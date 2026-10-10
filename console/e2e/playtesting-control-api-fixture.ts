@@ -174,6 +174,7 @@ const comparison = {
   pairing: {
     mode: "not-comparable",
     pairMap: {},
+    allocationPlanHash: null,
     rngAlgorithm: null,
     rngStreamVersion: null,
     couplingDiagnostics: [],
@@ -214,6 +215,26 @@ const comparison = {
         interval: null
       },
       interval: null,
+      sourceSemantics: {
+        baseline: {
+          metricId: "completion",
+          metricVersion: 1,
+          source: "deterministic",
+          quantityHash: "a".repeat(64),
+          sourceHash: "c".repeat(64),
+          modality: "headless",
+          independentUnit: "episode"
+        },
+        candidate: {
+          metricId: "completion",
+          metricVersion: 1,
+          source: "deterministic",
+          quantityHash: "b".repeat(64),
+          sourceHash: "d".repeat(64),
+          modality: "headless",
+          independentUnit: "episode"
+        }
+      },
       guardrailStatus: "not-applicable",
       notes: "Synthetic UI fixture only."
     }
@@ -399,6 +420,306 @@ async function handleSyntheticWorkspaceApproval(
   return true;
 }
 
+const CANCEL_RUN_ROUTE = /^\/control\/playtesting\/runs\/([^/]+)\/cancel$/u;
+const STATUS_RUN_ROUTE = /^\/control\/playtesting\/runs\/([^/]+)$/u;
+
+function activeSyntheticRunRequest(value: Record<string, unknown> | null): {
+  readonly scenario: string;
+  readonly policy: string;
+  readonly seed: string;
+} | null {
+  if (!value || !workspaceApproval || workspaceApproval.revokedAt !== null)
+    return null;
+  const limits = workspaceApproval.limits as
+    Record<string, unknown> | undefined;
+  const scenarios = workspaceApproval.allowedScenarios;
+  const policies = workspaceApproval.allowedPolicies;
+  if (
+    value.workspaceId !== WORKSPACE_ID ||
+    typeof value.scenario !== "string" ||
+    !Array.isArray(scenarios) ||
+    !scenarios.includes(value.scenario) ||
+    value.policy !== "random" ||
+    !Array.isArray(policies) ||
+    !policies.includes(value.policy) ||
+    typeof value.seed !== "string" ||
+    value.seed.length === 0 ||
+    value.seed.length > 256 ||
+    !limits ||
+    typeof value.maxSteps !== "number" ||
+    !Number.isSafeInteger(value.maxSteps) ||
+    value.maxSteps < 1 ||
+    value.maxSteps > Number(limits.maxStepsPerEpisode)
+  ) {
+    return null;
+  }
+  return {
+    scenario: value.scenario,
+    policy: value.policy,
+    seed: value.seed
+  };
+}
+
+async function handleSyntheticRunMutation(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): Promise<boolean> {
+  if (
+    url.pathname === "/control/playtesting/runs" &&
+    request.method === "POST"
+  ) {
+    const runRequest = activeSyntheticRunRequest(await readJsonBody(request));
+    if (!runRequest) {
+      response.writeHead(400).end();
+      return true;
+    }
+    const batchId = `batch-browser-${String(nextRunId++).padStart(3, "0")}`;
+    syntheticRuns.set(batchId, {
+      workspaceId: WORKSPACE_ID,
+      ...runRequest,
+      status: "running",
+      cancellationRequested: false
+    });
+    sendJson(
+      response,
+      {
+        schema: "autodev-control-playtesting-run-started-v1",
+        workspaceId: WORKSPACE_ID,
+        batchId,
+        status: "running"
+      },
+      202
+    );
+    return true;
+  }
+
+  const match = url.pathname.match(CANCEL_RUN_ROUTE);
+  if (!match || request.method !== "POST") return false;
+  const batchId = decodeURIComponent(match[1]!);
+  const body = await readJsonBody(request);
+  const run = syntheticRuns.get(batchId);
+  if (
+    !body ||
+    url.searchParams.get("workspaceId") !== WORKSPACE_ID ||
+    body.expectedStatus !== "running" ||
+    !run ||
+    run.status !== "running"
+  ) {
+    response.writeHead(409).end();
+    return true;
+  }
+  run.status = "cancelled";
+  run.cancellationRequested = true;
+  sendJson(
+    response,
+    {
+      schema: "autodev-control-playtesting-run-cancellation-v1",
+      workspaceId: WORKSPACE_ID,
+      batchId,
+      cancellationRequested: true
+    },
+    202
+  );
+  return true;
+}
+
+function sendSyntheticCapabilities(response: ServerResponse): void {
+  const limits = workspaceApproval?.limits as
+    Record<string, unknown> | undefined;
+  const scenarios =
+    (workspaceApproval?.allowedScenarios as string[] | undefined) ?? [];
+  const policies =
+    (workspaceApproval?.allowedPolicies as string[] | undefined) ?? [];
+  const approved =
+    workspaceApproval !== null && workspaceApproval.revokedAt === null;
+  const runnableAssignments =
+    approved &&
+    limits &&
+    scenarios.includes("tutorial") &&
+    policies.includes("random")
+      ? [
+          {
+            scenarioId: "tutorial",
+            scenarioFamily: "tutorial",
+            policyId: "random",
+            policyVersion: "hmac-sha256-v1",
+            cohort: "exploratory",
+            strategy: "uniform-legal-action",
+            maxStepsPerEpisode: Number(limits.maxStepsPerEpisode)
+          }
+        ]
+      : [];
+  sendJson(response, {
+    schema: "autodev-control-playtesting-capabilities-v1",
+    workspaceId: WORKSPACE_ID,
+    workspaceCatalog: "valid",
+    workspaceEnabled: true,
+    operatorActionsAvailable: true,
+    approved,
+    approvalRevision: approved ? workspaceApproval.revision : null,
+    buildSha: approved ? workspaceApproval.buildSha : null,
+    gameBuild: approved ? workspaceApproval.gameBuild : null,
+    allowedScenarios: scenarios,
+    approvedPolicies: policies,
+    supportedPolicies: ["random"],
+    runnablePolicies: runnableAssignments.length > 0 ? ["random"] : [],
+    unsupportedApprovedPolicies: policies.filter(
+      (policy) => policy !== "random"
+    ),
+    configurationStatus: approved ? "validated" : "not-checked",
+    runnableAssignments,
+    policyProfiles: runnableAssignments.map((assignment) => ({
+      policyId: assignment.policyId,
+      version: assignment.policyVersion,
+      cohort: assignment.cohort,
+      strategy: assignment.strategy
+    })),
+    limits: approved ? limits : null,
+    issueReporting: approved ? workspaceApproval.issueReporting : "disabled",
+    humanStudyAllowed: approved ? workspaceApproval.humanStudyAllowed : false,
+    revokedAt: workspaceApproval?.revokedAt ?? null,
+    runPreflight: "required-at-start"
+  });
+}
+
+function sendSyntheticRunStatus(
+  response: ServerResponse,
+  batchId: string
+): boolean {
+  const run = syntheticRuns.get(batchId);
+  if (!run) {
+    response.writeHead(404).end();
+    return true;
+  }
+  if (run.status === "running" && run.seed !== "hold") run.status = "completed";
+  sendJson(response, {
+    schema: "autodev-control-playtesting-run-status-v1",
+    workspaceId: WORKSPACE_ID,
+    run: {
+      batchId,
+      status: run.status,
+      cancellationReason: run.status === "cancelled" ? "cancelled" : null,
+      result:
+        run.status === "completed"
+          ? { episodeId: episode.episodeId, outcome: episode.outcome }
+          : null,
+      error: null
+    }
+  });
+  return true;
+}
+
+function handleSyntheticRunRead(response: ServerResponse, url: URL): boolean {
+  if (url.pathname === "/control/playtesting/capabilities") {
+    sendSyntheticCapabilities(response);
+    return true;
+  }
+  if (url.pathname === "/control/playtesting/runs") {
+    const runs = [...syntheticRuns.entries()]
+      .filter(
+        ([, run]) =>
+          run.workspaceId === WORKSPACE_ID && run.status === "running"
+      )
+      .map(([batchId, run]) => ({
+        batchId,
+        scenarioId: run.scenario,
+        createdAt: FIXTURE_TIMESTAMP
+      }));
+    sendJson(response, {
+      schema: "autodev-control-playtesting-runs-v1",
+      workspaceId: WORKSPACE_ID,
+      runs
+    });
+    return true;
+  }
+  const match = url.pathname.match(STATUS_RUN_ROUTE);
+  return match
+    ? sendSyntheticRunStatus(response, decodeURIComponent(match[1]!))
+    : false;
+}
+
+function handleSyntheticPlaytestingRead(
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (url.pathname === "/control/playtesting/batches") {
+    sendJson(response, page("batches", [batch], 1));
+    return true;
+  }
+  if (url.pathname === "/control/playtesting/episodes") {
+    sendJson(response, page("episodes", [episode], 1));
+    return true;
+  }
+  if (url.pathname === "/control/playtesting/findings") {
+    sendJson(response, page("findings", [finding], 1));
+    return true;
+  }
+  if (url.pathname === "/control/playtesting/comparisons") {
+    sendJson(response, page("comparisons", [comparison], 1));
+    return true;
+  }
+  if (url.pathname === `/control/playtesting/episodes/${episode.episodeId}`) {
+    sendJson(response, {
+      schema: "autodev-control-playtesting-detail-v1",
+      workspaceId: WORKSPACE_ID,
+      resource: "episode",
+      readOnly: true,
+      record: episode,
+      latestReview: null
+    });
+    return true;
+  }
+  if (
+    url.pathname ===
+    `/control/playtesting/episodes/${episode.episodeId}/windows/${TRACE_ID}`
+  ) {
+    sendJson(response, {
+      schema: "autodev-control-playtesting-window-v1",
+      workspaceId: WORKSPACE_ID,
+      episodeId: episode.episodeId,
+      artifactId: TRACE_ID,
+      sha256: "b".repeat(64),
+      mediaType: "application/x-ndjson",
+      startStep: Number(url.searchParams.get("startStep")),
+      endStep: Number(url.searchParams.get("endStep")),
+      sourceLineCount: 3,
+      omittedLineCount: 0,
+      entries: [
+        { type: "step", step: 0, state: { room: "start" }, actionId: "look" },
+        {
+          type: "event",
+          event: { step: 1, eventId: "event-1", type: "warning-shown" }
+        },
+        {
+          type: "event",
+          event: { step: 2, eventId: "event-2", type: "legal-action-noop" }
+        }
+      ].filter(
+        (entry) =>
+          entry.step === undefined ||
+          (entry.step >= Number(url.searchParams.get("startStep")) &&
+            entry.step <= Number(url.searchParams.get("endStep")))
+      )
+    });
+    return true;
+  }
+  if (
+    url.pathname ===
+    `/control/playtesting/episodes/${episode.episodeId}/media/${FRAME_ID}`
+  ) {
+    response
+      .writeHead(200, {
+        "content-type": "image/png",
+        "content-length": FRAME_BYTES.byteLength,
+        "cache-control": "no-store"
+      })
+      .end(FRAME_BYTES);
+    return true;
+  }
+  return false;
+}
+
 const server = createServer(
   async (request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -411,90 +732,7 @@ const server = createServer(
     ) {
       return;
     }
-    if (
-      url.pathname === "/control/playtesting/runs" &&
-      request.method === "POST"
-    ) {
-      const body = await readJsonBody(request);
-      const limits = workspaceApproval?.limits as
-        Record<string, unknown> | undefined;
-      const scenarios = workspaceApproval?.allowedScenarios;
-      const policies = workspaceApproval?.allowedPolicies;
-      if (
-        !body ||
-        !workspaceApproval ||
-        workspaceApproval.revokedAt !== null ||
-        typeof body.workspaceId !== "string" ||
-        body.workspaceId !== WORKSPACE_ID ||
-        typeof body.scenario !== "string" ||
-        !Array.isArray(scenarios) ||
-        !scenarios.includes(body.scenario) ||
-        body.policy !== "random" ||
-        !Array.isArray(policies) ||
-        !policies.includes(body.policy) ||
-        typeof body.seed !== "string" ||
-        body.seed.length < 1 ||
-        body.seed.length > 256 ||
-        !limits ||
-        typeof body.maxSteps !== "number" ||
-        !Number.isSafeInteger(body.maxSteps) ||
-        body.maxSteps < 1 ||
-        body.maxSteps > Number(limits.maxStepsPerEpisode)
-      ) {
-        response.writeHead(400).end();
-        return;
-      }
-      const batchId = `batch-browser-${String(nextRunId++).padStart(3, "0")}`;
-      syntheticRuns.set(batchId, {
-        workspaceId: WORKSPACE_ID,
-        scenario: body.scenario,
-        policy: body.policy,
-        seed: body.seed,
-        status: "running",
-        cancellationRequested: false
-      });
-      sendJson(
-        response,
-        {
-          schema: "autodev-control-playtesting-run-started-v1",
-          workspaceId: WORKSPACE_ID,
-          batchId,
-          status: "running"
-        },
-        202
-      );
-      return;
-    }
-    const cancelMatch = url.pathname.match(
-      /^\/control\/playtesting\/runs\/([^/]+)\/cancel$/u
-    );
-    if (cancelMatch && request.method === "POST") {
-      const body = await readJsonBody(request);
-      const run = syntheticRuns.get(decodeURIComponent(cancelMatch[1]!));
-      if (
-        !body ||
-        url.searchParams.get("workspaceId") !== WORKSPACE_ID ||
-        body.expectedStatus !== "running" ||
-        !run ||
-        run.status !== "running"
-      ) {
-        response.writeHead(409).end();
-        return;
-      }
-      run.status = "cancelled";
-      run.cancellationRequested = true;
-      sendJson(
-        response,
-        {
-          schema: "autodev-control-playtesting-run-cancellation-v1",
-          workspaceId: WORKSPACE_ID,
-          batchId: decodeURIComponent(cancelMatch[1]!),
-          cancellationRequested: true
-        },
-        202
-      );
-      return;
-    }
+    if (await handleSyntheticRunMutation(request, response, url)) return;
     if (request.method !== "GET") {
       response.writeHead(405).end();
       return;
@@ -525,200 +763,11 @@ const server = createServer(
       response.writeHead(404).end();
       return;
     }
-    if (url.pathname === "/control/playtesting/capabilities") {
-      const limits = workspaceApproval?.limits as
-        Record<string, unknown> | undefined;
-      const scenarios =
-        (workspaceApproval?.allowedScenarios as string[] | undefined) ?? [];
-      const policies =
-        (workspaceApproval?.allowedPolicies as string[] | undefined) ?? [];
-      const approved =
-        workspaceApproval !== null && workspaceApproval.revokedAt === null;
-      sendJson(response, {
-        schema: "autodev-control-playtesting-capabilities-v1",
-        workspaceId: WORKSPACE_ID,
-        workspaceCatalog: "valid",
-        workspaceEnabled: true,
-        operatorActionsAvailable: true,
-        approved,
-        approvalRevision: approved ? workspaceApproval.revision : null,
-        buildSha: approved ? workspaceApproval.buildSha : null,
-        gameBuild: approved ? workspaceApproval.gameBuild : null,
-        allowedScenarios: scenarios,
-        approvedPolicies: policies,
-        supportedPolicies: ["random"],
-        runnablePolicies:
-          approved && limits
-            ? policies.filter((policy) => policy === "random")
-            : [],
-        unsupportedApprovedPolicies: policies.filter(
-          (policy) => policy !== "random"
-        ),
-        configurationStatus: approved ? "validated" : "not-checked",
-        runnableAssignments:
-          approved &&
-          limits &&
-          scenarios.includes("tutorial") &&
-          policies.includes("random")
-            ? [
-                {
-                  scenarioId: "tutorial",
-                  scenarioFamily: "tutorial",
-                  policyId: "random",
-                  policyVersion: "hmac-sha256-v1",
-                  cohort: "exploratory",
-                  strategy: "uniform-legal-action",
-                  maxStepsPerEpisode: Number(limits.maxStepsPerEpisode)
-                }
-              ]
-            : [],
-        policyProfiles:
-          approved && policies.includes("random")
-            ? [
-                {
-                  policyId: "random",
-                  version: "hmac-sha256-v1",
-                  cohort: "exploratory",
-                  strategy: "uniform-legal-action"
-                }
-              ]
-            : [],
-        limits: approved ? limits : null,
-        issueReporting: approved
-          ? workspaceApproval.issueReporting
-          : "disabled",
-        humanStudyAllowed: approved
-          ? workspaceApproval.humanStudyAllowed
-          : false,
-        revokedAt: workspaceApproval?.revokedAt ?? null,
-        runPreflight: "required-at-start"
-      });
-      return;
-    }
-    if (url.pathname === "/control/playtesting/runs") {
-      const runs = [...syntheticRuns.entries()]
-        .filter(
-          ([, run]) =>
-            run.workspaceId === WORKSPACE_ID && run.status === "running"
-        )
-        .map(([batchId, run]) => ({
-          batchId,
-          scenarioId: run.scenario,
-          createdAt: FIXTURE_TIMESTAMP
-        }));
-      sendJson(response, {
-        schema: "autodev-control-playtesting-runs-v1",
-        workspaceId: WORKSPACE_ID,
-        runs
-      });
-      return;
-    }
-    const runMatch = url.pathname.match(
-      /^\/control\/playtesting\/runs\/([^/]+)$/u
-    );
-    if (runMatch) {
-      const batchId = decodeURIComponent(runMatch[1]!);
-      const run = syntheticRuns.get(batchId);
-      if (!run) {
-        response.writeHead(404).end();
-        return;
-      }
-      if (run.status === "running" && run.seed !== "hold")
-        run.status = "completed";
-      sendJson(response, {
-        schema: "autodev-control-playtesting-run-status-v1",
-        workspaceId: WORKSPACE_ID,
-        run: {
-          batchId,
-          status: run.status,
-          cancellationReason: run.status === "cancelled" ? "cancelled" : null,
-          result:
-            run.status === "completed"
-              ? { episodeId: episode.episodeId, outcome: episode.outcome }
-              : null,
-          error: null
-        }
-      });
-      return;
-    }
-    if (url.pathname === "/control/playtesting/batches") {
-      sendJson(response, page("batches", [batch], 1));
-      return;
-    }
-    if (url.pathname === "/control/playtesting/episodes") {
-      sendJson(response, page("episodes", [episode], 1));
-      return;
-    }
-    if (url.pathname === "/control/playtesting/findings") {
-      sendJson(response, page("findings", [finding], 1));
-      return;
-    }
-    if (url.pathname === "/control/playtesting/comparisons") {
-      sendJson(response, page("comparisons", [comparison], 1));
-      return;
-    }
-    if (url.pathname === `/control/playtesting/episodes/${episode.episodeId}`) {
-      sendJson(response, {
-        schema: "autodev-control-playtesting-detail-v1",
-        workspaceId: WORKSPACE_ID,
-        resource: "episode",
-        readOnly: true,
-        record: episode,
-        latestReview: null
-      });
-      return;
-    }
-    if (
-      url.pathname ===
-      `/control/playtesting/episodes/${episode.episodeId}/windows/${TRACE_ID}`
-    ) {
-      sendJson(response, {
-        schema: "autodev-control-playtesting-window-v1",
-        workspaceId: WORKSPACE_ID,
-        episodeId: episode.episodeId,
-        artifactId: TRACE_ID,
-        sha256: "b".repeat(64),
-        mediaType: "application/x-ndjson",
-        startStep: Number(url.searchParams.get("startStep")),
-        endStep: Number(url.searchParams.get("endStep")),
-        sourceLineCount: 3,
-        omittedLineCount: 0,
-        entries: [
-          { type: "step", step: 0, state: { room: "start" }, actionId: "look" },
-          {
-            type: "event",
-            event: { step: 1, eventId: "event-1", type: "warning-shown" }
-          },
-          {
-            type: "event",
-            event: { step: 2, eventId: "event-2", type: "legal-action-noop" }
-          }
-        ].filter(
-          (entry) =>
-            entry.step === undefined ||
-            (entry.step >= Number(url.searchParams.get("startStep")) &&
-              entry.step <= Number(url.searchParams.get("endStep")))
-        )
-      });
-      return;
-    }
-    if (
-      url.pathname ===
-      `/control/playtesting/episodes/${episode.episodeId}/media/${FRAME_ID}`
-    ) {
-      response
-        .writeHead(200, {
-          "content-type": "image/png",
-          "content-length": FRAME_BYTES.byteLength,
-          "cache-control": "no-store"
-        })
-        .end(FRAME_BYTES);
-      return;
-    }
+    if (handleSyntheticRunRead(response, url)) return;
+    if (handleSyntheticPlaytestingRead(response, url)) return;
     response.writeHead(404).end();
   }
 );
-
 server.listen(PORT, "127.0.0.1");
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

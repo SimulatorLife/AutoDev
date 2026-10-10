@@ -216,6 +216,7 @@ function comparison(
     pairing: {
       mode: "observational",
       pairMap: {},
+      allocationPlanHash: null,
       rngAlgorithm: null,
       rngStreamVersion: null,
       couplingDiagnostics: [],
@@ -602,7 +603,65 @@ test("Core artifact round-trips preserve full canonical payloads and latest revi
   };
   const findingArtifact = finding();
   const reviewArtifact = review();
-  const comparisonArtifact = comparison();
+  const comparisonArtifact: PlaytestComparison = {
+    ...comparison(),
+    metrics: [
+      {
+        metricId: "completion",
+        metricVersion: 1,
+        compatibility: "observational",
+        meaningfulMargin: 0.02,
+        guardrailMargin: null,
+        orientedBenefitDelta: null,
+        classification: "inconclusive",
+        baseline: {
+          arm: "baseline",
+          assigned: 10,
+          eligible: 10,
+          missing: 0,
+          independentUnits: 10,
+          exposure: 10,
+          estimate: 0.5,
+          rawDelta: null,
+          interval: null
+        },
+        candidate: {
+          arm: "candidate",
+          assigned: 10,
+          eligible: 10,
+          missing: 0,
+          independentUnits: 10,
+          exposure: 10,
+          estimate: 0.5,
+          rawDelta: null,
+          interval: null
+        },
+        interval: null,
+        sourceSemantics: {
+          baseline: {
+            metricId: "completion",
+            metricVersion: 1,
+            source: "deterministic",
+            quantityHash: "a".repeat(64),
+            sourceHash: "b".repeat(64),
+            modality: "headless",
+            independentUnit: "episode"
+          },
+          candidate: {
+            metricId: "completion",
+            metricVersion: 1,
+            source: "deterministic",
+            quantityHash: "a".repeat(64),
+            sourceHash: "b".repeat(64),
+            modality: "headless",
+            independentUnit: "episode"
+          }
+        },
+        guardrailStatus: "not-applicable",
+        notes: "Fixture source fingerprints are retained verbatim."
+      }
+    ]
+  };
   const benchmarkArtifact = benchmark();
   const experimentArtifact = experiment();
 

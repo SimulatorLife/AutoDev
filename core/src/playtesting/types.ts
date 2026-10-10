@@ -19,7 +19,8 @@ import type { AgentRole } from "../agents/types.ts";
 /** Current Core schema version for the playtesting artifact family. */
 export const PLAYTESTS_SCHEMA_VERSION = 1 as const;
 /** Version of the normative measurement rules applied to new artifacts. */
-export const PLAYTESTS_MEASUREMENT_VERSION = "playtesting-measurement-v1" as const;
+export const PLAYTESTS_MEASUREMENT_VERSION =
+  "playtesting-measurement-v1" as const;
 
 /** Version negotiated by `game.capabilities` before any episode reset. */
 export const PLAYTESTS_PROTOCOL_VERSION = 1 as const;
@@ -468,6 +469,19 @@ export interface PlaytestMetricArmSummary {
   readonly interval: PlaytestNumericInterval | null;
 }
 
+export type PlaytestMeasurementSource = "deterministic" | "critic" | "human";
+
+/** Frozen identity of the quantity, measurement source and independent unit. */
+export interface PlaytestMetricSemantics {
+  readonly metricId: string;
+  readonly metricVersion: number | string;
+  readonly source: PlaytestMeasurementSource;
+  readonly quantityHash: string;
+  readonly sourceHash: string;
+  readonly modality: string;
+  readonly independentUnit: string;
+}
+
 /** Numeric interval returned by an external statistics library. */
 export interface PlaytestNumericInterval {
   readonly lower: number;
@@ -491,6 +505,11 @@ export interface PlaytestMetricComparison {
   readonly baseline: PlaytestMetricArmSummary;
   readonly candidate: PlaytestMetricArmSummary;
   readonly interval: PlaytestNumericInterval | null;
+  /** Direct descriptive classification has null source identity; durable comparison builders populate both arms. */
+  readonly sourceSemantics: {
+    readonly baseline: PlaytestMetricSemantics;
+    readonly candidate: PlaytestMetricSemantics;
+  } | null;
   readonly guardrailStatus:
     "passed" | "breached" | "uncertain" | "not-applicable";
   readonly notes: string;
@@ -509,6 +528,8 @@ export interface PlaytestComparison {
   readonly pairing: {
     readonly mode: PlaytestCompatibilityMode;
     readonly pairMap: Readonly<Record<string, string>>;
+    /** Hash of the frozen assignment plan; identical seed text is not proof of a pair. */
+    readonly allocationPlanHash: string | null;
     readonly rngAlgorithm: string | null;
     readonly rngStreamVersion: string | null;
     readonly couplingDiagnostics: readonly string[];

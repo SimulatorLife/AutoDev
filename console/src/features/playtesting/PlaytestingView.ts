@@ -9,10 +9,6 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
-import {
-  PlaytestingRunControls,
-  type PlaytestingRunSetup
-} from "./PlaytestingRunControls.tsx";
 import { FilterBar } from "../../components/filters/FilterBar.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
@@ -106,7 +102,6 @@ export interface PlaytestingViewProps {
   readonly workspaces: readonly WorkspaceEntry[];
   readonly overview?: PlaytestingOverviewData | undefined;
   readonly list?: PlaytestingListData | undefined;
-  readonly runSetup?: PlaytestingRunSetup | undefined;
 }
 
 function preserveForFilterForm(
@@ -454,8 +449,7 @@ function PageSummary({
 
 function overview(
   data: PlaytestingOverviewData,
-  scope: PlaytestingScope,
-  runSetup: PlaytestingRunSetup | undefined
+  scope: PlaytestingScope
 ): React.JSX.Element {
   const latest = data.batches[0];
   return React.createElement(
@@ -527,10 +521,7 @@ function overview(
             data.episodeCount === 0
               ? "No episodes are recorded yet."
               : "Recent episode rows are not observed in this response."
-        }),
-    runSetup
-      ? React.createElement(PlaytestingRunControls, { setup: runSetup, scope })
-      : null
+        })
   );
 }
 
@@ -971,8 +962,7 @@ export function PlaytestingView({
   scope,
   workspaces,
   overview: overviewData,
-  list,
-  runSetup
+  list
 }: PlaytestingViewProps): React.JSX.Element {
   const fields = filterFields(scope, workspaces);
   const selectedWorkspace = workspaces.find(
@@ -1017,7 +1007,7 @@ export function PlaytestingView({
         )
       : null,
     scope.view === "overview" && overviewData
-      ? overview(overviewData, scope, runSetup)
+      ? overview(overviewData, scope)
       : list
         ? activeList(list, scope)
         : React.createElement(EmptyState, {

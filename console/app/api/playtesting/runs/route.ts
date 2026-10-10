@@ -6,18 +6,17 @@ import {
   controlApiFailureCode,
   readControlApiConfig
 } from "../../../../src/lib/server/control-api.ts";
-import { startPlaytestingRun } from "../../../playtesting/playtesting-server.ts";
 import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../src/lib/server/form-mutation.ts";
+import { startPlaytestingRun } from "../../../playtesting/playtesting-server.ts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const MAX_BODY_BYTES = 4096;
 const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
-const SAFE_FIELD_PATTERN = /^[^\u0000-\u001f\u007f]{1,256}$/u;
 const STEP_PATTERN = /^[1-9]\d{0,5}$/u;
 const ALLOWED_FIELDS = new Set([
   "workspaceId",
@@ -42,7 +41,17 @@ function oneField(form: URLSearchParams, key: string): string | null {
   const values = form.getAll(key);
   if (values.length !== 1) return null;
   const value = values[0]!.trim();
-  return SAFE_FIELD_PATTERN.test(value) ? value : null;
+  return value.length > 0 && value.length <= 256 && !hasControlCharacters(value)
+    ? value
+    : null;
+}
+
+function hasControlCharacters(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code <= 31 || code === 127) return true;
+  }
+  return false;
 }
 
 function failureStatus(

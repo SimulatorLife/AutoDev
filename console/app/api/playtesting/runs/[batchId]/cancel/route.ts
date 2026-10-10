@@ -5,11 +5,11 @@ import {
   controlApiFailureCode,
   readControlApiConfig
 } from "../../../../../../src/lib/server/control-api.ts";
-import { cancelPlaytestingRun } from "../../../../../playtesting/playtesting-server.ts";
 import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../../../src/lib/server/form-mutation.ts";
+import { cancelPlaytestingRun } from "../../../../../playtesting/playtesting-server.ts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

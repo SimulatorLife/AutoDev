@@ -26,6 +26,14 @@ if ! command -v docker >/dev/null 2>&1; then
 	echo "up.sh: docker is required" >&2
 	exit 1
 fi
+if ! docker info >/dev/null 2>&1; then
+	echo "up.sh: Docker Engine is not reachable; start Docker Desktop or the Docker service, then retry" >&2
+	exit 1
+fi
+if ! command -v curl >/dev/null 2>&1; then
+	echo "up.sh: curl is required to verify OpenLIT readiness" >&2
+	exit 1
+fi
 if docker compose version >/dev/null 2>&1; then
 	DOCKER_COMPOSE=(docker compose)
 elif command -v docker-compose >/dev/null 2>&1; then
@@ -94,12 +102,33 @@ echo "==> Starting the patched OpenLIT stack with authenticated OTLP"
 	up -d
 
 echo "==> Waiting for ClickHouse to accept connections"
-for _ in {1..30}; do
+CLICKHOUSE_READY=0
+for _ in {1..120}; do
 	if "${DOCKER_COMPOSE[@]}" -f "$COMPOSE_FILE" exec -T clickhouse clickhouse-client --user="${OPENLIT_DB_USER:-default}" --password="$OPENLIT_DB_PASSWORD" --query="SELECT 1" >/dev/null 2>&1; then
+		CLICKHOUSE_READY=1
 		break
 	fi
 	sleep 1
 done
+if [[ "$CLICKHOUSE_READY" -ne 1 ]]; then
+	echo "up.sh: ClickHouse did not become healthy within 120 seconds; inspect the openlit-clickhouse container logs" >&2
+	exit 5
+fi
+
+echo "==> Waiting for the OpenLIT HTTP service"
+OPENLIT_READY=0
+OPENLIT_DEADLINE=$((SECONDS + 120))
+while (( SECONDS < OPENLIT_DEADLINE )); do
+	if curl --fail --silent --show-error --location --max-time 2 "http://127.0.0.1:${PORT:-3000}/" >/dev/null 2>&1; then
+		OPENLIT_READY=1
+		break
+	fi
+	if (( SECONDS < OPENLIT_DEADLINE )); then sleep 1; fi
+done
+if [[ "$OPENLIT_READY" -ne 1 ]]; then
+	echo "up.sh: OpenLIT did not become HTTP-ready on port ${PORT:-3000} within 120 seconds; inspect the openlit container logs" >&2
+	exit 5
+fi
 
 echo "==> Synchronizing rulesync prompts to AutoDev Prompt Hub"
 OPENLIT_DB_PASSWORD="$OPENLIT_DB_PASSWORD" pnpm --filter @simulatorlife/autodev-data openlit:sync-prompts || echo "Warning: prompt synchronization failed" >&2
@@ -113,7 +142,7 @@ pnpm --filter @simulatorlife/autodev-data openlit:sync-models || echo "Warning: 
 echo "==> Synchronizing AutoDev project and workspace architecture"
 pnpm --filter @simulatorlife/autodev-data openlit:sync-workspaces || echo "Warning: workspace synchronization failed" >&2
 
-echo "==> AutoDev Console stack started (container build/runtime still requires acceptance probes)."
+echo "==> OpenLIT HTTP and ClickHouse are ready for the AutoDev Console."
 echo "    Image tag:       $IMAGE_TAG"
 echo "    Image lock:      $LOCK_FILE"
 echo "    Env template:    $ENV_FILE"

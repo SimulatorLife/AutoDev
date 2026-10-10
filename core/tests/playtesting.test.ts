@@ -5,6 +5,8 @@ import {
   aggregateMiniPxiEnj,
   allocatePlaytestExperimentArms,
   allocatePlaytestSurveillanceStrata,
+  assessPlaytestMetricCompatibility,
+  assessPlaytestPairing,
   assertNoContradictingLocator,
   assertPlaytestAdapterParams,
   assertPlaytestAdapterResult,
@@ -738,6 +740,179 @@ function makeArmSummary(
   };
 }
 
+function pairingEvidence(
+  count: number,
+  requestedMode:
+    | "paired-initial-condition"
+    | "paired-counterfactual" = "paired-initial-condition",
+  candidateRngSequenceHash = "c".repeat(64)
+) {
+  return {
+    requestedMode,
+    allocationPlanHash: "e".repeat(64),
+    pairs: Array.from({ length: count }, (_, index) => {
+      const suffix = String(index).padStart(4, "0");
+      const side = (
+        arm: "baseline" | "candidate",
+        rngSequenceHash: string
+      ) => ({
+        episodeId: arm + "-" + suffix,
+        scenarioId: "scenario-a",
+        seedAllocationId: "allocation-" + suffix,
+        policyInformationHash: "a".repeat(64),
+        initialStateHash: "b".repeat(64),
+        rngAlgorithm: "pcg64",
+        rngStreamVersion: "fixture-v1",
+        rngSequenceHash
+      });
+      return {
+        pairId: "pair-" + suffix,
+        baseline: side("baseline", "c".repeat(64)),
+        candidate: side("candidate", candidateRngSequenceHash)
+      };
+    })
+  } as const;
+}
+
+function metricSemantics(
+  metricId: string,
+  source: "deterministic" | "critic" = "deterministic",
+  sourceHash = "f".repeat(64)
+) {
+  return {
+    metricId,
+    metricVersion: 1,
+    source,
+    quantityHash: "9".repeat(64),
+    sourceHash,
+    modality: source === "critic" ? "native-visual" : "headless",
+    independentUnit: "episode"
+  } as const;
+}
+
+test("paired-counterfactual requires verified random-stream identity, not matching seed labels", () => {
+  const matched = assessPlaytestPairing(
+    pairingEvidence(2, "paired-counterfactual")
+  );
+  assert.equal(matched.mode, "paired-counterfactual");
+  assert.equal(Object.keys(matched.pairMap).length, 2);
+  assert.equal(matched.allocationPlanHash, "e".repeat(64));
+
+  const extraDraw = assessPlaytestPairing(
+    pairingEvidence(2, "paired-counterfactual", "d".repeat(64))
+  );
+  assert.equal(extraDraw.mode, "paired-initial-condition");
+  assert.equal(Object.keys(extraDraw.pairMap).length, 2);
+  assert.deepEqual(extraDraw.exclusions, []);
+  assert.match(extraDraw.couplingDiagnostics.join(" "), /extra draws/u);
+});
+
+test("pairing rejects changed initial conditions, seed assignments, and policy-information contracts", () => {
+  const base = pairingEvidence(1);
+  const changed = {
+    ...base,
+    pairs: [
+      {
+        ...base.pairs[0]!,
+        candidate: {
+          ...base.pairs[0]!.candidate,
+          seedAllocationId: "unpaired-seed",
+          policyInformationHash: "7".repeat(64),
+          initialStateHash: "8".repeat(64)
+        }
+      }
+    ]
+  };
+  const assessment = assessPlaytestPairing(changed);
+  assert.equal(assessment.mode, "not-comparable");
+  assert.equal(assessment.exclusions.length, 0);
+  assert.equal(assessment.couplingDiagnostics.length, 3);
+});
+
+test("changed judge invalidates critic measurements but not unchanged deterministic metrics", () => {
+  const unchanged = metricSemantics("completion");
+  const deterministic = assessPlaytestMetricCompatibility(unchanged, unchanged);
+  assert.equal(deterministic.compatible, true);
+
+  const baselineJudge = metricSemantics("clarity", "critic", "1".repeat(64));
+  const changedJudge = metricSemantics("clarity", "critic", "2".repeat(64));
+  const critic = assessPlaytestMetricCompatibility(baselineJudge, changedJudge);
+  assert.equal(critic.compatible, false);
+  assert.match(critic.reasons.join(" "), /Critic\/rubric source changed/u);
+});
+
+test("comparison builder downgrades an extra RNG draw and changed critic without losing objective compatibility", () => {
+  const summary = makeArmSummary("baseline");
+  const candidateSummary = { ...summary, arm: "candidate" as const };
+  const pairing = pairingEvidence(100, "paired-counterfactual", "d".repeat(64));
+  const common = {
+    meaningfulMargin: 0.02,
+    guardrailMargin: null,
+    orientedBenefitDelta: 0.1,
+    interval: {
+      lower: 0.05,
+      upper: 0.16,
+      method: "percentile-bootstrap",
+      libraryVersion: "scipy-1.17.0",
+      confidenceLevel: 0.95,
+      resamples: 100_000,
+      seed: "42"
+    },
+    baseline: summary,
+    candidate: candidateSummary,
+    baselineUnitIds: pairing.pairs.map((pair) => pair.baseline.episodeId),
+    candidateUnitIds: pairing.pairs.map((pair) => pair.candidate.episodeId)
+  };
+  const comparison = buildPlaytestComparison({
+    comparisonId: "changed-measurement",
+    version: 1,
+    benchmarkId: "benchmark-a",
+    experimentId: null,
+    baseline: { id: "same-game-build", version: 1 },
+    candidate: { id: "same-game-build", version: 2 },
+    freezeStatus: "frozen",
+    pairingEvidence: pairing,
+    sourceFindingIds: [],
+    episodeRefs: [],
+    measurementVersion: "changed-critic-v2",
+    metrics: [
+      {
+        ...common,
+        metricId: "completion",
+        metricVersion: 1,
+        baselineSemantics: metricSemantics("completion"),
+        candidateSemantics: metricSemantics("completion")
+      },
+      {
+        ...common,
+        metricId: "clarity",
+        metricVersion: 1,
+        baselineSemantics: metricSemantics("clarity", "critic", "1".repeat(64)),
+        candidateSemantics: metricSemantics("clarity", "critic", "2".repeat(64))
+      }
+    ],
+    primaryMetricId: "completion",
+    provenance: {
+      workspaceId: WORKSPACE_ID,
+      measurementVersion: "changed-critic-v2",
+      generatedAt: "2026-01-01T00:00:00.000Z"
+    }
+  });
+
+  assert.equal(comparison.pairing.mode, "paired-initial-condition");
+  assert.match(
+    comparison.pairing.couplingDiagnostics.join(" "),
+    /extra draws/u
+  );
+  assert.equal(
+    comparison.metrics[0]?.compatibility,
+    "paired-initial-condition"
+  );
+  assert.equal(comparison.metrics[1]?.compatibility, "not-comparable");
+  assert.equal(comparison.metrics[1]?.classification, "not-comparable");
+  assert.equal(comparison.decision, "hold-not-comparable");
+});
+
 test("classifyPlaytestMetricComparison: improved when interval lower bound exceeds the meaningful margin", () => {
   const result = classifyPlaytestMetricComparison({
     metricId: "completion",
@@ -829,6 +1004,29 @@ test("§4 worked fixture: completion improved + clarity breached yields hold-reg
     primaryMetricId: "completion"
   });
   assert.equal(decision, "hold-regression");
+  const assignedPairing = pairingEvidence(100);
+
+  const comparisonMetric = (
+    metric: PlaytestMetricComparison,
+    source: "deterministic" | "critic"
+  ) => ({
+    metricId: metric.metricId,
+    metricVersion: metric.metricVersion,
+    meaningfulMargin: metric.meaningfulMargin,
+    guardrailMargin: metric.guardrailMargin,
+    orientedBenefitDelta: metric.orientedBenefitDelta,
+    interval: metric.interval,
+    baseline: metric.baseline,
+    candidate: metric.candidate,
+    baselineUnitIds: assignedPairing.pairs.map(
+      (pair) => pair.baseline.episodeId
+    ),
+    candidateUnitIds: assignedPairing.pairs.map(
+      (pair) => pair.candidate.episodeId
+    ),
+    baselineSemantics: metricSemantics(metric.metricId, source),
+    candidateSemantics: metricSemantics(metric.metricId, source)
+  });
 
   const comparison = buildPlaytestComparison({
     comparisonId: "cmp-1",
@@ -838,18 +1036,14 @@ test("§4 worked fixture: completion improved + clarity breached yields hold-reg
     baseline: { id: "build-a", version: 1 },
     candidate: { id: "build-b", version: 1 },
     freezeStatus: "frozen",
-    pairing: {
-      mode: "paired-initial-condition",
-      pairMap: { episodeA: "episodeB" },
-      rngAlgorithm: "pcg",
-      rngStreamVersion: "v1",
-      couplingDiagnostics: [],
-      exclusions: []
-    },
+    pairingEvidence: assignedPairing,
     sourceFindingIds: ["finding-1"],
     episodeRefs: [{ kind: "episode", id: "episode-a" }],
     measurementVersion: MEASUREMENT_VERSION,
-    metrics: [completion, clarity],
+    metrics: [
+      comparisonMetric(completion, "deterministic"),
+      comparisonMetric(clarity, "critic")
+    ],
     primaryMetricId: "completion",
     provenance: {
       workspaceId: WORKSPACE_ID,
@@ -1054,6 +1248,7 @@ test("recordPlaytestOwnerDecision returns a new immutable revision and rejects a
     pairing: {
       mode: "observational" as const,
       pairMap: {},
+      allocationPlanHash: null,
       rngAlgorithm: null,
       rngStreamVersion: null,
       couplingDiagnostics: [],

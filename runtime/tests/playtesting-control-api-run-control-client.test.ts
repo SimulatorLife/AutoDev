@@ -458,7 +458,8 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
     });
     assert.equal(
       JSON.parse(cancelResponse.content[0].text).cancellationRequested,
-      true
+      true,
+      cancelResponse.content[0].text
     );
 
     assert.deepEqual(

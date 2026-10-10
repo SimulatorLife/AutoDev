@@ -255,7 +255,8 @@ export function createPlaytestControlApiRunClient(
           await request(
             "POST",
             RUNS_PATH + "/" + encodeURIComponent(batchId) + "/cancel?" + query,
-            session
+            session,
+            { expectedStatus: "running" }
           ),
           "autodev-control-playtesting-run-cancellation-v1",
           workspaceId

@@ -25,6 +25,12 @@ import {
   PLAYTESTS_NOT_COMPARABLE_MODE,
   type PlaytestVersionedRef
 } from "./types.ts";
+import {
+  assessPlaytestMetricCompatibility,
+  assessPlaytestPairing,
+  type PlaytestMetricSemantics,
+  type PlaytestPairingEvidence
+} from "./compatibility.ts";
 
 /** Is this a finite, non-degenerate (lower <= upper) numeric interval? */
 export function isValidPlaytestInterval(
@@ -88,6 +94,7 @@ export function classifyPlaytestMetricComparison(
     baseline: input.baseline,
     candidate: input.candidate,
     interval: input.interval,
+    sourceSemantics: null,
     guardrailStatus,
     notes: classificationNotes(input, classification, guardrailStatus)
   };
@@ -150,6 +157,18 @@ export interface PlaytestDecisionInput {
   readonly primaryMetricId: string;
 }
 
+/** A comparison metric plus the frozen source semantics from both arms. */
+export interface PlaytestComparisonMetricInput extends Omit<
+  PlaytestMetricClassificationInput,
+  "compatibility"
+> {
+  readonly baselineSemantics: PlaytestMetricSemantics;
+  readonly candidateSemantics: PlaytestMetricSemantics;
+  /** Every preregistered assigned unit, including one with a missing outcome. */
+  readonly baselineUnitIds: readonly string[];
+  readonly candidateUnitIds: readonly string[];
+}
+
 /**
  * `eligible-for-owner-promotion` only when the preregistered primary metric
  * improved and every guardrail-bearing metric passed with adequate
@@ -199,11 +218,11 @@ export function buildPlaytestComparison(args: {
   readonly baseline: PlaytestVersionedRef;
   readonly candidate: PlaytestVersionedRef;
   readonly freezeStatus: "frozen" | "spent" | "not-comparable";
-  readonly pairing: PlaytestComparison["pairing"];
+  readonly pairingEvidence: PlaytestPairingEvidence;
   readonly sourceFindingIds: readonly string[];
   readonly episodeRefs: PlaytestComparison["episodeRefs"];
   readonly measurementVersion: string;
-  readonly metrics: readonly PlaytestMetricComparison[];
+  readonly metrics: readonly PlaytestComparisonMetricInput[];
   readonly primaryMetricId: string;
   readonly humanPreference?: {
     readonly answer: PlaytestPreferenceAnswer | "not-collected";
@@ -212,8 +231,94 @@ export function buildPlaytestComparison(args: {
   readonly provenance: PlaytestProvenance;
   readonly notes?: string;
 }): PlaytestComparison {
+  const assessedPairing = assessPlaytestPairing(args.pairingEvidence);
+  const expectedBaselineUnits = new Set(
+    args.pairingEvidence.pairs.map((pair) => pair.baseline.episodeId)
+  );
+  const expectedCandidateUnits = new Set(
+    args.pairingEvidence.pairs.map((pair) => pair.candidate.episodeId)
+  );
+  const matchesAssignments = (
+    actual: readonly string[],
+    expected: ReadonlySet<string>
+  ): boolean =>
+    actual.length === expected.size &&
+    new Set(actual).size === actual.length &&
+    actual.every((unitId) => expected.has(unitId));
+  const assignedCountsMatchPairing = args.metrics.every(
+    (metric) =>
+      metric.baseline.assigned === args.pairingEvidence.pairs.length &&
+      metric.candidate.assigned === args.pairingEvidence.pairs.length &&
+      matchesAssignments(metric.baselineUnitIds, expectedBaselineUnits) &&
+      matchesAssignments(metric.candidateUnitIds, expectedCandidateUnits)
+  );
+  const pairing = assignedCountsMatchPairing
+    ? assessedPairing
+    : {
+        ...assessedPairing,
+        mode: PLAYTESTS_NOT_COMPARABLE_MODE,
+        couplingDiagnostics: [
+          ...assessedPairing.couplingDiagnostics,
+          "Assigned arm counts do not match the frozen pair inventory."
+        ]
+      };
+  const seenMetrics = new Set<string>();
+  const metrics = args.metrics.map((input) => {
+    if (seenMetrics.has(input.metricId)) {
+      throw new TypeError(
+        `Comparison metric "${input.metricId}" is duplicated.`
+      );
+    }
+    seenMetrics.add(input.metricId);
+    for (const semantics of [
+      input.baselineSemantics,
+      input.candidateSemantics
+    ]) {
+      if (
+        semantics.metricId !== input.metricId ||
+        semantics.metricVersion !== input.metricVersion
+      ) {
+        throw new TypeError(
+          `Comparison metric "${input.metricId}" does not match its frozen source semantics.`
+        );
+      }
+    }
+    const semantics = assessPlaytestMetricCompatibility(
+      input.baselineSemantics,
+      input.candidateSemantics
+    );
+    const compatibility =
+      pairing.mode === PLAYTESTS_NOT_COMPARABLE_MODE || !semantics.compatible
+        ? PLAYTESTS_NOT_COMPARABLE_MODE
+        : pairing.mode;
+    const {
+      baselineSemantics: _baseline,
+      candidateSemantics: _candidate,
+      ...measurement
+    } = input;
+    const classified = classifyPlaytestMetricComparison({
+      ...measurement,
+      compatibility
+    });
+    const diagnostics = [
+      ...semantics.reasons,
+      ...(pairing.mode === PLAYTESTS_NOT_COMPARABLE_MODE
+        ? pairing.couplingDiagnostics
+        : [])
+    ];
+    return {
+      ...classified,
+      sourceSemantics: {
+        baseline: input.baselineSemantics,
+        candidate: input.candidateSemantics
+      },
+      ...(diagnostics.length > 0
+        ? { notes: [classified.notes, ...diagnostics].join(" ") }
+        : {})
+    };
+  });
   const decision = decidePlaytestComparisonStatus({
-    metrics: args.metrics,
+    metrics,
     primaryMetricId: args.primaryMetricId
   });
   return {
@@ -225,11 +330,11 @@ export function buildPlaytestComparison(args: {
     baseline: args.baseline,
     candidate: args.candidate,
     freezeStatus: args.freezeStatus,
-    pairing: args.pairing,
+    pairing,
     sourceFindingIds: args.sourceFindingIds,
     episodeRefs: args.episodeRefs,
     measurementVersion: args.measurementVersion,
-    metrics: args.metrics,
+    metrics,
     decision,
     ownerDecisionAt: null,
     ownerDecisionReason: null,

@@ -737,6 +737,40 @@ test("synthetic 1,000-episode improvement cycle records evidence, finding, compa
     assert.equal(metricComparison.classification, "inconclusive");
     assert.equal(metricComparison.orientedBenefitDelta, -0.1);
 
+    const frozenPairingEvidence = {
+      requestedMode: "paired-initial-condition" as const,
+      allocationPlanHash: createHash("sha256")
+        .update("synthetic-acceptance-seed-allocation-v1")
+        .digest("hex"),
+      pairs: Array.from({ length: pairs }, (_, index) => {
+        const suffix = String(index).padStart(4, "0");
+        const seed = "seed-" + suffix;
+        const stateHash = createHash("sha256")
+          .update("initial-state:" + seed)
+          .digest("hex");
+        const rngSequenceHash = createHash("sha256")
+          .update("rng-sequence:" + seed)
+          .digest("hex");
+        const side = (arm: "baseline" | "candidate") => ({
+          episodeId: arm + "-episode-" + suffix,
+          scenarioId: "tutorial",
+          seedAllocationId: "assignment-" + seed,
+          policyInformationHash: createHash("sha256")
+            .update("fixture-heuristic-v1/tutorial/empty-memory")
+            .digest("hex"),
+          initialStateHash: stateHash,
+          rngAlgorithm: "fixture-rng",
+          rngStreamVersion: "fixture-rng-v1",
+          rngSequenceHash
+        });
+        return {
+          pairId: "pair-" + seed,
+          baseline: side("baseline"),
+          candidate: side("candidate")
+        };
+      })
+    };
+
     const comparison: PlaytestComparison = buildPlaytestComparison({
       comparisonId: "comparison-synthetic-regression",
       version: 1,
@@ -745,26 +779,54 @@ test("synthetic 1,000-episode improvement cycle records evidence, finding, compa
       baseline: { id: baselineBuild, version: 1 },
       candidate: { id: candidateBuild, version: 1 },
       freezeStatus: "frozen",
-      pairing: {
-        mode: "paired-initial-condition",
-        pairMap: Object.fromEntries(
-          Array.from({ length: pairs }, (_, index) => [
-            "seed-" + String(index).padStart(4, "0"),
-            "baseline-episode-" +
-              String(index).padStart(4, "0") +
-              "|candidate-episode-" +
-              String(index).padStart(4, "0")
-          ])
-        ),
-        rngAlgorithm: "fixture-rng",
-        rngStreamVersion: "fixture-rng-v1",
-        couplingDiagnostics: ["same seed and deterministic fixture adapter"],
-        exclusions: []
-      },
+      pairingEvidence: frozenPairingEvidence,
       sourceFindingIds: [finding.findingId],
       episodeRefs: [episodeEvidence],
       measurementVersion: PLAYTESTS_MEASUREMENT_VERSION,
-      metrics: [metricComparison],
+      metrics: [
+        {
+          metricId,
+          metricVersion,
+          meaningfulMargin: 0.05,
+          guardrailMargin: null,
+          orientedBenefitDelta: meanBenefit,
+          interval: null,
+          baseline: baselineSummary,
+          candidate: candidateSummary,
+          baselineUnitIds: frozenPairingEvidence.pairs.map(
+            (pair) => pair.baseline.episodeId
+          ),
+          candidateUnitIds: frozenPairingEvidence.pairs.map(
+            (pair) => pair.candidate.episodeId
+          ),
+          baselineSemantics: {
+            metricId,
+            metricVersion,
+            source: "deterministic",
+            quantityHash: createHash("sha256")
+              .update("fixture-tutorial-completion-quantity-v1")
+              .digest("hex"),
+            sourceHash: createHash("sha256")
+              .update("fixture-tutorial-completion-evaluator-v1")
+              .digest("hex"),
+            modality: "headless",
+            independentUnit: "episode"
+          },
+          candidateSemantics: {
+            metricId,
+            metricVersion,
+            source: "deterministic",
+            quantityHash: createHash("sha256")
+              .update("fixture-tutorial-completion-quantity-v1")
+              .digest("hex"),
+            sourceHash: createHash("sha256")
+              .update("fixture-tutorial-completion-evaluator-v1")
+              .digest("hex"),
+            modality: "headless",
+            independentUnit: "episode"
+          }
+        }
+      ],
       primaryMetricId: metricId,
       provenance: {
         workspaceId: WORKSPACE_ID,

@@ -238,7 +238,6 @@ test("recorded frame references render lazy same-origin authorized image routes"
   assert.match(html, /loading="lazy"/u);
 });
 
-
 test("Compare shows native human outcomes separately and never reconstructs suppressed cells", () => {
   const comparison: PlaytestComparison = {
     schema: "autodev-playtest-comparison-v1",
@@ -252,6 +251,7 @@ test("Compare shows native human outcomes separately and never reconstructs supp
     pairing: {
       mode: "paired-initial-condition",
       pairMap: {},
+      allocationPlanHash: null,
       rngAlgorithm: "fixture-rng",
       rngStreamVersion: "v1",
       couplingDiagnostics: [],
@@ -308,7 +308,11 @@ test("Compare shows native human outcomes separately and never reconstructs supp
         rows: [comparison],
         total: 1,
         nextCursor: null,
-        humanValidation: { kind: "available", studyId: "study-1", data: humanValidation }
+        humanValidation: {
+          kind: "available",
+          studyId: "study-1",
+          data: humanValidation
+        }
       }
     })
   );
@@ -316,7 +320,10 @@ test("Compare shows native human outcomes separately and never reconstructs supp
   assert.match(html, /miniPXI/u);
   assert.match(html, /Suppressed to protect small cells/u);
   assert.match(html, /Not collected/u);
-  assert.doesNotMatch(html, /participantId|responseId|pseudonymousParticipantId/u);
+  assert.doesNotMatch(
+    html,
+    /participantId|responseId|pseudonymousParticipantId/u
+  );
 });
 
 test("Compare labels an absent human study as not collected rather than zero", () => {

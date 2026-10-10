@@ -13,12 +13,15 @@ import {
   type PlaytestingScope
 } from "../../src/features/playtesting/playtesting-url.ts";
 import {
+  PlaytestingRunControls,
+  type PlaytestingRunSetup
+} from "../../src/features/playtesting/PlaytestingRunControls.tsx";
+import {
   type PlaytestingHumanValidation,
   type PlaytestingListData,
   type PlaytestingOverviewData,
   PlaytestingView
 } from "../../src/features/playtesting/PlaytestingView.ts";
-import type { PlaytestingRunSetup } from "../../src/features/playtesting/PlaytestingRunControls.tsx";
 import {
   type ControlApiConfig,
   controlApiFailureCode,
@@ -310,12 +313,19 @@ function pageResult(
   if (loaded.kind === "unavailable")
     content = resourceUnavailable(loaded.result);
   else if (loaded.kind === "overview") {
-    content = React.createElement(PlaytestingView, {
-      scope,
-      workspaces,
-      overview: loaded.data,
-      runSetup: loaded.runSetup
-    });
+    content = React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(PlaytestingView, {
+        scope,
+        workspaces,
+        overview: loaded.data
+      }),
+      React.createElement(PlaytestingRunControls, {
+        scope,
+        setup: loaded.runSetup
+      })
+    );
   } else {
     content = React.createElement(PlaytestingView, {
       scope,

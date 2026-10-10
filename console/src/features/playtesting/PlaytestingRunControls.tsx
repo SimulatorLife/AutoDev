@@ -15,7 +15,10 @@ import {
   NESTED_PANEL_CLASS
 } from "../../components/layout/Panel.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_STATUS,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { FIELD_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
 import {
   MUTED_BODY_CLASS,
@@ -37,9 +40,17 @@ export type PlaytestingRunSetup =
       readonly message: string;
     };
 
+interface RunSubmission {
+  readonly workspaceId: string;
+  readonly scenario: string;
+  readonly policy: string;
+  readonly seed: string;
+  readonly maxSteps: string;
+}
+
 function objectRecord(
   value: PlaytestJsonValue | null
-): Record<string, PlaytestJsonValue> | null {
+): Readonly<Record<string, PlaytestJsonValue>> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return null;
   }
@@ -59,22 +70,339 @@ function responseMessage(value: unknown): string {
 }
 
 function batchStatusBadge(status: string): React.JSX.Element {
-  const appearance =
-    status === "completed"
-      ? { variant: "valid" as const, label: "Completed" }
-      : status === "running" || status === "persisting"
-        ? {
-            variant: "pending" as const,
-            label: status === "running" ? "Running" : "Saving evidence"
-          }
-        : {
-            variant: "unavailable" as const,
-            label: status === "cancelled" ? "Cancelled" : "Failed"
-          };
-  return React.createElement(StatusBadge, {
-    status: appearance.variant,
-    label: appearance.label
-  });
+  if (status === "completed") {
+    return <StatusBadge status="valid" label="Completed" />;
+  }
+  if (status === "running") {
+    return <StatusBadge status="pending" label="Running" />;
+  }
+  if (status === "persisting") {
+    return <StatusBadge status="pending" label="Saving evidence" />;
+  }
+  return (
+    <StatusBadge
+      status="unavailable"
+      label={status === "cancelled" ? "Cancelled" : "Failed"}
+    />
+  );
+}
+
+function RunRequestForm({
+  capabilities,
+  pending,
+  onSubmit
+}: {
+  readonly capabilities: ControlApiPlaytestingCapabilitiesResponse;
+  readonly pending: boolean;
+  readonly onSubmit: (request: RunSubmission) => void;
+}): React.JSX.Element {
+  const assignments = capabilities.runnableAssignments;
+  const firstAssignment = assignments[0]!;
+  const [scenarioId, setScenarioId] = useState(firstAssignment.scenarioId);
+  const assignmentsForScenario = assignments.filter(
+    (assignment) => assignment.scenarioId === scenarioId
+  );
+  const [policyId, setPolicyId] = useState(assignmentsForScenario[0]!.policyId);
+  const selectedAssignment = assignments.find(
+    (assignment) =>
+      assignment.scenarioId === scenarioId && assignment.policyId === policyId
+  )!;
+  const [seed, setSeed] = useState("seed-1");
+  const [maxSteps, setMaxSteps] = useState(
+    String(
+      Math.min(
+        selectedAssignment.maxStepsPerEpisode,
+        capabilities.limits!.maxStepsPerEpisode
+      )
+    )
+  );
+  const scenarioIds = Array.from(
+    new Set(assignments.map((assignment) => assignment.scenarioId)),
+    (id) => (
+      <option key={id} value={id}>
+        {id}
+      </option>
+    )
+  );
+
+  function onScenarioChange(nextScenario: string): void {
+    setScenarioId(nextScenario);
+    const nextAssignment = assignments.find(
+      (assignment) => assignment.scenarioId === nextScenario
+    );
+    if (!nextAssignment) return;
+    setPolicyId(nextAssignment.policyId);
+    setMaxSteps((current) => {
+      const parsed = Number(current);
+      const bounded =
+        Number.isSafeInteger(parsed) && parsed > 0
+          ? Math.min(parsed, nextAssignment.maxStepsPerEpisode)
+          : nextAssignment.maxStepsPerEpisode;
+      return String(bounded);
+    });
+  }
+
+  function onPolicyChange(nextPolicy: string): void {
+    setPolicyId(nextPolicy);
+    const nextAssignment = assignments.find(
+      (assignment) =>
+        assignment.scenarioId === scenarioId &&
+        assignment.policyId === nextPolicy
+    );
+    if (!nextAssignment) return;
+    setMaxSteps((current) => {
+      const parsed = Number(current);
+      return String(
+        Number.isSafeInteger(parsed) && parsed > 0
+          ? Math.min(parsed, nextAssignment.maxStepsPerEpisode)
+          : nextAssignment.maxStepsPerEpisode
+      );
+    });
+  }
+
+  function submit(event: React.FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    onSubmit({
+      workspaceId: capabilities.workspaceId,
+      scenario: scenarioId,
+      policy: policyId,
+      seed,
+      maxSteps
+    });
+  }
+
+  return (
+    <form
+      aria-label="Run one approved Playtesting episode"
+      className="grid gap-3 md:grid-cols-2"
+      onSubmit={submit}
+    >
+      <label className="flex flex-col gap-1 text-xs text-fg-muted">
+        Scenario
+        <select
+          className={FIELD_CONTROL_CLASS}
+          name="scenario"
+          value={scenarioId}
+          onChange={(event) => onScenarioChange(event.currentTarget.value)}
+        >
+          {scenarioIds}
+        </select>
+      </label>
+      <label className="flex flex-col gap-1 text-xs text-fg-muted">
+        Policy / cohort
+        <select
+          className={FIELD_CONTROL_CLASS}
+          name="policy"
+          value={policyId}
+          onChange={(event) => onPolicyChange(event.currentTarget.value)}
+        >
+          {assignmentsForScenario.map((assignment) => (
+            <option key={assignment.policyId} value={assignment.policyId}>
+              {assignment.policyId +
+                " · " +
+                assignment.cohort +
+                " · " +
+                assignment.strategy}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex flex-col gap-1 text-xs text-fg-muted">
+        Seed
+        <input
+          className={FIELD_CONTROL_CLASS}
+          maxLength={256}
+          name="seed"
+          required
+          value={seed}
+          onChange={(event) => setSeed(event.currentTarget.value)}
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-xs text-fg-muted">
+        Step budget
+        <input
+          className={FIELD_CONTROL_CLASS}
+          max={selectedAssignment.maxStepsPerEpisode}
+          min={1}
+          name="maxSteps"
+          type="number"
+          value={maxSteps}
+          onChange={(event) => setMaxSteps(event.currentTarget.value)}
+        />
+      </label>
+      <div className="md:col-span-2">
+        <p className={MUTED_META_CLASS}>
+          Budget preview: 1 episode · {selectedAssignment.scenarioFamily} · at
+          most {selectedAssignment.maxStepsPerEpisode} steps ·{" "}
+          {capabilities.limits!.workerCount} concurrent worker(s) ·{" "}
+          {capabilities.limits!.wallTimeMs} ms wall time · 0 critiques.
+        </p>
+        <p className={MUTED_META_CLASS}>
+          Build {capabilities.buildSha} · {capabilities.gameBuild} · the Runtime
+          rechecks exact approval before launch.
+        </p>
+      </div>
+      <button
+        className="min-h-11 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-fg-inverse disabled:cursor-not-allowed disabled:opacity-60"
+        data-playtesting-run-submit="true"
+        disabled={pending || seed.trim().length === 0}
+        type="submit"
+      >
+        {pending ? "Submitting…" : "Run one approved episode"}
+      </button>
+    </form>
+  );
+}
+
+function setupMessage(
+  setup: PlaytestingRunSetup,
+  capabilities: ControlApiPlaytestingCapabilitiesResponse | null
+): {
+  readonly label: string;
+  readonly message: string;
+  readonly code?: string;
+} | null {
+  if (setup.kind === "unavailable") {
+    return {
+      label: "Run control unavailable",
+      message: setup.message,
+      code: setup.code
+    };
+  }
+  if (!capabilities) {
+    return {
+      label: "Run setup unavailable",
+      message: "Runtime capabilities were not observed."
+    };
+  }
+  if (!capabilities.operatorActionsAvailable) {
+    return {
+      label: "Operator required",
+      message:
+        "An authorized operator can start or cancel runs. You can still inspect recorded results."
+    };
+  }
+  if (!capabilities.approved) {
+    return {
+      label: "Approval required",
+      message:
+        "Workspaces must approve an exact build, adapter image, and command before any game process can run."
+    };
+  }
+  if (!capabilities.workspaceEnabled) {
+    return {
+      label: "Workspace disabled",
+      message: "The approved run cannot start while this workspace is disabled."
+    };
+  }
+  if (capabilities.limits === null) {
+    return {
+      label: "Budget unavailable",
+      message: "The active workspace approval has no readable resource budget."
+    };
+  }
+  if (capabilities.configurationStatus !== "validated") {
+    return {
+      label: "Preflight required",
+      message:
+        "The checked-in target configuration must pass the Runtime's exact-build preflight before this run form is enabled."
+    };
+  }
+  if (capabilities.runnableAssignments.length === 0) {
+    return {
+      label: "No runnable policy",
+      message:
+        "No approved policy is currently supported by the Runtime; unsupported approvals are not silently substituted."
+    };
+  }
+  return null;
+}
+
+function RunStatusPanel({
+  run,
+  capabilities,
+  scope,
+  pending,
+  onRefresh,
+  onCancel
+}: {
+  readonly run: ControlApiPlaytestingRunRecord;
+  readonly capabilities: ControlApiPlaytestingCapabilitiesResponse;
+  readonly scope: PlaytestingScope;
+  readonly pending: boolean;
+  readonly onRefresh: () => void;
+  readonly onCancel: () => void;
+}): React.JSX.Element {
+  const result = objectRecord(run.result);
+  const episodeId = result?.episodeId;
+  return (
+    <section
+      aria-label="Server-confirmed run status"
+      className={NESTED_PANEL_CLASS}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <strong className="font-mono">{run.batchId}</strong>
+        {batchStatusBadge(run.status)}
+      </div>
+      {run.error ? (
+        <p className={MUTED_BODY_CLASS}>{run.error.message}</p>
+      ) : typeof episodeId === "string" ? (
+        <NavigationLink
+          className="text-sm text-accent hover:underline"
+          href={playtestingEpisodeHref(scope, episodeId, 0)}
+        >
+          Open episode {episodeId}
+        </NavigationLink>
+      ) : (
+        <p className={MUTED_META_CLASS}>No episode result is recorded yet.</p>
+      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          className="min-h-10 rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
+          disabled={pending}
+          onClick={onRefresh}
+          type="button"
+        >
+          Refresh server status
+        </button>
+        {capabilities.operatorActionsAvailable &&
+        (run.status === "running" || run.status === "persisting") ? (
+          <button
+            className="min-h-10 rounded-md border border-warning/50 px-3 py-2 text-sm disabled:opacity-60"
+            disabled={pending}
+            onClick={onCancel}
+            type="button"
+          >
+            Request cancellation
+          </button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function RunStatusMessage({
+  notice,
+  failure
+}: {
+  readonly notice: string | null;
+  readonly failure: string | null;
+}): React.JSX.Element | null {
+  if (failure) {
+    return (
+      <p className="text-sm text-error" role="alert">
+        {failure}
+      </p>
+    );
+  }
+  if (notice) {
+    return (
+      <p className={MUTED_META_CLASS} role="status">
+        {notice}
+      </p>
+    );
+  }
+  return null;
 }
 
 export function PlaytestingRunControls({
@@ -85,42 +413,15 @@ export function PlaytestingRunControls({
   readonly scope: PlaytestingScope;
 }): React.JSX.Element {
   const capabilities = setup.kind === "available" ? setup.capabilities : null;
-  const assignments = capabilities?.runnableAssignments ?? [];
-  const [scenarioId, setScenarioId] = useState(
-    assignments[0]?.scenarioId ?? ""
-  );
-  const policiesForScenario = assignments.filter(
-    (assignment) => assignment.scenarioId === scenarioId
-  );
-  const [policyId, setPolicyId] = useState(
-    policiesForScenario[0]?.policyId ?? ""
-  );
-  const selectedAssignment = assignments.find(
-    (assignment) =>
-      assignment.scenarioId === scenarioId && assignment.policyId === policyId
-  );
-  const [seed, setSeed] = useState("seed-1");
-  const [maxSteps, setMaxSteps] = useState(
-    String(selectedAssignment?.maxStepsPerEpisode ?? 1)
-  );
   const [pending, setPending] = useState(false);
   const [run, setRun] = useState<ControlApiPlaytestingRunRecord | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const noticeNode = RunStatusMessage({ notice, failure });
+  const unavailable = setupMessage(setup, capabilities);
 
-  const canStart =
-    capabilities !== null &&
-    capabilities.operatorActionsAvailable &&
-    capabilities.approved &&
-    capabilities.workspaceEnabled &&
-    capabilities.configurationStatus === "validated" &&
-    selectedAssignment !== undefined;
-
-  async function startRun(
-    event: React.FormEvent<HTMLFormElement>
-  ): Promise<void> {
-    event.preventDefault();
-    if (!canStart || !capabilities) return;
+  async function startRun(request: RunSubmission): Promise<void> {
+    if (!capabilities) return;
     setPending(true);
     setFailure(null);
     setNotice(null);
@@ -132,11 +433,11 @@ export function PlaytestingRunControls({
           "content-type": "application/x-www-form-urlencoded"
         },
         body: new URLSearchParams({
-          workspaceId: capabilities.workspaceId,
-          scenario: scenarioId,
-          policy: policyId,
-          seed,
-          maxSteps
+          workspaceId: request.workspaceId,
+          scenario: request.scenario,
+          policy: request.policy,
+          seed: request.seed,
+          maxSteps: request.maxSteps
         })
       });
       const payload: unknown = await response.json();
@@ -183,7 +484,10 @@ export function PlaytestingRunControls({
         workspaceId: capabilities.workspaceId
       });
       const response = await fetch(
-        `/api/playtesting/runs/${encodeURIComponent(run.batchId)}?${query}`,
+        "/api/playtesting/runs/" +
+          encodeURIComponent(run.batchId) +
+          "?" +
+          query,
         { headers: { accept: "application/json" }, cache: "no-store" }
       );
       const payload: unknown = await response.json();
@@ -215,13 +519,14 @@ export function PlaytestingRunControls({
 
   async function cancelRun(): Promise<void> {
     if (!run || !capabilities) return;
-    if (!window.confirm(`Request cancellation of ${run.batchId}?`)) return;
+    if (!globalThis.confirm("Request cancellation of " + run.batchId + "?"))
+      return;
     setPending(true);
     setFailure(null);
     setNotice(null);
     try {
       const response = await fetch(
-        `/api/playtesting/runs/${encodeURIComponent(run.batchId)}/cancel`,
+        "/api/playtesting/runs/" + encodeURIComponent(run.batchId) + "/cancel",
         {
           method: "POST",
           headers: {
@@ -248,341 +553,57 @@ export function PlaytestingRunControls({
     }
   }
 
-  const body: React.ReactNode[] = [];
-  if (setup.kind === "unavailable") {
-    body.push(
-      React.createElement(StatusBadge, {
-        key: "status",
-        status: "unavailable",
-        label: "Run control unavailable"
-      }),
-      React.createElement(
-        "p",
-        { className: MUTED_BODY_CLASS, key: "message" },
-        setup.message
-      ),
-      React.createElement(
-        "p",
-        { className: MUTED_META_CLASS, key: "code" },
-        setup.code
-      )
-    );
-  } else if (capabilities === null) {
-    body.push(
-      React.createElement(StatusBadge, {
-        key: "status",
-        status: "unavailable",
-        label: "Run setup unavailable"
-      })
-    );
-  } else if (!capabilities.operatorActionsAvailable) {
-    body.push(
-      React.createElement(StatusBadge, {
-        key: "status",
-        status: "not-observed",
-        label: "Operator required"
-      }),
-      React.createElement(
-        "p",
-        { className: MUTED_BODY_CLASS, key: "message" },
-        "An authorized operator can start or cancel runs. You can still inspect recorded results."
-      )
-    );
-  } else if (!capabilities.approved) {
-    body.push(
-      React.createElement(StatusBadge, {
-        key: "status",
-        status: "not-observed",
-        label: "Approval required"
-      }),
-      React.createElement(
-        "p",
-        { className: MUTED_BODY_CLASS, key: "message" },
-        "Workspaces must approve an exact build, adapter image, and command before any game process can run."
-      )
-    );
-  } else if (!capabilities.workspaceEnabled) {
-    body.push(
-      React.createElement(StatusBadge, {
-        key: "status",
-        status: "unavailable",
-        label: "Workspace disabled"
-      }),
-      React.createElement(
-        "p",
-        { className: MUTED_BODY_CLASS, key: "message" },
-        "The approved run cannot start while this workspace is disabled."
-      )
-    );
-  } else if (capabilities.configurationStatus !== "validated") {
-    body.push(
-      React.createElement(StatusBadge, {
-        key: "status",
-        status: "unavailable",
-        label: "Preflight required"
-      }),
-      React.createElement(
-        "p",
-        { className: MUTED_BODY_CLASS, key: "message" },
-        "The checked-in target configuration must pass the Runtime's exact-build preflight before this run form is enabled."
-      )
-    );
-  } else if (assignments.length === 0) {
-    body.push(
-      React.createElement(StatusBadge, {
-        key: "status",
-        status: "unavailable",
-        label: "No runnable policy"
-      }),
-      React.createElement(
-        "p",
-        { className: MUTED_BODY_CLASS, key: "message" },
-        "No approved policy is currently supported by the Runtime; unsupported approvals are not silently substituted."
-      )
-    );
-  } else {
-    body.push(
-      React.createElement(
-        "form",
-        {
-          className: "grid gap-3 md:grid-cols-2",
-          key: "form",
-          "aria-label": "Run one approved Playtesting episode",
-          onSubmit: (event: React.FormEvent<HTMLFormElement>) =>
-            void startRun(event)
-        },
-        React.createElement(
-          "label",
-          { className: "flex flex-col gap-1 text-xs text-fg-muted" },
-          "Scenario",
-          React.createElement(
-            "select",
-            {
-              name: "scenario",
-              value: scenarioId,
-              className: FIELD_CONTROL_CLASS,
-              onChange: (event: React.ChangeEvent<HTMLSelectElement>) => {
-                const nextScenario = event.currentTarget.value;
-                setScenarioId(nextScenario);
-                const nextPolicy = assignments.find(
-                  (assignment) => assignment.scenarioId === nextScenario
-                )?.policyId;
-                if (nextPolicy) {
-                  setPolicyId(nextPolicy);
-                  const nextLimit = assignments.find(
-                    (assignment) =>
-                      assignment.scenarioId === nextScenario &&
-                      assignment.policyId === nextPolicy
-                  )?.maxStepsPerEpisode;
-                  if (nextLimit) {
-                    const current = Number(maxSteps);
-                    setMaxSteps(
-                      String(
-                        Number.isSafeInteger(current) && current > 0
-                          ? Math.min(current, nextLimit)
-                          : nextLimit
-                      )
-                    );
-                  }
-                }
-              }
-            },
-            ...[
-              ...new Set(assignments.map((assignment) => assignment.scenarioId))
-            ].map((id) =>
-              React.createElement("option", { key: id, value: id }, id)
-            )
-          )
-        ),
-        React.createElement(
-          "label",
-          { className: "flex flex-col gap-1 text-xs text-fg-muted" },
-          "Policy / cohort",
-          React.createElement(
-            "select",
-            {
-              name: "policy",
-              value: policyId,
-              className: FIELD_CONTROL_CLASS,
-              onChange: (event: React.ChangeEvent<HTMLSelectElement>) =>
-                setPolicyId(event.currentTarget.value)
-            },
-            ...policiesForScenario.map((assignment) =>
-              React.createElement(
-                "option",
-                { key: assignment.policyId, value: assignment.policyId },
-                `${assignment.policyId} · ${assignment.cohort} · ${assignment.strategy}`
-              )
-            )
-          )
-        ),
-        React.createElement(
-          "label",
-          { className: "flex flex-col gap-1 text-xs text-fg-muted" },
-          "Seed",
-          React.createElement("input", {
-            name: "seed",
-            value: seed,
-            className: FIELD_CONTROL_CLASS,
-            maxLength: 256,
-            required: true,
-            onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
-              setSeed(event.currentTarget.value)
-          })
-        ),
-        React.createElement(
-          "label",
-          { className: "flex flex-col gap-1 text-xs text-fg-muted" },
-          "Step budget",
-          React.createElement("input", {
-            name: "maxSteps",
-            type: "number",
-            min: 1,
-            max: selectedAssignment?.maxStepsPerEpisode ?? 1,
-            value: maxSteps,
-            className: FIELD_CONTROL_CLASS,
-            onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
-              setMaxSteps(event.currentTarget.value)
-          })
-        ),
-        React.createElement(
-          "div",
-          { className: "md:col-span-2", key: "budget" },
-          React.createElement(
-            "p",
-            { className: MUTED_META_CLASS },
-            `Budget preview: 1 episode · at most ${String(selectedAssignment?.maxStepsPerEpisode ?? 0)} steps · ${String(capabilities.limits?.workerCount ?? 0)} concurrent worker(s) · ${String(capabilities.limits?.wallTimeMs ?? 0)} ms wall time · 0 critiques`
-          ),
-          React.createElement(
-            "p",
-            { className: MUTED_META_CLASS },
-            `Build ${capabilities.buildSha ?? "Not observed"} · ${capabilities.gameBuild ?? "Game build not observed"} · configuration ${capabilities.configurationStatus}; Runtime rechecks exact approval before launch.`
-          )
-        ),
-        React.createElement(
-          "button",
-          {
-            type: "submit",
-            disabled: pending || !canStart || seed.trim().length === 0,
-            className:
-              "min-h-11 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-fg-inverse disabled:cursor-not-allowed disabled:opacity-60",
-            "data-playtesting-run-submit": "true"
-          },
-          pending ? "Submitting…" : "Run one approved episode"
-        )
-      )
-    );
-  }
-
-  if (run && capabilities) {
-    const result = objectRecord(run.result);
-    body.push(
-      React.createElement(
-        "section",
-        {
-          className: NESTED_PANEL_CLASS,
-          key: "run-status",
-          "aria-label": "Server-confirmed run status"
-        },
-        React.createElement(
-          "div",
-          { className: "flex flex-wrap items-center gap-2" },
-          React.createElement(
-            "strong",
-            { className: "font-mono" },
-            run.batchId
-          ),
-          batchStatusBadge(run.status)
-        ),
-        run.error
-          ? React.createElement(
-              "p",
-              { className: MUTED_BODY_CLASS },
-              run.error.message
-            )
-          : result && typeof result.episodeId === "string"
-            ? React.createElement(
-                NavigationLink,
-                {
-                  href: playtestingEpisodeHref(scope, result.episodeId, 0),
-                  className: "text-sm text-accent hover:underline"
-                },
-                `Open episode ${result.episodeId}`
-              )
-            : React.createElement(
-                "p",
-                { className: MUTED_META_CLASS },
-                "No episode result is recorded yet."
-              ),
-        React.createElement(
-          "div",
-          { className: "mt-3 flex flex-wrap gap-2" },
-          React.createElement(
-            "button",
-            {
-              type: "button",
-              disabled: pending,
-              className:
-                "min-h-10 rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60",
-              onClick: () => void refreshStatus()
-            },
-            "Refresh server status"
-          ),
-          capabilities.operatorActionsAvailable &&
-            (run.status === "running" || run.status === "persisting")
-            ? React.createElement(
-                "button",
-                {
-                  type: "button",
-                  disabled: pending,
-                  className:
-                    "min-h-10 rounded-md border border-warning/50 px-3 py-2 text-sm disabled:opacity-60",
-                  onClick: () => void cancelRun()
-                },
-                "Request cancellation"
-              )
-            : null
-        )
-      )
-    );
-  }
-  if (notice)
-    body.push(
-      React.createElement(
-        "p",
-        { className: MUTED_META_CLASS, role: "status", key: "notice" },
-        notice
-      )
-    );
-  if (failure)
-    body.push(
-      React.createElement(
-        "p",
-        { className: "text-sm text-error", role: "alert", key: "failure" },
-        failure
-      )
-    );
-
-  return React.createElement(
-    "section",
-    {
-      className: LIST_PANEL_CLASS,
-      "aria-labelledby": "playtesting-run-controls-heading",
-      "data-run-setup": setup.kind
-    },
-    React.createElement(
-      "h2",
-      {
-        id: "playtesting-run-controls-heading",
-        className: SECTION_HEADING_CLASS
-      },
-      "Run an approved episode"
-    ),
-    React.createElement(
-      "p",
-      { className: MUTED_BODY_CLASS },
-      "Run requests contain only typed scenario, policy, seed, and step-budget fields. Workspaces owns the exact build approval; the Runtime confirms status and cancellation."
-    ),
-    ...body
+  return (
+    <section
+      aria-labelledby="playtesting-run-controls-heading"
+      className={LIST_PANEL_CLASS}
+      data-run-setup={setup.kind}
+    >
+      <h2
+        className={SECTION_HEADING_CLASS}
+        id="playtesting-run-controls-heading"
+      >
+        Run an approved episode
+      </h2>
+      <p className={MUTED_BODY_CLASS}>
+        Run requests contain only typed scenario, policy, seed, and step-budget
+        fields. Workspaces owns exact-build approval; the Runtime confirms
+        status and cancellation.
+      </p>
+      {unavailable ? (
+        <div className="flex flex-col gap-2">
+          <StatusBadge
+            status={
+              unavailable.label === "Approval required" ||
+              unavailable.label === "Operator required"
+                ? NOT_OBSERVED_STATUS
+                : "unavailable"
+            }
+            label={unavailable.label}
+          />
+          <p className={MUTED_BODY_CLASS}>{unavailable.message}</p>
+          {unavailable.code ? (
+            <p className={MUTED_META_CLASS}>{unavailable.code}</p>
+          ) : null}
+        </div>
+      ) : capabilities ? (
+        <RunRequestForm
+          capabilities={capabilities}
+          pending={pending}
+          onSubmit={(request) => void startRun(request)}
+        />
+      ) : null}
+      {run && capabilities ? (
+        <RunStatusPanel
+          run={run}
+          capabilities={capabilities}
+          scope={scope}
+          pending={pending}
+          onRefresh={() => void refreshStatus()}
+          onCancel={() => void cancelRun()}
+        />
+      ) : null}
+      {noticeNode}
+    </section>
   );
 }

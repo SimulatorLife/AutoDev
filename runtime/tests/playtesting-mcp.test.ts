@@ -2351,6 +2351,7 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
       pairing: {
         mode: "distribution-matched",
         pairMap: {},
+        allocationPlanHash: null,
         rngAlgorithm: null,
         rngStreamVersion: null,
         couplingDiagnostics: [],

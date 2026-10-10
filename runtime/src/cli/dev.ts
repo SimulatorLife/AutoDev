@@ -13,6 +13,10 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/output";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
+import { httpHealthProbe } from "../platform/health-probe.ts";
+import { sleep } from "../platform/sleep.ts";
+import { waitForProbe } from "../platform/wait-for-probe.ts";
+
 export const IS_MAIN =
   Boolean(process.argv[1]) &&
   import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
@@ -74,7 +78,15 @@ export function ensureConsoleSecrets(root = repoRoot): void {
 
   if (!existsSync(canonicalSecrets) || !existsSync(consoleEnv)) {
     writeLine("[dev] Initializing console secrets (console/.env.local)...");
-    spawnSync("bash", [script], { stdio: "inherit", cwd: root });
+    const result = spawnSync("bash", [script], {
+      stdio: "inherit",
+      cwd: root
+    });
+    if (result.error) throw result.error;
+    if (result.status !== 0)
+      throw new Error(
+        `Console secret initialization failed with exit status ${String(result.status)}.`
+      );
     return;
   }
 
@@ -106,70 +118,223 @@ export function ensureConsoleSecrets(root = repoRoot): void {
     writeLine(
       "[dev] Synchronizing console/.env.local with active OpenLIT secrets..."
     );
-    spawnSync("bash", [script], { stdio: "inherit", cwd: root });
+    const result = spawnSync("bash", [script], {
+      stdio: "inherit",
+      cwd: root
+    });
+    if (result.error) throw result.error;
+    if (result.status !== 0)
+      throw new Error(
+        `Console secret synchronization failed with exit status ${String(result.status)}.`
+      );
   }
 }
 
-export async function checkBackends(): Promise<{
-  telemetryActive: boolean;
-  routerActive: boolean;
-}> {
-  let telemetryActive = false;
-  // 1. Check Docker / OpenLIT / ClickHouse
-  try {
-    const dockerCheck = spawnSync("docker", ["info"], { stdio: "ignore" });
-    if (dockerCheck.status === 0) {
-      const chRunning = await isPortListening(8123);
-      const openlitRunning = await isPortListening(3000);
-      if (chRunning && openlitRunning) {
-        telemetryActive = true;
-        writeLine(
-          "[dev] ✔ OpenLIT & ClickHouse telemetry services are active (ports 3000, 4318, 8123)."
-        );
-      } else {
-        const startCheck = spawnSync(
-          "docker",
-          ["start", "openlit-clickhouse", "openlit"],
-          {
-            stdio: "ignore"
-          }
-        );
-        if (startCheck.status === 0) {
-          telemetryActive = true;
-          writeLine(
-            "[dev] ✔ Started existing OpenLIT & ClickHouse containers."
-          );
-        } else {
-          writeLine(
-            "[dev] ℹ OpenLIT containers not started (run `bash scripts/openlit/up.sh` if telemetry storage is needed)."
-          );
-        }
-      }
-    } else {
-      writeLine(
-        "[dev] ℹ Docker is not running; skipping telemetry database (ClickHouse/OpenLIT)."
-      );
-    }
-  } catch {
-    writeLine("[dev] ℹ Docker not found; skipping telemetry database.");
+const OPENLIT_PORT = 3000;
+const CLICKHOUSE_HTTP_PORT = 8123;
+const DOCKER_READY_TIMEOUT_MS = 120_000;
+const STACK_READY_TIMEOUT_MS = 120_000;
+const DOCKER_PROBE_TIMEOUT_MS = 5000;
+
+export interface DevCommandOptions {
+  readonly cwd: string;
+  readonly stdio: "ignore" | "inherit";
+  readonly timeoutMs?: number;
+}
+
+export interface DevCommandResult {
+  readonly status: number | null;
+  readonly error?: Error | undefined;
+}
+
+/** Injectable process/readiness boundary for the root development lifecycle. */
+export interface DevBackendDependencies {
+  readonly platform: NodeJS.Platform;
+  readonly repoRoot: string;
+  readonly runCommand: (
+    command: string,
+    args: readonly string[],
+    options: DevCommandOptions
+  ) => DevCommandResult;
+  readonly isPortListening: (port: number) => Promise<boolean>;
+  readonly isOpenlitHttpReady: () => Promise<boolean>;
+  readonly sleep: (milliseconds: number) => Promise<void>;
+  readonly writeLine: (message: string) => void;
+}
+
+function runDevCommand(
+  command: string,
+  args: readonly string[],
+  options: DevCommandOptions
+): DevCommandResult {
+  const result = spawnSync(command, [...args], {
+    cwd: options.cwd,
+    stdio: options.stdio,
+    timeout: options.timeoutMs
+  });
+  return { status: result.status, error: result.error };
+}
+
+function defaultBackendDependencies(): DevBackendDependencies {
+  return {
+    platform: process.platform,
+    repoRoot,
+    runCommand: runDevCommand,
+    isPortListening: (port) => isPortListening(port),
+    isOpenlitHttpReady: httpHealthProbe(`http://127.0.0.1:${OPENLIT_PORT}`, {
+      cache: "no-store"
+    }),
+    sleep,
+    writeLine
+  };
+}
+
+function commandSucceeded(result: DevCommandResult): boolean {
+  return result.error === undefined && result.status === 0;
+}
+
+function dockerInfo(dependencies: DevBackendDependencies): boolean {
+  return commandSucceeded(
+    dependencies.runCommand("docker", ["info"], {
+      cwd: dependencies.repoRoot,
+      stdio: "ignore",
+      timeoutMs: DOCKER_PROBE_TIMEOUT_MS
+    })
+  );
+}
+
+function waitForDockerEngine(
+  dependencies: DevBackendDependencies
+): Promise<boolean> {
+  return waitForProbe(
+    {
+      probe: () => Promise.resolve(dockerInfo(dependencies)),
+      sleep: dependencies.sleep
+    },
+    DOCKER_READY_TIMEOUT_MS
+  );
+}
+
+async function isOpenlitStackReady(
+  dependencies: DevBackendDependencies
+): Promise<boolean> {
+  const [clickhouseReady, openlitReady] = await Promise.all([
+    dependencies.isPortListening(CLICKHOUSE_HTTP_PORT),
+    dependencies.isOpenlitHttpReady()
+  ]);
+  return clickhouseReady && openlitReady;
+}
+
+function waitForOpenlitStack(
+  dependencies: DevBackendDependencies
+): Promise<boolean> {
+  return waitForProbe(
+    {
+      probe: () => isOpenlitStackReady(dependencies),
+      sleep: dependencies.sleep
+    },
+    STACK_READY_TIMEOUT_MS
+  );
+}
+
+async function ensureDockerEngine(
+  dependencies: DevBackendDependencies
+): Promise<void> {
+  if (dockerInfo(dependencies)) return;
+  if (dependencies.platform !== "darwin") {
+    throw new Error(
+      "Docker Engine is required for OpenLIT Usage. Start Docker, then rerun pnpm run dev."
+    );
   }
 
-  // 2. Check AutoDev Model Router
-  const routerActive = await isPortListening(4100);
+  dependencies.writeLine(
+    "[dev] Docker Engine is unavailable; starting Docker Desktop..."
+  );
+  const launched = dependencies.runCommand("open", ["-a", "Docker"], {
+    cwd: dependencies.repoRoot,
+    stdio: "ignore",
+    timeoutMs: 10_000
+  });
+  if (!commandSucceeded(launched)) {
+    throw new Error(
+      "Docker Desktop could not be launched. Install or start Docker Desktop, then rerun pnpm run dev."
+    );
+  }
+  if (!(await waitForDockerEngine(dependencies))) {
+    throw new Error(
+      "Docker Desktop did not make Docker Engine ready within 120 seconds. Check Docker Desktop, then rerun pnpm run dev."
+    );
+  }
+}
+
+/**
+ * Ensure the dependencies the Console's server-side Usage adapter requires.
+ * A known-unreachable Usage service is a startup failure, not an optional
+ * backend warning followed by a broken Console.
+ */
+export async function ensureBackends(
+  overrides: Partial<DevBackendDependencies> = {}
+): Promise<{ telemetryActive: true; routerActive: boolean }> {
+  const dependencies = { ...defaultBackendDependencies(), ...overrides };
+  let telemetryActive = await isOpenlitStackReady(dependencies);
+
+  if (!telemetryActive) {
+    await ensureDockerEngine(dependencies);
+    telemetryActive = await isOpenlitStackReady(dependencies);
+    if (!telemetryActive) {
+      dependencies.writeLine(
+        "[dev] Starting the OpenLIT and ClickHouse Usage services..."
+      );
+      const started = dependencies.runCommand(
+        "bash",
+        [path.join(dependencies.repoRoot, "scripts", "openlit", "up.sh")],
+        { cwd: dependencies.repoRoot, stdio: "inherit" }
+      );
+      if (!commandSucceeded(started)) {
+        const detail = started.error?.message;
+        throw new Error(
+          detail
+            ? `OpenLIT startup failed: ${detail}`
+            : `OpenLIT startup failed with exit status ${String(started.status)}.`
+        );
+      }
+
+      telemetryActive = await waitForOpenlitStack(dependencies);
+      if (!telemetryActive) {
+        throw new Error(
+          "OpenLIT or ClickHouse did not become ready within 120 seconds; check the Docker Compose logs and rerun pnpm run dev."
+        );
+      }
+    }
+  }
+
+  dependencies.writeLine(
+    "[dev] ✔ OpenLIT Usage and ClickHouse are ready (ports 3000, 8123)."
+  );
+  const routerActive = await dependencies.isPortListening(4100);
   if (routerActive) {
-    writeLine("[dev] ✔ AutoDev Model Router is active (port 4100).");
+    dependencies.writeLine(
+      "[dev] ✔ AutoDev Model Router is active (port 4100)."
+    );
   } else {
-    writeLine(
+    dependencies.writeLine(
       "[dev] ℹ AutoDev Model Router is not listening on port 4100 (run launchctl or scripts/run-codex-model-router.sh)."
     );
   }
 
-  return { telemetryActive, routerActive };
+  return { telemetryActive: true, routerActive };
 }
 
 export async function startDev(): Promise<void> {
-  ensureConsoleSecrets();
-  await checkBackends();
+  try {
+    ensureConsoleSecrets();
+    await ensureBackends();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    writeErrorLine(`[dev] Startup failed: ${message}`);
+    process.exitCode = 1;
+    return;
+  }
 
   const consolePort = process.env.AUTODEV_CONSOLE_PORT || "3300";
   writeLine(

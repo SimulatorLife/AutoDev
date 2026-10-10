@@ -100,6 +100,23 @@ AUTODEV_OPENLIT_IMAGE_TAG="${AUTODEV_OPENLIT_IMAGE_TAG:-autodev-openlit:openlit-
 export AUTODEV_OPENLIT_IMAGE_TAG
 echo "==> tag = $AUTODEV_OPENLIT_IMAGE_TAG"
 
+# A stopped local stack is started through up.sh from `pnpm run dev`.
+# Reuse its prior build only when the pinned source, complete patch-set hash,
+# expected tag, locked image id, and native platform all still match.
+if [[ -s "$LOCK_FILE" ]]; then
+	LOCKED_COMMIT="$(awk -F= '$1 == "AUTODEV_OPENLIT_PINNED_COMMIT" { sub(/^[^=]*=/, ""); print; exit }' "$LOCK_FILE")"
+	LOCKED_PATCH_HASH="$(awk -F= '$1 == "AUTODEV_OPENLIT_PATCH_SET_HASH" { sub(/^[^=]*=/, ""); print; exit }' "$LOCK_FILE")"
+	LOCKED_IMAGE_TAG="$(awk -F= '$1 == "AUTODEV_OPENLIT_IMAGE_TAG" { sub(/^[^=]*=/, ""); print; exit }' "$LOCK_FILE")"
+	LOCKED_IMAGE_ID="$(awk -F= '$1 == "AUTODEV_OPENLIT_IMAGE_ID" { sub(/^[^=]*=/, ""); print; exit }' "$LOCK_FILE")"
+	if [[ "$LOCKED_COMMIT" == "$PINNED_COMMIT" && "$LOCKED_PATCH_HASH" == "$PATCH_SET_HASH" && "$LOCKED_IMAGE_TAG" == "$AUTODEV_OPENLIT_IMAGE_TAG" && "$LOCKED_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+		LOCAL_IMAGE="$(docker inspect --format='{{.Id}}|{{.Os}}/{{.Architecture}}' "$AUTODEV_OPENLIT_IMAGE_TAG" 2>/dev/null || true)"
+		if [[ "$LOCAL_IMAGE" == "$LOCKED_IMAGE_ID|linux/$TARGET_ARCH" ]]; then
+			echo "==> Reusing the already-built, locked OpenLIT image"
+			exit 0
+		fi
+	fi
+fi
+
 if ! command -v "$REPO_ROOT/scripts/openlit/apply-patches.sh" >/dev/null 2>&1; then
 	echo "build-local.sh: apply-patches.sh not executable" >&2
 	exit 1

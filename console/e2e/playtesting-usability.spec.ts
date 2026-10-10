@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 
 const SESSION_17_URL_PATTERN = /\/playtesting\/sessions\/episode-17\?/u;
 const VIEW_FINDINGS_PATTERN = /view=findings/u;
@@ -9,6 +9,59 @@ const SEVERITY_MAJOR_PATTERN = /severity=major/u;
 const FINDING_1_ANCHOR_PATTERN = /#finding-finding-1$/u;
 const VIEW_COMPARE_PATTERN = /view=compare/u;
 const WORKSPACE_DETAIL_URL_PATTERN = /\/workspaces\/fixture\/game$/u;
+const BUDGET_PREVIEW_PATTERN =
+  /Budget preview: 1 episode · tutorial · at most 20 steps/u;
+const FIXTURE_BUILD_SHA = "a".repeat(40);
+const FIXTURE_CONFIG_HASH = "b".repeat(64);
+const FIXTURE_IMAGE_DIGEST = "fixture/adapter@sha256:" + "c".repeat(64);
+
+async function fillSyntheticApprovalForm(page: Page): Promise<Locator> {
+  await page.goto("/workspaces/fixture/game");
+  await expect(
+    page.getByRole("heading", { name: "fixture/game", exact: true })
+  ).toBeVisible();
+  const form = page.getByRole("form", {
+    name: "Approve playtesting for fixture/game"
+  });
+  await expect(form).toBeVisible();
+  await expect(
+    form.getByLabel("Checkout root (absolute local path)")
+  ).toBeVisible();
+  await expect(form.getByLabel("Build SHA (Git revision)")).toBeVisible();
+  await expect(
+    form.getByLabel("Adapter image digest (sha256:...)")
+  ).toBeVisible();
+  await form
+    .getByLabel("Checkout root (absolute local path)")
+    .fill("/tmp/synthetic-game");
+  await form
+    .getByLabel("Working directory (relative to checkout)")
+    .fill("server");
+  await form.getByLabel("Build SHA (Git revision)").fill(FIXTURE_BUILD_SHA);
+  await form.getByLabel("Game build identifier").fill("fixture-game-1");
+  await form
+    .getByLabel("Playtest config hash (SHA-256)")
+    .fill(FIXTURE_CONFIG_HASH);
+  await form
+    .getByLabel("Adapter image digest (sha256:...)")
+    .fill(FIXTURE_IMAGE_DIGEST);
+  await form
+    .getByLabel("Adapter command (comma-separated argv)")
+    .fill("node, adapter.mjs");
+  await form.getByLabel("Allowed scenarios (comma-separated)").fill("tutorial");
+  await form.getByLabel("Allowed policies (comma-separated)").fill("random");
+  await form.getByLabel("CPU cores").fill("1");
+  await form.getByLabel("Memory (bytes)").fill("134217728");
+  await form.getByLabel("Process count").fill("2");
+  await form.getByLabel("Wall time (ms)").fill("60000");
+  await form.getByLabel("Artifact bytes").fill("1048576");
+  await form.getByLabel("Worker count").fill("1");
+  await form.getByLabel("Episode count").fill("10");
+  await form.getByLabel("Max steps / episode").fill("20");
+  await form.getByLabel("Critique count").fill("0");
+  await form.getByLabel("Retention (days)").fill("30");
+  return form;
+}
 
 test("workspace overview distinguishes batches, episodes, findings, and comparisons", async ({
   page
@@ -104,48 +157,7 @@ test("mobile session list has no horizontal page overflow and tabs are keyboard 
 test("workspace approval is an accessible explicit exact-build form", async ({
   page
 }) => {
-  await page.goto("/workspaces/fixture/game");
-  await expect(
-    page.getByRole("heading", { name: "fixture/game", exact: true })
-  ).toBeVisible();
-  const form = page.getByRole("form", {
-    name: "Approve playtesting for fixture/game"
-  });
-  await expect(form).toBeVisible();
-  await expect(
-    form.getByLabel("Checkout root (absolute local path)")
-  ).toBeVisible();
-  await expect(form.getByLabel("Build SHA (Git revision)")).toBeVisible();
-  await expect(
-    form.getByLabel("Adapter image digest (sha256:...)")
-  ).toBeVisible();
-  await form
-    .getByLabel("Checkout root (absolute local path)")
-    .fill("/tmp/synthetic-game");
-  await form
-    .getByLabel("Working directory (relative to checkout)")
-    .fill("server");
-  await form.getByLabel("Build SHA (Git revision)").fill("a".repeat(40));
-  await form.getByLabel("Game build identifier").fill("fixture-game-1");
-  await form.getByLabel("Playtest config hash (SHA-256)").fill("b".repeat(64));
-  await form
-    .getByLabel("Adapter image digest (sha256:...)")
-    .fill("fixture/adapter@sha256:" + "c".repeat(64));
-  await form
-    .getByLabel("Adapter command (comma-separated argv)")
-    .fill("node, adapter.mjs");
-  await form.getByLabel("Allowed scenarios (comma-separated)").fill("tutorial");
-  await form.getByLabel("Allowed policies (comma-separated)").fill("random");
-  await form.getByLabel("CPU cores").fill("1");
-  await form.getByLabel("Memory (bytes)").fill("134217728");
-  await form.getByLabel("Process count").fill("2");
-  await form.getByLabel("Wall time (ms)").fill("60000");
-  await form.getByLabel("Artifact bytes").fill("1048576");
-  await form.getByLabel("Worker count").fill("1");
-  await form.getByLabel("Episode count").fill("10");
-  await form.getByLabel("Max steps / episode").fill("20");
-  await form.getByLabel("Critique count").fill("0");
-  await form.getByLabel("Retention (days)").fill("30");
+  const form = await fillSyntheticApprovalForm(page);
 
   let documentNavigations = 0;
   page.on("framenavigated", (frame) => {
@@ -155,7 +167,9 @@ test("workspace approval is an accessible explicit exact-build form", async ({
   await expect(
     page.locator('[data-workspace-approval-state="active"]')
   ).toBeVisible();
-  await expect(page.getByText("a".repeat(40), { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(FIXTURE_BUILD_SHA, { exact: true })
+  ).toBeVisible();
   await expect(
     page.getByRole("form", {
       name: "Revoke playtesting approval for fixture/game"
@@ -188,48 +202,10 @@ test("workspace approval is an accessible explicit exact-build form", async ({
   );
 });
 
-test("approved run controls submit typed requests, confirm status, and cancel in place", async ({
+test("approved run start, status refresh, and cancellation stay in the Console without document navigation", async ({
   page
 }) => {
-  await page.goto("/workspaces/fixture/game");
-  const approvalForm = page.getByRole("form", {
-    name: "Approve playtesting for fixture/game"
-  });
-  await approvalForm
-    .getByLabel("Checkout root (absolute local path)")
-    .fill("/tmp/synthetic-game");
-  await approvalForm
-    .getByLabel("Working directory (relative to checkout)")
-    .fill("server");
-  await approvalForm
-    .getByLabel("Build SHA (Git revision)")
-    .fill("a".repeat(40));
-  await approvalForm.getByLabel("Game build identifier").fill("fixture-game-1");
-  await approvalForm
-    .getByLabel("Playtest config hash (SHA-256)")
-    .fill("b".repeat(64));
-  await approvalForm
-    .getByLabel("Adapter image digest (sha256:...)")
-    .fill("fixture/adapter@sha256:" + "c".repeat(64));
-  await approvalForm
-    .getByLabel("Adapter command (comma-separated argv)")
-    .fill("node, adapter.mjs");
-  await approvalForm
-    .getByLabel("Allowed scenarios (comma-separated)")
-    .fill("tutorial");
-  await approvalForm
-    .getByLabel("Allowed policies (comma-separated)")
-    .fill("random");
-  await approvalForm.getByLabel("CPU cores").fill("1");
-  await approvalForm.getByLabel("Memory (bytes)").fill("134217728");
-  await approvalForm.getByLabel("Process count").fill("2");
-  await approvalForm.getByLabel("Wall time (ms)").fill("60000");
-  await approvalForm.getByLabel("Artifact bytes").fill("1048576");
-  await approvalForm.getByLabel("Worker count").fill("1");
-  await approvalForm.getByLabel("Episode count").fill("10");
-  await approvalForm.getByLabel("Max steps / episode").fill("20");
-  await approvalForm.getByLabel("Critique count").fill("0");
-  await approvalForm.getByLabel("Retention (days)").fill("30");
+  const approvalForm = await fillSyntheticApprovalForm(page);
   await approvalForm.getByRole("button", { name: "Approve" }).click();
   await expect(
     page.locator('[data-workspace-approval-state="active"]')
@@ -240,15 +216,13 @@ test("approved run controls submit typed requests, confirm status, and cancel in
     name: "Run one approved Playtesting episode"
   });
   await expect(form).toBeVisible();
-  await expect(
-    page.getByText(/Budget preview: 1 episode · at most 20 steps/u)
-  ).toBeVisible();
-  await form.getByLabel("Seed").fill("hold");
+  await expect(page.getByText(BUDGET_PREVIEW_PATTERN)).toBeVisible();
 
   let documentNavigations = 0;
   page.on("framenavigated", (frame) => {
     if (frame === page.mainFrame()) documentNavigations += 1;
   });
+  await form.getByLabel("Seed").fill("hold");
   await form.getByRole("button", { name: "Run one approved episode" }).click();
   await expect(
     page.getByText("batch-browser-001", { exact: true })
@@ -263,7 +237,12 @@ test("approved run controls submit typed requests, confirm status, and cancel in
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: "Request cancellation" }).click();
   await expect(
-    page.getByText("Cancellation was requested", { exact: false })
+    page.getByText(
+      "Cancellation was requested; refresh status to confirm its terminal disposition.",
+      {
+        exact: true
+      }
+    )
   ).toBeVisible();
   await page.getByRole("button", { name: "Refresh server status" }).click();
   await expect(page.getByText("Cancelled", { exact: true })).toBeVisible();

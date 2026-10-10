@@ -8,6 +8,7 @@
  */
 
 export * from "./artifacts.ts";
+export * from "./compatibility.ts";
 export * from "./comparison.ts";
 export * from "./configuration.ts";
 export * from "./evaluators.ts";

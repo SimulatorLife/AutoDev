@@ -19355,6 +19355,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
     [
       join("src", "features", "workspaces", "WorkspacePlaytestRevokeForm.ts"),
       "Provides revision-bound revocation fields and submits through the in-place workspace mutation handler."
+    ],
+    [
+      join("src", "features", "playtesting", "PlaytestingRunControls.tsx"),
+      "Starts, refreshes, and cancels typed approved runs through same-origin routes while history and authorization stay server-owned."
     ]
   ]);
   const approvedServerHandlerModules = new Map<string, string>();

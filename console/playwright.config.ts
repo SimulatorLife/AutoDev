@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+
 import { defineConfig, devices } from "@playwright/test";
 
 if (!process.env.PLAYWRIGHT_BROWSERS_PATH) {
@@ -37,7 +38,7 @@ export default defineConfig({
       timeout: 30_000
     },
     {
-      command: `AUTODEV_CONSOLE_PORT=${consolePort} AUTODEV_CONTROL_API_BASE_URL=http://127.0.0.1:${fixturePort} AUTODEV_CONTROL_API_TOKEN=${serviceToken} AUTODEV_CONTROL_VIEWERS=autodev-local pnpm start`,
+      command: `AUTODEV_CONSOLE_PORT=${consolePort} AUTODEV_CONTROL_API_BASE_URL=http://127.0.0.1:${fixturePort} AUTODEV_CONTROL_API_TOKEN=${serviceToken} AUTODEV_CONTROL_VIEWERS= AUTODEV_CONTROL_OPERATORS=autodev-local pnpm start`,
       url: `http://localhost:${consolePort}/playtesting`,
       reuseExistingServer: false,
       timeout: 120_000

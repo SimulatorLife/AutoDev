@@ -11,6 +11,14 @@ tmp/
 .env.*
 !.env.example
 .playwright-mcp/
+
+# Top-level images
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.svg
+
 # CocoIndex Code (ccc)
 /.cocoindex_code/
 # Rulesync-generated repository skill surfaces. `.rulesync/skills/` is the only

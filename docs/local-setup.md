@@ -750,22 +750,39 @@ to restart the supervisors and load the new runtime code.
 
 These are current local/operator entry points. Product, UI, ownership, and migration requirements remain authoritative in [autodev-console-target-state.md](autodev-console-target-state.md) and [autodev-console-migration.md](autodev-console-migration.md).
 
-### Local stack lifecycle
+### One-command development startup
 
-Current local stack lifecycle:
+`pnpm run dev` is the one-command entrypoint to start the AutoDev Console together with the required local OpenLIT and ClickHouse Usage telemetry stack:
+
+```bash
+pnpm run dev
+```
+
+Before launching the Next.js dev server (on port 3300 by default), `pnpm run dev` automatically coordinates and validates the backend dependencies via `ensureBackends`:
+
+- **Secret synchronization:** Ensures `console/.env.local` is materialized from the canonical secrets in `$CODEX_HOME/openlit-secrets.env`, updating it only when missing or out of sync.
+- **Backend readiness verification:** Verifies whether ClickHouse (port 8123) and OpenLIT (HTTP GET readiness check on port 3000) are already running. If both services are already ready, container startup and Docker checks are skipped.
+- **Docker Engine prerequisite and automatic macOS launch:** Docker Engine is required for the local OpenLIT and ClickHouse Usage telemetry stack. On macOS (`darwin`), if the Docker daemon is not running, `pnpm run dev` automatically launches Docker Desktop (`open -a Docker`) and polls boundedly (up to 120 seconds) for Docker Engine to become responsive. On other platforms, Docker Engine must be running beforehand; if it is unavailable, startup fails immediately with a clear prerequisite error before attempting to start services.
+- **Service startup and bounded wait:** Invokes the canonical `scripts/openlit/up.sh` script to launch the ClickHouse and OpenLIT containers, then polls boundedly for both services to report readiness. If startup fails or times out, the command throws and halts so the Console is never spawned without required Usage telemetry.
+- **Container persistence:** The Docker containers persist when the Console dev server exits. Stopping `pnpm run dev` (e.g. `Ctrl+C`) stops the Next.js process, but leaves the database and OpenLIT containers running for subsequent runs.
+- **Router diagnostics:** Checks and reports whether the AutoDev Model Router is listening on port 4100 without restarting launchd services.
+
+### Operator stack lifecycle
+
+Operators can still manage the container stack manually using the canonical scripts:
 
 ```bash
 bash scripts/openlit/up.sh
 bash scripts/openlit/down.sh
 ```
 
-### Console development
+### Standalone Console development
 
-Run the AutoDev Console independently while the transitional OpenLIT UI still occupies
-port 3000:
+To run the AutoDev Console independently without backend orchestration (e.g. against already-running containers or a remote stack):
 
 ```bash
-pnpm --filter @simulatorlife/autodev-console dev
+pnpm run dev:console
+# or: pnpm --filter @simulatorlife/autodev-console dev
 pnpm --filter @simulatorlife/autodev-console build
 pnpm --filter @simulatorlife/autodev-console start
 ```
