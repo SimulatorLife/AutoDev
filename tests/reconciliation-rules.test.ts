@@ -5,7 +5,6 @@ import {
   buildReconciliationView,
   deriveConvergence,
   deriveReconciliationStatus,
-  isObservedGeneration,
   OPERATION_HISTORY_LIMIT,
   type OperationHistoryEntry,
   type ReconciliationEvidence,
@@ -100,6 +99,22 @@ describe("deriveConvergence", () => {
     );
   });
 
+  test("treats missing and empty generations as unobserved or pending, never equal", () => {
+    const cases = [
+      [null, null, "not-observed"],
+      [null, "o", "not-observed"],
+      ["d", null, "pending"],
+      ["", "", "not-observed"],
+      ["d", "", "pending"]
+    ] as const;
+    for (const [desired, observed, expected] of cases) {
+      assert.equal(
+        deriveConvergence({ desired, observed }, { hasObservation: true }),
+        expected
+      );
+    }
+  });
+
   test("returns converged only when desired and observed generations match", () => {
     assert.equal(
       deriveConvergence(
@@ -181,46 +196,5 @@ describe("buildReconciliationView", () => {
     });
     assert.equal(view.status.convergence, "not-observed");
     assert.equal(view.history.length, 0);
-  });
-});
-
-describe("isObservedGeneration", () => {
-  test("returns false for any missing input", () => {
-    assert.equal(
-      isObservedGeneration({
-        desiredGeneration: null,
-        observedGeneration: null
-      }),
-      false
-    );
-    assert.equal(
-      isObservedGeneration({ desiredGeneration: "", observedGeneration: "" }),
-      false
-    );
-    assert.equal(
-      isObservedGeneration({
-        desiredGeneration: "d",
-        observedGeneration: null
-      }),
-      false
-    );
-    assert.equal(
-      isObservedGeneration({
-        desiredGeneration: null,
-        observedGeneration: "o"
-      }),
-      false
-    );
-  });
-
-  test("returns true only when desired and observed generations are equal", () => {
-    assert.equal(
-      isObservedGeneration({ desiredGeneration: "x", observedGeneration: "x" }),
-      true
-    );
-    assert.equal(
-      isObservedGeneration({ desiredGeneration: "x", observedGeneration: "y" }),
-      false
-    );
   });
 });

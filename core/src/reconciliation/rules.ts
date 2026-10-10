@@ -4,9 +4,8 @@
  *
  * Every function here is deterministic and infrastructure-free so the rule
  * layer can be unit-tested without disk, network, or process boundaries.
- * Runtime feeds evidence (desired vs. observed generations, timestamps,
- * redacted errors) through `deriveConvergence`; Console calls the same
- * helper to keep vocabulary consistent.
+ * Runtime uses `buildReconciliationView` to derive the shared contract from
+ * evidence; Console consumes that status and history instead of re-deriving it.
  */
 
 import type {
@@ -151,30 +150,4 @@ export function buildReconciliationView(args: {
     }),
     history: trimOperationHistory(args.history)
   };
-}
-
-/**
- * Convenience helper used by tests and Console to assert whether a desired
- * generation has been observed by the runtime. Returns `false` for any
- * missing input; never synthesizes a "converged" answer.
- */
-export function isObservedGeneration(
-  evidence: Pick<
-    ReconciliationEvidence,
-    "desiredGeneration" | "observedGeneration"
-  >
-): boolean {
-  if (
-    evidence.desiredGeneration === null ||
-    evidence.desiredGeneration.length === 0
-  ) {
-    return false;
-  }
-  if (
-    evidence.observedGeneration === null ||
-    evidence.observedGeneration.length === 0
-  ) {
-    return false;
-  }
-  return evidence.desiredGeneration === evidence.observedGeneration;
 }
