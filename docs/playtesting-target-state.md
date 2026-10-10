@@ -285,7 +285,7 @@ Require **cohort sizes/denominators, sampling method, policy identity, missing/i
 
 ### Session analysis and AI gameplay critic — required pipeline
 
-The original deterministic evaluations below are necessary but **not sufficient** for the requested playtesting system. Implement this explicit analysis stage on top of them, using the referenced projects' tested recording/replay/feedback components rather than creating competing frameworks.
+**Evaluation pipeline:** Combine deterministic gameplay checks with an independent evidence-grounded LLM critic. Reuse the reference projects' tested recording, replay and feedback components, and keep objective measurements separate from interpretive analysis.
 
 **1. Record the complete player-visible experience.** For each decision, save step/revision, player-visible pre-state, legal actions and meaningful alternatives, policy intent/choice/confidence/fallback, authoritative after-state, event IDs, outcome, timing, and run/seed/game/policy version. **Jev Playtest Lab** already supplies decision validation, loop detection and audit JSONL; **jev-arcade** supplies replayable episodes and per-move state comparison; **NanoJev** supplies strict replay verification. Use their tested primitives and adapters. Keep privileged game/debug state outside the decision policy. If visual testing is enabled, reuse **PlayJev**'s frame/step/browser capture for event-triggered screenshots or clips aligned to game events. Preserve full raw traces under bounded retention, not just AI summaries.
 
