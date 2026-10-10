@@ -1,5 +1,6 @@
 import React from "react";
 
+import { NavigationLink } from "../navigation/NavigationLink.ts";
 import { type StatusBadgeVariant, StatusDot } from "../status/StatusBadge.ts";
 import { TAG_SHAPE } from "../status/Tag.ts";
 import { ENTITY_LINK_CLASS, MUTED_META_CLASS } from "../ui/text-classes.ts";
@@ -64,7 +65,7 @@ export function Chip({
   const title = label ?? text;
   if (href !== undefined) {
     return React.createElement(
-      "a",
+      NavigationLink,
       {
         href,
         // `min-h-6` is on the anchor and not on `TAG_SHAPE`, because 2.5.8 is a

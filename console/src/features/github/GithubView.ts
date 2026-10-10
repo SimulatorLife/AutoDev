@@ -408,7 +408,7 @@ export function GithubView({
           "div",
           {
             className:
-              "rounded-lg border border-success/40 bg-success/10 p-4 text-xs text-success leading-relaxed flex items-center justify-between",
+              "rounded-lg border border-success/60 bg-success/10 p-4 text-xs text-success leading-relaxed flex items-center justify-between",
             role: "note",
             "data-status": "available"
           },

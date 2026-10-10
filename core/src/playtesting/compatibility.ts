@@ -7,11 +7,6 @@ import type {
 
 const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 
-export type {
-  PlaytestMeasurementSource,
-  PlaytestMetricSemantics
-} from "./types.ts";
-
 export interface PlaytestMetricCompatibility {
   readonly compatible: boolean;
   readonly reasons: readonly string[];
@@ -102,8 +97,8 @@ export interface PlaytestPairingSideEvidence {
   readonly seedAllocationId: string;
   /** Hash of the policy, knowledge and memory-reset contract. */
   readonly policyInformationHash: string;
-  /** Exact player-visible initial state or verified snapshot hash. */
-  readonly initialStateHash: string;
+  /** Exact initial state when the adapter can provide it, otherwise unobserved. */
+  readonly initialStateHash: string | null;
   readonly rngAlgorithm: string | null;
   readonly rngStreamVersion: string | null;
   /** Hash of the observed exogenous random-draw sequence, not the seed text. */
@@ -146,7 +141,8 @@ function assertPairSide(
     typeof value.seedAllocationId !== "string" ||
     value.seedAllocationId.trim().length === 0 ||
     !SHA256_PATTERN.test(value.policyInformationHash) ||
-    !SHA256_PATTERN.test(value.initialStateHash)
+    (value.initialStateHash !== null &&
+      !SHA256_PATTERN.test(value.initialStateHash))
   ) {
     throw new TypeError(`${label} pair evidence is incomplete or malformed.`);
   }
@@ -196,7 +192,7 @@ export function assessPlaytestPairing(
   const counterfactualLimitations: string[] = [];
   const algorithms = new Set<string>();
   const streamVersions = new Set<string>();
-  let allCounterfactualStreamsMatch = true;
+  let allCounterfactualEvidenceMatches = true;
 
   for (const pair of evidence.pairs) {
     if (!pair.pairId.trim() || pairIds.has(pair.pairId)) {
@@ -232,7 +228,11 @@ export function assessPlaytestPairing(
         `${pair.pairId}: policy or player-information contracts differ.`
       );
     }
-    if (pair.baseline.initialStateHash !== pair.candidate.initialStateHash) {
+    if (
+      pair.baseline.initialStateHash !== null &&
+      pair.candidate.initialStateHash !== null &&
+      pair.baseline.initialStateHash !== pair.candidate.initialStateHash
+    ) {
       incompatibilities.push(`${pair.pairId}: initial-state hashes differ.`);
     }
 
@@ -249,6 +249,15 @@ export function assessPlaytestPairing(
       if (version !== null) streamVersions.add(version);
     }
 
+    const initialStateMatches =
+      pair.baseline.initialStateHash !== null &&
+      pair.baseline.initialStateHash === pair.candidate.initialStateHash;
+    if (!initialStateMatches) {
+      allCounterfactualEvidenceMatches = false;
+      counterfactualLimitations.push(
+        `${pair.pairId}: identical initial-state hash was not established; counterfactual coupling is unavailable.`
+      );
+    }
     if (
       pair.baseline.rngAlgorithm === null ||
       pair.baseline.rngStreamVersion === null ||
@@ -257,7 +266,7 @@ export function assessPlaytestPairing(
       pair.baseline.rngStreamVersion !== pair.candidate.rngStreamVersion ||
       pair.baseline.rngSequenceHash !== pair.candidate.rngSequenceHash
     ) {
-      allCounterfactualStreamsMatch = false;
+      allCounterfactualEvidenceMatches = false;
       counterfactualLimitations.push(
         `${pair.pairId}: exogenous RNG stream was not proven identical; extra draws or stream divergence invalidate counterfactual coupling.`
       );
@@ -279,7 +288,7 @@ export function assessPlaytestPairing(
 
   const counterfactual =
     evidence.requestedMode === "paired-counterfactual" &&
-    allCounterfactualStreamsMatch;
+    allCounterfactualEvidenceMatches;
   const couplingDiagnostics =
     evidence.requestedMode === "paired-counterfactual" && !counterfactual
       ? counterfactualLimitations

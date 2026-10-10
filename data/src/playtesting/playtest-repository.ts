@@ -453,6 +453,40 @@ export class PlaytestRepository {
     return rows.length > 0 ? decodeFinding(rows[0]!) : null;
   }
 
+  /**
+   * Latest revision of the finding with this fingerprint in the given
+   * workspace, or null if none exists. `fingerprint` is a SHA-256
+   * hexadecimal digest produced by Runtime over
+   * `playtestFindingIdentityHashInput(identity)`. The query always binds
+   * `workspaceId` (mandatory scope) and `fingerprint` (validated on
+   * encode/decode) through ClickHouse parameters; the SQL text is fixed
+   * so a caller cannot smuggle a different column.
+   */
+  async getLatestFindingByFingerprint(
+    workspaceId: string,
+    fingerprint: string
+  ): Promise<PlaytestFinding | null> {
+    if (
+      typeof fingerprint !== "string" ||
+      !/^[a-f\d]{64}$/iu.test(fingerprint)
+    ) {
+      throw new TypeError(
+        "getLatestFindingByFingerprint requires a SHA-256 fingerprint."
+      );
+    }
+    const text = await this.execute(
+      `SELECT * FROM (
+        SELECT *, row_number() OVER (PARTITION BY workspace_id, fingerprint ORDER BY version DESC, cityHash64(payload_json) DESC, payload_json DESC) AS rn
+        FROM ${PLAYTEST_FINDINGS_TABLE}
+        WHERE workspace_id = {workspaceId:String} AND fingerprint = {fingerprint:String}
+      ) WHERE rn = 1
+      FORMAT JSONEachRow`,
+      { workspaceId, fingerprint: fingerprint.toLowerCase() }
+    );
+    const rows = parseNdjsonLines(text);
+    return rows.length > 0 ? decodeFinding(rows[0]!) : null;
+  }
+
   async listFindings(
     filter: PlaytestFindingFilter,
     listOptions: PlaytestListOptions = {}
@@ -475,7 +509,7 @@ export class PlaytestRepository {
     );
 
     const selectQuery =
-      `SELECT workspace_id, finding_id, version, severity, status, verification_stage, evidence_status, created_at, payload_json FROM (` +
+      `SELECT workspace_id, finding_id, version, fingerprint, severity, status, verification_stage, evidence_status, created_at, payload_json FROM (` +
       `SELECT *, row_number() OVER (PARTITION BY workspace_id, finding_id ORDER BY version DESC, cityHash64(payload_json) DESC, payload_json DESC) AS rn ` +
       `FROM ${PLAYTEST_FINDINGS_TABLE} WHERE ${innerWhere}) ` +
       `WHERE ${joinWhereClauses(outerWhere)} ORDER BY created_at DESC, finding_id DESC ` +

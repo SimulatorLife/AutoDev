@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
+  copyFileSync,
   lstatSync,
   mkdtempSync,
   realpathSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   unlinkSync,
@@ -12,8 +14,13 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-import type { WorkspacePlaytestApproval } from "@simulatorlife/autodev-core";
+import {
+  defaultPlaytestRegistryDefaults,
+  playtestBenchmarkHashInput,
+  type WorkspacePlaytestApproval
+} from "@simulatorlife/autodev-core";
 
 import {
   ApprovedPlaytestConfigurationError,
@@ -48,7 +55,32 @@ const CONFIG = {
   reporting: { githubIssues: "disabled" }
 } as const;
 
-const RUBRIC = JSON.stringify({ schemaVersion: 1, dimensions: [] }) + "\n";
+const RUBRIC =
+  JSON.stringify({
+    schemaVersion: 1,
+    workspaceId: "owner/fixture",
+    audience: "synthetic-fixture-only",
+    registryVersion: "approved-fixture-rubric-v1",
+    eventSchemaHash: "d".repeat(64),
+    defaults: defaultPlaytestRegistryDefaults(),
+    metricDefinitions: [
+      {
+        metricId: "legal-action-rejection",
+        version: 1,
+        mechanicKey: "action-execution",
+        exposurePredicate: "fresh-legal-request-v1",
+        eventFields: ["action.offeredIds", "action.expectedRevision"],
+        evaluatorRef: "fixture/legal-action-rejection-v1",
+        numerator: "fresh advertised legal requests rejected by engine",
+        denominator: "all fresh advertised legal requests",
+        unit: "proportion",
+        polarity: "lower",
+        targetBand: [0, 0],
+        notObservable: ["missing-action-or-revision-events"]
+      }
+    ],
+    dimensionRubrics: []
+  }) + "\n";
 const OBSERVATION =
   JSON.stringify({
     schemaVersion: 1,
@@ -75,9 +107,9 @@ function digest(bytes: Uint8Array | string): string {
 
 function approval(
   root: string,
-  changes: Partial<WorkspacePlaytestApproval> = {}
+  changes: Partial<WorkspacePlaytestApproval> = {},
+  configBytes = JSON.stringify(CONFIG) + "\n"
 ): WorkspacePlaytestApproval {
-  const configBytes = JSON.stringify(CONFIG) + "\n";
   return {
     schema: "autodev-workspace-playtest-approval-v1",
     workspaceId: "owner/fixture",
@@ -115,6 +147,36 @@ function approval(
   };
 }
 
+const SAMPLE_FIXTURE_ROOT = fileURLToPath(
+  new URL("fixtures/playtesting/", import.meta.url)
+);
+
+function setupSampleBenchmark(): {
+  readonly root: string;
+  readonly cleanup: () => void;
+  readonly configBytes: Buffer;
+} {
+  const root = mkdtempSync(
+    path.join(realpathSync(tmpdir()), "approved-playtest-benchmark-")
+  );
+  for (const filename of [
+    "playtest.config.json",
+    "playtest.observation.json",
+    "playtest.rubric.json",
+    "playtest.benchmark.json"
+  ]) {
+    copyFileSync(
+      path.join(SAMPLE_FIXTURE_ROOT, filename),
+      path.join(root, filename)
+    );
+  }
+  return {
+    root,
+    configBytes: readFileSync(path.join(root, "playtest.config.json")),
+    cleanup: () => rmSync(root, { recursive: true, force: true })
+  };
+}
+
 function setup(): { readonly root: string; readonly cleanup: () => void } {
   const root = mkdtempSync(
     path.join(realpathSync(tmpdir()), "approved-playtest-config-")
@@ -142,6 +204,24 @@ function expectCategory(
   });
 }
 
+function rewriteBenchmark(
+  root: string,
+  changes: Record<string, unknown>
+): void {
+  const benchmarkPath = path.join(root, "playtest.benchmark.json");
+  const previous = JSON.parse(readFileSync(benchmarkPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  const updated = { ...previous, ...changes };
+  delete updated.contentHash;
+  const contentHash = digest(playtestBenchmarkHashInput(updated as never));
+  writeFileSync(
+    benchmarkPath,
+    JSON.stringify({ ...updated, contentHash }) + "\n"
+  );
+}
+
 test("approved config verifies exact raw-byte digest and bound settings without executing", () => {
   const fixture = setup();
   try {
@@ -152,6 +232,92 @@ test("approved config verifies exact raw-byte digest and bound settings without 
       "adapter.mjs"
     ]);
     assert.deepEqual(result.configuration.scenarios, ["tutorial", "edge"]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("approved target bundle loads its rubric registry and content-hashed benchmark", () => {
+  const fixture = setupSampleBenchmark();
+  try {
+    const result = loadApprovedPlaytestDefinition(
+      approval(
+        fixture.root,
+        {
+          adapterCommand: ["node", "node-fixture-adapter.mjs"],
+          allowedScenarios: ["tutorial"],
+          allowedPolicies: ["random"]
+        },
+        fixture.configBytes.toString("utf8")
+      )
+    );
+    assert.equal(
+      result.benchmark?.benchmarkId,
+      "benchmark-synthetic-fixture-v1"
+    );
+    assert.equal(result.benchmark?.workspaceId, "owner/fixture");
+    assert.equal(result.benchmarkHash, result.benchmark?.contentHash);
+    assert.equal(result.rubricHash, result.benchmark?.rubricHash);
+    assert.deepEqual(
+      result.rubric.metricDefinitions.map((metric) => metric.metricId),
+      ["legal-action-rejection"]
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("approved target bundle refuses a stale benchmark content hash", () => {
+  const fixture = setupSampleBenchmark();
+  try {
+    const benchmarkPath = path.join(fixture.root, "playtest.benchmark.json");
+    const benchmark = JSON.parse(readFileSync(benchmarkPath, "utf8")) as {
+      contentHash: string;
+      [key: string]: unknown;
+    };
+    writeFileSync(
+      benchmarkPath,
+      JSON.stringify({ ...benchmark, contentHash: "f".repeat(64) }) + "\n"
+    );
+    expectCategory(
+      () =>
+        loadApprovedPlaytestDefinition(
+          approval(
+            fixture.root,
+            {
+              adapterCommand: ["node", "node-fixture-adapter.mjs"],
+              allowedScenarios: ["tutorial"],
+              allowedPolicies: ["random"]
+            },
+            fixture.configBytes.toString("utf8")
+          )
+        ),
+      "target-file-invalid"
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("approved target bundle rejects a well-hashed benchmark for another workspace", () => {
+  const fixture = setupSampleBenchmark();
+  try {
+    rewriteBenchmark(fixture.root, { workspaceId: "other/workspace" });
+    expectCategory(
+      () =>
+        loadApprovedPlaytestDefinition(
+          approval(
+            fixture.root,
+            {
+              adapterCommand: ["node", "node-fixture-adapter.mjs"],
+              allowedScenarios: ["tutorial"],
+              allowedPolicies: ["random"]
+            },
+            fixture.configBytes.toString("utf8")
+          )
+        ),
+      "benchmark-mismatch"
+    );
   } finally {
     fixture.cleanup();
   }

@@ -37,14 +37,15 @@ test("finding replay links preserve exact episode step and filtered cursor-page 
     status: "open",
     cursor: "page-3"
   });
-  const href = playtestingEpisodeHref(scope, "episode:17", 23, "finding-7");
+  const findingId = "finding-" + "7".repeat(64);
+  const href = playtestingEpisodeHref(scope, "episode:17", 23, findingId);
   const url = new URL(href, "http://console.test");
   assert.equal(url.pathname, "/playtesting/sessions/episode%3A17");
   assert.equal(url.searchParams.get("view"), "findings");
   assert.equal(url.searchParams.get("workspaceId"), "owner/game");
   assert.equal(url.searchParams.get("severity"), "major");
   assert.equal(url.searchParams.get("status"), "open");
-  assert.equal(url.searchParams.get("returnFinding"), "finding-7");
+  assert.equal(url.searchParams.get("returnFinding"), findingId);
   assert.equal(url.searchParams.get("cursor"), "page-3");
   assert.equal(url.searchParams.get("step"), "23");
 
@@ -58,7 +59,7 @@ test("finding replay links preserve exact episode step and filtered cursor-page 
   assert.equal(backUrl.searchParams.get("cursor"), "page-3");
   assert.equal(backUrl.searchParams.get("severity"), "major");
   assert.equal(backUrl.searchParams.get("status"), "open");
-  assert.equal(backUrl.hash, "#finding-finding-7");
+  assert.equal(backUrl.hash, "#finding-" + encodeURIComponent(findingId));
   assert.equal(backUrl.searchParams.has("step"), false);
 });
 

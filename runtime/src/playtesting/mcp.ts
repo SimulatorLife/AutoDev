@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   assertPlaytestFindingEvidenceStatusConsistent,
   assertPlaytestSessionReviewHasEvidence,
+  buildPlaytestFindingIdentity,
   type PlaytestBatch,
   type PlaytestCapabilityAdvertisement,
   type PlaytestComparison,
@@ -13,6 +14,7 @@ import {
   type PlaytestEpisode,
   type PlaytestEvidenceLocator,
   type PlaytestFinding,
+  type PlaytestFindingIdentity,
   type PlaytestKnownEvidenceIndex,
   type PlaytestMissingReason,
   PLAYTESTS_BATCH_SCHEMA,
@@ -24,6 +26,8 @@ import {
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_SEVERITIES,
   PLAYTESTS_VERIFICATION_STAGES,
+  playtestFindingIdentityHashInput,
+  playtestFindingIdFromFingerprint,
   type PlaytestSessionReview,
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
@@ -223,6 +227,11 @@ export interface PlaytestingRepositoryOps extends PlaytestingReadRepository {
     workspaceId: string,
     findingId: string
   ): Promise<PlaytestFinding | null>;
+  /** Latest revision of the finding with this workspace+identity fingerprint, or null. */
+  getLatestFindingByFingerprint(
+    workspaceId: string,
+    fingerprint: string
+  ): Promise<PlaytestFinding | null>;
   getLatestReview(
     workspaceId: string,
     episodeId: string,
@@ -351,25 +360,31 @@ const evidenceLocatorSchema = z.strictObject({
   timestampMs: z.number().min(0).optional()
 });
 
+/**
+ * Strict finding input. Caller-supplied event types, episode scope, IDs,
+ * fingerprints, and revisions are rejected: Runtime derives event types
+ * from cited persisted trace entries and derives scope from the stored
+ * episode. Only the proposed mechanic/action/witness and descriptive
+ * finding content cross this boundary. Workflow state, prevalence,
+ * cohorts, external links and verification dates are supplied only by their
+ * source-owning Runtime/Data workflows.
+ */
+const findingIdentityFailureSignatureSchema = z.strictObject({
+  action: z.string().min(1).max(200).nullable().optional(),
+  witness: z.string().min(1).max(200)
+});
+
+const findingIdentityInputSchema = z.strictObject({
+  mechanicKey: z.string().min(1).max(200),
+  failureSignature: findingIdentityFailureSignatureSchema
+});
+
 const findingSchema = z.strictObject({
-  findingId: z.string().min(1).max(256),
-  version: z.number().int().min(1).default(1),
+  identity: findingIdentityInputSchema,
   title: z.string().min(1).max(500),
   description: z.string().min(1).max(10_000),
-  severity: z.enum([...PLAYTESTS_SEVERITIES]),
-  status: z.enum([...PLAYTESTS_FINDING_STATUSES]),
-  verificationStage: z.enum([...PLAYTESTS_VERIFICATION_STAGES]),
-  evidenceStatus: z.enum(REVIEWABLE_STATUSES),
-  affectedEpisodes: z.number().int().min(0).default(1),
-  totalEligibleEpisodes: z.number().int().min(0).default(1),
-  affectedOpportunities: z.number().int().min(0).default(1),
-  totalEligibleOpportunities: z.number().int().min(0).default(1),
-  affectedCohorts: z.array(z.string()).default([]),
-  evidenceRefs: z.array(evidenceLocatorSchema),
-  experimentIds: z.array(z.string()).default([]),
-  issueRefs: z.array(z.string()).default([]),
-  lastVerifiedBuild: z.string().nullable().default(null),
-  nextReviewAt: z.string().nullable().default(null)
+  evidenceStatus: z.literal("hypothesis"),
+  evidenceRefs: z.array(evidenceLocatorSchema)
 });
 
 const playtestRunRequestSchema = z.strictObject({
@@ -380,6 +395,113 @@ const playtestRunRequestSchema = z.strictObject({
   goal: z.string().max(1000).optional(),
   maxSteps: z.number().int().min(1).max(100_000).optional()
 });
+
+/**
+ * §11's missed-known-issue / duplicate-flood gate lives here: the stable
+ * `findingId` is derived from the SHA-256 fingerprint of the canonical
+ * identity (not from anything a caller controls), so the same underlying
+ * defect across builds/policies/seed/batches deterministically produces the
+ * same finding ID. Prefix is fixed so Data/Console can recognize the
+ * namespace without parsing the hash.
+ */
+function deriveStableFindingId(fingerprint: string): string {
+  if (!SHA256_PATTERN.test(fingerprint)) {
+    throw new PlaytestMcpValidationError(
+      "Computed fingerprint is not a SHA-256 hexadecimal digest."
+    );
+  }
+  return playtestFindingIdFromFingerprint(fingerprint);
+}
+
+/**
+ * Compute the SHA-256 fingerprint over `playtestFindingIdentityHashInput`.
+ * Runtime owns the actual hashing; Core never computes the digest itself,
+ * matching the division of responsibility used by `playtestBenchmarkHashInput`
+ * in `core/src/playtesting/benchmark.ts`.
+ */
+function computeFindingFingerprint(identity: PlaytestFindingIdentity): string {
+  return createHash("sha256")
+    .update(playtestFindingIdentityHashInput(identity))
+    .digest("hex");
+}
+
+/** JSON-stable key for a locator used by the duplicate-flood merge. */
+function evidenceLocatorKey(locator: PlaytestEvidenceLocator): string {
+  const parts = [
+    locator.kind,
+    locator.id,
+    locator.step ?? "",
+    locator.frameIndex ?? "",
+    locator.phaseId ?? "",
+    "stepIndex" in locator ? String(locator.stepIndex ?? "") : "",
+    "frameIndex" in locator ? String(locator.frameIndex ?? "") : ""
+  ];
+  return JSON.stringify(parts);
+}
+
+function unionEvidenceRefs(
+  a: readonly PlaytestEvidenceLocator[],
+  b: readonly PlaytestEvidenceLocator[]
+): readonly PlaytestEvidenceLocator[] {
+  const seen = new Map<string, PlaytestEvidenceLocator>();
+  for (const locator of a) seen.set(evidenceLocatorKey(locator), locator);
+  for (const locator of b) seen.set(evidenceLocatorKey(locator), locator);
+  // Filter out any locator-derived artifacts whose `frameIndex` is set to
+  // `undefined` (allowed in zod's input, forbidden by
+  // exactOptionalPropertyTypes in the canonical type).
+  return [...seen.values()].filter(
+    (locator) =>
+      !("frameIndex" in locator) || typeof locator.frameIndex === "number"
+  );
+}
+
+function unionStringSet(
+  a: readonly string[],
+  b: readonly string[]
+): readonly string[] {
+  return [...new Set([...a, ...b])];
+}
+
+/**
+ * Per-(workspace, fingerprint) in-process serialization point for finding
+ * writes. The MCP server reads the latest revision and persists the
+ * resulting append inside the SAME critical section keyed by
+ * `workspaceId::fingerprint`, so two concurrent submitReview calls that
+ * resolve to the same identity can never both observe the same "latest
+ * version" and race to insert a colliding revision. ClickHouse does NOT
+ * enforce cross-process uniqueness of `(workspace_id, fingerprint,
+ * version)` -- a distributed Runtime would still need a coordinating
+ * store (e.g. a lease table or a single-writer queue) to guarantee it;
+ * this in-process map only guarantees ordering within one Runtime
+ * process. Completed chains are removed from the map once settled so it
+ * never grows unbounded across the process lifetime.
+ */
+const findingAppendLocks = new Map<string, Promise<unknown>>();
+function serializeFindingAppend<T>(
+  workspaceId: string,
+  fingerprint: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const key = JSON.stringify([workspaceId, fingerprint]);
+  const previous = findingAppendLocks.get(key) ?? Promise.resolve();
+  const settled = previous.catch(() => undefined).then(operation);
+  // Track the chain so later callers queue behind it, but never surface
+  // this tracked promise's rejection itself (the caller's own awaited
+  // `settled` promise still rejects normally).
+  const tracked = settled.then(
+    () => undefined,
+    () => undefined
+  );
+  findingAppendLocks.set(key, tracked);
+  void tracked.then(() => {
+    // Clean up the completed lock so it does not leak, but only if no
+    // newer waiter has already replaced it.
+    if (findingAppendLocks.get(key) === tracked) {
+      findingAppendLocks.delete(key);
+    }
+  });
+  return settled;
+}
 
 function authorizeWorkspace(
   requestedWorkspaceId: string | undefined,
@@ -738,6 +860,8 @@ function assertEpisodeMatchesRun(input: {
     episode.scenarioFamily !== input.scenarioFamily ||
     episode.policyCohort !== policy.cohort ||
     episode.strategy !== policy.strategy ||
+    (identity.rngInitialStateHash !== null &&
+      !SHA256_PATTERN.test(identity.rngInitialStateHash)) ||
     !SHA256_PATTERN.test(identity.actionSchemaHash) ||
     !SHA256_PATTERN.test(identity.observationSchemaHash) ||
     !SHA256_PATTERN.test(identity.eventSchemaHash) ||
@@ -1498,68 +1622,346 @@ function resolvePolicy(policyId: string): PlaytestPolicy {
  * comes from parsing the episode's own persisted trace artifact; review,
  * finding and comparison identity come from the real repository.
  */
-/** Parse one trace step entry's own events array into real event ids. */
-function stepEventIds(line: string): readonly string[] {
-  const trimmed = line.trim();
-  if (!trimmed) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return [];
-  }
-  if (
-    parsed === null ||
-    typeof parsed !== "object" ||
-    !Array.isArray((parsed as { events?: unknown }).events)
-  ) {
-    return [];
-  }
-  const ids: string[] = [];
-  for (const event of (parsed as { events: unknown[] }).events) {
-    if (
-      event !== null &&
-      typeof event === "object" &&
-      typeof (event as { eventId?: unknown }).eventId === "string"
-    ) {
-      ids.push((event as { eventId: string }).eventId);
-    }
-  }
-  return ids;
+interface PlaytestTraceEvent {
+  readonly eventId: string;
+  readonly type: string;
+  readonly phaseId: string | null;
+  readonly step: number | null;
 }
 
-/**
- * Real event identity for an episode, read from its own persisted trace
- * artifact. Never trusts a caller-supplied event locator as proof it exists.
- */
-function realEventEpisodeMap(
+interface PlaytestEpisodeTraceFacts {
+  readonly eventEpisodeOf: ReadonlyMap<string, string>;
+  readonly events: readonly PlaytestTraceEvent[];
+  readonly selectedActionIds: ReadonlySet<string>;
+}
+
+/** Parse an episode's persisted JSONL trace as authoritative event/action facts. */
+function readEpisodeTraceFacts(
   episode: PlaytestEpisode,
   artifacts: PlaytestArtifactStore
-): ReadonlyMap<string, string> {
+): PlaytestEpisodeTraceFacts {
   const eventEpisodeOf = new Map<string, string>();
-  if (!episode.trace) return eventEpisodeOf;
+  const events: PlaytestTraceEvent[] = [];
+  const selectedActionIds = new Set<string>();
+  if (!episode.trace) return { eventEpisodeOf, events, selectedActionIds };
   try {
     const traceReference = artifacts.referenceForId(episode.trace.id);
     if (!traceReference) throw new Error("trace artifact not authorized");
     const window = artifacts.readWindow(traceReference);
-    const text = new TextDecoder("utf-8").decode(window.bytes);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(window.bytes);
     for (const line of text.split("\n")) {
-      for (const eventId of stepEventIds(line)) {
-        eventEpisodeOf.set(eventId, episode.episodeId);
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+      if (
+        parsed === null ||
+        typeof parsed !== "object" ||
+        Array.isArray(parsed)
+      ) {
+        continue;
+      }
+      const entry = parsed as Record<string, unknown>;
+      const step = Number.isSafeInteger(entry.step)
+        ? (entry.step as number)
+        : null;
+      if (typeof entry.selectedActionId === "string") {
+        selectedActionIds.add(
+          entry.selectedActionId.normalize("NFKC").trim().toLowerCase()
+        );
+      }
+      if (!Array.isArray(entry.events)) continue;
+      for (const rawEvent of entry.events) {
+        if (
+          rawEvent === null ||
+          typeof rawEvent !== "object" ||
+          Array.isArray(rawEvent)
+        )
+          continue;
+        const event = rawEvent as Record<string, unknown>;
+        if (
+          typeof event.eventId !== "string" ||
+          event.eventId.length === 0 ||
+          typeof event.type !== "string" ||
+          event.type.length === 0
+        )
+          continue;
+        const fact: PlaytestTraceEvent = {
+          eventId: event.eventId,
+          type: event.type,
+          phaseId: typeof event.phaseId === "string" ? event.phaseId : null,
+          step
+        };
+        events.push(fact);
+        eventEpisodeOf.set(fact.eventId, episode.episodeId);
       }
     }
   } catch {
-    // Trace unreadable/expired: its events stay unverifiable, never
-    // fabricated as known just because the episode exists.
+    // Unreadable/expired trace means no event/action identity can be proven.
   }
-  return eventEpisodeOf;
+  return { eventEpisodeOf, events, selectedActionIds };
+}
+
+/**
+ * Shape accepted by `resolveSubmittedFinding`. Mirrors `findingSchema`
+ * but is structurally typed so we can keep callers strictly typed through
+ * zod while passing the resolved shape to the helper.
+ */
+type SubmittedFinding = z.infer<typeof findingSchema>;
+
+function normalizeEvidenceRefs(
+  locators: SubmittedFinding["evidenceRefs"]
+): readonly PlaytestEvidenceLocator[] {
+  // Strip zod-output `undefined`s from optional numeric fields so the
+  // resulting objects satisfy PlaytestEvidenceLocator under
+  // exactOptionalPropertyTypes. Anything not actually set is dropped.
+  return locators.map((locator) => {
+    const out: PlaytestEvidenceLocator = {
+      kind: locator.kind,
+      id: locator.id
+    };
+    if ("step" in locator && typeof locator.step === "number") {
+      (out as { step?: number }).step = locator.step;
+    }
+    if ("revision" in locator && typeof locator.revision === "number") {
+      (out as { revision?: number }).revision = locator.revision;
+    }
+    if ("frameIndex" in locator && typeof locator.frameIndex === "number") {
+      (out as { frameIndex?: number }).frameIndex = locator.frameIndex;
+    }
+    if ("phaseId" in locator && typeof locator.phaseId === "string") {
+      (out as { phaseId?: string }).phaseId = locator.phaseId;
+    }
+    return out;
+  });
+}
+
+/** Derive finding scope/events from the stored episode and cited trace, never caller claims. */
+function buildSubmittedFindingIdentity(
+  episode: PlaytestEpisode,
+  traceFacts: PlaytestEpisodeTraceFacts,
+  submitted: SubmittedFinding
+): {
+  readonly identity: PlaytestFindingIdentity;
+  readonly fingerprint: string;
+} {
+  const citedEventIds = new Set(
+    submitted.evidenceRefs
+      .filter((reference) => reference.kind === "event")
+      .map((reference) => reference.id)
+  );
+  const events = traceFacts.events
+    .filter((event) => citedEventIds.has(event.eventId))
+    .map((event) => event.type);
+  if (events.length === 0) {
+    throw new PlaytestMcpValidationError(
+      "A finding identity requires at least one cited event from the stored episode trace."
+    );
+  }
+  const requestedAction = submitted.identity.failureSignature.action;
+  if (requestedAction !== undefined && requestedAction !== null) {
+    const normalizedAction = requestedAction
+      .normalize("NFKC")
+      .trim()
+      .toLowerCase();
+    if (!traceFacts.selectedActionIds.has(normalizedAction)) {
+      throw new PlaytestMcpValidationError(
+        "Finding identity action must match a selected action recorded in the stored episode trace."
+      );
+    }
+  }
+  const identity = buildPlaytestFindingIdentity({
+    workspaceId: episode.identity.workspaceId,
+    mechanicKey: submitted.identity.mechanicKey,
+    failureSignature: {
+      events,
+      ...(requestedAction !== undefined ? { action: requestedAction } : {}),
+      witness: submitted.identity.failureSignature.witness
+    },
+    scope: {
+      // These fields are deliberately server-derived. Phase and modality
+      // remain null until the stored evidence contains a verified mapping.
+      scenarioFamily: episode.scenarioFamily,
+      phase: null,
+      modality: null
+    }
+  });
+  return { identity, fingerprint: computeFindingFingerprint(identity) };
+}
+
+interface SubmittedFindingGroup {
+  readonly identity: PlaytestFindingIdentity;
+  readonly fingerprint: string;
+  readonly submitted: SubmittedFinding;
+  readonly affectedCohorts: readonly string[];
+}
+
+/**
+ * Collapse findings within ONE submitted review that resolve to the same
+ * stable identity fingerprint before any Data read/append happens, so a
+ * single review can never create two persisted revisions -- or two
+ * entries in its own findings array -- for the same underlying defect.
+ * The first occurrence in review order keeps its severity/title/description;
+ * later in-review duplicates only contribute additional validated evidence.
+ * Cohort is derived from the stored episode. Workflow state, prevalence,
+ * external links and verification dates are owned by separate workflows.
+ */
+function collapseInReviewDuplicateFindings(
+  episode: PlaytestEpisode,
+  traceFacts: PlaytestEpisodeTraceFacts,
+  findings: readonly SubmittedFinding[]
+): readonly SubmittedFindingGroup[] {
+  const order: string[] = [];
+  const byFingerprint = new Map<string, SubmittedFindingGroup>();
+  for (const submitted of findings) {
+    const { identity, fingerprint } = buildSubmittedFindingIdentity(
+      episode,
+      traceFacts,
+      submitted
+    );
+    const group = byFingerprint.get(fingerprint);
+    if (!group) {
+      byFingerprint.set(fingerprint, {
+        identity,
+        fingerprint,
+        submitted,
+        affectedCohorts: [episode.policyCohort]
+      });
+      order.push(fingerprint);
+      continue;
+    }
+    byFingerprint.set(fingerprint, {
+      identity: group.identity,
+      fingerprint,
+      submitted: {
+        ...group.submitted,
+        evidenceRefs: [
+          ...group.submitted.evidenceRefs,
+          ...submitted.evidenceRefs
+        ]
+      },
+      affectedCohorts: [
+        ...unionStringSet(group.affectedCohorts, [episode.policyCohort])
+      ]
+    });
+  }
+  return order.map((fingerprint) => byFingerprint.get(fingerprint)!);
+}
+
+/**
+ * Resolve the authoritative, server-derived identity/fingerprint/
+ * findingId/version for one (already in-review-deduplicated) finding
+ * group, and persist it. The Data read (`getLatestFindingByFingerprint`)
+ * and the Data append (`insertFinding`) happen inside the SAME
+ * `serializeFindingAppend` critical section the caller wraps this in, so
+ * the latest-by-fingerprint lookup and the resulting append are strictly
+ * ordered per (workspace, fingerprint) and cannot race with a concurrent
+ * submitReview call resolving to the same identity.
+ *
+ * Duplicate handling across reviews (§11's duplicate-flood gate):
+ * - If a finding with the same fingerprint already exists in the
+ *   workspace, this writes exactly one new revision (version = latest +
+ *   1) that unions the new evidence/experiment/issue references into the
+ *   existing ones without inventing counts/status. The earlier
+ *   severity/title/description/status/verificationStage/lastVerifiedBuild/
+ *   nextReviewAt win so a follow-up report cannot rewrite them.
+ * - If the fingerprint is new, version = 1; workflow and verification
+ *   fields are initialized by Runtime, prevalence is null, and the proposed
+ *   severity/title/description remain a hypothesis.
+ */
+async function appendSubmittedFindingGroup(
+  workspaceId: string,
+  group: SubmittedFindingGroup,
+  evidenceIndex: PlaytestKnownEvidenceIndex,
+  playtestRepository: PlaytestingRepositoryOps
+): Promise<PlaytestFinding> {
+  const { identity, fingerprint, submitted } = group;
+  const findingId = deriveStableFindingId(fingerprint);
+
+  const existing = await playtestRepository.getLatestFindingByFingerprint(
+    workspaceId,
+    fingerprint
+  );
+
+  const resolved: PlaytestFinding = !existing
+    ? {
+        identity,
+        fingerprint,
+        findingId,
+        version: 1,
+        title: submitted.title,
+        description: submitted.description,
+        // No game-owned severity rule is bound to this review path yet.
+        // Keep the candidate unranked rather than trusting an LLM severity.
+        severity: "informational",
+        status: "open",
+        verificationStage: "not-yet-validated",
+        evidenceStatus: "hypothesis",
+        // Analyst reports are single-episode hypotheses, not a valid
+        // frequency sample. Keep prevalence explicitly unobserved until an
+        // indexed source-owned aggregation supplies the denominators.
+        affectedEpisodes: null,
+        totalEligibleEpisodes: null,
+        affectedOpportunities: null,
+        totalEligibleOpportunities: null,
+        affectedCohorts: [...group.affectedCohorts],
+        evidenceRefs: unionEvidenceRefs(
+          normalizeEvidenceRefs(submitted.evidenceRefs),
+          []
+        ),
+        experimentIds: [],
+        issueRefs: [],
+        lastVerifiedBuild: null,
+        nextReviewAt: null
+      }
+    : {
+        // Duplicate-flood merge: keep the existing authoritative fields
+        // (severity, title, description, status, verificationStage,
+        // evidenceStatus, affected counts, lastVerifiedBuild,
+        // nextReviewAt) and union the new evidence/experiment/issue
+        // references into them. Counts/status are NEVER invented here.
+        identity: existing.identity,
+        fingerprint: existing.fingerprint,
+        findingId: existing.findingId,
+        version: existing.version + 1,
+        title: existing.title,
+        description: existing.description,
+        severity: existing.severity,
+        status: existing.status,
+        verificationStage: existing.verificationStage,
+        evidenceStatus: existing.evidenceStatus,
+        affectedEpisodes: existing.affectedEpisodes,
+        totalEligibleEpisodes: existing.totalEligibleEpisodes,
+        affectedOpportunities: existing.affectedOpportunities,
+        totalEligibleOpportunities: existing.totalEligibleOpportunities,
+        affectedCohorts: unionStringSet(
+          existing.affectedCohorts,
+          group.affectedCohorts
+        ),
+        evidenceRefs: unionEvidenceRefs(
+          existing.evidenceRefs,
+          normalizeEvidenceRefs(submitted.evidenceRefs)
+        ),
+        experimentIds: existing.experimentIds,
+        issueRefs: existing.issueRefs,
+        lastVerifiedBuild: existing.lastVerifiedBuild,
+        nextReviewAt: existing.nextReviewAt
+      };
+
+  assertPlaytestFindingEvidenceStatusConsistent(resolved, evidenceIndex);
+  await playtestRepository.insertFinding(workspaceId, resolved);
+  return resolved;
 }
 
 async function buildKnownPlaytestEvidenceIndex(
   workspaceId: string,
   episode: PlaytestEpisode,
   evidenceRefs: readonly PlaytestEvidenceLocator[],
-  artifacts: PlaytestArtifactStore,
+  traceFacts: PlaytestEpisodeTraceFacts,
   playtestRepository: PlaytestingRepositoryOps
 ): Promise<PlaytestKnownEvidenceIndex> {
   const episodeIds = new Set<string>([episode.episodeId]);
@@ -1569,7 +1971,7 @@ async function buildKnownPlaytestEvidenceIndex(
     frameEpisodeOf.set(frame.id, episode.episodeId);
   }
 
-  const eventEpisodeOf = realEventEpisodeMap(episode, artifacts);
+  const eventEpisodeOf = traceFacts.eventEpisodeOf;
 
   const reviewIds = new Set<string>();
   const latestReview = await playtestRepository.getLatestReviewForEpisode(
@@ -2558,11 +2960,20 @@ export function createPlaytestMcpServer(
       safely(async () => {
         const session = await sessionProvider.current();
         const evidenceRefs = args.evidenceRefs ?? [];
-        const findings = args.findings ?? [];
         const reviewerRole = session.role;
         if (!isReviewerRole(reviewerRole)) {
           throw new PlaytestMcpAuthorizationError(
             "playtest.submitReview requires an authorized reviewer role."
+          );
+        }
+        let findings: SubmittedFinding[];
+        try {
+          findings = (args.findings ?? []).map((finding) =>
+            findingSchema.parse(finding)
+          );
+        } catch {
+          throw new PlaytestMcpValidationError(
+            "Submitted finding does not satisfy the finding schema."
           );
         }
         const targetWorkspaceId = authorizeWorkspace(args.workspaceId, session);
@@ -2581,18 +2992,6 @@ export function createPlaytestMcpServer(
             "Reviewer conclusions remain hypothesis or not-observed until independent validation is available."
           );
         }
-        if (
-          findings.some(
-            (finding) =>
-              finding.evidenceStatus !== "hypothesis" &&
-              finding.evidenceStatus !== "not observed"
-          )
-        ) {
-          throw new PlaytestMcpValidationError(
-            "Findings cannot claim corroborated or verified evidence without independent validation."
-          );
-        }
-
         const episode = await playtestRepository.getEpisode(
           targetWorkspaceId,
           args.episodeId
@@ -2611,11 +3010,15 @@ export function createPlaytestMcpServer(
           ...evidenceRefs,
           ...findings.flatMap((finding) => finding.evidenceRefs)
         ] as PlaytestEvidenceLocator[];
+        const traceFacts = readEpisodeTraceFacts(
+          episode,
+          artifactStoreForWorkspace(targetWorkspaceId)
+        );
         const knownIndex = await buildKnownPlaytestEvidenceIndex(
           targetWorkspaceId,
           episode,
           allEvidenceRefs,
-          artifactStoreForWorkspace(targetWorkspaceId),
+          traceFacts,
           playtestRepository
         );
 
@@ -2624,18 +3027,46 @@ export function createPlaytestMcpServer(
           assertPlaytestSessionReviewHasEvidence({
             reviewId: "review-precheck",
             evidenceRefs: evidenceRefs as PlaytestEvidenceLocator[],
-            findings: findings as PlaytestFinding[]
+            findings: []
           });
-
           for (const finding of findings) {
-            assertPlaytestFindingEvidenceStatusConsistent(
-              finding as PlaytestFinding,
-              knownIndex
-            );
+            if (finding.evidenceRefs.length === 0) {
+              throw new TypeError("Finding evidence is required.");
+            }
           }
         } catch {
           throw new PlaytestMcpValidationError(
             "Review evidence references do not satisfy the stored-evidence contract."
+          );
+        }
+
+        // §11 missed-known-issue / duplicate-flood gate. Collapse any
+        // findings in THIS review that resolve to the same stable
+        // identity fingerprint (so one review can never persist two
+        // revisions of the same defect), then, per distinct fingerprint,
+        // read the latest persisted revision and append the merged
+        // result inside one serialized (workspace, fingerprint) critical
+        // section so a concurrent submitReview on the same identity
+        // cannot race to the same version number.
+        const findingGroups = collapseInReviewDuplicateFindings(
+          episode,
+          traceFacts,
+          findings
+        );
+        const resolvedFindings: PlaytestFinding[] = [];
+        for (const group of findingGroups) {
+          resolvedFindings.push(
+            await serializeFindingAppend(
+              targetWorkspaceId,
+              group.fingerprint,
+              () =>
+                appendSubmittedFindingGroup(
+                  targetWorkspaceId,
+                  group,
+                  knownIndex,
+                  playtestRepository
+                )
+            )
           );
         }
 
@@ -2662,26 +3093,16 @@ export function createPlaytestMcpServer(
           alternativeExplanations: [],
           experiments: [],
           status: args.status,
-          findings: findings as PlaytestFinding[],
+          findings: resolvedFindings,
           evidenceRefs: evidenceRefs as PlaytestEvidenceLocator[],
           createdAt: new Date().toISOString(),
           notes: args.notes ?? ""
         };
 
+        // Findings for this review are already persisted above, inside
+        // the per-(workspace, fingerprint) serialized critical section;
+        // only the review itself remains to be written.
         await playtestRepository.insertReview(review);
-        if (findings.length > 0) {
-          if (!playtestRepository.insertFinding) {
-            throw new PlaytestMcpUnavailableError(
-              "Playtest data repository does not support finding persistence."
-            );
-          }
-          const insertFinding = playtestRepository.insertFinding;
-          await Promise.all(
-            (findings as PlaytestFinding[]).map((finding) =>
-              insertFinding(targetWorkspaceId, finding)
-            )
-          );
-        }
 
         return review;
       })

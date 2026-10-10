@@ -9,6 +9,7 @@ import {
   NEUTRAL_TONE_CLASS,
   SUCCESS_TONE_CLASS
 } from "../ui/tones.ts";
+import { registerLiveCountRefresh } from "./live-count-refresh.ts";
 
 export type FormNavigationStatus =
   "idle" | "submitting" | "completed" | "error";
@@ -132,6 +133,38 @@ interface ScrollAndFocusSnapshot {
 }
 
 const inFlightForms = new WeakSet<object>();
+
+const FORM_FEEDBACK_DISMISSAL_MS = 5000;
+const FORM_FEEDBACK_COUNTDOWN_INTERVAL_MS = 1000;
+
+export function scheduleFeedbackDismissal(
+  onCountdownChange: (secondsRemaining: number) => void,
+  onDismiss: () => void
+): () => void {
+  const deadline = Date.now() + FORM_FEEDBACK_DISMISSAL_MS;
+  let secondsRemaining = Math.ceil(FORM_FEEDBACK_DISMISSAL_MS / 1000);
+  onCountdownChange(secondsRemaining);
+
+  const countdownInterval = setInterval(() => {
+    const nextSecondsRemaining = Math.max(
+      0,
+      Math.ceil((deadline - Date.now()) / 1000)
+    );
+    if (nextSecondsRemaining === secondsRemaining) return;
+    secondsRemaining = nextSecondsRemaining;
+    onCountdownChange(secondsRemaining);
+  }, FORM_FEEDBACK_COUNTDOWN_INTERVAL_MS);
+  const dismissalTimeout = setTimeout(() => {
+    clearInterval(countdownInterval);
+    if (secondsRemaining !== 0) onCountdownChange(0);
+    onDismiss();
+  }, FORM_FEEDBACK_DISMISSAL_MS);
+
+  return () => {
+    clearInterval(countdownInterval);
+    clearTimeout(dismissalTimeout);
+  };
+}
 
 function isFormSubmitting(form: FormLike): boolean {
   if (typeof form === "object" && form !== null && inFlightForms.has(form)) {
@@ -931,9 +964,41 @@ export function FormNavigationOwner({
   const [feedback, setFeedback] = React.useState<{
     readonly status: FormNavigationStatus;
     readonly message: string;
-  }>(initialFeedback ?? { status: "idle", message: "" });
+    readonly revision: number;
+  }>({ ...(initialFeedback ?? { status: "idle", message: "" }), revision: 0 });
+  const feedbackRef = React.useRef(feedback);
+  const [countdownSeconds, setCountdownSeconds] = React.useState<number | null>(
+    feedback.status === "completed" || feedback.status === "error" ? 5 : null
+  );
   const [isNavigationPending, startTransition] = React.useTransition();
   const observedNavigationRef = React.useRef(false);
+
+  const publishFeedback = React.useCallback(
+    (status: FormNavigationStatus, message: string) => {
+      const nextFeedback = {
+        status,
+        message,
+        revision: feedbackRef.current.revision + 1
+      };
+      feedbackRef.current = nextFeedback;
+      setFeedback(nextFeedback);
+      setCountdownSeconds(
+        status === "completed" || status === "error" ? 5 : null
+      );
+    },
+    []
+  );
+
+  const dismissFeedback = React.useCallback(() => {
+    const dismissedFeedback = {
+      status: "idle" as const,
+      message: "",
+      revision: feedbackRef.current.revision + 1
+    };
+    feedbackRef.current = dismissedFeedback;
+    setFeedback(dismissedFeedback);
+    setCountdownSeconds(null);
+  }, []);
 
   const navigationRouter = React.useMemo<FormNavigationRouter | null>(
     () =>
@@ -957,13 +1022,32 @@ export function FormNavigationOwner({
     if (!observedNavigationRef.current) return;
 
     observedNavigationRef.current = false;
-    setFeedback((current) =>
-      current.status === "submitting" &&
-      current.message === "Applying filters..."
-        ? { status: "completed", message: "Filters applied." }
-        : current
+    if (
+      feedbackRef.current.status === "submitting" &&
+      feedbackRef.current.message === "Applying filters..."
+    ) {
+      publishFeedback("completed", "Filters applied.");
+    }
+  }, [isNavigationPending, publishFeedback]);
+
+  React.useEffect(() => {
+    if (feedback.status !== "completed" && feedback.status !== "error") {
+      return () => {};
+    }
+
+    const revision = feedback.revision;
+    return scheduleFeedbackDismissal(
+      (secondsRemaining) => {
+        if (feedbackRef.current.revision === revision) {
+          setCountdownSeconds(secondsRemaining);
+        }
+      },
+      () => {
+        if (feedbackRef.current.revision !== revision) return;
+        dismissFeedback();
+      }
     );
-  }, [isNavigationPending]);
+  }, [dismissFeedback, feedback.revision, feedback.status]);
 
   React.useEffect(() => {
     if (!navigationRouter) {
@@ -973,22 +1057,64 @@ export function FormNavigationOwner({
     return registerFormNavigation({
       router: navigationRouter,
       onStatusChange: (nextStatus, message) => {
-        setFeedback({ status: nextStatus, message });
+        publishFeedback(nextStatus, message);
       }
     });
+  }, [navigationRouter, publishFeedback]);
+
+  React.useEffect(() => {
+    if (!navigationRouter || globalThis.window === undefined) {
+      return () => {};
+    }
+    return registerLiveCountRefresh(
+      () => navigationRouter.refresh(),
+      globalThis.window
+    );
   }, [navigationRouter]);
 
   return React.createElement(
     "div",
     {
-      role: feedback.status === "error" ? "alert" : "status",
-      "aria-live": feedback.status === "error" ? "assertive" : "polite",
-      "aria-atomic": "true",
-      className: `fixed bottom-4 right-4 z-50 max-w-[min(24rem,calc(100vw-2rem))] rounded-md px-4 py-3 text-sm shadow-lg ${FEEDBACK_TONE_CLASS[feedback.status]}`,
+      className: `fixed bottom-4 right-4 z-50 flex max-w-[min(24rem,calc(100vw-2rem))] items-start gap-3 rounded-md px-4 py-3 text-sm shadow-lg ${FEEDBACK_TONE_CLASS[feedback.status]}`,
       hidden: feedback.status === "idle",
       "data-form-navigation-owner": "true",
       "data-form-navigation-status": feedback.status
     },
-    feedback.message
+    React.createElement(
+      "div",
+      {
+        role: feedback.status === "error" ? "alert" : "status",
+        "aria-live": feedback.status === "error" ? "assertive" : "polite",
+        "aria-atomic": "true",
+        className: "min-w-0 flex-1"
+      },
+      feedback.message
+    ),
+    countdownSeconds !== null &&
+      (feedback.status === "completed" || feedback.status === "error")
+      ? React.createElement(
+          "span",
+          {
+            "aria-live": "off",
+            className: "shrink-0 text-xs",
+            "data-feedback-countdown": "true"
+          },
+          `Dismisses in ${countdownSeconds} ${countdownSeconds === 1 ? "second" : "seconds"}`
+        )
+      : null,
+    feedback.status === "idle"
+      ? null
+      : React.createElement(
+          "button",
+          {
+            type: "button",
+            "aria-label": "Dismiss notification",
+            title: "Dismiss notification",
+            className:
+              "-mr-1 -mt-1 shrink-0 rounded p-1 text-base leading-none hover:bg-black/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2",
+            onClick: dismissFeedback
+          },
+          "×"
+        )
   );
 }

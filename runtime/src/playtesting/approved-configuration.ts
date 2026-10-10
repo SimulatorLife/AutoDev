@@ -12,10 +12,16 @@ import {
 import path from "node:path";
 
 import {
+  assertPlaytestBenchmark,
   assertPlaytestGameConfiguration,
   assertPlaytestObservationContract,
   assertWorkspacePlaytestApproval,
+  expandPlaytestRegistry,
+  PLAYTESTS_MEASUREMENT_VERSION,
+  playtestBenchmarkHashInput,
+  type PlaytestBenchmark,
   type PlaytestGameConfiguration,
+  type PlaytestMetricRegistry,
   type PlaytestObservationContract,
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
@@ -38,7 +44,8 @@ export type ApprovedConfigurationFailure =
   | "command-mismatch"
   | "scenario-mismatch"
   | "policy-mismatch"
-  | "budget-mismatch";
+  | "budget-mismatch"
+  | "benchmark-mismatch";
 
 export class ApprovedPlaytestConfigurationError extends Error {
   readonly category: ApprovedConfigurationFailure;
@@ -54,7 +61,10 @@ export interface ApprovedPlaytestDefinition {
   readonly configuration: PlaytestGameConfiguration;
   readonly configHash: string;
   readonly observationContract: PlaytestObservationContract;
+  readonly rubric: PlaytestMetricRegistry;
   readonly rubricHash: string;
+  readonly benchmark: PlaytestBenchmark | null;
+  readonly benchmarkHash: string | null;
 }
 
 function isWithin(root: string, candidate: string): boolean {
@@ -225,6 +235,52 @@ function assertMatchesApproval(
   }
 }
 
+function assertBenchmarkMatchesTarget(input: {
+  readonly benchmark: PlaytestBenchmark;
+  readonly approval: WorkspacePlaytestApproval;
+  readonly configuration: PlaytestGameConfiguration;
+  readonly observationContract: PlaytestObservationContract;
+  readonly rubric: PlaytestMetricRegistry;
+  readonly rubricHash: string;
+}): void {
+  const {
+    benchmark,
+    approval,
+    configuration,
+    observationContract,
+    rubric,
+    rubricHash
+  } = input;
+  const configurationMetrics = new Set([
+    ...rubric.metricDefinitions.map((metric) => metric.metricId),
+    ...rubric.dimensionRubrics.map((dimension) => dimension.dimensionId)
+  ]);
+  if (
+    benchmark.workspaceId !== approval.workspaceId ||
+    benchmark.measurementVersion !== PLAYTESTS_MEASUREMENT_VERSION ||
+    benchmark.rubricHash !== rubricHash ||
+    benchmark.metricRegistryHash !== rubricHash ||
+    benchmark.observationSchemaHash !== observationContract.schemaHash ||
+    !configuration.modes.includes(benchmark.captureMode) ||
+    benchmark.scenarioInventory.some(
+      (scenario) =>
+        !configuration.scenarios.includes(scenario.scenarioId) ||
+        configuration.scenarioFamilies[scenario.scenarioId] !== scenario.family
+    ) ||
+    Object.keys(benchmark.policyVersions).some(
+      (policyId) => !configuration.policies.includes(policyId)
+    ) ||
+    [...benchmark.primaryMetricIds, ...benchmark.guardrailMetricIds].some(
+      (metricId) => !configurationMetrics.has(metricId)
+    )
+  ) {
+    fail(
+      "benchmark-mismatch",
+      "The benchmark does not match the approved workspace, target configuration, and measurement sources."
+    );
+  }
+}
+
 /**
  * Read exact target-owned files, validate their schemas and bind the config's
  * raw-byte SHA-256 to the approval. This performs no execution.
@@ -324,10 +380,67 @@ export function loadApprovedPlaytestDefinition(
     configuration.analysis.rubric,
     configuration.analysis.rubric
   );
+  let rubric: PlaytestMetricRegistry;
+  try {
+    rubric = expandPlaytestRegistry(
+      JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rubricBytes))
+    );
+    if (rubric.workspaceId !== approval.workspaceId) {
+      throw new TypeError("The metric registry belongs to another workspace.");
+    }
+  } catch (error) {
+    if (error instanceof ApprovedPlaytestConfigurationError) throw error;
+    fail(
+      "target-file-invalid",
+      "The target rubric or metric registry is invalid."
+    );
+  }
+  const rubricHash = createHash("sha256").update(rubricBytes).digest("hex");
+
+  let benchmark: PlaytestBenchmark | null = null;
+  let benchmarkHash: string | null = null;
+  if (configuration.analysis.benchmark !== null) {
+    try {
+      const benchmarkBytes = readApprovedWorkspaceFile(
+        root,
+        configuration.analysis.benchmark,
+        configuration.analysis.benchmark
+      );
+      const parsed: unknown = JSON.parse(
+        new TextDecoder("utf-8", { fatal: true }).decode(benchmarkBytes)
+      );
+      assertPlaytestBenchmark(parsed);
+      const contentHash = createHash("sha256")
+        .update(playtestBenchmarkHashInput(parsed))
+        .digest("hex");
+      if (contentHash !== parsed.contentHash.toLowerCase()) {
+        throw new TypeError("The benchmark content hash is invalid.");
+      }
+      assertBenchmarkMatchesTarget({
+        benchmark: parsed,
+        approval,
+        configuration,
+        observationContract,
+        rubric,
+        rubricHash
+      });
+      benchmark = parsed;
+      benchmarkHash = contentHash;
+    } catch (error) {
+      if (error instanceof ApprovedPlaytestConfigurationError) throw error;
+      fail(
+        "target-file-invalid",
+        "The target benchmark is invalid or incompatible."
+      );
+    }
+  }
   return {
     configuration,
     configHash,
     observationContract,
-    rubricHash: createHash("sha256").update(rubricBytes).digest("hex")
+    rubric,
+    rubricHash,
+    benchmark,
+    benchmarkHash
   };
 }

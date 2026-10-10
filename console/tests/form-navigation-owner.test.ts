@@ -14,7 +14,8 @@ import {
   type FormNavigationStatus,
   type FormSubmissionEvent,
   handleFormSubmission,
-  registerFormNavigation
+  registerFormNavigation,
+  scheduleFeedbackDismissal
 } from "../src/components/navigation/FormNavigationOwner.ts";
 
 interface MockSubmitter extends FormElementLike {
@@ -110,6 +111,7 @@ test("FormNavigationOwner renders accessible live region with idle status", () =
   assert.match(markup, /hidden=""/u);
   assert.match(markup, /data-form-navigation-owner="true"/u);
   assert.match(markup, /data-form-navigation-status="idle"/u);
+  assert.doesNotMatch(markup, /aria-label="Dismiss notification"/u);
 });
 
 test("FormNavigationOwner renders visible pending status with accessible live announcement", () => {
@@ -131,6 +133,8 @@ test("FormNavigationOwner renders visible pending status with accessible live an
   assert.match(markup, /data-form-navigation-owner="true"/u);
   assert.match(markup, /data-form-navigation-status="submitting"/u);
   assert.match(markup, /Applying filters\.\.\./u);
+  assert.match(markup, /aria-label="Dismiss notification"/u);
+  assert.doesNotMatch(markup, /data-feedback-countdown="true"/u);
 });
 
 test("FormNavigationOwner renders visible actionable error feedback with alert role and assertive live region", () => {
@@ -156,6 +160,13 @@ test("FormNavigationOwner renders visible actionable error feedback with alert r
     markup,
     /The server could not save these changes\. Review the notice on this page\./u
   );
+  assert.match(markup, /data-feedback-countdown="true"/u);
+  assert.match(markup, /Dismisses in 5 seconds/u);
+  assert.match(markup, /aria-live="off"/u);
+  assert.match(markup, /aria-label="Dismiss notification"/u);
+  const liveRegion = markup.match(/<div role="alert"[^>]*>[\s\S]*?<\/div>/u);
+  assert.ok(liveRegion);
+  assert.doesNotMatch(liveRegion[0], /Dismisses in/u);
 });
 
 test("FormNavigationOwner renders visible completed feedback with polite live region", () => {
@@ -177,6 +188,44 @@ test("FormNavigationOwner renders visible completed feedback with polite live re
   assert.match(markup, /data-form-navigation-owner="true"/u);
   assert.match(markup, /data-form-navigation-status="completed"/u);
   assert.match(markup, /Changes saved\./u);
+  assert.match(markup, /Dismisses in 5 seconds/u);
+  assert.match(markup, /aria-live="off"/u);
+  assert.match(markup, /aria-label="Dismiss notification"/u);
+});
+
+test("terminal feedback countdown dismisses after five seconds and cleanup cancels it", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"] });
+  try {
+    const countdown: number[] = [];
+    let dismissals = 0;
+    const cleanup = scheduleFeedbackDismissal(
+      (secondsRemaining) => countdown.push(secondsRemaining),
+      () => dismissals++
+    );
+
+    assert.deepEqual(countdown, [5]);
+    t.mock.timers.tick(1000);
+    assert.deepEqual(countdown, [5, 4]);
+    for (let second = 0; second < 4; second++) {
+      t.mock.timers.tick(1000);
+    }
+    assert.deepEqual(countdown, [5, 4, 3, 2, 1, 0]);
+    assert.equal(dismissals, 1);
+    cleanup();
+
+    const cancelledCountdown: number[] = [];
+    let cancelledDismissals = 0;
+    const cancel = scheduleFeedbackDismissal(
+      (secondsRemaining) => cancelledCountdown.push(secondsRemaining),
+      () => cancelledDismissals++
+    );
+    cancel();
+    t.mock.timers.tick(5000);
+    assert.deepEqual(cancelledCountdown, [5]);
+    assert.equal(cancelledDismissals, 0);
+  } finally {
+    t.mock.timers.reset();
+  }
 });
 
 test("registerFormNavigation lifecycle: registers listeners on document and unregisters on cleanup", () => {

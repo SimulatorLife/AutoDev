@@ -17,11 +17,35 @@ ENV_FILE="${AUTODEV_OPENLIT_ENV_FILE:-$REPO_ROOT/config/openlit/openlit.env}"
 SECRET_FILE="${AUTODEV_OPENLIT_SECRET_FILE:-$CODEX_HOME/openlit-secrets.env}"
 LOCK_FILE="${AUTODEV_OPENLIT_LOCK_FILE:-$CODEX_HOME/openlit-patched.lock}"
 OTLP_KEY_FILE="${AUTODEV_OPENLIT_OTLP_KEY_FILE:-$CODEX_HOME/openlit-otlp-api-key}"
+COMPOSE_DIR="$(cd "$(dirname "$COMPOSE_FILE")" && pwd)"
+ASSET_DIR="$COMPOSE_DIR/assets"
+
+fingerprint_files() {
+	local file
+	for file in "$@"; do
+		if [[ ! -f "$file" ]]; then
+			echo "up.sh: mounted configuration file is missing: $file" >&2
+			return 1
+		fi
+		cat "$file"
+		printf '\0'
+	done | shasum -a 256 | awk '{print $1}'
+}
 
 if [[ ! -d "$REPO_ROOT/patches/openlit" || ! -f "$COMPOSE_FILE" || ! -f "$ENV_FILE" ]]; then
 	echo "up.sh: patch directory, compose file, or env template is missing" >&2
 	exit 1
 fi
+
+# Compose does not detect changes to the contents of bind-mounted files.
+# Include their fingerprints in service labels so `compose up` recreates only
+# the affected container while leaving its durable volume untouched.
+export AUTODEV_OPENLIT_CLICKHOUSE_CONFIG_HASH="$(fingerprint_files \
+	"$ASSET_DIR/clickhouse-config.xml" \
+	"$ASSET_DIR/clickhouse-init.sh")"
+export AUTODEV_OPENLIT_OTEL_CONFIG_HASH="$(fingerprint_files \
+	"$ASSET_DIR/otel-collector-config.yaml")"
+
 if ! command -v docker >/dev/null 2>&1; then
 	echo "up.sh: docker is required" >&2
 	exit 1

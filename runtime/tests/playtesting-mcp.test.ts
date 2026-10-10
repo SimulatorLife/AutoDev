@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -6,6 +7,7 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import {
+  buildPlaytestFindingIdentity,
   type PlaytestBatch,
   type PlaytestCapabilityAdvertisement,
   type PlaytestComparison,
@@ -13,7 +15,8 @@ import {
   type PlaytestFinding,
   PLAYTESTS_MEASUREMENT_VERSION,
   type PlaytestSessionReview,
-  type WorkspacePlaytestApproval
+  type WorkspacePlaytestApproval,
+  playtestFindingIdentityHashInput
 } from "@simulatorlife/autodev-core";
 import type { WorkspaceCatalogRead } from "@simulatorlife/autodev-data";
 import { PlaytestSourceUnavailableError } from "@simulatorlife/autodev-data/playtesting";
@@ -218,6 +221,7 @@ function episodeForRun(
       scenarioId: options.scenarioId,
       configHash: options.approval.playtestConfigHash,
       seed: options.seed,
+      rngInitialStateHash: null,
       rngAlgorithm: "fixture-rng",
       rngVersion: "1",
       policyId: options.policy.id,
@@ -686,6 +690,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
         insertedEpisodes.find((e) => e.episodeId === epId) ?? null,
       getLatestReviewForEpisode: async () => null,
       getFinding: async () => null,
+      getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
       getLatestComparison: async () => null,
       insertBatch: async (batch) => {
@@ -733,6 +738,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
               scenarioId: opts.scenarioId,
               configHash: opts.approval.playtestConfigHash,
               seed: opts.seed,
+              rngInitialStateHash: null,
               rngAlgorithm: null,
               rngVersion: null,
               policyId: opts.policy.id,
@@ -1065,6 +1071,7 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
       getEpisode: async () => null,
       getLatestReviewForEpisode: async () => null,
       getFinding: async () => null,
+      getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
       getLatestComparison: async () => null,
       insertBatch: async (batch) => {
@@ -1109,6 +1116,7 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
             scenarioId: opts.scenarioId,
             configHash: opts.approval.playtestConfigHash,
             seed: opts.seed,
+            rngInitialStateHash: null,
             rngAlgorithm: null,
             rngVersion: null,
             policyId: opts.policy.id,
@@ -1289,6 +1297,7 @@ test("playtest MCP: Docker preflight and adapter reset failures are never comple
         getEpisode: async () => null,
         getLatestReviewForEpisode: async () => null,
         getFinding: async () => null,
+        getLatestFindingByFingerprint: async () => null,
         getLatestReview: async () => null,
         getLatestComparison: async () => null,
         insertBatch: async (batch) => {
@@ -1527,6 +1536,7 @@ test("playtest MCP serializes concurrent assignment reservations before checking
       getEpisode: async () => null,
       getLatestReviewForEpisode: async () => null,
       getFinding: async () => null,
+      getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
       getLatestComparison: async () => null,
       insertBatch: async (batch) => {
@@ -1665,6 +1675,7 @@ test("playtest MCP: per-run cancellation and approval/workspace revocation abort
         getEpisode: async () => null,
         getLatestReviewForEpisode: async () => null,
         getFinding: async () => null,
+        getLatestFindingByFingerprint: async () => null,
         getLatestReview: async () => null,
         getLatestComparison: async () => null,
         insertBatch: async (batch) => {
@@ -1910,7 +1921,18 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       entries: [
         {
           step: 0,
+          selectedActionId: "jump",
           events: [{ eventId: "evt-real-1", type: "collision" }]
+        },
+        {
+          step: 1,
+          selectedActionId: "jump",
+          events: [{ eventId: "evt-real-2", type: "collision" }]
+        },
+        {
+          step: 2,
+          selectedActionId: "jump",
+          events: [{ eventId: "evt-real-3", type: "collision" }]
         }
       ]
     });
@@ -1928,6 +1950,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
         scenarioId: "tutorial",
         configHash: "b".repeat(64),
         seed: "seed-1",
+        rngInitialStateHash: null,
         rngAlgorithm: null,
         rngVersion: null,
         policyId: "random",
@@ -1961,7 +1984,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       replayStatus: "trace-replayable",
       trace: { kind: "replay-segment", id: traceWrite.reference.artifactId },
       frames: [],
-      stepCount: 1,
+      stepCount: 3,
       metrics: [],
       findingIds: [],
       assignedAt: new Date().toISOString(),
@@ -1992,6 +2015,10 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       getFinding: async (_ws, findingId) =>
         insertedFindings.find((finding) => finding.findingId === findingId) ??
         null,
+      getLatestFindingByFingerprint: async (_ws, fingerprint) =>
+        [...insertedFindings]
+          .filter((finding) => finding.fingerprint === fingerprint)
+          .sort((a, b) => b.version - a.version)[0] ?? null,
       getLatestReview: async (_ws, _episodeId, reviewId) =>
         insertedReviews.find((review) => review.reviewId === reviewId) ?? null,
       getLatestComparison: async () => null,
@@ -2092,11 +2119,11 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       rubricHash: "f".repeat(64),
       findings: [
         {
-          findingId: "find-fabricated",
-          severity: "major",
-          status: "new",
-          verificationStage: "candidate",
-          evidenceStatus: "verified",
+          identity: {
+            mechanicKey: "hazard-collision",
+            failureSignature: { action: "jump", witness: "fabricated-hazard" }
+          },
+          evidenceStatus: "hypothesis",
           title: "Fabricated hazard",
           description: "Cites an event that was never recorded.",
           evidenceRefs: [{ kind: "event", id: "evt-fabricated-1" }]
@@ -2148,11 +2175,11 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       rubricHash: "f".repeat(64),
       findings: [
         {
-          findingId: "find-verified",
-          severity: "major",
-          status: "new",
-          verificationStage: "candidate",
-          evidenceStatus: "verified",
+          identity: {
+            mechanicKey: "unvalidated-finding",
+            failureSignature: { witness: "self-verified" }
+          },
+          evidenceStatus: "corroborated",
           title: "Unvalidated finding",
           description: "Attempt to self-verify.",
           evidenceRefs: [{ kind: "episode", id: "ep-1" }]
@@ -2161,6 +2188,101 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     });
     assert.equal(
       parsedMcpError(verifiedFinding).code,
+      "playtest_invalid_request"
+    );
+
+    // Scope and event types are server-derived. A caller cannot inject
+    // alternate families/phases/modalities or pretend a trace emitted a
+    // different event type.
+    const forgedIdentity = await (server as any)._registeredTools[
+      "playtest.submitReview"
+    ].handler({
+      episodeId: "ep-1",
+      chronologicalSummary: "Attempted identity spoof.",
+      status: "hypothesis",
+      evidenceRefs: [{ kind: "episode", id: "ep-1" }],
+      rubricHash: "f".repeat(64),
+      findings: [
+        {
+          identity: {
+            mechanicKey: "movement-collision",
+            failureSignature: {
+              events: ["forged-event"],
+              witness: "forged-witness"
+            },
+            scope: {
+              scenarioFamily: "forged-family",
+              phase: "phase-9",
+              modality: "native-visual"
+            }
+          },
+          evidenceStatus: "hypothesis",
+          title: "Spoofed finding",
+          description:
+            "Caller attempts to supply authoritative identity fields.",
+          evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
+        }
+      ]
+    });
+    assert.equal(
+      parsedMcpError(forgedIdentity).code,
+      "playtest_invalid_request"
+    );
+
+    const unobservedAction = await (server as any)._registeredTools[
+      "playtest.submitReview"
+    ].handler({
+      episodeId: "ep-1",
+      chronologicalSummary: "Action is not in the stored trace.",
+      status: "hypothesis",
+      evidenceRefs: [{ kind: "episode", id: "ep-1" }],
+      rubricHash: "f".repeat(64),
+      findings: [
+        {
+          identity: {
+            mechanicKey: "movement-collision",
+            failureSignature: {
+              action: "teleport",
+              witness: "unobserved-action"
+            }
+          },
+          evidenceStatus: "hypothesis",
+          title: "Unobserved action",
+          description: "Action must be observed.",
+          evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
+        }
+      ]
+    });
+    assert.equal(
+      parsedMcpError(unobservedAction).code,
+      "playtest_invalid_request"
+    );
+
+    const forgedFindingState = await (server as any)._registeredTools[
+      "playtest.submitReview"
+    ].handler({
+      episodeId: "ep-1",
+      chronologicalSummary: "Attempted state and denominator forgery.",
+      status: "hypothesis",
+      evidenceRefs: [{ kind: "episode", id: "ep-1" }],
+      rubricHash: "f".repeat(64),
+      findings: [{
+        identity: {
+          mechanicKey: "movement-collision",
+          failureSignature: { action: "jump", witness: "collision-on-jump" }
+        },
+        severity: "major",
+        verificationStage: "sustained-improvement",
+        evidenceStatus: "hypothesis",
+        title: "Forged outcome",
+        description: "An analyst cannot set state or claim population counts.",
+        affectedEpisodes: 50,
+        totalEligibleEpisodes: 50,
+        evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
+      }]
+    });
+    assert.equal(
+      parsedMcpError(forgedFindingState).code,
       "playtest_invalid_request"
     );
 
@@ -2178,14 +2300,24 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       rubricHash: "f".repeat(64),
       findings: [
         {
-          findingId: "find-1",
-          severity: "minor",
-          status: "new",
-          verificationStage: "candidate",
+          identity: {
+            mechanicKey: "movement-collision",
+            failureSignature: { action: "jump", witness: "collision-on-jump" }
+          },
           evidenceStatus: "hypothesis",
           title: "Minor pacing lull",
           description: "Lull in corridor",
           evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
+        },
+        {
+          identity: {
+            mechanicKey: "movement-collision",
+            failureSignature: { action: "jump", witness: "collision-on-jump" }
+          },
+          evidenceStatus: "hypothesis",
+          title: "Duplicate title must not overwrite the first finding",
+          description: "Duplicate report.",
+          evidenceRefs: [{ kind: "event", id: "evt-real-2" }],
         }
       ]
     });
@@ -2197,6 +2329,111 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     assert.equal(parsedReview.rubricHash, "f".repeat(64));
     assert.equal(insertedReviews.length, 1);
     assert.equal(insertedFindings.length, 1);
+    assert.equal(parsedReview.findings.length, 1);
+    assert.equal(
+      parsedReview.findings[0].findingId,
+      "finding-" + parsedReview.findings[0].fingerprint
+    );
+    assert.equal(parsedReview.findings[0].version, 1);
+    assert.deepEqual(parsedReview.findings[0].identity.scope, {
+      scenarioFamily: "tutorial-family",
+      phase: null,
+      modality: null
+    });
+    assert.deepEqual(
+      parsedReview.findings[0].identity.failureSignature.events,
+      ["collision"]
+    );
+    assert.equal(parsedReview.findings[0].title, "Minor pacing lull");
+    assert.equal(parsedReview.findings[0].affectedEpisodes, null);
+    assert.equal(parsedReview.findings[0].totalEligibleEpisodes, null);
+    assert.equal(parsedReview.findings[0].affectedOpportunities, null);
+    assert.equal(parsedReview.findings[0].totalEligibleOpportunities, null);
+    assert.deepEqual(parsedReview.findings[0].affectedCohorts, ["random"]);
+    assert.deepEqual(parsedReview.findings[0].experimentIds, []);
+    assert.deepEqual(parsedReview.findings[0].issueRefs, []);
+    assert.equal(parsedReview.findings[0].lastVerifiedBuild, null);
+    assert.equal(parsedReview.findings[0].nextReviewAt, null);
+    assert.deepEqual(
+      parsedReview.findings[0].evidenceRefs.map(
+        (reference: { id: string }) => reference.id
+      ),
+      ["evt-real-1", "evt-real-2"]
+    );
+
+    // Same identity on a later review creates one append-only revision and
+    // unions new evidence without allowing the caller to rewrite status or counts.
+    const repeatedReview = await (server as any)._registeredTools[
+      "playtest.submitReview"
+    ].handler({
+      episodeId: "ep-1",
+      chronologicalSummary: "Same collision on a later observation.",
+      status: "hypothesis",
+      evidenceRefs: [
+        { kind: "episode", id: "ep-1" },
+        { kind: "event", id: "evt-real-3" }
+      ],
+      rubricHash: "f".repeat(64),
+      findings: [
+        {
+          identity: {
+            mechanicKey: "movement-collision",
+            failureSignature: { action: "jump", witness: "collision-on-jump" }
+          },
+          evidenceStatus: "hypothesis",
+          title: "Attempted rewrite",
+          description: "Attempted rewrite.",
+          evidenceRefs: [{ kind: "event", id: "evt-real-3" }],
+        }
+      ]
+    });
+    assert.equal(repeatedReview.isError, undefined);
+    assert.equal(insertedFindings.length, 2);
+    assert.equal(insertedFindings[1]?.version, 2);
+    assert.equal(insertedFindings[1]?.title, "Minor pacing lull");
+    assert.equal(insertedFindings[1]?.severity, "informational");
+    assert.equal(insertedFindings[1]?.status, "open");
+    assert.equal(insertedFindings[1]?.affectedEpisodes, null);
+    assert.equal(insertedFindings[1]?.totalEligibleEpisodes, null);
+    assert.deepEqual(
+      insertedFindings[1]?.evidenceRefs.map((reference) => reference.id),
+      ["evt-real-1", "evt-real-2", "evt-real-3"]
+    );
+
+    const submitRepeatedWitness = (eventId: string) =>
+      (server as any)._registeredTools["playtest.submitReview"].handler({
+        episodeId: "ep-1",
+        chronologicalSummary: "Concurrent repeated witness.",
+        status: "hypothesis",
+        evidenceRefs: [{ kind: "episode", id: "ep-1" }],
+        rubricHash: "f".repeat(64),
+        findings: [
+          {
+            identity: {
+              mechanicKey: "movement-collision",
+              failureSignature: { action: "jump", witness: "collision-on-jump" }
+            },
+            severity: "minor",
+            evidenceStatus: "hypothesis",
+            title: "Minor pacing lull",
+            description: "Lull in corridor",
+            evidenceRefs: [{ kind: "event", id: eventId }]
+          }
+        ]
+      });
+    const concurrentReviews = await Promise.all([
+      submitRepeatedWitness("evt-real-1"),
+      submitRepeatedWitness("evt-real-2")
+    ]);
+    assert.ok(
+      concurrentReviews.every(
+        (result: { isError?: boolean }) => !result.isError
+      )
+    );
+    assert.deepEqual(
+      insertedFindings.slice(-2).map((finding) => finding.version),
+      [3, 4]
+    );
   } finally {
     rmSync(tmpRoot, { recursive: true, force: true });
   }
@@ -2245,6 +2482,7 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
           scenarioId: "tutorial",
           configHash: "b".repeat(64),
           seed: "123",
+          rngInitialStateHash: null,
           rngAlgorithm: null,
           rngVersion: null,
           policyId: "random",
@@ -2302,7 +2540,7 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
             notes: ""
           }
         ],
-        findingIds: episodeId === "ep-dummy-1" ? ["find-2"] : [],
+        findingIds: [],
         assignedAt: new Date().toISOString(),
         startedAt: new Date().toISOString(),
         completedAt: new Date().toISOString(),
@@ -2318,8 +2556,27 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
     const dummyEpisode = makeEpisode("ep-dummy-1", 42);
     const missingMetricEpisode = makeEpisode("ep-dummy-2", null);
 
+    const dummyFindingIdentity = buildPlaytestFindingIdentity({
+      workspaceId: WORKSPACE_ID,
+      mechanicKey: "collision-stuck",
+      failureSignature: {
+        events: ["collision"],
+        action: "advance",
+        witness: "witness-collision-stuck"
+      },
+      scope: {
+        scenarioFamily: "tutorial-family",
+        phase: "phase-1",
+        modality: "headless"
+      }
+    });
+    const dummyFindingFingerprint = createHash("sha256")
+      .update(playtestFindingIdentityHashInput(dummyFindingIdentity))
+      .digest("hex");
     const dummyFinding: PlaytestFinding = {
-      findingId: "find-2",
+      identity: dummyFindingIdentity,
+      fingerprint: dummyFindingFingerprint,
+      findingId: "finding-" + dummyFindingFingerprint,
       version: 1,
       title: "Major collision defect",
       description: "Collision stuck on barrier",
@@ -2419,6 +2676,7 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
       getLatestReviewForEpisode: async () => null,
       getFinding: async (_ws, findingId) =>
         findingId === dummyFinding.findingId ? dummyFinding : null,
+      getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
       getLatestComparison: async (_ws, comparisonId) =>
         comparisonId === storedComparison.comparisonId
@@ -2576,7 +2834,7 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
     assert.equal(findingsRes.isError, undefined);
     const findingsParsed = JSON.parse(findingsRes.content[0].text);
     assert.equal(findingsParsed.total, 1);
-    assert.equal(findingsParsed.rows[0].findingId, "find-2");
+    assert.equal(findingsParsed.rows[0].findingId, dummyFinding.findingId);
   } finally {
     rmSync(tmpRoot, { recursive: true, force: true });
   }

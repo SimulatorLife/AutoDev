@@ -9,6 +9,9 @@
  */
 
 import type { ClickHouseParamValue } from "../clickhouse/clickhouse-client.ts";
+
+const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
+
 import type { PlaytestKeysetCursor } from "./cursor.ts";
 import type {
   PlaytestBatchFilter,
@@ -96,6 +99,18 @@ export function buildFindingWhereClause(
   const clauses = [...base.clauses];
   const params: Record<string, ClickHouseParamValue> = { ...base.params };
 
+  if (filter.fingerprint !== undefined) {
+    if (
+      typeof filter.fingerprint !== "string" ||
+      !SHA256_PATTERN.test(filter.fingerprint)
+    ) {
+      throw new TypeError(
+        "PlaytestFindingFilter.fingerprint must be a SHA-256 hexadecimal digest."
+      );
+    }
+    clauses.push("fingerprint = {fingerprint:String}");
+    params.fingerprint = filter.fingerprint;
+  }
   if (filter.severity !== undefined) {
     clauses.push("severity = {severity:String}");
     params.severity = filter.severity;

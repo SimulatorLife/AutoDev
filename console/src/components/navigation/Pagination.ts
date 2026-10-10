@@ -1,5 +1,7 @@
 import React from "react";
 
+import { NavigationLink } from "./NavigationLink.ts";
+
 /**
  * Page navigation for a bounded Console collection.
  *
@@ -14,10 +16,11 @@ import React from "react";
  * to reach the other 1,154. A count that reports more than the page holds is
  * only useful if something can act on it.
  *
- * Navigation is a pair of links, not a client-side control, for the reason the
- * rest of the Console is server-rendered: the page position is real query state,
- * so it stays bookmarkable, shareable, and reachable by the back button, and it
- * works with no JavaScript at all. There is no page-number strip, because the
+ * Navigation is a pair of server-addressable Next.js links: the page position
+ * remains real query state, bookmarkable, shareable, reachable by the back
+ * button, and still works without JavaScript. With the client active, Next.js
+ * performs an in-place route transition rather than reloading the document.
+ * There is no page-number strip, because the
  * set of pages is only known from the current offset and total and a strip
  * guessed from those two numbers would render page links the Runtime may refuse.
  *
@@ -116,7 +119,7 @@ export function Pagination({
   ): React.JSX.Element =>
     available
       ? React.createElement(
-          "a",
+          NavigationLink,
           { href: hrefForOffset(target), rel, className: LINK_CLASS },
           text
         )

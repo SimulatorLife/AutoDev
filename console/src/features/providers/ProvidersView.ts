@@ -1,8 +1,10 @@
 import type {
+  ControlApiLiveAgentCounts,
   ControlApiModelRecord,
   ControlApiModelsResponse,
   ControlApiProviderRecord,
-  ControlApiProvidersResponse
+  ControlApiProvidersResponse,
+  ControlApiRuntimeResponse
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
@@ -14,6 +16,8 @@ import {
   PageBody
 } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
+import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
@@ -33,6 +37,7 @@ import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
+import { liveAgentCount } from "../live-agent-count.ts";
 import { ModelToggle } from "./ModelToggle.ts";
 import {
   modelPath,
@@ -61,6 +66,7 @@ export type ProvidersModelsState =
 export interface ProvidersViewProps {
   readonly providers: ControlApiProvidersResponse;
   readonly models: ProvidersModelsState;
+  readonly runtime?: ControlApiRuntimeResponse | undefined;
   /** Raw `?tab=` value; unknown values fall back to the Providers tab. */
   readonly activeTab?: string | undefined;
   readonly controlFailed?: boolean | undefined;
@@ -72,7 +78,7 @@ function ProviderLink({
   readonly provider: string;
 }): React.JSX.Element {
   return React.createElement(
-    "a",
+    NavigationLink,
     {
       href: providerPath(provider),
       className: MONO_ID_LINK_CLASS,
@@ -83,7 +89,7 @@ function ProviderLink({
 }
 
 /**
- * The four columns of the Providers configuration table.
+ * The Providers configuration columns, including live provider counts.
  *
  * Role Enablement, Health, Credential, Available Models and Tier Priority are
  * gone: their facts are either folded into the single Status verdict or
@@ -91,7 +97,8 @@ function ProviderLink({
  * not a layout preference.
  */
 function providerColumns(
-  returnTo: string
+  returnTo: string,
+  liveAgents: ControlApiLiveAgentCounts | null | undefined
 ): ColumnDef<ControlApiProviderRecord>[] {
   return [
     {
@@ -119,6 +126,20 @@ function providerColumns(
       // environment variable ("Missing LITELLM_API_KEY"), not the word Ready.
       weight: 210,
       cell: (provider) => React.createElement(ProviderStatusBadge, { provider })
+    },
+    {
+      id: "activeAgents",
+      header: "Active Agents",
+      weight: 118,
+      cell: (provider) =>
+        React.createElement(
+          "span",
+          {
+            className: "text-xs text-fg-secondary tabular-nums",
+            "data-live-agent-provider": provider.id
+          },
+          liveAgentCount(liveAgents, "byProvider", provider.id)
+        )
     },
     {
       id: "roles",
@@ -159,7 +180,10 @@ function providerColumns(
  * into Status and the row's own controls, but a model is still an item with its
  * own lifecycle, so it keeps a list of its own.
  */
-function modelColumns(returnTo: string): ColumnDef<ControlApiModelRecord>[] {
+function modelColumns(
+  returnTo: string,
+  liveAgents: ControlApiLiveAgentCounts | null | undefined
+): ColumnDef<ControlApiModelRecord>[] {
   return [
     {
       id: "model",
@@ -192,6 +216,24 @@ function modelColumns(returnTo: string): ColumnDef<ControlApiModelRecord>[] {
       header: "Provider",
       cell: (model) =>
         React.createElement(ProviderLink, { provider: model.provider })
+    },
+    {
+      id: "activeAgents",
+      header: "Active Agents",
+      weight: 112,
+      cell: (model) =>
+        React.createElement(
+          "span",
+          {
+            className: "text-xs text-fg-secondary tabular-nums",
+            "data-live-agent-model": model.id
+          },
+          liveAgentCount(
+            liveAgents,
+            "byModel",
+            `${model.provider}/${model.id}`
+          )
+        )
     },
     {
       id: "tiers",
@@ -297,9 +339,11 @@ function RoutingPriorityPanel({
 }
 
 function ProvidersTab({
-  providers
+  providers,
+  runtime
 }: {
   readonly providers: ControlApiProvidersResponse;
+  readonly runtime: ControlApiRuntimeResponse | undefined;
 }): React.JSX.Element {
   const records = providers.providers;
   const healthObserved = records.every((provider) => provider.health !== null);
@@ -317,7 +361,7 @@ function ProvidersTab({
     },
     React.createElement(
       StatGrid,
-      { columns: 3 },
+      { columns: 4 },
       React.createElement(StatCard, {
         title: "Ready",
         value: readyCount,
@@ -335,6 +379,17 @@ function ProvidersTab({
             ? records.filter((p) => p.health?.cooldown).length
             : NOT_OBSERVED_LABEL,
         subtitle: healthObserved ? "Live router evidence" : "No router evidence"
+      }),
+      React.createElement(StatCard, {
+        title: "Active Agent Instances",
+        value:
+          runtime?.liveAgents === undefined || runtime.liveAgents === null
+            ? NOT_OBSERVED_LABEL
+            : runtime.liveAgents.count,
+        subtitle:
+          runtime?.liveAgents === undefined || runtime.liveAgents === null
+            ? "No live activity source"
+            : "Runtime live sessions and subagents"
       })
     ),
     React.createElement(
@@ -347,7 +402,10 @@ function ProvidersTab({
       ),
       React.createElement<DataTableProps<ControlApiProviderRecord>>(DataTable, {
         data: records,
-        columns: providerColumns(providersPath("providers")),
+        columns: providerColumns(
+        providersPath("providers"),
+        runtime?.liveAgents
+      ),
         keyExtractor: (provider: ControlApiProviderRecord) => provider.id,
         emptyMessage: "No providers are configured."
       })
@@ -357,9 +415,11 @@ function ProvidersTab({
 }
 
 function ModelsTab({
-  models
+  models,
+  runtime
 }: {
   readonly models: ProvidersModelsState;
+  readonly runtime: ControlApiRuntimeResponse | undefined;
 }): React.JSX.Element {
   if (models.status === "unavailable") {
     return React.createElement(
@@ -392,7 +452,10 @@ function ModelsTab({
     ),
     React.createElement<DataTableProps<ControlApiModelRecord>>(DataTable, {
       data: models.data.models,
-      columns: modelColumns(providersPath("models")),
+      columns: modelColumns(
+        providersPath("models"),
+        runtime?.liveAgents
+      ),
       keyExtractor: (model: ControlApiModelRecord) => model.id,
       emptyMessage: "No models are configured."
     })
@@ -402,6 +465,7 @@ function ModelsTab({
 export function ProvidersView({
   providers,
   models,
+  runtime,
   activeTab,
   controlFailed
 }: ProvidersViewProps): React.JSX.Element {
@@ -409,6 +473,7 @@ export function ProvidersView({
   return React.createElement(
     PageBody,
     { feature: "providers" },
+    React.createElement(LiveCountRefresh),
     React.createElement(TabNav, {
       navLabel: "Providers views",
       basePath: PROVIDERS_PATH,
@@ -417,7 +482,7 @@ export function ProvidersView({
     }),
     controlFailed ? React.createElement(ControlFailureNotice) : null,
     tab === "models"
-      ? React.createElement(ModelsTab, { models })
-      : React.createElement(ProvidersTab, { providers })
+      ? React.createElement(ModelsTab, { models, runtime })
+      : React.createElement(ProvidersTab, { providers, runtime })
   );
 }

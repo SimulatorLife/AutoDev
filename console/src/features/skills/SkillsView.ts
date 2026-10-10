@@ -26,10 +26,13 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
+import { MONO_META_CLASS } from "../../components/ui/text-classes.ts";
 import {
-  type SkillAssignmentSaveOutcome,
-  SkillRoleAssignment
+  assignmentUnavailableReason,
+  SAVE_OUTCOME_MESSAGES,
+  type SkillAssignmentSaveOutcome
 } from "./SkillRoleAssignment.ts";
+import { SkillRoleAssignmentControl } from "./SkillRoleAssignmentControl.ts";
 
 /**
  * Skills resource view.
@@ -38,6 +41,11 @@ import {
  * skill is only that: configured and possibly eligible. Whether it was
  * exposed, selected, or used must come from runtime telemetry; until the OTel
  * skill exposure/use adapter exists, those values remain `Not observed`.
+ *
+ * The catalog table and role assignment controls are merged into one view:
+ * each row displays its identity and metadata alongside its assignment control.
+ * Checkbox changes submit immediately through the canonical FormNavigationOwner
+ * POST route with expectedRevision conflict protection.
  */
 
 export interface SkillsViewProps {
@@ -55,12 +63,6 @@ export interface SkillsViewProps {
   readonly validationIssues: readonly RuleSyncValidationIssue[];
   /**
    * Roles the execution contract declares, and its digest.
-   *
-   * Required rather than optional: the reason this view grew a write surface is
-   * that a skill promoted from a procedural memory arrived in the catalog
-   * assigned to nothing with no control anywhere on the page able to fix it. An
-   * optional pair here would let a later caller drop the assignment section
-   * without a compile error and reopen exactly that dead end.
    */
   readonly assignmentRoles: readonly string[];
   readonly executionContractRevision: string | null;
@@ -98,13 +100,18 @@ export function SkillsView({
         ? "RuleSync `.rulesync/skills/` was not observed."
         : "No skills configured in RuleSync `.rulesync/skills/`.";
 
+  const unavailable = assignmentUnavailableReason({
+    executionContractRevision,
+    assignmentRoles,
+    skills,
+    sourceValidity
+  });
+
   const columns: ColumnDef<SkillDefinition>[] = [
     {
       id: "name",
       header: "Skill Name",
-      weight: 373,
-      // The description below is prose that must wrap inside the column, so
-      // this cell opts out of the default single-line truncation.
+      weight: 320,
       align: "prose",
       cell: (skill) =>
         React.createElement(
@@ -114,9 +121,6 @@ export function SkillsView({
             "span",
             {
               className: "block font-mono font-semibold text-fg truncate",
-              // The skill name is the row's identity and the shortest thing
-              // that distinguishes one row from another, so the ellipsis has
-              // to stay recoverable.
               title: skill.name
             },
             skill.name
@@ -134,56 +138,38 @@ export function SkillsView({
     {
       id: "path",
       header: "Path",
-      // Gives the share the State column needs for its badge. A path can wrap
-      // between its segments and keep every one of them, so it is the cheaper
-      // place to take width than the skill name, which is the row's primary key.
       align: "path",
-      weight: 269,
+      weight: 240,
       cell: (skill) => React.createElement(PathText, { path: skill.path })
     },
     {
       id: "eligibleRoles",
       header: "Eligible Roles",
       align: "tokens",
+      weight: 360,
       cell: (skill) => {
         const item = eligibility.find((e) => e.skill === skill.name);
-        return chipList({
-          items: item?.roles ?? [],
-          emptyLabel:
-            item === undefined ? NOT_OBSERVED_LABEL : "No roles assigned",
-          testId: "skill-roles"
+        if (executionContractRevision === null || unavailable !== null) {
+          return chipList({
+            items: item?.roles ?? [],
+            emptyLabel:
+              item === undefined ? NOT_OBSERVED_LABEL : "No roles assigned",
+            testId: "skill-roles"
+          });
+        }
+        return React.createElement(SkillRoleAssignmentControl, {
+          skill,
+          roles: item?.roles ?? [],
+          assignmentRoles,
+          executionContractRevision,
+          isObserved: item !== undefined
         });
       }
     },
     {
       id: "status",
       header: "State",
-      // Sized for the badge. Declared no weight at all, so this column took the
-      // 100-unit default and clipped "Configured" at its last glyph.
-      //
-      // The badge needs 86px of text plus 32px of cell padding, and the table
-      // is at its 864px floor below that, so 131 is the share that fits it at
-      // 390px rather than at the width it was measured at. `StatusBadge` now
-      // truncates recoverably regardless, because a share of a container is not
-      // a width: this number is the difference between a badge that reads whole
-      // and one that reads "Configure…", not the difference between one that
-      // reads "Configure…" and one that reads nothing at all.
       weight: 146,
-      // Three states, because being in the catalog, being reachable, and our
-      // knowledge of whether it is reachable are three different facts. This cell
-      // used to ignore the row entirely and badge every skill "Configured", so a
-      // skill promoted from a procedural memory — which lands in the catalog with
-      // no role assignment — sat beside "No roles assigned" under a green badge
-      // saying it was fine. It is not fine: no agent can reach it, and the
-      // promotion that created it reported success.
-      //
-      // The assignment section below the table is what makes "Not assigned" a
-      // problem the operator can do something about rather than a row they can
-      // only read.
-      //
-      // An eligibility entry we never resolved stays "Not observed". Collapsing
-      // it into "Not assigned" would claim we checked and found nothing, which is
-      // the same confusion the roles column already refuses.
       cell: (skill) => {
         const item = eligibility.find((e) => e.skill === skill.name);
         if (item === undefined) {
@@ -302,8 +288,12 @@ export function SkillsView({
         )
       : null,
     React.createElement(
-      "div",
-      null,
+      "section",
+      {
+        className: "flex flex-col gap-3",
+        "data-skill-assignment-revision": executionContractRevision ?? "none",
+        "data-skill-assignment-roles": assignmentRoles.length
+      },
       React.createElement(
         "h2",
         {
@@ -311,29 +301,43 @@ export function SkillsView({
         },
         "Agent Skills"
       ),
+      saveOutcome === undefined
+        ? null
+        : React.createElement(
+            "p",
+            {
+              className: CALLOUT_ERROR_CLASS,
+              role: "alert",
+              "data-testid": "skill-assignment-failure",
+              "data-save-outcome": saveOutcome
+            },
+            SAVE_OUTCOME_MESSAGES[saveOutcome]
+          ),
+      unavailable !== null
+        ? React.createElement(
+            "p",
+            { className: CALLOUT_WARNING_CLASS, role: "status" },
+            unavailable
+          )
+        : null,
       React.createElement<DataTableProps<SkillDefinition>>(DataTable, {
         data: skills,
         columns,
         keyExtractor: (s: SkillDefinition) => s.name,
         emptyMessage
-      })
+      }),
+      unavailable === null && skills.length > 0
+        ? React.createElement(
+            "p",
+            { className: MONO_META_CLASS },
+            "Checked boxes replace the whole set, so clearing the last one unassigns the skill. Roles come from the execution contract."
+          )
+        : null
     ),
-    // The catalog above is a projection and always was; this is what makes the
-    // page something more than a report. A skill promoted from a procedural
-    // memory lands assigned to nothing, and until this existed there was no
-    // control anywhere that could reach the execution contract and change that.
     React.createElement(SourceValidationIssues, {
       issues: validationIssues,
       testId: "skill-catalog-validation-issues",
       subject: "Skill catalog"
-    }),
-    React.createElement(SkillRoleAssignment, {
-      skills,
-      eligibility,
-      assignmentRoles,
-      executionContractRevision,
-      sourceValidity,
-      ...(saveOutcome === undefined ? {} : { saveOutcome })
     })
   );
 }

@@ -2,7 +2,8 @@ import type {
   AgentDefinition,
   ControlApiAgentDetailResponse,
   ControlApiProvidersResponse,
-  ControlApiRoutingResponse
+  ControlApiRoutingResponse,
+  ControlApiRuntimeResponse
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
@@ -15,6 +16,7 @@ import {
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.ts";
 import {
   DetailGrid,
   DetailValue,
@@ -27,6 +29,7 @@ import {
 } from "../../components/status/StatusBadge.ts";
 import { chipList } from "../../components/tables/Chips.ts";
 import { SECTION_LABEL_CLASS } from "../../components/ui/text-classes.ts";
+import { liveAgentCount } from "../live-agent-count.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
 
 export interface AgentDetailViewProps {
@@ -46,13 +49,15 @@ export interface AgentDetailViewProps {
   readonly reconciliation: ControlApiAgentDetailResponse["reconciliation"];
   readonly routing?: ControlApiRoutingResponse | undefined;
   readonly providers?: ControlApiProvidersResponse | undefined;
+  readonly runtime?: ControlApiRuntimeResponse | undefined;
 }
 
 export function AgentDetailView({
   agent,
   reconciliation,
   routing,
-  providers
+  providers,
+  runtime
 }: AgentDetailViewProps): React.JSX.Element {
   const readiness =
     agent.status === "ready" || agent.status === "unavailable"
@@ -66,6 +71,7 @@ export function AgentDetailView({
   return React.createElement(
     PageBody,
     { feature: "agent-detail" },
+    React.createElement(LiveCountRefresh),
     React.createElement(
       "section",
       {
@@ -138,7 +144,7 @@ export function AgentDetailView({
       ),
       React.createElement(
         "div",
-        { className: gridRowClass(2, "gap-4") },
+        { className: gridRowClass(3, "gap-4") },
         React.createElement(StatusValue, {
           label: "Readiness",
           status: readiness
@@ -146,7 +152,24 @@ export function AgentDetailView({
         React.createElement(StatusValue, {
           label: "Convergence",
           status: agent.convergence
-        })
+        }),
+        React.createElement(
+          "div",
+          {
+            className: "flex flex-col gap-2",
+            "data-live-agent-role": agent.role
+          },
+          React.createElement(
+            "dt",
+            { className: SECTION_LABEL_CLASS },
+            "Active instances"
+          ),
+          React.createElement(
+            "dd",
+            { className: "text-sm font-semibold tabular-nums text-fg" },
+            liveAgentCount(runtime?.liveAgents, "byRole", agent.role)
+          )
+        )
       )
     ),
     React.createElement(

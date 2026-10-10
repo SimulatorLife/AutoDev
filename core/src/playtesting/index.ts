@@ -8,11 +8,16 @@
  */
 
 export * from "./artifacts.ts";
+export * from "./benchmark.ts";
 export * from "./compatibility.ts";
 export * from "./comparison.ts";
+export * from "./cohort-standardization.ts";
 export * from "./configuration.ts";
+export * from "./experiment.ts";
+export * from "./diagnostic-corpus.ts";
 export * from "./evaluators.ts";
 export * from "./evidence.ts";
+export * from "./finding-identity.ts";
 export * from "./human-study-aggregation.ts";
 export * from "./human-study-import.ts";
 export * from "./observability.ts";

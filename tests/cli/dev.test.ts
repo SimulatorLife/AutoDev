@@ -70,6 +70,31 @@ test("package.json declares dev and dev:console scripts", () => {
   );
 });
 
+test("OpenLIT reconciliation fingerprints mounted config for service restarts", () => {
+  const compose = readFileSync(
+    join(repoRoot, "config", "openlit", "docker-compose.yml"),
+    "utf8"
+  );
+  const runner = readFileSync(
+    join(repoRoot, "scripts", "openlit", "up.sh"),
+    "utf8"
+  );
+  const [clickhouseService, openlitService = ""] = compose.split("  openlit:");
+
+  assert.match(runner, /AUTODEV_OPENLIT_CLICKHOUSE_CONFIG_HASH=.*fingerprint_files/u);
+  assert.match(runner, /AUTODEV_OPENLIT_OTEL_CONFIG_HASH=.*fingerprint_files/u);
+  assert.match(runner, /clickhouse-config\.xml[\s\S]*clickhouse-init\.sh/u);
+  assert.match(runner, /otel-collector-config\.yaml/u);
+  assert.match(
+    clickhouseService ?? "",
+    /io\.autodev\.openlit\.clickhouse-config-sha256: \$\{AUTODEV_OPENLIT_CLICKHOUSE_CONFIG_HASH/u
+  );
+  assert.match(
+    openlitService,
+    /io\.autodev\.openlit\.collector-config-sha256: \$\{AUTODEV_OPENLIT_OTEL_CONFIG_HASH/u
+  );
+});
+
 test("isPortListening resolves false on closed port and true on listening port", async () => {
   const closed = await isPortListening(59_981, "127.0.0.1", 100);
   assert.equal(closed, false);
@@ -131,7 +156,7 @@ test("ensureConsoleSecrets synchronizes only a temporary Console environment", (
   }
 });
 
-test("already-ready skips Docker/up", async () => {
+test("already-ready services still reconcile the current image and config", async () => {
   const { dependencies, commands, loggedMessages } = createFakeDependencies({
     isPortListening: async (port) => {
       if (port === 8123) return true;
@@ -147,8 +172,13 @@ test("already-ready skips Docker/up", async () => {
   assert.equal(result.routerActive, true);
   assert.equal(
     commands.length,
-    0,
-    "No commands should run when services are already ready"
+    2,
+    "Docker readiness and the idempotent Compose reconciliation still run"
+  );
+  assert.deepEqual(commands[0]?.args, ["info"]);
+  assert.deepEqual(commands[1]?.args, ["/mock/repo/scripts/openlit/up.sh"]);
+  assert.ok(
+    loggedMessages.some((msg) => msg.includes("Reconciling the OpenLIT"))
   );
   assert.ok(
     loggedMessages.some((msg) =>

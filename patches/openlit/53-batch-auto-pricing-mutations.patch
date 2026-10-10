@@ -1,0 +1,232 @@
+diff --git a/src/client/src/lib/platform/pricing/index.ts b/src/client/src/lib/platform/pricing/index.ts
+--- a/src/client/src/lib/platform/pricing/index.ts
++++ b/src/client/src/lib/platform/pricing/index.ts
+@@ -23,6 +23,7 @@
+ } from "./chat-cost";
+ 
+ const COST_KEY = getTraceMappingKeyFullPath("cost") as string; // gen_ai.usage.cost
++const AUTO_PRICING_MUTATION_BATCH_SIZE = 200;
+ const MODEL_KEY = getTraceMappingKeyFullPath("model") as string; // gen_ai.request.model
+ const PROVIDER_KEYS = getTraceMappingKeyFullPaths("provider") as string[]; // gen_ai.provider.name, gen_ai.system
+ const TYPE_KEY = getTraceMappingKeyFullPath("type") as string; // gen_ai.operation.name
+@@ -43,6 +44,12 @@
+ 	SpanId: string;
+ 	Timestamp: string;
+ 	SpanAttributes: Record<string, string>;
++}
++
++interface TraceCostUpdate {
++	spanId: string;
++	timestamp: string;
++	cost: number;
+ }
+ 
+ function getAttr(trace: TraceRow, key: string): string {
+@@ -157,6 +164,49 @@
+ 		ALTER TABLE ${OTEL_TRACES_TABLE_NAME}
+ 		UPDATE SpanAttributes = mapUpdate(SpanAttributes, map('${COST_KEY}', '${costString}'))
+ 		WHERE SpanId = '${sanitizedSpanId}'
++	`;
++
++	const { err } = await dataCollector({ query }, "exec", databaseConfigId);
++	return { err: err as string | undefined };
++}
++
++/**
++ * Persist a bounded set of computed costs in one ClickHouse mutation.
++ *
++ * MergeTree mutations rewrite immutable parts. The auto-pricing backfill must
++ * therefore avoid one ALTER UPDATE per span and limit each mutation to the
++ * affected time partitions.
++ */
++async function writeCostsToTraces(
++	updates: readonly TraceCostUpdate[],
++	databaseConfigId: string
++): Promise<{ err?: string }> {
++	if (updates.length === 0) return {};
++
++	const sanitized = updates.map(({ spanId, timestamp, cost }) => {
++		const date = timestamp.slice(0, 10);
++		if (!/^\d{4}-\d{2}-\d{2}$/u.test(date)) {
++			throw new Error("Trace timestamp did not contain a valid partition date");
++		}
++		return {
++			spanId: Sanitizer.sanitizeValue(spanId),
++			date,
++			cost: cost.toFixed(10),
++		};
++	});
++	const spanIds = sanitized.map(({ spanId }) => `'${spanId}'`).join(", ");
++	const costs = sanitized.map(({ cost }) => `'${cost}'`).join(", ");
++	const dates = Array.from(new Set(sanitized.map(({ date }) => date)))
++		.map((date) => `toDate('${date}')`)
++		.join(", ");
++	const query = `
++		ALTER TABLE ${OTEL_TRACES_TABLE_NAME}
++		UPDATE SpanAttributes = mapUpdate(
++			SpanAttributes,
++			map('${COST_KEY}', transform(SpanId, [${spanIds}], [${costs}], ''))
++		)
++		WHERE SpanId IN (${spanIds})
++			AND toDate(Timestamp) IN (${dates})
+ 	`;
+ 
+ 	const { err } = await dataCollector({ query }, "exec", databaseConfigId);
+@@ -399,8 +449,9 @@
+ 	let errorCount = 0;
+ 	let updatedCount = 0;
+ 	const errorObject: Record<string, string> = {};
+-
+-	// Run sequentially to avoid hammering ClickHouse with many ALTER mutations
++	const updates: TraceCostUpdate[] = [];
++
++	// Compute per-span prices, then persist them through bounded mutations.
+ 	for (const trace of traces) {
+ 		try {
+ 			const { cost } = await computeCostForTrace(trace, dbConfig.id);
+@@ -411,20 +462,34 @@
+ 			if (!persistCosts) {
+ 				continue;
+ 			}
+-			const { err: writeErr } = await writeCostToTrace(
+-				trace.SpanId,
++			updates.push({
++				spanId: trace.SpanId,
++				timestamp: trace.Timestamp,
+ 				cost,
+-				dbConfig.id
+-			);
+-			if (writeErr) {
+-				errorCount++;
+-				errorObject[trace.SpanId] = writeErr;
+-			} else {
+-				updatedCount++;
+-			}
++			});
+ 		} catch (e: any) {
+ 			errorCount++;
+ 			errorObject[trace.SpanId] = e.message || String(e);
++		}
++	}
++
++	for (
++		let offset = 0;
++		offset < updates.length;
++		offset += AUTO_PRICING_MUTATION_BATCH_SIZE
++	) {
++		const batch = updates.slice(
++			offset,
++			offset + AUTO_PRICING_MUTATION_BATCH_SIZE
++		);
++		try {
++			const { err: writeErr } = await writeCostsToTraces(batch, dbConfig.id);
++			if (writeErr) throw new Error(writeErr);
++			updatedCount += batch.length;
++		} catch (e: any) {
++			const reason = e.message || String(e);
++			errorCount += batch.length;
++			for (const update of batch) errorObject[update.spanId] = reason;
+ 		}
+ 	}
+ 
+diff --git a/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts b/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
+--- a/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
++++ b/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
+@@ -455,6 +455,88 @@
+ });
+ 
+ describe('autoUpdatePricing', () => {
++  it('persists many priced spans with one bounded mutation', async () => {
++    (getPricingConfigById as jest.Mock).mockResolvedValue({ id: 'pc-1', databaseConfigId: 'db-1' });
++    (asaw as jest.Mock).mockResolvedValue([null, { id: 'db-1' }]);
++    const provider = 'provider-fixture';
++    const model = 'model-fixture';
++    const spans = Array.from({ length: 3 }, (_, index) => ({
++      SpanId: `span-${index}`,
++      Timestamp: '2026-01-01 00:00:00.000000000',
++      SpanAttributes: {
++        'gen_ai.provider.name': provider,
++        'gen_ai.request.model': model,
++        'gen_ai.usage.input_tokens': String(100 * (index + 1)),
++        'gen_ai.usage.output_tokens': '200',
++      },
++    }));
++    (dataCollector as jest.Mock)
++      .mockResolvedValueOnce({ data: spans })
++      .mockResolvedValueOnce({ err: null });
++    (ProviderRegistry.getModel as jest.Mock).mockResolvedValue({
++      id: model, inputPricePerMToken: 2.5, outputPricePerMToken: 10.0,
++    });
++
++    const result = await autoUpdatePricing({ pricingConfigId: 'pc-1', cronId: 'cron-1' });
++
++    expect(result.success).toBe(true);
++    const writes = (dataCollector as jest.Mock).mock.calls.filter(([, mode]) => mode === 'exec');
++    expect(writes).toHaveLength(1);
++    const query = writes[0][0].query as string;
++    for (const span of spans) expect(query).toContain(`'${span.SpanId}'`);
++    expect(query).toContain('transform(SpanId');
++    expect(query).toContain("toDate(Timestamp) IN (toDate('2026-01-01'))");
++    expect(insertCronLog).toHaveBeenCalledWith(
++      expect.objectContaining({ meta: expect.objectContaining({ totalUpdated: 3 }) }),
++      'db-1'
++    );
++  });
++
++  it('caps every auto-pricing mutation at the configured batch size', async () => {
++    (getPricingConfigById as jest.Mock).mockResolvedValue({ id: 'pc-1', databaseConfigId: 'db-1' });
++    (asaw as jest.Mock).mockResolvedValue([null, { id: 'db-1' }]);
++    const provider = 'provider-fixture';
++    const model = 'model-fixture';
++    const spans = Array.from({ length: 201 }, (_, index) => ({
++      SpanId: `span-${index}`,
++      Timestamp: '2026-01-01 00:00:00.000000000',
++      SpanAttributes: {
++        'gen_ai.provider.name': provider,
++        'gen_ai.request.model': model,
++        'gen_ai.usage.input_tokens': '100',
++        'gen_ai.usage.output_tokens': '200',
++      },
++    }));
++    (dataCollector as jest.Mock)
++      .mockResolvedValueOnce({ data: spans })
++      .mockResolvedValue({ err: null });
++    (ProviderRegistry.getModel as jest.Mock).mockResolvedValue({
++      id: model, inputPricePerMToken: 2.5, outputPricePerMToken: 10.0,
++    });
++
++    const result = await autoUpdatePricing({ pricingConfigId: 'pc-1', cronId: 'cron-1' });
++
++    expect(result.success).toBe(true);
++    const writes = (dataCollector as jest.Mock).mock.calls
++      .filter(([, mode]) => mode === 'exec')
++      .map(([params]) => params.query as string);
++    expect(writes).toHaveLength(2);
++    const spanIdBatches = writes.map((query) =>
++      [...query.matchAll(/SpanId IN \(([^)]*)\)/gu)][0]?.[1]?.match(/'[^']+'/gu)?.length ?? 0
++    );
++    expect(spanIdBatches).toEqual([200, 1]);
++    const writtenSpanIds = writes.flatMap((query) =>
++      [...query.matchAll(/SpanId IN \(([^)]*)\)/gu)][0]?.[1]
++        ?.match(/'([^']+)'/gu)
++        ?.map((spanId) => spanId.slice(1, -1)) ?? []
++    );
++    expect(new Set(writtenSpanIds)).toEqual(new Set(spans.map(({ SpanId }) => SpanId)));
++    expect(insertCronLog).toHaveBeenCalledWith(
++      expect.objectContaining({ meta: expect.objectContaining({ totalUpdated: 201 }) }),
++      'db-1'
++    );
++  });
++
+   it('processes traces and writes costs', async () => {
+     (getPricingConfigById as jest.Mock).mockResolvedValue({
+       id: 'pc-1',
+@@ -593,7 +675,7 @@
+     );
+   });
+ 
+-  it('counts errors when writeCostToTrace fails', async () => {
++  it('counts every span as failed when its batch mutation fails', async () => {
+     (getPricingConfigById as jest.Mock).mockResolvedValue({
+       id: 'pc-1',
+       databaseConfigId: 'db-1',

@@ -7,6 +7,7 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import {
   NOT_OBSERVED_STATUS,
@@ -87,7 +88,7 @@ export function WorkspacesView({
       // recover it; the two halves are exactly the break points it wants.
       cell: (ws) =>
         React.createElement(
-          "a",
+          NavigationLink,
           {
             href: workspacePath(ws.id),
             className: ENTITY_LINK_CLASS,
@@ -131,7 +132,7 @@ export function WorkspacesView({
             ? "unavailable"
             : workspaceApprovalStatus(approval);
         return React.createElement(
-          "a",
+          NavigationLink,
           {
             href: workspacePath(ws.id),
             "aria-label": `Open playtesting approval for ${ws.id}`

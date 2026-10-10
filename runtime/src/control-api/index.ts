@@ -13,6 +13,7 @@ import {
   type ControlApiEvaluationsResponse,
   type ControlApiGithubResponse,
   type ControlApiHooksResponse,
+  type ControlApiLiveAgentCounts,
   type ControlApiMcpsResponse,
   type ControlApiModelPatchResponse,
   type ControlApiModelsResponse,
@@ -74,6 +75,10 @@ import {
   RuleSyncRepository,
   ToolCatalogAdapter
 } from "@simulatorlife/autodev-data";
+import {
+  getDefaultRestrictedHumanResponseRepository,
+  type RestrictedHumanResponseRepository
+} from "@simulatorlife/autodev-data/playtesting";
 import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
@@ -106,15 +111,11 @@ import {
   handlePlaytestingControlApiRequest,
   type PlaytestingReadRepository
 } from "./playtesting.ts";
-import { handlePlaytestingRunControlRequest } from "./playtesting-run-control.ts";
 import {
   handlePlaytestingHumanStudyControlApiRequest,
   type PlaytestingHumanStudyRepository
 } from "./playtesting-human-studies.ts";
-import {
-  getDefaultRestrictedHumanResponseRepository,
-  type RestrictedHumanResponseRepository
-} from "@simulatorlife/autodev-data/playtesting";
+import { handlePlaytestingRunControlRequest } from "./playtesting-run-control.ts";
 import { handleWorkspacePlaytestingApprovalRequest } from "./workspace-playtesting.ts";
 
 export const CONTROL_API_BASE = "/control";
@@ -449,7 +450,13 @@ export type ControlApiProviderHealthSource = (
   now: number
 ) => Readonly<Record<string, ControlApiProviderHealth>>;
 
+/** Canonical Runtime activity source for the read-only live-count projection. */
+export type ControlApiLiveAgentCountsSource = (
+  now: number
+) => ControlApiLiveAgentCounts;
+
 let providerHealthSource: ControlApiProviderHealthSource | null = null;
+let liveAgentCountsSource: ControlApiLiveAgentCountsSource | null = null;
 
 /**
  * The router registers its live per-provider evidence here. Without a
@@ -460,6 +467,16 @@ export function setControlApiProviderHealthSource(
   source: ControlApiProviderHealthSource | null
 ): void {
   providerHealthSource = source;
+}
+
+/**
+ * The router registers its live activity projection here. A standalone Control
+ * API has no live evidence and reports `null` rather than an observed zero.
+ */
+export function setControlApiLiveAgentCountsSource(
+  source: ControlApiLiveAgentCountsSource | null
+): void {
+  liveAgentCountsSource = source;
 }
 
 function providerTierPriorities(
@@ -990,11 +1007,12 @@ function skillsView(
 function runtimeView(now: number): Record<string, unknown> {
   const runtime = getDefaultRouterLifecycle();
   return {
-    schema: "autodev-control-runtime-v1",
+    schema: "autodev-control-runtime-v2",
     routerInstanceId: ROUTER_INSTANCE_ID,
     lifecycle: runtime.getLifecycleStatus(),
     concurrency: getDefaultConcurrencyManager().concurrencyStatus(now),
-    inFlightRequestCount: runtime.activeRequestCount
+    inFlightRequestCount: runtime.activeRequestCount,
+    liveAgents: liveAgentCountsSource?.(now) ?? null
   } satisfies ControlApiRuntimeResponse;
 }
 

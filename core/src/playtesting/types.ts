@@ -15,6 +15,7 @@
  */
 
 import type { AgentRole } from "../agents/types.ts";
+import type { PlaytestFindingIdentity } from "./finding-identity.ts";
 
 /** Current Core schema version for the playtesting artifact family. */
 export const PLAYTESTS_SCHEMA_VERSION = 1 as const;
@@ -552,6 +553,10 @@ export interface PlaytestComparison {
 
 /** A finding is a testable, evidence-linked design or defect claim. */
 export interface PlaytestFinding {
+  /** Stable workspace/game/mechanic identity shared across builds and policies. */
+  readonly identity: PlaytestFindingIdentity;
+  /** SHA-256 of `identity`; Runtime generates it and Data verifies it. */
+  readonly fingerprint: string;
   readonly findingId: string;
   readonly version: number;
   readonly title: string;
@@ -561,10 +566,10 @@ export interface PlaytestFinding {
   readonly verificationStage: PlaytestVerificationStage;
   readonly evidenceStatus:
     "verified" | "corroborated" | "hypothesis" | "not observed";
-  readonly affectedEpisodes: number;
-  readonly totalEligibleEpisodes: number;
-  readonly affectedOpportunities: number;
-  readonly totalEligibleOpportunities: number;
+  readonly affectedEpisodes: number | null;
+  readonly totalEligibleEpisodes: number | null;
+  readonly affectedOpportunities: number | null;
+  readonly totalEligibleOpportunities: number | null;
   readonly affectedCohorts: readonly string[];
   readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
   readonly experimentIds: readonly string[];

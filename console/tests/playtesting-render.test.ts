@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
+import {
+  buildPlaytestFindingIdentity,
+  playtestFindingIdentityHashInput
+} from "@simulatorlife/autodev-core";
 import type {
   ControlApiPlaytestingEpisodeDetailResponse,
   ControlApiPlaytestingHumanValidationResponse,
@@ -40,6 +45,7 @@ function episode(): PlaytestEpisode {
       scenarioId: "tutorial",
       configHash: "config-hash",
       seed: "seed-17",
+      rngInitialStateHash: "b".repeat(64),
       rngAlgorithm: "fixture-rng",
       rngVersion: "1",
       policyId: "weak-bot",
@@ -129,8 +135,27 @@ test("Playtesting list view uses accessible links and explicit empty/unavailable
 });
 
 test("finding witness links open the exact cited step while execution and outcome remain distinct", () => {
+  const identity = buildPlaytestFindingIdentity({
+    workspaceId: WORKSPACE,
+    mechanicKey: "action-execution",
+    failureSignature: {
+      events: ["legal-action-rejected"],
+      action: "advance",
+      witness: "tutorial-step-2"
+    },
+    scope: {
+      scenarioFamily: "tutorial",
+      phase: "tutorial",
+      modality: "headless"
+    }
+  });
+  const fingerprint = createHash("sha256")
+    .update(playtestFindingIdentityHashInput(identity))
+    .digest("hex");
   const finding: PlaytestFinding = {
-    findingId: "finding-1",
+    identity,
+    fingerprint,
+    findingId: "finding-" + fingerprint,
     version: 1,
     title: "A legal choice is rejected",
     description: "Synthetic fixture only.",
@@ -164,6 +189,26 @@ test("finding witness links open the exact cited step while execution and outcom
   assert.match(html, /episode-17/iu);
   assert.match(html, /step=2/u);
   assert.match(html, /Episodes affected/u);
+  const unknownFrequencyHtml = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: scope({ view: "findings", severity: "major" }),
+      workspaces: [workspace],
+      list: {
+        resource: "findings",
+        rows: [{
+          ...finding,
+          affectedEpisodes: null,
+          totalEligibleEpisodes: null,
+          affectedOpportunities: null,
+          totalEligibleOpportunities: null
+        }],
+        total: 1,
+        nextCursor: null
+      }
+    })
+  );
+  assert.match(unknownFrequencyHtml, /Not observed/u);
+  assert.doesNotMatch(unknownFrequencyHtml, /null \/ null/u);
 });
 
 test("inspector renders only recorded structured evidence and labels missing frames and review", () => {

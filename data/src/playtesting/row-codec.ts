@@ -1,6 +1,11 @@
 /** Private projection codecs; public artifact contracts remain Core-owned. */
 
+import { createHash } from "node:crypto";
+
 import {
+  assertPlaytestBenchmark,
+  assertPlaytestExperiment,
+  isPlaytestFindingId,
   type HumanPlaytestStudy,
   type PlaytestBatch,
   type PlaytestBenchmark,
@@ -14,6 +19,10 @@ import {
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
+  playtestBenchmarkHashInput,
+  playtestExperimentHashInput,
+  playtestFindingIdentityHashInput,
+  playtestFindingIdFromFingerprint,
   type PlaytestSessionReview
 } from "@simulatorlife/autodev-core";
 
@@ -71,14 +80,15 @@ export interface PlaytestIndexedFindingRow {
   readonly workspace_id: string;
   readonly finding_id: string;
   readonly version: number;
+  readonly fingerprint: string;
   readonly severity: string;
   readonly status: string;
   readonly verification_stage: string;
   readonly evidence_status: string;
-  readonly affected_episodes: number;
-  readonly total_eligible_episodes: number;
-  readonly affected_opportunities: number;
-  readonly total_eligible_opportunities: number;
+  readonly affected_episodes: number | null;
+  readonly total_eligible_episodes: number | null;
+  readonly affected_opportunities: number | null;
+  readonly total_eligible_opportunities: number | null;
   readonly created_at: string;
   readonly payload_json: string;
 }
@@ -266,14 +276,87 @@ export function encodeEpisode(
   };
 }
 
+const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
+
+/**
+ * Recompute the SHA-256 fingerprint Runtime promises to set on every
+ * persisted finding. Data enforces it on the way in and on the way out so
+ * a tampered payload, a stale import, or a row produced by a buggy
+ * writer cannot reach a reader claiming a fingerprint Runtime never agreed
+ * to.
+ */
+function assertFindingFingerprint(artifact: PlaytestFinding): string {
+  const expected = createHash("sha256")
+    .update(playtestFindingIdentityHashInput(artifact.identity))
+    .digest("hex");
+  if (!SHA256_PATTERN.test(artifact.fingerprint)) {
+    throw new TypeError(
+      "PlaytestFinding.fingerprint must be a SHA-256 hexadecimal digest."
+    );
+  }
+  if (artifact.fingerprint !== expected) {
+    throw new TypeError(
+      "PlaytestFinding.fingerprint does not match SHA-256(canonical identity)."
+    );
+  }
+  return expected;
+}
+
+/** Validate optional finding counts without treating unknown as zero. */
+function assertFindingFrequency(artifact: PlaytestFinding): void {
+  const values = [
+    artifact.affectedEpisodes,
+    artifact.totalEligibleEpisodes,
+    artifact.affectedOpportunities,
+    artifact.totalEligibleOpportunities
+  ];
+  if (values.some((value) => value !== null && (!Number.isSafeInteger(value) || value < 0))) {
+    throw new TypeError("PlaytestFinding frequency counts must be null or non-negative safe integers.");
+  }
+  if (
+    (artifact.affectedEpisodes !== null &&
+      artifact.totalEligibleEpisodes !== null &&
+      artifact.affectedEpisodes > artifact.totalEligibleEpisodes) ||
+    (artifact.affectedOpportunities !== null &&
+      artifact.totalEligibleOpportunities !== null &&
+      artifact.affectedOpportunities > artifact.totalEligibleOpportunities)
+  ) {
+    throw new TypeError("PlaytestFinding affected counts cannot exceed eligible denominators.");
+  }
+}
+
+/** Verify a finding's stable id is derivable from its full fingerprint. */
+function assertStableFindingId(artifact: PlaytestFinding): void {
+  const expected = playtestFindingIdFromFingerprint(artifact.fingerprint);
+  if (artifact.findingId !== expected) {
+    throw new TypeError(
+      `PlaytestFinding.findingId must be the canonical full-fingerprint ID; expected "${expected}".`
+    );
+  }
+}
+
 export function encodeFinding(
   workspaceId: string,
   artifact: PlaytestFinding
 ): PlaytestIndexedFindingRow {
+  if (workspaceId !== artifact.identity.workspaceId) {
+    throw new TypeError(
+      "PlaytestFinding identity workspaceId must match its indexed workspace."
+    );
+  }
+  const fingerprint = assertFindingFingerprint(artifact);
+  assertStableFindingId(artifact);
+  assertFindingFrequency(artifact);
+  if (artifact.version < 1 || !Number.isSafeInteger(artifact.version)) {
+    throw new TypeError(
+      "PlaytestFinding.version must be a positive safe integer (append-only)."
+    );
+  }
   return {
     workspace_id: requiredRef(workspaceId, "workspaceId"),
     finding_id: requiredRef(artifact.findingId, "findingId"),
     version: artifact.version,
+    fingerprint,
     severity: artifact.severity,
     status: artifact.status,
     verification_stage: artifact.verificationStage,
@@ -307,6 +390,11 @@ export function encodeReview(
 export function encodeComparison(
   artifact: PlaytestComparison
 ): PlaytestIndexedComparisonRow {
+  if (!artifact.sourceFindingIds.every(isPlaytestFindingId)) {
+    throw new TypeError(
+      "PlaytestComparison.sourceFindingIds must contain canonical stable finding IDs."
+    );
+  }
   return {
     workspace_id: requiredRef(artifact.provenance.workspaceId, "workspaceId"),
     comparison_id: requiredRef(artifact.comparisonId, "comparisonId"),
@@ -327,6 +415,8 @@ export function encodeComparison(
 export function encodeBenchmark(
   artifact: PlaytestBenchmark
 ): PlaytestIndexedBenchmarkRow {
+  assertPlaytestBenchmark(artifact);
+  assertBenchmarkContentHash(artifact);
   return {
     workspace_id: requiredRef(artifact.workspaceId, "workspaceId"),
     benchmark_id: requiredRef(artifact.benchmarkId, "benchmarkId"),
@@ -341,6 +431,8 @@ export function encodeBenchmark(
 export function encodeExperiment(
   artifact: PlaytestExperiment
 ): PlaytestIndexedExperimentRow {
+  assertPlaytestExperiment(artifact);
+  assertExperimentContentHash(artifact);
   return {
     workspace_id: requiredRef(artifact.workspaceId, "workspaceId"),
     experiment_id: requiredRef(artifact.experimentId, "experimentId"),
@@ -462,6 +554,28 @@ function assertIndexMatches(
   }
 }
 
+function assertBenchmarkContentHash(artifact: PlaytestBenchmark): void {
+  const contentHash = createHash("sha256")
+    .update(playtestBenchmarkHashInput(artifact))
+    .digest("hex");
+  if (contentHash !== artifact.contentHash.toLowerCase()) {
+    throw new TypeError(
+      "Benchmark contentHash does not match its canonical manifest."
+    );
+  }
+}
+
+function assertExperimentContentHash(artifact: PlaytestExperiment): void {
+  const contentHash = createHash("sha256")
+    .update(playtestExperimentHashInput(artifact))
+    .digest("hex");
+  if (contentHash !== artifact.contentHash.toLowerCase()) {
+    throw new TypeError(
+      "Experiment contentHash does not match its frozen manifest."
+    );
+  }
+}
+
 export function decodeBatch(row: Record<string, unknown>): PlaytestBatch {
   const artifact = decodePayload<PlaytestBatch>(
     row,
@@ -498,12 +612,43 @@ export function decodeEpisode(row: Record<string, unknown>): PlaytestEpisode {
 
 export function decodeFinding(row: Record<string, unknown>): PlaytestFinding {
   const artifact = decodePayload<PlaytestFinding>(row, "findingId", "version");
+  if (
+    artifact.identity === null ||
+    typeof artifact.identity !== "object" ||
+    typeof artifact.identity.workspaceId !== "string"
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse finding payload is missing its stable identity"
+    );
+  }
+  assertIndexMatches(row, "workspace_id", artifact.identity.workspaceId);
   assertIndexMatches(row, "finding_id", artifact.findingId);
   assertIndexMatches(row, "version", artifact.version);
   assertIndexMatches(row, "severity", artifact.severity);
   assertIndexMatches(row, "status", artifact.status);
   assertIndexMatches(row, "verification_stage", artifact.verificationStage);
   assertIndexMatches(row, "evidence_status", artifact.evidenceStatus);
+  // Fingerprint is a server-derived invariant; reject rows where the
+  // indexed fingerprint disagrees with either the payload's claim or the
+  // SHA-256 of the canonical identity payload.
+  if (typeof row.fingerprint !== "string") {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse finding row is missing its indexed fingerprint column"
+    );
+  }
+  if (!SHA256_PATTERN.test(row.fingerprint)) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse finding fingerprint index column is not a SHA-256 hexadecimal digest"
+    );
+  }
+  const expectedFingerprint = assertFindingFingerprint(artifact);
+  if (String(row.fingerprint).toLowerCase() !== expectedFingerprint) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse finding fingerprint index column disagrees with SHA-256(canonical identity)"
+    );
+  }
+  assertStableFindingId(artifact);
+  assertFindingFrequency(artifact);
   return artifact;
 }
 
@@ -536,6 +681,14 @@ export function decodeComparison(
   assertIndexMatches(row, "comparison_id", artifact.comparisonId);
   assertIndexMatches(row, "version", artifact.version);
   assertIndexMatches(row, "benchmark_id", artifact.benchmarkId);
+  if (
+    !Array.isArray(artifact.sourceFindingIds) ||
+    !artifact.sourceFindingIds.every(isPlaytestFindingId)
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse comparison payload contains a noncanonical source finding ID"
+    );
+  }
   return artifact;
 }
 
@@ -547,6 +700,8 @@ export function decodeBenchmark(
     "benchmarkId",
     "version"
   );
+  assertPlaytestBenchmark(artifact);
+  assertBenchmarkContentHash(artifact);
   assertIndexMatches(row, "workspace_id", artifact.workspaceId);
   assertIndexMatches(row, "benchmark_id", artifact.benchmarkId);
   assertIndexMatches(row, "version", artifact.version);
@@ -563,6 +718,8 @@ export function decodeExperiment(
     "version",
     PLAYTESTS_EXPERIMENT_SCHEMA
   );
+  assertPlaytestExperiment(artifact);
+  assertExperimentContentHash(artifact);
   assertIndexMatches(row, "workspace_id", artifact.workspaceId);
   assertIndexMatches(row, "experiment_id", artifact.experimentId);
   assertIndexMatches(row, "version", artifact.version);

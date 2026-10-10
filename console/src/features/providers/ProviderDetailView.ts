@@ -2,7 +2,8 @@ import type {
   ControlApiModelRecord,
   ControlApiProviderHealth,
   ControlApiProviderRecord,
-  ControlApiProvidersResponse
+  ControlApiProvidersResponse,
+  ControlApiRuntimeResponse
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
@@ -14,6 +15,8 @@ import {
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
@@ -29,6 +32,7 @@ import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
+import { liveAgentCount } from "../live-agent-count.ts";
 import { ModelToggle } from "./ModelToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
@@ -41,6 +45,7 @@ export interface ProviderDetailViewProps {
   readonly orchestratorTier: string;
   /** This provider's models, or `null` when the Models collection is unavailable. */
   readonly models: readonly ControlApiModelRecord[] | null;
+  readonly runtime?: ControlApiRuntimeResponse | undefined;
   readonly controlFailed?: boolean | undefined;
 }
 
@@ -76,10 +81,12 @@ function RolesPanel({
 function ModelsPanel({
   provider,
   models,
+  runtime,
   returnTo
 }: {
   readonly provider: ControlApiProviderRecord;
   readonly models: readonly ControlApiModelRecord[] | null;
+  readonly runtime: ControlApiRuntimeResponse | undefined;
   readonly returnTo: string;
 }): React.JSX.Element {
   const heading = React.createElement(
@@ -117,7 +124,7 @@ function ModelsPanel({
       header: "Model",
       cell: (model) =>
         React.createElement(
-          "a",
+          NavigationLink,
           {
             href: modelPath(provider.id, model.id),
             className: `font-mono text-xs text-fg ${ENTITY_LINK_CLASS}`,
@@ -134,6 +141,24 @@ function ModelsPanel({
           "span",
           { className: MONO_VALUE_CLASS },
           model.tiers.join(", ")
+        )
+    },
+    {
+      id: "activeAgents",
+      header: "Active Agents",
+      weight: 112,
+      cell: (model) =>
+        React.createElement(
+          "span",
+          {
+            className: "text-xs text-fg-secondary tabular-nums",
+            "data-live-agent-model": model.id
+          },
+          liveAgentCount(
+            runtime?.liveAgents,
+            "byModel",
+            `${model.provider}/${model.id}`
+          )
         )
     },
     {
@@ -215,7 +240,7 @@ function RoutingPanel({
                       .flatMap((peer, index) => [
                         index === 0 ? null : ", ",
                         React.createElement(
-                          "a",
+                          NavigationLink,
                           {
                             key: peer,
                             href: providerPath(peer),
@@ -356,11 +381,6 @@ function HealthPanel({
       ),
       React.createElement(
         DetailValue,
-        { label: "Active agents" },
-        health.activeAgents
-      ),
-      React.createElement(
-        DetailValue,
         { label: "Failure streak" },
         health.failureStreak
       ),
@@ -413,12 +433,14 @@ export function ProviderDetailView({
   tiers,
   orchestratorTier,
   models,
+  runtime,
   controlFailed
 }: ProviderDetailViewProps): React.JSX.Element {
   const returnTo = providerPath(provider.id);
   return React.createElement(
     PageBody,
     { feature: "provider-detail" },
+    React.createElement(LiveCountRefresh),
     React.createElement(
       "section",
       { className: DETAIL_PANEL_CLASS },
@@ -448,7 +470,7 @@ export function ProviderDetailView({
           { className: "flex flex-col items-end gap-2" },
           React.createElement(ProviderHealthBadge, { health: provider.health }),
           React.createElement(
-            "a",
+            NavigationLink,
             {
               href: `/usage?provider=${encodeURIComponent(provider.id)}`,
               className: "text-xs text-accent underline underline-offset-2"
@@ -460,11 +482,24 @@ export function ProviderDetailView({
             links: provider.links
           })
         )
+      ),
+      React.createElement(
+        "div",
+        { "data-live-agent-provider": provider.id },
+        React.createElement(
+          DetailGrid,
+          { columns: 2 },
+          React.createElement(
+            DetailValue,
+            { label: "Active agents" },
+            liveAgentCount(runtime?.liveAgents, "byProvider", provider.id)
+          )
+        )
       )
     ),
     controlFailed ? React.createElement(ControlFailureNotice) : null,
     React.createElement(RolesPanel, { provider, returnTo }),
-    React.createElement(ModelsPanel, { provider, models, returnTo }),
+    React.createElement(ModelsPanel, { provider, models, runtime, returnTo }),
     React.createElement(RoutingPanel, { provider, tiers, orchestratorTier }),
     React.createElement(RoutePanel, { provider }),
     React.createElement(HealthPanel, { health: provider.health })

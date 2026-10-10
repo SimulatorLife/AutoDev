@@ -143,8 +143,10 @@ function validPlaytestRecord<R extends ControlApiPlaytestingResource>(
         isNonEmptyString(finding.findingId) &&
         isNonEmptyString(finding.title) &&
         isCount(finding.version) &&
-        isCount(finding.affectedEpisodes) &&
-        isCount(finding.totalEligibleEpisodes) &&
+        (finding.affectedEpisodes === null || isCount(finding.affectedEpisodes)) &&
+        (finding.totalEligibleEpisodes === null || isCount(finding.totalEligibleEpisodes)) &&
+        (finding.affectedOpportunities === null || isCount(finding.affectedOpportunities)) &&
+        (finding.totalEligibleOpportunities === null || isCount(finding.totalEligibleOpportunities)) &&
         Array.isArray(finding.evidenceRefs)
       );
     }

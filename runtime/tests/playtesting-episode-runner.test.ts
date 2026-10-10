@@ -10,6 +10,7 @@ import {
   assertPlaytestFindingEvidenceStatusConsistent,
   assertPlaytestSessionReviewHasEvidence,
   buildPlaytestComparison,
+  buildPlaytestFindingIdentity,
   classifyPlaytestMetricComparison,
   type PlaytestCapabilityAdvertisement,
   type PlaytestComparison,
@@ -23,7 +24,8 @@ import {
   PLAYTESTS_MEASUREMENT_VERSION,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   type PlaytestSessionReview,
-  type WorkspacePlaytestApproval
+  type WorkspacePlaytestApproval,
+  playtestFindingIdentityHashInput
 } from "@simulatorlife/autodev-core";
 
 import type {
@@ -490,6 +492,7 @@ test("episode runner executes one approved episode, filters hidden observation/e
     assert.equal(result.episode.stepCount, 1);
     assert.equal(result.episode.identity.workspaceId, WORKSPACE_ID);
     assert.equal(result.episode.identity.seed, "seed-1");
+    assert.equal(result.episode.identity.rngInitialStateHash, "e".repeat(64));
     assert.deepEqual(policyObservation, { room: "hall" });
     assert.deepEqual(
       result.episode.metrics.map((metric) => metric.metricId),
@@ -629,8 +632,27 @@ test("synthetic 1,000-episode improvement cycle records evidence, finding, compa
       comparisonIds: new Set(),
       frameEpisodeOf: new Map()
     };
+    const findingIdentity = buildPlaytestFindingIdentity({
+      workspaceId: candidateWitness.identity.workspaceId,
+      mechanicKey: "tutorial-completion-regression",
+      failureSignature: {
+        events: ["step-stuck"],
+        action: "advance",
+        witness: "witness-tutorial-completion"
+      },
+      scope: {
+        scenarioFamily: candidateWitness.scenarioFamily,
+        phase: "phase-tutorial",
+        modality: "headless"
+      }
+    });
+    const findingFingerprint = createHash("sha256")
+      .update(playtestFindingIdentityHashInput(findingIdentity))
+      .digest("hex");
     const finding: PlaytestFinding = {
-      findingId: "finding-synthetic-tutorial-regression",
+      identity: findingIdentity,
+      fingerprint: findingFingerprint,
+      findingId: "finding-" + findingFingerprint,
       version: 1,
       title: "Tutorial completion regressed on the candidate build",
       description: `${injectedRegressionCount} of ${pairs} paired candidate episodes reached the injected defect outcome.`,
@@ -799,6 +821,14 @@ test("synthetic 1,000-episode improvement cycle records evidence, finding, compa
           candidateUnitIds: frozenPairingEvidence.pairs.map(
             (pair) => pair.candidate.episodeId
           ),
+          missingnessPlan: {
+            maximumMissingFraction: 0,
+            sensitivityBounds: "not-needed"
+          },
+          precisionPlan: {
+            minimumIndependentUnits: 1,
+            maximumIntervalWidth: null
+          },
           baselineSemantics: {
             metricId,
             metricVersion,

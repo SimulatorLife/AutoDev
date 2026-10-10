@@ -28,9 +28,10 @@ import {
 import {
   assessPlaytestMetricCompatibility,
   assessPlaytestPairing,
-  type PlaytestMetricSemantics,
   type PlaytestPairingEvidence
 } from "./compatibility.ts";
+import type { PlaytestMetricSemantics } from "./types.ts";
+import { isPlaytestFindingId } from "./finding-identity.ts";
 
 /** Is this a finite, non-degenerate (lower <= upper) numeric interval? */
 export function isValidPlaytestInterval(
@@ -160,13 +161,96 @@ export interface PlaytestDecisionInput {
 /** A comparison metric plus the frozen source semantics from both arms. */
 export interface PlaytestComparisonMetricInput extends Omit<
   PlaytestMetricClassificationInput,
-  "compatibility"
+  "compatibility" | "missingnessOrPrecisionFailed"
 > {
   readonly baselineSemantics: PlaytestMetricSemantics;
   readonly candidateSemantics: PlaytestMetricSemantics;
   /** Every preregistered assigned unit, including one with a missing outcome. */
   readonly baselineUnitIds: readonly string[];
   readonly candidateUnitIds: readonly string[];
+  readonly missingnessPlan: {
+    readonly maximumMissingFraction: number;
+    readonly sensitivityBounds:
+      "not-needed" | "passed" | "failed" | "unavailable";
+  };
+  readonly precisionPlan: {
+    readonly minimumIndependentUnits: number;
+    readonly maximumIntervalWidth: number | null;
+  };
+}
+
+function compareMissingnessAndPrecision(input: PlaytestComparisonMetricInput): {
+  readonly failed: boolean;
+  readonly reasons: readonly string[];
+} {
+  const { baseline, candidate, missingnessPlan, precisionPlan } = input;
+  if (
+    !Number.isFinite(missingnessPlan.maximumMissingFraction) ||
+    missingnessPlan.maximumMissingFraction < 0 ||
+    missingnessPlan.maximumMissingFraction > 1 ||
+    !["not-needed", "passed", "failed", "unavailable"].includes(
+      missingnessPlan.sensitivityBounds
+    )
+  ) {
+    throw new TypeError("Maximum missing fraction must be between 0 and 1.");
+  }
+  if (
+    !Number.isSafeInteger(precisionPlan.minimumIndependentUnits) ||
+    precisionPlan.minimumIndependentUnits < 1 ||
+    (precisionPlan.maximumIntervalWidth !== null &&
+      (!Number.isFinite(precisionPlan.maximumIntervalWidth) ||
+        precisionPlan.maximumIntervalWidth < 0))
+  ) {
+    throw new TypeError("Comparison precision plan is invalid.");
+  }
+
+  const reasons: string[] = [];
+  for (const arm of [baseline, candidate]) {
+    if (
+      !Number.isSafeInteger(arm.assigned) ||
+      arm.assigned < 1 ||
+      !Number.isSafeInteger(arm.missing) ||
+      arm.missing < 0 ||
+      arm.missing > arm.assigned ||
+      !Number.isSafeInteger(arm.eligible) ||
+      arm.eligible < 0 ||
+      arm.eligible + arm.missing > arm.assigned ||
+      !Number.isSafeInteger(arm.independentUnits) ||
+      arm.independentUnits < 0 ||
+      arm.independentUnits > arm.assigned
+    ) {
+      throw new TypeError(
+        "Comparison arm assignment or missingness counts are invalid."
+      );
+    }
+    if (arm.independentUnits < precisionPlan.minimumIndependentUnits) {
+      reasons.push(
+        `${arm.arm} has fewer independent units than the preregistered minimum.`
+      );
+    }
+    if (arm.missing / arm.assigned > missingnessPlan.maximumMissingFraction) {
+      reasons.push(`${arm.arm} missingness exceeds the preregistered maximum.`);
+    }
+  }
+  if (
+    baseline.missing + candidate.missing > 0 &&
+    missingnessPlan.sensitivityBounds !== "passed"
+  ) {
+    reasons.push(
+      "Missing outcomes lack passing preregistered sensitivity bounds."
+    );
+  }
+  if (precisionPlan.maximumIntervalWidth !== null) {
+    if (!isValidPlaytestInterval(input.interval)) {
+      reasons.push("A valid interval is required by the precision plan.");
+    } else if (
+      input.interval.upper - input.interval.lower >
+      precisionPlan.maximumIntervalWidth
+    ) {
+      reasons.push("The interval exceeds the preregistered maximum width.");
+    }
+  }
+  return { failed: reasons.length > 0, reasons };
 }
 
 /**
@@ -209,7 +293,7 @@ export function decidePlaytestComparisonStatus(
   return "eligible-for-owner-promotion";
 }
 
-/** Build the full comparison envelope from classified metrics + provenance. */
+/** Build one comparison from frozen pairing, metric semantics and measurements. */
 export function buildPlaytestComparison(args: {
   readonly comparisonId: string;
   readonly version: number;
@@ -231,6 +315,11 @@ export function buildPlaytestComparison(args: {
   readonly provenance: PlaytestProvenance;
   readonly notes?: string;
 }): PlaytestComparison {
+  if (!args.sourceFindingIds.every(isPlaytestFindingId)) {
+    throw new TypeError(
+      "PlaytestComparison.sourceFindingIds must contain canonical stable finding IDs."
+    );
+  }
   const assessedPairing = assessPlaytestPairing(args.pairingEvidence);
   const expectedBaselineUnits = new Set(
     args.pairingEvidence.pairs.map((pair) => pair.baseline.episodeId)
@@ -287,6 +376,7 @@ export function buildPlaytestComparison(args: {
       input.baselineSemantics,
       input.candidateSemantics
     );
+    const missingnessAndPrecision = compareMissingnessAndPrecision(input);
     const compatibility =
       pairing.mode === PLAYTESTS_NOT_COMPARABLE_MODE || !semantics.compatible
         ? PLAYTESTS_NOT_COMPARABLE_MODE
@@ -294,14 +384,20 @@ export function buildPlaytestComparison(args: {
     const {
       baselineSemantics: _baseline,
       candidateSemantics: _candidate,
+      baselineUnitIds: _baselineUnits,
+      candidateUnitIds: _candidateUnits,
+      missingnessPlan: _missingnessPlan,
+      precisionPlan: _precisionPlan,
       ...measurement
     } = input;
     const classified = classifyPlaytestMetricComparison({
       ...measurement,
-      compatibility
+      compatibility,
+      missingnessOrPrecisionFailed: missingnessAndPrecision.failed
     });
     const diagnostics = [
       ...semantics.reasons,
+      ...missingnessAndPrecision.reasons,
       ...(pairing.mode === PLAYTESTS_NOT_COMPARABLE_MODE
         ? pairing.couplingDiagnostics
         : [])

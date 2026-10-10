@@ -612,7 +612,7 @@ export interface ControlApiRoutingResponse {
 }
 
 export interface ControlApiRuntimeResponse {
-  readonly schema: "autodev-control-runtime-v1";
+  readonly schema: "autodev-control-runtime-v2";
   readonly routerInstanceId: string;
   /**
    * Every field here is emitted on every response by `getLifecycleStatus()`;
@@ -645,6 +645,23 @@ export interface ControlApiRuntimeResponse {
    */
   readonly concurrency: ControlApiConcurrencyStatus;
   readonly inFlightRequestCount: number;
+  /**
+   * Canonical live agent activity, grouped by its observed provider, model,
+   * and role attribution. `null` means Runtime did not register an activity
+   * source; a measured empty map means the observed count is zero.
+   */
+  readonly liveAgents: ControlApiLiveAgentCounts | null;
+}
+
+/** Runtime's current live agent records, not historical usage telemetry. */
+export interface ControlApiLiveAgentCounts {
+  readonly count: number;
+  readonly byRole: Readonly<Record<string, number>>;
+  readonly byProvider: Readonly<Record<string, number>>;
+  /** Keys use the canonical `<provider>/<model>` identifier. */
+  readonly byModel: Readonly<Record<string, number>>;
+  readonly missingProvider: number;
+  readonly missingModel: number;
 }
 
 export interface ControlApiEvaluationsResponse {

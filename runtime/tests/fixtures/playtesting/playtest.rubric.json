@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "workspaceId": "owner/fixture",
+  "audience": "synthetic-fixture-only",
+  "registryVersion": "synthetic-fixture-registry-v1",
+  "eventSchemaHash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "defaults": {
+    "audience": "synthetic-fixture-only",
+    "scenarioEligibility": [
+      "tutorial"
+    ],
+    "analysisUnit": "episode",
+    "aggregationWindow": "whole-episode",
+    "aggregation": "ratio-of-sums-within-scenario",
+    "modality": "headless",
+    "minExposure": 1,
+    "minIndependentUnits": 1,
+    "precisionPlanRef": "fixture-descriptive-only",
+    "missingPolicy": "null-with-reason-and-missing-count",
+    "provenance": [
+      "episodeId",
+      "eventId",
+      "buildSha",
+      "evaluatorHash"
+    ],
+    "humanConstruct": null,
+    "meaningfulMargin": null,
+    "guardrailMargin": null,
+    "severityRule": "descriptive-until-verified",
+    "priorityClass": "investigate"
+  },
+  "metricDefinitions": [
+    {
+      "metricId": "legal-action-rejection",
+      "version": 1,
+      "mechanicKey": "action-execution",
+      "exposurePredicate": "fresh-legal-request-v1",
+      "eventFields": [
+        "action.offeredIds",
+        "action.expectedRevision",
+        "action.currentRevision",
+        "action.executedId",
+        "action.rejected"
+      ],
+      "evaluatorRef": "fixture/legal-action-rejection-v1",
+      "numerator": "fresh advertised legal requests rejected by engine",
+      "denominator": "all fresh advertised legal requests",
+      "unit": "proportion",
+      "polarity": "lower",
+      "targetBand": [
+        0,
+        0
+      ],
+      "notObservable": [
+        "missing-action-or-revision-events"
+      ]
+    }
+  ],
+  "dimensionRubrics": []
+}

@@ -70,19 +70,43 @@ CREATE TABLE IF NOT EXISTS ${PLAYTEST_FINDINGS_TABLE} (
   workspace_id String,
   finding_id String,
   version UInt32,
+  fingerprint String,
   severity String,
   status String,
   verification_stage String,
   evidence_status String,
-  affected_episodes UInt32,
-  total_eligible_episodes UInt32,
-  affected_opportunities UInt32,
-  total_eligible_opportunities UInt32,
+  affected_episodes Nullable(UInt32),
+  total_eligible_episodes Nullable(UInt32),
+  affected_opportunities Nullable(UInt32),
+  total_eligible_opportunities Nullable(UInt32),
   created_at DateTime64(3),
   payload_json String
 ) ENGINE = MergeTree
-ORDER BY (workspace_id, finding_id, version)
+ORDER BY (workspace_id, fingerprint, finding_id, version)
 `;
+
+/**
+ * Idempotent migration that adds the `fingerprint` column to an existing
+ * `playtest_findings` table on clusters provisioned before the §11
+ * duplicate-flood work landed. `ALTER ... ADD COLUMN IF NOT EXISTS` is a
+ * no-op when the column already exists; the same call sequence against a
+ * fresh table is a no-op because `CREATE TABLE IF NOT EXISTS` already
+ * declared the column.
+ */
+const ALTER_PLAYTEST_FINDINGS_ADD_FINGERPRINT = `
+ALTER TABLE ${PLAYTEST_FINDINGS_TABLE}
+ADD COLUMN IF NOT EXISTS fingerprint String
+`;
+
+const ALTER_PLAYTEST_FINDINGS_NULLABLE_FREQUENCY = [
+  "affected_episodes",
+  "total_eligible_episodes",
+  "affected_opportunities",
+  "total_eligible_opportunities"
+].map(
+  (column) =>
+    `ALTER TABLE ${PLAYTEST_FINDINGS_TABLE} MODIFY COLUMN ${column} Nullable(UInt32)`
+);
 
 const CREATE_PLAYTEST_REVIEWS = `
 CREATE TABLE IF NOT EXISTS ${PLAYTEST_REVIEWS_TABLE} (
@@ -185,6 +209,16 @@ export const PLAYTEST_SCHEMA_STATEMENTS: readonly string[] = [
   CREATE_PLAYTEST_HUMAN_SUMMARIES
 ];
 
+/**
+ * Idempotent follow-up migrations that bring pre-§11 `playtest_findings`
+ * tables up to the canonical schema (fingerprint index and nullable unknown
+ * prevalence). Safe to apply on already-migrated tables.
+ */
+export const PLAYTEST_FINDING_SCHEMA_MIGRATIONS: readonly string[] = [
+  ALTER_PLAYTEST_FINDINGS_ADD_FINGERPRINT,
+  ...ALTER_PLAYTEST_FINDINGS_NULLABLE_FREQUENCY
+];
+
 /** Idempotent DDL initialization; errors fail closed as typed unavailability. */
 export async function ensurePlaytestSchema(
   endpoint: string,
@@ -204,6 +238,25 @@ export async function ensurePlaytestSchema(
       } catch (error) {
         throw new PlaytestSourceUnavailableError(
           "failed to initialize Playtesting schema",
+          error
+        );
+      }
+    })
+  );
+  await Promise.all(
+    PLAYTEST_FINDING_SCHEMA_MIGRATIONS.map(async (statement) => {
+      try {
+        await runParameterizedClickHouseStatement(
+          endpoint,
+          statement,
+          {},
+          {
+            ...(fetchImpl ? { fetchImpl } : {})
+          }
+        );
+      } catch (error) {
+        throw new PlaytestSourceUnavailableError(
+          "failed to apply Playtesting schema migration",
           error
         );
       }

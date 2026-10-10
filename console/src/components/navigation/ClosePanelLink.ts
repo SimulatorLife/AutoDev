@@ -1,6 +1,7 @@
 import React from "react";
 
 import { Icon } from "../icons/Icon.ts";
+import { NavigationLink } from "./NavigationLink.ts";
 
 /**
  * Dismiss a selected detail panel and return to the list behind it.
@@ -19,7 +20,7 @@ export function ClosePanelLink({
   readonly label?: string | undefined;
 }): React.JSX.Element {
   return React.createElement(
-    "a",
+    NavigationLink,
     {
       href,
       // `py-1` reaches the 24px minimum target height, and `-my-1` gives the

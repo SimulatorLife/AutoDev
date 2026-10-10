@@ -6,7 +6,8 @@ import { isControlFailure } from "../../src/lib/control-failure.ts";
 import {
   controlApiFailureCode,
   fetchModels,
-  fetchProviders
+  fetchProviders,
+  fetchRuntime
 } from "../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
@@ -39,9 +40,10 @@ export default async function ProvidersPage({
     );
   }
   const query = (await searchParams) ?? {};
-  const [providersResult, modelsResult] = await Promise.all([
+  const [providersResult, modelsResult, runtimeResult] = await Promise.all([
     fetchProviders(config),
-    fetchModels(config)
+    fetchModels(config),
+    fetchRuntime(config)
   ]);
   if (providersResult.kind !== "ok") {
     return React.createElement(
@@ -72,6 +74,7 @@ export default async function ProvidersPage({
         modelsResult.kind === "ok"
           ? { status: "available", data: modelsResult.data }
           : { status: "unavailable", message: modelsResult.message },
+      runtime: runtimeResult.kind === "ok" ? runtimeResult.data : undefined,
       activeTab: tab,
       controlFailed: isControlFailure(query.control)
     })

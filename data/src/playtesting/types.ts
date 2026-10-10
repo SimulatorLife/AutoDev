@@ -36,6 +36,7 @@ export interface PlaytestEpisodeFilter {
 
 export interface PlaytestFindingFilter {
   readonly workspaceId: string;
+  readonly fingerprint?: string;
   readonly severity?: PlaytestFinding["severity"];
   readonly status?: PlaytestFinding["status"];
   readonly verificationStage?: PlaytestFinding["verificationStage"];

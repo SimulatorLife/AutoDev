@@ -807,6 +807,32 @@ test("paired-counterfactual requires verified random-stream identity, not matchi
   assert.match(extraDraw.couplingDiagnostics.join(" "), /extra draws/u);
 });
 
+test("paired initial-condition analysis does not require hidden-state hashes, but counterfactual analysis does", () => {
+  const complete = pairingEvidence(1, "paired-initial-condition");
+  const withoutStateHashes = {
+    ...complete,
+    pairs: complete.pairs.map((pair) => ({
+      ...pair,
+      baseline: { ...pair.baseline, initialStateHash: null },
+      candidate: { ...pair.candidate, initialStateHash: null }
+    }))
+  };
+  assert.equal(
+    assessPlaytestPairing(withoutStateHashes).mode,
+    "paired-initial-condition"
+  );
+
+  const counterfactualWithoutHashes = assessPlaytestPairing({
+    ...withoutStateHashes,
+    requestedMode: "paired-counterfactual"
+  });
+  assert.equal(counterfactualWithoutHashes.mode, "paired-initial-condition");
+  assert.match(
+    counterfactualWithoutHashes.couplingDiagnostics.join(" "),
+    /initial-state hash was not established/u
+  );
+});
+
 test("pairing rejects changed initial conditions, seed assignments, and policy-information contracts", () => {
   const base = pairingEvidence(1);
   const changed = {
@@ -861,7 +887,15 @@ test("comparison builder downgrades an extra RNG draw and changed critic without
     baseline: summary,
     candidate: candidateSummary,
     baselineUnitIds: pairing.pairs.map((pair) => pair.baseline.episodeId),
-    candidateUnitIds: pairing.pairs.map((pair) => pair.candidate.episodeId)
+    candidateUnitIds: pairing.pairs.map((pair) => pair.candidate.episodeId),
+    missingnessPlan: {
+      maximumMissingFraction: 0.1,
+      sensitivityBounds: "not-needed" as const
+    },
+    precisionPlan: {
+      minimumIndependentUnits: 1,
+      maximumIntervalWidth: null
+    }
   };
   const comparison = buildPlaytestComparison({
     comparisonId: "changed-measurement",
@@ -911,6 +945,83 @@ test("comparison builder downgrades an extra RNG draw and changed critic without
   assert.equal(comparison.metrics[1]?.compatibility, "not-comparable");
   assert.equal(comparison.metrics[1]?.classification, "not-comparable");
   assert.equal(comparison.decision, "hold-not-comparable");
+});
+
+test("missing hard episodes remain assigned and force an inconclusive paired result", () => {
+  const pairing = pairingEvidence(3);
+  const source = metricSemantics("completion");
+  const comparison = buildPlaytestComparison({
+    comparisonId: "missing-hard-episodes",
+    version: 1,
+    benchmarkId: "benchmark-a",
+    experimentId: "experiment-a",
+    baseline: { id: "baseline-build", version: 1 },
+    candidate: { id: "candidate-build", version: 1 },
+    freezeStatus: "frozen",
+    pairingEvidence: pairing,
+    sourceFindingIds: [],
+    episodeRefs: [],
+    measurementVersion: MEASUREMENT_VERSION,
+    metrics: [
+      {
+        metricId: "completion",
+        metricVersion: 1,
+        meaningfulMargin: 0.02,
+        guardrailMargin: null,
+        orientedBenefitDelta: 0.1,
+        interval: {
+          lower: 0.05,
+          upper: 0.16,
+          method: "test-statistics-library",
+          libraryVersion: "fixture-v1",
+          confidenceLevel: 0.95,
+          resamples: 1000,
+          seed: "fixture-seed"
+        },
+        baseline: makeArmSummary("baseline", {
+          assigned: 3,
+          eligible: 2,
+          missing: 1,
+          independentUnits: 2,
+          exposure: 2
+        }),
+        candidate: makeArmSummary("candidate", {
+          assigned: 3,
+          eligible: 3,
+          missing: 0,
+          independentUnits: 3,
+          exposure: 3
+        }),
+        baselineUnitIds: pairing.pairs.map((pair) => pair.baseline.episodeId),
+        candidateUnitIds: pairing.pairs.map((pair) => pair.candidate.episodeId),
+        missingnessPlan: {
+          maximumMissingFraction: 0.1,
+          sensitivityBounds: "unavailable"
+        },
+        precisionPlan: {
+          minimumIndependentUnits: 2,
+          maximumIntervalWidth: null
+        },
+        baselineSemantics: source,
+        candidateSemantics: source
+      }
+    ],
+    primaryMetricId: "completion",
+    provenance: {
+      workspaceId: WORKSPACE_ID,
+      measurementVersion: MEASUREMENT_VERSION,
+      generatedAt: "2026-01-01T00:00:00.000Z"
+    }
+  });
+
+  assert.equal(comparison.pairing.mode, "paired-initial-condition");
+  assert.equal(Object.keys(comparison.pairing.pairMap).length, 3);
+  assert.equal(comparison.metrics[0]?.baseline.assigned, 3);
+  assert.equal(comparison.metrics[0]?.baseline.eligible, 2);
+  assert.equal(comparison.metrics[0]?.baseline.missing, 1);
+  assert.equal(comparison.metrics[0]?.classification, "inconclusive");
+  assert.match(comparison.metrics[0]?.notes ?? "", /sensitivity bounds/u);
+  assert.equal(comparison.decision, "hold-inconclusive");
 });
 
 test("classifyPlaytestMetricComparison: improved when interval lower bound exceeds the meaningful margin", () => {
@@ -1024,6 +1135,14 @@ test("§4 worked fixture: completion improved + clarity breached yields hold-reg
     candidateUnitIds: assignedPairing.pairs.map(
       (pair) => pair.candidate.episodeId
     ),
+    missingnessPlan: {
+      maximumMissingFraction: 0,
+      sensitivityBounds: "not-needed" as const
+    },
+    precisionPlan: {
+      minimumIndependentUnits: 1,
+      maximumIntervalWidth: null
+    },
     baselineSemantics: metricSemantics(metric.metricId, source),
     candidateSemantics: metricSemantics(metric.metricId, source)
   });
@@ -1037,7 +1156,7 @@ test("§4 worked fixture: completion improved + clarity breached yields hold-reg
     candidate: { id: "build-b", version: 1 },
     freezeStatus: "frozen",
     pairingEvidence: assignedPairing,
-    sourceFindingIds: ["finding-1"],
+    sourceFindingIds: ["finding-" + "f".repeat(64)],
     episodeRefs: [{ kind: "episode", id: "episode-a" }],
     measurementVersion: MEASUREMENT_VERSION,
     metrics: [
@@ -1053,6 +1172,30 @@ test("§4 worked fixture: completion improved + clarity breached yields hold-reg
   });
   assert.equal(comparison.decision, "hold-regression");
   assert.equal(comparison.humanPreference.answer, "not-collected");
+  assert.throws(
+    () =>
+      buildPlaytestComparison({
+        comparisonId: "cmp-invalid-finding-id",
+        version: 1,
+        benchmarkId: "bench-1",
+        experimentId: null,
+        baseline: { id: "build-a", version: 1 },
+        candidate: { id: "build-b", version: 1 },
+        freezeStatus: "frozen",
+        pairingEvidence: assignedPairing,
+        sourceFindingIds: ["finding-1"],
+        episodeRefs: [{ kind: "episode", id: "episode-a" }],
+        measurementVersion: MEASUREMENT_VERSION,
+        metrics: [comparisonMetric(completion, "deterministic")],
+        primaryMetricId: "completion",
+        provenance: {
+          workspaceId: WORKSPACE_ID,
+          measurementVersion: MEASUREMENT_VERSION,
+          generatedAt: "2026-01-01T00:00:00.000Z"
+        }
+      }),
+    /canonical stable finding IDs/u
+  );
 });
 
 test("classifyPlaytestMetricComparison: no-material-change when interval lies wholly within the margin", () => {

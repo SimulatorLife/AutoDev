@@ -1,15 +1,13 @@
 import {
   MEMORY_EVIDENCE_KINDS,
-  MEMORY_REASON_CODES
-} from "@simulatorlife/autodev-core";
-import type {
-  ControlApiMemoryWhyResponse,
-  EvidenceReference,
-  MemoryKind,
-  MemoryLifecycleEvent,
-  MemoryRecord,
-  MemoryScope,
-  MemoryValidity
+  MEMORY_REASON_CODES,
+  type ControlApiMemoryWhyResponse,
+  type EvidenceReference,
+  type MemoryKind,
+  type MemoryLifecycleEvent,
+  type MemoryRecord,
+  type MemoryScope,
+  type MemoryValidity
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
@@ -23,6 +21,7 @@ import { SelectField } from "../../components/forms/SelectField.ts";
 import { TextField } from "../../components/forms/TextField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { Pagination } from "../../components/navigation/Pagination.ts";
 import { DetailDrawer } from "../../components/panels/DetailDrawer.ts";
 import { gridRowClass } from "../../components/panels/DetailGrid.ts";
@@ -279,11 +278,11 @@ export function MemoryRecordsView({
       weight: 180,
       cell: (record) =>
         React.createElement(
-          "a",
+          NavigationLink,
           {
             href: memoryDetailHref(listScope, "recordId", record.id),
             className: `font-mono text-xs font-semibold ${ACTION_LINK_CLASS}`,
-            "data-memory-record-id": record.id
+            dataAttributes: { "data-memory-record-id": record.id }
           },
           record.id
         )
@@ -514,12 +513,12 @@ function ProvenanceSources({
     ),
     ids.map((id) =>
       React.createElement(
-        "a",
+        NavigationLink,
         {
           key: id,
           href: memoryExperienceHref(listScope, id),
           className: `font-mono ${ACTION_LINK_CLASS}`,
-          "data-provenance-experience": id
+          dataAttributes: { "data-provenance-experience": id }
         },
         id
       )
@@ -697,7 +696,7 @@ function RecordDetailPanel({
                     {
                       key: i,
                       className:
-                        "border-accent/40 bg-accent/15 font-mono text-accent"
+                        "border-accent/60 bg-accent/15 font-mono text-accent"
                     },
                     `${ev.kind}: ${ev.uri}`
                   )
@@ -730,7 +729,7 @@ function RecordDetailPanel({
                 ),
                 record.supersedes.map((id) =>
                   React.createElement(
-                    "a",
+                    NavigationLink,
                     {
                       key: id,
                       href: memoryDetailHref(listScope, "recordId", id),
@@ -752,7 +751,7 @@ function RecordDetailPanel({
                 ),
                 record.supersededBy.map((id) =>
                   React.createElement(
-                    "a",
+                    NavigationLink,
                     {
                       key: id,
                       href: memoryDetailHref(listScope, "recordId", id),

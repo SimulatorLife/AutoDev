@@ -484,10 +484,7 @@ export function PlaytestingRunControls({
         workspaceId: capabilities.workspaceId
       });
       const response = await fetch(
-        "/api/playtesting/runs/" +
-          encodeURIComponent(run.batchId) +
-          "?" +
-          query,
+        `/api/playtesting/runs/${encodeURIComponent(run.batchId)}?${query.toString()}`,
         { headers: { accept: "application/json" }, cache: "no-store" }
       );
       const payload: unknown = await response.json();
@@ -526,7 +523,7 @@ export function PlaytestingRunControls({
     setNotice(null);
     try {
       const response = await fetch(
-        "/api/playtesting/runs/" + encodeURIComponent(run.batchId) + "/cancel",
+        `/api/playtesting/runs/${encodeURIComponent(run.batchId)}/cancel`,
         {
           method: "POST",
           headers: {

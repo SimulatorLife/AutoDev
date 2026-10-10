@@ -406,9 +406,10 @@ export function evaluationsHref(
  *
  * Three links mean "take me back to the list": the pager's Previous/Next, the
  * drawer's "Close evaluation detail", and the trace panel's "Back to
- * evaluations". Every one of them is a plain link, so every one of them is a full
- * server-rendered navigation, and the browser's answer to a navigation with no
- * fragment is "scroll to the top, focus `<body>`".
+ * evaluations". They use `NavigationLink` for an in-place Next.js transition,
+ * while remaining ordinary hrefs when scripting is unavailable. A query-state
+ * navigation without a fragment can still return the viewport/focus to the top,
+ * so each destination needs its own arrival anchor.
  *
  * Measured, that is wrong twice over on this page. The keyboard half is the one
  * this anchor exists for: after activating Next with Enter, `document

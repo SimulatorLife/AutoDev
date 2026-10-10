@@ -129,7 +129,7 @@ export function HooksView({
                     {
                       key: index,
                       className:
-                        "bg-background p-3 rounded border border-border/80 flex flex-col gap-1 text-xs font-mono"
+                        "bg-background p-3 rounded border border-border flex flex-col gap-1 text-xs font-mono"
                     },
                     React.createElement(
                       "div",

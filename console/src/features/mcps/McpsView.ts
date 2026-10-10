@@ -7,6 +7,7 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { SourceValidationIssues } from "../../components/status/SourceValidationIssues.ts";
 import {
@@ -84,7 +85,7 @@ export function McpsView({
       weight: 230,
       cell: (server) =>
         React.createElement(
-          "a",
+          NavigationLink,
           {
             className: MONO_ID_LINK_CLASS,
             href: `/mcps/${encodeURIComponent(server.name)}`,

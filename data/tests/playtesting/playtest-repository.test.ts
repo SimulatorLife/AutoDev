@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
+  buildPlaytestFindingIdentity,
   type HumanPlaytestStudy,
   type PlaytestBatch,
   type PlaytestBenchmark,
@@ -15,6 +17,9 @@ import {
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
+  playtestBenchmarkHashInput,
+  playtestExperimentHashInput,
+  playtestFindingIdentityHashInput,
   type PlaytestSessionReview
 } from "@simulatorlife/autodev-core";
 
@@ -29,8 +34,11 @@ import {
   encodeComparison,
   encodeEpisode,
   encodeExperiment,
+  encodeFinding,
   encodeHumanStudy,
-  encodeHumanSummary
+  encodeHumanSummary,
+  decodeFinding,
+  decodeComparison
 } from "../../src/playtesting/row-codec.ts";
 
 function counts() {
@@ -64,6 +72,7 @@ function episode(index: number, workspaceId = "workspace-a"): PlaytestEpisode {
       scenarioId: index % 2 ? "tutorial" : "arena",
       configHash: "config-hash",
       seed: String(index),
+      rngInitialStateHash: null,
       rngAlgorithm: "pcg32",
       rngVersion: "1",
       policyId: index % 3 ? "heuristic" : "expert",
@@ -145,9 +154,28 @@ function batch(): PlaytestBatch {
   };
 }
 
-function finding(): PlaytestFinding {
+function finding(overrides: Partial<PlaytestFinding> = {}): PlaytestFinding {
+  const identity = buildPlaytestFindingIdentity({
+    workspaceId: "workspace-a",
+    mechanicKey: "collision-clip",
+    failureSignature: {
+      events: ["collision", "fall", "clip"],
+      action: "jump",
+      witness: "witness-collision-1"
+    },
+    scope: {
+      scenarioFamily: "tutorial",
+      phase: "phase-2",
+      modality: "headless"
+    }
+  });
+  const fingerprint = createHash("sha256")
+    .update(playtestFindingIdentityHashInput(identity))
+    .digest("hex");
   return {
-    findingId: "finding-1",
+    identity,
+    fingerprint,
+    findingId: `finding-${fingerprint}`,
     version: 2,
     title: "Verified synthetic finding",
     description: "The content remains in the full canonical artifact payload.",
@@ -164,8 +192,9 @@ function finding(): PlaytestFinding {
     experimentIds: [],
     issueRefs: [],
     lastVerifiedBuild: "build-a",
-    nextReviewAt: null
-  };
+    nextReviewAt: null,
+    ...overrides
+  } as PlaytestFinding;
 }
 
 function review(): PlaytestSessionReview {
@@ -244,34 +273,44 @@ function comparison(
 }
 
 function benchmark(index = 1, workspaceId = "workspace-a"): PlaytestBenchmark {
-  return {
+  const manifest: Omit<PlaytestBenchmark, "contentHash"> = {
     benchmarkId: `benchmark-${String(index).padStart(5, "0")}`,
     version: 1,
     workspaceId,
-    referenceBuildSha: index % 2 === 0 ? "build-a" : "build-b",
+    referenceBuildSha: index % 2 === 0 ? "a".repeat(40) : "b".repeat(40),
     scenarioInventory: [{ scenarioId: "tutorial", family: "intro", weight: 1 }],
     seedInventory: [{ seed: "1", purpose: "discovery" }],
     policyVersions: { heuristic: "1" },
     competenceReportRefs: [],
     memoryResetRules: "episode",
-    engineEnvironmentHash: "environment-v1",
-    actionSchemaHash: "actions-v1",
-    observationSchemaHash: "observations-v1",
-    eventSchemaHash: "events-v1",
-    metricRegistryHash: "metrics-v1",
-    rubricHash: "rubric-v1",
+    engineEnvironmentHash: createHash("sha256")
+      .update("environment-v1")
+      .digest("hex"),
+    actionSchemaHash: createHash("sha256").update("actions-v1").digest("hex"),
+    observationSchemaHash: createHash("sha256")
+      .update("observations-v1")
+      .digest("hex"),
+    eventSchemaHash: createHash("sha256").update("events-v1").digest("hex"),
+    metricRegistryHash: createHash("sha256").update("metrics-v1").digest("hex"),
+    rubricHash: createHash("sha256").update("rubric-v1").digest("hex"),
     captureMode: "headless",
+    cohortWeights: { novice: 1 },
     measurementVersion: index % 3 === 0 ? "measurement-v2" : "measurement-v1",
     primaryMetricIds: ["completion"],
     guardrailMetricIds: [],
-    practicalMargins: {},
+    practicalMargins: { completion: 0.05 },
     independentUnit: "episode",
     precisionPlanRef: "precision-plan-v1",
     missingnessBound: 0.1,
     refreshPolicy: "manual",
     createdAt: new Date(Date.UTC(2026, 9, 1, 0, 0, index % 60)).toISOString(),
-    createdBy: "operator",
-    contentHash: "benchmark-hash"
+    createdBy: "operator"
+  };
+  return {
+    ...manifest,
+    contentHash: createHash("sha256")
+      .update(playtestBenchmarkHashInput(manifest))
+      .digest("hex")
   };
 }
 
@@ -279,18 +318,35 @@ function experiment(
   index = 1,
   workspaceId = "workspace-a"
 ): PlaytestExperiment {
-  return {
+  const discoveryInventory = [
+    `experiment-${index}-discovery-1`,
+    `experiment-${index}-discovery-2`
+  ];
+  const confirmationInventory = Array.from(
+    { length: 8 },
+    (_, assignment) => `experiment-${index}-confirmation-${assignment + 1}`
+  );
+  const assignedUnits = [...discoveryInventory, ...confirmationInventory];
+  const manifest: Omit<PlaytestExperiment, "contentHash"> = {
     schema: PLAYTESTS_EXPERIMENT_SCHEMA,
     experimentId: `experiment-${String(index).padStart(5, "0")}`,
     version: 1,
     workspaceId,
-    findingIds: ["finding-1"],
+    findingIds: ["finding-" + "f".repeat(64)],
     hypothesis: "Synthetic hypothesis",
     falsifier: "Synthetic falsifier",
-    alternativeExplanations: [],
+    alternativeExplanations: ["Synthetic alternative explanation."],
     benchmarkId: `benchmark-${index % 2 === 0 ? 2 : 1}`,
-    baseline: { id: "baseline", version: "1" },
-    treatment: { id: "treatment", version: "2" },
+    baseline: {
+      id: "baseline",
+      version: "1",
+      contentHash: createHash("sha256").update("baseline").digest("hex")
+    },
+    treatment: {
+      id: "treatment",
+      version: "2",
+      contentHash: createHash("sha256").update("treatment").digest("hex")
+    },
     approvalId: null,
     exposureUnit: "episode",
     allocationSeed: "seed-1",
@@ -298,9 +354,14 @@ function experiment(
     cohort: "novice",
     memoryInitialization: "fresh",
     pairMap: {},
-    assignmentMap: {},
-    discoveryInventory: [],
-    confirmationInventory: [],
+    assignmentMap: Object.fromEntries(
+      assignedUnits.map((unit, unitIndex) => [
+        unit,
+        unitIndex % 2 === 0 ? "baseline" : "treatment"
+      ])
+    ),
+    discoveryInventory,
+    confirmationInventory,
     primaryMetricId: "completion",
     guardrailMetricIds: [],
     analysisPlan: "descriptive",
@@ -313,8 +374,13 @@ function experiment(
     comparisonId: null,
     ownerDecision: null,
     rollbackRefs: [],
-    createdAt: new Date(Date.UTC(2026, 9, 1, 0, 0, index % 60)).toISOString(),
-    contentHash: "experiment-hash"
+    createdAt: new Date(Date.UTC(2026, 9, 1, 0, 0, index % 60)).toISOString()
+  };
+  return {
+    ...manifest,
+    contentHash: createHash("sha256")
+      .update(playtestExperimentHashInput({ ...manifest, contentHash: "" }))
+      .digest("hex")
   };
 }
 
@@ -390,6 +456,29 @@ function humanSummary(
     createdAt: new Date(Date.UTC(2026, 9, 1, 0, 0, revision % 60)).toISOString()
   };
 }
+
+test("Data verifies immutable benchmark and experiment content hashes before indexing", () => {
+  const benchmarkArtifact = benchmark();
+  const experimentArtifact = experiment();
+  assert.doesNotThrow(() => encodeBenchmark(benchmarkArtifact));
+  assert.doesNotThrow(() => encodeExperiment(experimentArtifact));
+  assert.throws(
+    () =>
+      encodeBenchmark({
+        ...benchmarkArtifact,
+        contentHash: "f".repeat(64)
+      }),
+    /Benchmark contentHash does not match/u
+  );
+  assert.throws(
+    () =>
+      encodeExperiment({
+        ...experimentArtifact,
+        hypothesis: "Changed without a new frozen content hash."
+      }),
+    /Experiment contentHash does not match/u
+  );
+});
 
 const SYNTHETIC_ID_COLUMNS = {
   batchId: "batch_id",
@@ -591,6 +680,74 @@ function makeClickHouseFetch() {
   return { fetchImpl, calls, tables };
 }
 
+test("comparison codec rejects legacy finding aliases on write and read", () => {
+  const current = comparison();
+  const row = encodeComparison(current);
+  const legacy = { ...current, sourceFindingIds: ["finding-1"] };
+  assert.throws(
+    () => encodeComparison(legacy),
+    /canonical stable finding IDs/u
+  );
+  assert.throws(
+    () =>
+      decodeComparison({
+        ...row,
+        payload_json: JSON.stringify(legacy)
+      }),
+    /noncanonical source finding ID/u
+  );
+});
+
+test("finding codec rejects workspace spoofing, fingerprint tampering, and legacy rows without stable identity", () => {
+  const artifact = finding();
+  const row = encodeFinding("workspace-a", artifact);
+  const prevalenceUnknown = finding({
+    affectedEpisodes: null,
+    totalEligibleEpisodes: null,
+    affectedOpportunities: null,
+    totalEligibleOpportunities: null
+  });
+  assert.deepEqual(
+    decodeFinding(encodeFinding("workspace-a", prevalenceUnknown)),
+    prevalenceUnknown
+  );
+  assert.throws(
+    () => encodeFinding("workspace-b", artifact),
+    /identity workspaceId must match/u
+  );
+  assert.throws(
+    () =>
+      encodeFinding("workspace-a", {
+        ...artifact,
+        fingerprint: "f".repeat(64)
+      }),
+    /does not match SHA-256/u
+  );
+  assert.throws(
+    () => encodeFinding("workspace-a", { ...artifact, affectedEpisodes: 11 }),
+    /cannot exceed eligible denominators/u
+  );
+  assert.throws(
+    () => encodeFinding("workspace-a", { ...artifact, affectedOpportunities: -1 }),
+    /non-negative safe integers/u
+  );
+  assert.throws(
+    () => decodeFinding({ ...row, fingerprint: "" }),
+    /fingerprint index column is not/u
+  );
+  assert.throws(
+    () =>
+      decodeFinding({
+        ...row,
+        payload_json: JSON.stringify({
+          findingId: artifact.findingId,
+          version: 1
+        })
+      }),
+    /identity|fingerprint|findingId/u
+  );
+});
+
 test("Core artifact round-trips preserve full canonical payloads and latest revisions", async () => {
   const fake = makeClickHouseFetch();
   const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
@@ -690,6 +847,13 @@ test("Core artifact round-trips preserve full canonical payloads and latest revi
   );
   assert.deepEqual(
     await repo.getFinding("workspace-a", findingArtifact.findingId),
+    findingArtifact
+  );
+  assert.deepEqual(
+    await repo.getLatestFindingByFingerprint(
+      "workspace-a",
+      findingArtifact.fingerprint
+    ),
     findingArtifact
   );
   assert.deepEqual(
@@ -936,11 +1100,28 @@ test("idempotent schema stores complete canonical payloads but no human-response
   });
   await repo.ensureSchema();
   await repo.ensureSchema();
-  assert.equal(queries.length, 18);
-  assert.ok(
-    queries.every((query) => query.includes("CREATE TABLE IF NOT EXISTS"))
+  assert.equal(
+    queries.filter((query) => query.includes("CREATE TABLE IF NOT EXISTS"))
+      .length,
+    18
   );
-  assert.ok(queries.every((query) => query.includes("payload_json")));
+  assert.equal(
+    queries.filter((query) =>
+      query.includes("ADD COLUMN IF NOT EXISTS fingerprint")
+    ).length,
+    2
+  );
+  assert.equal(
+    queries.filter((query) =>
+      query.includes("MODIFY COLUMN") && query.includes("Nullable(UInt32)")
+    ).length,
+    8
+  );
+  assert.ok(
+    queries
+      .filter((query) => query.includes("CREATE TABLE IF NOT EXISTS"))
+      .every((query) => query.includes("payload_json"))
+  );
   assert.ok(queries.some((query) => query.includes("trace_hash_manifest")));
   assert.ok(queries.some((query) => query.includes("playtest_human_studies")));
   assert.ok(
@@ -1035,13 +1216,13 @@ test("comparisons, benchmarks, and experiments support cursor pagination, full t
 
   const benchFiltered = await repo.listBenchmarks({
     workspaceId: "workspace-a",
-    referenceBuildSha: "build-a"
+    referenceBuildSha: "a".repeat(40)
   });
   assert.equal(benchFiltered.total, 7);
   assert.equal(
     await repo.countBenchmarks({
       workspaceId: "workspace-a",
-      referenceBuildSha: "build-a"
+      referenceBuildSha: "a".repeat(40)
     }),
     7
   );

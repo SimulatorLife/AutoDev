@@ -21,15 +21,15 @@
  * `ModelToggle` uses -- keeps its own class, because that difference is
  * carrying meaning rather than repeating a convention.
  */
-export const ACCENT_TONE_CLASS = "bg-accent/15 text-accent border-accent/40";
+export const ACCENT_TONE_CLASS = "bg-accent/15 text-accent border-accent/60";
 
 export const SUCCESS_TONE_CLASS =
-  "bg-success/15 text-success border-success/40";
+  "bg-success/15 text-success border-success/60";
 
-export const ERROR_TONE_CLASS = "bg-error/15 text-error border-error/40";
+export const ERROR_TONE_CLASS = "bg-error/15 text-error border-error/60";
 
 export const WARNING_TONE_CLASS =
-  "bg-warning/15 text-warning border-warning/40";
+  "bg-warning/15 text-warning border-warning/60";
 
 export const NEUTRAL_TONE_CLASS =
-  "bg-neutral/15 text-neutral border-neutral/40";
+  "bg-neutral/15 text-neutral border-neutral/60";

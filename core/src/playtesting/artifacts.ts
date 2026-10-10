@@ -65,6 +65,8 @@ export interface PlaytestEpisodeIdentity {
   readonly scenarioId: string;
   readonly configHash: string;
   readonly seed: string;
+  /** Hash of the adapter's initial RNG state; null means unobserved. */
+  readonly rngInitialStateHash: string | null;
   readonly rngAlgorithm: string | null;
   readonly rngVersion: string | null;
   readonly policyId: string;
@@ -224,6 +226,14 @@ export interface PlaytestBenchmark {
   readonly refreshPolicy: string;
   readonly createdAt: string;
   readonly createdBy: string;
+  /**
+   * Frozen benchmark cohort weight vector. Drives the §10/§11 mix-shift
+   * gate so per-cohort observations are standardized against a single
+   * canonical distribution instead of the build's sample mix.
+   * Cohort keys are unique non-empty IDs; weights are finite positive
+   * numbers summing to 1.0 within the canonical hash tolerance.
+   */
+  readonly cohortWeights: Readonly<Record<string, number>>;
   readonly contentHash: string;
 }
 

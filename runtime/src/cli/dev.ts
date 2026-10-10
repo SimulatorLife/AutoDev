@@ -276,36 +276,34 @@ export async function ensureBackends(
   overrides: Partial<DevBackendDependencies> = {}
 ): Promise<{ telemetryActive: true; routerActive: boolean }> {
   const dependencies = { ...defaultBackendDependencies(), ...overrides };
-  let telemetryActive = await isOpenlitStackReady(dependencies);
+  await ensureDockerEngine(dependencies);
 
+  // Readiness alone is not freshness: a healthy container may still be
+  // running an older image or stale bind-mounted configuration. The canonical
+  // runner reuses an unchanged image and lets Compose recreate only services
+  // whose image/config fingerprint changed, while preserving data volumes.
+  dependencies.writeLine(
+    "[dev] Reconciling the OpenLIT and ClickHouse Usage services..."
+  );
+  const started = dependencies.runCommand(
+    "bash",
+    [path.join(dependencies.repoRoot, "scripts", "openlit", "up.sh")],
+    { cwd: dependencies.repoRoot, stdio: "inherit" }
+  );
+  if (!commandSucceeded(started)) {
+    const detail = started.error?.message;
+    throw new Error(
+      detail
+        ? `OpenLIT startup failed: ${detail}`
+        : `OpenLIT startup failed with exit status ${String(started.status)}.`
+    );
+  }
+
+  const telemetryActive = await waitForOpenlitStack(dependencies);
   if (!telemetryActive) {
-    await ensureDockerEngine(dependencies);
-    telemetryActive = await isOpenlitStackReady(dependencies);
-    if (!telemetryActive) {
-      dependencies.writeLine(
-        "[dev] Starting the OpenLIT and ClickHouse Usage services..."
-      );
-      const started = dependencies.runCommand(
-        "bash",
-        [path.join(dependencies.repoRoot, "scripts", "openlit", "up.sh")],
-        { cwd: dependencies.repoRoot, stdio: "inherit" }
-      );
-      if (!commandSucceeded(started)) {
-        const detail = started.error?.message;
-        throw new Error(
-          detail
-            ? `OpenLIT startup failed: ${detail}`
-            : `OpenLIT startup failed with exit status ${String(started.status)}.`
-        );
-      }
-
-      telemetryActive = await waitForOpenlitStack(dependencies);
-      if (!telemetryActive) {
-        throw new Error(
-          "OpenLIT or ClickHouse did not become ready within 120 seconds; check the Docker Compose logs and rerun pnpm run dev."
-        );
-      }
-    }
+    throw new Error(
+      "OpenLIT or ClickHouse did not become ready within 120 seconds; check the Docker Compose logs and rerun pnpm run dev."
+    );
   }
 
   dependencies.writeLine(

@@ -1,6 +1,7 @@
 import {
   type ControlApiModelRecord,
   type ControlApiProviderRecord,
+  type ControlApiRuntimeResponse,
   PROVIDER_ROLES
 } from "@simulatorlife/autodev-core";
 import React from "react";
@@ -13,6 +14,8 @@ import {
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
 import { ConvergenceBadge } from "../../components/status/ConvergenceBadge.ts";
@@ -21,6 +24,7 @@ import {
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import { ENTITY_LINK_CLASS } from "../../components/ui/text-classes.ts";
+import { liveAgentCount } from "../live-agent-count.ts";
 import { ModelToggle } from "./ModelToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 
@@ -28,6 +32,7 @@ export interface ModelDetailViewProps {
   readonly model: ControlApiModelRecord;
   /** The owning provider's record, or `null` when Providers is unavailable. */
   readonly provider: ControlApiProviderRecord | null;
+  readonly runtime?: ControlApiRuntimeResponse | undefined;
   readonly controlFailed?: boolean | undefined;
 }
 
@@ -60,11 +65,13 @@ function ProviderRoleState({
 export function ModelDetailView({
   model,
   provider,
+  runtime,
   controlFailed
 }: ModelDetailViewProps): React.JSX.Element {
   return React.createElement(
     PageBody,
     { feature: "model-detail" },
+    React.createElement(LiveCountRefresh),
     React.createElement(
       "section",
       { className: DETAIL_PANEL_CLASS },
@@ -98,7 +105,7 @@ export function ModelDetailView({
               )
         ),
         React.createElement(
-          "a",
+          NavigationLink,
           {
             href: `/usage?model=${encodeURIComponent(model.id)}`,
             className: "text-xs text-accent underline underline-offset-2"
@@ -160,7 +167,7 @@ export function ModelDetailView({
           DetailValue,
           { label: "Provider" },
           React.createElement(
-            "a",
+            NavigationLink,
             {
               href: providerPath(model.provider),
               className: `text-fg ${ENTITY_LINK_CLASS}`
@@ -172,6 +179,15 @@ export function ModelDetailView({
           DetailValue,
           { label: "Tiers" },
           model.tiers.join(", ")
+        ),
+        React.createElement(
+          DetailValue,
+          { label: "Active agents" },
+          liveAgentCount(
+            runtime?.liveAgents,
+            "byModel",
+            `${model.provider}/${model.id}`
+          )
         ),
         React.createElement(
           DetailValue,

@@ -2068,6 +2068,34 @@ function isConcurrencyStatus(
   );
 }
 
+function isCountMap(value: unknown): value is Readonly<Record<string, number>> {
+  return (
+    isRecord(value) &&
+    Object.values(value).every(
+      (count) =>
+        typeof count === "number" && Number.isInteger(count) && count >= 0
+    )
+  );
+}
+
+function isControlApiLiveAgentCounts(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.count === "number" &&
+    Number.isInteger(value.count) &&
+    value.count >= 0 &&
+    isCountMap(value.byRole) &&
+    isCountMap(value.byProvider) &&
+    isCountMap(value.byModel) &&
+    typeof value.missingProvider === "number" &&
+    Number.isInteger(value.missingProvider) &&
+    value.missingProvider >= 0 &&
+    typeof value.missingModel === "number" &&
+    Number.isInteger(value.missingModel) &&
+    value.missingModel >= 0
+  );
+}
+
 /**
  * Narrows the runtime response the Console composes onto the Agents page.
  *
@@ -2081,7 +2109,7 @@ function isControlApiRuntimeResponse(
 ): value is ControlApiRuntimeResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-runtime-v1" &&
+    value.schema === "autodev-control-runtime-v2" &&
     typeof value.routerInstanceId === "string" &&
     isRecord(value.lifecycle) &&
     isRouterLifecycleState(value.lifecycle.state) &&
@@ -2089,7 +2117,8 @@ function isControlApiRuntimeResponse(
     typeof value.lifecycle.changedAt === "string" &&
     typeof value.lifecycle.activeResponseRequests === "number" &&
     isConcurrencyStatus(value.concurrency) &&
-    typeof value.inFlightRequestCount === "number"
+    typeof value.inFlightRequestCount === "number" &&
+    (value.liveAgents === null || isControlApiLiveAgentCounts(value.liveAgents))
   );
 }
 
@@ -2734,7 +2763,7 @@ export async function fetchRuntime(
     kind: INVALID_RESPONSE_KIND,
     code: "autodev_control_api_invalid_runtime_response",
     message:
-      "AutoDev Control API returned an incompatible Runtime response; the Console requires the v1 runtime contract."
+      "AutoDev Control API returned an incompatible Runtime response; the Console requires the v2 runtime contract."
   };
 }
 

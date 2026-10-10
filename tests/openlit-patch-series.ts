@@ -66,7 +66,8 @@ export const OPENLIT_PATCH_NAMES = [
   "49-analytics-ungate-ping-gate",
   "50-ungate-the-remaining-telemetry-reads",
   "51-format-chart-time-axis-ticks",
-  "52-request-time-telemetry-rendering"
+  "52-request-time-telemetry-rendering",
+  "53-batch-auto-pricing-mutations"
 ] as const;
 
 /** Strips the `.patch` suffix a directory listing carries. */

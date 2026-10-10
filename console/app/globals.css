@@ -25,9 +25,9 @@
   --color-hover: #2a2a2a;
   --color-selected: #252525;
 
-  /* Borders */
-  --color-border: var(--color-surface-raised);
-  --color-border-strong: var(--color-hover);
+  /* Neutral outlines remain distinct from every dark surface below. */
+  --color-border: #7d7d7d;
+  --color-border-strong: #929292;
 
   /* Text */
   --color-fg: #f4f4f5;

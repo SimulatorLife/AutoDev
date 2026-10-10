@@ -227,12 +227,12 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   );
   assert.ok(
     target.includes(
-      "A safe, reversible single-choice setting applies as soon as the operator changes its select."
+      "Every editable configuration control persists its change immediately; do not require a separate Save button."
     )
   );
   assert.ok(
     target.includes(
-      "Keep explicit Apply/Save only when the operator is deliberately staging a coherent group"
+      "Apply remains appropriate for non-persistent filter groups that are deliberately staged as one URL state"
     )
   );
   assert.ok(
@@ -249,7 +249,7 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   );
   assert.ok(
     target.includes(
-      "multiple filter axes applied as one URL state, a multi-select/checkbox set, a preview/validation step, or a consequential action that needs review or confirmation"
+      "non-persistent filter groups that are deliberately staged as one URL state, preview/validation steps, or consequential actions that need review or confirmation"
     ),
     "staged-submit policy must enumerate the justified exceptions requiring explicit Apply/Save"
   );
@@ -277,7 +277,7 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   );
   assert.ok(
     target.includes(
-      "Changing or submitting any Console form or control must not cause a full document reload: safe single-choice controls auto-apply and explicit grouped Apply/Save where intentional are kept, but all GET filters and POST mutations use in-place client navigation/update while preserving URL state and server-confirmed feedback."
+      "Changing or submitting any Console form or control must not cause a full document reload: configuration changes auto-save, filters may use an explicit Apply action where staged URL state is intentional, and GET/POST updates use in-place client navigation while preserving URL state and server-confirmed feedback."
     ),
     "UI policy must require in-place client navigation/update without full document reloads for all form submissions"
   );
@@ -347,18 +347,18 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
   );
   assert.match(
     target,
-    /Safe single-choice settings apply on selection without a second Apply control; multi-axis filters, multi-select sets, and reviewed transactions retain an explicit submit boundary with its purpose made clear\./u
+    /Every editable configuration control persists its change immediately; do not require a separate Save button\./u
   );
   assert.match(
     target,
-    /Changing or submitting any Console form or control does not cause a full document reload, executing via in-place client navigation and updates while preserving URL state, native form semantics, keyboard focus, accessible pending feedback, and server-confirmed state\./u,
+    /Changing or submitting any Console form or control must not cause a full document reload: configuration changes auto-save, filters may use an explicit Apply action where staged URL state is intentional, and GET\/POST updates use in-place client navigation while preserving URL state and server-confirmed feedback\./u,
     "acceptance contract must guard no-document-reload invariant for all Console form submissions"
   );
-  // The Providers table is a single four-column configuration surface, so the
-  // guard pins those columns rather than accepting any Providers layout.
+  // The Providers table is one configuration surface with the live agent count,
+  // so the guard pins its current columns rather than accepting any layout.
   assert.match(
     target,
-    /single four-column configuration table \(Provider, Status, Roles, Agent Limits\)/u
+    /single five-column configuration table \(Provider, Status, Active Agents, Roles, Agent Limits\)/u
   );
   for (const removedColumn of [
     "Role Enablement",
@@ -1109,8 +1109,6 @@ test("Console globals.css defines the required dark-only semantic token set", ()
   // Semantic roles keep their utility names while sharing canonical colors.
   for (const [alias, canonical] of [
     ["input", "surface-raised"],
-    ["border", "surface-raised"],
-    ["border-strong", "hover"],
     ["fg-inverse", "background"],
     ["neutral", "fg-secondary"]
   ] as const) {
@@ -1140,18 +1138,15 @@ test("Console globals.css defines the required dark-only semantic token set", ()
 // Background/surface hierarchy must read as black/neutral-charcoal (per
 // docs/autodev-console-target-state.md §3's dark-only visual system
 // requirements), not the purple/blue-tinted dark gray the Console
-// previously shipped. Semantic accent/success/warning/error/chart roles
-// keep their own distinct hues; only the background/surface hierarchy is
-// constrained to near-black neutral gray.
-const BACKGROUND_SURFACE_HIERARCHY_TOKENS = [
+// previously shipped. Borders are separate contrast tokens and are tested
+// against these surfaces below.
+const BACKGROUND_SURFACE_TOKENS = [
   "background",
   "surface",
   "surface-raised",
   "input",
   "hover",
-  "selected",
-  "border",
-  "border-strong"
+  "selected"
 ] as const;
 
 function channelSpread(hex: string): {
@@ -1176,7 +1171,7 @@ test("Console background/surface hierarchy is black/neutral-charcoal, not purple
   const tokens = parseThemeColorTokens(css);
   const failures: string[] = [];
 
-  for (const name of BACKGROUND_SURFACE_HIERARCHY_TOKENS) {
+  for (const name of BACKGROUND_SURFACE_TOKENS) {
     const hex = tokens[name];
     if (!hex) {
       failures.push(`missing --color-${name}`);
@@ -1238,6 +1233,161 @@ test("Console background/surface hierarchy is black/neutral-charcoal, not purple
       `--color-${name} (${hex}) must keep a distinct hue, not collapse into neutral charcoal`
     );
   }
+});
+
+const BORDER_CONTRAST_SURFACES = [
+  "background",
+  "surface",
+  "surface-raised",
+  "input",
+  "hover",
+  "selected"
+] as const;
+const NEUTRAL_BORDER_TOKENS = ["border", "border-strong"] as const;
+const STATUS_BORDER_TOKENS = [
+  "accent",
+  "success",
+  "warning",
+  "error",
+  "neutral"
+] as const;
+
+interface RenderedStatusBorder {
+  readonly color: (typeof STATUS_BORDER_TOKENS)[number];
+  readonly opacity: number;
+  readonly source: string;
+  readonly className: string;
+}
+
+function borderSurfaceContrastFailures(
+  name: string,
+  border: string,
+  opacity: number,
+  tokens: Record<string, string>,
+  source: string
+): string[] {
+  const failures: string[] = [];
+  for (const surfaceName of BORDER_CONTRAST_SURFACES) {
+    const surface = tokens[surfaceName];
+    if (!surface) continue;
+    const renderedBorder = compositeHex(border, surface, opacity);
+    const ratio = contrastRatio(renderedBorder, surface);
+    if (
+      relativeLuminance(renderedBorder) <= relativeLuminance(surface) ||
+      ratio < 3
+    ) {
+      failures.push(
+        `${source}: ${name} on ${surfaceName}: ${ratio.toFixed(2)}:1 (requires a brighter outline at >= 3:1)`
+      );
+    }
+  }
+  return failures;
+}
+
+function neutralBorderFailures(tokens: Record<string, string>): string[] {
+  const failures: string[] = [];
+  for (const name of NEUTRAL_BORDER_TOKENS) {
+    const border = tokens[name];
+    if (!border) {
+      failures.push(`missing --color-${name}`);
+      continue;
+    }
+    if (channelSpread(border).maxDelta > 1)
+      failures.push(`--color-${name} (${border}) must be neutral gray`);
+    failures.push(
+      ...borderSurfaceContrastFailures(name, border, 1, tokens, name)
+    );
+  }
+  return failures;
+}
+
+function attenuatedNeutralBorderClasses(): string[] {
+  const forbidden = [
+    "border-border/",
+    "border-border-strong/",
+    "divide-border/",
+    "divide-border-strong/",
+    "outline-border/",
+    "outline-border-strong/"
+  ];
+  return consoleSourceFiles().flatMap((file) => {
+    const source = readFileSync(file, "utf8");
+    return forbidden
+      .filter((prefix) => source.includes(prefix))
+      .map(
+        (prefix) =>
+          `${fileURLToPath(file)}: ${prefix}… attenuates a neutral outline token below its tested contrast`
+      );
+  });
+}
+
+function statusBorderClass(
+  className: string,
+  source: string
+): RenderedStatusBorder | null {
+  for (const color of STATUS_BORDER_TOKENS) {
+    const prefix = `border-${color}`;
+    if (className === prefix) return { color, opacity: 1, source, className };
+    if (!className.startsWith(`${prefix}/`)) continue;
+    const rawOpacity = className.slice(prefix.length + 1);
+    const digitsOnly =
+      rawOpacity.length > 0 &&
+      [...rawOpacity].every(
+        (character) => character >= "0" && character <= "9"
+      );
+    if (!digitsOnly) continue;
+    const percent = Number(rawOpacity);
+    if (percent >= 0 && percent <= 100)
+      return { color, opacity: percent / 100, source, className };
+  }
+  return null;
+}
+
+function statusBorderClassesFromSource(
+  sourcePath: string
+): RenderedStatusBorder[] {
+  const source = readFileSync(sourcePath, "utf8");
+  return source.split(/[^A-Za-z0-9/_-]+/u).flatMap((className) => {
+    const border = statusBorderClass(className, fileURLToPath(sourcePath));
+    return border === null ? [] : [border];
+  });
+}
+
+function statusBorderFailures(tokens: Record<string, string>): string[] {
+  const borders = consoleSourceFiles().flatMap((file) =>
+    statusBorderClassesFromSource(file)
+  );
+  return borders.flatMap(({ color, opacity, source, className }) => {
+    const border = tokens[color];
+    return border === undefined
+      ? [`${source}: missing --color-${color} for ${className}`]
+      : borderSurfaceContrastFailures(
+          className,
+          border,
+          opacity,
+          tokens,
+          source
+        );
+  });
+}
+
+// WCAG 2.1 SC 1.4.11 requires 3:1 non-text contrast for visual information
+// needed to identify controls and their boundaries. Test effective border
+// colors, including status-tinted outlines, instead of specific gray hexes.
+test("Console component borders meet 3:1 contrast against every dark surface", () => {
+  const tokens = parseThemeColorTokens(readFileSync(globalsCssPath, "utf8"));
+  const failures = [
+    ...neutralBorderFailures(tokens),
+    ...attenuatedNeutralBorderClasses(),
+    ...statusBorderFailures(tokens)
+  ];
+
+  assert.deepEqual(
+    failures,
+    [],
+    "Console component outlines must remain visible against every dark surface:\n" +
+      failures.join("\n")
+  );
 });
 
 test("Console favicon stays aligned with the canonical dark theme tokens", () => {
@@ -1468,7 +1618,7 @@ test("Console form interactions forbid document reload while preserving intentio
   );
   assert.ok(
     target.includes(
-      "all GET filters and POST mutations use in-place client navigation/update while preserving URL state and server-confirmed feedback"
+      "configuration changes auto-save, filters may use an explicit Apply action where staged URL state is intentional, and GET/POST updates use in-place client navigation while preserving URL state and server-confirmed feedback"
     ),
     "GET filters and POST mutations must use in-place client navigation/update preserving URL and server state"
   );
@@ -1476,13 +1626,13 @@ test("Console form interactions forbid document reload while preserving intentio
   // Intentional staged-submit exception: safe single-choice auto-applies vs explicit grouped Apply/Save
   assert.ok(
     target.includes(
-      "safe single-choice controls auto-apply and explicit grouped Apply/Save where intentional are kept"
+      "configuration changes auto-save, filters may use an explicit Apply action where staged URL state is intentional"
     ),
     "safe single-choice auto-apply and intentional grouped Apply/Save must be preserved"
   );
   assert.ok(
     target.includes(
-      "Keep explicit Apply/Save only when the operator is deliberately staging a coherent group: multiple filter axes applied as one URL state, a multi-select/checkbox set, a preview/validation step, or a consequential action that needs review or confirmation."
+      "Apply remains appropriate for non-persistent filter groups that are deliberately staged as one URL state, preview/validation steps, or consequential actions that need review or confirmation."
     ),
     "explicit Apply/Save must be guarded for intentional staged submit scenarios"
   );

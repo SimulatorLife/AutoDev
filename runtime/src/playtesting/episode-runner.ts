@@ -905,6 +905,7 @@ function assembleEpisode(
     scenarioId: options.scenarioId,
     configHash: options.approval.playtestConfigHash,
     seed: options.seed,
+    rngInitialStateHash: context.reset.rngProvenance.initialStateHash,
     rngAlgorithm: context.reset.rngProvenance.algorithm,
     rngVersion: context.reset.rngProvenance.version,
     policyId: options.policy.id,

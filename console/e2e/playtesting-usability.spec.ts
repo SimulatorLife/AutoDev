@@ -3,10 +3,10 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 const SESSION_17_URL_PATTERN = /\/playtesting\/sessions\/episode-17\?/u;
 const VIEW_FINDINGS_PATTERN = /view=findings/u;
 const STEP_2_PATTERN = /step=2/u;
-const RETURN_FINDING_1_PATTERN = /returnFinding=finding-1/u;
+const RETURN_FINDING_1_PATTERN = /returnFinding=finding-[a-f\d]{64}/u;
 const PLAYTESTING_FINDINGS_VIEW_PATTERN = /\/playtesting\?view=findings/u;
 const SEVERITY_MAJOR_PATTERN = /severity=major/u;
-const FINDING_1_ANCHOR_PATTERN = /#finding-finding-1$/u;
+const FINDING_1_ANCHOR_PATTERN = /#finding-finding-[a-f\d]{64}$/u;
 const VIEW_COMPARE_PATTERN = /view=compare/u;
 const WORKSPACE_DETAIL_URL_PATTERN = /\/workspaces\/fixture\/game$/u;
 const BUDGET_PREVIEW_PATTERN =
@@ -124,7 +124,7 @@ test("finding witness opens its exact replay step, then Back restores filtered l
   await expect(page).toHaveURL(PLAYTESTING_FINDINGS_VIEW_PATTERN);
   await expect(page).toHaveURL(SEVERITY_MAJOR_PATTERN);
   await expect(page).toHaveURL(FINDING_1_ANCHOR_PATTERN);
-  await expect(page.locator("#finding-finding-1")).toBeVisible();
+  await expect(page.locator('[id^="finding-finding-"]')).toBeVisible();
 });
 
 test("mobile session list has no horizontal page overflow and tabs are keyboard navigable", async ({

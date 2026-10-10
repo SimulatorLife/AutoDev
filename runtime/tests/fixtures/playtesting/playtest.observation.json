@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "schemaHash": "a4654f7fae58dc28d1f5ad541efe42768acbd851755ddcfe5594a64cfd3da012",
+  "mode": "headless",
+  "cohort": "synthetic-fixture-only",
+  "visibilityMode": "structured",
+  "fields": [
+    {
+      "fieldPath": "room",
+      "unit": null,
+      "displayRounding": null,
+      "revelationTiming": "before-action",
+      "playerRuleRef": "fixture/room-is-visible"
+    }
+  ],
+  "uiEquivalence": "unverified",
+  "conformanceFixtureHash": null
+}

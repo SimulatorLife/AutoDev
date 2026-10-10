@@ -9,6 +9,8 @@ import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
+import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import {
   DetailGrid,
   DetailValue,
@@ -29,6 +31,7 @@ import {
   MONO_VALUE_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
+import { liveAgentCount } from "../live-agent-count.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
 
 export interface AgentsViewProps {
@@ -75,18 +78,32 @@ export function AgentsView({
       weight: 221,
       cell: (agent) =>
         React.createElement(
-          "a",
+          "div",
           {
-            href: `/agents/${encodeURIComponent(agent.id)}`,
-            className: `block min-h-6 font-semibold text-fg ${ENTITY_LINK_CLASS}`,
-            "aria-label": `Open agent ${agent.role}`,
-            title: `${agent.role} (${agent.kind})`
+            className: "flex flex-col items-start gap-1"
           },
-          React.createElement("span", null, agent.role),
+          React.createElement(
+            NavigationLink,
+            {
+              href: `/agents/${encodeURIComponent(agent.id)}`,
+              className: `block min-h-6 font-semibold text-fg ${ENTITY_LINK_CLASS}`,
+              "aria-label": `Open agent ${agent.role}`,
+              title: `${agent.role} (${agent.kind})`
+            },
+            React.createElement("span", null, agent.role),
+            React.createElement(
+              "span",
+              { className: "ml-2 text-xs text-fg-muted capitalize" },
+              `(${agent.kind})`
+            )
+          ),
           React.createElement(
             "span",
-            { className: "ml-2 text-xs text-fg-muted capitalize" },
-            `(${agent.kind})`
+            {
+              className: "text-xs text-fg-muted tabular-nums",
+              "data-live-agent-role": agent.role
+            },
+            `Active instances: ${liveAgentCount(runtime?.liveAgents, "byRole", agent.role)}`
           )
         )
     },
@@ -167,9 +184,10 @@ export function AgentsView({
   return React.createElement(
     PageBody,
     { feature: "agents" },
+    React.createElement(LiveCountRefresh),
     React.createElement(
       StatGrid,
-      { columns: 3 },
+      { columns: 4 },
       React.createElement(StatCard, {
         title: "Ready Agents",
         value: readinessObserved ? readyAgents : NOT_OBSERVED_LABEL,
@@ -189,6 +207,17 @@ export function AgentsView({
         value: inFlightCount,
         subtitle:
           runtime === undefined ? NOT_OBSERVED_LABEL : "Active router turns"
+      }),
+      React.createElement(StatCard, {
+        title: "Active Agent Instances",
+        value:
+          runtime?.liveAgents === undefined || runtime.liveAgents === null
+            ? NOT_OBSERVED_LABEL
+            : runtime.liveAgents.count,
+        subtitle:
+          runtime?.liveAgents === undefined || runtime.liveAgents === null
+            ? "No live activity source"
+            : "Runtime live sessions and subagents"
       })
     ),
     React.createElement(

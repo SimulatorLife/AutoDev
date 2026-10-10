@@ -121,7 +121,7 @@ export function ResourceUnavailable({
     {
       // The failure shell starts from the panel *shape*, not the finished panel, so
       // the severity tint is not competing with the default `bg-surface`.
-      className: `${DETAIL_PANEL_SHAPE} flex flex-col gap-3 border-error/40 bg-error/10`,
+      className: `${DETAIL_PANEL_SHAPE} flex flex-col gap-3 border-error/60 bg-error/10`,
       role: "alert",
       "data-status": "unavailable",
       "data-error-code": code
@@ -156,7 +156,7 @@ export function ResourceUnavailable({
           // that cannot fit a line even on its own. The break opportunities that
           // do the real work are the `<wbr>` elements inside.
           className:
-            "max-w-full break-words rounded border border-error/40 bg-error/15 px-2 py-0.5 font-mono text-xs text-error"
+            "max-w-full break-words rounded border border-error/60 bg-error/15 px-2 py-0.5 font-mono text-xs text-error"
         },
         breakableToken(code)
       )

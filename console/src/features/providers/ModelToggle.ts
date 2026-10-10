@@ -23,9 +23,9 @@ const PILL_CLASS = {
   // Hover strengthens the border instead of tinting the fill: a heavier
   // translucent background pulls the status text below the WCAG AA contrast
   // floor, and a pill that becomes unreadable on hover is not a hover state.
-  on: "bg-success/15 text-success border-success/40 hover:border-success/70",
-  off: "bg-warning/10 text-warning border-warning/40 hover:border-warning/70",
-  unknown: "bg-neutral/15 text-fg-muted border-neutral/40"
+  on: "bg-success/15 text-success border-success/60 hover:border-success/70",
+  off: "bg-warning/10 text-warning border-warning/60 hover:border-warning/70",
+  unknown: "bg-neutral/15 text-fg-muted border-neutral/60"
 } as const;
 
 /**

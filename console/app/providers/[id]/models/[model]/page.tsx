@@ -7,7 +7,8 @@ import { isControlFailure } from "../../../../../src/lib/control-failure.ts";
 import {
   controlApiFailureCode,
   fetchModels,
-  fetchProviders
+  fetchProviders,
+  fetchRuntime
 } from "../../../../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
@@ -52,9 +53,10 @@ export default async function ModelDetailPage({
     );
   }
   const query = (await searchParams) ?? {};
-  const [modelsResult, providersResult] = await Promise.all([
+  const [modelsResult, providersResult, runtimeResult] = await Promise.all([
     fetchModels(config),
-    fetchProviders(config)
+    fetchProviders(config),
+    fetchRuntime(config)
   ]);
   if (modelsResult.kind !== "ok") {
     return React.createElement(
@@ -83,6 +85,7 @@ export default async function ModelDetailPage({
     React.createElement(ModelDetailView, {
       model,
       provider: providers?.find((entry) => entry.id === model.provider) ?? null,
+      runtime: runtimeResult.kind === "ok" ? runtimeResult.data : undefined,
       controlFailed: isControlFailure(query.control)
     })
   );

@@ -314,9 +314,10 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
   assert.equal(active.body.schema, "autodev-control-playtesting-runs-v1");
   assert.equal((active.body.runs as unknown[]).length, 1);
   assert.equal(
-    (calls[3] as { session: { role: string } }).session.role,
+    (calls[2] as { operation: string; session: { role: string } }).session.role,
     "control-viewer"
   );
+  assert.equal((calls[2] as { operation: string }).operation, "list");
 
   const status = await callRunControl(
     "GET",
@@ -326,9 +327,10 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
   );
   assert.equal(status.status, 200);
   assert.equal(
-    (calls[2] as { session: { role: string } }).session.role,
+    (calls[3] as { operation: string; session: { role: string } }).session.role,
     "control-viewer"
   );
+  assert.equal((calls[3] as { operation: string }).operation, "wait");
   assert.deepEqual(status.body.run, {
     batchId: "batch-run-1",
     status: "completed",

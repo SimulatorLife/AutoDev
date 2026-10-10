@@ -10,7 +10,7 @@
     stays legible at the 16px a browser tab actually renders.
   -->
   <rect width="32" height="32" rx="7" fill="#111111" />
-  <rect x="0.75" y="0.75" width="30.5" height="30.5" rx="6.25" fill="none" stroke="#2a2a2a" stroke-width="1.5" />
+  <rect x="0.75" y="0.75" width="30.5" height="30.5" rx="6.25" fill="none" stroke="#929292" stroke-width="1.5" />
   <path
     d="M9 11.5 L14 16 L9 20.5"
     fill="none"

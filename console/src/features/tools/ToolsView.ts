@@ -16,6 +16,7 @@ import {
   CALLOUT_WARNING_CLASS
 } from "../../components/layout/Callout.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -23,7 +24,7 @@ import {
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
-import { Chip, chipList } from "../../components/tables/Chips.ts";
+import { CHIP_CLASS, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable,
@@ -31,6 +32,7 @@ import {
 } from "../../components/tables/DataTable.ts";
 import {
   ACTION_LINK_CLASS,
+  ENTITY_LINK_CLASS,
   MONO_ID_LINK_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -212,8 +214,12 @@ function EditSurfaceLink({
 }): React.JSX.Element {
   const target = editSurfaceTarget(surface);
   return React.createElement(
-    "a",
-    { href: target.href, className: EDIT_SURFACE_LINK_CLASS },
+    NavigationLink,
+    {
+      href: target.href,
+      className: EDIT_SURFACE_LINK_CLASS,
+      dataAttributes: { "data-edit-surface": surface.section }
+    },
     surface.label ?? target.fallbackLabel
   );
 }
@@ -300,7 +306,7 @@ export function ToolsView({
           "div",
           { className: "min-w-0" },
           React.createElement(
-            "a",
+            NavigationLink,
             {
               href: `/tools/${toolId(tool)}`,
               className: MONO_ID_LINK_CLASS,
@@ -312,7 +318,8 @@ export function ToolsView({
               // neighbour states. That left the longest name needing 413px in a
               // 317px box, cut by 96px, and the cut fell inside the one part
               // that distinguishes one row from another.
-              title: qualifiedToolName(tool)
+              title: qualifiedToolName(tool),
+              dataAttributes: { "data-tool-detail-link": toolId(tool) }
             },
             tool.name
           ),
@@ -378,15 +385,20 @@ export function ToolsView({
             items: tool.exposedRoles,
             emptyLabel: "No roles assigned",
             testId: "tool-roles",
-            renderItem: (role) =>
-              React.createElement(
-                Chip,
+            renderItem: (role) => {
+              const label = `Filter tools exposed to ${role}`;
+              return React.createElement(
+                NavigationLink,
                 {
                   href: roleFilterHref(filters, role),
-                  label: `Filter tools exposed to ${role}`
+                  className: `${CHIP_CLASS} min-h-6 ${ENTITY_LINK_CLASS}`,
+                  "aria-label": label,
+                  title: label,
+                  dataAttributes: { "data-role-chip": role }
                 },
                 role
-              )
+              );
+            }
           })
         )
     },
@@ -465,11 +477,11 @@ export function ToolsView({
         },
         SOURCE_FILTERS.map((src) =>
           React.createElement(
-            "a",
+            NavigationLink,
             {
               key: src,
               href: sourceFilterHref(filters, src),
-              "data-source-filter": src,
+              dataAttributes: { "data-source-filter": src },
               className: `px-3 py-1 rounded text-xs font-medium capitalize transition-colors ${
                 requestedSource === src || (src === "all" && !requestedSource)
                   ? "bg-surface-raised text-accent"
@@ -493,10 +505,10 @@ export function ToolsView({
               "Role:"
             ),
             React.createElement(
-              "a",
+              NavigationLink,
               {
                 href: roleFilterHref(filters, ""),
-                "data-role-filter": "all",
+                dataAttributes: { "data-role-filter": "all" },
                 className: `px-3 py-1 rounded text-xs font-medium transition-colors ${
                   requestedRole
                     ? "text-fg-muted hover:text-fg"
@@ -507,11 +519,11 @@ export function ToolsView({
             ),
             sortedRoles.map((role) =>
               React.createElement(
-                "a",
+                NavigationLink,
                 {
                   key: role,
                   href: roleFilterHref(filters, role),
-                  "data-role-filter": role,
+                  dataAttributes: { "data-role-filter": role },
                   className: `px-3 py-1 rounded text-xs font-medium transition-colors ${
                     requestedRole === role
                       ? "bg-surface-raised text-accent"
@@ -545,10 +557,11 @@ export function ToolsView({
           : "Catalog not observed; no tools available."
       ),
       React.createElement(
-        "a",
+        NavigationLink,
         {
           href: usageLink,
-          className: ACTION_LINK_CLASS
+          className: ACTION_LINK_CLASS,
+          dataAttributes: { "data-tools-usage-link": "true" }
         },
         "View tool-call usage →"
       )

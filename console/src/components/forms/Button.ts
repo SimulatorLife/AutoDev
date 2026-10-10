@@ -38,7 +38,7 @@ const ICON_BUTTON_SIZE_CLASS = "h-6 w-6 p-0 text-sm font-medium";
  * destructive control rather than being re-typed per feature.
  */
 const DESTRUCTIVE_BUTTON_BEFORE_SIZE_CLASS =
-  "rounded border border-error/40 bg-error/15";
+  "rounded border border-error/60 bg-error/15";
 const DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS =
   "text-error transition-colors hover:bg-error/25 disabled:cursor-not-allowed disabled:opacity-60";
 export const DESTRUCTIVE_BUTTON_CLASS = `${DESTRUCTIVE_BUTTON_BEFORE_SIZE_CLASS} ${DEFAULT_BUTTON_SIZE_CLASS} ${DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS}`;

@@ -124,7 +124,7 @@ function metricTable(
             "tr",
             {
               key: `${metric.metricId}:${metric.metricVersion}`,
-              className: "border-b border-border/70 align-top"
+              className: "border-b border-border align-top"
             },
             React.createElement(
               "th",

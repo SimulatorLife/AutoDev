@@ -4,6 +4,12 @@ import {
   type IncomingMessage,
   type ServerResponse
 } from "node:http";
+import { createHash } from "node:crypto";
+
+import {
+  buildPlaytestFindingIdentity,
+  playtestFindingIdentityHashInput
+} from "@simulatorlife/autodev-core";
 
 const PORT = Number(process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? 4311);
 const WORKSPACE_ID = "fixture/game";
@@ -16,6 +22,24 @@ const FRAME_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4nQAAAAASUVORK5CYII=",
   "base64"
 );
+const findingIdentity = buildPlaytestFindingIdentity({
+  workspaceId: WORKSPACE_ID,
+  mechanicKey: "action-execution",
+  failureSignature: {
+    events: ["legal-action-noop"],
+    action: "advance",
+    witness: "tutorial-step-2"
+  },
+  scope: {
+    scenarioFamily: "tutorial",
+    phase: "tutorial",
+    modality: "headless"
+  }
+});
+const findingFingerprint = createHash("sha256")
+  .update(playtestFindingIdentityHashInput(findingIdentity))
+  .digest("hex");
+const findingId = "finding-" + findingFingerprint;
 
 const counts = {
   assigned: 1,
@@ -42,6 +66,7 @@ const episode = {
     scenarioId: "tutorial",
     configHash: "config-hash",
     seed: "seed-17",
+    rngInitialStateHash: "e".repeat(64),
     rngAlgorithm: "fixture-rng",
     rngVersion: "1",
     policyId: "weak-bot",
@@ -87,7 +112,7 @@ const episode = {
       notes: "Synthetic fixture metric; not a real game result."
     }
   ],
-  findingIds: ["finding-1"],
+  findingIds: [findingId],
   assignedAt: FIXTURE_TIMESTAMP,
   startedAt: "2026-10-10T00:00:01.000Z",
   completedAt: "2026-10-10T00:00:02.000Z",
@@ -141,7 +166,9 @@ const batch = {
 };
 
 const finding = {
-  findingId: "finding-1",
+  identity: findingIdentity,
+  fingerprint: findingFingerprint,
+  findingId,
   version: 1,
   title: "A legal action produces no visible progress",
   description:
@@ -180,7 +207,7 @@ const comparison = {
     couplingDiagnostics: [],
     exclusions: []
   },
-  sourceFindingIds: ["finding-1"],
+  sourceFindingIds: [findingId],
   episodeRefs: [{ kind: "episode", id: episode.episodeId, step: 2 }],
   measurementVersion: MEASUREMENT_VERSION,
   metrics: [

@@ -581,7 +581,9 @@ function findingsTable(
       header: "Episodes affected",
       weight: 150,
       cell: (finding) =>
-        `${finding.affectedEpisodes} / ${finding.totalEligibleEpisodes}`
+        finding.affectedEpisodes === null || finding.totalEligibleEpisodes === null
+          ? "Not observed"
+          : `${finding.affectedEpisodes} / ${finding.totalEligibleEpisodes}`
     },
     {
       id: "witness",

@@ -1460,7 +1460,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(runtime.response.statusCode, 200);
-    assert.equal(runtime.body.schema, "autodev-control-runtime-v1");
+    assert.equal(runtime.body.schema, "autodev-control-runtime-v2");
 
     // 13. GitHub: parsed workflow definitions/triggers only; never live
     // Actions API facts.

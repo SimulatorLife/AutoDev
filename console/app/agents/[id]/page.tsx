@@ -7,7 +7,8 @@ import {
   controlApiFailureCode,
   fetchAgentDetail,
   fetchProviders,
-  fetchRouting
+  fetchRouting,
+  fetchRuntime
 } from "../../../src/lib/server/control-api.ts";
 import { agentDetailFromControlApi } from "../../../src/lib/server/views.ts";
 import {
@@ -49,11 +50,13 @@ export default async function AgentDetailPage({
     );
   }
 
-  const [detailResult, routingResult, providersResult] = await Promise.all([
-    fetchAgentDetail(id, config),
-    fetchRouting(config),
-    fetchProviders(config)
-  ]);
+  const [detailResult, routingResult, providersResult, runtimeResult] =
+    await Promise.all([
+      fetchAgentDetail(id, config),
+      fetchRouting(config),
+      fetchProviders(config),
+      fetchRuntime(config)
+    ]);
 
   if (detailResult.kind === "http-error" && detailResult.status === 404) {
     notFound();
@@ -73,6 +76,7 @@ export default async function AgentDetailPage({
   const routing = routingResult.kind === "ok" ? routingResult.data : undefined;
   const providers =
     providersResult.kind === "ok" ? providersResult.data : undefined;
+  const runtime = runtimeResult.kind === "ok" ? runtimeResult.data : undefined;
 
   return React.createElement(
     ConsolePageShell,
@@ -81,7 +85,8 @@ export default async function AgentDetailPage({
       agent: agentDetailFromControlApi(detailResult.data),
       reconciliation: detailResult.data.reconciliation,
       routing,
-      providers
+      providers,
+      runtime
     })
   );
 }

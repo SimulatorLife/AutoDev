@@ -20,7 +20,10 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 
-import type { WorkspacePlaytestApproval } from "@simulatorlife/autodev-core";
+import {
+  defaultPlaytestRegistryDefaults,
+  type WorkspacePlaytestApproval
+} from "@simulatorlife/autodev-core";
 
 import type { PlaytestAdapterExit } from "../src/playtesting/adapter-client.ts";
 import {
@@ -36,6 +39,40 @@ import {
 } from "../src/playtesting/docker-sandbox.ts";
 
 const STANDARD_COMMAND = ["/usr/bin/python3", "adapter.py"] as const;
+
+function fixtureRubric(): string {
+  return (
+    JSON.stringify({
+      schemaVersion: 1,
+      workspaceId: "fixture/game",
+      audience: "synthetic-fixture-only",
+      registryVersion: "docker-sandbox-fixture-v1",
+      eventSchemaHash: "d".repeat(64),
+      defaults: {
+        ...defaultPlaytestRegistryDefaults(),
+        audience: "synthetic-fixture-only",
+        scenarioEligibility: ["default"]
+      },
+      metricDefinitions: [
+        {
+          metricId: "legal-action-rejection",
+          version: 1,
+          mechanicKey: "action-execution",
+          exposurePredicate: "fresh-legal-request-v1",
+          eventFields: ["action.offeredIds", "action.expectedRevision"],
+          evaluatorRef: "fixture/legal-action-rejection-v1",
+          numerator: "fresh advertised legal requests rejected by engine",
+          denominator: "all fresh advertised legal requests",
+          unit: "proportion",
+          polarity: "lower",
+          targetBand: [0, 0],
+          notObservable: ["missing-action-or-revision-events"]
+        }
+      ],
+      dimensionRubrics: []
+    }) + "\n"
+  );
+}
 
 function configFor(command: readonly string[]): string {
   return (
@@ -99,10 +136,7 @@ function repository(command: readonly string[] = STANDARD_COMMAND): {
       conformanceFixtureHash: null
     }) + "\n"
   );
-  writeFileSync(
-    path.join(root, "playtest.rubric.json"),
-    JSON.stringify({ schemaVersion: 1, dimensions: [] }) + "\n"
-  );
+  writeFileSync(path.join(root, "playtest.rubric.json"), fixtureRubric());
   execFileSync("git", ["init", "--quiet", root]);
   execFileSync("git", [
     "-C",

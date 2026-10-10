@@ -100,12 +100,11 @@ export interface DetailDrawerProps {
   /**
    * Anchor id for the drawer, for the link that opens it to name.
    *
-   * The drawer is reached by a normal link carrying the selected id in the URL,
-   * and that link is a full page load: without a fragment the browser arrives at
-   * the top of the document with `document.activeElement` on `<body>`, so a
-   * keyboard user who just opened a panel has to cross the whole navigation again
-   * to reach the panel they can see. Naming it here is what lets that link land
-   * on the panel rather than above it.
+   * The drawer is reached by a URL-addressable Next.js link carrying the
+   * selected id. The client transition preserves the document, but without a
+   * fragment the viewport and keyboard destination can still remain at the top
+   * of the list rather than at the panel that just opened. Naming it here gives
+   * that link an explicit arrival target.
    *
    * Opt-in because a fragment is only worth carrying if the id exists on the page
    * the link reaches, and a drawer that no link opens has nothing to land on.

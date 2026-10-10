@@ -22,6 +22,7 @@ import {
   PageBody
 } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { gridRowClass, StatGrid } from "../../components/panels/DetailGrid.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import {
@@ -504,12 +505,12 @@ function traceAttemptColumns(
       align: "tokens",
       cell: (attempt) =>
         React.createElement(
-          "a",
+          NavigationLink,
           {
             href: usageHref(selection, attempt.spanId),
             className: `font-mono text-xs ${ACTION_LINK_CLASS}`,
             "aria-label": `Inspect trace for span ${attempt.spanId}`,
-            "data-usage-trace-span-id": attempt.spanId
+            dataAttributes: { "data-usage-trace-span-id": attempt.spanId }
           },
           attempt.spanId
         )
@@ -529,7 +530,7 @@ function traceSpanColumns(
       align: "tokens",
       cell: (span) =>
         React.createElement(
-          "a",
+          NavigationLink,
           {
             href: usageHref(selection, span.spanId),
             className: `font-mono text-xs ${ACTION_LINK_CLASS}`,
@@ -549,7 +550,7 @@ function traceSpanColumns(
       cell: (span) =>
         span.parentSpanId
           ? React.createElement(
-              "a",
+              NavigationLink,
               {
                 href: usageHref(selection, span.parentSpanId),
                 className: `font-mono text-xs ${ACTION_LINK_CLASS}`,
@@ -702,7 +703,7 @@ function renderTraceLookup(
       ),
       React.createElement("p", { className: MUTED_BODY_CLASS }, errorMessage),
       React.createElement(
-        "a",
+        NavigationLink,
         {
           href: usageHref(selection),
           className: `w-fit text-xs ${ACTION_LINK_CLASS}`
@@ -731,7 +732,7 @@ function renderTraceLookup(
         USAGE_TRACE_DETAIL_TITLE
       ),
       React.createElement(
-        "a",
+        NavigationLink,
         {
           href: usageHref(selection),
           className: `text-xs ${ACTION_LINK_CLASS}`

@@ -256,6 +256,20 @@ import {
   workspacesFromControlApi
 } from "../src/lib/server/views.ts";
 
+
+/** Find one rendered anchor by destination without depending on prop order. */
+function anchorMarkupForHref(markup: string, href: string): string {
+  const escapedHref = href.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
+  for (const match of markup.matchAll(/<a\b[^>]*>/gu)) {
+    if (match.index === undefined) continue;
+    const actualHref = /\bhref="([^"]*)"/u.exec(match[0])?.[1];
+    if (actualHref !== escapedHref) continue;
+    const close = markup.indexOf("</a>", match.index);
+    return close === -1 ? match[0] : markup.slice(match.index, close + 4);
+  }
+  return "";
+}
+
 const unavailablePromptHistory = {
   status: "unavailable",
   message: "Git history unavailable in this test."
@@ -1659,19 +1673,19 @@ test("a date field keeps its focus ring on every stop inside the control", () =>
     "the form controls must carry the :focus-within clause: " +
       css.slice(0, 200)
   );
-  const selectors = (delegationClause[1] ?? "")
+  const selectors = new Set((delegationClause[1] ?? "")
     .split(",")
-    .map((part) => part.trim());
+    .map((part) => part.trim()));
   for (const forbidden of ["a", "button", "summary", "[tabindex]"]) {
     assert.equal(
-      selectors.includes(forbidden),
+      selectors.has(forbidden),
       false,
       `${forbidden} can hold focusable descendants, so :focus-within would ring the container`
     );
   }
   for (const required of ["input", "select", "textarea"]) {
     assert.equal(
-      selectors.includes(required),
+      selectors.has(required),
       true,
       `${required} delegates focus into its own control and must keep the ring`
     );
@@ -1752,15 +1766,16 @@ test("Breadcrumbs renders a server-renderable landmark with native ancestor link
   assert.match(navMarkup, /<ol/);
   assert.match(navMarkup, /<\/ol>/);
 
-  // Ancestor item: a real <a href="/mcps"> anchor (no client-side router).
-  assert.match(navMarkup, /<a href="\/mcps"[^>]*>MCPs<\/a>/);
+  // Ancestor item: a real URL-addressable anchor using client-side routing.
+  assert.match(anchorMarkupForHref(navMarkup, "/mcps"), />MCPs<\/a>/);
   // Ancestor link must expose a visible keyboard focus state, either through the
   // shared rule or an explicit one it carries itself.
   assert.ok(
     globalFocusRingIsDeclared(),
     "the shared :focus-visible outline rule must exist for keyboard focus"
   );
-  const ancestorTag = navMarkup.match(/<a href="\/mcps"[^>]*>/u)?.[0] ?? "";
+  const ancestorTag =
+    anchorMarkupForHref(navMarkup, "/mcps").match(/^<a\b[^>]*>/u)?.[0] ?? "";
   assert.doesNotMatch(ancestorTag, /focus-visible:outline-none/u);
 
   // Current-page item: a non-link <span aria-current="page"> with the
@@ -1826,7 +1841,7 @@ test('Breadcrumbs renders ancestor items without an href as non-link elements an
   assert.equal(navMarkup.includes('href=""'), false);
 
   // The middle ancestor still renders as a native <a href> link.
-  assert.match(navMarkup, /<a href="\/mcps"[^>]*>MCPs<\/a>/);
+  assert.match(anchorMarkupForHref(navMarkup, "/mcps"), />MCPs<\/a>/);
 
   // Only the final item carries aria-current="page".
   const currentMatches = navMarkup.match(/aria-current="page"/g) ?? [];
@@ -1856,7 +1871,7 @@ test("Breadcrumbs renders a single ancestor link with current-page aria state wh
       items: [{ label: "Prompts", href: "/prompts" }, { label: "dry" }]
     })
   );
-  assert.match(markup, /<a href="\/prompts"[^>]*>Prompts<\/a>/);
+  assert.match(anchorMarkupForHref(markup, "/prompts"), />Prompts<\/a>/);
   assert.match(markup, /<span[^>]*aria-current="page"[^>]*>dry<\/span>/);
   // Only one separator between the two items.
   const separatorMatches = markup.match(/aria-hidden="true"/g) ?? [];
@@ -1895,8 +1910,8 @@ test("the drawer header stacks at a phone width instead of folding its close con
   );
   // The control is an atomic label, the same rule StatusBadge follows for its
   // word: it does not fold, so the title absorbs the space instead.
-  const [, closeLinkClass] =
-    drawer.match(/<a href="\/evaluations" class="([^"]*)"/) ?? [];
+  const closeLink = anchorMarkupForHref(drawer, "/evaluations");
+  const closeLinkClass = /\bclass="([^"]*)"/u.exec(closeLink)?.[1];
   assert.ok(closeLinkClass, "the drawer renders its close link, got " + drawer);
   assert.ok(
     closeLinkClass.includes("whitespace-nowrap"),
@@ -2399,7 +2414,10 @@ test("Agent detail exposes the shared breadcrumbs landmark with /agents parent a
     breadcrumbNavStart,
     breadcrumbNavEnd + "</nav>".length
   );
-  assert.match(breadcrumbMarkup, /<a href="\/agents"[^>]*>Agents<\/a>/);
+  assert.match(
+    anchorMarkupForHref(breadcrumbMarkup, "/agents"),
+    />Agents<\/a>/
+  );
   assert.match(
     breadcrumbMarkup,
     /<span[^>]*aria-current="page"[^>]*>orchestrator<\/span>/
@@ -2791,7 +2809,10 @@ test("PromptsView and PromptDetailView render prompt types, linkage, and Git aut
     breadcrumbNavStart,
     breadcrumbNavEnd + "</nav>".length
   );
-  assert.match(breadcrumbMarkup, /<a href="\/prompts"[^>]*>Prompts<\/a>/);
+  assert.match(
+    anchorMarkupForHref(breadcrumbMarkup, "/prompts"),
+    />Prompts<\/a>/
+  );
   assert.match(
     breadcrumbMarkup,
     /<span[^>]*aria-current="page"[^>]*>orchestrator<\/span>/
@@ -3195,6 +3216,7 @@ test("no column is narrower than its own header", () => {
     Skills: 79,
     "Server Name": 84,
     Status: 84,
+    "Active Agents": 88,
     Health: 85,
     Target: 85,
     Source: 87,
@@ -4165,7 +4187,7 @@ test("a measured zero and an unreported counter stay different readings", () => 
 
 test("live session state projects Runtime counters without inventing defaults", () => {
   const base = {
-    schema: "autodev-control-runtime-v1" as const,
+    schema: "autodev-control-runtime-v2" as const,
     routerInstanceId: "router-1",
     lifecycle: {
       state: "ready" as const,
@@ -4174,7 +4196,8 @@ test("live session state projects Runtime counters without inventing defaults", 
       activeResponseRequests: 2
     },
     concurrency: {},
-    inFlightRequestCount: 2
+    inFlightRequestCount: 2,
+    liveAgents: null
   };
 
   // Reported counters pass through.
@@ -5028,7 +5051,7 @@ test("SkillsView distinguishes declared role scope from missing eligibility evid
   assert.match(markup, /Role-assigned/);
   assert.match(markup, /of 3 configured/);
   assert.match(markup, /orchestrator/);
-  assert.match(markup, /No roles assigned/);
+  assert.match(markup, /Unassigned — no agent role can invoke this skill\./);
   assert.match(markup, /Not observed/);
   assert.equal(markup.includes("Universal / All"), false);
   assert.match(markup, /Unresolved role assignments/);
@@ -6075,8 +6098,8 @@ test("a trace lookup that failed says what failed and offers the way back", asyn
         "the trace state stays on the panel's own element"
       );
       assert.match(
-        markup,
-        /<a href="\/evaluations#evaluation-history"[^>]*>Back to evaluations<\/a>/,
+        anchorMarkupForHref(markup, "/evaluations#evaluation-history"),
+        />Back to evaluations<\/a>/u,
         "a failed lookup is not a dead end"
       );
     }
@@ -6718,15 +6741,13 @@ test("clearing the filters keeps the section and the run being looked for", () =
   // on the first one.
   const clearLinks = (markup: string): string[] => {
     const found: string[] = [];
-    let at = markup.indexOf('data-evaluations-clear="true"');
-    while (at !== -1) {
-      const open = markup.lastIndexOf("<a", at);
-      // The capture group is what is wanted, not the match: `exec` returns the
-      // group as `string | undefined` under `noUncheckedIndexedAccess`, so a
-      // truthy match is not evidence the group is there.
-      const captured = /href="([^"]+)"/.exec(markup.slice(open, at))?.[1];
+    const clearTags = Array.from(
+      markup.matchAll(/<a\b[^>]*>/gu),
+      (match) => match[0]
+    ).filter((tag) => tag.includes('data-evaluations-clear="true"'));
+    for (const tag of clearTags) {
+      const captured = /\bhref="([^"]+)"/u.exec(tag)?.[1];
       if (captured !== undefined) found.push(captured);
-      at = markup.indexOf('data-evaluations-clear="true"', at + 1);
     }
     return found;
   };
@@ -7950,10 +7971,12 @@ test("every link whose destination is the history table names an element that is
     tab: "results",
     filters: evaluationsFilters({ outcome: "passed" })
   });
-  const clearHrefs = captured(
-    /<a href="([^"]*)"[^>]*data-evaluations-clear="true/g,
-    narrowedPage
-  );
+  const clearHrefs = Array.from(
+    narrowedPage.matchAll(/<a\b[^>]*>/gu),
+    (match) => match[0]
+  )
+    .filter((tag) => tag.includes('data-evaluations-clear="true"'))
+    .flatMap((tag) => captured(/href="([^"]*)"/gu, tag));
   assert.ok(clearHrefs.length > 0, "the clear link has an href to read");
   for (const href of clearHrefs) {
     assert.equal(
@@ -7962,10 +7985,12 @@ test("every link whose destination is the history table names an element that is
       "clearing filters lands at the top of the page, where the counts are"
     );
   }
-  const sectionHrefs = captured(
-    /<a\b(?=[^>]*data-tab-item=)[^>]*href="([^"]*)"/g,
-    narrowedPage
-  );
+  const sectionHrefs = Array.from(
+    narrowedPage.matchAll(/<a\b[^>]*>/gu),
+    (match) => match[0]
+  )
+    .filter((tag) => tag.includes("data-tab-item="))
+    .flatMap((tag) => captured(/href="([^"]*)"/gu, tag));
   assert.ok(sectionHrefs.length > 0, "the section links are on this page");
   for (const href of sectionHrefs) {
     assert.equal(
@@ -9526,7 +9551,10 @@ test("every filter axis is offered and every link states what it keeps", () => {
     markup,
     /href="\/evaluations\?outcome=failed&amp;role=worker&amp;tab=comparisons"/
   );
-  assert.match(markup, /href="\/evaluations"[^>]*data-evaluations-clear/);
+  assert.match(
+    markup,
+    /<a\b(?=[^>]*href="\/evaluations")(?=[^>]*data-evaluations-clear="true")[^>]*>/u
+  );
 });
 
 test("the section tabs keep the filters and the open section keeps its own links", () => {
@@ -9551,7 +9579,7 @@ test("the section tabs keep the filters and the open section keeps its own links
   const results = renderEvaluations({ evaluations });
   assert.match(
     results,
-    /href="\/evaluations\?spanId=4bf92f3577b34da6#evaluation-trace-span-4bf92f3577b34da6"[^>]*data-evaluation-trace-span-id/
+    /<a\b(?=[^>]*href="\/evaluations\?spanId=4bf92f3577b34da6#evaluation-trace-span-4bf92f3577b34da6")(?=[^>]*data-evaluation-trace-span-id="4bf92f3577b34da6")[^>]*>/u
   );
   assert.match(
     results,
@@ -9764,7 +9792,7 @@ test("EvaluationsView links valid span references and marks invalid ones", () =>
   });
   assert.match(
     markup,
-    /href="\/evaluations\?spanId=0123456789abcdef#evaluation-trace-span-0123456789abcdef"[^>]*data-evaluation-trace-span-id="0123456789abcdef"/
+    /<a\b(?=[^>]*href="\/evaluations\?spanId=0123456789abcdef#evaluation-trace-span-0123456789abcdef")(?=[^>]*data-evaluation-trace-span-id="0123456789abcdef")[^>]*>/u
   );
   assert.match(markup, /Invalid span/);
   assert.equal(
@@ -9796,7 +9824,7 @@ test("EvaluationsView links valid span references and marks invalid ones", () =>
   assert.match(
     drawer(spanId),
     new RegExp(
-      String.raw`href="/evaluations\?spanId=${spanId}#evaluation-trace-span-${spanId}"[^>]*data-evaluation-trace-span-id="${spanId}"`
+      String.raw`<a\b(?=[^>]*href="/evaluations\?spanId=${spanId}#evaluation-trace-span-${spanId}")(?=[^>]*data-evaluation-trace-span-id="${spanId}")[^>]*>`
     ),
     "a valid span is a link to the trace from the drawer too"
   );
@@ -10310,7 +10338,7 @@ test("AgentsView shows read-only provider summaries that link to Providers", () 
       agents: [CONFIGURED_AGENT],
       providers: PROVIDERS_FIXTURE,
       runtime: {
-        schema: "autodev-control-runtime-v1",
+        schema: "autodev-control-runtime-v2",
         routerInstanceId: "router-uuid-test",
         lifecycle: {
           state: "ready",
@@ -10319,13 +10347,22 @@ test("AgentsView shows read-only provider summaries that link to Providers", () 
           activeResponseRequests: 1
         },
         concurrency: { effectivePerSessionLimit: 2, activeSubagentThreads: 1 },
-        inFlightRequestCount: 1
+        inFlightRequestCount: 1,
+        liveAgents: {
+          count: 1,
+          byRole: { orchestrator: 1 },
+          byProvider: {},
+          byModel: {},
+          missingProvider: 1,
+          missingModel: 1
+        }
       }
     })
   );
   assert.match(markup, /data-section="configured-agents"/);
   assert.match(markup, /data-section="runtime-health"/);
   assert.match(markup, /router-uuid-test/);
+  assert.match(markup, /Active instances: 1/);
   assert.match(markup, /data-agent-providers="orchestrator"/);
   assert.match(markup, /href="\/providers\/codex"/);
   // codex is disabled for the orchestrator role the agent runs as. The summary
@@ -12088,24 +12125,24 @@ test("Pagination reports the rows on the page and offers only the directions tha
   const middle = renderToStaticMarkup(at(50, 50, 120)) ?? "";
   assert.match(middle, /aria-label="Records pagination"/);
   assert.match(middle, /51–100 of 120/);
-  assert.match(middle, /href="\/memory\?offset=0"[^>]*rel="prev"/);
-  assert.match(middle, /href="\/memory\?offset=100"[^>]*rel="next"/);
+  assert.match(middle, /<a\b(?=[^>]*href="\/memory\?offset=0")(?=[^>]*rel="prev")[^>]*>/u);
+  assert.match(middle, /<a\b(?=[^>]*href="\/memory\?offset=100")(?=[^>]*rel="next")[^>]*>/u);
 
   // The unavailable direction is inert text, not a dead link a keyboard
   // operator could focus and find did nothing.
   const first = renderToStaticMarkup(at(0, 50, 120)) ?? "";
   assert.match(first, /<span aria-disabled="true"[^>]*>Previous<\/span>/);
-  assert.match(first, /href="\/memory\?offset=50"[^>]*rel="next"/);
+  assert.match(first, /<a\b(?=[^>]*href="\/memory\?offset=50")(?=[^>]*rel="next")[^>]*>/u);
 
   const last = renderToStaticMarkup(at(100, 50, 120)) ?? "";
   assert.match(last, /<span aria-disabled="true"[^>]*>Next<\/span>/);
-  assert.match(last, /href="\/memory\?offset=50"[^>]*rel="prev"/);
+  assert.match(last, /<a\b(?=[^>]*href="\/memory\?offset=50")(?=[^>]*rel="prev")[^>]*>/u);
 
   // Past the end of a collection too small to paginate, the bar survives to
   // carry the way back.
   const pastEnd = renderToStaticMarkup(at(100, 50, 12)) ?? "";
   assert.match(pastEnd, /No rows on this page/);
-  assert.match(pastEnd, /href="\/memory\?offset=50"[^>]*rel="prev"/);
+  assert.match(pastEnd, /<a\b(?=[^>]*href="\/memory\?offset=50")(?=[^>]*rel="prev")[^>]*>/u);
 });
 
 test("MemoryRecordsView and MemoryExperiencesView page a collection larger than one page", () => {
@@ -12913,7 +12950,7 @@ test("Provider limits keep their labels readable and describe disabled state tru
   assert.match(enabledMarkup, /flex-col items-start gap-1/u);
 });
 
-test("ProvidersView renders the four configuration columns with per-role controls", () => {
+test("ProvidersView renders configuration columns and live provider counts", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProvidersView, {
       providers: PROVIDERS_FIXTURE,
@@ -12928,7 +12965,7 @@ test("ProvidersView renders the four configuration columns with per-role control
   );
   assert.match(markup, /data-tab-panel="providers"/);
 
-  // Exactly the four columns the contract names, in its order. Read the label
+  // Exactly the five columns the contract names, in its order. Read the label
   // element: two of them carry a help affordance beside the label, and that
   // affordance is not part of the column's name.
   const headers = Array.from(
@@ -12937,7 +12974,23 @@ test("ProvidersView renders the four configuration columns with per-role control
     ),
     (match) => (match[1] ?? match[2] ?? "").replaceAll(/<[^>]*>/g, "").trim()
   );
-  assert.deepEqual(headers, ["Provider", "Status", "Roles", "Agent Limits"]);
+  assert.deepEqual(headers, [
+    "Provider",
+    "Status",
+    "Active Agents",
+    "Roles",
+    "Agent Limits"
+  ]);
+  for (const provider of PROVIDERS_FIXTURE.providers) {
+    const marker = `data-live-agent-provider="${provider.id}"`;
+    const start = markup.indexOf(marker);
+    assert.notEqual(start, -1);
+    const cell = markup.slice(start, markup.indexOf("</span>", start));
+    assert.ok(
+      cell.endsWith(">Not observed"),
+      "provider health cannot substitute for the missing canonical Runtime live-count projection"
+    );
+  }
 
   // The contract asks for a help affordance on the Roles and Agent Limits
   // headers, and on those two only.
@@ -13268,6 +13321,31 @@ test("ProvidersView Models tab puts each model's toggle next to the model", () =
     React.createElement(ProvidersView, {
       providers: PROVIDERS_FIXTURE,
       models: { status: "available", data: MODELS_FIXTURE },
+      runtime: {
+        schema: "autodev-control-runtime-v2",
+        routerInstanceId: "router-fixture",
+        lifecycle: {
+          state: "ready",
+          draining: false,
+          changedAt: "2026-10-05T15:00:00.000Z",
+          activeResponseRequests: 0
+        },
+        concurrency: {},
+        inFlightRequestCount: 0,
+        liveAgents: {
+          count: MODELS_FIXTURE.models.length,
+          byRole: {},
+          byProvider: {},
+          byModel: Object.fromEntries(
+            MODELS_FIXTURE.models.map((model, index) => [
+              `${model.provider}/${model.id}`,
+              index + 1
+            ])
+          ),
+          missingProvider: 0,
+          missingModel: 0
+        }
+      },
       activeTab: "models"
     })
   );
@@ -13279,6 +13357,16 @@ test("ProvidersView Models tab puts each model's toggle next to the model", () =
       tag.includes(`action="/api/models/${model.id}"`)
     );
     assert.ok(form, `${model.id} toggle must be next to the model`);
+    assert.ok(
+      markup.includes(
+        `href="/providers/${model.provider}/models/${model.id}"`
+      ),
+      `${model.id} must link to its detail view`
+    );
+    assert.ok(
+      markup.includes(`data-live-agent-model="${model.id}"`),
+      `${model.id} must show its live instance count`
+    );
     assert.equal(hiddenValue(markup, form, "model"), model.id);
     assert.equal(
       hiddenValue(markup, form, "returnTo"),
@@ -13289,8 +13377,6 @@ test("ProvidersView Models tab puts each model's toggle next to the model", () =
       String(!model.enablement.enabled)
     );
   }
-  assert.match(markup, /Claude Sonnet subscription/);
-  assert.match(markup, /href="\/providers\/codex\/models\/gpt-6-luna"/);
   assert.equal(markup.includes('data-enablement-form="provider-role"'), false);
 
   const unavailable = renderToStaticMarkup(
@@ -13318,7 +13404,7 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
     })
   );
   assert.match(markup, /data-feature="provider-detail"/);
-  assert.match(markup, /<a href="\/providers"[^>]*>Providers<\/a>/);
+  assert.match(anchorMarkupForHref(markup, "/providers"), />Providers<\/a>/);
   assert.match(markup, /aria-current="page"[^>]*>claude</);
   assert.match(markup, /Selecting a priority or model applies immediately\./u);
 
@@ -13417,7 +13503,27 @@ test("ProviderDetailView reads an absent provider route without throwing", async
         provider,
         tiers: PROVIDERS_FIXTURE.tiers,
         orchestratorTier: PROVIDERS_FIXTURE.orchestratorTier,
-        models: null
+        models: null,
+        runtime: {
+          schema: "autodev-control-runtime-v2",
+          routerInstanceId: "router-fixture",
+          lifecycle: {
+            state: "ready",
+            draining: false,
+            changedAt: "2026-10-10T12:00:00.000Z",
+            activeResponseRequests: 0
+          },
+          concurrency: {},
+          inFlightRequestCount: 0,
+          liveAgents: {
+            count: 0,
+            byRole: {},
+            byProvider: {},
+            byModel: {},
+            missingProvider: 0,
+            missingModel: 0
+          }
+        }
       })
     );
 
@@ -13458,7 +13564,10 @@ test("ModelDetailView renders the model toggle under its provider's breadcrumbs"
     })
   );
   assert.match(markup, /data-feature="model-detail"/);
-  assert.match(markup, /<a href="\/providers\/claude"[^>]*>claude<\/a>/);
+  assert.match(
+    anchorMarkupForHref(markup, "/providers/claude"),
+    />claude<\/a>/
+  );
   assert.match(markup, /aria-current="page"[^>]*>sonnet</);
   const forms = formTags(markup);
   assert.equal(forms.length, 1);
@@ -14317,10 +14426,10 @@ test("Console rejects provider and model responses that do not match the v2 cont
   assert.equal(models.kind, "ok");
 });
 
-test("Console rejects a runtime response that does not match the v1 contract", async () => {
+test("Console rejects a runtime response that does not match the v2 contract", async () => {
   const config = { baseUrl: "http://127.0.0.1:4101", serviceToken: "t" };
   const valid = {
-    schema: "autodev-control-runtime-v1",
+    schema: "autodev-control-runtime-v2",
     routerInstanceId: "router-uuid-test",
     lifecycle: {
       state: "ready",
@@ -14329,7 +14438,15 @@ test("Console rejects a runtime response that does not match the v1 contract", a
       activeResponseRequests: 1
     },
     concurrency: { effectivePerSessionLimit: 2, activeSubagentThreads: 1 },
-    inFlightRequestCount: 1
+    inFlightRequestCount: 1,
+    liveAgents: {
+      count: 2,
+      byRole: { fixtureRole: 2 },
+      byProvider: { fixtureProvider: 2 },
+      byModel: { "fixtureProvider/fixtureModel": 1 },
+      missingProvider: 0,
+      missingModel: 1
+    }
   };
   assert.equal(
     (
@@ -14373,6 +14490,29 @@ test("Console rejects a runtime response that does not match the v1 contract", a
     { ...valid, lifecycle: { state: "ready", draining: "yes" } },
     { ...valid, concurrency: { effectivePerSessionLimit: "two" } },
     { ...valid, concurrency: { denialsByReason: { cap: "many" } } },
+    { ...valid, liveAgents: undefined },
+    {
+      ...valid,
+      liveAgents: {
+        count: -1,
+        byRole: {},
+        byProvider: {},
+        byModel: {},
+        missingProvider: 0,
+        missingModel: 0
+      }
+    },
+    {
+      ...valid,
+      liveAgents: {
+        count: 1,
+        byRole: {},
+        byProvider: {},
+        byModel: { invalid: -1 },
+        missingProvider: 0,
+        missingModel: 0
+      }
+    },
     // A recorded denial is a real object; only its absence or nullness counts
     // as "no denial observed". Rejecting the object would discard evidence.
     { ...valid, concurrency: { lastDenial: "per_session_limit" } },
@@ -14392,7 +14532,7 @@ test("Console rejects a runtime response that does not match the v1 contract", a
 
 test("AgentsView reports runtime counters as unobserved instead of zero", () => {
   const runtime = {
-    schema: "autodev-control-runtime-v1",
+    schema: "autodev-control-runtime-v2",
     routerInstanceId: "router-uuid-test",
     lifecycle: {
       state: "ready",
@@ -14403,7 +14543,8 @@ test("AgentsView reports runtime counters as unobserved instead of zero", () => 
     // A Runtime that has no concurrency evidence omits the fields rather than
     // reporting zero, so the Console must not turn their absence into a zero.
     concurrency: {},
-    inFlightRequestCount: 0
+    inFlightRequestCount: 0,
+    liveAgents: null
   } as const;
   const markup = renderToStaticMarkup(
     React.createElement(AgentsView, {
@@ -14479,8 +14620,11 @@ test("ToolsView applies URL-addressable source and role filters without losing c
       ]
     })
   );
-  // Filter is active for mcp only.
-  assert.match(markup, /data-source-filter="mcp"[^>]*bg-surface-raised/);
+  // Filter is active for mcp only. Match the anchor as a whole so Next.js's
+  // attribute ordering does not become part of the rendering contract.
+  const selectedMcpFilter = /<a\b(?=[^>]*data-source-filter="mcp")[^>]*>/u.exec(markup)?.[0];
+  assert.ok(selectedMcpFilter, "the MCP source filter is rendered");
+  assert.match(selectedMcpFilter, /bg-surface-raised/u);
   assert.match(markup, /Showing 1 of 4 tool entries/);
   // MCP entry is visible; native and plugin are filtered out.
   assert.match(markup, /lsp_goto_definition/);
@@ -16522,7 +16666,10 @@ test("ClosePanelLink renders the shared close mark and keeps its accessible name
   );
 
   // A real link: following it dismisses the panel, with or without scripting.
-  assert.match(markup, /^<a href="\/memory\?tab=records"/);
+  assert.match(
+    anchorMarkupForHref(markup, "/memory?tab=records"),
+    /^<a\b/u
+  );
   // The mark comes from the shared icon set, not a raw glyph typed into the
   // view, so it shares the product's grid, stroke, and currentColor behaviour.
   assert.match(markup, /<svg[^>]*viewBox="0 0 24 24"/);
@@ -19333,6 +19480,14 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Owns same-origin form navigation so filters and mutations do not reload the document."
     ],
     [
+      join("src", "components", "navigation", "LiveCountRefresh.ts"),
+      "Requests five-second live-count refreshes through the shared router owner without moving data fetching client-side."
+    ],
+    [
+      join("src", "features", "skills", "SkillRoleAssignmentControl.ts"),
+      "Submits the complete role set immediately through the existing same-origin Skills mutation route."
+    ],
+    [
       join("src", "components", "navigation", "AppNav.ts"),
       "Persists the interactive sidebar preference without moving page data client-side."
     ],
@@ -19965,7 +20120,7 @@ test("a Runtime response with no concurrency limit is readable, and says so", as
     fetchImpl: async () => Response.json(payload)
   });
   const runtime = {
-    schema: "autodev-control-runtime-v1",
+    schema: "autodev-control-runtime-v2",
     routerInstanceId: "router-uuid-test",
     lifecycle: {
       state: "ready",
@@ -19979,7 +20134,8 @@ test("a Runtime response with no concurrency limit is readable, and says so", as
       activeSubagentThreads: 0,
       activeSessions: 0
     },
-    inFlightRequestCount: 0
+    inFlightRequestCount: 0,
+    liveAgents: null
   } satisfies ControlApiRuntimeResponse;
   assert.equal(
     (await fetchRuntime(config, serve(runtime))).kind,

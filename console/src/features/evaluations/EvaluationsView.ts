@@ -14,6 +14,7 @@ import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { DetailDrawer } from "../../components/panels/DetailDrawer.ts";
 import {
   DetailGrid,
@@ -543,7 +544,7 @@ function traceReference(
     });
   }
   return React.createElement(
-    "a",
+    NavigationLink,
     {
       href: evaluationTraceHref(
         nav.filters,
@@ -553,7 +554,7 @@ function traceReference(
       ),
       className: `font-mono text-xs font-medium ${ACTION_LINK_CLASS}`,
       "aria-label": `View trace for evaluation ${evaluation.id}`,
-      "data-evaluation-trace-span-id": reference.spanId
+      dataAttributes: { "data-evaluation-trace-span-id": reference.spanId }
     },
     "View trace"
   );
@@ -565,7 +566,7 @@ function spanLink(
   selected: boolean
 ): React.JSX.Element {
   const link = React.createElement(
-    "a",
+    NavigationLink,
     {
       href: evaluationTraceHref(nav.filters, spanId, nav.tab, nav.page),
       className: `font-mono text-xs ${ACTION_LINK_CLASS}`,
@@ -589,10 +590,11 @@ function spanLink(
       // it certain. Measured against a fixture of counter-derived ids, 199 of 200
       // rows rendered as `00000000` with nothing to tell them apart on hover.
       title: spanId,
-      "data-trace-span-id": spanId,
-      ...(selected
-        ? { "aria-current": "true", "data-trace-selected": "true" }
-        : {})
+      ...(selected ? { "aria-current": "true" } : {}),
+      dataAttributes: {
+        "data-trace-span-id": spanId,
+        ...(selected ? { "data-trace-selected": "true" } : {})
+      }
     },
     spanId.slice(0, 8)
   );
@@ -834,11 +836,11 @@ function renderMissingResult(
     ),
     resultCounts.narrowed
       ? React.createElement(
-          "a",
+          NavigationLink,
           {
             href: evaluationsClearedHref({ resultId: selection }),
             className: `text-xs ${ACTION_LINK_CLASS}`,
-            "data-evaluations-clear": "true"
+            dataAttributes: { "data-evaluations-clear": "true" }
           },
           "Clear the filters and look for it in the whole retained history"
         )
@@ -916,7 +918,7 @@ function renderTraceLookup(
         "p",
         { className: "text-xs" },
         React.createElement(
-          "a",
+          NavigationLink,
           {
             href: navListHref(nav),
             className: ACTION_LINK_CLASS
@@ -945,7 +947,7 @@ function renderTraceLookup(
         "Trace detail"
       ),
       React.createElement(
-        "a",
+        NavigationLink,
         {
           href: navListHref(nav),
           className: `text-xs ${ACTION_LINK_CLASS}`
@@ -1033,7 +1035,7 @@ function drawerTraceValue(
     });
   }
   return React.createElement(
-    "a",
+    NavigationLink,
     {
       href: evaluationTraceHref(
         nav.filters,
@@ -1043,7 +1045,7 @@ function drawerTraceValue(
       ),
       className: `${MONO_VALUE_CLASS} ${ACTION_LINK_CLASS}`,
       "aria-label": `View trace for evaluation ${evaluation.id}`,
-      "data-evaluation-trace-span-id": reference.spanId
+      dataAttributes: { "data-evaluation-trace-span-id": reference.spanId }
     },
     reference.spanId
   );
@@ -1379,32 +1381,32 @@ function renderPager(
     target: number,
     label: string,
     enabled: boolean
-  ): React.JSX.Element =>
-    React.createElement(
-      enabled ? "a" : "span",
-      {
-        // `aria-disabled`, never `aria-hidden`. A hidden step leaves the
-        // accessibility tree, so a screen-reader user is offered a Next button
-        // that does nothing and no Previous at all, rather than a control they
-        // can hear, recognise as unavailable, and skip. The step's own name is
-        // its accessible name: the adjacent `Page 2 of 3` already states the
-        // position, and repeating it produced "Previous, page 0" at page one.
-        "aria-label": label,
-        ...(enabled
-          ? {
-              href: evaluationsPageHref(filters, target, tab),
-              className: `rounded border border-border px-3 py-1 text-xs ${ACTION_LINK_CLASS}`,
-              "data-evaluations-page-step": target
-            }
-          : {
-              className:
-                "rounded border border-border px-3 py-1 text-xs text-fg-muted opacity-50",
-              "aria-disabled": "true",
-              "data-evaluations-page-step": target
-            })
-      },
-      label
-    );
+  ): React.JSX.Element => {
+    const sharedProps = { "aria-label": label };
+    const stepAttributes = { "data-evaluations-page-step": String(target) };
+    return enabled
+      ? React.createElement(
+          NavigationLink,
+          {
+            ...sharedProps,
+            href: evaluationsPageHref(filters, target, tab),
+            className: `rounded border border-border px-3 py-1 text-xs ${ACTION_LINK_CLASS}`,
+            dataAttributes: stepAttributes
+          },
+          label
+        )
+      : React.createElement(
+          "span",
+          {
+            ...sharedProps,
+            ...stepAttributes,
+            className:
+              "rounded border border-border px-3 py-1 text-xs text-fg-muted opacity-50",
+            "aria-disabled": "true"
+          },
+          label
+        );
+  };
 
   return React.createElement(
     "nav",
@@ -1765,7 +1767,7 @@ export function EvaluationsView({
           "div",
           { className: "flex flex-col gap-0.5" },
           React.createElement(
-            "a",
+            NavigationLink,
             {
               href: evaluationResultHref(filters, evaluation.id, tab, page),
               className: `font-mono text-xs font-semibold ${ACTION_LINK_CLASS}`,
@@ -1776,7 +1778,7 @@ export function EvaluationsView({
               // so this adopts the convention the row's other link set rather
               // than inventing one.
               "aria-label": `Open detail for evaluation ${evaluation.id}`,
-              "data-evaluation-result-id": evaluation.id
+              dataAttributes: { "data-evaluation-result-id": evaluation.id }
             },
             evaluation.agentRole
           ),
@@ -1981,11 +1983,11 @@ export function EvaluationsView({
       }),
       narrowed
         ? React.createElement(
-            "a",
+            NavigationLink,
             {
               href: evaluationsClearedHref({ tab }),
               className: `text-xs ${ACTION_LINK_CLASS}`,
-              "data-evaluations-clear": "true"
+              dataAttributes: { "data-evaluations-clear": "true" }
             },
             "Clear filters"
           )

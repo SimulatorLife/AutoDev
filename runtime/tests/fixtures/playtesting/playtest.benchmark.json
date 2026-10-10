@@ -1,0 +1,54 @@
+{
+  "benchmarkId": "benchmark-synthetic-fixture-v1",
+  "version": 1,
+  "workspaceId": "owner/fixture",
+  "referenceBuildSha": "3659b31ab7fb3a19173d0d0670366d265e3a531f",
+  "scenarioInventory": [
+    {
+      "scenarioId": "tutorial",
+      "family": "onboarding",
+      "weight": 1
+    }
+  ],
+  "seedInventory": [
+    {
+      "seed": "fixture-discovery",
+      "purpose": "discovery"
+    },
+    {
+      "seed": "fixture-confirmation",
+      "purpose": "confirmation"
+    },
+    {
+      "seed": "fixture-regression",
+      "purpose": "regression"
+    }
+  ],
+  "policyVersions": {
+    "random": "hmac-sha256-v1"
+  },
+  "competenceReportRefs": [],
+  "memoryResetRules": "One isolated episode; no shared learning memory.",
+  "engineEnvironmentHash": "8d43aa9ad70bbdbd74c58fad4fcf6b53c08de87e7637b13e476fb22d0bb716a8",
+  "actionSchemaHash": "22e4a3b73cfe95d3a70172d637aed29574eef4488dfb94c8e30aa075acfa5b40",
+  "observationSchemaHash": "a4654f7fae58dc28d1f5ad541efe42768acbd851755ddcfe5594a64cfd3da012",
+  "eventSchemaHash": "83b222c141d0ac9cf15696947e3cdcfeecf54fb985c94ca96b411e0e8e44f65e",
+  "metricRegistryHash": "f0c1c8df805d8176d0d1941a386f303aac74276e02499942521bbfc8a8ef17d6",
+  "rubricHash": "f0c1c8df805d8176d0d1941a386f303aac74276e02499942521bbfc8a8ef17d6",
+  "captureMode": "headless",
+  "measurementVersion": "playtesting-measurement-v1",
+  "primaryMetricIds": [
+    "legal-action-rejection"
+  ],
+  "guardrailMetricIds": [],
+  "practicalMargins": {
+    "legal-action-rejection": 0.02
+  },
+  "independentUnit": "episode",
+  "precisionPlanRef": "fixture-descriptive-only",
+  "missingnessBound": 0.1,
+  "refreshPolicy": "manual-operator-review-only",
+  "createdAt": "2026-10-10T00:00:00.000Z",
+  "createdBy": "synthetic-fixture-only",
+  "contentHash": "70b535e54ef5879528298dc1a991f76b401ba45f07a602b9720b3bc1e038fd58"
+}

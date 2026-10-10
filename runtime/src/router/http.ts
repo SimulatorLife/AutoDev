@@ -6,7 +6,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
-import type { ControlApiProviderHealth } from "@simulatorlife/autodev-core";
+import type {
+  ControlApiLiveAgentCounts,
+  ControlApiProviderHealth
+} from "@simulatorlife/autodev-core";
 import {
   createAgentActivityTracker,
   resolveAgentActivityTtlMs
@@ -84,6 +87,7 @@ import {
 
 import {
   handleControlApiRequest,
+  setControlApiLiveAgentCountsSource,
   setControlApiProviderHealthSource
 } from "../control-api/index.ts";
 import { safeMetricLabel } from "./metric-label.ts";
@@ -166,7 +170,6 @@ import {
   resetUsageTelemetry,
   restoreUsagePersistenceSnapshot,
   safeWorkspaceId,
-  UNATTRIBUTED_DIMENSION,
   usageOrigin,
   usagePersistenceSnapshot,
   usageStatus
@@ -761,41 +764,21 @@ export function agentsStatus(at = Date.now()): Record<string, unknown> {
   const liveAgents = projection.allLiveAgents;
   const byState = agentActivity.snapshot(at).byState;
   const liveByKind: Record<string, number> = {};
-  const liveByRole: Record<string, number> = {};
-  const liveByOrigin: Record<string, number> = {};
-  const liveByProvider: Record<string, number> = {};
-  const liveByModel: Record<string, number> = {};
-  const liveByWorkspace: Record<string, number> = {};
   for (const agent of liveAgents) {
     const kind =
       typeof agent.kind === "string" && agent.kind ? agent.kind : "session";
     liveByKind[kind] = (liveByKind[kind] ?? 0) + 1;
-    if (agent.provider)
-      liveByProvider[agent.provider] =
-        (liveByProvider[agent.provider] ?? 0) + 1;
-    if (agent.provider && agent.model) {
-      const modelKey = agent.model.startsWith(`${agent.provider}/`)
-        ? agent.model
-        : `${agent.provider}/${agent.model}`;
-      liveByModel[modelKey] = (liveByModel[modelKey] ?? 0) + 1;
-    }
-    const rKey = agent.role ?? UNATTRIBUTED_DIMENSION;
-    liveByRole[rKey] = (liveByRole[rKey] ?? 0) + 1;
-    const oKey = agent.origin ?? UNATTRIBUTED_DIMENSION;
-    liveByOrigin[oKey] = (liveByOrigin[oKey] ?? 0) + 1;
-    const wKey = agent.workspace ?? UNATTRIBUTED_DIMENSION;
-    liveByWorkspace[wKey] = (liveByWorkspace[wKey] ?? 0) + 1;
   }
   return {
     schema: "autodev-agent-status-v1",
     canonicalLiveCount: projection.canonicalTotal,
     byState,
     liveByKind,
-    liveByRole,
-    liveByOrigin,
-    liveByProvider,
-    liveByModel,
-    liveByWorkspace,
+    liveByRole: projection.byRole,
+    liveByOrigin: projection.byOrigin,
+    liveByProvider: projection.byProvider,
+    liveByModel: projection.byModel,
+    liveByWorkspace: projection.byWorkspace,
     missingProvider: projection.missingProvider,
     missingModel: projection.missingModel,
     slotVsAgent: {
@@ -811,6 +794,18 @@ export function agentsStatus(at = Date.now()): Record<string, unknown> {
       )
     },
     reconciledWithConcurrency: true
+  };
+}
+
+function controlApiLiveAgentCounts(now: number): ControlApiLiveAgentCounts {
+  const projection = projectLiveAgents(now);
+  return {
+    count: projection.canonicalTotal,
+    byRole: projection.byRole,
+    byProvider: projection.byProvider,
+    byModel: projection.byModel,
+    missingProvider: projection.missingProvider,
+    missingModel: projection.missingModel
   };
 }
 
@@ -1353,6 +1348,7 @@ function controlApiProviderHealth(
   );
 }
 setControlApiProviderHealthSource(controlApiProviderHealth);
+setControlApiLiveAgentCountsSource(controlApiLiveAgentCounts);
 
 function buildRouterStatus(
   now = Date.now(),
