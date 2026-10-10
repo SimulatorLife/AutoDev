@@ -1650,6 +1650,16 @@ test("the skill-read telemetry hook dedupes per turn and emits one skill_used pe
         tool_name: "read_file",
         arguments: { file_path: skillPath }
       });
+      // Turn ids come from hook input and may be inherited object-property names.
+      // They must remain valid keys in the persisted deduplication state.
+      for (const unusualTurnId of ["constructor", "__proto__"]) {
+        await run({
+          session_id: sessionId,
+          turn_id: unusualTurnId,
+          tool_name: "read_file",
+          arguments: { file_path: skillPath }
+        });
+      }
       // Arbitrary mentions, writes, and non-canonical paths must not post.
       await run({
         session_id: sessionId,
@@ -1673,8 +1683,8 @@ test("the skill-read telemetry hook dedupes per turn and emits one skill_used pe
       });
       assert.equal(
         received.length,
-        4,
-        `expected 4 posts including the user-level shell read; got ${received.length}`
+        6,
+        `expected 6 posts including unusual turn ids and the user-level shell read; got ${received.length}`
       );
       assert.deepEqual(received[0].events[0], {
         type: "skill_used",
@@ -1688,6 +1698,12 @@ test("the skill-read telemetry hook dedupes per turn and emits one skill_used pe
       assert.equal(received[1].events[0].skill, "ccc");
       assert.equal(received[2].events[0].skill, "orchestration");
       assert.equal(received[3].events[0].skill, "orchestration");
+      assert.equal(received[4].events[0].skill, "orchestration");
+      assert.equal(received[5].events[0].skill, "orchestration");
+      assert.notEqual(
+        received[4].events[0].eventId,
+        received[5].events[0].eventId
+      );
     } finally {
       await close(server);
     }

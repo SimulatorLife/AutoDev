@@ -43,6 +43,34 @@ Commands:
   install
 ```
 
+Render target arguments (after `render`; bracketed options are optional):
+
+```text
+    agents --mcp-source <toml> --output-dir <dir>
+      [--source-dir <dir>] [--prompt-dir <dir>] [--check]
+    contract --output <file>
+      [--source-dir <dir>] [--root-config <file>] [--contract <file>] [--check]
+    mcp --mcp-source <toml> --output <file>
+      [--check]
+    catalog --routing-config <file> --catalogs-dir <dir> --output <file>
+      [--check]
+```
+
+The checkout-relative defaults are `agents/roles` for `--source-dir`,
+`agents/prompts` for `--prompt-dir`, `config/config.autodev.toml` for
+`--root-config`, and `config/execution-contract.json` for `--contract`.
+`--mcp-source` must point to a Codex TOML MCP projection; `.rulesync/mcp.jsonc`
+is its source, not a directly accepted input. Output paths and catalog inputs
+remain required where shown. For example, generate the projection and render to
+a temporary working directory without changing tracked configuration:
+
+```sh
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+pnpm exec rulesync generate --input-roots .rulesync --targets codexcli --features mcp --output-roots "$tmpdir" --silent
+pnpm autodev -- render agents --mcp-source "$tmpdir/.codex/config.toml" --output-dir "$tmpdir/agents"
+```
+
 Every rejection names the values it would have accepted, so a typo does not
 require reading the source to recover. Omitting a subcommand says which one is
 missing rather than reporting the command itself as unknown:
@@ -317,10 +345,9 @@ not allowed, the leaf prompt directs the model to stop retrying it and return a
 visible summary that records the limitation.
 
 - Web research permissions: `read_url(*)` for headless document and URL inspection.
-- Exact and recursive read grants for shared configuration: `read_file(~/.agents)`
-  plus `read_file(~/.agents/**)`, and the equivalent pair for `~/.codex`.
-- Scoped `read_file(<root>)` and `read_file(<root>/**)` grants for every
-  configured workspace.
+- Scoped literal read grants for shared configuration: `read_file(~/.agents)`,
+  `read_file(~/.codex)`, and `read_file(~/.gemini)` (in agy, directory grants provide recursive access without globs).
+- Scoped `read_file(<root>)` grants for every configured workspace.
 - A small fixed `unsandboxed(...)` allowlist for `pwd`, `pnpm test`, and the
   repository Python test command; this is not a general shell grant.
 

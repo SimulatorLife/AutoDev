@@ -132,7 +132,7 @@
     },
     "validator": {
       "kind": "leaf",
-      "readOnly": true,
+      "readOnly": false,
       "mcp": [
         "lsp",
         "cocoindex-code"

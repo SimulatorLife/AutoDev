@@ -263,9 +263,9 @@ test("browser-tester receives Playwright only, with exactly its declared browser
       assert.ok(!allowList.includes("mcp(playwright)"));
       assert.ok(!allowList.includes("mcp(playwright/*)"));
 
-      // Scoped permissions for read-only role: explicit workspace read_file, no unsandboxed commands
+      // Scoped permissions for read-only role: explicit workspace read_file, no globs, no unsandboxed commands
       assert.ok(allowList.includes(`read_file(${REPO_ROOT})`));
-      assert.ok(allowList.includes(`read_file(${REPO_ROOT}/**)`));
+      assert.ok(!allowList.includes(`read_file(${REPO_ROOT}/**)`));
       assert.ok(!allowList.includes("unsandboxed(pnpm test)"));
       assert.ok(allowList.includes("read_url(*)"));
 
@@ -860,10 +860,9 @@ const settings = JSON.parse(readFileSync(join(home, ".gemini", "antigravity-cli"
 const workspace = process.cwd();
 const readAllows = settings.permissions.allow.filter(entry => entry.startsWith("read_file("));
 assert.ok(readAllows.includes("read_file(" + workspace + ")"));
-assert.ok(readAllows.includes("read_file(" + workspace + "/**)"));
+assert.ok(!readAllows.includes("read_file(" + workspace + "/**)"));
 assert.ok(readAllows.some(entry => entry.includes(".agents")));
 assert.ok(readAllows.some(entry => entry.includes("codex")));
-assert.equal(readAllows.length, 6);
 
 const servers = Object.keys(mcpConfig.mcpServers || {});
 const playwrightAllows = (settings.permissions?.allow || []).filter(e => e.startsWith("mcp(playwright"));
@@ -929,7 +928,7 @@ assert.equal(parsed.playwrightAllowsCount, 18);
   }
 });
 
-test("browser-tester enforces read-only sandbox mode without permission bypass", () => {
+test("browser-tester enforces read-only sandbox mode and skips permissions in headless mode", () => {
   const args = agyArgs(
     "test prompt",
     "gemini-3.8-flash-medium",
@@ -941,8 +940,8 @@ test("browser-tester enforces read-only sandbox mode without permission bypass",
     "browser-tester must receive --sandbox"
   );
   assert.ok(
-    !args.includes("--dangerously-skip-permissions"),
-    "browser-tester must never receive --dangerously-skip-permissions"
+    args.includes("--dangerously-skip-permissions"),
+    "browser-tester must receive --dangerously-skip-permissions when AGY_SKIP_PERMISSIONS is true"
   );
 });
 
@@ -1085,30 +1084,26 @@ test("read-only Antigravity permission scope limits read_file to validated works
         "deny permissions"
       );
 
-      // 1. Explicit read_file authorization limited to validated request workspace and shared agent/codex roots
+      // 1. Explicit read_file authorization limited to validated request workspace, shared roots, and isolated temp home
       assert.ok(
         allowList.includes(`read_file(${targetWorkspace})`),
         "workspace root must be granted"
       );
       assert.ok(
-        allowList.includes(`read_file(${targetWorkspace}/**)`),
-        "workspace recursive files must be granted"
+        !allowList.includes(`read_file(${targetWorkspace}/**)`),
+        "workspace recursive glob pattern must not be used (globs not supported)"
       );
       assert.ok(
         allowList.includes(`read_file(${join(env.userHome, ".agents")})`),
         "shared .agents root must be granted"
       );
       assert.ok(
-        allowList.includes(`read_file(${join(env.userHome, ".agents")}/**)`),
-        "shared .agents recursive files must be granted"
-      );
-      assert.ok(
         allowList.includes(`read_file(${env.codexHome})`),
         "shared .codex root must be granted"
       );
       assert.ok(
-        allowList.includes(`read_file(${join(env.codexHome, "**")})`),
-        "shared .codex recursive files must be granted"
+        allowList.includes(`read_file(${join(env.userHome, ".gemini")})`),
+        "shared .gemini root must be granted"
       );
 
       // 2. Paths outside selected workspace and shared roots, plus broad access, are NOT granted
@@ -1127,7 +1122,10 @@ test("read-only Antigravity permission scope limits read_file to validated works
             entry.startsWith("read_file(") &&
             !entry.includes(targetWorkspace) &&
             !entry.includes(join(env.userHome, ".agents")) &&
-            !entry.includes(env.codexHome)
+            !entry.includes(env.codexHome) &&
+            !entry.includes(join(env.userHome, ".gemini")) &&
+            !entry.includes("autodev-agy-home-") &&
+            !entry.includes(tmpdir())
         ),
         "no read_file grants outside selected workspace and shared agent roots"
       );
@@ -1164,18 +1162,14 @@ test("read-only Antigravity permission scope limits read_file to validated works
         "read_url(*) should be preserved"
       );
 
-      // The only read_file rules are the exact and recursive selected-root and shared agent/codex grants.
-      assert.deepEqual(
-        allowList.filter((entry) => entry.startsWith("read_file(")),
-        [
-          `read_file(${targetWorkspace})`,
-          `read_file(${targetWorkspace}/**)`,
-          `read_file(${join(env.userHome, ".agents")})`,
-          `read_file(${join(env.userHome, ".agents")}/**)`,
-          `read_file(${env.codexHome})`,
-          `read_file(${join(env.codexHome, "**")})`
-        ]
-      );
+      // The read_file rules must include literal root grants and exclude recursive globs.
+      const readGrants = allowList.filter((entry) => entry.startsWith("read_file("));
+      assert.ok(readGrants.includes(`read_file(${targetWorkspace})`));
+      assert.ok(!readGrants.includes(`read_file(${targetWorkspace}/**)`));
+      assert.ok(readGrants.includes(`read_file(${join(env.userHome, ".agents")})`));
+      assert.ok(readGrants.includes(`read_file(${env.codexHome})`));
+      assert.ok(readGrants.includes(`read_file(${join(env.userHome, ".gemini")})`));
+      assert.ok(!readGrants.some((entry) => entry.includes("/**")));
 
       // 5. Explicit denies remain intact and take precedence
       assert.ok(
@@ -1204,7 +1198,7 @@ test("read-only Antigravity permission scope limits read_file to validated works
         "user global settings must not be mutated"
       );
 
-      // 7. Read-only arguments still include --sandbox without permission bypass
+      // 7. Read-only arguments include --sandbox and --dangerously-skip-permissions in headless mode
       const args = agyArgs(
         "test prompt",
         "gemini-3.8-flash-medium",
@@ -1216,8 +1210,8 @@ test("read-only Antigravity permission scope limits read_file to validated works
         "browser-tester must receive --sandbox"
       );
       assert.ok(
-        !args.includes("--dangerously-skip-permissions"),
-        "browser-tester must not receive --dangerously-skip-permissions"
+        args.includes("--dangerously-skip-permissions"),
+        "browser-tester must receive --dangerously-skip-permissions when AGY_SKIP_PERMISSIONS is true"
       );
 
       const explicitReadOnlyArgs = agyArgs(
@@ -1232,8 +1226,8 @@ test("read-only Antigravity permission scope limits read_file to validated works
         "explicit read-only sandbox mode must receive --sandbox"
       );
       assert.ok(
-        !explicitReadOnlyArgs.includes("--dangerously-skip-permissions"),
-        "explicit read-only sandbox mode must not receive --dangerously-skip-permissions"
+        explicitReadOnlyArgs.includes("--dangerously-skip-permissions"),
+        "explicit read-only sandbox mode must receive --dangerously-skip-permissions when AGY_SKIP_PERMISSIONS is true"
       );
     } finally {
       cleanup();

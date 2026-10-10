@@ -5,13 +5,13 @@ import { resolveSandboxMode } from "@simulatorlife/autodev-runtime/shared/execut
 
 void test("resolveSandboxMode: read-only roles return 'read-only'", () => {
   assert.equal(resolveSandboxMode("explorer"), "read-only");
-  assert.equal(resolveSandboxMode("validator"), "read-only");
   assert.equal(resolveSandboxMode("browser-tester"), "read-only");
   assert.equal(resolveSandboxMode("docs-researcher"), "read-only");
 });
 
 void test("resolveSandboxMode: write-capable roles return 'workspace-write'", () => {
   assert.equal(resolveSandboxMode("orchestrator"), "workspace-write");
+  assert.equal(resolveSandboxMode("validator"), "workspace-write");
   assert.equal(resolveSandboxMode("worker"), "workspace-write");
   assert.equal(resolveSandboxMode("default"), "workspace-write");
   assert.equal(resolveSandboxMode("smart"), "workspace-write");

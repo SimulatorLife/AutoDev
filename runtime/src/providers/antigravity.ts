@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync
@@ -1784,6 +1785,7 @@ interface IsolatedHomeOptions {
   codexHome?: string;
   cwd?: string;
   sandboxMode?: "read-only" | "workspace-write" | null;
+  isolatedHome?: string;
 }
 
 const GEMINI_DIRECTORY = ".gemini";
@@ -1988,7 +1990,8 @@ function buildReadOnlyInvocationSettings({
   mcpGrants,
   cwd,
   originalHome,
-  codexHome
+  codexHome,
+  isolatedHome
 }: {
   userSettings: JsonRecord;
   userPermissions: JsonRecord;
@@ -1998,6 +2001,7 @@ function buildReadOnlyInvocationSettings({
   cwd: string | undefined;
   originalHome?: string | undefined;
   codexHome?: string | undefined;
+  isolatedHome?: string | undefined;
 }): AntigravitySettings {
   if (!cwd || !pathApi.isAbsolute(cwd))
     throw new Error(
@@ -2009,16 +2013,50 @@ function buildReadOnlyInvocationSettings({
     codexHome ?? process.env.CODEX_HOME ?? pathApi.join(home, ".codex");
 
   const workspaceRoot = pathApi.resolve(cwd);
+  const workspaceReal = existsSync(workspaceRoot)
+    ? realpathSync(workspaceRoot)
+    : workspaceRoot;
   const workspaceReadGrants = [
     `read_file(${workspaceRoot})`,
-    `read_file(${workspaceRoot}/**)`
+    ...(workspaceReal !== workspaceRoot ? [`read_file(${workspaceReal})`] : [])
   ];
+
+  const agentRoot = pathApi.join(home, ".agents");
+  const agentReal = existsSync(agentRoot) ? realpathSync(agentRoot) : agentRoot;
+  const codexReal = existsSync(resolvedCodexHome)
+    ? realpathSync(resolvedCodexHome)
+    : resolvedCodexHome;
+  const geminiRoot = pathApi.join(home, ".gemini");
+  const geminiReal = existsSync(geminiRoot) ? realpathSync(geminiRoot) : geminiRoot;
+
   const sharedReadGrants = [
-    `read_file(${pathApi.join(home, ".agents")})`,
-    `read_file(${pathApi.join(home, ".agents")}/**)`,
+    `read_file(${agentRoot})`,
+    ...(agentReal !== agentRoot ? [`read_file(${agentReal})`] : []),
     `read_file(${resolvedCodexHome})`,
-    `read_file(${pathApi.join(resolvedCodexHome, "**")})`
+    ...(codexReal !== resolvedCodexHome ? [`read_file(${codexReal})`] : []),
+    `read_file(${geminiRoot})`,
+    ...(geminiReal !== geminiRoot ? [`read_file(${geminiReal})`] : [])
   ];
+
+  if (isolatedHome) {
+    const isolatedReal = existsSync(isolatedHome)
+      ? realpathSync(isolatedHome)
+      : isolatedHome;
+    sharedReadGrants.push(`read_file(${isolatedHome})`);
+    if (isolatedReal !== isolatedHome) {
+      sharedReadGrants.push(`read_file(${isolatedReal})`);
+    }
+  }
+
+  const systemTmp = tmpdir();
+  const systemTmpReal = existsSync(systemTmp)
+    ? realpathSync(systemTmp)
+    : systemTmp;
+  sharedReadGrants.push(`read_file(${systemTmp})`);
+  if (systemTmpReal !== systemTmp) {
+    sharedReadGrants.push(`read_file(${systemTmpReal})`);
+  }
+
   const urlReadGrants = existingAllow.filter(
     (entry): entry is string =>
       typeof entry === "string" &&
@@ -2120,7 +2158,8 @@ function buildInvocationSettings(
       mcpGrants,
       cwd: options?.cwd,
       originalHome: options?.originalHome ?? originalHome,
-      codexHome: options?.codexHome
+      codexHome: options?.codexHome,
+      isolatedHome: options?.isolatedHome
     });
 
   return {
@@ -2184,13 +2223,6 @@ function createIsolatedAntigravityHome(
       `Antigravity user state is missing at ${origGemini}; sign in with agy before using the bridge`
     );
 
-  const mcpConfig = buildInvocationMcpConfig(agentRole, spawnSession, options);
-  const settings = buildInvocationSettings(
-    agentRole,
-    mcpConfig,
-    originalHome,
-    options
-  );
   let tempHome: string | null = null;
   let cleaned = false;
 
@@ -2212,6 +2244,14 @@ function createIsolatedAntigravityHome(
   try {
     tempHome = mkdtempSync(pathApi.join(tmpdir(), "autodev-agy-home-"));
     chmodSync(tempHome, 0o700);
+
+    const mcpConfig = buildInvocationMcpConfig(agentRole, spawnSession, options);
+    const settings = buildInvocationSettings(
+      agentRole,
+      mcpConfig,
+      originalHome,
+      { ...options, isolatedHome: tempHome }
+    );
     const geminiDir = pathApi.join(tempHome, GEMINI_DIRECTORY);
     mkdirSync(geminiDir, { mode: 0o700 });
 
@@ -2288,21 +2328,15 @@ function agyArgs(
   // to the contract for backwards compatibility with bridges that have not
   // been updated to send it yet.
   const readOnly = isReadOnlyRole(agentRole, sandboxMode);
+  // Headless print mode (-p) cannot prompt interactively for tool approvals.
+  // AGY_SKIP_PERMISSIONS ("true" by default) auto-approves tool permission
+  // requests so the turn does not crash on unpromptable tool confirmations.
+  // Read-only turns are restricted by settings.json permissions scoping and
+  // agy's --sandbox terminal restrictions.
   const permissionArgs =
-    AGY_SKIP_PERMISSIONS === "true" && !readOnly
+    AGY_SKIP_PERMISSIONS === "true"
       ? ["--dangerously-skip-permissions"]
       : [];
-  // A read-only role (validator, explorer, ...) never needs
-  // --dangerously-skip-permissions -- its contract grants it no writes to
-  // approve -- but leaving it on agy's interactive permission gate means a
-  // headless run either hangs on a prompt nothing will ever answer, or has
-  // to be started with command(*) / --dangerously-skip-permissions granted
-  // anyway, which is exactly the write escalation the contract is trying to
-  // keep it away from. `--sandbox` is agy's own terminal-restriction mode:
-  // it runs the turn without asking, but inside restrictions instead of with
-  // permissions bypassed, so a read-only role gets a headless run without
-  // gaining anything a write-capable role has. Write-capable roles are
-  // unaffected; they keep whatever AGY_SKIP_PERMISSIONS already decided.
   const sandboxArgs = readOnly ? ["--sandbox"] : [];
   // Only pass --effort when the model id does not already fix it; see
   // MODEL_EFFORT_SUFFIX.

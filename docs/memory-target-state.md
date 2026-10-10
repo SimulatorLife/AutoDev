@@ -191,6 +191,10 @@ Before injection, reconstruct the memory for the current task:
 
 Verify remembered facts against current tools/state when practical. If nothing survives validation, proceed without memory.
 
+JIT research preserves relevance rank and packet order while processing at most two candidate verification/reconstruction chains concurrently. The per-context GitHub evidence budget remains owned by the first ranked candidate that needs it. Candidate, evidence, and packet-size limits are unchanged; a failed batch fails closed without injecting a partial packet.
+
+Measure this path with `pnpm run bench:memory -- --candidates=2 --iterations=5 --reconstruction-delay-ms=250`. The harness uses a temporary Git repository and deterministic 250ms reconstruction delay (not a live provider); it checks packet contents and reports p50/p95 plus observed in-flight counts. On Node 25.0, five baseline runs from `5596ac09` measured p50/p95 `1992.74/2018.84ms`; the updated code measured `1600.09/1643.39ms` at similar host load (19.7% lower p50, 18.6% lower p95). Peak validation/reconstruction concurrency changed from 1/1 to 2/2. The benchmark excludes live provider/network latency.
+
 ## 8. Task-specific packet, validity, and provenance
 
 Agents receive a compact advisory packet, not arbitrary historical chunks. It may contain relevant decisions, successes/failures, procedures, conflicts, uncertainty, and source references.

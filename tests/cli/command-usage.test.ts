@@ -207,6 +207,41 @@ test("help advertises exactly what each command accepts", async () => {
   }
 });
 
+test("help shows required and optional arguments for every render target", async () => {
+  const help = await capture(["--", "--help"]);
+  for (const [target, required, optional] of [
+    [
+      "agents",
+      "--mcp-source <toml> --output-dir <dir>",
+      "[--source-dir <dir>] [--prompt-dir <dir>] [--check]"
+    ],
+    [
+      "contract",
+      "--output <file>",
+      "[--source-dir <dir>] [--root-config <file>] [--contract <file>] [--check]"
+    ],
+    ["mcp", "--mcp-source <toml> --output <file>", "[--check]"],
+    [
+      "catalog",
+      "--routing-config <file> --catalogs-dir <dir> --output <file>",
+      "[--check]"
+    ]
+  ] as const) {
+    assert.ok(
+      help.includes(`    ${target} ${required}\n      ${optional}`),
+      `help omits ${target} arguments`
+    );
+  }
+  assert.match(
+    help,
+    /Defaults \(checkout-relative\): --source-dir agents\/roles,[\s\S]*--contract config\/execution-contract\.json\./u
+  );
+  assert.match(
+    help,
+    /--mcp-source expects Codex TOML generated from the RuleSync MCP catalog/u
+  );
+});
+
 test("help discloses the provider and hook vocabularies", async () => {
   // Both families used to render a bare `<name>`, so their accepted values were
   // discoverable only by running a command and reading the error.

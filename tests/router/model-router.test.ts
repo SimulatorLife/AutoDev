@@ -11,6 +11,7 @@ import test from "node:test";
 import {
   AGENT_ACTIVITY_STATES,
   AGENT_ACTIVITY_TTL_ENV,
+  buildSpawnToolCallOutput,
   createAgentActivityTracker,
   DEFAULT_AGENT_ACTIVITY_TTL_MS,
   resolveAgentActivityTtlMs
@@ -1207,17 +1208,14 @@ test("an exec tool call carrying a spawn script reaches Codex byte for byte", as
   // must not touch it. If it ever did, Codex would be handed a script calling a
   // function that does not exist, and every bridge-driven spawn would fail with
   // nothing in the router log to explain it.
-  const { buildSpawnScript, execToolCallSseEvents } =
-    await import("@simulatorlife/autodev-runtime/agents");
-  const source = buildSpawnScript([
-    { agentType: "explorer", message: "audit the catalogue" }
-  ]);
+  const spawnOutput = buildSpawnToolCallOutput(
+    [{ agentType: "explorer", message: "audit the catalogue" }],
+    "parent-1",
+    1
+  );
+  assert.ok(spawnOutput);
 
-  for (const [name, payload] of execToolCallSseEvents({
-    itemId: "ctc_1",
-    callId: "call_1",
-    source
-  })) {
+  for (const [name, payload] of spawnOutput.events) {
     const transformed = responses.transformSseEvent(
       `event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`,
       "autodev/orchestrator"

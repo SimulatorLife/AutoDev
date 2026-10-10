@@ -218,6 +218,29 @@ const COMMAND_ROWS: readonly (readonly [string, string])[] = [
   ["install", ""]
 ];
 
+const RENDER_ARGUMENTS: Record<
+  (typeof RENDER_TARGETS)[number],
+  { readonly required: string; readonly optional: string }
+> = {
+  agents: {
+    required: "--mcp-source <toml> --output-dir <dir>",
+    optional: "[--source-dir <dir>] [--prompt-dir <dir>] [--check]"
+  },
+  contract: {
+    required: "--output <file>",
+    optional:
+      "[--source-dir <dir>] [--root-config <file>] [--contract <file>] [--check]"
+  },
+  mcp: {
+    required: "--mcp-source <toml> --output <file>",
+    optional: "[--check]"
+  },
+  catalog: {
+    required: "--routing-config <file> --catalogs-dir <dir> --output <file>",
+    optional: "[--check]"
+  }
+};
+
 function usage(): void {
   writeLine(
     [
@@ -228,6 +251,17 @@ function usage(): void {
         ([name, choices]) =>
           `  ${name}${choices.length > 0 ? ` ${choices}` : ""}`
       ),
+      "",
+      'Render target arguments (after "render"):',
+      "    Bracketed options are optional; --check verifies generated output.",
+      "    --mcp-source expects Codex TOML generated from the RuleSync MCP catalog.",
+      ...RENDER_TARGETS.flatMap((target) => {
+        const { required, optional } = RENDER_ARGUMENTS[target];
+        return [`    ${target} ${required}`, `      ${optional}`];
+      }),
+      "    Defaults (checkout-relative): --source-dir agents/roles,",
+      "      --prompt-dir agents/prompts, --root-config config/config.autodev.toml,",
+      "      --contract config/execution-contract.json.",
       ""
     ].join("\n")
   );

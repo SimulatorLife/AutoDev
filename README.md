@@ -37,7 +37,10 @@ Node 24.12+, declared by `.nvmrc` and the package engine constraint. Use
 `pnpm install --frozen-lockfile` before running the checks. The typed command
 boundary is available as `pnpm autodev -- <command>` (or
 `node runtime/src/cli/autodev.ts <command>`); native TypeScript is executed directly by
-Node and checked with `pnpm run typecheck`. The target-aware runner
+Node and checked with `pnpm run typecheck`. The root TypeScript project excludes
+Console-owned sources: the Console workspace typechecks them with Next.js route
+type generation and its bundler resolver. The aggregate command still checks
+all workspaces. The target-aware runner
 intentionally retains an npm compatibility branch for organization repositories
 that have not migrated their own package manager; that branch is not used to
 validate AutoDev. Run `pnpm autodev -- --help` to list the typed CLI commands;

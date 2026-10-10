@@ -162,14 +162,17 @@ logs, then classify the first failing boundary:
   empty terminal response to the unhelpful `completed without a response`
   message. A live `/health/liveliness` only proves the local adapter is alive,
   not that the upstream Antigravity service answered a turn.
-- **Headless permissions and MCP scope:** read-only roles intentionally do not
-  receive `--dangerously-skip-permissions`. The bridge starts each `agy` turn in
-  a temporary home containing only that role's contracted MCP servers and exact
-  permissions. When a role contract declares a per-server tool list, the bridge
+- **Headless permissions and MCP scope:** in headless print mode (`-p`),
+  `--dangerously-skip-permissions` is passed when `AGY_SKIP_PERMISSIONS=true`
+  so unpromptable interactive permission gates do not crash turns. Read-only
+  roles are sandboxed with agy's `--sandbox` flag. The bridge starts each `agy`
+  turn in a temporary home containing only that role's contracted MCP servers and
+  exact permissions. When a role contract declares a per-server tool list, the bridge
   also filters the MCP `tools/list` response and rejects direct calls outside
-  that list. For a read-only turn, the temporary settings grant `read_file`
-  only beneath the request's validated workspace, preserve explicit denies,
-  and do not inherit command, write, or `unsandboxed(...)` grants.
+  that list. For a read-only turn, the temporary settings grant literal `read_file`
+  access to the request's validated workspace, shared agent/codex roots, and the
+  invocation's isolated home, preserve explicit denies, and do not inherit command,
+  write, or `unsandboxed(...)` grants.
   User-configured `read_url(...)` rules remain separate from local file access.
   Write-capable turns keep their existing user non-MCP permissions. The global
   Antigravity settings and MCP registry are never modified by a request.

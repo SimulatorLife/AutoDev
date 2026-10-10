@@ -20,12 +20,12 @@ import {
   type ExperienceListRequest,
   type ExperienceSearchRequest,
   isMemoryExecutionMode,
+  isMemoryExperiencePurgeReason,
   isMemoryExperienceVisibleTo,
   isMemoryInjectionResult,
   isMemoryOutcomeReportKind,
   isMemoryScopeVisibleTo,
   isMemoryUseKind,
-  isMemoryExperiencePurgeReason,
   MEMORY_EXECUTION_MODES,
   MEMORY_REASON_CODES,
   type MemoryActor,
@@ -70,6 +70,7 @@ import {
 } from "@simulatorlife/autodev-core";
 import { MemoryConflictError as RepositoryMemoryConflictError } from "@simulatorlife/autodev-data";
 
+import { mapConcurrentOrdered } from "../shared/map-concurrent-ordered.ts";
 import { redactSensitiveText, sanitizeEvidence } from "./privacy.ts";
 import {
   type NativeTrajectorySource,
@@ -207,6 +208,7 @@ const MAX_MEMORY_REFERENCE_ID_LENGTH = 256;
 export const MAX_CLAIM_LENGTH = 4000;
 const MAX_RESEARCH_HITS = 40;
 const MAX_RESEARCH_CANDIDATES = 40;
+const MAX_CONCURRENT_RESEARCH_CANDIDATES = 2;
 const MAX_LIST_OFFSET = 100_000;
 const MAX_PACKET_CHARACTERS = 24_000;
 /** A sanity ceiling on an injected provider's vector; see `validateEmbedding`. */
@@ -2491,11 +2493,9 @@ export class MemoryService
     request: MemoryResearchRequest,
     rejections: Map<MemoryReasonCode, number>
   ): Promise<MemoryPacket["entries"]> {
-    const entries: MemoryPacket["entries"][number][] = [];
-    // Rank order is the packet priority order. Keep expensive verifier/model
-    // adapters sequential and bounded rather than fanning out up to 40 calls.
-    /* eslint-disable no-await-in-loop -- preserve rank order and cap verifier/reconstructor concurrency */
-    for (const { memory } of ranked) {
+    const processCandidate = async (
+      memory: MemoryRecord
+    ): Promise<MemoryPacket["entries"][number] | null> => {
       const assessment = await this.withSpan(
         MEMORY_OPERATIONS.validate,
         (span) =>
@@ -2517,7 +2517,7 @@ export class MemoryService
             ? "contradicted"
             : "uncertain"
         );
-        continue;
+        return null;
       }
       const review = await this.withSpan(
         MEMORY_OPERATIONS.reconstruct,
@@ -2543,18 +2543,28 @@ export class MemoryService
               ? "uncertain"
               : "rejected"
         );
-        continue;
+        return null;
       }
-      entries.push({
+      return {
         memoryId: memory.id,
         disposition: review.disposition,
         guidance: redactSensitiveText(guidance),
         rationale: redactSensitiveText(review.rationale.trim()),
         evidence: mergeEvidence(memory.provenance.evidence, assessment.evidence)
-      });
-    }
-    /* eslint-enable no-await-in-loop */
-    return entries;
+      };
+    };
+
+    // Candidates are ranked. The ordered batches keep the verifier's one-per-
+    // context GitHub lookup with the first candidate that needs it, preserve
+    // packet order, and cap verifier/model work at two candidates in flight.
+    const entries = await mapConcurrentOrdered(
+      ranked,
+      MAX_CONCURRENT_RESEARCH_CANDIDATES,
+      ({ memory }) => processCandidate(memory)
+    );
+    return entries.filter(
+      (entry): entry is MemoryPacket["entries"][number] => entry !== null
+    );
   }
 
   private recordResearchResults(

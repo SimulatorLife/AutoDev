@@ -54,7 +54,9 @@ function asObject(value: JsonValue | undefined): JsonObject {
 
 function asSeenState(value: JsonValue): SeenState {
   const object = asObject(value);
-  const turns: Record<string, SeenTurn> = {};
+  // Turn ids are supplied by hook input; a normal object would treat names
+  // such as "constructor" and "__proto__" as inherited properties.
+  const turns = Object.create(null) as Record<string, SeenTurn>;
   const rawTurns = asObject(object.turns);
   for (const [turnId, rawTurn] of Object.entries(rawTurns)) {
     const turn = asObject(rawTurn);
@@ -388,7 +390,10 @@ async function readSeenState(
     )
       throw error;
   }
-  return { path: filePath, value: { turns: {}, keys: [] } };
+  return {
+    path: filePath,
+    value: { turns: Object.create(null) as Record<string, SeenTurn>, keys: [] }
+  };
 }
 
 async function writeSeenState({

@@ -153,7 +153,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 assert.ok(process.argv.includes("--sandbox"));
-assert.ok(!process.argv.includes("--dangerously-skip-permissions"));
+assert.ok(process.argv.includes("--dangerously-skip-permissions"));
 const settings = JSON.parse(readFileSync(join(process.env.HOME, ".gemini", "antigravity-cli", "settings.json"), "utf8"));
 assert.ok(settings.permissions);
 process.stdout.write(JSON.stringify({event:"step_update",step_update:{step_type:"tool",tool_name:"view_file",state:"ACTIVE"}}) + "\n");

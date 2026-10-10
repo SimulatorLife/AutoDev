@@ -21,10 +21,18 @@ function execGit(
   args: readonly string[],
   options: { readonly env?: NodeJS.ProcessEnv } = {}
 ): string {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("GIT_")) delete env[key];
+  }
+  for (const [key, value] of Object.entries(options.env ?? {})) {
+    if (value === undefined) delete env[key];
+    else env[key] = value;
+  }
   return execFileSync("git", ["-C", root, ...args], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-    ...options
+    env
   }).trim();
 }
 
@@ -84,6 +92,46 @@ test("a commit's added and deleted files are subsets of the files it changed", a
     const commits = await listCommitsInRange(root, `${base}..HEAD`);
     assert.deepEqual(commits, [commit]);
   });
+});
+
+test("commit measurements bound independent Git reads and preserve commit order", async () => {
+  const commits = ["1", "2", "3", "4", "5", "6"].map((digit) =>
+    digit.repeat(40)
+  );
+  let active = 0;
+  let peak = 0;
+  const changes = await measureGitCommitChanges({
+    repositoryRoot: "/synthetic/repository",
+    commits,
+    runGit: async (_root, args) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      const commit = args.at(-1) ?? "";
+      if (args[0] === "log")
+        return { exitCode: 0, stdout: "human@example.test" };
+      if (args[0] === "diff-tree") {
+        return { exitCode: 0, stdout: `A\t${commit}.txt` };
+      }
+      if (args[0] === "show") {
+        return { exitCode: 0, stdout: `1\t0\t${commit}.txt` };
+      }
+      throw new Error(`Unexpected Git operation: ${String(args[0])}`);
+    }
+  });
+
+  assert.equal(peak, 12, "four commits × three independent Git reads");
+  assert.deepEqual(
+    changes.map(({ commit }) => commit),
+    commits,
+    "parallel completion must not reorder commit observations"
+  );
+  assert.ok(
+    changes.every(
+      ({ filesChanged, linesAdded }) => filesChanged === 1 && linesAdded === 1
+    )
+  );
 });
 
 test("a rename counts as one changed file, not two paths", async () => {
@@ -169,7 +217,6 @@ test("an agent commit's own identity is read back from git, a human commit's is 
     execGit(root, ["add", "."]);
     execGit(root, ["commit", "-q", "-m", "agent work"], {
       env: {
-        ...process.env,
         GIT_COMMITTER_NAME: identity.name,
         GIT_COMMITTER_EMAIL: identity.email,
         GIT_AUTHOR_NAME: identity.name,
@@ -195,7 +242,7 @@ test("an agent commit's own identity is read back from git, a human commit's is 
 });
 
 test("the agent identity is bounded and round-trips through a real commit", async () => {
-  await withGitRepository(async (root) => {
+  await withGitRepository(async () => {
     const identity = gitCommitIdentity({ role: "subagent", provider: "codex" });
     assert.ok(identity);
     assert.equal(

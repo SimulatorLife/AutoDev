@@ -139,6 +139,51 @@ async function withGitRepository(
   }
 }
 
+test("Git verifier runs independent tracked-file and diff checks concurrently", async () => {
+  await withGitRepository(async ({ root, sourceCommit, filePath }) => {
+    let activeChecks = 0;
+    let peakChecks = 0;
+    const verifier = new GitWorkingTreeMemoryVerifier({
+      repositories: { resolve: async () => root },
+      runGit: async (_repositoryRoot, args) => {
+        const command = args[0];
+        if (command === "rev-parse") {
+          return { exitCode: 0, stdout: sourceCommit };
+        }
+        if (command === "ls-files" || command === "diff") {
+          activeChecks += 1;
+          peakChecks = Math.max(peakChecks, activeChecks);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          activeChecks -= 1;
+          return { exitCode: 0, stdout: "" };
+        }
+        if (command === "merge-base" || command === "log") {
+          return { exitCode: 0, stdout: "" };
+        }
+        throw new Error(`Unexpected Git operation: ${String(command)}`);
+      }
+    });
+    const evidence: EvidenceReference[] = [
+      {
+        kind: "commit",
+        uri: `git://${encodeURIComponent(context.repositoryId!)}/commit/${sourceCommit}`,
+        revision: sourceCommit
+      },
+      { kind: "file", uri: pathToFileURL(filePath).href }
+    ];
+
+    const assessment = await verifier.verify({
+      memory: recordWithEvidence(evidence),
+      task: "Use the current feature behavior.",
+      context,
+      asOf: "2026-10-01T12:00:00.000Z"
+    });
+
+    assert.equal(assessment.compatibility, "compatible");
+    assert.equal(peakChecks, 2);
+  });
+});
+
 function execGit(root: string, args: readonly string[]): string {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of Object.keys(env)) {
@@ -916,10 +961,12 @@ test("Git verifier caps concurrent PR lookups at one per research context", asyn
     const assessments = await Promise.all([verifyPr(60), verifyPr(61)]);
 
     assert.equal(lookups, 1);
-    assert.deepEqual(
-      assessments.map((assessment) => assessment.compatibility).sort(),
-      ["compatible", "unknown"]
+    assert.equal(
+      assessments[0]?.compatibility,
+      "compatible",
+      "the first ranked/requested candidate retains the one live PR lookup"
     );
+    assert.equal(assessments[1]?.compatibility, "unknown");
   });
 });
 

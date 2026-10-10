@@ -13,6 +13,8 @@
     "typecheck:root": "tsc --noEmit",
     "typecheck": "pnpm run typecheck:root; root_status=$?; pnpm --recursive --if-present typecheck; workspace_status=$?; test \"$root_status\" -eq 0 -a \"$workspace_status\" -eq 0",
     "validate:weights": "node tests/weights.test.ts",
+    "bench:memory": "node runtime/src/benchmarks/memory-research.ts",
+    "bench:github-metrics": "node runtime/src/benchmarks/github-metrics.ts",
     "validate:actionlint": "actionlint",
     "validate:shell": "find scripts -type f -name '*.sh' -exec shellcheck --severity=warning {} +",
     "autodev": "node runtime/src/cli/autodev.ts",

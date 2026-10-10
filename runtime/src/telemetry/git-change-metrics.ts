@@ -11,6 +11,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { mapConcurrentOrdered } from "../shared/map-concurrent-ordered.ts";
 import {
   type GitCommitActor,
   gitCommitActorFromEmail
@@ -24,6 +25,7 @@ const COMMIT_PATTERN = /^[0-9a-f]{40}$/iu;
 /** Git prints `-` in place of a count for binary files. */
 const BINARY_NUMSTAT_FIELD = "-";
 const MAX_COMMITS_PER_OBSERVATION = 200;
+const MAX_CONCURRENT_COMMIT_MEASUREMENTS = 4;
 
 export type GitChangeStatus = "added" | "deleted" | "modified" | "renamed";
 
@@ -158,58 +160,55 @@ export async function measureGitCommitChanges({
   commits,
   runGit = defaultRunGit
 }: GitCommitChangeOptions): Promise<readonly GitCommitChange[]> {
-  const changes: GitCommitChange[] = [];
   const bounded = commits
     .filter((commit) => COMMIT_PATTERN.test(commit))
     .slice(0, MAX_COMMITS_PER_OBSERVATION);
 
-  for (const commit of bounded) {
-    // The committer email is read from the commit itself, so attribution does
-    // not depend on the caller knowing which actor ran in this workspace.
-    const identity = await runGit(repositoryRoot, [
-      "log",
-      "-1",
-      "--format=%ce",
-      commit
-    ]);
-    const names = await runGit(repositoryRoot, [
-      "diff-tree",
-      "--no-commit-id",
-      "--name-status",
-      "-r",
-      "-M",
-      commit
-    ]);
-    if (names.exitCode !== 0) continue;
-    const numstat = await runGit(repositoryRoot, [
-      "show",
-      "--numstat",
-      "--format=",
-      commit
-    ]);
-    if (numstat.exitCode !== 0) continue;
+  const measured = await mapConcurrentOrdered(
+    bounded,
+    MAX_CONCURRENT_COMMIT_MEASUREMENTS,
+    async (commit) => {
+      // The committer email is read from the commit itself, so attribution does
+      // not depend on the caller knowing which actor ran in this workspace.
+      const [identity, names, numstat] = await Promise.all([
+        runGit(repositoryRoot, ["log", "-1", "--format=%ce", commit]),
+        runGit(repositoryRoot, [
+          "diff-tree",
+          "--no-commit-id",
+          "--name-status",
+          "-r",
+          "-M",
+          commit
+        ]),
+        runGit(repositoryRoot, ["show", "--numstat", "--format=", commit])
+      ]);
+      if (names.exitCode !== 0 || numstat.exitCode !== 0) return null;
 
-    const statuses = parseChangeStatuses(names.stdout);
-    const lines = parseNumstat(numstat.stdout);
-    changes.push({
-      commit,
-      // Added and deleted files are subsets of changed files, not additions to
-      // them: summing all three into one total would double-count.
-      filesChanged: statuses.statuses.length,
-      filesAdded: statuses.statuses.filter((value) => value === "added").length,
-      filesDeleted: statuses.statuses.filter((value) => value === "deleted")
-        .length,
-      linesAdded: lines.linesAdded,
-      linesRemoved: lines.linesRemoved,
-      // A human commit has no AutoDev identity and stays unattributed rather
-      // than being folded into agent output.
-      actor: gitCommitActorFromEmail(
-        identity.exitCode === 0 ? identity.stdout.trim() : null
-      ),
-      partial: statuses.partial || lines.partial
-    });
-  }
-  return changes;
+      const statuses = parseChangeStatuses(names.stdout);
+      const lines = parseNumstat(numstat.stdout);
+      return {
+        commit,
+        // Added and deleted files are subsets of changed files, not additions to
+        // them: summing all three into one total would double-count.
+        filesChanged: statuses.statuses.length,
+        filesAdded: statuses.statuses.filter((value) => value === "added")
+          .length,
+        filesDeleted: statuses.statuses.filter((value) => value === "deleted")
+          .length,
+        linesAdded: lines.linesAdded,
+        linesRemoved: lines.linesRemoved,
+        // A human commit has no AutoDev identity and stays unattributed rather
+        // than being folded into agent output.
+        actor: gitCommitActorFromEmail(
+          identity.exitCode === 0 ? identity.stdout.trim() : null
+        ),
+        partial: statuses.partial || lines.partial
+      };
+    }
+  );
+  return measured.filter(
+    (change): change is GitCommitChange => change !== null
+  );
 }
 
 /**

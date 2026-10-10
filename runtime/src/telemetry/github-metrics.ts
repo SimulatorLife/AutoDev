@@ -1,3 +1,5 @@
+import { mapConcurrentOrdered } from "../shared/map-concurrent-ordered.ts";
+
 export const AGENT_NAMES = [
   "copilot",
   "claude",
@@ -144,6 +146,8 @@ export interface CollectMetricsOptions {
   generatedAt?: string;
 }
 
+const MAX_CONCURRENT_GITHUB_METRIC_READS = 2;
+
 export function normalizeAgent(value: unknown): string {
   const normalized = String(value ?? "")
     .trim()
@@ -235,45 +239,43 @@ interface CollectProviderInvocationsContext {
   repositories: string[];
 }
 
-async function collectProviderWorkflow(
-  context: CollectProviderInvocationsContext,
-  index: number
-): Promise<void> {
-  if (index >= context.providerWorkflows.length) return;
-  const entry = context.providerWorkflows[index];
-  if (!entry) return;
-  const [workflowId, agent] = entry;
-  const runs = await context.github.paginate<WorkflowRunItem>(
-    context.github.rest.actions.listWorkflowRuns,
-    {
-      owner: context.owner,
-      repo: context.autoDevRepo,
-      workflow_id: workflowId,
-      created: `>=${context.since}`,
-      per_page: 100
-    }
-  );
-  for (const run of runs) {
-    const outcome = run.conclusion || run.status || "unknown";
-    const agentCounter = context.perAgent[agent];
-    if (agentCounter) addInvocation(agentCounter, outcome);
-    const runTitle = run.display_title ?? "";
-    const target = context.repositories.find((repository) =>
-      runTitle.includes(repository)
-    );
-    if (target && context.perRepository[target]) {
-      addInvocation(context.perRepository[target].agentInvokes, outcome);
-    } else if (context.perAgent.unattributed) {
-      addInvocation(context.perAgent.unattributed, outcome);
-    }
-  }
-  await collectProviderWorkflow(context, index + 1);
-}
-
-function collectProviderInvocations(
+async function collectProviderInvocations(
   context: CollectProviderInvocationsContext
 ): Promise<void> {
-  return collectProviderWorkflow(context, 0);
+  const workflowRuns = await mapConcurrentOrdered(
+    context.providerWorkflows,
+    MAX_CONCURRENT_GITHUB_METRIC_READS,
+    async ([workflowId, agent]) => ({
+      agent,
+      runs: await context.github.paginate<WorkflowRunItem>(
+        context.github.rest.actions.listWorkflowRuns,
+        {
+          owner: context.owner,
+          repo: context.autoDevRepo,
+          workflow_id: workflowId,
+          created: `>=${context.since}`,
+          per_page: 100
+        }
+      )
+    })
+  );
+
+  for (const { agent, runs } of workflowRuns) {
+    for (const run of runs) {
+      const outcome = run.conclusion || run.status || "unknown";
+      const agentCounter = context.perAgent[agent];
+      if (agentCounter) addInvocation(agentCounter, outcome);
+      const runTitle = run.display_title ?? "";
+      const target = context.repositories.find((repository) =>
+        runTitle.includes(repository)
+      );
+      if (target && context.perRepository[target]) {
+        addInvocation(context.perRepository[target].agentInvokes, outcome);
+      } else if (context.perAgent.unattributed) {
+        addInvocation(context.perAgent.unattributed, outcome);
+      }
+    }
+  }
 }
 
 interface CollectRepositoryPullsContext {
@@ -287,29 +289,6 @@ interface CollectRepositoryPullsContext {
     bumpMerged: () => number;
     bumpStale: () => number;
   };
-}
-
-async function collectRepository(
-  context: CollectRepositoryPullsContext,
-  index: number,
-  sinceDate: Date
-): Promise<void> {
-  if (index >= context.repositories.length) return;
-  const fullName = context.repositories[index];
-  if (fullName === undefined) return;
-  const [targetOwner, targetRepo] = fullName.split("/");
-  if (!targetOwner || !targetRepo) {
-    await collectRepository(context, index + 1, sinceDate);
-    return;
-  }
-  const pulls = await listRecentPulls({
-    github: context.github,
-    owner: targetOwner,
-    repo: targetRepo,
-    sinceDate
-  });
-  applyPullsToTotals(context, sinceDate, fullName, pulls);
-  await collectRepository(context, index + 1, sinceDate);
 }
 
 function applyPullsToTotals(
@@ -356,10 +335,30 @@ function applyPullsToTotals(
   }
 }
 
-function collectRepositoryPulls(
+async function collectRepositoryPulls(
   context: CollectRepositoryPullsContext
 ): Promise<void> {
-  return collectRepository(context, 0, context.sinceDate);
+  const repositoryPulls = await mapConcurrentOrdered(
+    context.repositories,
+    MAX_CONCURRENT_GITHUB_METRIC_READS,
+    async (fullName) => {
+      const [owner, repo] = fullName.split("/");
+      if (!owner || !repo) return { fullName, pulls: [] as PullSummary[] };
+      return {
+        fullName,
+        pulls: await listRecentPulls({
+          github: context.github,
+          owner,
+          repo,
+          sinceDate: context.sinceDate
+        })
+      };
+    }
+  );
+
+  for (const { fullName, pulls } of repositoryPulls) {
+    applyPullsToTotals(context, context.sinceDate, fullName, pulls);
+  }
 }
 
 interface WorkflowRunItem {
@@ -404,38 +403,41 @@ export async function collectMetrics({
   let agentPrsMerged = 0;
   let staleEmptyPrsClosed = 0;
 
-  await collectProviderInvocations({
-    providerWorkflows,
-    github,
-    owner,
-    autoDevRepo,
-    since,
-    perAgent,
-    perRepository,
-    repositories
-  });
-
-  await collectRepositoryPulls({
-    repositories,
-    github,
-    sinceDate,
-    perRepository,
-    recentPrs,
-    mutateTotals: {
-      bumpRaised: () => {
-        agentPrsRaised += 1;
-        return agentPrsRaised;
-      },
-      bumpMerged: () => {
-        agentPrsMerged += 1;
-        return agentPrsMerged;
-      },
-      bumpStale: () => {
-        staleEmptyPrsClosed += 1;
-        return staleEmptyPrsClosed;
+  const [providerResult, repositoryResult] = await Promise.allSettled([
+    collectProviderInvocations({
+      providerWorkflows,
+      github,
+      owner,
+      autoDevRepo,
+      since,
+      perAgent,
+      perRepository,
+      repositories
+    }),
+    collectRepositoryPulls({
+      repositories,
+      github,
+      sinceDate,
+      perRepository,
+      recentPrs,
+      mutateTotals: {
+        bumpRaised: () => {
+          agentPrsRaised += 1;
+          return agentPrsRaised;
+        },
+        bumpMerged: () => {
+          agentPrsMerged += 1;
+          return agentPrsMerged;
+        },
+        bumpStale: () => {
+          staleEmptyPrsClosed += 1;
+          return staleEmptyPrsClosed;
+        }
       }
-    }
-  });
+    })
+  ]);
+  if (providerResult.status === "rejected") throw providerResult.reason;
+  if (repositoryResult.status === "rejected") throw repositoryResult.reason;
 
   recentPrs.sort((left, right) =>
     COLLATOR.compare(right.createdAt, left.createdAt)

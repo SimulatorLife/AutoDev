@@ -1,21 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import * as agents from "@simulatorlife/autodev-runtime/agents";
 import {
-  buildRecoveryScript,
+  EXEC_TOOL,
+  MULTI_AGENT_SPAWN_TOOL
+} from "@simulatorlife/autodev-runtime/shared/tool-names";
+import {
   buildSpawnScript,
-  buildSpawnToolCallOutput,
   carriesPendingSpawnResult,
   execToolCallSseEvents,
   mintCallId,
   mintCallItemId,
   parseSpawnResults,
   pendingToolCallOutputs
-} from "@simulatorlife/autodev-runtime/agents";
-import {
-  EXEC_TOOL,
-  MULTI_AGENT_SPAWN_TOOL
-} from "@simulatorlife/autodev-runtime/shared/tool-names";
+} from "../runtime/src/agents/spawn-tools.ts";
 
 type ScriptTask = {
   agent_type?: string;
@@ -36,8 +35,28 @@ test("the spawn call targets Codex's own code-mode tools", () => {
   assert.equal(MULTI_AGENT_SPAWN_TOOL, "multi_agent_v1__spawn_agent");
 });
 
+test("the agents facade exports bridge operations, not spawn internals", () => {
+  assert.equal(typeof agents.buildRecoveryScript, "function");
+  assert.equal(typeof agents.buildSpawnToolCallOutput, "function");
+  for (const name of [
+    "buildSpawnScript",
+    "carriesPendingSpawnResult",
+    "execToolCallSseEvents",
+    "mintCallId",
+    "mintCallItemId",
+    "parseSpawnResults",
+    "pendingToolCallOutputs"
+  ]) {
+    assert.equal(
+      Object.hasOwn(agents, name),
+      false,
+      `${name} remains an implementation detail of spawn-tools`
+    );
+  }
+});
+
 test("recovery script closes only terminal children owned by the parent", async () => {
-  const source = buildRecoveryScript("parent-1");
+  const source = agents.buildRecoveryScript("parent-1");
   const closed: string[] = [];
   const output: unknown[] = [];
   const tools = {
@@ -267,7 +286,7 @@ test("call ids are stable per session and unique per call", () => {
 });
 
 test("a collected batch becomes one indexed Codex spawn tool call", () => {
-  const output = buildSpawnToolCallOutput(
+  const output = agents.buildSpawnToolCallOutput(
     [{ agentType: "explorer", message: "audit" }, { message: "verify" }],
     "parent-1",
     4
@@ -283,7 +302,7 @@ test("a collected batch becomes one indexed Codex spawn tool call", () => {
     { message: "verify" }
   ]);
   assert.match(completed.item.input, /recoveryParentId = "parent-1"/);
-  assert.equal(buildSpawnToolCallOutput([], "parent-1", 4), null);
+  assert.equal(agents.buildSpawnToolCallOutput([], "parent-1", 4), null);
 });
 
 test("the exec call is emitted as a complete custom_tool_call", () => {

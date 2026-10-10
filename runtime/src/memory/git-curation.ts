@@ -17,6 +17,11 @@ import type {
 } from "./service.ts";
 
 const execFileAsync = promisify(execFile);
+type GitCommandResult = { readonly exitCode: number; readonly stdout: string };
+type GitCommandRunner = (
+  repositoryRoot: string,
+  args: readonly string[]
+) => Promise<GitCommandResult>;
 const COMMIT_PATTERN = /^[0-9a-f]{7,64}$/i;
 const COMMIT_URI_PATTERN = /\/commit\/([0-9a-f]{7,64})(?:$|[/?#])/i;
 const NON_FILE_URI_SCHEME_PATTERN = /^[a-z][a-z\d+.-]*:/i;
@@ -175,6 +180,7 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
     pullRequestUri: string | null,
     issueUri: string | null
   ) => Promise<GitHubReferenceState | null>;
+  private readonly runGitCommand: GitCommandRunner;
   private readonly snapshots = new WeakMap<
     MemoryReadContext,
     Promise<GitRepositorySnapshot | null>
@@ -193,10 +199,13 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
       pullRequestUri: string | null,
       issueUri: string | null
     ) => Promise<GitHubReferenceState | null>;
+    /** Substitutable for hermetic Git-command tests; production uses `git`. */
+    readonly runGit?: GitCommandRunner;
   }) {
     this.repositories = options.repositories;
     this.now = options.now ?? (() => new Date().toISOString());
     this.githubState = options.githubState ?? githubReferenceState;
+    this.runGitCommand = options.runGit ?? runGit;
   }
 
   async verify(input: {
@@ -287,7 +296,7 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
     readonly resolvedPullRequest: EvidenceReference | null;
     readonly issueObservation: CurrentStateIssueObservation | null;
   }): Promise<CurrentStateAssessment> {
-    const ancestry = await runGit(input.repositoryRoot, [
+    const ancestry = await this.runGitCommand(input.repositoryRoot, [
       "merge-base",
       "--is-ancestor",
       input.sourceCommit,
@@ -305,22 +314,23 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
       return unknownAssessment(input.checkedAt, "verification_inconclusive");
     }
 
-    const tracked = await runGit(input.repositoryRoot, [
-      "ls-files",
-      "--error-unmatch",
-      "--",
-      ...input.citedFiles.map((file) => file.relativePath)
+    const [tracked, diff] = await Promise.all([
+      this.runGitCommand(input.repositoryRoot, [
+        "ls-files",
+        "--error-unmatch",
+        "--",
+        ...input.citedFiles.map((file) => file.relativePath)
+      ]),
+      this.runGitCommand(input.repositoryRoot, [
+        "diff",
+        "--quiet",
+        input.sourceCommit,
+        "--",
+        ...input.citedFiles.map((file) => file.relativePath)
+      ])
     ]);
     if (tracked.exitCode !== 0)
       return unknownAssessment(input.checkedAt, "verification_inconclusive");
-
-    const diff = await runGit(input.repositoryRoot, [
-      "diff",
-      "--quiet",
-      input.sourceCommit,
-      "--",
-      ...input.citedFiles.map((file) => file.relativePath)
-    ]);
     if (diff.exitCode === 1) {
       return contradictedAssessment(
         input.checkedAt,
@@ -342,7 +352,8 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
       input.repositoryRoot,
       input.sourceCommit,
       input.currentCommit,
-      input.citedFiles.map((file) => file.relativePath)
+      input.citedFiles.map((file) => file.relativePath),
+      this.runGitCommand
     );
     if (pathHistory.exitCode !== 0) {
       return unknownAssessment(input.checkedAt, "verification_inconclusive");
@@ -537,7 +548,11 @@ export class GitWorkingTreeMemoryVerifier implements MemoryCurrentStateVerifier 
   ): Promise<GitRepositorySnapshot | null> {
     const root = await this.repositories.resolve(context);
     if (!root) return null;
-    const head = await runGit(root, ["rev-parse", "--verify", "HEAD"]);
+    const head = await this.runGitCommand(root, [
+      "rev-parse",
+      "--verify",
+      "HEAD"
+    ]);
     if (head.exitCode !== 0 || !COMMIT_PATTERN.test(head.stdout)) return null;
     return { root, head: head.stdout };
   }
@@ -1259,7 +1274,7 @@ function safeRepositoryRelativePath(root: string, uri: string): string | null {
 async function runGit(
   repositoryRoot: string,
   args: readonly string[]
-): Promise<{ readonly exitCode: number; readonly stdout: string }> {
+): Promise<GitCommandResult> {
   try {
     const result = await execFileAsync("git", ["-C", repositoryRoot, ...args], {
       timeout: GIT_TIMEOUT_MS,
@@ -1355,7 +1370,8 @@ async function inspectCitedFileHistory(
   repositoryRoot: string,
   sourceCommit: string,
   currentCommit: string,
-  citedRelativePaths: readonly string[]
+  citedRelativePaths: readonly string[],
+  runGitCommand: GitCommandRunner = runGit
 ): Promise<{
   readonly exitCode: number;
   readonly changed: boolean;
@@ -1365,7 +1381,7 @@ async function inspectCitedFileHistory(
     String.raw`^This reverts commit ${sourceCommit.toLowerCase()}[0-9a-f]*\.$`,
     "m"
   );
-  const result = await runGit(repositoryRoot, [
+  const result = await runGitCommand(repositoryRoot, [
     "log",
     "--full-history",
     "--format=tformat:%H%x00%s%x00%B%x00%x1e",

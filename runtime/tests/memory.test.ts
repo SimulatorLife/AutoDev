@@ -3255,6 +3255,65 @@ test("MemoryService caps candidate research before expensive reconstruction", as
   assert.equal(result.entries.length, 2);
 });
 
+test("MemoryService bounds concurrent candidate work and keeps packet rank order", async () => {
+  const repository = new FakeMemoryRepository();
+  repository.hits = [1, 4, 2, 3].map((score) => {
+    const memory = record(`rank-${score}`, { claim: `Rank ${score}` });
+    return { memory, score, matchedSignals: ["lexical"] };
+  });
+
+  let activeVerifiers = 0;
+  let peakVerifiers = 0;
+  const verifierStartOrder: string[] = [];
+  let activeReconstructors = 0;
+  let peakReconstructors = 0;
+  const waitForAdapter = (): Promise<void> =>
+    new Promise((resolve) => setTimeout(resolve, 10));
+  const service = new MemoryService({
+    repository,
+    verifier: {
+      verify: async ({ memory }) => {
+        verifierStartOrder.push(memory.id);
+        activeVerifiers += 1;
+        peakVerifiers = Math.max(peakVerifiers, activeVerifiers);
+        await waitForAdapter();
+        activeVerifiers -= 1;
+        return compatibleAssessment();
+      }
+    },
+    reconstructor: {
+      reconstruct: async ({ memory }) => {
+        activeReconstructors += 1;
+        peakReconstructors = Math.max(peakReconstructors, activeReconstructors);
+        await waitForAdapter();
+        activeReconstructors -= 1;
+        return {
+          disposition: "retain",
+          guidance: memory.claim,
+          rationale: "The benchmark verifier confirmed this ranked candidate."
+        };
+      }
+    },
+    maxResearchCandidates: 4,
+    now: () => "2026-09-30T10:00:00.000Z"
+  });
+
+  const packet = await service.research(researchRequest());
+
+  assert.equal(peakVerifiers, 2);
+  assert.equal(peakReconstructors, 2);
+  assert.deepEqual(verifierStartOrder, [
+    "rank-4",
+    "rank-3",
+    "rank-2",
+    "rank-1"
+  ]);
+  assert.deepEqual(
+    packet.entries.map(({ memoryId }) => memoryId),
+    ["rank-4", "rank-3", "rank-2", "rank-1"]
+  );
+});
+
 test("MemoryService provides scoped lifecycle browsing with bounded pagination", async () => {
   const repository = new FakeMemoryRepository();
   const visible = record("visible");

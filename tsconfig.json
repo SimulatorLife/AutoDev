@@ -21,10 +21,6 @@
     "core/tests/**/*.ts",
     "data/src/**/*.ts",
     "data/tests/**/*.ts",
-    "console/src/**/*.ts",
-    "console/src/**/*.tsx",
-    "console/tests/**/*.ts",
-    "console/tests/**/*.tsx",
     "runtime/src/**/*.ts",
     "runtime/tests/**/*.ts"
   ]

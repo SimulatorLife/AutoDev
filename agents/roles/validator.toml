@@ -5,7 +5,7 @@ nickname_candidates = ["VerificationAgent", "VerificationChecker", "Verification
 model_provider = "local_model_router"
 model = "autodev/validator"
 model_reasoning_summary = "none"
-sandbox_mode = "read-only"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
 {{AUTODEV_BASE_PROMPT}}
