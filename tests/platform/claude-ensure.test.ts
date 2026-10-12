@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -42,11 +43,43 @@ function deps(overrides: Partial<ClaudeEnsureDeps> = {}): ClaudeEnsureDeps {
   };
 }
 
-test("Claude model gate is strict and case-insensitive for known aliases", () => {
+test("Claude model gate is strict for known aliases", () => {
   assert.equal(isClaudeModel('{"model":"sonnet"}'), true);
   assert.equal(isClaudeModel('{"model":"claude-3-7-sonnet"}'), true);
   assert.equal(isClaudeModel('{"model":"MiniMax-M3"}'), false);
   assert.equal(isClaudeModel("{}"), false);
+});
+
+// The gate shares CLAUDE_MODEL_PATTERN with the router's claude route, which
+// is case-sensitive, so the two cannot disagree about which ids are Claude's.
+// Matching more loosely than the route would start the bridge for an id the
+// router then routes elsewhere; matching more strictly would leave it down.
+test("Claude model gate accepts exactly the ids the claude route accepts", () => {
+  const routingConfig = JSON.parse(
+    readFileSync(
+      new URL("../../config/model-routing.json", import.meta.url),
+      "utf8"
+    )
+  ) as { routes: Record<string, { pattern: string }> };
+  const route = new RegExp(routingConfig.routes.claude!.pattern);
+  for (const model of [
+    "sonnet",
+    "opus",
+    "haiku",
+    "claude-3-7-sonnet",
+    "claude-opus-5-5",
+    "SONNET",
+    "Sonnet",
+    "claude-opus-5-5-high",
+    "gemini-3.8-flash-high",
+    "MiniMax-M3"
+  ]) {
+    assert.equal(
+      isClaudeModel(JSON.stringify({ model })),
+      route.test(model),
+      `${model} must agree between the lifecycle gate and the claude route`
+    );
+  }
 });
 
 test("Claude resolver uses typed runtime paths and OAuth environment", () => {

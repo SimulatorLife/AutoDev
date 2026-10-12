@@ -11,6 +11,7 @@ import path from "node:path";
 
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import { CLAUDE_MODEL_PATTERN } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 import { httpHealthProbe } from "./health-probe.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
@@ -38,8 +39,6 @@ export interface ClaudeEnsureDeps {
   readonly startFallback: (launcher: string, logPath: string) => void;
 }
 
-const CLAUDE_MODEL_PATTERN =
-  /^(sonnet|opus|haiku|claude-[a-z0-9][a-z0-9.-]*)$/iu;
 const DEFAULT_TIMEOUT_MS = 5000;
 
 function keychainToken(env: NodeJS.ProcessEnv): string {

@@ -81,7 +81,8 @@ export function getAutoDevProviders(): ProviderCatalogEntry[] {
     {
       providerId: "antigravity",
       displayName: "Google Antigravity",
-      description: "Google Gemini models bridged via Antigravity CLI",
+      description:
+        "Google Gemini and Claude models bridged via Antigravity CLI",
       requiresVault: false,
       configSchema: DEFAULT_CONFIG_SCHEMA,
       isDefault: true
@@ -207,6 +208,24 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       capabilities: ["chat", "tools"],
       isDefault: false
     },
+
+    // Claude families served by the same agy subscription. agy encodes
+    // reasoning depth in the model id, so each effort is its own model.
+    ...(["opus", "sonnet"] as const).flatMap((family) =>
+      (["low", "medium", "high"] as const).map((effort) => ({
+        provider: "antigravity",
+        modelId: `claude-${family}-5-5-${effort}`,
+        displayName: `Claude ${family === "opus" ? "Opus" : "Sonnet"} 5.5 (${effort[0]!.toUpperCase()}${effort.slice(1)})`,
+        modelType: "chat" as const,
+        contextWindow: 200_000,
+        inputPricePerMToken: family === "opus" ? 15 : 3,
+        outputPricePerMToken: family === "opus" ? 75 : 15,
+        cacheReadPricePerMToken: family === "opus" ? 1.5 : 0.3,
+        cacheCreationPricePerMToken: family === "opus" ? 18.75 : 3.75,
+        capabilities: ["chat", "tools", "reasoning"],
+        isDefault: false
+      }))
+    ),
 
     // MiniMax
     {
@@ -464,6 +483,24 @@ export function getAutoDevModels(): ModelCatalogEntry[] {
       capabilities: ["chat", "tools", "reasoning"],
       isDefault: false
     },
+    // The agy bridge serves Claude under the `antigravity` provider, so the
+    // Anthropic-side aliases are what let trace attribution still price those
+    // turns as Claude rather than leaving them unattributed.
+    ...(["opus", "sonnet"] as const).flatMap((family) =>
+      (["low", "medium", "high"] as const).map((effort) => ({
+        provider: "anthropic",
+        modelId: `claude-${family}-5-5-${effort}`,
+        displayName: `Claude ${family === "opus" ? "Opus" : "Sonnet"} 5.5 ${effort} (AutoDev Antigravity)`,
+        modelType: "chat" as const,
+        contextWindow: 200_000,
+        inputPricePerMToken: family === "opus" ? 15 : 3,
+        outputPricePerMToken: family === "opus" ? 75 : 15,
+        cacheReadPricePerMToken: family === "opus" ? 1.5 : 0.3,
+        cacheCreationPricePerMToken: family === "opus" ? 18.75 : 3.75,
+        capabilities: ["chat", "tools", "reasoning"],
+        isDefault: false
+      }))
+    ),
     {
       provider: "openai",
       modelId: "gpt-6-luna",

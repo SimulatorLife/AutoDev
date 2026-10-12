@@ -54,6 +54,20 @@ hyphen-separated ids, so a mistyped `claude-opus-5.5` fails at startup (and in
 the test suite) instead of turning every Claude turn into a CLI error. A valid
 id still has to be supported by the installed Claude CLI: a newer model can
 need `claude update` first, which the bridge reports as `invalid_model`.
+
+Two providers serve Claude, so the model id alone has to name which one.
+Antigravity's `agy` CLI encodes reasoning depth in the id itself
+(`claude-opus-5-5-high`, `claude-sonnet-5-5-medium`), while Anthropic's own ids
+carry no suffix (`claude-opus-5-5`). An effort-suffixed Claude id therefore
+belongs to Antigravity and every other Claude id to the Claude bridge, and each
+route's `pattern` encodes that split — which is what keeps
+`validateProviderModelRoutes` from rejecting an Antigravity-served Claude model
+as one that "routes to claude". `ANTIGRAVITY_MODEL_PATTERN` and
+`CLAUDE_MODEL_PATTERN` in `runtime/src/shared/provider-model-ids.ts` are the
+single definition of that boundary; the router's built-in routes and the proxy
+lifecycle gates (`antigravity-ensure.ts`, `claude-ensure.ts`) all consume them,
+so selecting an Antigravity Claude model starts the `agy` proxy and never the
+Claude bridge.
 For the `default` capability tier, the router randomizes Claude, Gemini/Antigravity, and MiniMax, then falls back to Copilot and OpenAI/Codex. For `smart`, it randomizes Claude, Gemini/Antigravity, and MiniMax, then falls back directly to OpenAI/Codex Sol. MiniMax's smart assignment uses MiniMax-M3.1-Flash-Preview; its ordinary/default assignment remains MiniMax-M3. Providers that are unavailable or return fallbackable limit errors are skipped and the next provider in the current group is tried before progressing to the next group. A skipped provider is not forgotten: if no candidate serves the turn, the router reconsiders the ones it skipped as a bounded last resort before giving up (see "Cooldowns and provider selection"):
 
 1. `default`: Claude, Gemini/Antigravity, MiniMax (randomized), then Copilot, then OpenAI/Codex Luna
@@ -1582,8 +1596,9 @@ orchestrator spawns through Codex, so its children are ordinary
 
 ### Reasoning effort on the Antigravity bridge
 
-`agy` encodes reasoning depth in the model id itself (`gemini-3.8-flash-high`)
-and rejects the whole invocation when a separate `--effort` disagrees:
+`agy` encodes reasoning depth in the model id itself (`gemini-3.8-flash-high`,
+`claude-opus-5-5-high`) and rejects the whole invocation when a separate
+`--effort` disagrees:
 
 ```
 Error: invalid model selection (--model "gemini-3.8-flash-high" --effort "medium"):
@@ -1594,8 +1609,9 @@ The router picks the model per tier and the caller's reasoning effort is an
 independent value, so the two routinely disagree and the turn fails before the
 CLI starts. The model id is the more specific choice, so it wins: the bridge
 omits `--effort` entirely for any model whose id already carries a
-`-low`/`-medium`/`-high` suffix, and passes it only for models that do not
-(`claude-sonnet-4-6`, for example). `orchestrator.reasoningEffort.antigravity`
+`-low`/`-medium`/`-high` suffix, and passes it only for models that do not.
+This covers the Claude 5.5 families too, since `agy` lists every Opus and Sonnet
+variant with an effort suffix. `orchestrator.reasoningEffort.antigravity`
 therefore has effect only through the model the orchestrator tier selects.
 
 ### Reasoning effort on MiniMax

@@ -8,7 +8,11 @@ import {
   type ProviderRoleAssignment,
   type RoutingPolicyState
 } from "@simulatorlife/autodev-core";
-import { MINIMAX_MODEL_PATTERN } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import {
+  ANTIGRAVITY_MODEL_PATTERN,
+  CLAUDE_MODEL_PATTERN,
+  MINIMAX_MODEL_PATTERN
+} from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 export const ROLE_NAMES = [
@@ -116,7 +120,10 @@ const DEFAULT_ROUTES: readonly ProviderRoute[] = [
   {
     provider: "claude",
     // Anthropic model ids are lowercase, hyphen-separated: never `claude-opus-5.5`.
-    pattern: /^(sonnet|opus|haiku|claude-[a-z0-9-]*[a-z0-9])$/,
+    // The shared pattern also excludes agy's effort-suffixed Claude ids, which
+    // belong to Antigravity -- see provider-model-ids.ts for why the id alone
+    // has to name its provider regardless of route order.
+    pattern: CLAUDE_MODEL_PATTERN,
     baseUrl: "http://127.0.0.1:4000/v1",
     healthUrl: "http://127.0.0.1:4000/health/liveliness",
     envKey: "LITELLM_API_KEY"
@@ -130,7 +137,8 @@ const DEFAULT_ROUTES: readonly ProviderRoute[] = [
   },
   {
     provider: "antigravity",
-    pattern: /^gemini-[A-Za-z0-9][A-Za-z0-9.-]*$/,
+    // Gemini ids plus agy's effort-suffixed Claude ids (`claude-opus-5-5-high`).
+    pattern: ANTIGRAVITY_MODEL_PATTERN,
     baseUrl: "http://127.0.0.1:4002/v1",
     healthUrl: "http://127.0.0.1:4002/health/liveliness",
     envKey: "LITELLM_API_KEY"

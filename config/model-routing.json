@@ -49,7 +49,7 @@
   },
   "routes": {
     "claude": {
-      "pattern": "^(sonnet|opus|haiku|claude-[a-z0-9-]*[a-z0-9])$",
+      "pattern": "^(sonnet|opus|haiku|claude-(?![a-z0-9-]*-(?:low|medium|high)$)[a-z0-9-]*[a-z0-9])$",
       "baseUrl": "http://127.0.0.1:4000/v1",
       "healthUrl": "http://127.0.0.1:4000/health/liveliness",
       "envKey": "LITELLM_API_KEY"
@@ -61,7 +61,7 @@
       "envKey": "MINIMAX_API_KEY"
     },
     "antigravity": {
-      "pattern": "^gemini-[A-Za-z0-9][A-Za-z0-9.-]*$",
+      "pattern": "^(gemini-[A-Za-z0-9][A-Za-z0-9.-]*|claude-[a-z0-9-]*[a-z0-9]-(?:low|medium|high))$",
       "baseUrl": "http://127.0.0.1:4002/v1",
       "healthUrl": "http://127.0.0.1:4002/health/liveliness",
       "envKey": "LITELLM_API_KEY"
@@ -83,7 +83,9 @@
       "models": {
         "smart": "gemini-3.8-flash-high",
         "orchestrator": "gemini-3.8-flash-high",
-        "default": "gemini-3.8-flash-medium"
+        "default": "gemini-3.8-flash-medium",
+        "claude-opus": "claude-opus-5-5-high",
+        "claude-sonnet": "claude-sonnet-5-5-medium"
       },
       "links": {
         "usage": "https://gemini.google.com/u/1/usage?pli=1",
