@@ -1882,6 +1882,9 @@ installer is the only supported materialization path into
   - Role TOMLs, and the Antigravity and Copilot bridges, take their launch
     definitions from that generated output. A Claude turn reaches MCP servers
     through Codex's tools, so it needs none.
+  - `autodev_spawn` is injected by the Antigravity/Copilot bridges, not a
+    Rulesync or native Codex MCP. Keep it out of leaf role TOMLs; the root
+    orchestrator capability and provider-specific shim injection own it.
 - User-level provider/runtime configuration: `config/config.autodev.toml` is
   the authoritative portable source for AutoDev-owned provider/runtime settings that RuleSync does not model, composed into `$CODEX_HOME/config.toml`
   as an atomic regular file by `runtime/src/config/compose-user-config.ts`. The former

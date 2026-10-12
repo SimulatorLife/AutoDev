@@ -83,6 +83,10 @@ export const PLAYTESTS_EPISODE_SCHEMA_V1 =
 export const PLAYTESTS_EXPERIMENT_SCHEMA =
   "autodev-playtest-experiment-v1" as const;
 export const PLAYTESTS_SESSION_REVIEW_SCHEMA =
+  "autodev-playtest-session-review-v4" as const;
+export const PLAYTESTS_SESSION_REVIEW_SCHEMA_V3 =
+  "autodev-playtest-session-review-v3" as const;
+export const PLAYTESTS_SESSION_REVIEW_SCHEMA_V2 =
   "autodev-playtest-session-review-v2" as const;
 export const PLAYTESTS_SESSION_REVIEW_SCHEMA_V1 =
   "autodev-playtest-session-review-v1" as const;
@@ -406,6 +410,12 @@ export interface PlaytestEvidenceLocator {
   readonly revision?: number;
   readonly frameIndex?: number;
   readonly phaseId?: string;
+}
+
+/** One observed or interpreted review claim with its own packet citations. */
+export interface PlaytestReviewClaim {
+  readonly text: string;
+  readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
 }
 
 /** What a review records as a deterministic fact-support verdict. */

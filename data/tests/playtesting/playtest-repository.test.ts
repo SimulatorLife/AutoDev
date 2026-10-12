@@ -36,6 +36,8 @@ import {
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V1,
+  PLAYTESTS_SESSION_REVIEW_SCHEMA_V2,
+  PLAYTESTS_SESSION_REVIEW_SCHEMA_V3,
   type PlaytestSessionReview,
   selectPlaytestBatchReviews
 } from "@simulatorlife/autodev-core";
@@ -322,13 +324,22 @@ function finding(overrides: Partial<PlaytestFinding> = {}): PlaytestFinding {
 }
 
 function review(): PlaytestSessionReview {
+  const episodeEvidence = { kind: "episode", id: "episode-00001" } as const;
   return {
     schema: PLAYTESTS_SESSION_REVIEW_SCHEMA,
     reviewId: "review-1",
     version: 1,
     episodeId: "episode-00001",
     supersedes: null,
-    evidencePacket: null,
+    evidencePacket: {
+      packetId: "packet-review-1",
+      artifact: {
+        artifactId: "artifact-review-1",
+        sha256: "1".repeat(64),
+        bytes: 256,
+        mediaType: PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE
+      }
+    },
     authorRole: "playtest-analyst",
     authorId: "analyst-1",
     rubricHash: "rubric-v1",
@@ -341,24 +352,30 @@ function review(): PlaytestSessionReview {
     },
     chronologicalSummary: "Synthetic summary",
     authoritativeMetrics: [],
-    observations: ["Synthetic observation"],
-    interpretations: ["Synthetic interpretation"],
+    observations: [
+      { text: "Synthetic observation", evidenceRefs: [episodeEvidence] }
+    ],
+    interpretations: [
+      { text: "Synthetic interpretation", evidenceRefs: [episodeEvidence] }
+    ],
     anchors: [],
     alternativeExplanations: [],
     experiments: [],
     status: "hypothesis",
     findings: [],
-    evidenceRefs: [],
+    evidenceRefs: [episodeEvidence],
     createdAt: "2026-10-01T00:00:00.000Z",
     notes: "Synthetic note"
   };
 }
 
-test("review schema v1 history migrates to an explicitly packet-unavailable v2 record", () => {
+test("legacy review schemas migrate with explicit packet and claim-citation gaps", () => {
   const artifact = review();
   const row = encodeReview("workspace-a", artifact);
   const legacy = JSON.parse(row.payload_json) as Record<string, unknown>;
   legacy.schema = PLAYTESTS_SESSION_REVIEW_SCHEMA_V1;
+  legacy.observations = ["Synthetic observation"];
+  legacy.interpretations = ["Synthetic interpretation"];
   delete legacy.evidencePacket;
   const decoded = decodeReview({
     ...row,
@@ -366,6 +383,12 @@ test("review schema v1 history migrates to an explicitly packet-unavailable v2 r
   } as unknown as Record<string, unknown>);
   assert.equal(decoded.schema, PLAYTESTS_SESSION_REVIEW_SCHEMA);
   assert.equal(decoded.evidencePacket, null);
+  assert.deepEqual(decoded.observations, [
+    { text: "Synthetic observation", evidenceRefs: [] }
+  ]);
+  assert.deepEqual(decoded.interpretations, [
+    { text: "Synthetic interpretation", evidenceRefs: [] }
+  ]);
 
   const packetReview: PlaytestSessionReview = {
     ...artifact,
@@ -384,6 +407,28 @@ test("review schema v1 history migrates to an explicitly packet-unavailable v2 r
     decodeReview(packetReviewRow as unknown as Record<string, unknown>),
     packetReview
   );
+  for (const legacySchema of [
+    PLAYTESTS_SESSION_REVIEW_SCHEMA_V2,
+    PLAYTESTS_SESSION_REVIEW_SCHEMA_V3
+  ]) {
+    const legacyPacketReview = JSON.parse(
+      packetReviewRow.payload_json
+    ) as Record<string, unknown>;
+    legacyPacketReview.schema = legacySchema;
+    legacyPacketReview.observations = ["Synthetic observation"];
+    legacyPacketReview.interpretations = ["Synthetic interpretation"];
+    const migrated = decodeReview({
+      ...packetReviewRow,
+      payload_json: JSON.stringify(legacyPacketReview)
+    } as unknown as Record<string, unknown>);
+    assert.deepEqual(migrated.evidencePacket, packetReview.evidencePacket);
+    assert.deepEqual(migrated.observations, [
+      { text: "Synthetic observation", evidenceRefs: [] }
+    ]);
+    assert.deepEqual(migrated.interpretations, [
+      { text: "Synthetic interpretation", evidenceRefs: [] }
+    ]);
+  }
   assert.throws(
     () =>
       encodeReview("workspace-a", {

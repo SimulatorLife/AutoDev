@@ -1,7 +1,8 @@
 import type {
   ControlApiPlaytestingEpisodeDetailResponse,
   ControlApiPlaytestingWindowResponse,
-  PlaytestJsonValue
+  PlaytestJsonValue,
+  PlaytestReviewClaim
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
@@ -258,6 +259,54 @@ function reviewPanel(
         "No analyst review is recorded. This is not a negative review or a score of zero."
     });
   }
+  const renderClaims = (
+    kind: "observation" | "interpretation",
+    claims: readonly PlaytestReviewClaim[],
+    className: string
+  ): React.JSX.Element | null =>
+    claims.length === 0
+      ? null
+      : React.createElement(
+          "ul",
+          { className, "data-review-claim-kind": kind },
+          ...claims.map((claim, index) =>
+            React.createElement(
+              "li",
+              { key: `${kind}:${index}`, className: "space-y-1" },
+              React.createElement("p", {}, claim.text),
+              claim.evidenceRefs.length > 0
+                ? React.createElement(
+                    "ul",
+                    { className: "flex flex-wrap gap-2 pl-3" },
+                    ...claim.evidenceRefs.map((reference, referenceIndex) =>
+                      React.createElement(
+                        "li",
+                        { key: `${reference.id}:${referenceIndex}` },
+                        React.createElement(
+                          NavigationLink,
+                          {
+                            href: playtestingEpisodeHref(
+                              scope,
+                              detail.record.episodeId,
+                              reference.step ?? 0
+                            ),
+                            className: "text-xs text-accent hover:underline",
+                            dataAttributes: {
+                              "data-review-claim-evidence": reference.id
+                            }
+                          },
+                          `${reference.kind} ${reference.id}`
+                        )
+                      )
+                    )
+                  )
+                : React.createElement(StatusBadge, {
+                    status: NOT_OBSERVED_STATUS,
+                    label: "No citations recorded"
+                  })
+            )
+          )
+        );
   return React.createElement(
     "div",
     { className: "flex flex-col gap-4", "data-review-status": review.status },
@@ -345,24 +394,16 @@ function reviewPanel(
             )
           )
         ),
-    review.observations.length > 0
-      ? React.createElement(
-          "ul",
-          { className: "list-disc space-y-1 pl-5 text-sm" },
-          ...review.observations.map((item, index) =>
-            React.createElement("li", { key: `observation:${index}` }, item)
-          )
-        )
-      : null,
-    review.interpretations.length > 0
-      ? React.createElement(
-          "ul",
-          { className: "list-disc space-y-1 pl-5 text-sm text-fg-muted" },
-          ...review.interpretations.map((item, index) =>
-            React.createElement("li", { key: `interpretation:${index}` }, item)
-          )
-        )
-      : null
+    renderClaims(
+      "observation",
+      review.observations,
+      "list-disc space-y-2 pl-5 text-sm"
+    ),
+    renderClaims(
+      "interpretation",
+      review.interpretations,
+      "list-disc space-y-2 pl-5 text-sm text-fg-muted"
+    )
   );
 }
 

@@ -758,14 +758,15 @@ These are current local/operator entry points. Product, UI, ownership, and migra
 pnpm run dev
 ```
 
-Before launching the Next.js dev server (on port 3300 by default), `pnpm run dev` automatically coordinates and validates the backend dependencies via `ensureBackends`:
+Before launching the Next.js dev server (on port 3300 by default), `pnpm run dev` validates the Control API and coordinates the Console's backend dependencies:
 
 - **Secret synchronization:** Ensures `console/.env.local` is materialized from the canonical secrets in `$CODEX_HOME/openlit-secrets.env`, updating it only when missing or out of sync.
+- **Control API contract check:** Before starting Next.js, sends authenticated, read-only probes for the Providers v2 response and the workspace-scoped Playtesting capabilities endpoint used by the Console. This catches an installed Model Router that is still serving an older Runtime than the Console checkout; startup stops with the Runtime refresh instructions instead of opening a Console whose Providers or Playtesting pages cannot work. The probes do not log or return the service token.
 - **Backend reconciliation:** Checks Docker Engine, then invokes the canonical `scripts/openlit/up.sh` on every `pnpm run dev`. The locked image is reused when its pinned source/patch hash is unchanged, and Compose idempotently recreates only services whose image, environment, or bind-mounted config fingerprint changed. ClickHouse and OpenLIT readiness are checked after reconciliation; unchanged services and persistent volumes are preserved.
 - **Docker Engine prerequisite and automatic macOS launch:** Docker Engine is required for the local OpenLIT and ClickHouse Usage telemetry stack. On macOS (`darwin`), if the Docker daemon is not running, `pnpm run dev` automatically launches Docker Desktop (`open -a Docker`) and polls boundedly (up to 120 seconds) for Docker Engine to become responsive. On other platforms, Docker Engine must be running beforehand; if it is unavailable, startup fails immediately with a clear prerequisite error before attempting to start services.
 - **Service startup and bounded wait:** The canonical runner reconciles the ClickHouse and OpenLIT containers against the current pinned image and mounted configuration, starting or restarting only what is stale, then polls boundedly for both services to report readiness. If startup fails or times out, the command throws and halts so the Console is never spawned without required Usage telemetry.
 - **Container persistence:** The Docker containers persist when the Console dev server exits. Stopping `pnpm run dev` (e.g. `Ctrl+C`) stops the Next.js process, but leaves the database and OpenLIT containers running for subsequent runs.
-- **Router diagnostics:** Checks and reports whether the AutoDev Model Router is listening on port 4100 without restarting launchd services.
+- **Router lifecycle:** The Control API is served by the separately managed AutoDev Model Router (model listener on port 4100; private Control API listener defaults to port 4101). `pnpm run dev` checks API compatibility but deliberately does not restart the LaunchAgent. After Runtime source changes, run `pnpm run install:codex` when no active task depends on the Model Router. During a live session, use `bash scripts/install.sh --materialize-only` and restart the Router later. The command also reports whether the model listener is active.
 
 ### Operator stack lifecycle
 
@@ -800,7 +801,9 @@ types. The dev server's `console/.next-dev/types` stay out of the type-check.
 The Console defaults to port 3300 (`AUTODEV_CONSOLE_PORT` overrides it). Set
 `AUTODEV_CONTROL_API_TOKEN` only in the Console server environment; the
 Control API base defaults to `http://127.0.0.1:4101` and can be configured with
-`AUTODEV_CONTROL_API_BASE_URL`. The Playtesting MCP uses a **separate,
+`AUTODEV_CONTROL_API_BASE_URL`. `pnpm run dev` probes that configured endpoint
+before starting Next.js and exits if its Providers or Playtesting contracts do
+not match the current Console. The Playtesting MCP uses a **separate,
 Playtesting-only** `AUTODEV_PLAYTEST_CONTROL_API_TOKEN` provisioned in the
 Runtime and the Playtest MCP process, plus the trusted
 `AUTODEV_PLAYTEST_CONTROL_API_ACTOR`, and the exact

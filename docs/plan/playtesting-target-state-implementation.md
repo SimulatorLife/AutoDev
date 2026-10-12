@@ -369,7 +369,7 @@ coverage claim, and empirical first-milestone run remain external gates.
   This is UI workflow evidence only; it is not game or human evidence.
 - Targeted ESLint (zero warnings / no rule disables), Prettier checks, and
   `git diff --check`: passed for the inspected changed Playtesting files.
-- Root `pnpm run test:root`: **1,455 passed / 1 failed / 5 skipped**. The lone
+- Root `pnpm run test:root`: **1,460 passed / 1 failed / 5 skipped**. The lone
   unrelated failure remains `tests/hooks/memory-session-end.test.ts`: Node emits
   `MODULE_TYPELESS_PACKAGE_JSON` to child stderr, contrary to that test's empty-
   stderr assertion. No test threshold or stderr behavior was changed to mask it.
@@ -421,7 +421,7 @@ Final validation after this slice:
   run/cancel flow. No target game was launched.
 - Targeted ESLint (zero warnings, no rule disables), Prettier, and
   `git diff --check`: passed for the changed coverage slice.
-- Root tests remain **1,455 passed / 1 failed / 5 skipped**. The unrelated
+- Root tests remain **1,460 passed / 1 failed / 5 skipped**. The unrelated
   failure is `tests/hooks/memory-session-end.test.ts`: Node emits a
   `MODULE_TYPELESS_PACKAGE_JSON` warning to child stderr, violating its empty-
   stderr assertion. No threshold or unrelated assertion was changed.
@@ -470,32 +470,37 @@ path without claiming an analyst inference or target-game result:
   the exact selected packet. The playtester role cannot retrieve or submit
   reviews. Model and prompt provenance remains explicitly null until trusted
   invocation identity is available.
-- Batch schema v3 persists packet receipts. Data validates one explicit
-  prepared/unavailable receipt per selected session, packet reference metadata,
-  and review-receipt linkage. Selected V1/V2 sessions migrate to explicit
-  `recorded-before-evidence-packets` unavailable receipts, while legacy review
-  receipts get `packetId: null`; v1 reviews migrate to v2 with
-  `evidencePacket: null`. Pre-contract batches retain `coverageManifest: null`
-  explicitly and cannot produce analyst packets. V3 records missing packet
-  inventory fail closed.
+- Batch schema v3 persists packet receipts and a reserved/persisted critique
+  ledger. Data validates one explicit prepared/unavailable receipt per selected
+  session, packet reference metadata, and review-receipt linkage. Selected V1/V2
+  sessions migrate to `recorded-before-evidence-packets` unavailable receipts;
+  legacy review receipts migrate as persisted, with `packetId: null` where the
+  older row did not bind a packet. Review schemas V1/V2/V3 migrate to V4; legacy
+  observation/interpretation text is preserved with empty per-claim citations,
+  and V1 packet provenance remains explicitly null. Pre-contract batches retain
+  `coverageManifest: null` and cannot produce analyst packets. V3 records missing
+  packet inventory fail closed.
 - The analyst prompt/skill and session-review reference now require packet-first
   analysis and exact packet identity on submit. Core/Data/Runtime and role/skill
   tests cover selected-window locators, source-bound packet round-trip,
   unavailable packets, missing/forged packet references, unauthorized roles,
   citations outside the packet, receipt completeness, bounded packet-ID syntax,
-  pending-vs-persisted critique reservations, and both one-way schema
-  migrations. Review-finding evidence status is preflighted across the full
+  pending-vs-persisted critique reservations, per-claim review citations, and
+  the V1/V2/V3-to-current review migration. Review-finding evidence status is preflighted across the full
   review before writes; an identical retry after a partial storage failure
   reuses existing evidence rather than creating a redundant revision.
 - Runtime integration tests exercise a completed synthetic batch through
   packet generation, durable batch receipt and analyst retrieval. The MCP role
   gate is also enforced inside each exclusive read/analysis handler, not only
-  through provider-side allowlists. Review findings are preflighted before any
-  writes; durable reserved/persisted receipt states hold critique capacity
-  across a review-row/batch-row write failure, and exact retries finalize the
-  same reservation without taking a second slot. This proves
-  mechanics/usability only; it is not a target-game run, model-quality study,
-  or human calibration.
+  through provider-side allowlists. `submitReview` stores the packet's numeric
+  results verbatim, derives dimension categories from the exact rubric indicator
+  and metric when available (otherwise null), and accepts cited dimension
+  rationale, alternatives and falsifiable metric-bound experiments. Review
+  findings are preflighted before any writes; durable reserved/persisted receipt
+  states hold critique capacity across a review-row/batch-row write failure,
+  and exact retries finalize the same reservation without taking a second
+  slot. This proves mechanics/usability only; it is not a target-game run,
+  model-quality study, or human calibration.
 
 The packet blob and ClickHouse batch receipt are still separate durable
 resources. A batch-store outage after a packet artifact write can leave a
@@ -503,12 +508,11 @@ content-addressed orphan until artifact retention cleanup; production hardening
 still needs a cross-store recovery/reclamation design before claiming atomicity.
 
 Remaining work is substantial: source/adapter provenance and trust-boundary
-verification, model/prompt identity propagation, persisting all required analyst
-report fields (authoritative metrics, anchors, alternatives and experiments),
-actual analyst-inference and independent claim-validator integration, the
-experiment/finding-to-owner-decision cycle, remaining helper integrations,
-human validation, UI/upstream reuse audits, a second mechanically different
-adapter, and the explicitly authorized empirical first-milestone gates. This slice does not complete Delivery Slices 1, 2, 4, 5,
+verification, model/prompt identity propagation, a full report-completeness gate,
+actual analyst-inference and independent claim-validator integration, the experiment/finding-to-owner-decision cycle,
+remaining helper integrations, human validation, UI/upstream reuse audits, a
+second mechanically different adapter, and the explicitly authorized empirical
+first-milestone gates. This slice does not complete Delivery Slices 1, 2, 4, 5,
 6, or 8.
 
 ### Validation snapshot after packet, review-ledger and trust-boundary hardening (2026-10-12)
@@ -531,7 +535,7 @@ adapter, and the explicitly authorized empirical first-milestone gates. This sli
   `console/src/features/skills/SkillRoleAssignment.ts`,
   `console/tests/console.test.ts`, `console/tests/skills-autosave.test.ts`, and
   `tests/cli/dev.test.ts`. They were left untouched.
-- `pnpm run test:root`: **1,455 passed / 1 failed / 5 skipped**. The sole failure
+- `pnpm run test:root`: **1,460 passed / 1 failed / 5 skipped**. The sole failure
   remains the unrelated `tests/hooks/memory-session-end.test.ts` assertion that
   child stderr is empty while Node emits `MODULE_TYPELESS_PACKAGE_JSON`; its
   assertion/warning policy was not weakened.

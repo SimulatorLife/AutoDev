@@ -15,7 +15,9 @@ import {
   playtestReviewOutcomeKey,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
   PLAYTESTS_BATCH_SCHEMA,
+  PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
+  PLAYTESTS_SESSION_REVIEW_SCHEMA,
   selectPlaytestBatchReviews
 } from "@simulatorlife/autodev-core";
 
@@ -160,6 +162,54 @@ const assignmentManifestBase = {
       maxSteps: 20
     }
   ]
+} as const;
+
+const latestReview = {
+  schema: PLAYTESTS_SESSION_REVIEW_SCHEMA,
+  reviewId: "review-fixture-1",
+  version: 1,
+  episodeId: episode.episodeId,
+  supersedes: null,
+  evidencePacket: {
+    packetId: "packet-fixture-1",
+    artifact: {
+      artifactId: "packet-artifact-fixture-1",
+      sha256: "c".repeat(64),
+      bytes: 128,
+      mediaType: PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE
+    }
+  },
+  authorRole: "playtest-analyst",
+  authorId: "analyst-fixture",
+  rubricHash: RUBRIC_HASH,
+  measurementVersion: MEASUREMENT_VERSION,
+  provenance: {
+    workspaceId: WORKSPACE_ID,
+    measurementVersion: MEASUREMENT_VERSION,
+    generatedAt: FIXTURE_TIMESTAMP
+  },
+  chronologicalSummary: "Synthetic reviewed session for UI usability only.",
+  authoritativeMetrics: [],
+  observations: [
+    {
+      text: "A warning event was recorded at the cited step.",
+      evidenceRefs: [{ kind: "event", id: "event-1", step: 1 }]
+    }
+  ],
+  interpretations: [
+    { text: "This legacy interpretation has no claim-level citation.", evidenceRefs: [] }
+  ],
+  anchors: [],
+  alternativeExplanations: ["The policy may have missed the warning."],
+  experiments: [],
+  status: "hypothesis",
+  findings: [],
+  evidenceRefs: [
+    { kind: "episode", id: episode.episodeId },
+    { kind: "event", id: "event-1", step: 1 }
+  ],
+  createdAt: FIXTURE_TIMESTAMP,
+  notes: "Synthetic fixture only; not game or human evidence."
 } as const;
 const assignmentManifest = {
   ...assignmentManifestBase,
@@ -968,7 +1018,7 @@ function handleSyntheticPlaytestingRead(
       resource: "episode",
       readOnly: true,
       record,
-      latestReview: null
+      latestReview: episodeId === episode.episodeId ? latestReview : null
     });
     return true;
   }

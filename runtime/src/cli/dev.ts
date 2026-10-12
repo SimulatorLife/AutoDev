@@ -55,7 +55,13 @@ function parseToken(filePath: string, key: string): string | null {
     for (const line of content.split(NEWLINE_SPLIT_REGEX)) {
       const trimmed = line.trim();
       if (trimmed.startsWith(`${key}=`)) {
-        return trimmed.slice(key.length + 1).trim();
+        const value = trimmed.slice(key.length + 1).trim();
+        const quote = value[0];
+        return value.length >= 2 &&
+          (quote === '"' || quote === "'") &&
+          value.at(-1) === quote
+          ? value.slice(1, -1)
+          : value;
       }
     }
   } catch {
@@ -135,6 +141,176 @@ const CLICKHOUSE_HTTP_PORT = 8123;
 const DOCKER_READY_TIMEOUT_MS = 120_000;
 const STACK_READY_TIMEOUT_MS = 120_000;
 const DOCKER_PROBE_TIMEOUT_MS = 5000;
+const DEFAULT_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+const CONTROL_API_PROBE_TIMEOUT_MS = 5000;
+const DEV_PROBE_WORKSPACE_ID = "autodev-dev-probe/not-configured";
+// Fixed local actor; runtime-cli cannot depend on Core under the layer rules.
+const LOCAL_CONTROL_API_ACTOR = "autodev-local";
+const CONTROL_API_BASE_URL_DEFAULT_PATTERN =
+  /^\$\{AUTODEV_CONTROL_API_BASE_URL:-([^{}]+)\}$/u;
+const TRAILING_SLASHES = /\/+$/u;
+
+export interface DevControlApiConfig {
+  readonly baseUrl: string;
+  readonly serviceToken: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isControlApiProvidersResponse(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-providers-v2" &&
+    Array.isArray(value.providers) &&
+    value.providers.every(
+      (provider) =>
+        isRecord(provider) &&
+        isRecord(provider.links) &&
+        (provider.links.usage === null ||
+          typeof provider.links.usage === "string") &&
+        (provider.links.documentation === null ||
+          typeof provider.links.documentation === "string")
+    )
+  );
+}
+
+function controlApiBaseUrlFromEnvFile(value: string | null): string | null {
+  if (!value) return null;
+  const defaultExpression = CONTROL_API_BASE_URL_DEFAULT_PATTERN.exec(value);
+  return (defaultExpression?.[1] ?? value).trim();
+}
+
+export function readDevControlApiConfig(
+  root = repoRoot,
+  env: NodeJS.ProcessEnv = process.env
+): DevControlApiConfig {
+  const consoleEnv = path.join(root, "console", ".env.local");
+  const serviceToken =
+    env.AUTODEV_CONTROL_API_TOKEN?.trim() ||
+    parseToken(consoleEnv, "AUTODEV_CONTROL_API_TOKEN");
+  if (!serviceToken) {
+    throw new Error(
+      "Console Control API credentials are missing. Run the Console secret bootstrap before starting the dev server."
+    );
+  }
+
+  const baseUrl =
+    env.AUTODEV_CONTROL_API_BASE_URL?.trim() ||
+    controlApiBaseUrlFromEnvFile(
+      parseToken(consoleEnv, "AUTODEV_CONTROL_API_BASE_URL")
+    ) ||
+    DEFAULT_CONTROL_API_BASE_URL;
+  return { baseUrl: baseUrl.replace(TRAILING_SLASHES, ""), serviceToken };
+}
+
+function controlApiStartupError(reason: string): Error {
+  return new Error(
+    `The configured AutoDev Control API is not compatible with this Console checkout (${reason}). The Console was not started. Refresh the Runtime with \`pnpm run install:codex\` when no active task depends on the Model Router. For a live session, use \`bash scripts/install.sh --materialize-only\` and restart the Model Router later.`
+  );
+}
+
+function controlApiUnavailableError(reason: string): Error {
+  return new Error(
+    `The configured AutoDev Control API could not be reached (${reason}). Verify AUTODEV_CONTROL_API_BASE_URL and that the Model Router's private Control API listener is running. The Console was not started.`
+  );
+}
+
+function controlApiAuthorizationError(): Error {
+  return new Error(
+    "The AutoDev Control API rejected the Console service credential or local actor. Verify AUTODEV_CONTROL_API_TOKEN and the Runtime actor allowlists. The Console was not started."
+  );
+}
+
+/** Fail before Next.js starts when its separately managed Runtime API is stale. */
+export async function verifyDevControlApi(
+  config: DevControlApiConfig,
+  fetchImpl: typeof fetch = globalThis.fetch
+): Promise<void> {
+  const headers = {
+    Authorization: `Bearer ${config.serviceToken}`,
+    "X-AutoDev-Actor": LOCAL_CONTROL_API_ACTOR,
+    Accept: "application/json"
+  };
+  const request = async (
+    pathAndQuery: string
+  ): Promise<{
+    readonly response: Response;
+    readonly body: unknown;
+  }> => {
+    const response = await fetchImpl(`${config.baseUrl}${pathAndQuery}`, {
+      method: "GET",
+      headers,
+      signal: AbortSignal.timeout(CONTROL_API_PROBE_TIMEOUT_MS)
+    });
+    return {
+      response,
+      body: await response.json().catch(() => null)
+    };
+  };
+
+  let providers: Awaited<ReturnType<typeof request>>;
+  try {
+    providers = await request("/control/providers");
+  } catch {
+    throw controlApiUnavailableError("the Providers endpoint did not respond");
+  }
+  if (providers.response.status === 401 || providers.response.status === 403) {
+    throw controlApiAuthorizationError();
+  }
+  if (providers.response.status >= 500) {
+    throw controlApiUnavailableError(
+      `the Providers endpoint returned HTTP ${providers.response.status}`
+    );
+  }
+  if (
+    !providers.response.ok ||
+    !isControlApiProvidersResponse(providers.body)
+  ) {
+    throw controlApiStartupError(
+      "the current Providers v2 response contract is missing"
+    );
+  }
+
+  const playtestingQuery = new URLSearchParams({
+    workspaceId: DEV_PROBE_WORKSPACE_ID
+  });
+  let playtesting: Awaited<ReturnType<typeof request>>;
+  try {
+    playtesting = await request(
+      `/control/playtesting/capabilities?${playtestingQuery.toString()}`
+    );
+  } catch {
+    throw controlApiUnavailableError(
+      "the workspace-scoped Playtesting endpoint did not respond"
+    );
+  }
+  if (
+    playtesting.response.status === 401 ||
+    playtesting.response.status === 403
+  ) {
+    throw controlApiAuthorizationError();
+  }
+  const apiError =
+    isRecord(playtesting.body) && isRecord(playtesting.body.error)
+      ? playtesting.body.error
+      : null;
+  const code =
+    apiError && typeof apiError.code === "string" ? apiError.code : "";
+  const currentPlaytestingCapabilities =
+    isRecord(playtesting.body) &&
+    playtesting.body.schema === "autodev-control-playtesting-capabilities-v1" &&
+    playtesting.body.workspaceId === DEV_PROBE_WORKSPACE_ID;
+  const currentPlaytestingError =
+    code.startsWith("autodev_control_playtesting_") &&
+    code !== "autodev_control_playtesting_unknown_path";
+  if (!currentPlaytestingCapabilities && !currentPlaytestingError) {
+    throw controlApiStartupError(
+      "the workspace-scoped Playtesting routes are missing"
+    );
+  }
+}
 
 export interface DevCommandOptions {
   readonly cwd: string;
@@ -326,6 +502,8 @@ export async function ensureBackends(
 export async function startDev(): Promise<void> {
   try {
     ensureConsoleSecrets();
+    await verifyDevControlApi(readDevControlApiConfig());
+    writeLine("[dev] ✔ AutoDev Control API matches the Console contracts.");
     await ensureBackends();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

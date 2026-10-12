@@ -20,6 +20,7 @@ import {
   type PlaytestCoverageManifest,
   playtestCoverageManifestHashInput,
   playtestCoveragePlanForRegistry,
+  type PlaytestDimensionRubric,
   type PlaytestEpisode,
   type PlaytestEvidenceTraceStep,
   type PlaytestFinding,
@@ -3479,11 +3480,44 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       assignments: assignmentManifest.assignments,
       episodes: [episodeOne, episodeTwo]
     });
+    const reviewDimensionRubric: PlaytestDimensionRubric = {
+      dimensionId: "collision-agency",
+      version: 1,
+      unit: "episode",
+      indicator: "anomaly@1",
+      modality: "headless",
+      minExposure: 1,
+      minIndependentUnits: 1,
+      scoreBands: [
+        { score: 0, equals: 0 },
+        { score: 1, greaterThan: 0, atMost: 0.25 },
+        { score: 2, greaterThan: 0.25, atMost: 0.5 },
+        { score: 3, greaterThan: 0.5, atMost: 0.75 },
+        { score: 4, greaterThan: 0.75, atMost: 1 }
+      ],
+      counterexample:
+        "A safe alternative avoids collision without lost progress.",
+      evidenceChecklist: [
+        "legal alternative observed",
+        "source collision event"
+      ],
+      insufficient: "null",
+      humanOutcomeMapping: null
+    };
+    const unsupportedVisualRubric: PlaytestDimensionRubric = {
+      ...reviewDimensionRubric,
+      dimensionId: "visual-clarity",
+      indicator: "visual-clarity@1",
+      modality: "native-visual"
+    };
     const packet = buildPlaytestEvidencePacket({
       packetId: "packet-ep-1",
       episode: episodeOne,
       assignment: assignmentManifest.assignments[0],
-      registry: fixturePlaytestMetricRegistry(WORKSPACE_ID),
+      registry: fixturePlaytestMetricRegistry(WORKSPACE_ID, "anomaly", [
+        reviewDimensionRubric,
+        unsupportedVisualRubric
+      ]),
       coverageManifest,
       rubricHash: "f".repeat(64),
       measurementVersion: PLAYTESTS_MEASUREMENT_VERSION,
@@ -3671,6 +3705,35 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       packetArtifactId: packetArtifact.artifactId,
       packetSha256: packetArtifact.sha256
     };
+    const submitReviewInputSchema = (server as any)._registeredTools[
+      "playtest.submitReview"
+    ].inputSchema;
+    const locatorSchemaResult = await submitReviewInputSchema.safeParseAsync({
+      ...packetArgs,
+      episodeId: episodeOne.episodeId,
+      chronologicalSummary: "Exact source step locator.",
+      status: "hypothesis",
+      evidenceRefs: [
+        {
+          kind: "event",
+          id: "evt-real-1",
+          step: 0,
+          revision: 1,
+          phaseId: "fixture-phase"
+        }
+      ],
+      rubricHash: "f".repeat(64)
+    });
+    assert.equal(locatorSchemaResult.success, true);
+    const obsoleteLocatorFields = await submitReviewInputSchema.safeParseAsync({
+      ...packetArgs,
+      episodeId: episodeOne.episodeId,
+      chronologicalSummary: "Obsolete locator spelling.",
+      status: "hypothesis",
+      evidenceRefs: [{ kind: "event", id: "evt-real-1", stepIndex: 0 }],
+      rubricHash: "f".repeat(64)
+    });
+    assert.equal(obsoleteLocatorFields.success, false);
     const submitReview = (input: Record<string, unknown>) =>
       (server as any)._registeredTools["playtest.submitReview"].handler({
         ...packetArgs,
@@ -3727,6 +3790,25 @@ test("playtest MCP server: submitReview validates evidence against the real stor
         { kind: "event", id: "evt-real-2" }
       ],
       rubricHash: "f".repeat(64),
+      dimensionEvidence: [
+        {
+          dimensionId: "collision-agency",
+          rationale: "The legal wait action is a plausible safe alternative.",
+          evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
+        }
+      ],
+      alternativeExplanations: [
+        "The random policy may have chosen an avoidable collision."
+      ],
+      experiments: [
+        {
+          hypothesis: "The collision is avoidable with a wait action.",
+          falsifier: "A same-seed wait still collides at the same step.",
+          metricId: "anomaly",
+          controls: ["same build", "same seed"],
+          budget: "one additional synthetic episode"
+        }
+      ],
       findings: [
         {
           identity: {
@@ -3764,6 +3846,47 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     assert.equal(insertedReviews.length, 0);
     assert.equal(storedBatch.budget.actualCritiques, 0);
     existingFindingOverrides.clear();
+
+    const unknownReviewDimension = await submitReview({
+      episodeId: episodeOne.episodeId,
+      chronologicalSummary:
+        "A dimension outside the frozen rubric is rejected.",
+      status: "hypothesis",
+      evidenceRefs: [{ kind: "episode", id: episodeOne.episodeId }],
+      rubricHash: "f".repeat(64),
+      dimensionEvidence: [
+        {
+          dimensionId: "unregistered-dimension",
+          rationale: "This dimension is not in the packet.",
+          evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
+        }
+      ]
+    });
+    assert.equal(
+      parsedMcpError(unknownReviewDimension).code,
+      "playtest_invalid_request"
+    );
+    const unknownExperimentMetric = await submitReview({
+      episodeId: episodeOne.episodeId,
+      chronologicalSummary: "An experiment cannot invent a metric.",
+      status: "hypothesis",
+      evidenceRefs: [{ kind: "episode", id: episodeOne.episodeId }],
+      rubricHash: "f".repeat(64),
+      experiments: [
+        {
+          hypothesis: "Unknown metric improves.",
+          falsifier: "Unknown metric does not improve.",
+          metricId: "invented-metric",
+          controls: ["same seed"],
+          budget: "one episode"
+        }
+      ]
+    });
+    assert.equal(
+      parsedMcpError(unknownExperimentMetric).code,
+      "playtest_invalid_request"
+    );
+    assert.equal(insertedFindings.length, 0);
 
     const retryableFindings = {
       episodeId: episodeOne.episodeId,
@@ -3861,6 +3984,26 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     });
     assert.equal(
       parsedMcpError(mismatchedPacketReview).code,
+      "playtest_invalid_request"
+    );
+    assert.equal(insertedReviews.length, 0);
+
+    const outsidePacketDimensionReview = await submitReview({
+      episodeId: "ep-1",
+      chronologicalSummary: "A dimension claim cites outside evidence.",
+      status: "hypothesis",
+      evidenceRefs: [{ kind: "episode", id: "ep-1" }],
+      rubricHash: "f".repeat(64),
+      dimensionEvidence: [
+        {
+          dimensionId: "collision-agency",
+          rationale: "This citation must not escape the packet.",
+          evidenceRefs: [{ kind: "event", id: "evt-not-in-packet" }]
+        }
+      ]
+    });
+    assert.equal(
+      parsedMcpError(outsidePacketDimensionReview).code,
       "playtest_invalid_request"
     );
     assert.equal(insertedReviews.length, 0);
@@ -4122,6 +4265,37 @@ test("playtest MCP server: submitReview validates evidence against the real stor
         { kind: "event", id: "evt-real-1" }
       ],
       rubricHash: "f".repeat(64),
+      observations: [
+        {
+          text: "The trace records a collision after jump.",
+          evidenceRefs: [{ kind: "event", id: "evt-real-1", step: 0 }]
+        }
+      ],
+      interpretations: [
+        {
+          text: "A failed policy choice is an alternative explanation.",
+          evidenceRefs: [{ kind: "event", id: "evt-real-1", step: 0 }]
+        }
+      ],
+      dimensionEvidence: [
+        {
+          dimensionId: "collision-agency",
+          rationale: "The legal wait action is a plausible safe alternative.",
+          evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
+        }
+      ],
+      alternativeExplanations: [
+        "The random policy may have chosen an avoidable collision."
+      ],
+      experiments: [
+        {
+          hypothesis: "The collision is avoidable with a wait action.",
+          falsifier: "A same-seed wait still collides at the same step.",
+          metricId: "anomaly",
+          controls: ["same build", "same seed"],
+          budget: "one additional synthetic episode"
+        }
+      ],
       findings: [
         {
           identity: {
@@ -4145,6 +4319,10 @@ test("playtest MCP server: submitReview validates evidence against the real stor
         }
       ]
     };
+    const validReviewSchemaResult = await (server as any)._registeredTools[
+      "playtest.submitReview"
+    ].inputSchema.safeParseAsync({ ...packetArgs, ...validReviewInput });
+    assert.equal(validReviewSchemaResult.success, true);
     failReceiptWrite = true;
     const missingReceipt = await submitReview(validReviewInput);
     assert.equal(
@@ -4162,6 +4340,36 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     assert.equal(parsedReview.episodeId, "ep-1");
     assert.equal(parsedReview.status, "hypothesis");
     assert.equal(parsedReview.rubricHash, "f".repeat(64));
+    assert.deepEqual(parsedReview.authoritativeMetrics, packet.metrics);
+    assert.deepEqual(parsedReview.observations, validReviewInput.observations);
+    assert.deepEqual(
+      parsedReview.interpretations,
+      validReviewInput.interpretations
+    );
+    assert.equal(parsedReview.anchors.length, 2);
+    assert.equal(parsedReview.anchors[0].dimensionId, "collision-agency");
+    assert.equal(parsedReview.anchors[0].score, 4);
+    assert.deepEqual(parsedReview.anchors[0].evidenceRefs, [
+      { kind: "event", id: "evt-real-1" }
+    ]);
+    assert.equal(parsedReview.anchors[1].dimensionId, "visual-clarity");
+    assert.equal(parsedReview.anchors[1].score, null);
+    assert.equal(
+      parsedReview.anchors[1].insufficientReason,
+      "unsupported-modality"
+    );
+    assert.deepEqual(parsedReview.alternativeExplanations, [
+      "The random policy may have chosen an avoidable collision."
+    ]);
+    assert.deepEqual(parsedReview.experiments, [
+      {
+        hypothesis: "The collision is avoidable with a wait action.",
+        falsifier: "A same-seed wait still collides at the same step.",
+        metricId: "anomaly",
+        controls: ["same build", "same seed"],
+        budget: "one additional synthetic episode"
+      }
+    ]);
     assert.equal(insertedReviews.length, 1);
     assert.equal(insertedFindings.length, 1);
     assert.equal(storedBatch.counts.reviewed, 1);

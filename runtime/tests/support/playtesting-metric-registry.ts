@@ -2,6 +2,7 @@ import {
   defaultPlaytestRegistryDefaults,
   expandPlaytestRegistry,
   type GameMetricEvaluation,
+  type PlaytestDimensionRubric,
   type PlaytestMetricRegistry
 } from "@simulatorlife/autodev-core";
 
@@ -9,7 +10,8 @@ export const FIXTURE_SCORE_EVALUATOR_HASH = "f".repeat(64);
 
 export function fixturePlaytestMetricRegistry(
   workspaceId: string,
-  metricId = "fixture-score"
+  metricId = "fixture-score",
+  dimensionRubrics: readonly PlaytestDimensionRubric[] = []
 ): PlaytestMetricRegistry {
   return expandPlaytestRegistry({
     schemaVersion: 2,
@@ -63,7 +65,7 @@ export function fixturePlaytestMetricRegistry(
         unsupportedReason: null
       }
     ],
-    dimensionRubrics: []
+    dimensionRubrics
   });
 }
 

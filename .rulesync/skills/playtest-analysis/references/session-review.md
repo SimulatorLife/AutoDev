@@ -2,7 +2,7 @@
 
 Full contract: docs/playtesting-measurement-contract.md section 6 ("Evidence validation, policy validity, and judge drift") and docs/playtesting-target-state.md section 6 (versioned artifacts).
 
-For a selected session, retrieve its frozen critic input with `playtest.prepareReview` before analysis. The returned packet and packet artifact reference define the allowed citation boundary. Pass its exact packet ID, artifact ID and SHA-256 to `playtest.submitReview`; a source fact that is not present in the packet cannot be cited in that review. Packet omissions and unavailable artifacts stay explicit, and a missing packet is not a reason to expand the evidence window.
+For a selected session, retrieve its frozen critic input with `playtest.prepareReview` before analysis. The returned packet and packet artifact reference define the allowed citation boundary. Pass its exact packet ID, artifact ID and SHA-256 to `playtest.submitReview`; a source fact that is not present in the packet cannot be cited in that review. Packet omissions and unavailable artifacts stay explicit, and a missing packet is not a reason to expand the evidence window. Runtime copies `authoritativeMetrics` from the packet and derives anchor categories from exact registered metrics and game-owned score bands; provide dimension rationale/citations through `dimensionEvidence`, alternatives through `alternativeExplanations`, and falsifiable proposals through `experiments`. Missing or inapplicable categories remain null rather than model-invented scores.
 
 ## Required report sections
 

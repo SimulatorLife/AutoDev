@@ -10,6 +10,8 @@ import {
   type PlaytestComparison,
   type PlaytestEpisode,
   type PlaytestFinding,
+  type PlaytestSessionReview,
+  PLAYTESTS_SESSION_REVIEW_SCHEMA,
   playtestFindingIdentityHashInput,
   type WorkspaceEntry
 } from "@simulatorlife/autodev-core";
@@ -230,6 +232,69 @@ test("inspector renders only recorded structured evidence and labels missing fra
   assert.match(html, /Back to sessions/u);
   assert.match(html, /cursor=page-2/u);
   assert.doesNotMatch(html, /<video|<img/u);
+});
+
+test("inspector renders each review claim with its exact citations and legacy missing-citation state", () => {
+  const review: PlaytestSessionReview = {
+    schema: PLAYTESTS_SESSION_REVIEW_SCHEMA,
+    reviewId: "review-episode-17",
+    version: 1,
+    episodeId: "episode-17",
+    supersedes: null,
+    evidencePacket: {
+      packetId: "packet-episode-17",
+      artifact: {
+        artifactId: "packet-artifact",
+        sha256: "c".repeat(64),
+        bytes: 128,
+        mediaType: "application/vnd.autodev.playtest-evidence-packet+json"
+      }
+    },
+    authorRole: "playtest-analyst",
+    authorId: "analyst-1",
+    rubricHash: "d".repeat(64),
+    measurementVersion: "playtesting-measurement-v2",
+    provenance: {
+      workspaceId: WORKSPACE,
+      measurementVersion: "playtesting-measurement-v2",
+      generatedAt: "2026-10-12T00:00:00.000Z"
+    },
+    chronologicalSummary: "A source-linked review summary.",
+    authoritativeMetrics: [],
+    observations: [
+      {
+        text: "The collision was emitted after the jump action.",
+        evidenceRefs: [{ kind: "event", id: "event-1", step: 1, revision: 2 }]
+      }
+    ],
+    interpretations: [
+      { text: "The policy may have missed a safer choice.", evidenceRefs: [] }
+    ],
+    anchors: [],
+    alternativeExplanations: [],
+    experiments: [],
+    status: "hypothesis",
+    findings: [],
+    evidenceRefs: [
+      { kind: "episode", id: "episode-17" },
+      { kind: "event", id: "event-1", step: 1, revision: 2 }
+    ],
+    createdAt: "2026-10-12T00:00:00.000Z",
+    notes: ""
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: { ...detail(), latestReview: review },
+      scope: scope({ view: "sessions" }),
+      window: null
+    })
+  );
+  assert.match(html, /The collision was emitted after the jump action/u);
+  assert.match(html, /data-review-claim-evidence="event-1"/u);
+  assert.match(html, /event event-1/u);
+  assert.match(html, /step=1/u);
+  assert.match(html, /The policy may have missed a safer choice/u);
+  assert.match(html, /No citations recorded/u);
 });
 
 test("inspector step window shows an exact recorded event and preserves episode source", () => {

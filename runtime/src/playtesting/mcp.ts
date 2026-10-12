@@ -38,6 +38,7 @@ import {
   playtestCoverageManifestHashInput,
   type PlaytestCoveragePlanCell,
   playtestCoveragePlanForRegistry,
+  type PlaytestDimensionAnchor,
   type PlaytestEpisode,
   type PlaytestEvidenceLocator,
   type PlaytestEvidenceOmittedArtifact,
@@ -68,6 +69,7 @@ import {
   PLAYTESTS_SEVERITIES,
   PLAYTESTS_VERIFICATION_STAGES,
   type PlaytestSessionReview,
+  scorePlaytestDimensionAnchor,
   selectPlaytestBatchReviews,
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
@@ -450,10 +452,10 @@ const evidenceLocatorSchema = z.strictObject({
     "replay-segment"
   ]),
   id: z.string().min(1).max(256),
-  subId: z.string().max(256).optional(),
-  stepIndex: z.number().int().min(0).optional(),
+  step: z.number().int().min(0).optional(),
+  revision: z.number().int().min(0).optional(),
   frameIndex: z.number().int().min(0).optional(),
-  timestampMs: z.number().min(0).optional()
+  phaseId: z.string().max(256).optional()
 });
 
 /**
@@ -481,6 +483,26 @@ const findingSchema = z.strictObject({
   description: z.string().min(1).max(10_000),
   evidenceStatus: z.literal("hypothesis"),
   evidenceRefs: z.array(evidenceLocatorSchema)
+});
+
+const reviewDimensionEvidenceSchema = z.strictObject({
+  dimensionId: z.string().min(1).max(128),
+  rationale: z.string().min(1).max(4000),
+  evidenceRefs: z.array(evidenceLocatorSchema).max(64).default([]),
+  counterexampleId: z.string().min(1).max(256).optional()
+});
+
+const reviewClaimSchema = z.strictObject({
+  text: z.string().min(1).max(4000),
+  evidenceRefs: z.array(evidenceLocatorSchema).min(1).max(64)
+});
+
+const reviewExperimentSchema = z.strictObject({
+  hypothesis: z.string().min(1).max(4000),
+  falsifier: z.string().min(1).max(4000),
+  metricId: z.string().min(1).max(256),
+  controls: z.array(z.string().min(1).max(1000)).max(32),
+  budget: z.string().min(1).max(1000)
 });
 
 const playtestBatchAssignmentSchema = z.strictObject({
@@ -4443,6 +4465,75 @@ async function readPreparedReviewPacket(input: {
   return { packet: typed, artifact: reference };
 }
 
+type ReviewDimensionEvidence = z.infer<typeof reviewDimensionEvidenceSchema>;
+type ReviewExperiment = z.infer<typeof reviewExperimentSchema>;
+
+function anchorsForReview(
+  packet: PlaytestEvidencePacket,
+  evidence: readonly ReviewDimensionEvidence[]
+): readonly PlaytestDimensionAnchor[] {
+  const notes = new Map<string, ReviewDimensionEvidence>();
+  const rubricIds = new Set(
+    packet.dimensionRubrics.map((rubric) => rubric.dimensionId)
+  );
+  for (const item of evidence) {
+    if (!rubricIds.has(item.dimensionId) || notes.has(item.dimensionId)) {
+      throw new PlaytestMcpValidationError(
+        "Dimension evidence must refer to one unique rubric dimension in the prepared packet."
+      );
+    }
+    notes.set(item.dimensionId, item);
+  }
+
+  return packet.dimensionRubrics.map((rubric) => {
+    const note = notes.get(rubric.dimensionId);
+    const evidenceRefs = note ? normalizeEvidenceRefs(note.evidenceRefs) : [];
+    const matchingMetrics = packet.metrics.filter(
+      (metric) =>
+        rubric.indicator ===
+        `${metric.metricId}@${String(metric.metricVersion)}`
+    );
+    const metric =
+      matchingMetrics.length === 1 &&
+      evidenceRefs.length > 0 &&
+      rubric.modality === packet.observationMode
+        ? matchingMetrics[0]!
+        : null;
+    const anchor = scorePlaytestDimensionAnchor(rubric, {
+      dimensionId: rubric.dimensionId,
+      ratio: metric?.estimate ?? null,
+      independentUnits: metric?.independentUnits ?? null,
+      eligibleOpportunities: metric?.opportunityCount ?? null,
+      evidenceRefs,
+      ...(note?.counterexampleId === undefined
+        ? {}
+        : { counterexampleId: note.counterexampleId })
+    });
+    return {
+      ...anchor,
+      rationale: note?.rationale ?? anchor.rationale,
+      ...(metric === null && rubric.modality !== packet.observationMode
+        ? { insufficientReason: "unsupported-modality" as const }
+        : {})
+    };
+  });
+}
+
+function assertReviewExperimentMetrics(
+  packet: PlaytestEvidencePacket,
+  experiments: readonly ReviewExperiment[]
+): void {
+  const metricIds = new Set([
+    ...packet.metrics.map((metric) => metric.metricId),
+    ...packet.metricIntent.map((metric) => metric.metricId)
+  ]);
+  if (experiments.some((experiment) => !metricIds.has(experiment.metricId))) {
+    throw new PlaytestMcpValidationError(
+      "Review experiments must target a metric declared by the prepared packet."
+    );
+  }
+}
+
 export function createPlaytestMcpServer(
   options: PlaytestMcpOptions
 ): PlaytestMcpServer {
@@ -4954,8 +5045,17 @@ export function createPlaytestMcpServer(
         chronologicalSummary: z.string().min(1).max(10_000),
         status: z.enum(REVIEWABLE_STATUSES),
         evidenceRefs: z.array(evidenceLocatorSchema).min(1),
-        observations: z.array(z.string()).default([]),
-        interpretations: z.array(z.string()).default([]),
+        observations: z.array(reviewClaimSchema).max(64).default([]),
+        interpretations: z.array(reviewClaimSchema).max(64).default([]),
+        dimensionEvidence: z
+          .array(reviewDimensionEvidenceSchema)
+          .max(32)
+          .default([]),
+        alternativeExplanations: z
+          .array(z.string().min(1).max(4000))
+          .max(32)
+          .default([]),
+        experiments: z.array(reviewExperimentSchema).max(32).default([]),
         findings: z
           .array(findingSchema)
           .max(MAX_FINDINGS_PER_REVIEW)
@@ -4967,7 +5067,15 @@ export function createPlaytestMcpServer(
     (args) =>
       safely(async () => {
         const session = await sessionProvider.current();
-        const evidenceRefs = args.evidenceRefs ?? [];
+        const evidenceRefs = normalizeEvidenceRefs(args.evidenceRefs ?? []);
+        const observations = (args.observations ?? []).map((claim) => ({
+          text: claim.text,
+          evidenceRefs: normalizeEvidenceRefs(claim.evidenceRefs)
+        }));
+        const interpretations = (args.interpretations ?? []).map((claim) => ({
+          text: claim.text,
+          evidenceRefs: normalizeEvidenceRefs(claim.evidenceRefs)
+        }));
         const reviewerRole = session.role;
         if (!isReviewerRole(reviewerRole)) {
           throw new PlaytestMcpAuthorizationError(
@@ -5042,9 +5150,17 @@ export function createPlaytestMcpServer(
             "The submitted review does not match the frozen evidence packet."
           );
         }
+        const dimensionEvidence = args.dimensionEvidence ?? [];
+        const alternativeExplanations = args.alternativeExplanations ?? [];
+        const experiments = args.experiments ?? [];
+        assertReviewExperimentMetrics(packet.packet, experiments);
+        const anchors = anchorsForReview(packet.packet, dimensionEvidence);
         const packetEvidenceRefs = [
           ...evidenceRefs,
-          ...findings.flatMap((finding) => finding.evidenceRefs)
+          ...findings.flatMap((finding) => finding.evidenceRefs),
+          ...observations.flatMap((claim) => claim.evidenceRefs),
+          ...interpretations.flatMap((claim) => claim.evidenceRefs),
+          ...dimensionEvidence.flatMap((dimension) => dimension.evidenceRefs)
         ] as PlaytestEvidenceLocator[];
         try {
           assertPlaytestEvidenceLocatorsWithinPacket(
@@ -5067,8 +5183,11 @@ export function createPlaytestMcpServer(
                 chronologicalSummary: args.chronologicalSummary,
                 status: args.status,
                 evidenceRefs,
-                observations: args.observations ?? [],
-                interpretations: args.interpretations ?? [],
+                observations,
+                interpretations,
+                dimensionEvidence,
+                alternativeExplanations,
+                experiments,
                 findings,
                 rubricHash: args.rubricHash,
                 packetId: packet.packet.packetId,
@@ -5174,7 +5293,9 @@ export function createPlaytestMcpServer(
 
             const allEvidenceRefs = [
               ...evidenceRefs,
-              ...findings.flatMap((finding) => finding.evidenceRefs)
+              ...findings.flatMap((finding) => finding.evidenceRefs),
+              ...observations.flatMap((claim) => claim.evidenceRefs),
+              ...interpretations.flatMap((claim) => claim.evidenceRefs)
             ] as PlaytestEvidenceLocator[];
             const traceFacts = readEpisodeTraceFacts(
               episode,
@@ -5192,7 +5313,9 @@ export function createPlaytestMcpServer(
               assertKnownEvidenceLocators(allEvidenceRefs, knownIndex);
               assertPlaytestSessionReviewHasEvidence({
                 reviewId: "review-precheck",
-                evidenceRefs: evidenceRefs as PlaytestEvidenceLocator[],
+                evidenceRefs,
+                observations,
+                interpretations,
                 findings: findings.map((finding, index) => ({
                   findingId: "review-precheck-finding-" + String(index + 1),
                   evidenceRefs: normalizeEvidenceRefs(finding.evidenceRefs)
@@ -5265,15 +5388,15 @@ export function createPlaytestMcpServer(
                 generatedAt: new Date().toISOString()
               },
               chronologicalSummary: args.chronologicalSummary,
-              authoritativeMetrics: [],
-              observations: args.observations ?? [],
-              interpretations: args.interpretations ?? [],
-              anchors: [],
-              alternativeExplanations: [],
-              experiments: [],
+              authoritativeMetrics: packet.packet.metrics,
+              observations,
+              interpretations,
+              anchors,
+              alternativeExplanations,
+              experiments,
               status: args.status,
               findings: resolvedFindings,
-              evidenceRefs: evidenceRefs as PlaytestEvidenceLocator[],
+              evidenceRefs,
               createdAt: new Date().toISOString(),
               notes: args.notes ?? ""
             };

@@ -972,9 +972,17 @@ test("synthetic 1,000-episode improvement cycle records evidence, finding, compa
       chronologicalSummary:
         "The synthetic candidate fixture produced the injected loss outcome.",
       authoritativeMetrics: candidateWitness.metrics,
-      observations: ["The adapter returned the preregistered loss outcome."],
+      observations: [
+        {
+          text: "The adapter returned the preregistered loss outcome.",
+          evidenceRefs: [episodeEvidence]
+        }
+      ],
       interpretations: [
-        "This is a synthetic mechanics signal, not a human-experience claim."
+        {
+          text: "This is a synthetic mechanics signal, not a human-experience claim.",
+          evidenceRefs: [episodeEvidence]
+        }
       ],
       anchors: [],
       alternativeExplanations: [
@@ -991,6 +999,8 @@ test("synthetic 1,000-episode improvement cycle records evidence, finding, compa
     assertPlaytestSessionReviewHasEvidence({
       reviewId: review.reviewId,
       evidenceRefs: review.evidenceRefs,
+      observations: review.observations,
+      interpretations: review.interpretations,
       findings: review.findings
     });
 

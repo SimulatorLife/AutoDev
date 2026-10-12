@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -120,6 +120,24 @@ test("the root config takes the orchestrator role's per-server MCP settings", as
     });
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("bridge-injected autodev_spawn is absent from Codex leaf role TOMLs", () => {
+  const roleDir = join(import.meta.dirname, "../../agents/roles");
+  const leafRoles = readdirSync(roleDir).filter(
+    (name) => name.endsWith(".toml") && name !== "orchestrator.toml"
+  );
+
+  for (const roleName of leafRoles) {
+    const role = parse(readFileSync(join(roleDir, roleName), "utf8")) as {
+      mcp_servers?: Record<string, unknown>;
+    };
+    assert.equal(
+      role.mcp_servers?.autodev_spawn,
+      undefined,
+      `${roleName} must not declare the bridge-injected spawn shim as a Codex MCP`
+    );
   }
 });
 

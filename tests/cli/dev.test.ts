@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import {
   mkdirSync,
   mkdtempSync,
@@ -6,11 +7,13 @@ import {
   rmSync,
   writeFileSync
 } from "node:fs";
+import type { Server } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
 import {
   type DevBackendDependencies,
   type DevCommandOptions,
@@ -18,7 +21,9 @@ import {
   ensureBackends,
   ensureConsoleSecrets,
   isPortListening,
-  repoRoot
+  readDevControlApiConfig,
+  repoRoot,
+  verifyDevControlApi
 } from "@simulatorlife/autodev-runtime/cli/dev";
 
 interface RecordedCommand {
@@ -70,6 +75,183 @@ test("package.json declares dev and dev:console scripts", () => {
   );
 });
 
+test("dev Control API config resolves the generated local default and explicit overrides", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "autodev-dev-control-api-"));
+  const consoleDir = join(tempDir, "console");
+  mkdirSync(consoleDir, { recursive: true });
+  writeFileSync(
+    join(consoleDir, ".env.local"),
+    [
+      "AUTODEV_CONTROL_API_TOKEN=console-token",
+      "AUTODEV_CONTROL_API_BASE_URL=${AUTODEV_CONTROL_API_BASE_URL:-http://127.0.0.1:4101}"
+    ].join("\n")
+  );
+  try {
+    assert.deepEqual(readDevControlApiConfig(tempDir, {}), {
+      baseUrl: "http://127.0.0.1:4101",
+      serviceToken: "console-token"
+    });
+    writeFileSync(
+      join(consoleDir, ".env.local"),
+      [
+        'AUTODEV_CONTROL_API_TOKEN="console-token"',
+        'AUTODEV_CONTROL_API_BASE_URL="https://control.example.test/"'
+      ].join("\n")
+    );
+    assert.deepEqual(readDevControlApiConfig(tempDir, {}), {
+      baseUrl: "https://control.example.test",
+      serviceToken: "console-token"
+    });
+    assert.deepEqual(
+      readDevControlApiConfig(tempDir, {
+        AUTODEV_CONTROL_API_TOKEN: "process-token",
+        AUTODEV_CONTROL_API_BASE_URL: "https://control.example.test/"
+      }),
+      {
+        baseUrl: "https://control.example.test",
+        serviceToken: "process-token"
+      }
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("dev Control API probe accepts the current provider and Playtesting contracts", async () => {
+  const requests: Array<{ url: string; headers: Headers }> = [];
+  const responses = [
+    Response.json({
+      schema: "autodev-control-providers-v2",
+      providers: [
+        { links: { usage: null, documentation: "https://example.test/docs" } }
+      ]
+    }),
+    Response.json({
+      schema: "autodev-control-playtesting-capabilities-v1",
+      workspaceId: "autodev-dev-probe/not-configured"
+    })
+  ];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    requests.push({ url: String(input), headers: new Headers(init?.headers) });
+    const response = responses.shift();
+    assert.ok(response, "probe must make only the two expected GET requests");
+    return response;
+  };
+
+  await verifyDevControlApi(
+    { baseUrl: "http://127.0.0.1:4101", serviceToken: "never-log-this" },
+    fetchImpl
+  );
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0]?.url, "http://127.0.0.1:4101/control/providers");
+  assert.match(
+    requests[1]?.url ?? "",
+    /\/control\/playtesting\/capabilities\?/u
+  );
+  assert.equal(
+    requests[0]?.headers.get("authorization"),
+    "Bearer never-log-this"
+  );
+  assert.equal(
+    requests[0]?.headers.get("x-autodev-actor"),
+    LOCAL_CONTROL_API_ACTOR
+  );
+});
+
+test("dev Control API probe rejects the stale Providers v2 response without links", async () => {
+  let requestCount = 0;
+  const fetchImpl: typeof fetch = async () => {
+    requestCount += 1;
+    return Response.json({
+      schema: "autodev-control-providers-v2",
+      providers: [{ id: "codex" }]
+    });
+  };
+
+  await assert.rejects(
+    verifyDevControlApi(
+      { baseUrl: "http://127.0.0.1:4101", serviceToken: "probe-token" },
+      fetchImpl
+    ),
+    (error: Error) => {
+      assert.match(
+        error.message,
+        /current Providers v2 response contract is missing/u
+      );
+      assert.doesNotMatch(error.message, /probe-token/u);
+      return true;
+    }
+  );
+  assert.equal(requestCount, 1);
+});
+
+test("dev Control API probe rejects a Runtime that does not register Playtesting", async () => {
+  const responses = [
+    Response.json({
+      schema: "autodev-control-providers-v2",
+      providers: [{ links: { usage: null, documentation: null } }]
+    }),
+    Response.json(
+      { error: { code: "autodev_control_api_unknown_path" } },
+      { status: 404 }
+    )
+  ];
+  const fetchImpl: typeof fetch = async () => {
+    const response = responses.shift();
+    assert.ok(response);
+    return response;
+  };
+
+  await assert.rejects(
+    verifyDevControlApi(
+      { baseUrl: "http://127.0.0.1:4101", serviceToken: "probe-token" },
+      fetchImpl
+    ),
+    /workspace-scoped Playtesting routes are missing/u
+  );
+});
+
+test("dev Control API probe passes against the in-tree authenticated listener", async () => {
+  const previous = {
+    token: process.env.AUTODEV_CONTROL_API_TOKEN,
+    viewers: process.env.AUTODEV_CONTROL_VIEWERS,
+    operators: process.env.AUTODEV_CONTROL_OPERATORS
+  };
+  const serviceToken = "dev-control-api-integration-test-token-0123456789";
+  process.env.AUTODEV_CONTROL_API_TOKEN = serviceToken;
+  process.env.AUTODEV_CONTROL_VIEWERS = "";
+  process.env.AUTODEV_CONTROL_OPERATORS = "";
+  let server: Server | undefined;
+  try {
+    const { createControlApiServer } =
+      await import("@simulatorlife/autodev-runtime/router/server");
+    server = createControlApiServer();
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    await verifyDevControlApi({
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      serviceToken
+    });
+  } finally {
+    if (server?.listening) {
+      const closed = once(server, "close");
+      server.close();
+      await closed;
+    }
+    for (const [name, value] of Object.entries({
+      AUTODEV_CONTROL_API_TOKEN: previous.token,
+      AUTODEV_CONTROL_VIEWERS: previous.viewers,
+      AUTODEV_CONTROL_OPERATORS: previous.operators
+    })) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
 test("OpenLIT reconciliation fingerprints mounted config for service restarts", () => {
   const compose = readFileSync(
     join(repoRoot, "config", "openlit", "docker-compose.yml"),
@@ -81,7 +263,10 @@ test("OpenLIT reconciliation fingerprints mounted config for service restarts", 
   );
   const [clickhouseService, openlitService = ""] = compose.split("  openlit:");
 
-  assert.match(runner, /AUTODEV_OPENLIT_CLICKHOUSE_CONFIG_HASH=.*fingerprint_files/u);
+  assert.match(
+    runner,
+    /AUTODEV_OPENLIT_CLICKHOUSE_CONFIG_HASH=.*fingerprint_files/u
+  );
   assert.match(runner, /AUTODEV_OPENLIT_OTEL_CONFIG_HASH=.*fingerprint_files/u);
   assert.match(runner, /clickhouse-config\.xml[\s\S]*clickhouse-init\.sh/u);
   assert.match(runner, /otel-collector-config\.yaml/u);

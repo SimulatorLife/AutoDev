@@ -34,9 +34,6 @@ enabled = false
 [mcp_servers.context7]
 enabled = false
 
-[mcp_servers.autodev_spawn]
-enabled = false
-
 [mcp_servers.codex_app]
 enabled = false
 

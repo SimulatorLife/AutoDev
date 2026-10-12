@@ -131,6 +131,15 @@ test("finding witness opens its exact replay step, then Back restores filtered l
   });
   await expect(frame).toBeVisible();
   await expect(frame).toHaveJSProperty("naturalWidth", 1);
+  await expect(
+    page.getByText("A warning event was recorded at the cited step.")
+  ).toBeVisible();
+  const claimCitation = page.locator(
+    '[data-review-claim-evidence="event-1"]'
+  );
+  await expect(claimCitation).toBeVisible();
+  await expect(claimCitation).toHaveAttribute("href", /step=1/u);
+  await expect(page.getByText("No citations recorded")).toBeVisible();
   const backLink = page.getByRole("link", { name: "Back to findings" });
   await backLink.hover();
   await page.waitForTimeout(250);

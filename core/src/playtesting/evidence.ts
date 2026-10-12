@@ -16,6 +16,7 @@ import type {
   PlaytestEvidenceVerdict,
   PlaytestFinding
 } from "./types.ts";
+import { assertPlaytestEvidenceLocator } from "./protocol.ts";
 
 /** What the caller's evidence store can resolve a locator to. */
 export interface PlaytestKnownEvidenceIndex {
@@ -196,7 +197,10 @@ export function assertNoContradictingLocator(
  * locators is invalid -- not a successful empty report.
  */
 export function assertPlaytestSessionReviewHasEvidence(
-  review: Pick<PlaytestSessionReview, "reviewId" | "evidenceRefs"> & {
+  review: Pick<
+    PlaytestSessionReview,
+    "reviewId" | "evidenceRefs" | "observations" | "interpretations"
+  > & {
     readonly findings: readonly Pick<
       PlaytestFinding,
       "findingId" | "evidenceRefs"
@@ -207,6 +211,26 @@ export function assertPlaytestSessionReviewHasEvidence(
     throw new TypeError(
       `Review "${review.reviewId}" has no evidence locators; a review without evidence is invalid, not an empty success.`
     );
+  }
+  for (const [kind, claims] of [
+    ["observation", review.observations],
+    ["interpretation", review.interpretations]
+  ] as const) {
+    for (const [index, claim] of claims.entries()) {
+      if (typeof claim.text !== "string" || claim.text.trim().length === 0) {
+        throw new TypeError(
+          `Review ${kind} claim ${String(index + 1)} in "${review.reviewId}" has no text.`
+        );
+      }
+      if (claim.evidenceRefs.length === 0) {
+        throw new TypeError(
+          `Review ${kind} claim ${String(index + 1)} in "${review.reviewId}" has no evidence locators.`
+        );
+      }
+      for (const locator of claim.evidenceRefs) {
+        assertPlaytestEvidenceLocator(locator);
+      }
+    }
   }
   for (const finding of review.findings) {
     if (finding.evidenceRefs.length === 0) {

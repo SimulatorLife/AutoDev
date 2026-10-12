@@ -24,6 +24,7 @@ import {
   type PlaytestProvenance,
   type PlaytestReviewPacketReceipt,
   type PlaytestReviewReceipt,
+  type PlaytestReviewClaim,
   type PLAYTESTS_BATCH_SCHEMA,
   type PLAYTESTS_COVERAGE_MANIFEST_SCHEMA,
   type PLAYTESTS_EPISODE_SCHEMA,
@@ -520,8 +521,8 @@ export interface PlaytestSessionReview {
   readonly provenance: PlaytestProvenance;
   readonly chronologicalSummary: string;
   readonly authoritativeMetrics: readonly PlaytestNumericResult[];
-  readonly observations: readonly string[];
-  readonly interpretations: readonly string[];
+  readonly observations: readonly PlaytestReviewClaim[];
+  readonly interpretations: readonly PlaytestReviewClaim[];
   readonly anchors: readonly PlaytestDimensionAnchor[];
   readonly alternativeExplanations: readonly string[];
   readonly experiments: readonly {

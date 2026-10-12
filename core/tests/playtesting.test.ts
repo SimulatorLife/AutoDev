@@ -1634,6 +1634,8 @@ test("assertPlaytestSessionReviewHasEvidence rejects a review with zero evidence
       assertPlaytestSessionReviewHasEvidence({
         reviewId: "rev-1",
         evidenceRefs: [],
+        observations: [],
+        interpretations: [],
         findings: []
       }),
     /has no evidence locators/u
@@ -1646,6 +1648,8 @@ test("assertPlaytestSessionReviewHasEvidence rejects a finding with zero evidenc
       assertPlaytestSessionReviewHasEvidence({
         reviewId: "rev-2",
         evidenceRefs: [{ kind: "episode", id: "ep-1" }],
+        observations: [],
+        interpretations: [],
         findings: [
           {
             findingId: "f-1",
@@ -1654,6 +1658,20 @@ test("assertPlaytestSessionReviewHasEvidence rejects a finding with zero evidenc
         ]
       }),
     /has no evidence locators/u
+  );
+});
+
+test("assertPlaytestSessionReviewHasEvidence requires citations on each claim", () => {
+  assert.throws(
+    () =>
+      assertPlaytestSessionReviewHasEvidence({
+        reviewId: "rev-3",
+        evidenceRefs: [{ kind: "episode", id: "ep-1" }],
+        observations: [{ text: "An uncited observation", evidenceRefs: [] }],
+        interpretations: [],
+        findings: []
+      }),
+    /observation claim 1.*no evidence locators/u
   );
 });
 
