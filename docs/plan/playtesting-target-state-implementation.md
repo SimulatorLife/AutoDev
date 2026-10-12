@@ -60,6 +60,10 @@ normative specification; this checklist tracks implementation and evidence.
 - [ ] Keyboard/mobile navigation, stable filter → finding → session → back,
       no fabricated video, source-mapped upstream UI logic actually executing,
       and performance on indexed queries, view changes, and replay selection.
+- [ ] Console run/watch and multi-session analysis: an operator can start an
+      approved run and watch every nonterminal batch progress without manual
+      refresh, and can select several persisted sessions and request analysis
+      over them together — see the active slice below.
 - [ ] Documentation, test coverage, package checks and independent validation
       match the final integrated diff.
 
@@ -502,18 +506,18 @@ path without claiming an analyst inference or target-game result:
   slot. This proves mechanics/usability only; it is not a target-game run,
   model-quality study, or human calibration.
 
-The packet blob and ClickHouse batch receipt are still separate durable
-resources. A batch-store outage after a packet artifact write can leave a
-content-addressed orphan until artifact retention cleanup; production hardening
-still needs a cross-store recovery/reclamation design before claiming atomicity.
+At the packet-integration checkpoint, packet blobs and ClickHouse batch
+receipts were separate durable resources with no cross-store recovery. The
+pending-marker/reconciliation slice below subsequently closed the orphan
+reclamation gap without claiming a distributed transaction.
 
 Remaining work is substantial: source/adapter provenance and trust-boundary
-verification, model/prompt identity propagation, cited cross-session context and
-a full report-completeness gate, actual analyst-inference and independent
-claim-validator integration, the experiment/finding-to-owner-decision cycle,
-remaining helper integrations, human validation, UI/upstream reuse audits, a
-second mechanically different adapter, and the explicitly authorized empirical
-first-milestone gates. This slice does not complete Delivery Slices 1, 2, 4, 5,
+verification, model/prompt identity propagation, deterministic cross-session
+aggregation and an aggregate-grounded synthesis workflow, actual
+analyst-inference and independent claim-validator integration, the
+experiment/finding-to-owner-decision cycle, remaining helper integrations,
+human validation, UI/upstream reuse audits, a second mechanically different
+adapter, and the explicitly authorized empirical first-milestone gates. This slice does not complete Delivery Slices 1, 2, 4, 5,
 6, or 8.
 
 ### Validation snapshot after packet, review-ledger and trust-boundary hardening (2026-10-12)
@@ -532,7 +536,7 @@ first-milestone gates. This slice does not complete Delivery Slices 1, 2, 4, 5,
   run/status/cancel). This is Console mechanics only, not game or human evidence.
 - Changed Playtesting files passed targeted Prettier and ESLint (zero warnings,
   no rule disables); `git diff --check` passed. Global `pnpm format:check`
-  still reports five unrelated in-progress files outside this slice:
+  still reports four unrelated in-progress files outside this slice:
   `console/src/features/providers/ProvidersView.ts`,
   `console/src/features/skills/SkillRoleAssignment.ts`,
   `console/tests/console.test.ts` and
@@ -546,3 +550,255 @@ The packet/receipt and human build-reference work remains code-contract evidence
 only. No target game was launched, no workspace/build run was authorized, no
 human study was authorized, and no target-game, human-calibration, or model
 quality claim is made. The full target-state goal remains active.
+
+### Review-v5 report-completeness contract (2026-10-12)
+
+- [x] Added Core-owned report completeness for alternatives, experiments, follow-up,
+      and cross-session-context availability. Explicit none/unavailable states
+      require reasons and must agree with the corresponding review arrays; proposed
+      experiments require a hypothesis, falsifier, metric, at least one control,
+      and bounded budget.
+- [x] Runtime requires this object on `playtest.submitReview`, rejects inconsistent
+      section states before any review/finding write, and includes it in review
+      identity. New submissions cannot claim cross-session synthesis because the
+      only prepared packet remains single-session; they must state the context is
+      unavailable.
+- [x] Review schema v5 and Data migration preserve v4 and earlier history while
+      marking missing completeness sections `not-recorded`. New writes reject that
+      historical-only state rather than fabricating that the analyst considered a
+      section.
+- [x] Console now displays the completeness states, alternatives, experiment
+      controls/falsifiers/metrics/budgets, and proposed/no-follow-up explanation.
+      Role prompt and analysis skill explain the required shape and do not equate
+      completion with independent validation.
+- [x] Core/Data/Runtime/Console tests cover coherent and contradictory states,
+      missing sections, legacy migration, and browser-visible completeness.
+
+This closes the **mechanical report-completeness gate**, not the cross-session
+analysis gate. Runtime still does not invoke the analyst itself or persist a
+blind independent validator's fact/semantic/corroboration verdicts. Model and
+prompt provenance remain null until supplied by a trusted invocation boundary.
+
+Validation after the implementation:
+
+- `pnpm typecheck`: passed across root, Core, Data, Console and Runtime.
+- `pnpm --recursive --if-present test`: Core **281 passed**; Data **363 passed / 9
+  skipped**; Console **555 passed**; Runtime **825 passed / 5 skipped**.
+- Targeted Playtesting tests after strict-completeness refactoring: Core **72/72**,
+  Data repository **23/23**, Runtime MCP **17/17**, Console renderer **8/8**.
+- Playtesting Console production build and synthetic-browser usability: **6/6**
+  passed, including claim citation navigation plus visible cross-session-unavailable,
+  alternative and follow-up sections. This is UI mechanics only.
+- Changed Playtesting source/tests passed targeted ESLint (zero warnings/no rule
+  disables), Prettier, and `git diff --check`.
+- Root tests: **1,470 passed / 1 failed / 5 skipped**. The sole failure remains
+  unrelated `tests/hooks/memory-session-end.test.ts`: Node emits
+  `MODULE_TYPELESS_PACKAGE_JSON` to child stderr. Its assertion/warning policy
+  was not changed.
+
+No target game, target-game build, or human study was authorized. Cross-session
+synthesis, trusted model/prompt provenance, independent claim validation, the
+owner experiment/comparison cycle, and all external empirical gates remain open.
+The overarching goal remains active.
+
+### Pending packet artifact commit and reclamation (2026-10-12)
+
+- [x] Runtime writes packet references with a local `pendingCommitId` tied to the
+      frozen batch. The marker is finalized only after the batch revision with
+      the packet receipt is durably acknowledged; metadata updates are atomic.
+      Older artifact metadata without the optional marker is read as committed.
+- [x] Data exposes a workspace/batch-scoped read of all bounded batch revisions
+      (maximum 128), returning the latest execution state and the union of
+      persisted prepared-packet references. Conflicting hashes, malformed rows,
+      history overflow, and source failures fail closed.
+- [x] At MCP startup, Runtime reconciles only pending packet artifacts. It
+      finalizes markers found in durable Data history; preserves packets for
+      active batches, recent writes, mismatched references, and unavailable Data;
+      and reclaims only expired packets or packets beyond the two-hour grace whose
+      batch is terminal/missing with no receipt in its history. Inventory and
+      per-pass batch work are bounded; deferred items are retried at a later MCP
+      start.
+- [x] Terminal batch writes with ambiguous acknowledgements are read back by
+      exact canonical identity. A confirmed terminal commit is treated as success;
+      otherwise Runtime avoids appending a potentially contradictory failure
+      revision and lets normal status recovery resolve the batch.
+- [x] Installed the reconciliation module through Runtime's source manifest.
+      Tests cover marker finalization/idempotence, metadata migration, history
+      references, terminal orphan removal, active/recent preservation, expiration,
+      hash/workspace mismatch, Data outage/history overflow, and lost terminal
+      write acknowledgement. A cross-workspace integration fixture composes the
+      real Data repository with the Runtime artifact store.
+
+This is an eventual recovery protocol, not a distributed transaction. If Data
+remains unavailable, pending artifacts remain protected until a later successful
+reconciliation or their configured artifact expiry.
+
+Validation after this slice:
+
+- `pnpm typecheck`: passed across root, Core, Data, Console, and Runtime.
+- Full workspace tests: Core **281/281**; Data **365 passed / 9 skipped**;
+  Console **555/555**; Runtime **832 passed / 5 skipped**.
+- Focused tests: Data repository **25/25**; Runtime artifact store + packet
+  reconciliation + MCP **39/39**; Runtime source-install manifest **30/30**.
+- Targeted ESLint (no warnings/rule disables), Prettier, and `git diff --check`
+  passed. Console files were unchanged; the existing synthetic-browser E2E
+  remains **6/6 passed** from the previous validation.
+- Root tests: **1,470 passed / 1 failed / 5 skipped**. The sole failure remains
+  the unrelated `MODULE_TYPELESS_PACKAGE_JSON` warning on child stderr in
+  `tests/hooks/memory-session-end.test.ts`; no assertion or threshold was relaxed.
+
+No target game or human study was run. Source/adapter trust review, cross-session
+synthesis, trusted model/prompt provenance, independent claim validation, the
+finding-to-owner experiment/comparison cycle, remaining helper integrations,
+upstream code execution verification, second-adapter portability, and empirical
+first-milestone gates remain open. The overarching goal remains active.
+
+### Bounded sibling context in analyst packets (2026-10-12)
+
+- [x] Evidence packet schema v2 records a SHA-256 sibling inventory identity,
+      deterministic selection seed, eligible inventory count, selected complete
+      same-batch/build episode summaries, and the exact inclusion probability.
+      The selected sample is capped at four and included in the packet ID and
+      byte/token budget.
+- [x] Runtime forms candidates only from persisted complete sibling episodes
+      joined to their frozen assignment manifest. Partial/infrastructure outcomes
+      are excluded; workspace, batch, build, rubric, policy, cohort and seed
+      identity are checked before context enters the packet.
+- [x] Reviews can mark context available only with citations to supplied whole
+      sibling episode IDs. Core and Runtime reject arbitrary sibling IDs,
+      unsupported step/event locators, missing citations, duplicates and forged
+      context; the Console links those citations to the cited episode.
+- [x] Packet v1 remains readable without upgrade. Review schemas v5 and older
+      remain one-way readable with their historical unavailable/not-recorded
+      state; new submissions use v6.
+- [x] Core packet tests cover deterministic sampling, inventory/provenance,
+      four-sibling bounds, citation scope and v1 reading. Runtime integration
+      constructs and retrieves a real v2 artifact from a two-assignment synthetic
+      batch and rejects a forged sibling citation. Console rendering covers the
+      addressable sibling link. All are mechanics fixtures, not target-game
+      evidence.
+
+Validation for the integrated packet-v2 slice:
+
+- `pnpm typecheck`: passed across root, Core, Data, Console and Runtime.
+- `pnpm --recursive --if-present test`: Core **283/283**; Data **365 passed / 9
+  skipped**; Console **555/555**; Runtime **832 passed / 5 skipped**.
+- `pnpm run test:root`: **1,471 passed / 5 skipped**.
+- Playtesting Console production build and usability E2E: **6/6 passed**;
+  claim rendering and sibling-session links are covered by Console tests.
+- Changed Playtesting TypeScript passed targeted ESLint with zero warnings/no
+  rule disables, targeted Prettier and `git diff --check`.
+
+Remaining cross-session work is the deterministic matched-seed/cohort aggregate,
+an aggregate-grounded analyst workflow, and empirical review-quality validation.
+The bounded sibling summaries are selected episode context only; they do not
+close Delivery Slice 2/4/6 or any production/empirical gate.
+
+### Experiment lifecycle and owner-decision invariants (2026-10-12)
+
+- [x] Core now rejects persisted experiment states unsupported by their
+      provenance: approved/execution states require the frozen approval ID,
+      execution/result states require an attempt, analyzed/owner-decided require
+      a comparison, and owner-decided requires a decision. Invalid historical
+      records fail closed rather than being represented as valid lifecycle state.
+- [x] The pure owner-decision helper now appends a new comparison revision,
+      validates its timestamp/reason, and refuses to overwrite an existing
+      owner decision. Its derived comparison eligibility remains code-owned and
+      is not changed by operator text.
+- [x] Core transition/state tests cover missing approvals, attempts, comparisons
+      and decisions; Data repository fixtures now use valid approval-bound
+      approved states and rejects lifecycle-invalid rows on both write and
+      readback. Targeted Core **105/105** and Data repository **25/25** tests
+      passed for this wave.
+- [x] Final validation: `pnpm typecheck`; full workspace tests (Core **285/285**,
+      Data **365 passed / 9 skipped**, Console **555/555**, Runtime **832 passed /
+      5 skipped**); root tests (**1,471 passed / 5 skipped**); targeted ESLint,
+      Prettier and `git diff --check` all passed.
+
+This hardens the existing contracts; it does not yet provide the persisted
+Runtime workflow that composes experiment execution with statistical
+comparison. The separately persisted root/operator comparison decision path is
+implemented in the follow-up below; experiment attempts are not yet bound to
+comparison inputs.
+
+### Persisted comparison owner disposition (2026-10-12)
+
+- [x] Comparison schema v2 records `promote`/`hold`, the trusted actor, timestamp,
+      and reason separately from the code-derived comparison eligibility. Core
+      permits `promote` only for `eligible-for-owner-promotion`; it cannot alter
+      the metric decision or invoke release/deployment.
+- [x] Data migrates v1 comparisons one-way. Existing free-text owner decisions
+      become `not-recorded` disposition with null author; absent decisions remain
+      null. Current writes validate the owner-decision field relationships.
+- [x] `playtest.decideComparison` is root/operator-only, requires the exact
+      expected revision, appends a new revision through Data, serializes same-
+      process writes per comparison, recognizes an exact retry after an
+      ambiguous insert acknowledgement, and rejects stale or conflicting
+      decisions. It does not open the game runner or write GitHub/releases.
+- [x] Console comparison history distinguishes derived eligibility from the
+      separately authored disposition, actor and reason. Runtime tests cover
+      role denial, promotion gating, successful hold, exact retry, lost write
+      acknowledgement, stale revision, and unchanged workspace approval.
+
+This adds the durable owner-decision endpoint, not the full experiment cycle.
+Comparison creation/analysis is still only a read of stored comparisons; fixed
+experiment arm execution, approved variant mapping, input-derived statistical
+analysis, and experiment lifecycle transitions remain unintegrated. The
+per-comparison lock is process-local; cross-process writers remain unsupported
+until a durable coordinator is introduced.
+
+### Console run/watch and multi-session analysis (required, not implemented)
+
+This slice records a target-state requirement added to
+[`docs/playtesting-target-state.md`](../playtesting-target-state.md) §
+"Playtesting Console UX". It is **unimplemented**; nothing below may be read
+as delivered.
+
+Current state, from source:
+
+- `console/src/features/playtesting/PlaytestingRunControls.tsx` already composes
+  the bounded assignment inventory, starts an approved run through the typed
+  Control API, renders one run record, and cancels it. The synthetic browser
+  suite covers run start, manual status refresh and cancellation
+  (`console/e2e/playtesting-usability.spec.ts`).
+- Monitoring is therefore **operator-driven**, not live. `refreshStatus()` runs
+  only from an explicit click, and the cancellation notice asks the operator to
+  refresh to confirm the terminal disposition. `onRefresh` is bound to a single
+  run record, so there is no workspace-scoped active-runs view.
+- Analysis is **single-session by contract and has no batch entry point**.
+  `playtest.prepareReview` returns only the durable selected packet;
+  `playtest.submitReview` requires that packet/artifact/SHA-256 identity and
+  rejects citations outside it; new submissions must declare cross-session
+  context unavailable because the prepared packet is single-session. No Console
+  or MCP path selects N sessions and requests analysis over them together.
+
+Required work:
+
+- [ ] Live batch monitoring over the existing run-control owner: a
+      workspace-scoped active-runs view, automatic refresh until terminal
+      status, backoff, and an explicit `stale`/`unavailable` state on read
+      failure rather than a frozen last-good frame. No second status authority.
+- [ ] Live view keeps the required distinctions visible: assignment outcomes
+      versus gameplay outcomes, execution status versus `win/loss/DNF/other`,
+      infrastructure-loss assignments versus persisted episodes, and
+      `nonterminal-batch-recovered` versus a real result.
+- [ ] Cancellation confirmation requires a server-confirmed status read; it must
+      not assert a terminal disposition optimistically.
+- [ ] Live progress is `aria-live` polite, does not steal focus, is keyboard and
+      mobile usable, and survives refresh/Back through the shared
+      workspace/build URL state.
+- [ ] Multi-session analysis selection: explicit, bounded, shareable URL state
+      across a batch or filtered result set.
+- [ ] Runtime owns dispatch and keeps enforcing critique-budget reservation and
+      the per-batch cap; excludes partial, cancelled, crashed,
+      infrastructure-failed and truncated sessions; and reports selected
+      sessions that yielded packet-unavailable receipts instead of dropping them.
+- [ ] Cross-session claims cite into each contributing session's own packet and
+      are labelled cross-session, never presented as one session's grounded
+      evidence. The packet-bound citation invariant is unchanged.
+
+Acceptance requires real-browser coverage of both paths against a labeled
+synthetic Control API fixture — live progress advancing without manual refresh,
+an explicit stale state when the status read fails, and a multi-session
+selection that reserves capacity and rejects an out-of-cap request without
+truncation. That remains Console mechanics evidence, not a game run.
