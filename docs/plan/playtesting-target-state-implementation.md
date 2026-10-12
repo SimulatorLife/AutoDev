@@ -64,6 +64,9 @@ normative specification; this checklist tracks implementation and evidence.
       approved run and watch every nonterminal batch progress without manual
       refresh, and can select several persisted sessions and request analysis
       over them together — see the active slice below.
+- [ ] Declarative game onboarding: a second, mechanically different game joins
+      Playtesting by adding one config file, with no adapter, protocol glue or
+      hand-maintained digest — see the active slice below.
 - [ ] Documentation, test coverage, package checks and independent validation
       match the final integrated diff.
 
@@ -802,3 +805,56 @@ synthetic Control API fixture — live progress advancing without manual refresh
 an explicit stale state when the status read fails, and a multi-session
 selection that reserves capacity and rejects an out-of-cap request without
 truncation. That remains Console mechanics evidence, not a game run.
+
+### Declarative game onboarding: one config, no adapter (required, not implemented)
+
+This slice records a target-state requirement added to
+[`docs/playtesting-target-state.md`](../playtesting-target-state.md) §
+"Declarative game onboarding". It is **unimplemented**; nothing below may be
+read as delivered.
+
+Current state, from RacingGame's first integration:
+
+- Onboarding required five hand-written scripts and four manifests, roughly
+  1,000 lines of adapter, evaluator, schema and hash-binding code plus ~360
+  lines of JSON, for a game that already had a clean deterministic `src/game`
+  core and a seeded headless driver.
+- The adapter implements the game-adapter protocol v1 itself: transport,
+  capability negotiation, revision tracking, event emission, and per-phase
+  decision enumeration. All of that is AutoDev-shaped, not game-shaped.
+- The game hand-maintains `evaluatorHash`, `schemaHash`, `actionSchemaHash`,
+  `eventSchemaHash` and `contentHash` through a custom generator script, so any
+  evaluator or schema edit silently invalidates a run until regenerated.
+- `playtest.config.json` is a hardcoded `CONFIG_FILENAME` resolved against the
+  checkout root (`runtime/src/playtesting/approved-configuration.ts`), so the
+  integration files cannot share one conventional directory.
+- Approval runs `git status --porcelain=v1 --untracked-files=all
+--ignored=matching` and rejects any output
+  (`runtime/src/playtesting/docker-sandbox.ts`), so a gitignored integration
+  directory fails with a message that does not name it.
+
+Required work:
+
+- [ ] Generic adapter runtime that binds to a game from declarations: entry
+      module and factory, observation projection, legal-action space, step
+      function, terminal predicate, seeded-RNG entry points.
+- [ ] Tiered onboarding with an explicitly stated tier, not an assumed one:
+      convention-bound games onboard with the config alone; other games get an
+      AutoDev-generated scaffold from the same config plus a conformance test
+      that resolves every declared binding and drives a real episode.
+- [ ] A standard `.autodev/` home, with the config location made configurable so
+      the hardcoded `CONFIG_FILENAME` no longer pins it to the checkout root.
+- [ ] `autodev playtest init` to lay out the standard tree and
+      `autodev playtest check` to verify it end to end before approval.
+- [ ] Hash chain fully generated and verified by `check`; no game edits or
+      hand-maintains any digest.
+- [ ] Gitignoring `.autodev/` fails with a message naming that directory.
+- [ ] Measurement intent stays game-owned: scaffolding must not ship invented
+      metric defaults, intended-experience claims or difficulty curves.
+
+Acceptance requires a second, mechanically different game to join by adding one
+config file and no code, with AutoDev infrastructure unchanged. That is
+Delivery Slice 8's "only game adapter/scenarios/rubric change" restated as
+"only the declarative config changes" — an adapter is a protocol
+implementation, and treating that as an acceptable per-game cost is what this
+slice removes.
