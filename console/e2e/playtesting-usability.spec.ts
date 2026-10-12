@@ -3,6 +3,7 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 const SESSION_17_URL_PATTERN = /\/playtesting\/sessions\/episode-17\?/u;
 const VIEW_FINDINGS_PATTERN = /view=findings/u;
 const STEP_2_PATTERN = /step=2/u;
+const REVIEW_STEP_1_PATTERN = /step=1/u;
 const RETURN_FINDING_1_PATTERN = /returnFinding=finding-[a-f\d]{64}/u;
 const PLAYTESTING_FINDINGS_VIEW_PATTERN = /\/playtesting\?view=findings/u;
 const SEVERITY_MAJOR_PATTERN = /severity=major/u;
@@ -134,12 +135,24 @@ test("finding witness opens its exact replay step, then Back restores filtered l
   await expect(
     page.getByText("A warning event was recorded at the cited step.")
   ).toBeVisible();
-  const claimCitation = page.locator(
-    '[data-review-claim-evidence="event-1"]'
-  );
+  const claimCitation = page.locator('[data-review-claim-evidence="event-1"]');
   await expect(claimCitation).toBeVisible();
-  await expect(claimCitation).toHaveAttribute("href", /step=1/u);
+  await expect(claimCitation).toHaveAttribute("href", REVIEW_STEP_1_PATTERN);
   await expect(page.getByText("No citations recorded")).toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      name: "Review completeness and follow-up"
+    })
+  ).toBeVisible();
+  await expect(
+    page.getByText("This fixture contains one session and no batch synthesis.")
+  ).toBeVisible();
+  await expect(
+    page.getByText("The policy may have missed the warning.")
+  ).toBeVisible();
+  await expect(
+    page.getByText("Review the cited warning in the selected replay.")
+  ).toBeVisible();
   const backLink = page.getByRole("link", { name: "Back to findings" });
   await backLink.hover();
   await page.waitForTimeout(250);

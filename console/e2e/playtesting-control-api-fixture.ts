@@ -197,10 +197,28 @@ const latestReview = {
     }
   ],
   interpretations: [
-    { text: "This legacy interpretation has no claim-level citation.", evidenceRefs: [] }
+    {
+      text: "This legacy interpretation has no claim-level citation.",
+      evidenceRefs: []
+    }
   ],
   anchors: [],
   alternativeExplanations: ["The policy may have missed the warning."],
+  reportCompleteness: {
+    crossSessionContext: {
+      status: "unavailable",
+      reason: "This fixture contains one session and no batch synthesis."
+    },
+    alternatives: { status: "provided" },
+    experiments: {
+      status: "none-recommended",
+      reason: "This UI fixture does not recommend a new experiment."
+    },
+    followUp: {
+      status: "proposed",
+      text: "Review the cited warning in the selected replay."
+    }
+  },
   experiments: [],
   status: "hypothesis",
   findings: [],

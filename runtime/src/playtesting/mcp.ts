@@ -50,6 +50,7 @@ import {
   playtestFindingIdFromFingerprint,
   type PlaytestKnownEvidenceIndex,
   type PlaytestReviewCandidate,
+  type PlaytestReviewCompleteness,
   playtestReviewOutcomeKey,
   type PlaytestReviewPacketFailureReason,
   type PlaytestReviewPacketReceipt,
@@ -497,11 +498,42 @@ const reviewClaimSchema = z.strictObject({
   evidenceRefs: z.array(evidenceLocatorSchema).min(1).max(64)
 });
 
+const reviewCompletenessSchema = z.strictObject({
+  crossSessionContext: z.strictObject({
+    status: z.literal("unavailable"),
+    reason: z.string().min(1).max(2000)
+  }),
+  alternatives: z.union([
+    z.strictObject({ status: z.literal("provided") }),
+    z.strictObject({
+      status: z.literal("none-identified"),
+      reason: z.string().min(1).max(2000)
+    })
+  ]),
+  experiments: z.union([
+    z.strictObject({ status: z.literal("proposed") }),
+    z.strictObject({
+      status: z.literal("none-recommended"),
+      reason: z.string().min(1).max(2000)
+    })
+  ]),
+  followUp: z.union([
+    z.strictObject({
+      status: z.literal("proposed"),
+      text: z.string().min(1).max(4000)
+    }),
+    z.strictObject({
+      status: z.literal("none"),
+      reason: z.string().min(1).max(2000)
+    })
+  ])
+});
+
 const reviewExperimentSchema = z.strictObject({
   hypothesis: z.string().min(1).max(4000),
   falsifier: z.string().min(1).max(4000),
   metricId: z.string().min(1).max(256),
-  controls: z.array(z.string().min(1).max(1000)).max(32),
+  controls: z.array(z.string().min(1).max(1000)).min(1).max(32),
   budget: z.string().min(1).max(1000)
 });
 
@@ -5045,17 +5077,15 @@ export function createPlaytestMcpServer(
         chronologicalSummary: z.string().min(1).max(10_000),
         status: z.enum(REVIEWABLE_STATUSES),
         evidenceRefs: z.array(evidenceLocatorSchema).min(1),
-        observations: z.array(reviewClaimSchema).max(64).default([]),
-        interpretations: z.array(reviewClaimSchema).max(64).default([]),
+        observations: z.array(reviewClaimSchema).min(1).max(64),
+        interpretations: z.array(reviewClaimSchema).min(1).max(64),
         dimensionEvidence: z
           .array(reviewDimensionEvidenceSchema)
           .max(32)
           .default([]),
-        alternativeExplanations: z
-          .array(z.string().min(1).max(4000))
-          .max(32)
-          .default([]),
-        experiments: z.array(reviewExperimentSchema).max(32).default([]),
+        alternativeExplanations: z.array(z.string().min(1).max(4000)).max(32),
+        reportCompleteness: reviewCompletenessSchema,
+        experiments: z.array(reviewExperimentSchema).max(32),
         findings: z
           .array(findingSchema)
           .max(MAX_FINDINGS_PER_REVIEW)
@@ -5067,6 +5097,24 @@ export function createPlaytestMcpServer(
     (args) =>
       safely(async () => {
         const session = await sessionProvider.current();
+        const reviewerRole = session.role;
+        if (!isReviewerRole(reviewerRole)) {
+          throw new PlaytestMcpAuthorizationError(
+            "playtest.submitReview requires an authorized reviewer role."
+          );
+        }
+        if (
+          !Array.isArray(args.observations) ||
+          args.observations.length === 0 ||
+          !Array.isArray(args.interpretations) ||
+          args.interpretations.length === 0 ||
+          !Array.isArray(args.alternativeExplanations) ||
+          !Array.isArray(args.experiments)
+        ) {
+          throw new PlaytestMcpValidationError(
+            "A review must include observed and interpreted claims, alternatives, and an explicit experiment list."
+          );
+        }
         const evidenceRefs = normalizeEvidenceRefs(args.evidenceRefs ?? []);
         const observations = (args.observations ?? []).map((claim) => ({
           text: claim.text,
@@ -5076,12 +5124,6 @@ export function createPlaytestMcpServer(
           text: claim.text,
           evidenceRefs: normalizeEvidenceRefs(claim.evidenceRefs)
         }));
-        const reviewerRole = session.role;
-        if (!isReviewerRole(reviewerRole)) {
-          throw new PlaytestMcpAuthorizationError(
-            "playtest.submitReview requires an authorized reviewer role."
-          );
-        }
         const submittedFindings = args.findings ?? [];
         if (submittedFindings.length > MAX_FINDINGS_PER_REVIEW) {
           throw new PlaytestMcpValidationError(
@@ -5153,6 +5195,8 @@ export function createPlaytestMcpServer(
         const dimensionEvidence = args.dimensionEvidence ?? [];
         const alternativeExplanations = args.alternativeExplanations ?? [];
         const experiments = args.experiments ?? [];
+        const reportCompleteness =
+          args.reportCompleteness as PlaytestReviewCompleteness;
         assertReviewExperimentMetrics(packet.packet, experiments);
         const anchors = anchorsForReview(packet.packet, dimensionEvidence);
         const packetEvidenceRefs = [
@@ -5187,6 +5231,7 @@ export function createPlaytestMcpServer(
                 interpretations,
                 dimensionEvidence,
                 alternativeExplanations,
+                reportCompleteness,
                 experiments,
                 findings,
                 rubricHash: args.rubricHash,
@@ -5316,6 +5361,9 @@ export function createPlaytestMcpServer(
                 evidenceRefs,
                 observations,
                 interpretations,
+                alternativeExplanations,
+                experiments,
+                reportCompleteness,
                 findings: findings.map((finding, index) => ({
                   findingId: "review-precheck-finding-" + String(index + 1),
                   evidenceRefs: normalizeEvidenceRefs(finding.evidenceRefs)
@@ -5393,6 +5441,7 @@ export function createPlaytestMcpServer(
               interpretations,
               anchors,
               alternativeExplanations,
+              reportCompleteness,
               experiments,
               status: args.status,
               findings: resolvedFindings,

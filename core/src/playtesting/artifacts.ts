@@ -22,9 +22,10 @@ import {
   type PlaytestMissingReason,
   type PlaytestNumericResult,
   type PlaytestProvenance,
+  type PlaytestReviewClaim,
+  type PlaytestReviewCompleteness,
   type PlaytestReviewPacketReceipt,
   type PlaytestReviewReceipt,
-  type PlaytestReviewClaim,
   type PLAYTESTS_BATCH_SCHEMA,
   type PLAYTESTS_COVERAGE_MANIFEST_SCHEMA,
   type PLAYTESTS_EPISODE_SCHEMA,
@@ -525,6 +526,7 @@ export interface PlaytestSessionReview {
   readonly interpretations: readonly PlaytestReviewClaim[];
   readonly anchors: readonly PlaytestDimensionAnchor[];
   readonly alternativeExplanations: readonly string[];
+  readonly reportCompleteness: PlaytestReviewCompleteness;
   readonly experiments: readonly {
     readonly hypothesis: string;
     readonly falsifier: string;

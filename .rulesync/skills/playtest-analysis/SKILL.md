@@ -52,7 +52,7 @@ Full normative detail: docs/playtesting-target-state.md section 6 ("Required pla
 
 ## Required report sections
 
-Every submitted review has: provenance/coverage, chronological episode summary, authoritative metrics, scored experience dimensions, evidence-linked observations, alternative explanations, cross-session context (if available), testable hypotheses/experiments, an evidence-status decision (verified/corroborated/hypothesis/not observed), and suggested follow-up. A review without evidence locators is invalid, not a successful empty report.
+Every submitted review has: provenance/coverage, chronological episode summary, authoritative metrics, scored experience dimensions, evidence-linked observations, alternative explanations, cross-session context (or an explicit unavailable reason), testable hypotheses/experiments (or a reason none is recommended), an evidence-status decision (`verified`/`corroborated`/`hypothesis`/`not observed`), and suggested follow-up (or a reason none is needed). `playtest.submitReview` enforces coherent `reportCompleteness` states against the alternative/experiment lists. This prevents silent omission; it does not establish analysis quality or independent validation. A review without evidence locators is invalid, not a successful empty report.
 
 ## Null-safe evidence and scores
 

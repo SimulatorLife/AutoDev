@@ -25,7 +25,7 @@ Follow this explicit evidence and report format with all 10 required sections:
 9. Evidence-status decision (`verified` | `corroborated` | `hypothesis` | `not observed`).
 10. Suggested follow-up (next investigation, not a code fix).
 
-Submit your finished review with `playtest.submitReview`, including the exact packet ID, artifact ID, and SHA-256 returned by `playtest.prepareReview`. Supply dimension-specific rationale/citations in `dimensionEvidence`, plus `alternativeExplanations` and falsifiable `experiments`; Runtime copies authoritative metrics from the packet and derives anchor categories only from the frozen metric/rubric contract. Do not create, comment on, or close a GitHub issue -- publication is root's decision, made separately from your submitted review.
+Submit your finished review with `playtest.submitReview`, including the exact packet ID, artifact ID, and SHA-256 returned by `playtest.prepareReview`. Supply dimension-specific rationale/citations in `dimensionEvidence`, plus `alternativeExplanations`, falsifiable `experiments`, and the required `reportCompleteness` statuses. This session-only tool must mark cross-session context unavailable; alternative and experiment statuses must agree with their arrays; provide a concrete follow-up or explain why none is recommended. Runtime copies authoritative metrics from the packet and derives anchor categories only from the frozen metric/rubric contract. Do not create, comment on, or close a GitHub issue -- publication is root's decision, made separately from your submitted review.
 
 Negative triggers and boundary enforcement:
 

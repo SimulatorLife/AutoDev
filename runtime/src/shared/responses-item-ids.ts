@@ -128,20 +128,25 @@ export function normalizeInputItemIds(
 }
 
 /**
- * The same input without the reasoning items this upstream cannot resolve.
+ * The same input without the reasoning items this Codex upstream cannot resolve.
  *
- * A reasoning item carrying `encrypted_content` is self-describing: the backend
- * decrypts it and needs to look nothing up. One without it names an item the
- * backend is expected to already hold, and Codex runs with `store: false`, so
- * for anything the backend did not itself produce there is nothing to find --
- * a 404 that ends the turn.
+ * A reasoning item carrying `encrypted_content` and a conforming `rs_` id is
+ * self-describing: the backend decrypts it and needs to look nothing up. One
+ * without encrypted content names an item the backend is expected to already
+ * hold, and Codex runs with `store: false`, so for anything the backend did not
+ * itself produce there is nothing to find -- a 404 that ends the turn. An item
+ * with encrypted content but a non-conforming id is also foreign: Codex rejects
+ * it at the id/type check before it can decrypt anything, and rewriting its id
+ * would not make provider-specific encrypted reasoning portable.
  *
  * The two are cleanly separable in practice. Every genuine OpenAI reasoning
  * item observed carries encrypted content; the ones that do not are all
  * synthetic -- MiniMax's own traces, and the activity summaries the CLI bridges
- * mint so a bridge-served turn still shows its thinking in the app. None of
- * that is intelligible to a different backend anyway, so dropping it costs
- * nothing beyond a summary the model never authored.
+ * mint so a bridge-served turn still shows its thinking in the app. MiniMax can
+ * also attach encrypted content to a reasoning item while minting a non-Codex
+ * id; that foreign ciphertext is not portable to Codex. None of that is
+ * intelligible to a different backend anyway, so dropping it costs nothing
+ * beyond a summary the model never authored.
  *
  * This is why it is not applied to every route: on the provider that minted
  * them, those same items are live reasoning continuity.
@@ -153,10 +158,13 @@ export function dropUnresolvableReasoning(
   const kept = input.filter((item) => {
     if (item === null || typeof item !== "object" || item.type !== "reasoning")
       return true;
-    return (
+    const hasEncryptedContent =
       typeof item.encrypted_content === "string" &&
-      item.encrypted_content.length > 0
-    );
+      item.encrypted_content.length > 0;
+    const idIsConforming =
+      typeof item.id === "string" &&
+      item.id.startsWith(RESPONSES_ITEM_ID_PREFIXES.reasoning);
+    return hasEncryptedContent && idIsConforming;
   });
   const dropped = input.length - kept.length;
   return dropped ? { input: kept, dropped } : { input, dropped: 0 };

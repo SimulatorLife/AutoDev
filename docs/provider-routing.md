@@ -377,7 +377,8 @@ a continuation and so is not pinned to the provider that served the last one,
 one failover is enough to end a session.
 
 `upstreamPayload` in `runtime/src/router/responses.ts` therefore rewrites any
-non-conforming id, using `@simulatorlife/autodev-runtime/shared/responses-item-ids`. The router
+non-conforming id on a self-contained item, using
+`@simulatorlife/autodev-runtime/shared/responses-item-ids`. The router
 is the right place for it rather than each adapter: it is the one point every
 upstream call passes through, and since stored history is re-sent rather than
 re-read, correcting outbound also repairs sessions that are already carrying
@@ -412,13 +413,22 @@ Rewriting its id to a conforming `rs_<32 hex>` simply converts a 400 format
 validation error into a 404 (`Item with id 'rs_...' not found. Items are not persisted
 when store is set to false`).
 
+Encrypted content alone is not enough to establish continuity. Codex validates
+the item id before decrypting the content, so a foreign encrypted reasoning item
+whose id is still `<32 hex>_rs` is rejected with `Expected an ID that begins
+with 'rs'`. Rewriting that id would not make another provider's ciphertext
+portable; on a Codex route it is dropped along with other unresolvable foreign
+reasoning items. A conforming `rs_` id and non-empty `encrypted_content` are
+both required for the router to preserve a reasoning item for Codex.
+
 Therefore, reasoning items are excluded from id rewriting. Instead:
 
 - On Codex routes (`route.provider === "codex"`), `dropUnresolvableReasoning`
-  drops foreign reasoning items lacking `encrypted_content`. Genuine OpenAI
-  reasoning items carrying `encrypted_content` are preserved. When foreign
-  reasoning items are removed, the router emits a `foreign_reasoning_dropped`
-  event with `droppedReasoningItems: <count>`.
+  drops reasoning items lacking `encrypted_content` or carrying a non-conforming
+  id. Genuine OpenAI reasoning items with a conforming `rs_` id and
+  `encrypted_content` are preserved. When foreign or malformed reasoning items
+  are removed, the router emits a `foreign_reasoning_dropped` event with
+  `droppedReasoningItems: <count>`.
 - On non-Codex routes, reasoning items are passed through untouched so the
   provider that minted them retains its own reasoning continuity on subsequent
   turns.

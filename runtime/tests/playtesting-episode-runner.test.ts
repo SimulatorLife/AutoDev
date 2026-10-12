@@ -988,6 +988,21 @@ test("synthetic 1,000-episode improvement cycle records evidence, finding, compa
       alternativeExplanations: [
         "The fixture intentionally injected the defect."
       ],
+      reportCompleteness: {
+        crossSessionContext: {
+          status: "unavailable",
+          reason: "This synthetic session has no cross-session synthesis."
+        },
+        alternatives: { status: "provided" },
+        experiments: {
+          status: "none-recommended",
+          reason: "This mechanics fixture does not recommend an experiment."
+        },
+        followUp: {
+          status: "proposed",
+          text: "Inspect the synthetic finding in a separate validation run."
+        }
+      },
       experiments: [],
       status: "hypothesis",
       findings: [finding],
@@ -1001,6 +1016,9 @@ test("synthetic 1,000-episode improvement cycle records evidence, finding, compa
       evidenceRefs: review.evidenceRefs,
       observations: review.observations,
       interpretations: review.interpretations,
+      alternativeExplanations: review.alternativeExplanations,
+      experiments: review.experiments,
+      reportCompleteness: review.reportCompleteness,
       findings: review.findings
     });
 

@@ -10089,6 +10089,11 @@ test("outbound item ids are corrected to match their item type", () => {
     { type: "message", id: "msg_1", role: "user", content: [] },
     { type: "reasoning", id: "06eea1506b9c37f6f3f4bb02f90abd28_rs" },
     {
+      type: "reasoning",
+      id: "071c3900201e1c597722897c76d3e54b_rs",
+      encrypted_content: "foreign_encrypted_content"
+    },
+    {
       type: "custom_tool_call",
       id: "06ef3bc08924acade1facee14da0af2e_fc_0",
       call_id: "call_8ec20ad454e0460d9d4b6662",
@@ -10103,8 +10108,8 @@ test("outbound item ids are corrected to match their item type", () => {
     }
   ];
 
-  // Non-Codex providers preserve reasoning items with their minted IDs for continuity,
-  // while self-contained items like tool calls are normalized.
+  // Non-Codex providers preserve reasoning items with their minted IDs for
+  // continuity, while self-contained items like tool calls are normalized.
   for (const model of ["MiniMax-M3", "sonnet"]) {
     const route = routing.routeForModel(model);
     const sent: any = responses.upstreamPayload(
@@ -10112,25 +10117,31 @@ test("outbound item ids are corrected to match their item type", () => {
       { model, input: poisoned },
       true
     );
-    assert.equal(sent.input.length, 4);
+    assert.equal(sent.input.length, 5);
     assert.equal(sent.input[0].id, "msg_1");
     assert.equal(
       sent.input[1].id,
       "06eea1506b9c37f6f3f4bb02f90abd28_rs",
       `${route!.provider} reasoning id preserved`
     );
-    assert.match(
+    assert.equal(
       sent.input[2].id,
+      "071c3900201e1c597722897c76d3e54b_rs",
+      `${route!.provider} encrypted reasoning id preserved`
+    );
+    assert.match(
+      sent.input[3].id,
       /^ctc_/,
       `${route!.provider} tool call id normalized`
     );
-    assert.equal(sent.input[3].id, "ctco_1");
-    assert.equal(sent.input[2].call_id, "call_8ec20ad454e0460d9d4b6662");
+    assert.equal(sent.input[4].id, "ctco_1");
     assert.equal(sent.input[3].call_id, "call_8ec20ad454e0460d9d4b6662");
+    assert.equal(sent.input[4].call_id, "call_8ec20ad454e0460d9d4b6662");
   }
 
-  // On Codex routes, reasoning items without encrypted_content are unresolvable references
-  // under store: false and are dropped outright, while tool calls are normalized.
+  // On Codex routes, reasoning without encrypted_content is unresolvable, and
+  // an encrypted item with a foreign id is rejected before Codex can decrypt
+  // it. Both are dropped rather than rewritten; tool calls are normalized.
   const codexRoute = routing.routeForModel(CONFIGURED_ORCHESTRATOR_MODEL);
   const codexSent: any = responses.upstreamPayload(
     codexRoute as any,
@@ -10140,7 +10151,7 @@ test("outbound item ids are corrected to match their item type", () => {
   assert.equal(
     codexSent.input.length,
     3,
-    "unresolvable foreign reasoning item dropped"
+    "unresolvable and foreign reasoning items dropped"
   );
   assert.equal(codexSent.input[0].id, "msg_1");
   assert.match(codexSent.input[1].id, /^ctc_/, "tool call id normalized");
@@ -10148,7 +10159,8 @@ test("outbound item ids are corrected to match their item type", () => {
   assert.equal(codexSent.input[1].call_id, "call_8ec20ad454e0460d9d4b6662");
   assert.equal(codexSent.input[2].call_id, "call_8ec20ad454e0460d9d4b6662");
 
-  // A genuine reasoning item carrying encrypted_content survives on Codex.
+  // A genuine Codex reasoning item with a conforming id and encrypted_content
+  // survives on Codex.
   const withEncrypted = [
     {
       type: "reasoning",
@@ -10176,7 +10188,7 @@ test("outbound item ids are corrected to match their item type", () => {
   assert.match(codexSurvives.input[1].id, /^ctc_/);
 
   // The caller's array is never mutated in place.
-  assert.equal(poisoned[2]!.id, "06ef3bc08924acade1facee14da0af2e_fc_0");
+  assert.equal(poisoned[3]!.id, "06ef3bc08924acade1facee14da0af2e_fc_0");
 });
 
 test("a payload whose ids already conform is forwarded unchanged", () => {
@@ -10225,6 +10237,11 @@ test("end-to-end: unresolvable reasoning items dropped and tool call ids normali
     id: "06eea1506b9c37f6f3f4bb02f90abd28_rs"
   };
   const unresolvable2 = { type: "reasoning", id: "rs_bridge_synthetic_123456" };
+  const unresolvableEncrypted = {
+    type: "reasoning",
+    id: "071c3900201e1c597722897c76d3e54b_rs",
+    encrypted_content: "foreign_encrypted_content"
+  };
   const extraGenuine = {
     type: "reasoning",
     id: "rs_extra_genuine_123456789012345678901234567890123456789012",
@@ -10235,6 +10252,7 @@ test("end-to-end: unresolvable reasoning items dropped and tool call ids normali
     ...fixture.items,
     unresolvable1,
     unresolvable2,
+    unresolvableEncrypted,
     extraGenuine
   ];
 
@@ -10343,7 +10361,7 @@ test("end-to-end: unresolvable reasoning items dropped and tool call ids normali
     );
 
     assert.ok(dropEvent, "foreign_reasoning_dropped event fired");
-    assert.equal(dropEvent.droppedReasoningItems, 2);
+    assert.equal(dropEvent.droppedReasoningItems, 3);
 
     assert.ok(normEvent, "item_ids_normalized event fired");
     assert.equal(normEvent.normalizedItemIds, 9);

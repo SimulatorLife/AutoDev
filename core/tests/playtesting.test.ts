@@ -19,6 +19,7 @@ import {
   assertPlaytestJsonRpcResponse,
   assertPlaytestJsonRpcSuccess,
   assertPlaytestObservationContract,
+  assertPlaytestReviewCompleteness,
   assertPlaytestSessionReviewHasEvidence,
   assessPlaytestMetricCompatibility,
   assessPlaytestPairing,
@@ -1634,8 +1635,32 @@ test("assertPlaytestSessionReviewHasEvidence rejects a review with zero evidence
       assertPlaytestSessionReviewHasEvidence({
         reviewId: "rev-1",
         evidenceRefs: [],
-        observations: [],
-        interpretations: [],
+        alternativeExplanations: [],
+        experiments: [],
+        reportCompleteness: {
+          crossSessionContext: {
+            status: "unavailable",
+            reason: "Only one session is in the packet."
+          },
+          alternatives: {
+            status: "none-identified",
+            reason: "No alternative was supplied."
+          },
+          experiments: {
+            status: "none-recommended",
+            reason: "No experiment was supplied."
+          },
+          followUp: { status: "none", reason: "No follow-up was supplied." }
+        },
+        observations: [
+          { text: "Observed", evidenceRefs: [{ kind: "episode", id: "ep-1" }] }
+        ],
+        interpretations: [
+          {
+            text: "Interpreted",
+            evidenceRefs: [{ kind: "episode", id: "ep-1" }]
+          }
+        ],
         findings: []
       }),
     /has no evidence locators/u
@@ -1648,8 +1673,32 @@ test("assertPlaytestSessionReviewHasEvidence rejects a finding with zero evidenc
       assertPlaytestSessionReviewHasEvidence({
         reviewId: "rev-2",
         evidenceRefs: [{ kind: "episode", id: "ep-1" }],
-        observations: [],
-        interpretations: [],
+        alternativeExplanations: [],
+        experiments: [],
+        reportCompleteness: {
+          crossSessionContext: {
+            status: "unavailable",
+            reason: "Only one session is in the packet."
+          },
+          alternatives: {
+            status: "none-identified",
+            reason: "No alternative was supplied."
+          },
+          experiments: {
+            status: "none-recommended",
+            reason: "No experiment was supplied."
+          },
+          followUp: { status: "none", reason: "No follow-up was supplied." }
+        },
+        observations: [
+          { text: "Observed", evidenceRefs: [{ kind: "episode", id: "ep-1" }] }
+        ],
+        interpretations: [
+          {
+            text: "Interpreted",
+            evidenceRefs: [{ kind: "episode", id: "ep-1" }]
+          }
+        ],
         findings: [
           {
             findingId: "f-1",
@@ -1667,11 +1716,134 @@ test("assertPlaytestSessionReviewHasEvidence requires citations on each claim", 
       assertPlaytestSessionReviewHasEvidence({
         reviewId: "rev-3",
         evidenceRefs: [{ kind: "episode", id: "ep-1" }],
+        alternativeExplanations: [],
+        experiments: [],
+        reportCompleteness: {
+          crossSessionContext: {
+            status: "unavailable",
+            reason: "Only one session is in the packet."
+          },
+          alternatives: {
+            status: "none-identified",
+            reason: "No alternative was supplied."
+          },
+          experiments: {
+            status: "none-recommended",
+            reason: "No experiment was supplied."
+          },
+          followUp: { status: "none", reason: "No follow-up was supplied." }
+        },
         observations: [{ text: "An uncited observation", evidenceRefs: [] }],
-        interpretations: [],
+        interpretations: [
+          {
+            text: "A cited interpretation",
+            evidenceRefs: [{ kind: "episode", id: "ep-1" }]
+          }
+        ],
         findings: []
       }),
     /observation claim 1.*no evidence locators/u
+  );
+});
+
+test("review completeness rejects missing, contradictory and unrecorded current sections", () => {
+  const base = {
+    reviewId: "review-completeness",
+    alternativeExplanations: ["The policy may be weak."],
+    experiments: [],
+    reportCompleteness: {
+      crossSessionContext: {
+        status: "unavailable" as const,
+        reason: "Only one session packet is available."
+      },
+      alternatives: { status: "provided" as const },
+      experiments: {
+        status: "none-recommended" as const,
+        reason: "No experiment would discriminate the current hypothesis."
+      },
+      followUp: {
+        status: "proposed" as const,
+        text: "Review a matched policy run before generalizing."
+      }
+    }
+  };
+  assert.doesNotThrow(() => assertPlaytestReviewCompleteness(base));
+  const proposedExperiment = {
+    hypothesis: "A safer action avoids the collision.",
+    falsifier: "The collision still occurs after the alternate action.",
+    metricId: "collision-rate",
+    controls: ["same build", "same seed"],
+    budget: "two episodes"
+  };
+  const withExperiment = {
+    ...base,
+    experiments: [proposedExperiment],
+    reportCompleteness: {
+      ...base.reportCompleteness,
+      experiments: { status: "proposed" as const }
+    }
+  };
+  assert.doesNotThrow(() => assertPlaytestReviewCompleteness(withExperiment));
+  assert.throws(
+    () =>
+      assertPlaytestReviewCompleteness({
+        ...withExperiment,
+        experiments: [{ ...proposedExperiment, controls: [] }]
+      }),
+    /needs at least one explicit control/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestReviewCompleteness({
+        ...base,
+        alternativeExplanations: [],
+        reportCompleteness: {
+          ...base.reportCompleteness,
+          alternatives: { status: "provided" }
+        }
+      }),
+    /marks alternatives provided but contains none/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestReviewCompleteness({
+        ...base,
+        reportCompleteness: {
+          ...base.reportCompleteness,
+          experiments: { status: "proposed" }
+        }
+      }),
+    /marks experiments proposed but contains none/u
+  );
+  const historical = {
+    ...base,
+    reportCompleteness: {
+      crossSessionContext: {
+        status: "not-recorded" as const,
+        reason: "Not present in the previous schema."
+      },
+      alternatives: {
+        status: "not-recorded" as const,
+        reason: "Not present in the previous schema."
+      },
+      experiments: {
+        status: "not-recorded" as const,
+        reason: "Not present in the previous schema."
+      },
+      followUp: {
+        status: "not-recorded" as const,
+        reason: "Not present in the previous schema."
+      }
+    }
+  };
+  assert.throws(
+    () => assertPlaytestReviewCompleteness(historical),
+    /historical not-recorded section status/u
+  );
+  assert.doesNotThrow(() =>
+    assertPlaytestReviewCompleteness(historical, {
+      allowHistoricalNotRecorded: true
+    })
   );
 });
 

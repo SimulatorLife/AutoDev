@@ -82,7 +82,10 @@ export const PLAYTESTS_EPISODE_SCHEMA_V1 =
   "autodev-playtest-episode-v1" as const;
 export const PLAYTESTS_EXPERIMENT_SCHEMA =
   "autodev-playtest-experiment-v1" as const;
+export const PLAYTEST_REVIEW_SECTION_NOT_RECORDED = "not-recorded" as const;
 export const PLAYTESTS_SESSION_REVIEW_SCHEMA =
+  "autodev-playtest-session-review-v5" as const;
+export const PLAYTESTS_SESSION_REVIEW_SCHEMA_V4 =
   "autodev-playtest-session-review-v4" as const;
 export const PLAYTESTS_SESSION_REVIEW_SCHEMA_V3 =
   "autodev-playtest-session-review-v3" as const;
@@ -416,6 +419,37 @@ export interface PlaytestEvidenceLocator {
 export interface PlaytestReviewClaim {
   readonly text: string;
   readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
+}
+
+/** Explicitly accounts for review sections that may otherwise disappear silently. */
+export interface PlaytestReviewCompleteness {
+  readonly crossSessionContext:
+    | { readonly status: "unavailable"; readonly reason: string }
+    | {
+        readonly status: typeof PLAYTEST_REVIEW_SECTION_NOT_RECORDED;
+        readonly reason: string;
+      };
+  readonly alternatives:
+    | { readonly status: "provided" }
+    | { readonly status: "none-identified"; readonly reason: string }
+    | {
+        readonly status: typeof PLAYTEST_REVIEW_SECTION_NOT_RECORDED;
+        readonly reason: string;
+      };
+  readonly experiments:
+    | { readonly status: "proposed" }
+    | { readonly status: "none-recommended"; readonly reason: string }
+    | {
+        readonly status: typeof PLAYTEST_REVIEW_SECTION_NOT_RECORDED;
+        readonly reason: string;
+      };
+  readonly followUp:
+    | { readonly status: "proposed"; readonly text: string }
+    | { readonly status: "none"; readonly reason: string }
+    | {
+        readonly status: typeof PLAYTEST_REVIEW_SECTION_NOT_RECORDED;
+        readonly reason: string;
+      };
 }
 
 /** What a review records as a deterministic fact-support verdict. */

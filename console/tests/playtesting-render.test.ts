@@ -10,9 +10,9 @@ import {
   type PlaytestComparison,
   type PlaytestEpisode,
   type PlaytestFinding,
-  type PlaytestSessionReview,
-  PLAYTESTS_SESSION_REVIEW_SCHEMA,
   playtestFindingIdentityHashInput,
+  PLAYTESTS_SESSION_REVIEW_SCHEMA,
+  type PlaytestSessionReview,
   type WorkspaceEntry
 } from "@simulatorlife/autodev-core";
 import React from "react";
@@ -272,6 +272,24 @@ test("inspector renders each review claim with its exact citations and legacy mi
     ],
     anchors: [],
     alternativeExplanations: [],
+    reportCompleteness: {
+      crossSessionContext: {
+        status: "unavailable",
+        reason: "The review packet contains only this session."
+      },
+      alternatives: {
+        status: "none-identified",
+        reason: "No alternative is included in this fixture."
+      },
+      experiments: {
+        status: "none-recommended",
+        reason: "No experiment is included in this fixture."
+      },
+      followUp: {
+        status: "none",
+        reason: "No follow-up is included in this fixture."
+      }
+    },
     experiments: [],
     status: "hypothesis",
     findings: [],
@@ -295,6 +313,10 @@ test("inspector renders each review claim with its exact citations and legacy mi
   assert.match(html, /step=1/u);
   assert.match(html, /The policy may have missed a safer choice/u);
   assert.match(html, /No citations recorded/u);
+  assert.match(html, /Review completeness and follow-up/u);
+  assert.match(html, /Cross-session context/u);
+  assert.match(html, /The review packet contains only this session/u);
+  assert.match(html, /Alternative explanations/u);
 });
 
 test("inspector step window shows an exact recorded event and preserves episode source", () => {

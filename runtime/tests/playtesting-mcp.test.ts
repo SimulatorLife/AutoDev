@@ -3713,6 +3713,29 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       episodeId: episodeOne.episodeId,
       chronologicalSummary: "Exact source step locator.",
       status: "hypothesis",
+      observations: [
+        {
+          text: "Observed",
+          evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
+        }
+      ],
+      interpretations: [
+        {
+          text: "Interpreted",
+          evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
+        }
+      ],
+      alternativeExplanations: [],
+      experiments: [],
+      reportCompleteness: {
+        crossSessionContext: {
+          status: "unavailable",
+          reason: "Only a session packet is available in this test."
+        },
+        alternatives: { status: "none-identified", reason: "No alternatives." },
+        experiments: { status: "none-recommended", reason: "No experiment." },
+        followUp: { status: "none", reason: "No follow-up." }
+      },
       evidenceRefs: [
         {
           kind: "event",
@@ -3725,11 +3748,62 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       rubricHash: "f".repeat(64)
     });
     assert.equal(locatorSchemaResult.success, true);
+    const incompleteReportInput = {
+      ...packetArgs,
+      episodeId: episodeOne.episodeId,
+      chronologicalSummary:
+        "Missing report completeness is not a complete review.",
+      status: "hypothesis",
+      observations: [
+        {
+          text: "Observed",
+          evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
+        }
+      ],
+      interpretations: [
+        {
+          text: "Interpreted",
+          evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
+        }
+      ],
+      alternativeExplanations: [],
+      experiments: [],
+      evidenceRefs: [{ kind: "event", id: "evt-real-1" }],
+      rubricHash: "f".repeat(64)
+    };
+    assert.equal(
+      (await submitReviewInputSchema.safeParseAsync(incompleteReportInput))
+        .success,
+      false
+    );
     const obsoleteLocatorFields = await submitReviewInputSchema.safeParseAsync({
       ...packetArgs,
       episodeId: episodeOne.episodeId,
       chronologicalSummary: "Obsolete locator spelling.",
       status: "hypothesis",
+      observations: [
+        {
+          text: "Observed",
+          evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
+        }
+      ],
+      interpretations: [
+        {
+          text: "Interpreted",
+          evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
+        }
+      ],
+      alternativeExplanations: [],
+      experiments: [],
+      reportCompleteness: {
+        crossSessionContext: {
+          status: "unavailable",
+          reason: "Only a session packet is available in this test."
+        },
+        alternatives: { status: "none-identified", reason: "No alternatives." },
+        experiments: { status: "none-recommended", reason: "No experiment." },
+        followUp: { status: "none", reason: "No follow-up." }
+      },
       evidenceRefs: [{ kind: "event", id: "evt-real-1", stepIndex: 0 }],
       rubricHash: "f".repeat(64)
     });
@@ -3737,6 +3811,57 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     const submitReview = (input: Record<string, unknown>) =>
       (server as any)._registeredTools["playtest.submitReview"].handler({
         ...packetArgs,
+        observations: [
+          {
+            text: "Synthetic observation",
+            evidenceRefs: [
+              {
+                kind: "episode",
+                id: String(input.episodeId ?? episodeOne.episodeId)
+              }
+            ]
+          }
+        ],
+        interpretations: [
+          {
+            text: "Synthetic interpretation",
+            evidenceRefs: [
+              {
+                kind: "episode",
+                id: String(input.episodeId ?? episodeOne.episodeId)
+              }
+            ]
+          }
+        ],
+        alternativeExplanations: [],
+        experiments: [],
+        reportCompleteness: {
+          crossSessionContext: {
+            status: "unavailable",
+            reason: "The session packet contains no cross-session synthesis."
+          },
+          alternatives:
+            Array.isArray(input.alternativeExplanations) &&
+            input.alternativeExplanations.length > 0
+              ? { status: "provided" }
+              : {
+                  status: "none-identified",
+                  reason:
+                    "No distinct alternative is present in this test report."
+                },
+          experiments:
+            Array.isArray(input.experiments) && input.experiments.length > 0
+              ? { status: "proposed" }
+              : {
+                  status: "none-recommended",
+                  reason:
+                    "No additional experiment is required by this test case."
+                },
+          followUp: {
+            status: "proposed",
+            text: "Review the evidence and run only an approved follow-up."
+          }
+        },
         ...input
       });
 
@@ -3809,6 +3934,18 @@ test("playtest MCP server: submitReview validates evidence against the real stor
           budget: "one additional synthetic episode"
         }
       ],
+      reportCompleteness: {
+        crossSessionContext: {
+          status: "unavailable",
+          reason: "The packet covers one session and no aggregate comparison."
+        },
+        alternatives: { status: "provided" },
+        experiments: { status: "proposed" },
+        followUp: {
+          status: "proposed",
+          text: "Run a root-approved matched-seed follow-up."
+        }
+      },
       findings: [
         {
           identity: {
@@ -4296,6 +4433,18 @@ test("playtest MCP server: submitReview validates evidence against the real stor
           budget: "one additional synthetic episode"
         }
       ],
+      reportCompleteness: {
+        crossSessionContext: {
+          status: "unavailable",
+          reason: "The packet covers one session and no aggregate comparison."
+        },
+        alternatives: { status: "provided" },
+        experiments: { status: "proposed" },
+        followUp: {
+          status: "proposed",
+          text: "Run a root-approved matched-seed follow-up."
+        }
+      },
       findings: [
         {
           identity: {
@@ -4319,6 +4468,29 @@ test("playtest MCP server: submitReview validates evidence against the real stor
         }
       ]
     };
+    const contradictoryCompleteness = await submitReview({
+      ...validReviewInput,
+      experiments: [],
+      reportCompleteness: {
+        crossSessionContext: {
+          status: "unavailable",
+          reason: "No batch synthesis was included in this session packet."
+        },
+        alternatives: { status: "provided" },
+        experiments: { status: "proposed" },
+        followUp: {
+          status: "proposed",
+          text: "Run an approved matched-seed comparison."
+        }
+      }
+    });
+    assert.equal(
+      parsedMcpError(contradictoryCompleteness).code,
+      "playtest_invalid_request"
+    );
+    assert.equal(insertedReviews.length, 0);
+    assert.equal(insertedFindings.length, 0);
+
     const validReviewSchemaResult = await (server as any)._registeredTools[
       "playtest.submitReview"
     ].inputSchema.safeParseAsync({ ...packetArgs, ...validReviewInput });

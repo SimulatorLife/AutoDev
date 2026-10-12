@@ -214,12 +214,18 @@ test("the rollout that crashed the orchestrator normalises cleanly", () => {
   );
 });
 
-test("dropUnresolvableReasoning drops reasoning items lacking encrypted_content", () => {
+test("dropUnresolvableReasoning drops missing content and invalid IDs", () => {
   const input = [
     { type: "message", id: "msg_1", role: "user" },
     { type: "reasoning", id: "06eea1506b9c37f6f3f4bb02f90abd28_rs" },
     { type: "reasoning", id: "rs_bridge1234567890123456" },
     { type: "reasoning", id: "rs_empty", encrypted_content: "" },
+    {
+      type: "reasoning",
+      id: "071c3900201e1c597722897c76d3e54b_rs",
+      encrypted_content: "foreign_encrypted_content"
+    },
+    { type: "reasoning", encrypted_content: "encrypted_content_without_id" },
     {
       type: "reasoning",
       id: "rs_0252e954049dbf1c016aa00850d46087d1853ed6aa5cb47915",
@@ -228,7 +234,7 @@ test("dropUnresolvableReasoning drops reasoning items lacking encrypted_content"
     { type: "custom_tool_call", id: "ctc_1", call_id: "call_1", name: "exec" }
   ];
   const { input: filtered, dropped } = dropUnresolvableReasoning(input);
-  assert.equal(dropped, 3);
+  assert.equal(dropped, 5);
   assert.equal((filtered as JsonItem[]).length, 3);
   assert.equal((filtered as JsonItem[])[0]?.id, "msg_1");
   assert.equal(

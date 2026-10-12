@@ -38,6 +38,7 @@ import {
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V1,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V2,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V3,
+  PLAYTESTS_SESSION_REVIEW_SCHEMA_V4,
   type PlaytestSessionReview,
   selectPlaytestBatchReviews
 } from "@simulatorlife/autodev-core";
@@ -360,6 +361,24 @@ function review(): PlaytestSessionReview {
     ],
     anchors: [],
     alternativeExplanations: [],
+    reportCompleteness: {
+      crossSessionContext: {
+        status: "unavailable",
+        reason: "The review packet contains only this session."
+      },
+      alternatives: {
+        status: "none-identified",
+        reason: "No alternative is included in this fixture."
+      },
+      experiments: {
+        status: "none-recommended",
+        reason: "No experiment is included in this fixture."
+      },
+      followUp: {
+        status: "none",
+        reason: "No follow-up is included in this fixture."
+      }
+    },
     experiments: [],
     status: "hypothesis",
     findings: [],
@@ -407,6 +426,36 @@ test("legacy review schemas migrate with explicit packet and claim-citation gaps
     decodeReview(packetReviewRow as unknown as Record<string, unknown>),
     packetReview
   );
+  const schemaV4 = JSON.parse(packetReviewRow.payload_json) as Record<
+    string,
+    unknown
+  >;
+  schemaV4.schema = PLAYTESTS_SESSION_REVIEW_SCHEMA_V4;
+  delete schemaV4.reportCompleteness;
+  const migratedV4 = decodeReview({
+    ...packetReviewRow,
+    payload_json: JSON.stringify(schemaV4)
+  } as unknown as Record<string, unknown>);
+  assert.equal(migratedV4.schema, PLAYTESTS_SESSION_REVIEW_SCHEMA);
+  assert.deepEqual(migratedV4.reportCompleteness, {
+    crossSessionContext: {
+      status: "not-recorded",
+      reason: "Cross-session context was not represented in review schema v4."
+    },
+    alternatives: {
+      status: "not-recorded",
+      reason:
+        "Alternative-explanation completeness was not represented in review schema v4."
+    },
+    experiments: {
+      status: "not-recorded",
+      reason: "Experiment completeness was not represented in review schema v4."
+    },
+    followUp: {
+      status: "not-recorded",
+      reason: "Follow-up completeness was not represented in review schema v4."
+    }
+  });
   for (const legacySchema of [
     PLAYTESTS_SESSION_REVIEW_SCHEMA_V2,
     PLAYTESTS_SESSION_REVIEW_SCHEMA_V3

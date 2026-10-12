@@ -415,7 +415,7 @@ Final validation after this slice:
 
 - `pnpm typecheck`: passed for root, Core, Data, Runtime and Console.
 - Workspace tests: Core **272/272**; Data **361 passed / 9 skipped**;
-  Console **554/554**; Runtime **825 passed / 5 skipped**.
+  Console **555/555**; Runtime **825 passed / 5 skipped**.
 - Playtesting browser build and usability: **6/6 passed**, including the
   server-filtered per-cell coverage display, 1,000-assignment form, and
   run/cancel flow. No target game was launched.
@@ -508,8 +508,9 @@ content-addressed orphan until artifact retention cleanup; production hardening
 still needs a cross-store recovery/reclamation design before claiming atomicity.
 
 Remaining work is substantial: source/adapter provenance and trust-boundary
-verification, model/prompt identity propagation, a full report-completeness gate,
-actual analyst-inference and independent claim-validator integration, the experiment/finding-to-owner-decision cycle,
+verification, model/prompt identity propagation, cited cross-session context and
+a full report-completeness gate, actual analyst-inference and independent
+claim-validator integration, the experiment/finding-to-owner-decision cycle,
 remaining helper integrations, human validation, UI/upstream reuse audits, a
 second mechanically different adapter, and the explicitly authorized empirical
 first-milestone gates. This slice does not complete Delivery Slices 1, 2, 4, 5,
@@ -519,22 +520,23 @@ first-milestone gates. This slice does not complete Delivery Slices 1, 2, 4, 5,
 
 - `pnpm typecheck`: passed across root, Core, Data, Console and Runtime.
 - `pnpm --recursive --if-present test`: passed. Core **279/279**; Data
-  **363 passed / 9 skipped**; Console **554/554**; Runtime **825 passed / 5
+  **363 passed / 9 skipped**; Console **555/555**; Runtime **825 passed / 5
   skipped**.
 - Focused coverage: evidence packet Core **7/7**, Data playtest repository
-  **23/23**, Runtime MCP **17/17**, human-response repository **24/24**, and
-  analyst/playtester role+skill tests **20/20**.
+  **23/23**, Runtime MCP **17/17**, Console review-claim rendering **8/8**,
+  human-response repository **24/24**, and analyst/playtester role+skill tests
+  **20/20**.
 - Synthetic Console browser usability: production build succeeded and Playtesting
-  E2E **6/6** passed (desktop overview/replay/back, mobile overflow/keyboard,
-  exact-build approval, 1,000-assignment composer, run/status/cancel). This is
-  Console mechanics only, not game or human evidence.
+  E2E **6/6** passed (desktop overview/replay/back with a claim-level citation,
+  mobile overflow/keyboard, exact-build approval, 1,000-assignment composer,
+  run/status/cancel). This is Console mechanics only, not game or human evidence.
 - Changed Playtesting files passed targeted Prettier and ESLint (zero warnings,
   no rule disables); `git diff --check` passed. Global `pnpm format:check`
   still reports five unrelated in-progress files outside this slice:
   `console/src/features/providers/ProvidersView.ts`,
   `console/src/features/skills/SkillRoleAssignment.ts`,
-  `console/tests/console.test.ts`, `console/tests/skills-autosave.test.ts`, and
-  `tests/cli/dev.test.ts`. They were left untouched.
+  `console/tests/console.test.ts` and
+  `console/tests/skills-autosave.test.ts`. They were left untouched.
 - `pnpm run test:root`: **1,460 passed / 1 failed / 5 skipped**. The sole failure
   remains the unrelated `tests/hooks/memory-session-end.test.ts` assertion that
   child stderr is empty while Node emits `MODULE_TYPELESS_PACKAGE_JSON`; its

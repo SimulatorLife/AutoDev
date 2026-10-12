@@ -13,6 +13,7 @@ import {
   type HumanPlaytestStudy,
   isPlaytestEvidencePacketId,
   isPlaytestFindingId,
+  PLAYTEST_REVIEW_SECTION_NOT_RECORDED,
   type PlaytestAssignmentManifest,
   playtestAssignmentManifestHashInput,
   type PlaytestBatch,
@@ -27,8 +28,8 @@ import {
   type PlaytestFinding,
   playtestFindingIdentityHashInput,
   playtestFindingIdFromFingerprint,
-  type PlaytestReviewPacketReceipt,
   type PlaytestReviewClaim,
+  type PlaytestReviewPacketReceipt,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V1,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V2,
@@ -46,9 +47,10 @@ import {
   PLAYTESTS_MAX_BATCH_REVIEW_SESSIONS,
   PLAYTESTS_REVIEW_PACKET_FAILURE_REASONS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
+  PLAYTESTS_SESSION_REVIEW_SCHEMA_V1,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V2,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V3,
-  PLAYTESTS_SESSION_REVIEW_SCHEMA_V1,
+  PLAYTESTS_SESSION_REVIEW_SCHEMA_V4,
   type PlaytestSessionReview
 } from "@simulatorlife/autodev-core";
 
@@ -473,7 +475,6 @@ export function encodeReview(
     );
   }
   assertEvidencePacketReference(artifact.evidencePacket);
-  assertPlaytestSessionReviewHasEvidence(artifact);
   assertPlaytestSessionReviewHasEvidence(artifact);
   return {
     workspace_id: requiredRef(workspaceId, "workspaceId"),
@@ -1426,6 +1427,114 @@ export function decodeFinding(row: Record<string, unknown>): PlaytestFinding {
   return artifact;
 }
 
+function isLegacyReviewSchema(schema: unknown): boolean {
+  return (
+    schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V1 ||
+    schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V2 ||
+    schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V3 ||
+    schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V4
+  );
+}
+
+function notRecordedReviewCompleteness(
+  schemaLabel: string
+): PlaytestSessionReview["reportCompleteness"] {
+  const sectionReason = (section: string): string =>
+    `${section} was not represented in review schema ${schemaLabel}.`;
+  return {
+    crossSessionContext: {
+      status: PLAYTEST_REVIEW_SECTION_NOT_RECORDED,
+      reason: sectionReason("Cross-session context")
+    },
+    alternatives: {
+      status: PLAYTEST_REVIEW_SECTION_NOT_RECORDED,
+      reason: sectionReason("Alternative-explanation completeness")
+    },
+    experiments: {
+      status: PLAYTEST_REVIEW_SECTION_NOT_RECORDED,
+      reason: sectionReason("Experiment completeness")
+    },
+    followUp: {
+      status: PLAYTEST_REVIEW_SECTION_NOT_RECORDED,
+      reason: sectionReason("Follow-up completeness")
+    }
+  };
+}
+
+function migrateLegacyReview(
+  raw: Readonly<Record<string, unknown>>
+): PlaytestSessionReview {
+  const isVersionOne = raw.schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V1;
+  const isVersionFour = raw.schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V4;
+  if (!isVersionOne && raw.evidencePacket === undefined) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse legacy review is missing its evidence-packet field"
+    );
+  }
+  if (!isVersionOne) {
+    try {
+      assertEvidencePacketReference(raw.evidencePacket);
+    } catch (error) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse legacy review has a malformed evidence-packet reference",
+        error
+      );
+    }
+  }
+  if (isVersionFour) {
+    const migrated = {
+      ...raw,
+      schema: PLAYTESTS_SESSION_REVIEW_SCHEMA,
+      reportCompleteness: notRecordedReviewCompleteness("v4")
+    } as unknown as PlaytestSessionReview;
+    try {
+      assertPlaytestSessionReviewHasEvidence(migrated, {
+        allowHistoricalNotRecorded: true
+      });
+      return migrated;
+    } catch (error) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse v4 review has malformed packet citations or report fields",
+        error
+      );
+    }
+  }
+  return {
+    ...raw,
+    schema: PLAYTESTS_SESSION_REVIEW_SCHEMA,
+    evidencePacket: isVersionOne
+      ? null
+      : (raw.evidencePacket as PlaytestSessionReview["evidencePacket"]),
+    reportCompleteness: notRecordedReviewCompleteness("legacy"),
+    observations: migrateLegacyReviewClaims(raw.observations, "observations"),
+    interpretations: migrateLegacyReviewClaims(
+      raw.interpretations,
+      "interpretations"
+    )
+  } as unknown as PlaytestSessionReview;
+}
+
+function decodeCurrentReview(
+  raw: Readonly<Record<string, unknown>>
+): PlaytestSessionReview {
+  if (raw.evidencePacket === undefined || raw.evidencePacket === null) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse v5 playtest review is missing its evidence-packet reference"
+    );
+  }
+  try {
+    assertEvidencePacketReference(raw.evidencePacket);
+    const review = raw as unknown as PlaytestSessionReview;
+    assertPlaytestSessionReviewHasEvidence(review);
+    return review;
+  } catch (error) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse v5 review has a malformed packet reference, claim citation or report-completeness record",
+      error
+    );
+  }
+}
+
 export function decodeReview(
   row: Record<string, unknown>
 ): PlaytestSessionReview {
@@ -1434,75 +1543,12 @@ export function decodeReview(
     "reviewId",
     "version"
   );
-  let artifact: PlaytestSessionReview;
-  if (
-    raw.schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V1 ||
-    raw.schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V2 ||
-    raw.schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V3
-  ) {
-    if (
-      raw.schema !== PLAYTESTS_SESSION_REVIEW_SCHEMA_V1 &&
-      raw.evidencePacket === undefined
-    ) {
-      throw new PlaytestSourceUnavailableError(
-        "ClickHouse legacy review is missing its evidence-packet field"
-      );
-    }
-    if (raw.schema !== PLAYTESTS_SESSION_REVIEW_SCHEMA_V1) {
-      try {
-        assertEvidencePacketReference(raw.evidencePacket);
-      } catch (error) {
-        throw new PlaytestSourceUnavailableError(
-          "ClickHouse legacy review has a malformed evidence-packet reference",
-          error
-        );
-      }
-    }
-    artifact = {
-      ...raw,
-      schema: PLAYTESTS_SESSION_REVIEW_SCHEMA,
-      evidencePacket:
-        raw.schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V1
-          ? null
-          : (raw.evidencePacket as PlaytestSessionReview["evidencePacket"]),
-      observations: migrateLegacyReviewClaims(raw.observations, "observations"),
-      interpretations: migrateLegacyReviewClaims(
-        raw.interpretations,
-        "interpretations"
-      )
-    } as unknown as PlaytestSessionReview;
-  } else if (raw.schema === PLAYTESTS_SESSION_REVIEW_SCHEMA) {
-    if (raw.evidencePacket === undefined || raw.evidencePacket === null) {
-      throw new PlaytestSourceUnavailableError(
-        "ClickHouse v4 playtest review is missing its evidence-packet reference"
-      );
-    }
-    try {
-      assertEvidencePacketReference(raw.evidencePacket);
-    } catch (error) {
-      throw new PlaytestSourceUnavailableError(
-        "ClickHouse review has a malformed evidence-packet reference",
-        error
-      );
-    }
-    artifact = raw as unknown as PlaytestSessionReview;
-    try {
-      assertPlaytestSessionReviewHasEvidence(artifact);
-    } catch (error) {
-      throw new PlaytestSourceUnavailableError(
-        "ClickHouse review has malformed per-claim citations",
-        error
-      );
-    }
-    try {
-      assertPlaytestSessionReviewHasEvidence(artifact);
-    } catch (error) {
-      throw new PlaytestSourceUnavailableError(
-        "ClickHouse review has missing or malformed claim citations",
-        error
-      );
-    }
-  } else {
+  const artifact = isLegacyReviewSchema(raw.schema)
+    ? migrateLegacyReview(raw)
+    : raw.schema === PLAYTESTS_SESSION_REVIEW_SCHEMA
+      ? decodeCurrentReview(raw)
+      : null;
+  if (artifact === null) {
     throw new PlaytestSourceUnavailableError(
       "ClickHouse returned an unsupported playtest review schema"
     );

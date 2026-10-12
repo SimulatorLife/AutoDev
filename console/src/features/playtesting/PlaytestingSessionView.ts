@@ -259,6 +259,112 @@ function reviewPanel(
         "No analyst review is recorded. This is not a negative review or a score of zero."
     });
   }
+  const completenessSection = (
+    title: string,
+    status: string,
+    explanation: string,
+    children: readonly React.ReactNode[] = []
+  ): React.JSX.Element =>
+    React.createElement(
+      "li",
+      {
+        className: "space-y-1",
+        "data-review-completeness-section": title
+          .toLowerCase()
+          .replaceAll(" ", "-")
+      },
+      React.createElement("h4", { className: "font-medium" }, title),
+      React.createElement(StatusBadge, {
+        status:
+          status === "not-recorded"
+            ? NOT_OBSERVED_STATUS
+            : status === "unavailable"
+              ? "unavailable"
+              : "configured",
+        label: status
+      }),
+      explanation.length > 0
+        ? React.createElement("p", { className: MUTED_BODY_CLASS }, explanation)
+        : null,
+      ...children
+    );
+  const completeness = review.reportCompleteness;
+  const crossSessionReason = completeness.crossSessionContext.reason;
+  const alternativeSection = completenessSection(
+    "Alternative explanations",
+    completeness.alternatives.status,
+    completeness.alternatives.status === "provided"
+      ? "Competing explanations are listed below."
+      : completeness.alternatives.reason,
+    review.alternativeExplanations.map((alternative, index) =>
+      React.createElement(
+        "p",
+        { key: `alternative:${index}`, className: "text-sm" },
+        alternative
+      )
+    )
+  );
+  const experimentSection = completenessSection(
+    "Experiments",
+    completeness.experiments.status,
+    completeness.experiments.status === "proposed"
+      ? "Proposed tests and their falsifiers are listed below."
+      : completeness.experiments.reason,
+    review.experiments.map((experiment, index) =>
+      React.createElement(
+        "div",
+        {
+          key: `experiment:${index}`,
+          className: "rounded border border-border p-2 text-sm"
+        },
+        React.createElement("p", {}, experiment.hypothesis),
+        React.createElement(
+          "p",
+          { className: MUTED_META_CLASS },
+          `Falsifier: ${experiment.falsifier}`
+        ),
+        React.createElement(
+          "p",
+          { className: MUTED_META_CLASS },
+          `Controls: ${experiment.controls.join(", ")}`
+        ),
+        React.createElement(
+          "p",
+          { className: MUTED_META_CLASS },
+          `Metric: ${experiment.metricId} · Budget: ${experiment.budget}`
+        )
+      )
+    )
+  );
+  const followUpDetail =
+    completeness.followUp.status === "proposed"
+      ? completeness.followUp.text
+      : completeness.followUp.reason;
+  const completenessPanel = React.createElement(
+    "section",
+    { className: "space-y-2", "aria-label": "Review completeness" },
+    React.createElement(
+      "h3",
+      { className: "font-semibold" },
+      "Review completeness and follow-up"
+    ),
+    React.createElement(
+      "ul",
+      { className: "grid gap-3 sm:grid-cols-2" },
+      completenessSection(
+        "Cross-session context",
+        completeness.crossSessionContext.status,
+        crossSessionReason
+      ),
+      alternativeSection,
+      experimentSection,
+      completenessSection(
+        "Follow-up",
+        completeness.followUp.status,
+        followUpDetail
+      )
+    )
+  );
   const renderClaims = (
     kind: "observation" | "interpretation",
     claims: readonly PlaytestReviewClaim[],
@@ -320,6 +426,7 @@ function reviewPanel(
       { className: MUTED_META_CLASS },
       `Review ${review.reviewId} · rubric ${review.rubricHash} · ${review.measurementVersion}`
     ),
+    completenessPanel,
     review.anchors.length === 0
       ? React.createElement(EmptyState, {
           variant: "inline",
