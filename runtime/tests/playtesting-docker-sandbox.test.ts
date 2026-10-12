@@ -233,11 +233,64 @@ function approval(
   };
 }
 
+/**
+ * `sockaddr_un.sun_path` is a fixed-size buffer -- 104 bytes on macOS, 108 on
+ * Linux, NUL terminator included -- so `listen()` rejects an over-long path
+ * with `EINVAL` before it ever binds. A deep `TMPDIR` (long-lived sandbox
+ * session directories, some CI runners) therefore breaks this fixture even
+ * though the filesystem has room; production does not share the problem
+ * because `localDockerSocket` returns a fixed short path.
+ */
+const SUN_PATH_LIMIT = process.platform === "darwin" ? 104 : 108;
+// Short prefix: every character here comes out of the socket path budget, and
+// `mkdtemp` appends six more. The socket name is fixed by the mock engine.
+const SOCKET_DIR_PREFIX = "agy-";
+const SOCKET_NAME = "engine.sock";
+
+/** Standard temporary roots, shortest-fitting first; `tmpdir` is preferred. */
+function socketTempRoots(): string[] {
+  const roots = [tmpdir()];
+  if (process.platform !== "win32") roots.push("/tmp", "/var/tmp");
+  return roots;
+}
+
+/**
+ * Create the directory that will hold the socket, preferring `tmpdir()` but
+ * falling back to shorter standard roots when `tmpdir()` alone would overflow
+ * `sun_path`. Reports every candidate it rejected so a genuine failure says
+ * which roots were unusable and why, rather than surfacing as an opaque
+ * `EINVAL` from `listen()`.
+ */
+function createSocketDirectory(): string {
+  const rejected: string[] = [];
+  for (const root of socketTempRoots()) {
+    const directory = path.join(root, `${SOCKET_DIR_PREFIX}XXXXXX`);
+    // mkdtemp replaces the six X characters with random ones.
+    const projected = path.join(directory, SOCKET_NAME);
+    if (Buffer.byteLength(projected) >= SUN_PATH_LIMIT) {
+      rejected.push(
+        `${projected} needs ${Buffer.byteLength(projected)} bytes of a ${SUN_PATH_LIMIT}-byte sun_path`
+      );
+      continue;
+    }
+    try {
+      return mkdtempSync(directory);
+    } catch (error) {
+      rejected.push(
+        `${root}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+  throw new Error(
+    `Unable to create a directory for a Unix socket path: ${rejected.join("; ")}`
+  );
+}
+
 async function withLocalSocket<T>(
   run: (socket: string) => Promise<T>
 ): Promise<T> {
-  const directory = mkdtempSync(path.join(tmpdir(), "autodev-docker-socket-"));
-  const socket = path.join(directory, "engine.sock");
+  const directory = createSocketDirectory();
+  const socket = path.join(directory, SOCKET_NAME);
   const server = createServer();
   try {
     await new Promise<void>((resolve, reject) => {
