@@ -21,6 +21,7 @@ Do not use this skill for:
 ### Negative trigger examples
 
 Do not trigger for requests such as:
+
 - "play ten episodes of the target game" (execution/simulation task, use game-playtesting)
 - "run a playtest batch" (execution/simulation task, use game-playtesting)
 - "fix this code so the build passes" (source code repair, use standard engineering skills)
@@ -40,14 +41,14 @@ Enforce the authorized workspace and build gate: inspect only evidence originati
 
 Full normative detail: docs/playtesting-target-state.md section 6 ("Required playtest-analysis skill: how to read and interpret a session").
 
-1. Verify and read the source. Check game/adapter/policy/rubric hashes, run completeness, timeline revisions, replay validation, visible-vs-privileged state, and event/frame coverage. Name missing evidence instead of filling it in.
+1. Obtain and verify the frozen critic input. For a selected session, call `playtest.prepareReview` first. Check its packet's workspace/build/policy/rubric identity, completeness, selected-window reasons, source-trace hash, visible-vs-privileged state, and omitted/missing artifacts. The packet is the citation boundary for `submitReview`; do not substitute ad hoc trace reads or cite evidence that is absent from it. Name missing evidence instead of filling it in.
 2. Reconstruct decisions in context. For each sampled key moment: before-state, player-visible rules/alerts, legal alternatives, chosen action, stated intention/prediction (if collected), and authoritative after-state.
 3. Separate observations from interpretations. Deterministic evaluators establish what happened; you suggest why it may be a problem, against the target game's own goals, not universal norms.
 4. Evaluate both interesting and routine play. Sample abnormal moments and representative ordinary phases; distinguish novice learning failure, strong-policy dominance, bad AI calibration, intended difficulty, and actual usability defects.
 5. Score dimensions only where supported. Produce separately evidenced scores or null (never a placeholder "2") for agency, depth/strategy, pacing/repetition, tension/recovery, and clarity/fairness -- see references/scoring.md.
 6. Compare when necessary. Use code-computed aggregates (playtest.compare: matched seeds, comparable policy skill, sample counts, uncertainty) before explaining group patterns -- see references/comparisons.md. A single session cannot establish a systemic trend.
 7. Propose discriminating experiments. For each high-value concern: competing causes, a minimal test, metric, controls, budget, and what would refute the theory. Request execution via the root; you cannot run it yourself.
-8. Publish an evidence-linked review artifact. Separate verified bug vs statistically supported regression vs unverified game-design hypothesis; submit with playtest.submitReview -- see references/session-review.md. Never produce a GitHub issue directly.
+8. Publish an evidence-linked review artifact. Separate verified bug vs statistically supported regression vs unverified game-design hypothesis; submit with `playtest.submitReview`, carrying the exact packet ID, packet artifact ID, and SHA-256 from step 1 -- see references/session-review.md. Never produce a GitHub issue directly.
 
 ## Required report sections
 

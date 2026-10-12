@@ -6,38 +6,41 @@ All numeric examples below are **synthetic fixtures**. Their thresholds test beh
 
 ## 1. Metric registry, events and coverage
 
-The game owns playtest.rubric.json. Core validates its schema; game-owned deterministic evaluators emit facts; Data computes indexed aggregates. Neither prompts nor React implement metric calculations. Version/hash the rubric, evaluator code, event taxonomy and observation/action schemas; a semantic change creates a new version and comparison-compatibility decision, never silently rewrites history.
+The game owns playtest.rubric.json (registry schema v2). The sufficient-statistics and evaluator-hash contract is measurement version v2; Core validates its schema; the exact approved game adapter executes game-owned deterministic evaluators and emits sufficient statistics; Runtime validates and normalizes them; Data computes indexed aggregates. Neither prompts nor React implement metric calculations. Version/hash the rubric, evaluator code, event taxonomy and observation/action schemas; a semantic change creates a new version and comparison-compatibility decision, never silently rewrites history.
 
-A registry has schemaVersion, workspaceId, audience, registryVersion, eventSchemaHash, metricDefinitions and dimensionRubrics. Each metric definition must expand to the following fields before a run is approved:
+A registry has schemaVersion, workspaceId, audience, registryVersion, eventSchemaHash, metricDefinitions, `coverageRequirements`, and dimensionRubrics. Each metric definition must expand to the following fields before a run is approved:
 
-| Field | Required meaning |
-| --- | --- |
-| metricId/version, mechanicKey | Stable quantity identity and semantic version, with game-owned mechanic |
-| audience, scenarioEligibility, exposurePredicate | Who and what can contribute; deterministic named predicate/version |
-| eventFields, evaluatorRef | Exact source events/fields and code hash; no arbitrary expression executed from a critic |
-| numerator, denominator, unit | Calculation, eligible exposure count, display units; counts and units travel together |
-| analysisUnit, aggregationWindow, aggregation | Independent episode/player/cluster, phase or session window, stratification and aggregation |
-| polarity, targetBand, meaningfulMargin, guardrailMargin | Higher/lower/target-band goal and preregistered practical thresholds; null if descriptive |
-| modality, notObservable, missingPolicy | Headless/native visual/human requirements, explicit null reasons and handling |
-| minExposure, minIndependentUnits, precisionPlanRef | Minimum evidence and justified inference plan; a count alone is not sufficient |
-| severityRule, priorityClass | Target-defined consequence categories with witnesses, not an LLM priority number |
-| provenance, humanConstruct | Source IDs/hashes and exact instrument/outcome, or null; no automatic proxy-to-human mapping |
+| Field                                                   | Required meaning                                                                                                                   |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| metricId/version, mechanicKey                           | Stable quantity identity and semantic version, with game-owned mechanic                                                            |
+| audience, scenarioEligibility, exposurePredicate        | Who and what can contribute; deterministic named predicate/version                                                                 |
+| eventFields, evaluatorRef, evaluatorHash                | Exact source events/fields and SHA-256 of the target-owned deterministic evaluator; no arbitrary expression executed from a critic |
+| numerator, denominator, unit                            | Calculation, eligible exposure count, display units; counts and units travel together                                              |
+| analysisUnit, aggregationWindow, aggregation            | Independent episode/player/cluster, phase or session window, stratification and aggregation                                        |
+| polarity, targetBand, meaningfulMargin, guardrailMargin | Higher/lower/target-band goal and preregistered practical thresholds; null if descriptive                                          |
+| modality, notObservable, missingPolicy                  | Headless/native visual/human requirements, explicit null reasons and handling                                                      |
+| minExposure, minIndependentUnits, precisionPlanRef      | Minimum evidence and justified inference plan; a count alone is not sufficient                                                     |
+| severityRule, priorityClass                             | Target-defined consequence categories with witnesses, not an LLM priority number                                                   |
+| provenance, humanConstruct                              | Source IDs/hashes and exact instrument/outcome, or null; no automatic proxy-to-human mapping                                       |
+
+Every coverage requirement freezes one `coverageMetricId`/mechanic/phase/scenario-family/cohort/policy/modality cell, required opportunity and independent-unit counts, and either `unsupportedReason: null` or a bounded game-owned explanation. A supported requirement references a phase-window metric with a non-null phase or a whole-episode metric with `phaseId: null`, and must match its mechanic and modality. Runtime rejects a batch assignment if any eligible phase-window metric lacks a matching frozen cell; whole-episode metrics can still emit an episode-level result without being a critical coverage cell. An adapter cannot add an unplanned cell during evaluation. Cells declared unsupported stay visible in the batch manifest and do not ask the adapter to invent a value.
+
+`game.outcome` returns typed sufficient statistics per metric, with a non-null `phaseId` for a phase-window metric and `phaseId: null` for a whole-episode metric (`metricId`, `phaseId`, semantic version, exact `evaluatorRef` and declared evaluator SHA-256, numerator, denominator, opportunity count, missing count/reasons, independent units, and unit). Runtime accepts only registered metric/phase pairs and exact ref/version/hash/unit matches; it derives the ratio and coverage without re-running or evaluating adapter code. The evaluator SHA is an adapter-reported provenance claim matched to the rubric, not remote attestation of which code path the process executed. The trust root is the exact approved clean checkout and adapter image (bound into the episode environment hash); source-level evaluator reuse/behavior must be verified against that pinned artifact before production claims. Every eligible non-human metric emits its required result row, including zero-opportunity `estimate=null` rows; phase-window metrics require rows for every matching supported plan cell. Missing rows, duplicate/unknown metric/phase pairs, unplanned phase outputs, or mismatched outputs fail the evidence attempt instead of becoming zero. A mode mismatch is `null` with `unsupported-modality`; a metric outside the current scenario eligibility is omitted as inapplicable. Human-post-play measures are imported through the consented study path, not returned as game episode metrics. Data indexes the resulting per-episode measurements; it does not treat one episode result as a population aggregate.
+
+The versioned assignment manifest freezes each assignment's policy cohort as well as scenario, policy/version and seed; Runtime does not infer cohort identity from a returned episode after an assignment disappears. The batch `coverageManifest` carries workspace/batch/build identity, the rubric and assignment hashes, every planned cell, assigned/persisted episode counts, observed/eligible/missing opportunities, independent-unit coverage and missing reasons. Cell states distinguish `covered`, `insufficient`, `partial`, `not-assigned`, `unsupported`, and `unsupported-modality`. Counts are aggregated only over assignments that match the exact cell. `observedIndependentUnits` is null for non-episode analysis units until the evaluator contract provides cross-episode identity deduplication; a per-episode count is not silently summed into a distinct-participant/learner count. Data verifies the manifest's content hash and batch/rubric/assignment identity. The server-filtered Console overview renders the latest batch's cell states and unmet counts. Historical batches that predate this manifest remain explicitly unrecorded; no coverage is reconstructed from seed text. A migrated historical batch may therefore retain `coverageManifest: null` as explicit unavailable coverage; it cannot be used to prepare an analyst packet or make a coverage claim. New terminal Runtime batches carry the content-verified manifest.
 
 **Complete compact fixture registry.** Resolve defaults by shallow field replacement into each metric; reject absent required fields after expansion. The four definitions cover an objective defect, strategy signal, learning measure and reported enjoyment. Identifiers refer to fixture evaluator functions whose specified input/output cases below must become implementation tests.
 
-~~~json
+```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "workspaceId": "fixture-game",
   "audience": "first-time-adult",
-  "registryVersion": "fixture-v1",
+  "registryVersion": "fixture-v2",
   "eventSchemaHash": "fixture-events-v1",
   "defaults": {
     "audience": "first-time-adult",
-    "scenarioEligibility": [
-      "tutorial",
-      "standard"
-    ],
+    "scenarioEligibility": ["tutorial", "standard"],
     "analysisUnit": "episode",
     "aggregationWindow": "whole-episode",
     "aggregation": "ratio-of-sums-within-scenario",
@@ -46,12 +49,7 @@ A registry has schemaVersion, workspaceId, audience, registryVersion, eventSchem
     "minIndependentUnits": 1,
     "precisionPlanRef": "fixture-descriptive-only",
     "missingPolicy": "null-with-reason-and-missing-count",
-    "provenance": [
-      "episodeId",
-      "eventId",
-      "buildSha",
-      "evaluatorHash"
-    ],
+    "provenance": ["episodeId", "eventId", "buildSha", "evaluatorHash"],
     "humanConstruct": null,
     "meaningfulMargin": null,
     "guardrailMargin": null,
@@ -63,6 +61,7 @@ A registry has schemaVersion, workspaceId, audience, registryVersion, eventSchem
       "metricId": "legal-action-rejection",
       "version": 1,
       "mechanicKey": "action-execution",
+      "aggregationWindow": "phase",
       "exposurePredicate": "fresh-legal-request-v1",
       "eventFields": [
         "action.offeredIds",
@@ -72,17 +71,13 @@ A registry has schemaVersion, workspaceId, audience, registryVersion, eventSchem
         "action.rejected"
       ],
       "evaluatorRef": "fixture/legal-rejection-v1",
+      "evaluatorHash": "1111111111111111111111111111111111111111111111111111111111111111",
       "numerator": "fresh advertised legal requests rejected by engine",
       "denominator": "all fresh advertised legal requests",
       "unit": "proportion",
       "polarity": "lower",
-      "targetBand": [
-        0,
-        0
-      ],
-      "notObservable": [
-        "missing-action-or-revision-events"
-      ],
+      "targetBand": [0, 0],
+      "notObservable": ["missing-action-or-revision-events"],
       "severityRule": "verified-blocks-progress",
       "priorityClass": "major"
     },
@@ -90,6 +85,7 @@ A registry has schemaVersion, workspaceId, audience, registryVersion, eventSchem
       "metricId": "competitive-choice-share",
       "version": 1,
       "mechanicKey": "strategic-choice",
+      "aggregationWindow": "phase",
       "exposurePredicate": "decision-with-complete-approved-alternative-evaluation-v1",
       "eventFields": [
         "branch.decisionId",
@@ -99,24 +95,25 @@ A registry has schemaVersion, workspaceId, audience, registryVersion, eventSchem
         "branch.continuationPolicyHash"
       ],
       "evaluatorRef": "fixture/competitive-options-v1",
+      "evaluatorHash": "2222222222222222222222222222222222222222222222222222222222222222",
       "numerator": "eligible decisions with at least two actions within 0.05 of best expected reward",
       "denominator": "decisions with all legal alternatives evaluated under frozen continuation and RNG plan",
       "unit": "proportion",
       "polarity": "higher",
-      "targetBand": [
-        0.5,
-        1
-      ],
+      "targetBand": [0.5, 1],
       "notObservable": [
         "fork-unsupported",
         "partial-alternatives",
-        "reward-or-continuation-contract-mismatch"
+        "reward-or-continuation-contract-mismatch",
+        "unsupported-evaluator",
+        "unsupported-modality"
       ]
     },
     {
       "metricId": "repeat-forecast-error",
       "version": 1,
       "mechanicKey": "learning",
+      "aggregationWindow": "phase",
       "exposurePredicate": "revisited-visible-rule-after-feedback-v1",
       "eventFields": [
         "probe.ruleId",
@@ -127,14 +124,12 @@ A registry has schemaVersion, workspaceId, audience, registryVersion, eventSchem
         "feedback.visible"
       ],
       "evaluatorRef": "fixture/repeated-error-v1",
+      "evaluatorHash": "3333333333333333333333333333333333333333333333333333333333333333",
       "numerator": "wrong preregistered deterministic consequence predictions after visible feedback",
       "denominator": "eligible revisits after visible feedback",
       "unit": "proportion",
       "polarity": "lower",
-      "targetBand": [
-        0,
-        0.2
-      ],
+      "targetBand": [0, 0.2],
       "analysisUnit": "learner-identity",
       "notObservable": [
         "missing-before-action-probe",
@@ -155,14 +150,12 @@ A registry has schemaVersion, workspaceId, audience, registryVersion, eventSchem
         "response.instrumentVersion"
       ],
       "evaluatorRef": "fixture/minipxi-enj-v1",
+      "evaluatorHash": "4444444444444444444444444444444444444444444444444444444444444444",
       "numerator": "sum of valid ENJ responses",
       "denominator": "valid ENJ respondent-session responses",
       "unit": "native-Likert-minus3-plus3",
       "polarity": "higher",
-      "targetBand": [
-        1,
-        3
-      ],
+      "targetBand": [1, 3],
       "aggregation": "native-item-mean-and-category-distribution",
       "analysisUnit": "participant",
       "modality": "human-post-play",
@@ -182,6 +175,44 @@ A registry has schemaVersion, workspaceId, audience, registryVersion, eventSchem
         "instrumentVersion"
       ],
       "severityRule": "reported-experience-only"
+    }
+  ],
+  "coverageRequirements": [
+    {
+      "coverageMetricId": "legal-action-rejection",
+      "mechanicKey": "action-execution",
+      "phaseId": "tutorial",
+      "scenarioFamily": "tutorial",
+      "cohort": "novice",
+      "policy": "heuristic",
+      "modality": "headless",
+      "requiredOpportunities": 10,
+      "requiredIndependentUnits": 1,
+      "unsupportedReason": null
+    },
+    {
+      "coverageMetricId": "competitive-choice-share",
+      "mechanicKey": "strategic-choice",
+      "phaseId": "tutorial",
+      "scenarioFamily": "tutorial",
+      "cohort": "novice",
+      "policy": "heuristic",
+      "modality": "headless",
+      "requiredOpportunities": 4,
+      "requiredIndependentUnits": 1,
+      "unsupportedReason": null
+    },
+    {
+      "coverageMetricId": "repeat-forecast-error",
+      "mechanicKey": "learning",
+      "phaseId": "tutorial",
+      "scenarioFamily": "tutorial",
+      "cohort": "novice",
+      "policy": "heuristic",
+      "modality": "headless",
+      "requiredOpportunities": 4,
+      "requiredIndependentUnits": 1,
+      "unsupportedReason": null
     }
   ],
   "dimensionRubrics": [
@@ -230,7 +261,7 @@ A registry has schemaVersion, workspaceId, audience, registryVersion, eventSchem
     }
   ]
 }
-~~~
+```
 
 **Known inputs → outputs:** two rejected requests among ten fresh advertised requests = 2/10 = 0.20 legal-action rejection. Competitive-choice decisions with alternative reward vectors [0.80,0.78], [0.90,0.10], [0.40,0.38] yield 2/3; an unevaluated fourth decision is excluded as missing, so coverage is 3/4, not a fourth zero. This is reward-relative choice viability, not proven strategic depth. Revisited rules with one wrong prediction among four eligible revisits = 1/4; this measures the synthetic learner unless human validity is established. ENJ responses [2,1,-1,null] yield native mean 2/3, three respondents, one missing, and category counts; they do not yield a 0–4 critic score.
 
@@ -260,6 +291,10 @@ Surveillance uses seeded sampling without replacement within preregistered polic
 
 Only surveillance contributes to population critic-category estimates, using stratum population weights N_h/N and a design-appropriate interval implementation. Targeted reviews are reported separately; a 12/40 discovery-enriched count cannot become 30% of 1,000 episodes. If valid design weights/intervals are unavailable, report reviewed-only counts and population prevalence unknown. A validated deterministic detector may run over all eligible exposures and report exact batch prevalence instead. Confirm discovered hypotheses on fresh, independently selected episodes. Fixture: discovery finds a rare failure in 12 selected reviews; full detector sees 12/1,000 episodes. Display both with distinct denominators, never equate them.
 
+The critique sampling population is persisted, complete episodes only. A cancelled, crashed, infrastructure-failed, budget-truncated, partial, or episode-less assignment remains in the assignment denominator and is counted as unreviewable; it cannot be selected to satisfy a complete-session critique budget. The first milestone selects no more than 40 complete sessions for critique. Persist the ordered, bounded assignment manifest (at most 1,000 assignments and 256 KiB) and its content hash before launching workers. Live Runtime status may expose partial outcome counts; the terminal batch revision retains every no-episode disposition, while episode rows remain the source for assignments with persisted episodes. If Runtime restarts before terminal persistence, reconcile against the frozen manifest and workspace-scoped episode rows, preserve observed episodes, close missing assignments as infrastructure loss, and mark the batch failed with durable `nonterminal-batch-recovered` provenance. Both run-status and active-runs reads reconcile orphaned nonterminal batches. Never synthesize an episode, successful retry, or game outcome during recovery. A batch recorded before manifests existed remains inventory-unavailable and is not reconstructed from seed text. The review cap counts persisted critique receipts, not planned selections; retrying the same review ID is idempotent. Before writing findings or a review row, Runtime durably reserves that exact review ID against the cap. Reservations do not inflate completed-review counts and cannot be consumed by another review; the same ID finalizes the reservation after persistence succeeds. Cancelled batches retain whether the operator cancelled, approval was revoked, or the workspace was disabled; pre-change records remain explicitly reason-unavailable.
+
+Before analyst inference, Runtime prepares one immutable, bounded evidence packet for every selected complete session and persists a packet receipt (prepared or explicitly unavailable) in the terminal batch. The packet binds the frozen episode, assignment, build, rubric, coverage manifest, source-trace hash and only player-visible selected windows; event-bearing and terminal evidence is retained ahead of deterministic ordinary context, with omitted windows/artifacts and byte/token limits explicit. A selected batch cannot silently omit a packet receipt. The analyst retrieves the exact artifact using `playtest.prepareReview`; `playtest.submitReview` must bind its packet ID, artifact ID and SHA-256, and every citation must resolve within that packet. A missing/unavailable/corrupt source or packet is an explicit review failure, not permission to reread arbitrary trace windows and enlarge the critic input. Unknown model/prompt identity stays null rather than being inferred.
+
 Every finding records affected episodes/all eligible episodes **and** affected opportunities/all eligible opportunities, by build/scenario/policy/modality. A pit failure can be 12/15 pit entries and 12/1,000 runs simultaneously; affected-human share remains unknown without human exposure data. Repeated events within an episode are not independent sample units.
 
 Keep assigned, started, completed, crashed, infrastructure-failed, cancelled, budget-truncated, reviewed and eligible counts. Game crashes count in the assigned-run stability outcome; a normal game loss is a completed outcome. Instrumentation failures are missing, not losses or zeros. Predeclared completion endpoints count game crashes as failure; outcomes genuinely unobserved because of infrastructure remain unknown and retain their original pair assignment. Optional completed-only rates are visibly conditional secondary metrics. Report missingness by arm/stratum and predeclared sensitivity bounds; do not silently delete pairs or replace failed episodes with successful retries. When missingness limits or precision requirements fail, comparison is inconclusive; semantic contract mismatch is not-comparable. No LLM score is imputed as zero.
@@ -274,13 +309,15 @@ Core rejects malformed benchmark inventories, non-normalized scenario weights, i
 
 Compatibility is metric-specific:
 
-| Mode | Required evidence | Claim permitted |
-| --- | --- | --- |
-| paired-initial-condition | Explicit pair ID, comparable initial scenario and policy/information contract, recorded seed allocation | Whole-episode outcome difference under matched initial conditions |
-| paired-counterfactual | Above plus verified snapshot/hidden-state equality, exogenous RNG coupling/stream semantics and continuation policy | Bounded same-state intervention effect under that coupling |
-| distribution-matched | Comparable measurement and scenario/skill distributions, independent allocations | Controlled group difference with declared limitations |
-| observational | No controlled allocation, but interpretable common quantity | Association, with confounders |
-| not-comparable | Changed quantity, missing required modality or unbridged schemas/competence | No quality delta |
+| Mode                     | Required evidence                                                                                                   | Claim permitted                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| paired-initial-condition | Explicit pair ID, comparable initial scenario and policy/information contract, recorded seed allocation             | Whole-episode outcome difference under matched initial conditions |
+| paired-counterfactual    | Above plus verified snapshot/hidden-state equality, exogenous RNG coupling/stream semantics and continuation policy | Bounded same-state intervention effect under that coupling        |
+| distribution-matched     | Comparable measurement and scenario/skill distributions, independent allocations                                    | Controlled group difference with declared limitations             |
+| observational            | No controlled allocation, but interpretable common quantity                                                         | Association, with confounders                                     |
+| not-comparable           | Changed quantity, missing required modality or unbridged schemas/competence                                         | No quality delta                                                  |
+
+For a counterfactual branch, retain a full-state/RNG digest at the parent's exact pre-action decision. Runtime replays the frozen trace to that zero-based decision, requires `replayStatus=verified` and an exact reached-step match, materializes a snapshot, and compares the digest plus RNG algorithm/version/state hash with the parent checkpoint before forking. The fork must reproduce the same state/RNG digest; Runtime then verifies the alternate ID against current legal actions and executes it. A missing digest, hidden-state mismatch, extra random draw, nondeterministic stream, or replay/fork artifact failure means no paired-counterfactual evidence. The replay prefix and continuation share the approved per-episode step ceiling and the branch is a separately budgeted assignment with durable parent/trace/snapshot lineage. A synthetic adapter contract test does not establish target-game support.
 
 Record pair map, RNG algorithm/stream versions, coupling diagnostics, exclusions and intended pair assignments. Identical seed strings do not prove identical future draws. An extra RNG call invalidates an identical-randomness branch claim; it need not invalidate a legitimate initial-condition block. Independently sampled continuations or stratified group analysis may be allowed if preregistered and scientifically appropriate; do not select the fallback after seeing which result is favorable.
 
@@ -289,6 +326,7 @@ The Core comparison builder consumes the frozen allocation-plan SHA-256 plus eve
 **One PlaytestComparison, not a second ComparisonReport schema.** It contains benchmark/experiment IDs, baseline/candidate SHA, freeze/compatibility status, measurement version, per-metric assigned/eligible/missing counts, independent N/pairs, exposure, estimate, raw delta, oriented benefit delta, interval/method/library version, meaningful/noninferiority margins, classification, guardrail status, human-preference result or not-collected, source finding/episode refs, and owner-authored decision/reason. Store immutable revisions when reanalysis is necessary.
 
 For an oriented benefit delta d (positive is favorable), interval [L,U], meaningful margin m>0:
+
 - improved if L>m; regressed if U<−m;
 - no-material-change if [L,U] is wholly within [−m,m];
 - otherwise inconclusive. Failure to reject zero is not equivalence.
@@ -341,7 +379,7 @@ Use existing survey tooling and official instrument templates; v1 implements **a
 
 [PXI guidance](https://playerexperienceinventory.org/docs) defines ten constructs with native −3…+3 responses and published item grouping. Preserve wording, labels and administration; report each full-PXI construct using its published three-item average. Do not combine ten constructs into enjoyment. The [official miniPXI items](https://playerexperienceinventory.org/assets/docs/miniPXI_English.pdf) identify ENJ separately: “I had a good time playing this game.” Use ENJ for reportedEnjoyment.postPlay; AUT, GR and CH remain distinct single-item constructs. Retain native units; any display transform must disclose its reversible mapping and never map to the critic's 0–4 scale.
 
-The study declares response timing/window, exposure requirements, counterbalanced AB/BA order, independent unit and missing-item rule. V1 conservatively leaves a full-PXI construct null if any constituent item is missing; miniPXI missing ENJ makes enjoyment null while other answered items remain usable. This is a declared missing-data policy, not a claim that PXI mandates it. For preference collect a separate project-authored A/B/tie/unable-to-judge response after both exposures; it is not a PXI item.
+The study declares response timing/window, exposure requirements, counterbalanced AB/BA order, independent unit and missing-item rule. When a paired preference outcome is planned, the approved `HumanPlaytestStudy.preferencePlan` freezes the exact question version/content hash, A/B build identities, interval method/library/version/confidence/resampling seed, participant minimum, maximum exclusion rate, and practical margin. Preference data are not silently borrowed from a PXI item. V1 conservatively leaves a full-PXI construct null if any constituent item is missing; miniPXI missing ENJ makes enjoyment null while other answered items remain usable. This is a declared missing-data policy, not a claim that PXI mandates it. For preference collect a separate project-authored A/B/tie/unable-to-judge response after both exposures; it is not a PXI item.
 
 Required response fields: studyId, responseId, pseudonymousParticipantId, consentVersion/scope, instrument/version/hash, immutable build/variant, episodeId, exposure start/end and order, submittedAt, itemId/nativeValue or missingReason, completion status and restricted optional free text. Study metadata carries invited/eligible/responded/withdrawn counts. Reject unapproved study, wrong workspace/build, bad item IDs/range, invalid episode links, wrong timing and consent mismatch. (studyId,responseId) is idempotent; amendments have revision/supersedes, and duplicate participant×episode×instrument submissions are quarantined for operator choice. Never silently count both.
 
@@ -351,26 +389,26 @@ Human-study approval precedes collection. The study links each pseudonym to cons
 
 **Human-versus-AI fixture:** critic agency category improves 2→3 while a participant's ENJ changes +2→0. Display both with separate construct/scale/source; flag disagreement, not “PXI confirms fun.” Prediction targets are explicit (e.g. native ENJ category distribution, or probability of preferring B) and validated separately from rubric categories. An autonomy or challenge score is not automatically a proxy for enjoyment.
 
-**Change sensitivity is a separate qualification.** Freeze predicted direction/size or category of each held-out build-pair effect before human labels. Counterbalance exposure and blind build labels where feasible; use independent target-player pairs and preregister tie handling, primary outcome, precision and guardrails. Report absolute-rating agreement and change-detection/preference accuracy separately, with clustered intervals, baseline comparisons and disagreement. For preference define p=Pr(B preferred | decisive response), report ties/unable/missing separately and a preregistered maximum such exclusion rate; a preference claim requires the interval lower bound above 0.5 plus the practical margin. Otherwise inconclusive; all ties cannot count as wins. Passing absolute-rating validation never authorizes a change-detection claim. Revalidate after meaningful audience, mechanics, modality or evaluator shifts under §6.
+**Change sensitivity is a separate qualification.** Freeze predicted direction/size or category of each held-out build-pair effect before human labels. Counterbalance exposure and blind build labels where feasible; use independent target-player pairs and preregister tie handling, primary outcome, precision and guardrails. Report absolute-rating agreement and change-detection/preference accuracy separately, with clustered intervals, baseline comparisons and disagreement. For preference define p=Pr(B preferred | decisive response), report ties/unable/missing separately and a preregistered maximum such exclusion rate; a preference claim requires the interval lower bound above 0.5 plus the practical margin. Otherwise inconclusive; all ties cannot count as wins. Passing absolute-rating validation never authorizes a change-detection claim. Revalidate after meaningful audience, mechanics, modality or evaluator shifts under §6. Core `importHumanStudyPreferenceResponses` imports a dedicated project-authored preference export, verifies the exact plan-bound A/B builds, both completed episode links, counterbalanced exposure order, timing, consent and question hash, and quarantines duplicate participant-pair submissions. The instrument-response and paired-preference quarantine endpoints return disjoint lists; each view returns an empty array for the other response family. The export must include one roster row per eligible participant with a completed pair; a blank answer is missing, not a response or a tie. The v1 interval plan uses the pinned Runtime statistics worker’s SciPy exact binomial (`binomtest(...).proportion_ci(method="exact")`) on decisive participant-level B/A answers; ties, unable-to-judge and missing answers remain separate counts and are excluded from that conditional probability. It is never a bootstrap over aggregate means, a model-generated interval, or a browser calculation. Data persists preference rows separately from PXI items in the restricted human-study store, migrates existing restricted state atomically to the preference-capable format, removes preference data on withdrawal, and suppresses counts when the participant total or any nonzero answer category is below five. Both current and migrated response records must match the study's frozen consent version and scope; malformed persisted rows fail closed before they can contribute to exposure or response summaries. Core `aggregatePlaytestPreferenceResponses` accepts the restricted pseudonym-keyed roster (including a null answer for nonresponse), rejects duplicate participants, and returns only distinct B/A/tie/unable/missing counts. `classifyPlaytestPreferenceSensitivity` applies the preregistered participant minimum, maximum exclusion rate, practical margin and provenance-backed external interval to those counts; it never computes interval math or turns ties into wins. Runtime obtains the interval only from the hash-locked Python worker using SciPy `binomtest(...).proportion_ci(method="exact")`, passes that exact interval and its locked method/library/confidence metadata to Core, and leaves the preference result inconclusive if the plan or worker cannot meet the frozen interval specification. An absent or unqualified interval, insufficient independent participants, or excessive exclusions is inconclusive. This decision concerns relative preference only and does not promote a build or establish absolute enjoyment.
 
 ## 8. Confusion and timing
 
 Use an ordered diagnostic ladder: (1) verify authoritative rules, UI-to-observation equivalence and visual reading capability; (2) check independently initialized observers' competence; (3) freeze repeated pre-action forecasts before outcomes; (4) obtain actual consented human comprehension and behavior evidence for human claims; (5) compare a developer-supplied changed warning against frozen controls. Separate model-misunderstood, UI-possibly-ambiguous and human-confirmed-confusing, with eligible exposures and uncertainty. Several LLMs are not several people.
 
-The human comprehension protocol is project-authored, **not a validated questionnaire**: show the exact pre-action UI, ask what the selected action will do to the preregistered visible consequence variable and confidence, commit the answer before execution, then record actual consequence and corrective behavior. Keep instruction wording, answer key and visibility limits fixed; use a separate shadow/moderated cohort because asking can teach the player. Administer published miniPXI GR separately for reported goal clarity. Claim human-confirmed-confusing only for the directly tested mechanic/cohort with prospectively adequate evidence; changed-warning causal claims additionally require the controlled treatment. Stochastic forecasts are scored probabilistically over repeated outcomes, not called misunderstanding because one unlikely event occurred.
+The human comprehension protocol is project-authored, **not a validated questionnaire**: show the exact pre-action UI, ask what the selected action will do to the preregistered visible consequence variable and confidence, commit the answer before execution, then record actual consequence and corrective behavior. Keep instruction wording, answer key and visibility limits fixed; use a separate shadow/moderated cohort because asking can teach the player. Administer published miniPXI GR separately for reported goal clarity. Claim human-confirmed-confusing only for the directly tested mechanic/cohort with prospectively adequate evidence; changed-warning causal claims additionally require the controlled treatment. Stochastic forecasts are scored probabilistically over repeated outcomes, not called misunderstanding because one unlikely event occurred. Core exposes `evaluateDiagnosticLadder` to evaluate pre-action forecasts and human evidence across the ordered 5-stage diagnostic ladder. It requires game-owned model-ambiguity and human-confusion thresholds, never uses universal hard-coded classification thresholds, and only claims `human-confirmed-confusing` when consented human evidence meets the small-cell minimum and its source-provided error-interval lower bound clears the game threshold. A threshold-overlapping or unavailable interval remains `ui-possibly-ambiguous`; isolated model mistakes remain distinct. A changed-warning intervention advances only after qualifying human evidence and with an externally estimated risk-difference interval; a point estimate alone is insufficient.
 
-Timing fields separate simulationWallMs, logicalTicks/turns, policyInferenceMs and native capture clocks. Native sessions record mutually exclusive state intervals (active interaction, required animation/wait, deliberation, idle) using versioned game/browser state precedence; unknown intervals stay unclassified, not zero. Deliberation = actionable UI available before player response, idle = explicit pause/background or declared inactivity rule; record overlap resolution. Report per-phase medians/distributions and exposure durations; do not subtract synthetic inference time from real human experience. Headless/accelerated traces support logical phase-length/repetition signals only. Native timing supports presentation measurements; human pacing/boredom claims still require human reports. Acceptance: a 5-second simulation and 35-minute native run are never plotted on one duration series.
+Timing fields separate simulationWallMs, logicalTicks/turns, policyInferenceMs and native capture clocks. Native sessions record mutually exclusive state intervals (active interaction, required animation/wait, deliberation, idle) using versioned game/browser state precedence; unknown intervals stay unclassified, not zero. Deliberation = actionable UI available before player response, idle = explicit pause/background or declared inactivity rule; record overlap resolution. Report per-phase medians/distributions and exposure durations; do not subtract synthetic inference time from real human experience. Headless/accelerated traces support logical phase-length/repetition signals only. Native timing supports presentation measurements; human pacing/boredom claims still require human reports. Acceptance: a 5-second simulation and 35-minute native run are never plotted on one duration series. Core exposes `summarizePlaytestNativeTiming` to validate the capture bounds and precedence version, resolve overlaps with the adapter-declared state ordering, emit a gap-free mutually exclusive interval partition, and retain uncovered or explicitly unknown time as `unknown`. It returns native-state durations only; callers must keep simulation, logical-turn and policy-inference values in their own units and series. Its fixture tests cover overlap precedence, gaps, invalid bounds and version mismatch. This helper does not establish that an adapter’s UI-state detector is valid; the game must supply and version that evidence.
 
 ## 9. Finding priority and fix lineage
 
-Finding records separate severity, eligible frequency/recurrence, discoverability, affected cohorts, evidence status, human impact (when measured), novelty, investigation state and grounded effort estimate or unknown. Stable identity hashes workspace/game, a game-owned mechanic key, normalized event/action/witness signature and reproducible scope; seed, build, batch, model and run IDs remain evidence, not identity. Runtime derives event types and workspace/scenario-family from cited persisted evidence and rejects caller-supplied scope/event identity; unverified phase/modality remain null. Same-review duplicates collapse and repeat sightings append revisions with unioned references, not fabricated frequency. Triage is explainable: catastrophic/data-loss/access-blocking harm first; then major progress/experience harm, then minor friction. Within a class sort corroborated impact/exposure, recurrence and breadth; uncertainty affects investigation urgency rather than converting severity to zero. Operator overrides store author/reason. Human-confirmed severe UX can outrank a deterministic cosmetic defect. No opaque weighted LLM priority score.
+Finding records separate severity, eligible frequency/recurrence, discoverability, affected cohorts, evidence status, human impact (when measured), novelty, investigation state and grounded effort estimate or unknown. Stable identity hashes workspace/game, a game-owned mechanic key, normalized event/action/witness signature and reproducible scope; seed, build, batch, model and run IDs remain evidence, not identity. Runtime derives event types and workspace/scenario-family from cited persisted evidence and rejects caller-supplied scope/event identity; unverified phase/modality remain null. Same-review duplicates collapse and repeat sightings append revisions with unioned references, not fabricated frequency. A single submitted review is capped at 64 proposed findings; distinct findings persist through bounded concurrent appends while preserving input order, and an oversized review is rejected rather than partially truncated. Triage is explainable: catastrophic/data-loss/access-blocking harm first; then major progress/experience harm, then minor friction. Within a class sort corroborated impact/exposure, recurrence and breadth; uncertainty affects investigation urgency rather than converting severity to zero. Operator overrides store author/reason. Human-confirmed severe UX can outrank a deterministic cosmetic defect. No opaque weighted LLM priority score. Core exposes `comparePlaytestFindings` and `triagePlaytestFindings` to implement this explainable priority ordering, sorting by severity class, corroborated/verified evidence, opportunity/episode exposure rates, cohort breadth, and explicit operator overrides with audit trail.
 
-| Synthetic finding | Severity / evidence | Exposure and affected scope | Priority reason |
-| --- | --- | --- | --- |
-| Save lost after exit | Catastrophic, reproducible | 1/1,000 episodes; 1/12 eligible exits | Irrecoverable progress loss |
-| Unreadable mandatory control | Major, human-confirmed in studied cohort | 8/10 eligible human encounters | Blocks play for measured cohort |
-| Pit-entry failure | Major, reproducible | 12/15 pit entries; 12/1,000 episodes | Frequent when exposed; do not call 80% of players affected |
-| Decorative clipping | Minor, reproducible | 900/1,000 captured episodes | Broad but low harm; not above blocking UX solely due to determinism |
+| Synthetic finding            | Severity / evidence                      | Exposure and affected scope           | Priority reason                                                     |
+| ---------------------------- | ---------------------------------------- | ------------------------------------- | ------------------------------------------------------------------- |
+| Save lost after exit         | Catastrophic, reproducible               | 1/1,000 episodes; 1/12 eligible exits | Irrecoverable progress loss                                         |
+| Unreadable mandatory control | Major, human-confirmed in studied cohort | 8/10 eligible human encounters        | Blocks play for measured cohort                                     |
+| Pit-entry failure            | Major, reproducible                      | 12/15 pit entries; 12/1,000 episodes  | Frequent when exposed; do not call 80% of players affected          |
+| Decorative clipping          | Minor, reproducible                      | 900/1,000 captured episodes           | Broad but low harm; not above blocking UX solely due to determinism |
 
 Persist findingId/fingerprint → experimentId → authorized issue/PR → candidate/build SHA → retest batches → PlaytestComparison → owner decision → recurrence observations. Extend these existing records, not a second workflow database. Root orchestrates retests when a linked approved build becomes available; it cannot infer success from a merged PR or closed issue.
 
@@ -386,17 +424,17 @@ Reuse [existing orchestration](../.rulesync/skills/orchestration/SKILL.md), GitH
 
 Illustrative bounded tiers: authorized PR build → 20 fixed smoke assignments, deterministic checks, four critiques, ten-minute cap; merged approved build → 200 benchmark/discovery assignments, sixteen critiques, thirty-minute cap; opted-in nightly → 1,000 assignments, forty critiques, sixty-minute cap. Budget numbers are defaults to fit-test, not effectiveness claims. Manual runs choose one tier. Deduplicate by workspace/build/benchmark/tier/event; prioritize reproducible regressions, then uncovered critical cells, then rotating discovery. Never expose secret confirmation inventories to change authors. Weekly active judge checks reuse §6; release/human studies require a separately approved study and actual participant availability.
 
-Retry a transient infrastructure assignment at most twice under the same budget, preserving every attempt; no retries of game failures for favorable statistics. Unsupported adapters/policies are quarantined with visible skipped cells. Budget exhaustion yields partial coverage and no automatic promotion. Paused/revoked workspace approval cancels queued work. Study failure or unavailability leaves human outcomes not-collected; it does not stop basic deterministic playtesting.
+Retry a transient infrastructure assignment at most twice under the same budget, preserving every attempt; no retries of game failures for favorable statistics. Unsupported adapters/policies are quarantined with visible skipped cells. Budget exhaustion yields partial coverage and no automatic promotion. Paused/revoked workspace approval cancels queued work. Study failure or unavailability leaves human outcomes not-collected; it does not stop basic deterministic playtesting. Core exposes `validatePlaytestCadenceConfig`, `deduplicateCadenceTriggers`, `prioritizeCadenceWork`, `evaluateCadenceRetry`, and `evaluateJudgeCalibration` to validate tier budgets, deduplicate trigger events by `(workspaceId, buildSha, benchmarkId, tier, event)`, prioritize reproducible regressions before uncovered cells before discovery, strictly disallow retrying game failures while bounding infrastructure retries, and quarantine affected claim types when periodic judge calibration drifts past tolerances.
 
 **One complete cycle:** approved baseline → linked change artifact/event → budgeted fixed suite plus rotating discovery → immutable comparison → evidence-supported finding/experiment → authorized external implementation → witness/control/fresh retest → owner decision → explicit baseline promotion or hold → longitudinal observation. The existing release authority consumes optional source-authored Evaluations projections; Playtesting never merges/deploys.
 
 **Progress view:** Overview shows both pinned-reference-to-current and previous-build deltas with baseline ID, sample/exposure counts, missingness, scenario weights, measurement version, uncertainty and claim scope. Compare's default table shows primary outcome and each guardrail/classification, decision/reason, human result or not-collected, and links to manifest, findings, changes and paired evidence. Ordinal dimensions use distributions; incompatible series have breaks. Findings show new/fixed/recurrent counts and last verification.
 
-| Synthetic build | Fixed-weight completion (easy/hard weight 50/50) | Raw sampled completion | Interpretation |
-| --- | --- | --- | --- |
-| A: rates 90%/50%, sample mix 50/50 | 70% | 70% | Pinned reference |
-| B: rates 90%/40%, sample mix 90/10 | 65% | 85% | Apparent raw gain hides worse hard-scenario outcome; investigate regression |
-| C: rates 90%/50%, sample mix 90/10 | 70% | 86% | Descriptive recovery to A; not evidence of improvement beyond A |
+| Synthetic build                    | Fixed-weight completion (easy/hard weight 50/50) | Raw sampled completion | Interpretation                                                              |
+| ---------------------------------- | ------------------------------------------------ | ---------------------- | --------------------------------------------------------------------------- |
+| A: rates 90%/50%, sample mix 50/50 | 70%                                              | 70%                    | Pinned reference                                                            |
+| B: rates 90%/40%, sample mix 90/10 | 65%                                              | 85%                    | Apparent raw gain hides worse hard-scenario outcome; investigate regression |
+| C: rates 90%/50%, sample mix 90/10 | 70%                                              | 86%                    | Descriptive recovery to A; not evidence of improvement beyond A             |
 
 The Core `standardizePlaytestCohortRates` helper preserves raw observed and frozen-weight standardized rates separately, the per-cohort numerators/denominators/missing counts, and source coverage. Missing strata/zero denominators yield explicit unknown states; this is a descriptive point estimate only, not an interval or a promotion verdict. Attach independent-unit N and intervals from the selected external statistics library to real rows; fixture rates alone do not establish statistical significance. In this example a separate reproduced hard-scenario defect can establish the B regression while rate evidence remains descriptive. Promotion creates a new benchmark version with author/reason and bridge results, never overwrites A. Track both references for continuity.
 

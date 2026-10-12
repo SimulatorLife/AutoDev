@@ -9,9 +9,6 @@
  */
 
 import type { ClickHouseParamValue } from "../clickhouse/clickhouse-client.ts";
-
-const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
-
 import type { PlaytestKeysetCursor } from "./cursor.ts";
 import type {
   PlaytestBatchFilter,
@@ -22,6 +19,8 @@ import type {
   PlaytestFindingFilter,
   PlaytestHumanStudyFilter
 } from "./types.ts";
+
+const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 
 export interface BoundWhereClause {
   readonly clauses: readonly string[];

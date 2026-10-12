@@ -37,7 +37,7 @@ function benchmarkInput() {
     metricRegistryHash: sha256("fixture-registry-v1"),
     rubricHash: sha256("fixture-rubric-v1"),
     captureMode: "headless" as const,
-    measurementVersion: "playtesting-measurement-v1",
+    measurementVersion: "playtesting-measurement-v2",
     primaryMetricIds: ["legal-action-rejection"],
     guardrailMetricIds: ["crash-rate"],
     practicalMargins: {
@@ -91,7 +91,9 @@ test("benchmark content hash binds the frozen cohort weight distribution", () =>
     ...benchmarkInput(),
     cohortWeights: { easy: 0.7, hard: 0.3 }
   };
-  const shiftedContentHash = sha256(playtestBenchmarkHashInput(shiftedWeightsInput));
+  const shiftedContentHash = sha256(
+    playtestBenchmarkHashInput(shiftedWeightsInput)
+  );
   assert.notEqual(
     benchmark.contentHash,
     shiftedContentHash,
@@ -186,6 +188,35 @@ test("benchmark rejects malformed hashes, date, sensitivity bound and nested unk
   );
 });
 
+test("benchmark timestamp keeps the exact ISO shape and precision boundaries", () => {
+  const benchmark = frozenBenchmark();
+  for (const createdAt of [
+    "2026-10-10T00:00:00Z",
+    "2026-10-10T00:00:00.1Z",
+    "2026-10-10T00:00:00.123Z"
+  ]) {
+    assert.doesNotThrow(() =>
+      assertPlaytestBenchmark({ ...benchmark, createdAt })
+    );
+  }
+  for (const createdAt of [
+    "2026-10-10T00:00:00.1234Z",
+    "2026-10-10T00:00:00.Z",
+    "2026-10-10T00:00:00+00:00",
+    "2026-10-10 00:00:00Z"
+  ]) {
+    assert.throws(
+      () => assertPlaytestBenchmark({ ...benchmark, createdAt }),
+      /ISO-compatible timestamp/u
+    );
+  }
+  // Date.parse accepts some calendar overflow dates; keep that existing
+  // behavior rather than silently tightening the timestamp contract.
+  assert.doesNotThrow(() =>
+    assertPlaytestBenchmark({ ...benchmark, createdAt: "2026-02-30T00:00:00Z" })
+  );
+});
+
 test("benchmark rejects missing or malformed cohortWeights", () => {
   const benchmark = frozenBenchmark();
   // Missing entirely (the field is required).
@@ -200,13 +231,8 @@ test("benchmark rejects missing or malformed cohortWeights", () => {
     () => assertPlaytestBenchmark({ ...benchmark, cohortWeights: {} }),
     /at least one cohort weight/u
   );
-  // Duplicate cohort id (object literal collapses them at parse time, so
-  // we use an explicit Map-style seed instead).
-  const duplicateId: Record<string, number> = {};
-  duplicateId["easy"] = 0.5;
-  duplicateId["easy"] = 0.5;
-  // Defensive belt: the object above keeps one entry, so also exercise the
-  // not-an-object branch.
+  // Duplicate JSON object keys are collapsed before this object validator
+  // receives them, so only observable malformed input is asserted here.
   assert.throws(
     () =>
       assertPlaytestBenchmark({
@@ -215,7 +241,6 @@ test("benchmark rejects missing or malformed cohortWeights", () => {
       }),
     /cohortWeights must be an object/u
   );
-  void duplicateId;
 });
 
 test("benchmark rejects cohortWeights whose keys are empty or whose weights are not finite positive", () => {

@@ -14,6 +14,7 @@ import {
   lstatSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
@@ -23,7 +24,11 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 
-import type { WorkspacePlaytestApproval } from "@simulatorlife/autodev-core";
+import type {
+  PlaytestArtifactReference,
+  PlaytestMetricRegistry,
+  WorkspacePlaytestApproval
+} from "@simulatorlife/autodev-core";
 
 import type {
   PlaytestAdapterExit,
@@ -35,12 +40,14 @@ import {
 } from "./approved-configuration.ts";
 
 const SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
+const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const RUN_ID_PATTERN = /^[A-Za-z\d][A-Za-z\d._:-]{0,127}$/u;
 const PATH_SEPARATOR_PATTERN = /[\\/]/u;
 const LINE_SPLIT_PATTERN = /\r?\n/u;
 const CONTAINER_WORKSPACE = "/workspace";
 const CONTAINER_TEMP = "/tmp";
 const CONTAINER_ARTIFACTS = "/artifacts";
+const CONTAINER_INPUT_ARTIFACTS = "/run/autodev-playtest-input";
 const SANDBOX_UID = 65_532;
 const SANDBOX_GID = 65_532;
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -63,6 +70,8 @@ export interface PreparedPlaytestSandbox {
   readonly limits: WorkspacePlaytestApproval["limits"];
   readonly configuration: ApprovedPlaytestDefinition["configuration"];
   readonly observationContract: ApprovedPlaytestDefinition["observationContract"];
+  readonly rubric: PlaytestMetricRegistry;
+  readonly benchmark: ApprovedPlaytestDefinition["benchmark"];
   readonly rubricHash: string;
 }
 
@@ -166,7 +175,14 @@ export interface PlaytestSandboxHandle extends PlaytestAdapterStreams {
   readonly cleanup: () => Promise<void>;
 }
 
+export interface PlaytestSandboxInputArtifact {
+  readonly reference: PlaytestArtifactReference;
+  readonly bytes: Uint8Array;
+}
+
 export interface PlaytestSandboxLaunchOptions {
+  /** Verified Runtime bytes, mounted by SHA-256 filename as read-only input. */
+  readonly inputArtifacts?: readonly PlaytestSandboxInputArtifact[];
   readonly runId?: string;
   readonly socket?: string;
   readonly env?: NodeJS.ProcessEnv;
@@ -310,6 +326,8 @@ export function preparePlaytestSandbox(
     limits: { ...approval.limits },
     configuration,
     observationContract: definition.observationContract,
+    rubric: definition.rubric,
+    benchmark: definition.benchmark,
     rubricHash: definition.rubricHash
   };
 }
@@ -453,7 +471,9 @@ export function buildDockerRunArguments(
   request: PreparedPlaytestSandbox,
   runId: string,
   dockerConfigDirectory: string,
-  socket = localDockerSocket()
+  socket = localDockerSocket(),
+  inputArtifactDirectory?: string,
+  outputArtifactBytes = request.limits.artifactBytes
 ): string[] {
   if (!RUN_ID_PATTERN.test(runId)) {
     throw new PlaytestSandboxApprovalError("Run ID is invalid.");
@@ -473,6 +493,26 @@ export function buildDockerRunArguments(
     );
   }
   const containerName = getPlaytestContainerName(runId);
+  if (
+    !Number.isSafeInteger(outputArtifactBytes) ||
+    outputArtifactBytes < 1 ||
+    outputArtifactBytes > request.limits.artifactBytes
+  ) {
+    throw new PlaytestSandboxApprovalError(
+      "Sandbox output artifact quota exceeds the approved byte budget."
+    );
+  }
+  if (
+    inputArtifactDirectory !== undefined &&
+    (!path.isAbsolute(inputArtifactDirectory) ||
+      inputArtifactDirectory.includes(",") ||
+      lstatSync(inputArtifactDirectory).isSymbolicLink() ||
+      !lstatSync(inputArtifactDirectory).isDirectory())
+  ) {
+    throw new PlaytestSandboxApprovalError(
+      "Playtest input artifact directory must be an existing absolute directory without commas."
+    );
+  }
   const workingDirectory = `${CONTAINER_WORKSPACE}${path.posix.sep}${path
     .relative(request.checkoutRoot, request.workingDirectory)
     .split(path.sep)
@@ -482,7 +522,7 @@ export function buildDockerRunArguments(
     "noexec",
     "nosuid",
     "nodev",
-    `size=${request.limits.artifactBytes}`,
+    `size=${outputArtifactBytes}`,
     `uid=${SANDBOX_UID}`,
     `gid=${SANDBOX_GID}`,
     "mode=0700"
@@ -525,6 +565,12 @@ export function buildDockerRunArguments(
     "--stop-timeout=2",
     "--mount",
     `type=bind,source=${request.checkoutRoot},target=${CONTAINER_WORKSPACE},readonly`,
+    ...(inputArtifactDirectory === undefined
+      ? []
+      : [
+          "--mount",
+          `type=bind,source=${inputArtifactDirectory},target=${CONTAINER_INPUT_ARTIFACTS},readonly`
+        ]),
     "--tmpfs",
     `${CONTAINER_TEMP}:${tempTmpfs}`,
     "--tmpfs",
@@ -537,11 +583,141 @@ export function buildDockerRunArguments(
     "LANG=C.UTF-8",
     "--env",
     "TZ=UTC",
+    "--env",
+    "AUTODEV_PLAYTEST_OUTPUT_DIR=" + CONTAINER_ARTIFACTS,
+    ...(inputArtifactDirectory === undefined
+      ? []
+      : ["--env", "AUTODEV_PLAYTEST_INPUT_DIR=" + CONTAINER_INPUT_ARTIFACTS]),
     "--entrypoint",
     request.command[0]!,
     request.imageDigest,
     ...request.command.slice(1)
   ];
+}
+
+function stageInputArtifacts(
+  artifacts: readonly PlaytestSandboxInputArtifact[] | undefined,
+  maximumBytes: number
+): { readonly directory: string | null; readonly bytes: number } {
+  if (!artifacts || artifacts.length === 0)
+    return { directory: null, bytes: 0 };
+  if (artifacts.length > DEFAULT_MAX_ARTIFACT_FILES) {
+    throw new PlaytestSandboxApprovalError(
+      "Playtest input artifact count exceeds the sandbox limit."
+    );
+  }
+  const directory = mkdtempSync(path.join(tmpdir(), "autodev-playtest-input-"));
+  chmodSync(directory, 0o700);
+  let totalBytes = 0;
+  const seen = new Set<string>();
+  try {
+    for (const { reference, bytes } of artifacts) {
+      if (
+        !SHA256_PATTERN.test(reference.sha256) ||
+        !Number.isSafeInteger(reference.bytes) ||
+        reference.bytes < 1 ||
+        bytes.byteLength !== reference.bytes ||
+        createHash("sha256").update(bytes).digest("hex") !==
+          reference.sha256.toLowerCase()
+      ) {
+        throw new PlaytestSandboxApprovalError(
+          "Playtest input artifact bytes do not match their content-addressed reference."
+        );
+      }
+      const sha = reference.sha256.toLowerCase();
+      if (seen.has(sha)) continue;
+      totalBytes += bytes.byteLength;
+      if (totalBytes > maximumBytes) {
+        throw new PlaytestSandboxApprovalError(
+          "Playtest input artifacts exceed the approved artifact-byte budget."
+        );
+      }
+      seen.add(sha);
+      writeFileSync(path.join(directory, sha), bytes, {
+        flag: "wx",
+        mode: 0o400
+      });
+    }
+    return { directory, bytes: totalBytes };
+  } catch (error) {
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/** Read one staged adapter artifact only after rechecking its path, size and SHA. */
+export function readStagedPlaytestArtifact(
+  reference: PlaytestArtifactReference,
+  stagingDirectory: string | null,
+  artifacts: readonly StagedPlaytestArtifact[]
+): Uint8Array {
+  if (
+    stagingDirectory === null ||
+    !SHA256_PATTERN.test(reference.sha256) ||
+    !Number.isSafeInteger(reference.bytes) ||
+    reference.bytes < 1
+  ) {
+    throw new PlaytestSandboxExecutionError(
+      "The adapter artifact reference has no bounded staged source.",
+      { category: ARTIFACT_ERROR_CATEGORY }
+    );
+  }
+  const root = realpathSync(stagingDirectory);
+  for (const artifact of artifacts) {
+    if (
+      artifact.size !== reference.bytes ||
+      artifact.relativePath !== reference.sha256.toLowerCase()
+    ) {
+      continue;
+    }
+    const candidate = path.resolve(root, artifact.relativePath);
+    let realArtifactPath: string;
+    try {
+      realArtifactPath = realpathSync(artifact.absolutePath);
+    } catch {
+      continue;
+    }
+    if (!isWithin(root, candidate) || realArtifactPath !== candidate) {
+      throw new PlaytestSandboxExecutionError(
+        "The staged adapter artifact escaped its private output directory.",
+        { category: ARTIFACT_ERROR_CATEGORY }
+      );
+    }
+    let current = root;
+    const relative = path.relative(root, candidate);
+    for (const part of relative.split(path.sep)) {
+      current = path.join(current, part);
+      const metadata = lstatSync(current);
+      if (metadata.isSymbolicLink()) {
+        throw new PlaytestSandboxExecutionError(
+          "The staged adapter artifact path contains a symbolic link.",
+          { category: ARTIFACT_ERROR_CATEGORY }
+        );
+      }
+      if (current === candidate && !metadata.isFile()) {
+        throw new PlaytestSandboxExecutionError(
+          "The staged adapter artifact is not a regular file.",
+          { category: ARTIFACT_ERROR_CATEGORY }
+        );
+      }
+    }
+    const content = readFileSync(candidate);
+    if (
+      content.byteLength === reference.bytes &&
+      createHash("sha256").update(content).digest("hex") ===
+        reference.sha256.toLowerCase()
+    ) {
+      return new Uint8Array(
+        content.buffer,
+        content.byteOffset,
+        content.byteLength
+      );
+    }
+  }
+  throw new PlaytestSandboxExecutionError(
+    "The adapter did not stage bytes matching its artifact reference.",
+    { category: ARTIFACT_ERROR_CATEGORY }
+  );
 }
 
 /** Recursively scan mode-0700 staging directory, enforcing quotas and rejecting symlinks/special files. */
@@ -785,6 +961,145 @@ function determineSandboxFailure(options: {
   return null;
 }
 
+interface StagedInputArtifacts {
+  readonly directory: string | null;
+  readonly bytes: number;
+}
+
+function cleanupStagedInput(input: StagedInputArtifacts): void {
+  if (input.directory)
+    rmSync(input.directory, { recursive: true, force: true });
+}
+
+function prepareStagedInput(
+  prepared: PreparedPlaytestSandbox,
+  options: PlaytestSandboxLaunchOptions | undefined,
+  configCleanup: () => void
+): { readonly staged: StagedInputArtifacts; readonly maxOutputBytes: number } {
+  let staged: StagedInputArtifacts | undefined;
+  try {
+    staged = stageInputArtifacts(
+      options?.inputArtifacts,
+      prepared.limits.artifactBytes
+    );
+    const remaining = prepared.limits.artifactBytes - staged.bytes;
+    if (remaining < 1) {
+      throw new PlaytestSandboxApprovalError(
+        "Branch input artifacts leave no room for bounded output evidence."
+      );
+    }
+    return {
+      staged,
+      maxOutputBytes: Math.min(
+        options?.maxArtifactBytes ?? prepared.limits.artifactBytes,
+        remaining
+      )
+    };
+  } catch (error) {
+    if (staged) cleanupStagedInput(staged);
+    configCleanup();
+    throw error;
+  }
+}
+
+async function verifyApprovedImage(
+  prepared: PreparedPlaytestSandbox,
+  socket: string,
+  configDirectory: string,
+  execFileFn: PlaytestExecFileFn,
+  options: PlaytestSandboxLaunchOptions | undefined,
+  stagedInput: StagedInputArtifacts,
+  configCleanup: () => void
+): Promise<void> {
+  try {
+    if (options?.inspectImage) {
+      const available = await options.inspectImage(
+        prepared.imageDigest,
+        socket,
+        configDirectory
+      );
+      if (!available) {
+        throw new PlaytestSandboxUnavailableError(
+          "Approved adapter image " +
+            prepared.imageDigest +
+            " is not locally available without pulling."
+        );
+      }
+    } else {
+      verifyLocalDockerImage(
+        prepared.imageDigest,
+        socket,
+        configDirectory,
+        execFileFn
+      );
+    }
+  } catch (error) {
+    cleanupStagedInput(stagedInput);
+    configCleanup();
+    if (
+      error instanceof PlaytestSandboxUnavailableError ||
+      error instanceof PlaytestSandboxApprovalError
+    ) {
+      throw error;
+    }
+    throw new PlaytestSandboxUnavailableError(
+      "Approved adapter image " +
+        prepared.imageDigest +
+        " check failed: " +
+        (error instanceof Error ? error.message : String(error))
+    );
+  }
+}
+
+function buildApprovedRunArguments(input: {
+  readonly prepared: PreparedPlaytestSandbox;
+  readonly runId: string;
+  readonly configDirectory: string;
+  readonly socket: string;
+  readonly stagedInput: StagedInputArtifacts;
+  readonly maxOutputBytes: number;
+  readonly configCleanup: () => void;
+}): string[] {
+  try {
+    return buildDockerRunArguments(
+      input.prepared,
+      input.runId,
+      input.configDirectory,
+      input.socket,
+      input.stagedInput.directory ?? undefined,
+      input.maxOutputBytes
+    );
+  } catch (error) {
+    cleanupStagedInput(input.stagedInput);
+    input.configCleanup();
+    throw error;
+  }
+}
+
+function spawnApprovedDocker(input: {
+  readonly runArgs: string[];
+  readonly env: NodeJS.ProcessEnv;
+  readonly spawnFn: PlaytestSpawnFn;
+  readonly stagedInput: StagedInputArtifacts;
+  readonly configCleanup: () => void;
+}): ChildProcess {
+  try {
+    return input.spawnFn("docker", input.runArgs, {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: input.env,
+      shell: false
+    });
+  } catch (error) {
+    cleanupStagedInput(input.stagedInput);
+    input.configCleanup();
+    throw new PlaytestSandboxExecutionError(
+      "Failed to spawn Docker process: " +
+        (error instanceof Error ? error.message : String(error)),
+      { category: "process-error" }
+    );
+  }
+}
+
 /** Launch an approved OCI container sandbox with attached adapter streams and lifecycle management. */
 export async function launchPlaytestSandbox(
   prepared: PreparedPlaytestSandbox,
@@ -803,51 +1118,30 @@ export async function launchPlaytestSandbox(
   const spawnFn: PlaytestSpawnFn =
     options?.spawn ?? (spawn as unknown as PlaytestSpawnFn);
   const nowFn = options?.now ?? Date.now;
-
-  try {
-    if (options?.inspectImage) {
-      const ok = await options.inspectImage(
-        prepared.imageDigest,
-        socket,
-        configDirectory
-      );
-      if (!ok) {
-        throw new PlaytestSandboxUnavailableError(
-          `Approved adapter image ${prepared.imageDigest} is not locally available without pulling.`
-        );
-      }
-    } else {
-      verifyLocalDockerImage(
-        prepared.imageDigest,
-        socket,
-        configDirectory,
-        execFileFn
-      );
-    }
-  } catch (error) {
-    configCleanup();
-    if (
-      error instanceof PlaytestSandboxUnavailableError ||
-      error instanceof PlaytestSandboxApprovalError
-    ) {
-      throw error;
-    }
-    throw new PlaytestSandboxUnavailableError(
-      `Approved adapter image ${prepared.imageDigest} check failed: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-
-  const runArgs = buildDockerRunArguments(
+  const { staged: stagedInputArtifacts, maxOutputBytes: maxArtifactBytes } =
+    prepareStagedInput(prepared, options, configCleanup);
+  await verifyApprovedImage(
+    prepared,
+    socket,
+    configDirectory,
+    execFileFn,
+    options,
+    stagedInputArtifacts,
+    configCleanup
+  );
+  const runArgs = buildApprovedRunArguments({
     prepared,
     runId,
     configDirectory,
-    socket
-  );
+    socket,
+    stagedInput: stagedInputArtifacts,
+    maxOutputBytes: maxArtifactBytes,
+    configCleanup
+  });
   const sanitizedEnv = getSanitizedHostEnvironment(
     configDirectory,
     options?.env ?? process.env
   );
-
   const startTime = nowFn();
   let timedOut = false;
   let cancelled = false;
@@ -863,8 +1157,6 @@ export async function launchPlaytestSandbox(
   let totalStdoutBytes = 0;
   let totalStderrBytes = 0;
   const maxOutputBytes = options?.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
-  const maxArtifactBytes =
-    options?.maxArtifactBytes ?? prepared.limits.artifactBytes;
   const maxArtifactFiles =
     options?.maxArtifactFiles ?? DEFAULT_MAX_ARTIFACT_FILES;
 
@@ -908,20 +1200,13 @@ export async function launchPlaytestSandbox(
     }
   }
 
-  let child: ChildProcess;
-  try {
-    child = spawnFn("docker", runArgs, {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: sanitizedEnv,
-      shell: false
-    });
-  } catch (error) {
-    configCleanup();
-    throw new PlaytestSandboxExecutionError(
-      `Failed to spawn Docker process: ${error instanceof Error ? error.message : String(error)}`,
-      { category: "process-error" }
-    );
-  }
+  const child = spawnApprovedDocker({
+    runArgs,
+    env: sanitizedEnv,
+    spawnFn,
+    stagedInput: stagedInputArtifacts,
+    configCleanup
+  });
 
   if (child.stdin) {
     stdinStream.pipe(child.stdin);
@@ -1097,6 +1382,11 @@ export async function launchPlaytestSandbox(
         // ignore removal error
       }
       stagingDirectory = null;
+    }
+    try {
+      cleanupStagedInput(stagedInputArtifacts);
+    } catch {
+      // Best-effort deletion after the adapter process has exited.
     }
     configCleanup();
     return Promise.resolve();

@@ -1,8 +1,19 @@
-import type { PlaytestJsonValue } from "./protocol-types.ts";
+import type {
+  GameRngCheckpoint,
+  PlaytestArtifactReference,
+  PlaytestCheckpointDigest,
+  PlaytestJsonValue
+} from "./protocol-types.ts";
 import {
+  type PlaytestAssignmentBranch,
+  type PlaytestAssignmentInventory,
+  type PlaytestAssignmentOutcome,
+  type PlaytestBatchReviewSelection,
   type PlaytestComparison,
   type PlaytestCompletionCounts,
+  type PlaytestCoverageModality,
   type PlaytestDimensionAnchor,
+  type PlaytestDimensionRubric,
   type PlaytestEpisodeState,
   type PlaytestEvidenceLocator,
   type PlaytestExperimentState,
@@ -11,13 +22,16 @@ import {
   type PlaytestMissingReason,
   type PlaytestNumericResult,
   type PlaytestProvenance,
+  type PlaytestReviewPacketReceipt,
+  type PlaytestReviewReceipt,
   type PLAYTESTS_BATCH_SCHEMA,
+  type PLAYTESTS_COVERAGE_MANIFEST_SCHEMA,
   type PLAYTESTS_EPISODE_SCHEMA,
+  type PLAYTESTS_EVIDENCE_PACKET_SCHEMA,
   type PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_GAME_MODES,
   type PLAYTESTS_HUMAN_STUDY_SCHEMA,
   type PLAYTESTS_SESSION_REVIEW_SCHEMA,
-  type PlaytestSamplingPlan,
   type PlaytestVersionedRef
 } from "./types.ts";
 
@@ -95,6 +109,8 @@ export interface PlaytestEpisodeStep {
   readonly authoritativeOutcome: PlaytestJsonValue | null;
   readonly eventRefs: readonly PlaytestEvidenceLocator[];
   readonly frameRef: PlaytestEvidenceLocator | null;
+  /** Full-state/RNG point captured before this action; null when unsupported. */
+  readonly checkpoint: PlaytestCheckpointDigest | null;
   readonly simulationWallMs: number | null;
   readonly logicalTicks: number | null;
   readonly policyInferenceMs: number | null;
@@ -111,12 +127,29 @@ export interface PlaytestEpisodeStep {
   }[];
 }
 
+/** Durable proof chain for one same-stream counterfactual episode. */
+export interface PlaytestBranchLineage extends PlaytestAssignmentBranch {
+  readonly replayTransitionHash: string;
+  readonly snapshotArtifact: PlaytestArtifactReference | null;
+  readonly snapshotIntegrityHash: string;
+  readonly forkStateHash: string;
+  readonly forkRngCheckpoint: GameRngCheckpoint;
+  readonly continuationPolicyId: string;
+  readonly continuationPolicyVersion: string;
+}
+
 /** Indexed episode summary. Full traces/media remain external bounded artifacts. */
 export interface PlaytestEpisode {
   readonly schema: typeof PLAYTESTS_EPISODE_SCHEMA;
   readonly episodeId: string;
   readonly revision: number;
   readonly batchId: string;
+  /**
+   * Batch-local frozen assignment this episode executed. Null only for
+   * history recorded before assignment manifests existed.
+   */
+  readonly assignmentId: string | null;
+  readonly branchLineage: PlaytestBranchLineage | null;
   readonly identity: PlaytestEpisodeIdentity;
   readonly scenarioFamily: string;
   readonly policyCohort: string;
@@ -151,6 +184,67 @@ export const PLAYTESTS_BATCH_STATES = [
   "truncated"
 ] as const;
 export type PlaytestBatchState = (typeof PLAYTESTS_BATCH_STATES)[number];
+export const PLAYTESTS_BATCH_CANCELLATION_REASONS = [
+  "cancelled",
+  "approval-revoked",
+  "workspace-disabled"
+] as const;
+export type PlaytestBatchCancellationReason =
+  (typeof PLAYTESTS_BATCH_CANCELLATION_REASONS)[number];
+export type PlaytestBatchFailureReason = "nonterminal-batch-recovered";
+
+export type PlaytestCoverageCellStatus =
+  | "unsupported"
+  | "unsupported-modality"
+  | "not-assigned"
+  | "partial"
+  | "covered"
+  | "insufficient";
+
+/** One frozen mechanic × phase × scenario × cohort × policy × modality cell. */
+export interface PlaytestCoverageManifestCell {
+  readonly coverageMetricId: string;
+  readonly metricVersion: number;
+  readonly mechanicKey: string;
+  readonly phaseId: string | null;
+  readonly scenarioFamily: string;
+  readonly cohort: string;
+  readonly policy: string;
+  readonly modality: PlaytestCoverageModality;
+  readonly analysisUnit:
+    "episode" | "decision" | "cohort" | "learner-identity" | "participant";
+  readonly requiredOpportunities: number;
+  readonly requiredIndependentUnits: number;
+  readonly unsupportedReason: string | null;
+  readonly assignedEpisodes: number;
+  readonly observedEpisodes: number;
+  readonly missingAssignments: number;
+  readonly unresolvedCohortAssignments: number;
+  readonly missingMetricResults: number;
+  readonly observedOpportunities: number;
+  readonly eligibleOpportunities: number;
+  readonly missingOpportunities: number;
+  /** Null when identities cannot be proven additive across episode rows. */
+  readonly observedIndependentUnits: number | null;
+  readonly missingReasons: readonly PlaytestMissingReason[];
+  readonly status: PlaytestCoverageCellStatus;
+}
+
+/** Content-addressed coverage plan and observed batch counts. */
+export interface PlaytestCoverageManifest {
+  readonly schema: typeof PLAYTESTS_COVERAGE_MANIFEST_SCHEMA;
+  readonly workspaceId: string;
+  readonly batchId: string;
+  readonly buildSha: string;
+  readonly rubricHash: string;
+  readonly assignmentManifestHash: string;
+  readonly mode: "headless" | "browser" | "native-visual";
+  readonly generatedAt: string;
+  readonly assignedEpisodes: number;
+  readonly observedEpisodes: number;
+  readonly cells: readonly PlaytestCoverageManifestCell[];
+  readonly contentHash: string;
+}
 
 /** Workspace-scoped batch; execution state and game outcome are separate. */
 export interface PlaytestBatch {
@@ -173,8 +267,21 @@ export interface PlaytestBatch {
   readonly policyIds: readonly string[];
   readonly cohortIds: readonly string[];
   readonly scenarioIds: readonly string[];
-  readonly samplingPlan: PlaytestSamplingPlan | null;
+  readonly assignmentInventory: PlaytestAssignmentInventory;
+  /** Null for persisted history created before the coverage-manifest contract. */
+  readonly coverageManifest: PlaytestCoverageManifest | null;
+  /** Terminal no-episode outcomes; started sessions are stored as PlaytestEpisode rows. */
+  readonly unobservedAssignments: readonly PlaytestAssignmentOutcome[] | null;
+  readonly reviewSelection: PlaytestBatchReviewSelection;
+  /** Durable pre-inference packet artifacts for selected complete sessions. */
+  readonly reviewPackets: readonly PlaytestReviewPacketReceipt[];
+  /** Durable idempotency ledger; selection is not an actual critique. */
+  readonly reviewReceipts: readonly PlaytestReviewReceipt[];
   readonly status: PlaytestBatchState;
+  /** Durable cancellation cause; null for other states or older history. */
+  readonly cancellationReason: PlaytestBatchCancellationReason | null;
+  /** Durable owner-level failure cause that no episode row can express. */
+  readonly failureReason: PlaytestBatchFailureReason | null;
   readonly counts: PlaytestCompletionCounts;
   readonly budget: {
     readonly assignedEpisodes: number;
@@ -280,25 +387,122 @@ export interface PlaytestExperiment {
   readonly contentHash: string;
 }
 
-/** Packet records exactly which windows/artifacts were supplied to an analyst. */
+export interface PlaytestEvidenceTraceEvent {
+  readonly eventId: string;
+  readonly type: string;
+  readonly phaseId: string | null;
+  readonly revision: number;
+}
+
+/** Strictly player-visible, Runtime-projected trace step supplied to critique. */
+export interface PlaytestEvidenceTraceStep {
+  readonly step: number;
+  readonly phaseId: string | null;
+  readonly revisionBefore: number;
+  readonly revisionAfter: number | null;
+  readonly observationVisibility: "structured" | "visual-only";
+  readonly visibleObservation: PlaytestJsonValue;
+  readonly legalActionIds: readonly string[];
+  readonly selectedActionId: string | null;
+  readonly preActionPrediction: PlaytestJsonValue | null;
+  readonly authoritativeOutcome: PlaytestJsonValue | null;
+  readonly events: readonly PlaytestEvidenceTraceEvent[];
+  readonly frameRefs: readonly PlaytestEvidenceLocator[];
+}
+
+export type PlaytestEvidenceSelectionReason =
+  "event-bearing-step" | "terminal" | "ordinary-sample";
+
+export interface PlaytestEvidenceWindow {
+  readonly startStep: number;
+  readonly endStep: number;
+  readonly selectionReasons: readonly PlaytestEvidenceSelectionReason[];
+  readonly steps: readonly PlaytestEvidenceTraceStep[];
+}
+
+export interface PlaytestOmittedEvidenceWindow {
+  readonly startStep: number;
+  readonly endStep: number;
+  readonly reason: "ordinary-sampling" | "packet-budget";
+}
+
+export interface PlaytestEvidenceSuppliedArtifact {
+  readonly kind: "trace" | "frame";
+  readonly artifactId: string;
+  readonly sha256: string;
+}
+
+export interface PlaytestEvidenceOmittedArtifact {
+  readonly kind: "frame";
+  readonly artifactId: string;
+  readonly step: number;
+  readonly reason:
+    "missing" | "expired" | "invalid-reference" | "unsupported-media";
+}
+
+/** Target-owned metric semantics supplied with the exact session evidence. */
+export interface PlaytestEvidenceMetricIntent {
+  readonly metricId: string;
+  readonly version: number;
+  readonly mechanicKey: string;
+  readonly audience: string;
+  readonly numerator: string;
+  readonly denominator: string;
+  readonly unit: string;
+  readonly polarity: string;
+  readonly targetBand: readonly [number | null, number | null];
+  readonly exposurePredicate: string;
+  readonly eventFields: readonly string[];
+}
+
+/** Bounded, immutable reasoning input; full traces and media stay separate. */
 export interface PlaytestEvidencePacket {
+  readonly schema: typeof PLAYTESTS_EVIDENCE_PACKET_SCHEMA;
   readonly packetId: string;
+  readonly workspaceId: string;
+  readonly batchId: string;
   readonly episodeId: string;
+  readonly episodeRevision: number;
+  readonly assignmentId: string;
+  readonly buildSha: string;
+  readonly gameBuild: string;
+  readonly scenarioId: string;
+  readonly scenarioFamily: string;
+  readonly policyId: string;
+  readonly policyVersion: string;
+  readonly cohort: string;
+  readonly outcome: PlaytestGameOutcomeKind;
+  readonly outcomeMetrics: Readonly<Record<string, number | null>>;
+  readonly observationMode: "headless" | "browser" | "native-visual";
+  readonly sourceStepCount: number;
+  readonly rubricHash: string;
   readonly rubricVersion: string;
   readonly audience: string;
-  readonly intent: readonly string[];
-  readonly metricRefs: readonly PlaytestEvidenceLocator[];
-  readonly selectedWindows: readonly PlaytestEvidenceLocator[];
-  readonly omittedWindowReasons: readonly string[];
-  readonly suppliedArtifactHashes: readonly string[];
-  readonly visibleEvidenceOnly: boolean;
+  readonly metricIntent: readonly PlaytestEvidenceMetricIntent[];
+  readonly dimensionRubrics: readonly PlaytestDimensionRubric[];
+  readonly metrics: readonly PlaytestNumericResult[];
+  readonly coverageCells: readonly PlaytestCoverageManifestCell[];
+  readonly coverageManifestHash: string;
+  readonly chronologicalSummary: string;
+  readonly traceArtifactId: string;
+  readonly selectedWindows: readonly PlaytestEvidenceWindow[];
+  readonly omittedWindows: readonly PlaytestOmittedEvidenceWindow[];
+  readonly omittedArtifacts: readonly PlaytestEvidenceOmittedArtifact[];
+  readonly suppliedArtifacts: readonly PlaytestEvidenceSuppliedArtifact[];
+  readonly visibleEvidenceOnly: true;
   readonly criticRole: "playtest-analyst";
-  readonly modelId: string;
+  readonly modelId: string | null;
   readonly modelRevision: string | null;
+  readonly promptHash: string | null;
   readonly measurementVersion: string;
+  /** Conservative UTF-8 byte upper bound on model tokens for this packet. */
   readonly tokenBudget: number;
-  readonly createdAt: string;
+  readonly generatedAt: string;
 }
+
+/** JSON media type used by Runtime's content-addressed packet artifact store. */
+export const PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE =
+  "application/vnd.autodev.playtest-evidence-packet+json" as const;
 
 /** Versioned analyst review; facts, interpretations and human outcomes stay separate. */
 export interface PlaytestSessionReview {
@@ -307,6 +511,8 @@ export interface PlaytestSessionReview {
   readonly version: number;
   readonly episodeId: string;
   readonly supersedes: string | null;
+  /** Null only for migrated reviews predating frozen analyst input packets. */
+  readonly evidencePacket: PlaytestEvidencePacketReference | null;
   readonly authorRole: "playtest-analyst";
   readonly authorId: string;
   readonly rubricHash: string;
@@ -332,6 +538,12 @@ export interface PlaytestSessionReview {
   readonly notes: string;
 }
 
+/** Workspace-owned stored packet reference embedded in the immutable review. */
+export interface PlaytestEvidencePacketReference {
+  readonly packetId: string;
+  readonly artifact: PlaytestArtifactReference;
+}
+
 /** Instrument identities accepted by the consented human-study import path. */
 export const PLAYTESTS_HUMAN_INSTRUMENTS = [
   "miniPXI",
@@ -340,6 +552,25 @@ export const PLAYTESTS_HUMAN_INSTRUMENTS = [
 ] as const;
 export type PlaytestHumanInstrument =
   (typeof PLAYTESTS_HUMAN_INSTRUMENTS)[number];
+
+/** Frozen, game/build-specific plan for a separate A/B preference question. */
+export interface PlaytestHumanPreferencePlan {
+  readonly analysisPlanRef: string;
+  readonly questionVersion: string;
+  readonly questionHash: string;
+  readonly buildA: PlaytestVersionedRef;
+  readonly buildB: PlaytestVersionedRef;
+  readonly maximumExclusionRate: number;
+  readonly practicalMargin: number;
+  readonly minimumIndependentParticipants: number;
+  readonly interval: {
+    readonly method: string;
+    readonly libraryVersion: string;
+    readonly confidenceLevel: number;
+    readonly resamples: number | null;
+    readonly seed: string | null;
+  };
+}
 
 /** Approved human study metadata; participant identity stays in its consent owner. */
 export interface HumanPlaytestStudy {
@@ -350,6 +581,8 @@ export interface HumanPlaytestStudy {
   readonly benchmarkId: string;
   /** Exact immutable builds permitted for this study's exposures. */
   readonly allowedBuilds: readonly PlaytestVersionedRef[];
+  /** Optional separate post-play preference plan; never an instrument item. */
+  readonly preferencePlan?: PlaytestHumanPreferencePlan;
   /** Hash of the operator-approved item→construct map for full PXI, otherwise null. */
   readonly pxiItemConstructMappingHash: string | null;
   readonly instrument: PlaytestHumanInstrument;

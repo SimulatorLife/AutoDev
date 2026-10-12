@@ -12,25 +12,26 @@ import {
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import test, { type TestContext } from "node:test";
-import { pathToFileURL } from "node:url";
 
 import {
   type HumanPlaytestStudy,
   type HumanStudyExportManifest,
   type HumanStudyImportValidators,
+  type HumanStudyPreferenceExportManifest,
+  type HumanStudyPreferenceImportValidators,
   type HumanStudyRawRow,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
   PLAYTESTS_PXI_CONSTRUCTS
 } from "@simulatorlife/autodev-core";
 
 import {
+  hashHumanStudyPxiItemConstructMapping,
   RestrictedHumanResponseRepository,
   RestrictedHumanStudyNotRegisteredError,
-  RestrictedHumanStudyStorageError,
-  hashHumanStudyPxiItemConstructMapping
+  RestrictedHumanStudyStorageError
 } from "../../src/playtesting/human-response-repository.ts";
 
 function makeStudy(
@@ -98,6 +99,83 @@ function makeManifest(): HumanStudyExportManifest {
     ]
   };
 }
+const PREF_BUILD_A_HASH = "b".repeat(64);
+const PREF_BUILD_B_HASH = "c".repeat(64);
+const PREFERENCE_PLAN = {
+  analysisPlanRef: "human-preference-v1",
+  questionVersion: "question-v1",
+  questionHash: "a".repeat(64),
+  buildA: { id: "build-A", version: "1", contentHash: PREF_BUILD_A_HASH },
+  buildB: { id: "build-B", version: "1", contentHash: PREF_BUILD_B_HASH },
+  maximumExclusionRate: 0.25,
+  practicalMargin: 0.05,
+  minimumIndependentParticipants: 5,
+  interval: {
+    method: "scipy-binomial-exact",
+    libraryVersion: "scipy-1.17.0/numpy-2.3.5/statsmodels-0.14.6",
+    confidenceLevel: 0.95,
+    resamples: null,
+    seed: null
+  }
+} as const;
+
+const preferenceManifest: HumanStudyPreferenceExportManifest = {
+  studyIdColumn: "studyId",
+  responseIdColumn: "responseId",
+  revisionColumn: "revision",
+  supersedesColumn: "supersedes",
+  participantIdColumn: "participantId",
+  consentVersionColumn: "consentVersion",
+  consentScopeColumn: "consentScope",
+  workspaceIdColumn: "workspaceId",
+  episodeAColumn: "episodeA",
+  exposureAStartedAtColumn: "startA",
+  exposureAEndedAtColumn: "endA",
+  episodeBColumn: "episodeB",
+  exposureBStartedAtColumn: "startB",
+  exposureBEndedAtColumn: "endB",
+  orderColumn: "order",
+  submittedAtColumn: "submittedAt",
+  answerColumn: "answer"
+};
+
+function preferenceRows(
+  participants: readonly { readonly id: string; readonly answer: string }[]
+): readonly HumanStudyRawRow[] {
+  return participants.map(({ id, answer }) => ({
+    studyId: "study-fixture-1",
+    responseId: "pref-response-" + id,
+    revision: "1",
+    supersedes: "",
+    participantId: id,
+    consentVersion: "consent-v1",
+    consentScope: "post-play-feedback",
+    workspaceId: "ws-1",
+    episodeA: "ep-" + id + "-build-A",
+    startA: "2026-02-01T00:00:00.000Z",
+    endA: "2026-02-01T00:10:00.000Z",
+    episodeB: "ep-" + id + "-build-B",
+    startB: "2026-02-01T00:20:00.000Z",
+    endB: "2026-02-01T00:30:00.000Z",
+    order: "A-first",
+    submittedAt: "2026-02-01T00:35:00.000Z",
+    answer
+  }));
+}
+
+function makePreferenceValidators(
+  repository: RestrictedHumanResponseRepository,
+  overrides: Partial<HumanStudyPreferenceImportValidators> = {}
+): HumanStudyPreferenceImportValidators {
+  return {
+    ...makeValidators(repository),
+    isTrustedPreferenceQuestion: (_study, plan) =>
+      plan.questionHash === PREFERENCE_PLAN.questionHash,
+    isPreferencePairComplete: () => true,
+    ...overrides
+  };
+}
+
 function makeValidators(
   repository: RestrictedHumanResponseRepository,
   overrides: Partial<HumanStudyImportValidators> = {}
@@ -139,12 +217,23 @@ function makeRow(
     workspaceId: study.workspaceId,
     buildId: value.buildId,
     buildVersion: "1",
-    buildHash: "",
+    buildHash:
+      study.allowedBuilds.find((build) => build.id === value.buildId)
+        ?.contentHash ?? "",
     episodeId: "ep-" + value.participantId + "-" + value.buildId,
-    exposureStartedAt: "2026-02-01T00:00:00.000Z",
-    exposureEndedAt: "2026-02-01T00:10:00.000Z",
+    exposureStartedAt:
+      value.buildId === "build-A"
+        ? "2026-02-01T00:00:00.000Z"
+        : "2026-02-01T00:20:00.000Z",
+    exposureEndedAt:
+      value.buildId === "build-A"
+        ? "2026-02-01T00:10:00.000Z"
+        : "2026-02-01T00:30:00.000Z",
     order: "A-first",
-    submittedAt: "2026-02-01T00:15:00.000Z",
+    submittedAt:
+      value.buildId === "build-A"
+        ? "2026-02-01T00:15:00.000Z"
+        : "2026-02-01T00:35:00.000Z",
     completionStatus: "completed",
     enj: value.enj,
     enjMissingReason: ""
@@ -166,6 +255,24 @@ function fixtureRows(study: HumanPlaytestStudy): readonly HumanStudyRawRow[] {
     );
   }
   return rows;
+}
+function recordCompletedPairResponses(
+  repository: RestrictedHumanResponseRepository,
+  study: HumanPlaytestStudy,
+  participants: readonly string[]
+): void {
+  const rows = participants.flatMap((participantId) => [
+    makeRow(study, { participantId, buildId: "build-A", enj: "1" }),
+    makeRow(study, { participantId, buildId: "build-B", enj: "1" })
+  ]);
+  const report = repository.importRows(
+    study.studyId,
+    rows,
+    makeManifest(),
+    makeValidators(repository)
+  );
+  assert.equal(report.acceptedCount, rows.length);
+  assert.equal(report.rejected.length, 0);
 }
 function setup(t: TestContext): {
   readonly root: string;
@@ -221,6 +328,206 @@ test("rejects an unregistered study and registration itself fails closed", (t) =
     () => repository.registerStudy(makeStudy({ approved: false })),
     /valid, approved/
   );
+  assert.throws(
+    () =>
+      repository.registerStudy(
+        makeStudy({
+          preferencePlan: {
+            analysisPlanRef: "preference-plan-v1",
+            questionVersion: "question-v1",
+            questionHash: "a".repeat(64),
+            buildA: {
+              id: "build-A",
+              version: "1",
+              contentHash: "b".repeat(64)
+            },
+            buildB: {
+              id: "unapproved-build",
+              version: "1",
+              contentHash: "d".repeat(64)
+            },
+            maximumExclusionRate: 0.2,
+            practicalMargin: 0.05,
+            minimumIndependentParticipants: 10,
+            interval: {
+              method: "scipy-binomial-exact",
+              libraryVersion: "scipy-1.17.0/numpy-2.3.5/statsmodels-0.14.6",
+              confidenceLevel: 0.95,
+              resamples: null,
+              seed: null
+            }
+          }
+        })
+      ),
+    /two allowed builds/
+  );
+});
+
+test("instrument imports normalize numeric build versions like preference imports", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-human-numeric-build-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repository = new RestrictedHumanResponseRepository({
+    rootDirectory: root
+  });
+  const study = makeStudy({
+    allowedBuilds: [
+      { id: "build-A", version: 1 },
+      { id: "build-B", version: 1 }
+    ]
+  });
+  repository.registerStudy(study);
+  for (const participant of ["p1", "p2", "p3", "p4", "p5"]) {
+    repository.recordConsent(
+      study.studyId,
+      participant,
+      study.consentVersion,
+      study.consentScope
+    );
+  }
+
+  const report = repository.importRows(
+    study.studyId,
+    fixtureRows(study),
+    makeManifest(),
+    makeValidators(repository)
+  );
+  assert.equal(report.acceptedCount, 10, JSON.stringify(report));
+  assert.equal(report.rejected.length, 0);
+  assert.equal(report.quarantined.length, 0);
+});
+
+test("version-one restricted state migrates atomically without losing consent or PXI data", (t) => {
+  const { root, study } = setup(t);
+  const fileName =
+    createHash("sha256").update(study.studyId).digest("hex") + ".json";
+  const statePath = join(root, fileName);
+  const legacy = JSON.parse(readFileSync(statePath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  legacy.format = "autodev-restricted-human-study-v1";
+  delete legacy.preferenceResponses;
+  delete legacy.preferenceQuarantines;
+  writeFileSync(statePath, JSON.stringify(legacy));
+  chmodSync(statePath, 0o600);
+
+  const migrated = new RestrictedHumanResponseRepository({
+    rootDirectory: root
+  });
+  migrated.registerStudy(study);
+  assert.equal(
+    migrated.getConsent(study.studyId, "p1")?.consentVersion,
+    study.consentVersion
+  );
+  const persisted = JSON.parse(readFileSync(statePath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  assert.equal(persisted.format, "autodev-restricted-human-study-v2");
+  assert.equal((persisted.responses as readonly unknown[]).length, 10);
+  assert.deepEqual(persisted.preferenceResponses, []);
+  assert.deepEqual(persisted.preferenceQuarantines, []);
+});
+
+test("legacy response consent must match its frozen study before migration", (t) => {
+  const { root, study } = setup(t);
+  const fileName =
+    createHash("sha256").update(study.studyId).digest("hex") + ".json";
+  const statePath = join(root, fileName);
+  const legacy = JSON.parse(readFileSync(statePath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  legacy.format = "autodev-restricted-human-study-v1";
+  delete legacy.preferenceResponses;
+  delete legacy.preferenceQuarantines;
+  const responses = legacy.responses as Record<string, unknown>[];
+  responses[0]!.consentVersion = "stale-consent-version";
+  writeFileSync(statePath, JSON.stringify(legacy));
+  chmodSync(statePath, 0o600);
+
+  assert.throws(
+    () => new RestrictedHumanResponseRepository({ rootDirectory: root }),
+    RestrictedHumanStudyStorageError
+  );
+  const persisted = JSON.parse(readFileSync(statePath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  assert.equal(persisted.format, "autodev-restricted-human-study-v1");
+});
+
+test("current restricted response consent mismatch fails closed on read", (t) => {
+  const { root, study } = setup(t);
+  const fileName =
+    createHash("sha256").update(study.studyId).digest("hex") + ".json";
+  const statePath = join(root, fileName);
+  const current = JSON.parse(readFileSync(statePath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  const responses = current.responses as Record<string, unknown>[];
+  responses[0]!.consentScope = "unapproved-scope";
+  writeFileSync(statePath, JSON.stringify(current));
+  chmodSync(statePath, 0o600);
+
+  const reconstructed = new RestrictedHumanResponseRepository({
+    rootDirectory: root
+  });
+  assert.throws(
+    () => reconstructed.registerStudy(study),
+    RestrictedHumanStudyStorageError
+  );
+});
+
+test("current preference response consent mismatch fails closed on read", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-human-preference-consent-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repository = new RestrictedHumanResponseRepository({
+    rootDirectory: root
+  });
+  const study = makeStudy({
+    allowedBuilds: [PREFERENCE_PLAN.buildA, PREFERENCE_PLAN.buildB],
+    preferencePlan: PREFERENCE_PLAN
+  });
+  repository.registerStudy(study);
+  const participants = ["pref-p1", "pref-p2", "pref-p3", "pref-p4", "pref-p5"];
+  for (const participant of participants) {
+    repository.recordConsent(
+      study.studyId,
+      participant,
+      study.consentVersion,
+      study.consentScope
+    );
+  }
+  recordCompletedPairResponses(repository, study, participants);
+  repository.importPreferenceRows(
+    study.studyId,
+    preferenceRows(participants.map((id) => ({ id, answer: "B" }))),
+    preferenceManifest,
+    makePreferenceValidators(repository)
+  );
+
+  const statePath = join(
+    root,
+    createHash("sha256").update(study.studyId).digest("hex") + ".json"
+  );
+  const current = JSON.parse(readFileSync(statePath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  const responses = current.preferenceResponses as Record<string, unknown>[];
+  responses[0]!.consentVersion = "stale-consent-version";
+  writeFileSync(statePath, JSON.stringify(current));
+  chmodSync(statePath, 0o600);
+
+  const reconstructed = new RestrictedHumanResponseRepository({
+    rootDirectory: root
+  });
+  assert.throws(
+    () => reconstructed.registerStudy(study),
+    RestrictedHumanStudyStorageError
+  );
 });
 
 test("authorized fixture import persists privately and suppresses each under-five item cell", (t) => {
@@ -261,6 +568,173 @@ test("authorized fixture import persists privately and suppresses each under-fiv
     true,
     "raw responses stay in the restricted owner-only store"
   );
+});
+
+test("paired preference imports remain separate, restricted, withdrawal-aware and small-cell suppressed", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-human-preference-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repository = new RestrictedHumanResponseRepository({
+    rootDirectory: root
+  });
+  const study = makeStudy({
+    allowedBuilds: [PREFERENCE_PLAN.buildA, PREFERENCE_PLAN.buildB],
+    preferencePlan: PREFERENCE_PLAN
+  });
+  repository.registerStudy(study);
+  const participants = ["pref-p1", "pref-p2", "pref-p3", "pref-p4", "pref-p5"];
+  for (const participant of participants) {
+    repository.recordConsent(
+      study.studyId,
+      participant,
+      study.consentVersion,
+      study.consentScope
+    );
+  }
+  recordCompletedPairResponses(repository, study, participants);
+  const report = repository.importPreferenceRows(
+    study.studyId,
+    preferenceRows(participants.map((id) => ({ id, answer: "B" }))),
+    preferenceManifest,
+    makePreferenceValidators(repository)
+  );
+  assert.equal(report.acceptedCount, 5);
+  assert.equal(report.rejected.length, 0);
+  assert.equal(report.quarantined.length, 0);
+  const summary = repository.getHumanPreferenceSummary(study.studyId);
+  assert.equal(summary?.suppressionState, "unsuppressed");
+  assert.equal(summary?.counts?.eligibleParticipants, 5);
+  assert.equal(summary?.counts?.preferB, 5);
+  assert.equal(JSON.stringify(summary).includes("pref-p"), false);
+
+  const withdrawal = repository.withdrawParticipant(study.studyId, "pref-p5");
+  assert.equal(withdrawal.retainedParticipants, null);
+  const withdrawnSummary = repository.getHumanPreferenceSummary(study.studyId);
+  assert.equal(withdrawnSummary?.suppressionState, "suppressed");
+  assert.equal(withdrawnSummary?.counts, null);
+});
+
+test("preference summary derives unanswered eligible participants as missing rather than dropping them", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-human-preference-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repository = new RestrictedHumanResponseRepository({
+    rootDirectory: root
+  });
+  const study = makeStudy({
+    allowedBuilds: [PREFERENCE_PLAN.buildA, PREFERENCE_PLAN.buildB],
+    preferencePlan: PREFERENCE_PLAN
+  });
+  repository.registerStudy(study);
+  const participants = Array.from(
+    { length: 10 },
+    (_, index) => "p" + String(index)
+  );
+  for (const participant of participants)
+    repository.recordConsent(
+      study.studyId,
+      participant,
+      study.consentVersion,
+      study.consentScope
+    );
+  recordCompletedPairResponses(repository, study, participants);
+  repository.importPreferenceRows(
+    study.studyId,
+    preferenceRows(participants.slice(0, 5).map((id) => ({ id, answer: "B" }))),
+    preferenceManifest,
+    makePreferenceValidators(repository)
+  );
+  const summary = repository.getHumanPreferenceSummary(study.studyId);
+  assert.equal(summary?.suppressionState, "unsuppressed");
+  assert.equal(summary?.counts?.eligibleParticipants, 10);
+  assert.equal(summary?.counts?.preferB, 5);
+  assert.equal(summary?.counts?.missing, 5);
+});
+
+test("preference duplicate quarantine requires explicit resolution before its row is counted", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-human-preference-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repository = new RestrictedHumanResponseRepository({
+    rootDirectory: root
+  });
+  const study = makeStudy({
+    allowedBuilds: [PREFERENCE_PLAN.buildA, PREFERENCE_PLAN.buildB],
+    preferencePlan: PREFERENCE_PLAN
+  });
+  repository.registerStudy(study);
+  repository.recordConsent(
+    study.studyId,
+    "p1",
+    study.consentVersion,
+    study.consentScope
+  );
+  recordCompletedPairResponses(repository, study, ["p1"]);
+  const report = repository.importPreferenceRows(
+    study.studyId,
+    preferenceRows([
+      { id: "p1", answer: "A" },
+      { id: "p1", answer: "B" }
+    ]).map((row, index) => ({
+      ...row,
+      responseId: "pref-response-p1-" + String(index)
+    })),
+    preferenceManifest,
+    makePreferenceValidators(repository)
+  );
+  assert.equal(report.acceptedCount, 0);
+  assert.equal(report.quarantined.length, 1);
+  assert.equal(
+    repository.getHumanPreferenceSummary(study.studyId)?.counts,
+    null
+  );
+  const quarantined = repository.listPreferenceQuarantines(study.studyId);
+  assert.equal(quarantined[0]!.participantId, "p1");
+  const keep = quarantined[0]!.responseIds[0]!;
+  repository.resolvePreferenceQuarantine(study.studyId, keep);
+  assert.equal(repository.listPreferenceQuarantines(study.studyId).length, 0);
+  const resolved = repository.getHumanPreferenceSummary(study.studyId);
+  assert.equal(resolved?.suppressionState, "suppressed");
+  assert.equal(resolved?.counts, null);
+  assert.ok(
+    repository
+      .getTombstonedHistory(study.studyId)
+      .some((entry) => entry.status === "stale")
+  );
+});
+
+test("preference category cells below the privacy threshold suppress the entire roster", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-human-preference-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repository = new RestrictedHumanResponseRepository({
+    rootDirectory: root
+  });
+  const study = makeStudy({
+    allowedBuilds: [PREFERENCE_PLAN.buildA, PREFERENCE_PLAN.buildB],
+    preferencePlan: PREFERENCE_PLAN
+  });
+  repository.registerStudy(study);
+  const participants = ["p1", "p2", "p3", "p4", "p5"];
+  for (const participant of participants)
+    repository.recordConsent(
+      study.studyId,
+      participant,
+      study.consentVersion,
+      study.consentScope
+    );
+  recordCompletedPairResponses(repository, study, participants);
+  repository.importPreferenceRows(
+    study.studyId,
+    preferenceRows([
+      { id: "p1", answer: "A" },
+      { id: "p2", answer: "B" },
+      { id: "p3", answer: "B" },
+      { id: "p4", answer: "B" },
+      { id: "p5", answer: "B" }
+    ]),
+    preferenceManifest,
+    makePreferenceValidators(repository)
+  );
+  const summary = repository.getHumanPreferenceSummary(study.studyId);
+  assert.equal(summary?.suppressionState, "suppressed");
+  assert.equal(summary?.counts, null);
 });
 
 test("restricted PXI summaries preserve a null construct and a complete construct", (t) => {
@@ -384,37 +858,44 @@ test("repository startup removes owner-only orphaned atomic staging files", (t) 
 
 test("separate processes serialize consent updates and reconstructed readers see both commits", async (t) => {
   const { root, repository, study } = setup(t);
-  const moduleUrl = pathToFileURL(
-    resolve("src/playtesting/human-response-repository.ts")
+  const moduleUrl = new URL(
+    "../../src/playtesting/human-response-repository.ts",
+    import.meta.url
   ).href;
-  const children = ["p6", "p7"].map((participantId) => {
-    const source = [
-      `import { RestrictedHumanResponseRepository } from ${JSON.stringify(moduleUrl)};`,
-      `const repository = new RestrictedHumanResponseRepository({ rootDirectory: ${JSON.stringify(root)} });`,
-      `repository.recordConsent(${JSON.stringify(study.studyId)}, ${JSON.stringify(participantId)}, ${JSON.stringify(study.consentVersion)}, ${JSON.stringify(study.consentScope)});`
-    ].join("\n");
-    const child = spawn(
-      process.execPath,
-      ["--input-type=module", "-e", source],
-      {
-        cwd: process.cwd(),
-        env: { PATH: process.env.PATH ?? "" },
-        stdio: "ignore"
-      }
-    );
-    return new Promise<void>((_resolve, _reject) => {
-      child.once("error", _reject);
-      child.once("exit", (code, signal) => {
-        if (code === 0) _resolve();
-        else
-          _reject(
-            new Error(
-              `writer child exited with ${String(code)} (${String(signal)})`
-            )
-          );
+  const children = ["p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13"].map(
+    (participantId) => {
+      const source = [
+        `import { RestrictedHumanResponseRepository } from ${JSON.stringify(moduleUrl)};`,
+        `const repository = new RestrictedHumanResponseRepository({ rootDirectory: ${JSON.stringify(root)} });`,
+        `repository.recordConsent(${JSON.stringify(study.studyId)}, ${JSON.stringify(participantId)}, ${JSON.stringify(study.consentVersion)}, ${JSON.stringify(study.consentScope)});`
+      ].join("\n");
+      const child = spawn(
+        process.execPath,
+        ["--input-type=module", "-e", source],
+        {
+          cwd: process.cwd(),
+          env: { PATH: process.env.PATH ?? "" },
+          stdio: ["ignore", "pipe", "pipe"]
+        }
+      );
+      let stderr = "";
+      child.stderr?.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString("utf8");
       });
-    });
-  });
+      return new Promise<void>((_resolve, _reject) => {
+        child.once("error", _reject);
+        child.once("exit", (code, signal) => {
+          if (code === 0) _resolve();
+          else
+            _reject(
+              new Error(
+                `writer child exited with ${String(code)} (${String(signal)}): ${stderr}`
+              )
+            );
+        });
+      });
+    }
+  );
   await Promise.all(children);
 
   const reconstructed = new RestrictedHumanResponseRepository({
@@ -425,10 +906,11 @@ test("separate processes serialize consent updates and reconstructed readers see
     consentVersion: study.consentVersion,
     consentScope: study.consentScope
   });
-  assert.deepEqual(reconstructed.getConsent(study.studyId, "p7"), {
-    consentVersion: study.consentVersion,
-    consentScope: study.consentScope
-  });
+  for (const participantId of ["p7", "p8", "p9", "p10", "p11", "p12", "p13"])
+    assert.deepEqual(reconstructed.getConsent(study.studyId, participantId), {
+      consentVersion: study.consentVersion,
+      consentScope: study.consentScope
+    });
   assert.ok(repository);
 });
 
@@ -466,6 +948,22 @@ test("live writer contention has a bounded wait and blocks startup staging clean
     /Timed out waiting for the restricted human-study writer lock/
   );
   assert.equal(readdirSync(root).includes(orphan.split("/").at(-1)!), true);
+  rmSync(lockFile, { force: true });
+  writeFileSync(lockFile, "");
+  chmodSync(lockFile, 0o600);
+  const emptyReservationStartedAt = performance.now();
+  assert.throws(
+    () =>
+      repository.recordConsent(
+        study.studyId,
+        "p6",
+        study.consentVersion,
+        study.consentScope
+      ),
+    /Timed out waiting for the restricted human-study writer lock/
+  );
+  assert.ok(performance.now() - emptyReservationStartedAt < 2000);
+  assert.equal(readFileSync(lockFile, "utf8"), "");
   rmSync(lockFile, { force: true });
   const recovered = new RestrictedHumanResponseRepository({
     rootDirectory: root
@@ -779,11 +1277,8 @@ test("symlink state files fail closed and owner-only files are written", (t) => 
   const outside = join(root, "target");
   writeFileSync(outside, "{}");
   symlinkSync(outside, join(root, digest));
-  const repository = new RestrictedHumanResponseRepository({
-    rootDirectory: root
-  });
   assert.throws(
-    () => repository.registerStudy(study),
+    () => new RestrictedHumanResponseRepository({ rootDirectory: root }),
     RestrictedHumanStudyStorageError
   );
   rmSync(join(root, digest));

@@ -22,6 +22,11 @@
     "benchmark": "playtest.benchmark.json",
     "critic": "fixture-only-no-model",
     "maxReviewedSessions": 0,
+    "reviewSelection": {
+      "surveillanceSessions": 0,
+      "discoverySessions": 0,
+      "discoverySignal": null
+    },
     "visualCapture": "off",
     "counterfactuals": "off",
     "understandingProbes": "off",

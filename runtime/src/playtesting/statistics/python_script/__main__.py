@@ -11,6 +11,8 @@ Supported methods
   params: ``array`` (array of numbers). Optional params: ``resamples``
   (default 100000), ``confidenceLevel`` (default 0.95), ``seed``
   (default 42). Result keys: ``interval``.
+* ``statistics.binomial_proportion`` -> Exact two-sided participant
+  preference proportion interval via SciPy's ``binomtest``.
 * ``statistics.multipletests`` -> Family-wise multiplicity adjustment.
   Required params: ``pvalues`` (array). Optional params: ``alpha``
   (default 0.05), ``method`` (default ``fdr_bh``).
@@ -38,6 +40,7 @@ from .analysis import (
     DEFAULT_SEED,
     StatisticInputError,
     expected_fixture_intervals,
+    exact_binomial_proportion_interval,
     multiplicity_adjusted_pvalues,
     paired_percentile_bootstrap,
 )
@@ -109,6 +112,19 @@ def _handle_bootstrap(params: dict) -> dict:
     return {"interval": interval.to_dict()}
 
 
+def _handle_binomial_proportion(params: dict) -> dict:
+    if not isinstance(params, dict):
+        raise StatisticInputError("binomial proportion params must be an object.")
+    if set(params) - {"successes", "trials", "confidenceLevel"}:
+        raise StatisticInputError("binomial proportion params contain unsupported fields.")
+    interval = exact_binomial_proportion_interval(
+        params.get("successes"),
+        params.get("trials"),
+        confidence_level=params.get("confidenceLevel", DEFAULT_CONFIDENCE_LEVEL),
+    )
+    return {"interval": interval.to_dict()}
+
+
 def _handle_multipletests(params: dict) -> dict:
     if not isinstance(params, dict):
         raise StatisticInputError("multipletests params must be an object.")
@@ -130,6 +146,7 @@ def _handle_manifest(_params) -> dict:
 
 DISPATCH = {
     "statistics.bootstrap": _handle_bootstrap,
+    "statistics.binomial_proportion": _handle_binomial_proportion,
     "statistics.multipletests": _handle_multipletests,
     "statistics.manifest": _handle_manifest,
 }

@@ -12,29 +12,30 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 
+import type {
+  ControlApiPlaytestingHumanValidationResponse,
+  HumanPlaytestStudy,
+  PlaytestBenchmark,
+  PlaytestEpisode
+} from "@simulatorlife/autodev-core";
 import {
   PlaytestInvalidCursorError,
   PlaytestSourceUnavailableError,
   RestrictedHumanResponseRepository
 } from "@simulatorlife/autodev-data/playtesting";
+import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
 
 import { handleControlApiRequest } from "../src/control-api/index.ts";
 import {
   handlePlaytestingControlApiRequest,
   type PlaytestingReadRepository
 } from "../src/control-api/playtesting.ts";
+import type { PlaytestingHumanStudyRepository } from "../src/control-api/playtesting-human-studies.ts";
 import {
   handlePlaytestingRunControlRequest,
   type PlaytestingRunControlApiOptions
 } from "../src/control-api/playtesting-run-control.ts";
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
-import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
-import type {
-  HumanPlaytestStudy,
-  PlaytestBenchmark,
-  PlaytestEpisode
-} from "@simulatorlife/autodev-core";
-import type { PlaytestingHumanStudyRepository } from "../src/control-api/playtesting-human-studies.ts";
 import { PlaytestSandboxUnavailableError } from "../src/playtesting/docker-sandbox.ts";
 import type {
   PlaytestRunCapabilities,
@@ -175,6 +176,7 @@ function runControlFixture(calls: unknown[] = []): PlaytestRunControl {
         runnablePolicies: ["random"],
         unsupportedApprovedPolicies: [],
         configurationStatus: "validated",
+        maxBatchAssignments: 10,
         runnableAssignments: [
           {
             scenarioId: "tutorial",
@@ -213,14 +215,19 @@ function runControlFixture(calls: unknown[] = []): PlaytestRunControl {
     },
     startRun: async (session, payload) => {
       calls.push({ operation: "start", session, request: payload });
-      return { batchId: "batch-run-1", status: "running" };
+      return {
+        batchId: "batch-run-1",
+        assignmentCount:
+          "assignments" in payload ? payload.assignments.length : 1,
+        status: "running"
+      };
     },
     listActiveRuns: (session, workspaceId) => {
       calls.push({ operation: "list", session, workspaceId });
       return [
         {
           batchId: "batch-run-1",
-          scenarioId: "tutorial",
+          assignmentCount: 1,
           createdAt: "2026-10-10T00:00:00.000Z"
         }
       ];
@@ -235,12 +242,70 @@ function runControlFixture(calls: unknown[] = []): PlaytestRunControl {
         batchId,
         status: "completed",
         cancellationReason: null,
-        result: { episodeId: "episode-1", outcome: "win" },
+        result: {
+          batchId: "batch-run-1",
+          assignmentCount: 1,
+          outcomes: [
+            {
+              assignmentId: "a-0001",
+              episodeId: "episode-1",
+              state: "completed",
+              started: true,
+              eligible: true
+            }
+          ]
+        },
         error: null
       };
     }
   };
 }
+
+test("Control API branch requests use the shared approved run owner and reject malformed bounds", async () => {
+  const calls: unknown[] = [];
+  const options: PlaytestingRunControlApiOptions = {
+    runControl: runControlFixture(calls)
+  };
+  const operator = { actor: "operator-branch", role: "operator" as const };
+  const started = await callRunControl(
+    "POST",
+    "/control/playtesting/runs",
+    operator,
+    options,
+    {
+      workspaceId: WORKSPACE,
+      parentEpisodeId: "episode-parent",
+      branchStep: 7,
+      alternativeActionId: "cool-down",
+      policy: "random",
+      maxSteps: 12
+    }
+  );
+  assert.equal(started.status, 202);
+  assert.equal(started.body.assignmentCount, 1);
+  assert.deepEqual((calls[0] as { request: unknown }).request, {
+    workspaceId: WORKSPACE,
+    parentEpisodeId: "episode-parent",
+    branchStep: 7,
+    alternativeActionId: "cool-down",
+    policy: "random",
+    maxSteps: 12
+  });
+  const invalid = await callRunControl(
+    "POST",
+    "/control/playtesting/runs",
+    operator,
+    options,
+    {
+      workspaceId: WORKSPACE,
+      parentEpisodeId: "episode-parent",
+      branchStep: 100_000,
+      alternativeActionId: "cool-down"
+    }
+  );
+  assert.equal(invalid.status, 400);
+  assert.equal(calls.length, 1);
+});
 
 test("Control API run, status, list, and cancel delegate to the shared Runtime run owner", async () => {
   const calls: unknown[] = [];
@@ -254,10 +319,9 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
   const viewer = { actor: "viewer-1", role: "viewer" as const };
   const requestBody = {
     workspaceId: WORKSPACE,
-    scenario: "tutorial",
-    policy: "random",
-    seed: "seed-1",
-    maxSteps: 20
+    assignments: [
+      { scenario: "tutorial", policy: "random", seed: "seed-1", maxSteps: 20 }
+    ]
   };
 
   const capabilities = await callRunControl(
@@ -285,6 +349,7 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
     schema: "autodev-control-playtesting-run-started-v1",
     workspaceId: WORKSPACE,
     batchId: "batch-run-1",
+    assignmentCount: 1,
     status: "running"
   });
   const delegatedStart = calls[1] as {
@@ -298,10 +363,9 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
   assert.match(delegatedStart.session.actor, /^control-api:[a-f0-9]{64}$/u);
   assert.deepEqual(delegatedStart.request, {
     workspaceId: WORKSPACE,
-    scenario: "tutorial",
-    policy: "random",
-    seed: "seed-1",
-    maxSteps: 20
+    assignments: [
+      { scenario: "tutorial", policy: "random", seed: "seed-1", maxSteps: 20 }
+    ]
   });
 
   const active = await callRunControl(
@@ -335,7 +399,19 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
     batchId: "batch-run-1",
     status: "completed",
     cancellationReason: null,
-    result: { episodeId: "episode-1", outcome: "win" },
+    result: {
+      batchId: "batch-run-1",
+      assignmentCount: 1,
+      outcomes: [
+        {
+          assignmentId: "a-0001",
+          episodeId: "episode-1",
+          state: "completed",
+          started: true,
+          eligible: true
+        }
+      ]
+    },
     error: null
   });
 
@@ -355,6 +431,28 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
   assert.equal(calls.length, 5);
 });
 
+test("Control API preserves truncated execution status instead of normalizing it to completed", async () => {
+  const base = runControlFixture();
+  const runControl: PlaytestRunControl = {
+    ...base,
+    waitForRun: async (_session, _workspaceId, batchId) => ({
+      batchId,
+      status: "truncated",
+      cancellationReason: null,
+      result: { counts: { assigned: 2, budgetTruncated: 1 } },
+      error: null
+    })
+  };
+  const response = await callRunControl(
+    "GET",
+    `/control/playtesting/runs/batch-run-truncated?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    { actor: "operator-1", role: "operator" },
+    { runControl }
+  );
+  assert.equal(response.status, 200);
+  assert.equal((response.body.run as { status: string }).status, "truncated");
+});
+
 test("Control API preserves the trusted MCP role and run ownership session across the process boundary", async () => {
   const calls: unknown[] = [];
   const options: PlaytestingRunControlApiOptions = {
@@ -370,9 +468,7 @@ test("Control API preserves the trusted MCP role and run ownership session acros
   };
   const sessionRequest = runRequest("POST", "/control/playtesting/runs", {
     workspaceId: WORKSPACE,
-    scenario: "tutorial",
-    policy: "random",
-    seed: "seed-1"
+    assignments: [{ scenario: "tutorial", policy: "random", seed: "seed-1" }]
   });
   sessionRequest.headers = {
     host: "127.0.0.1",
@@ -449,9 +545,7 @@ test("Control API run actions fail closed for viewers, malformed requests, and a
   const viewer = { actor: "viewer-1", role: "viewer" as const };
   const body = {
     workspaceId: WORKSPACE,
-    scenario: "tutorial",
-    policy: "random",
-    seed: "seed-1"
+    assignments: [{ scenario: "tutorial", policy: "random", seed: "seed-1" }]
   };
 
   const forbidden = await callRunControl(
@@ -498,9 +592,9 @@ test("Control API reports missing Data and sandbox services as unavailable witho
   const operator = { actor: "operator-1", role: "operator" as const };
   const requestBody = {
     workspaceId: WORKSPACE,
-    scenario: "tutorial",
-    policy: "random",
-    seed: "failure-seed"
+    assignments: [
+      { scenario: "tutorial", policy: "random", seed: "failure-seed" }
+    ]
   };
   for (const failure of ["data", "sandbox"] as const) {
     const base = runControlFixture();
@@ -662,7 +756,7 @@ test("Playtesting invalid keyset cursors return 400, never an empty page", async
 test("selected episode returns its latest review and remains workspace-scoped", async () => {
   const episode = {
     episodeId: "episode-1",
-    schema: "autodev-playtest-episode-v1"
+    schema: "autodev-playtest-episode-v3"
   };
   const review = { reviewId: "review-1", status: "hypothesis" };
   let lookup: unknown;
@@ -760,9 +854,9 @@ test("Control API authenticates and routes workspace-scoped Playtesting reads", 
     const delegatedRunControl = runControlFixture();
     const runRequestBody = {
       workspaceId: WORKSPACE,
-      scenario: "tutorial",
-      policy: "random",
-      seed: "auth-boundary-seed"
+      assignments: [
+        { scenario: "tutorial", policy: "random", seed: "auth-boundary-seed" }
+      ]
     };
     const viewerRun = responseRecorder();
     const viewerRequest = runRequest(
@@ -890,9 +984,9 @@ test("scoped Playtesting Control API credential is limited to typed run routes",
     };
     const scopedRequest = runRequest("POST", "/control/playtesting/runs", {
       workspaceId: WORKSPACE,
-      scenario: "tutorial",
-      policy: "random",
-      seed: "scoped-token-seed"
+      assignments: [
+        { scenario: "tutorial", policy: "random", seed: "scoped-token-seed" }
+      ]
     });
     scopedRequest.headers = {
       host: "127.0.0.1",
@@ -922,9 +1016,9 @@ test("scoped Playtesting Control API credential is limited to typed run routes",
       "/control/playtesting/runs",
       {
         workspaceId: WORKSPACE,
-        scenario: "tutorial",
-        policy: "random",
-        seed: "missing-session"
+        assignments: [
+          { scenario: "tutorial", policy: "random", seed: "missing-session" }
+        ]
       }
     );
     missingSessionRequest.headers = {
@@ -949,9 +1043,9 @@ test("scoped Playtesting Control API credential is limited to typed run routes",
       "/control/playtesting/runs",
       {
         workspaceId: WORKSPACE,
-        scenario: "tutorial",
-        policy: "random",
-        seed: "escalated-role"
+        assignments: [
+          { scenario: "tutorial", policy: "random", seed: "escalated-role" }
+        ]
       }
     );
     escalatedSessionRequest.headers = {
@@ -1024,6 +1118,8 @@ test("authorized human-study API registers consent, imports idempotently, suppre
   );
   const buildA = "a".repeat(40);
   const buildB = "b".repeat(40);
+  const buildAContentHash = "f".repeat(64);
+  const buildBContentHash = "e".repeat(64);
   const studyId = "study-fixture-1";
   const studies = new Map<string, HumanPlaytestStudy>();
   const episodeRows = new Map<string, PlaytestEpisode>();
@@ -1115,7 +1211,18 @@ test("authorized human-study API registers consent, imports idempotently, suppre
     repositoryRoot,
     playtestingHumanStudyRepository: repository,
     restrictedHumanResponseRepository: restricted,
-    workspacePlaytestApprovalRepository: approvalRepository
+    workspacePlaytestApprovalRepository: approvalRepository,
+    preferenceStatistics: {
+      exactBinomialProportionInterval: async ({ confidenceLevel = 0.95 }) => ({
+        lower: Number("0.47817624989501856"),
+        upper: 1,
+        method: "scipy-binomial-exact",
+        libraryVersion: "scipy-1.17.0/numpy-2.3.5/statsmodels-0.14.6",
+        confidenceLevel,
+        resamples: null,
+        seed: null
+      })
+    }
   };
   const callApi = async (
     method: string,
@@ -1147,6 +1254,7 @@ test("authorized human-study API registers consent, imports idempotently, suppre
     const episodeId = `episode-${participant}-${buildSha === buildA ? "a" : "b"}`;
     episodeRows.set(episodeId, {
       episodeId,
+      status: "completed",
       identity: { workspaceId: WORKSPACE, buildSha }
     } as PlaytestEpisode);
     return episodeId;
@@ -1165,9 +1273,34 @@ test("authorized human-study API registers consent, imports idempotently, suppre
           workspaceId: WORKSPACE,
           benchmarkId: benchmark.benchmarkId,
           allowedBuilds: [
-            { id: buildA, version: "1" },
-            { id: buildB, version: "1" }
+            { id: buildA, version: "1", contentHash: buildAContentHash },
+            { id: buildB, version: "1", contentHash: buildBContentHash }
           ],
+          preferencePlan: {
+            analysisPlanRef: "preference-analysis-v1",
+            questionVersion: "preference-question-v1",
+            questionHash: "9".repeat(64),
+            buildA: {
+              id: buildA,
+              version: "1",
+              contentHash: buildAContentHash
+            },
+            buildB: {
+              id: buildB,
+              version: "1",
+              contentHash: buildBContentHash
+            },
+            maximumExclusionRate: 0.25,
+            practicalMargin: 0.05,
+            minimumIndependentParticipants: 5,
+            interval: {
+              method: "scipy-binomial-exact",
+              libraryVersion: "scipy-1.17.0/numpy-2.3.5/statsmodels-0.14.6",
+              confidenceLevel: 0.95,
+              resamples: null,
+              seed: null
+            }
+          },
           pxiItemConstructMappingHash: null,
           instrument: "miniPXI",
           instrumentVersion: "miniPXI-v1",
@@ -1193,9 +1326,7 @@ test("authorized human-study API registers consent, imports idempotently, suppre
     const rows: Record<string, string>[] = [];
     for (let index = 1; index <= 5; index += 1) {
       const participantId = `participant-${index}`;
-      const startedAt = "2026-10-10T00:00:00.000Z";
-      const endedAt = "2026-10-10T00:10:00.000Z";
-      const submittedAt = "2026-10-10T00:15:00.000Z";
+      const order = index % 2 === 0 ? "B-first" : "A-first";
       const consent = await callApi(
         "POST",
         `/control/playtesting/human-studies/${studyId}/consents?${workspaceQuery}`,
@@ -1211,38 +1342,73 @@ test("authorized human-study API registers consent, imports idempotently, suppre
         ...[
           {
             buildId: buildA,
-            order: "A-first",
-            episodeId: episodeLink(participantId, buildA)
+            order,
+            episodeId: episodeLink(participantId, buildA),
+            exposureStartedAt:
+              order === "A-first"
+                ? "2026-10-10T00:00:00.000Z"
+                : "2026-10-10T00:20:00.000Z",
+            exposureEndedAt:
+              order === "A-first"
+                ? "2026-10-10T00:10:00.000Z"
+                : "2026-10-10T00:30:00.000Z"
           },
           {
             buildId: buildB,
-            order: "B-first",
-            episodeId: episodeLink(participantId, buildB)
+            order,
+            episodeId: episodeLink(participantId, buildB),
+            exposureStartedAt:
+              order === "A-first"
+                ? "2026-10-10T00:20:00.000Z"
+                : "2026-10-10T00:00:00.000Z",
+            exposureEndedAt:
+              order === "A-first"
+                ? "2026-10-10T00:30:00.000Z"
+                : "2026-10-10T00:10:00.000Z"
           }
-        ].map(({ buildId, order, episodeId }, armIndex) => ({
-          studyId,
-          responseId: `${participantId}-response-${armIndex}`,
-          revision: "1",
-          supersedes: "",
-          participantId,
-          consentVersion: "consent-v1",
-          consentScope: "post-play",
-          instrument: "miniPXI",
-          instrumentVersion: "miniPXI-v1",
-          instrumentHash: "e".repeat(64),
-          workspaceId: WORKSPACE,
-          buildId,
-          buildVersion: "1",
-          buildHash: "",
-          episodeId,
-          exposureStartedAt: startedAt,
-          exposureEndedAt: endedAt,
-          order,
-          submittedAt,
-          completionStatus: "completed",
-          enj: "1",
-          enjMissingReason: ""
-        }))
+        ].map(
+          (
+            {
+              buildId,
+              order: exposureOrder,
+              episodeId,
+              exposureStartedAt,
+              exposureEndedAt
+            },
+            armIndex
+          ) => ({
+            studyId,
+            responseId: `${participantId}-response-${armIndex}`,
+            revision: "1",
+            supersedes: "",
+            participantId,
+            consentVersion: "consent-v1",
+            consentScope: "post-play",
+            instrument: "miniPXI",
+            instrumentVersion: "miniPXI-v1",
+            instrumentHash: "e".repeat(64),
+            workspaceId: WORKSPACE,
+            buildId,
+            buildVersion: "1",
+            buildHash:
+              buildId === buildA ? buildAContentHash : buildBContentHash,
+            episodeId,
+            exposureStartedAt,
+            exposureEndedAt,
+            order: exposureOrder,
+            submittedAt:
+              exposureOrder === "A-first"
+                ? armIndex === 0
+                  ? "2026-10-10T00:15:00.000Z"
+                  : "2026-10-10T00:35:00.000Z"
+                : armIndex === 0
+                  ? "2026-10-10T00:35:00.000Z"
+                  : "2026-10-10T00:15:00.000Z",
+            completionStatus: "completed",
+            enj: "1",
+            enjMissingReason: ""
+          })
+        )
       );
     }
     const manifest = {
@@ -1296,9 +1462,169 @@ test("authorized human-study API registers consent, imports idempotently, suppre
     assert.equal(repeatedImport.body.acceptedCount, 0);
     assert.equal(repeatedImport.body.unchangedCount, 10);
 
+    const preferenceManifest = {
+      studyIdColumn: "studyId",
+      responseIdColumn: "responseId",
+      revisionColumn: "revision",
+      supersedesColumn: "supersedes",
+      participantIdColumn: "participantId",
+      consentVersionColumn: "consentVersion",
+      consentScopeColumn: "consentScope",
+      workspaceIdColumn: "workspaceId",
+      episodeAColumn: "episodeA",
+      exposureAStartedAtColumn: "exposureAStartedAt",
+      exposureAEndedAtColumn: "exposureAEndedAt",
+      episodeBColumn: "episodeB",
+      exposureBStartedAtColumn: "exposureBStartedAt",
+      exposureBEndedAtColumn: "exposureBEndedAt",
+      orderColumn: "order",
+      submittedAtColumn: "submittedAt",
+      answerColumn: "answer"
+    };
+    const preferenceRows = Array.from({ length: 5 }, (_, index) => {
+      const participantId = `participant-${index + 1}`;
+      const order = index % 2 === 1 ? "B-first" : "A-first";
+      return {
+        studyId,
+        responseId: `preference-response-${index + 1}`,
+        revision: "1",
+        supersedes: "",
+        participantId,
+        consentVersion: "consent-v1",
+        consentScope: "post-play",
+        workspaceId: WORKSPACE,
+        episodeA: episodeLink(participantId, buildA),
+        exposureAStartedAt:
+          order === "A-first"
+            ? "2026-10-10T00:00:00.000Z"
+            : "2026-10-10T00:20:00.000Z",
+        exposureAEndedAt:
+          order === "A-first"
+            ? "2026-10-10T00:10:00.000Z"
+            : "2026-10-10T00:30:00.000Z",
+        episodeB: episodeLink(participantId, buildB),
+        exposureBStartedAt:
+          order === "A-first"
+            ? "2026-10-10T00:20:00.000Z"
+            : "2026-10-10T00:00:00.000Z",
+        exposureBEndedAt:
+          order === "A-first"
+            ? "2026-10-10T00:30:00.000Z"
+            : "2026-10-10T00:10:00.000Z",
+        order,
+        submittedAt: "2026-10-10T00:35:00.000Z",
+        answer: "B"
+      };
+    });
+    const preferenceImportUrl = `/control/playtesting/human-studies/${studyId}/preferences/import?${workspaceQuery}`;
+    const unauthorizedPreferenceImport = await callApi(
+      "POST",
+      preferenceImportUrl,
+      "viewer",
+      {
+        format: "json",
+        manifest: preferenceManifest,
+        exportText: JSON.stringify(preferenceRows)
+      }
+    );
+    assert.equal(unauthorizedPreferenceImport.status, 403);
+    const preferenceImport = await callApi(
+      "POST",
+      preferenceImportUrl,
+      "operator",
+      {
+        format: "json",
+        manifest: preferenceManifest,
+        exportText: JSON.stringify(preferenceRows)
+      }
+    );
+    assert.equal(preferenceImport.status, 200);
+    assert.equal(preferenceImport.body.acceptedCount, 5);
+    assert.equal(preferenceImport.body.rejectedCount, 0);
+    assert.doesNotMatch(
+      JSON.stringify(preferenceImport.body),
+      /participant-1/u
+    );
+    const repeatedPreferenceImport = await callApi(
+      "POST",
+      preferenceImportUrl,
+      "operator",
+      {
+        format: "json",
+        manifest: preferenceManifest,
+        exportText: JSON.stringify(preferenceRows)
+      }
+    );
+    assert.equal(repeatedPreferenceImport.body.acceptedCount, 0);
+    assert.equal(repeatedPreferenceImport.body.unchangedCount, 5);
+
+    const duplicatePreferenceImport = await callApi(
+      "POST",
+      preferenceImportUrl,
+      "operator",
+      {
+        format: "json",
+        manifest: preferenceManifest,
+        exportText: JSON.stringify([
+          {
+            ...preferenceRows[0]!,
+            responseId: "preference-response-1-duplicate",
+            answer: "A"
+          }
+        ])
+      }
+    );
+    assert.equal(duplicatePreferenceImport.body.quarantinedCount, 1);
+    const preferenceQuarantinesUrl = `/control/playtesting/human-studies/${studyId}/preferences/quarantines?${workspaceQuery}`;
+    const preferenceQuarantines = await callApi(
+      "GET",
+      preferenceQuarantinesUrl,
+      "operator"
+    );
+    assert.equal(preferenceQuarantines.status, 200);
+    assert.deepEqual(preferenceQuarantines.body.quarantines, []);
+    const prefGroups = preferenceQuarantines.body
+      .preferenceQuarantines as readonly {
+      responseIds: readonly string[];
+    }[];
+    assert.equal(prefGroups.length, 1);
+    assert.equal(prefGroups[0]!.responseIds.length, 2);
+    const instrumentQuarantines = await callApi(
+      "GET",
+      `/control/playtesting/human-studies/${studyId}/quarantines?${workspaceQuery}`,
+      "operator"
+    );
+    assert.equal(instrumentQuarantines.status, 200);
+    assert.deepEqual(instrumentQuarantines.body.preferenceQuarantines, []);
+    assert.doesNotMatch(
+      JSON.stringify(preferenceQuarantines.body),
+      /participant-1/u
+    );
+    const resolvePreference = await callApi(
+      "POST",
+      `/control/playtesting/human-studies/${studyId}/preferences/quarantines/resolve?${workspaceQuery}`,
+      "operator",
+      { responseIdToKeep: "preference-response-1" }
+    );
+    assert.equal(resolvePreference.status, 200);
+
     const summaryUrl = `/control/playtesting/human-studies/${studyId}/validation?${workspaceQuery}&buildSha=${buildA}&aBuildSha=${buildA}&bBuildSha=${buildB}`;
     const summary = await callApi("GET", summaryUrl, "viewer");
     assert.equal(summary.status, 200);
+    const preferenceSummary = summary.body.preference as NonNullable<
+      ControlApiPlaytestingHumanValidationResponse["preference"]
+    >;
+    assert.equal(preferenceSummary.suppressionState, "unsuppressed");
+    assert.equal(preferenceSummary.counts?.eligibleParticipants, 5);
+    assert.equal(preferenceSummary.counts?.preferB, 5);
+    assert.equal(preferenceSummary.decision, "inconclusive");
+    assert.ok(preferenceSummary.interval);
+    assert.equal(preferenceSummary.interval.method, "scipy-binomial-exact");
+    assert.ok(
+      Math.abs(
+        preferenceSummary.interval.lower - Number("0.47817624989501856")
+      ) < 1e-12
+    );
     assert.equal(
       (summary.body.summary as { retainedParticipants: number })
         .retainedParticipants,
@@ -1324,9 +1650,13 @@ test("authorized human-study API registers consent, imports idempotently, suppre
     };
     assert.equal(suppressed.retainedParticipants, null);
     assert.equal(suppressed.suppressionState, "suppressed");
+    assert.equal(
+      (afterWithdrawal.body.preference as { counts: unknown }).counts,
+      null
+    );
     assert.deepEqual(
       restricted.getTombstonedHistory(studyId).map((item) => item.status),
-      ["withdrawn"]
+      ["stale", "stale", "stale", "withdrawn"]
     );
   } finally {
     if (priorEnv.token === undefined)

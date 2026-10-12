@@ -12,12 +12,19 @@
  */
 
 import {
+  assessPlaytestMetricCompatibility,
+  assessPlaytestPairing,
+  type PlaytestPairingEvidence
+} from "./compatibility.ts";
+import { isPlaytestFindingId } from "./finding-identity.ts";
+import {
   type PlaytestComparison,
   type PlaytestCompatibilityMode,
   type PlaytestDecisionStatus,
   type PlaytestDeltaClassification,
   type PlaytestMetricArmSummary,
   type PlaytestMetricComparison,
+  type PlaytestMetricSemantics,
   type PlaytestNumericInterval,
   type PlaytestPreferenceAnswer,
   type PlaytestProvenance,
@@ -25,13 +32,6 @@ import {
   PLAYTESTS_NOT_COMPARABLE_MODE,
   type PlaytestVersionedRef
 } from "./types.ts";
-import {
-  assessPlaytestMetricCompatibility,
-  assessPlaytestPairing,
-  type PlaytestPairingEvidence
-} from "./compatibility.ts";
-import type { PlaytestMetricSemantics } from "./types.ts";
-import { isPlaytestFindingId } from "./finding-identity.ts";
 
 /** Is this a finite, non-degenerate (lower <= upper) numeric interval? */
 export function isValidPlaytestInterval(

@@ -3,24 +3,41 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
+  assertPlaytestAssignmentManifest,
+  buildPlaytestCoverageManifestDraft,
   buildPlaytestFindingIdentity,
   type HumanPlaytestStudy,
+  type PlaytestAssignmentManifest,
+  playtestAssignmentManifestHashInput,
+  type PlaytestAssignmentOutcome,
   type PlaytestBatch,
   type PlaytestBenchmark,
+  playtestBenchmarkHashInput,
   type PlaytestComparison,
+  playtestCoverageManifestHashInput,
   type PlaytestEpisode,
   type PlaytestExperiment,
+  playtestExperimentHashInput,
   type PlaytestFinding,
+  playtestFindingIdentityHashInput,
+  playtestReviewOutcomeKey,
+  PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
+  PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V1,
+  PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V2,
   PLAYTESTS_BATCH_SCHEMA,
+  PLAYTESTS_BATCH_SCHEMA_V1,
+  PLAYTESTS_BATCH_SCHEMA_V2,
   PLAYTESTS_COMPARISON_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA,
+  PLAYTESTS_EPISODE_SCHEMA_V1,
+  PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
+  PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
-  playtestBenchmarkHashInput,
-  playtestExperimentHashInput,
-  playtestFindingIdentityHashInput,
-  type PlaytestSessionReview
+  PLAYTESTS_SESSION_REVIEW_SCHEMA_V1,
+  type PlaytestSessionReview,
+  selectPlaytestBatchReviews
 } from "@simulatorlife/autodev-core";
 
 import {
@@ -30,6 +47,12 @@ import {
   PlaytestSourceUnavailableError
 } from "../../src/playtesting/index.ts";
 import {
+  decodeBatch,
+  decodeComparison,
+  decodeEpisode,
+  decodeFinding,
+  decodeReview,
+  encodeBatch,
   encodeBenchmark,
   encodeComparison,
   encodeEpisode,
@@ -37,8 +60,7 @@ import {
   encodeFinding,
   encodeHumanStudy,
   encodeHumanSummary,
-  decodeFinding,
-  decodeComparison
+  encodeReview
 } from "../../src/playtesting/row-codec.ts";
 
 function counts() {
@@ -64,6 +86,8 @@ function episode(index: number, workspaceId = "workspace-a"): PlaytestEpisode {
     episodeId: `episode-${String(index).padStart(5, "0")}`,
     revision: 1,
     batchId: `batch-${Math.floor(index / 20)}`,
+    assignmentId: `a-${String(index).padStart(5, "0")}`,
+    branchLineage: null,
     identity: {
       workspaceId,
       repository: "synthetic/game",
@@ -112,6 +136,28 @@ function episode(index: number, workspaceId = "workspace-a"): PlaytestEpisode {
 }
 
 function batch(): PlaytestBatch {
+  const assignmentManifest = {
+    schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
+    batchId: "batch-0",
+    workspaceId: "workspace-a",
+    buildSha: "build-a",
+    configHash: "config-hash",
+    rubricHash: "rubric-v1",
+    approvalRevision: 1,
+    createdAt: "2026-10-01T00:00:00.000Z",
+    assignments: [
+      {
+        assignmentId: "a-00001",
+        scenarioId: "tutorial",
+        scenarioFamily: "tutorial",
+        policyId: "heuristic",
+        policyVersion: "1",
+        cohort: "novice",
+        seed: "1",
+        maxSteps: 50
+      }
+    ]
+  } as const;
   return {
     schema: PLAYTESTS_BATCH_SCHEMA,
     batchId: "batch-0",
@@ -130,8 +176,23 @@ function batch(): PlaytestBatch {
     policyIds: ["heuristic"],
     cohortIds: ["novice"],
     scenarioIds: ["tutorial"],
-    samplingPlan: null,
+    assignmentInventory: {
+      status: "frozen",
+      manifest: {
+        ...assignmentManifest,
+        contentHash: createHash("sha256")
+          .update(playtestAssignmentManifestHashInput(assignmentManifest))
+          .digest("hex")
+      }
+    },
+    coverageManifest: null,
+    reviewPackets: [],
+    reviewSelection: { status: "pending" },
+    unobservedAssignments: [],
+    reviewReceipts: [],
     status: "completed",
+    cancellationReason: null,
+    failureReason: null,
     counts: counts(),
     budget: {
       assignedEpisodes: 1,
@@ -151,6 +212,69 @@ function batch(): PlaytestBatch {
     },
     evaluationIds: [],
     spanIds: []
+  };
+}
+
+function batchWithCoverage(): PlaytestBatch {
+  const original = batch();
+  if (original.assignmentInventory.status !== "frozen") {
+    throw new Error(
+      "The fixture batch must have a frozen assignment inventory."
+    );
+  }
+  const buildSha = "a".repeat(40);
+  const rubricHash = "d".repeat(64);
+  const manifestBase = {
+    ...original.assignmentInventory.manifest,
+    buildSha,
+    rubricHash
+  };
+  const manifest = {
+    ...manifestBase,
+    contentHash: createHash("sha256")
+      .update(playtestAssignmentManifestHashInput(manifestBase))
+      .digest("hex")
+  };
+  const draft = buildPlaytestCoverageManifestDraft({
+    rubricHash,
+    assignmentManifestHash: manifest.contentHash,
+    mode: "headless",
+    generatedAt: original.createdAt,
+    batchId: original.batchId,
+    workspaceId: original.workspaceId,
+    buildSha,
+    plan: [
+      {
+        coverageMetricId: "fixture-rate",
+        metricVersion: 2,
+        mechanicKey: "fixture-mechanic",
+        phaseId: "tutorial",
+        scenarioFamily: "tutorial",
+        cohort: "novice",
+        policy: "heuristic",
+        modality: "headless",
+        analysisUnit: "episode",
+        requiredOpportunities: 1,
+        requiredIndependentUnits: 1,
+        unsupportedReason: null
+      }
+    ],
+    assignments: manifest.assignments,
+    episodes: []
+  });
+  const coverageManifest = {
+    ...draft,
+    contentHash: createHash("sha256")
+      .update(playtestCoverageManifestHashInput(draft))
+      .digest("hex")
+  };
+  return {
+    ...original,
+    buildSha,
+    rubricHash,
+    provenance: { ...original.provenance, buildSha },
+    assignmentInventory: { status: "frozen", manifest },
+    coverageManifest
   };
 }
 
@@ -204,6 +328,7 @@ function review(): PlaytestSessionReview {
     version: 1,
     episodeId: "episode-00001",
     supersedes: null,
+    evidencePacket: null,
     authorRole: "playtest-analyst",
     authorId: "analyst-1",
     rubricHash: "rubric-v1",
@@ -228,6 +353,54 @@ function review(): PlaytestSessionReview {
     notes: "Synthetic note"
   };
 }
+
+test("review schema v1 history migrates to an explicitly packet-unavailable v2 record", () => {
+  const artifact = review();
+  const row = encodeReview("workspace-a", artifact);
+  const legacy = JSON.parse(row.payload_json) as Record<string, unknown>;
+  legacy.schema = PLAYTESTS_SESSION_REVIEW_SCHEMA_V1;
+  delete legacy.evidencePacket;
+  const decoded = decodeReview({
+    ...row,
+    payload_json: JSON.stringify(legacy)
+  } as unknown as Record<string, unknown>);
+  assert.equal(decoded.schema, PLAYTESTS_SESSION_REVIEW_SCHEMA);
+  assert.equal(decoded.evidencePacket, null);
+
+  const packetReview: PlaytestSessionReview = {
+    ...artifact,
+    evidencePacket: {
+      packetId: "packet-review-1",
+      artifact: {
+        artifactId: "artifact-review-1",
+        sha256: "1".repeat(64),
+        bytes: 256,
+        mediaType: PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE
+      }
+    }
+  };
+  const packetReviewRow = encodeReview("workspace-a", packetReview);
+  assert.deepEqual(
+    decodeReview(packetReviewRow as unknown as Record<string, unknown>),
+    packetReview
+  );
+  assert.throws(
+    () =>
+      encodeReview("workspace-a", {
+        ...packetReview,
+        evidencePacket: {
+          ...packetReview.evidencePacket!,
+          artifact: {
+            artifactId: "artifact-review-1",
+            sha256: "1".repeat(64),
+            bytes: 256,
+            mediaType: "text/plain"
+          }
+        }
+      }),
+    /artifact metadata/u
+  );
+});
 
 function comparison(
   index = 1,
@@ -456,6 +629,240 @@ function humanSummary(
     createdAt: new Date(Date.UTC(2026, 9, 1, 0, 0, revision % 60)).toISOString()
   };
 }
+
+test("Data round-trips only verified branch lineage and migrates episode/manifest v1 once", () => {
+  const sourceCheckpoint = {
+    stateHash: "a".repeat(64),
+    rngCheckpoint: {
+      algorithm: "pcg",
+      version: "pcg-v1",
+      stateHash: "b".repeat(64),
+      reproducible: true
+    }
+  } as const;
+  const branchEpisode: PlaytestEpisode = {
+    ...episode(1),
+    episodeId: "episode-branch",
+    branchLineage: {
+      parentEpisodeId: "episode-parent",
+      parentEpisodeRevision: 1,
+      parentBatchId: "batch-parent",
+      branchStep: 3,
+      parentTrace: {
+        artifactId: "parent-trace",
+        sha256: "c".repeat(64),
+        bytes: 128,
+        mediaType: "application/x-ndjson"
+      },
+      parentCheckpoint: sourceCheckpoint,
+      alternativeActionId: "cool-down",
+      rngPolicy: "same-stream",
+      rngPolicyVersion: "same-stream-state-v1",
+      replayTransitionHash: "d".repeat(64),
+      snapshotArtifact: {
+        artifactId: "branch-snapshot",
+        sha256: "e".repeat(64),
+        bytes: 64,
+        mediaType: "application/vnd.fixture.snapshot"
+      },
+      snapshotIntegrityHash: "e".repeat(64),
+      forkStateHash: sourceCheckpoint.stateHash,
+      forkRngCheckpoint: sourceCheckpoint.rngCheckpoint,
+      continuationPolicyId: "heuristic",
+      continuationPolicyVersion: "v1"
+    }
+  };
+  const encodedEpisode = encodeEpisode(branchEpisode);
+  assert.deepEqual(
+    decodeEpisode(encodedEpisode as unknown as Record<string, unknown>)
+      .branchLineage,
+    branchEpisode.branchLineage
+  );
+  assert.throws(
+    () =>
+      encodeEpisode({
+        ...branchEpisode,
+        branchLineage: {
+          ...branchEpisode.branchLineage!,
+          forkStateHash: "f".repeat(64)
+        }
+      }),
+    /state or RNG lineage/u
+  );
+  assert.throws(
+    () =>
+      encodeEpisode({
+        ...branchEpisode,
+        branchLineage: {
+          ...branchEpisode.branchLineage!,
+          snapshotArtifact: null
+        }
+      }),
+    /explicitly incomplete/u
+  );
+
+  const legacyEpisodeRow = encodeEpisode({
+    ...episode(2),
+    branchLineage: null
+  });
+  const legacyEpisodePayload = JSON.parse(
+    legacyEpisodeRow.payload_json
+  ) as Record<string, unknown>;
+  legacyEpisodePayload.schema = PLAYTESTS_EPISODE_SCHEMA_V1;
+  delete legacyEpisodePayload.branchLineage;
+  legacyEpisodePayload.metrics = [
+    {
+      metricId: "legacy-rate",
+      metricVersion: 1,
+      numerator: 1,
+      denominator: 2,
+      coverage: 0.5,
+      unit: "proportion",
+      estimate: 0.5,
+      missing: 0,
+      missingReasons: [],
+      independentUnits: 2,
+      provenance: {
+        workspaceId: "workspace-a",
+        measurementVersion: "measurement-v1",
+        generatedAt: new Date().toISOString()
+      },
+      notes: "Old result did not store the total opportunity count."
+    }
+  ];
+  const migratedEpisode = decodeEpisode({
+    ...legacyEpisodeRow,
+    payload_json: JSON.stringify(legacyEpisodePayload)
+  } as unknown as Record<string, unknown>);
+  assert.equal(migratedEpisode.schema, PLAYTESTS_EPISODE_SCHEMA);
+  assert.equal(migratedEpisode.branchLineage, null);
+  assert.equal(migratedEpisode.metrics[0]?.opportunityCount, null);
+  assert.equal(migratedEpisode.metrics[0]?.coverage, 0.5);
+
+  const batchRow = encodeBatch(batch());
+  const legacyBatchPayload = JSON.parse(batchRow.payload_json) as Record<
+    string,
+    any
+  >;
+  const currentManifest = legacyBatchPayload.assignmentInventory.manifest;
+  const legacyManifest = {
+    ...currentManifest,
+    schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V1,
+    assignments: currentManifest.assignments.map(
+      ({ cohort: _cohort, ...assignment }: Record<string, unknown>) =>
+        assignment
+    ),
+    contentHash: ""
+  };
+  legacyManifest.contentHash = createHash("sha256")
+    .update(
+      playtestAssignmentManifestHashInput(
+        legacyManifest as unknown as Omit<
+          PlaytestAssignmentManifest,
+          "contentHash"
+        >
+      )
+    )
+    .digest("hex");
+  legacyBatchPayload.assignmentInventory.manifest = legacyManifest;
+  const migratedBatch = decodeBatch({
+    ...batchRow,
+    payload_json: JSON.stringify(legacyBatchPayload)
+  });
+  assert.equal(migratedBatch.assignmentInventory.status, "frozen");
+  if (migratedBatch.assignmentInventory.status === "frozen") {
+    const migratedManifest = migratedBatch.assignmentInventory.manifest;
+    assert.equal(migratedManifest.schema, PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA);
+    assert.equal(migratedManifest.assignments[0]?.cohort, null);
+    assert.doesNotThrow(() =>
+      assertPlaytestAssignmentManifest(migratedManifest)
+    );
+  }
+
+  const legacyV2Manifest = {
+    ...legacyManifest,
+    schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V2,
+    contentHash: ""
+  };
+  legacyV2Manifest.contentHash = createHash("sha256")
+    .update(
+      playtestAssignmentManifestHashInput(
+        legacyV2Manifest as unknown as Omit<
+          PlaytestAssignmentManifest,
+          "contentHash"
+        >
+      )
+    )
+    .digest("hex");
+  const migratedV2 = decodeBatch({
+    ...batchRow,
+    payload_json: JSON.stringify({
+      ...legacyBatchPayload,
+      assignmentInventory: {
+        status: "frozen",
+        manifest: legacyV2Manifest
+      }
+    })
+  });
+  assert.equal(migratedV2.assignmentInventory.status, "frozen");
+  if (migratedV2.assignmentInventory.status === "frozen") {
+    assert.equal(
+      migratedV2.assignmentInventory.manifest.assignments[0]?.cohort,
+      null
+    );
+  }
+});
+
+test("Data fails closed on a malformed frozen manifest instead of relabeling it pre-manifest history", () => {
+  const row = encodeBatch(batch());
+  const payload = JSON.parse(row.payload_json) as Record<string, any>;
+  payload.assignmentInventory = {
+    status: "frozen",
+    manifest: "corrupted-current-format"
+  };
+  payload.reviewReceipts = [];
+  assert.throws(
+    () => decodeBatch({ ...row, payload_json: JSON.stringify(payload) }),
+    PlaytestSourceUnavailableError
+  );
+});
+
+test("Data round-trips opportunity counts and verified evaluator provenance", () => {
+  const base = {
+    ...episode(101),
+    identity: { ...episode(101).identity, buildSha: "a".repeat(40) }
+  };
+  const result = {
+    metricId: "fixture-rate",
+    metricVersion: 2,
+    phaseId: null,
+    numerator: 2,
+    denominator: 3,
+    opportunityCount: 4,
+    coverage: 0.75,
+    unit: "proportion",
+    estimate: 2 / 3,
+    missing: 1,
+    missingReasons: ["unobserved" as const],
+    independentUnits: 3,
+    provenance: {
+      workspaceId: base.identity.workspaceId,
+      buildSha: base.identity.buildSha,
+      evaluatorHash: "c".repeat(64),
+      rubricHash: "d".repeat(64),
+      measurementVersion: "playtesting-measurement-v1",
+      generatedAt: base.assignedAt
+    },
+    notes: "2/3 eligible opportunities; coverage 3/4."
+  };
+  const encoded = encodeEpisode({ ...base, metrics: [result] });
+  const decoded = decodeEpisode(encoded as unknown as Record<string, unknown>);
+  assert.deepEqual(decoded.metrics, [result]);
+  assert.throws(
+    () => encodeEpisode({ ...base, metrics: [result, result] }),
+    /unique metric\/phase pairs/u
+  );
+});
 
 test("Data verifies immutable benchmark and experiment content hashes before indexing", () => {
   const benchmarkArtifact = benchmark();
@@ -728,7 +1135,8 @@ test("finding codec rejects workspace spoofing, fingerprint tampering, and legac
     /cannot exceed eligible denominators/u
   );
   assert.throws(
-    () => encodeFinding("workspace-a", { ...artifact, affectedOpportunities: -1 }),
+    () =>
+      encodeFinding("workspace-a", { ...artifact, affectedOpportunities: -1 }),
     /non-negative safe integers/u
   );
   assert.throws(
@@ -746,6 +1154,437 @@ test("finding codec rejects workspace spoofing, fingerprint tampering, and legac
       }),
     /identity|fingerprint|findingId/u
   );
+});
+
+test("batch assignment manifest is durably round-tripped, hash-checked and old history stays unavailable", () => {
+  const artifact = batch();
+  const encoded = encodeBatch(artifact);
+  const decoded = decodeBatch(encoded as unknown as Record<string, unknown>);
+  assert.deepEqual(decoded.assignmentInventory, artifact.assignmentInventory);
+  assert.deepEqual(decoded.unobservedAssignments, []);
+
+  const reviewSelection = selectPlaytestBatchReviews({
+    inventoryHash:
+      artifact.assignmentInventory.status === "frozen"
+        ? artifact.assignmentInventory.manifest.contentHash
+        : "",
+    maxReviewedSessions: 1,
+    critiqueBudget: 1,
+    surveillanceSessions: 1,
+    discoverySessions: 0,
+    discoverySignal: null,
+    candidates: [
+      {
+        assignmentId: "a-00001",
+        episodeId: "episode-selected",
+        policyId: "heuristic",
+        scenarioId: "tutorial",
+        outcomeKey: playtestReviewOutcomeKey("completed", "win"),
+        metrics: []
+      }
+    ],
+    unreviewableAssignments: 0,
+    selectedAt: "2026-10-01T00:00:00.000Z"
+  });
+  const packetBatch: PlaytestBatch = {
+    ...artifact,
+    reviewSelection,
+    reviewPackets: [
+      {
+        status: "prepared",
+        packetId: "packet-selected",
+        assignmentId: "a-00001",
+        episodeId: "episode-selected",
+        artifact: {
+          artifactId: "artifact-packet",
+          sha256: "1".repeat(64),
+          bytes: 128,
+          mediaType: PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE
+        },
+        failureReason: null,
+        createdAt: "2026-10-01T00:00:00.000Z"
+      }
+    ]
+  };
+  assert.deepEqual(
+    decodeBatch(encodeBatch(packetBatch) as unknown as Record<string, unknown>)
+      .reviewPackets,
+    packetBatch.reviewPackets
+  );
+  const receiptedBatch: PlaytestBatch = {
+    ...packetBatch,
+    counts: { ...packetBatch.counts, reviewed: 1 },
+    budget: { ...packetBatch.budget, actualCritiques: 1 },
+    reviewReceipts: [
+      {
+        reviewId: "review-selected",
+        assignmentId: "a-00001",
+        episodeId: "episode-selected",
+        packetId: "packet-selected",
+        status: "persisted"
+      }
+    ]
+  };
+  assert.deepEqual(
+    decodeBatch(
+      encodeBatch(receiptedBatch) as unknown as Record<string, unknown>
+    ).reviewReceipts,
+    receiptedBatch.reviewReceipts
+  );
+  const reservedBatch: PlaytestBatch = {
+    ...packetBatch,
+    reviewReceipts: [
+      {
+        reviewId: "review-reserved",
+        assignmentId: "a-00001",
+        episodeId: "episode-selected",
+        packetId: "packet-selected",
+        status: "reserved"
+      }
+    ]
+  };
+  assert.deepEqual(
+    decodeBatch(
+      encodeBatch(reservedBatch) as unknown as Record<string, unknown>
+    ).reviewReceipts,
+    reservedBatch.reviewReceipts
+  );
+  assert.throws(
+    () =>
+      encodeBatch({
+        ...reservedBatch,
+        counts: { ...reservedBatch.counts, reviewed: 1 },
+        budget: { ...reservedBatch.budget, actualCritiques: 1 }
+      }),
+    /persisted review receipts and reservation ledger/u
+  );
+  const missingReceiptStatus = JSON.parse(
+    encodeBatch(reservedBatch).payload_json
+  ) as Record<string, unknown>;
+  const missingReceiptStatusRows =
+    missingReceiptStatus.reviewReceipts as Record<string, unknown>[];
+  delete missingReceiptStatusRows[0]!.status;
+  assert.throws(
+    () =>
+      decodeBatch({
+        ...encodeBatch(reservedBatch),
+        payload_json: JSON.stringify(missingReceiptStatus)
+      } as unknown as Record<string, unknown>),
+    /persisted review receipts and reservation ledger/u
+  );
+  assert.throws(
+    () =>
+      encodeBatch({
+        ...receiptedBatch,
+        reviewReceipts: [
+          { ...receiptedBatch.reviewReceipts[0]!, packetId: "packet-other" }
+        ]
+      }),
+    /do not match.*selection/u
+  );
+  const unavailablePacketBatch: PlaytestBatch = {
+    ...packetBatch,
+    reviewPackets: [
+      {
+        status: "unavailable",
+        packetId: "packet-selected",
+        assignmentId: "a-00001",
+        episodeId: "episode-selected",
+        artifact: null,
+        failureReason: "trace-unavailable",
+        createdAt: "2026-10-01T00:00:00.000Z"
+      }
+    ]
+  };
+  assert.deepEqual(
+    decodeBatch(
+      encodeBatch(unavailablePacketBatch) as unknown as Record<string, unknown>
+    ).reviewPackets,
+    unavailablePacketBatch.reviewPackets
+  );
+  assert.throws(
+    () => encodeBatch({ ...packetBatch, reviewPackets: [] }),
+    /explicitly cover every selected review session/u
+  );
+  assert.throws(
+    () =>
+      encodeBatch({
+        ...packetBatch,
+        reviewPackets: packetBatch.reviewPackets.map((receipt) => ({
+          ...receipt,
+          packetId: "invalid packet id"
+        }))
+      }),
+    /receipt identity is invalid/u
+  );
+  assert.throws(
+    () =>
+      encodeBatch({
+        ...packetBatch,
+        reviewPackets: [
+          {
+            status: "prepared",
+            packetId: "packet-selected",
+            assignmentId: "a-00001",
+            episodeId: "episode-selected",
+            artifact: {
+              artifactId: "artifact-packet",
+              sha256: "1".repeat(64),
+              bytes: 128,
+              mediaType: "text/plain"
+            },
+            failureReason: null,
+            createdAt: "2026-10-01T00:00:00.000Z"
+          }
+        ]
+      }),
+    /packet artifact metadata/u
+  );
+  const missingV3Packets = JSON.parse(
+    encodeBatch(packetBatch).payload_json
+  ) as Record<string, unknown>;
+  delete missingV3Packets.reviewPackets;
+  assert.throws(
+    () =>
+      decodeBatch({
+        ...encodeBatch(packetBatch),
+        payload_json: JSON.stringify(missingV3Packets)
+      } as unknown as Record<string, unknown>),
+    /v3 batch is missing its packet/u
+  );
+
+  const inventory = artifact.assignmentInventory;
+  assert.equal(inventory.status, "frozen");
+  const tampered: PlaytestBatch = {
+    ...artifact,
+    assignmentInventory: {
+      status: "frozen",
+      manifest: {
+        ...inventory.manifest,
+        assignments: inventory.manifest.assignments.map((assignment) => ({
+          ...assignment,
+          seed: "changed-seed"
+        }))
+      }
+    }
+  };
+  assert.throws(() => encodeBatch(tampered), /contentHash/u);
+
+  const legacyPayload: Record<string, unknown> = {
+    ...artifact,
+    schema: PLAYTESTS_BATCH_SCHEMA_V1,
+    samplingPlan: null,
+    reviewedAssignmentIds: [],
+    assignmentOutcomes: []
+  };
+  delete legacyPayload.assignmentInventory;
+  delete legacyPayload.unobservedAssignments;
+  delete legacyPayload.reviewSelection;
+  delete legacyPayload.reviewReceipts;
+  delete legacyPayload.reviewPackets;
+  const legacy = decodeBatch({
+    ...encoded,
+    payload_json: JSON.stringify(legacyPayload)
+  } as unknown as Record<string, unknown>);
+  assert.equal(legacy.assignmentInventory.status, "unavailable");
+  assert.equal(legacy.unobservedAssignments, null);
+  assert.equal(legacy.reviewSelection.status, "unavailable");
+  assert.deepEqual(legacy.reviewReceipts, []);
+  assert.equal(legacy.cancellationReason, null);
+  assert.equal(legacy.failureReason, null);
+  assert.equal("samplingPlan" in legacy, false);
+  assert.equal("reviewedAssignmentIds" in legacy, false);
+  assert.equal("assignmentOutcomes" in legacy, false);
+
+  const v2Payload: Record<string, unknown> = {
+    ...artifact,
+    schema: PLAYTESTS_BATCH_SCHEMA_V2,
+    reviewSelection: selectPlaytestBatchReviews({
+      inventoryHash:
+        artifact.assignmentInventory.status === "frozen"
+          ? artifact.assignmentInventory.manifest.contentHash
+          : "",
+      maxReviewedSessions: 1,
+      critiqueBudget: 1,
+      surveillanceSessions: 1,
+      discoverySessions: 0,
+      discoverySignal: null,
+      candidates: [
+        {
+          assignmentId: "a-00001",
+          episodeId: "episode-1",
+          policyId: "heuristic",
+          scenarioId: "tutorial",
+          outcomeKey: playtestReviewOutcomeKey("completed", "win"),
+          metrics: []
+        }
+      ],
+      unreviewableAssignments: 0,
+      selectedAt: "2026-10-01T00:00:00.000Z"
+    }),
+    counts: { ...artifact.counts, reviewed: 1 },
+    budget: { ...artifact.budget, actualCritiques: 1 },
+    reviewReceipts: [
+      {
+        reviewId: "review-legacy",
+        assignmentId: "a-00001",
+        episodeId: "episode-1"
+      }
+    ]
+  };
+  delete v2Payload.reviewPackets;
+  const migratedV2 = decodeBatch({
+    ...encoded,
+    payload_json: JSON.stringify(v2Payload)
+  } as unknown as Record<string, unknown>);
+  assert.equal(migratedV2.coverageManifest, null);
+  assert.equal(migratedV2.reviewPackets.length, 1);
+  assert.equal(migratedV2.reviewPackets[0]?.status, "unavailable");
+  assert.equal(
+    migratedV2.reviewPackets[0]?.failureReason,
+    "recorded-before-evidence-packets"
+  );
+  assert.equal(migratedV2.reviewPackets[0]?.assignmentId, "a-00001");
+  assert.equal(migratedV2.reviewPackets[0]?.episodeId, "episode-1");
+  assert.equal(migratedV2.reviewReceipts[0]?.packetId, null);
+  assert.equal(migratedV2.reviewReceipts[0]?.status, "persisted");
+  assert.doesNotThrow(() => encodeBatch(migratedV2));
+
+  const cancelled: PlaytestBatch = {
+    ...artifact,
+    status: "cancelled",
+    cancellationReason: "approval-revoked"
+  };
+  assert.equal(
+    decodeBatch(encodeBatch(cancelled) as unknown as Record<string, unknown>)
+      .cancellationReason,
+    "approval-revoked"
+  );
+  const interrupted: PlaytestBatch = {
+    ...artifact,
+    status: "failed",
+    failureReason: "nonterminal-batch-recovered"
+  };
+  assert.equal(
+    decodeBatch(encodeBatch(interrupted) as unknown as Record<string, unknown>)
+      .failureReason,
+    "nonterminal-batch-recovered"
+  );
+  assert.throws(
+    () => encodeBatch({ ...artifact, cancellationReason: "cancelled" }),
+    /cancellation reason/u
+  );
+  assert.throws(
+    () =>
+      encodeBatch({
+        ...artifact,
+        failureReason: "nonterminal-batch-recovered"
+      }),
+    /failure reason/u
+  );
+});
+
+test("Data verifies coverage-manifest hashes and its frozen batch identity", () => {
+  const artifact = batchWithCoverage();
+  const encoded = encodeBatch(artifact);
+  const decoded = decodeBatch(encoded as unknown as Record<string, unknown>);
+  assert.deepEqual(decoded.coverageManifest, artifact.coverageManifest);
+  assert.equal(decoded.coverageManifest?.cells[0]?.status, "partial");
+  assert.throws(
+    () =>
+      encodeBatch({
+        ...artifact,
+        coverageManifest: {
+          ...artifact.coverageManifest!,
+          generatedAt: "2026-10-02T00:00:00.000Z"
+        }
+      }),
+    /coverage manifest content hash/u
+  );
+  assert.throws(
+    () =>
+      encodeBatch({
+        ...artifact,
+        coverageManifest: {
+          ...artifact.coverageManifest!,
+          assignmentManifestHash: "e".repeat(64)
+        }
+      }),
+    /does not match its frozen rubric and assignment identity/u
+  );
+});
+
+test("Data durably bounds and accepts a full 1,000-assignment partial batch", () => {
+  const template = batch();
+  const manifestBase = {
+    schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
+    batchId: "batch-1000",
+    workspaceId: template.workspaceId,
+    buildSha: template.buildSha,
+    configHash: template.configHash,
+    rubricHash: template.rubricHash,
+    approvalRevision: 1,
+    createdAt: template.createdAt,
+    assignments: Array.from(
+      { length: PLAYTESTS_MAX_BATCH_ASSIGNMENTS },
+      (_, index) => ({
+        assignmentId: "a-" + String(index + 1).padStart(4, "0"),
+        scenarioId: "tutorial",
+        scenarioFamily: "tutorial",
+        policyId: "heuristic",
+        policyVersion: "1",
+        cohort: "novice",
+        seed: "seed-" + String(index + 1),
+        maxSteps: 50
+      })
+    )
+  } as const;
+  const manifest = {
+    ...manifestBase,
+    contentHash: createHash("sha256")
+      .update(playtestAssignmentManifestHashInput(manifestBase))
+      .digest("hex")
+  };
+  const unobservedAssignments: PlaytestAssignmentOutcome[] =
+    manifest.assignments.map(({ assignmentId }) => ({
+      assignmentId,
+      episodeId: null,
+      state: "infrastructure-failed",
+      started: false,
+      eligible: false
+    }));
+  const completeInventory: PlaytestBatch = {
+    ...template,
+    batchId: manifest.batchId,
+    revision: 2,
+    assignmentInventory: { status: "frozen", manifest },
+    unobservedAssignments,
+    reviewSelection: { status: "unavailable", reason: "batch-incomplete" },
+    status: "failed",
+    counts: {
+      assigned: PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
+      started: 0,
+      completed: 0,
+      crashed: 0,
+      infrastructureFailed: PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
+      cancelled: 0,
+      budgetTruncated: 0,
+      reviewed: 0,
+      eligible: 0
+    },
+    budget: {
+      ...template.budget,
+      assignedEpisodes: PLAYTESTS_MAX_BATCH_ASSIGNMENTS
+    }
+  };
+
+  const row = encodeBatch(completeInventory);
+  assert.equal(JSON.parse(row.payload_json).unobservedAssignments.length, 1000);
+  assert.equal(Buffer.byteLength(row.payload_json, "utf8") < 512 * 1024, true);
+  const decoded = decodeBatch(row as unknown as Record<string, unknown>);
+  assert.equal(decoded.assignmentInventory.status, "frozen");
+  assert.equal(decoded.assignmentInventory.manifest.assignments.length, 1000);
+  assert.equal(decoded.unobservedAssignments?.length, 1000);
 });
 
 test("Core artifact round-trips preserve full canonical payloads and latest revisions", async () => {
@@ -1112,8 +1951,9 @@ test("idempotent schema stores complete canonical payloads but no human-response
     2
   );
   assert.equal(
-    queries.filter((query) =>
-      query.includes("MODIFY COLUMN") && query.includes("Nullable(UInt32)")
+    queries.filter(
+      (query) =>
+        query.includes("MODIFY COLUMN") && query.includes("Nullable(UInt32)")
     ).length,
     8
   );

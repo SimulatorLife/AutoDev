@@ -1,14 +1,12 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "workspaceId": "owner/fixture",
   "audience": "synthetic-fixture-only",
-  "registryVersion": "synthetic-fixture-registry-v1",
+  "registryVersion": "synthetic-fixture-registry-v2",
   "eventSchemaHash": "0000000000000000000000000000000000000000000000000000000000000000",
   "defaults": {
     "audience": "synthetic-fixture-only",
-    "scenarioEligibility": [
-      "tutorial"
-    ],
+    "scenarioEligibility": ["tutorial"],
     "analysisUnit": "episode",
     "aggregationWindow": "whole-episode",
     "aggregation": "ratio-of-sums-within-scenario",
@@ -17,12 +15,7 @@
     "minIndependentUnits": 1,
     "precisionPlanRef": "fixture-descriptive-only",
     "missingPolicy": "null-with-reason-and-missing-count",
-    "provenance": [
-      "episodeId",
-      "eventId",
-      "buildSha",
-      "evaluatorHash"
-    ],
+    "provenance": ["episodeId", "eventId", "buildSha", "evaluatorHash"],
     "humanConstruct": null,
     "meaningfulMargin": null,
     "guardrailMargin": null,
@@ -34,6 +27,7 @@
       "metricId": "legal-action-rejection",
       "version": 1,
       "mechanicKey": "action-execution",
+      "aggregationWindow": "phase",
       "exposurePredicate": "fresh-legal-request-v1",
       "eventFields": [
         "action.offeredIds",
@@ -43,17 +37,27 @@
         "action.rejected"
       ],
       "evaluatorRef": "fixture/legal-action-rejection-v1",
+      "evaluatorHash": "1111111111111111111111111111111111111111111111111111111111111111",
       "numerator": "fresh advertised legal requests rejected by engine",
       "denominator": "all fresh advertised legal requests",
       "unit": "proportion",
       "polarity": "lower",
-      "targetBand": [
-        0,
-        0
-      ],
-      "notObservable": [
-        "missing-action-or-revision-events"
-      ]
+      "targetBand": [0, 0],
+      "notObservable": ["missing-action-or-revision-events"]
+    }
+  ],
+  "coverageRequirements": [
+    {
+      "coverageMetricId": "legal-action-rejection",
+      "mechanicKey": "action-execution",
+      "phaseId": "tutorial",
+      "scenarioFamily": "onboarding",
+      "cohort": "exploratory",
+      "policy": "random",
+      "modality": "headless",
+      "requiredOpportunities": 10,
+      "requiredIndependentUnits": 1,
+      "unsupportedReason": null
     }
   ],
   "dimensionRubrics": []

@@ -3,26 +3,48 @@
 import { createHash } from "node:crypto";
 
 import {
+  assertPlaytestAssignmentManifest,
   assertPlaytestBenchmark,
+  assertPlaytestBranchLineage,
+  assertPlaytestCoverageManifest,
   assertPlaytestExperiment,
-  isPlaytestFindingId,
+  assertPlaytestNumericResults,
   type HumanPlaytestStudy,
+  isPlaytestEvidencePacketId,
+  isPlaytestFindingId,
+  type PlaytestAssignmentManifest,
+  playtestAssignmentManifestHashInput,
   type PlaytestBatch,
   type PlaytestBenchmark,
-  type PlaytestComparison,
-  type PlaytestEpisode,
-  type PlaytestExperiment,
-  type PlaytestFinding,
-  PLAYTESTS_BATCH_SCHEMA,
-  PLAYTESTS_COMPARISON_SCHEMA,
-  PLAYTESTS_EPISODE_SCHEMA,
-  PLAYTESTS_EXPERIMENT_SCHEMA,
-  PLAYTESTS_HUMAN_STUDY_SCHEMA,
-  PLAYTESTS_SESSION_REVIEW_SCHEMA,
   playtestBenchmarkHashInput,
+  type PlaytestComparison,
+  playtestCoverageManifestHashInput,
+  type PlaytestEpisode,
+  type PlaytestEvidencePacketReference,
+  type PlaytestExperiment,
   playtestExperimentHashInput,
+  type PlaytestFinding,
   playtestFindingIdentityHashInput,
   playtestFindingIdFromFingerprint,
+  type PlaytestReviewPacketReceipt,
+  PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
+  PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V1,
+  PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V2,
+  PLAYTESTS_BATCH_CANCELLATION_REASONS,
+  PLAYTESTS_BATCH_SCHEMA,
+  PLAYTESTS_BATCH_SCHEMA_V1,
+  PLAYTESTS_BATCH_SCHEMA_V2,
+  PLAYTESTS_COMPARISON_SCHEMA,
+  PLAYTESTS_EPISODE_SCHEMA,
+  PLAYTESTS_EPISODE_SCHEMA_V1,
+  PLAYTESTS_EPISODE_SCHEMA_V2,
+  PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
+  PLAYTESTS_EXPERIMENT_SCHEMA,
+  PLAYTESTS_HUMAN_STUDY_SCHEMA,
+  PLAYTESTS_MAX_BATCH_REVIEW_SESSIONS,
+  PLAYTESTS_REVIEW_PACKET_FAILURE_REASONS,
+  PLAYTESTS_SESSION_REVIEW_SCHEMA,
+  PLAYTESTS_SESSION_REVIEW_SCHEMA_V1,
   type PlaytestSessionReview
 } from "@simulatorlife/autodev-core";
 
@@ -60,6 +82,7 @@ export interface PlaytestIndexedEpisodeRow {
   readonly revision: number;
   readonly scenario: string;
   readonly policy: string;
+  readonly assignment_id: string | null;
   readonly cohort: string;
   readonly seed: string;
   readonly status: string;
@@ -76,7 +99,7 @@ export interface PlaytestIndexedEpisodeRow {
   readonly payload_json: string;
 }
 
-export interface PlaytestIndexedFindingRow {
+export interface PlaytestIndexedFindingRow extends Record<string, unknown> {
   readonly workspace_id: string;
   readonly finding_id: string;
   readonly version: number;
@@ -224,6 +247,7 @@ function numericCounts(
 }
 
 export function encodeBatch(artifact: PlaytestBatch): PlaytestIndexedBatchRow {
+  assertBatchAssignmentInventory(artifact);
   return {
     workspace_id: requiredRef(artifact.workspaceId, "workspaceId"),
     batch_id: requiredRef(artifact.batchId, "batchId"),
@@ -240,6 +264,18 @@ export function encodeBatch(artifact: PlaytestBatch): PlaytestIndexedBatchRow {
 export function encodeEpisode(
   artifact: PlaytestEpisode
 ): PlaytestIndexedEpisodeRow {
+  assertPlaytestNumericResults(artifact.metrics);
+  if (artifact.branchLineage !== null) {
+    assertPlaytestBranchLineage(artifact.branchLineage, artifact);
+    if (
+      artifact.branchLineage.parentEpisodeId === artifact.episodeId ||
+      artifact.branchLineage.parentBatchId === artifact.batchId
+    ) {
+      throw new TypeError(
+        "A branch episode cannot name its own episode or batch as the parent."
+      );
+    }
+  }
   const traceRef = artifact.trace?.id ?? "";
   if (traceRef.length > MAX_ARTIFACT_REF_LENGTH) {
     throw new TypeError(
@@ -259,6 +295,7 @@ export function encodeEpisode(
     revision: artifact.revision,
     scenario: artifact.identity.scenarioId,
     policy: artifact.identity.policyId,
+    assignment_id: artifact.assignmentId,
     cohort: artifact.policyCohort,
     seed: artifact.identity.seed,
     status: artifact.status,
@@ -310,8 +347,14 @@ function assertFindingFrequency(artifact: PlaytestFinding): void {
     artifact.affectedOpportunities,
     artifact.totalEligibleOpportunities
   ];
-  if (values.some((value) => value !== null && (!Number.isSafeInteger(value) || value < 0))) {
-    throw new TypeError("PlaytestFinding frequency counts must be null or non-negative safe integers.");
+  if (
+    values.some(
+      (value) => value !== null && (!Number.isSafeInteger(value) || value < 0)
+    )
+  ) {
+    throw new TypeError(
+      "PlaytestFinding frequency counts must be null or non-negative safe integers."
+    );
   }
   if (
     (artifact.affectedEpisodes !== null &&
@@ -321,7 +364,9 @@ function assertFindingFrequency(artifact: PlaytestFinding): void {
       artifact.totalEligibleOpportunities !== null &&
       artifact.affectedOpportunities > artifact.totalEligibleOpportunities)
   ) {
-    throw new TypeError("PlaytestFinding affected counts cannot exceed eligible denominators.");
+    throw new TypeError(
+      "PlaytestFinding affected counts cannot exceed eligible denominators."
+    );
   }
 }
 
@@ -370,10 +415,57 @@ export function encodeFinding(
   };
 }
 
+function assertEvidencePacketReference(
+  value: unknown
+): asserts value is PlaytestEvidencePacketReference | null {
+  if (value === null) return;
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 2 ||
+    Object.keys(value).some((key) => !["packetId", "artifact"].includes(key)) ||
+    !isPlaytestEvidencePacketId(value.packetId) ||
+    !isRecord(value.artifact)
+  ) {
+    throw new TypeError("Review evidence packet reference is malformed.");
+  }
+  const reference = value.artifact;
+  const allowedKeys = new Set([
+    "artifactId",
+    "sha256",
+    "bytes",
+    "mediaType",
+    "revision"
+  ]);
+  if (
+    Object.keys(reference).some((key) => !allowedKeys.has(key)) ||
+    typeof reference.artifactId !== "string" ||
+    reference.artifactId.trim().length === 0 ||
+    reference.artifactId.length > MAX_ARTIFACT_REF_LENGTH ||
+    typeof reference.sha256 !== "string" ||
+    !SHA256_PATTERN.test(reference.sha256) ||
+    !Number.isSafeInteger(reference.bytes) ||
+    (reference.bytes as number) < 1 ||
+    (reference.bytes as number) > MAX_PLAYTEST_PAYLOAD_BYTES ||
+    reference.mediaType !== PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE ||
+    (reference.revision !== undefined &&
+      (!Number.isSafeInteger(reference.revision) ||
+        (reference.revision as number) < 0))
+  ) {
+    throw new TypeError("Review evidence packet artifact metadata is invalid.");
+  }
+}
+
 export function encodeReview(
   workspaceId: string,
   artifact: PlaytestSessionReview
 ): PlaytestIndexedReviewRow {
+  if (
+    artifact.schema !== PLAYTESTS_SESSION_REVIEW_SCHEMA ||
+    artifact.provenance.workspaceId !== workspaceId
+  ) {
+    throw new TypeError("Review schema or workspace identity is invalid.");
+  }
+  assertEvidencePacketReference(artifact.evidencePacket);
   return {
     workspace_id: requiredRef(workspaceId, "workspaceId"),
     episode_id: requiredRef(artifact.episodeId, "episodeId"),
@@ -576,27 +668,678 @@ function assertExperimentContentHash(artifact: PlaytestExperiment): void {
   }
 }
 
+function assertBatchReviewPacketReceipts(input: {
+  readonly packets: readonly PlaytestReviewPacketReceipt[];
+  readonly assignments: ReadonlySet<string>;
+  readonly selected: ReadonlyMap<string, string>;
+  readonly reviewCap: number;
+}): void {
+  if (
+    !Array.isArray(input.packets) ||
+    input.packets.length > PLAYTESTS_MAX_BATCH_REVIEW_SESSIONS ||
+    input.packets.length > input.reviewCap
+  ) {
+    throw new TypeError(
+      "Batch evidence packet receipts exceed the frozen review cap."
+    );
+  }
+  const packetIds = new Set<string>();
+  const assignmentIds = new Set<string>();
+  for (const packet of input.packets) {
+    if (
+      !isPlaytestEvidencePacketId(packet.packetId) ||
+      !input.assignments.has(packet.assignmentId) ||
+      input.selected.get(packet.assignmentId) !== packet.episodeId ||
+      typeof packet.createdAt !== "string" ||
+      !Number.isFinite(Date.parse(packet.createdAt)) ||
+      packetIds.has(packet.packetId) ||
+      assignmentIds.has(packet.assignmentId) ||
+      (packet.status !== "prepared" && packet.status !== "unavailable")
+    ) {
+      throw new TypeError("Batch evidence packet receipt identity is invalid.");
+    }
+    if (packet.status === "prepared") {
+      if (packet.failureReason !== null) {
+        throw new TypeError(
+          "Prepared packet receipt cannot have a failure reason."
+        );
+      }
+      assertEvidencePacketReference({
+        packetId: packet.packetId,
+        artifact: packet.artifact
+      });
+    } else if (
+      packet.artifact !== null ||
+      packet.failureReason === null ||
+      !PLAYTESTS_REVIEW_PACKET_FAILURE_REASONS.includes(packet.failureReason)
+    ) {
+      throw new TypeError(
+        "Unavailable packet receipt requires an explicit failure reason."
+      );
+    }
+    packetIds.add(packet.packetId);
+    assignmentIds.add(packet.assignmentId);
+  }
+}
+
+function assertBatchLifecycle(artifact: PlaytestBatch): void {
+  if (
+    artifact.status === "cancelled"
+      ? artifact.cancellationReason !== null &&
+        !PLAYTESTS_BATCH_CANCELLATION_REASONS.includes(
+          artifact.cancellationReason
+        )
+      : artifact.cancellationReason !== null
+  ) {
+    throw new TypeError(
+      "Batch cancellation reason must be absent unless the batch is cancelled."
+    );
+  }
+  if (
+    artifact.failureReason !== null &&
+    (artifact.status !== "failed" ||
+      artifact.failureReason !== "nonterminal-batch-recovered")
+  ) {
+    throw new TypeError(
+      "Batch failure reason is unsupported for this execution status."
+    );
+  }
+}
+
+function assertBatchReviewCounts(artifact: PlaytestBatch): void {
+  const receipts = artifact.reviewReceipts;
+  if (!Array.isArray(receipts)) {
+    throw new TypeError("Batch review receipts must be an array.");
+  }
+  const persistedReceipts = receipts.filter(
+    (receipt) => receipt.status === "persisted"
+  );
+  const assignmentIds = new Set(
+    persistedReceipts.map((receipt) => receipt.assignmentId)
+  );
+  const reviewIds = new Set(receipts.map((receipt) => receipt.reviewId));
+  if (
+    receipts.some(
+      (receipt) =>
+        (receipt.status !== "reserved" && receipt.status !== "persisted") ||
+        !receipt.reviewId.trim() ||
+        !receipt.assignmentId.trim() ||
+        !receipt.episodeId.trim()
+    ) ||
+    reviewIds.size !== receipts.length ||
+    artifact.counts.reviewed !== assignmentIds.size ||
+    artifact.budget.actualCritiques !== persistedReceipts.length
+  ) {
+    throw new TypeError(
+      "Batch critique counts must match its persisted review receipts and reservation ledger."
+    );
+  }
+}
+
+function assertBatchUnobservedAssignments(
+  artifact: PlaytestBatch,
+  assignmentIds: ReadonlySet<string>
+): void {
+  const outcomes = artifact.unobservedAssignments;
+  if (
+    outcomes === null ||
+    outcomes.length > assignmentIds.size ||
+    new Set(outcomes.map((outcome) => outcome.assignmentId)).size !==
+      outcomes.length ||
+    outcomes.some(
+      (outcome) =>
+        !assignmentIds.has(outcome.assignmentId) ||
+        outcome.episodeId !== null ||
+        outcome.eligible ||
+        (outcome.state !== "infrastructure-failed" &&
+          outcome.state !== "cancelled")
+    )
+  ) {
+    throw new TypeError(
+      "Batch no-episode outcomes must be unique terminal assignments with explicit missing episode state."
+    );
+  }
+}
+
+function frozenBatchInventory(artifact: PlaytestBatch): {
+  readonly manifest: PlaytestAssignmentManifest;
+  readonly assignmentIds: ReadonlySet<string>;
+} | null {
+  if (artifact.assignmentInventory.status === "unavailable") {
+    if (
+      artifact.unobservedAssignments !== null ||
+      artifact.assignmentInventory.reason !==
+        "recorded-before-assignment-manifests"
+    ) {
+      throw new TypeError("Batch assignment inventory has an unknown reason.");
+    }
+    if (
+      artifact.reviewReceipts.length > 0 ||
+      artifact.reviewPackets.length > 0
+    ) {
+      throw new TypeError(
+        "A batch without a recorded assignment manifest cannot carry review or packet receipts."
+      );
+    }
+    return null;
+  }
+  const manifest = artifact.assignmentInventory.manifest;
+  assertPlaytestAssignmentManifest(manifest);
+  const assignmentIds = new Set(
+    manifest.assignments.map((assignment) => assignment.assignmentId)
+  );
+  assertBatchUnobservedAssignments(artifact, assignmentIds);
+  return { manifest, assignmentIds };
+}
+
+function selectedReviewsForBatch(
+  artifact: PlaytestBatch
+): ReadonlyMap<string, string> {
+  return artifact.reviewSelection.status === "selected"
+    ? new Map(
+        artifact.reviewSelection.selected.map((selected) => [
+          selected.assignmentId,
+          selected.episodeId
+        ])
+      )
+    : new Map<string, string>();
+}
+
+function assertCompletePacketInventory(
+  artifact: PlaytestBatch,
+  packetReceipts: readonly PlaytestReviewPacketReceipt[]
+): void {
+  if (artifact.reviewSelection.status !== "selected") {
+    return;
+  }
+  const selected = artifact.reviewSelection.selected;
+  if (
+    packetReceipts.length !== selected.length ||
+    selected.some(
+      (session) =>
+        !packetReceipts.some(
+          (receipt) =>
+            receipt.assignmentId === session.assignmentId &&
+            receipt.episodeId === session.episodeId
+        )
+    )
+  ) {
+    throw new TypeError(
+      "Batch evidence packet inventory must explicitly cover every selected review session."
+    );
+  }
+}
+
+function assertBatchManifestIdentity(
+  artifact: PlaytestBatch,
+  manifest: PlaytestAssignmentManifest,
+  assignmentIds: ReadonlySet<string>,
+  selectedReviews: ReadonlyMap<string, string>,
+  packetReceipts: readonly PlaytestReviewPacketReceipt[]
+): void {
+  const receipts = artifact.reviewReceipts;
+  if (
+    manifest.batchId !== artifact.batchId ||
+    manifest.workspaceId !== artifact.workspaceId ||
+    manifest.buildSha !== artifact.buildSha ||
+    manifest.configHash !== artifact.configHash ||
+    manifest.rubricHash !== artifact.rubricHash ||
+    manifest.assignments.length !== artifact.budget.assignedEpisodes ||
+    receipts.some(
+      (receipt) =>
+        !assignmentIds.has(receipt.assignmentId) ||
+        selectedReviews.get(receipt.assignmentId) !== receipt.episodeId ||
+        (receipt.packetId !== null &&
+          !packetReceipts.some(
+            (packet) =>
+              packet.status === "prepared" &&
+              packet.packetId === receipt.packetId &&
+              packet.assignmentId === receipt.assignmentId &&
+              packet.episodeId === receipt.episodeId
+          ))
+    ) ||
+    (artifact.reviewSelection.status === "selected" &&
+      receipts.length > artifact.reviewSelection.reviewCap)
+  ) {
+    throw new TypeError(
+      "Batch assignment manifest or review receipts do not match the persisted batch identity, selection, or count."
+    );
+  }
+  const contentHash = createHash("sha256")
+    .update(playtestAssignmentManifestHashInput(manifest))
+    .digest("hex");
+  if (contentHash !== manifest.contentHash.toLowerCase()) {
+    throw new TypeError("Batch assignment manifest contentHash is invalid.");
+  }
+}
+
+function assertBatchAssignmentInventory(artifact: PlaytestBatch): void {
+  if (artifact.schema !== PLAYTESTS_BATCH_SCHEMA) {
+    throw new TypeError("Batch artifact has an unsupported schema.");
+  }
+  if (artifact.coverageManifest !== null) {
+    assertBatchCoverageManifest(artifact);
+  }
+  if (!Array.isArray(artifact.reviewPackets)) {
+    throw new TypeError("Batch evidence packet receipts must be an array.");
+  }
+  assertBatchLifecycle(artifact);
+  assertBatchReviewCounts(artifact);
+  const inventory = frozenBatchInventory(artifact);
+  if (inventory === null) return;
+
+  const packetReceipts = artifact.reviewPackets;
+  const selectedReviews = selectedReviewsForBatch(artifact);
+  assertCompletePacketInventory(artifact, packetReceipts);
+  assertBatchReviewPacketReceipts({
+    packets: packetReceipts,
+    assignments: inventory.assignmentIds,
+    selected: selectedReviews,
+    reviewCap:
+      artifact.reviewSelection.status === "selected"
+        ? artifact.reviewSelection.reviewCap
+        : 0
+  });
+  assertBatchManifestIdentity(
+    artifact,
+    inventory.manifest,
+    inventory.assignmentIds,
+    selectedReviews,
+    packetReceipts
+  );
+}
+
+function assertBatchCoverageManifest(artifact: PlaytestBatch): void {
+  const coverage = artifact.coverageManifest;
+  if (coverage === null) return;
+  assertPlaytestCoverageManifest(coverage);
+  if (
+    artifact.assignmentInventory.status !== "frozen" ||
+    coverage.workspaceId !== artifact.workspaceId ||
+    coverage.batchId !== artifact.batchId ||
+    coverage.buildSha !== artifact.buildSha ||
+    coverage.rubricHash !== artifact.rubricHash ||
+    coverage.assignmentManifestHash !==
+      artifact.assignmentInventory.manifest.contentHash ||
+    coverage.assignedEpisodes !== artifact.budget.assignedEpisodes
+  ) {
+    throw new TypeError(
+      "Batch coverage manifest does not match its frozen rubric and assignment identity."
+    );
+  }
+  const { contentHash, ...draft } = coverage;
+  const expectedHash = createHash("sha256")
+    .update(playtestCoverageManifestHashInput(draft))
+    .digest("hex");
+  if (expectedHash !== contentHash.toLowerCase()) {
+    throw new TypeError("Batch coverage manifest content hash is invalid.");
+  }
+}
+
+/**
+ * One-way migration for records persisted before batch assignment manifests
+ * existed. Pre-change history stays honest inventory-unavailable history; no
+ * assignment is fabricated from seed text.
+ */
+function migrateAssignmentManifest(
+  value: Record<string, unknown>
+): PlaytestAssignmentManifest {
+  if (value.schema === PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA) {
+    try {
+      assertPlaytestAssignmentManifest(value);
+    } catch (error) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse v3 assignment manifest is malformed",
+        error
+      );
+    }
+    return value as unknown as PlaytestAssignmentManifest;
+  }
+  if (
+    value.schema !== PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V1 &&
+    value.schema !== PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V2
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse frozen assignment inventory has an unsupported schema"
+    );
+  }
+  const originalHash = createHash("sha256")
+    .update(
+      playtestAssignmentManifestHashInput(
+        value as unknown as Omit<PlaytestAssignmentManifest, "contentHash">
+      )
+    )
+    .digest("hex");
+  if (
+    typeof value.contentHash !== "string" ||
+    originalHash !== value.contentHash.toLowerCase()
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse legacy assignment manifest has an invalid content hash"
+    );
+  }
+  if (
+    !Array.isArray(value.assignments) ||
+    value.assignments.some(
+      (assignment) => !isRecord(assignment) || assignment.cohort !== undefined
+    )
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse legacy assignment manifest has malformed coverage identity"
+    );
+  }
+  const migrated = {
+    ...value,
+    schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
+    assignments: value.assignments.map((assignment) => ({
+      ...(assignment as Record<string, unknown>),
+      cohort: null
+    }))
+  };
+  const contentHash = createHash("sha256")
+    .update(
+      playtestAssignmentManifestHashInput(
+        migrated as unknown as Omit<PlaytestAssignmentManifest, "contentHash">
+      )
+    )
+    .digest("hex");
+  const result = { ...migrated, contentHash };
+  try {
+    assertPlaytestAssignmentManifest(result);
+  } catch (error) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse migrated assignment manifest is malformed",
+      error
+    );
+  }
+  return result as unknown as PlaytestAssignmentManifest;
+}
+
+function migrateAssignmentInventory(
+  value: unknown
+): PlaytestBatch["assignmentInventory"] {
+  if (value === undefined) {
+    return {
+      status: "unavailable",
+      reason: "recorded-before-assignment-manifests"
+    };
+  }
+  if (!isRecord(value)) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse batch has a malformed assignment inventory"
+    );
+  }
+  if (value.status === "unavailable") {
+    if (value.reason !== "recorded-before-assignment-manifests") {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse batch has an unsupported unavailable assignment reason"
+      );
+    }
+    return value as PlaytestBatch["assignmentInventory"];
+  }
+  if (value.status !== "frozen" || !isRecord(value.manifest)) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse frozen assignment inventory has a malformed manifest"
+    );
+  }
+  return {
+    status: "frozen",
+    manifest: migrateAssignmentManifest(value.manifest)
+  };
+}
+
+/**
+ * One-way migration for batch, assignment and coverage fields. Missing legacy
+ * evidence stays unavailable; malformed frozen state never becomes history.
+ */
+function migrateBatchArtifact(
+  artifact: Readonly<Record<string, unknown>>
+): PlaytestBatch {
+  const schema = artifact.schema;
+  if (
+    schema !== PLAYTESTS_BATCH_SCHEMA &&
+    schema !== PLAYTESTS_BATCH_SCHEMA_V2 &&
+    schema !== PLAYTESTS_BATCH_SCHEMA_V1
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse returned an unsupported playtest batch schema"
+    );
+  }
+  if (
+    schema !== PLAYTESTS_BATCH_SCHEMA_V1 &&
+    artifact.coverageManifest === undefined
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse batch is missing its coverage-manifest field"
+    );
+  }
+  if (
+    schema === PLAYTESTS_BATCH_SCHEMA &&
+    (artifact.reviewPackets === undefined ||
+      !Array.isArray(artifact.reviewReceipts))
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse v3 batch is missing its packet or review receipt inventory"
+    );
+  }
+  if (
+    schema === PLAYTESTS_BATCH_SCHEMA_V2 &&
+    !Array.isArray(artifact.reviewReceipts)
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse v2 batch is missing its review receipt inventory"
+    );
+  }
+  const assignmentInventory = migrateAssignmentInventory(
+    artifact.assignmentInventory
+  );
+  const reviewSelection =
+    artifact.reviewSelection === undefined
+      ? {
+          status: "unavailable" as const,
+          reason: "recorded-before-review-selection" as const
+        }
+      : artifact.reviewSelection;
+  const reviewReceipts = Array.isArray(artifact.reviewReceipts)
+    ? schema === PLAYTESTS_BATCH_SCHEMA
+      ? artifact.reviewReceipts
+      : artifact.reviewReceipts.map((receipt) =>
+          isRecord(receipt)
+            ? {
+                ...receipt,
+                packetId: receipt.packetId ?? null,
+                status: receipt.status ?? "persisted"
+              }
+            : receipt
+        )
+    : [];
+  const reviewPackets =
+    schema === PLAYTESTS_BATCH_SCHEMA && Array.isArray(artifact.reviewPackets)
+      ? artifact.reviewPackets
+      : migrateLegacyPacketReceipts({
+          batchId: artifact.batchId,
+          createdAt: artifact.createdAt,
+          assignmentInventory,
+          reviewSelection
+        });
+  const normalized: Record<string, unknown> = {
+    ...artifact,
+    schema: PLAYTESTS_BATCH_SCHEMA
+  };
+  delete normalized.samplingPlan;
+  delete normalized.reviewedAssignmentIds;
+  delete normalized.assignmentOutcomes;
+  return {
+    ...normalized,
+    assignmentInventory,
+    coverageManifest:
+      schema === PLAYTESTS_BATCH_SCHEMA_V1
+        ? null
+        : (artifact.coverageManifest as PlaytestBatch["coverageManifest"]),
+    reviewPackets,
+    unobservedAssignments:
+      artifact.unobservedAssignments === undefined
+        ? null
+        : artifact.unobservedAssignments,
+    reviewSelection,
+    reviewReceipts,
+    cancellationReason: artifact.cancellationReason ?? null,
+    failureReason: artifact.failureReason ?? null
+  } as unknown as PlaytestBatch;
+}
+
+function migrateLegacyPacketReceipts(input: {
+  readonly batchId: unknown;
+  readonly createdAt: unknown;
+  readonly assignmentInventory: PlaytestBatch["assignmentInventory"];
+  readonly reviewSelection: unknown;
+}): readonly PlaytestReviewPacketReceipt[] {
+  const batchId = input.batchId;
+  const createdAt = input.createdAt;
+  if (
+    !isRecord(input.reviewSelection) ||
+    input.reviewSelection.status !== "selected"
+  ) {
+    return [];
+  }
+  if (
+    input.assignmentInventory.status !== "frozen" ||
+    typeof batchId !== "string" ||
+    typeof createdAt !== "string" ||
+    !Number.isFinite(Date.parse(createdAt)) ||
+    !Array.isArray(input.reviewSelection.selected)
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "Legacy batch selection cannot be represented as explicit unavailable packet receipts."
+    );
+  }
+  return input.reviewSelection.selected.map((selected) => {
+    if (
+      !isRecord(selected) ||
+      typeof selected.assignmentId !== "string" ||
+      selected.assignmentId.trim().length === 0 ||
+      typeof selected.episodeId !== "string" ||
+      selected.episodeId.trim().length === 0
+    ) {
+      throw new PlaytestSourceUnavailableError(
+        "Legacy batch has a malformed selected review session."
+      );
+    }
+    const packetId =
+      "packet-legacy-" +
+      createHash("sha256")
+        .update(
+          JSON.stringify([batchId, selected.assignmentId, selected.episodeId])
+        )
+        .digest("hex");
+    return {
+      status: "unavailable",
+      packetId,
+      assignmentId: selected.assignmentId,
+      episodeId: selected.episodeId,
+      artifact: null,
+      failureReason: "recorded-before-evidence-packets",
+      createdAt
+    };
+  });
+}
+
+/** One-way migration: pre-change episodes carry no batch-local assignment id. */
+function migrateEpisodeArtifact(
+  artifact: Readonly<Record<string, unknown>>
+): PlaytestEpisode {
+  if (
+    artifact.schema !== PLAYTESTS_EPISODE_SCHEMA_V1 &&
+    artifact.schema !== PLAYTESTS_EPISODE_SCHEMA_V2 &&
+    artifact.schema !== PLAYTESTS_EPISODE_SCHEMA
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse returned an unsupported playtest episode schema"
+    );
+  }
+  if (artifact.schema === PLAYTESTS_EPISODE_SCHEMA_V1) {
+    return {
+      ...artifact,
+      schema: PLAYTESTS_EPISODE_SCHEMA,
+      assignmentId:
+        typeof artifact.assignmentId === "string"
+          ? artifact.assignmentId
+          : null,
+      branchLineage: null,
+      metrics: Array.isArray(artifact.metrics)
+        ? artifact.metrics.map((metric) =>
+            isRecord(metric)
+              ? { ...metric, phaseId: null, opportunityCount: null }
+              : metric
+          )
+        : []
+    } as unknown as PlaytestEpisode;
+  }
+  if (artifact.schema === PLAYTESTS_EPISODE_SCHEMA_V2) {
+    if (
+      typeof artifact.assignmentId !== "string" &&
+      artifact.assignmentId !== null
+    ) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse v2 episode is missing its batch assignment identity"
+      );
+    }
+    if (artifact.branchLineage === undefined) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse v2 episode is missing its branch-lineage field"
+      );
+    }
+    return {
+      ...artifact,
+      schema: PLAYTESTS_EPISODE_SCHEMA,
+      metrics: Array.isArray(artifact.metrics)
+        ? artifact.metrics.map((metric) =>
+            isRecord(metric) && metric.phaseId === undefined
+              ? { ...metric, phaseId: null }
+              : metric
+          )
+        : []
+    } as unknown as PlaytestEpisode;
+  }
+  if (
+    typeof artifact.assignmentId !== "string" &&
+    artifact.assignmentId !== null
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse v2 episode is missing its batch assignment identity"
+    );
+  }
+  if (artifact.branchLineage === undefined) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse v2 episode is missing its branch-lineage field"
+    );
+  }
+  return artifact as unknown as PlaytestEpisode;
+}
+
 export function decodeBatch(row: Record<string, unknown>): PlaytestBatch {
-  const artifact = decodePayload<PlaytestBatch>(
+  const payload = decodePayload<Readonly<Record<string, unknown>>>(
     row,
     "batchId",
-    "revision",
-    PLAYTESTS_BATCH_SCHEMA
+    "revision"
   );
+  const artifact = migrateBatchArtifact(payload);
   assertIndexMatches(row, "workspace_id", artifact.workspaceId);
   assertIndexMatches(row, "batch_id", artifact.batchId);
   assertIndexMatches(row, "revision", artifact.revision);
+  assertBatchAssignmentInventory(artifact);
   assertIndexMatches(row, "status", artifact.status);
   assertIndexMatches(row, "build_sha", artifact.buildSha);
   return artifact;
 }
 
 export function decodeEpisode(row: Record<string, unknown>): PlaytestEpisode {
-  const artifact = decodePayload<PlaytestEpisode>(
-    row,
-    "episodeId",
-    "revision",
-    PLAYTESTS_EPISODE_SCHEMA
+  const artifact = migrateEpisodeArtifact(
+    decodePayload<Readonly<Record<string, unknown>>>(
+      row,
+      "episodeId",
+      "revision"
+    )
   );
   assertIndexMatches(row, "workspace_id", artifact.identity.workspaceId);
   assertIndexMatches(row, "batch_id", artifact.batchId);
@@ -604,9 +1347,31 @@ export function decodeEpisode(row: Record<string, unknown>): PlaytestEpisode {
   assertIndexMatches(row, "revision", artifact.revision);
   assertIndexMatches(row, "scenario", artifact.identity.scenarioId);
   assertIndexMatches(row, "policy", artifact.identity.policyId);
+  if (row.assignment_id !== undefined && artifact.assignmentId !== null) {
+    assertIndexMatches(row, "assignment_id", artifact.assignmentId);
+  }
   assertIndexMatches(row, "cohort", artifact.policyCohort);
   assertIndexMatches(row, "status", artifact.status);
   assertIndexMatches(row, "game_outcome", artifact.outcome);
+  try {
+    assertPlaytestNumericResults(artifact.metrics);
+  } catch (error) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse episode contains invalid or duplicate metric results",
+      error
+    );
+  }
+  if (artifact.branchLineage !== null) {
+    assertPlaytestBranchLineage(artifact.branchLineage, artifact);
+    if (
+      artifact.branchLineage.parentEpisodeId === artifact.episodeId ||
+      artifact.branchLineage.parentBatchId === artifact.batchId
+    ) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse branch episode names itself as its parent episode or batch"
+      );
+    }
+  }
   return artifact;
 }
 
@@ -655,12 +1420,38 @@ export function decodeFinding(row: Record<string, unknown>): PlaytestFinding {
 export function decodeReview(
   row: Record<string, unknown>
 ): PlaytestSessionReview {
-  const artifact = decodePayload<PlaytestSessionReview>(
+  const raw = decodePayload<Readonly<Record<string, unknown>>>(
     row,
     "reviewId",
-    "version",
-    PLAYTESTS_SESSION_REVIEW_SCHEMA
+    "version"
   );
+  let artifact: PlaytestSessionReview;
+  if (raw.schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V1) {
+    artifact = {
+      ...raw,
+      schema: PLAYTESTS_SESSION_REVIEW_SCHEMA,
+      evidencePacket: null
+    } as unknown as PlaytestSessionReview;
+  } else if (raw.schema === PLAYTESTS_SESSION_REVIEW_SCHEMA) {
+    if (raw.evidencePacket === undefined) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse v2 playtest review is missing its evidence-packet field"
+      );
+    }
+    try {
+      assertEvidencePacketReference(raw.evidencePacket);
+    } catch (error) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse review has a malformed evidence-packet reference",
+        error
+      );
+    }
+    artifact = raw as unknown as PlaytestSessionReview;
+  } else {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse returned an unsupported playtest review schema"
+    );
+  }
   assertIndexMatches(row, "workspace_id", artifact.provenance.workspaceId);
   assertIndexMatches(row, "episode_id", artifact.episodeId);
   assertIndexMatches(row, "review_id", artifact.reviewId);

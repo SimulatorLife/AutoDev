@@ -1,10 +1,5 @@
 import type { PlaytestJsonValue } from "./protocol-types.ts";
-import {
-  type PlaytestCoverageModality,
-  PLAYTESTS_COVERAGE_MODALITIES,
-  PLAYTESTS_SEVERITIES,
-  type PlaytestSeverity
-} from "./types.ts";
+import { PLAYTESTS_SEVERITIES, type PlaytestSeverity } from "./types.ts";
 
 const SHA256_HEX_PATTERN = /^[a-f\d]{64}$/iu;
 const EVENT_TAXONOMY_KEYS = [
@@ -61,41 +56,6 @@ export interface PlaytestEventTaxonomy {
   readonly events: readonly PlaytestEventDefinition[];
 }
 
-export type PlaytestCoverageState =
-  "covered" | "under-covered" | "not-observed" | "unsupported";
-
-export interface PlaytestCoverageCellInput {
-  readonly mechanicKey: string;
-  readonly phaseId: string;
-  readonly scenarioFamily: string;
-  readonly cohort: string;
-  readonly policy: string;
-  readonly modality: PlaytestCoverageModality;
-  readonly requiredOpportunities: number;
-  readonly requiredIndependentUnits: number;
-  readonly observedOpportunities: number;
-  readonly observedIndependentUnits: number;
-  readonly unsupportedReason: string | null;
-}
-
-export interface PlaytestCoverageCell extends PlaytestCoverageCellInput {
-  readonly state: PlaytestCoverageState;
-}
-
-export interface PlaytestCoverageManifest {
-  readonly schemaVersion: 1;
-  readonly workspaceId: string;
-  readonly batchId: string;
-  readonly buildSha: string;
-  readonly measurementVersion: string;
-  readonly generatedAt: string;
-  readonly cells: readonly PlaytestCoverageCell[];
-  readonly coveredCells: number;
-  readonly underCoveredCells: number;
-  readonly notObservedCells: number;
-  readonly unsupportedCells: number;
-}
-
 function isPlainRecord(
   value: unknown
 ): value is Readonly<Record<string, unknown>> {
@@ -114,15 +74,6 @@ function isSeverity(value: unknown): value is PlaytestSeverity {
   return (
     typeof value === "string" &&
     (PLAYTESTS_SEVERITIES as readonly string[]).includes(value)
-  );
-}
-
-function isCoverageMode(
-  value: unknown
-): value is PlaytestCoverageCellInput["modality"] {
-  return (
-    typeof value === "string" &&
-    (PLAYTESTS_COVERAGE_MODALITIES as readonly string[]).includes(value)
   );
 }
 
@@ -244,107 +195,4 @@ export function assertPlaytestEventTaxonomy(
     throw new TypeError("Event taxonomy events must be an array.");
   const eventIds = new Set<string>();
   for (const event of value.events) assertEventDefinition(event, eventIds);
-}
-
-/** Return a stable collision-resistant key for one declared coverage cell. */
-function coverageKey(cell: PlaytestCoverageCellInput): string {
-  return [
-    cell.mechanicKey,
-    cell.phaseId,
-    cell.scenarioFamily,
-    cell.cohort,
-    cell.policy,
-    cell.modality
-  ].join("\u001F");
-}
-
-function cellState(cell: PlaytestCoverageCellInput): PlaytestCoverageState {
-  if (cell.unsupportedReason !== null) return "unsupported";
-  if (cell.observedOpportunities === 0 && cell.observedIndependentUnits === 0) {
-    return "not-observed";
-  }
-  if (
-    cell.observedOpportunities < cell.requiredOpportunities ||
-    cell.observedIndependentUnits < cell.requiredIndependentUnits
-  ) {
-    return "under-covered";
-  }
-  return "covered";
-}
-
-/** Build exact mechanic/phase/scenario/cohort/strategy/modality coverage. */
-export function buildPlaytestCoverageManifest(input: {
-  readonly workspaceId: string;
-  readonly batchId: string;
-  readonly buildSha: string;
-  readonly measurementVersion: string;
-  readonly generatedAt: string;
-  readonly cells: readonly PlaytestCoverageCellInput[];
-}): PlaytestCoverageManifest {
-  if (
-    !nonEmpty(input.workspaceId) ||
-    !nonEmpty(input.batchId) ||
-    !nonEmpty(input.measurementVersion)
-  ) {
-    throw new TypeError("Coverage manifest identity fields must be non-empty.");
-  }
-  if (!isHash(input.buildSha))
-    throw new TypeError("Coverage buildSha must be a SHA-256 digest.");
-  if (input.cells.length === 0) {
-    throw new TypeError(
-      "Coverage manifest must declare at least one required cell."
-    );
-  }
-  if (!Number.isFinite(Date.parse(input.generatedAt)))
-    throw new TypeError("Coverage generatedAt must be a date.");
-  const seen = new Set<string>();
-  const cells = input.cells.map((cell) => {
-    for (const key of [
-      "mechanicKey",
-      "phaseId",
-      "scenarioFamily",
-      "cohort",
-      "policy"
-    ] as const) {
-      if (!nonEmpty(cell[key]))
-        throw new TypeError("Coverage cell " + key + " must be non-empty.");
-    }
-    if (!isCoverageMode(cell.modality))
-      throw new TypeError("Coverage modality is invalid.");
-    for (const count of [
-      cell.requiredOpportunities,
-      cell.requiredIndependentUnits,
-      cell.observedOpportunities,
-      cell.observedIndependentUnits
-    ]) {
-      if (!Number.isSafeInteger(count) || count < 0) {
-        throw new TypeError("Coverage counts must be non-negative integers.");
-      }
-    }
-    if (cell.unsupportedReason !== null && !nonEmpty(cell.unsupportedReason)) {
-      throw new TypeError(
-        "Coverage unsupportedReason must be non-empty or null."
-      );
-    }
-    const key = coverageKey(cell);
-    if (seen.has(key)) throw new TypeError("Coverage cells must be unique.");
-    seen.add(key);
-    return { ...cell, state: cellState(cell) };
-  });
-  return {
-    schemaVersion: 1,
-    workspaceId: input.workspaceId,
-    batchId: input.batchId,
-    buildSha: input.buildSha,
-    measurementVersion: input.measurementVersion,
-    generatedAt: input.generatedAt,
-    cells,
-    coveredCells: cells.filter((cell) => cell.state === "covered").length,
-    underCoveredCells: cells.filter((cell) => cell.state === "under-covered")
-      .length,
-    notObservedCells: cells.filter((cell) => cell.state === "not-observed")
-      .length,
-    unsupportedCells: cells.filter((cell) => cell.state === "unsupported")
-      .length
-  };
 }

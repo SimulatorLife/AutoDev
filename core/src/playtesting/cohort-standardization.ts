@@ -66,6 +66,18 @@ export const PLAYTESTS_COHORT_STANDARDIZATION_SCHEMA =
   "autodev-playtest-cohort-standardization-v1" as const;
 
 /**
+ * Shared non-inferential state literals reused by both the
+ * standardization and raw-observed state vocabularies below, and by
+ * their classification logic in `standardizeBuild`. Declaring them
+ * once avoids duplicating the same literal string across both state
+ * arrays and every branch that assigns or compares them.
+ */
+const STATE_UNKNOWN_INCOMPLETE_SOURCE_COVERAGE =
+  "unknown-incomplete-source-coverage" as const;
+const STATE_UNKNOWN_ZERO_DENOMINATOR_STRATUM =
+  "unknown-zero-denominator-stratum" as const;
+
+/**
  * Closed vocabulary for the non-inferential verdict on a build's
  * standardization. The state is reported verbatim in
  * `PlaytestBuildCohortStandardization.standardizationState` so a
@@ -73,8 +85,8 @@ export const PLAYTESTS_COHORT_STANDARDIZATION_SCHEMA =
  */
 export const PLAYTESTS_COHORT_STANDARDIZATION_STATES = [
   "standardized",
-  "unknown-incomplete-source-coverage",
-  "unknown-zero-denominator-stratum",
+  STATE_UNKNOWN_INCOMPLETE_SOURCE_COVERAGE,
+  STATE_UNKNOWN_ZERO_DENOMINATOR_STRATUM,
   "unknown-no-observation"
 ] as const;
 export type PlaytestCohortStandardizationState =
@@ -88,8 +100,8 @@ export type PlaytestCohortStandardizationState =
  */
 export const PLAYTESTS_COHORT_OBSERVED_STATES = [
   "observed",
-  "unknown-incomplete-source-coverage",
-  "unknown-zero-denominator-stratum",
+  STATE_UNKNOWN_INCOMPLETE_SOURCE_COVERAGE,
+  STATE_UNKNOWN_ZERO_DENOMINATOR_STRATUM,
   "unknown-no-observation"
 ] as const;
 export type PlaytestCohortObservedState =
@@ -292,8 +304,8 @@ function assertPlaytestCohortStandardizationInput(
   // After the assertion above, the cohortWeights projection is a
   // Readonly<Record<string, number>>; capture it as such for downstream
   // narrowing of the benchmark record.
-  const cohortWeights: Readonly<Record<string, number>> =
-    value.benchmark.cohortWeights as Readonly<Record<string, number>>;
+  const cohortWeights: Readonly<Record<string, number>> = value.benchmark
+    .cohortWeights as Readonly<Record<string, number>>;
   if (!nonEmptyString(value.benchmark.benchmarkId)) {
     throw new TypeError(
       `${label}.benchmark.benchmarkId must be a non-empty string.`
@@ -329,7 +341,9 @@ function assertPlaytestCohortStandardizationInput(
       throw new TypeError(`${labelForBuild} must be an object.`);
     }
     if (!nonEmptyString(build.buildId)) {
-      throw new TypeError(`${labelForBuild}.buildId must be a non-empty string.`);
+      throw new TypeError(
+        `${labelForBuild}.buildId must be a non-empty string.`
+      );
     }
     if (seenBuilds.has(build.buildId)) {
       throw new TypeError(
@@ -343,9 +357,7 @@ function assertPlaytestCohortStandardizationInput(
 
 /** ---------- internal computation helpers ---------- */
 
-function observedRateOf(
-  observation: PlaytestCohortObservation
-): number | null {
+function observedRateOf(observation: PlaytestCohortObservation): number | null {
   if (observation.denominator === 0) return null;
   return observation.numerator / observation.denominator;
 }
@@ -400,115 +412,44 @@ function standardizeBuild(
   benchmarkKeys: readonly string[]
 ): PlaytestBuildCohortStandardization {
   // Step 1: aggregate totals and detect coverage / zero-denominator issues.
-  let totalObserved = 0;
-  let totalMissing = 0;
-  for (const key of benchmarkKeys) {
-    const obs = build.cohortObservations[key];
-    if (obs === undefined) {
-      // Validation already guarantees the key is present; this is a defence
-      // against silent loosening of the validator in the future.
-      throw new TypeError(
-        `Build "${build.buildId}" is missing benchmark cohort "${key}" after validation.`
-      );
-    }
-    totalObserved += obs.denominator;
-    totalMissing += obs.missing;
-  }
+  const { totalObserved, totalMissing } = aggregateObservationTotals(
+    build,
+    benchmarkKeys
+  );
   const totalEligible = totalObserved + totalMissing;
   const sourceCoverage =
     totalEligible === 0 ? null : totalObserved / totalEligible;
 
   // Step 2: classify the build's standardization verdict.
-  let standardizationState: PlaytestCohortStandardizationState = "standardized";
-  for (const key of benchmarkKeys) {
-    const obs = build.cohortObservations[key];
-    if (obs === undefined) {
-      standardizationState = "unknown-incomplete-source-coverage";
-      break;
-    }
-    if (obs.denominator === 0) {
-      standardizationState = "unknown-zero-denominator-stratum";
-      break;
-    }
-  }
-
-  let standardizedRate: number | null;
-  if (standardizationState !== "standardized") {
-    standardizedRate = null;
-  } else {
-    let weighted = 0;
-    for (const key of benchmarkKeys) {
-      const obs = build.cohortObservations[key];
-      const weight = cohortWeights[key];
-      if (obs === undefined || weight === undefined) {
-        // unreachable after validation + state classification above
-        throw new TypeError(
-          `Internal error: cohort "${key}" referenced without observation or benchmark weight.`
-        );
-      }
-      weighted += weight * (obs.numerator / obs.denominator);
-    }
-    standardizedRate = weighted;
-  }
+  const standardizationState = classifyStandardizationState(
+    build,
+    benchmarkKeys
+  );
+  const standardizedRate = computeStandardizedRate(
+    standardizationState,
+    build,
+    benchmarkKeys,
+    cohortWeights
+  );
 
   // Step 3: classify the raw sample-mix weighted verdict.
-  let rawObservedState: PlaytestCohortObservedState = "observed";
-  if (totalObserved === 0) {
-    rawObservedState = "unknown-no-observation";
-  } else if (standardizationState === "unknown-zero-denominator-stratum") {
-    rawObservedState = "unknown-zero-denominator-stratum";
-  } else if (
-    standardizationState === "unknown-incomplete-source-coverage"
-  ) {
-    rawObservedState = "unknown-incomplete-source-coverage";
-  }
-
-  let rawObservedRate: number | null;
-  if (rawObservedState !== "observed") {
-    rawObservedRate = null;
-  } else {
-    let weighted = 0;
-    for (const key of benchmarkKeys) {
-      const obs = build.cohortObservations[key];
-      if (obs === undefined) {
-        // unreachable after validation
-        throw new TypeError(
-          `Internal error: cohort "${key}" referenced without observation.`
-        );
-      }
-      const sampleProportion = obs.denominator / totalObserved;
-      weighted += sampleProportion * (obs.numerator / obs.denominator);
-    }
-    rawObservedRate = weighted;
-  }
+  const rawObservedState = classifyRawObservedState(
+    standardizationState,
+    totalObserved
+  );
+  const rawObservedRate = computeRawObservedRate(
+    rawObservedState,
+    build,
+    benchmarkKeys,
+    totalObserved
+  );
 
   // Step 4: per-cohort rows for downstream auditability.
-  const cohorts: PlaytestCohortStandardizationRow[] = benchmarkKeys.map(
-    (key): PlaytestCohortStandardizationRow => {
-      const obs = build.cohortObservations[key];
-      const weight = cohortWeights[key];
-      if (obs === undefined || weight === undefined) {
-        // unreachable after validation
-        throw new TypeError(
-          `Internal error: cohort "${key}" referenced without observation or benchmark weight.`
-        );
-      }
-      const eligible = obs.denominator + obs.missing;
-      return {
-        cohortKey: key,
-        benchmarkWeight: weight,
-        numerator: obs.numerator,
-        denominator: obs.denominator,
-        missing: obs.missing,
-        eligible,
-        observedRate: observedRateOf(obs),
-        sampleProportion:
-          obs.denominator === 0 || totalObserved === 0
-            ? null
-            : obs.denominator / totalObserved,
-        cohortCoverage: cohortCoverageOf(obs)
-      };
-    }
+  const cohorts = buildCohortRows(
+    build,
+    benchmarkKeys,
+    cohortWeights,
+    totalObserved
   );
 
   return {
@@ -526,4 +467,169 @@ function standardizeBuild(
     totalEligible,
     cohorts
   };
+}
+
+/**
+ * Step 1 helper: sums each benchmark cohort's observed denominator and
+ * explicit missing count across the build's `cohortObservations` map.
+ */
+function aggregateObservationTotals(
+  build: PlaytestBuildCohortObservations,
+  benchmarkKeys: readonly string[]
+): { totalObserved: number; totalMissing: number } {
+  let totalObserved = 0;
+  let totalMissing = 0;
+  for (const key of benchmarkKeys) {
+    const obs = build.cohortObservations[key];
+    if (obs === undefined) {
+      // Validation already guarantees the key is present; this is a defence
+      // against silent loosening of the validator in the future.
+      throw new TypeError(
+        `Build "${build.buildId}" is missing benchmark cohort "${key}" after validation.`
+      );
+    }
+    totalObserved += obs.denominator;
+    totalMissing += obs.missing;
+  }
+  return { totalObserved, totalMissing };
+}
+
+/**
+ * Step 2 helper: classifies the build's non-inferential standardization
+ * verdict. A benchmark cohort absent from the build's observations, or
+ * present with a zero denominator, makes the fixed-weight rate honestly
+ * unknown rather than silently dropped or zero-filled.
+ */
+function classifyStandardizationState(
+  build: PlaytestBuildCohortObservations,
+  benchmarkKeys: readonly string[]
+): PlaytestCohortStandardizationState {
+  for (const key of benchmarkKeys) {
+    const obs = build.cohortObservations[key];
+    if (obs === undefined) {
+      return STATE_UNKNOWN_INCOMPLETE_SOURCE_COVERAGE;
+    }
+    if (obs.denominator === 0) {
+      return STATE_UNKNOWN_ZERO_DENOMINATOR_STRATUM;
+    }
+  }
+  return "standardized";
+}
+
+/**
+ * Step 2 helper: computes the fixed-weight benchmark-standardized rate
+ * when every benchmark cohort was observed with a non-zero denominator;
+ * `null` otherwise.
+ */
+function computeStandardizedRate(
+  standardizationState: PlaytestCohortStandardizationState,
+  build: PlaytestBuildCohortObservations,
+  benchmarkKeys: readonly string[],
+  cohortWeights: Readonly<Record<string, number>>
+): number | null {
+  if (standardizationState !== "standardized") {
+    return null;
+  }
+  let weighted = 0;
+  for (const key of benchmarkKeys) {
+    const obs = build.cohortObservations[key];
+    const weight = cohortWeights[key];
+    if (obs === undefined || weight === undefined) {
+      // unreachable after validation + state classification above
+      throw new TypeError(
+        `Internal error: cohort "${key}" referenced without observation or benchmark weight.`
+      );
+    }
+    weighted += weight * (obs.numerator / obs.denominator);
+  }
+  return weighted;
+}
+
+/**
+ * Step 3 helper: classifies the raw sample-mix weighted verdict. The
+ * precedence mirrors the standardized state's dependency on the same
+ * underlying coverage gaps: no observations at all takes priority,
+ * followed by a zero-denominator stratum, followed by incomplete source
+ * coverage.
+ */
+function classifyRawObservedState(
+  standardizationState: PlaytestCohortStandardizationState,
+  totalObserved: number
+): PlaytestCohortObservedState {
+  if (totalObserved === 0) {
+    return "unknown-no-observation";
+  }
+  if (standardizationState === STATE_UNKNOWN_ZERO_DENOMINATOR_STRATUM) {
+    return STATE_UNKNOWN_ZERO_DENOMINATOR_STRATUM;
+  }
+  if (standardizationState === STATE_UNKNOWN_INCOMPLETE_SOURCE_COVERAGE) {
+    return STATE_UNKNOWN_INCOMPLETE_SOURCE_COVERAGE;
+  }
+  return "observed";
+}
+
+/**
+ * Step 3 helper: computes the sample-mix weighted observed rate when the
+ * raw observed state is `"observed"`; `null` otherwise.
+ */
+function computeRawObservedRate(
+  rawObservedState: PlaytestCohortObservedState,
+  build: PlaytestBuildCohortObservations,
+  benchmarkKeys: readonly string[],
+  totalObserved: number
+): number | null {
+  if (rawObservedState !== "observed") {
+    return null;
+  }
+  let weighted = 0;
+  for (const key of benchmarkKeys) {
+    const obs = build.cohortObservations[key];
+    if (obs === undefined) {
+      // unreachable after validation
+      throw new TypeError(
+        `Internal error: cohort "${key}" referenced without observation.`
+      );
+    }
+    const sampleProportion = obs.denominator / totalObserved;
+    weighted += sampleProportion * (obs.numerator / obs.denominator);
+  }
+  return weighted;
+}
+
+/**
+ * Step 4 helper: builds the per-cohort auditability rows, including the
+ * raw inputs that fed each derived number so an independent audit can
+ * replay the math from the artifact.
+ */
+function buildCohortRows(
+  build: PlaytestBuildCohortObservations,
+  benchmarkKeys: readonly string[],
+  cohortWeights: Readonly<Record<string, number>>,
+  totalObserved: number
+): PlaytestCohortStandardizationRow[] {
+  return benchmarkKeys.map((key): PlaytestCohortStandardizationRow => {
+    const obs = build.cohortObservations[key];
+    const weight = cohortWeights[key];
+    if (obs === undefined || weight === undefined) {
+      // unreachable after validation
+      throw new TypeError(
+        `Internal error: cohort "${key}" referenced without observation or benchmark weight.`
+      );
+    }
+    const eligible = obs.denominator + obs.missing;
+    return {
+      cohortKey: key,
+      benchmarkWeight: weight,
+      numerator: obs.numerator,
+      denominator: obs.denominator,
+      missing: obs.missing,
+      eligible,
+      observedRate: observedRateOf(obs),
+      sampleProportion:
+        obs.denominator === 0 || totalObserved === 0
+          ? null
+          : obs.denominator / totalObserved,
+      cohortCoverage: cohortCoverageOf(obs)
+    };
+  });
 }

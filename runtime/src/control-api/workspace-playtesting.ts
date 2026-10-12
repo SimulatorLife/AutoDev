@@ -9,8 +9,7 @@ import {
 import { ConfigRepository } from "@simulatorlife/autodev-data";
 import {
   WorkspacePlaytestApprovalConflictError,
-  WorkspacePlaytestApprovalRepository,
-  WorkspacePlaytestApprovalStoreError
+  WorkspacePlaytestApprovalRepository
 } from "@simulatorlife/autodev-data/workspaces";
 
 import { errorBody, sendJson } from "../router/proxy.ts";

@@ -1,5 +1,10 @@
-/** Server-only, typed Playtesting run request; Runtime owns approval and execution. */
-import type { ControlApiPlaytestingRunRequest } from "@simulatorlife/autodev-core";
+/** Server-only, typed Playtesting batch request; Runtime owns approval and execution. */
+import {
+  type ControlApiPlaytestingBatchAssignment,
+  type ControlApiPlaytestingRunRequest,
+  PLAYTESTS_MAX_ASSIGNMENT_MANIFEST_BYTES,
+  PLAYTESTS_MAX_BATCH_ASSIGNMENTS
+} from "@simulatorlife/autodev-core";
 import { type NextRequest, NextResponse } from "next/server.js";
 
 import {
@@ -15,16 +20,11 @@ import { startPlaytestingRun } from "../../../playtesting/playtesting-server.ts"
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const MAX_BODY_BYTES = 4096;
+const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_ASSIGNMENTS = PLAYTESTS_MAX_BATCH_ASSIGNMENTS;
+const MAX_ASSIGNMENTS_JSON_BYTES = PLAYTESTS_MAX_ASSIGNMENT_MANIFEST_BYTES;
 const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
-const STEP_PATTERN = /^[1-9]\d{0,5}$/u;
-const ALLOWED_FIELDS = new Set([
-  "workspaceId",
-  "scenario",
-  "policy",
-  "seed",
-  "maxSteps"
-]);
+const ALLOWED_FIELDS = new Set(["workspaceId", "assignments"]);
 
 function sendError(
   status: number,
@@ -37,21 +37,82 @@ function sendError(
   );
 }
 
-function oneField(form: URLSearchParams, key: string): string | null {
-  const values = form.getAll(key);
-  if (values.length !== 1) return null;
-  const value = values[0]!.trim();
-  return value.length > 0 && value.length <= 256 && !hasControlCharacters(value)
-    ? value
-    : null;
-}
-
 function hasControlCharacters(value: string): boolean {
   for (const character of value) {
     const code = character.codePointAt(0) ?? 0;
     if (code <= 31 || code === 127) return true;
   }
   return false;
+}
+
+function boundedText(value: unknown, maximum: number): string | null {
+  if (
+    typeof value !== "string" ||
+    value.trim().length === 0 ||
+    value.length > maximum ||
+    hasControlCharacters(value)
+  ) {
+    return null;
+  }
+  return value;
+}
+
+function parseAssignment(
+  value: unknown
+): ControlApiPlaytestingBatchAssignment | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const scenario = boundedText(record.scenario, 256);
+  const policy = boundedText(record.policy, 256);
+  const seed = boundedText(record.seed, 256);
+  if (scenario === null || policy === null || seed === null) return null;
+  const goal: string | null =
+    record.goal === undefined ? null : boundedText(record.goal, 1000);
+  if (record.goal !== undefined && goal === null) return null;
+  const maxSteps = record.maxSteps;
+  if (
+    maxSteps !== undefined &&
+    (!Number.isSafeInteger(maxSteps) ||
+      (maxSteps as number) < 1 ||
+      (maxSteps as number) > 100_000)
+  ) {
+    return null;
+  }
+  return {
+    scenario,
+    policy,
+    seed,
+    ...(goal === null ? {} : { goal }),
+    ...(maxSteps === undefined ? {} : { maxSteps: maxSteps as number })
+  };
+}
+
+function parseAssignments(
+  raw: string
+): ControlApiPlaytestingBatchAssignment[] | null {
+  if (Buffer.byteLength(raw, "utf8") > MAX_ASSIGNMENTS_JSON_BYTES) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length === 0 ||
+    parsed.length > MAX_ASSIGNMENTS
+  ) {
+    return null;
+  }
+  const assignments: ControlApiPlaytestingBatchAssignment[] = [];
+  for (const entry of parsed) {
+    const assignment = parseAssignment(entry);
+    if (assignment === null) return null;
+    assignments.push(assignment);
+  }
+  return assignments;
 }
 
 function failureStatus(
@@ -71,7 +132,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return sendError(
       403,
       "autodev_console_playtesting_origin_refused",
-      "Run requests must come from the Console's same origin."
+      "Batch requests must come from the Console's same origin."
     );
   }
   const form = await readStrictUrlEncodedFormBody(request, MAX_BODY_BYTES);
@@ -79,31 +140,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return sendError(
       400,
       "autodev_console_playtesting_invalid_request",
-      "The typed playtest run form is invalid."
+      "The typed playtest batch form is invalid."
     );
   }
-  const workspaceId = oneField(form, "workspaceId");
-  const scenario = oneField(form, "scenario");
-  const policy = oneField(form, "policy");
-  const seed = oneField(form, "seed");
-  const maxStepsText = form.getAll("maxSteps");
-  const maxSteps =
-    maxStepsText.length === 1 && STEP_PATTERN.test(maxStepsText[0]!.trim())
-      ? Number(maxStepsText[0]!.trim())
+  const workspaceValues = form.getAll("workspaceId");
+  const assignmentValues = form.getAll("assignments");
+  const workspaceId = workspaceValues[0]?.trim() ?? "";
+  const assignments =
+    workspaceValues.length === 1 && assignmentValues.length === 1
+      ? parseAssignments(assignmentValues[0]!)
       : null;
-  if (
-    !workspaceId ||
-    !WORKSPACE_ID_PATTERN.test(workspaceId) ||
-    !scenario ||
-    !policy ||
-    !seed ||
-    maxSteps === null ||
-    maxSteps > 100_000
-  ) {
+  if (!assignments || !WORKSPACE_ID_PATTERN.test(workspaceId)) {
     return sendError(
       400,
       "autodev_console_playtesting_invalid_request",
-      "Workspace, scenario, policy, seed, and a bounded step budget are required."
+      "A canonical workspaceId and 1-" +
+        String(MAX_ASSIGNMENTS) +
+        " typed assignments are required."
     );
   }
   const config = readControlApiConfig();
@@ -116,10 +169,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
   const requestBody: ControlApiPlaytestingRunRequest = {
     workspaceId,
-    scenario,
-    policy,
-    seed,
-    maxSteps
+    assignments
   };
   const result = await startPlaytestingRun(requestBody, config);
   if (result.kind !== "ok") {

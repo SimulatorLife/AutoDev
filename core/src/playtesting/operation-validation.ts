@@ -7,6 +7,8 @@ import type {
 import type { PlaytestAdapterMethod } from "./types.ts";
 
 const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
+const GAME_BUILD_SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
+const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024;
 const GAME_METHOD = {
   capabilities: "game.capabilities",
   reset: "game.reset",
@@ -121,6 +123,9 @@ function assertArtifactReference(
     throw new TypeError(field + ".sha256 must be a SHA-256 digest.");
   }
   nonNegativeInteger(ref.bytes, field + ".bytes");
+  if ((ref.bytes as number) > MAX_ARTIFACT_BYTES) {
+    throw new TypeError(field + ".bytes exceeds the artifact storage bound.");
+  }
   nonEmptyString(ref.mediaType, field + ".mediaType");
   if (ref.revision !== undefined)
     nonNegativeInteger(ref.revision, field + ".revision");
@@ -145,31 +150,40 @@ function assertGameEvent(
     throw new TypeError(field + ".fields must be an object.");
 }
 
-/** Validate method-specific outbound params beyond the generic JSON-RPC envelope. */
-export function assertPlaytestAdapterParams(
+function assertRevisionBoundParams(
   method: PlaytestAdapterMethod,
   params: Readonly<Record<string, unknown>>
 ): void {
-  if (REVISION_BOUND_METHODS.has(method)) {
-    const extraKeys =
-      method === GAME_METHOD.step
-        ? ["actionId"]
+  const extraKeys =
+    method === GAME_METHOD.step
+      ? ["actionId"]
+      : method === GAME_METHOD.snapshot
+        ? ["includeArtifact"]
         : CAPTURE_RANGE_METHODS.has(method)
           ? ["startStep", "endStep"]
           : [];
-    const value = assertRevisionParams(params, extraKeys, method);
-    if (method === GAME_METHOD.step) {
-      nonEmptyString(value.actionId, "game.step.actionId");
-    }
-    if (CAPTURE_RANGE_METHODS.has(method)) {
-      nonNegativeInteger(value.startStep, method + ".startStep");
-      nonNegativeInteger(value.endStep, method + ".endStep");
-      if ((value.endStep as number) < (value.startStep as number)) {
-        throw new TypeError(method + " range must be ordered.");
-      }
-    }
-    return;
+  const value = assertRevisionParams(params, extraKeys, method);
+  if (method === GAME_METHOD.step) {
+    nonEmptyString(value.actionId, "game.step.actionId");
   }
+  if (
+    method === GAME_METHOD.snapshot &&
+    typeof value.includeArtifact !== "boolean"
+  ) {
+    throw new TypeError("game.snapshot.includeArtifact must be a boolean.");
+  }
+  if (!CAPTURE_RANGE_METHODS.has(method)) return;
+  nonNegativeInteger(value.startStep, method + ".startStep");
+  nonNegativeInteger(value.endStep, method + ".endStep");
+  if ((value.endStep as number) < (value.startStep as number)) {
+    throw new TypeError(method + " range must be ordered.");
+  }
+}
+
+function assertNonRevisionBoundParams(
+  method: PlaytestAdapterMethod,
+  params: Readonly<Record<string, unknown>>
+): void {
   switch (method) {
     case GAME_METHOD.capabilities: {
       const value = objectWithKeys(params, ["protocolVersion"], method);
@@ -195,11 +209,24 @@ export function assertPlaytestAdapterParams(
     case GAME_METHOD.replay: {
       const value = objectWithKeys(
         params,
-        ["trace", "expectedBuildSha"],
+        ["trace", "expectedBuildSha", "throughStep"],
         method
       );
       assertArtifactReference(value.trace, "game.replay.trace");
-      nonEmptyString(value.expectedBuildSha, "game.replay.expectedBuildSha");
+      if (
+        typeof value.expectedBuildSha !== "string" ||
+        !GAME_BUILD_SHA_PATTERN.test(value.expectedBuildSha)
+      ) {
+        throw new TypeError(
+          "game.replay.expectedBuildSha must be a build SHA."
+        );
+      }
+      if (value.trace.mediaType !== "application/x-ndjson") {
+        throw new TypeError(
+          "game.replay.trace must reference the indexed decision trace."
+        );
+      }
+      nonNegativeInteger(value.throughStep, "game.replay.throughStep");
       return;
     }
     case GAME_METHOD.fork: {
@@ -229,9 +256,21 @@ export function assertPlaytestAdapterParams(
       return;
     }
     default: {
-      throw new TypeError("Unsupported adapter method params: " + method);
+      throw new TypeError("Unsupported non-revision adapter params: " + method);
     }
   }
+}
+
+/** Validate method-specific outbound params beyond the generic JSON-RPC envelope. */
+export function assertPlaytestAdapterParams(
+  method: PlaytestAdapterMethod,
+  params: Readonly<Record<string, unknown>>
+): void {
+  if (REVISION_BOUND_METHODS.has(method)) {
+    assertRevisionBoundParams(method, params);
+    return;
+  }
+  assertNonRevisionBoundParams(method, params);
 }
 
 function assertResetResult(result: unknown): void {
@@ -259,6 +298,24 @@ function assertRngProvenance(value: unknown, field: string): void {
       !SHA256_PATTERN.test(rng.initialStateHash))
   ) {
     throw new TypeError(field + ".initialStateHash must be SHA-256 or null.");
+  }
+  if (typeof rng.reproducible !== "boolean")
+    throw new TypeError(field + ".reproducible must be a boolean.");
+}
+
+function assertRngCheckpoint(value: unknown, field: string): void {
+  const rng = objectWithKeys(
+    value,
+    ["algorithm", "version", "stateHash", "reproducible"],
+    field
+  );
+  nonEmptyString(rng.algorithm, field + ".algorithm");
+  nonEmptyString(rng.version, field + ".version");
+  if (
+    rng.stateHash !== null &&
+    (typeof rng.stateHash !== "string" || !SHA256_PATTERN.test(rng.stateHash))
+  ) {
+    throw new TypeError(field + ".stateHash must be SHA-256 or null.");
   }
   if (typeof rng.reproducible !== "boolean")
     throw new TypeError(field + ".reproducible must be a boolean.");
@@ -351,13 +408,94 @@ function assertStepResult(
     throw new TypeError("game.step terminal must be a boolean.");
 }
 
+function assertGameMetricEvaluation(
+  value: unknown,
+  field: string
+): asserts value is Record<string, unknown> {
+  const metric = objectWithKeys(
+    value,
+    [
+      "metricId",
+      "metricVersion",
+      "phaseId",
+      "evaluatorRef",
+      "evaluatorHash",
+      "numerator",
+      "denominator",
+      "opportunityCount",
+      "missing",
+      "independentUnits",
+      "unit",
+      "missingReasons"
+    ],
+    field
+  );
+  nonEmptyString(metric.metricId, field + ".metricId");
+  if (
+    !Number.isSafeInteger(metric.metricVersion) ||
+    (metric.metricVersion as number) < 1
+  ) {
+    throw new TypeError(field + ".metricVersion must be a positive integer.");
+  }
+  nonEmptyString(metric.evaluatorRef, field + ".evaluatorRef");
+  if (
+    metric.phaseId !== null &&
+    (typeof metric.phaseId !== "string" ||
+      metric.phaseId.trim().length === 0 ||
+      metric.phaseId.length > 256)
+  ) {
+    throw new TypeError(field + ".phaseId must be bounded non-empty text.");
+  }
+  if (
+    typeof metric.evaluatorHash !== "string" ||
+    !SHA256_PATTERN.test(metric.evaluatorHash)
+  ) {
+    throw new TypeError(field + ".evaluatorHash must be a SHA-256 digest.");
+  }
+  if (
+    typeof metric.numerator !== "number" ||
+    !Number.isFinite(metric.numerator)
+  ) {
+    throw new TypeError(field + ".numerator must be finite.");
+  }
+  for (const key of [
+    "denominator",
+    "opportunityCount",
+    "missing",
+    "independentUnits"
+  ]) {
+    nonNegativeInteger(metric[key], field + "." + key);
+  }
+  if (
+    (metric.denominator as number) > (metric.opportunityCount as number) ||
+    (metric.missing as number) > (metric.opportunityCount as number) ||
+    (metric.denominator as number) + (metric.missing as number) >
+      (metric.opportunityCount as number) ||
+    (metric.independentUnits as number) > (metric.opportunityCount as number)
+  ) {
+    throw new TypeError(
+      field + " sufficient-statistic counts are inconsistent."
+    );
+  }
+  nonEmptyString(metric.unit, field + ".unit");
+  stringArray(metric.missingReasons, field + ".missingReasons");
+}
+
 function assertOutcomeResult(
   params: Readonly<Record<string, unknown>>,
   result: unknown
 ): void {
   const value = objectWithKeys(
     result,
-    ["episodeId", "revision", "state", "outcome", "metrics", "missingReasons"],
+    [
+      "episodeId",
+      "revision",
+      "state",
+      "outcome",
+      "metrics",
+      "evaluations",
+      "missingReasons"
+    ],
     GAME_METHOD.outcome
   );
   assertEpisodeRevision(value, params, GAME_METHOD.outcome);
@@ -378,6 +516,24 @@ function assertOutcomeResult(
     throw new TypeError("game.outcome metrics must be finite numbers or null.");
   }
   stringArray(value.missingReasons, "game.outcome.missingReasons");
+  if (!Array.isArray(value.evaluations) || value.evaluations.length > 1000) {
+    throw new TypeError("game.outcome evaluations must be a bounded array.");
+  }
+  const metricPhases = new Set<string>();
+  for (const [index, evaluation] of value.evaluations.entries()) {
+    assertGameMetricEvaluation(
+      evaluation,
+      "game.outcome.evaluations[" + String(index) + "]"
+    );
+    const typed = evaluation as Readonly<Record<string, unknown>>;
+    const metricPhase = JSON.stringify([typed.metricId, typed.phaseId]);
+    if (metricPhases.has(metricPhase)) {
+      throw new TypeError(
+        "game.outcome metric evaluations must have unique metric/phase pairs."
+      );
+    }
+    metricPhases.add(metricPhase);
+  }
 }
 
 function assertInvariantsResult(
@@ -423,16 +579,39 @@ function assertSnapshotResult(
 ): void {
   const value = objectWithKeys(
     result,
-    ["episodeId", "revision", "snapshot", "integrityHash"],
+    [
+      "episodeId",
+      "revision",
+      "snapshot",
+      "integrityHash",
+      "stateHash",
+      "rngCheckpoint"
+    ],
     GAME_METHOD.snapshot
   );
   assertEpisodeRevision(value, params, GAME_METHOD.snapshot);
-  assertArtifactReference(value.snapshot, "game.snapshot.snapshot");
   if (
-    typeof value.integrityHash !== "string" ||
-    !SHA256_PATTERN.test(value.integrityHash)
+    typeof value.stateHash !== "string" ||
+    !SHA256_PATTERN.test(value.stateHash)
   ) {
-    throw new TypeError("game.snapshot integrityHash must be SHA-256.");
+    throw new TypeError("game.snapshot stateHash must be SHA-256.");
+  }
+  assertRngCheckpoint(value.rngCheckpoint, "game.snapshot.rngCheckpoint");
+  if (params.includeArtifact === true) {
+    assertArtifactReference(value.snapshot, "game.snapshot.snapshot");
+    if (
+      typeof value.integrityHash !== "string" ||
+      !SHA256_PATTERN.test(value.integrityHash) ||
+      value.integrityHash.toLowerCase() !== value.snapshot.sha256.toLowerCase()
+    ) {
+      throw new TypeError(
+        "game.snapshot integrityHash must match its snapshot SHA-256."
+      );
+    }
+  } else if (value.snapshot !== null || value.integrityHash !== null) {
+    throw new TypeError(
+      "Digest-only game.snapshot must not return a snapshot artifact."
+    );
   }
 }
 
@@ -445,6 +624,9 @@ function assertReplayResult(result: unknown): void {
       "replayStatus",
       "transitionHash",
       "firstDivergentStep",
+      "replayedThroughStep",
+      "stateHash",
+      "rngCheckpoint",
       "diagnostics"
     ],
     GAME_METHOD.replay
@@ -470,13 +652,35 @@ function assertReplayResult(result: unknown): void {
       value.firstDivergentStep,
       "game.replay.firstDivergentStep"
     );
+  nonNegativeInteger(
+    value.replayedThroughStep,
+    "game.replay.replayedThroughStep"
+  );
+  if (
+    value.stateHash !== null &&
+    (typeof value.stateHash !== "string" ||
+      !SHA256_PATTERN.test(value.stateHash))
+  ) {
+    throw new TypeError("game.replay stateHash must be SHA-256 or null.");
+  }
+  assertRngCheckpoint(value.rngCheckpoint, "game.replay.rngCheckpoint");
+  if (
+    value.replayStatus === "verified" &&
+    (value.transitionHash === null ||
+      value.stateHash === null ||
+      value.firstDivergentStep !== null)
+  ) {
+    throw new TypeError(
+      "A verified game.replay requires matching transition and state hashes."
+    );
+  }
   stringArray(value.diagnostics, "game.replay.diagnostics");
 }
 
 function assertForkResult(result: unknown): void {
   const value = objectWithKeys(
     result,
-    ["episodeId", "revision", "initialStateHash", "rngProvenance"],
+    ["episodeId", "revision", "initialStateHash", "rngCheckpoint"],
     GAME_METHOD.fork
   );
   nonEmptyString(value.episodeId, "game.fork.episodeId");
@@ -487,7 +691,7 @@ function assertForkResult(result: unknown): void {
   ) {
     throw new TypeError("game.fork initialStateHash must be SHA-256.");
   }
-  assertRngProvenance(value.rngProvenance, "game.fork.rngProvenance");
+  assertRngCheckpoint(value.rngCheckpoint, "game.fork.rngCheckpoint");
 }
 
 function assertCaptureEventsResult(
@@ -587,6 +791,13 @@ export function assertPlaytestAdapterResult(
     }
     case GAME_METHOD.replay: {
       assertReplayResult(result);
+      const request = params as Readonly<Record<string, unknown>>;
+      const response = result as Readonly<Record<string, unknown>>;
+      if (response.replayedThroughStep !== request.throughStep) {
+        throw new TypeError(
+          "game.replay must stop at the requested pre-action decision step."
+        );
+      }
       return;
     }
     case GAME_METHOD.fork: {

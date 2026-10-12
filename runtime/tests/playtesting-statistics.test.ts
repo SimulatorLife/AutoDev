@@ -25,6 +25,12 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  classifyPlaytestPreferenceSensitivity,
+  type HumanPlaytestStudy,
+  PLAYTESTS_HUMAN_STUDY_SCHEMA
+} from "@simulatorlife/autodev-core";
+
+import {
   PlaytestStatisticInputError,
   PlaytestStatisticLockDriftError,
   PlaytestStatisticTransportError,
@@ -102,6 +108,115 @@ test("EXPECTED_LOCK_TAG carries the §4 pin order", () => {
     EXPECTED_LOCK_TAG,
     "scipy-1.17.0/numpy-2.3.5/statsmodels-0.14.6"
   );
+});
+
+test("RuntimePlaytestStatAnalysis returns the locked SciPy exact preference interval", async () => {
+  const analysis = new RuntimePlaytestStatAnalysis();
+  const interval = await analysis.exactBinomialProportionInterval({
+    successes: 7,
+    trials: 10,
+    confidenceLevel: 0.95
+  });
+  assert.equal(interval.method, "scipy-binomial-exact");
+  assert.equal(interval.libraryVersion, EXPECTED_LOCK_TAG);
+  assert.equal(interval.confidenceLevel, 0.95);
+  assert.equal(interval.resamples, null);
+  assert.equal(interval.seed, null);
+  assert.ok(Math.abs(interval.lower - Number("0.3475471499399921")) < 1e-12);
+  assert.ok(Math.abs(interval.upper - Number("0.9332604888222655")) < 1e-12);
+});
+
+test("SciPy exact interval flows through Core's frozen preference decision gates", async () => {
+  const analysis = new RuntimePlaytestStatAnalysis();
+  const plan = {
+    analysisPlanRef: "synthetic-preference-analysis-v1",
+    questionVersion: "synthetic-question-v1",
+    questionHash: "a".repeat(64),
+    buildA: {
+      id: "build-A",
+      version: "1",
+      contentHash: "b".repeat(64)
+    },
+    buildB: {
+      id: "build-B",
+      version: "1",
+      contentHash: "c".repeat(64)
+    },
+    maximumExclusionRate: 0.1,
+    practicalMargin: 0.05,
+    minimumIndependentParticipants: 20,
+    interval: {
+      method: "scipy-binomial-exact",
+      libraryVersion: EXPECTED_LOCK_TAG,
+      confidenceLevel: 0.95,
+      resamples: null,
+      seed: null
+    }
+  } as const;
+  const study: HumanPlaytestStudy = {
+    schema: PLAYTESTS_HUMAN_STUDY_SCHEMA,
+    studyId: "synthetic-preference-study",
+    version: 1,
+    workspaceId: "fixture/game",
+    benchmarkId: "fixture-benchmark",
+    allowedBuilds: [plan.buildA, plan.buildB],
+    preferencePlan: plan,
+    pxiItemConstructMappingHash: null,
+    instrument: "miniPXI",
+    instrumentVersion: "miniPXI-v1",
+    instrumentHash: "fixture-instrument-hash",
+    consentVersion: "consent-v1",
+    consentScope: "synthetic-study-only",
+    approved: true,
+    approvedBy: "synthetic-operator",
+    responseWindowMs: 86_400_000,
+    minimumExposureMs: 0,
+    orderDesign: "AB/BA",
+    independentUnit: "participant",
+    missingItemPolicy: "null-construct",
+    invitedCount: 100,
+    eligibleCount: 100,
+    respondedCount: 100,
+    withdrawnCount: 0,
+    createdAt: "2026-10-10T00:00:00.000Z"
+  };
+  const interval = await analysis.exactBinomialProportionInterval({
+    successes: 95,
+    trials: 100,
+    confidenceLevel: plan.interval.confidenceLevel
+  });
+  const result = classifyPlaytestPreferenceSensitivity({
+    study,
+    counts: {
+      eligibleParticipants: 100,
+      preferA: 5,
+      preferB: 95,
+      ties: 0,
+      unableToJudge: 0,
+      missing: 0
+    },
+    interval
+  });
+  assert.ok(interval.lower > 0.55);
+  assert.equal(result.decision, "supports-b-preference");
+  assert.equal(result.probabilityBPreferred, 0.95);
+});
+
+test("RuntimePlaytestStatAnalysis rejects invalid exact-proportion counts", async () => {
+  const analysis = new RuntimePlaytestStatAnalysis({
+    fixturePathOverride: "/nonexistent-fixture.json"
+  });
+  for (const [successes, trials] of [
+    [-1, 5],
+    [6, 5],
+    [1.5, 5],
+    [1, 0]
+  ] as const) {
+    await assert.rejects(
+      () => analysis.exactBinomialProportionInterval({ successes, trials }),
+      PlaytestStatisticInputError
+    );
+  }
 });
 
 test("RuntimePlaytestStatAnalysis rejects empty bootstrap arrays", async () => {

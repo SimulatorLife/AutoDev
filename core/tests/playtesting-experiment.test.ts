@@ -5,11 +5,11 @@ import test from "node:test";
 import {
   assertPlaytestExperiment,
   isPlaytestExperimentTransitionAllowed,
-  PLAYTESTS_EXPERIMENT_TRANSITIONS,
-  playtestExperimentHashInput,
-  transitionPlaytestExperiment,
   type PlaytestExperiment,
-  type PlaytestVersionedRef
+  playtestExperimentHashInput,
+  PLAYTESTS_EXPERIMENT_TRANSITIONS,
+  type PlaytestVersionedRef,
+  transitionPlaytestExperiment
 } from "../src/playtesting/index.ts";
 
 const WORKSPACE_ID = "fixture-game";
@@ -73,14 +73,13 @@ function buildFixtureExperiment(overrides: {
   const ids = [...discovery, ...confirmation];
   const discoveryArm = overrides.discoveryArm ?? "baseline";
   const assignmentMap: Record<string, "baseline" | "treatment"> = {};
-  for (let index = 0; index < ids.length; index += 1) {
-    const id = ids[index]!;
-    let arm: "baseline" | "treatment" = "baseline";
-    if (discovery.includes(id)) {
-      arm = discoveryArm;
-    } else {
-      arm = index % 2 === 0 ? "baseline" : "treatment";
-    }
+  for (const [index, id_] of ids.entries()) {
+    const id = id_!;
+    const arm: "baseline" | "treatment" = discovery.includes(id)
+      ? discoveryArm
+      : index % 2 === 0
+        ? "baseline"
+        : "treatment";
     assignmentMap[id] = arm;
   }
   const pairMap: Record<string, string> = {};
@@ -90,8 +89,8 @@ function buildFixtureExperiment(overrides: {
     if (arm === "baseline") baselineUnits.push(id);
     else treatmentUnits.push(id);
   }
-  for (let index = 0; index < baselineUnits.length; index += 1) {
-    const left = baselineUnits[index]!;
+  for (const [index, baselineUnit] of baselineUnits.entries()) {
+    const left = baselineUnit!;
     const right = treatmentUnits[index] ?? null;
     if (right === null) continue;
     pairMap[left] = right;
@@ -185,7 +184,7 @@ test("assertPlaytestExperiment rejects legacy/noncanonical finding aliases", () 
 test("assertPlaytestExperiment rejects a malformed record missing required identity fields", () => {
   const fixture = buildFixtureExperiment({});
   const broken: Record<string, unknown> = { ...fixture };
-  delete broken["experimentId"];
+  delete broken.experimentId;
   assert.throws(
     () => assertPlaytestExperiment(broken),
     /PlaytestExperiment must have exactly its specified fields/u
@@ -270,9 +269,9 @@ test("assertPlaytestExperiment rejects a pairMap that pairs two baseline units",
   const baselineUnit = Object.entries(fixture.assignmentMap).find(
     ([, arm]) => arm === "baseline"
   )?.[0];
-  const otherBaselineUnit = Object.entries(fixture.assignmentMap).filter(
+  const otherBaselineUnit = Object.entries(fixture.assignmentMap).find(
     ([id, arm]) => arm === "baseline" && id !== baselineUnit
-  )[0]?.[0];
+  )?.[0];
   assert.ok(baselineUnit && otherBaselineUnit);
   const pairMap = { ...fixture.pairMap, [baselineUnit]: otherBaselineUnit };
   const broken: PlaytestExperiment = { ...fixture, pairMap };

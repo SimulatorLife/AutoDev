@@ -1,5 +1,7 @@
 /** Server-only authenticated Playtesting reads for the Console resource. */
 import {
+  assertPlaytestCoverageManifest,
+  assertPlaytestNumericResults,
   type ControlApiPlaytestingCapabilitiesResponse,
   type ControlApiPlaytestingEntityMap,
   type ControlApiPlaytestingEpisodeDetailResponse,
@@ -19,6 +21,9 @@ import {
   type PlaytestExperiment,
   type PlaytestFinding,
   type PlaytestJsonValue,
+  PLAYTESTS_BATCH_SCHEMA,
+  PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
+  PLAYTESTS_SESSION_REVIEW_SCHEMA,
   type PlaytestSessionReview
 } from "@simulatorlife/autodev-core";
 
@@ -40,8 +45,8 @@ import {
 const RESOURCE_SCHEMAS: Readonly<
   Record<ControlApiPlaytestingResource, string>
 > = {
-  batches: "autodev-playtest-batch-v1",
-  episodes: "autodev-playtest-episode-v1",
+  batches: PLAYTESTS_BATCH_SCHEMA,
+  episodes: "autodev-playtest-episode-v3",
   findings: "",
   comparisons: "autodev-playtest-comparison-v1",
   benchmarks: "",
@@ -108,6 +113,59 @@ function hasSchema(
   return expectedSchema === "" || value.schema === expectedSchema;
 }
 
+function validBatchRecord(
+  value: Record<string, unknown>,
+  workspaceId: string
+): boolean {
+  const batch = value as unknown as PlaytestBatch;
+  if (batch.coverageManifest !== null) {
+    try {
+      assertPlaytestCoverageManifest(batch.coverageManifest);
+    } catch {
+      return false;
+    }
+    if (
+      batch.assignmentInventory.status !== "frozen" ||
+      batch.coverageManifest.workspaceId !== batch.workspaceId ||
+      batch.coverageManifest.batchId !== batch.batchId ||
+      batch.coverageManifest.buildSha !== batch.buildSha ||
+      batch.coverageManifest.rubricHash !== batch.rubricHash ||
+      batch.coverageManifest.assignmentManifestHash !==
+        batch.assignmentInventory.manifest.contentHash ||
+      batch.coverageManifest.assignedEpisodes !== batch.budget.assignedEpisodes
+    ) {
+      return false;
+    }
+  }
+  return (
+    batch.workspaceId === workspaceId &&
+    isNonEmptyString(batch.batchId) &&
+    isCount(batch.revision) &&
+    Array.isArray(batch.policyIds) &&
+    isCount(batch.counts?.assigned)
+  );
+}
+
+function validEpisodeRecord(
+  value: Record<string, unknown>,
+  workspaceId: string
+): boolean {
+  const episode = value as unknown as PlaytestEpisode;
+  try {
+    assertPlaytestNumericResults(episode.metrics);
+  } catch {
+    return false;
+  }
+  return (
+    episode.identity?.workspaceId === workspaceId &&
+    isNonEmptyString(episode.episodeId) &&
+    isNonEmptyString(episode.batchId) &&
+    isCount(episode.revision) &&
+    isCount(episode.stepCount) &&
+    Array.isArray(episode.frames)
+  );
+}
+
 function validPlaytestRecord<R extends ControlApiPlaytestingResource>(
   value: unknown,
   resource: R,
@@ -116,26 +174,10 @@ function validPlaytestRecord<R extends ControlApiPlaytestingResource>(
   if (!hasSchema(value, resource)) return false;
   switch (resource) {
     case "batches": {
-      const batch = value as unknown as PlaytestBatch;
-      return (
-        batch.workspaceId === workspaceId &&
-        isNonEmptyString(batch.batchId) &&
-        isCount(batch.revision) &&
-        Array.isArray(batch.policyIds) &&
-        isCount(batch.counts?.assigned)
-      );
+      return validBatchRecord(value, workspaceId);
     }
     case "episodes": {
-      const episode = value as unknown as PlaytestEpisode;
-      return (
-        episode.identity?.workspaceId === workspaceId &&
-        isNonEmptyString(episode.episodeId) &&
-        isNonEmptyString(episode.batchId) &&
-        isCount(episode.revision) &&
-        isCount(episode.stepCount) &&
-        Array.isArray(episode.metrics) &&
-        Array.isArray(episode.frames)
-      );
+      return validEpisodeRecord(value, workspaceId);
     }
     case "findings": {
       const finding = value as unknown as PlaytestFinding;
@@ -143,10 +185,14 @@ function validPlaytestRecord<R extends ControlApiPlaytestingResource>(
         isNonEmptyString(finding.findingId) &&
         isNonEmptyString(finding.title) &&
         isCount(finding.version) &&
-        (finding.affectedEpisodes === null || isCount(finding.affectedEpisodes)) &&
-        (finding.totalEligibleEpisodes === null || isCount(finding.totalEligibleEpisodes)) &&
-        (finding.affectedOpportunities === null || isCount(finding.affectedOpportunities)) &&
-        (finding.totalEligibleOpportunities === null || isCount(finding.totalEligibleOpportunities)) &&
+        (finding.affectedEpisodes === null ||
+          isCount(finding.affectedEpisodes)) &&
+        (finding.totalEligibleEpisodes === null ||
+          isCount(finding.totalEligibleEpisodes)) &&
+        (finding.affectedOpportunities === null ||
+          isCount(finding.affectedOpportunities)) &&
+        (finding.totalEligibleOpportunities === null ||
+          isCount(finding.totalEligibleOpportunities)) &&
         Array.isArray(finding.evidenceRefs)
       );
     }
@@ -225,11 +271,20 @@ function isReview(
 ): value is PlaytestSessionReview {
   return (
     isRecord(value) &&
-    value.schema === "autodev-playtest-session-review-v1" &&
+    value.schema === PLAYTESTS_SESSION_REVIEW_SCHEMA &&
     value.episodeId === episodeId &&
     isNonEmptyString(value.reviewId) &&
     isCount(value.version) &&
     value.authorRole === "playtest-analyst" &&
+    (value.evidencePacket === null ||
+      (isRecord(value.evidencePacket) &&
+        isNonEmptyString(value.evidencePacket.packetId) &&
+        isRecord(value.evidencePacket.artifact) &&
+        isNonEmptyString(value.evidencePacket.artifact.artifactId) &&
+        SHA_PATTERN.test(String(value.evidencePacket.artifact.sha256)) &&
+        isCount(value.evidencePacket.artifact.bytes) &&
+        value.evidencePacket.artifact.mediaType ===
+          "application/vnd.autodev.playtest-evidence-packet+json")) &&
     Array.isArray(value.findings) &&
     Array.isArray(value.evidenceRefs)
   );
@@ -404,6 +459,7 @@ function isPlaytestingCapabilitiesResponse(
     (value.configurationStatus === "validated" ||
       value.configurationStatus === "invalid" ||
       value.configurationStatus === "not-checked") &&
+    isCount(value.maxBatchAssignments) &&
     Array.isArray(value.runnableAssignments) &&
     value.runnableAssignments.every(
       (assignment) =>
@@ -474,6 +530,8 @@ function isRunStartedResponse(
     value.workspaceId === workspaceId &&
     isNonEmptyString(value.batchId) &&
     RUN_ID_PATTERN.test(value.batchId) &&
+    isCount(value.assignmentCount) &&
+    value.assignmentCount > 0 &&
     value.status === "running"
   );
 }
@@ -513,8 +571,17 @@ export async function startPlaytestingRun(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiPlaytestingRunStartedResponse>> {
-  if (!WORKSPACE_ID_PATTERN.test(request.workspaceId)) {
-    return invalidResponse("Playtesting run", "a canonical workspaceId");
+  if (
+    !WORKSPACE_ID_PATTERN.test(request.workspaceId) ||
+    request.assignments.length === 0 ||
+    request.assignments.length > PLAYTESTS_MAX_BATCH_ASSIGNMENTS
+  ) {
+    return invalidResponse(
+      "Playtesting batch",
+      "a canonical workspaceId and 1-" +
+        String(PLAYTESTS_MAX_BATCH_ASSIGNMENTS) +
+        " assignments"
+    );
   }
   const result = await postControlApi<unknown>(
     `${CONTROL_API_PATHS.playtesting}/runs`,
@@ -632,6 +699,77 @@ function hasNoRestrictedHumanFields(value: unknown): boolean {
   );
 }
 
+const HUMAN_PREFERENCE_DECISIONS = new Set([
+  "supports-b-preference",
+  "supports-a-preference",
+  "no-material-preference",
+  "inconclusive"
+]);
+
+function validHumanPreferenceSummary(value: unknown): boolean {
+  if (value === null) return true;
+  const preference = isRecord(value) ? value : null;
+  if (
+    !preference ||
+    Object.keys(preference).length !== 7 ||
+    !isNonEmptyString(preference.analysisPlanRef) ||
+    (preference.suppressionState !== "suppressed" &&
+      preference.suppressionState !== "unsuppressed") ||
+    !validNullableCount(preference.incompleteExposurePairs) ||
+    !HUMAN_PREFERENCE_DECISIONS.has(String(preference.decision)) ||
+    !Array.isArray(preference.reasons) ||
+    preference.reasons.some((reason) => !isNonEmptyString(reason))
+  ) {
+    return false;
+  }
+  let countsValid = preference.counts === null;
+  if (isRecord(preference.counts)) {
+    const counts = preference.counts;
+    countsValid =
+      Object.keys(counts).length === 6 &&
+      isCount(counts.eligibleParticipants) &&
+      isCount(counts.preferA) &&
+      isCount(counts.preferB) &&
+      isCount(counts.ties) &&
+      isCount(counts.unableToJudge) &&
+      isCount(counts.missing) &&
+      counts.eligibleParticipants ===
+        counts.preferA +
+          counts.preferB +
+          counts.ties +
+          counts.unableToJudge +
+          counts.missing;
+  }
+  let intervalValid = preference.interval === null;
+  if (isRecord(preference.interval)) {
+    const interval = preference.interval;
+    intervalValid =
+      typeof interval.lower === "number" &&
+      Number.isFinite(interval.lower) &&
+      interval.lower >= 0 &&
+      typeof interval.upper === "number" &&
+      Number.isFinite(interval.upper) &&
+      interval.upper <= 1 &&
+      interval.lower <= interval.upper &&
+      isNonEmptyString(interval.method) &&
+      isNonEmptyString(interval.libraryVersion) &&
+      typeof interval.confidenceLevel === "number" &&
+      Number.isFinite(interval.confidenceLevel) &&
+      interval.confidenceLevel > 0 &&
+      interval.confidenceLevel < 1 &&
+      (interval.resamples === null || isCount(interval.resamples)) &&
+      (interval.seed === null || isNonEmptyString(interval.seed));
+  }
+  return (
+    countsValid &&
+    intervalValid &&
+    (preference.counts !== null ||
+      (preference.interval === null &&
+        preference.decision === "inconclusive")) &&
+    (preference.interval !== null || preference.decision === "inconclusive")
+  );
+}
+
 function isHumanValidationResponse(
   value: unknown,
   workspaceId: string,
@@ -644,10 +782,12 @@ function isHumanValidationResponse(
     value.workspaceId !== workspaceId ||
     value.studyId !== studyId ||
     value.buildSha !== buildSha ||
-    !hasNoRestrictedHumanFields(value)
+    !hasNoRestrictedHumanFields(value) ||
+    !("preference" in value)
   ) {
     return false;
   }
+  if (!validHumanPreferenceSummary(value.preference)) return false;
   if (value.summary === null) return true;
   const summary = isRecord(value.summary) ? value.summary : null;
   if (

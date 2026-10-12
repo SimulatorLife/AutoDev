@@ -215,6 +215,22 @@ def handle(request):
                     "state": "terminal",
                     "outcome": "completed",
                     "metrics": {},
+                    "evaluations": [
+                        {
+                            "metricId": "legal-action-rejection",
+                            "metricVersion": 1,
+                            "phaseId": "tutorial",
+                            "evaluatorRef": "fixture/legal-action-rejection-v1",
+                            "evaluatorHash": "1111111111111111111111111111111111111111111111111111111111111111",
+                            "numerator": 0,
+                            "denominator": 0,
+                            "opportunityCount": 0,
+                            "missing": 0,
+                            "independentUnits": 0,
+                            "unit": "proportion",
+                            "missingReasons": ["unobserved"],
+                        }
+                    ],
                     "missingReasons": [],
                 },
             }

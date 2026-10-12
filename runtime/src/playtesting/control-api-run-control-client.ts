@@ -206,13 +206,11 @@ export function createPlaytestControlApiRunClient(
       workspaceId
     ): Promise<PlaytestRunCapabilities> {
       const query = new URLSearchParams({ workspaceId });
-      const response =
-        assertResponse<ControlApiPlaytestingCapabilitiesResponse>(
-          await request("GET", CAPABILITIES_PATH + "?" + query, session),
-          "autodev-control-playtesting-capabilities-v1",
-          workspaceId
-        );
-      return response;
+      return assertResponse<ControlApiPlaytestingCapabilitiesResponse>(
+        await request("GET", CAPABILITIES_PATH + "?" + query, session),
+        "autodev-control-playtesting-capabilities-v1",
+        workspaceId
+      );
     },
     async startRun(session, requestBody) {
       const workspaceId = requestBody.workspaceId ?? session.workspaceId;
@@ -226,13 +224,19 @@ export function createPlaytestControlApiRunClient(
       );
       if (
         response.status !== "running" ||
-        typeof response.batchId !== "string"
+        typeof response.batchId !== "string" ||
+        !Number.isSafeInteger(response.assignmentCount) ||
+        response.assignmentCount < 1
       ) {
         throw new PlaytestMcpUnavailableError(
-          "The Runtime Control API returned an invalid run acknowledgement."
+          "The Runtime Control API returned an invalid batch acknowledgement."
         );
       }
-      return { batchId: response.batchId, status: "running" };
+      return {
+        batchId: response.batchId,
+        assignmentCount: response.assignmentCount,
+        status: "running"
+      };
     },
     async listActiveRuns(session, workspaceId) {
       const query = new URLSearchParams({ workspaceId });

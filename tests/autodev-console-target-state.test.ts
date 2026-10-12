@@ -1344,7 +1344,7 @@ function statusBorderClass(
 }
 
 function statusBorderClassesFromSource(
-  sourcePath: string
+  sourcePath: URL | string
 ): RenderedStatusBorder[] {
   const source = readFileSync(sourcePath, "utf8");
   return source.split(/[^A-Za-z0-9/_-]+/u).flatMap((className) => {

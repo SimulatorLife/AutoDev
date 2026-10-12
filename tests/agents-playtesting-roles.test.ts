@@ -108,6 +108,7 @@ test("playtester.toml is sandboxed read-only, leaf-only, and run/read-scoped", (
   for (const forbidden of [
     "playtest.metrics",
     "playtest.compare",
+    "playtest.prepareReview",
     "playtest.submitReview",
     "playtest.branch",
     "playtest.findings"
@@ -146,6 +147,7 @@ test("playtest-analyst.toml reuses autodev/smart but overrides to read-only, evi
       "playtest.compare",
       "playtest.listEpisodes",
       "playtest.metrics",
+      "playtest.prepareReview",
       "playtest.readEpisode",
       "playtest.readWindow",
       "playtest.submitReview"

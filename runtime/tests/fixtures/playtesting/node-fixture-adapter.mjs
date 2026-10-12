@@ -93,7 +93,13 @@ function handle(request) {
   switch (method) {
     case "game.capabilities": {
       if (params.protocolVersion !== 1) {
-        sendApplicationError(id, -32004, "unsupported protocol version", "unsupported_capability", "unchanged");
+        sendApplicationError(
+          id,
+          -32004,
+          "unsupported protocol version",
+          "unsupported_capability",
+          "unchanged"
+        );
         return;
       }
       send({ jsonrpc: "2.0", id, result: CAPABILITIES });
@@ -150,15 +156,33 @@ function handle(request) {
     }
     case "game.step": {
       if (params.episodeId !== activeEpisodeId) {
-        sendApplicationError(id, -32001, "unsupported episode", "unsupported_scenario", "unchanged");
+        sendApplicationError(
+          id,
+          -32001,
+          "unsupported episode",
+          "unsupported_scenario",
+          "unchanged"
+        );
         return;
       }
       if (params.expectedRevision !== revision) {
-        sendApplicationError(id, -32002, "stale revision", "stale_revision", "unchanged");
+        sendApplicationError(
+          id,
+          -32002,
+          "stale revision",
+          "stale_revision",
+          "unchanged"
+        );
         return;
       }
       if (params.actionId !== "advance" && params.actionId !== "wait") {
-        sendApplicationError(id, -32003, "illegal action", "illegal_action", "unchanged");
+        sendApplicationError(
+          id,
+          -32003,
+          "illegal action",
+          "illegal_action",
+          "unchanged"
+        );
         return;
       }
       revision += 1;
@@ -201,6 +225,23 @@ function handle(request) {
           state: "terminal",
           outcome: "completed",
           metrics: {},
+          evaluations: [
+            {
+              metricId: "legal-action-rejection",
+              metricVersion: 1,
+              phaseId: "tutorial",
+              evaluatorRef: "fixture/legal-action-rejection-v1",
+              evaluatorHash:
+                "1111111111111111111111111111111111111111111111111111111111111111",
+              numerator: 0,
+              denominator: 0,
+              opportunityCount: 0,
+              missing: 0,
+              independentUnits: 0,
+              unit: "proportion",
+              missingReasons: ["unobserved"]
+            }
+          ],
           missingReasons: []
         }
       });
@@ -236,7 +277,10 @@ function handle(request) {
   }
 }
 
-const input = readline.createInterface({ input: process.stdin, terminal: false });
+const input = readline.createInterface({
+  input: process.stdin,
+  terminal: false
+});
 input.on("line", (line) => {
   if (line.length === 0) return;
   let request;

@@ -1,32 +1,40 @@
 /** Approved, single-episode gameplay loop over the v1 adapter transport. */
-import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
 import {
   assertWorkspacePlaytestApproval,
   type GameCaptureEvent,
+  type GameForkResult,
   type GameLegalAction,
   type GameObserveResult,
   type GameOutcomeResult,
+  type GameReplayResult,
   type GameResetResult,
+  type GameSnapshotResult,
   type GameStepResult,
+  normalizeGameMetricEvaluations,
   type PlaytestArtifactReference,
+  type PlaytestAssignmentBranch,
+  type PlaytestBranchLineage,
   type PlaytestCapabilityAdvertisement,
+  type PlaytestCheckpointDigest,
   type PlaytestEpisode,
   type PlaytestEpisodeIdentity,
   type PlaytestEpisodeStep,
   type PlaytestEvidenceLocator,
   type PlaytestJsonValue,
+  type PlaytestMetricRegistry,
   type PlaytestMissingReason,
   type PlaytestNumericResult,
   type PlaytestObservationContract,
   type PlaytestProvenance,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_GAME_OUTCOMES,
+  samePlaytestCheckpoint,
+  samePlaytestRngCheckpoint,
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
 
-import { mapConcurrentOrdered } from "../shared/map-concurrent-ordered.ts";
 import {
   type PlaytestAdapterCallResult,
   PlaytestAdapterClient
@@ -36,16 +44,17 @@ import {
   PlaytestSandboxExecutionError,
   type PlaytestSandboxHandle,
   type PlaytestSandboxResult,
-  type StagedPlaytestArtifact
+  readStagedPlaytestArtifact
 } from "./docker-sandbox.ts";
 import { PlaytestLoopGuard } from "./loop-guard.ts";
 import type { PlaytestPolicy, PlaytestPolicyDecision } from "./policies.ts";
 import { projectPlaytestVisibleObservation } from "./visible-observation.ts";
 
-const SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
-const MAX_EPISODE_WINDOW_STEPS = 4096;
+const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
+const ASSIGNMENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u;
+export const MAX_PLAYTEST_EPISODE_TRACE_STEPS = 4096;
+const MAX_EPISODE_WINDOW_STEPS = MAX_PLAYTEST_EPISODE_TRACE_STEPS;
 const MAX_TRACE_EVENT_COUNT = 100_000;
-const FRAME_IMPORT_CONCURRENCY = 2;
 const BUDGET_TRUNCATED = "budget-truncated" as const;
 const INFRASTRUCTURE_FAILED = "infrastructure-failed" as const;
 const EMPTY_COMPLETION_COUNTS = {
@@ -60,11 +69,18 @@ const EMPTY_COMPLETION_COUNTS = {
   eligible: 0
 } as const;
 
+export interface PlaytestEpisodeBranchExecution {
+  readonly manifest: PlaytestAssignmentBranch;
+  readonly parentEpisode: PlaytestEpisode;
+}
+
 export interface PlaytestEpisodeRunOptions {
   readonly approval: WorkspacePlaytestApproval;
   readonly sandbox: PlaytestSandboxHandle;
   readonly artifacts: PlaytestArtifactStore;
   readonly batchId: string;
+  /** Batch-local frozen assignment id; paired in Data, never sent to the game. */
+  readonly assignmentId: string;
   readonly repository: string;
   readonly scenarioId: string;
   readonly scenarioFamily: string;
@@ -75,7 +91,10 @@ export interface PlaytestEpisodeRunOptions {
   readonly environmentHash: string;
   readonly policy: PlaytestPolicy;
   readonly observationContract: PlaytestObservationContract;
+  readonly metricRegistry: PlaytestMetricRegistry;
+  readonly rubricHash: string;
   readonly maxSteps: number;
+  readonly branch?: PlaytestEpisodeBranchExecution;
   readonly signal?: AbortSignal;
   readonly now?: () => number;
   /** Game-authored mapping; absent mappings leave the game outcome unknown. */
@@ -86,19 +105,6 @@ export interface PlaytestEpisodeRunOptions {
   readonly projectPublicOutcome?: (
     outcome: PlaytestJsonValue | null
   ) => PlaytestJsonValue | null;
-  /** Deterministic game-owned evaluator; raw event facts remain in memory only. */
-  readonly evaluate?: (input: {
-    readonly episodeId: string;
-    readonly outcome: GameOutcomeResult;
-    readonly events: readonly GameCaptureEvent[];
-    readonly steps: readonly PlaytestEpisodeStep[];
-    readonly provenance: PlaytestProvenance;
-  }) => readonly PlaytestNumericResult[];
-  /** Trusted Runtime adapter that maps validated staged files to requested refs. */
-  readonly loadFrame?: (
-    reference: PlaytestArtifactReference,
-    stagedArtifacts: readonly StagedPlaytestArtifact[]
-  ) => Promise<Uint8Array> | Uint8Array;
   readonly isApprovalActive?: () => boolean;
   readonly cancelProcess?: (reason: string) => Promise<void>;
 }
@@ -145,6 +151,7 @@ interface StepDraft {
   readonly authoritativeOutcome: PlaytestJsonValue | null;
   readonly eventRefs: readonly PlaytestEvidenceLocator[];
   readonly frameRef: PlaytestEvidenceLocator | null;
+  readonly checkpoint: PlaytestCheckpointDigest | null;
   readonly executed: boolean;
   readonly simulationWallMs: number;
   readonly policyInferenceMs: number;
@@ -166,6 +173,11 @@ interface EpisodeExecutionContext {
   readonly drafts: StepDraft[];
   readonly pendingFrames: PendingFrame[];
   readonly missingReasons: Set<PlaytestMissingReason>;
+  branchSnapshot: GameSnapshotResult | null;
+  branchReplayTransitionHash: string | null;
+  branchForkStateHash: string | null;
+  branchForkRngCheckpoint: GameForkResult["rngCheckpoint"] | null;
+  persistedBranchSnapshot: PlaytestArtifactReference | null;
   capabilities: PlaytestCapabilityAdvertisement | null;
   reset: GameResetResult | null;
   startedAt: string | null;
@@ -225,6 +237,14 @@ function assertRunInputs(options: PlaytestEpisodeRunOptions): void {
   if (options.approval.revokedAt !== null) {
     throw new TypeError("Workspace playtesting approval has been revoked.");
   }
+  if (
+    options.metricRegistry.workspaceId !== options.approval.workspaceId ||
+    !SHA256_PATTERN.test(options.rubricHash)
+  ) {
+    throw new TypeError(
+      "Episode metric registry or rubric hash does not match the workspace approval."
+    );
+  }
   if (options.artifacts.boundWorkspaceId() !== options.approval.workspaceId) {
     throw new TypeError(
       "Artifact store workspace does not match the approval."
@@ -251,6 +271,11 @@ function assertRunInputs(options: PlaytestEpisodeRunOptions): void {
       "Episode step limit exceeds the approved or artifact window bound."
     );
   }
+  if (!ASSIGNMENT_ID_PATTERN.test(options.assignmentId)) {
+    throw new TypeError(
+      "Episode assignmentId must be a bounded batch-local identifier."
+    );
+  }
   const required = [
     options.batchId,
     options.scenarioFamily,
@@ -265,7 +290,7 @@ function assertRunInputs(options: PlaytestEpisodeRunOptions): void {
       "Episode identity fields must be bounded non-empty strings."
     );
   }
-  if (!SHA_PATTERN.test(options.environmentHash)) {
+  if (!SHA256_PATTERN.test(options.environmentHash)) {
     throw new TypeError("Episode environmentHash must be a SHA-256 digest.");
   }
   if (
@@ -429,6 +454,7 @@ function episodeStep(draft: StepDraft, traceId: string): PlaytestEpisodeStep {
     authoritativeOutcome: draft.authoritativeOutcome,
     eventRefs: draft.eventRefs,
     frameRef: draft.frameRef,
+    checkpoint: draft.checkpoint,
     simulationWallMs: draft.simulationWallMs,
     logicalTicks: null,
     policyInferenceMs: draft.policyInferenceMs,
@@ -449,6 +475,18 @@ function artifactEntry(draft: StepDraft): PlaytestJsonValue {
     preActionPrediction: draft.preActionPrediction,
     authoritativeOutcome: draft.authoritativeOutcome,
     executed: draft.executed,
+    checkpoint:
+      draft.checkpoint === null
+        ? null
+        : {
+            stateHash: draft.checkpoint.stateHash,
+            rngCheckpoint: {
+              algorithm: draft.checkpoint.rngCheckpoint.algorithm,
+              version: draft.checkpoint.rngCheckpoint.version,
+              stateHash: draft.checkpoint.rngCheckpoint.stateHash,
+              reproducible: draft.checkpoint.rngCheckpoint.reproducible
+            }
+          },
     events: draft.capturedEvents.map((event) => ({
       eventId: event.eventId,
       type: event.type,
@@ -523,6 +561,28 @@ function storeCapabilities(
   context.capabilities = capabilities;
 }
 
+function supportsVerifiedBranching(
+  capabilities: PlaytestCapabilityAdvertisement
+): boolean {
+  const optional = new Set(capabilities.optionalOperations);
+  return (
+    capabilities.deterministic.seededRuns &&
+    capabilities.deterministic.traceReplayable &&
+    optional.has("game.snapshot") &&
+    optional.has("game.replay") &&
+    optional.has("game.fork")
+  );
+}
+
+function checkpointFromSnapshot(
+  snapshot: GameSnapshotResult
+): PlaytestCheckpointDigest {
+  return {
+    stateHash: snapshot.stateHash,
+    rngCheckpoint: snapshot.rngCheckpoint
+  };
+}
+
 function storeReset(
   context: EpisodeExecutionContext,
   reset: GameResetResult,
@@ -534,7 +594,7 @@ function storeReset(
   context.revision = reset.revision;
 }
 
-async function negotiateAndReset(
+async function negotiateAndInitialize(
   context: EpisodeExecutionContext
 ): Promise<void> {
   const { options, client } = context;
@@ -561,6 +621,11 @@ async function negotiateAndReset(
       "Observation contract hash differs from negotiated capabilities."
     );
   }
+  const startedAt = new Date((options.now ?? Date.now)()).toISOString();
+  if (options.branch) {
+    await initializeBranch(context, startedAt);
+    return;
+  }
   captureNotifications(context);
   const reset = await callAdapter<GameResetResult>(client, "game.reset", {
     seed: options.seed,
@@ -568,11 +633,140 @@ async function negotiateAndReset(
     approvedVariantHash: options.approval.playtestConfigHash
   });
   context.simulationWallMs += reset.durationMs;
+  storeReset(context, reset.value, startedAt);
+}
+
+async function initializeBranch(
+  context: EpisodeExecutionContext,
+  startedAt: string
+): Promise<void> {
+  const { options, client } = context;
+  const branch = options.branch;
+  const capabilities = context.capabilities;
+  if (!branch || !capabilities || !supportsVerifiedBranching(capabilities)) {
+    throw new TypeError(
+      "The approved adapter does not advertise verified checkpoint, replay, and fork support."
+    );
+  }
+  if (
+    !SHA256_PATTERN.test(branch.manifest.parentTrace.sha256) ||
+    branch.manifest.parentEpisodeId !== branch.parentEpisode.episodeId ||
+    branch.manifest.parentEpisodeRevision !== branch.parentEpisode.revision ||
+    branch.manifest.parentBatchId !== branch.parentEpisode.batchId ||
+    branch.parentEpisode.identity.workspaceId !==
+      options.approval.workspaceId ||
+    branch.parentEpisode.identity.buildSha.toLowerCase() !==
+      options.approval.buildSha.toLowerCase() ||
+    branch.parentEpisode.identity.configHash !==
+      options.approval.playtestConfigHash ||
+    branch.parentEpisode.identity.scenarioId !== options.scenarioId ||
+    branch.parentEpisode.identity.seed !== options.seed ||
+    branch.parentEpisode.identity.observationSchemaHash !==
+      capabilities.observationSchemaHash ||
+    branch.parentEpisode.identity.actionSchemaHash !==
+      capabilities.actionSchemaHash ||
+    branch.parentEpisode.identity.eventSchemaHash !==
+      capabilities.eventSchemaHash
+  ) {
+    throw new TypeError(
+      "The frozen branch source does not match this approved run."
+    );
+  }
+  const replay = await callAdapter<GameReplayResult>(client, "game.replay", {
+    trace: branch.manifest.parentTrace,
+    expectedBuildSha: options.approval.buildSha,
+    throughStep: branch.manifest.branchStep
+  });
+  context.simulationWallMs += replay.durationMs;
+  if (
+    replay.value.replayStatus !== "verified" ||
+    replay.value.firstDivergentStep !== null ||
+    replay.value.replayedThroughStep !== branch.manifest.branchStep ||
+    replay.value.transitionHash === null ||
+    !SHA256_PATTERN.test(replay.value.transitionHash) ||
+    replay.value.stateHash === null ||
+    !SHA256_PATTERN.test(replay.value.stateHash)
+  ) {
+    throw new TypeError(
+      "The parent trace could not be replayed to the exact decision state."
+    );
+  }
+  const replayCheckpoint: PlaytestCheckpointDigest = {
+    stateHash: replay.value.stateHash,
+    rngCheckpoint: replay.value.rngCheckpoint
+  };
+  if (
+    !samePlaytestCheckpoint(replayCheckpoint, branch.manifest.parentCheckpoint)
+  ) {
+    throw new TypeError(
+      "The replayed hidden state or RNG differs from the parent checkpoint."
+    );
+  }
+  const snapshot = await callAdapter<GameSnapshotResult>(
+    client,
+    "game.snapshot",
+    {
+      episodeId: replay.value.episodeId,
+      expectedRevision: replay.value.revision,
+      includeArtifact: true
+    }
+  );
+  context.simulationWallMs += snapshot.durationMs;
+  if (
+    snapshot.value.snapshot === null ||
+    snapshot.value.integrityHash === null ||
+    snapshot.value.stateHash !== branch.manifest.parentCheckpoint.stateHash ||
+    !samePlaytestCheckpoint(
+      checkpointFromSnapshot(snapshot.value),
+      branch.manifest.parentCheckpoint
+    )
+  ) {
+    throw new TypeError(
+      "The materialized branch snapshot does not match its source checkpoint."
+    );
+  }
+  const fork = await callAdapter<GameForkResult>(client, "game.fork", {
+    snapshot: snapshot.value.snapshot,
+    alternativeActionId: branch.manifest.alternativeActionId,
+    rngPolicy: branch.manifest.rngPolicy,
+    rngPolicyVersion: branch.manifest.rngPolicyVersion
+  });
+  context.simulationWallMs += fork.durationMs;
+  if (
+    fork.value.initialStateHash !==
+      branch.manifest.parentCheckpoint.stateHash ||
+    !samePlaytestRngCheckpoint(
+      fork.value.rngCheckpoint,
+      branch.manifest.parentCheckpoint.rngCheckpoint
+    )
+  ) {
+    throw new TypeError(
+      "The forked state or RNG differs from its verified snapshot."
+    );
+  }
+  const parentIdentity = branch.parentEpisode.identity;
+  if (!parentIdentity.rngAlgorithm || !parentIdentity.rngVersion) {
+    throw new TypeError("The parent episode is missing its RNG identity.");
+  }
+  context.branchSnapshot = snapshot.value;
+  context.branchReplayTransitionHash = replay.value.transitionHash;
+  context.branchForkStateHash = fork.value.initialStateHash;
+  context.branchForkRngCheckpoint = fork.value.rngCheckpoint;
   storeReset(
     context,
-    reset.value,
-    new Date((options.now ?? Date.now)()).toISOString()
+    {
+      episodeId: fork.value.episodeId,
+      revision: fork.value.revision,
+      rngProvenance: {
+        algorithm: parentIdentity.rngAlgorithm,
+        version: parentIdentity.rngVersion,
+        initialStateHash: parentIdentity.rngInitialStateHash,
+        reproducible: true
+      }
+    },
+    startedAt
   );
+  captureNotifications(context);
 }
 
 function capturePendingFrame(
@@ -645,15 +839,51 @@ async function runOneStep(
     return true;
   }
   const legalActionIds = legal.value.actions.map((action) => action.actionId);
+  let checkpoint: PlaytestCheckpointDigest | null = null;
+  if (context.capabilities && supportsVerifiedBranching(context.capabilities)) {
+    const snapshot = await callAdapter<GameSnapshotResult>(
+      client,
+      "game.snapshot",
+      {
+        episodeId: context.episodeId,
+        expectedRevision: revisionBefore,
+        includeArtifact: false
+      }
+    );
+    context.simulationWallMs += snapshot.durationMs;
+    checkpoint = checkpointFromSnapshot(snapshot.value);
+    if (
+      options.branch &&
+      step === 0 &&
+      !samePlaytestCheckpoint(
+        checkpoint,
+        options.branch.manifest.parentCheckpoint
+      )
+    ) {
+      throw new TypeError(
+        "The branched decision state changed before its alternative action."
+      );
+    }
+  }
+  const forcedActionId =
+    options.branch && step === 0
+      ? options.branch.manifest.alternativeActionId
+      : null;
   const policyStarted = performance.now();
-  const decision = await options.policy.chooseAction({
-    seed: options.seed,
-    episodeId: context.episodeId,
-    step,
-    observation: visibleObservation,
-    legalActionIds
-  });
-  const policyInferenceMs = Math.max(0, performance.now() - policyStarted);
+  const decision =
+    forcedActionId === null
+      ? await options.policy.chooseAction({
+          seed: options.seed,
+          episodeId: context.episodeId,
+          step,
+          observation: visibleObservation,
+          legalActionIds
+        })
+      : { actionId: forcedActionId, prediction: null };
+  const policyInferenceMs =
+    forcedActionId === null
+      ? Math.max(0, performance.now() - policyStarted)
+      : 0;
   context.policyInferenceMs += policyInferenceMs;
   validatePolicyDecision(decision, legalActionIds);
   const loop = loopGuard.inspect(
@@ -685,6 +915,7 @@ async function runOneStep(
       authoritativeOutcome: null,
       eventRefs: [],
       frameRef: null,
+      checkpoint,
       executed: false,
       simulationWallMs: Math.round(
         context.simulationWallMs - simulationStarted
@@ -723,6 +954,7 @@ async function runOneStep(
     authoritativeOutcome: null,
     eventRefs,
     frameRef: null,
+    checkpoint,
     executed: true,
     simulationWallMs: 0,
     policyInferenceMs,
@@ -750,35 +982,44 @@ async function runOneStep(
   return outcome.value.state === "terminal";
 }
 
-async function importFrames(
+function importBranchSnapshot(context: EpisodeExecutionContext): void {
+  const result = context.branchSnapshot;
+  if (!result?.snapshot) return;
+  if (context.sandboxResult === null) {
+    context.missingReasons.add(INFRASTRUCTURE_FAILED);
+    return;
+  }
+  try {
+    const bytes = readStagedPlaytestArtifact(
+      result.snapshot,
+      context.sandboxResult.stagingDirectory,
+      context.sandboxResult.artifacts
+    );
+    context.persistedBranchSnapshot = context.options.artifacts.writeArtifact({
+      mediaType: result.snapshot.mediaType,
+      bytes
+    }).reference;
+  } catch {
+    context.missingReasons.add(INFRASTRUCTURE_FAILED);
+  }
+}
+
+function importFrames(
   context: EpisodeExecutionContext
-): Promise<readonly PlaytestEvidenceLocator[]> {
+): readonly PlaytestEvidenceLocator[] {
   if (context.pendingFrames.length === 0) return [];
-  if (
-    context.options.loadFrame === undefined ||
-    context.sandboxResult === null
-  ) {
+  if (context.sandboxResult === null) {
     context.missingReasons.add(INFRASTRUCTURE_FAILED);
     return [];
   }
-  const imported = await mapConcurrentOrdered(
-    context.pendingFrames,
-    FRAME_IMPORT_CONCURRENCY,
-    async ({ step, frameIndex, reference }) => {
+  const imported = context.pendingFrames.map(
+    ({ step, frameIndex, reference }) => {
       try {
-        const bytes = await context.options.loadFrame!(
+        const bytes = readStagedPlaytestArtifact(
           reference,
+          context.sandboxResult!.stagingDirectory,
           context.sandboxResult!.artifacts
         );
-        if (
-          bytes.byteLength !== reference.bytes ||
-          createHash("sha256").update(bytes).digest("hex") !==
-            reference.sha256.toLowerCase()
-        ) {
-          throw new TypeError(
-            "Staged frame bytes do not match the adapter reference."
-          );
-        }
         const stored = context.options.artifacts.writeArtifact({
           mediaType: reference.mediaType,
           bytes
@@ -830,37 +1071,63 @@ function persistTrace(
 
 function evaluateMetrics(
   context: EpisodeExecutionContext,
-  provenance: PlaytestProvenance,
-  traceId: string | null
+  provenance: PlaytestProvenance
 ): readonly PlaytestNumericResult[] {
-  if (
-    context.outcome?.state !== "terminal" ||
-    context.options.evaluate === undefined ||
-    context.reset === null
-  ) {
+  if (context.outcome?.state !== "terminal" || context.reset === null) {
     return [];
   }
   try {
-    return context.options.evaluate({
-      episodeId: context.episodeId,
-      outcome: context.outcome,
-      events: context.events,
-      steps:
-        traceId === null
-          ? []
-          : context.drafts.map((draft) => episodeStep(draft, traceId)),
-      provenance
+    return normalizeGameMetricEvaluations({
+      registry: context.options.metricRegistry,
+      evaluations: context.outcome.evaluations,
+      workspaceId: provenance.workspaceId,
+      buildSha: context.options.approval.buildSha,
+      rubricHash: context.options.rubricHash,
+      measurementVersion: provenance.measurementVersion,
+      generatedAt: provenance.generatedAt,
+      scenarioId: context.options.scenarioId,
+      scenarioFamily: context.options.scenarioFamily,
+      cohort: context.options.policy.cohort,
+      policy: context.options.policy.id,
+      modality: context.options.observationContract.mode
     });
   } catch {
     context.failure ??= {
       stage: "evidence",
       category: "evaluator",
       code: null,
-      disposition: "unknown"
+      disposition: "invalid-game-evaluator-output"
     };
     context.missingReasons.add(INFRASTRUCTURE_FAILED);
     return [];
   }
+}
+
+function buildBranchLineage(
+  context: EpisodeExecutionContext
+): PlaytestBranchLineage | null {
+  const branch = context.options.branch;
+  const snapshot = context.branchSnapshot;
+  if (
+    !branch ||
+    !snapshot?.snapshot ||
+    !snapshot.integrityHash ||
+    !context.branchReplayTransitionHash ||
+    !context.branchForkStateHash ||
+    !context.branchForkRngCheckpoint
+  ) {
+    return null;
+  }
+  return {
+    ...branch.manifest,
+    replayTransitionHash: context.branchReplayTransitionHash,
+    snapshotArtifact: context.persistedBranchSnapshot,
+    snapshotIntegrityHash: snapshot.integrityHash,
+    forkStateHash: context.branchForkStateHash,
+    forkRngCheckpoint: context.branchForkRngCheckpoint,
+    continuationPolicyId: context.options.policy.id,
+    continuationPolicyVersion: context.options.policy.version
+  };
 }
 
 function assembleEpisode(
@@ -919,11 +1186,7 @@ function assembleEpisode(
     runtimeVersion: options.runtimeVersion,
     environmentHash: options.environmentHash
   };
-  const metrics = evaluateMetrics(
-    context,
-    provenance,
-    trace?.artifactId ?? null
-  );
+  const metrics = evaluateMetrics(context, provenance);
   const isComplete =
     status === "completed" && context.missingReasons.size === 0;
   return {
@@ -931,6 +1194,8 @@ function assembleEpisode(
     episodeId: context.episodeId,
     revision: 1,
     batchId: options.batchId,
+    assignmentId: options.assignmentId,
+    branchLineage: buildBranchLineage(context),
     identity,
     scenarioFamily: options.scenarioFamily,
     policyCohort: options.policy.cohort,
@@ -1033,6 +1298,11 @@ function contextFor(
     drafts: [],
     pendingFrames: [],
     missingReasons: new Set(),
+    branchSnapshot: null,
+    branchReplayTransitionHash: null,
+    branchForkStateHash: null,
+    branchForkRngCheckpoint: null,
+    persistedBranchSnapshot: null,
     capabilities: null,
     reset: null,
     episodeId: `unstarted:${options.batchId}`,
@@ -1059,7 +1329,7 @@ export async function runPlaytestEpisode(
   const context = contextFor(options);
   const removeAbortListener = bindAbortCancellation(context);
   try {
-    await negotiateAndReset(context);
+    await negotiateAndInitialize(context);
     await runSteps(context);
   } catch (error) {
     context.failure = failureFor(error, options.signal);
@@ -1102,7 +1372,8 @@ export async function runPlaytestEpisode(
     }
   }
 
-  const frames = await importFrames(context);
+  importBranchSnapshot(context);
+  const frames = importFrames(context);
   const trace = persistTrace(context);
   const episode = assembleEpisode(context, trace, frames);
   const steps =

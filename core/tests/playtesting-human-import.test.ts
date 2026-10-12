@@ -278,6 +278,46 @@ test("applyHumanStudySmallCellSuppression passes through an aggregate at or abov
   assert.equal(applyHumanStudySmallCellSuppression(belowThreshold), null);
 });
 
+test("human import refuses a preference plan that is not bound to the approved build pair", () => {
+  const study = makeStudy({
+    preferencePlan: {
+      analysisPlanRef: "preference-plan-v1",
+      questionVersion: "question-v1",
+      questionHash: "a".repeat(64),
+      buildA: {
+        id: "build-A",
+        version: "1",
+        contentHash: "b".repeat(64)
+      },
+      buildB: {
+        id: "build-C",
+        version: "1",
+        contentHash: "d".repeat(64)
+      },
+      maximumExclusionRate: 0.2,
+      practicalMargin: 0.05,
+      minimumIndependentParticipants: 10,
+      interval: {
+        method: "scipy-binomial-exact",
+        libraryVersion: "scipy-1.17.0/numpy-2.3.5/statsmodels-0.14.6",
+        confidenceLevel: 0.95,
+        resamples: null,
+        seed: null
+      }
+    }
+  });
+  assert.throws(
+    () =>
+      importHumanStudyResponses(
+        study,
+        [],
+        makeManifest(),
+        allowAllValidators()
+      ),
+    /two allowed builds/
+  );
+});
+
 test("importHumanStudyResponses rejects every row for an unapproved study", () => {
   const study = makeStudy({ approved: false });
   const outcome = importHumanStudyResponses(

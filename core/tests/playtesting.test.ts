@@ -5,8 +5,6 @@ import {
   aggregateMiniPxiEnj,
   allocatePlaytestExperimentArms,
   allocatePlaytestSurveillanceStrata,
-  assessPlaytestMetricCompatibility,
-  assessPlaytestPairing,
   assertNoContradictingLocator,
   assertPlaytestAdapterParams,
   assertPlaytestAdapterResult,
@@ -22,8 +20,9 @@ import {
   assertPlaytestJsonRpcSuccess,
   assertPlaytestObservationContract,
   assertPlaytestSessionReviewHasEvidence,
+  assessPlaytestMetricCompatibility,
+  assessPlaytestPairing,
   buildPlaytestComparison,
-  buildPlaytestCoverageManifest,
   categorizeMiniPxiEnjValue,
   classifyPlaytestMetricComparison,
   decidePlaytestComparisonStatus,
@@ -53,7 +52,7 @@ const MEASUREMENT_VERSION = "fixture-v1";
 
 function buildFixtureRegistryInput() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     workspaceId: WORKSPACE_ID,
     audience: "first-time-adult",
     registryVersion: "fixture-v1",
@@ -64,6 +63,7 @@ function buildFixtureRegistryInput() {
         metricId: "legal-action-rejection",
         version: 1,
         mechanicKey: "action-execution",
+        aggregationWindow: "phase" as const,
         exposurePredicate: "fresh-legal-request-v1",
         eventFields: [
           "action.offeredIds",
@@ -73,6 +73,7 @@ function buildFixtureRegistryInput() {
           "action.rejected"
         ],
         evaluatorRef: "fixture/legal-rejection-v1",
+        evaluatorHash: "1".repeat(64),
         numerator: "fresh advertised legal requests rejected by engine",
         denominator: "all fresh advertised legal requests",
         unit: "proportion",
@@ -84,6 +85,7 @@ function buildFixtureRegistryInput() {
         metricId: "competitive-choice-share",
         version: 1,
         mechanicKey: "strategic-choice",
+        aggregationWindow: "phase" as const,
         exposurePredicate:
           "decision-with-complete-approved-alternative-evaluation-v1",
         eventFields: [
@@ -94,6 +96,7 @@ function buildFixtureRegistryInput() {
           "branch.continuationPolicyHash"
         ],
         evaluatorRef: "fixture/competitive-options-v1",
+        evaluatorHash: "2".repeat(64),
         numerator:
           "eligible decisions with at least two actions within 0.05 of best expected reward",
         denominator:
@@ -111,6 +114,7 @@ function buildFixtureRegistryInput() {
         metricId: "repeat-forecast-error",
         version: 1,
         mechanicKey: "learning",
+        aggregationWindow: "phase" as const,
         exposurePredicate: "revisited-visible-rule-after-feedback-v1",
         eventFields: [
           "probe.ruleId",
@@ -121,6 +125,7 @@ function buildFixtureRegistryInput() {
           "feedback.visible"
         ],
         evaluatorRef: "fixture/repeated-error-v1",
+        evaluatorHash: "3".repeat(64),
         numerator:
           "wrong preregistered deterministic consequence predictions after visible feedback",
         denominator: "eligible revisits after visible feedback",
@@ -146,6 +151,7 @@ function buildFixtureRegistryInput() {
           "response.instrumentVersion"
         ],
         evaluatorRef: "fixture/minipxi-enj-v1",
+        evaluatorHash: "4".repeat(64),
         numerator: "sum of valid ENJ responses",
         denominator: "valid ENJ respondent-session responses",
         unit: "native-Likert-minus3-plus3",
@@ -171,6 +177,44 @@ function buildFixtureRegistryInput() {
         ]
       }
     ],
+    coverageRequirements: [
+      {
+        coverageMetricId: "legal-action-rejection",
+        mechanicKey: "action-execution",
+        phaseId: "tutorial",
+        scenarioFamily: "tutorial",
+        cohort: "novice",
+        policy: "heuristic",
+        modality: "headless" as const,
+        requiredOpportunities: 10,
+        requiredIndependentUnits: 1,
+        unsupportedReason: null
+      },
+      {
+        coverageMetricId: "competitive-choice-share",
+        mechanicKey: "strategic-choice",
+        phaseId: "tutorial",
+        scenarioFamily: "tutorial",
+        cohort: "novice",
+        policy: "heuristic",
+        modality: "headless" as const,
+        requiredOpportunities: 4,
+        requiredIndependentUnits: 1,
+        unsupportedReason: null
+      },
+      {
+        coverageMetricId: "repeat-forecast-error",
+        mechanicKey: "learning",
+        phaseId: "tutorial",
+        scenarioFamily: "tutorial",
+        cohort: "novice",
+        policy: "heuristic",
+        modality: "headless" as const,
+        requiredOpportunities: 4,
+        requiredIndependentUnits: 1,
+        unsupportedReason: null
+      }
+    ],
     dimensionRubrics: [fixtureAgencyDimensionRubric()]
   };
 }
@@ -186,6 +230,28 @@ test("expandPlaytestRegistry fills defaults by shallow replacement and rejects a
   assert.equal(enjoyment.modality, "human-post-play");
   assert.equal(enjoyment.analysisUnit, "participant");
   assert.equal(enjoyment.humanConstruct, "miniPXI.ENJ.post-play");
+
+  assert.throws(
+    () =>
+      expandPlaytestRegistry({
+        ...buildFixtureRegistryInput(),
+        schemaVersion: 1
+      }),
+    /schemaVersion must be the integer 2/u
+  );
+  assert.throws(
+    () =>
+      expandPlaytestRegistry({
+        ...buildFixtureRegistryInput(),
+        metricDefinitions: [
+          {
+            ...buildFixtureRegistryInput().metricDefinitions[0],
+            evaluatorHash: "fixture-alias"
+          }
+        ]
+      }),
+    /evaluatorHash must be a SHA-256 digest/u
+  );
 
   const learning = lookupPlaytestMetric(registry, "repeat-forecast-error");
   assert.equal(learning.analysisUnit, "learner-identity");
@@ -267,6 +333,7 @@ test("evaluateLegalActionRejection: 2 rejected among 10 fresh requests is 0.20",
   const result = evaluateLegalActionRejection(
     WORKSPACE_ID,
     MEASUREMENT_VERSION,
+    "1".repeat(64),
     events
   );
   assert.equal(result.numerator, 2);
@@ -298,6 +365,7 @@ test("evaluateLegalActionRejection excludes stale-revision requests from both nu
   const result = evaluateLegalActionRejection(
     WORKSPACE_ID,
     MEASUREMENT_VERSION,
+    "1".repeat(64),
     events
   );
   assert.equal(result.denominator, 1);
@@ -315,6 +383,7 @@ test("evaluateCompetitiveChoiceShare: fixture reward arrays yield 2/3 on 3/4 cov
   const result = evaluateCompetitiveChoiceShare(
     WORKSPACE_ID,
     MEASUREMENT_VERSION,
+    "2".repeat(64),
     decisions
   );
   assert.equal(result.denominator, 3);
@@ -330,6 +399,7 @@ test("evaluateCompetitiveChoiceShare treats a dominated second action as not com
   const result = evaluateCompetitiveChoiceShare(
     WORKSPACE_ID,
     MEASUREMENT_VERSION,
+    "2".repeat(64),
     decisions
   );
   assert.equal(result.numerator, 0);
@@ -342,6 +412,7 @@ test("evaluateCompetitiveChoiceShare reports fork-unsupported for a single-rewar
   const result = evaluateCompetitiveChoiceShare(
     WORKSPACE_ID,
     MEASUREMENT_VERSION,
+    "2".repeat(64),
     decisions
   );
   assert.equal(result.denominator, 0);
@@ -360,6 +431,7 @@ test("evaluateRepeatForecastError: 1 wrong among 4 eligible revisits is 1/4", ()
   const result = evaluateRepeatForecastError(
     WORKSPACE_ID,
     MEASUREMENT_VERSION,
+    "3".repeat(64),
     probes
   );
   assert.equal(result.numerator, 1);
@@ -395,6 +467,7 @@ test("evaluateRepeatForecastError excludes missing-before-action, missing-feedba
   const result = evaluateRepeatForecastError(
     WORKSPACE_ID,
     MEASUREMENT_VERSION,
+    "3".repeat(64),
     probes
   );
   assert.equal(result.denominator, 0);
@@ -1692,64 +1765,6 @@ test("event taxonomy accepts authoritative game events and versioned detector pr
   );
 });
 
-test("coverage distinguishes missing critical cells from a large easy-scenario sample", () => {
-  const coverage = buildPlaytestCoverageManifest({
-    workspaceId: WORKSPACE_ID,
-    batchId: "batch-coverage",
-    buildSha: "a".repeat(64),
-    measurementVersion: MEASUREMENT_VERSION,
-    generatedAt: "2026-10-09T12:00:00.000Z",
-    cells: [
-      {
-        mechanicKey: "pit-strategy",
-        phaseId: "race",
-        scenarioFamily: "easy",
-        cohort: "heuristic",
-        policy: "deterministic-baseline",
-        modality: "headless",
-        requiredOpportunities: 10,
-        requiredIndependentUnits: 1,
-        observedOpportunities: 1000,
-        observedIndependentUnits: 1000,
-        unsupportedReason: null
-      },
-      {
-        mechanicKey: "pit-strategy",
-        phaseId: "race",
-        scenarioFamily: "hard",
-        cohort: "novice",
-        policy: "limited-information",
-        modality: "headless",
-        requiredOpportunities: 10,
-        requiredIndependentUnits: 1,
-        observedOpportunities: 0,
-        observedIndependentUnits: 0,
-        unsupportedReason: null
-      },
-      {
-        mechanicKey: "warning-clarity",
-        phaseId: "race",
-        scenarioFamily: "standard",
-        cohort: "visual-only",
-        policy: "visual-observer",
-        modality: "native-visual",
-        requiredOpportunities: 1,
-        requiredIndependentUnits: 1,
-        observedOpportunities: 0,
-        observedIndependentUnits: 0,
-        unsupportedReason: "native renderer is not approved"
-      }
-    ]
-  });
-  assert.equal(coverage.coveredCells, 1);
-  assert.equal(coverage.notObservedCells, 1);
-  assert.equal(coverage.unsupportedCells, 1);
-  assert.deepEqual(
-    coverage.cells.map((cell) => cell.state),
-    ["covered", "not-observed", "unsupported"]
-  );
-});
-
 // --- protocol/envelope validators --------------------------------------------
 
 test("method-specific adapter contracts bind resets, observations, legal actions, revisions, and outcomes", () => {
@@ -1834,6 +1849,7 @@ test("method-specific adapter contracts bind resets, observations, legal actions
       state: "partial",
       outcome: null,
       metrics: { survival: null },
+      evaluations: [],
       missingReasons: []
     })
   );
@@ -2266,6 +2282,15 @@ test("playtest.config.json validates a bounded target-owned adapter and analysis
       benchmark: "playtest.benchmark.json",
       critic: "auto",
       maxReviewedSessions: 40,
+      reviewSelection: {
+        surveillanceSessions: 24,
+        discoverySessions: 16,
+        discoverySignal: {
+          metricId: "legal-action-rejection",
+          version: 1,
+          direction: "higher-first"
+        }
+      },
       visualCapture: "on-anomaly",
       counterfactuals: "targeted",
       understandingProbes: "sampled",
@@ -2275,6 +2300,19 @@ test("playtest.config.json validates a bounded target-owned adapter and analysis
     reporting: { githubIssues: "review" }
   };
   assert.doesNotThrow(() => assertPlaytestGameConfiguration(config));
+  assert.doesNotThrow(() =>
+    assertPlaytestGameConfiguration({
+      ...config,
+      analysis: {
+        ...config.analysis,
+        reviewSelection: {
+          surveillanceSessions: 40,
+          discoverySessions: 0,
+          discoverySignal: null
+        }
+      }
+    })
+  );
   assert.throws(
     () =>
       assertPlaytestGameConfiguration({
@@ -2282,6 +2320,35 @@ test("playtest.config.json validates a bounded target-owned adapter and analysis
         adapter: { ...config.adapter, command: "pnpm run unsafe" }
       }),
     /adapter.command/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestGameConfiguration({
+        ...config,
+        analysis: {
+          ...config.analysis,
+          reviewSelection: {
+            surveillanceSessions: 30,
+            discoverySessions: 16,
+            discoverySignal: null
+          }
+        }
+      }),
+    /must not exceed analysis.maxReviewedSessions/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestGameConfiguration({
+        ...config,
+        analysis: {
+          ...config.analysis,
+          reviewSelection: {
+            surveillanceSessions: 24,
+            discoverySessions: 16
+          }
+        }
+      }),
+    /discoverySignal must be declared/u
   );
   assert.throws(
     () =>

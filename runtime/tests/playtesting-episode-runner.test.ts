@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough, type Writable } from "node:stream";
@@ -12,20 +12,22 @@ import {
   buildPlaytestComparison,
   buildPlaytestFindingIdentity,
   classifyPlaytestMetricComparison,
+  type GameMetricEvaluation,
+  type PlaytestAssignmentBranch,
   type PlaytestCapabilityAdvertisement,
+  type PlaytestCheckpointDigest,
   type PlaytestComparison,
   type PlaytestEpisode,
   type PlaytestFinding,
+  playtestFindingIdentityHashInput,
   type PlaytestFixLineage,
   type PlaytestKnownEvidenceIndex,
-  type PlaytestNumericResult,
   type PlaytestObservationContract,
   PLAYTESTS_BATCH_SCHEMA,
   PLAYTESTS_MEASUREMENT_VERSION,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   type PlaytestSessionReview,
-  type WorkspacePlaytestApproval,
-  playtestFindingIdentityHashInput
+  type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
 
 import type {
@@ -39,6 +41,10 @@ import type {
 } from "../src/playtesting/docker-sandbox.ts";
 import { runPlaytestEpisode } from "../src/playtesting/episode-runner.ts";
 import { createScoredPlaytestPolicy } from "../src/playtesting/policies.ts";
+import {
+  fixturePlaytestMetricRegistry,
+  fixtureScoreEvaluation
+} from "./support/playtesting-metric-registry.ts";
 
 const WORKSPACE_ID = "owner/game";
 const GAME_BUILD = "fixture-game-build-1";
@@ -59,7 +65,8 @@ function hash(value: unknown): string {
 }
 
 function capabilities(
-  engineBuild = GAME_BUILD
+  engineBuild = GAME_BUILD,
+  supportsBranching = false
 ): PlaytestCapabilityAdvertisement {
   const observationSchema = {
     type: "object",
@@ -91,7 +98,9 @@ function capabilities(
     observationSchemaHash: hash(observationSchema),
     actionSchemaHash: hash(actionSchema),
     eventSchemaHash: hash(eventSchema),
-    optionalOperations: [],
+    optionalOperations: supportsBranching
+      ? ["game.snapshot", "game.replay", "game.fork"]
+      : [],
     quotas: {
       maxMessageBytes: 65_536,
       maxQueuedRequests: 8,
@@ -183,12 +192,38 @@ function sandboxFixture(
     readonly eventId?: string;
     readonly engineBuild?: string;
     readonly outcome?: "loss" | "win";
+    readonly supportsBranching?: boolean;
+    readonly branchStep?: number;
+    readonly replayMismatch?: "hidden-state" | "rng" | "fork-state" | null;
+    readonly branchAlternativeNotLegal?: boolean;
+    readonly snapshotCorrupted?: boolean;
+    readonly evaluations?: readonly GameMetricEvaluation[];
   } = {}
 ): FixtureSandbox {
   const stdin = new PassThrough();
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   const sentMethods: string[] = [];
+  const snapshotBytes = Buffer.from("synthetic checkpoint bytes", "utf8");
+  const snapshotSha = createHash("sha256").update(snapshotBytes).digest("hex");
+  const snapshotRef = {
+    artifactId: "adapter-snapshot-1",
+    sha256: snapshotSha,
+    bytes: snapshotBytes.byteLength,
+    mediaType: "application/vnd.fixture.snapshot"
+  } as const;
+  const snapshotStagingDirectory = options.supportsBranching
+    ? mkdtempSync(path.join(tmpdir(), "autodev-branch-snapshot-"))
+    : null;
+  const snapshotPath = snapshotStagingDirectory
+    ? path.join(snapshotStagingDirectory, snapshotSha)
+    : null;
+  if (snapshotPath) {
+    const stagedSnapshotBytes = Buffer.from(snapshotBytes);
+    if (options.snapshotCorrupted)
+      stagedSnapshotBytes[0] = stagedSnapshotBytes[0]! ^ 1;
+    writeFileSync(snapshotPath, stagedSnapshotBytes, { mode: 0o600 });
+  }
   const exitListeners: Array<(cause: PlaytestAdapterExit) => void> = [];
   let requestBuffer = "";
   let revision = 0;
@@ -218,112 +253,192 @@ function sandboxFixture(
   const notify = (method: string, params: unknown): void => {
     stdout.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
   };
+  const handleBranchRequest = (
+    method: string,
+    id: string,
+    params: Record<string, unknown>
+  ): boolean => {
+    if (method === "game.replay") {
+      revision = options.branchStep ?? 2;
+      const mismatch = options.replayMismatch;
+      respond(id, {
+        episodeId: "replayed-parent-1",
+        revision,
+        replayStatus: "verified",
+        transitionHash: "d".repeat(64),
+        firstDivergentStep: null,
+        replayedThroughStep: params.throughStep,
+        stateHash:
+          mismatch === "hidden-state" ? "a".repeat(64) : "f".repeat(64),
+        rngCheckpoint: {
+          algorithm: "fixture-rng",
+          version: "fixture-rng-v1",
+          stateHash: mismatch === "rng" ? "a".repeat(64) : "e".repeat(64),
+          reproducible: true
+        },
+        diagnostics: []
+      });
+      return true;
+    }
+    if (method === "game.snapshot") {
+      const withArtifact = params.includeArtifact === true;
+      respond(id, {
+        episodeId: params.episodeId,
+        revision,
+        stateHash: "f".repeat(64),
+        rngCheckpoint: {
+          algorithm: "fixture-rng",
+          version: "fixture-rng-v1",
+          stateHash: "e".repeat(64),
+          reproducible: true
+        },
+        snapshot: withArtifact ? snapshotRef : null,
+        integrityHash: withArtifact ? snapshotSha : null
+      });
+      return true;
+    }
+    if (method === "game.fork") {
+      revision = options.branchStep ?? 2;
+      respond(id, {
+        episodeId: "branch-episode-1",
+        revision,
+        initialStateHash:
+          options.replayMismatch === "fork-state"
+            ? "a".repeat(64)
+            : "f".repeat(64),
+        rngCheckpoint: {
+          algorithm: "fixture-rng",
+          version: "fixture-rng-v1",
+          stateHash: "e".repeat(64),
+          reproducible: true
+        }
+      });
+      return true;
+    }
+    return false;
+  };
+  const handleGameRequest = (
+    method: string,
+    id: string,
+    params: Record<string, unknown>
+  ): void => {
+    switch (method) {
+      case "game.reset": {
+        revision = 0;
+        eventSequence = 0;
+        respond(id, {
+          episodeId: options.episodeId ?? "fixture-episode-1",
+          revision,
+          rngProvenance: {
+            algorithm: "fixture-rng",
+            version: "fixture-rng-v1",
+            initialStateHash: "e".repeat(64),
+            reproducible: true
+          }
+        });
+        return;
+      }
+      case "game.observe": {
+        respond(id, {
+          episodeId: params.episodeId,
+          revision,
+          observation: { room: "hall", secret: "engine-only-value" },
+          turnContext: null,
+          frame: null
+        });
+        return;
+      }
+      case "game.legalActions": {
+        respond(id, {
+          episodeId: params.episodeId,
+          revision,
+          actions: options.noLegalActions
+            ? []
+            : options.branchAlternativeNotLegal
+              ? [{ actionId: "advance", description: "Advance" }]
+              : [
+                  { actionId: "advance", description: "Advance" },
+                  { actionId: "wait", description: "Wait" }
+                ]
+        });
+        return;
+      }
+      case "game.step": {
+        options.onStepRequest?.();
+        revision += 1;
+        if (options.terminal === false) {
+          respond(id, {
+            episodeId: params.episodeId,
+            revision,
+            acceptedActionId: params.actionId,
+            eventIds: [],
+            terminal: false
+          });
+          return;
+        }
+        eventSequence += 1;
+        notify("game.event", {
+          episodeId: params.episodeId,
+          revision,
+          eventSequence,
+          event: {
+            eventId: options.eventId ?? "event-1",
+            type: "choice-applied",
+            phaseId: "tutorial",
+            step: 1,
+            revision,
+            actor: "player",
+            fields: { secret: "hidden-event-value", visibleFact: "advance" }
+          }
+        });
+        respond(id, {
+          episodeId: params.episodeId,
+          revision,
+          acceptedActionId: params.actionId,
+          eventIds: [options.eventId ?? "event-1"],
+          terminal: true
+        });
+        return;
+      }
+      case "game.outcome": {
+        respond(id, {
+          episodeId: params.episodeId,
+          revision,
+          state: options.terminal === false ? "partial" : "terminal",
+          outcome: {
+            kind: options.outcome ?? "loss",
+            secret: "privileged-outcome"
+          },
+          metrics: { score: 0 },
+          evaluations: options.evaluations ?? [fixtureScoreEvaluation(0)],
+          missingReasons: []
+        });
+        return;
+      }
+      case "game.cancel": {
+        respond(id, {
+          requestId: params.requestId,
+          acknowledged: true,
+          episodeDisposition: "unknown"
+        });
+        break;
+      }
+      default: {
+        break;
+      }
+    }
+  };
   const processRequest = (request: Record<string, unknown>): void => {
     const method = String(request.method);
     const id = String(request.id);
     const params = request.params as Record<string, unknown>;
     sentMethods.push(method);
     if (method === "game.capabilities") {
-      respond(id, capabilities(options.engineBuild));
+      respond(id, capabilities(options.engineBuild, options.supportsBranching));
       return;
     }
-    if (method === "game.reset") {
-      revision = 0;
-      eventSequence = 0;
-      respond(id, {
-        episodeId: options.episodeId ?? "fixture-episode-1",
-        revision,
-        rngProvenance: {
-          algorithm: "fixture-rng",
-          version: "fixture-rng-v1",
-          initialStateHash: "e".repeat(64),
-          reproducible: true
-        }
-      });
-      return;
-    }
-    if (method === "game.observe") {
-      respond(id, {
-        episodeId: params.episodeId,
-        revision,
-        observation: { room: "hall", secret: "engine-only-value" },
-        turnContext: null,
-        frame: null
-      });
-      return;
-    }
-    if (method === "game.legalActions") {
-      respond(id, {
-        episodeId: params.episodeId,
-        revision,
-        actions: options.noLegalActions
-          ? []
-          : [
-              { actionId: "advance", description: "Advance" },
-              { actionId: "wait", description: "Wait" }
-            ]
-      });
-      return;
-    }
-    if (method === "game.step") {
-      options.onStepRequest?.();
-      if (options.terminal === false) {
-        revision += 1;
-        respond(id, {
-          episodeId: params.episodeId,
-          revision,
-          acceptedActionId: params.actionId,
-          eventIds: [],
-          terminal: false
-        });
-        return;
-      }
-      revision += 1;
-      eventSequence += 1;
-      notify("game.event", {
-        episodeId: params.episodeId,
-        revision,
-        eventSequence,
-        event: {
-          eventId: options.eventId ?? "event-1",
-          type: "choice-applied",
-          phaseId: "tutorial",
-          step: 1,
-          revision,
-          actor: "player",
-          fields: { secret: "hidden-event-value", visibleFact: "advance" }
-        }
-      });
-      respond(id, {
-        episodeId: params.episodeId,
-        revision,
-        acceptedActionId: params.actionId,
-        eventIds: [options.eventId ?? "event-1"],
-        terminal: true
-      });
-      return;
-    }
-    if (method === "game.outcome") {
-      respond(id, {
-        episodeId: params.episodeId,
-        revision,
-        state: options.terminal === false ? "partial" : "terminal",
-        outcome: {
-          kind: options.outcome ?? "loss",
-          secret: "privileged-outcome"
-        },
-        metrics: { score: 0 },
-        missingReasons: []
-      });
-      return;
-    }
-    if (method === "game.cancel") {
-      respond(id, {
-        requestId: params.requestId,
-        acknowledged: true,
-        episodeDisposition: "unknown"
-      });
-    }
+    if (handleBranchRequest(method, id, params)) return;
+    handleGameRequest(method, id, params);
   };
   stdin.on("data", (chunk: Buffer) => {
     requestBuffer += chunk.toString("utf8");
@@ -348,8 +463,17 @@ function sandboxFixture(
       durationMs: 1,
       stdoutTail: [],
       stderrTail: [],
-      stagingDirectory: null,
-      artifacts: []
+      stagingDirectory: snapshotStagingDirectory,
+      artifacts:
+        snapshotStagingDirectory && snapshotPath
+          ? [
+              {
+                relativePath: snapshotSha,
+                absolutePath: snapshotPath,
+                size: snapshotBytes.byteLength
+              }
+            ]
+          : []
     });
   });
   const streams: PlaytestAdapterStreams = {
@@ -374,12 +498,112 @@ function sandboxFixture(
     },
     cleanup: async () => {
       cleanupCount += 1;
+      if (snapshotStagingDirectory) {
+        rmSync(snapshotStagingDirectory, { recursive: true, force: true });
+      }
     },
     sentMethods,
     closeNormally: () => stdin.end(),
     cancelCount: () => cancelCount,
     cleanupCount: () => cleanupCount
   };
+}
+
+function branchExecution(
+  branchStep = 2,
+  alternativeActionId = "wait"
+): NonNullable<Parameters<typeof runPlaytestEpisode>[0]["branch"]> {
+  const approved = approval();
+  const advertised = capabilities(GAME_BUILD, true);
+  const parentEpisode: PlaytestEpisode = {
+    schema: "autodev-playtest-episode-v3",
+    episodeId: "parent-episode-1",
+    revision: 4,
+    batchId: "parent-batch-1",
+    assignmentId: "a-0001",
+    branchLineage: null,
+    identity: {
+      workspaceId: WORKSPACE_ID,
+      repository: WORKSPACE_ID,
+      buildSha: approved.buildSha,
+      gameBuild: GAME_BUILD,
+      scenarioId: "tutorial",
+      configHash: approved.playtestConfigHash,
+      seed: "seed-1",
+      rngInitialStateHash: "e".repeat(64),
+      rngAlgorithm: "fixture-rng",
+      rngVersion: "fixture-rng-v1",
+      policyId: "fixture-heuristic",
+      policyVersion: "1",
+      modelId: null,
+      modelRevision: null,
+      observationSchemaHash: advertised.observationSchemaHash,
+      actionSchemaHash: advertised.actionSchemaHash,
+      eventSchemaHash: advertised.eventSchemaHash,
+      protocolVersion: 1,
+      runtimeVersion: "runtime-v1",
+      environmentHash: ENVIRONMENT_HASH
+    },
+    scenarioFamily: "tutorial",
+    policyCohort: "novice",
+    strategy: "advance-first",
+    status: "completed",
+    outcome: "loss",
+    outcomeMetrics: {},
+    completionCounts: {
+      assigned: 1,
+      started: 1,
+      completed: 1,
+      crashed: 0,
+      infrastructureFailed: 0,
+      cancelled: 0,
+      budgetTruncated: 0,
+      reviewed: 0,
+      eligible: 1
+    },
+    replayStatus: "trace-replayable",
+    trace: { kind: "replay-segment", id: "parent-trace-1" },
+    frames: [],
+    stepCount: 4,
+    metrics: [],
+    findingIds: [],
+    assignedAt: "2026-10-10T00:00:00.000Z",
+    startedAt: "2026-10-10T00:00:00.000Z",
+    completedAt: "2026-10-10T00:00:01.000Z",
+    simulationWallMs: 10,
+    logicalTicks: 4,
+    policyInferenceMs: 1,
+    nativeDurationMs: null,
+    completeness: "complete",
+    missingReasons: []
+  };
+  const parentTrace = {
+    artifactId: "parent-trace-1",
+    sha256: "c".repeat(64),
+    bytes: 1024,
+    mediaType: "application/x-ndjson"
+  } as const;
+  const parentCheckpoint: PlaytestCheckpointDigest = {
+    stateHash: "f".repeat(64),
+    rngCheckpoint: {
+      algorithm: "fixture-rng",
+      version: "fixture-rng-v1",
+      stateHash: "e".repeat(64),
+      reproducible: true
+    }
+  };
+  const manifest: PlaytestAssignmentBranch = {
+    parentEpisodeId: parentEpisode.episodeId,
+    parentEpisodeRevision: parentEpisode.revision,
+    parentBatchId: parentEpisode.batchId,
+    branchStep,
+    parentTrace,
+    parentCheckpoint,
+    alternativeActionId,
+    rngPolicy: "same-stream",
+    rngPolicyVersion: "same-stream-state-v1"
+  };
+  return { manifest, parentEpisode };
 }
 
 function policy() {
@@ -418,6 +642,7 @@ function runOptions(
     sandbox,
     artifacts,
     batchId: "batch-1",
+    assignmentId: "a-0001",
     repository: WORKSPACE_ID,
     scenarioId: "tutorial",
     scenarioFamily: "tutorial",
@@ -428,6 +653,8 @@ function runOptions(
     environmentHash: ENVIRONMENT_HASH,
     policy: policy(),
     observationContract: observationContract(),
+    metricRegistry: fixturePlaytestMetricRegistry(WORKSPACE_ID),
+    rubricHash: "e".repeat(64),
     maxSteps: 5,
     now: () => Date.parse("2026-10-10T00:00:00.000Z"),
     classifyOutcome: (outcome) =>
@@ -448,7 +675,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 test("episode runner executes one approved episode, filters hidden observation/event/outcome fields, and records provenance", async () => {
   const temporary = store();
-  const sandbox = sandboxFixture();
+  const sandbox = sandboxFixture({
+    evaluations: [fixtureScoreEvaluation(0)]
+  });
   let policyObservation: unknown;
   const testPolicy = createScoredPlaytestPolicy({
     id: "fixture-heuristic",
@@ -463,29 +692,13 @@ test("episode runner executes one approved episode, filters hidden observation/e
   try {
     const result = await runPlaytestEpisode(
       runOptions(sandbox, temporary.artifacts, {
-        policy: testPolicy,
-        evaluate: ({ outcome, events, provenance }) => {
-          const score = outcome.metrics.score ?? null;
-          return [
-            {
-              metricId: "fixture-score",
-              metricVersion: 1,
-              numerator: score ?? 0,
-              denominator: 1,
-              coverage: 1,
-              unit: "points",
-              estimate: score,
-              missing: 0,
-              missingReasons: [],
-              independentUnits: 1,
-              provenance,
-              notes: `observed ${events.length} source event`
-            }
-          ];
-        }
+        policy: testPolicy
       })
     );
-    assert.ok(result.episode);
+    assert.ok(
+      result.episode,
+      JSON.stringify({ failure: result.failure, methods: sandbox.sentMethods })
+    );
     assert.equal(result.episode.status, "completed");
     assert.equal(result.episode.outcome, "loss");
     assert.equal(result.episode.completionCounts.completed, 1);
@@ -497,6 +710,19 @@ test("episode runner executes one approved episode, filters hidden observation/e
     assert.deepEqual(
       result.episode.metrics.map((metric) => metric.metricId),
       ["fixture-score"]
+    );
+    assert.equal(result.episode.metrics[0]?.numerator, 0);
+    assert.equal(result.episode.metrics[0]?.denominator, 1);
+    assert.equal(result.episode.metrics[0]?.opportunityCount, 1);
+    assert.equal(result.episode.metrics[0]?.coverage, 1);
+    assert.equal(result.episode.metrics[0]?.estimate, 0);
+    assert.equal(
+      result.episode.metrics[0]?.provenance.evaluatorHash,
+      "f".repeat(64)
+    );
+    assert.equal(
+      result.episode.metrics[0]?.provenance.rubricHash,
+      "e".repeat(64)
     );
     assert.ok(result.traceReference);
     const stored = temporary.artifacts.readWindow(result.traceReference!);
@@ -522,6 +748,105 @@ test("episode runner executes one approved episode, filters hidden observation/e
   }
 });
 
+interface SyntheticArmConfiguration {
+  readonly name: "baseline" | "candidate";
+  readonly batchId: string;
+  readonly buildSha: string;
+  readonly gameBuild: string;
+}
+
+async function runSyntheticArm(input: {
+  readonly artifacts: PlaytestArtifactStore;
+  readonly arm: SyntheticArmConfiguration;
+  readonly seed: string;
+  readonly index: number;
+  readonly metricId: string;
+  readonly metricRegistry: ReturnType<typeof fixturePlaytestMetricRegistry>;
+  readonly injectedLoss: boolean;
+}): Promise<{ readonly episode: PlaytestEpisode; readonly estimate: number }> {
+  const episodeId =
+    input.arm.name + "-episode-" + String(input.index).padStart(4, "0");
+  const result = await runPlaytestEpisode(
+    runOptions(
+      sandboxFixture({
+        episodeId,
+        eventId:
+          input.arm.name + "-event-" + String(input.index).padStart(4, "0"),
+        engineBuild: input.arm.gameBuild,
+        outcome: input.injectedLoss ? "loss" : "win",
+        evaluations: [
+          fixtureScoreEvaluation(input.injectedLoss ? 0 : 1, input.metricId)
+        ]
+      }),
+      input.artifacts,
+      {
+        approval: approval({
+          buildSha: input.arm.buildSha,
+          gameBuild: input.arm.gameBuild
+        }),
+        batchId: input.arm.batchId,
+        seed: input.seed,
+        measurementVersion: PLAYTESTS_MEASUREMENT_VERSION,
+        metricRegistry: input.metricRegistry
+      }
+    )
+  );
+  assert.ok(
+    result.episode,
+    "missing episode for " + input.arm.name + " " + input.seed
+  );
+  assert.equal(result.episode.status, "completed");
+  assert.equal(result.episode.identity.seed, input.seed);
+  assert.equal(result.episode.identity.buildSha, input.arm.buildSha);
+  assert.equal(result.episode.identity.gameBuild, input.arm.gameBuild);
+  const estimate = result.episode.metrics[0]?.estimate;
+  assert.equal(typeof estimate, "number");
+  return { episode: result.episode, estimate: estimate! };
+}
+
+async function runSyntheticImprovementEpisodes(input: {
+  readonly artifacts: PlaytestArtifactStore;
+  readonly pairs: number;
+  readonly injectedRegressionCount: number;
+  readonly baseline: SyntheticArmConfiguration;
+  readonly candidate: SyntheticArmConfiguration;
+  readonly metricId: string;
+  readonly metricRegistry: ReturnType<typeof fixturePlaytestMetricRegistry>;
+}): Promise<{
+  readonly episodes: PlaytestEpisode[];
+  readonly baselineOutcomes: number[];
+  readonly candidateOutcomes: number[];
+}> {
+  const episodes: PlaytestEpisode[] = [];
+  const baselineOutcomes: number[] = [];
+  const candidateOutcomes: number[] = [];
+  for (let index = 0; index < input.pairs; index += 1) {
+    const seed = "seed-" + String(index).padStart(4, "0");
+    const baseline = await runSyntheticArm({
+      artifacts: input.artifacts,
+      arm: input.baseline,
+      seed,
+      index,
+      metricId: input.metricId,
+      metricRegistry: input.metricRegistry,
+      injectedLoss: false
+    });
+    const candidate = await runSyntheticArm({
+      artifacts: input.artifacts,
+      arm: input.candidate,
+      seed,
+      index,
+      metricId: input.metricId,
+      metricRegistry: input.metricRegistry,
+      injectedLoss: index < input.injectedRegressionCount
+    });
+    episodes.push(baseline.episode, candidate.episode);
+    baselineOutcomes.push(baseline.estimate);
+    candidateOutcomes.push(candidate.estimate);
+  }
+  return { episodes, baselineOutcomes, candidateOutcomes };
+}
+
 test("synthetic 1,000-episode improvement cycle records evidence, finding, comparison, and a hold next-cycle state", async () => {
   const temporary = store();
   const baselineBuild = "a".repeat(40);
@@ -530,80 +855,34 @@ test("synthetic 1,000-episode improvement cycle records evidence, finding, compa
   const candidateGameBuild = "fixture-game-build-2";
   const pairs = 500;
   const injectedRegressionCount = 50;
-  const episodes: PlaytestEpisode[] = [];
-  const baselineOutcomes: number[] = [];
-  const candidateOutcomes: number[] = [];
   const baselineBatchId = "batch-synthetic-baseline";
   const candidateBatchId = "batch-synthetic-candidate";
   const generatedAt = "2026-10-10T00:00:00.000Z";
   const metricId = "tutorial-completion";
   const metricVersion = 1;
-
-  const evaluate = ({
-    outcome,
-    provenance
-  }: Parameters<
-    NonNullable<Parameters<typeof runPlaytestEpisode>[0]["evaluate"]>
-  >[0]): readonly PlaytestNumericResult[] => {
-    const estimate =
-      isRecord(outcome.outcome) && outcome.outcome.kind === "win" ? 1 : 0;
-    return [
-      {
-        metricId,
-        metricVersion,
-        numerator: estimate,
-        denominator: 1,
-        coverage: 1,
-        unit: "proportion",
-        estimate,
-        missing: 0,
-        missingReasons: [],
-        independentUnits: 1,
-        provenance,
-        notes: "Synthetic fixture objective endpoint; not a human outcome."
-      }
-    ];
-  };
+  const metricRegistry = fixturePlaytestMetricRegistry(WORKSPACE_ID, metricId);
 
   try {
-    for (let index = 0; index < pairs; index += 1) {
-      const seed = "seed-" + String(index).padStart(4, "0");
-      for (const arm of ["baseline", "candidate"] as const) {
-        const candidate = arm === "candidate";
-        const buildSha = candidate ? candidateBuild : baselineBuild;
-        const gameBuild = candidate ? candidateGameBuild : baselineGameBuild;
-        const injectedLoss = candidate && index < injectedRegressionCount;
-        const episodeId = arm + "-episode-" + String(index).padStart(4, "0");
-        const result = await runPlaytestEpisode(
-          runOptions(
-            sandboxFixture({
-              episodeId,
-              eventId: arm + "-event-" + String(index).padStart(4, "0"),
-              engineBuild: gameBuild,
-              outcome: injectedLoss ? "loss" : "win"
-            }),
-            temporary.artifacts,
-            {
-              approval: approval({ buildSha, gameBuild }),
-              batchId: candidate ? candidateBatchId : baselineBatchId,
-              seed,
-              measurementVersion: PLAYTESTS_MEASUREMENT_VERSION,
-              evaluate
-            }
-          )
-        );
-        assert.ok(result.episode, `missing episode for ${arm} ${seed}`);
-        assert.equal(result.episode.status, "completed");
-        assert.equal(result.episode.identity.seed, seed);
-        assert.equal(result.episode.identity.buildSha, buildSha);
-        assert.equal(result.episode.identity.gameBuild, gameBuild);
-        episodes.push(result.episode);
-        const estimate = result.episode.metrics[0]?.estimate;
-        assert.equal(typeof estimate, "number");
-        (candidate ? candidateOutcomes : baselineOutcomes).push(estimate!);
-      }
-    }
-
+    const { episodes, baselineOutcomes, candidateOutcomes } =
+      await runSyntheticImprovementEpisodes({
+        artifacts: temporary.artifacts,
+        pairs,
+        injectedRegressionCount,
+        baseline: {
+          name: "baseline",
+          batchId: baselineBatchId,
+          buildSha: baselineBuild,
+          gameBuild: baselineGameBuild
+        },
+        candidate: {
+          name: "candidate",
+          batchId: candidateBatchId,
+          buildSha: candidateBuild,
+          gameBuild: candidateGameBuild
+        },
+        metricId,
+        metricRegistry
+      });
     assert.equal(episodes.length, 1000);
     assert.equal(
       new Set(episodes.map((episode) => episode.episodeId)).size,
@@ -679,6 +958,7 @@ test("synthetic 1,000-episode improvement cycle records evidence, finding, compa
       version: 1,
       episodeId: candidateWitness.episodeId,
       supersedes: null,
+      evidencePacket: null,
       authorRole: "playtest-analyst",
       authorId: "synthetic-acceptance-analyst",
       rubricHash: "c".repeat(64),
@@ -945,6 +1225,148 @@ test("synthetic 1,000-episode improvement cycle records evidence, finding, compa
       1000
     );
   } finally {
+    temporary.cleanup();
+  }
+});
+
+test("episode runner proves replay, hidden-state/RNG equality, snapshot, fork, legal intervention and durable lineage", async () => {
+  const temporary = store();
+  const sandbox = sandboxFixture({ supportsBranching: true, branchStep: 2 });
+  try {
+    const branch = branchExecution(2, "wait");
+    const result = await runPlaytestEpisode(
+      runOptions(sandbox, temporary.artifacts, { branch })
+    );
+    assert.ok(
+      result.episode,
+      JSON.stringify({ failure: result.failure, methods: sandbox.sentMethods })
+    );
+    assert.equal(result.episode.status, "completed");
+    assert.equal(result.episode.outcome, "loss");
+    assert.equal(result.episode.stepCount, 1);
+    assert.deepEqual(sandbox.sentMethods, [
+      "game.capabilities",
+      "game.replay",
+      "game.snapshot",
+      "game.fork",
+      "game.observe",
+      "game.legalActions",
+      "game.snapshot",
+      "game.step",
+      "game.outcome"
+    ]);
+    assert.equal(result.steps[0]?.selectedActionId, "wait");
+    assert.deepEqual(
+      result.steps[0]?.checkpoint,
+      branch.manifest.parentCheckpoint
+    );
+    assert.equal(result.episode.identity.rngInitialStateHash, "e".repeat(64));
+    assert.deepEqual(result.episode.branchLineage, {
+      ...branch.manifest,
+      replayTransitionHash: "d".repeat(64),
+      snapshotArtifact: result.episode.branchLineage?.snapshotArtifact,
+      snapshotIntegrityHash:
+        result.episode.branchLineage?.snapshotIntegrityHash,
+      forkStateHash: "f".repeat(64),
+      forkRngCheckpoint: branch.manifest.parentCheckpoint.rngCheckpoint,
+      continuationPolicyId: "fixture-heuristic",
+      continuationPolicyVersion: "1"
+    });
+    assert.equal(
+      result.episode.branchLineage?.snapshotArtifact?.sha256,
+      result.episode.branchLineage?.snapshotIntegrityHash
+    );
+    assert.ok(result.episode.branchLineage?.snapshotArtifact);
+    assert.equal(result.episode.completeness, "complete");
+    assert.deepEqual(result.episode.missingReasons, []);
+    assert.ok(result.traceReference);
+    const trace = new TextDecoder().decode(
+      temporary.artifacts.readWindow(result.traceReference!).bytes
+    );
+    assert.match(trace, /"checkpoint":\{"stateHash":"f{64}"/u);
+  } finally {
+    await sandbox.cleanup();
+    temporary.cleanup();
+  }
+});
+
+test("branch runner refuses hidden-state and extra-RNG replay mismatches before fork", async (t) => {
+  for (const mismatch of ["hidden-state", "rng"] as const) {
+    await t.test(mismatch, async () => {
+      const temporary = store();
+      const sandbox = sandboxFixture({
+        supportsBranching: true,
+        branchStep: 2,
+        replayMismatch: mismatch
+      });
+      try {
+        const result = await runPlaytestEpisode(
+          runOptions(sandbox, temporary.artifacts, {
+            branch: branchExecution()
+          })
+        );
+        assert.equal(result.episode, null);
+        assert.ok(result.failure);
+        assert.ok(sandbox.sentMethods.includes("game.replay"));
+        assert.equal(sandbox.sentMethods.includes("game.fork"), false);
+        assert.equal(sandbox.sentMethods.includes("game.step"), false);
+      } finally {
+        await sandbox.cleanup();
+        temporary.cleanup();
+      }
+    });
+  }
+});
+
+test("branch runner keeps gameplay outcome but marks a corrupted retained snapshot incomplete", async () => {
+  const temporary = store();
+  const sandbox = sandboxFixture({
+    supportsBranching: true,
+    branchStep: 2,
+    snapshotCorrupted: true
+  });
+  try {
+    const result = await runPlaytestEpisode(
+      runOptions(sandbox, temporary.artifacts, { branch: branchExecution() })
+    );
+    assert.ok(result.episode);
+    assert.equal(result.episode.status, "completed");
+    assert.equal(result.episode.completeness, "partial");
+    assert.ok(result.episode.missingReasons.includes("infrastructure-failed"));
+    assert.equal(result.episode.branchLineage?.snapshotArtifact, null);
+    assert.match(
+      result.episode.branchLineage?.snapshotIntegrityHash ?? "",
+      /^[a-f0-9]{64}$/u
+    );
+  } finally {
+    await sandbox.cleanup();
+    temporary.cleanup();
+  }
+});
+
+test("branch runner rechecks the alternative against current legal actions before executing", async () => {
+  const temporary = store();
+  const sandbox = sandboxFixture({
+    supportsBranching: true,
+    branchStep: 2,
+    branchAlternativeNotLegal: true
+  });
+  try {
+    const result = await runPlaytestEpisode(
+      runOptions(sandbox, temporary.artifacts, {
+        branch: branchExecution(2, "wait")
+      })
+    );
+    assert.ok(
+      result.episode,
+      JSON.stringify({ failure: result.failure, methods: sandbox.sentMethods })
+    );
+    assert.notEqual(result.episode.status, "completed");
+    assert.equal(result.episode.outcome, "unknown");
+    assert.equal(sandbox.sentMethods.includes("game.fork"), true);
+    assert.equal(sandbox.sentMethods.includes("game.step"), false);
+  } finally {
+    await sandbox.cleanup();
     temporary.cleanup();
   }
 });

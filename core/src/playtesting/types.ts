@@ -16,15 +16,21 @@
 
 import type { AgentRole } from "../agents/types.ts";
 import type { PlaytestFindingIdentity } from "./finding-identity.ts";
+import type {
+  PlaytestArtifactReference,
+  PlaytestCheckpointDigest
+} from "./protocol-types.ts";
 
 /** Current Core schema version for the playtesting artifact family. */
 export const PLAYTESTS_SCHEMA_VERSION = 1 as const;
 /** Version of the normative measurement rules applied to new artifacts. */
 export const PLAYTESTS_MEASUREMENT_VERSION =
-  "playtesting-measurement-v1" as const;
+  "playtesting-measurement-v2" as const;
 
 /** Version negotiated by `game.capabilities` before any episode reset. */
 export const PLAYTESTS_PROTOCOL_VERSION = 1 as const;
+/** Exact RNG-coupling semantics implemented by the v1 branch runner. */
+export const PLAYTESTS_RNG_POLICY_VERSION = "same-stream-state-v1" as const;
 
 /** Hard v1 JSON-RPC transport ceilings; adapters may advertise lower limits. */
 export const PLAYTESTS_ADAPTER_DEFAULT_QUOTAS = {
@@ -35,13 +41,28 @@ export const PLAYTESTS_ADAPTER_DEFAULT_QUOTAS = {
   cancelGraceMs: 2000
 } as const;
 
-/** Identifier for the v1 metric-registry family. */
+/** Identifier for the v2 metric-registry family with content-hashed evaluators. */
 export const PLAYTESTS_REGISTRY_SCHEMA =
-  "autodev-playtest-registry-v1" as const;
+  "autodev-playtest-registry-v2" as const;
 
-/** Identifier for the v1 sampling contract. */
-export const PLAYTESTS_SAMPLING_SCHEMA =
-  "autodev-playtest-sampling-v1" as const;
+/** Identifier for the v1 per-batch critique selection contract. */
+export const PLAYTESTS_REVIEW_SELECTION_SCHEMA =
+  "autodev-playtest-review-selection-v1" as const;
+
+/** Identifier for the v3 frozen assignment manifest with coverage identity. */
+export const PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA =
+  "autodev-playtest-assignment-manifest-v3" as const;
+export const PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V2 =
+  "autodev-playtest-assignment-manifest-v2" as const;
+export const PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V1 =
+  "autodev-playtest-assignment-manifest-v1" as const;
+
+/** Content-addressed, rubric-owned batch coverage matrix. */
+export const PLAYTESTS_COVERAGE_MANIFEST_SCHEMA =
+  "autodev-playtest-coverage-manifest-v1" as const;
+/** Bounded, evidence-linked analyst input artifact. */
+export const PLAYTESTS_EVIDENCE_PACKET_SCHEMA =
+  "autodev-playtest-evidence-packet-v1" as const;
 
 /** Identifier for the v1 comparison contract. */
 export const PLAYTESTS_COMPARISON_SCHEMA =
@@ -51,11 +72,19 @@ export const PLAYTESTS_COMPARISON_SCHEMA =
 export const PLAYTESTS_HUMAN_STUDY_SCHEMA =
   "autodev-playtest-human-study-v1" as const;
 
-export const PLAYTESTS_BATCH_SCHEMA = "autodev-playtest-batch-v1" as const;
-export const PLAYTESTS_EPISODE_SCHEMA = "autodev-playtest-episode-v1" as const;
+export const PLAYTESTS_BATCH_SCHEMA = "autodev-playtest-batch-v3" as const;
+export const PLAYTESTS_BATCH_SCHEMA_V2 = "autodev-playtest-batch-v2" as const;
+export const PLAYTESTS_BATCH_SCHEMA_V1 = "autodev-playtest-batch-v1" as const;
+export const PLAYTESTS_EPISODE_SCHEMA = "autodev-playtest-episode-v3" as const;
+export const PLAYTESTS_EPISODE_SCHEMA_V2 =
+  "autodev-playtest-episode-v2" as const;
+export const PLAYTESTS_EPISODE_SCHEMA_V1 =
+  "autodev-playtest-episode-v1" as const;
 export const PLAYTESTS_EXPERIMENT_SCHEMA =
   "autodev-playtest-experiment-v1" as const;
 export const PLAYTESTS_SESSION_REVIEW_SCHEMA =
+  "autodev-playtest-session-review-v2" as const;
+export const PLAYTESTS_SESSION_REVIEW_SCHEMA_V1 =
   "autodev-playtest-session-review-v1" as const;
 
 /** Standard JSON-RPC error codes are preserved verbatim. */
@@ -177,6 +206,8 @@ export const PLAYTESTS_MISSING_REASONS = [
   "fork-unsupported",
   "partial-alternatives",
   "reward-or-continuation-contract-mismatch",
+  "unsupported-evaluator",
+  "unsupported-modality",
   "wrong-instrument",
   "outside-window",
   "unobserved",
@@ -200,6 +231,21 @@ export const PLAYTESTS_EPISODE_STATES = [
 ] as const;
 
 export type PlaytestEpisodeState = (typeof PLAYTESTS_EPISODE_STATES)[number];
+
+/** Terminal disposition for an assignment without a persisted game episode. */
+export type PlaytestAssignmentTerminalState = Exclude<
+  PlaytestEpisodeState,
+  "assigned" | "started"
+>;
+
+/** Assignment outcome retained when no episode row can carry the disposition. */
+export interface PlaytestAssignmentOutcome {
+  readonly assignmentId: string;
+  readonly episodeId: string | null;
+  readonly state: PlaytestAssignmentTerminalState;
+  readonly started: boolean;
+  readonly eligible: boolean;
+}
 
 /** One incompatible semantic quantity disables every statistical delta rule. */
 export const PLAYTESTS_NOT_COMPARABLE_MODE = "not-comparable" as const;
@@ -437,12 +483,186 @@ export interface PlaytestDiscoverySample {
   readonly tieBreakerSeed: string;
 }
 
-/** Combined sampling output for a single review batch. */
-export interface PlaytestSamplingPlan {
-  readonly surveillance: PlaytestSurveillanceSample;
-  readonly discovery: PlaytestDiscoverySample;
-  readonly schema: typeof PLAYTESTS_SAMPLING_SCHEMA;
+/** Strata are fixed by the measurement contract: policy x scenario x outcome. */
+export const PLAYTESTS_REVIEW_STRATIFICATION =
+  "policy-scenario-outcome-v1" as const;
+
+/** Game-owned deterministic evaluator signal used to rank discovery reviews. */
+export interface PlaytestDiscoverySignal {
+  readonly metricId: string;
+  readonly version: number;
+  readonly direction: "higher-first" | "lower-first";
 }
+
+/** One frozen session selected for complete-session critique. */
+export interface PlaytestSelectedReviewSession {
+  readonly assignmentId: string;
+  readonly episodeId: string;
+  readonly stream: "surveillance" | "discovery";
+  readonly stratumKey: string;
+  /** n_h / N_h for surveillance units; null for targeted discovery units. */
+  readonly inclusionProbability: number | null;
+  /** 1-based discovery rank and evaluator value; null for surveillance. */
+  readonly discoveryRank: number | null;
+  readonly signalValue: number | null;
+}
+
+export type PlaytestSurveillanceSelection =
+  | {
+      readonly status: "selected";
+      readonly sample: PlaytestSurveillanceSample;
+    }
+  | { readonly status: "disabled"; readonly budget: 0 }
+  | {
+      readonly status: "rejected";
+      readonly reason: "over-stratified";
+      readonly budget: number;
+      readonly nonEmptyStrata: number;
+    };
+
+export type PlaytestDiscoverySelection =
+  | {
+      readonly status: "selected";
+      readonly signal: PlaytestDiscoverySignal;
+      readonly sample: PlaytestDiscoverySample;
+      readonly rankedCandidates: number;
+      readonly unobservedCandidates: number;
+    }
+  | { readonly status: "disabled"; readonly budget: 0 }
+  | {
+      readonly status: "unavailable";
+      readonly reason:
+        "no-approved-signal" | "signal-not-observed" | "no-remaining-sessions";
+      readonly budget: number;
+      readonly signal: PlaytestDiscoverySignal | null;
+    };
+
+/**
+ * Frozen per-batch critique selection. Surveillance alone supports weighted
+ * population estimates; discovery reviews are reported separately.
+ */
+export interface PlaytestReviewSelection {
+  readonly schema: typeof PLAYTESTS_REVIEW_SELECTION_SCHEMA;
+  readonly status: "selected";
+  readonly inventoryHash: string;
+  readonly seed: string;
+  readonly stratification: typeof PLAYTESTS_REVIEW_STRATIFICATION;
+  readonly maxReviewedSessions: number;
+  readonly critiqueBudget: number;
+  /** min(maxReviewedSessions, critiqueBudget); never exceeded by distinct reviews. */
+  readonly reviewCap: number;
+  readonly reviewablePopulation: number;
+  readonly unreviewableAssignments: number;
+  readonly surveillance: PlaytestSurveillanceSelection;
+  readonly discovery: PlaytestDiscoverySelection;
+  readonly selected: readonly PlaytestSelectedReviewSession[];
+  readonly selectedAt: string;
+}
+
+/** Explicit selection state; no fabricated selection for incomplete history. */
+export type PlaytestBatchReviewSelection =
+  | PlaytestReviewSelection
+  | { readonly status: "pending" }
+  | {
+      readonly status: "unavailable";
+      readonly reason: "recorded-before-review-selection" | "batch-incomplete";
+    };
+
+/** Verified source and exact intervention frozen into a branch assignment. */
+export interface PlaytestAssignmentBranch {
+  readonly parentEpisodeId: string;
+  readonly parentEpisodeRevision: number;
+  readonly parentBatchId: string;
+  /** Zero-based, pre-action decision step. */
+  readonly branchStep: number;
+  readonly parentTrace: PlaytestArtifactReference;
+  readonly parentCheckpoint: PlaytestCheckpointDigest;
+  readonly alternativeActionId: string;
+  readonly rngPolicy: "same-stream";
+  readonly rngPolicyVersion: string;
+}
+
+/** One frozen batch-local run assignment; the episode links back by ID. */
+export interface PlaytestBatchAssignment {
+  readonly assignmentId: string;
+  readonly scenarioId: string;
+  readonly scenarioFamily: string;
+  readonly policyId: string;
+  readonly policyVersion: string;
+  /** Null only in one-way migrated assignment history predating coverage plans. */
+  readonly cohort: string | null;
+  readonly seed: string;
+  readonly maxSteps: number;
+  readonly branch?: PlaytestAssignmentBranch;
+}
+
+/** Complete, content-hashed assignment inventory reserved before any launch. */
+export interface PlaytestAssignmentManifest {
+  readonly schema: typeof PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA;
+  readonly batchId: string;
+  readonly workspaceId: string;
+  readonly buildSha: string;
+  readonly configHash: string;
+  readonly rubricHash: string;
+  readonly approvalRevision: number;
+  readonly createdAt: string;
+  readonly assignments: readonly PlaytestBatchAssignment[];
+  readonly contentHash: string;
+}
+
+/** Durable critique slot; reservations survive review/batch write failures. */
+export interface PlaytestReviewReceipt {
+  readonly reviewId: string;
+  readonly assignmentId: string;
+  readonly episodeId: string;
+  /** Null only for migrated review history predating evidence packets. */
+  readonly packetId: string | null;
+  readonly status: "reserved" | "persisted";
+}
+
+export const PLAYTESTS_REVIEW_PACKET_FAILURE_REASONS = [
+  "trace-unavailable",
+  "trace-malformed",
+  "rubric-mismatch",
+  "packet-budget-exceeded",
+  "packet-validation-failed",
+  "artifact-store-failed",
+  "recorded-before-evidence-packets"
+] as const;
+export type PlaytestReviewPacketFailureReason =
+  (typeof PLAYTESTS_REVIEW_PACKET_FAILURE_REASONS)[number];
+
+/** Packet preparation is durable before analyst inference and may fail explicitly. */
+export type PlaytestReviewPacketReceipt =
+  | {
+      readonly status: "prepared";
+      readonly packetId: string;
+      readonly assignmentId: string;
+      readonly episodeId: string;
+      readonly artifact: PlaytestArtifactReference;
+      readonly failureReason: null;
+      readonly createdAt: string;
+    }
+  | {
+      readonly status: "unavailable";
+      readonly packetId: string;
+      readonly assignmentId: string;
+      readonly episodeId: string;
+      readonly artifact: null;
+      readonly failureReason: PlaytestReviewPacketFailureReason;
+      readonly createdAt: string;
+    };
+
+/** Frozen assignment inventory embedded in every durable batch revision. */
+export type PlaytestAssignmentInventory =
+  | {
+      readonly status: "frozen";
+      readonly manifest: PlaytestAssignmentManifest;
+    }
+  | {
+      readonly status: "unavailable";
+      readonly reason: "recorded-before-assignment-manifests";
+    };
 
 /** Aggregate coverage/cohort breakdown used by comparisons and reviews. */
 export interface PlaytestCompletionCounts {
@@ -666,8 +886,11 @@ export interface PlaytestActionRequest {
 export interface PlaytestNumericResult {
   readonly metricId: string;
   readonly metricVersion: number | string;
+  readonly phaseId: string | null;
   readonly numerator: number;
   readonly denominator: number;
+  /** All evaluator opportunities, including excluded/missing opportunities. */
+  readonly opportunityCount: number | null;
   readonly coverage: number;
   readonly unit: string;
   readonly estimate: number | null;

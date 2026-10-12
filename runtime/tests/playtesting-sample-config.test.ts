@@ -10,8 +10,8 @@ import {
   assertPlaytestGameConfiguration,
   assertPlaytestObservationContract,
   expandPlaytestRegistry,
-  PLAYTESTS_MEASUREMENT_VERSION,
-  playtestBenchmarkHashInput
+  playtestBenchmarkHashInput,
+  PLAYTESTS_MEASUREMENT_VERSION
 } from "@simulatorlife/autodev-core";
 
 const FIXTURE_ROOT = fileURLToPath(

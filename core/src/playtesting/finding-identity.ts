@@ -53,8 +53,8 @@
 
 import { canonicalPlaytestJson } from "./canonical-json.ts";
 import {
-  PLAYTESTS_COVERAGE_MODALITIES,
-  type PlaytestCoverageModality
+  type PlaytestCoverageModality,
+  PLAYTESTS_COVERAGE_MODALITIES
 } from "./types.ts";
 
 /** Bumping this constant deliberately invalidates every prior fingerprint; it is part of the hashed payload, not a free-standing version field callers can set. */
@@ -87,8 +87,33 @@ export function isPlaytestFindingId(value: unknown): value is string {
 }
 
 /** Closed identifier charset: lowercase ASCII letters/digits with single-character separators. No whitespace, sentence punctuation or non-ASCII glyphs. */
-const IDENTIFIER_PATTERN = /^[a-z0-9]+(?:[-_.:/][a-z0-9]+)*$/u;
+const IDENTIFIER_SEPARATORS = new Set(["-", "_", ".", ":", "/"]);
 const MAX_IDENTIFIER_LENGTH = 200;
+
+function isAsciiLowerLetterOrDigit(code: number): boolean {
+  return (code >= 97 && code <= 122) || (code >= 48 && code <= 57);
+}
+
+function hasValidIdentifierSeparators(value: string): boolean {
+  let separatorPending = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]!;
+    if (isAsciiLowerLetterOrDigit(value.charCodeAt(index))) {
+      separatorPending = false;
+      continue;
+    }
+    if (
+      separatorPending ||
+      index === 0 ||
+      index === value.length - 1 ||
+      !IDENTIFIER_SEPARATORS.has(character)
+    ) {
+      return false;
+    }
+    separatorPending = true;
+  }
+  return !separatorPending;
+}
 
 /**
  * Named provenance fields the measurement contract explicitly bars from
@@ -182,7 +207,7 @@ function normalizeIdentifier(value: unknown, label: string): string {
   if (normalized.length > MAX_IDENTIFIER_LENGTH) {
     throw new TypeError(label + " exceeds the maximum identifier length.");
   }
-  if (!IDENTIFIER_PATTERN.test(normalized)) {
+  if (!hasValidIdentifierSeparators(normalized)) {
     throw new TypeError(
       label +
         " must be a stable identifier (lowercase ASCII letters/digits separated by -, _, ., : or /), not free-form prose."

@@ -1,13 +1,14 @@
 "use client";
 
 import type {
+  ControlApiPlaytestingCancellationReason,
   ControlApiPlaytestingCapabilitiesResponse,
   ControlApiPlaytestingRunRecord,
   ControlApiPlaytestingRunStartedResponse,
   ControlApiPlaytestingRunStatusResponse,
   PlaytestJsonValue
 } from "@simulatorlife/autodev-core";
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import {
@@ -40,12 +41,15 @@ export type PlaytestingRunSetup =
       readonly message: string;
     };
 
+/** One editable, ordered set submitted through the canonical batch API. */
 interface RunSubmission {
   readonly workspaceId: string;
-  readonly scenario: string;
-  readonly policy: string;
-  readonly seed: string;
-  readonly maxSteps: string;
+  readonly assignments: readonly {
+    readonly scenario: string;
+    readonly policy: string;
+    readonly seed: string;
+    readonly maxSteps: number;
+  }[];
 }
 
 function objectRecord(
@@ -61,7 +65,9 @@ function responseMessage(value: unknown): string {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return "The Console could not validate the server response.";
   }
-  const error = (value as { error?: unknown }).error;
+  const record = value as { error?: unknown; message?: unknown };
+  if (typeof record.message === "string") return record.message;
+  const error = record.error;
   if (typeof error === "object" && error !== null && !Array.isArray(error)) {
     const message = (error as { message?: unknown }).message;
     if (typeof message === "string") return message;
@@ -79,11 +85,43 @@ function batchStatusBadge(status: string): React.JSX.Element {
   if (status === "persisting") {
     return <StatusBadge status="pending" label="Saving evidence" />;
   }
+  if (status === "truncated") {
+    return <StatusBadge status="unavailable" label="Truncated" />;
+  }
   return (
     <StatusBadge
       status="unavailable"
       label={status === "cancelled" ? "Cancelled" : "Failed"}
     />
+  );
+}
+
+const CANCELLATION_REASON_LABELS: Readonly<
+  Record<ControlApiPlaytestingCancellationReason, string>
+> = {
+  cancelled: "Operator requested cancellation",
+  "approval-revoked": "Playtesting approval was revoked",
+  "workspace-disabled": "Workspace was disabled"
+};
+
+interface RunAssignmentDraft {
+  readonly id: number;
+  readonly scenarioId: string;
+  readonly policyId: string;
+  readonly seed: string;
+  readonly maxSteps: string;
+}
+
+function stepsFor(
+  capabilities: ControlApiPlaytestingCapabilitiesResponse,
+  scenarioId: string,
+  policyId: string
+): number {
+  return (
+    capabilities.runnableAssignments.find(
+      (assignment) =>
+        assignment.scenarioId === scenarioId && assignment.policyId === policyId
+    )?.maxStepsPerEpisode ?? 1
   );
 }
 
@@ -96,146 +134,400 @@ function RunRequestForm({
   readonly pending: boolean;
   readonly onSubmit: (request: RunSubmission) => void;
 }): React.JSX.Element {
-  const assignments = capabilities.runnableAssignments;
-  const firstAssignment = assignments[0]!;
-  const [scenarioId, setScenarioId] = useState(firstAssignment.scenarioId);
-  const assignmentsForScenario = assignments.filter(
-    (assignment) => assignment.scenarioId === scenarioId
+  const runnableAssignments = capabilities.runnableAssignments;
+  const first = runnableAssignments[0]!;
+  const maxAssignments = capabilities.maxBatchAssignments;
+  const nextId = useRef(2);
+  const [assignments, setAssignments] = useState<readonly RunAssignmentDraft[]>(
+    [
+      {
+        id: 1,
+        scenarioId: first.scenarioId,
+        policyId: first.policyId,
+        seed: "seed-1",
+        maxSteps: String(first.maxStepsPerEpisode)
+      }
+    ]
   );
-  const [policyId, setPolicyId] = useState(assignmentsForScenario[0]!.policyId);
-  const selectedAssignment = assignments.find(
-    (assignment) =>
-      assignment.scenarioId === scenarioId && assignment.policyId === policyId
-  )!;
-  const [seed, setSeed] = useState("seed-1");
-  const [maxSteps, setMaxSteps] = useState(
-    String(
-      Math.min(
-        selectedAssignment.maxStepsPerEpisode,
-        capabilities.limits!.maxStepsPerEpisode
-      )
-    )
-  );
-  const scenarioIds = Array.from(
-    new Set(assignments.map((assignment) => assignment.scenarioId)),
-    (id) => (
-      <option key={id} value={id}>
-        {id}
-      </option>
-    )
-  );
+  const [seedPrefix, setSeedPrefix] = useState("seed");
+  const [additionalAssignments, setAdditionalAssignments] = useState("1");
+  const [showAllAssignments, setShowAllAssignments] = useState(false);
+  const duplicateCells = new Set<string>();
+  const seenCells = new Set<string>();
+  for (const assignment of assignments) {
+    const key = JSON.stringify([
+      assignment.scenarioId,
+      assignment.policyId,
+      assignment.seed.trim()
+    ]);
+    if (seenCells.has(key)) duplicateCells.add(key);
+    seenCells.add(key);
+  }
+  const valid =
+    assignments.length > 0 &&
+    assignments.length <= maxAssignments &&
+    assignments.every((assignment) => {
+      const maximumSteps = stepsFor(
+        capabilities,
+        assignment.scenarioId,
+        assignment.policyId
+      );
+      const steps = Number(assignment.maxSteps);
+      return (
+        assignment.seed.trim().length > 0 &&
+        !duplicateCells.has(
+          JSON.stringify([
+            assignment.scenarioId,
+            assignment.policyId,
+            assignment.seed.trim()
+          ])
+        ) &&
+        Number.isSafeInteger(steps) &&
+        steps >= 1 &&
+        steps <= maximumSteps
+      );
+    });
+  const additionalCount = Number(additionalAssignments);
+  const remainingBatchCapacity = maxAssignments - assignments.length;
+  const canGenerateAssignments =
+    Number.isSafeInteger(additionalCount) &&
+    additionalCount > 0 &&
+    additionalCount <= remainingBatchCapacity &&
+    seedPrefix.trim().length > 0;
+  const displayedAssignments =
+    assignments.length <= 10 || showAllAssignments
+      ? assignments
+      : assignments.slice(0, 10);
 
-  function onScenarioChange(nextScenario: string): void {
-    setScenarioId(nextScenario);
-    const nextAssignment = assignments.find(
-      (assignment) => assignment.scenarioId === nextScenario
+  function updateAssignment(
+    id: number,
+    update: (assignment: RunAssignmentDraft) => RunAssignmentDraft
+  ): void {
+    setAssignments((current) =>
+      current.map((assignment) =>
+        assignment.id === id ? update(assignment) : assignment
+      )
     );
-    if (!nextAssignment) return;
-    setPolicyId(nextAssignment.policyId);
-    setMaxSteps((current) => {
-      const parsed = Number(current);
-      const bounded =
-        Number.isSafeInteger(parsed) && parsed > 0
-          ? Math.min(parsed, nextAssignment.maxStepsPerEpisode)
-          : nextAssignment.maxStepsPerEpisode;
-      return String(bounded);
+  }
+
+  function changeScenario(id: number, scenarioId: string): void {
+    const policy = runnableAssignments.find(
+      (assignment) => assignment.scenarioId === scenarioId
+    );
+    if (!policy) return;
+    updateAssignment(id, (assignment) => ({
+      ...assignment,
+      scenarioId,
+      policyId: policy.policyId,
+      maxSteps: String(
+        Math.min(
+          Number(assignment.maxSteps) || policy.maxStepsPerEpisode,
+          policy.maxStepsPerEpisode
+        )
+      )
+    }));
+  }
+
+  function changePolicy(id: number, policyId: string): void {
+    updateAssignment(id, (assignment) => {
+      const maxSteps = stepsFor(capabilities, assignment.scenarioId, policyId);
+      return {
+        ...assignment,
+        policyId,
+        maxSteps: String(
+          Math.min(Number(assignment.maxSteps) || maxSteps, maxSteps)
+        )
+      };
     });
   }
 
-  function onPolicyChange(nextPolicy: string): void {
-    setPolicyId(nextPolicy);
-    const nextAssignment = assignments.find(
-      (assignment) =>
-        assignment.scenarioId === scenarioId &&
-        assignment.policyId === nextPolicy
+  function addAssignment(): void {
+    if (assignments.length >= maxAssignments) return;
+    const template = assignments[0]!;
+    const seeds = new Set(assignments.map((assignment) => assignment.seed));
+    let seedNumber = assignments.length + 1;
+    while (seeds.has("seed-" + String(seedNumber))) seedNumber += 1;
+    const id = nextId.current++;
+    setAssignments((current) => [
+      ...current,
+      {
+        id,
+        scenarioId: template.scenarioId,
+        policyId: template.policyId,
+        seed: "seed-" + String(seedNumber),
+        maxSteps: template.maxSteps
+      }
+    ]);
+  }
+
+  function generateAssignments(): void {
+    if (!canGenerateAssignments) return;
+    const template = assignments[0]!;
+    const seeds = new Set(
+      assignments
+        .filter(
+          (assignment) =>
+            assignment.scenarioId === template.scenarioId &&
+            assignment.policyId === template.policyId
+        )
+        .map((assignment) => assignment.seed.trim())
     );
-    if (!nextAssignment) return;
-    setMaxSteps((current) => {
-      const parsed = Number(current);
-      return String(
-        Number.isSafeInteger(parsed) && parsed > 0
-          ? Math.min(parsed, nextAssignment.maxStepsPerEpisode)
-          : nextAssignment.maxStepsPerEpisode
-      );
-    });
+    const prefix = seedPrefix.trim();
+    let sequence = assignments.length + 1;
+    const generated: RunAssignmentDraft[] = [];
+    while (generated.length < additionalCount) {
+      const seed = prefix + "-" + String(sequence++);
+      if (seeds.has(seed)) continue;
+      seeds.add(seed);
+      generated.push({
+        id: nextId.current++,
+        scenarioId: template.scenarioId,
+        policyId: template.policyId,
+        seed,
+        maxSteps: template.maxSteps
+      });
+    }
+    setAssignments((current) => [...current, ...generated]);
   }
 
   function submit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
+    if (!valid) return;
     onSubmit({
       workspaceId: capabilities.workspaceId,
-      scenario: scenarioId,
-      policy: policyId,
-      seed,
-      maxSteps
+      assignments: assignments.map((assignment) => ({
+        scenario: assignment.scenarioId,
+        policy: assignment.policyId,
+        seed: assignment.seed.trim(),
+        maxSteps: Number(assignment.maxSteps)
+      }))
     });
   }
 
   return (
     <form
-      aria-label="Run one approved Playtesting episode"
-      className="grid gap-3 md:grid-cols-2"
+      aria-label="Run an approved Playtesting batch"
+      className="grid gap-3"
       onSubmit={submit}
     >
-      <label className="flex flex-col gap-1 text-xs text-fg-muted">
-        Scenario
-        <select
-          className={FIELD_CONTROL_CLASS}
-          name="scenario"
-          value={scenarioId}
-          onChange={(event) => onScenarioChange(event.currentTarget.value)}
+      <fieldset className={`${NESTED_PANEL_CLASS} grid gap-3 md:grid-cols-3`}>
+        <legend className="px-1 text-sm font-semibold">
+          Generate seed variations
+        </legend>
+        <label className="flex flex-col gap-1 text-xs text-fg-muted">
+          Seed prefix
+          <input
+            className={FIELD_CONTROL_CLASS}
+            disabled={pending}
+            maxLength={256}
+            value={seedPrefix}
+            onChange={(event) => setSeedPrefix(event.currentTarget.value)}
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-fg-muted">
+          Additional assignments
+          <input
+            className={FIELD_CONTROL_CLASS}
+            disabled={pending || remainingBatchCapacity < 1}
+            max={remainingBatchCapacity}
+            min={1}
+            type="number"
+            value={additionalAssignments}
+            onChange={(event) =>
+              setAdditionalAssignments(event.currentTarget.value)
+            }
+          />
+        </label>
+        <button
+          className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
+          disabled={pending || !canGenerateAssignments}
+          onClick={generateAssignments}
+          type="button"
         >
-          {scenarioIds}
-        </select>
-      </label>
-      <label className="flex flex-col gap-1 text-xs text-fg-muted">
-        Policy / cohort
-        <select
-          className={FIELD_CONTROL_CLASS}
-          name="policy"
-          value={policyId}
-          onChange={(event) => onPolicyChange(event.currentTarget.value)}
+          Generate assignments
+        </button>
+        <p className={`${MUTED_META_CLASS} md:col-span-3`}>
+          Generated rows copy the first assignment&apos;s scenario, policy and
+          step budget, using distinct prefix-number seeds.
+        </p>
+      </fieldset>
+      <ol aria-label="Batch assignments" className="grid gap-3">
+        {displayedAssignments.map((assignment, index) => {
+          const row = index + 1;
+          const optionsForScenario = runnableAssignments.filter(
+            (candidate) => candidate.scenarioId === assignment.scenarioId
+          );
+          const selected = runnableAssignments.find(
+            (candidate) =>
+              candidate.scenarioId === assignment.scenarioId &&
+              candidate.policyId === assignment.policyId
+          )!;
+          const duplicate = duplicateCells.has(
+            JSON.stringify([
+              assignment.scenarioId,
+              assignment.policyId,
+              assignment.seed.trim()
+            ])
+          );
+          return (
+            <li key={assignment.id}>
+              <fieldset
+                className={`${NESTED_PANEL_CLASS} grid gap-3 md:grid-cols-2`}
+              >
+                <legend className="px-1 text-sm font-semibold">
+                  Assignment {row}
+                </legend>
+                <label className="flex flex-col gap-1 text-xs text-fg-muted">
+                  Scenario {row}
+                  <select
+                    className={FIELD_CONTROL_CLASS}
+                    disabled={pending}
+                    name={`scenario-${row}`}
+                    value={assignment.scenarioId}
+                    onChange={(event) =>
+                      changeScenario(assignment.id, event.currentTarget.value)
+                    }
+                  >
+                    {Array.from(
+                      new Set(
+                        runnableAssignments.map((item) => item.scenarioId)
+                      ),
+                      (scenarioId) => (
+                        <option key={scenarioId} value={scenarioId}>
+                          {scenarioId}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-fg-muted">
+                  Policy / cohort {row}
+                  <select
+                    className={FIELD_CONTROL_CLASS}
+                    disabled={pending}
+                    name={`policy-${row}`}
+                    value={assignment.policyId}
+                    onChange={(event) =>
+                      changePolicy(assignment.id, event.currentTarget.value)
+                    }
+                  >
+                    {optionsForScenario.map((option) => (
+                      <option key={option.policyId} value={option.policyId}>
+                        {option.policyId +
+                          " · " +
+                          option.cohort +
+                          " · " +
+                          option.strategy}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <p className={`${MUTED_META_CLASS} md:col-span-2`}>
+                  Family {selected.scenarioFamily} · policy version{" "}
+                  {selected.policyVersion} · maximum{" "}
+                  {selected.maxStepsPerEpisode} steps for this approved cell.
+                </p>
+                <label className="flex flex-col gap-1 text-xs text-fg-muted">
+                  Seed {row}
+                  <input
+                    className={FIELD_CONTROL_CLASS}
+                    disabled={pending}
+                    maxLength={256}
+                    name={`seed-${row}`}
+                    required
+                    value={assignment.seed}
+                    onChange={(event) => {
+                      const seed = event.currentTarget.value;
+                      updateAssignment(assignment.id, (current) => ({
+                        ...current,
+                        seed
+                      }));
+                    }}
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-fg-muted">
+                  Step budget {row}
+                  <input
+                    className={FIELD_CONTROL_CLASS}
+                    disabled={pending}
+                    max={selected.maxStepsPerEpisode}
+                    min={1}
+                    name={`maxSteps-${row}`}
+                    type="number"
+                    value={assignment.maxSteps}
+                    onChange={(event) => {
+                      const maxSteps = event.currentTarget.value;
+                      updateAssignment(assignment.id, (current) => ({
+                        ...current,
+                        maxSteps
+                      }));
+                    }}
+                  />
+                </label>
+                {duplicate ? (
+                  <p className="text-sm text-error" role="alert">
+                    Scenario, policy, and seed must identify a unique
+                    assignment.
+                  </p>
+                ) : null}
+                <button
+                  className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
+                  disabled={pending || assignments.length === 1}
+                  onClick={() =>
+                    setAssignments((current) =>
+                      current.filter((entry) => entry.id !== assignment.id)
+                    )
+                  }
+                  type="button"
+                >
+                  Remove assignment {row}
+                </button>
+              </fieldset>
+            </li>
+          );
+        })}
+      </ol>
+      {assignments.length > displayedAssignments.length ? (
+        <button
+          className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm"
+          onClick={() => setShowAllAssignments(true)}
+          type="button"
         >
-          {assignmentsForScenario.map((assignment) => (
-            <option key={assignment.policyId} value={assignment.policyId}>
-              {assignment.policyId +
-                " · " +
-                assignment.cohort +
-                " · " +
-                assignment.strategy}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="flex flex-col gap-1 text-xs text-fg-muted">
-        Seed
-        <input
-          className={FIELD_CONTROL_CLASS}
-          maxLength={256}
-          name="seed"
-          required
-          value={seed}
-          onChange={(event) => setSeed(event.currentTarget.value)}
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-xs text-fg-muted">
-        Step budget
-        <input
-          className={FIELD_CONTROL_CLASS}
-          max={selectedAssignment.maxStepsPerEpisode}
-          min={1}
-          name="maxSteps"
-          type="number"
-          value={maxSteps}
-          onChange={(event) => setMaxSteps(event.currentTarget.value)}
-        />
-      </label>
-      <div className="md:col-span-2">
+          Show {assignments.length - displayedAssignments.length} more
+          assignments
+        </button>
+      ) : null}
+      {showAllAssignments && assignments.length > 10 ? (
+        <button
+          className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm"
+          onClick={() => setShowAllAssignments(false)}
+          type="button"
+        >
+          Collapse to first 10 assignments
+        </button>
+      ) : null}
+      <button
+        className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
+        disabled={pending || assignments.length >= maxAssignments}
+        onClick={addAssignment}
+        type="button"
+      >
+        Add assignment
+      </button>
+      <div>
         <p className={MUTED_META_CLASS}>
-          Budget preview: 1 episode · {selectedAssignment.scenarioFamily} · at
-          most {selectedAssignment.maxStepsPerEpisode} steps ·{" "}
-          {capabilities.limits!.workerCount} concurrent worker(s) ·{" "}
-          {capabilities.limits!.wallTimeMs} ms wall time · 0 critiques.
+          Batch budget preview: {assignments.length} of {maxAssignments}{" "}
+          per-batch episode assignments · {capabilities.limits!.workerCount}{" "}
+          concurrent worker(s) · {capabilities.limits!.wallTimeMs} ms wall time
+          · at most {capabilities.limits!.critiqueCount} critiques.
+        </p>
+        <p className={MUTED_META_CLASS}>
+          Runtime also checks the remaining approved build budget before any
+          sandbox launches.
+        </p>
+        <p className={MUTED_META_CLASS}>
+          Critiques are not invoked by starting a batch; any later reviews
+          remain bounded by the frozen selection and approved critique cap.
         </p>
         <p className={MUTED_META_CLASS}>
           Build {capabilities.buildSha} · {capabilities.gameBuild} · the Runtime
@@ -245,10 +537,12 @@ function RunRequestForm({
       <button
         className="min-h-11 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-fg-inverse disabled:cursor-not-allowed disabled:opacity-60"
         data-playtesting-run-submit="true"
-        disabled={pending || seed.trim().length === 0}
+        disabled={pending || !valid}
         type="submit"
       >
-        {pending ? "Submitting…" : "Run one approved episode"}
+        {pending
+          ? "Submitting…"
+          : `Run ${assignments.length} approved assignment${assignments.length === 1 ? "" : "s"}`}
       </button>
     </form>
   );
@@ -301,6 +595,13 @@ function setupMessage(
       message: "The active workspace approval has no readable resource budget."
     };
   }
+  if (capabilities.maxBatchAssignments < 1) {
+    return {
+      label: "Batch budget unavailable",
+      message:
+        "The checked-in target budget does not permit an approved batch assignment."
+    };
+  }
   if (capabilities.configurationStatus !== "validated") {
     return {
       label: "Preflight required",
@@ -334,7 +635,16 @@ function RunStatusPanel({
   readonly onCancel: () => void;
 }): React.JSX.Element {
   const result = objectRecord(run.result);
-  const episodeId = result?.episodeId;
+  const rawOutcomes = result?.outcomes;
+  const outcomes = Array.isArray(rawOutcomes)
+    ? rawOutcomes.filter(
+        (outcome): outcome is Readonly<Record<string, PlaytestJsonValue>> =>
+          typeof outcome === "object" &&
+          outcome !== null &&
+          !Array.isArray(outcome)
+      )
+    : [];
+  const counts = objectRecord(result?.counts ?? null);
   return (
     <section
       aria-label="Server-confirmed run status"
@@ -346,15 +656,65 @@ function RunStatusPanel({
       </div>
       {run.error ? (
         <p className={MUTED_BODY_CLASS}>{run.error.message}</p>
-      ) : typeof episodeId === "string" ? (
-        <NavigationLink
-          className="text-sm text-accent hover:underline"
-          href={playtestingEpisodeHref(scope, episodeId, 0)}
-        >
-          Open episode {episodeId}
-        </NavigationLink>
+      ) : null}
+      {run.cancellationReason ? (
+        <p className={MUTED_META_CLASS}>
+          Cancellation: {CANCELLATION_REASON_LABELS[run.cancellationReason]}.
+        </p>
+      ) : null}
+      {counts && Number.isSafeInteger(counts.assigned) ? (
+        <p className={MUTED_META_CLASS}>
+          Progress: {String(counts.completed ?? 0)} completed ·{" "}
+          {String(counts.crashed ?? 0)} crashed ·{" "}
+          {String(counts.budgetTruncated ?? 0)} budget-truncated ·{" "}
+          {String(counts.infrastructureFailed ?? 0)} infrastructure failures ·{" "}
+          {String(counts.cancelled ?? 0)} cancelled of {String(counts.assigned)}{" "}
+          assigned.
+        </p>
+      ) : null}
+      {outcomes.length > 0 ? (
+        <ul aria-label="Assignment outcomes" className="grid gap-1">
+          {outcomes.map((outcome, index) => {
+            const episodeId = outcome.episodeId;
+            const assignmentId = outcome.assignmentId;
+            const state = outcome.state;
+            return (
+              <li
+                key={typeof assignmentId === "string" ? assignmentId : index}
+                className="text-sm"
+              >
+                {typeof episodeId === "string" ? (
+                  <NavigationLink
+                    className="text-accent hover:underline"
+                    href={playtestingEpisodeHref(scope, episodeId, 0)}
+                  >
+                    Open{" "}
+                    {typeof assignmentId === "string"
+                      ? assignmentId
+                      : "assignment"}{" "}
+                    · {episodeId}
+                  </NavigationLink>
+                ) : (
+                  <span>
+                    {typeof assignmentId === "string"
+                      ? assignmentId
+                      : "Assignment"}{" "}
+                    ·{" "}
+                    {typeof state === "string" ? state : "no episode recorded"}
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      ) : run.result === null ? (
+        <p className={MUTED_META_CLASS}>
+          Assignment outcomes are not recorded yet.
+        </p>
       ) : (
-        <p className={MUTED_META_CLASS}>No episode result is recorded yet.</p>
+        <p className={MUTED_META_CLASS}>
+          The batch has no persisted episode outcomes.
+        </p>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
         <button
@@ -426,19 +786,17 @@ export function PlaytestingRunControls({
     setFailure(null);
     setNotice(null);
     try {
+      const form = new URLSearchParams({
+        workspaceId: request.workspaceId,
+        assignments: JSON.stringify(request.assignments)
+      });
       const response = await fetch("/api/playtesting/runs", {
         method: "POST",
         headers: {
           accept: "application/json",
           "content-type": "application/x-www-form-urlencoded"
         },
-        body: new URLSearchParams({
-          workspaceId: request.workspaceId,
-          scenario: request.scenario,
-          policy: request.policy,
-          seed: request.seed,
-          maxSteps: request.maxSteps
-        })
+        body: form
       });
       const payload: unknown = await response.json();
       if (!response.ok) {
@@ -465,7 +823,13 @@ export function PlaytestingRunControls({
         result: null,
         error: null
       });
-      setNotice("The Runtime confirmed this approved episode assignment.");
+      setNotice(
+        "The Runtime confirmed an approved batch of " +
+          String(envelope.data.assignmentCount) +
+          (envelope.data.assignmentCount === 1
+            ? " assignment."
+            : " assignments.")
+      );
     } catch {
       setFailure(
         "The same-origin run request could not reach the Console server."
@@ -560,12 +924,12 @@ export function PlaytestingRunControls({
         className={SECTION_HEADING_CLASS}
         id="playtesting-run-controls-heading"
       >
-        Run an approved episode
+        Run an approved batch
       </h2>
       <p className={MUTED_BODY_CLASS}>
-        Run requests contain only typed scenario, policy, seed, and step-budget
-        fields. Workspaces owns exact-build approval; the Runtime confirms
-        status and cancellation.
+        Batch requests contain an ordered list of typed scenario, policy, seed,
+        and step-budget assignments. Workspaces owns exact-build approval; the
+        Runtime confirms assignment outcomes, status, and cancellation.
       </p>
       {unavailable ? (
         <div className="flex flex-col gap-2">

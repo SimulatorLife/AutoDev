@@ -3,13 +3,14 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
   type ControlApiPlaytestingActiveRunsResponse,
-  type ControlApiPlaytestingCapabilitiesResponse,
   type ControlApiPlaytestingCancellationReason,
+  type ControlApiPlaytestingCapabilitiesResponse,
   type ControlApiPlaytestingRunCancellationResponse,
   type ControlApiPlaytestingRunRecord,
   type ControlApiPlaytestingRunStartedResponse,
   type ControlApiPlaytestingRunStatusResponse,
-  type PlaytestJsonValue
+  type PlaytestJsonValue,
+  PLAYTESTS_MAX_BATCH_ASSIGNMENTS
 } from "@simulatorlife/autodev-core";
 import { ConfigRepository } from "@simulatorlife/autodev-data";
 import { PlaytestSourceUnavailableError } from "@simulatorlife/autodev-data/playtesting";
@@ -42,7 +43,8 @@ const RUN_STATES = new Set([
   "persisting",
   "completed",
   "failed",
-  "cancelled"
+  "cancelled",
+  "truncated"
 ]);
 const CANCELLATION_REASONS = new Set<ControlApiPlaytestingCancellationReason>([
   "cancelled",
@@ -53,14 +55,33 @@ const CANCELLATION_REASONS = new Set<ControlApiPlaytestingCancellationReason>([
 const cancellationRequestSchema = z.strictObject({
   expectedStatus: z.literal("running")
 });
-const runRequestSchema = z.strictObject({
-  workspaceId: z.string().regex(WORKSPACE_ID_PATTERN),
+const batchAssignmentSchema = z.strictObject({
   scenario: z.string().min(1).max(256),
   policy: z.string().min(1).max(256),
   seed: z.string().min(1).max(256),
   goal: z.string().max(1000).optional(),
   maxSteps: z.number().int().min(1).max(100_000).optional()
 });
+/** The one batch request shape; a one-episode Console submit is a 1-element array. */
+const batchRunRequestSchema = z.strictObject({
+  workspaceId: z.string().regex(WORKSPACE_ID_PATTERN),
+  assignments: z
+    .array(batchAssignmentSchema)
+    .min(1)
+    .max(PLAYTESTS_MAX_BATCH_ASSIGNMENTS)
+});
+const branchRunRequestSchema = z.strictObject({
+  workspaceId: z.string().regex(WORKSPACE_ID_PATTERN),
+  parentEpisodeId: z.string().min(1).max(256),
+  branchStep: z.number().int().min(0).max(99_999),
+  alternativeActionId: z.string().min(1).max(256),
+  policy: z.string().min(1).max(256).optional(),
+  maxSteps: z.number().int().min(1).max(100_000).optional()
+});
+const runRequestSchema = z.union([
+  batchRunRequestSchema,
+  branchRunRequestSchema
+]);
 const PROCESS_SESSION_HEADER = "x-autodev-playtest-session";
 const BASE64URL_HEADER_PATTERN = /^[A-Za-z0-9_-]+$/u;
 const processSessionSchema = z.strictObject({
@@ -463,8 +484,7 @@ async function startRun(
     };
     recordAudit(options, actor, "start_playtest_run", workspaceId, "ok", {
       batchId: started.batchId,
-      scenario: runRequest.scenario,
-      policy: runRequest.policy
+      assignmentCount: started.assignmentCount
     });
     sendJson(response, 202, body, { "cache-control": "no-store" });
   } catch (error) {

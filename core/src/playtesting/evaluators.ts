@@ -41,6 +41,7 @@ export interface LegalActionRequestEvent {
 export function evaluateLegalActionRejection(
   workspaceId: string,
   measurementVersion: string,
+  evaluatorHash: string,
   events: readonly LegalActionRequestEvent[]
 ): PlaytestNumericResult {
   let denominator = 0;
@@ -68,8 +69,10 @@ export function evaluateLegalActionRejection(
   return {
     metricId: "legal-action-rejection",
     metricVersion: 1,
+    phaseId: null,
     numerator,
     denominator,
+    opportunityCount: events.length,
     coverage,
     unit: "proportion",
     estimate: denominator === 0 ? null : numerator / denominator,
@@ -77,7 +80,7 @@ export function evaluateLegalActionRejection(
     missingReasons,
     independentUnits: denominator,
     provenance: makePlaytestProvenance(workspaceId, measurementVersion, {
-      evaluatorHash: "fixture/legal-rejection-v1"
+      evaluatorHash
     }),
     notes:
       denominator === 0
@@ -107,6 +110,7 @@ const COMPETITIVE_CHOICE_WINDOW = 0.05;
 export function evaluateCompetitiveChoiceShare(
   workspaceId: string,
   measurementVersion: string,
+  evaluatorHash: string,
   decisions: readonly CompetitiveChoiceDecisionEvent[]
 ): PlaytestNumericResult {
   let denominator = 0;
@@ -136,8 +140,10 @@ export function evaluateCompetitiveChoiceShare(
   return {
     metricId: "competitive-choice-share",
     metricVersion: 1,
+    phaseId: null,
     numerator,
     denominator,
+    opportunityCount: totalEligible,
     coverage,
     unit: "proportion",
     estimate: denominator === 0 ? null : numerator / denominator,
@@ -145,7 +151,7 @@ export function evaluateCompetitiveChoiceShare(
     missingReasons,
     independentUnits: denominator,
     provenance: makePlaytestProvenance(workspaceId, measurementVersion, {
-      evaluatorHash: "fixture/competitive-options-v1"
+      evaluatorHash
     }),
     notes:
       denominator === 0
@@ -175,6 +181,7 @@ export interface RepeatForecastProbeEvent {
 export function evaluateRepeatForecastError(
   workspaceId: string,
   measurementVersion: string,
+  evaluatorHash: string,
   probes: readonly RepeatForecastProbeEvent[]
 ): PlaytestNumericResult {
   let denominator = 0;
@@ -203,8 +210,10 @@ export function evaluateRepeatForecastError(
   return {
     metricId: "repeat-forecast-error",
     metricVersion: 1,
+    phaseId: null,
     numerator,
     denominator,
+    opportunityCount: probes.length,
     coverage: probes.length === 0 ? 0 : denominator / probes.length,
     unit: "proportion",
     estimate: denominator === 0 ? null : numerator / denominator,
@@ -212,7 +221,7 @@ export function evaluateRepeatForecastError(
     missingReasons,
     independentUnits: denominator,
     provenance: makePlaytestProvenance(workspaceId, measurementVersion, {
-      evaluatorHash: "fixture/repeated-error-v1"
+      evaluatorHash
     }),
     notes:
       denominator === 0

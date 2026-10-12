@@ -15,10 +15,12 @@
  */
 
 import {
+  type PlaytestCoverageModality,
   type PlaytestDimensionRubric,
   type PlaytestMissingReason,
   type PlaytestPolarity,
   type PlaytestProvenance,
+  PLAYTESTS_COVERAGE_MODALITIES,
   PLAYTESTS_POLARITIES,
   PLAYTESTS_REGISTRY_SCHEMA,
   type PlaytestScoreBand
@@ -34,6 +36,7 @@ export const PLAYTESTS_METRIC_REQUIRED_FIELDS = [
   "exposurePredicate",
   "eventFields",
   "evaluatorRef",
+  "evaluatorHash",
   "numerator",
   "denominator",
   "unit",
@@ -58,6 +61,8 @@ export const PLAYTESTS_METRIC_REQUIRED_FIELDS = [
 
 export type PlaytestMetricRequiredField =
   (typeof PLAYTESTS_METRIC_REQUIRED_FIELDS)[number];
+
+const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 
 /** A registry-level defaults block. */
 export interface PlaytestRegistryDefaults {
@@ -97,6 +102,7 @@ export interface PlaytestMetricDefinitionInput {
   readonly exposurePredicate: string;
   readonly eventFields: readonly string[];
   readonly evaluatorRef: string;
+  readonly evaluatorHash: string;
   readonly numerator: string;
   readonly denominator: string;
   readonly unit: string;
@@ -129,6 +135,7 @@ export interface PlaytestMetricDefinition {
   readonly exposurePredicate: string;
   readonly eventFields: readonly string[];
   readonly evaluatorRef: string;
+  readonly evaluatorHash: string;
   readonly numerator: string;
   readonly denominator: string;
   readonly unit: string;
@@ -151,28 +158,44 @@ export interface PlaytestMetricDefinition {
   readonly guardrailMargin: number | null;
 }
 
+/** One game-owned required opportunity cell for a deterministic metric. */
+export interface PlaytestCoverageRequirement {
+  readonly coverageMetricId: string;
+  readonly mechanicKey: string;
+  readonly phaseId: string | null;
+  readonly scenarioFamily: string;
+  readonly cohort: string;
+  readonly policy: string;
+  readonly modality: PlaytestCoverageModality;
+  readonly requiredOpportunities: number;
+  readonly requiredIndependentUnits: number;
+  readonly unsupportedReason: string | null;
+}
+
 /** A metric registry as supplied by the game/adapter. */
 export interface PlaytestMetricRegistryInput {
-  readonly schemaVersion: number;
+  readonly schemaVersion: 2;
   readonly workspaceId: string;
   readonly audience: string;
   readonly registryVersion: string;
   readonly eventSchemaHash: string;
   readonly defaults: PlaytestRegistryDefaults;
   readonly metricDefinitions: readonly PlaytestMetricDefinitionInput[];
+  readonly coverageRequirements: readonly PlaytestCoverageRequirement[];
   readonly dimensionRubrics?: readonly PlaytestDimensionRubric[];
 }
 
 /** A metric registry after validation and default expansion. */
 export interface PlaytestMetricRegistry {
   readonly schema: typeof PLAYTESTS_REGISTRY_SCHEMA;
-  readonly schemaVersion: number;
+  readonly schemaVersion: 2;
   readonly workspaceId: string;
   readonly audience: string;
   readonly registryVersion: string;
   readonly eventSchemaHash: string;
   readonly defaults: PlaytestRegistryDefaults;
   readonly metricDefinitions: readonly PlaytestMetricDefinition[];
+  readonly coverageRequirements: readonly PlaytestCoverageRequirement[];
   readonly dimensionRubrics: readonly PlaytestDimensionRubric[];
 }
 
@@ -439,8 +462,12 @@ function assertDimensionRubric(
     }
   }
   assertNonEmptyString(value.dimensionId, `${field}.dimensionId`);
-  if (typeof value.version !== "number" || !Number.isInteger(value.version)) {
-    throw new TypeError(`${field}.version must be an integer.`);
+  if (
+    typeof value.version !== "number" ||
+    !Number.isSafeInteger(value.version) ||
+    value.version < 1
+  ) {
+    throw new TypeError(`${field}.version must be a positive integer.`);
   }
   assertKnownEnum(value.unit, `${field}.unit`, DIMENSION_UNITS);
   assertNonEmptyString(value.indicator, `${field}.indicator`);
@@ -511,6 +538,7 @@ function expandMetricDefinition(
     exposurePredicate: input.exposurePredicate,
     eventFields: input.eventFields,
     evaluatorRef: input.evaluatorRef,
+    evaluatorHash: input.evaluatorHash,
     numerator: input.numerator,
     denominator: input.denominator,
     unit: input.unit,
@@ -589,6 +617,12 @@ function assertMetricCalculation(
   assertNonEmptyString(value.exposurePredicate, `${field}.exposurePredicate`);
   assertStringArray(value.eventFields, `${field}.eventFields`);
   assertNonEmptyString(value.evaluatorRef, `${field}.evaluatorRef`);
+  if (
+    typeof value.evaluatorHash !== "string" ||
+    !SHA256_PATTERN.test(value.evaluatorHash)
+  ) {
+    throw new TypeError(`${field}.evaluatorHash must be a SHA-256 digest.`);
+  }
   assertNonEmptyString(value.numerator, `${field}.numerator`);
   assertNonEmptyString(value.denominator, `${field}.denominator`);
   assertNonEmptyString(value.unit, `${field}.unit`);
@@ -698,13 +732,131 @@ function assertMetricDefinition(
   assertMetricHumanAndMargins(value, field);
 }
 
+function expandCoverageRequirements(
+  raw: unknown,
+  metrics: readonly PlaytestMetricDefinition[]
+): readonly PlaytestCoverageRequirement[] {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > 256) {
+    throw new TypeError(
+      "Metric registry coverageRequirements must contain between 1 and 256 cells."
+    );
+  }
+  const metricsById = new Map(
+    metrics.map((metric) => [metric.metricId, metric])
+  );
+  const seen = new Set<string>();
+  return raw.map((entry, index) => {
+    const field = "coverageRequirements[" + String(index) + "]";
+    if (!isPlainObject(entry))
+      throw new TypeError(field + " must be an object.");
+    const keys = [
+      "coverageMetricId",
+      "mechanicKey",
+      "phaseId",
+      "scenarioFamily",
+      "cohort",
+      "policy",
+      "modality",
+      "requiredOpportunities",
+      "requiredIndependentUnits",
+      "unsupportedReason"
+    ];
+    if (
+      Object.keys(entry).length !== keys.length ||
+      Object.keys(entry).some((key) => !keys.includes(key))
+    ) {
+      throw new TypeError(field + " has unknown or missing fields.");
+    }
+    for (const key of [
+      "coverageMetricId",
+      "mechanicKey",
+      "scenarioFamily",
+      "cohort",
+      "policy"
+    ]) {
+      assertNonEmptyString(entry[key], field + "." + key);
+    }
+    if (entry.phaseId !== null) {
+      assertNonEmptyString(entry.phaseId, field + ".phaseId");
+    }
+    assertKnownEnum(
+      entry.modality,
+      field + ".modality",
+      new Set(PLAYTESTS_COVERAGE_MODALITIES)
+    );
+    assertNonNegativeInteger(
+      entry.requiredOpportunities,
+      field + ".requiredOpportunities"
+    );
+    assertNonNegativeInteger(
+      entry.requiredIndependentUnits,
+      field + ".requiredIndependentUnits"
+    );
+    if (
+      entry.unsupportedReason !== null &&
+      (typeof entry.unsupportedReason !== "string" ||
+        entry.unsupportedReason.trim().length === 0 ||
+        entry.unsupportedReason.length > 256)
+    ) {
+      throw new TypeError(
+        field + ".unsupportedReason must be null or bounded text."
+      );
+    }
+    if (
+      entry.unsupportedReason === null &&
+      ((entry.requiredOpportunities as number) < 1 ||
+        (entry.requiredIndependentUnits as number) < 1)
+    ) {
+      throw new TypeError(field + " requires positive coverage thresholds.");
+    }
+    const metric = metricsById.get(entry.coverageMetricId as string);
+    if (
+      !metric ||
+      metric.mechanicKey !== entry.mechanicKey ||
+      metric.modality !== entry.modality ||
+      (metric.aggregationWindow === "phase"
+        ? typeof entry.phaseId !== "string"
+        : metric.aggregationWindow === "whole-episode"
+          ? entry.phaseId !== null
+          : true)
+    ) {
+      throw new TypeError(
+        field +
+          " must reference an episode- or phase-window metric with matching mechanic, phase, and modality."
+      );
+    }
+    if (
+      metric.modality === "human-post-play" &&
+      entry.unsupportedReason === null
+    ) {
+      throw new TypeError(
+        field + " cannot require human-post-play data from a game episode."
+      );
+    }
+    const requirement = entry as unknown as PlaytestCoverageRequirement;
+    const key = [
+      requirement.coverageMetricId,
+      requirement.mechanicKey,
+      requirement.phaseId,
+      requirement.scenarioFamily,
+      requirement.cohort,
+      requirement.policy,
+      requirement.modality
+    ].join("\u001F");
+    if (seen.has(key))
+      throw new TypeError("Coverage requirement cells must be unique.");
+    seen.add(key);
+    return requirement;
+  });
+}
+
 /** Validate a metric-registry input and return the expanded form. */
 export function expandPlaytestRegistry(input: unknown): PlaytestMetricRegistry {
   if (!isPlainObject(input)) {
     throw new TypeError("Metric registry must be a plain object.");
   }
-  if (input.schemaVersion !== 1) {
-    throw new TypeError("Metric registry schemaVersion must be the integer 1.");
+  if (input.schemaVersion !== 2) {
+    throw new TypeError("Metric registry schemaVersion must be the integer 2.");
   }
   assertNonEmptyString(input.workspaceId, "workspaceId");
   assertNonEmptyString(input.audience, "audience");
@@ -738,6 +890,10 @@ export function expandPlaytestRegistry(input: unknown): PlaytestMetricRegistry {
       expandMetricDefinition(typed, input.defaults as PlaytestRegistryDefaults)
     );
   }
+  const coverageRequirements = expandCoverageRequirements(
+    input.coverageRequirements,
+    expandedMetrics
+  );
   const dimensionRubrics: PlaytestDimensionRubric[] = [];
   if (input.dimensionRubrics !== undefined) {
     if (!Array.isArray(input.dimensionRubrics)) {
@@ -754,13 +910,14 @@ export function expandPlaytestRegistry(input: unknown): PlaytestMetricRegistry {
   }
   return {
     schema: PLAYTESTS_REGISTRY_SCHEMA,
-    schemaVersion: 1,
+    schemaVersion: 2,
     workspaceId: input.workspaceId as string,
     audience: input.audience as string,
     registryVersion: input.registryVersion as string,
     eventSchemaHash: input.eventSchemaHash as string,
     defaults: input.defaults as PlaytestRegistryDefaults,
     metricDefinitions: expandedMetrics,
+    coverageRequirements,
     dimensionRubrics
   };
 }

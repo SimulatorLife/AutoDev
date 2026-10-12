@@ -58,6 +58,7 @@ test("Playtest Control API client forwards typed run operations and host-bound s
       runnablePolicies: ["random"],
       unsupportedApprovedPolicies: [],
       configurationStatus: "validated",
+      maxBatchAssignments: 10,
       runnableAssignments: [
         {
           scenarioId: "tutorial",
@@ -97,6 +98,7 @@ test("Playtest Control API client forwards typed run operations and host-bound s
       schema: "autodev-control-playtesting-run-started-v1",
       workspaceId: WORKSPACE,
       batchId: "batch-1",
+      assignmentCount: 1,
       status: "running"
     },
     {
@@ -105,7 +107,7 @@ test("Playtest Control API client forwards typed run operations and host-bound s
       runs: [
         {
           batchId: "batch-1",
-          scenarioId: "tutorial",
+          assignmentCount: 1,
           createdAt: "2026-10-10T00:00:00Z"
         }
       ]
@@ -117,7 +119,19 @@ test("Playtest Control API client forwards typed run operations and host-bound s
         batchId: "batch-1",
         status: "completed",
         cancellationReason: null,
-        result: { episodeId: "episode-1", outcome: "win" },
+        result: {
+          batchId: "batch-1",
+          assignmentCount: 1,
+          outcomes: [
+            {
+              assignmentId: "a-0001",
+              episodeId: "episode-1",
+              state: "completed",
+              started: true,
+              eligible: true
+            }
+          ]
+        },
         error: null
       }
     },
@@ -149,11 +163,13 @@ test("Playtest Control API client forwards typed run operations and host-bound s
   const capabilities = await client.getCapabilities(SESSION, WORKSPACE);
   assert.equal(capabilities.runnablePolicies[0], "random");
   const started = await client.startRun(SESSION, {
-    scenario: "tutorial",
-    policy: "random",
-    seed: "seed-1"
+    assignments: [{ scenario: "tutorial", policy: "random", seed: "seed-1" }]
   });
-  assert.deepEqual(started, { batchId: "batch-1", status: "running" });
+  assert.deepEqual(started, {
+    batchId: "batch-1",
+    assignmentCount: 1,
+    status: "running"
+  });
   const listed = await client.listActiveRuns(SESSION, WORKSPACE);
   assert.equal(listed.length, 1);
   const status = await client.waitForRun(SESSION, WORKSPACE, "batch-1", 100);
@@ -171,9 +187,7 @@ test("Playtest Control API client forwards typed run operations and host-bound s
   );
   assert.equal(calls[1]!.method, "POST");
   assert.deepEqual(JSON.parse(calls[1]!.body!), {
-    scenario: "tutorial",
-    policy: "random",
-    seed: "seed-1",
+    assignments: [{ scenario: "tutorial", policy: "random", seed: "seed-1" }],
     workspaceId: WORKSPACE
   });
   for (const call of calls) {
@@ -304,6 +318,7 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
       runnablePolicies: ["random"],
       unsupportedApprovedPolicies: [],
       configurationStatus: "validated",
+      maxBatchAssignments: 10,
       runnableAssignments: [
         {
           scenarioId: "tutorial",
@@ -341,7 +356,12 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
     }),
     async startRun(receivedSession, request) {
       delegated.push({ operation: "start", session: receivedSession, request });
-      return { batchId: "batch-remote-1", status: "running" };
+      return {
+        batchId: "batch-remote-1",
+        assignmentCount:
+          "assignments" in request ? request.assignments.length : 1,
+        status: "running"
+      };
     },
     listActiveRuns(receivedSession, workspaceId) {
       delegated.push({
@@ -352,7 +372,7 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
       return [
         {
           batchId: "batch-remote-1",
-          scenarioId: "tutorial",
+          assignmentCount: 1,
           createdAt: "2026-10-10T00:00:00.000Z"
         }
       ];
@@ -429,12 +449,42 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
     const tool = (name: string) => (mcp as any)._registeredTools[name].handler;
 
     const runResponse = await tool("playtest.run")({
-      scenario: "tutorial",
-      policy: "random",
-      seed: "remote-seed"
+      assignments: [
+        { scenario: "tutorial", policy: "random", seed: "remote-seed" }
+      ]
     });
     const run = JSON.parse(runResponse.content[0].text);
-    assert.deepEqual(run, { batchId: "batch-remote-1", status: "running" });
+    assert.deepEqual(run, {
+      batchId: "batch-remote-1",
+      assignmentCount: 1,
+      status: "running"
+    });
+
+    const branchResponse = await tool("playtest.branch")({
+      parentEpisodeId: "episode-parent",
+      branchStep: 4,
+      alternativeActionId: "cool-down",
+      policy: "random",
+      maxSteps: 8
+    });
+    assert.equal(
+      branchResponse.isError,
+      undefined,
+      branchResponse.content[0].text
+    );
+    assert.deepEqual(JSON.parse(branchResponse.content[0].text), {
+      batchId: "batch-remote-1",
+      assignmentCount: 1,
+      status: "running"
+    });
+    assert.deepEqual((delegated[1] as { request: unknown }).request, {
+      workspaceId: WORKSPACE,
+      parentEpisodeId: "episode-parent",
+      branchStep: 4,
+      alternativeActionId: "cool-down",
+      policy: "random",
+      maxSteps: 8
+    });
 
     const activeResponse = await tool("playtest.activeRuns")({});
     assert.equal(
@@ -464,7 +514,7 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
 
     assert.deepEqual(
       delegated.map((entry) => (entry as { operation: string }).operation),
-      ["start", "list", "wait", "cancel"]
+      ["start", "start", "list", "wait", "cancel"]
     );
     for (const entry of delegated) {
       assert.deepEqual(

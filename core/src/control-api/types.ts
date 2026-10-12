@@ -23,15 +23,21 @@ import type { SandboxMode } from "../permissions/types.ts";
 import type {
   HumanPlaytestStudy,
   PlaytestBatch,
+  PlaytestBatchCancellationReason,
   PlaytestBenchmark,
   PlaytestEpisode,
   PlaytestExperiment,
   PlaytestSessionReview
 } from "../playtesting/artifacts.ts";
+import type {
+  PlaytestHumanPreferenceCounts,
+  PlaytestPreferenceSensitivityDecision
+} from "../playtesting/human-preference.ts";
 import type { PlaytestJsonValue } from "../playtesting/protocol-types.ts";
 import type {
   PlaytestComparison,
-  PlaytestFinding
+  PlaytestFinding,
+  PlaytestNumericInterval
 } from "../playtesting/types.ts";
 import type {
   OperationHistoryEntry,
@@ -1002,10 +1008,10 @@ export type ControlApiMemoryInjectionUseAssessmentsResponse =
 
 /** Runtime run state surfaced by authenticated Playtesting actions. */
 export type ControlApiPlaytestingRunState =
-  "running" | "persisting" | "completed" | "failed" | "cancelled";
+  "running" | "persisting" | "completed" | "failed" | "cancelled" | "truncated";
 
 export type ControlApiPlaytestingCancellationReason =
-  "cancelled" | "approval-revoked" | "workspace-disabled";
+  PlaytestBatchCancellationReason;
 
 export interface ControlApiPlaytestingRunRecord {
   readonly batchId: string;
@@ -1037,6 +1043,8 @@ export interface ControlApiPlaytestingCapabilitiesResponse {
   readonly runnablePolicies: readonly string[];
   readonly unsupportedApprovedPolicies: readonly string[];
   readonly configurationStatus: "validated" | "invalid" | "not-checked";
+  /** Maximum assignments in one request after checked-in and approved limits. */
+  readonly maxBatchAssignments: number;
   readonly runnableAssignments: readonly {
     readonly scenarioId: string;
     readonly scenarioFamily: string;
@@ -1065,14 +1073,13 @@ export interface ControlApiPlaytestingActiveRunsResponse {
   readonly workspaceId: string;
   readonly runs: readonly {
     readonly batchId: string;
-    readonly scenarioId: string;
+    readonly assignmentCount: number;
     readonly createdAt: string;
   }[];
 }
 
-/** One typed approved run request; never carries a command or executable path. */
-export interface ControlApiPlaytestingRunRequest {
-  readonly workspaceId: string;
+/** One typed approved batch assignment; never carries a command or path. */
+export interface ControlApiPlaytestingBatchAssignment {
   readonly scenario: string;
   readonly policy: string;
   readonly seed: string;
@@ -1080,11 +1087,20 @@ export interface ControlApiPlaytestingRunRequest {
   readonly maxSteps?: number;
 }
 
-/** Typed run-start acknowledgement; completion is read from the run route. */
+/**
+ * The single ordered, bounded batch request. There is no single-run alias.
+ */
+export interface ControlApiPlaytestingRunRequest {
+  readonly workspaceId: string;
+  readonly assignments: readonly ControlApiPlaytestingBatchAssignment[];
+}
+
+/** Typed batch acknowledgement; completion is read from the run route. */
 export interface ControlApiPlaytestingRunStartedResponse {
   readonly schema: "autodev-control-playtesting-run-started-v1";
   readonly workspaceId: string;
   readonly batchId: string;
+  readonly assignmentCount: number;
   readonly status: "running";
 }
 
@@ -1114,6 +1130,16 @@ export interface ControlApiPlaytestingHumanValidationResponse {
   readonly workspaceId: string;
   readonly studyId: string;
   readonly buildSha: string;
+  /** Separate paired-preference outcome; no PXI scale or participant IDs. */
+  readonly preference: {
+    readonly analysisPlanRef: string;
+    readonly suppressionState: "suppressed" | "unsuppressed";
+    readonly incompleteExposurePairs: number | null;
+    readonly counts: PlaytestHumanPreferenceCounts | null;
+    readonly interval: PlaytestNumericInterval | null;
+    readonly decision: PlaytestPreferenceSensitivityDecision;
+    readonly reasons: readonly string[];
+  } | null;
   readonly summary: {
     readonly revision: number;
     readonly benchmarkId: string | null;
@@ -1190,6 +1216,12 @@ export interface ControlApiPlaytestingHumanQuarantinesResponse {
     readonly responseIds: readonly string[];
     readonly instrument: string;
     readonly reason: "duplicate-participant-episode-instrument";
+  }[];
+  readonly preferenceQuarantines: readonly {
+    readonly responseIds: readonly string[];
+    readonly buildAId: string;
+    readonly buildBId: string;
+    readonly reason: "duplicate-participant-pair-preference";
   }[];
 }
 

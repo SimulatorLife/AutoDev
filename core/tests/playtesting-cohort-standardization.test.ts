@@ -5,9 +5,9 @@ import test from "node:test";
 import type { PlaytestBenchmark } from "../src/playtesting/artifacts.ts";
 import { playtestBenchmarkHashInput } from "../src/playtesting/benchmark.ts";
 import {
-  PLAYTESTS_COHORT_STANDARDIZATION_SCHEMA,
-  type PlaytestCohortStandardizationInput,
   type PlaytestBuildCohortObservations,
+  type PlaytestCohortStandardizationInput,
+  PLAYTESTS_COHORT_STANDARDIZATION_SCHEMA,
   standardizePlaytestCohortRates
 } from "../src/playtesting/index.ts";
 
@@ -75,7 +75,7 @@ function frozenBenchmark(
     metricRegistryHash: sha256("fixture-registry-v1"),
     rubricHash: sha256("fixture-rubric-v1"),
     captureMode: "headless" as const,
-    measurementVersion: "playtesting-measurement-v1",
+    measurementVersion: "playtesting-measurement-v2",
     primaryMetricIds: ["legal-action-rejection"],
     guardrailMetricIds: ["crash-rate"],
     practicalMargins: {
@@ -233,17 +233,17 @@ test("three-build mix-shift gate: raw trends mislead but fixed-weight standardiz
   for (const row of result.builds) {
     const rowRecord = row as unknown as Record<string, unknown>;
     assert.equal(
-      rowRecord["interval"],
+      rowRecord.interval,
       undefined,
       "standardization must not compute or carry a confidence interval"
     );
     assert.equal(
-      rowRecord["compositeScore"],
+      rowRecord.compositeScore,
       undefined,
       "standardization must not produce a composite score"
     );
     assert.equal(
-      rowRecord["humanClaim"],
+      rowRecord.humanClaim,
       undefined,
       "standardization must not assert a human claim"
     );
@@ -547,7 +547,7 @@ test("validation rejects negative, zero, and non-finite benchmark cohort weights
       metricRegistryHash: sha256("fixture-registry-v1"),
       rubricHash: sha256("fixture-rubric-v1"),
       captureMode: "headless",
-      measurementVersion: "playtesting-measurement-v1",
+      measurementVersion: "playtesting-measurement-v2",
       primaryMetricIds: ["legal-action-rejection"],
       guardrailMetricIds: ["crash-rate"],
       practicalMargins: {

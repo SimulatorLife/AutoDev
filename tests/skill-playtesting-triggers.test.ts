@@ -105,6 +105,11 @@ test("playtest-analysis owns the normative 8-step procedure and required report 
     );
   }
   assert.match(playtestAnalysisBody, /## Required report sections/);
+  assert.match(playtestAnalysisBody, /playtest\.prepareReview/);
+  assert.match(
+    playtestAnalysisBody,
+    /exact packet ID, packet artifact ID, and SHA-256/
+  );
   for (const section of [
     "provenance/coverage",
     "chronological episode summary",

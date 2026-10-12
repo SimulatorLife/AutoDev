@@ -1,4 +1,8 @@
-import { type PlaytestGameMode, PLAYTESTS_GAME_MODES } from "./types.ts";
+import {
+  type PlaytestDiscoverySignal,
+  type PlaytestGameMode,
+  PLAYTESTS_GAME_MODES
+} from "./types.ts";
 
 const CONFIG_PATH_SEPARATOR_PATTERN = /[\\/]/u;
 const CONFIG_ABSOLUTE_PATH_PATTERN = /^(?:[A-Za-z]:|\\\\)/u;
@@ -26,6 +30,16 @@ export interface PlaytestGameConfiguration {
     readonly benchmark: string | null;
     readonly critic: string;
     readonly maxReviewedSessions: number;
+    /**
+     * Explicit game-owned critique allocation. There is no default split;
+     * surveillanceSessions + discoverySessions <= maxReviewedSessions.
+     */
+    readonly reviewSelection: {
+      readonly surveillanceSessions: number;
+      readonly discoverySessions: number;
+      /** Null means discovery is reported unavailable, never randomized. */
+      readonly discoverySignal: PlaytestDiscoverySignal | null;
+    };
     readonly visualCapture: "off" | "on-anomaly" | "sampled" | "all";
     readonly counterfactuals: "off" | "targeted" | "all";
     readonly understandingProbes: "off" | "sampled";
@@ -158,6 +172,78 @@ function assertOneOf<const T extends readonly string[]>(
   }
 }
 
+const DISCOVERY_SIGNAL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+
+function assertReviewSelection(
+  value: unknown,
+  maxReviewedSessions: number
+): void {
+  if (!isRecord(value)) {
+    throw new TypeError(
+      "analysis.reviewSelection must declare explicit surveillance and discovery budgets."
+    );
+  }
+  assertOnlyKeys(
+    value,
+    ["surveillanceSessions", "discoverySessions", "discoverySignal"],
+    "analysis.reviewSelection"
+  );
+  assertNonNegativeInteger(
+    value.surveillanceSessions,
+    "analysis.reviewSelection.surveillanceSessions",
+    100_000
+  );
+  assertNonNegativeInteger(
+    value.discoverySessions,
+    "analysis.reviewSelection.discoverySessions",
+    100_000
+  );
+  if (
+    (value.surveillanceSessions as number) +
+      (value.discoverySessions as number) >
+    maxReviewedSessions
+  ) {
+    throw new TypeError(
+      "analysis.reviewSelection budgets must not exceed analysis.maxReviewedSessions."
+    );
+  }
+  if (!("discoverySignal" in value)) {
+    throw new TypeError(
+      "analysis.reviewSelection.discoverySignal must be declared (null when no approved signal exists)."
+    );
+  }
+  const signal = value.discoverySignal;
+  if (signal === null) return;
+  if (!isRecord(signal)) {
+    throw new TypeError(
+      "analysis.reviewSelection.discoverySignal must be null or a versioned metric signal."
+    );
+  }
+  assertOnlyKeys(
+    signal,
+    ["metricId", "version", "direction"],
+    "analysis.reviewSelection.discoverySignal"
+  );
+  if (
+    typeof signal.metricId !== "string" ||
+    !DISCOVERY_SIGNAL_ID_PATTERN.test(signal.metricId)
+  ) {
+    throw new TypeError(
+      "analysis.reviewSelection.discoverySignal.metricId must name a registered metric."
+    );
+  }
+  assertPositiveInteger(
+    signal.version,
+    "analysis.reviewSelection.discoverySignal.version",
+    1_000_000
+  );
+  assertOneOf(
+    signal.direction,
+    ["higher-first", "lower-first"],
+    "analysis.reviewSelection.discoverySignal.direction"
+  );
+}
+
 /** Validate the target-owned playtest.config.json contract without executing commands. */
 export function assertPlaytestGameConfiguration(
   value: unknown
@@ -264,6 +350,7 @@ export function assertPlaytestGameConfiguration(
       "benchmark",
       "critic",
       "maxReviewedSessions",
+      "reviewSelection",
       "visualCapture",
       "counterfactuals",
       "understandingProbes",
@@ -292,6 +379,10 @@ export function assertPlaytestGameConfiguration(
     value.analysis.maxReviewedSessions,
     "analysis.maxReviewedSessions",
     100_000
+  );
+  assertReviewSelection(
+    value.analysis.reviewSelection,
+    value.analysis.maxReviewedSessions as number
   );
   assertOneOf(
     value.analysis.visualCapture,

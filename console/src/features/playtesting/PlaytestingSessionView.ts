@@ -123,13 +123,15 @@ function metricTable(
           React.createElement(
             "tr",
             {
-              key: `${metric.metricId}:${metric.metricVersion}`,
+              key: `${metric.metricId}:${metric.metricVersion}:${metric.phaseId ?? "episode"}`,
               className: "border-b border-border align-top"
             },
             React.createElement(
               "th",
               { scope: "row", className: "py-2 pr-4 font-medium" },
-              metric.metricId
+              metric.phaseId === null
+                ? metric.metricId
+                : `${metric.metricId} · ${metric.phaseId}`
             ),
             React.createElement(
               "td",

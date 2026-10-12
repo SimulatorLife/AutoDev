@@ -54,6 +54,12 @@ import { JsonLineFrameError, JsonLineFramer } from "./jsonl-framer.ts";
 const GAME_RESET_METHOD: PlaytestAdapterMethod = "game.reset";
 const GAME_STEP_METHOD: PlaytestAdapterMethod = "game.step";
 const GAME_REPLAY_METHOD: PlaytestAdapterMethod = "game.replay";
+const GAME_FORK_METHOD: PlaytestAdapterMethod = "game.fork";
+const EPISODE_START_METHODS: ReadonlySet<PlaytestAdapterMethod> = new Set([
+  GAME_RESET_METHOD,
+  GAME_REPLAY_METHOD,
+  GAME_FORK_METHOD
+]);
 
 /** Local reason for refusing work once the adapter request ceiling is reached. */
 const QUEUE_FULL_DISPOSITION = "queue-full" as const;
@@ -97,7 +103,8 @@ const TRAILING_CR_PATTERN = /\r$/u;
 /** Methods whose effective deadline is `resetReplayTimeoutMs`. */
 const RESET_REPLAY_METHODS: ReadonlySet<PlaytestAdapterMethod> = new Set([
   GAME_RESET_METHOD,
-  GAME_REPLAY_METHOD
+  GAME_REPLAY_METHOD,
+  GAME_FORK_METHOD
 ]);
 
 const OPTIONAL_VOCABULARY: ReadonlySet<PlaytestAdapterMethod> = new Set([
@@ -531,16 +538,18 @@ export class PlaytestAdapterClient {
       );
     }
     if (
-      method === GAME_RESET_METHOD &&
+      EPISODE_START_METHODS.has(method) &&
       (this.resetInFlight ||
         [...this.inflight.values()].some(
-          (entry) => entry.method === GAME_STEP_METHOD
+          (entry) =>
+            EPISODE_START_METHODS.has(entry.method) ||
+            entry.method === GAME_STEP_METHOD
         ))
     ) {
       return Promise.resolve(
         this.transportErrorResult(
           PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES.quota,
-          "game.reset cannot race an in-flight game.step or another game.reset.",
+          "Episode initialization cannot race an in-flight step or another initialization.",
           QUEUE_FULL_DISPOSITION
         )
       );
@@ -549,7 +558,7 @@ export class PlaytestAdapterClient {
       return Promise.resolve(
         this.transportErrorResult(
           PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES.quota,
-          "game.step cannot race an in-flight game.reset.",
+          "game.step cannot race an in-flight episode initialization.",
           QUEUE_FULL_DISPOSITION
         )
       );
@@ -575,7 +584,7 @@ export class PlaytestAdapterClient {
       }
     }
     const deadline = options.deadlineMs ?? this.defaultDeadlineFor(method);
-    if (method !== GAME_RESET_METHOD) {
+    if (!EPISODE_START_METHODS.has(method)) {
       return this.sendRequest(method, params, deadline);
     }
     this.resetInFlight = true;
@@ -1145,7 +1154,7 @@ export class PlaytestAdapterClient {
       this.failClosed(message, code);
       return;
     }
-    if (inflight.method === GAME_RESET_METHOD) {
+    if (EPISODE_START_METHODS.has(inflight.method)) {
       const episodeId = (response.result as { readonly episodeId: string })
         .episodeId;
       if (
@@ -1153,7 +1162,8 @@ export class PlaytestAdapterClient {
         this.issuedEpisodeIds.size >= MAX_EPISODE_IDS
       ) {
         const message =
-          "game.reset reused an episode id or exceeded the per-process episode limit.";
+          inflight.method +
+          " reused an episode id or exceeded the per-process episode limit.";
         this.recordDiagnostic({
           kind: "malformed",
           message,

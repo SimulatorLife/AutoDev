@@ -9193,6 +9193,13 @@ test("waits out a cooldown that is about to lapse instead of ending the turn", a
       return null;
     },
     async ({ port, fetch: realFetch }: any) => {
+      const resetsAt = new Date(Date.now() + 350).toISOString();
+      for (const provider of DEFAULT_TIER)
+        cooldowns.cooldownProvider(provider, {
+          failureClass: "quota_exhausted",
+          resetsAt,
+          structured: true
+        });
       const response = await realFetch(
         `http://127.0.0.1:${port}/v1/responses`,
         {
@@ -9211,18 +9218,6 @@ test("waits out a cooldown that is about to lapse instead of ending the turn", a
           (event: any) => event.phase === "exhaustion_wait"
         )
       );
-    },
-    // A stated reset moments away. The last-resort pass will not touch it -- the
-    // provider has said it will not serve yet -- so the wait is the only thing
-    // that can save this turn.
-    () => {
-      const resetsAt = new Date(Date.now() + 250).toISOString();
-      for (const provider of DEFAULT_TIER)
-        cooldowns.cooldownProvider(provider, {
-          failureClass: "quota_exhausted",
-          resetsAt,
-          structured: true
-        });
     }
   );
   for (const provider of DEFAULT_TIER) cooldowns.clear(provider);

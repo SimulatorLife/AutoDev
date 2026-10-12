@@ -10,6 +10,10 @@ The statistics layer implements two operations required by
     exactly: 100 paired synthetic episodes, ten +1 / ninety 0; thirty -1
     / seventy 0, default_rng(42), 100_000 resamples, 95% confidence.
 
+  exact_binomial_proportion_interval(successes, trials) -> NumericInterval
+    Two-sided Clopper-Pearson proportion interval via
+    scipy.stats.binomtest(...).proportion_ci(method="exact").
+
   multiplicity_adjusted_pvalues(pvalue_array) -> (rejected, p_adjusted)
     Family-wise adjustment via statsmodels.stats.multitest.multipletests,
     mirroring §5 "Use predeclared family correction".
@@ -45,6 +49,7 @@ __all__ = [
     "NumericInterval",
     "MultiplicityResult",
     "paired_percentile_bootstrap",
+    "exact_binomial_proportion_interval",
     "multiplicity_adjusted_pvalues",
     "expected_fixture_intervals",
 ]
@@ -74,8 +79,8 @@ class NumericInterval:
     method: str
     library_version: str
     confidence_level: float
-    resamples: int
-    seed: str
+    resamples: int | None
+    seed: str | None
 
     def to_dict(self) -> dict:
         return {
@@ -84,7 +89,7 @@ class NumericInterval:
             "method": self.method,
             "libraryVersion": self.library_version,
             "confidenceLevel": float(self.confidence_level),
-            "resamples": int(self.resamples),
+            "resamples": self.resamples,
             "seed": self.seed,
         }
 
@@ -252,6 +257,58 @@ def paired_percentile_bootstrap(
         confidence_level=float(confidence_level),
         resamples=int(resamples),
         seed=str(seed),
+    )
+
+
+def exact_binomial_proportion_interval(
+    successes: int,
+    trials: int,
+    *,
+    confidence_level: float = DEFAULT_CONFIDENCE_LEVEL,
+) -> NumericInterval:
+    """Exact two-sided Clopper-Pearson CI using SciPy's public API.
+
+    Inputs are participant counts for one binary preference outcome. This
+    operation computes no effect margin, exclusion gate, or build verdict;
+    those remain frozen Core study-plan rules.
+    """
+    assert_library_pins()
+    if not isinstance(successes, int) or isinstance(successes, bool):
+        raise StatisticInputError("successes must be a non-negative integer.")
+    if not isinstance(trials, int) or isinstance(trials, bool):
+        raise StatisticInputError("trials must be a positive integer.")
+    if trials < 1 or trials > 1_000_000:
+        raise StatisticInputError("trials must be in [1, 1000000].")
+    if successes < 0 or successes > trials:
+        raise StatisticInputError("successes must be in [0, trials].")
+    if (
+        not isinstance(confidence_level, (int, float))
+        or isinstance(confidence_level, bool)
+        or not math.isfinite(float(confidence_level))
+        or not 0.0 < float(confidence_level) < 1.0
+    ):
+        raise StatisticInputError("confidence_level must lie in (0, 1).")
+
+    try:
+        ci = stats.binomtest(successes, trials).proportion_ci(
+            confidence_level=float(confidence_level), method="exact"
+        )
+    except ValueError as exc:
+        raise StatisticInputError(
+            f"scipy.stats.binomtest rejected input: {exc}"
+        ) from exc
+    lower = float(ci.low)
+    upper = float(ci.high)
+    if not (math.isfinite(lower) and math.isfinite(upper)) or lower > upper:
+        raise StatisticInputError("SciPy returned an invalid proportion interval.")
+    return NumericInterval(
+        lower=lower,
+        upper=upper,
+        method="scipy-binomial-exact",
+        library_version=library_tag(),
+        confidence_level=float(confidence_level),
+        resamples=None,
+        seed=None,
     )
 
 

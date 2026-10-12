@@ -23,7 +23,8 @@ import { EmptyState } from "../../components/status/EmptyState.ts";
 import {
   NOT_OBSERVED_LABEL,
   NOT_OBSERVED_STATUS,
-  StatusBadge
+  StatusBadge,
+  type StatusBadgeVariant
 } from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
@@ -452,6 +453,97 @@ function overview(
   scope: PlaytestingScope
 ): React.JSX.Element {
   const latest = data.batches[0];
+  const coverage = latest?.coverageManifest ?? null;
+  const coveragePanel =
+    coverage === null
+      ? React.createElement(EmptyState, {
+          variant: "inline",
+          message: "Coverage manifest not recorded for this batch."
+        })
+      : React.createElement(
+          "section",
+          {
+            className: NESTED_PANEL_CLASS,
+            "aria-labelledby": "latest-coverage-heading",
+            "data-coverage-manifest": coverage.contentHash
+          },
+          sectionHeading("latest-coverage-heading", "Metric coverage"),
+          React.createElement(
+            "p",
+            { className: MUTED_META_CLASS },
+            `${coverage.observedEpisodes} of ${coverage.assignedEpisodes} assignments have persisted episodes · ${coverage.cells.filter((cell) => cell.status === "covered").length} cells meet their declared thresholds · mode ${coverage.mode}`
+          ),
+          React.createElement(
+            "ul",
+            {
+              className: "mt-3 grid gap-2",
+              "aria-label": "Metric coverage cells"
+            },
+            ...coverage.cells.map((cell) => {
+              const badge: { status: StatusBadgeVariant; label: string } =
+                cell.status === "covered"
+                  ? { status: "valid" as const, label: "Covered" }
+                  : cell.status === "not-assigned"
+                    ? { status: NOT_OBSERVED_STATUS, label: "Not assigned" }
+                    : cell.status === "unsupported" ||
+                        cell.status === "unsupported-modality"
+                      ? { status: "unavailable" as const, label: "Unsupported" }
+                      : cell.status === "partial"
+                        ? { status: "unavailable" as const, label: "Partial" }
+                        : {
+                            status: "unavailable" as const,
+                            label: "Insufficient"
+                          };
+              return React.createElement(
+                "li",
+                {
+                  key: `${cell.coverageMetricId}:${cell.phaseId ?? "whole-episode"}:${cell.scenarioFamily}:${cell.cohort}:${cell.policy}:${cell.modality}`,
+                  className:
+                    "flex flex-wrap items-start justify-between gap-3 rounded-md border border-border p-3",
+                  "data-coverage-cell": cell.coverageMetricId
+                },
+                React.createElement(
+                  "div",
+                  { className: "min-w-48 flex-1" },
+                  React.createElement(
+                    "p",
+                    { className: "font-medium text-fg" },
+                    `${cell.coverageMetricId} · ${cell.phaseId ?? "whole episode"}`
+                  ),
+                  React.createElement(
+                    "p",
+                    { className: MUTED_META_CLASS },
+                    `${cell.scenarioFamily} · ${cell.cohort} · ${cell.policy} · ${cell.modality} · ${cell.observedOpportunities}/${cell.requiredOpportunities} opportunities · ${cell.observedIndependentUnits === null ? "not deduplicated" : String(cell.observedIndependentUnits)}/${cell.requiredIndependentUnits} independent ${cell.analysisUnit}`
+                  ),
+                  cell.unsupportedReason === null
+                    ? cell.missingAssignments +
+                        cell.unresolvedCohortAssignments +
+                        cell.missingMetricResults >
+                      0
+                      ? React.createElement(
+                          "p",
+                          { className: MUTED_META_CLASS },
+                          `Missing assignments ${cell.missingAssignments} · unresolved cohort ${cell.unresolvedCohortAssignments} · missing metric rows ${cell.missingMetricResults}`
+                        )
+                      : null
+                    : React.createElement(
+                        "p",
+                        { className: MUTED_META_CLASS },
+                        `Unsupported: ${cell.unsupportedReason}`
+                      )
+                ),
+                React.createElement(StatusBadge, {
+                  status: badge.status,
+                  label: badge.label,
+                  title:
+                    cell.missingReasons.length > 0
+                      ? cell.missingReasons.join(", ")
+                      : undefined
+                })
+              );
+            })
+          )
+        );
   return React.createElement(
     React.Fragment,
     null,
@@ -507,7 +599,8 @@ function overview(
             "p",
             { className: MUTED_META_CLASS },
             `Build ${latest.buildSha} · ${latest.measurementVersion}`
-          )
+          ),
+          coveragePanel
         )
       : React.createElement(EmptyState, {
           message: scope.workspaceId
@@ -581,7 +674,8 @@ function findingsTable(
       header: "Episodes affected",
       weight: 150,
       cell: (finding) =>
-        finding.affectedEpisodes === null || finding.totalEligibleEpisodes === null
+        finding.affectedEpisodes === null ||
+        finding.totalEligibleEpisodes === null
           ? "Not observed"
           : `${finding.affectedEpisodes} / ${finding.totalEligibleEpisodes}`
     },
@@ -689,6 +783,108 @@ function humanValidationCell(cell: {
   );
 }
 
+function humanPreferenceContent(
+  preference: ControlApiPlaytestingHumanValidationResponse["preference"]
+): React.ReactNode[] {
+  if (preference === null) {
+    return [
+      React.createElement(StatusBadge, {
+        key: "preference-status",
+        status: NOT_OBSERVED_STATUS,
+        label: "Preference not collected"
+      })
+    ];
+  }
+  const content: React.ReactNode[] = [
+    React.createElement(
+      "h4",
+      { className: "font-medium text-fg", key: "preference-heading" },
+      "Paired-build preference (separate from PXI)"
+    ),
+    humanValidationSuppressionBadge(preference.suppressionState),
+    React.createElement(
+      "p",
+      { className: MUTED_META_CLASS, key: "preference-plan" },
+      `Analysis plan ${preference.analysisPlanRef}`
+    )
+  ];
+  if (preference.counts === null) {
+    content.push(
+      React.createElement(
+        "p",
+        { className: MUTED_BODY_CLASS, key: "preference-suppressed" },
+        "Preference counts are suppressed to protect small participant or answer cells."
+      )
+    );
+  } else {
+    const counts = preference.counts;
+    content.push(
+      React.createElement(
+        "p",
+        { className: MUTED_BODY_CLASS, key: "preference-counts" },
+        `Eligible completed pairs ${counts.eligibleParticipants} · A ${counts.preferA} · B ${counts.preferB} · ties ${counts.ties} · unable ${counts.unableToJudge} · missing ${counts.missing}`
+      )
+    );
+  }
+  const decisionLabels = {
+    "supports-b-preference":
+      "Evidence supports a preference for build B beyond the registered margin",
+    "supports-a-preference":
+      "Evidence supports a preference for build A beyond the registered margin",
+    "no-material-preference":
+      "No material A/B preference was detected within the registered margin",
+    inconclusive:
+      "Inconclusive under the registered participant, exclusion and interval gates"
+  } as const;
+  content.push(
+    React.createElement(
+      "p",
+      { className: MUTED_BODY_CLASS, key: "preference-decision" },
+      decisionLabels[preference.decision]
+    ),
+    React.createElement(
+      "p",
+      { className: MUTED_META_CLASS, key: "preference-limits" },
+      `Incomplete exposure pairs: ${preference.incompleteExposurePairs === null ? "suppressed" : String(preference.incompleteExposurePairs)}`
+    )
+  );
+  if (preference.interval === null) {
+    content.push(
+      React.createElement(
+        "p",
+        { className: MUTED_META_CLASS, key: "preference-no-interval" },
+        "No qualified external preference interval is available; no preference claim is made."
+      )
+    );
+  } else {
+    const probability = preference.counts
+      ? preference.counts.preferB /
+        (preference.counts.preferA + preference.counts.preferB)
+      : null;
+    content.push(
+      React.createElement(
+        "p",
+        { className: MUTED_META_CLASS, key: "preference-interval" },
+        `Pr(B preferred | decisive response) = ${probability === null ? "not observed" : probability.toFixed(3)} · ${(preference.interval.confidenceLevel * 100).toFixed(0)}% exact interval [${preference.interval.lower.toFixed(3)}, ${preference.interval.upper.toFixed(3)}] · ${preference.interval.libraryVersion}`
+      )
+    );
+  }
+
+  if (preference.reasons.length > 0) {
+    content.push(
+      React.createElement(
+        "p",
+        { className: MUTED_META_CLASS, key: "preference-reasons" },
+        "Decision limits: " +
+          preference.reasons
+            .map((reason) => reason.replaceAll("-", " "))
+            .join("; ")
+      )
+    );
+  }
+  return content;
+}
+
 function humanValidationSummaryContent(
   state: Extract<PlaytestingHumanValidation, { readonly kind: "available" }>
 ): React.ReactNode[] {
@@ -706,13 +902,14 @@ function humanValidationSummaryContent(
       React.createElement(StatusBadge, {
         key: "status",
         status: NOT_OBSERVED_STATUS,
-        label: "Not observed"
+        label: "No instrument responses"
       }),
       React.createElement(
         "p",
         { className: MUTED_BODY_CLASS, key: "none" },
-        "The approved study has no retained responses for this build."
-      )
+        "No retained PXI/project-authored instrument responses are available for this build."
+      ),
+      ...humanPreferenceContent(data.preference)
     );
     return content;
   }
@@ -780,6 +977,7 @@ function humanValidationSummaryContent(
       )
     );
   }
+  content.push(...humanPreferenceContent(data.preference));
   return content;
 }
 

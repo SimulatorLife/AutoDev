@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS ${PLAYTEST_EPISODES_TABLE} (
   revision UInt32,
   scenario String,
   policy String,
+  assignment_id Nullable(String),
   cohort String,
   seed String,
   status String,
@@ -210,6 +211,15 @@ export const PLAYTEST_SCHEMA_STATEMENTS: readonly string[] = [
 ];
 
 /**
+ * Idempotent migration adding the batch-local assignment index to episode
+ * tables provisioned before batch assignment manifests existed.
+ */
+const ALTER_PLAYTEST_EPISODES_ADD_ASSIGNMENT = `
+ALTER TABLE ${PLAYTEST_EPISODES_TABLE}
+ADD COLUMN IF NOT EXISTS assignment_id Nullable(String)
+`;
+
+/**
  * Idempotent follow-up migrations that bring pre-§11 `playtest_findings`
  * tables up to the canonical schema (fingerprint index and nullable unknown
  * prevalence). Safe to apply on already-migrated tables.
@@ -217,6 +227,11 @@ export const PLAYTEST_SCHEMA_STATEMENTS: readonly string[] = [
 export const PLAYTEST_FINDING_SCHEMA_MIGRATIONS: readonly string[] = [
   ALTER_PLAYTEST_FINDINGS_ADD_FINGERPRINT,
   ...ALTER_PLAYTEST_FINDINGS_NULLABLE_FREQUENCY
+];
+
+/** Idempotent follow-up migrations for batch assignment pairing. */
+export const PLAYTEST_ASSIGNMENT_SCHEMA_MIGRATIONS: readonly string[] = [
+  ALTER_PLAYTEST_EPISODES_ADD_ASSIGNMENT
 ];
 
 /** Idempotent DDL initialization; errors fail closed as typed unavailability. */
@@ -238,6 +253,25 @@ export async function ensurePlaytestSchema(
       } catch (error) {
         throw new PlaytestSourceUnavailableError(
           "failed to initialize Playtesting schema",
+          error
+        );
+      }
+    })
+  );
+  await Promise.all(
+    PLAYTEST_ASSIGNMENT_SCHEMA_MIGRATIONS.map(async (statement) => {
+      try {
+        await runParameterizedClickHouseStatement(
+          endpoint,
+          statement,
+          {},
+          {
+            ...(fetchImpl ? { fetchImpl } : {})
+          }
+        );
+      } catch (error) {
+        throw new PlaytestSourceUnavailableError(
+          "failed to apply Playtesting assignment schema migration",
           error
         );
       }

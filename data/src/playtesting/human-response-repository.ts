@@ -7,12 +7,14 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import { constants as fsConstants } from "node:fs";
-import path from "node:path";
 import { homedir } from "node:os";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import {
   aggregateHumanStudyResponses,
+  aggregatePlaytestPreferenceResponses,
+  assertHumanStudyPreferencePlan,
   HUMAN_STUDY_SMALL_CELL_SUPPRESSION_THRESHOLD,
   type HumanPlaytestStudy,
   type HumanStudyConstructAggregate,
@@ -21,21 +23,31 @@ import {
   type HumanStudyExportManifest,
   type HumanStudyImportRejection,
   type HumanStudyImportValidators,
-  type HumanStudyPxiItemConstructMapping,
   type HumanStudyPairedArmBuildIds,
+  type HumanStudyPreferenceDuplicateQuarantine,
+  type HumanStudyPreferenceExportManifest,
+  type HumanStudyPreferenceImportOutcome,
+  type HumanStudyPreferenceImportValidators,
+  type HumanStudyPreferenceResponse,
+  type HumanStudyPxiItemConstructMapping,
   type HumanStudyRawRow,
   type HumanStudyResponse,
+  importHumanStudyPreferenceResponses,
   importHumanStudyResponses,
   parseHumanStudyExportRows,
+  type PlaytestHumanPreferenceCounts,
   PLAYTESTS_HUMAN_INSTRUMENTS,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
-  PLAYTESTS_MEASUREMENT_VERSION
+  PLAYTESTS_MEASUREMENT_VERSION,
+  samePlaytestBuild
 } from "@simulatorlife/autodev-core";
 
-const FORMAT = "autodev-restricted-human-study-v1";
+const FORMAT = "autodev-restricted-human-study-v2";
+const LEGACY_FORMAT = "autodev-restricted-human-study-v1";
 const MAX_STATE_BYTES = 20_000_000;
 const SHA256_TOKEN_PATTERN = /^[0-9a-f]{64}$/u;
 const STAGING_FILE_PATTERN = /^[0-9a-f]{64}\.json\.[0-9a-f-]{36}\.tmp$/u;
+const STUDY_STATE_FILE_PATTERN = /^[a-f\d]{64}\.json$/u;
 const WRITER_LOCK_FILE = ".human-study-writer.lock";
 const WRITER_LOCK_WAIT_MS = 1000;
 const WRITER_LOCK_POLL_MS = 25;
@@ -81,11 +93,34 @@ interface StudyState {
   readonly study: HumanPlaytestStudy;
   readonly withdrawalSalt: string;
   responses: HumanStudyResponse[];
+  preferenceResponses: HumanStudyPreferenceResponse[];
   consents: ConsentRecord[];
   withdrawnTokens: string[];
   quarantines: HumanStudyDuplicateQuarantine[];
+  preferenceQuarantines: HumanStudyPreferenceDuplicateQuarantine[];
   revision: number;
   tombstones: HumanStudyTombstoneMetadata[];
+}
+
+export interface HumanPreferenceImportReport {
+  readonly studyId: string;
+  readonly revision: number;
+  readonly acceptedCount: number;
+  readonly unchangedCount: number;
+  readonly rejected: HumanStudyPreferenceImportOutcome["rejected"];
+  readonly quarantined: readonly HumanStudyPreferenceDuplicateQuarantine[];
+  readonly retainedParticipants: number | null;
+}
+
+export interface RestrictedHumanPreferenceSummary {
+  readonly workspaceId: string;
+  readonly studyId: string;
+  readonly revision: number;
+  readonly analysisPlanRef: string;
+  readonly suppressionState: "suppressed" | "unsuppressed";
+  readonly incompleteExposurePairs: number | null;
+  readonly counts: PlaytestHumanPreferenceCounts | null;
+  readonly createdAt: string;
 }
 
 export interface HumanResponseImportReport {
@@ -146,7 +181,70 @@ export interface PlaytestHumanPairedDifferenceSummary {
   readonly meanDifference: number | null;
 }
 
+function preferenceResponseMatchesStudy(
+  response: HumanStudyPreferenceResponse,
+  study: HumanPlaytestStudy
+): boolean {
+  const plan = study.preferencePlan;
+  if (
+    plan === undefined ||
+    response.studyId !== study.studyId ||
+    typeof response.responseId !== "string" ||
+    response.responseId.length === 0 ||
+    !Number.isSafeInteger(response.revision) ||
+    response.revision < 1 ||
+    (response.supersedes !== null &&
+      (typeof response.supersedes !== "string" ||
+        response.supersedes.length === 0)) ||
+    typeof response.pseudonymousParticipantId !== "string" ||
+    response.pseudonymousParticipantId.length === 0 ||
+    response.consentVersion !== study.consentVersion ||
+    response.consentScope !== study.consentScope ||
+    response.questionVersion !== plan.questionVersion ||
+    response.questionHash !== plan.questionHash ||
+    !samePlaytestBuild(response.buildA, plan.buildA) ||
+    !samePlaytestBuild(response.buildB, plan.buildB) ||
+    typeof response.episodeA !== "string" ||
+    response.episodeA.length === 0 ||
+    typeof response.episodeB !== "string" ||
+    response.episodeB.length === 0 ||
+    typeof response.exposureAStartedAt !== "string" ||
+    typeof response.exposureAEndedAt !== "string" ||
+    typeof response.exposureBStartedAt !== "string" ||
+    typeof response.exposureBEndedAt !== "string" ||
+    typeof response.submittedAt !== "string" ||
+    (response.order !== "A-first" && response.order !== "B-first") ||
+    (response.answer !== null &&
+      response.answer !== "A" &&
+      response.answer !== "B" &&
+      response.answer !== "tie" &&
+      response.answer !== "unable-to-judge") ||
+    typeof response.withdrawn !== "boolean"
+  ) {
+    return false;
+  }
+  const startA = Date.parse(response.exposureAStartedAt);
+  const endA = Date.parse(response.exposureAEndedAt);
+  const startB = Date.parse(response.exposureBStartedAt);
+  const endB = Date.parse(response.exposureBEndedAt);
+  const submittedAt = Date.parse(response.submittedAt);
+  const orderMatches =
+    response.order === "A-first" ? endA <= startB : endB <= startA;
+  return (
+    Number.isFinite(startA) &&
+    Number.isFinite(endA) &&
+    Number.isFinite(startB) &&
+    Number.isFinite(endB) &&
+    Number.isFinite(submittedAt) &&
+    endA >= startA &&
+    endB >= startB &&
+    orderMatches &&
+    submittedAt >= Math.max(endA, endB)
+  );
+}
+
 function validateStudy(study: HumanPlaytestStudy): void {
+  assertHumanStudyPreferencePlan(study);
   if (
     study.schema !== PLAYTESTS_HUMAN_STUDY_SCHEMA ||
     study.approved !== true ||
@@ -231,15 +329,137 @@ function validateStudy(study: HumanPlaytestStudy): void {
       "Only valid, approved human studies can be registered."
     );
 }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readPrivateJsonState(filePath: string): unknown {
+  let fd: number | undefined;
+  try {
+    const before = assertPrivateFile(filePath);
+    if (before.size > MAX_STATE_BYTES) {
+      throw new RestrictedHumanStudyStorageError(
+        "Restricted state exceeds size limit."
+      );
+    }
+    fd = fs.openSync(
+      filePath,
+      fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0)
+    );
+    const opened = fs.fstatSync(fd);
+    if (
+      !opened.isFile() ||
+      opened.ino !== before.ino ||
+      (opened.mode & 0o077) !== 0
+    ) {
+      throw new RestrictedHumanStudyStorageError(
+        "Restricted state changed during secure open."
+      );
+    }
+    return JSON.parse(fs.readFileSync(fd, "utf8")) as unknown;
+  } catch (error) {
+    if (error instanceof RestrictedHumanStudyStorageError) throw error;
+    throw new RestrictedHumanStudyStorageError(
+      "Could not read restricted state safely.",
+      { cause: error }
+    );
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+function validateLegacyStateHeader(
+  value: Record<string, unknown>,
+  name: string
+): { readonly study: HumanPlaytestStudy; readonly withdrawalSalt: string } {
+  const study = value.study as HumanPlaytestStudy | undefined;
+  const withdrawalSalt = value.withdrawalSalt;
+  if (
+    !study ||
+    typeof study.studyId !== "string" ||
+    stateFileKey(study.studyId) !== name ||
+    typeof withdrawalSalt !== "string" ||
+    !SHA256_TOKEN_PATTERN.test(withdrawalSalt) ||
+    !Array.isArray(value.responses) ||
+    !Array.isArray(value.consents) ||
+    !Array.isArray(value.withdrawnTokens) ||
+    !Array.isArray(value.quarantines) ||
+    !Array.isArray(value.tombstones) ||
+    !Number.isSafeInteger(value.revision)
+  ) {
+    throw new RestrictedHumanStudyStorageError(
+      "Legacy restricted state schema is invalid."
+    );
+  }
+  validateStudy(study);
+  return { study, withdrawalSalt };
+}
+
+function migrateLegacyState(value: unknown, name: string): StudyState | null {
+  if (!isRecord(value)) {
+    throw new RestrictedHumanStudyStorageError(
+      "Restricted state is not a JSON object."
+    );
+  }
+  if (value.format === FORMAT) return null;
+  if (value.format !== LEGACY_FORMAT) {
+    throw new RestrictedHumanStudyStorageError(
+      "Restricted state has an unsupported format."
+    );
+  }
+  const { study, withdrawalSalt } = validateLegacyStateHeader(value, name);
+  const responses = value.responses as HumanStudyResponse[];
+  const consents = value.consents as ConsentRecord[];
+  const withdrawnTokens = value.withdrawnTokens as string[];
+  if (
+    responses.some(
+      (response) =>
+        response.studyId !== study.studyId ||
+        !response.responseId ||
+        !response.pseudonymousParticipantId ||
+        !Number.isSafeInteger(response.revision) ||
+        typeof response.completionStatus !== "string" ||
+        response.consentVersion !== study.consentVersion ||
+        response.consentScope !== study.consentScope
+    ) ||
+    consents.some(
+      (consent) =>
+        !consent.participantId ||
+        consent.consentVersion !== study.consentVersion ||
+        consent.consentScope !== study.consentScope
+    ) ||
+    withdrawnTokens.some((token) => !SHA256_TOKEN_PATTERN.test(token))
+  ) {
+    throw new RestrictedHumanStudyStorageError(
+      "Legacy response, consent or withdrawal state is invalid."
+    );
+  }
+  return {
+    format: FORMAT,
+    study,
+    withdrawalSalt,
+    responses,
+    preferenceResponses: [],
+    consents,
+    withdrawnTokens,
+    quarantines: value.quarantines as HumanStudyDuplicateQuarantine[],
+    preferenceQuarantines: [],
+    revision: value.revision as number,
+    tombstones: value.tombstones as HumanStudyTombstoneMetadata[]
+  };
+}
+
 function newState(study: HumanPlaytestStudy): StudyState {
   return {
     format: FORMAT,
     study,
     withdrawalSalt: randomBytes(32).toString("hex"),
     responses: [],
+    preferenceResponses: [],
     consents: [],
     withdrawnTokens: [],
     quarantines: [],
+    preferenceQuarantines: [],
     revision: 0,
     tombstones: []
   };
@@ -280,6 +500,57 @@ export function hashHumanStudyPxiItemConstructMapping(
 function stateFileKey(studyId: string): string {
   return createHash("sha256").update(studyId).digest("hex") + ".json";
 }
+const RETRY_LOCK_READ = Symbol("retry lock metadata read");
+type WriterLockReadResult = WriterLockOwner | null | typeof RETRY_LOCK_READ;
+
+function readWriterLockFile(
+  lockFile: string,
+  expectedInode: number
+): WriterLockReadResult {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(
+      lockFile,
+      fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0)
+    );
+    const opened = fs.fstatSync(fd);
+    if (!opened.isFile() || opened.ino !== expectedInode) {
+      return RETRY_LOCK_READ;
+    }
+    if (opened.size > WRITER_LOCK_METADATA_MAX_BYTES) {
+      throw new RestrictedHumanStudyStorageError(
+        "Writer lock metadata exceeds its size bound."
+      );
+    }
+    if (opened.size === 0) return null;
+    const parsed: unknown = JSON.parse(fs.readFileSync(fd, "utf8"));
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !Number.isSafeInteger((parsed as WriterLockOwner).pid) ||
+      (parsed as WriterLockOwner).pid <= 0 ||
+      typeof (parsed as WriterLockOwner).token !== "string" ||
+      (parsed as WriterLockOwner).token.length === 0
+    ) {
+      throw new RestrictedHumanStudyStorageError(
+        "Writer lock metadata is malformed; refusing unsafe recovery."
+      );
+    }
+    return parsed as WriterLockOwner;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return RETRY_LOCK_READ;
+    }
+    if (error instanceof RestrictedHumanStudyStorageError) throw error;
+    throw new RestrictedHumanStudyStorageError(
+      "Could not safely read writer lock metadata.",
+      { cause: error }
+    );
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
 function assertPrivateFile(filePath: string): fs.Stats {
   const stat = fs.lstatSync(filePath);
   if (
@@ -320,7 +591,10 @@ export class RestrictedHumanResponseRepository {
       );
     }
     fs.chmodSync(this.root, 0o700);
-    this.withWriterLock(() => this.removeOrphanedStagingFiles());
+    this.withWriterLock(() => {
+      this.migrateLegacyStudyFiles();
+      this.removeOrphanedStagingFiles();
+    });
   }
 
   private writerLockPath(): string {
@@ -328,53 +602,26 @@ export class RestrictedHumanResponseRepository {
   }
 
   private readWriterLockOwner(lockFile: string): WriterLockOwner | null {
-    let before: fs.Stats;
-    try {
-      before = assertPrivateFile(lockFile);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw error;
-    }
-    if (before.size > WRITER_LOCK_METADATA_MAX_BYTES) {
-      throw new RestrictedHumanStudyStorageError(
-        "Writer lock metadata exceeds its size bound."
-      );
-    }
-    let fd: number | undefined;
-    try {
-      fd = fs.openSync(
-        lockFile,
-        fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0)
-      );
-      const opened = fs.fstatSync(fd);
-      if (!opened.isFile() || opened.ino !== before.ino) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      let before: fs.Stats;
+      try {
+        before = assertPrivateFile(lockFile);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw error;
+      }
+      if (before.size > WRITER_LOCK_METADATA_MAX_BYTES) {
         throw new RestrictedHumanStudyStorageError(
-          "Writer lock metadata changed during secure open."
+          "Writer lock metadata exceeds its size bound."
         );
       }
-      const parsed: unknown = JSON.parse(fs.readFileSync(fd, "utf8"));
-      if (
-        typeof parsed !== "object" ||
-        parsed === null ||
-        !Number.isSafeInteger((parsed as WriterLockOwner).pid) ||
-        (parsed as WriterLockOwner).pid <= 0 ||
-        typeof (parsed as WriterLockOwner).token !== "string" ||
-        (parsed as WriterLockOwner).token.length === 0
-      ) {
-        throw new RestrictedHumanStudyStorageError(
-          "Writer lock metadata is malformed; refusing unsafe recovery."
-        );
-      }
-      return parsed as WriterLockOwner;
-    } catch (error) {
-      if (error instanceof RestrictedHumanStudyStorageError) throw error;
-      throw new RestrictedHumanStudyStorageError(
-        "Could not safely read writer lock metadata.",
-        { cause: error }
-      );
-    } finally {
-      if (fd !== undefined) fs.closeSync(fd);
+      if (before.size === 0) return null;
+      const owner = readWriterLockFile(lockFile, before.ino);
+      if (owner !== RETRY_LOCK_READ) return owner;
     }
+    throw new RestrictedHumanStudyStorageError(
+      "Writer lock changed repeatedly during secure read."
+    );
   }
 
   private isProcessAlive(pid: number): boolean {
@@ -421,11 +668,16 @@ export class RestrictedHumanResponseRepository {
         0o600
       );
       inode = fs.fstatSync(fd).ino;
-      fs.writeFileSync(fd, JSON.stringify(owner), { encoding: "utf8" });
+      fs.writeSync(fd, JSON.stringify(owner), undefined, "utf8");
       fs.fsyncSync(fd);
       fs.closeSync(fd);
       fd = undefined;
-      assertPrivateFile(lockFile);
+      const published = assertPrivateFile(lockFile);
+      if (published.ino !== inode) {
+        throw new RestrictedHumanStudyStorageError(
+          "Writer lock changed before its metadata was committed."
+        );
+      }
       const rootFd = fs.openSync(this.root, fsConstants.O_RDONLY);
       try {
         fs.fsyncSync(rootFd);
@@ -434,20 +686,29 @@ export class RestrictedHumanResponseRepository {
       }
       return owner;
     } catch (error) {
-      if (
-        fd === undefined &&
-        (error as NodeJS.ErrnoException).code === "EEXIST"
-      ) {
-        throw error;
-      }
-      if (fd !== undefined) fs.closeSync(fd);
-      try {
-        const stat = fs.lstatSync(lockFile);
-        if (stat.isFile() && !stat.isSymbolicLink() && stat.ino === inode) {
-          fs.unlinkSync(lockFile);
+      if (fd !== undefined) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          /* ignore */
         }
-      } catch {
-        /* The lock file may not have been created. */
+      }
+      if (inode !== undefined) {
+        try {
+          const lockStat = fs.lstatSync(lockFile);
+          if (
+            lockStat.isFile() &&
+            !lockStat.isSymbolicLink() &&
+            lockStat.ino === inode
+          ) {
+            fs.unlinkSync(lockFile);
+          }
+        } catch {
+          /* The reservation is already absent or cannot be safely identified. */
+        }
+      }
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        throw error;
       }
       throw new RestrictedHumanStudyStorageError(
         "Could not create a private writer lock.",
@@ -480,7 +741,14 @@ export class RestrictedHumanResponseRepository {
   private waitForExistingWriter(lockFile: string, deadline: number): void {
     const owner = this.readCurrentWriterOwner(lockFile);
     this.rejectStaleWriter(lockFile, owner);
-    if (owner === null) return;
+    if (owner === null) {
+      try {
+        fs.lstatSync(lockFile);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw error;
+      }
+    }
     if (performance.now() >= deadline) {
       throw new RestrictedHumanStudyStorageError(
         "Timed out waiting for the restricted human-study writer lock."
@@ -536,6 +804,16 @@ export class RestrictedHumanResponseRepository {
       } finally {
         this.writerLockHeld = false;
       }
+    }
+  }
+
+  /** Upgrade the one prior restricted-file schema in place under the writer lock. */
+  private migrateLegacyStudyFiles(): void {
+    for (const name of fs.readdirSync(this.root)) {
+      if (!STUDY_STATE_FILE_PATTERN.test(name)) continue;
+      const filePath = path.join(this.root, name);
+      const migrated = migrateLegacyState(readPrivateJsonState(filePath), name);
+      if (migrated !== null) this.writeState(migrated);
     }
   }
 
@@ -604,9 +882,11 @@ export class RestrictedHumanResponseRepository {
         typeof state.withdrawalSalt !== "string" ||
         !SHA256_TOKEN_PATTERN.test(state.withdrawalSalt) ||
         !Array.isArray(state.responses) ||
+        !Array.isArray(state.preferenceResponses) ||
         !Array.isArray(state.consents) ||
         !Array.isArray(state.withdrawnTokens) ||
         !Array.isArray(state.quarantines) ||
+        !Array.isArray(state.preferenceQuarantines) ||
         !Array.isArray(state.tombstones) ||
         !Number.isSafeInteger(state.revision)
       )
@@ -619,7 +899,24 @@ export class RestrictedHumanResponseRepository {
             !response.responseId ||
             !response.pseudonymousParticipantId ||
             !Number.isSafeInteger(response.revision) ||
-            typeof response.completionStatus !== "string"
+            typeof response.completionStatus !== "string" ||
+            response.consentVersion !== state.study.consentVersion ||
+            response.consentScope !== state.study.consentScope
+        ) ||
+        state.preferenceQuarantines.some(
+          (quarantine) =>
+            quarantine.studyId !== studyId ||
+            !quarantine.participantId ||
+            !Array.isArray(quarantine.responseIds) ||
+            quarantine.responseIds.length < 2
+        ) ||
+        state.preferenceResponses.some(
+          (preference) =>
+            preference.studyId !== studyId ||
+            !preference.responseId ||
+            !preference.pseudonymousParticipantId ||
+            !Number.isSafeInteger(preference.revision) ||
+            !preferenceResponseMatchesStudy(preference, state.study)
         ) ||
         state.consents.some(
           (consent) =>
@@ -806,6 +1103,248 @@ export class RestrictedHumanResponseRepository {
         )
     );
   }
+  private activePreferenceResponses(
+    state: StudyState
+  ): readonly HumanStudyPreferenceResponse[] {
+    const superseded = new Set(
+      state.preferenceResponses
+        .map((response) => response.supersedes)
+        .filter((id): id is string => id !== null)
+    );
+    const quarantined = new Set(
+      state.preferenceQuarantines.flatMap((entry) => entry.responseIds)
+    );
+    return state.preferenceResponses.filter(
+      (response) =>
+        !response.withdrawn &&
+        !superseded.has(response.responseId) &&
+        !quarantined.has(response.responseId) &&
+        !state.withdrawnTokens.includes(
+          hashParticipant(state, response.pseudonymousParticipantId)
+        )
+    );
+  }
+
+  private completedPreferenceExposureRoster(state: StudyState): {
+    readonly participants: ReadonlyMap<string, true>;
+    readonly incomplete: number;
+  } {
+    const plan = state.study.preferencePlan;
+    if (!plan) return { participants: new Map(), incomplete: 0 };
+    interface Exposure {
+      readonly episodeId: string;
+      readonly startedAt: string;
+      readonly endedAt: string;
+      readonly order: "A-first" | "B-first";
+    }
+    interface ParticipantExposures {
+      readonly a: Map<string, Exposure>;
+      readonly b: Map<string, Exposure>;
+    }
+    const byParticipant = new Map<string, ParticipantExposures>();
+    for (const response of this.activeResponses(state)) {
+      if (response.completionStatus !== "completed") continue;
+      const isA = samePlaytestBuild(response.build, plan.buildA);
+      const isB = samePlaytestBuild(response.build, plan.buildB);
+      if (!isA && !isB) continue;
+      const exposures = byParticipant.get(
+        response.pseudonymousParticipantId
+      ) ?? {
+        a: new Map<string, Exposure>(),
+        b: new Map<string, Exposure>()
+      };
+      const exposure = {
+        episodeId: response.episodeId,
+        startedAt: response.exposureStartedAt,
+        endedAt: response.exposureEndedAt,
+        order: response.order as "A-first" | "B-first"
+      };
+      const key = JSON.stringify(exposure);
+      (isA ? exposures.a : exposures.b).set(key, exposure);
+      byParticipant.set(response.pseudonymousParticipantId, exposures);
+    }
+
+    const participants = new Map<string, true>();
+    let incomplete = 0;
+    for (const [participantId, exposures] of byParticipant) {
+      if (exposures.a.size !== 1 || exposures.b.size !== 1) {
+        incomplete += 1;
+        continue;
+      }
+      const a = exposures.a.values().next().value as Exposure;
+      const b = exposures.b.values().next().value as Exposure;
+      const aStart = Date.parse(a.startedAt);
+      const aEnd = Date.parse(a.endedAt);
+      const bStart = Date.parse(b.startedAt);
+      const bEnd = Date.parse(b.endedAt);
+      const ordered =
+        a.order === b.order &&
+        (a.order === "A-first" ? aEnd <= bStart : bEnd <= aStart);
+      if (
+        !ordered ||
+        !Number.isFinite(aStart) ||
+        !Number.isFinite(aEnd) ||
+        !Number.isFinite(bStart) ||
+        !Number.isFinite(bEnd)
+      ) {
+        incomplete += 1;
+        continue;
+      }
+      participants.set(participantId, true);
+    }
+    return { participants, incomplete };
+  }
+
+  importPreferenceExport(
+    studyId: string,
+    raw: string,
+    format: HumanStudyExportFormat,
+    manifest: HumanStudyPreferenceExportManifest,
+    validators: HumanStudyPreferenceImportValidators
+  ): HumanPreferenceImportReport {
+    this.requireState(studyId);
+    return this.importPreferenceRows(
+      studyId,
+      parseHumanStudyExportRows(raw, format),
+      manifest,
+      validators
+    );
+  }
+
+  importPreferenceRows(
+    studyId: string,
+    rows: readonly HumanStudyRawRow[],
+    manifest: HumanStudyPreferenceExportManifest,
+    validators: HumanStudyPreferenceImportValidators
+  ): HumanPreferenceImportReport {
+    return this.withWriterLock(() =>
+      this.importPreferenceRowsLocked(studyId, rows, manifest, validators)
+    );
+  }
+
+  private importPreferenceRowsLocked(
+    studyId: string,
+    rows: readonly HumanStudyRawRow[],
+    manifest: HumanStudyPreferenceExportManifest,
+    validators: HumanStudyPreferenceImportValidators
+  ): HumanPreferenceImportReport {
+    const state = this.requireState(studyId);
+    const restrictedValidators: HumanStudyPreferenceImportValidators = {
+      ...validators,
+      isApprovedStudy: (study) =>
+        study.approved && validators.isApprovedStudy(study),
+      isWorkspaceAllowed: (study, workspaceId) =>
+        workspaceId === study.workspaceId &&
+        validators.isWorkspaceAllowed(study, workspaceId),
+      isBuildAllowed: (study, build) =>
+        study.allowedBuilds.some((allowed) =>
+          samePlaytestBuild(allowed, build)
+        ) && validators.isBuildAllowed(study, build),
+      isTrustedPreferenceQuestion: (study, plan) =>
+        study.preferencePlan !== undefined &&
+        JSON.stringify(study.preferencePlan) === JSON.stringify(plan) &&
+        validators.isTrustedPreferenceQuestion(study, plan),
+      isPreferencePairComplete: (study, participantId, plan, exposures) => {
+        const retained = this.activeResponses(state);
+        const hasExposure = (
+          build: HumanStudyPreferenceResponse["buildA"],
+          episodeId: string,
+          startedAt: string,
+          endedAt: string
+        ): boolean =>
+          retained.some(
+            (response) =>
+              response.pseudonymousParticipantId === participantId &&
+              response.completionStatus === "completed" &&
+              response.episodeId === episodeId &&
+              response.exposureStartedAt === startedAt &&
+              response.exposureEndedAt === endedAt &&
+              samePlaytestBuild(response.build, build)
+          );
+        return (
+          study.preferencePlan !== undefined &&
+          JSON.stringify(study.preferencePlan) === JSON.stringify(plan) &&
+          hasExposure(
+            plan.buildA,
+            exposures.episodeA,
+            exposures.exposureAStartedAt,
+            exposures.exposureAEndedAt
+          ) &&
+          hasExposure(
+            plan.buildB,
+            exposures.episodeB,
+            exposures.exposureBStartedAt,
+            exposures.exposureBEndedAt
+          ) &&
+          validators.isPreferencePairComplete(
+            study,
+            participantId,
+            plan,
+            exposures
+          )
+        );
+      },
+      isParticipantWithdrawn: (study, participantId) =>
+        state.withdrawnTokens.includes(hashParticipant(state, participantId)) ||
+        validators.isParticipantWithdrawn(study, participantId),
+      isConsentValid: (study, participantId, version, scope) => {
+        const stored = state.consents.find(
+          (entry) => entry.participantId === participantId
+        );
+        return (
+          !state.withdrawnTokens.includes(
+            hashParticipant(state, participantId)
+          ) &&
+          stored !== undefined &&
+          stored.consentVersion === version &&
+          stored.consentScope === scope &&
+          validators.isConsentValid(study, participantId, version, scope)
+        );
+      }
+    };
+    const outcome = importHumanStudyPreferenceResponses(
+      state.study,
+      rows,
+      manifest,
+      restrictedValidators,
+      state.preferenceResponses
+    );
+    const additions = [...outcome.accepted, ...outcome.quarantinedResponses];
+    const known = new Set(
+      state.preferenceResponses.map((response) => response.responseId)
+    );
+    const newResponses = additions.filter(
+      (response) => !known.has(response.responseId)
+    );
+    if (newResponses.length > 0) {
+      if (state.revision > 0) {
+        state.tombstones.push({
+          revision: state.revision,
+          status: "stale",
+          recordedAt: new Date().toISOString()
+        });
+      }
+      state.preferenceResponses.push(...newResponses);
+      state.preferenceQuarantines.push(...outcome.quarantined);
+      state.revision += 1;
+      this.writeState(state);
+    }
+    const retained = new Set(
+      this.activePreferenceResponses(state).map(
+        (response) => response.pseudonymousParticipantId
+      )
+    ).size;
+    return {
+      studyId,
+      revision: state.revision,
+      acceptedCount: outcome.accepted.length,
+      unchangedCount: outcome.unchanged.length,
+      rejected: outcome.rejected,
+      quarantined: outcome.quarantined,
+      retainedParticipants: retained < this.threshold ? null : retained
+    };
+  }
+
   importExport(
     studyId: string,
     raw: string,
@@ -865,11 +1404,8 @@ export class RestrictedHumanResponseRepository {
         workspaceId === study.workspaceId &&
         validators.isWorkspaceAllowed(study, workspaceId),
       isBuildAllowed: (study, build) =>
-        study.allowedBuilds.some(
-          (allowed) =>
-            allowed.id === build.id &&
-            allowed.version === build.version &&
-            (allowed.contentHash ?? null) === (build.contentHash ?? null)
+        study.allowedBuilds.some((allowed) =>
+          samePlaytestBuild(allowed, build)
         ) && validators.isBuildAllowed(study, build),
       isTrustedPxiItemConstructMapping: (study, mapping) =>
         study.pxiItemConstructMappingHash ===
@@ -920,11 +1456,14 @@ export class RestrictedHumanResponseRepository {
       state.revision += 1;
       this.writeState(state);
     }
-    const participants = new Set(
-      this.activeResponses(state).map(
+    const participants = new Set([
+      ...this.activeResponses(state).map(
+        (response) => response.pseudonymousParticipantId
+      ),
+      ...this.activePreferenceResponses(state).map(
         (response) => response.pseudonymousParticipantId
       )
-    ).size;
+    ]).size;
     return {
       studyId,
       revision: state.revision,
@@ -1010,25 +1549,135 @@ export class RestrictedHumanResponseRepository {
       state.responses = state.responses.filter(
         (response) => response.pseudonymousParticipantId !== participantId
       );
+      state.preferenceResponses = state.preferenceResponses.filter(
+        (response) => response.pseudonymousParticipantId !== participantId
+      );
       state.consents = state.consents.filter(
         (record) => record.participantId !== participantId
       );
       state.quarantines = state.quarantines.filter(
         (quarantine) => quarantine.participantId !== participantId
       );
+      state.preferenceQuarantines = state.preferenceQuarantines.filter(
+        (quarantine) => quarantine.participantId !== participantId
+      );
       state.withdrawnTokens.push(token);
       state.revision += 1;
       this.writeState(state);
     }
-    const participants = new Set(
-      this.activeResponses(state).map(
+    const participants = new Set([
+      ...this.activeResponses(state).map(
+        (response) => response.pseudonymousParticipantId
+      ),
+      ...this.activePreferenceResponses(state).map(
         (response) => response.pseudonymousParticipantId
       )
-    ).size;
+    ]).size;
     return {
       studyId,
       revision: state.revision,
       retainedParticipants: participants < this.threshold ? null : participants
+    };
+  }
+
+  listPreferenceQuarantines(
+    studyId: string
+  ): readonly HumanStudyPreferenceDuplicateQuarantine[] {
+    return this.requireState(studyId).preferenceQuarantines;
+  }
+
+  resolvePreferenceQuarantine(studyId: string, responseIdToKeep: string): void {
+    this.withWriterLock(() => {
+      const state = this.requireState(studyId);
+      const group = state.preferenceQuarantines.find((entry) =>
+        entry.responseIds.includes(responseIdToKeep)
+      );
+      if (!group) {
+        throw new TypeError(
+          "Preference response is not in a pending quarantine."
+        );
+      }
+      if (
+        !state.preferenceResponses.some(
+          (response) => response.responseId === responseIdToKeep
+        )
+      ) {
+        throw new TypeError(
+          "Selected preference response is not retained in restricted storage."
+        );
+      }
+      const discarded = new Set(
+        group.responseIds.filter((id) => id !== responseIdToKeep)
+      );
+      state.preferenceResponses = state.preferenceResponses.filter(
+        (response) => !discarded.has(response.responseId)
+      );
+      state.preferenceQuarantines = state.preferenceQuarantines.filter(
+        (entry) => entry !== group
+      );
+      if (state.revision > 0) {
+        state.tombstones.push({
+          revision: state.revision,
+          status: "stale",
+          recordedAt: new Date().toISOString()
+        });
+      }
+      state.revision += 1;
+      this.writeState(state);
+    });
+  }
+
+  getHumanPreferenceSummary(
+    studyId: string
+  ): RestrictedHumanPreferenceSummary | null {
+    const state = this.requireState(studyId);
+    const plan = state.study.preferencePlan;
+    if (!plan) return null;
+    const roster = this.completedPreferenceExposureRoster(state);
+    if (roster.participants.size === 0) return null;
+
+    const activePreferences = this.activePreferenceResponses(state);
+    const byParticipant = new Map<string, HumanStudyPreferenceResponse>();
+    for (const response of activePreferences) {
+      if (!roster.participants.has(response.pseudonymousParticipantId)) {
+        throw new RestrictedHumanStudyStorageError(
+          "Preference response does not link to an eligible completed exposure pair."
+        );
+      }
+      if (byParticipant.has(response.pseudonymousParticipantId)) {
+        throw new RestrictedHumanStudyStorageError(
+          "Multiple active preference responses exist for one participant."
+        );
+      }
+      byParticipant.set(response.pseudonymousParticipantId, response);
+    }
+    const counts = aggregatePlaytestPreferenceResponses(
+      Array.from(roster.participants.keys(), (participantId) => ({
+        participantKey: hashParticipant(state, participantId),
+        answer: byParticipant.get(participantId)?.answer ?? null
+      }))
+    );
+    const smallCategory = [
+      counts.preferA,
+      counts.preferB,
+      counts.ties,
+      counts.unableToJudge,
+      counts.missing
+    ].some((count) => count > 0 && count < this.threshold);
+    const suppressed =
+      counts.eligibleParticipants < this.threshold || smallCategory;
+    return {
+      workspaceId: state.study.workspaceId,
+      studyId,
+      revision: state.revision,
+      analysisPlanRef: plan.analysisPlanRef,
+      suppressionState: suppressed ? "suppressed" : "unsuppressed",
+      incompleteExposurePairs:
+        roster.incomplete > 0 && roster.incomplete < this.threshold
+          ? null
+          : roster.incomplete,
+      counts: suppressed ? null : counts,
+      createdAt: new Date().toISOString()
     };
   }
 

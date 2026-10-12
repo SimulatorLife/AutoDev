@@ -64,10 +64,7 @@ function acceptsJson(request: NextRequest): boolean {
   return request.headers.get("accept")?.includes("application/json") === true;
 }
 
-function sendMutationJson(
-  body: unknown,
-  status = 200
-): NextResponse {
+function sendMutationJson(body: unknown, status = 200): NextResponse {
   return NextResponse.json(body, {
     status,
     headers: { "cache-control": "no-store" }

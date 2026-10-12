@@ -9,10 +9,12 @@
  * worker (see `environment.ts`) over a JSON-RPC channel implemented in
  * `jsonrpc-client.ts`.
  *
- * The API deliberately exposes only two calls:
+ * The API exposes narrow calls that delegate every numerical method to the
+ * locked Python/SciPy/statsmodels worker:
  *
  *   pairedBootstrapPercentileInterval(input) -> PlaytestNumericInterval
- *   multiplicityAdjustedPValues(input)       -> PlaytestMultiplicityResult
+ *   exactBinomialProportionInterval(input)    -> PlaytestNumericInterval
+ *   multiplicityAdjustedPValues(input)        -> PlaytestMultiplicityResult
  *
  * Both share the same isolation guarantees: hash-locked env, frozen
  * pip cache, no system-Python fallback, no implicit defaults for the
@@ -43,6 +45,7 @@ import {
 } from "./lock-manifest.ts";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_CONFIDENCE_LEVEL = 0.95;
 const FIXTURE_FILE = "paired-bootstrap-fixture.json";
 const MULTIPLICITY_METHODS = new Set<string>([
   "bonferroni",
@@ -64,6 +67,12 @@ export interface PlaytestBootstrapInput {
   readonly confidenceLevel?: number;
   /** Integer seed for `numpy.random.default_rng`. */
   readonly seed?: number;
+}
+
+export interface PlaytestBinomialProportionInput {
+  readonly successes: number;
+  readonly trials: number;
+  readonly confidenceLevel?: number;
 }
 
 export interface PlaytestMultiplicityInput {
@@ -166,6 +175,47 @@ export class RuntimePlaytestStatAnalysis {
       );
     }
     return parseNumericInterval(intervalEnvelope as Record<string, unknown>);
+  }
+
+  /** Run SciPy's exact Clopper-Pearson binomial preference interval. */
+  async exactBinomialProportionInterval(
+    input: PlaytestBinomialProportionInput
+  ): Promise<PlaytestNumericInterval> {
+    validateBinomialProportionInput(input);
+    const confidenceLevel = input.confidenceLevel ?? DEFAULT_CONFIDENCE_LEVEL;
+    const envelope = await this.invoke("statistics.binomial_proportion", {
+      successes: input.successes,
+      trials: input.trials,
+      confidenceLevel
+    });
+    const intervalEnvelope = envelope.result.interval;
+    if (
+      !intervalEnvelope ||
+      typeof intervalEnvelope !== "object" ||
+      Array.isArray(intervalEnvelope)
+    ) {
+      throw new PlaytestStatisticTransportError(
+        "envelope",
+        "Worker binomial response did not include an interval object."
+      );
+    }
+    const interval = parseNumericInterval(
+      intervalEnvelope as Record<string, unknown>
+    );
+    if (
+      interval.lower < 0 ||
+      interval.upper > 1 ||
+      interval.method !== "scipy-binomial-exact" ||
+      interval.confidenceLevel !== confidenceLevel ||
+      interval.resamples !== null ||
+      interval.seed !== null
+    ) {
+      throw new PlaytestStatisticTransportError(
+        "envelope",
+        "Worker binomial interval does not match the exact proportion contract."
+      );
+    }
+    return interval;
   }
 
   /** Run statsmodels.stats.multitest.multipletests against the worker. */
@@ -278,7 +328,10 @@ export class RuntimePlaytestStatAnalysis {
   }
 
   private async invoke(
-    method: "statistics.bootstrap" | "statistics.multipletests",
+    method:
+      | "statistics.bootstrap"
+      | "statistics.binomial_proportion"
+      | "statistics.multipletests",
     params: Record<string, unknown>
   ): Promise<Extract<JsonRpcEnvelope, { kind: "response" }>> {
     const requestId = randomUUID();
@@ -465,6 +518,33 @@ async function collectWorkerEnvelope(
     );
   }
   return { envelope: resolvedEnvelope, stderrTail: stderrBuffer, exitCode };
+}
+
+function validateBinomialProportionInput(
+  input: PlaytestBinomialProportionInput
+): void {
+  if (
+    !Number.isSafeInteger(input.successes) ||
+    input.successes < 0 ||
+    !Number.isSafeInteger(input.trials) ||
+    input.trials < 1 ||
+    input.trials > 1_000_000 ||
+    input.successes > input.trials
+  ) {
+    throw new PlaytestStatisticInputError(
+      "Binomial counts must be safe integers with 0 <= successes <= trials <= 1000000 and trials >= 1."
+    );
+  }
+  if (
+    input.confidenceLevel !== undefined &&
+    (!Number.isFinite(input.confidenceLevel) ||
+      input.confidenceLevel <= 0 ||
+      input.confidenceLevel >= 1)
+  ) {
+    throw new PlaytestStatisticInputError(
+      "Binomial confidenceLevel must be a finite number in (0, 1)."
+    );
+  }
 }
 
 /** Validate and return a plain object ready to be marshalled to Python. */

@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { PLAYTESTS_MAX_BATCH_ASSIGNMENTS } from "@simulatorlife/autodev-core";
+
 import {
   fetchPlaytestingEpisode,
   fetchPlaytestingFrame,
   fetchPlaytestingHumanValidation,
   fetchPlaytestingPage,
-  fetchPlaytestingWindow
+  fetchPlaytestingWindow,
+  startPlaytestingRun
 } from "../app/playtesting/playtesting-server.ts";
 import { fetchControlApiBinary } from "../src/lib/server/control-api.ts";
 
@@ -15,6 +18,52 @@ const config = {
   serviceToken: "secret-control-token"
 };
 const workspaceId = "owner/game";
+
+test("run client forwards the canonical maximum batch and rejects a larger inventory before fetch", async () => {
+  let body: unknown = null;
+  let calls = 0;
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    calls += 1;
+    body = JSON.parse(String(init?.body));
+    return response({
+      schema: "autodev-control-playtesting-run-started-v1",
+      workspaceId,
+      batchId: "batch-1000",
+      assignmentCount: PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
+      status: "running"
+    });
+  };
+  const assignments = Array.from(
+    { length: PLAYTESTS_MAX_BATCH_ASSIGNMENTS },
+    (_, index) => ({
+      scenario: "tutorial",
+      policy: "random",
+      seed: "seed-" + String(index + 1),
+      maxSteps: 20
+    })
+  );
+  const started = await startPlaytestingRun(
+    { workspaceId, assignments },
+    config,
+    { fetchImpl }
+  );
+  assert.equal(started.kind, "ok");
+  assert.equal(
+    (body as { assignments: readonly unknown[] }).assignments.length,
+    PLAYTESTS_MAX_BATCH_ASSIGNMENTS
+  );
+
+  const oversized = await startPlaytestingRun(
+    {
+      workspaceId,
+      assignments: [...assignments, { ...assignments[0]!, seed: "extra" }]
+    },
+    config,
+    { fetchImpl }
+  );
+  assert.equal(oversized.kind, "invalid-response");
+  assert.equal(calls, 1);
+});
 
 function response(payload: unknown, status = 200): Response {
   return Response.json(payload, { status });
@@ -85,7 +134,7 @@ test("Playtesting page rejects a response for another workspace rather than rend
 test("Playtesting selected episode validates workspace binding and nullable review", async () => {
   let requested = "";
   const episode = {
-    schema: "autodev-playtest-episode-v1",
+    schema: "autodev-playtest-episode-v3",
     episodeId: "episode-1",
     revision: 1,
     batchId: "batch-1",
@@ -157,11 +206,12 @@ test("human validation read accepts only scoped suppression-aware aggregates", a
           workspaceId,
           studyId,
           buildSha,
+          preference: null,
           summary: {
             revision: 2,
             benchmarkId: "benchmark-1",
             instrument: "miniPXI",
-            measurementVersion: "playtesting-measurement-v1",
+            measurementVersion: "playtesting-measurement-v2",
             suppressionState: "suppressed",
             retainedParticipants: null,
             items: [
@@ -199,6 +249,7 @@ test("human validation read accepts only scoped suppression-aware aggregates", a
           workspaceId,
           studyId,
           buildSha,
+          preference: null,
           summary: {
             revision: 1,
             benchmarkId: null,

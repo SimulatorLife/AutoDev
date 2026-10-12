@@ -99,6 +99,7 @@ const MAX_PLAYTEST_PAGE_SIZE = 500;
 const DEFAULT_PLAYTEST_PAGE_SIZE = 50;
 const LINE_BREAK_PATTERN = /\r?\n/u;
 const COUNT_PATTERN = /^\d+$/u;
+const SHA256_HEX_PATTERN = /^[a-f\d]{64}$/iu;
 const SMALL_CELL_SUPPRESSION_THRESHOLD = 5;
 const WORKSPACE_ID_PREDICATE = "workspace_id = {workspaceId:String}";
 
@@ -468,7 +469,7 @@ export class PlaytestRepository {
   ): Promise<PlaytestFinding | null> {
     if (
       typeof fingerprint !== "string" ||
-      !/^[a-f\d]{64}$/iu.test(fingerprint)
+      !SHA256_HEX_PATTERN.test(fingerprint)
     ) {
       throw new TypeError(
         "getLatestFindingByFingerprint requires a SHA-256 fingerprint."

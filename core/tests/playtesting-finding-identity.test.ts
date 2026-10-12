@@ -3,13 +3,13 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
-  PLAYTESTS_FINDING_IDENTITY_EXCLUDED_FIELDS,
-  PLAYTESTS_FINDING_IDENTITY_SCHEMA,
   buildPlaytestFindingIdentity,
   isPlaytestFindingId,
-  playtestFindingIdFromFingerprint,
   playtestFindingIdentityHashInput,
-  type PlaytestFindingIdentityInput
+  type PlaytestFindingIdentityInput,
+  playtestFindingIdFromFingerprint,
+  PLAYTESTS_FINDING_IDENTITY_EXCLUDED_FIELDS,
+  PLAYTESTS_FINDING_IDENTITY_SCHEMA
 } from "../src/playtesting/index.ts";
 
 /**
@@ -166,8 +166,8 @@ test("scope phase and modality are optional ('as applicable') and default to nul
 
 /** Shift printable ASCII (0x21-0x7E) to its Unicode fullwidth presentation form. */
 function toFullwidth(ascii: string): string {
-  return ascii.replace(/[\x21-\x7e]/gu, (char) =>
-    String.fromCodePoint(char.codePointAt(0)! + 0xfee0)
+  return ascii.replaceAll(/[\u0021-\u007E]/gu, (char) =>
+    String.fromCodePoint(char.codePointAt(0)! + 0xfe_e0)
   );
 }
 
@@ -201,6 +201,38 @@ test("embedded whitespace is rejected rather than collapsed into an identifier",
       }),
     TypeError
   );
+});
+
+test("identifier charset rejects leading, trailing and consecutive separators", () => {
+  const base = chestInvariantInput();
+  for (const mechanicKey of [
+    "-leading-separator",
+    "trailing-separator-",
+    "double--separator",
+    "mixed.._separators"
+  ]) {
+    assert.throws(
+      () => buildPlaytestFindingIdentity({ ...base, mechanicKey }),
+      TypeError
+    );
+  }
+});
+
+test("identifier charset accepts every allowed single separator and a bare single character", () => {
+  const base = chestInvariantInput();
+  for (const mechanicKey of [
+    "a",
+    "a-b",
+    "a_b",
+    "a.b",
+    "a:b",
+    "a/b",
+    "multi-part.mechanic:key_ok"
+  ]) {
+    assert.doesNotThrow(() =>
+      buildPlaytestFindingIdentity({ ...base, mechanicKey })
+    );
+  }
 });
 
 test("non-ASCII glyphs are rejected rather than silently normalized", () => {

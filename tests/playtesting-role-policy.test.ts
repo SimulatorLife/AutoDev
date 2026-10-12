@@ -105,6 +105,7 @@ test("playtester role enforces read-only sandbox and approved run/read tool subs
   for (const forbidden of [
     "playtest.metrics",
     "playtest.compare",
+    "playtest.prepareReview",
     "playtest.submitReview",
     "playtest.branch",
     "playtest.findings"
@@ -166,6 +167,7 @@ test("playtest-analyst reuses autodev/smart model tier without inheriting smart 
       "playtest.compare",
       "playtest.listEpisodes",
       "playtest.metrics",
+      "playtest.prepareReview",
       "playtest.readEpisode",
       "playtest.readWindow",
       "playtest.submitReview"
@@ -343,6 +345,8 @@ test("playtest-analysis skill enforces workspace gate, negative triggers, and nu
   assert.match(skillText, /"run a playtest batch"/);
   assert.match(skillText, /"fix this code so the build passes"/);
   assert.match(skillText, /"file a GitHub issue for this bug"/);
+  assert.match(skillText, /playtest\.prepareReview/);
+  assert.match(skillText, /packet is the citation boundary/i);
 
   // References exist and are linked:
   assert.ok(

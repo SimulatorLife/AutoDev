@@ -7,8 +7,10 @@ import {
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
+  existsSync,
   lstatSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -43,10 +45,10 @@ const STANDARD_COMMAND = ["/usr/bin/python3", "adapter.py"] as const;
 function fixtureRubric(): string {
   return (
     JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       workspaceId: "fixture/game",
       audience: "synthetic-fixture-only",
-      registryVersion: "docker-sandbox-fixture-v1",
+      registryVersion: "docker-sandbox-fixture-v2",
       eventSchemaHash: "d".repeat(64),
       defaults: {
         ...defaultPlaytestRegistryDefaults(),
@@ -58,15 +60,31 @@ function fixtureRubric(): string {
           metricId: "legal-action-rejection",
           version: 1,
           mechanicKey: "action-execution",
+          aggregationWindow: "phase",
           exposurePredicate: "fresh-legal-request-v1",
           eventFields: ["action.offeredIds", "action.expectedRevision"],
           evaluatorRef: "fixture/legal-action-rejection-v1",
+          evaluatorHash: "1".repeat(64),
           numerator: "fresh advertised legal requests rejected by engine",
           denominator: "all fresh advertised legal requests",
           unit: "proportion",
           polarity: "lower",
           targetBand: [0, 0],
           notObservable: ["missing-action-or-revision-events"]
+        }
+      ],
+      coverageRequirements: [
+        {
+          coverageMetricId: "legal-action-rejection",
+          mechanicKey: "action-execution",
+          phaseId: "tutorial",
+          scenarioFamily: "default",
+          cohort: "novice",
+          policy: "random",
+          modality: "headless",
+          requiredOpportunities: 10,
+          requiredIndependentUnits: 1,
+          unsupportedReason: null
         }
       ],
       dimensionRubrics: []
@@ -94,7 +112,12 @@ function configFor(command: readonly string[]): string {
         observationContract: "playtest.observation.json",
         benchmark: null,
         critic: "auto",
-        maxReviewedSessions: 10,
+        maxReviewedSessions: 0,
+        reviewSelection: {
+          surveillanceSessions: 0,
+          discoverySessions: 0,
+          discoverySignal: null
+        },
         visualCapture: "off",
         counterfactuals: "off",
         understandingProbes: "off",
@@ -395,6 +418,87 @@ test("Docker argv enforces a local, read-only, networkless container with hard q
       assert.ok(joined.includes("--entrypoint /usr/bin/python3"));
       assert.doesNotMatch(joined, /--gpus|DOCKER_HOST=.*tcp/u);
       assert.doesNotMatch(joined, /--env .*API_KEY|--env .*TOKEN/u);
+    });
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("branch traces enter through a SHA-addressed read-only mount and are removed after exit", async () => {
+  const fixture = repository();
+  try {
+    const prepared = preparePlaytestSandbox(approval(fixture.root));
+    const bytes = Buffer.from("verified replay trace", "utf8");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const reference = {
+      artifactId: "runtime-private-trace-id",
+      sha256,
+      bytes: bytes.byteLength,
+      mediaType: "application/x-ndjson"
+    };
+    let capturedArgs: readonly string[] = [];
+    let inputDirectory: string | null = null;
+
+    await withLocalSocket(async (socket) => {
+      const mockChild = new MockChildProcess();
+      const sandbox = await launchPlaytestSandbox(prepared, {
+        socket,
+        inspectImage: () => true,
+        inputArtifacts: [{ reference, bytes }],
+        spawn: (_command, args) => {
+          capturedArgs = args;
+          const mount = args.find(
+            (arg) =>
+              arg.startsWith("type=bind,source=") &&
+              arg.includes("target=/run/autodev-playtest-input")
+          );
+          assert.ok(mount);
+          const targetSeparator = ",target=";
+          const targetIndex = mount.indexOf(targetSeparator);
+          assert.notEqual(targetIndex, -1);
+          inputDirectory = mount.slice("type=bind,source=".length, targetIndex);
+          const inputFile = path.join(inputDirectory, sha256);
+          assert.deepEqual(readFileSync(inputFile), bytes);
+          assert.equal(lstatSync(inputFile).mode & 0o777, 0o400);
+          mockChild.simulateExit(0);
+          return mockChild as unknown as ChildProcess;
+        },
+        execFile: () => ""
+      });
+      await sandbox.result;
+      const mount = capturedArgs.find((arg) =>
+        arg.includes("target=/run/autodev-playtest-input")
+      );
+      assert.match(mount ?? "", /,readonly$/u);
+      assert.ok(
+        capturedArgs.includes(
+          "AUTODEV_PLAYTEST_INPUT_DIR=/run/autodev-playtest-input"
+        )
+      );
+      assert.ok(
+        capturedArgs.includes("AUTODEV_PLAYTEST_OUTPUT_DIR=/artifacts")
+      );
+      await sandbox.cleanup();
+      assert.ok(inputDirectory);
+      assert.equal(existsSync(inputDirectory), false);
+    });
+
+    await withLocalSocket(async (socket) => {
+      let launched = false;
+      await assert.rejects(
+        launchPlaytestSandbox(prepared, {
+          socket,
+          inputArtifacts: [{ reference, bytes: Buffer.from("tampered") }],
+          inspectImage: () => true,
+          spawn: () => {
+            launched = true;
+            return new MockChildProcess() as unknown as ChildProcess;
+          },
+          execFile: () => ""
+        }),
+        PlaytestSandboxApprovalError
+      );
+      assert.equal(launched, false);
     });
   } finally {
     fixture.cleanup();

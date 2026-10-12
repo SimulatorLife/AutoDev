@@ -229,6 +229,68 @@ test("worker bootstrap rejects confidenceLevel outside (0,1)", async () => {
   assert.equal(response.error!.code, -32_602);
 });
 
+test("worker returns an exact SciPy binomial interval for independent preference responses", async () => {
+  const id = randomUUID();
+  const response = await callWorker({
+    jsonrpc: "2.0",
+    id,
+    method: "statistics.binomial_proportion",
+    params: { successes: 7, trials: 10, confidenceLevel: 0.95 }
+  });
+  assert.equal(response.id, id);
+  const interval = response.result!.interval as Record<string, unknown>;
+  assert.equal(interval.method, "scipy-binomial-exact");
+  assert.equal(interval.libraryVersion, EXPECTED_LOCK_TAG);
+  assert.equal(interval.confidenceLevel, 0.95);
+  assert.equal(interval.resamples, null);
+  assert.equal(interval.seed, null);
+  assert.ok(
+    Math.abs((interval.lower as number) - Number("0.3475471499399921")) < 1e-12
+  );
+  assert.ok(
+    Math.abs((interval.upper as number) - Number("0.9332604888222655")) < 1e-12
+  );
+});
+
+test("exact binomial preference intervals preserve all-success and all-failure uncertainty", async () => {
+  for (const [successes, expectedLower, expectedUpper] of [
+    [5, Number("0.47817624989501856"), 1],
+    [0, 0, Number("0.5218237501049814")]
+  ] as const) {
+    const response = await callWorker({
+      jsonrpc: "2.0",
+      id: randomUUID(),
+      method: "statistics.binomial_proportion",
+      params: { successes, trials: 5, confidenceLevel: 0.95 }
+    });
+    const interval = response.result!.interval as Record<string, unknown>;
+    assert.ok(Math.abs((interval.lower as number) - expectedLower) < 1e-12);
+    assert.ok(Math.abs((interval.upper as number) - expectedUpper) < 1e-12);
+  }
+});
+
+test("exact binomial interval rejects invalid counts, confidence and unknown params", async () => {
+  const invalidCases = [
+    { successes: -1, trials: 5 },
+    { successes: 6, trials: 5 },
+    { successes: 1.5, trials: 5 },
+    { successes: 0, trials: 0 },
+    { successes: 1, trials: 5, confidenceLevel: 1 },
+    { successes: 1, trials: 5, unexpected: "field" }
+  ];
+  for (const params of invalidCases) {
+    const response = await callWorker({
+      jsonrpc: "2.0",
+      id: randomUUID(),
+      method: "statistics.binomial_proportion",
+      params
+    });
+    assert.ok(response.error);
+    assert.equal(response.error!.code, -32_602);
+    assert.equal(response.error!.data?.category, "invalid-input");
+  }
+});
+
 test("worker multipletests applies Benjamini-Hochberg FDR", async () => {
   const id = randomUUID();
   const response = await callWorker({

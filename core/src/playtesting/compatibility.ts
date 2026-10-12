@@ -169,6 +169,107 @@ function assertPairSide(
   }
 }
 
+function assertUniquePairId(
+  pair: PlaytestPairEvidence,
+  pairIds: Set<string>
+): void {
+  if (!pair.pairId.trim() || pairIds.has(pair.pairId)) {
+    throw new TypeError(
+      "Frozen pair identifiers must be non-empty and unique."
+    );
+  }
+  pairIds.add(pair.pairId);
+}
+
+function registerPairEpisodes(
+  pair: PlaytestPairEvidence,
+  episodeIds: Set<string>,
+  pairMap: Record<string, string>
+): void {
+  for (const side of [pair.baseline, pair.candidate]) {
+    if (episodeIds.has(side.episodeId)) {
+      throw new TypeError("An episode may belong to only one frozen pair.");
+    }
+    episodeIds.add(side.episodeId);
+  }
+  pairMap[pair.pairId] = JSON.stringify([
+    pair.baseline.episodeId,
+    pair.candidate.episodeId
+  ]);
+}
+
+function pairIncompatibilities(pair: PlaytestPairEvidence): string[] {
+  const incompatibilities: string[] = [];
+  if (pair.baseline.scenarioId !== pair.candidate.scenarioId) {
+    incompatibilities.push(`${pair.pairId}: scenario assignments differ.`);
+  }
+  if (pair.baseline.seedAllocationId !== pair.candidate.seedAllocationId) {
+    incompatibilities.push(`${pair.pairId}: seed assignments differ.`);
+  }
+  if (
+    pair.baseline.policyInformationHash !== pair.candidate.policyInformationHash
+  ) {
+    incompatibilities.push(
+      `${pair.pairId}: policy or player-information contracts differ.`
+    );
+  }
+  if (
+    pair.baseline.initialStateHash !== null &&
+    pair.candidate.initialStateHash !== null &&
+    pair.baseline.initialStateHash !== pair.candidate.initialStateHash
+  ) {
+    incompatibilities.push(`${pair.pairId}: initial-state hashes differ.`);
+  }
+  return incompatibilities;
+}
+
+function collectRngProvenance(
+  pair: PlaytestPairEvidence,
+  algorithms: Set<string>,
+  streamVersions: Set<string>
+): void {
+  for (const algorithm of [
+    pair.baseline.rngAlgorithm,
+    pair.candidate.rngAlgorithm
+  ]) {
+    if (algorithm !== null) algorithms.add(algorithm);
+  }
+  for (const version of [
+    pair.baseline.rngStreamVersion,
+    pair.candidate.rngStreamVersion
+  ]) {
+    if (version !== null) streamVersions.add(version);
+  }
+}
+
+function assessCounterfactualCoupling(pair: PlaytestPairEvidence): {
+  readonly matches: boolean;
+  readonly limitations: readonly string[];
+} {
+  const limitations: string[] = [];
+  const initialStateMatches =
+    pair.baseline.initialStateHash !== null &&
+    pair.baseline.initialStateHash === pair.candidate.initialStateHash;
+  if (!initialStateMatches) {
+    limitations.push(
+      `${pair.pairId}: identical initial-state hash was not established; counterfactual coupling is unavailable.`
+    );
+  }
+  const rngMatches =
+    pair.baseline.rngAlgorithm !== null &&
+    pair.baseline.rngStreamVersion !== null &&
+    pair.baseline.rngSequenceHash !== null &&
+    pair.baseline.rngAlgorithm === pair.candidate.rngAlgorithm &&
+    pair.baseline.rngStreamVersion === pair.candidate.rngStreamVersion &&
+    pair.baseline.rngSequenceHash === pair.candidate.rngSequenceHash;
+  if (!rngMatches) {
+    limitations.push(
+      `${pair.pairId}: exogenous RNG stream was not proven identical; extra draws or stream divergence invalidate counterfactual coupling.`
+    );
+  }
+  return { matches: initialStateMatches && rngMatches, limitations };
+}
+
 /**
  * Validate a preregistered paired assignment. A stream mismatch (including an
  * extra random draw) downgrades a counterfactual claim to initial-condition
@@ -195,81 +296,16 @@ export function assessPlaytestPairing(
   let allCounterfactualEvidenceMatches = true;
 
   for (const pair of evidence.pairs) {
-    if (!pair.pairId.trim() || pairIds.has(pair.pairId)) {
-      throw new TypeError(
-        "Frozen pair identifiers must be non-empty and unique."
-      );
-    }
-    pairIds.add(pair.pairId);
+    assertUniquePairId(pair, pairIds);
     assertPairSide(pair.baseline, `Baseline ${pair.pairId}`);
     assertPairSide(pair.candidate, `Candidate ${pair.pairId}`);
-    for (const side of [pair.baseline, pair.candidate]) {
-      if (episodeIds.has(side.episodeId)) {
-        throw new TypeError("An episode may belong to only one frozen pair.");
-      }
-      episodeIds.add(side.episodeId);
-    }
-    pairMap[pair.pairId] = JSON.stringify([
-      pair.baseline.episodeId,
-      pair.candidate.episodeId
-    ]);
-
-    if (pair.baseline.scenarioId !== pair.candidate.scenarioId) {
-      incompatibilities.push(`${pair.pairId}: scenario assignments differ.`);
-    }
-    if (pair.baseline.seedAllocationId !== pair.candidate.seedAllocationId) {
-      incompatibilities.push(`${pair.pairId}: seed assignments differ.`);
-    }
-    if (
-      pair.baseline.policyInformationHash !==
-      pair.candidate.policyInformationHash
-    ) {
-      incompatibilities.push(
-        `${pair.pairId}: policy or player-information contracts differ.`
-      );
-    }
-    if (
-      pair.baseline.initialStateHash !== null &&
-      pair.candidate.initialStateHash !== null &&
-      pair.baseline.initialStateHash !== pair.candidate.initialStateHash
-    ) {
-      incompatibilities.push(`${pair.pairId}: initial-state hashes differ.`);
-    }
-
-    for (const algorithm of [
-      pair.baseline.rngAlgorithm,
-      pair.candidate.rngAlgorithm
-    ]) {
-      if (algorithm !== null) algorithms.add(algorithm);
-    }
-    for (const version of [
-      pair.baseline.rngStreamVersion,
-      pair.candidate.rngStreamVersion
-    ]) {
-      if (version !== null) streamVersions.add(version);
-    }
-
-    const initialStateMatches =
-      pair.baseline.initialStateHash !== null &&
-      pair.baseline.initialStateHash === pair.candidate.initialStateHash;
-    if (!initialStateMatches) {
+    registerPairEpisodes(pair, episodeIds, pairMap);
+    incompatibilities.push(...pairIncompatibilities(pair));
+    collectRngProvenance(pair, algorithms, streamVersions);
+    const coupling = assessCounterfactualCoupling(pair);
+    if (!coupling.matches) {
       allCounterfactualEvidenceMatches = false;
-      counterfactualLimitations.push(
-        `${pair.pairId}: identical initial-state hash was not established; counterfactual coupling is unavailable.`
-      );
-    }
-    if (
-      pair.baseline.rngAlgorithm === null ||
-      pair.baseline.rngStreamVersion === null ||
-      pair.baseline.rngSequenceHash === null ||
-      pair.baseline.rngAlgorithm !== pair.candidate.rngAlgorithm ||
-      pair.baseline.rngStreamVersion !== pair.candidate.rngStreamVersion ||
-      pair.baseline.rngSequenceHash !== pair.candidate.rngSequenceHash
-    ) {
-      allCounterfactualEvidenceMatches = false;
-      counterfactualLimitations.push(
-        `${pair.pairId}: exogenous RNG stream was not proven identical; extra draws or stream divergence invalidate counterfactual coupling.`
-      );
+      counterfactualLimitations.push(...coupling.limitations);
     }
   }
 

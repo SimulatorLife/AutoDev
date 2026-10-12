@@ -45,7 +45,7 @@ web_search = false
 
 # Planned Runtime-hosted playtesting MCP server (runtime/src/playtesting/mcp.ts,
 # registered in .rulesync/mcp.jsonc by the owning change). This role allowlists
-# only evidence reads, code-owned metrics/compare, and review submission; it
+# only evidence reads, code-owned metrics/compare, packet preparation, and review submission; it
 # never gets run/branch (runner-only) or findings/issue-write (root-only).
 [mcp_servers.playtest]
 enabled = true
@@ -54,6 +54,7 @@ enabled_tools = [
   "playtest.listEpisodes",
   "playtest.readEpisode",
   "playtest.readWindow",
+  "playtest.prepareReview",
   "playtest.metrics",
   "playtest.compare",
   "playtest.submitReview",

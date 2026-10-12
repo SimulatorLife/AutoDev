@@ -10,7 +10,12 @@ const FINDING_1_ANCHOR_PATTERN = /#finding-finding-[a-f\d]{64}$/u;
 const VIEW_COMPARE_PATTERN = /view=compare/u;
 const WORKSPACE_DETAIL_URL_PATTERN = /\/workspaces\/fixture\/game$/u;
 const BUDGET_PREVIEW_PATTERN =
-  /Budget preview: 1 episode · tutorial · at most 20 steps/u;
+  /Batch budget preview: 1 of 10 per-batch episode assignments/u;
+const RUN_TWO_ASSIGNMENTS_LABEL = "Run 2 approved assignments";
+const REVOKE_FORM_NAME = "Revoke playtesting approval for fixture/game";
+const MAX_BUDGET_PREVIEW_PATTERN =
+  /Batch budget preview: 1 of 1000 per-batch episode assignments/u;
+const BROWSER_BATCH_ID_PATTERN = /^batch-browser-\d{3}$/u;
 const FIXTURE_BUILD_SHA = "a".repeat(40);
 const FIXTURE_CONFIG_HASH = "b".repeat(64);
 const FIXTURE_IMAGE_DIGEST = "fixture/adapter@sha256:" + "c".repeat(64);
@@ -75,6 +80,15 @@ test("workspace overview distinguishes batches, episodes, findings, and comparis
     "page"
   );
   await expect(page.getByText("Latest batch")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Metric coverage" })
+  ).toBeVisible();
+  await expect(
+    page.locator('[data-coverage-cell="legal-action-rejection"]')
+  ).toContainText("3/3 opportunities");
+  await expect(
+    page.locator('[data-coverage-cell="legal-action-rejection"]')
+  ).toContainText("Covered");
   await expect(
     page.getByText("fixture/game · disabled", { exact: false })
   ).toHaveCount(0);
@@ -172,20 +186,20 @@ test("workspace approval is an accessible explicit exact-build form", async ({
   ).toBeVisible();
   await expect(
     page.getByRole("form", {
-      name: "Revoke playtesting approval for fixture/game"
+      name: REVOKE_FORM_NAME
     })
   ).toBeVisible();
   await expect(page).toHaveURL(WORKSPACE_DETAIL_URL_PATTERN);
   expect(documentNavigations).toBe(0);
   const revokeForm = page.getByRole("form", {
-    name: "Revoke playtesting approval for fixture/game"
+    name: REVOKE_FORM_NAME
   });
   await revokeForm
     .getByLabel("Revocation reason")
     .fill("Synthetic usability fixture only");
   await revokeForm
     .getByRole("button", {
-      name: "Revoke playtesting approval for fixture/game"
+      name: REVOKE_FORM_NAME
     })
     .click();
   await expect(
@@ -202,6 +216,69 @@ test("workspace approval is an accessible explicit exact-build form", async ({
   );
 });
 
+test("batch composer generates and submits the full bounded 1,000-assignment inventory", async ({
+  page
+}) => {
+  const approvalForm = await fillSyntheticApprovalForm(page);
+  await approvalForm.getByLabel("Episode count").fill("1000");
+  await approvalForm.getByRole("button", { name: "Approve" }).click();
+  await expect(
+    page.locator('[data-workspace-approval-state="active"]')
+  ).toBeVisible();
+
+  await page.goto("/playtesting?workspaceId=fixture%2Fgame");
+  const form = page.getByRole("form", {
+    name: "Run an approved Playtesting batch"
+  });
+  await expect(page.getByText(MAX_BUDGET_PREVIEW_PATTERN)).toBeVisible();
+  await form.getByLabel("Additional assignments").fill("999");
+  await form.getByRole("button", { name: "Generate assignments" }).click();
+  await expect(
+    form.getByRole("group", { name: "Assignment 10" })
+  ).toBeVisible();
+  await expect(form.getByRole("group", { name: "Assignment 11" })).toHaveCount(
+    0
+  );
+  await expect(
+    form.getByRole("button", { name: "Show 990 more assignments" })
+  ).toBeVisible();
+  await expect(
+    form.getByRole("button", { name: "Add assignment" })
+  ).toBeDisabled();
+  const submit = form.getByRole("button", {
+    name: "Run 1000 approved assignments"
+  });
+  await expect(submit).toBeEnabled();
+  await submit.click();
+
+  const runStatus = page.getByRole("region", {
+    name: "Server-confirmed run status"
+  });
+  await expect(runStatus).toBeVisible();
+  await expect(
+    page.getByText(
+      "The Runtime confirmed an approved batch of 1000 assignments.",
+      { exact: true }
+    )
+  ).toBeVisible();
+
+  await page.goto("/workspaces/fixture/game");
+  const revokeForm = page.getByRole("form", {
+    name: REVOKE_FORM_NAME
+  });
+  await revokeForm
+    .getByLabel("Revocation reason")
+    .fill("Synthetic usability fixture only");
+  await revokeForm
+    .getByRole("button", {
+      name: REVOKE_FORM_NAME
+    })
+    .click();
+  await expect(
+    page.locator('[data-workspace-approval-state="revoked"]')
+  ).toBeVisible();
+});
+
 test("approved run start, status refresh, and cancellation stay in the Console without document navigation", async ({
   page
 }) => {
@@ -213,24 +290,54 @@ test("approved run start, status refresh, and cancellation stay in the Console w
 
   await page.goto("/playtesting?workspaceId=fixture%2Fgame");
   const form = page.getByRole("form", {
-    name: "Run one approved Playtesting episode"
+    name: "Run an approved Playtesting batch"
   });
   await expect(form).toBeVisible();
   await expect(page.getByText(BUDGET_PREVIEW_PATTERN)).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileWidth = await page.evaluate(() => ({
+    document: document.documentElement.scrollWidth,
+    viewport: document.documentElement.clientWidth
+  }));
+  expect(mobileWidth.document).toBeLessThanOrEqual(mobileWidth.viewport);
+  const collapseSidebar = page.getByRole("button", {
+    name: "Collapse sidebar"
+  });
+  if (await collapseSidebar.isVisible()) await collapseSidebar.click();
 
   let documentNavigations = 0;
   page.on("framenavigated", (frame) => {
     if (frame === page.mainFrame()) documentNavigations += 1;
   });
-  await form.getByLabel("Seed").fill("hold");
-  await form.getByRole("button", { name: "Run one approved episode" }).click();
+  await form.getByLabel("Seed 1").fill("hold");
+  await form.getByLabel("Additional assignments").fill("1");
+  await form.getByRole("button", { name: "Generate assignments" }).click();
+  await expect(form.getByLabel("Seed 2")).toHaveValue("seed-2");
+  await form.getByLabel("Seed 2").fill("hold");
   await expect(
-    page.getByText("batch-browser-001", { exact: true })
-  ).toBeVisible();
+    form.getByRole("group", { name: "Assignment 1" }).getByRole("alert")
+  ).toHaveText("Scenario, policy, and seed must identify a unique assignment.");
   await expect(
-    page.getByText("The Runtime confirmed this approved episode assignment.", {
-      exact: true
-    })
+    form.getByRole("button", { name: RUN_TWO_ASSIGNMENTS_LABEL })
+  ).toBeDisabled();
+  await form.getByLabel("Seed 2").fill("seed-2");
+  await expect(
+    form.getByRole("button", { name: RUN_TWO_ASSIGNMENTS_LABEL })
+  ).toBeEnabled();
+  await form.getByRole("button", { name: RUN_TWO_ASSIGNMENTS_LABEL }).click();
+  const runStatus = page.getByRole("region", {
+    name: "Server-confirmed run status"
+  });
+  await expect(runStatus).toBeVisible();
+  const cancelledBatchId = await runStatus.locator("strong").textContent();
+  expect(cancelledBatchId).toMatch(BROWSER_BATCH_ID_PATTERN);
+  await expect(
+    page.getByText(
+      "The Runtime confirmed an approved batch of 2 assignments.",
+      {
+        exact: true
+      }
+    )
   ).toBeVisible();
   await expect(page.getByText("Running", { exact: true })).toBeVisible();
 
@@ -246,5 +353,35 @@ test("approved run start, status refresh, and cancellation stay in the Console w
   ).toBeVisible();
   await page.getByRole("button", { name: "Refresh server status" }).click();
   await expect(page.getByText("Cancelled", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Cancellation: Operator requested cancellation.", {
+      exact: true
+    })
+  ).toBeVisible();
+
+  await form.getByLabel("Seed 1").fill("complete-1");
+  await form.getByLabel("Seed 2").fill("complete-2");
+  await form.getByRole("button", { name: RUN_TWO_ASSIGNMENTS_LABEL }).click();
+  await expect(runStatus.locator("strong")).not.toHaveText(
+    cancelledBatchId ?? ""
+  );
+  const completedBatchId = await runStatus.locator("strong").textContent();
+  expect(completedBatchId).toMatch(BROWSER_BATCH_ID_PATTERN);
+  await page.getByRole("button", { name: "Refresh server status" }).click();
+  await expect(
+    page
+      .getByRole("region", { name: "Server-confirmed run status" })
+      .getByText("Completed", { exact: true })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", {
+      name: `Open a-0001 · episode-${completedBatchId}-a-0001`
+    })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", {
+      name: `Open a-0002 · episode-${completedBatchId}-a-0002`
+    })
+  ).toBeVisible();
   expect(documentNavigations).toBe(0);
 });

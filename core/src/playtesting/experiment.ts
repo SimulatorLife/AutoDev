@@ -22,14 +22,14 @@
  */
 
 import type { PlaytestExperiment } from "./artifacts.ts";
+import { canonicalPlaytestJson } from "./canonical-json.ts";
 import { isPlaytestFindingId } from "./finding-identity.ts";
 import {
+  type PlaytestExperimentState,
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_EXPERIMENT_STATES,
-  type PlaytestExperimentState,
   type PlaytestVersionedRef
 } from "./types.ts";
-import { canonicalPlaytestJson } from "./canonical-json.ts";
 
 const EXPOSURE_UNITS = [
   "episode",

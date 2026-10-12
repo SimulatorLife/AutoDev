@@ -19,6 +19,8 @@ import {
   type HumanPlaytestStudy,
   PLAYTESTS_HUMAN_INSTRUMENTS
 } from "./artifacts.ts";
+import { samePlaytestBuild } from "./build-identity.ts";
+import { assertHumanStudyPreferencePlan } from "./human-preference.ts";
 import {
   type PlaytestMiniPxiItem,
   type PlaytestMissingReason,
@@ -1010,11 +1012,8 @@ function studyAllowsBuild(
   study: HumanPlaytestStudy,
   build: PlaytestVersionedRef
 ): boolean {
-  return study.allowedBuilds.some(
-    (allowed) =>
-      allowed.id === build.id &&
-      allowed.version === build.version &&
-      (allowed.contentHash ?? null) === (build.contentHash ?? null)
+  return study.allowedBuilds.some((allowed) =>
+    samePlaytestBuild(allowed, build)
   );
 }
 
@@ -1491,6 +1490,7 @@ export function importHumanStudyResponses(
   ) {
     return unapprovedOutcome(study, rows);
   }
+  assertHumanStudyPreferencePlan(study);
   if (
     study.instrument === "PXI" &&
     !validators.isTrustedPxiItemConstructMapping(

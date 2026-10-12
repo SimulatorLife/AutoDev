@@ -4,8 +4,8 @@ import {
   copyFileSync,
   lstatSync,
   mkdtempSync,
-  realpathSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   unlinkSync,
@@ -46,6 +46,11 @@ const CONFIG = {
     benchmark: null,
     critic: "auto",
     maxReviewedSessions: 5,
+    reviewSelection: {
+      surveillanceSessions: 0,
+      discoverySessions: 0,
+      discoverySignal: null
+    },
     visualCapture: "off",
     counterfactuals: "off",
     understandingProbes: "off",
@@ -57,7 +62,7 @@ const CONFIG = {
 
 const RUBRIC =
   JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
     workspaceId: "owner/fixture",
     audience: "synthetic-fixture-only",
     registryVersion: "approved-fixture-rubric-v1",
@@ -68,15 +73,31 @@ const RUBRIC =
         metricId: "legal-action-rejection",
         version: 1,
         mechanicKey: "action-execution",
+        aggregationWindow: "phase",
         exposurePredicate: "fresh-legal-request-v1",
         eventFields: ["action.offeredIds", "action.expectedRevision"],
         evaluatorRef: "fixture/legal-action-rejection-v1",
+        evaluatorHash: "1".repeat(64),
         numerator: "fresh advertised legal requests rejected by engine",
         denominator: "all fresh advertised legal requests",
         unit: "proportion",
         polarity: "lower",
         targetBand: [0, 0],
         notObservable: ["missing-action-or-revision-events"]
+      }
+    ],
+    coverageRequirements: [
+      {
+        coverageMetricId: "legal-action-rejection",
+        mechanicKey: "action-execution",
+        phaseId: "tutorial",
+        scenarioFamily: "onboarding",
+        cohort: "exploratory",
+        policy: "random",
+        modality: "headless",
+        requiredOpportunities: 10,
+        requiredIndependentUnits: 1,
+        unsupportedReason: null
       }
     ],
     dimensionRubrics: []
@@ -133,7 +154,7 @@ function approval(
       workerCount: 1,
       episodeCount: 3,
       maxStepsPerEpisode: 20,
-      critiqueCount: 0
+      critiqueCount: 5
     },
     retentionDays: 7,
     issueReporting: "disabled",
@@ -246,7 +267,8 @@ test("approved target bundle loads its rubric registry and content-hashed benchm
         {
           adapterCommand: ["node", "node-fixture-adapter.mjs"],
           allowedScenarios: ["tutorial"],
-          allowedPolicies: ["random"]
+          allowedPolicies: ["random"],
+          limits: { ...approval(fixture.root).limits, critiqueCount: 0 }
         },
         fixture.configBytes.toString("utf8")
       )
@@ -287,7 +309,8 @@ test("approved target bundle refuses a stale benchmark content hash", () => {
             {
               adapterCommand: ["node", "node-fixture-adapter.mjs"],
               allowedScenarios: ["tutorial"],
-              allowedPolicies: ["random"]
+              allowedPolicies: ["random"],
+              limits: { ...approval(fixture.root).limits, critiqueCount: 0 }
             },
             fixture.configBytes.toString("utf8")
           )
@@ -311,7 +334,8 @@ test("approved target bundle rejects a well-hashed benchmark for another workspa
             {
               adapterCommand: ["node", "node-fixture-adapter.mjs"],
               allowedScenarios: ["tutorial"],
-              allowedPolicies: ["random"]
+              allowedPolicies: ["random"],
+              limits: { ...approval(fixture.root).limits, critiqueCount: 0 }
             },
             fixture.configBytes.toString("utf8")
           )
@@ -412,14 +436,24 @@ test("approved config rejects command, scenario, policy and budget drift", () =>
         }),
       "budget-mismatch"
     );
-    expectCategory(
-      () =>
-        loadApprovedPlaytestDefinition({
-          ...base,
-          limits: { ...base.limits, critiqueCount: 6 }
-        }),
-      "budget-mismatch"
-    );
+    expectCategory(() => {
+      const overBudgetConfig =
+        JSON.stringify({
+          ...CONFIG,
+          analysis: { ...CONFIG.analysis, maxReviewedSessions: 6 }
+        }) + "\n";
+      writeFileSync(
+        path.join(fixture.root, "playtest.config.json"),
+        overBudgetConfig
+      );
+      return loadApprovedPlaytestDefinition(
+        approval(
+          fixture.root,
+          { playtestConfigHash: digest(overBudgetConfig) },
+          overBudgetConfig
+        )
+      );
+    }, "budget-mismatch");
   } finally {
     fixture.cleanup();
   }

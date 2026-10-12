@@ -9,6 +9,7 @@
 
 export {
   EXPECTED_LOCK_TAG,
+  type PlaytestBinomialProportionInput,
   type PlaytestBootstrapInput,
   type PlaytestMultiplicityInput,
   type PlaytestMultiplicityResult,

@@ -2,7 +2,7 @@
   "benchmarkId": "benchmark-synthetic-fixture-v1",
   "version": 1,
   "workspaceId": "owner/fixture",
-  "referenceBuildSha": "3659b31ab7fb3a19173d0d0670366d265e3a531f",
+  "referenceBuildSha": "50e03efb53715bcb988582e91a210b4d7087e2eb",
   "scenarioInventory": [
     {
       "scenarioId": "tutorial",
@@ -33,13 +33,11 @@
   "actionSchemaHash": "22e4a3b73cfe95d3a70172d637aed29574eef4488dfb94c8e30aa075acfa5b40",
   "observationSchemaHash": "a4654f7fae58dc28d1f5ad541efe42768acbd851755ddcfe5594a64cfd3da012",
   "eventSchemaHash": "83b222c141d0ac9cf15696947e3cdcfeecf54fb985c94ca96b411e0e8e44f65e",
-  "metricRegistryHash": "f0c1c8df805d8176d0d1941a386f303aac74276e02499942521bbfc8a8ef17d6",
-  "rubricHash": "f0c1c8df805d8176d0d1941a386f303aac74276e02499942521bbfc8a8ef17d6",
+  "metricRegistryHash": "686260014b98a1b025ac7f42913d5fa7b775a224d50b19867cd8898a5893a4ca",
+  "rubricHash": "686260014b98a1b025ac7f42913d5fa7b775a224d50b19867cd8898a5893a4ca",
   "captureMode": "headless",
-  "measurementVersion": "playtesting-measurement-v1",
-  "primaryMetricIds": [
-    "legal-action-rejection"
-  ],
+  "measurementVersion": "playtesting-measurement-v2",
+  "primaryMetricIds": ["legal-action-rejection"],
   "guardrailMetricIds": [],
   "practicalMargins": {
     "legal-action-rejection": 0.02
@@ -50,5 +48,8 @@
   "refreshPolicy": "manual-operator-review-only",
   "createdAt": "2026-10-10T00:00:00.000Z",
   "createdBy": "synthetic-fixture-only",
-  "contentHash": "70b535e54ef5879528298dc1a991f76b401ba45f07a602b9720b3bc1e038fd58"
+  "cohortWeights": {
+    "onboarding": 1
+  },
+  "contentHash": "c78533772dbe5df91cba080cef778f41744ed7224c772e8d92ed38c0b796bb72"
 }

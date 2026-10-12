@@ -12,8 +12,6 @@
 
 import {
   type PlaytestDiscoverySample,
-  PLAYTESTS_SAMPLING_SCHEMA,
-  type PlaytestSamplingPlan,
   type PlaytestStratumAllocation,
   type PlaytestSurveillanceSample
 } from "./types.ts";
@@ -366,14 +364,6 @@ export function samplePlaytestDiscovery(
     rankedBy,
     tieBreakerSeed: seed
   };
-}
-
-/** Combine a surveillance and discovery sample into one plan envelope. */
-export function buildPlaytestSamplingPlan(
-  surveillance: PlaytestSurveillanceSample,
-  discovery: PlaytestDiscoverySample
-): PlaytestSamplingPlan {
-  return { surveillance, discovery, schema: PLAYTESTS_SAMPLING_SCHEMA };
 }
 
 export { groupByStratum };

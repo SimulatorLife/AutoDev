@@ -95,7 +95,9 @@ export interface PlaytestDiagnosticCorpusResult {
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u;
 const SHA256 = /^[a-f\d]{64}$/iu;
 const MAX_COVERAGE_STRATA = 128;
-const MAX_DIAGNOSTIC_INSTANCES = 2_000;
+const MAX_DIAGNOSTIC_INSTANCES = 2000;
+/** Shared collator for deterministic identifier ordering; construction is not free. */
+const ID_COLLATOR = new Intl.Collator();
 
 function identifier(value: unknown, field: string): asserts value is string {
   if (typeof value !== "string" || !IDENTIFIER.test(value)) {
@@ -191,21 +193,20 @@ function scoreSource(
   // Maximum-cardinality bipartite matching ensures a prediction cannot claim
   // multiple reference issues and a duplicate flood cannot inflate recall.
   const orderedPredictions = [...reviewedPredictions].sort((a, b) =>
-    a.predictionId.localeCompare(b.predictionId)
+    ID_COLLATOR.compare(a.predictionId, b.predictionId)
   );
   const orderedReferences = [...positiveReferences].sort((a, b) =>
-    a.instanceId.localeCompare(b.instanceId)
+    ID_COLLATOR.compare(a.instanceId, b.instanceId)
   );
   const referenceOwner = new Map<number, number>();
   const predictionReference = new Map<number, number>();
   const augment = (predictionIndex: number, visited: Set<number>): boolean => {
     const prediction = orderedPredictions[predictionIndex]!;
-    for (
-      let referenceIndex = 0;
-      referenceIndex < orderedReferences.length;
-      referenceIndex += 1
-    ) {
-      const reference = orderedReferences[referenceIndex]!;
+    for (const [
+      referenceIndex,
+      orderedReference
+    ] of orderedReferences.entries()) {
+      const reference = orderedReference!;
       if (!overlaps(prediction, reference) || visited.has(referenceIndex))
         continue;
       visited.add(referenceIndex);
@@ -226,12 +227,13 @@ function scoreSource(
     augment(predictionIndex, new Set());
   }
 
-  const matches = [...predictionReference]
-    .map(([predictionIndex, referenceIndex]) => ({
+  const matches = Array.from(
+    predictionReference,
+    ([predictionIndex, referenceIndex]) => ({
       predictionId: orderedPredictions[predictionIndex]!.predictionId,
       referenceInstanceId: orderedReferences[referenceIndex]!.instanceId
-    }))
-    .sort((a, b) => a.predictionId.localeCompare(b.predictionId));
+    })
+  ).sort((a, b) => ID_COLLATOR.compare(a.predictionId, b.predictionId));
   const matchedPredictionIds = new Set(
     matches.map((match) => match.predictionId)
   );
@@ -277,146 +279,180 @@ function scoreSource(
   };
 }
 
-/** Validate and score diagnostic precision/recall without imputing incomplete truth. */
-export function evaluatePlaytestDiagnosticCorpus(
-  input: PlaytestDiagnosticCorpusInput
-): PlaytestDiagnosticCorpusResult {
-  identifier(input.referenceCorpusVersion, "referenceCorpusVersion");
-  if (!SHA256.test(input.labelProtocolHash)) {
-    throw new TypeError("labelProtocolHash must be a SHA-256 digest.");
+function validateCoverageEntry(
+  cell: PlaytestDiagnosticCoverage,
+  field: string,
+  stratumIds: Set<string>,
+  episodeStrata: Map<string, string>
+): void {
+  identifier(cell.stratumId, `${field}.stratumId`);
+  if (stratumIds.has(cell.stratumId))
+    throw new TypeError("Diagnostic coverage strata must be unique.");
+  stratumIds.add(cell.stratumId);
+  const eligible = uniqueIds(
+    cell.eligibleEpisodeIds,
+    `${field}.eligibleEpisodeIds`
+  );
+  const reviewed = uniqueIds(
+    cell.reviewedEpisodeIds,
+    `${field}.reviewedEpisodeIds`
+  );
+  if (eligible.size === 0)
+    throw new TypeError(`${field} must declare eligible episodes.`);
+  for (const episodeId of reviewed) {
+    if (!eligible.has(episodeId))
+      throw new TypeError(
+        `${field} reviews an episode outside its eligible inventory.`
+      );
   }
-  if (!Array.isArray(input.coverage) || input.coverage.length === 0) {
-    throw new TypeError("Diagnostic corpus coverage must not be empty.");
+  for (const episodeId of eligible) {
+    const priorStratum = episodeStrata.get(episodeId);
+    if (priorStratum !== undefined && priorStratum !== cell.stratumId) {
+      throw new TypeError(
+        `Episode "${episodeId}" occurs in multiple diagnostic strata.`
+      );
+    }
+    episodeStrata.set(episodeId, cell.stratumId);
   }
-  if (!Array.isArray(input.references) || !Array.isArray(input.predictions)) {
-    throw new TypeError(
-      "Diagnostic references and predictions must be arrays."
+}
+
+function validateCoverage(
+  coverage: readonly PlaytestDiagnosticCoverage[]
+): void {
+  const stratumIds = new Set<string>();
+  const episodeStrata = new Map<string, string>();
+  for (const [index, cell] of coverage.entries()) {
+    validateCoverageEntry(
+      cell,
+      `coverage[${index}]`,
+      stratumIds,
+      episodeStrata
     );
   }
-  if (input.coverage.length > MAX_COVERAGE_STRATA) {
+}
+
+function validateReferenceLabelState(
+  reference: PlaytestDiagnosticReference,
+  field: string
+): void {
+  if (
+    !["positive", "negative", "unresolved"].includes(reference.label) ||
+    !["agreement", "adjudicated", "unresolved"].includes(reference.adjudication)
+  ) {
+    throw new TypeError(`${field} label or adjudication is unsupported.`);
+  }
+  if (
+    (reference.label === "unresolved" &&
+      reference.adjudication !== "unresolved") ||
+    (reference.label !== "unresolved" &&
+      !["agreement", "adjudicated"].includes(reference.adjudication))
+  ) {
+    throw new TypeError(`${field} label and adjudication state disagree.`);
+  }
+}
+
+function validateReferenceEntry(
+  reference: PlaytestDiagnosticReference,
+  field: string,
+  coverage: readonly PlaytestDiagnosticCoverage[],
+  referenceIds: Set<string>
+): void {
+  validateWindow(reference, field);
+  identifier(reference.instanceId, `${field}.instanceId`);
+  if (referenceIds.has(reference.instanceId))
+    throw new TypeError("Diagnostic reference instance IDs must be unique.");
+  referenceIds.add(reference.instanceId);
+  const cell = coverage.find(
+    (candidate) => candidate.stratumId === reference.stratumId
+  );
+  if (!cell?.reviewedEpisodeIds.includes(reference.episodeId)) {
     throw new TypeError(
-      "Diagnostic corpus exceeds the supported stratum limit."
+      `${field} must belong to an adequately reviewed episode in its stratum.`
     );
   }
   if (
-    input.references.length > MAX_DIAGNOSTIC_INSTANCES ||
-    input.predictions.length > MAX_DIAGNOSTIC_INSTANCES
+    !Number.isSafeInteger(reference.reviewerCount) ||
+    reference.reviewerCount < 2
   ) {
     throw new TypeError(
-      "Diagnostic corpus exceeds the bounded instance limit."
+      `${field}.reviewerCount must represent at least two reviewers.`
     );
   }
-  const stratumIds = new Set<string>();
-  const episodeStrata = new Map<string, string>();
-  for (const [index, cell] of input.coverage.entries()) {
-    const field = `coverage[${index}]`;
-    identifier(cell.stratumId, `${field}.stratumId`);
-    if (stratumIds.has(cell.stratumId))
-      throw new TypeError("Diagnostic coverage strata must be unique.");
-    stratumIds.add(cell.stratumId);
-    const eligible = uniqueIds(
-      cell.eligibleEpisodeIds,
-      `${field}.eligibleEpisodeIds`
+  if (reference.blindToPredictions !== true) {
+    throw new TypeError(
+      `${field} reviewers must be blind to critic predictions.`
     );
-    const reviewed = uniqueIds(
-      cell.reviewedEpisodeIds,
-      `${field}.reviewedEpisodeIds`
-    );
-    if (eligible.size === 0)
-      throw new TypeError(`${field} must declare eligible episodes.`);
-    for (const episodeId of reviewed) {
-      if (!eligible.has(episodeId))
-        throw new TypeError(
-          `${field} reviews an episode outside its eligible inventory.`
-        );
-    }
-    for (const episodeId of eligible) {
-      const priorStratum = episodeStrata.get(episodeId);
-      if (priorStratum !== undefined && priorStratum !== cell.stratumId) {
-        throw new TypeError(
-          `Episode "${episodeId}" occurs in multiple diagnostic strata.`
-        );
-      }
-      episodeStrata.set(episodeId, cell.stratumId);
-    }
   }
+  validateReferenceLabelState(reference, field);
+}
 
+function validateReferences(
+  coverage: readonly PlaytestDiagnosticCoverage[],
+  references: readonly PlaytestDiagnosticReference[]
+): void {
   const referenceIds = new Set<string>();
-  for (const [index, reference] of input.references.entries()) {
-    const field = `references[${index}]`;
-    validateWindow(reference, field);
-    identifier(reference.instanceId, `${field}.instanceId`);
-    if (referenceIds.has(reference.instanceId))
-      throw new TypeError("Diagnostic reference instance IDs must be unique.");
-    referenceIds.add(reference.instanceId);
-    const cell = input.coverage.find(
-      (candidate) => candidate.stratumId === reference.stratumId
+  for (const [index, reference] of references.entries()) {
+    validateReferenceEntry(
+      reference,
+      `references[${index}]`,
+      coverage,
+      referenceIds
     );
-    if (!cell?.reviewedEpisodeIds.includes(reference.episodeId)) {
-      throw new TypeError(
-        `${field} must belong to an adequately reviewed episode in its stratum.`
-      );
-    }
-    if (
-      !Number.isSafeInteger(reference.reviewerCount) ||
-      reference.reviewerCount < 2
-    ) {
-      throw new TypeError(
-        `${field}.reviewerCount must represent at least two reviewers.`
-      );
-    }
-    if (reference.blindToPredictions !== true) {
-      throw new TypeError(
-        `${field} reviewers must be blind to critic predictions.`
-      );
-    }
-    if (
-      !["positive", "negative", "unresolved"].includes(reference.label) ||
-      !["agreement", "adjudicated", "unresolved"].includes(
-        reference.adjudication
-      )
-    ) {
-      throw new TypeError(`${field} label or adjudication is unsupported.`);
-    }
-    if (
-      (reference.label === "unresolved" &&
-        reference.adjudication !== "unresolved") ||
-      (reference.label !== "unresolved" &&
-        !["agreement", "adjudicated"].includes(reference.adjudication))
-    ) {
-      throw new TypeError(`${field} label and adjudication state disagree.`);
-    }
   }
+}
 
+function validatePredictionEntry(
+  prediction: PlaytestDiagnosticPrediction,
+  field: string,
+  coverage: readonly PlaytestDiagnosticCoverage[],
+  predictionIds: Set<string>
+): void {
+  validateWindow(prediction, field);
+  identifier(prediction.predictionId, `${field}.predictionId`);
+  if (predictionIds.has(prediction.predictionId))
+    throw new TypeError("Diagnostic prediction IDs must be unique.");
+  predictionIds.add(prediction.predictionId);
+  const cell = coverage.find(
+    (candidate) => candidate.stratumId === prediction.stratumId
+  );
+  if (!cell) {
+    throw new TypeError(
+      `${field}.stratumId is not present in the frozen corpus coverage.`
+    );
+  }
+  if (!cell.eligibleEpisodeIds.includes(prediction.episodeId)) {
+    throw new TypeError(
+      `${field}.episodeId is outside the frozen reference inventory.`
+    );
+  }
+  if (prediction.source !== "critic" && prediction.source !== "deterministic") {
+    throw new TypeError(`${field}.source is unsupported.`);
+  }
+}
+
+function validatePredictions(
+  coverage: readonly PlaytestDiagnosticCoverage[],
+  predictions: readonly PlaytestDiagnosticPrediction[]
+): void {
   const predictionIds = new Set<string>();
-  for (const [index, prediction] of input.predictions.entries()) {
-    const field = `predictions[${index}]`;
-    validateWindow(prediction, field);
-    identifier(prediction.predictionId, `${field}.predictionId`);
-    if (predictionIds.has(prediction.predictionId))
-      throw new TypeError("Diagnostic prediction IDs must be unique.");
-    predictionIds.add(prediction.predictionId);
-    const cell = input.coverage.find(
-      (candidate) => candidate.stratumId === prediction.stratumId
+  for (const [index, prediction] of predictions.entries()) {
+    validatePredictionEntry(
+      prediction,
+      `predictions[${index}]`,
+      coverage,
+      predictionIds
     );
-    if (!cell) {
-      throw new TypeError(
-        `${field}.stratumId is not present in the frozen corpus coverage.`
-      );
-    }
-    if (!cell.eligibleEpisodeIds.includes(prediction.episodeId)) {
-      throw new TypeError(
-        `${field}.episodeId is outside the frozen reference inventory.`
-      );
-    }
-    if (
-      prediction.source !== "critic" &&
-      prediction.source !== "deterministic"
-    ) {
-      throw new TypeError(`${field}.source is unsupported.`);
-    }
   }
+}
 
+function computeByStratum(input: PlaytestDiagnosticCorpusInput): Record<
+  string,
+  {
+    critic: PlaytestDiagnosticSourceScore;
+    deterministic: PlaytestDiagnosticSourceScore;
+    combined: PlaytestDiagnosticSourceScore;
+  }
+> {
   const byStratum: Record<
     string,
     {
@@ -454,6 +490,42 @@ export function evaluatePlaytestDiagnosticCorpus(
       )
     };
   }
+  return byStratum;
+}
+
+/** Validate and score diagnostic precision/recall without imputing incomplete truth. */
+export function evaluatePlaytestDiagnosticCorpus(
+  input: PlaytestDiagnosticCorpusInput
+): PlaytestDiagnosticCorpusResult {
+  identifier(input.referenceCorpusVersion, "referenceCorpusVersion");
+  if (!SHA256.test(input.labelProtocolHash)) {
+    throw new TypeError("labelProtocolHash must be a SHA-256 digest.");
+  }
+  if (!Array.isArray(input.coverage) || input.coverage.length === 0) {
+    throw new TypeError("Diagnostic corpus coverage must not be empty.");
+  }
+  if (!Array.isArray(input.references) || !Array.isArray(input.predictions)) {
+    throw new TypeError(
+      "Diagnostic references and predictions must be arrays."
+    );
+  }
+  if (input.coverage.length > MAX_COVERAGE_STRATA) {
+    throw new TypeError(
+      "Diagnostic corpus exceeds the supported stratum limit."
+    );
+  }
+  if (
+    input.references.length > MAX_DIAGNOSTIC_INSTANCES ||
+    input.predictions.length > MAX_DIAGNOSTIC_INSTANCES
+  ) {
+    throw new TypeError(
+      "Diagnostic corpus exceeds the bounded instance limit."
+    );
+  }
+  validateCoverage(input.coverage);
+  validateReferences(input.coverage, input.references);
+  validatePredictions(input.coverage, input.predictions);
+
   return {
     referenceCorpusVersion: input.referenceCorpusVersion,
     labelProtocolHash: input.labelProtocolHash.toLowerCase(),
@@ -475,6 +547,6 @@ export function evaluatePlaytestDiagnosticCorpus(
       input.references,
       input.predictions
     ),
-    byStratum
+    byStratum: computeByStratum(input)
   };
 }

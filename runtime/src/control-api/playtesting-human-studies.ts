@@ -2,6 +2,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
+  classifyPlaytestPreferenceSensitivity,
   type ControlApiPlaytestingHumanConsentResponse,
   type ControlApiPlaytestingHumanImportResponse,
   type ControlApiPlaytestingHumanQuarantinesResponse,
@@ -11,9 +12,11 @@ import {
   type HumanPlaytestStudy,
   type HumanStudyExportManifest,
   type HumanStudyImportValidators,
+  type HumanStudyPreferenceExportManifest,
+  type HumanStudyPreferenceImportValidators,
+  parseHumanStudyExportRows,
   type PlaytestEpisode,
   type PlaytestExperiment,
-  parseHumanStudyExportRows,
   PLAYTESTS_HUMAN_INSTRUMENTS,
   PLAYTESTS_HUMAN_STUDY_SCHEMA
 } from "@simulatorlife/autodev-core";
@@ -23,6 +26,7 @@ import {
   hashHumanStudyPxiItemConstructMapping,
   PlaytestRepository,
   PlaytestSourceUnavailableError,
+  type RestrictedHumanPreferenceSummary,
   type RestrictedHumanResponseRepository,
   RestrictedHumanStudyNotRegisteredError,
   RestrictedHumanStudyStorageError
@@ -30,10 +34,13 @@ import {
 import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
 import { z } from "zod/v4";
 
-import type { PlaytestingRunControlActor } from "./playtesting-run-control.ts";
+import { RuntimePlaytestStatAnalysis } from "../playtesting/statistics/analysis.ts";
+import { EXPECTED_LOCK_TAG } from "../playtesting/statistics/lock-manifest.ts";
 import { errorBody, sendJson } from "../router/proxy.ts";
+import { mapConcurrentOrdered } from "../shared/map-concurrent-ordered.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import { readControlApiJsonObject } from "./body.ts";
+import type { PlaytestingRunControlActor } from "./playtesting-run-control.ts";
 
 const HUMAN_PATH = "/control/playtesting/human-studies";
 const MAX_HUMAN_IMPORT_BODY_BYTES = 12_000_000;
@@ -46,8 +53,10 @@ const WRITE_ACTIONS = new Set([
   "register_human_study",
   "record_human_consent",
   "import_human_responses",
+  "import_human_preference_responses",
   "withdraw_human_participant",
-  "resolve_human_quarantine"
+  "resolve_human_quarantine",
+  "resolve_human_preference_quarantine"
 ]);
 
 const versionedBuildSchema = z.strictObject({
@@ -58,6 +67,32 @@ const versionedBuildSchema = z.strictObject({
   ]),
   contentHash: z.string().regex(SHA256_PATTERN).optional()
 });
+const preferenceBuildSchema = z.strictObject({
+  id: z.string().min(40).max(64).regex(SHA_PATTERN),
+  version: z.union([
+    z.string().min(1).max(128),
+    z.number().int().min(1).max(Number.MAX_SAFE_INTEGER)
+  ]),
+  contentHash: z.string().regex(SHA256_PATTERN)
+});
+const humanPreferencePlanSchema = z.strictObject({
+  analysisPlanRef: z.string().min(1).max(256),
+  questionVersion: z.string().min(1).max(128),
+  questionHash: z.string().regex(SHA256_PATTERN),
+  buildA: preferenceBuildSchema,
+  buildB: preferenceBuildSchema,
+  maximumExclusionRate: z.number().finite().min(0).lt(1),
+  practicalMargin: z.number().finite().min(0).lt(0.5),
+  minimumIndependentParticipants: z.number().int().min(1).max(1_000_000),
+  interval: z.strictObject({
+    method: z.string().min(1).max(128),
+    libraryVersion: z.string().min(1).max(128),
+    confidenceLevel: z.number().finite().gt(0).lt(1),
+    resamples: z.number().int().min(1).nullable(),
+    seed: z.string().min(1).nullable()
+  })
+});
+
 const studyRegistrationSchema = z.strictObject({
   schema: z.literal(PLAYTESTS_HUMAN_STUDY_SCHEMA),
   studyId: z.string().min(1).max(128).regex(ENTITY_ID_PATTERN),
@@ -65,6 +100,7 @@ const studyRegistrationSchema = z.strictObject({
   workspaceId: z.string().regex(WORKSPACE_ID_PATTERN),
   benchmarkId: z.string().min(1).max(128).regex(ENTITY_ID_PATTERN),
   allowedBuilds: z.array(versionedBuildSchema).min(1).max(16),
+  preferencePlan: humanPreferencePlanSchema.optional(),
   pxiItemConstructMappingHash: z.string().regex(SHA256_PATTERN).nullable(),
   instrument: z.enum([...PLAYTESTS_HUMAN_INSTRUMENTS]),
   instrumentVersion: z.string().min(1).max(128),
@@ -135,6 +171,30 @@ const importBodySchema = z.strictObject({
   manifest: exportManifestSchema,
   exportText: z.string().max(2_000_000)
 });
+const preferenceExportManifestSchema = z.strictObject({
+  studyIdColumn: z.string().min(1).max(256),
+  responseIdColumn: z.string().min(1).max(256),
+  revisionColumn: z.string().min(1).max(256),
+  supersedesColumn: z.string().min(1).max(256),
+  participantIdColumn: z.string().min(1).max(256),
+  consentVersionColumn: z.string().min(1).max(256),
+  consentScopeColumn: z.string().min(1).max(256),
+  workspaceIdColumn: z.string().min(1).max(256),
+  episodeAColumn: z.string().min(1).max(256),
+  exposureAStartedAtColumn: z.string().min(1).max(256),
+  exposureAEndedAtColumn: z.string().min(1).max(256),
+  episodeBColumn: z.string().min(1).max(256),
+  exposureBStartedAtColumn: z.string().min(1).max(256),
+  exposureBEndedAtColumn: z.string().min(1).max(256),
+  orderColumn: z.string().min(1).max(256),
+  submittedAtColumn: z.string().min(1).max(256),
+  answerColumn: z.string().min(1).max(256)
+});
+const preferenceImportBodySchema = z.strictObject({
+  format: z.enum(["csv", "json"]),
+  manifest: preferenceExportManifestSchema,
+  exportText: z.string().max(2_000_000)
+});
 const consentBodySchema = z.strictObject({
   participantId: z.string().min(1).max(256),
   consentVersion: z.string().min(1).max(128),
@@ -159,6 +219,10 @@ export type PlaytestingHumanStudyRepository = Pick<
 export interface PlaytestingHumanStudyControlApiOptions {
   readonly repository?: PlaytestingHumanStudyRepository;
   readonly responses?: RestrictedHumanResponseRepository;
+  readonly preferenceStatistics?: Pick<
+    RuntimePlaytestStatAnalysis,
+    "exactBinomialProportionInterval"
+  >;
   readonly workspaceApprovals?: WorkspacePlaytestApprovalRepository;
   readonly readWorkspaceCatalog?: () => ReturnType<
     ConfigRepository["readWorkspaceCatalog"]
@@ -178,10 +242,13 @@ type HumanStudyAction =
   | "register"
   | "consents"
   | "import"
+  | "preference-import"
+  | "preference-quarantines"
   | "withdrawals"
   | "validation"
   | "quarantines"
-  | "resolve-quarantine";
+  | "resolve-quarantine"
+  | "resolve-preference-quarantine";
 interface HumanStudyRoute {
   readonly studyId: string | null;
   readonly action: HumanStudyAction;
@@ -195,6 +262,20 @@ function repositoryFor(
   options: PlaytestingHumanStudyControlApiOptions
 ): PlaytestingHumanStudyRepository {
   return options.repository ?? new PlaytestRepository();
+}
+async function episodesByIds(
+  repository: PlaytestingHumanStudyRepository,
+  workspaceId: string,
+  episodeIds: readonly string[]
+): Promise<ReadonlyMap<string, PlaytestEpisode>> {
+  const batches = Array.from(
+    { length: Math.ceil(episodeIds.length / 200) },
+    (_, index) => episodeIds.slice(index * 200, (index + 1) * 200)
+  );
+  const pages = await mapConcurrentOrdered(batches, 4, (ids) =>
+    repository.getEpisodesByIds(workspaceId, ids)
+  );
+  return new Map(pages.flat().map((episode) => [episode.episodeId, episode]));
 }
 function responsesFor(
   options: PlaytestingHumanStudyControlApiOptions
@@ -254,6 +335,22 @@ function routeFor(pathname: string): HumanStudyRoute | null {
     ) {
       return { studyId, action };
     }
+  }
+  if (parts.length === 3 && parts[1] === "preferences") {
+    if (parts[2] === "import") {
+      return { studyId, action: "preference-import" };
+    }
+    if (parts[2] === "quarantines") {
+      return { studyId, action: "preference-quarantines" };
+    }
+  }
+  if (
+    parts.length === 4 &&
+    parts[1] === "preferences" &&
+    parts[2] === "quarantines" &&
+    parts[3] === "resolve"
+  ) {
+    return { studyId, action: "resolve-preference-quarantine" };
   }
   if (
     parts.length === 3 &&
@@ -594,8 +691,9 @@ async function registerStudy(
       );
       return;
     }
+    const { preferencePlan, ...studyInput } = input;
     const study: HumanPlaytestStudy = {
-      ...input,
+      ...studyInput,
       allowedBuilds: input.allowedBuilds.map(
         ({ id, version, contentHash }) => ({
           id,
@@ -603,6 +701,27 @@ async function registerStudy(
           ...(contentHash === undefined ? {} : { contentHash })
         })
       ),
+      ...(preferencePlan === undefined
+        ? {}
+        : {
+            preferencePlan: {
+              ...preferencePlan,
+              buildA: {
+                id: preferencePlan.buildA.id,
+                version: preferencePlan.buildA.version,
+                ...(preferencePlan.buildA.contentHash === undefined
+                  ? {}
+                  : { contentHash: preferencePlan.buildA.contentHash })
+              },
+              buildB: {
+                id: preferencePlan.buildB.id,
+                version: preferencePlan.buildB.version,
+                ...(preferencePlan.buildB.contentHash === undefined
+                  ? {}
+                  : { contentHash: preferencePlan.buildB.contentHash })
+              }
+            }
+          }),
       approved: true,
       approvedBy: actor.actor
     };
@@ -780,15 +899,8 @@ async function importStudyResponses(
           .filter((id) => id.length > 0)
       )
     ];
-    const episodes = new Map<string, PlaytestEpisode>();
     const repo = repositoryFor(options);
-    for (let start = 0; start < episodeIds.length; start += 200) {
-      const selected = await repo.getEpisodesByIds(
-        query.workspaceId,
-        episodeIds.slice(start, start + 200)
-      );
-      for (const episode of selected) episodes.set(episode.episodeId, episode);
-    }
+    const episodes = await episodesByIds(repo, query.workspaceId, episodeIds);
     const validators = validatorsForImport(study, options, episodes);
     const report = responseStore.importRows(
       studyId,
@@ -828,6 +940,154 @@ async function importStudyResponses(
       options,
       actor,
       "import_human_responses",
+      query.workspaceId
+    );
+  }
+}
+
+function validatorsForPreferenceImport(
+  study: HumanPlaytestStudy,
+  options: PlaytestingHumanStudyControlApiOptions,
+  episodes: ReadonlyMap<string, PlaytestEpisode>
+): HumanStudyPreferenceImportValidators {
+  const base = validatorsForImport(study, options, episodes);
+  return {
+    ...base,
+    isTrustedPreferenceQuestion: (candidate, plan) =>
+      candidate.preferencePlan !== undefined &&
+      JSON.stringify(candidate.preferencePlan) === JSON.stringify(plan) &&
+      plan.questionHash === candidate.preferencePlan.questionHash &&
+      plan.questionVersion === candidate.preferencePlan.questionVersion,
+    isPreferencePairComplete: (candidate, _participantId, plan, exposures) => {
+      const episodeA = episodes.get(exposures.episodeA);
+      const episodeB = episodes.get(exposures.episodeB);
+      return (
+        candidate.preferencePlan !== undefined &&
+        JSON.stringify(candidate.preferencePlan) === JSON.stringify(plan) &&
+        episodeA?.status === "completed" &&
+        episodeA.identity.workspaceId === candidate.workspaceId &&
+        episodeA.identity.buildSha === plan.buildA.id &&
+        episodeB?.status === "completed" &&
+        episodeB.identity.workspaceId === candidate.workspaceId &&
+        episodeB.identity.buildSha === plan.buildB.id
+      );
+    }
+  };
+}
+
+async function importStudyPreferenceResponses(
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  studyId: string,
+  actor: PlaytestingRunControlActor,
+  options: PlaytestingHumanStudyControlApiOptions
+): Promise<void> {
+  if (!operatorRequired(actor, response)) return;
+  const query = workspaceQuery(request, pathname, ["workspaceId"], response);
+  if (!query || !catalogWorkspace(query.workspaceId, options, response, true))
+    return;
+  if (!humanStudyApproval(query.workspaceId, options, response)) return;
+  const study = await ensureStudyAvailable(
+    query.workspaceId,
+    studyId,
+    options,
+    response
+  );
+  if (!study) return;
+  if (!study.preferencePlan) {
+    sendError(
+      response,
+      409,
+      "autodev_control_playtesting_preference_plan_missing",
+      "This approved study has no frozen paired-preference plan."
+    );
+    return;
+  }
+  const parsedBody = await readControlApiJsonObject(
+    request,
+    MAX_HUMAN_IMPORT_BODY_BYTES
+  );
+  if (!parsedBody.ok) {
+    sendError(response, parsedBody.status, parsedBody.code, parsedBody.message);
+    return;
+  }
+  const parsed = preferenceImportBodySchema.safeParse(parsedBody.body);
+  if (!parsed.success) {
+    sendError(
+      response,
+      400,
+      "autodev_control_playtesting_invalid_preference_export",
+      "The paired human-preference export or explicit column mapping is invalid."
+    );
+    return;
+  }
+  try {
+    const responseStore = responsesFor(options);
+    responseStore.registerStudy(study);
+    const rows = parseHumanStudyExportRows(
+      parsed.data.exportText,
+      parsed.data.format
+    );
+    const manifest = parsed.data.manifest as HumanStudyPreferenceExportManifest;
+    const episodeIds = [
+      ...new Set(
+        rows
+          .flatMap((row) => [
+            row[manifest.episodeAColumn] ?? "",
+            row[manifest.episodeBColumn] ?? ""
+          ])
+          .filter((id) => id.length > 0)
+      )
+    ];
+    const repo = repositoryFor(options);
+    const episodes = await episodesByIds(repo, query.workspaceId, episodeIds);
+    const validators = validatorsForPreferenceImport(study, options, episodes);
+    const report = responseStore.importPreferenceRows(
+      studyId,
+      rows,
+      manifest,
+      validators
+    );
+    const rejectedByReason: Record<string, number> = {};
+    for (const rejection of report.rejected) {
+      rejectedByReason[rejection.reason] =
+        (rejectedByReason[rejection.reason] ?? 0) + 1;
+    }
+    const body: ControlApiPlaytestingHumanImportResponse = {
+      schema: "autodev-control-playtesting-human-import-v1",
+      workspaceId: query.workspaceId,
+      studyId,
+      revision: report.revision,
+      acceptedCount: report.acceptedCount,
+      unchangedCount: report.unchangedCount,
+      rejectedCount: report.rejected.length,
+      rejectedByReason,
+      quarantinedCount: report.quarantined.length,
+      retainedParticipants: report.retainedParticipants
+    };
+    audit(
+      options,
+      actor,
+      "import_human_preference_responses",
+      query.workspaceId,
+      "ok",
+      {
+        studyId,
+        acceptedCount: report.acceptedCount,
+        unchangedCount: report.unchangedCount,
+        rejectedCount: report.rejected.length,
+        quarantinedCount: report.quarantined.length
+      }
+    );
+    sendJson(response, 200, body, { "cache-control": "no-store" });
+  } catch (error) {
+    respondHumanError(
+      response,
+      error,
+      options,
+      actor,
+      "import_human_preference_responses",
       query.workspaceId
     );
   }
@@ -968,6 +1228,65 @@ async function withdrawParticipant(
   }
 }
 
+async function preferenceSensitivityForApi(
+  study: HumanPlaytestStudy,
+  summary: RestrictedHumanPreferenceSummary | null,
+  options: PlaytestingHumanStudyControlApiOptions
+): Promise<ControlApiPlaytestingHumanValidationResponse["preference"]> {
+  if (summary === null) return null;
+  const plan = study.preferencePlan;
+  if (!plan) {
+    throw new TypeError("Preference summary has no approved study plan.");
+  }
+  const reasons: string[] = [];
+  let interval = null;
+  if (summary.counts === null) {
+    reasons.push("small-cell-suppressed");
+  } else {
+    const decisive = summary.counts.preferA + summary.counts.preferB;
+    const supportedPlan =
+      plan.interval.method === "scipy-binomial-exact" &&
+      plan.interval.libraryVersion === EXPECTED_LOCK_TAG &&
+      plan.interval.resamples === null &&
+      plan.interval.seed === null;
+    if (!supportedPlan) {
+      reasons.push("unsupported-preference-interval-plan");
+    } else if (decisive > 0) {
+      try {
+        const statistics =
+          options.preferenceStatistics ?? new RuntimePlaytestStatAnalysis();
+        interval = await statistics.exactBinomialProportionInterval({
+          successes: summary.counts.preferB,
+          trials: decisive,
+          confidenceLevel: plan.interval.confidenceLevel
+        });
+      } catch {
+        reasons.push("external-preference-interval-unavailable");
+      }
+    }
+  }
+  const classification =
+    summary.counts === null
+      ? null
+      : classifyPlaytestPreferenceSensitivity({
+          counts: summary.counts,
+          study,
+          interval
+        });
+  if (classification?.reasons.length) {
+    reasons.push(...classification.reasons);
+  }
+  return {
+    analysisPlanRef: plan.analysisPlanRef,
+    suppressionState: summary.suppressionState,
+    incompleteExposurePairs: summary.incompleteExposurePairs,
+    counts: summary.counts,
+    interval,
+    decision: classification?.decision ?? "inconclusive",
+    reasons: [...new Set(reasons)]
+  };
+}
+
 async function humanValidationSummary(
   request: IncomingMessage,
   response: ServerResponse,
@@ -1030,6 +1349,11 @@ async function humanValidationSummary(
     const summary = responseStore.getHumanValidationSummary(studyId, buildSha, {
       ...(pairedArmBuildIds ? { pairedArmBuildIds } : {})
     });
+    const preference = await preferenceSensitivityForApi(
+      study,
+      responseStore.getHumanPreferenceSummary(studyId),
+      options
+    );
     const pairedDifferences = pairedArmBuildIds
       ? responseStore.getPairedDifferenceSummaries(studyId, pairedArmBuildIds)
       : [];
@@ -1038,6 +1362,7 @@ async function humanValidationSummary(
       workspaceId: query.workspaceId,
       studyId,
       buildSha,
+      preference,
       summary: summary
         ? {
             revision: summary.revision,
@@ -1054,6 +1379,9 @@ async function humanValidationSummary(
     };
     sendJson(response, 200, body, { "cache-control": "no-store" });
   } catch (error) {
+    writeErrorLine(
+      error instanceof Error ? (error.stack ?? error.message) : String(error)
+    );
     respondHumanError(
       response,
       error,
@@ -1071,7 +1399,8 @@ async function humanQuarantines(
   pathname: string,
   studyId: string,
   actor: PlaytestingRunControlActor,
-  options: PlaytestingHumanStudyControlApiOptions
+  options: PlaytestingHumanStudyControlApiOptions,
+  preferenceOnly = false
 ): Promise<void> {
   if (!operatorRequired(actor, response)) return;
   const query = workspaceQuery(request, pathname, ["workspaceId"], response);
@@ -1091,11 +1420,21 @@ async function humanQuarantines(
       schema: "autodev-control-playtesting-human-quarantines-v1",
       workspaceId: query.workspaceId,
       studyId,
-      quarantines: responseStore.listQuarantine(studyId).map((entry) => ({
-        responseIds: entry.responseIds,
-        instrument: entry.instrument,
-        reason: entry.reason
-      }))
+      quarantines: preferenceOnly
+        ? []
+        : responseStore.listQuarantine(studyId).map((entry) => ({
+            responseIds: entry.responseIds,
+            instrument: entry.instrument,
+            reason: entry.reason
+          })),
+      preferenceQuarantines: preferenceOnly
+        ? responseStore.listPreferenceQuarantines(studyId).map((entry) => ({
+            responseIds: entry.responseIds,
+            buildAId: entry.buildAId,
+            buildBId: entry.buildBId,
+            reason: entry.reason
+          }))
+        : []
     };
     sendJson(response, 200, body, { "cache-control": "no-store" });
   } catch (error) {
@@ -1116,7 +1455,8 @@ async function resolveHumanQuarantine(
   pathname: string,
   studyId: string,
   actor: PlaytestingRunControlActor,
-  options: PlaytestingHumanStudyControlApiOptions
+  options: PlaytestingHumanStudyControlApiOptions,
+  preference = false
 ): Promise<void> {
   if (!operatorRequired(actor, response)) return;
   const query = workspaceQuery(request, pathname, ["workspaceId"], response);
@@ -1147,10 +1487,18 @@ async function resolveHumanQuarantine(
   try {
     const responseStore = responsesFor(options);
     responseStore.registerStudy(study);
-    responseStore.resolveQuarantine(studyId, parsed.data.responseIdToKeep);
-    audit(options, actor, "resolve_human_quarantine", query.workspaceId, "ok", {
-      studyId
-    });
+    if (preference) {
+      responseStore.resolvePreferenceQuarantine(
+        studyId,
+        parsed.data.responseIdToKeep
+      );
+    } else {
+      responseStore.resolveQuarantine(studyId, parsed.data.responseIdToKeep);
+    }
+    const action = preference
+      ? "resolve_human_preference_quarantine"
+      : "resolve_human_quarantine";
+    audit(options, actor, action, query.workspaceId, "ok", { studyId });
     sendJson(
       response,
       200,
@@ -1168,7 +1516,9 @@ async function resolveHumanQuarantine(
       error,
       options,
       actor,
-      "resolve_human_quarantine",
+      preference
+        ? "resolve_human_preference_quarantine"
+        : "resolve_human_quarantine",
       query.workspaceId
     );
   }
@@ -1258,96 +1608,88 @@ export async function handlePlaytestingHumanStudyControlApiRequest(
 ): Promise<boolean> {
   const route = routeFor(pathname);
   if (!route) return false;
-  const method = request.method ?? "GET";
-  if (route.action === "register" && method === "POST") {
-    await registerStudy(request, response, actor, options);
-  } else if (
-    route.studyId &&
-    route.action === "consents" &&
-    method === "POST"
-  ) {
-    await consentParticipant(
-      request,
-      response,
-      pathname,
-      route.studyId,
-      actor,
-      options
-    );
-  } else if (route.studyId && route.action === "import" && method === "POST") {
-    await importStudyResponses(
-      request,
-      response,
-      pathname,
-      route.studyId,
-      actor,
-      options
-    );
-  } else if (
-    route.studyId &&
-    route.action === "withdrawals" &&
-    method === "POST"
-  ) {
-    await withdrawParticipant(
-      request,
-      response,
-      pathname,
-      route.studyId,
-      actor,
-      options
-    );
-  } else if (
-    route.studyId &&
-    route.action === "validation" &&
-    method === "GET"
-  ) {
-    await humanValidationSummary(
-      request,
-      response,
-      pathname,
-      route.studyId,
-      actor,
-      options
-    );
-  } else if (
-    route.studyId &&
-    route.action === "quarantines" &&
-    method === "GET"
-  ) {
-    await humanQuarantines(
-      request,
-      response,
-      pathname,
-      route.studyId,
-      actor,
-      options
-    );
-  } else if (
-    route.studyId &&
-    route.action === "resolve-quarantine" &&
-    method === "POST"
-  ) {
-    await resolveHumanQuarantine(
-      request,
-      response,
-      pathname,
-      route.studyId,
-      actor,
-      options
-    );
-  } else {
-    response.setHeader(
-      "allow",
-      route.action === "validation" || route.action === "quarantines"
-        ? "GET"
-        : "POST"
-    );
+  const studyId = route.studyId ?? "";
+  const handlers: Record<HumanStudyAction, () => Promise<void>> = {
+    register: () => registerStudy(request, response, actor, options),
+    consents: () =>
+      consentParticipant(request, response, pathname, studyId, actor, options),
+    import: () =>
+      importStudyResponses(
+        request,
+        response,
+        pathname,
+        studyId,
+        actor,
+        options
+      ),
+    "preference-import": () =>
+      importStudyPreferenceResponses(
+        request,
+        response,
+        pathname,
+        studyId,
+        actor,
+        options
+      ),
+    withdrawals: () =>
+      withdrawParticipant(request, response, pathname, studyId, actor, options),
+    validation: () =>
+      humanValidationSummary(
+        request,
+        response,
+        pathname,
+        studyId,
+        actor,
+        options
+      ),
+    quarantines: () =>
+      humanQuarantines(request, response, pathname, studyId, actor, options),
+    "preference-quarantines": () =>
+      humanQuarantines(
+        request,
+        response,
+        pathname,
+        studyId,
+        actor,
+        options,
+        true
+      ),
+    "resolve-quarantine": () =>
+      resolveHumanQuarantine(
+        request,
+        response,
+        pathname,
+        studyId,
+        actor,
+        options
+      ),
+    "resolve-preference-quarantine": () =>
+      resolveHumanQuarantine(
+        request,
+        response,
+        pathname,
+        studyId,
+        actor,
+        options,
+        true
+      )
+  };
+  const expectedMethod =
+    route.action === "validation" ||
+    route.action === "quarantines" ||
+    route.action === "preference-quarantines"
+      ? "GET"
+      : "POST";
+  if ((request.method ?? "GET") !== expectedMethod) {
+    response.setHeader("allow", expectedMethod);
     sendError(
       response,
       405,
       "autodev_control_playtesting_method_not_allowed",
       "The human-study route does not support this method."
     );
+    return true;
   }
+  await handlers[route.action]();
   return true;
 }

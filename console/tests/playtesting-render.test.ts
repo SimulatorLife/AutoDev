@@ -4,16 +4,14 @@ import test from "node:test";
 
 import {
   buildPlaytestFindingIdentity,
-  playtestFindingIdentityHashInput
-} from "@simulatorlife/autodev-core";
-import type {
-  ControlApiPlaytestingEpisodeDetailResponse,
-  ControlApiPlaytestingHumanValidationResponse,
-  ControlApiPlaytestingWindowResponse,
-  PlaytestComparison,
-  PlaytestEpisode,
-  PlaytestFinding,
-  WorkspaceEntry
+  type ControlApiPlaytestingEpisodeDetailResponse,
+  type ControlApiPlaytestingHumanValidationResponse,
+  type ControlApiPlaytestingWindowResponse,
+  type PlaytestComparison,
+  type PlaytestEpisode,
+  type PlaytestFinding,
+  playtestFindingIdentityHashInput,
+  type WorkspaceEntry
 } from "@simulatorlife/autodev-core";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -33,10 +31,12 @@ const workspace: WorkspaceEntry = {
 
 function episode(): PlaytestEpisode {
   return {
-    schema: "autodev-playtest-episode-v1",
+    schema: "autodev-playtest-episode-v3",
     episodeId: "episode-17",
     revision: 2,
     batchId: "batch-1",
+    assignmentId: "a-0017",
+    branchLineage: null,
     identity: {
       workspaceId: WORKSPACE,
       repository: WORKSPACE,
@@ -195,13 +195,15 @@ test("finding witness links open the exact cited step while execution and outcom
       workspaces: [workspace],
       list: {
         resource: "findings",
-        rows: [{
-          ...finding,
-          affectedEpisodes: null,
-          totalEligibleEpisodes: null,
-          affectedOpportunities: null,
-          totalEligibleOpportunities: null
-        }],
+        rows: [
+          {
+            ...finding,
+            affectedEpisodes: null,
+            totalEligibleEpisodes: null,
+            affectedOpportunities: null,
+            totalEligibleOpportunities: null
+          }
+        ],
         total: 1,
         nextCursor: null
       }
@@ -304,7 +306,7 @@ test("Compare shows native human outcomes separately and never reconstructs supp
     },
     sourceFindingIds: [],
     episodeRefs: [],
-    measurementVersion: "playtesting-measurement-v1",
+    measurementVersion: "playtesting-measurement-v2",
     metrics: [],
     decision: "hold-inconclusive",
     ownerDecisionAt: null,
@@ -312,7 +314,7 @@ test("Compare shows native human outcomes separately and never reconstructs supp
     humanPreference: { answer: "not-collected", interval: null },
     provenance: {
       workspaceId: WORKSPACE,
-      measurementVersion: "playtesting-measurement-v1",
+      measurementVersion: "playtesting-measurement-v2",
       generatedAt: "2026-10-10T00:00:00.000Z"
     },
     notes: "Synthetic view fixture."
@@ -322,6 +324,30 @@ test("Compare shows native human outcomes separately and never reconstructs supp
     workspaceId: WORKSPACE,
     studyId: "study-1",
     buildSha: "b".repeat(40),
+    preference: {
+      analysisPlanRef: "paired-preference-plan-v1",
+      suppressionState: "unsuppressed",
+      incompleteExposurePairs: 0,
+      counts: {
+        eligibleParticipants: 10,
+        preferA: 1,
+        preferB: 5,
+        ties: 1,
+        unableToJudge: 1,
+        missing: 2
+      },
+      interval: {
+        lower: 0.65,
+        upper: 0.95,
+        method: "scipy-binomial-exact",
+        libraryVersion: "scipy-1.17.0/numpy-2.3.5/statsmodels-0.14.6",
+        confidenceLevel: 0.95,
+        resamples: null,
+        seed: null
+      },
+      decision: "supports-b-preference",
+      reasons: []
+    },
     summary: {
       revision: 2,
       benchmarkId: comparison.benchmarkId,
@@ -364,6 +390,14 @@ test("Compare shows native human outcomes separately and never reconstructs supp
   assert.match(html, /Human validation/u);
   assert.match(html, /miniPXI/u);
   assert.match(html, /Suppressed to protect small cells/u);
+  assert.match(html, /Paired-build preference \(separate from PXI\)/u);
+  assert.match(html, /Eligible completed pairs 10 · A 1 · B 5/u);
+  assert.match(
+    html,
+    /Evidence supports a preference for build B beyond the registered margin/u
+  );
+  assert.match(html, /Pr\(B preferred \| decisive response\)/u);
+  assert.match(html, /exact interval \[0.650, 0.950\]/u);
   assert.match(html, /Not collected/u);
   assert.doesNotMatch(
     html,

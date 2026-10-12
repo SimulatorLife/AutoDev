@@ -1,20 +1,29 @@
 /** Deterministic, explicitly synthetic Control API fixture for browser usability tests. */
+import { createHash } from "node:crypto";
 import {
   createServer,
   type IncomingMessage,
   type ServerResponse
 } from "node:http";
-import { createHash } from "node:crypto";
 
 import {
+  buildPlaytestCoverageManifestDraft,
   buildPlaytestFindingIdentity,
-  playtestFindingIdentityHashInput
+  playtestAssignmentManifestHashInput,
+  playtestCoverageManifestHashInput,
+  playtestFindingIdentityHashInput,
+  playtestReviewOutcomeKey,
+  PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
+  PLAYTESTS_BATCH_SCHEMA,
+  PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
+  selectPlaytestBatchReviews
 } from "@simulatorlife/autodev-core";
 
 const PORT = Number(process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? 4311);
 const WORKSPACE_ID = "fixture/game";
 const BUILD_SHA = "a".repeat(40);
 const MEASUREMENT_VERSION = "measurement-v1";
+const RUBRIC_HASH = "d".repeat(64);
 const FIXTURE_TIMESTAMP = "2026-10-10T00:00:00.000Z";
 const TRACE_ID = "trace-window-1";
 const FRAME_ID = "frame-1";
@@ -50,14 +59,16 @@ const counts = {
   cancelled: 0,
   budgetTruncated: 0,
   reviewed: 0,
-  eligible: 2
+  eligible: 1
 } as const;
 
 const episode = {
-  schema: "autodev-playtest-episode-v1",
+  schema: "autodev-playtest-episode-v3",
   episodeId: "episode-17",
   revision: 1,
   batchId: "batch-3",
+  assignmentId: "a-0017",
+  branchLineage: null,
   identity: {
     workspaceId: WORKSPACE_ID,
     repository: WORKSPACE_ID,
@@ -95,8 +106,10 @@ const episode = {
     {
       metricId: "legal-action-rejection",
       metricVersion: 1,
+      phaseId: "tutorial",
       numerator: 0,
       denominator: 3,
+      opportunityCount: 3,
       coverage: 1,
       unit: "proportion",
       estimate: 0,
@@ -106,6 +119,8 @@ const episode = {
       provenance: {
         workspaceId: WORKSPACE_ID,
         buildSha: BUILD_SHA,
+        evaluatorHash: "e".repeat(64),
+        rubricHash: RUBRIC_HASH,
         measurementVersion: MEASUREMENT_VERSION,
         generatedAt: FIXTURE_TIMESTAMP
       },
@@ -124,8 +139,90 @@ const episode = {
   missingReasons: []
 };
 
+const assignmentManifestBase = {
+  schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
+  batchId: "batch-3",
+  workspaceId: WORKSPACE_ID,
+  buildSha: BUILD_SHA,
+  configHash: "config-hash",
+  rubricHash: RUBRIC_HASH,
+  approvalRevision: 1,
+  createdAt: FIXTURE_TIMESTAMP,
+  assignments: [
+    {
+      assignmentId: "a-0017",
+      scenarioId: episode.identity.scenarioId,
+      scenarioFamily: episode.scenarioFamily,
+      policyId: episode.identity.policyId,
+      policyVersion: episode.identity.policyVersion,
+      cohort: episode.policyCohort,
+      seed: episode.identity.seed,
+      maxSteps: 20
+    }
+  ]
+} as const;
+const assignmentManifest = {
+  ...assignmentManifestBase,
+  contentHash: createHash("sha256")
+    .update(playtestAssignmentManifestHashInput(assignmentManifestBase))
+    .digest("hex")
+};
+const coverageManifestDraft = buildPlaytestCoverageManifestDraft({
+  rubricHash: RUBRIC_HASH,
+  assignmentManifestHash: assignmentManifest.contentHash,
+  mode: "headless",
+  generatedAt: FIXTURE_TIMESTAMP,
+  batchId: assignmentManifest.batchId,
+  workspaceId: assignmentManifest.workspaceId,
+  buildSha: assignmentManifest.buildSha,
+  plan: [
+    {
+      coverageMetricId: "legal-action-rejection",
+      metricVersion: 1,
+      mechanicKey: "action-execution",
+      phaseId: "tutorial",
+      scenarioFamily: "tutorial",
+      cohort: "novice",
+      policy: "weak-bot",
+      modality: "headless",
+      analysisUnit: "episode",
+      requiredOpportunities: 3,
+      requiredIndependentUnits: 1,
+      unsupportedReason: null
+    }
+  ],
+  assignments: assignmentManifest.assignments,
+  episodes: [episode]
+});
+const coverageManifest = {
+  ...coverageManifestDraft,
+  contentHash: createHash("sha256")
+    .update(playtestCoverageManifestHashInput(coverageManifestDraft))
+    .digest("hex")
+};
+const reviewSelection = selectPlaytestBatchReviews({
+  inventoryHash: assignmentManifest.contentHash,
+  maxReviewedSessions: 1,
+  critiqueBudget: 1,
+  surveillanceSessions: 1,
+  discoverySessions: 0,
+  discoverySignal: null,
+  candidates: [
+    {
+      assignmentId: "a-0017",
+      episodeId: episode.episodeId,
+      policyId: episode.identity.policyId,
+      scenarioId: episode.identity.scenarioId,
+      outcomeKey: playtestReviewOutcomeKey("completed", episode.outcome),
+      metrics: episode.metrics
+    }
+  ],
+  unreviewableAssignments: 0,
+  selectedAt: FIXTURE_TIMESTAMP
+});
+
 const batch = {
-  schema: "autodev-playtest-batch-v1",
+  schema: PLAYTESTS_BATCH_SCHEMA,
   batchId: "batch-3",
   revision: 1,
   workspaceId: WORKSPACE_ID,
@@ -133,7 +230,7 @@ const batch = {
   buildSha: BUILD_SHA,
   gameBuild: "fixture-build-1",
   configHash: "config-hash",
-  rubricHash: "rubric-hash",
+  rubricHash: RUBRIC_HASH,
   actionSchemaHash: "action-hash",
   observationSchemaHash: "obs-hash",
   eventSchemaHash: "event-hash",
@@ -142,8 +239,15 @@ const batch = {
   policyIds: ["weak-bot"],
   cohortIds: ["novice"],
   scenarioIds: ["tutorial"],
-  samplingPlan: null,
+  assignmentInventory: { status: "frozen", manifest: assignmentManifest },
+  coverageManifest,
+  reviewPackets: [],
+  reviewSelection,
+  unobservedAssignments: [],
+  reviewReceipts: [],
   status: "completed",
+  cancellationReason: null,
+  failureReason: null,
   counts,
   budget: {
     assignedEpisodes: 1,
@@ -310,17 +414,28 @@ function page(
 
 let workspaceApproval: Record<string, unknown> | null = null;
 let nextRunId = 1;
-const syntheticRuns = new Map<
-  string,
-  {
-    readonly workspaceId: string;
-    readonly scenario: string;
-    readonly policy: string;
-    readonly seed: string;
-    status: "running" | "completed" | "cancelled";
-    cancellationRequested: boolean;
-  }
->();
+type SyntheticRunAssignment = {
+  readonly assignmentId: string;
+  readonly scenario: string;
+  readonly policy: string;
+  readonly seed: string;
+  readonly maxSteps: number;
+};
+type SyntheticRun = {
+  readonly workspaceId: string;
+  readonly assignmentCount: number;
+  readonly assignments: readonly SyntheticRunAssignment[];
+  readonly manifestHash: string;
+  readonly reviewSelection: ReturnType<typeof selectPlaytestBatchReviews>;
+  readonly episodes: readonly {
+    readonly episodeId: string;
+    readonly record: Record<string, unknown>;
+  }[];
+  status: "running" | "completed" | "cancelled";
+  cancellationRequested: boolean;
+};
+const syntheticRuns = new Map<string, SyntheticRun>();
+const syntheticRunEpisodes = new Map<string, Record<string, unknown>>();
 
 async function readJsonBody(
   request: IncomingMessage
@@ -449,11 +564,17 @@ async function handleSyntheticWorkspaceApproval(
 
 const CANCEL_RUN_ROUTE = /^\/control\/playtesting\/runs\/([^/]+)\/cancel$/u;
 const STATUS_RUN_ROUTE = /^\/control\/playtesting\/runs\/([^/]+)$/u;
+const PLAYTEST_EPISODE_DETAIL_ROUTE =
+  /^\/control\/playtesting\/episodes\/([^/]+)$/u;
 
 function activeSyntheticRunRequest(value: Record<string, unknown> | null): {
-  readonly scenario: string;
-  readonly policy: string;
-  readonly seed: string;
+  readonly assignments: readonly {
+    readonly assignmentId: string;
+    readonly scenario: string;
+    readonly policy: string;
+    readonly seed: string;
+    readonly maxSteps: number;
+  }[];
 } | null {
   if (!value || !workspaceApproval || workspaceApproval.revokedAt !== null)
     return null;
@@ -461,30 +582,61 @@ function activeSyntheticRunRequest(value: Record<string, unknown> | null): {
     Record<string, unknown> | undefined;
   const scenarios = workspaceApproval.allowedScenarios;
   const policies = workspaceApproval.allowedPolicies;
+  const rawAssignments = value.assignments;
   if (
     value.workspaceId !== WORKSPACE_ID ||
-    typeof value.scenario !== "string" ||
-    !Array.isArray(scenarios) ||
-    !scenarios.includes(value.scenario) ||
-    value.policy !== "random" ||
-    !Array.isArray(policies) ||
-    !policies.includes(value.policy) ||
-    typeof value.seed !== "string" ||
-    value.seed.length === 0 ||
-    value.seed.length > 256 ||
+    !Array.isArray(rawAssignments) ||
+    rawAssignments.length === 0 ||
     !limits ||
-    typeof value.maxSteps !== "number" ||
-    !Number.isSafeInteger(value.maxSteps) ||
-    value.maxSteps < 1 ||
-    value.maxSteps > Number(limits.maxStepsPerEpisode)
+    rawAssignments.length > Number(limits.episodeCount)
   ) {
     return null;
   }
-  return {
-    scenario: value.scenario,
-    policy: value.policy,
-    seed: value.seed
-  };
+  const assignments: {
+    assignmentId: string;
+    scenario: string;
+    policy: string;
+    seed: string;
+    maxSteps: number;
+  }[] = [];
+  const seen = new Set<string>();
+  for (const [index, raw] of rawAssignments.entries()) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+      return null;
+    const assignment = raw as Record<string, unknown>;
+    if (
+      typeof assignment.scenario !== "string" ||
+      !Array.isArray(scenarios) ||
+      !scenarios.includes(assignment.scenario) ||
+      assignment.policy !== "random" ||
+      !Array.isArray(policies) ||
+      !policies.includes(assignment.policy) ||
+      typeof assignment.seed !== "string" ||
+      assignment.seed.length === 0 ||
+      assignment.seed.length > 256 ||
+      typeof assignment.maxSteps !== "number" ||
+      !Number.isSafeInteger(assignment.maxSteps) ||
+      assignment.maxSteps < 1 ||
+      assignment.maxSteps > Number(limits.maxStepsPerEpisode)
+    ) {
+      return null;
+    }
+    const key = JSON.stringify([
+      assignment.scenario,
+      assignment.policy,
+      assignment.seed
+    ]);
+    if (seen.has(key)) return null;
+    seen.add(key);
+    assignments.push({
+      assignmentId: "a-" + String(index + 1).padStart(4, "0"),
+      scenario: assignment.scenario,
+      policy: assignment.policy,
+      seed: assignment.seed,
+      maxSteps: assignment.maxSteps
+    });
+  }
+  return { assignments };
 }
 
 async function handleSyntheticRunMutation(
@@ -502,9 +654,65 @@ async function handleSyntheticRunMutation(
       return true;
     }
     const batchId = `batch-browser-${String(nextRunId++).padStart(3, "0")}`;
+    const manifestBase = {
+      ...assignmentManifestBase,
+      batchId,
+      assignments: runRequest.assignments.map((assignment) => ({
+        assignmentId: assignment.assignmentId,
+        scenarioId: assignment.scenario,
+        scenarioFamily: assignment.scenario,
+        policyId: assignment.policy,
+        policyVersion: "hmac-sha256-v1",
+        seed: assignment.seed,
+        maxSteps: assignment.maxSteps
+      }))
+    };
+    const manifestHash = createHash("sha256")
+      .update(playtestAssignmentManifestHashInput(manifestBase))
+      .digest("hex");
+    const episodes = runRequest.assignments.map((assignment) => {
+      const episodeId = `episode-${batchId}-${assignment.assignmentId}`;
+      const record = {
+        ...episode,
+        episodeId,
+        batchId,
+        assignmentId: assignment.assignmentId,
+        branchLineage: null,
+        identity: {
+          ...episode.identity,
+          scenarioId: assignment.scenario,
+          seed: assignment.seed
+        },
+        scenarioFamily: assignment.scenario,
+        stepCount: Math.min(episode.stepCount, assignment.maxSteps)
+      } as Record<string, unknown>;
+      return { episodeId, record };
+    });
+    const selectedReview = selectPlaytestBatchReviews({
+      inventoryHash: manifestHash,
+      maxReviewedSessions: 1,
+      critiqueBudget: 1,
+      surveillanceSessions: 1,
+      discoverySessions: 0,
+      discoverySignal: null,
+      candidates: runRequest.assignments.map((assignment, index) => ({
+        assignmentId: assignment.assignmentId,
+        episodeId: episodes[index]!.episodeId,
+        policyId: assignment.policy,
+        scenarioId: assignment.scenario,
+        outcomeKey: playtestReviewOutcomeKey("completed", episode.outcome),
+        metrics: episode.metrics
+      })),
+      unreviewableAssignments: 0,
+      selectedAt: FIXTURE_TIMESTAMP
+    });
     syntheticRuns.set(batchId, {
       workspaceId: WORKSPACE_ID,
-      ...runRequest,
+      assignments: runRequest.assignments,
+      assignmentCount: runRequest.assignments.length,
+      manifestHash,
+      reviewSelection: selectedReview,
+      episodes,
       status: "running",
       cancellationRequested: false
     });
@@ -514,6 +722,7 @@ async function handleSyntheticRunMutation(
         schema: "autodev-control-playtesting-run-started-v1",
         workspaceId: WORKSPACE_ID,
         batchId,
+        assignmentCount: runRequest.assignments.length,
         status: "running"
       },
       202
@@ -595,6 +804,10 @@ function sendSyntheticCapabilities(response: ServerResponse): void {
       (policy) => policy !== "random"
     ),
     configurationStatus: approved ? "validated" : "not-checked",
+    maxBatchAssignments:
+      approved && limits
+        ? Math.min(PLAYTESTS_MAX_BATCH_ASSIGNMENTS, Number(limits.episodeCount))
+        : 0,
     runnableAssignments,
     policyProfiles: runnableAssignments.map((assignment) => ({
       policyId: assignment.policyId,
@@ -610,6 +823,60 @@ function sendSyntheticCapabilities(response: ServerResponse): void {
   });
 }
 
+function completeSyntheticRunIfReady(run: SyntheticRun): void {
+  if (
+    run.status === "running" &&
+    !run.assignments.some((assignment) => assignment.seed === "hold")
+  ) {
+    run.status = "completed";
+    for (const entry of run.episodes) {
+      syntheticRunEpisodes.set(entry.episodeId, entry.record);
+    }
+  }
+}
+
+function syntheticRunResult(
+  batchId: string,
+  run: SyntheticRun
+): Record<string, unknown> | null {
+  if (run.status === "running") return null;
+  const completed = run.status === "completed";
+  const cancelled = run.status === "cancelled";
+  const outcomes = run.assignments.map((assignment, index) => ({
+    assignmentId: assignment.assignmentId,
+    episodeId: completed ? run.episodes[index]!.episodeId : null,
+    state: completed ? "completed" : "cancelled",
+    started: completed,
+    eligible: completed
+  }));
+  const runCounts = {
+    assigned: run.assignmentCount,
+    started: completed ? run.assignmentCount : 0,
+    completed: completed ? run.assignmentCount : 0,
+    crashed: 0,
+    infrastructureFailed: 0,
+    cancelled: cancelled ? run.assignmentCount : 0,
+    budgetTruncated: 0,
+    reviewed: 0,
+    eligible: completed ? run.assignmentCount : 0
+  };
+  return {
+    batchId,
+    assignmentCount: run.assignmentCount,
+    manifestHash: run.manifestHash,
+    concurrency: 1,
+    outcomes,
+    counts: runCounts,
+    reviewSelection: completed
+      ? run.reviewSelection
+      : { status: "unavailable", reason: "batch-incomplete" },
+    cancellation: cancelled ? "cancelled" : null,
+    selectedReviewEpisodeIds: completed
+      ? run.reviewSelection.selected.map((selected) => selected.episodeId)
+      : []
+  };
+}
+
 function sendSyntheticRunStatus(
   response: ServerResponse,
   batchId: string
@@ -619,7 +886,7 @@ function sendSyntheticRunStatus(
     response.writeHead(404).end();
     return true;
   }
-  if (run.status === "running" && run.seed !== "hold") run.status = "completed";
+  completeSyntheticRunIfReady(run);
   sendJson(response, {
     schema: "autodev-control-playtesting-run-status-v1",
     workspaceId: WORKSPACE_ID,
@@ -627,10 +894,7 @@ function sendSyntheticRunStatus(
       batchId,
       status: run.status,
       cancellationReason: run.status === "cancelled" ? "cancelled" : null,
-      result:
-        run.status === "completed"
-          ? { episodeId: episode.episodeId, outcome: episode.outcome }
-          : null,
+      result: syntheticRunResult(batchId, run),
       error: null
     }
   });
@@ -650,7 +914,7 @@ function handleSyntheticRunRead(response: ServerResponse, url: URL): boolean {
       )
       .map(([batchId, run]) => ({
         batchId,
-        scenarioId: run.scenario,
+        assignmentCount: run.assignmentCount,
         createdAt: FIXTURE_TIMESTAMP
       }));
     sendJson(response, {
@@ -675,7 +939,8 @@ function handleSyntheticPlaytestingRead(
     return true;
   }
   if (url.pathname === "/control/playtesting/episodes") {
-    sendJson(response, page("episodes", [episode], 1));
+    const episodes = [episode, ...syntheticRunEpisodes.values()];
+    sendJson(response, page("episodes", episodes, episodes.length));
     return true;
   }
   if (url.pathname === "/control/playtesting/findings") {
@@ -686,13 +951,23 @@ function handleSyntheticPlaytestingRead(
     sendJson(response, page("comparisons", [comparison], 1));
     return true;
   }
-  if (url.pathname === `/control/playtesting/episodes/${episode.episodeId}`) {
+  const episodeMatch = url.pathname.match(PLAYTEST_EPISODE_DETAIL_ROUTE);
+  if (episodeMatch) {
+    const episodeId = decodeURIComponent(episodeMatch[1]!);
+    const record =
+      episodeId === episode.episodeId
+        ? episode
+        : syntheticRunEpisodes.get(episodeId);
+    if (!record) {
+      sendJson(response, { error: "Not found" }, 404);
+      return true;
+    }
     sendJson(response, {
       schema: "autodev-control-playtesting-detail-v1",
       workspaceId: WORKSPACE_ID,
       resource: "episode",
       readOnly: true,
-      record: episode,
+      record,
       latestReview: null
     });
     return true;

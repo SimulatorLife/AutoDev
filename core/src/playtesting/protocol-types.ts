@@ -1,4 +1,4 @@
-import type { PlaytestAdapterQuotas } from "./types.ts";
+import type { PlaytestAdapterQuotas, PlaytestMissingReason } from "./types.ts";
 
 /** JSON-compatible game state; Runtime validates it against the negotiated schema. */
 export type PlaytestJsonValue =
@@ -39,6 +39,21 @@ export interface GameResetResult {
   };
 }
 
+/** Compact digest for one exact engine state, including RNG when observable. */
+export interface GameRngCheckpoint {
+  readonly algorithm: string;
+  readonly version: string;
+  /** Null means the engine cannot expose a stable state for this stream. */
+  readonly stateHash: string | null;
+  readonly reproducible: boolean;
+}
+
+/** Persisted full-state digest and RNG point for one pre-action decision. */
+export interface PlaytestCheckpointDigest {
+  readonly stateHash: string;
+  readonly rngCheckpoint: GameRngCheckpoint;
+}
+
 export interface GameEpisodeRevisionParams {
   readonly episodeId: string;
   readonly expectedRevision: number;
@@ -77,12 +92,32 @@ export interface GameStepResult {
   readonly terminal: boolean;
 }
 
+/** Game-owned evaluator sufficient statistics for one frozen metric. */
+export interface GameMetricEvaluation {
+  readonly metricId: string;
+  readonly metricVersion: number;
+  /** Null for a whole-episode result; otherwise the exact game-owned phase. */
+  readonly phaseId: string | null;
+  readonly evaluatorRef: string;
+  readonly evaluatorHash: string;
+  readonly numerator: number;
+  readonly denominator: number;
+  readonly opportunityCount: number;
+  readonly missing: number;
+  readonly independentUnits: number;
+  readonly unit: string;
+  readonly missingReasons: readonly PlaytestMissingReason[];
+}
+
 export interface GameOutcomeResult {
   readonly episodeId: string;
   readonly revision: number;
   readonly state: "terminal" | "partial";
   readonly outcome: PlaytestJsonValue | null;
+  /** Game-native outcome facts, distinct from rubric-controlled metric rows. */
   readonly metrics: Readonly<Record<string, number | null>>;
+  /** Typed sufficient statistics emitted by the approved game evaluator code. */
+  readonly evaluations: readonly GameMetricEvaluation[];
   readonly missingReasons: readonly string[];
 }
 
@@ -102,13 +137,24 @@ export interface GameInvariantsResult {
 export interface GameSnapshotResult {
   readonly episodeId: string;
   readonly revision: number;
-  readonly snapshot: PlaytestArtifactReference;
-  readonly integrityHash: string;
+  /** Full relevant engine-state digest, including hidden state. */
+  readonly stateHash: string;
+  readonly rngCheckpoint: GameRngCheckpoint;
+  /** Present only when includeArtifact was requested. */
+  readonly snapshot: PlaytestArtifactReference | null;
+  readonly integrityHash: string | null;
+}
+
+export interface GameSnapshotParams extends GameEpisodeRevisionParams {
+  /** Digest-only checkpoints avoid writing a large engine image per decision. */
+  readonly includeArtifact: boolean;
 }
 
 export interface GameReplayParams {
   readonly trace: PlaytestArtifactReference;
   readonly expectedBuildSha: string;
+  /** Reconstruct the pre-action state of this zero-based decision. */
+  readonly throughStep: number;
 }
 
 export interface GameReplayResult {
@@ -117,6 +163,9 @@ export interface GameReplayResult {
   readonly replayStatus: "verified" | "diverged" | "unavailable";
   readonly transitionHash: string | null;
   readonly firstDivergentStep: number | null;
+  readonly replayedThroughStep: number;
+  readonly stateHash: string | null;
+  readonly rngCheckpoint: GameRngCheckpoint;
   readonly diagnostics: readonly string[];
 }
 
@@ -131,7 +180,7 @@ export interface GameForkResult {
   readonly episodeId: string;
   readonly revision: number;
   readonly initialStateHash: string;
-  readonly rngProvenance: GameResetResult["rngProvenance"];
+  readonly rngCheckpoint: GameRngCheckpoint;
 }
 
 export interface GameCaptureRangeParams extends GameEpisodeRevisionParams {

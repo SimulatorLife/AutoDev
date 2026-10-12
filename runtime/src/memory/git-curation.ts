@@ -39,7 +39,7 @@ const GITHUB_PULL_REQUEST_NUMBER_PATTERN = /^[1-9]\d{0,9}$/u;
 const GITHUB_CLOSED_EVENT = "ClosedEvent";
 const GITHUB_COMMIT_CLOSER = "Commit";
 const GITHUB_PULL_REQUEST_CLOSER = "PullRequest";
-const GIT_TIMEOUT_MS = 2000;
+const GIT_TIMEOUT_MS = 10_000;
 const GIT_MAX_BUFFER_BYTES = 512 * 1024;
 const GITHUB_LOOKUPS_PER_CONTEXT = 1;
 /**
@@ -1278,12 +1278,16 @@ async function runGit(
     });
     return { exitCode: 0, stdout: result.stdout.trim() };
   } catch (error) {
-    const code =
-      typeof error === "object" && error !== null && "code" in error
-        ? (error as { code?: unknown }).code
+    const status =
+      typeof error === "object" && error !== null
+        ? typeof (error as { status?: unknown }).status === "number"
+          ? (error as { status: number }).status
+          : typeof (error as { code?: unknown }).code === "number"
+            ? (error as { code: number }).code
+            : null
         : null;
     return {
-      exitCode: typeof code === "number" ? code : -1,
+      exitCode: status ?? -1,
       stdout: ""
     };
   }

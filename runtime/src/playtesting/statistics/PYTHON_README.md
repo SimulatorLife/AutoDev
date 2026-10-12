@@ -5,7 +5,8 @@ Pinned, hash-locked Python analysis used by the Runtime-owned
 
 This environment is selected by `docs/playtesting-measurement-contract.md`
 §4 "Statistics reuse", which requires an isolated analysis task that uses
-SciPy bootstrap on paired independent-unit arrays, plus statsmodels
+SciPy bootstrap on paired independent-unit arrays, SciPy exact binomial
+proportion intervals for participant-level A/B preference, plus statsmodels
 multiplicity corrections on a predeclared family. Core supplies quantity
 definitions and input grouping; this environment performs the inference
 without rewriting correlation/bootstrap math.
