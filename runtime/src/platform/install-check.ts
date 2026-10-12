@@ -44,6 +44,7 @@ import {
   LAUNCH_LABELS,
   loadCodexCommands,
   MCP_LAUNCHERS,
+  nodeModuleLinks,
   OBSOLETE_CLAUDE_SKILL_VIEWS,
   OBSOLETE_DASHBOARD,
   OBSOLETE_DIRS,
@@ -373,14 +374,12 @@ function checkRuntimeAndOt(
       );
     }
   }
-  check(
-    "runtime node_modules",
-    runtimeLinkMatches(
-      path.join(paths.repositoryRoot, "node_modules"),
-      path.join(paths.codexHome, "node_modules")
-    ),
-    failures
-  );
+  for (const { source, target } of nodeModuleLinks(paths))
+    check(
+      `node_modules link ${path.relative(paths.codexHome, target)}`,
+      runtimeLinkMatches(source, target),
+      failures
+    );
   for (const role of PROMPT_ROLES)
     check(
       `prompt role ${role}`,

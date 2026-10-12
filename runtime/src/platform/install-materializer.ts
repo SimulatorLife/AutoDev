@@ -897,13 +897,52 @@ function linkRuntimeConfigs(
     linkRuntimeSource(source(`agents/rules/${name}`), path.join(rules, name));
 }
 
+export interface NodeModuleLink {
+  readonly source: string;
+  readonly target: string;
+}
+
+/**
+ * `$CODEX_HOME/src` mirrors `runtime/src`, and pnpm installs each workspace
+ * package's dependencies into that package's own `node_modules` -- so the
+ * mirror resolves nothing Runtime declares from the copied sources alone.
+ * That is how the router came to crash-loop under KeepAlive with
+ * `Cannot find package 'zod'`: nothing was wrong with the copy, only with the
+ * resolution environment it was dropped into. Link the owning package's
+ * dependency tree beside the mirror root, and keep the repository-root link
+ * that resolves the workspace packages the mirror imports
+ * (`@simulatorlife/autodev-core`, `@simulatorlife/autodev-data`).
+ */
+export function nodeModuleLinks(
+  options: Pick<MaterializeOptions, "repositoryRoot" | "codexHome">
+): readonly NodeModuleLink[] {
+  return [
+    {
+      source: path.join(options.repositoryRoot, "node_modules"),
+      target: path.join(options.codexHome, "node_modules")
+    },
+    {
+      source: path.join(options.repositoryRoot, "runtime", "node_modules"),
+      // runtimeTarget() installs every `runtime/src/...` module under
+      // `$CODEX_HOME/src/...`, so node_modules beside that mirror root is the
+      // directory a copied module's own walk-up reaches first.
+      target: path.join(
+        runtimeTarget("runtime/src", options.codexHome),
+        "node_modules"
+      )
+    }
+  ];
+}
+
 function linkNodeModules(options: MaterializeOptions): void {
-  const target = path.join(options.codexHome, "node_modules");
-  const source = path.join(options.repositoryRoot, "node_modules");
-  if (exists(target) && !isSymlink(target)) {
-    rmSync(target, { recursive: true, force: true });
+  for (const { source, target } of nodeModuleLinks(options)) {
+    if (!exists(source))
+      throw new Error(`missing ${source}; run pnpm install --frozen-lockfile`);
+    if (exists(target) && !isSymlink(target)) {
+      rmSync(target, { recursive: true, force: true });
+    }
+    linkRuntimeSource(source, target);
   }
-  linkRuntimeSource(source, target);
 }
 
 function replaceSkillSymlinks(

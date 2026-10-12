@@ -1362,6 +1362,22 @@ that imports it. `tests/platform/runtime-manifest.test.ts` walks the manifest's
 transitive relative imports and fails with the exact entries to add, so adding a
 new module under `src/` means adding it to the manifest in the same change.
 
+Bare package imports break the same way, and pnpm's per-package layout is why.
+pnpm installs each workspace package's dependencies into that package's own
+`node_modules`, so a copy of `runtime/src/` living outside the repository resolves
+nothing Runtime declares. That is how the router crash-looped on
+`Cannot find package 'zod'`, imported by
+`runtime/src/control-api/playtesting-human-studies.ts`: it resolved in the checkout
+and not under `$CODEX_HOME`. `nodeModuleLinks()` is the one place that pairs each
+`node_modules` tree with the `CODEX_HOME` path a copied module's walk-up reaches --
+the repository root, which resolves the workspace packages
+(`@simulatorlife/autodev-core`, `@simulatorlife/autodev-data`), and
+`runtime/node_modules` beside the `$CODEX_HOME/src/` mirror root, which resolves
+Runtime's own dependencies. `install --check` verifies both links, and
+`tests/platform/runtime-manifest.test.ts` resolves every bare import of every
+manifest module through that link set, so dropping or misplacing a link fails in
+the test rather than in a supervised service.
+
 A Claude turn has no delegation tool of its own to bound: the CLI runs without
 `Agent`/`Task`, and delegation is Codex's `multi_agent_v1__spawn_agent`, which
 Codex offers only to the orchestrator. A target repository's

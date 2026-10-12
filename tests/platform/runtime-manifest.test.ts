@@ -1,16 +1,18 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, normalize } from "node:path";
+import { dirname, join, normalize, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
   LAUNCH_LABELS,
+  nodeModuleLinks,
   OBSOLETE_DASHBOARD,
   OBSOLETE_LAUNCH,
   OBSOLETE_RUNTIME_MODULES,
   RUNTIME_MODULES
 } from "@simulatorlife/autodev-runtime/platform/install-materializer";
+import { runtimeTarget } from "@simulatorlife/autodev-runtime/platform/runtime-files";
 import * as ts from "typescript";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -1207,4 +1209,55 @@ test("installed sources use dependencies from their owning workspace", () => {
       runtimeDependencies,
       runtimePackage.name
     );
+});
+
+test("the CODEX_HOME copy resolves every bare import through a linked node_modules", () => {
+  // `$CODEX_HOME` is not the repository, so a copied module resolves packages
+  // only by walking up from its installed directory through node_modules trees
+  // that actually exist there. Model that walk: a node_modules directory
+  // inside CODEX_HOME exists only where the installer links one, and it
+  // resolves to its link source. Driven by nodeModuleLinks() so that dropping
+  // or misplacing a link fails here rather than crash-looping a supervised
+  // service -- the router ran for a day on ERR_MODULE_NOT_FOUND for `zod`,
+  // which resolves in the repository and not in the mirror.
+  const codexHome = join(repositoryRoot, "codex-home");
+  const links = new Map(
+    nodeModuleLinks({ repositoryRoot, codexHome }).map(({ source, target }) => [
+      target,
+      source
+    ])
+  );
+  const resolvesFromInstalledPath = (
+    installedPath: string,
+    packageName: string
+  ): boolean => {
+    let directory = dirname(installedPath);
+    while (
+      directory === codexHome ||
+      directory.startsWith(`${codexHome}${sep}`)
+    ) {
+      const linkSource = links.get(join(directory, "node_modules"));
+      if (linkSource && existsSync(join(linkSource, packageName))) return true;
+      directory = dirname(directory);
+    }
+    return false;
+  };
+
+  const unresolvable: string[] = [];
+  for (const modulePath of RUNTIME_MODULES) {
+    if (!modulePath.endsWith(".ts")) continue;
+    const installedPath = runtimeTarget(modulePath, codexHome);
+    for (const packageName of packageImports(
+      readFileSync(join(repositoryRoot, modulePath), "utf8")
+    ))
+      if (!resolvesFromInstalledPath(installedPath, packageName))
+        unresolvable.push(
+          `${modulePath} -> ${installedPath} imports "${packageName}"`
+        );
+  }
+  assert.deepEqual(
+    unresolvable.sort(),
+    [],
+    `installed sources cannot resolve these packages from CODEX_HOME; link each owning package's node_modules where the mirror will walk through it:\n${unresolvable.join("\n")}`
+  );
 });
