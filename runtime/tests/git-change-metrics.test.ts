@@ -41,7 +41,14 @@ async function withGitRepository<T>(
 ): Promise<T> {
   const root = await mkdtemp(join(tmpdir(), "autodev-git-metrics-"));
   try {
-    execGit(root, ["init", "-q", "-b", "main"]);
+    // `--template=` gives the scratch repo no git templates. These assertions
+    // only read history and diffs, but `init` otherwise copies whatever the
+    // machine's global `init.templateDir` holds into `.git/hooks`. This helper
+    // deliberately clears `GIT_*` from the environment, which also clears any
+    // `GIT_TEMPLATE_DIR` that would have redirected that copy, so without an
+    // explicit empty template the fixture depends on a global directory it does
+    // not control and never uses.
+    execGit(root, ["init", "-q", "-b", "main", "--template="]);
     execGit(root, ["config", "user.email", "test@example.com"]);
     execGit(root, ["config", "user.name", "Test"]);
     return await body(root);

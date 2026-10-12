@@ -129,7 +129,14 @@ async function withGitRepository(
     await mkdir(join(root, "src"));
     const filePath = join(root, "src", "feature.ts");
     await writeFile(filePath, "export const feature = true;\n");
-    execGit(root, ["init", "-q"]);
+    // `--template=` gives the scratch repo no git templates. These assertions
+    // only read history and diffs, but `init` otherwise copies whatever the
+    // machine's global `init.templateDir` holds into `.git/hooks`. This helper
+    // deliberately clears `GIT_*` from the environment, which also clears any
+    // `GIT_TEMPLATE_DIR` that would have redirected that copy, so without an
+    // explicit empty template the fixture depends on a global directory it does
+    // not control and never uses.
+    execGit(root, ["init", "-q", "--template="]);
     execGit(root, ["add", "src/feature.ts"]);
     execGit(root, ["commit", "-q", "-m", "Add feature"]);
     const sourceCommit = execGit(root, ["rev-parse", "HEAD"]);
