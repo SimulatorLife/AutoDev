@@ -38,11 +38,21 @@ states what is implemented and, where applicable, what is still missing.
       `playtest-role-routing.test.ts`.
 - [~] 3. Policy/comprehension: policy provenance, bounded pre-action
   expectation probes, and stratified surveillance/discovery sampling are
-  implemented. **Missing: explicit deterministic-only coverage and its cost
-  accounting.** There is no cost model in `coverage.ts`, `diagnostic-corpus.ts`
-  or `benchmark.ts`; the measurement contract lists it as separate
-  acceptance work. Two runnable policies are now registered
-  (`random`, `first-legal`, commit below).
+  implemented. **Cost accounting for the arm comparison is implemented**
+  (`core/src/playtesting/analysis-cost.ts`, `90393bac`): cost is supplied as
+  measured rather than derived from a price list, coverage is read from the
+  same scored result the scores come from so the two cannot describe different
+  runs, and an unmeasured arm reports `null` rather than `0`. Two runnable
+  policies are now registered (`random`, `first-legal`).
+
+  **Still missing: a producer for the cost.** `PlaytestJudgeValidation` and its
+  `costPerReviewedEpisode` are declared and consumed by `cadence.ts` but
+  produced nowhere, so cadence's existing cost check can never fire. The
+  arithmetic is now available; wiring a producer is separate work and is not
+  claimed here. Measured across arms, matched coverage holds by construction —
+  the evaluator scores critic, deterministic and combined over one frozen
+  coverage set — so `coverageMatched` is kept as an explicit guard rather than
+  dropped as redundant.
 - [~] 4. Experiment/findings: preregistered comparisons, finding identity,
   exposure/evidence triage, and reproduction/fix lineage are implemented.
   **Gated issue drafting is implemented** (`core/src/playtesting/issue-drafts.ts`,
