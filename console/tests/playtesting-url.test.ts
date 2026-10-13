@@ -6,10 +6,12 @@ import {
   playtestingEpisodeHref,
   playtestingFilterHref,
   playtestingInspectorBackHref,
+  playtestingListHref,
   playtestingPageHref,
   playtestingViewHref
 } from "../src/features/playtesting/playtesting-url.ts";
 
+const WORKSPACE = "owner/game";
 const buildSha = "a".repeat(40);
 
 test("Playtesting view navigation preserves workspace and destination-compatible filters", () => {
@@ -111,4 +113,28 @@ test("URL parsing rejects duplicate/invalid selections without fabricating filte
   assert.equal(scope.filters.buildSha, undefined);
   assert.equal(scope.limit, 50);
   assert.equal(scope.step, null);
+});
+
+test("the focused live batch is bounded, shareable address state", () => {
+  const focused = parsePlaytestingScope({
+    workspaceId: WORKSPACE,
+    liveBatch: "batch-42"
+  });
+  assert.equal(focused.liveBatchId, "batch-42");
+  assert.equal(focused.invalidQuery, false);
+  // Refresh and Back both re-derive the focused batch from the URL.
+  assert.match(playtestingListHref(focused), /liveBatch=batch-42/);
+
+  // An unbounded or malformed value is rejected rather than trusted.
+  for (const value of ["a".repeat(129), "batch 42", "batch/42", "%00"]) {
+    const parsed = parsePlaytestingScope({ workspaceId: WORKSPACE, liveBatch: value });
+    assert.equal(parsed.liveBatchId, null, value);
+    assert.equal(parsed.invalidQuery, true, value);
+  }
+  // Repeating the key is ambiguous, so it is refused rather than guessed.
+  assert.equal(
+    parsePlaytestingScope({ liveBatch: ["a", "b"] }).invalidQuery,
+    true
+  );
+  assert.equal(parsePlaytestingScope({}).liveBatchId, null);
 });

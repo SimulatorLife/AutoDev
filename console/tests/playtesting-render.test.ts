@@ -264,7 +264,10 @@ test("inspector renders each review claim with its exact citations and legacy mi
     observations: [
       {
         text: "The collision was emitted after the jump action.",
-        evidenceRefs: [{ kind: "event", id: "event-1", step: 1, revision: 2 }]
+        evidenceRefs: [
+          { kind: "event", id: "event-1", step: 1, revision: 2 },
+          { kind: "episode", id: "episode-18" }
+        ]
       }
     ],
     interpretations: [
@@ -274,8 +277,8 @@ test("inspector renders each review claim with its exact citations and legacy mi
     alternativeExplanations: [],
     reportCompleteness: {
       crossSessionContext: {
-        status: "unavailable",
-        reason: "The review packet contains only this session."
+        status: "available",
+        evidenceRefs: [{ kind: "episode", id: "episode-18" }]
       },
       alternatives: {
         status: "none-identified",
@@ -309,13 +312,17 @@ test("inspector renders each review claim with its exact citations and legacy mi
   );
   assert.match(html, /The collision was emitted after the jump action/u);
   assert.match(html, /data-review-claim-evidence="event-1"/u);
+  assert.match(html, /data-review-claim-evidence="episode-18"/u);
+  assert.match(html, /href="[^"]*sessions\/episode-18/u);
   assert.match(html, /event event-1/u);
   assert.match(html, /step=1/u);
   assert.match(html, /The policy may have missed a safer choice/u);
   assert.match(html, /No citations recorded/u);
   assert.match(html, /Review completeness and follow-up/u);
   assert.match(html, /Cross-session context/u);
-  assert.match(html, /The review packet contains only this session/u);
+  assert.match(html, /Cites 1 packet-supplied sibling episode/u);
+  assert.match(html, /data-cross-session-episode="episode-18"/u);
+  assert.match(html, /episode episode-18/u);
   assert.match(html, /Alternative explanations/u);
 });
 
@@ -374,7 +381,7 @@ test("recorded frame references render lazy same-origin authorized image routes"
 
 test("Compare shows native human outcomes separately and never reconstructs suppressed cells", () => {
   const comparison: PlaytestComparison = {
-    schema: "autodev-playtest-comparison-v1",
+    schema: "autodev-playtest-comparison-v2",
     comparisonId: "comparison-1",
     version: 1,
     benchmarkId: "benchmark-1",
@@ -396,8 +403,10 @@ test("Compare shows native human outcomes separately and never reconstructs supp
     measurementVersion: "playtesting-measurement-v2",
     metrics: [],
     decision: "hold-inconclusive",
-    ownerDecisionAt: null,
-    ownerDecisionReason: null,
+    ownerDecisionAt: "2026-10-10T00:00:00.000Z",
+    ownerDecisionReason: "Wait for a fresh confirmation cohort.",
+    ownerDecisionBy: "release-owner",
+    ownerDisposition: "hold",
     humanPreference: { answer: "not-collected", interval: null },
     provenance: {
       workspaceId: WORKSPACE,
@@ -473,6 +482,10 @@ test("Compare shows native human outcomes separately and never reconstructs supp
         }
       }
     })
+  );
+  assert.match(
+    html,
+    /hold by release-owner: Wait for a fresh confirmation cohort/u
   );
   assert.match(html, /Human validation/u);
   assert.match(html, /miniPXI/u);

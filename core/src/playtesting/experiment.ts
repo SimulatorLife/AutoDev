@@ -437,6 +437,7 @@ export function assertPlaytestExperiment(
     "PlaytestExperiment.rollbackRefs",
     { allowEmpty: true }
   );
+  assertExperimentLifecycleState(experiment as unknown as PlaytestExperiment);
 
   if (!isIsoTimestamp(experiment.createdAt)) {
     throw new TypeError(
@@ -449,6 +450,120 @@ export function assertPlaytestExperiment(
   ) {
     throw new TypeError(
       "PlaytestExperiment.contentHash must be a SHA-256 hexadecimal digest."
+    );
+  }
+}
+
+const EXPERIMENT_LIFECYCLE_RULES: Readonly<
+  Record<
+    PlaytestExperiment["state"],
+    {
+      readonly approvalRequired: boolean;
+      readonly attemptRequirement: "none" | "required" | "optional";
+      readonly comparisonRequirement: "none" | "required" | "optional";
+      readonly ownerDecisionRequired: boolean;
+    }
+  >
+> = {
+  draft: {
+    approvalRequired: false,
+    attemptRequirement: "none",
+    comparisonRequirement: "none",
+    ownerDecisionRequired: false
+  },
+  approved: {
+    approvalRequired: true,
+    attemptRequirement: "none",
+    comparisonRequirement: "none",
+    ownerDecisionRequired: false
+  },
+  running: {
+    approvalRequired: true,
+    attemptRequirement: "required",
+    comparisonRequirement: "none",
+    ownerDecisionRequired: false
+  },
+  completed: {
+    approvalRequired: true,
+    attemptRequirement: "required",
+    comparisonRequirement: "none",
+    ownerDecisionRequired: false
+  },
+  analyzed: {
+    approvalRequired: true,
+    attemptRequirement: "required",
+    comparisonRequirement: "required",
+    ownerDecisionRequired: false
+  },
+  "owner-decided": {
+    approvalRequired: true,
+    attemptRequirement: "required",
+    comparisonRequirement: "required",
+    ownerDecisionRequired: true
+  },
+  denied: {
+    approvalRequired: false,
+    attemptRequirement: "none",
+    comparisonRequirement: "none",
+    ownerDecisionRequired: false
+  },
+  cancelled: {
+    approvalRequired: false,
+    attemptRequirement: "optional",
+    comparisonRequirement: "none",
+    ownerDecisionRequired: false
+  },
+  "execution-failed": {
+    approvalRequired: true,
+    attemptRequirement: "required",
+    comparisonRequirement: "none",
+    ownerDecisionRequired: false
+  },
+  inconclusive: {
+    approvalRequired: true,
+    attemptRequirement: "required",
+    comparisonRequirement: "optional",
+    ownerDecisionRequired: false
+  }
+};
+
+function assertExperimentLifecycleState(experiment: PlaytestExperiment): void {
+  const { state, approvalId, attemptIds, comparisonId, ownerDecision } =
+    experiment;
+  const rule = EXPERIMENT_LIFECYCLE_RULES[state];
+  if (rule.approvalRequired && approvalId === null) {
+    throw new TypeError(
+      `PlaytestExperiment state "${state}" requires an approvalId bound into its frozen design.`
+    );
+  }
+  if (rule.attemptRequirement === "required" && attemptIds.length === 0) {
+    throw new TypeError(
+      `PlaytestExperiment state "${state}" requires at least one recorded attempt.`
+    );
+  }
+  if (rule.attemptRequirement === "none" && attemptIds.length > 0) {
+    throw new TypeError(
+      `PlaytestExperiment state "${state}" cannot carry execution attempts.`
+    );
+  }
+  if (rule.comparisonRequirement === "required" && comparisonId === null) {
+    throw new TypeError(
+      `PlaytestExperiment state "${state}" requires a stored comparisonId.`
+    );
+  }
+  if (rule.comparisonRequirement === "none" && comparisonId !== null) {
+    throw new TypeError(
+      `PlaytestExperiment state "${state}" cannot carry a comparisonId.`
+    );
+  }
+  if (rule.ownerDecisionRequired && ownerDecision === null) {
+    throw new TypeError(
+      `PlaytestExperiment state "${state}" requires an ownerDecision.`
+    );
+  }
+  if (!rule.ownerDecisionRequired && ownerDecision !== null) {
+    throw new TypeError(
+      `PlaytestExperiment state "${state}" cannot carry an ownerDecision.`
     );
   }
 }

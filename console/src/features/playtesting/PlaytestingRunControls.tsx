@@ -26,6 +26,13 @@ import {
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
+  batchStatusBadge
+} from "./playtesting-run-presentation.ts";
+import {
+  CANCELLATION_REASON_LABELS,
+  responseMessage
+} from "./playtesting-run-messages.ts";
+import {
   playtestingEpisodeHref,
   type PlaytestingScope
 } from "./playtesting-url.ts";
@@ -60,49 +67,6 @@ function objectRecord(
   }
   return value as Readonly<Record<string, PlaytestJsonValue>>;
 }
-
-function responseMessage(value: unknown): string {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return "The Console could not validate the server response.";
-  }
-  const record = value as { error?: unknown; message?: unknown };
-  if (typeof record.message === "string") return record.message;
-  const error = record.error;
-  if (typeof error === "object" && error !== null && !Array.isArray(error)) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === "string") return message;
-  }
-  return "The Console could not validate the server response.";
-}
-
-function batchStatusBadge(status: string): React.JSX.Element {
-  if (status === "completed") {
-    return <StatusBadge status="valid" label="Completed" />;
-  }
-  if (status === "running") {
-    return <StatusBadge status="pending" label="Running" />;
-  }
-  if (status === "persisting") {
-    return <StatusBadge status="pending" label="Saving evidence" />;
-  }
-  if (status === "truncated") {
-    return <StatusBadge status="unavailable" label="Truncated" />;
-  }
-  return (
-    <StatusBadge
-      status="unavailable"
-      label={status === "cancelled" ? "Cancelled" : "Failed"}
-    />
-  );
-}
-
-const CANCELLATION_REASON_LABELS: Readonly<
-  Record<ControlApiPlaytestingCancellationReason, string>
-> = {
-  cancelled: "Operator requested cancellation",
-  "approval-revoked": "Playtesting approval was revoked",
-  "workspace-disabled": "Workspace was disabled"
-};
 
 interface RunAssignmentDraft {
   readonly id: number;

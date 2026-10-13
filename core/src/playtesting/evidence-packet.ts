@@ -3,9 +3,12 @@
 import {
   type PlaytestCoverageManifest,
   type PlaytestEpisode,
+  type PlaytestEvidenceCrossSessionContext,
+  type PlaytestEvidenceCrossSessionEpisode,
   type PlaytestEvidenceMetricIntent,
   type PlaytestEvidenceOmittedArtifact,
   type PlaytestEvidencePacket,
+  type PlaytestEvidencePacketV2,
   type PlaytestEvidenceSelectionReason,
   type PlaytestEvidenceTraceEvent,
   type PlaytestEvidenceTraceStep,
@@ -18,19 +21,23 @@ import { canonicalPlaytestJson } from "./canonical-json.ts";
 import { assertPlaytestCoverageManifest } from "./coverage.ts";
 import { assertPlaytestNumericResults } from "./metric-evaluation.ts";
 import type { PlaytestMetricRegistry } from "./registry.ts";
+import { samplePlaytestSurveillance } from "./sampling.ts";
 import {
   type PlaytestBatchAssignment,
   type PlaytestEvidenceLocator,
   type PlaytestGameMode,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_SCHEMA,
-  PLAYTESTS_GAME_MODES
+  PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1,
+  PLAYTESTS_GAME_MODES,
+  PLAYTESTS_MISSING_REASONS
 } from "./types.ts";
 
 const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const BUILD_SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const PACKET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const MAX_PACKET_WINDOWS = 32;
+export const MAX_PACKET_CROSS_SESSION_SESSIONS = 4;
 const MAX_PACKET_STEPS = 256;
 const MAX_PACKET_BYTES = 262_144;
 const MAX_PACKET_TOKENS = 32_768;
@@ -94,8 +101,12 @@ const PACKET_KEYS = new Set([
   "promptHash",
   "measurementVersion",
   "tokenBudget",
-  "generatedAt"
+  "generatedAt",
+  "crossSessionContext"
 ]);
+const PACKET_V1_KEYS = new Set(
+  [...PACKET_KEYS].filter((key) => key !== "crossSessionContext")
+);
 
 interface SelectionRange {
   readonly startStep: number;
@@ -104,12 +115,20 @@ interface SelectionRange {
   readonly mandatory: boolean;
 }
 
+export interface PlaytestEvidenceCrossSessionCandidate {
+  readonly episode: PlaytestEpisode;
+  readonly assignment: PlaytestBatchAssignment;
+}
+
 export interface BuildPlaytestEvidencePacketInput {
   readonly packetId: string;
   readonly episode: PlaytestEpisode;
   readonly assignment: PlaytestBatchAssignment;
   readonly registry: PlaytestMetricRegistry;
   readonly coverageManifest: PlaytestCoverageManifest;
+  readonly crossSessionCandidates: readonly PlaytestEvidenceCrossSessionCandidate[];
+  readonly crossSessionSelectionSeed: string;
+  readonly crossSessionInventoryHash: string;
   readonly rubricHash: string;
   readonly measurementVersion: string;
   readonly traceHash: string;
@@ -479,17 +498,194 @@ function suppliedArtifactsFor(input: {
   });
 }
 
+interface CrossSessionSummaryInput {
+  readonly target: PlaytestEpisode;
+  readonly rubricHash: string;
+  readonly measurementVersion: string;
+  readonly candidate: PlaytestEvidenceCrossSessionCandidate;
+}
+
+function crossSessionEpisodeSummary(
+  input: CrossSessionSummaryInput
+): PlaytestEvidenceCrossSessionEpisode {
+  const { target, rubricHash, measurementVersion, candidate } = input;
+  const { episode, assignment } = candidate;
+  if (
+    episode.schema !== PLAYTESTS_EPISODE_SCHEMA ||
+    episode.status !== "completed" ||
+    episode.completeness !== "complete" ||
+    episode.assignmentId !== assignment.assignmentId ||
+    episode.episodeId === target.episodeId ||
+    episode.identity.workspaceId !== target.identity.workspaceId ||
+    episode.batchId !== target.batchId ||
+    episode.identity.buildSha !== target.identity.buildSha ||
+    episode.identity.gameBuild !== target.identity.gameBuild ||
+    episode.identity.scenarioId !== assignment.scenarioId ||
+    episode.scenarioFamily !== assignment.scenarioFamily ||
+    episode.identity.policyId !== assignment.policyId ||
+    episode.identity.policyVersion !== assignment.policyVersion ||
+    episode.identity.seed !== assignment.seed ||
+    assignment.cohort === null ||
+    episode.policyCohort !== assignment.cohort
+  ) {
+    throw new TypeError(
+      "Cross-session packet candidate does not match a complete sibling episode."
+    );
+  }
+  assertPlaytestNumericResults(episode.metrics);
+  if (
+    episode.metrics.some(
+      (metric) =>
+        metric.provenance.workspaceId !== target.identity.workspaceId ||
+        metric.provenance.buildSha !== target.identity.buildSha ||
+        metric.provenance.rubricHash !== rubricHash ||
+        metric.provenance.measurementVersion !== measurementVersion
+    )
+  ) {
+    throw new TypeError(
+      "Cross-session metrics do not match the frozen batch provenance."
+    );
+  }
+  return {
+    workspaceId: episode.identity.workspaceId,
+    batchId: episode.batchId,
+    buildSha: episode.identity.buildSha,
+    rubricHash,
+    episodeId: episode.episodeId,
+    episodeRevision: episode.revision,
+    assignmentId: assignment.assignmentId,
+    scenarioId: assignment.scenarioId,
+    scenarioFamily: assignment.scenarioFamily,
+    policyId: assignment.policyId,
+    policyVersion: assignment.policyVersion,
+    cohort: assignment.cohort,
+    outcome: episode.outcome,
+    outcomeMetrics: episode.outcomeMetrics,
+    metrics: episode.metrics.map((metric) => ({
+      metricId: metric.metricId,
+      metricVersion: metric.metricVersion,
+      phaseId: metric.phaseId,
+      estimate: metric.estimate,
+      opportunityCount: metric.opportunityCount,
+      coverage: metric.coverage,
+      missing: metric.missing,
+      missingReasons: metric.missingReasons,
+      independentUnits: metric.independentUnits,
+      unit: metric.unit
+    }))
+  };
+}
+
+/** Stable identity projection used in packet IDs and the context inventory. */
+export function playtestCrossSessionInventoryHashInput(
+  candidates: readonly PlaytestEvidenceCrossSessionCandidate[]
+): string {
+  const identities = candidates
+    .map(({ episode, assignment }) => ({
+      episodeId: episode.episodeId,
+      episodeRevision: episode.revision,
+      assignmentId: assignment.assignmentId
+    }))
+    .sort((left, right) =>
+      left.episodeId < right.episodeId
+        ? -1
+        : left.episodeId > right.episodeId
+          ? 1
+          : 0
+    );
+  return canonicalPlaytestJson(identities);
+}
+
+function buildCrossSessionContext(input: {
+  readonly data: BuildPlaytestEvidencePacketInput;
+}): PlaytestEvidenceCrossSessionContext {
+  const { data } = input;
+  if (
+    !isText(data.crossSessionSelectionSeed, 256) ||
+    !SHA256_PATTERN.test(data.crossSessionInventoryHash)
+  ) {
+    throw new TypeError(
+      "Cross-session packet inventory provenance is invalid."
+    );
+  }
+  const summaries = data.crossSessionCandidates
+    .map((candidate) =>
+      crossSessionEpisodeSummary({
+        target: data.episode,
+        rubricHash: data.rubricHash,
+        measurementVersion: data.measurementVersion,
+        candidate
+      })
+    )
+    .sort((left, right) =>
+      left.episodeId < right.episodeId
+        ? -1
+        : left.episodeId > right.episodeId
+          ? 1
+          : 0
+    );
+  if (
+    new Set(summaries.map((summary) => summary.episodeId)).size !==
+      summaries.length ||
+    new Set(summaries.map((summary) => summary.assignmentId)).size !==
+      summaries.length
+  ) {
+    throw new TypeError("Cross-session sibling identities must be unique.");
+  }
+  if (summaries.length === 0) {
+    return {
+      status: "unavailable",
+      reason: "No other complete persisted episode exists in this batch.",
+      inventoryHash: data.crossSessionInventoryHash,
+      eligibleSessions: 0
+    };
+  }
+  const sampleSize = Math.min(
+    MAX_PACKET_CROSS_SESSION_SESSIONS,
+    summaries.length
+  );
+  const sample = samplePlaytestSurveillance(
+    summaries.map((summary) => ({
+      id: summary.episodeId,
+      stratumKey: "complete-batch-siblings"
+    })),
+    sampleSize,
+    data.crossSessionSelectionSeed
+  );
+  const summaryById = new Map(
+    summaries.map((summary) => [summary.episodeId, summary])
+  );
+  const sessions = sample.selected.map((episodeId) => {
+    const summary = summaryById.get(episodeId);
+    if (!summary) {
+      throw new TypeError("Cross-session sampler returned an unknown episode.");
+    }
+    return summary;
+  });
+  return {
+    status: "included",
+    inventoryHash: data.crossSessionInventoryHash,
+    selectionSeed: data.crossSessionSelectionSeed,
+    eligibleSessions: summaries.length,
+    inclusionProbability: sampleSize / summaries.length,
+    selectionMethod: "seeded-uniform-within-batch-v1",
+    sessions
+  };
+}
+
 function packetContentBytes(packet: PlaytestEvidencePacket): number {
   return new TextEncoder().encode(canonicalPlaytestJson(packet)).byteLength;
 }
 
 function buildPacketValue(input: {
   readonly data: BuildPlaytestEvidencePacketInput;
+  readonly crossSessionContext: PlaytestEvidenceCrossSessionContext;
   readonly windows: readonly PlaytestEvidenceWindow[];
   readonly omitted: readonly PlaytestOmittedEvidenceWindow[];
   readonly suppliedArtifacts: PlaytestEvidencePacket["suppliedArtifacts"];
-}): PlaytestEvidencePacket {
-  const { data, windows, omitted, suppliedArtifacts } = input;
+}): PlaytestEvidencePacketV2 {
+  const { data, crossSessionContext, windows, omitted, suppliedArtifacts } =
+    input;
   const episode = data.episode;
   const phases = [
     ...new Set(
@@ -529,6 +725,7 @@ function buildPacketValue(input: {
     metrics: episode.metrics,
     coverageCells: matchingCoverageCells(data.coverageManifest, episode),
     coverageManifestHash: data.coverageManifest.contentHash,
+    crossSessionContext,
     chronologicalSummary,
     traceArtifactId: episode.trace!.id,
     selectedWindows: windows,
@@ -549,7 +746,7 @@ function buildPacketValue(input: {
 /** Freeze the exact selected evidence body before an analyst is called. */
 export function buildPlaytestEvidencePacket(
   input: BuildPlaytestEvidencePacketInput
-): PlaytestEvidencePacket {
+): PlaytestEvidencePacketV2 {
   assertPlaytestEvidencePacketInputs(input);
   const maxWindows = input.maxWindows ?? 16;
   const maxSelectedSteps = input.maxSelectedSteps ?? 128;
@@ -570,6 +767,7 @@ export function buildPlaytestEvidencePacket(
     maxSteps: maxSelectedSteps,
     radius
   });
+  const crossSessionContext = buildCrossSessionContext({ data: input });
   const packetByteBudget = input.maxPacketBytes ?? MAX_PACKET_BYTES;
   const packetBudgetOmissions = new Set<number>();
   let omitted = omittedWindowsFor({
@@ -587,6 +785,7 @@ export function buildPlaytestEvidencePacket(
     });
     const packet = buildPacketValue({
       data: input,
+      crossSessionContext,
       windows,
       omitted,
       suppliedArtifacts
@@ -624,6 +823,9 @@ function assertPlaytestEvidencePacketInputs(
     !SHA256_PATTERN.test(input.rubricHash) ||
     !SHA256_PATTERN.test(input.traceHash) ||
     !isText(input.measurementVersion) ||
+    !isText(input.crossSessionSelectionSeed, 256) ||
+    !SHA256_PATTERN.test(input.crossSessionInventoryHash) ||
+    !Array.isArray(input.crossSessionCandidates) ||
     !Number.isFinite(Date.parse(input.generatedAt)) ||
     !isCount(input.tokenBudget, MAX_PACKET_TOKENS) ||
     input.tokenBudget === 0 ||
@@ -673,6 +875,11 @@ function assertPlaytestEvidencePacketInputs(
   ) {
     throw new TypeError(
       "Evidence packet metrics do not match the frozen episode provenance."
+    );
+  }
+  if (input.crossSessionCandidates.length > 999) {
+    throw new RangeError(
+      "Cross-session packet inventory exceeds the frozen batch assignment bound."
     );
   }
   if (
@@ -809,17 +1016,22 @@ function assertOmittedPacketArtifacts(packet: PlaytestEvidencePacket): void {
 export function assertPlaytestEvidencePacket(
   value: unknown
 ): asserts value is PlaytestEvidencePacket {
+  const packetKeys =
+    isRecord(value) && value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1
+      ? PACKET_V1_KEYS
+      : PACKET_KEYS;
   if (
     !isRecord(value) ||
-    Object.keys(value).length !== PACKET_KEYS.size ||
-    Object.keys(value).some((key) => !PACKET_KEYS.has(key))
+    Object.keys(value).length !== packetKeys.size ||
+    Object.keys(value).some((key) => !packetKeys.has(key))
   ) {
     throw new TypeError(
       "Playtest evidence packet has unknown or missing fields."
     );
   }
   if (
-    value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA ||
+    (value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA &&
+      value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1) ||
     !isPlaytestEvidencePacketId(value.packetId) ||
     !isText(value.workspaceId) ||
     !isText(value.batchId) ||
@@ -872,6 +1084,9 @@ export function assertPlaytestEvidencePacket(
     !Number.isFinite(Date.parse(String(value.generatedAt)))
   ) {
     throw new TypeError("Playtest evidence packet fields are invalid.");
+  }
+  if (value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA) {
+    assertCrossSessionContext(value.crossSessionContext, value);
   }
   assertPacketArtifactProvenance(value as unknown as PlaytestEvidencePacket);
   assertOmittedPacketArtifacts(value as unknown as PlaytestEvidencePacket);
@@ -992,6 +1207,176 @@ export function assertPlaytestEvidencePacket(
   }
 }
 
+function assertCrossSessionContext(
+  value: unknown,
+  packet: Record<string, unknown>
+): asserts value is PlaytestEvidenceCrossSessionContext {
+  if (!isRecord(value) || !SHA256_PATTERN.test(String(value.inventoryHash))) {
+    throw new TypeError("Evidence packet cross-session context is malformed.");
+  }
+  if (value.status === "unavailable") {
+    if (
+      Object.keys(value).length !== 4 ||
+      !["status", "reason", "inventoryHash", "eligibleSessions"].every(
+        (key) => key in value
+      ) ||
+      !isText(value.reason, 2000) ||
+      value.eligibleSessions !== 0
+    ) {
+      throw new TypeError(
+        "Evidence packet unavailable cross-session context is malformed."
+      );
+    }
+    return;
+  }
+  if (
+    value.status !== "included" ||
+    Object.keys(value).length !== 7 ||
+    ![
+      "status",
+      "inventoryHash",
+      "selectionSeed",
+      "eligibleSessions",
+      "inclusionProbability",
+      "selectionMethod",
+      "sessions"
+    ].every((key) => key in value) ||
+    !isText(value.selectionSeed, 256) ||
+    !isCount(value.eligibleSessions, 999) ||
+    value.eligibleSessions === 0 ||
+    value.selectionMethod !== "seeded-uniform-within-batch-v1" ||
+    !Array.isArray(value.sessions) ||
+    value.sessions.length === 0 ||
+    value.sessions.length > MAX_PACKET_CROSS_SESSION_SESSIONS ||
+    value.sessions.length > value.eligibleSessions ||
+    value.sessions.length !==
+      Math.min(MAX_PACKET_CROSS_SESSION_SESSIONS, value.eligibleSessions) ||
+    typeof value.inclusionProbability !== "number" ||
+    value.inclusionProbability !==
+      value.sessions.length / value.eligibleSessions
+  ) {
+    throw new TypeError(
+      "Evidence packet included cross-session context is malformed."
+    );
+  }
+  const episodeIds = new Set<string>();
+  const assignmentIds = new Set<string>();
+  for (const session of value.sessions) {
+    if (
+      !isRecord(session) ||
+      Object.keys(session).length !== 15 ||
+      ![
+        "workspaceId",
+        "batchId",
+        "buildSha",
+        "rubricHash",
+        "episodeId",
+        "episodeRevision",
+        "assignmentId",
+        "scenarioId",
+        "scenarioFamily",
+        "policyId",
+        "policyVersion",
+        "cohort",
+        "outcome",
+        "outcomeMetrics",
+        "metrics"
+      ].every((key) => key in session) ||
+      !isText(session.workspaceId) ||
+      !isText(session.batchId) ||
+      !BUILD_SHA_PATTERN.test(String(session.buildSha)) ||
+      !SHA256_PATTERN.test(String(session.rubricHash)) ||
+      !isText(session.episodeId) ||
+      !isCount(session.episodeRevision, Number.MAX_SAFE_INTEGER) ||
+      !isText(session.assignmentId) ||
+      !isText(session.scenarioId) ||
+      !isText(session.scenarioFamily) ||
+      !isText(session.policyId) ||
+      !isText(session.policyVersion) ||
+      !isText(session.cohort) ||
+      !PLAYTESTS_GAME_OUTCOMES.includes(
+        session.outcome as PlaytestGameOutcomeKind
+      ) ||
+      !isRecord(session.outcomeMetrics) ||
+      Object.values(session.outcomeMetrics).some(
+        (metric) =>
+          metric !== null &&
+          (typeof metric !== "number" || !Number.isFinite(metric))
+      ) ||
+      !Array.isArray(session.metrics) ||
+      session.metrics.length > 1000 ||
+      session.workspaceId !== packet.workspaceId ||
+      session.batchId !== packet.batchId ||
+      session.buildSha !== packet.buildSha ||
+      session.rubricHash !== packet.rubricHash ||
+      session.episodeId === packet.episodeId ||
+      session.assignmentId === packet.assignmentId ||
+      episodeIds.has(String(session.episodeId)) ||
+      assignmentIds.has(String(session.assignmentId))
+    ) {
+      throw new TypeError(
+        "Evidence packet sibling episode summary is malformed or mismatched."
+      );
+    }
+    episodeIds.add(session.episodeId as string);
+    assignmentIds.add(session.assignmentId as string);
+    const metricKeys = new Set<string>();
+    for (const metric of session.metrics) {
+      if (
+        !isRecord(metric) ||
+        Object.keys(metric).length !== 10 ||
+        ![
+          "metricId",
+          "metricVersion",
+          "phaseId",
+          "estimate",
+          "opportunityCount",
+          "coverage",
+          "missing",
+          "missingReasons",
+          "independentUnits",
+          "unit"
+        ].every((key) => key in metric) ||
+        !isText(metric.metricId) ||
+        ((typeof metric.metricVersion !== "string" ||
+          !isText(metric.metricVersion)) &&
+          !isCount(metric.metricVersion, Number.MAX_SAFE_INTEGER)) ||
+        (metric.phaseId !== null && !isText(metric.phaseId)) ||
+        (metric.estimate !== null &&
+          (typeof metric.estimate !== "number" ||
+            !Number.isFinite(metric.estimate))) ||
+        (metric.opportunityCount !== null &&
+          !isCount(metric.opportunityCount)) ||
+        typeof metric.coverage !== "number" ||
+        !Number.isFinite(metric.coverage) ||
+        metric.coverage < 0 ||
+        metric.coverage > 1 ||
+        !isCount(metric.missing) ||
+        !Array.isArray(metric.missingReasons) ||
+        metric.missingReasons.some(
+          (reason) =>
+            !PLAYTESTS_MISSING_REASONS.includes(
+              reason as (typeof PLAYTESTS_MISSING_REASONS)[number]
+            )
+        ) ||
+        !isCount(metric.independentUnits) ||
+        !isText(metric.unit)
+      ) {
+        throw new TypeError(
+          "Evidence packet sibling metric summary is malformed."
+        );
+      }
+      const key = `${metric.metricId}\0${metric.phaseId ?? "<whole-episode>"}`;
+      if (metricKeys.has(key)) {
+        throw new TypeError(
+          "Evidence packet sibling metrics contain a duplicate metric/phase pair."
+        );
+      }
+      metricKeys.add(key);
+    }
+  }
+}
+
 function assertUniqueSelectedEventIds(
   windows: readonly PlaytestEvidenceWindow[]
 ): void {
@@ -1052,12 +1437,28 @@ function assertEpisodeLocatorWithinPacket(
   packet: PlaytestEvidencePacket,
   selectedSteps: ReadonlySet<number>
 ): void {
+  if (locator.id === packet.episodeId) {
+    if (locator.step !== undefined && !selectedSteps.has(locator.step)) {
+      throw new TypeError(
+        "Review episode locator points outside the selected evidence packet."
+      );
+    }
+    return;
+  }
+  const siblingEpisodes =
+    packet.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA &&
+    packet.crossSessionContext.status === "included"
+      ? packet.crossSessionContext.sessions
+      : [];
   if (
-    locator.id !== packet.episodeId ||
-    (locator.step !== undefined && !selectedSteps.has(locator.step))
+    !siblingEpisodes.some((episode) => episode.episodeId === locator.id) ||
+    locator.step !== undefined ||
+    locator.revision !== undefined ||
+    locator.frameIndex !== undefined ||
+    locator.phaseId !== undefined
   ) {
     throw new TypeError(
-      "Review episode locator points outside the selected evidence packet."
+      "Review episode locator points outside the selected evidence packet or cites a sibling at unsupported granularity."
     );
   }
 }

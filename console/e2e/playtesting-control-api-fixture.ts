@@ -10,14 +10,17 @@ import {
   buildPlaytestCoverageManifestDraft,
   buildPlaytestFindingIdentity,
   playtestAssignmentManifestHashInput,
+  type PlaytestComparison,
   playtestCoverageManifestHashInput,
   playtestFindingIdentityHashInput,
   playtestReviewOutcomeKey,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
   PLAYTESTS_BATCH_SCHEMA,
+  PLAYTESTS_COMPARISON_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
+  recordPlaytestOwnerDecision,
   selectPlaytestBatchReviews
 } from "@simulatorlife/autodev-core";
 
@@ -27,6 +30,8 @@ const BUILD_SHA = "a".repeat(40);
 const MEASUREMENT_VERSION = "measurement-v1";
 const RUBRIC_HASH = "d".repeat(64);
 const FIXTURE_TIMESTAMP = "2026-10-10T00:00:00.000Z";
+const COMPARISON_DECISION_ROUTE =
+  /^\/control\/playtesting\/comparisons\/([^/]+)\/decision$/u;
 const TRACE_ID = "trace-window-1";
 const FRAME_ID = "frame-1";
 const FRAME_BYTES = Buffer.from(
@@ -361,8 +366,8 @@ const finding = {
   nextReviewAt: null
 };
 
-const comparison = {
-  schema: "autodev-playtest-comparison-v1",
+let comparison: PlaytestComparison = {
+  schema: PLAYTESTS_COMPARISON_SCHEMA,
   comparisonId: "comparison-1",
   version: 1,
   benchmarkId: "benchmark-1",
@@ -441,6 +446,8 @@ const comparison = {
   decision: "hold-not-comparable",
   ownerDecisionAt: null,
   ownerDecisionReason: null,
+  ownerDecisionBy: null,
+  ownerDisposition: null,
   humanPreference: { answer: "not-collected", interval: null },
   provenance: {
     workspaceId: WORKSPACE_ID,
@@ -712,6 +719,41 @@ async function handleSyntheticRunMutation(
   response: ServerResponse,
   url: URL
 ): Promise<boolean> {
+  const decisionMatch = url.pathname.match(COMPARISON_DECISION_ROUTE);
+  if (decisionMatch && request.method === "POST") {
+    const comparisonId = decodeURIComponent(decisionMatch[1]!);
+    const body = await readJsonBody(request);
+    if (
+      !body ||
+      body.workspaceId !== WORKSPACE_ID ||
+      body.comparisonId !== comparisonId ||
+      !Number.isSafeInteger(body.expectedVersion) ||
+      body.expectedVersion !== comparison.version ||
+      (body.disposition !== "promote" && body.disposition !== "hold") ||
+      typeof body.reason !== "string" ||
+      body.reason.trim().length === 0
+    ) {
+      sendJson(response, { error: "Invalid or stale decision." }, 409);
+      return true;
+    }
+    try {
+      comparison = recordPlaytestOwnerDecision(comparison, {
+        disposition: body.disposition,
+        decidedAt: FIXTURE_TIMESTAMP,
+        decidedBy: "console-e2e-operator",
+        reason: body.reason
+      });
+    } catch {
+      sendJson(response, { error: "Decision rejected." }, 400);
+      return true;
+    }
+    sendJson(response, {
+      schema: "autodev-control-playtesting-comparison-decision-v1",
+      workspaceId: WORKSPACE_ID,
+      comparison
+    });
+    return true;
+  }
   if (
     url.pathname === "/control/playtesting/runs" &&
     request.method === "POST"

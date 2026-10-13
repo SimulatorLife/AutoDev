@@ -7394,15 +7394,15 @@ const ELEMENT_TYPES: ReadonlySet<symbol> = new Set([
  * and widening the argument to `ReactNode` instead -- which does cast -- throws
  * away the narrowing the walk depends on and puts the error somewhere else.
  */
-function elementTagOf(node: unknown): symbol | undefined {
-  if (node === null || typeof node !== "object") return undefined;
+function elementTagOf(node: unknown): symbol | null {
+  if (node === null || typeof node !== "object") return null;
   const tag = (node as { $$typeof?: unknown }).$$typeof;
-  return typeof tag === "symbol" ? tag : undefined;
+  return typeof tag === "symbol" ? tag : null;
 }
 
 function isReactElement(node: unknown): node is React.JSX.Element {
   const tag = elementTagOf(node);
-  return tag !== undefined && ELEMENT_TYPES.has(tag);
+  return tag !== null && ELEMENT_TYPES.has(tag);
 }
 
 function elementChildrenOf(node: React.JSX.Element): React.JSX.Element[] {
@@ -7419,7 +7419,7 @@ function elementChildrenOf(node: React.JSX.Element): React.JSX.Element[] {
     const resolved = resolveForNesting(child);
     if (resolved === null) return;
     const tag = elementTagOf(resolved);
-    if (tag !== undefined && TRANSPARENT_TYPES.has(tag)) {
+    if (tag !== null && TRANSPARENT_TYPES.has(tag)) {
       elementChildrenOf(resolved).forEach((c) => flat.push(c));
       return;
     }
@@ -7723,17 +7723,17 @@ test("every link whose destination is the history table names an element that is
   // not have reached: the reader refuses a detail that does not contain the span
   // the URL names, so a link's fragment is only promised on the state where the
   // lookup came back.
-  const observedTrace = (spanId: string) =>
+  const observedTrace = (traceSpanId: string) =>
     ({
       kind: "observed",
       detail: {
         schema: "autodev-openlit-trace-detail-v1",
-        traceId: `${spanId}${spanId}`,
-        selectedSpanId: spanId,
+        traceId: `${traceSpanId}${traceSpanId}`,
+        selectedSpanId: traceSpanId,
         partial: false,
         spans: [
           {
-            spanId,
+            spanId: traceSpanId,
             parentSpanId: null,
             spanName: "gen_ai.client_operation",
             serviceName: "autodev-router",
@@ -19512,8 +19512,29 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Provides revision-bound revocation fields and submits through the in-place workspace mutation handler."
     ],
     [
+      join("src", "features", "playtesting", "usePlaytestingActiveRuns.ts"),
+      "Polls the workspace-scoped active-runs read on an interval with backoff so live batch progress reflects the typed run owner without moving that read server-side."
+    ],
+    [
+      join("src", "features", "playtesting", "PlaytestingActiveRunsPanel.ts"),
+      "Focuses a batch and requests cancellation from the live-runs shell; every status it renders was read from the typed run owner rather than tracked in the browser."
+    ],
+    [
+      join("src", "features", "playtesting", "PlaytestingLiveRuns.ts"),
+      "Keeps the focused batch, the cancellation confirmation read and the manual refresh in one live client shell while every batch state it renders still comes from the server."
+    ],
+    [
       join("src", "features", "playtesting", "PlaytestingRunControls.tsx"),
       "Starts, refreshes, and cancels typed approved runs through same-origin routes while history and authorization stay server-owned."
+    ],
+    [
+      join(
+        "src",
+        "features",
+        "playtesting",
+        "PlaytestComparisonDecisionForm.ts"
+      ),
+      "Records version-checked promote/hold decisions through a same-origin route with an explicit immutable-decision confirmation."
     ]
   ]);
   const approvedServerHandlerModules = new Map<string, string>();

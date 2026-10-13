@@ -62,10 +62,14 @@ export const PLAYTESTS_COVERAGE_MANIFEST_SCHEMA =
   "autodev-playtest-coverage-manifest-v1" as const;
 /** Bounded, evidence-linked analyst input artifact. */
 export const PLAYTESTS_EVIDENCE_PACKET_SCHEMA =
+  "autodev-playtest-evidence-packet-v2" as const;
+export const PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1 =
   "autodev-playtest-evidence-packet-v1" as const;
 
-/** Identifier for the v1 comparison contract. */
+/** Identifier for the v2 comparison contract with attributable owner decisions. */
 export const PLAYTESTS_COMPARISON_SCHEMA =
+  "autodev-playtest-comparison-v2" as const;
+export const PLAYTESTS_COMPARISON_SCHEMA_V1 =
   "autodev-playtest-comparison-v1" as const;
 
 /** Identifier for the v1 human-study import contract. */
@@ -84,6 +88,8 @@ export const PLAYTESTS_EXPERIMENT_SCHEMA =
   "autodev-playtest-experiment-v1" as const;
 export const PLAYTEST_REVIEW_SECTION_NOT_RECORDED = "not-recorded" as const;
 export const PLAYTESTS_SESSION_REVIEW_SCHEMA =
+  "autodev-playtest-session-review-v6" as const;
+export const PLAYTESTS_SESSION_REVIEW_SCHEMA_V5 =
   "autodev-playtest-session-review-v5" as const;
 export const PLAYTESTS_SESSION_REVIEW_SCHEMA_V4 =
   "autodev-playtest-session-review-v4" as const;
@@ -424,6 +430,10 @@ export interface PlaytestReviewClaim {
 /** Explicitly accounts for review sections that may otherwise disappear silently. */
 export interface PlaytestReviewCompleteness {
   readonly crossSessionContext:
+    | {
+        readonly status: "available";
+        readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
+      }
     | { readonly status: "unavailable"; readonly reason: string }
     | {
         readonly status: typeof PLAYTEST_REVIEW_SECTION_NOT_RECORDED;
@@ -780,9 +790,8 @@ export interface PlaytestMetricComparison {
   readonly notes: string;
 }
 
-/** Full comparison envelope, including owner decision and provenance. */
-export interface PlaytestComparison {
-  readonly schema: typeof PLAYTESTS_COMPARISON_SCHEMA;
+/** Shared comparison result fields across persisted comparison versions. */
+export interface PlaytestComparisonFields {
   readonly comparisonId: string;
   readonly version: number;
   readonly benchmarkId: string;
@@ -813,6 +822,20 @@ export interface PlaytestComparison {
   };
   readonly provenance: PlaytestProvenance;
   readonly notes: string;
+}
+
+/** Read-only history before owner-decision authorship/disposition was stored. */
+export interface PlaytestComparisonV1 extends PlaytestComparisonFields {
+  readonly schema: typeof PLAYTESTS_COMPARISON_SCHEMA_V1;
+}
+
+export type PlaytestOwnerDisposition = "promote" | "hold" | "not-recorded";
+
+/** Current comparison contract with an attributable owner decision record. */
+export interface PlaytestComparison extends PlaytestComparisonFields {
+  readonly schema: typeof PLAYTESTS_COMPARISON_SCHEMA;
+  readonly ownerDecisionBy: string | null;
+  readonly ownerDisposition: PlaytestOwnerDisposition | null;
 }
 
 /** A finding is a testable, evidence-linked design or defect claim. */

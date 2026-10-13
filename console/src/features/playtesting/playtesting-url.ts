@@ -88,6 +88,8 @@ export interface PlaytestingScope {
   readonly step: number | null;
   /** Finding to restore focus to when the inspector returns to its source list. */
   readonly returnFindingId: string | null;
+  /** Focused batch in the live view; bounded so it stays shareable. */
+  readonly liveBatchId: string | null;
   readonly invalidQuery: boolean;
 }
 
@@ -98,6 +100,8 @@ const HASH_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const POSITIVE_INTEGER_PATTERN = /^[1-9]\d{0,2}$/u;
 const STEP_PATTERN = /^(0|[1-9]\d{0,5})$/u;
 const FINDING_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+/** Batch ids are bounded so the live view's address state stays shareable. */
+const BATCH_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 
 function hasControlCharacters(value: string): boolean {
   for (const character of value) {
@@ -208,6 +212,7 @@ export function parsePlaytestingScope(
   const rawCursor = single(input.cursor);
   const rawStep = single(input.step);
   const rawReturnFinding = single(input.returnFinding);
+  const rawLiveBatch = single(input.liveBatch);
   const parsedFilters = normalizedFilters(input);
   const view = isView(rawView.value) ? rawView.value : "overview";
   const scopedFilters = filtersForView(view, parsedFilters.filters);
@@ -220,6 +225,13 @@ export function parsePlaytestingScope(
     candidateFindingId && FINDING_ID_PATTERN.test(candidateFindingId)
       ? candidateFindingId
       : null;
+  const candidateLiveBatchId = rawLiveBatch.value?.trim() || null;
+  const liveBatchId =
+    candidateLiveBatchId && BATCH_ID_PATTERN.test(candidateLiveBatchId)
+      ? candidateLiveBatchId
+      : null;
+  const liveBatchInvalid =
+    candidateLiveBatchId !== null && liveBatchId === null;
   const workspaceInvalid =
     workspaceId !== null &&
     (workspaceId.length > 256 || hasControlCharacters(workspaceId));
@@ -235,6 +247,7 @@ export function parsePlaytestingScope(
     cursor,
     step: parsedStep.step,
     returnFindingId,
+    liveBatchId,
     invalidQuery:
       rawView.invalid ||
       (rawView.value !== undefined && !isView(rawView.value)) ||
@@ -243,13 +256,15 @@ export function parsePlaytestingScope(
       rawCursor.invalid ||
       rawStep.invalid ||
       rawReturnFinding.invalid ||
+      rawLiveBatch.invalid ||
       parsedFilters.invalid ||
       scopedFilters.invalid ||
       parsedLimit.invalid ||
       parsedStep.invalid ||
       workspaceInvalid ||
       cursorInvalid ||
-      findingInvalid
+      findingInvalid ||
+      liveBatchInvalid
   };
 }
 
@@ -276,6 +291,9 @@ function paramsForScope(
   if (options.includeStep !== false && scope.step !== null) {
     params.set("step", String(scope.step));
   }
+  // The focused live batch is address state, so a refresh or Back returns the
+  // operator to the batch they were watching rather than a bare list.
+  if (scope.liveBatchId) params.set("liveBatch", scope.liveBatchId);
   return params;
 }
 

@@ -12,7 +12,7 @@ import {
   type PlaytestingActiveRun,
   readActiveRuns
 } from "../src/features/playtesting/playtesting-active-runs.ts";
-import { responseMessage } from "../src/features/playtesting/usePlaytestingActiveRuns.ts";
+import { responseMessage } from "../src/features/playtesting/playtesting-run-messages.ts";
 
 const WORKSPACE = "acme/game";
 
@@ -176,4 +176,95 @@ test("an unreadable response reports the server's message or an honest default",
     responseMessage(undefined),
     "The Console could not validate the server response."
   );
+});
+test("the panel never presents an unread read as current", async () => {
+  const React = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { PlaytestingActiveRunsPanel } = await import(
+    "../src/features/playtesting/PlaytestingActiveRunsPanel.ts"
+  );
+  const run = {
+    batchId: "batch-live-1",
+    assignmentCount: 4,
+    createdAt: "2026-10-12T00:00:00.000Z",
+    record: record("running", "batch-live-1")
+  };
+  const live = renderToStaticMarkup(
+    React.createElement(PlaytestingActiveRunsPanel, {
+      workspaceId: WORKSPACE,
+      runs: [run],
+      freshness: "live",
+      lastFailure: null,
+      watching: true,
+      onRefresh: () => {},
+      focusedBatchId: null,
+      onFocusBatch: () => {},
+      onCancel: null,
+      busyBatchId: null
+    })
+  );
+  assert.match(live, /data-freshness="live"/);
+  assert.doesNotMatch(live, /not confirmed current state/i);
+  assert.match(live, /data-status="running"/);
+  // Polite progress must not steal focus.
+  assert.match(live, /aria-live="polite"/);
+  assert.doesNotMatch(live, /autofocus/i);
+
+  const unavailable = renderToStaticMarkup(
+    React.createElement(PlaytestingActiveRunsPanel, {
+      workspaceId: WORKSPACE,
+      runs: [run],
+      freshness: "unavailable",
+      lastFailure: "Runtime is offline.",
+      watching: false,
+      onRefresh: () => {},
+      focusedBatchId: null,
+      onFocusBatch: () => {},
+      onCancel: null,
+      busyBatchId: null
+    })
+  );
+  assert.match(unavailable, /data-freshness="unavailable"/);
+  // The last known frame stays visible, but is labelled as not current.
+  assert.match(unavailable, /not confirmed current state/i);
+  assert.match(unavailable, /Runtime is offline\./);
+  // The row must not badge its last-known state as if it were current.
+  assert.doesNotMatch(unavailable, />Running</);
+  assert.match(unavailable, /Last known: Running/);
+  assert.match(unavailable, /data-stale="true"/);
+});
+
+test("a terminal batch offers no cancel action and is marked terminal", async () => {
+  const React = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { PlaytestingActiveRunsPanel } = await import(
+    "../src/features/playtesting/PlaytestingActiveRunsPanel.ts"
+  );
+  const markup = renderToStaticMarkup(
+    React.createElement(PlaytestingActiveRunsPanel, {
+      workspaceId: WORKSPACE,
+      runs: [
+        {
+          batchId: "batch-done",
+          assignmentCount: 1,
+          createdAt: "2026-10-12T00:00:00.000Z",
+          record: record("completed", "batch-done")
+        }
+      ],
+      freshness: "idle",
+      lastFailure: null,
+      watching: false,
+      onRefresh: () => {},
+      focusedBatchId: "batch-done",
+      onFocusBatch: () => {},
+      onCancel: () => {},
+      busyBatchId: null
+    })
+  );
+  assert.match(markup, /data-terminal="true"/);
+  assert.doesNotMatch(markup, /Cancel batch/);
+  // An unreported count is named as absent evidence, not a fabricated zero,
+  // and uses the Console's single spelling for that.
+  assert.match(markup, /Not observed/);
+  assert.doesNotMatch(markup, />Not reported</);
 });

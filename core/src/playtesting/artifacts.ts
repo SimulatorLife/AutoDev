@@ -30,6 +30,7 @@ import {
   type PLAYTESTS_COVERAGE_MANIFEST_SCHEMA,
   type PLAYTESTS_EPISODE_SCHEMA,
   type PLAYTESTS_EVIDENCE_PACKET_SCHEMA,
+  type PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1,
   type PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_GAME_MODES,
   type PLAYTESTS_HUMAN_STUDY_SCHEMA,
@@ -457,9 +458,59 @@ export interface PlaytestEvidenceMetricIntent {
   readonly eventFields: readonly string[];
 }
 
-/** Bounded, immutable reasoning input; full traces and media stay separate. */
-export interface PlaytestEvidencePacket {
-  readonly schema: typeof PLAYTESTS_EVIDENCE_PACKET_SCHEMA;
+/** Numeric-only source projection for one sibling episode in a packet. */
+export interface PlaytestEvidenceCrossSessionMetric {
+  readonly metricId: string;
+  readonly metricVersion: number | string;
+  readonly phaseId: string | null;
+  readonly estimate: number | null;
+  readonly opportunityCount: number | null;
+  readonly coverage: number;
+  readonly missing: number;
+  readonly missingReasons: readonly PlaytestMissingReason[];
+  readonly independentUnits: number;
+  readonly unit: string;
+}
+
+/** Player-visible and evaluator-backed summary for a cited sibling episode. */
+export interface PlaytestEvidenceCrossSessionEpisode {
+  readonly workspaceId: string;
+  readonly batchId: string;
+  readonly buildSha: string;
+  readonly rubricHash: string;
+  readonly episodeId: string;
+  readonly episodeRevision: number;
+  readonly assignmentId: string;
+  readonly scenarioId: string;
+  readonly scenarioFamily: string;
+  readonly policyId: string;
+  readonly policyVersion: string;
+  readonly cohort: string;
+  readonly outcome: PlaytestGameOutcomeKind;
+  readonly outcomeMetrics: Readonly<Record<string, number | null>>;
+  readonly metrics: readonly PlaytestEvidenceCrossSessionMetric[];
+}
+
+/** Deterministic selected context; the inclusion probability is conditional on this recorded inventory. */
+export type PlaytestEvidenceCrossSessionContext =
+  | {
+      readonly status: "included";
+      readonly inventoryHash: string;
+      readonly selectionSeed: string;
+      readonly eligibleSessions: number;
+      readonly inclusionProbability: number;
+      readonly selectionMethod: "seeded-uniform-within-batch-v1";
+      readonly sessions: readonly PlaytestEvidenceCrossSessionEpisode[];
+    }
+  | {
+      readonly status: "unavailable";
+      readonly reason: string;
+      readonly inventoryHash: string;
+      readonly eligibleSessions: 0;
+    };
+
+/** Shared immutable fields across persisted packet versions. */
+export interface PlaytestEvidencePacketFields {
   readonly packetId: string;
   readonly workspaceId: string;
   readonly batchId: string;
@@ -501,6 +552,22 @@ export interface PlaytestEvidencePacket {
   readonly tokenBudget: number;
   readonly generatedAt: string;
 }
+
+/** Persisted schema-v1 packets remain readable with cross-session context absent. */
+export interface PlaytestEvidencePacketV1 extends PlaytestEvidencePacketFields {
+  readonly schema: typeof PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1;
+}
+
+/** New bounded packet with a deterministic sample of sibling episode summaries. */
+export interface PlaytestEvidencePacketV2 extends PlaytestEvidencePacketFields {
+  readonly schema: typeof PLAYTESTS_EVIDENCE_PACKET_SCHEMA;
+  readonly crossSessionContext: PlaytestEvidenceCrossSessionContext;
+}
+
+/** Readable packet history; new builders create only schema v2 packets. */
+export type PlaytestEvidencePacket =
+  | PlaytestEvidencePacketV1
+  | PlaytestEvidencePacketV2;
 
 /** JSON media type used by Runtime's content-addressed packet artifact store. */
 export const PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE =

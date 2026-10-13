@@ -105,6 +105,56 @@ test("workspace overview distinguishes batches, episodes, findings, and comparis
   ).toBeVisible();
 });
 
+test("operator records a version-checked owner decision without deploying or changing approval", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/playtesting?view=compare&workspaceId=fixture%2Fgame");
+  const fitsViewport = await page.evaluate(
+    () => document.documentElement.scrollWidth <= window.innerWidth
+  );
+  expect(fitsViewport).toBe(true);
+  const decisionForm = page.getByRole("form", {
+    name: "Record owner decision for comparison-1"
+  });
+  await expect(decisionForm).toBeVisible();
+  const disposition = decisionForm.getByLabel("Disposition");
+  const reasonField = decisionForm.getByLabel("Decision reason");
+  const reviewButton = decisionForm.getByRole("button", {
+    name: "Review decision"
+  });
+  await expect(disposition).toHaveValue("hold");
+  await expect(
+    decisionForm.getByRole("option", { name: "Promote eligible candidate" })
+  ).toHaveCount(0);
+  await disposition.focus();
+  await page.keyboard.press("Tab");
+  await expect(reasonField).toBeFocused();
+  await reasonField.fill("Wait for a fresh confirmation cohort.");
+  await page.keyboard.press("Tab");
+  await expect(reviewButton).toBeFocused();
+  await reviewButton.click();
+  await expect(decisionForm).toBeVisible();
+  await expect(
+    page.getByText(
+      "Confirm the immutable hold decision. No release or deployment will be performed."
+    )
+  ).toBeVisible();
+  await expect(
+    page.getByText("No owner decision recorded", { exact: true })
+  ).toBeVisible();
+  await decisionForm.getByRole("button", { name: "Confirm hold" }).click();
+  await expect(
+    page.getByText("Recorded hold. No release or deployment was performed.")
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "hold by console-e2e-operator: Wait for a fresh confirmation cohort."
+    )
+  ).toBeVisible();
+  await expect(decisionForm).toHaveCount(0);
+});
+
 test("finding witness opens its exact replay step, then Back restores filtered list and anchor", async ({
   page
 }) => {

@@ -31,12 +31,13 @@ const TREATMENT: PlaytestVersionedRef = {
     "0000000000000000000000000000000000000000000000000000000000000002"
 };
 
-function buildFixtureExperiment(overrides: {
+interface FixtureExperimentOverrides {
   readonly discoveryInventory?: readonly string[];
   readonly confirmationInventory?: readonly string[];
   readonly discoveryArm?: "baseline" | "treatment";
   readonly primaryMetricId?: string;
   readonly state?: PlaytestExperiment["state"];
+  readonly approvalId?: string | null;
   readonly comparisonId?: string | null;
   readonly ownerDecision?: string | null;
   readonly attemptIds?: readonly string[];
@@ -50,7 +51,38 @@ function buildFixtureExperiment(overrides: {
   };
   readonly guardrailMetricIds?: readonly string[];
   readonly pairMap?: Readonly<Record<string, string>>;
-}): PlaytestExperiment {
+}
+
+function fixtureLifecycleFields(overrides: FixtureExperimentOverrides) {
+  const state = overrides.state ?? "draft";
+  const attemptIds = Object.hasOwn(overrides, "attemptIds")
+    ? (overrides.attemptIds ?? [])
+    : [
+          "running",
+          "completed",
+          "analyzed",
+          "owner-decided",
+          "execution-failed",
+          "inconclusive"
+        ].includes(state)
+      ? ["attempt-fixture"]
+      : [];
+  const comparisonId = Object.hasOwn(overrides, "comparisonId")
+    ? (overrides.comparisonId ?? null)
+    : state === "analyzed" || state === "owner-decided"
+      ? "comparison-fixture"
+      : null;
+  const ownerDecision = Object.hasOwn(overrides, "ownerDecision")
+    ? (overrides.ownerDecision ?? null)
+    : state === "owner-decided"
+      ? "eligible-for-owner-promotion"
+      : null;
+  return { state, attemptIds, comparisonId, ownerDecision };
+}
+
+function buildFixtureExperiment(
+  overrides: FixtureExperimentOverrides
+): PlaytestExperiment {
   const discovery = overrides.discoveryInventory ?? ["d1", "d2", "d3", "d4"];
   const confirmation = overrides.confirmationInventory ?? [
     "c1",
@@ -103,6 +135,8 @@ function buildFixtureExperiment(overrides: {
       maxCritiques: 40,
       maxWallTimeMs: 30 * 60 * 1000
     } as const);
+  const { state, attemptIds, comparisonId, ownerDecision } =
+    fixtureLifecycleFields(overrides);
   const manifest: Omit<PlaytestExperiment, "contentHash"> = {
     schema: "autodev-playtest-experiment-v1",
     experimentId: "experiment-warning",
@@ -118,7 +152,10 @@ function buildFixtureExperiment(overrides: {
     benchmarkId: "fixture-benchmark-warning",
     baseline: overrides.baseline ?? BASELINE,
     treatment: overrides.treatment ?? TREATMENT,
-    approvalId: "approval-001",
+    approvalId:
+      overrides.approvalId === undefined
+        ? "approval-001"
+        : overrides.approvalId,
     exposureUnit: "learner",
     allocationSeed: "fixture-seed-v1",
     allocationMethod: "pinned-random-permutation",
@@ -139,10 +176,10 @@ function buildFixtureExperiment(overrides: {
     multiplicityPlan: "single-primary-no-family-correction",
     budget,
     stoppingRule: "fixed-N-stop-after-20-assignments",
-    state: overrides.state ?? "draft",
-    attemptIds: overrides.attemptIds ?? [],
-    comparisonId: overrides.comparisonId ?? null,
-    ownerDecision: overrides.ownerDecision ?? null,
+    state,
+    attemptIds,
+    comparisonId,
+    ownerDecision,
     rollbackRefs: [],
     createdAt: "2026-01-01T00:00:00.000Z"
   };
@@ -171,6 +208,40 @@ function defaultBudget() {
 test("assertPlaytestExperiment accepts a fixture experiment with 20 assignments and a paired plan", () => {
   const fixture = buildFixtureExperiment({});
   assert.doesNotThrow(() => assertPlaytestExperiment(fixture));
+});
+
+test("assertPlaytestExperiment binds lifecycle state to approval, attempt, comparison, and owner-decision evidence", () => {
+  const approved = buildFixtureExperiment({ state: "approved" });
+  assert.throws(
+    () => assertPlaytestExperiment({ ...approved, approvalId: null }),
+    /state "approved" requires an approvalId/u
+  );
+
+  const running = buildFixtureExperiment({ state: "running" });
+  assert.throws(
+    () => assertPlaytestExperiment({ ...running, attemptIds: [] }),
+    /state "running" requires at least one recorded attempt/u
+  );
+
+  const analyzed = buildFixtureExperiment({ state: "analyzed" });
+  assert.throws(
+    () => assertPlaytestExperiment({ ...analyzed, comparisonId: null }),
+    /state "analyzed" requires a stored comparisonId/u
+  );
+
+  const decided = buildFixtureExperiment({ state: "owner-decided" });
+  assert.throws(
+    () => assertPlaytestExperiment({ ...decided, ownerDecision: null }),
+    /state "owner-decided" requires an ownerDecision/u
+  );
+});
+
+test("an experiment with no frozen approval cannot transition from draft to approved", () => {
+  const draft = buildFixtureExperiment({ approvalId: null });
+  assert.throws(
+    () => transitionPlaytestExperiment(draft, { to: "approved" }),
+    /state "approved" requires an approvalId/u
+  );
 });
 
 test("assertPlaytestExperiment rejects legacy/noncanonical finding aliases", () => {
@@ -562,10 +633,9 @@ test("transitionPlaytestExperiment forbids overwriting a stored comparisonId on 
   );
 });
 
-test("transitionPlaytestExperiment rejects entering owner-decided without a prior comparisonId and forbids overwriting an existing ownerDecision", () => {
-  // Start in 'analyzed' with no comparisonId: the table permits
-  // analyzed -> owner-decided, but the missing comparisonId check fires
-  // first and produces a clear, distinct error.
+test("transitionPlaytestExperiment rejects corrupt analyzed state and forbids overwriting an existing ownerDecision", () => {
+  // A persisted analyzed state without the comparison it claims to contain
+  // is invalid before any later transition is considered.
   const noComparison = buildFixtureExperiment({
     state: "analyzed",
     comparisonId: null
@@ -576,7 +646,7 @@ test("transitionPlaytestExperiment rejects entering owner-decided without a prio
         to: "owner-decided",
         ownerDecision: "anything"
       }),
-    /analyze the experiment first/u
+    /state "analyzed" requires a stored comparisonId/u
   );
   // With a comparisonId and an ownerDecision, the same analyzed state
   // advances normally and is then locked.

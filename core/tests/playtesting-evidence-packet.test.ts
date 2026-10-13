@@ -14,12 +14,14 @@ import {
   type PlaytestCoverageEpisode,
   playtestCoverageManifestHashInput,
   playtestCoveragePlanForRegistry,
+  playtestCrossSessionInventoryHashInput,
   type PlaytestEpisode,
   type PlaytestEvidenceLocator,
   type PlaytestEvidenceTraceStep,
   type PlaytestMetricRegistry,
   PLAYTESTS_EPISODE_SCHEMA,
-  PLAYTESTS_EVIDENCE_PACKET_SCHEMA
+  PLAYTESTS_EVIDENCE_PACKET_SCHEMA,
+  PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1
 } from "../src/playtesting/index.ts";
 
 const WORKSPACE_ID = "owner/evidence-fixture";
@@ -260,6 +262,9 @@ function build(overrides: Record<string, unknown> = {}) {
     assignment: assignment(),
     registry: registry(),
     coverageManifest: coverageManifest(),
+    crossSessionCandidates: [],
+    crossSessionSelectionSeed: "cross-session-fixture-seed-v1",
+    crossSessionInventoryHash: hashCrossSessionInventory([]),
     rubricHash: RUBRIC_HASH,
     measurementVersion: "playtesting-measurement-v2",
     traceHash: "5".repeat(64),
@@ -275,6 +280,14 @@ function build(overrides: Record<string, unknown> = {}) {
     windowRadius: 0,
     ...overrides
   });
+}
+
+function hashCrossSessionInventory(
+  candidates: Parameters<typeof playtestCrossSessionInventoryHashInput>[0]
+): string {
+  return createHash("sha256")
+    .update(playtestCrossSessionInventoryHashInput(candidates))
+    .digest("hex");
 }
 
 test("evidence packet always carries terminal and event-bearing steps plus deterministic ordinary context", () => {
@@ -315,7 +328,92 @@ test("evidence packet always carries terminal and event-bearing steps plus deter
   ]);
   assert.equal(packet.visibleEvidenceOnly, true);
   assert.equal(packet.modelId, null);
+  assert.deepEqual(packet.crossSessionContext, {
+    status: "unavailable",
+    reason: "No other complete persisted episode exists in this batch.",
+    inventoryHash: hashCrossSessionInventory([]),
+    eligibleSessions: 0
+  });
   assert.doesNotThrow(() => assertPlaytestEvidencePacket(packet));
+});
+
+test("cross-session packets include a deterministic bounded sibling sample and scoped citations", () => {
+  const candidates = Array.from({ length: 5 }, (_, index) => {
+    const assignmentId = `sibling-assignment-${String(index + 1)}`;
+    const seed = `sibling-seed-${String(index + 1)}`;
+    return {
+      assignment: {
+        ...assignment(),
+        assignmentId,
+        seed
+      },
+      episode: {
+        ...episode(),
+        episodeId: `sibling-episode-${String(index + 1)}`,
+        assignmentId,
+        identity: { ...episode().identity, seed }
+      }
+    };
+  });
+  const crossSessionInventoryHash = hashCrossSessionInventory(candidates);
+  const packet = build({
+    crossSessionCandidates: candidates,
+    crossSessionSelectionSeed: "frozen-selection-seed-v1",
+    crossSessionInventoryHash
+  });
+  assert.equal(packet.crossSessionContext.status, "included");
+  if (packet.crossSessionContext.status !== "included") {
+    assert.fail("Expected an included sibling sample.");
+  }
+  assert.equal(packet.crossSessionContext.eligibleSessions, 5);
+  assert.equal(packet.crossSessionContext.sessions.length, 4);
+  assert.equal(packet.crossSessionContext.inclusionProbability, 0.8);
+  assert.deepEqual(
+    build({
+      crossSessionCandidates: [...candidates].reverse(),
+      crossSessionSelectionSeed: "frozen-selection-seed-v1",
+      crossSessionInventoryHash
+    }).crossSessionContext,
+    packet.crossSessionContext
+  );
+  const siblingEpisodeId = packet.crossSessionContext.sessions[0]!.episodeId;
+  assert.doesNotThrow(() =>
+    assertPlaytestEvidenceLocatorsWithinPacket(
+      [{ kind: "episode", id: siblingEpisodeId }],
+      packet
+    )
+  );
+  assert.throws(
+    () =>
+      assertPlaytestEvidenceLocatorsWithinPacket(
+        [{ kind: "episode", id: siblingEpisodeId, step: 0 }],
+        packet
+      ),
+    /sibling at unsupported granularity/u
+  );
+});
+
+test("packet validator reads legacy v1 without upgrading it and rejects malformed v2 context", () => {
+  const packet = build();
+  const { crossSessionContext: _crossSessionContext, ...legacyFields } = packet;
+  const legacyPacket = {
+    ...legacyFields,
+    schema: PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1
+  };
+  assert.doesNotThrow(() => assertPlaytestEvidencePacket(legacyPacket));
+  assert.throws(
+    () =>
+      assertPlaytestEvidencePacket({
+        ...packet,
+        crossSessionContext: {
+          status: "unavailable",
+          reason: "",
+          inventoryHash: hashCrossSessionInventory([]),
+          eligibleSessions: 0
+        }
+      }),
+    /unavailable cross-session context is malformed/u
+  );
 });
 
 test("evidence packet refuses hidden/unverified trace data, assignment drift and missing mandatory windows", () => {

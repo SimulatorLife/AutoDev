@@ -10,6 +10,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { responseMessage } from "./playtesting-run-messages.ts";
 import {
   freshnessForFailure,
   freshnessForSuccess,
@@ -27,21 +28,6 @@ export interface PlaytestingActiveRunsState {
   readonly freshness: PlaytestingActiveRunsFreshness;
   readonly lastFailure: string | null;
   readonly lastUpdatedAt: number | null;
-}
-
-/** Prefer the server's own message; never invent one for an unparsed body. */
-export function responseMessage(value: unknown): string {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return "The Console could not validate the server response.";
-  }
-  const record = value as { message?: unknown; error?: unknown };
-  if (typeof record.message === "string") return record.message;
-  const { error } = record;
-  if (typeof error === "object" && error !== null && !Array.isArray(error)) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === "string") return message;
-  }
-  return "The Console could not validate the server response.";
 }
 
 export interface UsePlaytestingActiveRunsOptions {

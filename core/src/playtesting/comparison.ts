@@ -26,6 +26,7 @@ import {
   type PlaytestMetricComparison,
   type PlaytestMetricSemantics,
   type PlaytestNumericInterval,
+  type PlaytestOwnerDisposition,
   type PlaytestPreferenceAnswer,
   type PlaytestProvenance,
   PLAYTESTS_COMPARISON_SCHEMA,
@@ -434,6 +435,8 @@ export function buildPlaytestComparison(args: {
     decision,
     ownerDecisionAt: null,
     ownerDecisionReason: null,
+    ownerDecisionBy: null,
+    ownerDisposition: null,
     humanPreference: args.humanPreference ?? {
       answer: "not-collected",
       interval: null
@@ -451,15 +454,126 @@ export function buildPlaytestComparison(args: {
  */
 export function recordPlaytestOwnerDecision(
   comparison: PlaytestComparison,
-  decidedAt: string,
-  reason: string
+  input: {
+    readonly disposition: Exclude<PlaytestOwnerDisposition, "not-recorded">;
+    readonly decidedAt: string;
+    readonly decidedBy: string;
+    readonly reason: string;
+  }
 ): PlaytestComparison {
-  if (!reason || reason.trim().length === 0) {
-    throw new TypeError("Owner decision requires a non-empty reason.");
+  const { disposition, decidedAt, decidedBy, reason } = input;
+  assertPlaytestComparisonOwnerDecision(comparison);
+  assertNoPriorOwnerDecision(comparison);
+  if (disposition !== "promote" && disposition !== "hold") {
+    throw new TypeError("Owner disposition must be promote or hold.");
+  }
+  assertDecisionText(reason, 4000, "reason");
+  assertDecisionText(decidedBy, 256, "trusted author");
+  if (!Number.isFinite(Date.parse(decidedAt))) {
+    throw new TypeError("Owner decision timestamp must be a valid timestamp.");
+  }
+  if (comparison.version === Number.MAX_SAFE_INTEGER) {
+    throw new RangeError("Owner decision cannot exceed the revision limit.");
+  }
+  if (
+    disposition === "promote" &&
+    comparison.decision !== "eligible-for-owner-promotion"
+  ) {
+    throw new TypeError(
+      "An owner may record promotion only when the comparison is eligible; the promotion itself remains an external release action."
+    );
   }
   return {
     ...comparison,
+    version: comparison.version + 1,
     ownerDecisionAt: decidedAt,
-    ownerDecisionReason: reason
+    ownerDecisionReason: reason,
+    ownerDecisionBy: decidedBy,
+    ownerDisposition: disposition
   };
+}
+
+/** Validate current comparison owner-decision fields, including historical gaps. */
+export function assertPlaytestComparisonOwnerDecision(
+  comparison: PlaytestComparison
+): void {
+  if (comparison.schema !== PLAYTESTS_COMPARISON_SCHEMA) {
+    throw new TypeError(
+      "Owner decisions require the current comparison schema."
+    );
+  }
+  if (!Number.isSafeInteger(comparison.version) || comparison.version < 1) {
+    throw new TypeError("Comparison revision must be a positive safe integer.");
+  }
+  const noDecision =
+    comparison.ownerDecisionAt === null &&
+    comparison.ownerDecisionReason === null &&
+    comparison.ownerDecisionBy === null &&
+    comparison.ownerDisposition === null;
+  if (noDecision) return;
+
+  if (
+    typeof comparison.ownerDecisionAt !== "string" ||
+    !Number.isFinite(Date.parse(comparison.ownerDecisionAt)) ||
+    typeof comparison.ownerDecisionReason !== "string"
+  ) {
+    throw new TypeError("Comparison owner decision time/reason is malformed.");
+  }
+  assertDecisionText(comparison.ownerDecisionReason, 4000, "reason");
+  if (comparison.ownerDisposition === "not-recorded") {
+    if (comparison.ownerDecisionBy !== null) {
+      throw new TypeError(
+        "Historical owner decisions cannot invent an author identity."
+      );
+    }
+    return;
+  }
+  if (
+    comparison.ownerDisposition !== "promote" &&
+    comparison.ownerDisposition !== "hold"
+  ) {
+    throw new TypeError("Comparison owner disposition is malformed.");
+  }
+  assertDecisionText(comparison.ownerDecisionBy, 256, "trusted author");
+  if (
+    comparison.ownerDisposition === "promote" &&
+    comparison.decision !== "eligible-for-owner-promotion"
+  ) {
+    throw new TypeError(
+      "Only an eligible comparison can carry an owner promotion disposition."
+    );
+  }
+}
+
+function assertDecisionText(
+  value: unknown,
+  maximumLength: number,
+  label: string
+): asserts value is string {
+  if (
+    typeof value !== "string" ||
+    value.trim().length === 0 ||
+    value.length > maximumLength ||
+    [...value].some((character) => {
+      const point = character.codePointAt(0) ?? 0;
+      return point < 32 || point === 127;
+    })
+  ) {
+    throw new TypeError(
+      `Owner decision requires a bounded non-empty ${label}.`
+    );
+  }
+}
+
+function assertNoPriorOwnerDecision(comparison: PlaytestComparison): void {
+  if (
+    comparison.ownerDecisionAt !== null ||
+    comparison.ownerDecisionReason !== null ||
+    comparison.ownerDecisionBy !== null ||
+    comparison.ownerDisposition !== null
+  ) {
+    throw new TypeError(
+      "An owner decision is immutable; record a new comparison before deciding again."
+    );
+  }
 }

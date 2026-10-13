@@ -269,6 +269,36 @@ function assertReviewCrossSessionSection(
   reviewId: string,
   section: PlaytestReviewCompleteness["crossSessionContext"]
 ): void {
+  if (section.status === "available") {
+    if (section.evidenceRefs.length === 0) {
+      throw new TypeError(
+        `Review "${reviewId}" marks cross-session context available without citations.`
+      );
+    }
+    for (const reference of section.evidenceRefs) {
+      assertPlaytestEvidenceLocator(reference);
+      if (
+        reference.kind !== "episode" ||
+        reference.step !== undefined ||
+        reference.revision !== undefined ||
+        reference.frameIndex !== undefined ||
+        reference.phaseId !== undefined
+      ) {
+        throw new TypeError(
+          `Review "${reviewId}" cross-session citations must identify whole packet-supplied sibling episodes.`
+        );
+      }
+    }
+    if (
+      new Set(section.evidenceRefs.map((reference) => reference.id)).size !==
+      section.evidenceRefs.length
+    ) {
+      throw new TypeError(
+        `Review "${reviewId}" cross-session citations must identify unique sibling episodes.`
+      );
+    }
+    return;
+  }
   if (
     section.status === "unavailable" ||
     section.status === PLAYTEST_REVIEW_SECTION_NOT_RECORDED

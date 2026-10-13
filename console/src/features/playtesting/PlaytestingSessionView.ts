@@ -33,6 +33,8 @@ import {
 } from "./playtesting-url.ts";
 import { executionStatusBadge, gameOutcomeBadge } from "./PlaytestingView.ts";
 
+const EVIDENCE_LINK_CLASS = "text-xs text-accent hover:underline";
+
 export interface PlaytestingSessionViewProps {
   readonly detail: ControlApiPlaytestingEpisodeDetailResponse;
   readonly scope: PlaytestingScope;
@@ -226,7 +228,7 @@ function episodeSteps(
                 NavigationLink,
                 {
                   href: playtestingEpisodeHref(scope, episode.episodeId, step),
-                  className: "text-xs text-accent hover:underline"
+                  className: EVIDENCE_LINK_CLASS
                 },
                 selected ? "Selected step" : "Open this step"
               )
@@ -289,7 +291,31 @@ function reviewPanel(
       ...children
     );
   const completeness = review.reportCompleteness;
-  const crossSessionReason = completeness.crossSessionContext.reason;
+  const crossSessionContext = completeness.crossSessionContext;
+  const crossSessionExplanation =
+    crossSessionContext.status === "available"
+      ? `Cites ${crossSessionContext.evidenceRefs.length} packet-supplied sibling episode${crossSessionContext.evidenceRefs.length === 1 ? "" : "s"}.`
+      : crossSessionContext.reason;
+  const crossSessionEvidence =
+    crossSessionContext.status === "available"
+      ? crossSessionContext.evidenceRefs.map((reference, index) =>
+          React.createElement(
+            "li",
+            { key: `${reference.id}:${index}` },
+            React.createElement(
+              NavigationLink,
+              {
+                href: playtestingEpisodeHref(scope, reference.id, 0),
+                className: EVIDENCE_LINK_CLASS,
+                dataAttributes: {
+                  "data-cross-session-episode": reference.id
+                }
+              },
+              `episode ${reference.id}`
+            )
+          )
+        )
+      : [];
   const alternativeSection = completenessSection(
     "Alternative explanations",
     completeness.alternatives.status,
@@ -353,8 +379,9 @@ function reviewPanel(
       { className: "grid gap-3 sm:grid-cols-2" },
       completenessSection(
         "Cross-session context",
-        completeness.crossSessionContext.status,
-        crossSessionReason
+        crossSessionContext.status,
+        crossSessionExplanation,
+        crossSessionEvidence
       ),
       alternativeSection,
       experimentSection,
@@ -393,10 +420,12 @@ function reviewPanel(
                           {
                             href: playtestingEpisodeHref(
                               scope,
-                              detail.record.episodeId,
+                              reference.kind === "episode"
+                                ? reference.id
+                                : detail.record.episodeId,
                               reference.step ?? 0
                             ),
-                            className: "text-xs text-accent hover:underline",
+                            className: EVIDENCE_LINK_CLASS,
                             dataAttributes: {
                               "data-review-claim-evidence": reference.id
                             }
@@ -484,7 +513,7 @@ function reviewPanel(
                               detail.record.episodeId,
                               reference.step ?? 0
                             ),
-                            className: "text-xs text-accent hover:underline",
+                            className: EVIDENCE_LINK_CLASS,
                             dataAttributes: {
                               "data-review-evidence": reference.id
                             }

@@ -38,6 +38,7 @@ import {
   lookupPlaytestMetric,
   type PlaytestKnownEvidenceIndex,
   type PlaytestMetricComparison,
+  PLAYTESTS_COMPARISON_SCHEMA,
   recordPlaytestOwnerDecision,
   samplePlaytestDiscovery,
   samplePlaytestSurveillance,
@@ -1454,7 +1455,7 @@ test("decidePlaytestComparisonStatus throws when the primary metric is not among
 
 test("recordPlaytestOwnerDecision returns a new immutable revision and rejects an empty reason", () => {
   const base = {
-    schema: "autodev-playtest-comparison-v1" as const,
+    schema: PLAYTESTS_COMPARISON_SCHEMA,
     comparisonId: "cmp-3",
     version: 1,
     benchmarkId: "bench-1",
@@ -1478,6 +1479,8 @@ test("recordPlaytestOwnerDecision returns a new immutable revision and rejects a
     decision: "hold-inconclusive" as const,
     ownerDecisionAt: null,
     ownerDecisionReason: null,
+    ownerDecisionBy: null,
+    ownerDisposition: null,
     humanPreference: { answer: "not-collected" as const, interval: null },
     provenance: {
       workspaceId: WORKSPACE_ID,
@@ -1486,21 +1489,61 @@ test("recordPlaytestOwnerDecision returns a new immutable revision and rejects a
     },
     notes: ""
   };
-  const revised = recordPlaytestOwnerDecision(
-    base,
-    "2026-01-02T00:00:00.000Z",
-    "holding for guardrail"
-  );
+  const revised = recordPlaytestOwnerDecision(base, {
+    disposition: "hold",
+    decidedAt: "2026-01-02T00:00:00.000Z",
+    decidedBy: "root-operator",
+    reason: "holding for guardrail"
+  });
+  assert.equal(revised.version, 2);
   assert.equal(revised.ownerDecisionAt, "2026-01-02T00:00:00.000Z");
   assert.equal(revised.ownerDecisionReason, "holding for guardrail");
+  assert.equal(revised.ownerDecisionBy, "root-operator");
+  assert.equal(revised.ownerDisposition, "hold");
   assert.equal(
     base.ownerDecisionAt,
     null,
     "original comparison must remain unmutated"
   );
   assert.throws(
-    () => recordPlaytestOwnerDecision(base, "2026-01-02T00:00:00.000Z", ""),
+    () =>
+      recordPlaytestOwnerDecision(base, {
+        disposition: "hold",
+        decidedAt: "2026-01-02T00:00:00.000Z",
+        decidedBy: "root-operator",
+        reason: ""
+      }),
     /non-empty reason/u
+  );
+  assert.throws(
+    () =>
+      recordPlaytestOwnerDecision(base, {
+        disposition: "hold",
+        decidedAt: "not-a-date",
+        decidedBy: "root-operator",
+        reason: "Hold."
+      }),
+    /valid timestamp/u
+  );
+  assert.throws(
+    () =>
+      recordPlaytestOwnerDecision(revised, {
+        disposition: "hold",
+        decidedAt: "2026-01-03T00:00:00.000Z",
+        decidedBy: "root-operator",
+        reason: "Changing the prior decision."
+      }),
+    /immutable/u
+  );
+  assert.throws(
+    () =>
+      recordPlaytestOwnerDecision(base, {
+        disposition: "promote",
+        decidedAt: "2026-01-02T00:00:00.000Z",
+        decidedBy: "root-operator",
+        reason: "Promote."
+      }),
+    /eligible/u
   );
 });
 
@@ -1768,6 +1811,47 @@ test("review completeness rejects missing, contradictory and unrecorded current 
     }
   };
   assert.doesNotThrow(() => assertPlaytestReviewCompleteness(base));
+  const withCrossSessionEvidence = {
+    ...base,
+    reportCompleteness: {
+      ...base.reportCompleteness,
+      crossSessionContext: {
+        status: "available" as const,
+        evidenceRefs: [{ kind: "episode" as const, id: "sibling-episode-1" }]
+      }
+    }
+  };
+  assert.doesNotThrow(() =>
+    assertPlaytestReviewCompleteness(withCrossSessionEvidence)
+  );
+  assert.throws(
+    () =>
+      assertPlaytestReviewCompleteness({
+        ...withCrossSessionEvidence,
+        reportCompleteness: {
+          ...withCrossSessionEvidence.reportCompleteness,
+          crossSessionContext: {
+            status: "available",
+            evidenceRefs: [{ kind: "event", id: "sibling-event" }]
+          }
+        }
+      }),
+    /whole packet-supplied sibling episodes/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestReviewCompleteness({
+        ...withCrossSessionEvidence,
+        reportCompleteness: {
+          ...withCrossSessionEvidence.reportCompleteness,
+          crossSessionContext: {
+            status: "available",
+            evidenceRefs: []
+          }
+        }
+      }),
+    /without citations/u
+  );
   const proposedExperiment = {
     hypothesis: "A safer action avoids the collision.",
     falsifier: "The collision still occurs after the alternate action.",

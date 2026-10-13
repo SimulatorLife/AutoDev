@@ -37,6 +37,7 @@ import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
+import { PlaytestComparisonDecisionForm } from "./PlaytestComparisonDecisionForm.ts";
 import {
   PLAYTESTING_FILTER_KEYS,
   PLAYTESTING_PAGE_SIZES,
@@ -95,6 +96,7 @@ export type PlaytestingListData =
       readonly rows: readonly PlaytestComparison[];
       readonly total: number;
       readonly nextCursor: string | null;
+      readonly ownerActionsAvailable?: boolean | undefined;
       readonly humanValidation?: PlaytestingHumanValidation | undefined;
     };
 
@@ -1046,7 +1048,8 @@ function comparisonsTable(
   total: number,
   scope: PlaytestingScope,
   nextCursor: string | null,
-  humanValidation: PlaytestingHumanValidation | undefined
+  humanValidation: PlaytestingHumanValidation | undefined,
+  ownerActionsAvailable: boolean
 ): React.JSX.Element {
   const columns: readonly ColumnDef<PlaytestComparison>[] = [
     {
@@ -1069,6 +1072,23 @@ function comparisonsTable(
       weight: 220,
       align: "prose",
       cell: (row) => row.decision
+    },
+    {
+      id: "owner-disposition",
+      header: "Owner decision",
+      weight: 240,
+      align: "prose",
+      cell: (row) =>
+        scope.workspaceId === null
+          ? React.createElement(StatusBadge, {
+              status: NOT_OBSERVED_STATUS,
+              label: "No owner decision recorded"
+            })
+          : React.createElement(PlaytestComparisonDecisionForm, {
+              workspaceId: scope.workspaceId,
+              comparison: row,
+              enabled: ownerActionsAvailable
+            })
     },
     {
       id: "metrics",
@@ -1154,7 +1174,8 @@ function activeList(
     data.total,
     scope,
     data.nextCursor,
-    data.humanValidation
+    data.humanValidation,
+    data.ownerActionsAvailable ?? false
   );
 }
 

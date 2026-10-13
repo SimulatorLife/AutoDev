@@ -16,6 +16,7 @@ import {
   PlaytestingRunControls,
   type PlaytestingRunSetup
 } from "../../src/features/playtesting/PlaytestingRunControls.tsx";
+import { PlaytestingLiveRuns } from "../../src/features/playtesting/PlaytestingLiveRuns.ts";
 import {
   type PlaytestingHumanValidation,
   type PlaytestingListData,
@@ -280,11 +281,14 @@ async function loadList(
       }
     };
   }
-  const result = await fetchPlaytestingPage(
-    "comparisons",
-    pageRequest(scope, "comparisons"),
-    config
-  );
+  const [result, capabilities] = await Promise.all([
+    fetchPlaytestingPage(
+      "comparisons",
+      pageRequest(scope, "comparisons"),
+      config
+    ),
+    fetchPlaytestingRunCapabilities(scope.workspaceId!, config)
+  ]);
   if (result.kind !== "ok") return { kind: "unavailable", result };
   const humanValidation = await loadHumanValidation(
     scope,
@@ -298,6 +302,9 @@ async function loadList(
       rows: result.data.page.rows,
       total: result.data.page.total,
       nextCursor: result.data.page.nextCursor,
+      ownerActionsAvailable:
+        capabilities.kind === "ok" &&
+        capabilities.data.operatorActionsAvailable,
       humanValidation
     }
   };
@@ -324,6 +331,12 @@ function pageResult(
       React.createElement(PlaytestingRunControls, {
         scope,
         setup: loaded.runSetup
+      }),
+      // Live monitoring sits with the run controls so starting a batch and
+      // watching it are one surface.
+      React.createElement(PlaytestingLiveRuns, {
+        workspaceId: scope.workspaceId!,
+        initialFocusedBatchId: scope.liveBatchId
       })
     );
   } else {
