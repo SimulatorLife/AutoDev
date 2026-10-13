@@ -576,10 +576,32 @@ code-gatable gaps that synthetic coverage does not close:
   comparisons; there is no integrated immutable experiment → comparison →
   owner-decision cycle.
 - Several implemented Core helpers are not consumed by persisted workflows.
-  Diagnostic ladders, native timing, cohort standardization, cadence and
-  calibration scheduling still are not; finding triage now has an executor
-  (`playtest.triageFindings`) and the player-policy-validity derivation has one
-  (`playtest.policyValidity`).
+  Finding triage now has an executor (`playtest.triageFindings`) and the
+  player-policy-validity derivation has one (`playtest.policyValidity`). The
+  rest remain unconsumed, and each was checked against its own data source
+  rather than assumed buildable -- they fail for four different reasons, so
+  "wire them up" is not one task:
+
+  - **Native timing** is blocked at the protocol. `nativeIntervals` is written
+    as a literal `[]` by `runtime/src/playtesting/episode-runner.ts:461`, and a
+    search of `protocol.ts` and `protocol-types.ts` finds no message an adapter
+    could use to report one. `precedenceVersion` and the `precedence` order
+    exist only inside `native-timing.ts` and the artifact type -- the
+    observation contract does not declare them. Its own doc says the
+    "game/browser instrumentation supplies the intervals and versioned
+    precedence contract", so both are a protocol extension and a game-declared
+    contract, not a Runtime wiring job.
+  - **Cohort standardization** is buildable and is the best remaining
+    candidate: `PlaytestCohortObservation` is `{ numerator, denominator,
+    missing }` per cohort, derivable from persisted episode metric rows grouped
+    by `policyCohort`, with polarity read from the approved rubric, and the
+    benchmark already carries `cohortWeights`. Recorded as work, not done.
+  - **The diagnostic ladder** needs human evidence that does not exist here, so
+    `competence: "passed" | "failed"` stays unreachable rather than asserted on
+    synthetic data.
+  - **Cadence / judge calibration** consumes `PlaytestJudgeValidation`, which
+    is named by only two Core files and one Core test -- it has no producer, so
+    there is nothing for `evaluateJudgeCalibration` to score.
 - External gates still require exact target-game approval and evaluator/event/UI
   contracts, an authorized 1,000-episode/two-policy run, a second mechanically
   different adapter, authorized/held-out human evidence, upstream reuse/license
@@ -1116,8 +1138,6 @@ This slice records a target-state requirement added to
       per session; and never charges an ineligible session against the budget it
       could not have used.
 
-**Still required:**
-
 **Delivered (2026-10-13, continued):**
 
 - [x] A Console surface that selects several persisted sessions and requests
@@ -1129,6 +1149,15 @@ This slice records a target-state requirement added to
       receipts do not account for every selected session.
 - [x] `PLAYTESTS_MAX_ANALYSIS_SESSIONS` lives in Core, so the limit the
       operator sees and the one Runtime enforces cannot drift.
+- [x] Live status outcomes carry the game's own `gameOutcome` separately from
+      assignment execution `state`; it is sourced from the persisted episode,
+      while no-episode assignments carry null. This ephemeral Runtime projection
+      does not alter the durable batch schema.
+- [x] The Console validates every assignment result before rendering it and
+      links only persisted episode IDs to their full session view. The detail
+      keeps execution state, game outcome, start, and measurement eligibility
+      separate. Focused Runtime/Console tests cover direct completion, restart
+      recovery, no-episode outcomes, malformed/duplicate rows and navigation.
 
 Current state, from source:
 
@@ -1142,17 +1171,45 @@ Current state, from source:
   `PlaytestingActiveRunsPanel.ts` renders it; `playtesting-active-runs.ts` holds
   the pure read/terminal/backoff decisions so they are directly testable.
 
-Required work:
+- Runtime now returns `PlaytestRunAssignmentOutcome` for every recorded
+  assignment, with `gameOutcome` sourced from its persisted episode and kept
+  distinct from the assignment's execution `state`. A missing episode has a
+  null game outcome; an episode whose game cannot classify its result remains
+  explicitly `unknown`. This status projection is not copied into Data's batch
+  record, which continues to store only no-episode assignment dispositions.
+- The Console validates the complete outcome list (including unique assignment
+  and episode identities) before rendering it. Each row shows execution state,
+  game outcome, start/eligibility, and a session-detail link only when the
+  Runtime returned a persisted episode ID. The existing synthetic browser API
+  fixture now emits the same typed result shape.
+- Focused Runtime/Console coverage verifies completed game outcomes, absent
+  episodes, restored outcomes after Runtime restart, malformed/duplicate rows,
+  and the session link. No UI value is inferred from aggregate counts.
 
-Remaining work on this list is recorded under "Still required" above; the
-Runtime dispatch, the live read and the confirmation read are delivered.
+The Runtime dispatch, live read, confirmation read, and assignment-level
+results are delivered. The remaining Console evidence is browser acceptance;
+the remaining RacingGame evidence is a target-owned migration and an explicitly
+approved run, recorded below.
 
-The live view currently renders assignment outcomes and persisted episodes
-separately. The tiles read the owner's own `PlaytestCompletionCounts`; four of
-them previously read keys no producer emits and so rendered "not observed"
-permanently (`e6c3fbd1`). Per-assignment `win/loss/DNF/other` — which comes
-from the game's own `game.outcome`, not from assignment counts — is still not
-surfaced per assignment; the batch result carries it and the panel aggregates.
+The live view now renders the two independent outcomes per assignment: the
+Runtime execution disposition and the game's classified `win/loss/DNF/other`
+result. The tiles continue to read the owner's `PlaytestCompletionCounts`;
+four previously read keys no producer emits and rendered "not observed"
+permanently (`e6c3fbd1`). A row without a persisted episode has no game outcome,
+and a game that cannot classify a persisted result reports `unknown`; neither is
+reconstructed from execution state.
+
+**RacingGame target preflight (read-only, 2026-10-13):** The accessible
+`SimulatorLife/RacingGame` repository's `main` was at
+`a327d4edb12608c33519d96fcbf0b95b0413a212`. Its tracked `.autodev/` directory
+contains adapter/manifests, but no `.autodev/playtest.config.json`; the only
+playtest config is still root `playtest.config.json` and invokes the game's
+hand-written `.autodev/adapter/playtest-adapter.mjs`. This does not match the
+current approved Runtime contract, which reads the canonical `.autodev/` config
+and AutoDev generic adapter binding. No RacingGame checkout is present in the
+workspace, and no exact build approval/run authorization was supplied. The UI
+path is therefore implemented but cannot yet be represented as a real
+RacingGame end-to-end run; no game or synthetic substitute was launched.
 
 Acceptance requires real-browser coverage of both paths against a labeled
 synthetic Control API fixture — live progress advancing without manual refresh,
