@@ -68,13 +68,12 @@ normative specification; this checklist tracks implementation and evidence.
       (`e6c3fbd1`): four of the six tiles previously read keys no producer emits,
       so the batch's real outcomes were on screen as permanent absences, and the
       key type now makes that a compile error rather than a silent gap.
-- [~] Declarative game onboarding: `init`/`check`, the hash chain, the binding
-  contract and the generic adapter runtime all exist, a real episode runs
-  through the adapter entrypoint (`b6fe554e`), and the acceptance below is met
-  by a second, mechanically different game joining by configuration alone
-  (`e0cca05a`). What remains is the `generated-scaffold` tier and its
-  conformance test, which covers games that cannot onboard declaratively
-  without an AutoDev-generated body.
+- [~] Declarative game onboarding: `init`/`check`/`conformance`, the hash chain,
+  the binding contract and the generic adapter runtime all exist, a real episode
+  runs through the adapter entrypoint (`b6fe554e`), and the acceptance below is
+  met by a second, mechanically different game joining by configuration alone
+  (`e0cca05a`). What remains is the `generated-scaffold` tier: AutoDev writing
+  method bodies for a game that cannot onboard declaratively.
 - [ ] Documentation, test coverage, package checks and independent validation
       match the final integrated diff.
 
@@ -929,8 +928,13 @@ Required work:
       than a claim; a binding that omits a required method is rejected with
       every gap named at once; an optional method the game leaves unbound is
       named rather than assumed; and `check` reports a game with no binding as
-      still owning the protocol rather than on-board. The
-      `generated-scaffold` tier and its conformance test remain unimplemented.
+      still owning the protocol rather than on-board. The conformance test is
+      `autodev playtest conformance` (`a2c7127d`), which loads the game's real
+      entry and drives a real episode through the production host and client.
+      The `generated-scaffold` tier — AutoDev writing method bodies for a game
+      that cannot onboard declaratively — remains unimplemented; a game that
+      needs it is currently refused a tier it cannot earn rather than handed a
+      generated body.
 - [x] A standard `.autodev/` home, with manifests resolved relative to the
       config file rather than the checkout root, plus an independent Runtime
       boundary refusing any manifest that escapes the config's own directory
