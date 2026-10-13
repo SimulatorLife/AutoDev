@@ -74,6 +74,8 @@ import {
   PLAYTESTS_VERIFICATION_STAGES,
   buildPlaytestIssueDrafts,
   playtestIssueReportingRefusal,
+  type PlaytestBenchmark,
+  triagePlaytestFindings,
   type PlaytestIssueDraft,
   type PlaytestSessionReview,
   recordPlaytestOwnerDecision,
@@ -94,6 +96,7 @@ import { z } from "zod/v4";
 
 import type { PlaytestingReadRepository } from "../control-api/playtesting.ts";
 import { loadApprovedPlaytestDefinition } from "./approved-configuration.ts";
+import { standardizePlaytestCohorts } from "./cohort-standardization-run.ts";
 import { derivePlaytestPolicyValidity } from "./policy-validity-run.ts";
 import { mapConcurrentOrdered } from "../shared/map-concurrent-ordered.ts";
 import { writeErrorLine } from "../shared/output.ts";
@@ -6416,6 +6419,113 @@ export function createPlaytestMcpServer(
             .map((override) => override.findingId),
           // Overrides rank a reading; this tool records nothing.
           persisted: false as const
+        };
+      })
+  );
+
+  // 10d. playtest.cohortMixShift
+  mcp.registerTool(
+    "playtest.cohortMixShift",
+    {
+      description:
+        "Standardize per-cohort observation counts across runs against the approved benchmark's frozen cohort weights (§10/§11 mix-shift gate). This is a comparison, so it takes a reference and a candidate batch: a cohort mix can only have shifted between two builds. Refuses rather than padding: if the benchmark weights a cohort any supplied build never observed, or a build observed a cohort the benchmark does not weight, it names those cohorts and returns no result, because a zero-filled cohort would claim the run looked and observed nothing.",
+      inputSchema: {
+        workspaceId: z.string().min(1).max(256).optional(),
+        referenceBatchId: z.string().min(1).max(256),
+        candidateBatchId: z.string().min(1).max(256),
+        metricId: z.string().min(1).max(256)
+      }
+    },
+    (args) =>
+      safely(async () => {
+        const session = await sessionProvider.current();
+        assertPlaytestToolRole(
+          session.role,
+          ANALYSIS_READER_ROLES,
+          "playtest.cohortMixShift"
+        );
+        const targetWorkspaceId = authorizeWorkspace(args.workspaceId, session);
+        const repository = requiredRunRepository(playtestRepository);
+        const reference = await repository.getBatch(
+          targetWorkspaceId,
+          args.referenceBatchId
+        );
+        if (!reference) {
+          throw new PlaytestMcpValidationError(
+            `No batch '${args.referenceBatchId}' exists in this workspace.`
+          );
+        }
+        const candidate = await repository.getBatch(
+          targetWorkspaceId,
+          args.candidateBatchId
+        );
+        if (!candidate) {
+          throw new PlaytestMcpValidationError(
+            `No batch '${args.candidateBatchId}' exists in this workspace.`
+          );
+        }
+
+        // The weights are the approved benchmark's, so the gate is judged
+        // against the frozen distribution rather than this build's sample mix.
+        let benchmark: PlaytestBenchmark | null = null;
+        let benchmarkHash: string | null = null;
+        try {
+          const approval = approvalRepository?.read(targetWorkspaceId);
+          if (approval && approval.revokedAt === null) {
+            const definition = loadApprovedPlaytestDefinition(approval);
+            if (definition.benchmark) {
+              benchmark = definition.benchmark;
+              benchmarkHash = definition.benchmarkHash;
+            }
+          }
+        } catch {
+          benchmark = null;
+          benchmarkHash = null;
+        }
+        if (!benchmark) {
+          throw new PlaytestMcpValidationError(
+            "No approved benchmark declares cohort weights for this workspace."
+          );
+        }
+
+        const pages = await Promise.all(
+          [reference, candidate].map((run) =>
+            repository.listEpisodes({
+              workspaceId: targetWorkspaceId,
+              batchId: run.batchId
+            })
+          )
+        );
+        const outcome = standardizePlaytestCohorts({
+          benchmark,
+          runs: [
+            { batch: reference, episodes: pages[0]!.rows },
+            { batch: candidate, episodes: pages[1]!.rows }
+          ],
+          metricId: args.metricId
+        });
+
+        return {
+          referenceBatchId: reference.batchId,
+          candidateBatchId: candidate.batchId,
+          referenceBuildSha: reference.buildSha,
+          candidateBuildSha: candidate.buildSha,
+          metricId: args.metricId,
+          benchmarkId: benchmark.benchmarkId,
+          benchmarkContentHash: benchmarkHash,
+          standardized: outcome.result !== null,
+          result: outcome.result,
+          buildObservations: outcome.buildObservations,
+          contributingEpisodesByBuild: outcome.contributingEpisodesByBuild,
+          skippedRowsByBuild: outcome.skippedRowsByBuild,
+          // Named rather than folded into the result, because a non-empty list
+          // is the whole reason there is no result.
+          refusals: outcome.refusals,
+          // Explicit about the window: a truncated episode page undercounts
+          // every cohort, so the counts must not read as complete.
+          examinedEpisodes: pages.map((page) => page.total),
+          scoredEpisodes: pages.map((page) => page.rows.length),
+          nextCursor: pages.map((page) => page.nextCursor)
         };
       })
   );

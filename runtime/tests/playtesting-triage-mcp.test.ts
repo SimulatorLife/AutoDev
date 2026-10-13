@@ -42,7 +42,6 @@ function finding(
       },
       scope: { scenarioFamily: "onboarding" }
     }),
-    findingId: overrides.findingId,
     fingerprint: "a".repeat(64),
     version: 1,
     title: overrides.findingId,
@@ -61,7 +60,8 @@ function finding(
     issueRefs: [],
     lastVerifiedBuild: null,
     nextReviewAt: null,
-    ...overrides
+    ...overrides,
+    findingId: overrides.findingId
   };
 }
 

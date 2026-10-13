@@ -101,6 +101,52 @@ states what is implemented and, where applicable, what is still missing.
   back this: ignoring overrides, swallowing out-of-page overrides, and the
   earlier fabricated-zero all turn the relevant test red.
 
+  **The cohort mix-shift gate now runs over real runs, and building it corrected
+  the shape twice.** `standardizePlaytestCohortRates` was Core policy with no
+  executor. The first attempt took one batch and derived one build's
+  observations — which is not merely inconvenient but impossible: the canonical
+  validator rejects fewer than two builds with "builds must contain at least two
+  builds for a changing cohort-mix gate". A single build has no mix to have
+  shifted. The measurement contract agrees independently — §10 tabulates builds
+  A/B/C against a pinned reference, and §11 names "three-build changing cohort
+  mix" as a required fixture. So the executor takes runs and keys builds by
+  `batch.buildSha`, merging runs of one build (the counts are additive, and two
+  batches of the same build is ordinary operation, not a duplicate). The unit
+  test reproduces §10's own A/B/C numbers rather than invented ones, which is
+  what proves the weighting: B's raw rate rises to 85% while its fixed-weight
+  rate falls to 65%, and §10's interpretation — "apparent raw gain hides worse
+  hard-scenario outcome" — only holds if the two weights are kept apart.
+
+  **It refuses instead of padding, in both directions.** The validator demands
+  the observed cohort set be exactly the benchmark's weighted set, so the
+  tempting fix is to fill an absent cohort with
+  `{ numerator: 0, denominator: 0, missing: 0 }`. Zero is the report "we looked
+  and observed nothing"; an absent cohort is "we never looked". The vocabulary
+  already names the difference — `"unknown-no-observation"` sits in both state
+  lists — but no code path emits it, because the validator makes it unreachable.
+  The mirror case matters too: a cohort the run exercised that the benchmark
+  does not weight is discarded by neither Core nor this module, and dropping it
+  would silently lose real observations while the fixed weights described a mix
+  the run never had. Both are named refusals, not thrown type errors, because a
+  refusal a caller can report is the product and a `TypeError` from a deep
+  assertion is not. Observations are returned even on refusal so a reader sees
+  the basis, and `skippedRowsByBuild` distinguishes "the run recorded nothing for
+  this metric" from "the run recorded rows and some did not apply".
+
+  Evidence: Runtime unit `playtesting-cohort-standardization-run.test.ts` 9/9
+  and seam `playtesting-cohort-mix-shift-mcp.test.ts` 5/5. The seam test drives
+  the real MCP server against the approved benchmark **on disk**, whose fixture
+  weights a single cohort (`onboarding`); that is deliberate, because a tool that
+  stopped reading the benchmark's own weights could not standardize against it
+  at all. `playtest.cohortMixShift` is readable by `playtest-analyst` (the
+  target-state role that "interprets and compares") and refused to `playtester`.
+  Five controls turn a test red each: zero-padding unobserved cohorts, dropping
+  unweighted cohorts, removing the insufficient-builds refusal, collapsing the
+  fixed-weight rate into the raw rate, and treating each run as its own build.
+  Still not closed: the gate is descriptive point estimates only, and §10 is
+  explicit that intervals and independent-unit N must come from a statistics
+  library attached to real rows, which this slice does not do.
+
   **Still missing: counterexamples as a lifecycle step.** They remain
   registry/scoring fields only, and implementing them would require inventing
   the competence thresholds ("passed"/"failed"/"insufficient") that decide when
@@ -591,11 +637,12 @@ code-gatable gaps that synthetic coverage does not close:
     "game/browser instrumentation supplies the intervals and versioned
     precedence contract", so both are a protocol extension and a game-declared
     contract, not a Runtime wiring job.
-  - **Cohort standardization** is buildable and is the best remaining
-    candidate: `PlaytestCohortObservation` is `{ numerator, denominator,
-    missing }` per cohort, derivable from persisted episode metric rows grouped
-    by `policyCohort`, with polarity read from the approved rubric, and the
-    benchmark already carries `cohortWeights`. Recorded as work, not done.
+  - **Cohort standardization** now has an executor
+    (`runtime/src/playtesting/cohort-standardization-run.ts`,
+    `playtest.cohortMixShift`). `PlaytestCohortObservation` is `{ numerator,
+    denominator, missing }` per cohort, derived by summing persisted episode
+    metric rows grouped by `policyCohort`, and the weights come from the
+    approved benchmark's frozen `cohortWeights`.
   - **The diagnostic ladder** needs human evidence that does not exist here, so
     `competence: "passed" | "failed"` stays unreachable rather than asserted on
     synthetic data.
@@ -1210,6 +1257,19 @@ and AutoDev generic adapter binding. No RacingGame checkout is present in the
 workspace, and no exact build approval/run authorization was supplied. The UI
 path is therefore implemented but cannot yet be represented as a real
 RacingGame end-to-end run; no game or synthetic substitute was launched.
+
+**Direct Console analyst invocation remains open.** The current same-origin
+`/api/playtesting/analyses` action calls Runtime's
+`prepareCrossSessionReview`: it prepares bounded evidence packets, receipts and
+budget reservations, but it does not invoke `playtest-analyst` or a model. The
+Console copy now says “Prepare review packets” and makes that boundary explicit;
+the session inspector can render a persisted `latestReview` after the analyst
+role submits one. The targeted architecture review found no canonical,
+provider-neutral Control API for starting/retrieving an agent run from Console.
+Completing direct Console analysis needs an explicit Runtime-owned analyst
+dispatch/status contract that preserves analyst-role authorization, workspace
+scope, packet identity and critique budgets. Do not route straight to a model
+provider or create a second run scheduler.
 
 Acceptance requires real-browser coverage of both paths against a labeled
 synthetic Control API fixture — live progress advancing without manual refresh,
