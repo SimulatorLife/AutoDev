@@ -27,8 +27,15 @@ function binding(
     tier: "declarative",
     entry: "adapter.js",
     factory: "createGame",
+    // The game declares its own schemas; AutoDev hashes exactly these.
+    schemas: {
+      observation: OBSERVATION_SCHEMA,
+      action: ACTION_SCHEMA,
+      event: EVENT_SCHEMA
+    },
+    // No `capabilities` binding: AutoDev serves the advertisement derived from
+    // these schemas, so a game-supplied one would never be called.
     bindings: {
-      capabilities: { export: "capabilities" },
       reset: { export: "reset" },
       observe: { export: "observe" },
       legalActions: { export: "legalActions" },
@@ -75,8 +82,11 @@ test("capability digests are derived from the game's own schemas", async () => {
   assert.equal(capabilities.actionSchemaHash, playtestManifestHash(ACTION_SCHEMA));
   assert.equal(capabilities.eventSchemaHash, playtestManifestHash(EVENT_SCHEMA));
   // A hand-written adapter stores these beside the schemas they describe and
-  // drifts when a schema is edited. Nothing here is declared, only derived.
-  assert.equal(adapter.binding.bindings.capabilities !== undefined, true);
+  // drifts when a schema is edited. Nothing here is declared, only derived —
+  // and the game is never asked to supply `capabilities` at all, because
+  // AutoDev serves this advertisement instead of dispatching it.
+  assert.equal(adapter.binding.bindings.capabilities, undefined);
+  assert.equal(adapter.binding.bindings.observe !== undefined, true);
 });
 
 test("only optional operations the game actually bound are advertised", async () => {

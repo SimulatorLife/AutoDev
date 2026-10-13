@@ -13,11 +13,12 @@
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   assertPlaytestObservationContract,
   PLAYTESTS_ADAPTER_BINDING_SCHEMA,
+  PLAYTESTS_INTEGRATION_DIR,
   type PlaytestJsonSchema
 } from "@simulatorlife/autodev-core";
 
@@ -123,20 +124,50 @@ export function createEntryLoader(
   };
 }
 
-/** Parse `--integration-dir <dir>`, defaulting to `.autodev` in the checkout. */
+/**
+ * The container path the sandbox mounts the approved checkout at.
+ *
+ * The adapter resolves its integration directory against this, not against the
+ * process working directory: the sandbox sets the working directory to the
+ * *game's* approved directory, which is frequently not the checkout root, so a
+ * cwd-relative resolve would miss a binding that is present.
+ */
+export const PLAYTESTS_ADAPTER_CHECKOUT_ROOT = "/workspace";
+
+/**
+ * Overrides the checkout root. The sandbox mounts the checkout at the fixed
+ * container path above; this lets the same entrypoint run against a checkout
+ * somewhere else, which is how the episode test drives it without Docker.
+ */
+export const PLAYTESTS_ADAPTER_CHECKOUT_ROOT_ENV =
+  "AUTODEV_ADAPTER_CHECKOUT_ROOT";
+
+/**
+ * Parse `--integration-dir <dir>`, defaulting to `.autodev` in the checkout.
+ *
+ * Resolved against the checkout root, which the sandbox mounts read-only at a
+ * fixed path. Resolving against the process working directory instead would
+ * look for the binding under the *game's* working directory, so a game approved
+ * with a subdirectory working directory would not find its own integration
+ * directory — and would report a missing binding for a file that is present.
+ */
 export function integrationDirFrom(
-  argv: readonly string[]
+  argv: readonly string[],
+  checkoutRoot: string = PLAYTESTS_ADAPTER_CHECKOUT_ROOT
 ): string {
   const index = argv.indexOf("--integration-dir");
-  if (index >= 0 && index + 1 < argv.length) {
-    return path.resolve(argv[index + 1]!);
-  }
-  return path.resolve(".autodev");
+  const declared =
+    index >= 0 && index + 1 < argv.length ? argv[index + 1]! : null;
+  return path.resolve(checkoutRoot, declared ?? PLAYTESTS_INTEGRATION_DIR);
 }
 
 /** Serve the protocol on stdio until the Runtime closes the stream. */
 export async function main(argv: readonly string[]): Promise<void> {
-  const integrationDir = integrationDirFrom(argv);
+  const integrationDir = integrationDirFrom(
+    argv,
+    process.env[PLAYTESTS_ADAPTER_CHECKOUT_ROOT_ENV] ??
+      PLAYTESTS_ADAPTER_CHECKOUT_ROOT
+  );
   const context = readAdapterContext(integrationDir);
   const host = await startGenericAdapterHost({
     ...context,
@@ -146,4 +177,16 @@ export async function main(argv: readonly string[]): Promise<void> {
   });
   await host.serve();
   host.close();
+}
+
+// The adapter image runs this file as its entrypoint. Without this block the
+// process would import the module, export `main`, and exit — the Runtime would
+// wait on a stdout that never opens rather than seeing an adapter failure.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main(process.argv.slice(2)).catch((error: unknown) => {
+    process.stderr.write(
+      `autodev-playtest-adapter: ${error instanceof Error ? error.message : String(error)}\n`
+    );
+    process.exitCode = 1;
+  });
 }

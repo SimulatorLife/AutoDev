@@ -26,8 +26,12 @@ function binding(
     tier: "declarative",
     entry: "adapter.js",
     factory: "createGame",
+    schemas: {
+      observation: OBSERVATION_SCHEMA,
+      action: ACTION_SCHEMA,
+      event: EVENT_SCHEMA
+    },
     bindings: {
-      capabilities: { export: "capabilities" },
       reset: { export: "reset" },
       observe: { export: "observe" },
       legalActions: { export: "legalActions" },

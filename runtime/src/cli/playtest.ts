@@ -15,12 +15,13 @@ import path from "node:path";
 
 import {
   assertPlaytestObservationContract,
+  PLAYTESTS_GENERIC_ADAPTER_COMMAND,
+  PLAYTESTS_INTEGRATION_DIR,
   PLAYTESTS_REQUIRED_BINDINGS,
   derivedBenchmarkDigests,
   observationSchemaHash,
   type PlaytestAdapterBinding,
   type PlaytestObservationContract,
-  PLAYTESTS_GENERIC_ADAPTER_COMMAND,
   resolvePlaytestAdapterBinding,
   unboundPlaytestMethods,
   usesGenericPlaytestAdapter,
@@ -34,7 +35,7 @@ export const PLAYTESTS_SUBCOMMANDS = ["init", "check"] as const;
 export type PlaytestSubcommand = (typeof PLAYTESTS_SUBCOMMANDS)[number];
 
 /** The canonical integration directory a repository advertises support in. */
-export const PLAYTESTS_INTEGRATION_DIR = ".autodev";
+export { PLAYTESTS_INTEGRATION_DIR };
 export const PLAYTESTS_CONFIG_FILE = "playtest.config.json";
 export const PLAYTESTS_OBSERVATION_FILE = "playtest.observation.json";
 export const PLAYTESTS_RUBRIC_FILE = "playtest.rubric.json";
@@ -529,8 +530,9 @@ export function initPlaytestIntegration(checkoutRoot: string): number {
             action: { type: "object", properties: {} },
             event: { type: "object", properties: {} }
           },
+          // No `capabilities` binding: AutoDev derives the advertisement from
+          // these schemas, so a game-supplied one would never be called.
           bindings: {
-            capabilities: { export: "capabilities" },
             reset: { export: "reset" },
             observe: { export: "observe" },
             legalActions: { export: "legalActions" },

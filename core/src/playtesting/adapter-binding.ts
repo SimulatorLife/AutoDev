@@ -36,15 +36,28 @@ export type PlaytestBindableMethod = (typeof PLAYTESTS_BINDABLE_METHODS)[number]
 /**
  * Methods the Runtime cannot proceed without. An adapter missing one is not a
  * lesser adapter; it cannot produce an episode.
+ *
+ * `capabilities` is absent because AutoDev owns it. The advertisement is
+ * derived from the game's declared schemas, so a game that bound its own
+ * `capabilities` would have it silently ignored — requiring that binding would
+ * ask a game to write a function nothing ever calls.
  */
 export const PLAYTESTS_REQUIRED_BINDINGS: readonly PlaytestBindableMethod[] = [
-  "capabilities",
   "reset",
   "observe",
   "legalActions",
   "step",
   "outcome"
 ];
+
+/**
+ * Methods AutoDev answers itself rather than dispatching to the game.
+ *
+ * A game may still bind these; the derived answer is what is served, so a
+ * game's own implementation cannot overwrite the digests AutoDev computed.
+ */
+export const PLAYTESTS_ADAPTER_OWNED_METHODS: readonly PlaytestBindableMethod[] =
+  ["capabilities"];
 
 /**
  * How a bound function is reached on the game object: a property name, or a
@@ -105,6 +118,17 @@ export const PLAYTESTS_AUTODEV_ADAPTER_IMAGE_DIGEST =
   "sha256:autodev-playtest-adapter@sha256:" as const;
 
 /**
+ * The canonical integration directory a repository declares Playtesting in.
+ *
+ * One owner, because every consumer resolves against it: the CLI that lays it
+ * out, the approved-config loader that reads the config, the sandbox that names
+ * it when a checkout is not clean, and the generic adapter that finds the game's
+ * binding at run time. A second literal in any of them is a directory that one
+ * path creates and another refuses to find.
+ */
+export const PLAYTESTS_INTEGRATION_DIR = ".autodev";
+
+/**
  * The command AutoDev's adapter image runs.
  *
  * A game bound through declarations does not declare this; the game under test
@@ -115,7 +139,7 @@ export const PLAYTESTS_AUTODEV_ADAPTER_IMAGE_DIGEST =
 export const PLAYTESTS_GENERIC_ADAPTER_COMMAND: readonly string[] = [
   "/opt/autodev/playtest-adapter/main.js",
   "--integration-dir",
-  ".autodev"
+  PLAYTESTS_INTEGRATION_DIR
 ];
 
 /** True when this adapter is AutoDev's, not a game-supplied command. */
@@ -262,11 +286,18 @@ export function resolvePlaytestAdapterBinding(
     : { kind: "resolved", methods, gaps };
 }
 
-/** Methods a binding leaves to AutoDev, which it therefore cannot perform. */
+/**
+ * Methods a binding leaves to AutoDev, which it therefore cannot perform.
+ *
+ * AutoDev-owned methods are excluded: they are always served, so leaving one
+ * unbound is not a capability gap and must not be reported as one.
+ */
 export function unboundPlaytestMethods(
   binding: PlaytestAdapterBinding
 ): readonly PlaytestBindableMethod[] {
   return PLAYTESTS_BINDABLE_METHODS.filter(
-    (method) => binding.bindings[method] === undefined
+    (method) =>
+      binding.bindings[method] === undefined &&
+      !PLAYTESTS_ADAPTER_OWNED_METHODS.includes(method)
   );
 }

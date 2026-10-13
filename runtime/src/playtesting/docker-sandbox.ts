@@ -24,10 +24,11 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 
-import type {
-  PlaytestArtifactReference,
-  PlaytestMetricRegistry,
-  WorkspacePlaytestApproval
+import {
+  PLAYTESTS_INTEGRATION_DIR,
+  type PlaytestArtifactReference,
+  type PlaytestMetricRegistry,
+  type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
 
 import type {
@@ -293,7 +294,7 @@ function modifiedPaths(status: string): string[] {
  * Playtesting support. Naming it in a failure is the difference between an
  * operator knowing which path to un-ignore and guessing.
  */
-const AUTODEV_INTEGRATION_DIR = ".autodev";
+const AUTODEV_INTEGRATION_DIR = PLAYTESTS_INTEGRATION_DIR;
 
 function resolveApprovedCheckout(approval: WorkspacePlaytestApproval): {
   readonly root: string;

@@ -20,6 +20,7 @@ import {
   type PlaytestBenchmark,
   playtestBenchmarkHashInput,
   type PlaytestGameConfiguration,
+  PLAYTESTS_INTEGRATION_DIR,
   type PlaytestMetricRegistry,
   type PlaytestObservationContract,
   PLAYTESTS_MEASUREMENT_VERSION,
@@ -35,7 +36,7 @@ import {
  * Every other manifest it references resolves relative to this file's own
  * directory, so that directory is self-contained and relocatable.
  */
-const CONFIG_PATH = ".autodev/playtest.config.json";
+const CONFIG_PATH = `${PLAYTESTS_INTEGRATION_DIR}/playtest.config.json`;
 const CONFIG_LABEL = CONFIG_PATH;
 const CONFIG_UNAVAILABLE = "config-unavailable" as const;
 const MAX_TARGET_FILE_BYTES = 1024 * 1024;

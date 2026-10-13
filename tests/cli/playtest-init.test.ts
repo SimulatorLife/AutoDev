@@ -325,7 +325,7 @@ test("a game without declared bindings is told it still owns the protocol", () =
 test("an unbound optional method is named rather than assumed", () => {
   const { root } = checkout();
   initPlaytestIntegration(root);
-  // The scaffold binds the six methods an episode cannot run without. The rest
+  // The scaffold binds the five methods an episode cannot run without. The rest
   // are this game's choice, and each one it leaves out is named.
   const report = checkPlaytestIntegration(root);
   assert.equal(
@@ -341,6 +341,10 @@ test("an unbound optional method is named rather than assumed", () => {
   assert.match(gap!.message, /fork/u);
   // The methods it does bind must not be listed as gaps.
   assert.doesNotMatch(gap!.message, /\bobserve\b/u);
+  // AutoDev serves the capability advertisement from the game's own schemas, so
+  // a game that binds no `capabilities` is correct, not incomplete. Reporting it
+  // would send an operator to write a function nothing ever calls.
+  assert.doesNotMatch(gap!.message, /capabilities/u);
 });
 
 test("an unusable binding is rejected with a named gap", () => {
