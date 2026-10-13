@@ -130,7 +130,7 @@ export async function main(
   assertPlaytestStdioSessionBinding(
     config,
     catalog,
-    new Set(configRepository.loadAgents().map((agent) => agent.id))
+    new Set(configRepository.loadAgentRoles())
   );
 
   const approvalRepository = new WorkspacePlaytestApprovalRepository();

@@ -25,6 +25,10 @@ export function isControlRefusalReason(
   );
 }
 
+export interface ControlFailureNoticeProps {
+  readonly refusal?: ControlRefusalReason | undefined;
+}
+
 const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
   confirmation_missing:
     "This action needs the confirmation box ticked before it can run; nothing was sent to the Runtime.",
@@ -77,9 +81,7 @@ const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
  */
 export function ControlFailureNotice({
   refusal
-}: {
-  readonly refusal?: ControlRefusalReason | undefined;
-}): React.JSX.Element {
+}: ControlFailureNoticeProps): React.JSX.Element {
   const detail =
     refusal === undefined ? undefined : (REFUSAL_DETAIL[refusal] ?? undefined);
   return React.createElement(

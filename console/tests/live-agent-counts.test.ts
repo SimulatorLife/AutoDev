@@ -148,6 +148,12 @@ test("agent, provider, and model views render counts from one Runtime projection
     valid: null,
     status: "configured",
     convergence: "not-observed",
+    enablement: {
+      kind: "observed",
+      enabled: true,
+      mutable: true,
+      revision: "agent-revision-1"
+    },
     primaryModel: "configured-model",
     models: [],
     providers: [],

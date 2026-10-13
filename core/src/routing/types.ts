@@ -79,6 +79,10 @@ export interface RoutingPolicyState {
    */
   readonly disabledProviders: readonly string[];
   readonly disabledModels: readonly string[];
+  /** Named AutoDev role aliases disabled at Runtime admission. */
+  readonly disabledAgentRoles: readonly string[];
+  /** Monotonic per-role generation for stale-write detection, including ABA changes. */
+  readonly agentEnablementRevisions: Readonly<Record<string, number>>;
   /** Per-provider concurrency limits; absent providers are unconstrained. */
   readonly providerLimits: Readonly<Record<string, ProviderAgentLimits>>;
 }

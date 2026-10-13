@@ -1,3 +1,4 @@
+import type { AgentEnablementState } from "../agents/types.ts";
 import type { EvaluationResult } from "../evaluations/types.ts";
 import type {
   GithubActionsRunStats,
@@ -83,6 +84,7 @@ export interface ControlApiAgentRecord {
   readonly valid: boolean | null;
   readonly status: "configured" | "valid" | "invalid" | "ready" | "unavailable";
   readonly convergence: "converged" | "pending" | "error" | "not-observed";
+  readonly enablement: AgentEnablementState;
   readonly primaryModel: string;
   readonly allowedProviders: readonly string[];
   readonly mcps: readonly string[];
@@ -90,7 +92,7 @@ export interface ControlApiAgentRecord {
 }
 
 export interface ControlApiAgentsResponse {
-  readonly schema: "autodev-control-agents-v1";
+  readonly schema: "autodev-control-agents-v2";
   readonly source: string;
   readonly readOnly: boolean;
   readonly totalAgents: number;
@@ -100,7 +102,7 @@ export interface ControlApiAgentsResponse {
 }
 
 export interface ControlApiAgentDetailResponse extends ControlApiAgentRecord {
-  readonly schema: "autodev-control-agent-detail-v2";
+  readonly schema: "autodev-control-agent-detail-v3";
   readonly promptPath: string | null;
   readonly systemPrompt: string;
   /** Reusable reconciliation view shared with mutation responses. */
@@ -113,6 +115,21 @@ export interface ControlApiAgentDetailResponse extends ControlApiAgentRecord {
 export interface ControlApiEnablement {
   readonly enabled: boolean;
   readonly mutable: boolean;
+}
+
+export interface ControlApiAgentEnablementPatchRequest {
+  readonly enabled: boolean;
+  readonly expectedRevision: string;
+}
+
+export interface ControlApiAgentEnablementPatchResponse {
+  readonly schema: "autodev-control-agent-enablement-v1";
+  readonly role: string;
+  readonly enabled: boolean;
+  readonly previous: boolean;
+  readonly revision: string;
+  readonly actor: string;
+  readonly reconciliation: ReconciliationView;
 }
 
 /** Live router evidence for one provider; absent when the router is not observed. */

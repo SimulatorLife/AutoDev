@@ -1274,11 +1274,11 @@ test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source"
   }
 });
 
-test("ConfigRepository loads agent definitions and workspaces", () => {
+test("ConfigRepository reads agent role identifiers and workspaces", () => {
   const repo = new ConfigRepository();
-  const agents = repo.loadAgents();
-  assert.ok(agents.length > 0);
-  assert.ok(agents.some((a) => a.role === "orchestrator"));
+  const agentRoles = repo.loadAgentRoles();
+  assert.ok(agentRoles.length > 0);
+  assert.ok(agentRoles.includes("orchestrator"));
 
   const workspaceCatalog = repo.readWorkspaceCatalog();
   assert.equal(workspaceCatalog.status, "valid");
@@ -1289,6 +1289,24 @@ test("ConfigRepository loads agent definitions and workspaces", () => {
   const policy = repo.loadPermissionPolicy();
   assert.equal(policy.approvalPolicy, "never");
   assert.equal(policy.sandboxMode, "workspace-write");
+});
+
+test("ConfigRepository does not derive Agent roles from a malformed contract section", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-config-agent-roles-")
+  );
+  const configDirectory = path.join(repositoryRoot, "config");
+  await mkdir(configDirectory, { recursive: true });
+  const contractPath = path.join(configDirectory, "execution-contract.json");
+  const repository = new ConfigRepository(repositoryRoot);
+  try {
+    for (const roles of [null, [], "playtester"]) {
+      await writeFile(contractPath, JSON.stringify({ roles }), "utf8");
+      assert.deepEqual(repository.loadAgentRoles(), []);
+    }
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
 });
 
 test("ConfigRepository distinguishes missing and invalid workspace sources from an empty catalog", async () => {

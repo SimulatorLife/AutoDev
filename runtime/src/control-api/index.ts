@@ -8,6 +8,7 @@ import { SpanStatusCode } from "@opentelemetry/api";
 import {
   buildReconciliationView,
   type ControlApiAgentDetailResponse,
+  type ControlApiAgentEnablementPatchResponse,
   type ControlApiAgentRecord,
   type ControlApiAgentsResponse,
   type ControlApiEvaluationsResponse,
@@ -174,7 +175,30 @@ const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
 const SKILL_ROLES_PATH = /^\/control\/skills\/([a-zA-Z0-9._-]+)$/u;
 const SKILL_CONTENT_PATH = /^\/control\/skills\/([a-z0-9-]{1,64})\/content$/u;
 const SKILL_CONTENT_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
+const AGENT_ENABLEMENT_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const SKILL_CONTENT_REQUEST_MAX_BYTES = 300_000;
+const enablementMutationTails = new Map<string, Promise<void>>();
+
+async function serializeEnablementMutation<T>(
+  key: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const previous = enablementMutationTails.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const turn = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => turn);
+  enablementMutationTails.set(key, tail);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (enablementMutationTails.get(key) === tail)
+      enablementMutationTails.delete(key);
+  }
+}
 
 /**
  * The contract's digest, read without throwing.
@@ -1365,6 +1389,57 @@ async function evaluationsView(): Promise<Record<string, unknown>> {
   } satisfies ControlApiEvaluationsResponse;
 }
 
+function agentEnablementRevision(
+  role: string,
+  alias: string,
+  enabled: boolean,
+  generation: number
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        kind: "agent-enable-v1",
+        role,
+        alias,
+        enabled,
+        generation
+      })
+    )
+    .digest("hex");
+}
+
+function agentEnablementView(
+  role: string
+): ControlApiAgentRecord["enablement"] {
+  const alias = ROUTING_POLICY.agentModelAlias(role);
+  if (alias === null) {
+    return {
+      kind: "unavailable",
+      enabled: null,
+      mutable: false,
+      reason:
+        "This configured Agent has no matching AutoDev model-router alias, so Runtime cannot enforce its enablement."
+    };
+  }
+  const enabled = ROUTING_POLICY.isAgentEnabled(role);
+  const generation = ROUTING_POLICY.agentEnablementGeneration(role);
+  if (enabled === null || generation === null) {
+    return {
+      kind: "unavailable",
+      enabled: null,
+      mutable: false,
+      reason:
+        "Runtime could not observe enablement for this AutoDev model-router alias."
+    };
+  }
+  return {
+    kind: "observed",
+    enabled,
+    mutable: true,
+    revision: agentEnablementRevision(role, alias, enabled, generation)
+  };
+}
+
 function agentsView(
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
@@ -1419,6 +1494,7 @@ function agentsView(
         valid: null,
         status: "configured",
         convergence: "not-observed",
+        enablement: agentEnablementView(role),
         primaryModel: isOrchestrator
           ? "autodev/orchestrator"
           : "autodev/subagent",
@@ -1430,9 +1506,9 @@ function agentsView(
     }
   );
   return {
-    schema: "autodev-control-agents-v1",
+    schema: "autodev-control-agents-v2",
     source: EXECUTION_CONTRACT_SOURCE,
-    readOnly: true,
+    readOnly: false,
     totalAgents: agents.length,
     agents
   } satisfies ControlApiAgentsResponse;
@@ -1487,7 +1563,7 @@ function agentDetailView(
   );
 
   return {
-    schema: "autodev-control-agent-detail-v2",
+    schema: "autodev-control-agent-detail-v3",
     id: role,
     role,
     kind,
@@ -1496,6 +1572,7 @@ function agentDetailView(
     valid: null,
     status: "configured",
     convergence: "not-observed",
+    enablement: agentEnablementView(role),
     primaryModel: isOrchestrator ? "autodev/orchestrator" : "autodev/subagent",
     allowedProviders,
     mcps,
@@ -2034,10 +2111,9 @@ function auditReconciliationFields(
  * generations null rather than inventing them. Every enablement mutation
  * (provider role and model alike) publishes it.
  */
-function reconciliationOf(
-  body: Record<string, unknown>
-): EnablementReconciliation | null {
-  const reconciliation = body.reconciliation;
+function reconciliationOf(body: unknown): EnablementReconciliation | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const reconciliation = (body as Record<string, unknown>).reconciliation;
   if (!reconciliation || typeof reconciliation !== "object") return null;
   const status = (reconciliation as { readonly status?: unknown }).status;
   if (!status || typeof status !== "object") return null;
@@ -2059,6 +2135,10 @@ function reconciliationOf(
  * policy state. Provider-role and model enablement share this flow so every
  * toggle validates, persists, rolls back, and audits identically.
  */
+type EnablementPatchResult =
+  | Omit<ControlApiModelPatchResponse, "actor">
+  | Omit<ControlApiAgentEnablementPatchResponse, "actor">;
+
 interface EnablementMutation {
   readonly action: string;
   readonly resource: string;
@@ -2067,17 +2147,21 @@ interface EnablementMutation {
   readonly unknownReason: string;
   readonly unknownCode: string;
   readonly unknownMessage: string;
+  readonly unknownStatus?: number;
   readonly current: () => boolean;
+  readonly currentRevision?: () => string | null;
+  readonly revisionConflictCode?: string;
+  readonly serializeKey?: string;
   readonly apply: (enabled: boolean) => void;
   /**
    * The body minus `actor`, which `patchEnablement` stamps from the verified
-   * caller. Modelled as `Omit` rather than a bare record so the spread below can
-   * be checked against the contract it actually goes out on the wire as.
+   * caller. Modelled as an explicit response union rather than a bare record so
+   * each resource mutation still satisfies its own wire contract.
    */
   readonly result: (
     enabled: boolean,
     previous: boolean
-  ) => Omit<ControlApiModelPatchResponse, "actor">;
+  ) => EnablementPatchResult;
 }
 
 async function patchEnablement(
@@ -2127,13 +2211,22 @@ async function patchEnablement(
     return;
   }
   const body = parsedBody.body;
-  if (Object.keys(body).length !== 1 || typeof body.enabled !== "boolean") {
+  const revisionAware = mutation.currentRevision !== undefined;
+  if (
+    Object.keys(body).length !== (revisionAware ? 2 : 1) ||
+    typeof body.enabled !== "boolean" ||
+    (revisionAware &&
+      (typeof body.expectedRevision !== "string" ||
+        !AGENT_ENABLEMENT_REVISION_PATTERN.test(body.expectedRevision)))
+  ) {
     audit("error", null, "invalid_body");
     sendControlError(
       response,
       400,
       "autodev_control_api_bad_body",
-      `${mutation.subject.charAt(0).toUpperCase()}${mutation.subject.slice(1)} body must contain only a boolean enabled field.`
+      revisionAware
+        ? `${mutation.subject.charAt(0).toUpperCase()}${mutation.subject.slice(1)} body must contain only boolean enabled and a valid expectedRevision.`
+        : `${mutation.subject.charAt(0).toUpperCase()}${mutation.subject.slice(1)} body must contain only a boolean enabled field.`
     );
     return;
   }
@@ -2143,47 +2236,73 @@ async function patchEnablement(
     audit("error", { enabled }, mutation.unknownReason);
     sendControlError(
       response,
-      404,
+      mutation.unknownStatus ?? 404,
       mutation.unknownCode,
       mutation.unknownMessage
     );
     return;
   }
 
-  const previous = mutation.current();
-  try {
-    mutation.apply(enabled);
-    await persistRoutingPolicy();
-  } catch {
-    try {
-      mutation.apply(previous);
-    } catch {
-      // Preserve the original failure; the audit record below captures it.
+  const applyMutation = async (): Promise<void> => {
+    if (mutation.currentRevision) {
+      const currentRevision = mutation.currentRevision();
+      if (
+        currentRevision === null ||
+        body.expectedRevision !== currentRevision
+      ) {
+        audit("error", { enabled }, "revision_conflict");
+        sendControlError(
+          response,
+          409,
+          mutation.revisionConflictCode ??
+            "autodev_control_api_revision_conflict",
+          `${mutation.subject.charAt(0).toUpperCase()}${mutation.subject.slice(1)} state changed after it was read; reload and retry.`
+        );
+        return;
+      }
     }
-    audit("error", { enabled, previous }, "persistence_failed");
-    sendControlError(
-      response,
-      500,
-      "autodev_control_api_persistence_failed",
-      `${mutation.subject.charAt(0).toUpperCase()}${mutation.subject.slice(1)} change could not be persisted.`
-    );
-    return;
-  }
 
-  // Build the response body first: it owns the reconciliation evidence, and
-  // the audit record must carry the same generations the operator sees in the
-  // response. Auditing separately would let the two drift.
-  const result = mutation.result(enabled, previous);
-  audit("ok", { enabled, previous }, undefined, reconciliationOf(result));
-  sendJson(
-    response,
-    200,
-    { ...result, actor: actor.actor } satisfies ControlApiModelPatchResponse,
-    {
-      "cache-control": "no-store",
-      vary: CONTROL_VARY_HEADER
+    const previous = mutation.current();
+    let result: EnablementPatchResult;
+    let reconciliation: EnablementReconciliation | null;
+    try {
+      mutation.apply(enabled);
+      result = mutation.result(enabled, previous);
+      reconciliation = reconciliationOf(result);
+      await persistRoutingPolicy();
+    } catch {
+      try {
+        mutation.apply(previous);
+      } catch {
+        // Preserve the original failure; the audit record below captures it.
+      }
+      audit("error", { enabled, previous }, "persistence_failed");
+      sendControlError(
+        response,
+        500,
+        "autodev_control_api_persistence_failed",
+        `${mutation.subject.charAt(0).toUpperCase()}${mutation.subject.slice(1)} change could not be persisted.`
+      );
+      return;
     }
-  );
+
+    // The response and audit evidence are derived before persistence commits.
+    // If deriving either throws, the same catch path restores the policy.
+    audit("ok", { enabled, previous }, undefined, reconciliation);
+    sendJson(
+      response,
+      200,
+      { ...result, actor: actor.actor },
+      {
+        "cache-control": "no-store",
+        vary: CONTROL_VARY_HEADER
+      }
+    );
+  };
+
+  if (mutation.serializeKey)
+    await serializeEnablementMutation(mutation.serializeKey, applyMutation);
+  else await applyMutation();
 }
 
 async function patchProviderRole(
@@ -2652,6 +2771,86 @@ async function patchProviderLimits(
     } satisfies ControlApiProviderLimitsPatchResponse,
     { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
   );
+}
+
+function patchAgentEnablement(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  inputRole: string
+): Promise<void> {
+  const role = inputRole.trim().toLowerCase();
+  const roles = getDefaultExecutionContract().roles ?? {};
+  const contractRoleKnown = Object.hasOwn(roles, role);
+  const alias = ROUTING_POLICY.agentModelAlias(role);
+  const enabled = ROUTING_POLICY.isAgentEnabled(role);
+  const known = contractRoleKnown && alias !== null && enabled !== null;
+  const unavailableAlias = contractRoleKnown && alias === null;
+  const resource = `${CONTROL_API_PATHS.agents}/${role}`;
+
+  return patchEnablement(request, response, actor, {
+    action: "patch_agent_enablement",
+    resource,
+    subject: "Agent",
+    known,
+    unknownStatus: unavailableAlias ? 409 : 404,
+    unknownReason: unavailableAlias
+      ? "agent_alias_unavailable"
+      : "unknown_agent",
+    unknownCode: unavailableAlias
+      ? "autodev_control_api_agent_alias_unavailable"
+      : "autodev_control_api_unknown_agent",
+    unknownMessage: unavailableAlias
+      ? "This Agent has no configured AutoDev routing alias, so Runtime cannot enforce enablement."
+      : "Unknown agent role.",
+    current: () => ROUTING_POLICY.isAgentEnabled(role) === true,
+    currentRevision: () => {
+      const current = agentEnablementView(role);
+      return current.kind === "observed" ? current.revision : null;
+    },
+    revisionConflictCode: "autodev_control_api_agent_enablement_conflict",
+    serializeKey: `agent:${role}`,
+    apply: (next) => {
+      if (!ROUTING_POLICY.setAgentEnabled(role, next))
+        throw new Error("Agent has no configured router alias.");
+    },
+    result: (next, previous) => {
+      const current = ROUTING_POLICY.isAgentEnabled(role);
+      const currentAlias = ROUTING_POLICY.agentModelAlias(role);
+      const generation = ROUTING_POLICY.agentEnablementGeneration(role);
+      if (current === null || currentAlias === null || generation === null)
+        throw new Error(
+          "Agent enablement became unavailable after persistence."
+        );
+      const revision = agentEnablementRevision(
+        role,
+        currentAlias,
+        current,
+        generation
+      );
+      const desiredGeneration = `enabled=${next ? "true" : "false"}`;
+      const observedGeneration = current === next ? desiredGeneration : null;
+      const appliedAt = new Date().toISOString();
+      return {
+        schema: "autodev-control-agent-enablement-v1",
+        role,
+        enabled: next,
+        previous,
+        revision,
+        reconciliation: buildReconciliationView({
+          evidence: {
+            desiredGeneration,
+            observedGeneration,
+            lastApplyAt: appliedAt,
+            lastObservationAt: observedGeneration === null ? null : appliedAt,
+            lastError: null
+          },
+          history: historyForResource(resource),
+          hasObservation: observedGeneration !== null
+        })
+      } satisfies Omit<ControlApiAgentEnablementPatchResponse, "actor">;
+    }
+  });
 }
 
 function patchModel(
@@ -4155,6 +4354,40 @@ function actorForControlRequest(
   return authorizeRequest(request, response, method, pathname);
 }
 
+async function agentDetailRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  pathname: string,
+  role: string
+): Promise<boolean> {
+  if (method === "PATCH") {
+    await patchAgentEnablement(request, response, actor, role);
+    return true;
+  }
+  if (method === "GET")
+    return readOnlyDetailRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
+      role,
+      AGENT_DETAIL_ROUTE
+    );
+
+  auditRejectedRequest(request, method, pathname, "method_not_allowed", actor);
+  response.setHeader("allow", "GET, PATCH");
+  sendControlError(
+    response,
+    405,
+    "autodev_control_api_method_not_allowed",
+    "Agent details support GET reads and PATCH enablement changes."
+  );
+  return true;
+}
+
 export async function handleControlApiRequest(
   request: IncomingMessage,
   response: ServerResponse,
@@ -4279,14 +4512,13 @@ export async function handleControlApiRequest(
     );
   const agentMatch = pathname.match(AGENT_DETAIL_PATH);
   if (agentMatch)
-    return readOnlyDetailRoute(
+    return agentDetailRoute(
       request,
       response,
       actor,
       method,
       pathname,
-      agentMatch[1]!,
-      AGENT_DETAIL_ROUTE
+      agentMatch[1]!.toLowerCase()
     );
   const promptVersionsMatch = promptVersionsPath(pathname);
   if (promptVersionsMatch)

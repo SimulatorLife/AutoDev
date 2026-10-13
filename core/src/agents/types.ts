@@ -17,6 +17,21 @@ export type AgentStatus =
 export type AgentConvergence =
   "converged" | "pending" | "error" | "not-observed";
 
+/** Runtime-owned enablement for one named AutoDev routing alias. */
+export type AgentEnablementState =
+  | {
+      readonly kind: "observed";
+      readonly enabled: boolean;
+      readonly mutable: true;
+      readonly revision: string;
+    }
+  | {
+      readonly kind: "unavailable";
+      readonly enabled: null;
+      readonly mutable: false;
+      readonly reason: string;
+    };
+
 export interface AgentToolEntry {
   readonly name: string;
   readonly type: "mcp" | "skill";
@@ -32,6 +47,7 @@ export interface AgentDefinition {
   readonly valid: boolean | null;
   readonly status: AgentStatus;
   readonly convergence: AgentConvergence;
+  readonly enablement: AgentEnablementState;
   readonly primaryModel: string;
   readonly models: readonly string[];
   readonly providers: readonly string[];

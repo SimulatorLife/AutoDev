@@ -3,8 +3,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type {
-  AgentDefinition,
-  AgentRole,
   PermissionPolicy,
   WorkspaceEntry
 } from "@simulatorlife/autodev-core";
@@ -24,7 +22,7 @@ export class ConfigRepository {
     this.repositoryRoot = repositoryRoot;
   }
 
-  loadAgents(): AgentDefinition[] {
+  loadAgentRoles(): string[] {
     const contractPath = path.join(
       this.repositoryRoot,
       "config",
@@ -33,49 +31,13 @@ export class ConfigRepository {
     if (!existsSync(contractPath)) return [];
     try {
       const contract = JSON.parse(readFileSync(contractPath, "utf8")) as {
-        roles?: Record<string, Record<string, unknown>>;
+        roles?: unknown;
       };
-      const roles = contract.roles ?? {};
-      return Object.entries(roles).map(([role, raw]) => {
-        const isOrchestrator = role === "orchestrator";
-        const kind =
-          typeof raw.kind === "string"
-            ? (raw.kind as "orchestrator" | "leaf")
-            : isOrchestrator
-              ? "orchestrator"
-              : "leaf";
-        const readOnly = Boolean(raw.readOnly);
-        const mcps = Array.isArray(raw.mcp) ? (raw.mcp as string[]) : [];
-        const skills = Array.isArray(raw.skills)
-          ? (raw.skills as string[])
-          : [];
-        const tools: Array<{
-          name: string;
-          type: "mcp" | "skill";
-          server?: string;
-        }> = [];
-        for (const mcp of mcps)
-          tools.push({ name: mcp, type: "mcp", server: mcp });
-        for (const skill of skills) tools.push({ name: skill, type: "skill" });
-
-        return {
-          id: role,
-          role: role as AgentRole,
-          kind,
-          readOnly,
-          configured: true,
-          valid: true,
-          status: "ready" as const,
-          convergence: "converged" as const,
-          primaryModel: isOrchestrator
-            ? "autodev/orchestrator"
-            : "autodev/subagent",
-          models: ["gpt-5.6-terra", "claude-3-5-sonnet", "gemini-1.5-pro"],
-          providers: ["codex", "claude", "antigravity", "copilot", "minimax"],
-          tools,
-          toolNames: tools.map((t) => t.name)
-        };
-      });
+      return contract.roles !== null &&
+        typeof contract.roles === "object" &&
+        !Array.isArray(contract.roles)
+        ? Object.keys(contract.roles)
+        : [];
     } catch {
       return [];
     }

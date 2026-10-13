@@ -476,12 +476,28 @@ export async function refreshCodexState(): Promise<void> {
   }
 }
 
+const ROUTING_POLICY_PERSISTENCE_SECTIONS = new Set([
+  "roleAssignments",
+  "disabledProviders",
+  "disabledModels",
+  "disabledAgentRoles",
+  "agentEnablementRevisions",
+  "providerLimits"
+]);
+
 function restorePersistedSection(args: {
   section: string;
   value: unknown;
   parsed: Record<string, unknown>;
 }): void {
   const { section, value, parsed } = args;
+  if (ROUTING_POLICY_PERSISTENCE_SECTIONS.has(section)) {
+    ROUTING_POLICY.restoreRuntimeState({
+      ...ROUTING_POLICY.runtimeState(),
+      [section]: value
+    });
+    return;
+  }
   if (section === "providerTelemetry") {
     restoreProviderTelemetrySection(providerTelemetry, value);
     return;
@@ -508,34 +524,6 @@ function restorePersistedSection(args: {
   }
   if (section === "providerCooldowns" && Array.isArray(value)) {
     COOLDOWNS.restoreHardEntries(value, Date.now());
-    return;
-  }
-  if (section === "roleAssignments") {
-    ROUTING_POLICY.restoreRuntimeState({
-      ...ROUTING_POLICY.runtimeState(),
-      roleAssignments: value
-    });
-    return;
-  }
-  if (section === "disabledProviders") {
-    ROUTING_POLICY.restoreRuntimeState({
-      ...ROUTING_POLICY.runtimeState(),
-      disabledProviders: value
-    });
-    return;
-  }
-  if (section === "providerLimits") {
-    ROUTING_POLICY.restoreRuntimeState({
-      ...ROUTING_POLICY.runtimeState(),
-      providerLimits: value
-    });
-    return;
-  }
-  if (section === "disabledModels") {
-    ROUTING_POLICY.restoreRuntimeState({
-      ...ROUTING_POLICY.runtimeState(),
-      disabledModels: value
-    });
     return;
   }
   if (section === "liveFeed" && Array.isArray(value)) {
@@ -630,10 +618,7 @@ const routerPersistence = new RouterPersistence({
   ),
   debounceMs: 500,
   getSnapshot: () => ({
-    roleAssignments: ROUTING_POLICY.runtimeState().roleAssignments,
-    disabledProviders: ROUTING_POLICY.runtimeState().disabledProviders,
-    disabledModels: ROUTING_POLICY.runtimeState().disabledModels,
-    providerLimits: ROUTING_POLICY.runtimeState().providerLimits,
+    ...ROUTING_POLICY.runtimeState(),
     providerTelemetry: Object.fromEntries(providerTelemetry),
     usage: usagePersistenceSnapshot(),
     concurrency: concurrencyManager.telemetry,
@@ -673,6 +658,7 @@ export function resetRouterTelemetry(): void {
 
 export function routingStatus(): Record<string, unknown> {
   return {
+    ...ROUTING_POLICY.runtimeState(),
     configSource: process.env.CODEX_ROUTER_CONFIG_FILE
       ? "env_override"
       : "default_codex_home",
@@ -713,10 +699,6 @@ export function routingStatus(): Record<string, unknown> {
     enabledSubagentProviders: Object.keys(ROUTING.providers).filter((p) =>
       ROUTING_POLICY.isProviderEnabledForRole(p, "subagent")
     ),
-    roleAssignments: ROUTING_POLICY.runtimeState().roleAssignments,
-    disabledProviders: ROUTING_POLICY.runtimeState().disabledProviders,
-    disabledModels: ROUTING_POLICY.runtimeState().disabledModels,
-    providerLimits: ROUTING_POLICY.runtimeState().providerLimits,
     routes: Object.fromEntries(
       ROUTES.map((route) => [
         route.provider,
@@ -1393,10 +1375,7 @@ function buildRouterStatus(
     authentication: authStatus(),
     routing: routingStatus(),
     limits: limitsStatus(),
-    roleAssignments: ROUTING_POLICY.runtimeState().roleAssignments,
-    disabledProviders: ROUTING_POLICY.runtimeState().disabledProviders,
-    disabledModels: ROUTING_POLICY.runtimeState().disabledModels,
-    providerLimits: ROUTING_POLICY.runtimeState().providerLimits,
+    ...ROUTING_POLICY.runtimeState(),
     usage: usageStatus(now, projection),
     attributionDiagnostics: attributionDiagnosticsStatus(),
     liveAgentAttribution: {
@@ -1930,9 +1909,40 @@ async function handleResponseRequest(
   const role = ROUTING_POLICY.roleForModel(model);
   const requestId = String(request.headers["x-request-id"] ?? randomUUID());
   const wantsStream = payload.stream !== false;
+  const isOrchestratorRequest = model === ORCHESTRATOR_ALIAS;
+  const agentRole = isOrchestratorRequest ? "orchestrator" : role;
+  if (agentRole && ROUTING_POLICY.isAgentEnabled(agentRole) === false) {
+    recordRouterEvent({
+      phase: "denied",
+      requestId,
+      role: agentRole,
+      requestedModel: model,
+      provider: null,
+      model: null,
+      outcome: "failure",
+      status: 403,
+      failureClass: "request_error",
+      denialReason: "agent_disabled"
+    });
+    sendJson(
+      response,
+      403,
+      errorBody(
+        `Agent role ${agentRole} is disabled.`,
+        "router_agent_disabled",
+        {
+          code: "router_agent_disabled",
+          retryable: false,
+          model,
+          requestId
+        }
+      ),
+      { "x-autodev-request-id": requestId }
+    );
+    return;
+  }
   const turnMetadataHeader = resolveTurnMetadataHeader(request, payload);
   const session = requestSession(request, payload, turnMetadataHeader);
-  const isOrchestratorRequest = model === ORCHESTRATOR_ALIAS;
   const activitySubject = activitySubjectFor(requestId, session, {
     subagentOfKnownSession:
       !isOrchestratorRequest &&

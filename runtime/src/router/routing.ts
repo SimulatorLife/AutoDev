@@ -413,6 +413,17 @@ export function validateRoutingConfig(value: unknown): RoutingConfig {
     config.providers,
     config.orchestrator
   );
+  const orchestratorAlias =
+    typeof config.orchestrator.alias === "string"
+      ? config.orchestrator.alias.trim()
+      : "";
+  const orchestratorRole = orchestratorAlias
+    .match(AUTODEV_ROLE_PATTERN)?.[1]
+    ?.toLowerCase();
+  if (orchestratorRole && Object.hasOwn(config.roles, orchestratorRole))
+    throw new Error(
+      `Routing config orchestrator.alias conflicts with the configured role alias autodev/${orchestratorRole}.`
+    );
   return config as unknown as RoutingConfig;
 }
 
@@ -487,6 +498,8 @@ export class RoutingPolicy {
   >();
   private readonly disabledProviders = new Set<string>();
   private readonly disabledModels = new Set<string>();
+  private readonly disabledAgentRoles = new Set<string>();
+  private readonly agentEnablementRevisions = new Map<string, number>();
   private readonly providerLimits = new Map<string, ProviderAgentLimits>();
 
   constructor(
@@ -708,6 +721,12 @@ export class RoutingPolicy {
       roleAssignments,
       disabledProviders: [...this.disabledProviders].sort(),
       disabledModels: [...this.disabledModels].sort(),
+      disabledAgentRoles: [...this.disabledAgentRoles].sort(),
+      agentEnablementRevisions: Object.fromEntries(
+        [...this.agentEnablementRevisions.entries()].sort(([left], [right]) =>
+          left < right ? -1 : left > right ? 1 : 0
+        )
+      ),
       providerLimits: Object.fromEntries(this.providerLimits)
     };
   }
@@ -716,12 +735,16 @@ export class RoutingPolicy {
     this.roleAssignments.clear();
     this.disabledProviders.clear();
     this.disabledModels.clear();
+    this.disabledAgentRoles.clear();
+    this.agentEnablementRevisions.clear();
     this.providerLimits.clear();
     if (!isRecord(state)) return;
 
     this.restoreRoleAssignments(state.roleAssignments);
     this.restoreDisabledModels(state.disabledModels);
     this.restoreDisabledProviders(state.disabledProviders);
+    this.restoreDisabledAgentRoles(state.disabledAgentRoles);
+    this.restoreAgentEnablementRevisions(state.agentEnablementRevisions);
     this.restoreProviderLimits(state.providerLimits);
   }
 
@@ -751,6 +774,27 @@ export class RoutingPolicy {
     if (!Array.isArray(raw)) return;
     for (const model of raw) {
       if (this.isConfiguredModel(model)) this.disabledModels.add(model.trim());
+    }
+  }
+
+  private restoreDisabledAgentRoles(raw: unknown): void {
+    if (!Array.isArray(raw)) return;
+    for (const role of raw) {
+      if (this.agentModelAlias(role))
+        this.disabledAgentRoles.add((role as string).trim().toLowerCase());
+    }
+  }
+
+  private restoreAgentEnablementRevisions(raw: unknown): void {
+    if (!isRecord(raw)) return;
+    for (const [role, revision] of Object.entries(raw)) {
+      const canonicalRole = role.trim().toLowerCase();
+      if (
+        this.agentModelAlias(canonicalRole) !== null &&
+        Number.isSafeInteger(revision) &&
+        (revision as number) >= 0
+      )
+        this.agentEnablementRevisions.set(canonicalRole, revision as number);
     }
   }
 
@@ -824,6 +868,68 @@ export class RoutingPolicy {
     return match && this.config.roles[match[1]!.toLowerCase()]
       ? match[1]!.toLowerCase()
       : null;
+  }
+
+  /**
+   * The configured AutoDev alias that names one executable Agent role.
+   *
+   * The execution contract defines Agent capabilities, but it cannot disable
+   * an Agent in pinned RuleSync 16.30.2. The Router's `roles` map is the
+   * authoritative source for names that can actually enter through
+   * `autodev/<role>`; the orchestrator uses its dedicated alias.
+   */
+  agentModelAlias(agentRole: unknown): string | null {
+    if (typeof agentRole !== "string" || agentRole.trim().length === 0)
+      return null;
+    const role = agentRole.trim().toLowerCase();
+    if (role === "orchestrator") {
+      const alias = this.config.orchestrator.alias.trim();
+      return AUTODEV_ROLE_PATTERN.test(alias) &&
+        this.roleForModel(alias) === null
+        ? alias
+        : null;
+    }
+    const alias = `autodev/${role}`;
+    return this.roleForModel(alias) === role &&
+      alias !== this.config.orchestrator.alias.trim()
+      ? alias
+      : null;
+  }
+
+  /** Null means the configured Agent has no Runtime model-router alias. */
+  isAgentEnabled(agentRole: unknown): boolean | null {
+    const alias = this.agentModelAlias(agentRole);
+    if (!alias || typeof agentRole !== "string") return null;
+    const role = agentRole.trim().toLowerCase();
+    return !this.disabledAgentRoles.has(role);
+  }
+
+  /** Stable per-role generation, or null when no named router alias exists. */
+  agentEnablementGeneration(agentRole: unknown): number | null {
+    if (
+      this.agentModelAlias(agentRole) === null ||
+      typeof agentRole !== "string"
+    )
+      return null;
+    return (
+      this.agentEnablementRevisions.get(agentRole.trim().toLowerCase()) ?? 0
+    );
+  }
+
+  /** Returns false for an Agent without a configured router alias. */
+  setAgentEnabled(agentRole: unknown, enabled: boolean): boolean {
+    const alias = this.agentModelAlias(agentRole);
+    if (!alias || typeof agentRole !== "string") return false;
+    const role = agentRole.trim().toLowerCase();
+    const wasEnabled = !this.disabledAgentRoles.has(role);
+    if (wasEnabled === enabled) return true;
+    if (enabled) this.disabledAgentRoles.delete(role);
+    else this.disabledAgentRoles.add(role);
+    this.agentEnablementRevisions.set(
+      role,
+      (this.agentEnablementRevisions.get(role) ?? 0) + 1
+    );
+    return true;
   }
 
   routeForModel(model: unknown): ProviderRoute | null {

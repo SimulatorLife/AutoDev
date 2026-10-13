@@ -11152,6 +11152,103 @@ test("a disabled model is skipped for role aliases and rejected for direct reque
   }
 });
 
+test("disabled Agent aliases are rejected at Runtime admission without affecting concrete models", async () => {
+  resetRouterTelemetry();
+  const previousRoutingState = routing.runtimeState();
+  const previousFetch = globalThis.fetch;
+  const previousCredential = process.env.LITELLM_API_KEY;
+  const requestedProviders: string[] = [];
+  routing.setAgentEnabled("worker", false);
+  routing.setAgentEnabled("orchestrator", false);
+  process.env.LITELLM_API_KEY = "test-key";
+  globalThis.fetch = async (url: any) => {
+    const target = String(url);
+    if (!target.includes("/health")) requestedProviders.push(target);
+    return Response.json(
+      { id: "resp-direct", model: "claude-test", output_text: "direct" },
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  };
+
+  const server = createServer((request, response) => {
+    void handle(request, response);
+  });
+  await listenServer(server);
+  const port = (server.address() as AddressInfo).port;
+  try {
+    for (const alias of ["autodev/worker", ORCHESTRATOR_ALIAS]) {
+      const response = await previousFetch(
+        `http://127.0.0.1:${port}/v1/responses`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: alias, stream: false })
+        }
+      );
+      assert.equal(response.status, 403);
+      const body = await response.json();
+      assert.equal(body.error?.code, "router_agent_disabled");
+      assert.equal(body.error?.model, alias);
+      assert.equal(body.error?.retryable, false);
+    }
+    assert.equal(requestedProviders.length, 0);
+    const agentDenials = getRouterStatus().recentEvents.filter(
+      (event: { denialReason?: string | null }) =>
+        event.denialReason === "agent_disabled"
+    );
+    assert.equal(agentDenials.length, 2);
+
+    const concreteModel = routing.configuredModel("claude", "default")!;
+    const direct = await previousFetch(
+      `http://127.0.0.1:${port}/v1/responses`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: concreteModel, stream: false })
+      }
+    );
+    assert.equal(direct.status, 200);
+    assert.equal(requestedProviders.length, 1);
+    assert.match(requestedProviders[0]!, /litellm|4000/u);
+  } finally {
+    await closeServer(server);
+    globalThis.fetch = previousFetch;
+    if (previousCredential === undefined) delete process.env.LITELLM_API_KEY;
+    else process.env.LITELLM_API_KEY = previousCredential;
+    routing.restoreRuntimeState(previousRoutingState);
+    resetRouterTelemetry();
+  }
+});
+
+test("disabled Agent aliases survive router persistence and restore", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "autodev-agent-policy-"));
+  const stateFile = join(directory, "router-state.json");
+  const previousRoutingState = routing.runtimeState();
+  try {
+    routing.setAgentEnabled("worker", false);
+    const serialized = JSON.parse(serializeRouterState());
+    assert.ok(serialized.disabledAgentRoles.includes("worker"));
+
+    await writeFile(
+      stateFile,
+      JSON.stringify({
+        schema: "autodev-router-persisted-state-v4",
+        updatedAt: new Date().toISOString(),
+        disabledAgentRoles: ["worker"],
+        agentEnablementRevisions: { worker: 1 }
+      }),
+      "utf8"
+    );
+    routing.setAgentEnabled("worker", true);
+    assert.equal(loadRouterState(stateFile), true);
+    assert.equal(routing.isAgentEnabled("worker"), false);
+    assert.equal(routing.agentEnablementGeneration("worker"), 1);
+  } finally {
+    routing.restoreRuntimeState(previousRoutingState);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 // --- Agent activity: shared state machine (runtime/src/agents/agent-activity.ts) ---
 
 test("agent activity: TTL resolves from CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS with a 300000ms default", () => {

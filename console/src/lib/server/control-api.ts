@@ -22,6 +22,8 @@ import nodePath from "node:path";
 import {
   assertWorkspacePlaytestApproval,
   type ControlApiAgentDetailResponse,
+  type ControlApiAgentEnablementPatchRequest,
+  type ControlApiAgentEnablementPatchResponse,
   type ControlApiAgentsResponse,
   type ControlApiConcurrencyStatus,
   type ControlApiError,
@@ -631,7 +633,7 @@ export async function fetchAgents(
     kind: INVALID_RESPONSE_KIND,
     code: "autodev_control_api_invalid_agents_response",
     message:
-      "AutoDev Control API returned an incompatible Agents response; the Console requires the v1 agents contract."
+      "AutoDev Control API returned an incompatible Agents response; the Console requires the v2 agents contract."
   };
 }
 
@@ -650,7 +652,7 @@ export async function fetchAgentDetail(
     kind: INVALID_RESPONSE_KIND,
     code: "autodev_control_api_invalid_agent_detail_response",
     message:
-      "AutoDev Control API returned an incompatible Agent detail response; the Console requires the v2 agent detail contract."
+      "AutoDev Control API returned an incompatible Agent detail response; the Console requires the v3 agent detail contract."
   };
 }
 
@@ -671,10 +673,30 @@ function isAgentRecord(value: unknown): boolean {
     (value.valid === null || typeof value.valid === "boolean") &&
     typeof value.status === "string" &&
     isConvergenceStatus(value.convergence) &&
+    isAgentEnablementState(value.enablement) &&
     typeof value.primaryModel === "string" &&
     isStringList(value.allowedProviders) &&
     isStringList(value.mcps) &&
     isStringList(value.skills)
+  );
+}
+
+function isAgentEnablementState(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.kind === "observed") {
+    return (
+      typeof value.enabled === "boolean" &&
+      value.mutable === true &&
+      typeof value.revision === "string" &&
+      CONTROL_API_REVISION_PATTERN.test(value.revision)
+    );
+  }
+  return (
+    value.kind === "unavailable" &&
+    value.enabled === null &&
+    value.mutable === false &&
+    typeof value.reason === "string" &&
+    value.reason.trim().length > 0
   );
 }
 
@@ -684,8 +706,9 @@ function isControlApiAgentsResponse(
 ): value is ControlApiAgentsResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-agents-v1" &&
+    value.schema === "autodev-control-agents-v2" &&
     typeof value.source === "string" &&
+    value.readOnly === false &&
     Array.isArray(value.agents) &&
     typeof value.totalAgents === "number" &&
     value.agents.every(
@@ -704,12 +727,57 @@ function isControlApiAgentDetailResponse(
 ): value is ControlApiAgentDetailResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-agent-detail-v2" &&
+    value.schema === "autodev-control-agent-detail-v3" &&
     isAgentRecord(value) &&
     (value.promptPath === null || typeof value.promptPath === "string") &&
     typeof value.systemPrompt === "string" &&
     isReconciliationBundle(value.reconciliation)
   );
+}
+
+function isControlApiAgentEnablementPatchResponse(
+  value: unknown,
+  role: string
+): value is ControlApiAgentEnablementPatchResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-agent-enablement-v1" &&
+    value.role === role &&
+    typeof value.enabled === "boolean" &&
+    typeof value.previous === "boolean" &&
+    typeof value.revision === "string" &&
+    CONTROL_API_REVISION_PATTERN.test(value.revision) &&
+    typeof value.actor === "string" &&
+    value.actor.length > 0 &&
+    isReconciliationBundle(value.reconciliation)
+  );
+}
+
+/** Server-only typed mutation for Runtime-owned Agent role enablement. */
+export async function patchAgentEnablement(
+  role: string,
+  request: ControlApiAgentEnablementPatchRequest,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiAgentEnablementPatchResponse>> {
+  const canonicalRole = role.trim().toLowerCase();
+  const result = await mutateControlApi<unknown>(
+    "PATCH",
+    `${CONTROL_API_PATHS.agents}/${encodeURIComponent(canonicalRole)}`,
+    { enabled: request.enabled, expectedRevision: request.expectedRevision },
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  if (isControlApiAgentEnablementPatchResponse(result.data, canonicalRole)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_agent_enablement_response",
+    message:
+      "AutoDev Control API returned an incompatible Agent enablement response; the Console requires the v1 Agent enablement contract."
+  };
 }
 
 function isEnablement(value: unknown): boolean {

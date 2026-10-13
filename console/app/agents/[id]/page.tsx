@@ -4,6 +4,10 @@ import React from "react";
 
 import { AgentDetailView } from "../../../src/features/agents/AgentDetailView.ts";
 import {
+  isControlFailure,
+  readControlRefusal
+} from "../../../src/lib/control-failure.ts";
+import {
   controlApiFailureCode,
   fetchAgentDetail,
   fetchProviders,
@@ -36,11 +40,16 @@ export async function generateMetadata({
 }
 
 export default async function AgentDetailPage({
-  params
+  params,
+  searchParams
 }: {
   readonly params: Promise<{ readonly id: string }>;
+  readonly searchParams?: Promise<
+    Record<string, string | string[] | undefined>
+  >;
 }): Promise<React.JSX.Element> {
   const { id } = await params;
+  const query = (await searchParams) ?? {};
   const { section, config } = readNodeContext("/agents");
   if (!config) {
     return React.createElement(
@@ -86,7 +95,9 @@ export default async function AgentDetailPage({
       reconciliation: detailResult.data.reconciliation,
       routing,
       providers,
-      runtime
+      runtime,
+      controlFailed: isControlFailure(query.control),
+      controlRefusal: readControlRefusal(query.refusal)
     })
   );
 }

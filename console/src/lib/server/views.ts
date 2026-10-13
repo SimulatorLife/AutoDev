@@ -74,6 +74,7 @@ export function agentFromControlApi(
     valid: agent.valid,
     status: agent.status,
     convergence: agent.convergence,
+    enablement: agent.enablement,
     primaryModel: agent.primaryModel,
     models: [agent.primaryModel],
     providers: agent.allowedProviders,

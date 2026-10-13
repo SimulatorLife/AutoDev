@@ -308,16 +308,103 @@ test("provider role administration is independent", () => {
     },
     disabledProviders: [],
     disabledModels: [],
+    disabledAgentRoles: [],
+    agentEnablementRevisions: {},
     providerLimits: {}
   });
   policy.restoreRuntimeState({
     roleAssignments: { claude: { subagent: DISABLED_ASSIGNMENT } },
     disabledProviders: [],
     disabledModels: [],
+    disabledAgentRoles: [],
     providerLimits: {}
   });
   assert.equal(policy.isProviderEnabledForRole("claude", "orchestrator"), true);
   assert.equal(policy.isProviderEnabledForRole("claude", "subagent"), false);
+});
+
+test("Agent enablement is persisted per configured alias without changing provider assignments", () => {
+  const policy = new RoutingPolicy(
+    ROUTING_POLICY.config,
+    ROUTING_POLICY.configFile,
+    process.env
+  );
+  assert.equal(policy.agentModelAlias("worker"), "autodev/worker");
+  assert.equal(policy.agentModelAlias("orchestrator"), "autodev/orchestrator");
+  assert.equal(policy.agentModelAlias("not-a-configured-agent"), null);
+  assert.equal(policy.isAgentEnabled("worker"), true);
+  assert.equal(policy.isAgentEnabled("not-a-configured-agent"), null);
+
+  const assignmentsBefore = policy.runtimeState().roleAssignments;
+  policy.setAgentEnabled("worker", false);
+  policy.setAgentEnabled("orchestrator", false);
+  assert.equal(policy.isAgentEnabled("worker"), false);
+  assert.equal(policy.isAgentEnabled("orchestrator"), false);
+  assert.deepEqual(policy.runtimeState().disabledAgentRoles, [
+    "orchestrator",
+    "worker"
+  ]);
+  assert.deepEqual(policy.runtimeState().agentEnablementRevisions, {
+    orchestrator: 1,
+    worker: 1
+  });
+  assert.deepEqual(policy.runtimeState().roleAssignments, assignmentsBefore);
+
+  const restored = new RoutingPolicy(
+    ROUTING_POLICY.config,
+    ROUTING_POLICY.configFile,
+    process.env
+  );
+  restored.restoreRuntimeState(policy.runtimeState());
+  assert.equal(restored.isAgentEnabled("worker"), false);
+  assert.equal(restored.isAgentEnabled("orchestrator"), false);
+
+  // A Runtime state written before this policy field existed has no Agent
+  // disables. That is the existing route behavior, not a fabricated state.
+  restored.restoreRuntimeState({
+    roleAssignments: {},
+    disabledProviders: [],
+    disabledModels: [],
+    providerLimits: {}
+  });
+  assert.equal(restored.isAgentEnabled("worker"), true);
+  assert.deepEqual(restored.runtimeState().disabledAgentRoles, []);
+  assert.deepEqual(restored.runtimeState().agentEnablementRevisions, {});
+
+  // Persisted entries must be configured aliases; stale and malformed entries
+  // cannot disable a newly named Agent by accident.
+  restored.restoreRuntimeState({
+    roleAssignments: {},
+    disabledProviders: [],
+    disabledModels: [],
+    disabledAgentRoles: ["not-a-configured-agent", 3],
+    providerLimits: {}
+  });
+  assert.deepEqual(restored.runtimeState().disabledAgentRoles, []);
+});
+
+test("the orchestrator alias cannot collide with a named Agent alias", () => {
+  const conflicting = {
+    ...ROUTING_POLICY.config,
+    orchestrator: {
+      ...ROUTING_POLICY.config.orchestrator,
+      alias: "autodev/worker"
+    }
+  };
+  assert.throws(
+    () => validateRoutingConfig(conflicting),
+    /orchestrator\.alias conflicts with the configured role alias autodev\/worker/u
+  );
+
+  // RoutingPolicy is also defensive when constructed directly from an
+  // unchecked configuration object rather than the normal loader.
+  const policy = new RoutingPolicy(
+    conflicting,
+    ROUTING_POLICY.configFile,
+    process.env
+  );
+  assert.equal(policy.agentModelAlias("worker"), null);
+  assert.equal(policy.agentModelAlias("orchestrator"), null);
 });
 
 test("model enablement removes a model from every tier it serves and survives restore", () => {
@@ -427,6 +514,8 @@ test("model enablement removes a model from every tier it serves and survives re
     roleAssignments: {},
     disabledProviders: [],
     disabledModels: [CLAUDE_DEFAULT_TEST_MODEL],
+    disabledAgentRoles: [],
+    agentEnablementRevisions: {},
     providerLimits: {}
   });
   assert.equal(policy.isModelEnabled(CLAUDE_SMART_TEST_MODEL), true);

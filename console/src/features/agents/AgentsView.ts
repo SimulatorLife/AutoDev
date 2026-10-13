@@ -17,6 +17,10 @@ import {
   StatGrid
 } from "../../components/panels/DetailGrid.ts";
 import {
+  ControlFailureNotice,
+  type ControlFailureNoticeProps
+} from "../../components/status/ControlFailureNotice.ts";
+import {
   NOT_OBSERVED_LABEL,
   NOT_OBSERVED_STATUS,
   StatusBadge
@@ -32,18 +36,24 @@ import {
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
 import { liveAgentCount } from "../live-agent-count.ts";
+import { AgentEnablementControl } from "./AgentEnablementControl.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
+import { AGENTS_PATH } from "./paths.ts";
 
 export interface AgentsViewProps {
   readonly agents: readonly AgentDefinition[];
   readonly providers?: ControlApiProvidersResponse | undefined;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
+  readonly controlFailed?: boolean | undefined;
+  readonly controlRefusal?: ControlFailureNoticeProps["refusal"];
 }
 
 export function AgentsView({
   agents,
   providers,
-  runtime
+  runtime,
+  controlFailed,
+  controlRefusal
 }: AgentsViewProps): React.JSX.Element {
   const readinessObserved =
     agents.length > 0 &&
@@ -104,7 +114,13 @@ export function AgentsView({
               "data-live-agent-role": agent.role
             },
             `Active instances: ${liveAgentCount(runtime?.liveAgents, "byRole", agent.role)}`
-          )
+          ),
+          React.createElement(AgentEnablementControl, {
+            role: agent.role,
+            enablement: agent.enablement,
+            convergence: agent.convergence,
+            returnTo: AGENTS_PATH
+          })
         )
     },
     {
@@ -185,6 +201,9 @@ export function AgentsView({
     PageBody,
     { feature: "agents" },
     React.createElement(LiveCountRefresh),
+    controlFailed
+      ? React.createElement(ControlFailureNotice, { refusal: controlRefusal })
+      : null,
     React.createElement(
       StatGrid,
       { columns: 4 },

@@ -22,6 +22,10 @@ import {
   DetailValue,
   gridRowClass
 } from "../../components/panels/DetailGrid.ts";
+import {
+  ControlFailureNotice,
+  type ControlFailureNoticeProps
+} from "../../components/status/ControlFailureNotice.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -30,7 +34,9 @@ import {
 import { chipList } from "../../components/tables/Chips.ts";
 import { SECTION_LABEL_CLASS } from "../../components/ui/text-classes.ts";
 import { liveAgentCount } from "../live-agent-count.ts";
+import { AgentEnablementControl } from "./AgentEnablementControl.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
+import { agentPath } from "./paths.ts";
 
 export interface AgentDetailViewProps {
   readonly agent: AgentDefinition;
@@ -50,6 +56,8 @@ export interface AgentDetailViewProps {
   readonly routing?: ControlApiRoutingResponse | undefined;
   readonly providers?: ControlApiProvidersResponse | undefined;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
+  readonly controlFailed?: boolean | undefined;
+  readonly controlRefusal?: ControlFailureNoticeProps["refusal"];
 }
 
 export function AgentDetailView({
@@ -57,7 +65,9 @@ export function AgentDetailView({
   reconciliation,
   routing,
   providers,
-  runtime
+  runtime,
+  controlFailed,
+  controlRefusal
 }: AgentDetailViewProps): React.JSX.Element {
   const readiness =
     agent.status === "ready" || agent.status === "unavailable"
@@ -72,6 +82,9 @@ export function AgentDetailView({
     PageBody,
     { feature: "agent-detail" },
     React.createElement(LiveCountRefresh),
+    controlFailed
+      ? React.createElement(ControlFailureNotice, { refusal: controlRefusal })
+      : null,
     React.createElement(
       "section",
       {
@@ -127,6 +140,29 @@ export function AgentDetailView({
           React.createElement(StatusBadge, { status: validation })
         )
       )
+    ),
+    React.createElement(
+      "section",
+      {
+        className: DETAIL_PANEL_CLASS,
+        "data-section": "agent-enablement"
+      },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Enablement"
+      ),
+      React.createElement(
+        "p",
+        { className: "mb-3 text-xs text-fg-muted" },
+        "Runtime owns whether this agent role is enabled. The refreshed value is authoritative after a change."
+      ),
+      React.createElement(AgentEnablementControl, {
+        role: agent.role,
+        enablement: agent.enablement,
+        convergence: agent.convergence,
+        returnTo: agentPath(agent.role)
+      })
     ),
     React.createElement(
       "section",

@@ -1154,6 +1154,278 @@ test("Tools catalog stays authoritative when the role projection is empty but th
   }
 });
 
+test("Agent enablement is Runtime-owned, revision-bound, and independent of provider assignments", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  const priorContract = getDefaultExecutionContract();
+  const previousPolicyState = ROUTING_POLICY.runtimeState();
+  const previousAssignment = ROUTING_POLICY.assignmentFor("claude", "subagent");
+  let failPersistence = false;
+  let persistCalls = 0;
+  let persistedDisabledAgentRoles: readonly string[] = [];
+  setDefaultPersistenceManager({
+    async persistNow() {
+      persistCalls += 1;
+      persistedDisabledAgentRoles =
+        ROUTING_POLICY.runtimeState().disabledAgentRoles;
+      if (failPersistence) throw new Error("disk failure");
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    ROUTING_POLICY.setAgentEnabled("worker", true);
+    setExecutionContractForTests({
+      ...priorContract,
+      roles: {
+        ...priorContract.roles,
+        "unrouted-agent": { mcp: [] }
+      }
+    });
+
+    const collection = await call("GET", CONTROL_API_PATHS.agents, {
+      actor: "viewer-a"
+    });
+    assert.equal(collection.response.statusCode, 200);
+    assert.equal(collection.body.readOnly, false);
+    const worker = collection.body.agents.find(
+      (agent: { role: string }) => agent.role === "worker"
+    );
+    assert.deepEqual(worker.enablement, {
+      kind: "observed",
+      enabled: true,
+      mutable: true,
+      revision: (
+        await call("GET", `${CONTROL_API_PATHS.agents}/worker`, {
+          actor: "viewer-a"
+        })
+      ).body.enablement.revision
+    });
+
+    const unrouted = await call(
+      "GET",
+      `${CONTROL_API_PATHS.agents}/unrouted-agent`,
+      { actor: "viewer-a" }
+    );
+    assert.deepEqual(unrouted.body.enablement, {
+      kind: "unavailable",
+      enabled: null,
+      mutable: false,
+      reason:
+        "This configured Agent has no matching AutoDev model-router alias, so Runtime cannot enforce its enablement."
+    });
+
+    const path = `${CONTROL_API_PATHS.agents}/worker`;
+    const initial = await call("GET", path, { actor: "viewer-a" });
+    const initialRevision = initial.body.enablement.revision;
+    const denied = await call("PATCH", path, {
+      actor: "viewer-a",
+      body: { enabled: false, expectedRevision: initialRevision }
+    });
+    assert.equal(denied.response.statusCode, 403);
+    assert.equal(ROUTING_POLICY.isAgentEnabled("worker"), true);
+
+    const missingRevision = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { enabled: false }
+    });
+    assert.equal(missingRevision.response.statusCode, 400);
+    const unknownAgent = await call(
+      "PATCH",
+      `${CONTROL_API_PATHS.agents}/unknown-agent`,
+      {
+        actor: "operator-a",
+        body: { enabled: false, expectedRevision: initialRevision }
+      }
+    );
+    assert.equal(unknownAgent.response.statusCode, 404);
+    const unavailableAgent = await call(
+      "PATCH",
+      `${CONTROL_API_PATHS.agents}/unrouted-agent`,
+      {
+        actor: "operator-a",
+        body: { enabled: false, expectedRevision: "0".repeat(64) }
+      }
+    );
+    assert.equal(unavailableAgent.response.statusCode, 409);
+    assert.equal(
+      unavailableAgent.body.error.code,
+      "autodev_control_api_agent_alias_unavailable"
+    );
+
+    const changed = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { enabled: false, expectedRevision: initialRevision }
+    });
+    assert.equal(changed.response.statusCode, 200);
+    assert.equal(changed.body.enabled, false);
+    assert.equal(changed.body.previous, true);
+    assert.equal(changed.body.actor, "operator-a");
+    assert.notEqual(changed.body.revision, initialRevision);
+    assert.equal(changed.body.reconciliation.status.convergence, "converged");
+    assert.deepEqual(persistedDisabledAgentRoles, ["worker"]);
+    assert.deepEqual(
+      ROUTING_POLICY.assignmentFor("claude", "subagent") ?? null,
+      previousAssignment ?? null
+    );
+
+    const staleRevision = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { enabled: true, expectedRevision: initialRevision }
+    });
+    assert.equal(staleRevision.response.statusCode, 409);
+    assert.equal(
+      staleRevision.body.error.code,
+      "autodev_control_api_agent_enablement_conflict"
+    );
+    assert.equal(persistCalls, 1);
+    assert.equal(ROUTING_POLICY.isAgentEnabled("worker"), false);
+
+    const reenabled = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { enabled: true, expectedRevision: changed.body.revision }
+    });
+    assert.equal(reenabled.response.statusCode, 200);
+    assert.equal(reenabled.body.enabled, true);
+    assert.notEqual(reenabled.body.revision, initialRevision);
+    const staleAfterRoundTrip = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { enabled: false, expectedRevision: initialRevision }
+    });
+    assert.equal(
+      staleAfterRoundTrip.response.statusCode,
+      409,
+      "a stale revision conflicts even after the enablement value returns to its old value"
+    );
+    assert.equal(persistCalls, 2);
+
+    const disabledAgain = await call("PATCH", path, {
+      actor: "operator-a",
+      body: { enabled: false, expectedRevision: reenabled.body.revision }
+    });
+    assert.equal(disabledAgain.response.statusCode, 200);
+    assert.equal(disabledAgain.body.enabled, false);
+
+    const disabled = await call("GET", path, { actor: "viewer-a" });
+    failPersistence = true;
+    const failed = await call("PATCH", path, {
+      actor: "operator-a",
+      body: {
+        enabled: true,
+        expectedRevision: disabled.body.enablement.revision
+      }
+    });
+    assert.equal(failed.response.statusCode, 500);
+    assert.equal(ROUTING_POLICY.isAgentEnabled("worker"), false);
+    assert.equal(persistCalls, 4);
+  } finally {
+    setExecutionContractForTests(priorContract);
+    ROUTING_POLICY.restoreRuntimeState(previousPolicyState);
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("Agent detail and mutation paths canonicalize role aliases before applying policy", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  const previousPolicyState = ROUTING_POLICY.runtimeState();
+  setDefaultPersistenceManager({
+    async persistNow() {
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    ROUTING_POLICY.setAgentEnabled("worker", true);
+    const path = `${CONTROL_API_PATHS.agents}/WORKER`;
+    const detail = await call("GET", path, { actor: "viewer-a" });
+    assert.equal(detail.response.statusCode, 200);
+    assert.equal(detail.body.role, "worker");
+
+    const changed = await call("PATCH", path, {
+      actor: "operator-a",
+      body: {
+        enabled: false,
+        expectedRevision: detail.body.enablement.revision
+      }
+    });
+    assert.equal(changed.response.statusCode, 200);
+    assert.equal(changed.body.role, "worker");
+    assert.equal(ROUTING_POLICY.isAgentEnabled("worker"), false);
+  } finally {
+    ROUTING_POLICY.restoreRuntimeState(previousPolicyState);
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("concurrent Agent enablement writes compare revisions after the prior persist completes", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  const previousPolicyState = ROUTING_POLICY.runtimeState();
+  const { promise: firstPersist, resolve: releaseFirstPersist } =
+    Promise.withResolvers<boolean>();
+  const { promise: firstPersistStarted, resolve: signalFirstPersist } =
+    Promise.withResolvers<void>();
+  let persistCalls = 0;
+  let firstPatch: Promise<any> | null = null;
+  let secondPatch: Promise<any> | null = null;
+  setDefaultPersistenceManager({
+    async persistNow() {
+      persistCalls += 1;
+      if (persistCalls === 1) {
+        signalFirstPersist();
+        return firstPersist;
+      }
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    ROUTING_POLICY.setAgentEnabled("worker", true);
+    const path = `${CONTROL_API_PATHS.agents}/worker`;
+    const initial = await call("GET", path, { actor: "viewer-a" });
+    firstPatch = call("PATCH", path, {
+      actor: "operator-a",
+      body: {
+        enabled: false,
+        expectedRevision: initial.body.enablement.revision
+      }
+    });
+    await firstPersistStarted;
+
+    // A read can see the in-flight desired value, but a second mutation for
+    // this role must wait until that value has either persisted or rolled back.
+    const inFlight = await call("GET", path, { actor: "viewer-a" });
+    assert.equal(inFlight.body.enablement.enabled, false);
+    secondPatch = call("PATCH", path, {
+      actor: "operator-a",
+      body: {
+        enabled: true,
+        expectedRevision: inFlight.body.enablement.revision
+      }
+    });
+    const nextTurn = Promise.withResolvers<void>();
+    setImmediate(nextTurn.resolve);
+    await nextTurn.promise;
+    assert.equal(persistCalls, 1);
+
+    releaseFirstPersist(true);
+    const [first, second] = await Promise.all([firstPatch, secondPatch]);
+    assert.equal(first.response.statusCode, 200);
+    assert.equal(second.response.statusCode, 200);
+    assert.equal(ROUTING_POLICY.isAgentEnabled("worker"), true);
+    assert.equal(persistCalls, 2);
+  } finally {
+    releaseFirstPersist(true);
+    await Promise.all([firstPatch, secondPatch].filter(Boolean));
+    ROUTING_POLICY.restoreRuntimeState(previousPolicyState);
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
 test("Control API surfaces all 13 typed resource families", async () => {
   const saved = saveEnv();
   try {
@@ -1164,7 +1436,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(agents.response.statusCode, 200);
-    assert.equal(agents.body.schema, "autodev-control-agents-v1");
+    assert.equal(agents.body.schema, "autodev-control-agents-v2");
     assert.ok(agents.body.totalAgents > 0);
     assert.ok(Array.isArray(agents.body.agents));
     const configuredAgent = agents.body.agents.find(
@@ -1181,7 +1453,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
       { actor: "viewer-a" }
     );
     assert.equal(agentDetail.response.statusCode, 200);
-    assert.equal(agentDetail.body.schema, "autodev-control-agent-detail-v2");
+    assert.equal(agentDetail.body.schema, "autodev-control-agent-detail-v3");
     assert.equal(agentDetail.body.role, "orchestrator");
     assert.equal(agentDetail.body.kind, "orchestrator");
     assert.equal(agentDetail.body.status, "configured");

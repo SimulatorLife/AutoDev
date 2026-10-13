@@ -3,6 +3,10 @@ import React from "react";
 
 import { AgentsView } from "../../src/features/agents/AgentsView.ts";
 import {
+  isControlFailure,
+  readControlRefusal
+} from "../../src/lib/control-failure.ts";
+import {
   controlApiFailureCode,
   fetchAgents,
   fetchProviders,
@@ -22,7 +26,13 @@ export const metadata: Metadata = {
   title: "Agents"
 };
 
-export default async function AgentsPage(): Promise<React.JSX.Element> {
+export default async function AgentsPage({
+  searchParams
+}: {
+  readonly searchParams?: Promise<
+    Record<string, string | string[] | undefined>
+  >;
+}): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/agents");
   if (!config) {
     return React.createElement(
@@ -53,6 +63,7 @@ export default async function AgentsPage(): Promise<React.JSX.Element> {
     );
   }
   const agents = agentsFromControlApi(agentsResult.data);
+  const query = (await searchParams) ?? {};
   const providers =
     providersResult.kind === "ok" ? providersResult.data : undefined;
   const runtime = runtimeResult.kind === "ok" ? runtimeResult.data : undefined;
@@ -63,7 +74,9 @@ export default async function AgentsPage(): Promise<React.JSX.Element> {
     React.createElement(AgentsView, {
       agents,
       providers,
-      runtime
+      runtime,
+      controlFailed: isControlFailure(query.control),
+      controlRefusal: readControlRefusal(query.refusal)
     })
   );
 }

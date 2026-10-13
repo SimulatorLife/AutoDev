@@ -309,6 +309,12 @@ const CONFIGURED_AGENT: AgentDefinition = {
   valid: null,
   status: "configured",
   convergence: "not-observed",
+  enablement: {
+    kind: "observed",
+    enabled: true,
+    mutable: true,
+    revision: "agent-revision-1"
+  },
   primaryModel: "autodev/orchestrator",
   models: ["autodev/orchestrator"],
   providers: ["codex"],
@@ -10391,8 +10397,13 @@ test("AgentsView shows read-only provider summaries that link to Providers", () 
   // and as a hover title.
   assert.match(markup, /aria-label="Disabled"/);
   assert.match(markup, /data-status="unavailable"/);
-  // Provider controls and routing live in Providers, not Agents.
-  assert.equal(markup.includes("<form"), false);
+  // Agent enablement lives on the Agent row; provider controls and routing do not.
+  assert.match(markup, /data-enablement-form="agent"/);
+  assert.equal(
+    (markup.match(/data-enablement-form="agent"/gu) ?? []).length,
+    1,
+    "each Agent row renders one shared enablement control"
+  );
   assert.equal(markup.includes('data-section="providers-routing"'), false);
   assert.equal(markup.includes("chatgpt.com"), false);
 });
@@ -10410,7 +10421,12 @@ test("AgentDetailView renders a read-only provider summary and concurrency detai
   assert.match(markup, /href="\/providers\/codex"/);
   assert.match(markup, /Provider controls and routing live in Providers/);
   assert.match(markup, /Session concurrency limit/);
-  assert.equal(markup.includes("<form"), false);
+  assert.match(markup, /data-enablement-form="agent"/);
+  assert.equal(
+    (markup.match(/data-enablement-form="agent"/gu) ?? []).length,
+    1,
+    "Agent detail renders one shared enablement control"
+  );
 });
 
 test("Agents provider summaries stay not observed without provider configuration", () => {
@@ -12442,6 +12458,12 @@ test("Agents responses fail closed rather than render an empty Configure surface
     valid: null,
     status: "configured",
     convergence: "not-observed",
+    enablement: {
+      kind: "observed",
+      enabled: true,
+      mutable: true,
+      revision: "a".repeat(64)
+    },
     primaryModel: "autodev/orchestrator",
     allowedProviders: ["claude"],
     mcps: [],
@@ -12449,9 +12471,9 @@ test("Agents responses fail closed rather than render an empty Configure surface
     hasPrompt: true
   };
   const page = {
-    schema: "autodev-control-agents-v1",
+    schema: "autodev-control-agents-v2",
     source: "config/execution-contract.json",
-    readOnly: true,
+    readOnly: false,
     totalAgents: 1,
     agents: [agent]
   };
@@ -12468,6 +12490,15 @@ test("Agents responses fail closed rather than render an empty Configure surface
     { ...page, agents: [{ ...agent, mcps: "lsp" }] },
     { ...page, agents: [{ ...agent, hasPrompt: "yes" }] },
     { ...page, agents: [{ ...agent, primaryModel: 7 }] },
+    {
+      ...page,
+      agents: [
+        {
+          ...agent,
+          enablement: { ...agent.enablement, revision: "malformed" }
+        }
+      ]
+    },
     null
   ]) {
     assert.equal(
@@ -12479,7 +12510,7 @@ test("Agents responses fail closed rather than render an empty Configure surface
 
   const detail = {
     ...agent,
-    schema: "autodev-control-agent-detail-v2",
+    schema: "autodev-control-agent-detail-v3",
     promptPath: "agents/prompts/roles/orchestrator.md",
     systemPrompt: "You are the orchestrator.",
     reconciliation: {
