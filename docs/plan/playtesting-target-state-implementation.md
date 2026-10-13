@@ -882,9 +882,19 @@ Current state, from RacingGame's first integration:
 
 Required work:
 
-- [ ] Generic adapter runtime that binds to a game from declarations: entry
-      module and factory, observation projection, legal-action space, step
-      function, terminal predicate, seeded-RNG entry points.
+- [x] Generic adapter runtime binding to a game from declarations
+      (`core/src/playtesting/adapter-binding.ts`,
+      `runtime/src/playtesting/generic-adapter.ts`): entry module and factory,
+      a reference per protocol method, and a seeded-RNG entry point. The
+      capability advertisement's schema digests are computed from the game's own
+      declared schemas rather than written into a file, which is what a
+      hand-written adapter drifts on. An unbound method is refused by name
+      instead of answered from a default.
+- [ ] The remaining host wiring: serve `createGenericAdapter` over the
+      `stdio-jsonl` transport the config declares, and drive a real episode
+      through it. The dispatch and negotiation layer is built and tested against
+      an injected entry loader; it is not yet connected to the sandbox's
+      adapter process.
 - [ ] Tiered onboarding with an explicitly stated tier, not an assumed one:
       convention-bound games onboard with the config alone; other games get an
       AutoDev-generated scaffold from the same config plus a conformance test
