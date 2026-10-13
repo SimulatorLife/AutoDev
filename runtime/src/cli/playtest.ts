@@ -20,8 +20,10 @@ import {
   observationSchemaHash,
   type PlaytestAdapterBinding,
   type PlaytestObservationContract,
+  PLAYTESTS_GENERIC_ADAPTER_COMMAND,
   resolvePlaytestAdapterBinding,
   unboundPlaytestMethods,
+  usesGenericPlaytestAdapter,
   playtestFileHash,
   playtestManifestHash,
   withObservationSchemaHash
@@ -75,6 +77,19 @@ function writeLine(message: string): void {
 
 function writeErrorLine(message: string): void {
   process.stderr.write(`${message}\n`);
+}
+
+/** The adapter command the config declares, or null when it declares none. */
+function configAdapterCommand(checkoutRoot: string): readonly string[] | null {
+  const config = readJsonFile(
+    path.join(integrationRoot(checkoutRoot), PLAYTESTS_CONFIG_FILE)
+  );
+  if (!config.ok || !isPlainRecord(config.value)) return null;
+  const adapter = config.value.adapter;
+  if (!isPlainRecord(adapter) || !Array.isArray(adapter.command)) return null;
+  return adapter.command.every((entry) => typeof entry === "string")
+    ? (adapter.command as string[])
+    : null;
 }
 
 /** The benchmark the config declares, resolved beside the config itself. */
@@ -233,9 +248,26 @@ export function checkPlaytestIntegration(checkoutRoot: string): PlaytestCheckRep
         // Every protocol method the game leaves unbound is named. AutoDev does
         // not answer one from a default, so an unbound method is a refusal the
         // operator would otherwise meet mid-run.
-        const unbound = unboundPlaytestMethods(
-          parsed.value as PlaytestAdapterBinding
-        );
+        const binding = parsed.value as PlaytestAdapterBinding;
+        // A game that claims the declarative tier onboarded with no protocol
+        // code, which means AutoDev's adapter runs it. A config still pointing
+        // at a game-written command would make the tier a claim rather than a
+        // fact.
+        const command = configAdapterCommand(checkoutRoot);
+        if (
+          binding.tier === "declarative" &&
+          command !== null &&
+          !usesGenericPlaytestAdapter(command)
+        ) {
+          problems.push({
+            severity: "error",
+            code: "invalid-binding",
+            file: relative,
+            message:
+              "This binding declares the declarative tier, so the config's adapter command must be AutoDev's generic adapter rather than a game-written one."
+          });
+        }
+        const unbound = unboundPlaytestMethods(binding);
         const optional = unbound.filter(
           (method) => !PLAYTESTS_REQUIRED_BINDINGS.includes(method)
         );
@@ -391,7 +423,9 @@ export function initPlaytestIntegration(checkoutRoot: string): number {
           schemaVersion: 1,
           adapter: {
             transport: "stdio-jsonl",
-            command: ["./adapter", "--stdio-jsonl"]
+            // AutoDev's adapter, not a game-written one. The game declares
+            // bindings; AutoDev speaks the protocol.
+            command: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND]
           },
           modes: ["headless"],
           scenarios: ["default"],
@@ -467,6 +501,42 @@ export function initPlaytestIntegration(checkoutRoot: string): number {
           // Deliberately empty. AutoDev will not guess the game's quality
           // dimensions; an invented metric would read as the game's own.
           metrics: []
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+  }
+
+  // The binding is scaffolded, not the game. Its placeholders name what the
+  // game must replace; nothing here encodes the game's measurement intent.
+  const bindingPath = path.join(root, PLAYTESTS_BINDING_FILE);
+  if (!existsSync(bindingPath)) {
+    writeFileSync(
+      bindingPath,
+      `${JSON.stringify(
+        {
+          schema: "autodev-playtest-adapter-binding-v1",
+          schemaVersion: 1,
+          tier: "declarative",
+          entry: "adapter.js",
+          factory: "createGame",
+          // Placeholders, clearly marked: a game must declare what its own
+          // schemas are rather than inherit these.
+          schemas: {
+            observation: { type: "object", properties: {} },
+            action: { type: "object", properties: {} },
+            event: { type: "object", properties: {} }
+          },
+          bindings: {
+            capabilities: { export: "capabilities" },
+            reset: { export: "reset" },
+            observe: { export: "observe" },
+            legalActions: { export: "legalActions" },
+            step: { export: "step" },
+            outcome: { export: "outcome" }
+          }
         },
         null,
         2

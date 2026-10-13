@@ -1,0 +1,149 @@
+/**
+ * AutoDev's adapter entrypoint.
+ *
+ * This is the process AutoDev's pinned adapter image runs. It reads the game's
+ * binding from the approved integration directory, resolves the game's entry
+ * module, and serves the game-adapter protocol on stdio. The game supplies
+ * declarations and an entry module; the protocol is AutoDev's.
+ *
+ * The integration directory is read from the command line rather than discovered
+ * from the process working directory: the sandbox mounts the approved checkout
+ * read-only at a known path, and resolving against that path is what keeps the
+ * binding inside the approved tree.
+ */
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+import {
+  assertPlaytestObservationContract,
+  PLAYTESTS_ADAPTER_BINDING_SCHEMA,
+  type PlaytestJsonSchema
+} from "@simulatorlife/autodev-core";
+
+import {
+  startGenericAdapterHost,
+  type GenericAdapterHostOptions
+} from "./generic-adapter-host.ts";
+
+/** Bounded so a hostile or corrupt file cannot be read into memory whole. */
+const MAX_BINDING_BYTES = 256 * 1024;
+
+export interface EntryContext {
+  readonly binding: unknown;
+  readonly engineBuild: string;
+  readonly modes: readonly string[];
+  readonly scenarioIds: readonly string[];
+  readonly observationSchema: PlaytestJsonSchema;
+  readonly actionSchema: PlaytestJsonSchema;
+  readonly eventSchema: PlaytestJsonSchema;
+}
+
+/**
+ * Resolve everything the host needs from the integration directory.
+ *
+ * The schemas are read from the game alongside the binding: a game declares
+ * them, and AutoDev derives their digests. They are not invented here.
+ */
+export function readAdapterContext(integrationDir: string): EntryContext {
+  const bindingPath = path.join(integrationDir, "playtest.binding.json");
+  const raw = readFileSync(bindingPath, "utf8");
+  if (Buffer.byteLength(raw, "utf8") > MAX_BINDING_BYTES) {
+    throw new TypeError("The adapter binding exceeds the supported size.");
+  }
+  const binding: unknown = JSON.parse(raw);
+  if (
+    typeof binding !== "object" ||
+    binding === null ||
+    (binding as { schema?: unknown }).schema !==
+      PLAYTESTS_ADAPTER_BINDING_SCHEMA
+  ) {
+    throw new TypeError(
+      `The adapter binding must declare schema ${PLAYTESTS_ADAPTER_BINDING_SCHEMA}.`
+    );
+  }
+  // The observation contract still governs what a player can see; the adapter
+  // schemas live in the binding, because they describe the protocol surface
+  // rather than the observation contract.
+  const observation = JSON.parse(
+    readFileSync(path.join(integrationDir, "playtest.observation.json"), "utf8")
+  );
+  assertPlaytestObservationContract(observation);
+  const record = (binding as { schemas: Readonly<Record<string, unknown>> })
+    .schemas;
+  const configPath = path.join(integrationDir, "playtest.config.json");
+  const config = JSON.parse(readFileSync(configPath, "utf8")) as {
+    readonly modes?: readonly string[];
+    readonly scenarios?: readonly string[];
+  };
+  return {
+    binding,
+    engineBuild: process.env.AUTODEV_PLAYTEST_ENGINE_BUILD ?? "unpinned",
+    modes: config.modes ?? [],
+    scenarioIds: config.scenarios ?? [],
+    observationSchema: record.observation as PlaytestJsonSchema,
+    actionSchema: record.action as PlaytestJsonSchema,
+    eventSchema: record.event as PlaytestJsonSchema
+  };
+}
+
+/**
+ * Import the game's entry module and call its factory.
+ *
+ * The module is resolved inside the integration directory and loaded by URL, so
+ * the sandbox's read-only checkout mount is the only reachable filesystem.
+ */
+export function createEntryLoader(
+  integrationDir: string
+): GenericAdapterHostOptions["loadEntry"] {
+  const root = path.resolve(integrationDir);
+  return async ({ entry, factory }) => {
+    const resolved = path.resolve(root, entry);
+    const relative = path.relative(root, resolved);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new TypeError(
+        "The declared entry module must resolve inside the integration directory."
+      );
+    }
+    const module: unknown = await import(pathToFileURL(resolved).href);
+    if (typeof module !== "object" || module === null) {
+      throw new TypeError("The entry module did not export an object.");
+    }
+    const create = (module as Record<string, unknown>)[factory];
+    if (typeof create !== "function") {
+      throw new TypeError(
+        `The entry module does not export a factory named ${factory}.`
+      );
+    }
+    const game: unknown = await create();
+    if (typeof game !== "object" || game === null) {
+      throw new TypeError("The entry factory did not return a game object.");
+    }
+    return game as Record<string, unknown>;
+  };
+}
+
+/** Parse `--integration-dir <dir>`, defaulting to `.autodev` in the checkout. */
+export function integrationDirFrom(
+  argv: readonly string[]
+): string {
+  const index = argv.indexOf("--integration-dir");
+  if (index >= 0 && index + 1 < argv.length) {
+    return path.resolve(argv[index + 1]!);
+  }
+  return path.resolve(".autodev");
+}
+
+/** Serve the protocol on stdio until the Runtime closes the stream. */
+export async function main(argv: readonly string[]): Promise<void> {
+  const integrationDir = integrationDirFrom(argv);
+  const context = readAdapterContext(integrationDir);
+  const host = await startGenericAdapterHost({
+    ...context,
+    loadEntry: createEntryLoader(integrationDir),
+    input: process.stdin,
+    output: process.stdout
+  });
+  await host.serve();
+  host.close();
+}

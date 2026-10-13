@@ -76,11 +76,57 @@ export interface PlaytestAdapterBinding {
    * reported as unreproducible rather than assumed reproducible.
    */
   readonly seededRng?: PlaytestBindingReference;
+  /**
+   * The game's own schemas. AutoDev derives their digests rather than reading
+   * them from the file, which is what stops a hand-written adapter drifting
+   * when a schema is edited.
+   */
+  readonly schemas: Readonly<{
+    readonly observation: Readonly<Record<string, unknown>>;
+    readonly action: Readonly<Record<string, unknown>>;
+    readonly event: Readonly<Record<string, unknown>>;
+  }>;
   readonly bindings: Readonly<Partial<Record<PlaytestBindableMethod, PlaytestBindingReference>>>;
 }
 
 export const PLAYTESTS_ADAPTER_BINDING_SCHEMA =
   "autodev-playtest-adapter-binding-v1" as const;
+
+/**
+ * AutoDev's own adapter image, pinned.
+ *
+ * The adapter is AutoDev's protocol code, so it runs in AutoDev's image rather
+ * than each game's. The game image is the thing under test, and the game's
+ * code reaches the adapter through the approved checkout. This is the same for
+ * every onboarded game: two games cannot disagree about what protocol version
+ * they are speaking because neither of them supplies it.
+ */
+export const PLAYTESTS_AUTODEV_ADAPTER_IMAGE_DIGEST =
+  "sha256:autodev-playtest-adapter@sha256:" as const;
+
+/**
+ * The command AutoDev's adapter image runs.
+ *
+ * A game bound through declarations does not declare this; the game under test
+ * is reached through the integration directory's binding file. The entrypoint
+ * is resolved inside the approved checkout so the sandbox's read-only,
+ * SHA-addressed mount is what bounds it.
+ */
+export const PLAYTESTS_GENERIC_ADAPTER_COMMAND: readonly string[] = [
+  "/opt/autodev/playtest-adapter/main.js",
+  "--integration-dir",
+  ".autodev"
+];
+
+/** True when this adapter is AutoDev's, not a game-supplied command. */
+export function usesGenericPlaytestAdapter(
+  command: readonly string[]
+): boolean {
+  return (
+    command.length > 0 &&
+    command[0] === PLAYTESTS_GENERIC_ADAPTER_COMMAND[0]
+  );
+}
 
 export type PlaytestBindingGap = {
   readonly kind: "missing-required";
@@ -168,6 +214,19 @@ export function resolvePlaytestAdapterBinding(
       kind: "rejected",
       message: "The seeded RNG binding is malformed."
     };
+  }
+  // The schemas are declared, never invented here, and each must be a JSON
+  // object: AutoDev hashes exactly what the game wrote.
+  for (const key of ["observation", "action", "event"]) {
+    const schema = isRecord(value.schemas)
+      ? value.schemas[key]
+      : undefined;
+    if (!isRecord(schema)) {
+      return {
+        kind: "rejected",
+        message: `The adapter binding must declare the game's ${key} schema.`
+      };
+    }
   }
   for (const key of Object.keys(value.bindings)) {
     if (
