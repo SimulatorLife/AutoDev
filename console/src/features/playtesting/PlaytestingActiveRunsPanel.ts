@@ -11,7 +11,10 @@
  * Written with `React.createElement` in a `.ts` module so the render suite can
  * exercise it directly, matching the other Playtesting views.
  */
-import type { PlaytestJsonValue } from "@simulatorlife/autodev-core";
+import type {
+  PlaytestCompletionCounts,
+  PlaytestJsonValue
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
@@ -42,9 +45,18 @@ const FRESHNESS_NOTICE: Readonly<
     "The latest batch state could not be read. The batches below are the last values the Console received, not confirmed current state."
 };
 
+/**
+ * Reads one owner count by its contract key.
+ *
+ * The key type is the owner's, so a tile cannot be pointed at a field the
+ * Runtime never writes — the four this panel originally read did exactly that
+ * and every one of them rendered "not observed" for the life of the feature.
+ */
 function countLabel(
-  counts: Readonly<Record<string, PlaytestJsonValue>> | null,
-  key: string
+  counts: Readonly<
+    Record<keyof PlaytestCompletionCounts, PlaytestJsonValue>
+  > | null,
+  key: keyof PlaytestCompletionCounts
 ): number | null {
   if (!counts) return null;
   const value = counts[key];
@@ -65,19 +77,28 @@ function stat(label: string, value: number | null): React.JSX.Element {
  * The independent meanings stay separate while a batch runs: assignment
  * outcomes versus gameplay outcomes, assignment state versus episode outcome,
  * and assignments that became infrastructure loss versus persisted episodes.
- * Values come from the owner's counts; the Console never recomputes them.
+ * Values come from the owner's `PlaytestCompletionCounts`; the Console never
+ * recomputes them, and the keys read here are that contract's own.
  */
 function runProgress(run: PlaytestingActiveRun): React.JSX.Element {
   const counts = assignmentCounts(run.record);
   return React.createElement(
     "dl",
     { className: "grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4" },
-    stat("Assignments succeeded", countLabel(counts, "succeeded")),
-    stat("Assignments failed", countLabel(counts, "failed")),
+    stat("Assignments started", countLabel(counts, "started")),
+    stat("Assignments completed", countLabel(counts, "completed")),
+    stat("Assignments crashed", countLabel(counts, "crashed")),
+    stat(
+      "Assignments infra-failed",
+      countLabel(counts, "infrastructureFailed")
+    ),
     stat("Assignments cancelled", countLabel(counts, "cancelled")),
-    stat("Assignments quota-blocked", countLabel(counts, "quota-blocked")),
+    stat("Assignments budget-truncated", countLabel(counts, "budgetTruncated")),
+    stat("Sessions reviewed", countLabel(counts, "reviewed")),
     stat("Assignments in batch", run.assignmentCount),
-    stat("Episodes persisted", countLabel(counts, "episodes"))
+    // A count with no observation is left unnamed rather than shown as a zero,
+    // which is why these read the owner's keys verbatim.
+    stat("Sessions eligible", countLabel(counts, "eligible"))
   );
 }
 
@@ -170,11 +191,7 @@ function runRow(
         )
       : null,
     focused
-      ? React.createElement(
-          "div",
-          { className: "mt-3" },
-          runProgress(run)
-        )
+      ? React.createElement("div", { className: "mt-3" }, runProgress(run))
       : null
   );
 }
@@ -245,8 +262,7 @@ export function PlaytestingActiveRunsPanel({
     React.createElement(
       "div",
       {
-        className:
-          "flex flex-wrap items-center justify-between gap-3"
+        className: "flex flex-wrap items-center justify-between gap-3"
       },
       React.createElement(
         "h2",

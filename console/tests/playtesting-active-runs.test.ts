@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
 import {
   assignmentCounts,
   freshnessForFailure,
@@ -12,6 +15,7 @@ import {
   type PlaytestingActiveRun,
   readActiveRuns
 } from "../src/features/playtesting/playtesting-active-runs.ts";
+import { PlaytestingActiveRunsPanel } from "../src/features/playtesting/PlaytestingActiveRunsPanel.ts";
 import { responseMessage } from "../src/features/playtesting/playtesting-run-messages.ts";
 
 const WORKSPACE = "acme/game";
@@ -45,10 +49,7 @@ function envelope(runs: readonly PlaytestingActiveRun[]): unknown {
   };
 }
 
-function run(
-  batchId: string,
-  status: string
-): PlaytestingActiveRun {
+function run(batchId: string, status: string): PlaytestingActiveRun {
   return {
     batchId,
     assignmentCount: 1,
@@ -71,12 +72,53 @@ test("a live read fails closed rather than showing a partial view", () => {
   // A well-formed response proves the reader accepts; these prove it rejects.
   assert.ok(readActiveRuns(envelope([run("b", "running")]), WORKSPACE));
   const cases: readonly [string, unknown][] = [
-    ["wrong workspace", { kind: "ok", data: { schema: "autodev-control-playtesting-runs-v1", workspaceId: "other/game", runs: [] } }],
-    ["wrong schema", { kind: "ok", data: { schema: "something-else", workspaceId: WORKSPACE, runs: [] } }],
+    [
+      "wrong workspace",
+      {
+        kind: "ok",
+        data: {
+          schema: "autodev-control-playtesting-runs-v1",
+          workspaceId: "other/game",
+          runs: []
+        }
+      }
+    ],
+    [
+      "wrong schema",
+      {
+        kind: "ok",
+        data: { schema: "something-else", workspaceId: WORKSPACE, runs: [] }
+      }
+    ],
     ["error envelope", { kind: "error", code: "x", message: "nope" }],
-    ["runs not an array", { kind: "ok", data: { schema: "autodev-control-playtesting-runs-v1", workspaceId: WORKSPACE, runs: {} } }],
-    ["status missing its own batch id", envelope([{ ...run("batch-1", "running"), record: record("running", "other") }])],
-    ["entry not an object", { kind: "ok", data: { schema: "autodev-control-playtesting-runs-v1", workspaceId: WORKSPACE, runs: ["nope"] } }]
+    [
+      "runs not an array",
+      {
+        kind: "ok",
+        data: {
+          schema: "autodev-control-playtesting-runs-v1",
+          workspaceId: WORKSPACE,
+          runs: {}
+        }
+      }
+    ],
+    [
+      "status missing its own batch id",
+      envelope([
+        { ...run("batch-1", "running"), record: record("running", "other") }
+      ])
+    ],
+    [
+      "entry not an object",
+      {
+        kind: "ok",
+        data: {
+          schema: "autodev-control-playtesting-runs-v1",
+          workspaceId: WORKSPACE,
+          runs: ["nope"]
+        }
+      }
+    ]
   ];
   for (const [label, value] of cases) {
     assert.equal(readActiveRuns(value, WORKSPACE), null, label);
@@ -91,7 +133,11 @@ test("a live read fails closed rather than showing a partial view", () => {
           schema: "autodev-control-playtesting-runs-v1",
           workspaceId: WORKSPACE,
           runs: [
-            ...(envelope([run("batch-1", "running")]) as { data: { runs: unknown[] } }).data.runs,
+            ...(
+              envelope([run("batch-1", "running")]) as {
+                data: { runs: unknown[] };
+              }
+            ).data.runs,
             "malformed"
           ]
         }
@@ -105,7 +151,10 @@ test("a live read fails closed rather than showing a partial view", () => {
 test("truncated is terminal and distinct from a real completed result", () => {
   // The Console once rejected `truncated` while Runtime emitted it, so a
   // truncated batch surfaced as an invalid response instead of its own state.
-  const parsed = readActiveRuns(envelope([run("batch-t", "truncated")]), WORKSPACE);
+  const parsed = readActiveRuns(
+    envelope([run("batch-t", "truncated")]),
+    WORKSPACE
+  );
   assert.equal(parsed?.length, 1);
   assert.equal(parsed?.[0]?.record.status, "truncated");
   assert.ok(isTerminal(record("truncated")));
@@ -131,7 +180,10 @@ test("a failed read is unavailable, never the previous frame's live", () => {
   assert.equal(freshnessForFailure(), "unavailable");
   // The ordering matters: reading state first and failing second must not
   // leave a stale `live` on screen.
-  assert.notEqual(freshnessForFailure(), freshnessForSuccess([run("a", "running")]));
+  assert.notEqual(
+    freshnessForFailure(),
+    freshnessForSuccess([run("a", "running")])
+  );
 });
 
 test("polling backs off on repeated failure and stays capped", () => {
@@ -147,11 +199,18 @@ test("polling backs off on repeated failure and stays capped", () => {
 });
 
 test("counts come from the owner's result, never recomputed", () => {
+  // The owner's own `PlaytestCompletionCounts` fields, not names invented here.
+  // An earlier version of this fixture used `succeeded`/`failed`, which no
+  // producer emits, so it passed while every panel tile rendered "not observed".
   const withCounts = {
     ...record("running"),
-    result: { counts: { succeeded: 3, failed: 1 } }
+    result: { counts: { started: 3, completed: 2, crashed: 1 } }
   };
-  assert.deepEqual(assignmentCounts(withCounts), { succeeded: 3, failed: 1 });
+  assert.deepEqual(assignmentCounts(withCounts), {
+    started: 3,
+    completed: 2,
+    crashed: 1
+  });
   assert.equal(assignmentCounts(record("running")), null);
   assert.equal(
     assignmentCounts({ ...record("running"), result: { counts: null } }),
@@ -161,13 +220,14 @@ test("counts come from the owner's result, never recomputed", () => {
 
 test("an unreadable response reports the server's message or an honest default", () => {
   assert.equal(
-    responseMessage({ kind: "error", code: "x", message: "Runtime is offline." }),
+    responseMessage({
+      kind: "error",
+      code: "x",
+      message: "Runtime is offline."
+    }),
     "Runtime is offline."
   );
-  assert.equal(
-    responseMessage({ error: { message: "Nested." } }),
-    "Nested."
-  );
+  assert.equal(responseMessage({ error: { message: "Nested." } }), "Nested.");
   assert.equal(
     responseMessage("<html>502</html>"),
     "The Console could not validate the server response."
@@ -180,9 +240,8 @@ test("an unreadable response reports the server's message or an honest default",
 test("the panel never presents an unread read as current", async () => {
   const React = await import("react");
   const { renderToStaticMarkup } = await import("react-dom/server");
-  const { PlaytestingActiveRunsPanel } = await import(
-    "../src/features/playtesting/PlaytestingActiveRunsPanel.ts"
-  );
+  const { PlaytestingActiveRunsPanel } =
+    await import("../src/features/playtesting/PlaytestingActiveRunsPanel.ts");
   const run = {
     batchId: "batch-live-1",
     assignmentCount: 4,
@@ -197,7 +256,9 @@ test("the panel never presents an unread read as current", async () => {
       lastFailure: null,
       watching: true,
       onRefresh: () => {},
-      focusedBatchId: null,
+      // Progress is behind the row disclosure, so the focused batch is the
+      // one whose counts an operator is actually reading.
+      focusedBatchId: "batch-1",
       onFocusBatch: () => {},
       onCancel: null,
       busyBatchId: null
@@ -218,7 +279,9 @@ test("the panel never presents an unread read as current", async () => {
       lastFailure: "Runtime is offline.",
       watching: false,
       onRefresh: () => {},
-      focusedBatchId: null,
+      // Progress is behind the row disclosure, so the focused batch is the
+      // one whose counts an operator is actually reading.
+      focusedBatchId: "batch-1",
       onFocusBatch: () => {},
       onCancel: null,
       busyBatchId: null
@@ -237,9 +300,8 @@ test("the panel never presents an unread read as current", async () => {
 test("a terminal batch offers no cancel action and is marked terminal", async () => {
   const React = await import("react");
   const { renderToStaticMarkup } = await import("react-dom/server");
-  const { PlaytestingActiveRunsPanel } = await import(
-    "../src/features/playtesting/PlaytestingActiveRunsPanel.ts"
-  );
+  const { PlaytestingActiveRunsPanel } =
+    await import("../src/features/playtesting/PlaytestingActiveRunsPanel.ts");
   const markup = renderToStaticMarkup(
     React.createElement(PlaytestingActiveRunsPanel, {
       workspaceId: WORKSPACE,
@@ -267,4 +329,59 @@ test("a terminal batch offers no cancel action and is marked terminal", async ()
   // and uses the Console's single spelling for that.
   assert.match(markup, /Not observed/);
   assert.doesNotMatch(markup, />Not reported</);
+});
+
+test("the panel renders the owner's own counts rather than an absent reading", () => {
+  // The tiles are the only place an operator sees assignment outcomes, so a
+  // tile pointed at a key the Runtime never writes renders "not observed"
+  // forever while the batch runs. Rendering the owner's real keys is the
+  // assertion that catches it.
+  const markup = renderToStaticMarkup(
+    React.createElement(PlaytestingActiveRunsPanel, {
+      workspaceId: "fixture/game",
+      runs: [
+        {
+          batchId: "batch-1",
+          assignmentCount: 4,
+          createdAt: "2026-10-13T12:00:00.000Z",
+          record: {
+            ...record("running"),
+            result: {
+              counts: {
+                assigned: 4,
+                started: 4,
+                completed: 2,
+                crashed: 1,
+                infrastructureFailed: 1,
+                cancelled: 0,
+                budgetTruncated: 1,
+                reviewed: 0,
+                eligible: 2
+              }
+            }
+          }
+        }
+      ],
+      freshness: "live",
+      lastFailure: null,
+      watching: true,
+      onRefresh: () => {},
+      // Progress is behind the row disclosure, so the focused batch is the
+      // one whose counts an operator is actually reading.
+      focusedBatchId: "batch-1",
+      onFocusBatch: () => {},
+      onCancel: () => {},
+      busyBatchId: null
+    })
+  );
+  assert.match(markup, /Assignments completed/);
+  assert.match(markup, />2</u);
+  assert.match(markup, /Assignments crashed/);
+  // An unobserved count stays named as unobserved rather than becoming a zero.
+  assert.ok(
+    !/Assignments succeeded|Assignments quota-blocked|Episodes persisted/u.test(
+      markup
+    ),
+    "no tile may name a field the Runtime does not produce"
+  );
 });

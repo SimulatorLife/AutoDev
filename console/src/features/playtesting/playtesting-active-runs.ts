@@ -6,6 +6,7 @@
  */
 import type {
   ControlApiPlaytestingRunRecord,
+  PlaytestCompletionCounts,
   PlaytestJsonValue
 } from "@simulatorlife/autodev-core";
 
@@ -88,9 +89,7 @@ export function isTerminal(record: ControlApiPlaytestingRunRecord): boolean {
 }
 
 /** Polling continues only while some batch is genuinely nonterminal. */
-export function isWatching(
-  runs: readonly PlaytestingActiveRun[]
-): boolean {
+export function isWatching(runs: readonly PlaytestingActiveRun[]): boolean {
   return runs.some((run) => !isTerminal(run.record));
 }
 
@@ -119,12 +118,20 @@ export function nextPollDelayMs(consecutiveFailures: number): number {
 /**
  * Batch counts, read verbatim from the owner's result. The Console never
  * recomputes assignment outcomes from a subset it happened to receive.
+ *
+ * The keys are the owner's own `PlaytestCompletionCounts`. Naming them here as
+ * that type's keys means a renamed or removed field is a compile error rather
+ * than a tile that silently renders "not observed" forever — which is exactly
+ * what happened when the panel read `succeeded`/`failed`/`quota-blocked`/
+ * `episodes`, none of which the Runtime ever writes.
  */
 export function assignmentCounts(
   record: ControlApiPlaytestingRunRecord
-): Readonly<Record<string, PlaytestJsonValue>> | null {
+): Readonly<Record<keyof PlaytestCompletionCounts, PlaytestJsonValue>> | null {
   if (!isRecord(record.result)) return null;
   const { counts } = record.result;
   if (!isRecord(counts)) return null;
-  return counts as Readonly<Record<string, PlaytestJsonValue>>;
+  return counts as Readonly<
+    Record<keyof PlaytestCompletionCounts, PlaytestJsonValue>
+  >;
 }
