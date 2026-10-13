@@ -127,7 +127,10 @@ test("the focused live batch is bounded, shareable address state", () => {
 
   // An unbounded or malformed value is rejected rather than trusted.
   for (const value of ["a".repeat(129), "batch 42", "batch/42", "%00"]) {
-    const parsed = parsePlaytestingScope({ workspaceId: WORKSPACE, liveBatch: value });
+    const parsed = parsePlaytestingScope({
+      workspaceId: WORKSPACE,
+      liveBatch: value
+    });
     assert.equal(parsed.liveBatchId, null, value);
     assert.equal(parsed.invalidQuery, true, value);
   }
@@ -187,4 +190,42 @@ test("the analysis selection is explicit, bounded and shareable", () => {
     true
   );
   assert.deepEqual(parsePlaytestingScope({}).selectedEpisodeIds, []);
+});
+
+test("view changes and replay selection stay fast on a saturated filter set", () => {
+  // The Console's cross-cutting acceptance names performance on view changes and
+  // replay selection. These are the pure address-state helpers behind both, so
+  // the budget is asserted here where it runs: a browser timing assertion would
+  // be the same measurement, unable to run in every environment.
+  const scope = parsePlaytestingScope({
+    view: "findings",
+    workspaceId: "owner/game",
+    severity: "major",
+    status: "open",
+    cohort: "novice",
+    policy: "random",
+    cursor: "page-3"
+  });
+  const iterations = 2_000;
+  const startedAt = performance.now();
+  for (let index = 0; index < iterations; index += 1) {
+    const href = playtestingEpisodeHref(scope, "episode:17", index % 200);
+    // Round-tripping through the parser is what a Back navigation costs.
+    const parsed = parsePlaytestingScope(
+      Object.fromEntries(new URL(href, "http://console.test").searchParams)
+    );
+    playtestingInspectorBackHref(parsed);
+    playtestingViewHref(scope, "sessions");
+    playtestingFilterHref(scope, { severity: "minor" });
+  }
+  const elapsed = performance.now() - startedAt;
+  // Generous enough not to flake on a loaded machine, tight enough to catch a
+  // regression that makes navigation quadratic rather than linear.
+  // Calibrated, not guessed: the healthy path measures ~35ms and an
+  // eight-fold regression measures ~270ms, so 150ms separates them while still
+  // leaving room for a loaded machine.
+  assert.ok(
+    elapsed < 150,
+    `${iterations} navigation round-trips took ${elapsed.toFixed(0)}ms`
+  );
 });
