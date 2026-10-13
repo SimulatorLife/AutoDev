@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import test from "node:test";
+import { mock, test } from "node:test";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   assignmentCounts,
+  createPollLoop,
+  INITIAL_POLL_INTERVAL_MS,
   freshnessForFailure,
   freshnessForSuccess,
   isTerminal,
@@ -420,4 +422,137 @@ test("every count tile names a field the synthetic fixture actually emits", () =
     [],
     "every tile must read a field the fixture emits"
   );
+});
+
+/**
+ * The scheduling rule behind the live view.
+ *
+ * These drive `createPollLoop` directly because the hook's effect cannot run
+ * under `renderToStaticMarkup`, and because the defect they guard is precisely
+ * one that only shows up across repeated polls: arming the timer once per
+ * effect run instead of once per completed poll.
+ */
+
+/** Let the loop's pending promise chain settle without advancing fake time. */
+async function settle(): Promise<void> {
+  for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+}
+
+test("the poll loop keeps re-arming while its subject stays nonterminal", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    let polls = 0;
+    const loop = createPollLoop({
+      poll: async () => {
+        polls += 1;
+      },
+      shouldContinue: () => true,
+      delayFor: () => INITIAL_POLL_INTERVAL_MS
+    });
+    loop.start();
+    await settle();
+    assert.equal(polls, 1, "the first read is immediate, not after a delay");
+
+    // The defect: a loop that arms once per effect run stops here, leaving the
+    // view showing a live badge over numbers that can no longer move.
+    t.mock.timers.tick(INITIAL_POLL_INTERVAL_MS);
+    await settle();
+    assert.equal(polls, 2, "a completed poll re-arms the next one");
+
+    t.mock.timers.tick(INITIAL_POLL_INTERVAL_MS);
+    await settle();
+    assert.equal(polls, 3, "and keeps re-arming for as long as it is watching");
+
+    t.mock.timers.tick(INITIAL_POLL_INTERVAL_MS * 10);
+    await settle();
+    assert.equal(polls, 4, "one poll per arm, not a burst per tick");
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test("the poll loop stops as soon as the subject reaches a terminal state", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    let polls = 0;
+    let nonterminal = true;
+    const loop = createPollLoop({
+      poll: async () => {
+        polls += 1;
+        // The batch completes during this poll; `watching` flips afterwards.
+        nonterminal = false;
+      },
+      shouldContinue: () => nonterminal,
+      delayFor: () => INITIAL_POLL_INTERVAL_MS
+    });
+    loop.start();
+    await settle();
+    assert.equal(polls, 1);
+
+    // `shouldContinue` is read after the poll, not captured before it, so a
+    // batch that finished during this read is not polled again.
+    t.mock.timers.tick(INITIAL_POLL_INTERVAL_MS * 5);
+    await settle();
+    assert.equal(polls, 1, "a terminal subject is not polled again");
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test("stopping the poll loop cancels the pending read", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    let polls = 0;
+    const loop = createPollLoop({
+      poll: async () => {
+        polls += 1;
+      },
+      shouldContinue: () => true,
+      delayFor: () => INITIAL_POLL_INTERVAL_MS
+    });
+    loop.start();
+    await settle();
+    assert.equal(polls, 1);
+
+    loop.stop();
+    t.mock.timers.tick(INITIAL_POLL_INTERVAL_MS * 20);
+    await settle();
+    assert.equal(polls, 1, "an unmounted view stops issuing reads");
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test("the loop applies the caller's backoff for each arm", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const requestedDelays: number[] = [];
+    const loop = createPollLoop({
+      poll: async () => {},
+      shouldContinue: () => true,
+      delayFor: () => {
+        const delay = nextPollDelayMs(requestedDelays.length);
+        requestedDelays.push(delay);
+        return delay;
+      }
+    });
+    loop.start();
+    await settle();
+    t.mock.timers.tick(MAX_POLL_INTERVAL_MS);
+    await settle();
+    t.mock.timers.tick(MAX_POLL_INTERVAL_MS);
+    await settle();
+    assert.deepEqual(
+      requestedDelays,
+      [
+        INITIAL_POLL_INTERVAL_MS,
+        INITIAL_POLL_INTERVAL_MS * 2,
+        INITIAL_POLL_INTERVAL_MS * 4
+      ],
+      "each arm asks for its own delay, so backoff advances per read rather " +
+        "than being computed once and reused"
+    );
+  } finally {
+    t.mock.timers.reset();
+  }
 });

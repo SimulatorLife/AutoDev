@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { responseMessage } from "./playtesting-run-messages.ts";
 import {
+  createPollLoop,
   freshnessForFailure,
   freshnessForSuccess,
   isWatching,
@@ -51,9 +52,14 @@ export function usePlaytestingActiveRuns({
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const [nonce, setNonce] = useState(0);
   const failures = useRef(0);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const watching = isWatching(runs);
+  // The poll loop outlives any single render, so it asks these through refs
+  // rather than closing over one render's values.
+  const watchingRef = useRef(watching);
+  watchingRef.current = watching;
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
   const refresh = useCallback(() => {
     setNonce((value) => value + 1);
   }, []);
@@ -105,18 +111,23 @@ export function usePlaytestingActiveRuns({
       }
     }
 
-    void poll();
-    if (paused || !watching) return;
-    const delay = nextPollDelayMs(failures.current);
-    timer.current = setTimeout(() => {
-      void poll();
-    }, delay);
+    const loop = createPollLoop({
+      poll,
+      // Read live rather than captured: the loop asks after each poll, so a
+      // terminal batch or a paused view ends the chain on the next turn.
+      shouldContinue: () => !pausedRef.current && watchingRef.current,
+      delayFor: () => nextPollDelayMs(failures.current)
+    });
+    loop.start();
     return () => {
       cancelled = true;
-      if (timer.current) clearTimeout(timer.current);
+      loop.stop();
+      controller.abort();
     };
     // `watching` and `paused` drive the cadence; nonce forces an immediate
-    // re-read after a manual refresh.
+    // re-read after a manual refresh. Re-running the effect on a `watching`
+    // change is what stops the loop, so the loop reads those two through refs
+    // instead of capturing this render's values.
   }, [nonce, paused, watching, workspaceId]);
 
   return {

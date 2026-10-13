@@ -16,8 +16,6 @@
  * Both gates must say review. Either one alone authorises nothing: a game's
  * config cannot grant itself permission its operator withheld.
  */
-import { createHash } from "node:crypto";
-
 import type { PlaytestFinding } from "./types.ts";
 
 /** What a draft asks the operator to do with it. Never "publish". */
@@ -181,13 +179,9 @@ export function buildPlaytestIssueDrafts(
       } => entry.disposition !== "no-issue-proposed"
     )
     .map(({ finding, disposition }) => ({
-      // Content-addressed over the identity the draft is about, so a re-run
-      // proposes the same draft rather than a new one each time.
-      draftId: `draft-${createHash("sha256")
-        .update(finding.fingerprint, "utf8")
-        .update(`\0v${finding.version}`, "utf8")
-        .digest("hex")
-        .slice(0, 32)}`,
+      // Derived from the identity the draft is about, so a re-run proposes the
+      // same draft rather than a new one each time.
+      draftId: draftIdFor(finding),
       findingId: finding.findingId,
       findingVersion: finding.version,
       fingerprint: finding.fingerprint,
@@ -200,6 +194,20 @@ export function buildPlaytestIssueDrafts(
       evidenceRefs: [...finding.evidenceRefs],
       requiresOperatorAction: true as const
     }));
+}
+
+/**
+ * Stable identity for a draft about one version of one finding.
+ *
+ * Built from the fingerprint, which the Runtime already computed as a SHA-256
+ * of the finding identity, rather than from a digest computed here. Core does
+ * not hash: it emits canonical hash inputs and the Runtime digests them, and
+ * this module is reachable from the Console's browser bundle, where
+ * `node:crypto` cannot be bundled at all. Re-hashing an existing hash would
+ * also change nothing about the addressing.
+ */
+function draftIdFor(finding: PlaytestFinding): string {
+  return `draft-${finding.fingerprint.slice(0, 32)}-v${finding.version}`;
 }
 
 /** One line explaining why a caller produced no drafts. */

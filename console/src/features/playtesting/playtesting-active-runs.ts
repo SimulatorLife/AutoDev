@@ -105,6 +105,53 @@ export function freshnessForFailure(): PlaytestingActiveRunsFreshness {
   return "unavailable";
 }
 
+export interface PollLoopHandle {
+  /** Poll once immediately, then re-arm after each completed poll. */
+  readonly start: () => void;
+  /** Cancel the pending arm. No further poll is issued. */
+  readonly stop: () => void;
+}
+
+/**
+ * Drive a self-scheduling poll loop.
+ *
+ * Each completed poll re-arms the next one. Arming once per effect run instead
+ * is the defect this exists to make impossible: the effect only re-runs when
+ * `watching` flips, so a view whose subject stays nonterminal polled twice and
+ * then froze while still showing a live badge. The operator had to click
+ * Refresh for the numbers to move — exactly what the live view promises never
+ * to require.
+ *
+ * `shouldContinue` is read *after* every poll rather than captured up front, so
+ * reaching a terminal state or pausing ends the loop promptly.
+ */
+export function createPollLoop(options: {
+  readonly poll: () => Promise<void>;
+  readonly shouldContinue: () => boolean;
+  /** Backoff for the arm following the poll that just completed. */
+  readonly delayFor: () => number;
+}): PollLoopHandle {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const step = async (): Promise<void> => {
+    if (stopped) return;
+    await options.poll();
+    if (stopped || !options.shouldContinue()) return;
+    timer = setTimeout(() => {
+      void step();
+    }, options.delayFor());
+  };
+  return {
+    start: () => {
+      void step();
+    },
+    stop: () => {
+      stopped = true;
+      if (timer !== null) clearTimeout(timer);
+    }
+  };
+}
+
 /** Exponential backoff, capped, so a failing Runtime is not hammered. */
 export function nextPollDelayMs(consecutiveFailures: number): number {
   const exponent = Math.max(0, Math.floor(consecutiveFailures));
