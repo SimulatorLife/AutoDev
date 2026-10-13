@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   evaluateDiagnosticLadder,
+  type EvaluateDiagnosticLadderInput,
   type PlaytestPreActionForecast
 } from "../src/playtesting/comprehension.ts";
 
@@ -16,7 +17,7 @@ test("diagnostic ladder requires stage 1 UI-to-observation equivalence before in
     mechanicKey: "heat-management",
     thresholds: FIXTURE_THRESHOLDS,
     stage1UiEquivalenceVerified: false,
-    stage2ObserverCompetenceVerified: true,
+    stage2VerifiedObserverIds: ["observer-1"],
     stage3Forecasts: []
   });
 
@@ -34,7 +35,7 @@ test("diagnostic ladder requires stage 2 observer competence before accepting mo
     mechanicKey: "heat-management",
     thresholds: FIXTURE_THRESHOLDS,
     stage1UiEquivalenceVerified: true,
-    stage2ObserverCompetenceVerified: false,
+    stage2VerifiedObserverIds: [],
     stage3Forecasts: [
       {
         probeId: "probe-1",
@@ -91,7 +92,7 @@ test("model forecast errors alone never yield human-confirmed-confusing", () => 
     mechanicKey: "heat-management",
     thresholds: FIXTURE_THRESHOLDS,
     stage1UiEquivalenceVerified: true,
-    stage2ObserverCompetenceVerified: true,
+    stage2VerifiedObserverIds: ["observer-1"],
     stage3Forecasts: forecasts
   });
 
@@ -108,7 +109,7 @@ test("unconsented human evidence is rejected strictly", () => {
         mechanicKey: "heat-management",
         thresholds: FIXTURE_THRESHOLDS,
         stage1UiEquivalenceVerified: true,
-        stage2ObserverCompetenceVerified: true,
+        stage2VerifiedObserverIds: ["observer-1"],
         stage3Forecasts: [
           {
             probeId: "probe-1",
@@ -143,7 +144,7 @@ test("small-cell human sample (<5) suppresses human-confirmed claim", () => {
     mechanicKey: "heat-management",
     thresholds: FIXTURE_THRESHOLDS,
     stage1UiEquivalenceVerified: true,
-    stage2ObserverCompetenceVerified: true,
+    stage2VerifiedObserverIds: ["observer-1"],
     stage3Forecasts: [
       {
         probeId: "probe-1",
@@ -187,7 +188,7 @@ test("human confusion requires uncertainty beyond the game-owned threshold", () 
     mechanicKey: "heat-management",
     thresholds: FIXTURE_THRESHOLDS,
     stage1UiEquivalenceVerified: true,
-    stage2ObserverCompetenceVerified: true,
+    stage2VerifiedObserverIds: ["observer-1"],
     stage3Forecasts: [
       {
         probeId: "probe-1",
@@ -234,7 +235,7 @@ test("consented human cohort with adequate sample validates human-confirmed conf
     mechanicKey: "heat-management",
     thresholds: FIXTURE_THRESHOLDS,
     stage1UiEquivalenceVerified: true,
-    stage2ObserverCompetenceVerified: true,
+    stage2VerifiedObserverIds: ["observer-1"],
     stage3Forecasts: [
       {
         probeId: "probe-1",
@@ -308,7 +309,7 @@ test("controlled intervention cannot advance without qualified human evidence an
     mechanicKey: "heat-management",
     thresholds: FIXTURE_THRESHOLDS,
     stage1UiEquivalenceVerified: true,
-    stage2ObserverCompetenceVerified: true,
+    stage2VerifiedObserverIds: ["observer-1"],
     stage3Forecasts: [
       {
         probeId: "probe-1",
@@ -341,4 +342,88 @@ test("controlled intervention cannot advance without qualified human evidence an
     result.reasons.at(-1)!,
     /requires qualified consented human evidence/u
   );
+});
+
+/**
+ * Observer competence is a rung of the ladder, not a precondition the caller
+ * asserts.
+ *
+ * `stage2ObserverCompetenceVerified` was a bare boolean: a caller could pass
+ * `true` on the strength of nothing and the ladder would go on to
+ * human-confusion conclusions, which is exactly the distinction the contract
+ * says stage 2 exists to protect — model error cannot be separated from
+ * observer deficiency without an independently initialized, competence-checked
+ * observer. Naming the observers closes that, and gives `PlayerPolicyValidity`
+ * its first consumer.
+ */
+/** A ladder input that reaches stage 3, so only the observer gate varies. */
+function ladderBase(): EvaluateDiagnosticLadderInput {
+  return {
+    mechanicKey: "heat-management",
+    thresholds: FIXTURE_THRESHOLDS,
+    stage1UiEquivalenceVerified: true,
+    stage2VerifiedObserverIds: ["observer-1"],
+    stage3Forecasts: [
+      {
+        probeId: "probe-1",
+        mechanicKey: "heat-management",
+        preActionUiRef: "ui-frame-1",
+        actionId: "turbo-boost",
+        consequenceVariable: "engine-heat",
+        predictedValue: 50,
+        confidence: 0.8,
+        actualConsequence: 100,
+        isCorrect: false,
+        cohort: "novice-bot",
+        isHuman: false
+      }
+    ]
+  };
+}
+
+test("an unnamed observer is not a verified observer", () => {
+  const base = ladderBase();
+  // The old shape: `true` with nothing behind it.
+  const unbacked = evaluateDiagnosticLadder({
+    ...base,
+    stage2VerifiedObserverIds: []
+  });
+  assert.equal(unbacked.confusionCategory, "unverified");
+  assert.equal(unbacked.highestStageReached, "observer-competence");
+  assert.equal(unbacked.humanErrorRate, null);
+  assert.match(unbacked.reasons.join(" "), /competence unverified/u);
+
+  // A named observer proceeds, which is the difference the list makes.
+  const named = evaluateDiagnosticLadder({
+    ...base,
+    stage2VerifiedObserverIds: ["observer-1"]
+  });
+  assert.notEqual(named.highestStageReached, "observer-competence");
+});
+
+test("an unusable observer reference is refused rather than counted", () => {
+  const base = ladderBase();
+  for (const ids of [["   "], [""], ["observer-1", "  "]]) {
+    const result = evaluateDiagnosticLadder({
+      ...base,
+      stage2VerifiedObserverIds: ids
+    });
+    assert.equal(result.confusionCategory, "unverified");
+    assert.match(result.reasons.join(" "), /not a usable identifier/u);
+  }
+});
+
+test("a malformed observer list is refused, not crashed on", () => {
+  // Untyped callers can still hand this something that is not a list. The
+  // ladder has to name that as unverified rather than throwing a TypeError
+  // out of a diagnostic path, which would look like a crash instead of a
+  // refusal.
+  for (const bad of ["observer-1", 42, null, { length: 1 }]) {
+    const result = evaluateDiagnosticLadder({
+      ...ladderBase(),
+      stage2VerifiedObserverIds: bad as unknown as readonly string[]
+    });
+    assert.equal(result.confusionCategory, "unverified");
+    assert.equal(result.highestStageReached, "observer-competence");
+  }
 });

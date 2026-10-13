@@ -75,7 +75,16 @@ export interface PlaytestControlledIntervention {
 export interface EvaluateDiagnosticLadderInput {
   readonly mechanicKey: string;
   readonly stage1UiEquivalenceVerified: boolean;
-  readonly stage2ObserverCompetenceVerified: boolean;
+  /**
+   * Independently initialized observers whose competence was checked.
+   *
+   * This was a bare boolean, which let a caller assert observer competence on
+   * the strength of nothing and proceed to human-confusion conclusions. Naming
+   * the observers makes the rung checkable and gives `PlayerPolicyValidity` its
+   * first consumer; an empty list means unverified, never "verified, none
+   * needed". Each id must be backed by a competence report.
+   */
+  readonly stage2VerifiedObserverIds: readonly string[];
   readonly thresholds: {
     /** Game-owned threshold below which model-only errors trigger ambiguity review. */
     readonly modelAmbiguityAccuracy: number;
@@ -379,11 +388,20 @@ export function evaluateDiagnosticLadder(
       "UI-to-observation equivalence and authoritative rules are not verified; cannot infer understanding or confusion."
     );
   }
-  if (!input.stage2ObserverCompetenceVerified) {
+  if (
+    !Array.isArray(input.stage2VerifiedObserverIds) ||
+    input.stage2VerifiedObserverIds.length === 0 ||
+    input.stage2VerifiedObserverIds.some(
+      (id) => typeof id !== "string" || id.trim().length === 0
+    )
+  ) {
     return unverifiedResult(
       input.mechanicKey,
       "observer-competence",
-      "Observer competence unverified; model error cannot be distinguished from observer deficiency."
+      Array.isArray(input.stage2VerifiedObserverIds) &&
+        input.stage2VerifiedObserverIds.length > 0
+        ? "An observer competence reference was not a usable identifier."
+        : "Observer competence unverified; model error cannot be distinguished from observer deficiency."
     );
   }
   if (
