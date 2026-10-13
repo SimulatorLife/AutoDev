@@ -9,6 +9,7 @@ import { EventEmitter } from "node:events";
 import {
   existsSync,
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -136,10 +137,11 @@ function repository(command: readonly string[] = STANDARD_COMMAND): {
   const root = mkdtempSync(
     path.join(realpathSync(tmpdir()), "autodev-playtest-repo-")
   );
+  mkdirSync(path.join(root, ".autodev"));
   writeFileSync(path.join(root, "adapter.py"), "print('adapter')\n");
-  writeFileSync(path.join(root, "playtest.config.json"), configFor(command));
+  writeFileSync(path.join(root, ".autodev", "playtest.config.json"), configFor(command));
   writeFileSync(
-    path.join(root, "playtest.observation.json"),
+    path.join(root, ".autodev", "playtest.observation.json"),
     JSON.stringify({
       schemaVersion: 1,
       schemaHash: "d".repeat(64),
@@ -159,16 +161,16 @@ function repository(command: readonly string[] = STANDARD_COMMAND): {
       conformanceFixtureHash: null
     }) + "\n"
   );
-  writeFileSync(path.join(root, "playtest.rubric.json"), fixtureRubric());
+  writeFileSync(path.join(root, ".autodev", "playtest.rubric.json"), fixtureRubric());
   execFileSync("git", ["init", "--quiet", root]);
   execFileSync("git", [
     "-C",
     root,
     "add",
     "adapter.py",
-    "playtest.config.json",
-    "playtest.observation.json",
-    "playtest.rubric.json"
+    ".autodev/playtest.config.json",
+    ".autodev/playtest.observation.json",
+    ".autodev/playtest.rubric.json"
   ]);
   execFileSync("git", [
     "-C",

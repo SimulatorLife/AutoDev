@@ -26,8 +26,17 @@ import {
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
 
-const CONFIG_FILENAME = "playtest.config.json";
-const CONFIG_LABEL = "playtest.config.json";
+/**
+ * The one integration file a target game checks in, resolved against the
+ * approved checkout root.
+ *
+ * `.autodev/playtest.config.json` is the canonical location so a repository
+ * advertises AutoDev Playtesting support through one recognizable directory.
+ * Every other manifest it references resolves relative to this file's own
+ * directory, so that directory is self-contained and relocatable.
+ */
+const CONFIG_PATH = ".autodev/playtest.config.json";
+const CONFIG_LABEL = CONFIG_PATH;
 const CONFIG_UNAVAILABLE = "config-unavailable" as const;
 const MAX_TARGET_FILE_BYTES = 1024 * 1024;
 
@@ -167,7 +176,13 @@ function readOpenedWorkspaceFile(
   }
 }
 
-/** Read a small regular target file while refusing symlink traversal. */
+/**
+ * Read a small regular target file while refusing symlink traversal.
+ *
+ * `relativePath` is always interpreted against the approved checkout root, so
+ * the symlink and containment checks keep walking from that root even when the
+ * caller resolved the path against the config's own directory.
+ */
 function readApprovedWorkspaceFile(
   root: string,
   relativePath: string,
@@ -182,6 +197,35 @@ function readApprovedWorkspaceFile(
   assertNoSymlinkPath(root, file, label, category);
   const descriptor = openApprovedWorkspaceFile(root, file, label, category);
   return readOpenedWorkspaceFile(descriptor, label, isConfig);
+}
+
+/**
+ * Rewrites a config-declared manifest path into a checkout-root-relative one.
+ *
+ * Manifests are declared relative to the config file itself, which is what
+ * makes `.autodev/` a self-contained, relocatable integration directory.
+ *
+ * Core's `assertRelativeConfigPath` already rejects `..`, absolute and
+ * control-character paths, so a well-formed config cannot reach outside its
+ * directory. This containment check is the Runtime's own independent boundary:
+ * a containment rule enforced only by the validator that produced the value is
+ * not a boundary. Failing closed here turns a misconfiguration into an
+ * explicit refusal instead of a read from somewhere unexpected.
+ */
+function readConfigRelativeManifest(
+  root: string,
+  configDirectory: string,
+  declaredPath: string,
+  label: string
+): Buffer {
+  const resolved = path.resolve(configDirectory, declaredPath);
+  if (!isWithin(configDirectory, resolved)) {
+    fail(
+      "target-file-unavailable",
+      `${label} must stay inside the ${CONFIG_LABEL} directory.`
+    );
+  }
+  return readApprovedWorkspaceFile(root, path.relative(root, resolved), label);
 }
 
 function assertMatchesApproval(
@@ -316,10 +360,14 @@ function resolveApprovedCheckoutRoot(
 function loadApprovedConfiguration(
   root: string,
   approval: WorkspacePlaytestApproval
-): { configuration: PlaytestGameConfiguration; configHash: string } {
+): {
+  configuration: PlaytestGameConfiguration;
+  configHash: string;
+  configDirectory: string;
+} {
   const configBytes = readApprovedWorkspaceFile(
     root,
-    CONFIG_FILENAME,
+    CONFIG_PATH,
     CONFIG_LABEL,
     true
   );
@@ -345,16 +393,22 @@ function loadApprovedConfiguration(
     );
   }
   assertMatchesApproval(configuration, approval);
-  return { configuration, configHash };
+  return {
+    configuration,
+    configHash,
+    configDirectory: path.dirname(path.resolve(root, CONFIG_PATH))
+  };
 }
 
 function loadApprovedObservationContract(
   root: string,
+  configDirectory: string,
   configuration: PlaytestGameConfiguration
 ): PlaytestObservationContract {
   try {
-    const observationBytes = readApprovedWorkspaceFile(
+    const observationBytes = readConfigRelativeManifest(
       root,
+      configDirectory,
       configuration.analysis.observationContract,
       configuration.analysis.observationContract
     );
@@ -379,11 +433,13 @@ function loadApprovedObservationContract(
 
 function loadApprovedRubric(
   root: string,
+  configDirectory: string,
   configuration: PlaytestGameConfiguration,
   approval: WorkspacePlaytestApproval
 ): { rubric: PlaytestMetricRegistry; rubricHash: string } {
-  const rubricBytes = readApprovedWorkspaceFile(
+  const rubricBytes = readConfigRelativeManifest(
     root,
+    configDirectory,
     configuration.analysis.rubric,
     configuration.analysis.rubric
   );
@@ -408,6 +464,7 @@ function loadApprovedRubric(
 
 function loadApprovedBenchmark(
   root: string,
+  configDirectory: string,
   configuration: PlaytestGameConfiguration,
   approval: WorkspacePlaytestApproval,
   observationContract: PlaytestObservationContract,
@@ -418,8 +475,9 @@ function loadApprovedBenchmark(
     return { benchmark: null, benchmarkHash: null };
   }
   try {
-    const benchmarkBytes = readApprovedWorkspaceFile(
+    const benchmarkBytes = readConfigRelativeManifest(
       root,
+      configDirectory,
       configuration.analysis.benchmark,
       configuration.analysis.benchmark
     );
@@ -467,21 +525,22 @@ export function loadApprovedPlaytestDefinition(
   }
 
   const root = resolveApprovedCheckoutRoot(approval);
-  const { configuration, configHash } = loadApprovedConfiguration(
-    root,
-    approval
-  );
+  const { configuration, configHash, configDirectory } =
+    loadApprovedConfiguration(root, approval);
   const observationContract = loadApprovedObservationContract(
     root,
+    configDirectory,
     configuration
   );
   const { rubric, rubricHash } = loadApprovedRubric(
     root,
+    configDirectory,
     configuration,
     approval
   );
   const { benchmark, benchmarkHash } = loadApprovedBenchmark(
     root,
+    configDirectory,
     configuration,
     approval,
     observationContract,

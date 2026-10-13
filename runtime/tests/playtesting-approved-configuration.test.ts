@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   copyFileSync,
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -172,6 +173,15 @@ const SAMPLE_FIXTURE_ROOT = fileURLToPath(
   new URL("fixtures/playtesting/", import.meta.url)
 );
 
+/** A target game checks its integration into `.autodev/` inside the checkout. */
+function autodev(root: string): string {
+  return path.join(root, ".autodev");
+}
+
+function integration_file(root: string, name: string): string {
+  return path.join(root, ".autodev", name);
+}
+
 function setupSampleBenchmark(): {
   readonly root: string;
   readonly cleanup: () => void;
@@ -180,6 +190,7 @@ function setupSampleBenchmark(): {
   const root = mkdtempSync(
     path.join(realpathSync(tmpdir()), "approved-playtest-benchmark-")
   );
+  mkdirSync(autodev(root));
   for (const filename of [
     "playtest.config.json",
     "playtest.observation.json",
@@ -188,12 +199,12 @@ function setupSampleBenchmark(): {
   ]) {
     copyFileSync(
       path.join(SAMPLE_FIXTURE_ROOT, filename),
-      path.join(root, filename)
+      integration_file(root, filename)
     );
   }
   return {
     root,
-    configBytes: readFileSync(path.join(root, "playtest.config.json")),
+    configBytes: readFileSync(integration_file(root, "playtest.config.json")),
     cleanup: () => rmSync(root, { recursive: true, force: true })
   };
 }
@@ -202,12 +213,16 @@ function setup(): { readonly root: string; readonly cleanup: () => void } {
   const root = mkdtempSync(
     path.join(realpathSync(tmpdir()), "approved-playtest-config-")
   );
+  mkdirSync(autodev(root));
   writeFileSync(
-    path.join(root, "playtest.config.json"),
+    integration_file(root, "playtest.config.json"),
     JSON.stringify(CONFIG) + "\n"
   );
-  writeFileSync(path.join(root, "playtest.observation.json"), OBSERVATION);
-  writeFileSync(path.join(root, "playtest.rubric.json"), RUBRIC);
+  writeFileSync(
+    integration_file(root, "playtest.observation.json"),
+    OBSERVATION
+  );
+  writeFileSync(integration_file(root, "playtest.rubric.json"), RUBRIC);
   return {
     root,
     cleanup: () => rmSync(root, { recursive: true, force: true })
@@ -229,7 +244,7 @@ function rewriteBenchmark(
   root: string,
   changes: Record<string, unknown>
 ): void {
-  const benchmarkPath = path.join(root, "playtest.benchmark.json");
+  const benchmarkPath = integration_file(root, "playtest.benchmark.json");
   const previous = JSON.parse(readFileSync(benchmarkPath, "utf8")) as Record<
     string,
     unknown
@@ -292,7 +307,10 @@ test("approved target bundle loads its rubric registry and content-hashed benchm
 test("approved target bundle refuses a stale benchmark content hash", () => {
   const fixture = setupSampleBenchmark();
   try {
-    const benchmarkPath = path.join(fixture.root, "playtest.benchmark.json");
+    const benchmarkPath = integration_file(
+      fixture.root,
+      "playtest.benchmark.json"
+    );
     const benchmark = JSON.parse(readFileSync(benchmarkPath, "utf8")) as {
       contentHash: string;
       [key: string]: unknown;
@@ -350,7 +368,10 @@ test("approved target bundle rejects a well-hashed benchmark for another workspa
 test("approved config rejects changed bytes before parsing or execution", () => {
   const fixture = setup();
   try {
-    writeFileSync(path.join(fixture.root, "playtest.config.json"), "{}\n");
+    writeFileSync(
+      integration_file(fixture.root, "playtest.config.json"),
+      "{}\n"
+    );
     expectCategory(
       () => loadApprovedPlaytestDefinition(approval(fixture.root)),
       "config-hash-mismatch"
@@ -369,8 +390,11 @@ test("approved config refuses symlink files and symlink checkout roots", () => {
   writeFileSync(outsideFile, JSON.stringify(CONFIG) + "\n");
   const rootLink = `${fixture.root}-link`;
   try {
-    rmSync(path.join(fixture.root, "playtest.config.json"));
-    symlinkSync(outsideFile, path.join(fixture.root, "playtest.config.json"));
+    rmSync(integration_file(fixture.root, "playtest.config.json"));
+    symlinkSync(
+      outsideFile,
+      integration_file(fixture.root, "playtest.config.json")
+    );
     expectCategory(
       () =>
         loadApprovedPlaytestDefinition(
@@ -443,7 +467,7 @@ test("approved config rejects command, scenario, policy and budget drift", () =>
           analysis: { ...CONFIG.analysis, maxReviewedSessions: 6 }
         }) + "\n";
       writeFileSync(
-        path.join(fixture.root, "playtest.config.json"),
+        integration_file(fixture.root, "playtest.config.json"),
         overBudgetConfig
       );
       return loadApprovedPlaytestDefinition(
@@ -463,7 +487,7 @@ test("approved config fails closed on invalid UTF-8, malformed schema and revoke
   const fixture = setup();
   try {
     writeFileSync(
-      path.join(fixture.root, "playtest.config.json"),
+      integration_file(fixture.root, "playtest.config.json"),
       Buffer.from([0xff, 0xfe])
     );
     const changed = approval(fixture.root, {
@@ -474,7 +498,7 @@ test("approved config fails closed on invalid UTF-8, malformed schema and revoke
       "config-invalid"
     );
     writeFileSync(
-      path.join(fixture.root, "playtest.config.json"),
+      integration_file(fixture.root, "playtest.config.json"),
       JSON.stringify({ ...CONFIG, extra: true }) + "\n"
     );
     const invalid = approval(fixture.root, {
@@ -487,44 +511,50 @@ test("approved config fails closed on invalid UTF-8, malformed schema and revoke
       "config-invalid"
     );
     writeFileSync(
-      path.join(fixture.root, "playtest.config.json"),
+      integration_file(fixture.root, "playtest.config.json"),
       JSON.stringify(CONFIG) + "\n"
     );
-    writeFileSync(path.join(fixture.root, "playtest.observation.json"), "{}\n");
+    writeFileSync(
+      integration_file(fixture.root, "playtest.observation.json"),
+      "{}\n"
+    );
     expectCategory(
       () => loadApprovedPlaytestDefinition(approval(fixture.root)),
       "target-file-invalid"
     );
     writeFileSync(
-      path.join(fixture.root, "playtest.observation.json"),
+      integration_file(fixture.root, "playtest.observation.json"),
       OBSERVATION
     );
     const linkedObservation = `${fixture.root}-observation-link`;
     symlinkSync(
-      path.join(fixture.root, "playtest.observation.json"),
+      integration_file(fixture.root, "playtest.observation.json"),
       linkedObservation
     );
-    rmSync(path.join(fixture.root, "playtest.observation.json"));
+    rmSync(integration_file(fixture.root, "playtest.observation.json"));
     symlinkSync(
       linkedObservation,
-      path.join(fixture.root, "playtest.observation.json")
+      integration_file(fixture.root, "playtest.observation.json")
     );
     expectCategory(
       () => loadApprovedPlaytestDefinition(approval(fixture.root)),
       "target-file-unavailable"
     );
-    unlinkSync(path.join(fixture.root, "playtest.observation.json"));
+    unlinkSync(integration_file(fixture.root, "playtest.observation.json"));
     unlinkSync(linkedObservation);
     writeFileSync(
-      path.join(fixture.root, "playtest.observation.json"),
+      integration_file(fixture.root, "playtest.observation.json"),
       OBSERVATION
     );
-    rmSync(path.join(fixture.root, "playtest.rubric.json"));
+    rmSync(integration_file(fixture.root, "playtest.rubric.json"));
     expectCategory(
       () => loadApprovedPlaytestDefinition(approval(fixture.root)),
       "target-file-unavailable"
     );
-    writeFileSync(path.join(fixture.root, "playtest.rubric.json"), RUBRIC);
+    writeFileSync(
+      integration_file(fixture.root, "playtest.rubric.json"),
+      RUBRIC
+    );
     expectCategory(
       () =>
         loadApprovedPlaytestDefinition(
@@ -545,10 +575,12 @@ test("approved config bounds bytes before parsing", () => {
   const fixture = setup();
   try {
     writeFileSync(
-      path.join(fixture.root, "playtest.config.json"),
+      integration_file(fixture.root, "playtest.config.json"),
       Buffer.alloc(1024 * 1024 + 1)
     );
-    const info = lstatSync(path.join(fixture.root, "playtest.config.json"));
+    const info = lstatSync(
+      integration_file(fixture.root, "playtest.config.json")
+    );
     assert.equal(info.size, 1024 * 1024 + 1);
     expectCategory(
       () =>
