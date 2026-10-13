@@ -45,11 +45,21 @@ states what is implemented and, where applicable, what is still missing.
   runs, and an unmeasured arm reports `null` rather than `0`. Two runnable
   policies are now registered (`random`, `first-legal`).
 
-  **Still missing: a producer for the cost.** `PlaytestJudgeValidation` and its
-  `costPerReviewedEpisode` are declared and consumed by `cadence.ts` but
-  produced nowhere, so cadence's existing cost check can never fire. The
-  arithmetic is now available; wiring a producer is separate work and is not
-  claimed here. Measured across arms, matched coverage holds by construction —
+  **The cost check is no longer reachable-only-in-theory.** `evaluateJudgeCalibration`
+  was returning `passed` for a validation with *every* metric null, and
+  discarding the artifact's own recorded `insufficient`/`stale` status
+  (`8d5721ac`) — absence of evidence rendered as a positive claim, which is
+  what keeps novice/expert generalizations and human-proxy comparisons
+  authorized on the strength of nothing. Nothing measured is now
+  `insufficient`, an insufficient or stale result quarantines the same claims
+  a failure does, and a recorded insufficient/stale record cannot be upgraded
+  to passed. Partial measurement still draws a conclusion, and a measured
+  judge that misses tolerances is still `failed` rather than `insufficient`.
+
+  **Still missing: a producer.** `PlaytestJudgeValidation` itself is declared
+  and consumed but constructed nowhere, so no run yet feeds these fields.
+  `analysis-cost.ts` supplies the `costPerReviewedEpisode` arithmetic; wiring a
+  producer is separate work and is not claimed here. Measured across arms, matched coverage holds by construction —
   the evaluator scores critic, deterministic and combined over one frozen
   coverage set — so `coverageMatched` is kept as an explicit guard rather than
   dropped as redundant.
