@@ -19516,6 +19516,14 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Polls the workspace-scoped active-runs read on an interval with backoff so live batch progress reflects the typed run owner without moving that read server-side."
     ],
     [
+      join("src", "features", "playtesting", "PlaytestingSelection.ts"),
+      "Keeps the analysis selection in shareable URL state so a link, a refresh and Back reproduce the same sessions; the selection itself is only ever the operator's own choice."
+    ],
+    [
+      join("src", "features", "playtesting", "PlaytestingSelectionPanel.ts"),
+      "Toggles session checkboxes and requests analysis in place; eligibility, the critique cap and the receipts it renders all come from the Runtime owner's answer."
+    ],
+    [
       join("src", "features", "playtesting", "PlaytestingActiveRunsPanel.ts"),
       "Focuses a batch and requests cancellation from the live-runs shell; every status it renders was read from the typed run owner rather than tracked in the browser."
     ],

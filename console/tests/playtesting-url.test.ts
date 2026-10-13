@@ -138,3 +138,53 @@ test("the focused live batch is bounded, shareable address state", () => {
   );
   assert.equal(parsePlaytestingScope({}).liveBatchId, null);
 });
+
+test("the analysis selection is explicit, bounded and shareable", () => {
+  const scope = parsePlaytestingScope({
+    workspaceId: WORKSPACE,
+    view: "sessions",
+    sessions: "episode-1,episode-2,episode-3"
+  });
+  assert.deepEqual(scope.selectedEpisodeIds, [
+    "episode-1",
+    "episode-2",
+    "episode-3"
+  ]);
+  assert.equal(scope.invalidQuery, false);
+  // A shared link reproduces exactly the operator's selection.
+  assert.match(
+    playtestingListHref(scope),
+    /sessions=episode-1%2Cepisode-2%2Cepisode-3/u
+  );
+
+  // Duplicates name one session, so the selection is not silently doubled.
+  assert.deepEqual(
+    parsePlaytestingScope({ sessions: "episode-1,episode-1" })
+      .selectedEpisodeIds,
+    ["episode-1"]
+  );
+
+  // Over the bound Runtime enforces, a malformed id, an empty entry and a
+  // repeated key are refused rather than trimmed to something that looks valid.
+  const seventeen = Array.from(
+    { length: 17 },
+    (_, index) => `episode-${index}`
+  ).join(",");
+  for (const value of [
+    seventeen,
+    "episode-1,",
+    "episode 1",
+    "a".repeat(257),
+    "",
+    "episode-1/../other"
+  ]) {
+    const parsed = parsePlaytestingScope({ sessions: value });
+    assert.deepEqual(parsed.selectedEpisodeIds, [], value);
+    assert.equal(parsed.invalidQuery, true, value);
+  }
+  assert.equal(
+    parsePlaytestingScope({ sessions: ["a", "b"] }).invalidQuery,
+    true
+  );
+  assert.deepEqual(parsePlaytestingScope({}).selectedEpisodeIds, []);
+});

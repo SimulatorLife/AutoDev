@@ -38,6 +38,15 @@ import {
 
 /** First-milestone bound: one batch freezes at most 1,000 assignments. */
 export const PLAYTESTS_MAX_BATCH_ASSIGNMENTS = 1000;
+
+/**
+ * Bound on an explicit cross-session analysis selection.
+ *
+ * One authority for the number: Runtime's dispatch, the Control API route and
+ * the Console must agree, or a selection the Console offers is refused by the
+ * owner with a limit the operator never saw.
+ */
+export const PLAYTESTS_MAX_ANALYSIS_SESSIONS = 16;
 export const PLAYTESTS_MAX_BATCH_REVIEW_SESSIONS = 40;
 export const PLAYTESTS_MAX_ASSIGNMENT_MANIFEST_BYTES = 256 * 1024;
 export const PLAYTESTS_ASSIGNMENT_ID_PATTERN =

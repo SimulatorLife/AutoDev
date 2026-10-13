@@ -1,17 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  type ControlApiPlaytestingRunStartedResponse,
-  type PlaytestBatch,
-  type PlaytestEpisode
-} from "@simulatorlife/autodev-core";
+import type { PlaytestBatch, PlaytestEpisode } from "@simulatorlife/autodev-core";
 
 import {
   createPlaytestMcpServer,
-  type PlaytestMcpOptions
+  createPlaytestRunControl,
+  type PlaytestMcpOptions,
+  type PlaytestingRepositoryOps
 } from "../src/playtesting/mcp.ts";
-import type { PlaytestRunControl } from "../src/playtesting/mcp.ts";
 
 const WORKSPACE_ID = "owner/game";
 
@@ -129,20 +126,15 @@ function serverFor(
       episodes.find((entry) => entry.episodeId === episodeId) ?? null,
     getBatch: async (_workspaceId: string, batchId: string) =>
       batches.find((entry) => entry.batchId === batchId) ?? null
-  };
-  const runControl = {
-    startRun: async (): Promise<ControlApiPlaytestingRunStartedResponse> => {
-      throw new Error("not used");
-    },
-    listActiveRuns: async () => [],
-    waitForRun: async () => {
-      throw new Error("not used");
-    },
-    cancelRun: async () => {
-      throw new Error("not used");
-    },
-    shutdown: async () => {}
-  } as unknown as PlaytestRunControl;
+  } as unknown as PlaytestingRepositoryOps;
+  // The real owner, not a stub: the MCP tool and the Control API both route
+  // through it, so a stub would let the dispatch rules drift untested.
+  const runControl = createPlaytestRunControl({
+    playtestRepository,
+    artifactStoreForWorkspace: () => {
+      throw new Error("no artifacts");
+    }
+  });
   return createPlaytestMcpServer({
     sessionProvider: {
       current: () => ({
@@ -368,20 +360,13 @@ test("the analyst role is required for cross-session dispatch", async () => {
   const playtestRepository = {
     getEpisode: async () => null,
     getBatch: async () => null
-  };
-  const runControl = {
-    startRun: async () => {
-      throw new Error("not used");
-    },
-    listActiveRuns: async () => [],
-    waitForRun: async () => {
-      throw new Error("not used");
-    },
-    cancelRun: async () => {
-      throw new Error("not used");
-    },
-    shutdown: async () => {}
-  } as unknown as PlaytestRunControl;
+  } as unknown as PlaytestingRepositoryOps;
+  const runControl = createPlaytestRunControl({
+    playtestRepository,
+    artifactStoreForWorkspace: () => {
+      throw new Error("no artifacts");
+    }
+  });
   const server = createPlaytestMcpServer({
     sessionProvider: {
       current: () => ({

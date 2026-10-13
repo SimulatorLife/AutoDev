@@ -229,6 +229,19 @@ function runControlFixture(calls: unknown[] = []): PlaytestRunControl {
         status: "running"
       };
     },
+    prepareCrossSessionReview: async (
+      session: { role: string },
+      workspaceId: string,
+      episodeIds: readonly string[]
+    ) => {
+      calls.push({
+        operation: "cross-session",
+        session,
+        workspaceId,
+        episodeIds: [...episodeIds]
+      });
+      return { packets: [], receipts: [], budget: [] };
+    },
     listActiveRuns: (session, workspaceId) => {
       calls.push({ operation: "list", session, workspaceId });
       return [
@@ -1930,4 +1943,57 @@ test("frame API serves only linked, bounded, signature-checked raster images", a
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("cross-session analysis delegates to the owner and bounds the selection", async () => {
+  const calls: unknown[] = [];
+  const options = {
+    runControl: runControlFixture(calls)
+  };
+  const viewer = { actor: "viewer-1", role: "viewer" as const };
+  const selection = await callRunControl(
+    "POST",
+    `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    viewer,
+    options,
+    { episodeIds: ["episode-a", "episode-b"] }
+  );
+  assert.equal(selection.status, 200);
+  assert.equal(selection.body.schema, "autodev-control-playtesting-analysis-v1");
+  assert.equal(selection.body.workspaceId, WORKSPACE);
+  assert.equal(selection.body.requested, 2);
+  // The owner decides eligibility, caps and receipts; the route must not
+  // answer a selection question on its own.
+  const forwarded = calls.find(
+    (call) => (call as { operation?: string }).operation === "cross-session"
+  ) as { workspaceId: string; episodeIds: string[] } | undefined;
+  assert.equal(forwarded?.workspaceId, WORKSPACE);
+  assert.deepEqual(forwarded?.episodeIds, ["episode-a", "episode-b"]);
+  assert.equal(selection.headers["cache-control"], "no-store");
+
+  const empty = await callRunControl(
+    "POST",
+    `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    viewer,
+    options,
+    { episodeIds: [] }
+  );
+  assert.equal(empty.status, 400);
+
+  const oversized = await callRunControl(
+    "POST",
+    `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    viewer,
+    options,
+    { episodeIds: Array.from({ length: 17 }, (_, i) => `episode-${i}`) }
+  );
+  assert.equal(oversized.status, 400);
+
+  const wrongMethod = await callRunControl(
+    "GET",
+    `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    viewer,
+    options
+  );
+  assert.equal(wrongMethod.status, 405);
 });

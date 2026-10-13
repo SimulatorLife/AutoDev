@@ -64,6 +64,7 @@ import {
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_FINDING_STATUSES,
   PLAYTESTS_GAME_OUTCOMES,
+  PLAYTESTS_MAX_ANALYSIS_SESSIONS,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_MAX_BATCH_REVIEW_SESSIONS,
   PLAYTESTS_MEASUREMENT_VERSION,
@@ -299,6 +300,21 @@ export interface PlaytestRunControl {
     batchId: string,
     waitMs: number
   ): Promise<PlaytestRunStatus>;
+  /**
+   * Dispatch analysis over an explicit, bounded selection. The owner, not any
+   * caller, decides eligibility, the per-batch critique cap, and which selected
+   * sessions yielded packet-unavailable receipts, so the Console and the MCP
+   * tool cannot reach different answers about the same selection.
+   */
+  prepareCrossSessionReview(
+    session: PlaytestRunControlActor,
+    workspaceId: string,
+    episodeIds: readonly string[]
+  ): Promise<{
+    readonly packets: readonly PlaytestCrossSessionPacket[];
+    readonly receipts: readonly PlaytestCrossSessionReceipt[];
+    readonly budget: readonly PlaytestCrossSessionBudget[];
+  }>;
 }
 
 /** Process owner lifecycle used by Runtime shutdown; MCP clients do not implement it. */
@@ -4607,6 +4623,25 @@ export function createPlaytestRunControl(
       } finally {
         if (timeout) clearTimeout(timeout);
       }
+    },
+    async prepareCrossSessionReview(receivedSession, workspaceId, episodeIds) {
+      if (!playtestRepository) {
+        throw new PlaytestMcpUnavailableError(
+          "Playtest Data storage is unavailable for analyst packet retrieval."
+        );
+      }
+      return prepareCrossSessionReview({
+        workspaceId,
+        episodeIds,
+        repository: playtestRepository,
+        // A store that cannot be opened is not a selection that failed: it is
+        // a packet that could not be read, and is reported per session rather
+        // than collapsing the whole dispatch into one opaque error.
+        artifacts: safeArtifactStoreForWorkspace(
+          workspaceId,
+          artifactStoreForWorkspace
+        )
+      });
     }
   };
   return playtestRunControl;
@@ -4617,7 +4652,7 @@ export function createPlaytestRunControl(
  * session that cannot contribute evidence comes back as a named receipt rather
  * than being dropped from the result.
  */
-const MAX_CROSS_SESSION_SELECTIONS = 16;
+
 
 /** Why a selected session could not contribute an analyst packet. */
 const CROSS_SESSION_RECEIPT_REASONS = [
@@ -4849,9 +4884,9 @@ async function prepareCrossSessionReview(input: {
 }> {
   const { workspaceId, episodeIds, repository, artifacts } = input;
   const unique = [...new Set(episodeIds)];
-  if (unique.length === 0 || unique.length > MAX_CROSS_SESSION_SELECTIONS) {
+  if (unique.length === 0 || unique.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS) {
     throw new PlaytestMcpValidationError(
-      `A cross-session analysis must name between 1 and ${String(MAX_CROSS_SESSION_SELECTIONS)} distinct sessions.`
+      `A cross-session analysis must name between 1 and ${String(PLAYTESTS_MAX_ANALYSIS_SESSIONS)} distinct sessions.`
     );
   }
   const packets: PlaytestCrossSessionPacket[] = [];
@@ -5616,7 +5651,7 @@ export function createPlaytestMcpServer(
         episodeIds: z
           .array(z.string().min(1).max(256))
           .min(1)
-          .max(MAX_CROSS_SESSION_SELECTIONS)
+          .max(PLAYTESTS_MAX_ANALYSIS_SESSIONS)
       }
     },
     ({ workspaceId, episodeIds }) =>
@@ -5633,18 +5668,13 @@ export function createPlaytestMcpServer(
             "Playtest Data storage is unavailable for analyst packet retrieval."
           );
         }
-        const result = await prepareCrossSessionReview({
-          workspaceId: targetWorkspaceId,
-          episodeIds,
-          repository: playtestRepository,
-          // A store that cannot be opened is not a selection that failed: it
-          // is a packet that could not be read, and is reported per session
-          // rather than collapsing the whole dispatch into one opaque error.
-          artifacts: safeArtifactStoreForWorkspace(
-            targetWorkspaceId,
-            artifactStoreForWorkspace
-          )
-        });
+        // Routed through the same owner the Console reaches, so the MCP tool
+        // and the Control API cannot disagree about one selection.
+        const result = await playtestRunControl.prepareCrossSessionReview(
+          session,
+          targetWorkspaceId,
+          episodeIds
+        );
         // Every requested session appears exactly once, in packets or receipts,
         // so a silent drop is structurally impossible.
         return {

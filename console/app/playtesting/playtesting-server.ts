@@ -28,6 +28,7 @@ import {
   isControlApiPlaytestingRunState,
   PLAYTESTS_BATCH_SCHEMA,
   PLAYTESTS_COMPARISON_SCHEMA,
+  PLAYTESTS_MAX_ANALYSIS_SESSIONS,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   type PlaytestSessionReview
@@ -629,6 +630,88 @@ export async function fetchPlaytestingActiveRuns(
   return {
     kind: "ok",
     data: data as unknown as ControlApiPlaytestingActiveRunsResponse
+  };
+}
+
+/**
+ * Cross-session analysis over an explicit selection. Runtime owns eligibility,
+ * the critique cap and the packet-unavailable receipts; the Console forwards
+ * the selection and renders what comes back, so it can never disagree.
+ */
+export interface ControlApiPlaytestingAnalysisResponse {
+  readonly schema: "autodev-control-playtesting-analysis-v1";
+  readonly workspaceId: string;
+  readonly requested: number;
+  readonly packets: readonly { readonly episodeId: string; readonly batchId: string }[];
+  readonly receipts: readonly {
+    readonly episodeId: string;
+    readonly batchId: string | null;
+    readonly reason: string;
+    readonly detail: string;
+  }[];
+  readonly budget: readonly {
+    readonly batchId: string;
+    readonly reviewCap: number;
+    readonly actualCritiques: number;
+    readonly reserved: number;
+    readonly requested: number;
+    readonly remaining: number;
+  }[];
+}
+
+export async function requestPlaytestingAnalysis(
+  workspaceId: string,
+  episodeIds: readonly string[],
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiPlaytestingAnalysisResponse>> {
+  const selected = [...new Set(episodeIds)];
+  if (
+    !WORKSPACE_ID_PATTERN.test(workspaceId) ||
+    selected.length === 0 ||
+    selected.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS
+  ) {
+    // Refused before the request, against the same bound Runtime enforces.
+    return invalidResponse(
+      "Playtesting analysis",
+      `1 to ${String(PLAYTESTS_MAX_ANALYSIS_SESSIONS)} distinct sessions`
+    );
+  }
+  const params = new URLSearchParams({ workspaceId });
+  const result = await postControlApi(
+    `${CONTROL_API_PATHS.playtesting}/analyses?${params}`,
+    { episodeIds: selected },
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  const data = result.data;
+  if (
+    !isRecord(data) ||
+    data.schema !== "autodev-control-playtesting-analysis-v1" ||
+    data.workspaceId !== workspaceId ||
+    data.requested !== selected.length ||
+    !Array.isArray(data.packets) ||
+    !Array.isArray(data.receipts) ||
+    // Every requested session is accounted for. A missing one would let the
+    // Console show "3 sessions analysed" from a selection of 4.
+    [...data.packets, ...data.receipts].length !== selected.length ||
+    !data.receipts.every(
+      (receipt) =>
+        isRecord(receipt) &&
+        isNonEmptyString(receipt.episodeId) &&
+        isNonEmptyString(receipt.reason) &&
+        isNonEmptyString(receipt.detail)
+    )
+  ) {
+    return invalidResponse(
+      "Playtesting analysis",
+      "autodev-control-playtesting-analysis-v1"
+    );
+  }
+  return {
+    kind: "ok",
+    data: data as unknown as ControlApiPlaytestingAnalysisResponse
   };
 }
 

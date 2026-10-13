@@ -17,6 +17,7 @@ import {
   type PlaytestingRunSetup
 } from "../../src/features/playtesting/PlaytestingRunControls.tsx";
 import { PlaytestingLiveRuns } from "../../src/features/playtesting/PlaytestingLiveRuns.ts";
+import { PlaytestingSelection } from "../../src/features/playtesting/PlaytestingSelection.ts";
 import {
   type PlaytestingHumanValidation,
   type PlaytestingListData,
@@ -340,11 +341,26 @@ function pageResult(
       })
     );
   } else {
-    content = React.createElement(PlaytestingView, {
-      scope,
-      workspaces,
-      list: loaded.data
-    });
+    content = React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(PlaytestingView, {
+        scope,
+        workspaces,
+        list: loaded.data
+      }),
+      // Multi-session analysis belongs to the sessions view, where the
+      // selectable persisted sessions are the rows on screen.
+      scope.view === "sessions" && loaded.data.resource === "episodes"
+        ? React.createElement(PlaytestingSelection, {
+            workspaceId: scope.workspaceId!,
+            initialSelectedEpisodeIds: scope.selectedEpisodeIds,
+            selectableEpisodeIds: loaded.data.rows.map(
+              (row) => (row as { episodeId: string }).episodeId
+            )
+          })
+        : null
+    );
   }
   return React.createElement(ConsolePageShell, { section }, content);
 }

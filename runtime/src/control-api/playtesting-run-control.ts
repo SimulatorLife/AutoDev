@@ -13,6 +13,7 @@ import {
   type ControlApiPlaytestingRunStartedResponse,
   type ControlApiPlaytestingRunStatusResponse,
   type PlaytestJsonValue,
+  PLAYTESTS_MAX_ANALYSIS_SESSIONS,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS
 } from "@simulatorlife/autodev-core";
 import { ConfigRepository } from "@simulatorlife/autodev-data";
@@ -35,6 +36,18 @@ import { writeErrorLine } from "../shared/output.ts";
 import { readControlApiJsonObject } from "./body.ts";
 
 const RUNS_PATH = "/control/playtesting/runs";
+const ANALYSES_PATH = "/control/playtesting/analyses";
+
+/**
+ * Bounded, explicit selection. The workspace is not in the body: the query
+ * string is its single authority, so the two can never disagree.
+ */
+const analysisRequestSchema = z.object({
+  episodeIds: z
+    .array(z.string().min(1).max(256))
+    .min(1)
+    .max(PLAYTESTS_MAX_ANALYSIS_SESSIONS)
+});
 const CAPABILITIES_PATH = "/control/playtesting/capabilities";
 const WAIT_MILLISECONDS_PATTERN = /^(0|[1-9][0-9]{0,4})$/u;
 const RUN_ROUTE = /^\/control\/playtesting\/runs\/([^/]+)$/u;
@@ -130,7 +143,8 @@ export interface PlaytestingRunControlApiOptions {
     readonly action:
       | "start_playtest_run"
       | "cancel_playtest_run"
-      | "record_playtest_comparison_decision";
+      | "record_playtest_comparison_decision"
+      | "request_playtest_analysis";
     readonly workspaceId: string;
     readonly outcome: "ok" | "denied" | "error";
     readonly changes: Readonly<Record<string, unknown>> | null;
@@ -360,6 +374,89 @@ function pathId(pathname: string, pattern: RegExp): string | null {
   return BATCH_ID_PATTERN.test(value) ? value : null;
 }
 
+/**
+ * Cross-session analysis over an explicit selection. Every rule — eligibility,
+ * the per-batch critique cap, and which selected sessions produced no packet —
+ * belongs to the Runtime owner; this route only authorizes and forwards.
+ */
+async function requestCrossSessionReview(
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  actor: PlaytestingRunControlActor,
+  options: PlaytestingRunControlApiOptions,
+  runControl: PlaytestRunControl
+): Promise<void> {
+  const query = workspaceQuery(
+    request,
+    pathname,
+    ["workspaceId"],
+    options,
+    response
+  );
+  if (!query) return;
+  const session = sessionFor(
+    request,
+    actor,
+    query.workspaceId,
+    response,
+    options.requireSessionHeader ?? false,
+    options.trustedSessionRole
+  );
+  if (!session) return;
+  const parsedBody = await readControlApiJsonObject(request);
+  if (!parsedBody.ok) {
+    sendError(
+      response,
+      parsedBody.status,
+      "autodev_control_playtesting_invalid_request",
+      parsedBody.message
+    );
+    return;
+  }
+  const parsed = analysisRequestSchema.safeParse(parsedBody.body);
+  if (!parsed.success) {
+    sendError(
+      response,
+      400,
+      "autodev_control_playtesting_invalid_request",
+      `A cross-session analysis must name between 1 and ${String(
+        PLAYTESTS_MAX_ANALYSIS_SESSIONS
+      )} distinct sessions.`
+    );
+    return;
+  }
+  try {
+    const result = await runControl.prepareCrossSessionReview(
+      session,
+      query.workspaceId,
+      parsed.data.episodeIds
+    );
+    sendJson(
+      response,
+      200,
+      {
+        schema: "autodev-control-playtesting-analysis-v1",
+        workspaceId: query.workspaceId,
+        requested: parsed.data.episodeIds.length,
+        packets: result.packets,
+        receipts: result.receipts,
+        budget: result.budget
+      },
+      { "cache-control": "no-store" }
+    );
+  } catch (error) {
+    recordRunError(
+      response,
+      error,
+      options,
+      actor,
+      "request_playtest_analysis",
+      query.workspaceId
+    );
+  }
+}
+
 function sendMethodNotAllowed(response: ServerResponse, allow: string): void {
   response.setHeader("allow", allow);
   sendError(
@@ -416,6 +513,7 @@ function recordAudit(
     | "start_playtest_run"
     | "cancel_playtest_run"
     | "record_playtest_comparison_decision"
+    | "request_playtest_analysis"
     | undefined,
   workspaceId: string,
   outcome: "ok" | "denied" | "error",
@@ -884,6 +982,7 @@ function recordRunError(
     | "start_playtest_run"
     | "cancel_playtest_run"
     | "record_playtest_comparison_decision"
+    | "request_playtest_analysis"
     | undefined,
   workspaceId: string
 ): void {
@@ -1006,6 +1105,7 @@ function recordRunError(
 type RunControlRoute =
   | { readonly kind: "capabilities" }
   | { readonly kind: "collection" }
+  | { readonly kind: "analyses" }
   | { readonly kind: "status"; readonly batchId: string }
   | { readonly kind: "cancel"; readonly batchId: string }
   | { readonly kind: "comparison-decision"; readonly comparisonId: string };
@@ -1013,6 +1113,7 @@ type RunControlRoute =
 function runControlRoute(pathname: string): RunControlRoute | null {
   if (pathname === CAPABILITIES_PATH) return { kind: "capabilities" };
   if (pathname === RUNS_PATH) return { kind: "collection" };
+  if (pathname === ANALYSES_PATH) return { kind: "analyses" };
   const batchId = pathId(pathname, RUN_ROUTE);
   if (batchId !== null) return { kind: "status", batchId };
   const cancelBatchId = pathId(pathname, CANCEL_ROUTE);
@@ -1067,6 +1168,21 @@ export async function handlePlaytestingRunControlRequest(
         await listRuns(request, response, pathname, actor, options, runControl);
       } else {
         sendMethodNotAllowed(response, "GET, POST");
+      }
+      break;
+    }
+    case "analyses": {
+      if (method === "POST") {
+        await requestCrossSessionReview(
+          request,
+          response,
+          pathname,
+          actor,
+          options,
+          runControl
+        );
+      } else {
+        sendMethodNotAllowed(response, "POST");
       }
       break;
     }

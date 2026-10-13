@@ -22,6 +22,7 @@ import {
 const RUNS_PATH = "/control/playtesting/runs";
 const CAPABILITIES_PATH = "/control/playtesting/capabilities";
 const COMPARISONS_PATH = "/control/playtesting/comparisons";
+const ANALYSES_PATH = "/control/playtesting/analyses";
 const SESSION_HEADER = "x-autodev-playtest-session";
 const ACTOR_PATTERN = /^[A-Za-z0-9@._:+-]{1,128}$/u;
 const PLAYTEST_CONTROL_ROLES = new Set([
@@ -207,6 +208,37 @@ export function createPlaytestControlApiRunClient(
   }
 
   return {
+    /**
+     * Forwarded to the Runtime owner rather than computed here, so a Console
+     * reading cross-session analysis and an MCP caller reach the same
+     * eligibility, cap and receipt decisions.
+     */
+    async prepareCrossSessionReview(session, workspaceId, episodeIds) {
+      if (episodeIds.length === 0) {
+        throw new PlaytestMcpValidationError(
+          "A cross-session analysis must name at least one session."
+        );
+      }
+      const response = await request(
+        "POST",
+        `${ANALYSES_PATH}?${new URLSearchParams({ workspaceId }).toString()}`,
+        session,
+        { episodeIds }
+      );
+      const data = assertResponse<Record<string, unknown>>(
+        response,
+        "autodev-control-playtesting-analysis-v1",
+        workspaceId
+      );
+      if (!Array.isArray(data.packets) || !Array.isArray(data.receipts)) {
+        throw new PlaytestMcpUnavailableError(
+          "The Runtime Control API returned an invalid analysis response."
+        );
+      }
+      return data as unknown as Awaited<
+        ReturnType<PlaytestRunControl["prepareCrossSessionReview"]>
+      >;
+    },
     async recordComparisonDecision(
       session,
       workspaceId,

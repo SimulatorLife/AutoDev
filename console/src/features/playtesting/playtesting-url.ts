@@ -1,5 +1,8 @@
 /** Shareable, workspace-scoped address state for Playtesting lists and replay. */
-import type { ControlApiPlaytestingResource } from "@simulatorlife/autodev-core";
+import {
+  type ControlApiPlaytestingResource,
+  PLAYTESTS_MAX_ANALYSIS_SESSIONS
+} from "@simulatorlife/autodev-core";
 
 export const PLAYTESTING_VIEWS = [
   "overview",
@@ -90,6 +93,8 @@ export interface PlaytestingScope {
   readonly returnFindingId: string | null;
   /** Focused batch in the live view; bounded so it stays shareable. */
   readonly liveBatchId: string | null;
+  /** Explicit analysis selection; bounded by the same limit Runtime enforces. */
+  readonly selectedEpisodeIds: readonly string[];
   readonly invalidQuery: boolean;
 }
 
@@ -102,6 +107,33 @@ const STEP_PATTERN = /^(0|[1-9]\d{0,5})$/u;
 const FINDING_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 /** Batch ids are bounded so the live view's address state stays shareable. */
 const BATCH_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const SESSION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
+
+/**
+ * The analysis selection is explicit and bounded. An empty, oversized or
+ * malformed value is refused rather than silently trimmed, so a shared link
+ * either reproduces the operator's selection exactly or says it was invalid.
+ */
+function parseSessionSelection(value: string | undefined): {
+  readonly episodeIds: readonly string[];
+  readonly invalid: boolean;
+} {
+  if (value === undefined) return { episodeIds: [], invalid: false };
+  if (value.length === 0 || value.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS * 257) {
+    return { episodeIds: [], invalid: true };
+  }
+  const parts = value.split(",");
+  const episodeIds: string[] = [];
+  for (const part of parts) {
+    if (part.length === 0) return { episodeIds: [], invalid: true };
+    if (!SESSION_ID_PATTERN.test(part)) return { episodeIds: [], invalid: true };
+    if (!episodeIds.includes(part)) episodeIds.push(part);
+  }
+  if (episodeIds.length === 0 || episodeIds.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS) {
+    return { episodeIds: [], invalid: true };
+  }
+  return { episodeIds, invalid: false };
+}
 
 function hasControlCharacters(value: string): boolean {
   for (const character of value) {
@@ -213,6 +245,7 @@ export function parsePlaytestingScope(
   const rawStep = single(input.step);
   const rawReturnFinding = single(input.returnFinding);
   const rawLiveBatch = single(input.liveBatch);
+  const rawSelection = single(input.sessions);
   const parsedFilters = normalizedFilters(input);
   const view = isView(rawView.value) ? rawView.value : "overview";
   const scopedFilters = filtersForView(view, parsedFilters.filters);
@@ -232,6 +265,8 @@ export function parsePlaytestingScope(
       : null;
   const liveBatchInvalid =
     candidateLiveBatchId !== null && liveBatchId === null;
+  const selection = parseSessionSelection(rawSelection.value);
+  const selectionInvalid = rawSelection.invalid || selection.invalid;
   const workspaceInvalid =
     workspaceId !== null &&
     (workspaceId.length > 256 || hasControlCharacters(workspaceId));
@@ -248,6 +283,7 @@ export function parsePlaytestingScope(
     step: parsedStep.step,
     returnFindingId,
     liveBatchId,
+    selectedEpisodeIds: selection.episodeIds,
     invalidQuery:
       rawView.invalid ||
       (rawView.value !== undefined && !isView(rawView.value)) ||
@@ -257,6 +293,7 @@ export function parsePlaytestingScope(
       rawStep.invalid ||
       rawReturnFinding.invalid ||
       rawLiveBatch.invalid ||
+      selectionInvalid ||
       parsedFilters.invalid ||
       scopedFilters.invalid ||
       parsedLimit.invalid ||
@@ -294,6 +331,11 @@ function paramsForScope(
   // The focused live batch is address state, so a refresh or Back returns the
   // operator to the batch they were watching rather than a bare list.
   if (scope.liveBatchId) params.set("liveBatch", scope.liveBatchId);
+  // The selection is address state so a shared link, a refresh or Back
+  // reproduces the same set of sessions.
+  if (scope.selectedEpisodeIds.length > 0) {
+    params.set("sessions", scope.selectedEpisodeIds.join(","));
+  }
   return params;
 }
 

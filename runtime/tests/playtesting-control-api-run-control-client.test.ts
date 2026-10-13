@@ -456,6 +456,9 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
         }
       ];
     },
+    async prepareCrossSessionReview() {
+      return { packets: [], receipts: [], budget: [] };
+    },
     async waitForRun(receivedSession, workspaceId, batchId, waitMs) {
       delegated.push({
         operation: "wait",
