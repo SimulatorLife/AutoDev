@@ -358,6 +358,52 @@ test("sandbox approval pins a clean checkout, command, image, and bounded resour
   }
 });
 
+test("a gitignored .autodev/ is refused by name, not by a generic dirtiness message", () => {
+  // The failure an operator actually hits: they gitignore `.autodev/` and the
+  // checkout stops being clean. A generic "modified, untracked, or ignored"
+  // message leaves them guessing which path to un-ignore, and `.autodev/` is
+  // exactly the directory holding the config, rubric and observation manifest.
+  const fixture = repository();
+  try {
+    const approved = approval(fixture.root);
+    // Untrack the directory first: a path still in the index is not reported as
+    // ignored, so the failure under test would never occur.
+    execFileSync("git", [
+      "-C",
+      fixture.root,
+      "rm",
+      "--cached",
+      "-r",
+      "-q",
+      ".autodev"
+    ]);
+    writeFileSync(path.join(fixture.root, ".gitignore"), ".autodev/\n");
+    execFileSync("git", ["-C", fixture.root, "add", ".gitignore"]);
+    execFileSync("git", [
+      "-C",
+      fixture.root,
+      "-c",
+      "user.email=fixture@example.com",
+      "-c",
+      "user.name=fixture",
+      "commit",
+      "--quiet",
+      "-m",
+      "ignore autodev"
+    ]);
+    assert.throws(
+      () => preparePlaytestSandbox(approved),
+      /ignores \.autodev\//u
+    );
+    assert.throws(
+      () => preparePlaytestSandbox(approved),
+      /playtest config, rubric and observation manifests/u
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("sandbox refuses a changed build, dirty checkout, and unapproved command", () => {
   const fixture = repository();
   try {
@@ -369,7 +415,9 @@ test("sandbox refuses a changed build, dirty checkout, and unapproved command", 
     writeFileSync(path.join(fixture.root, "untracked.txt"), "no\n");
     assert.throws(
       () => preparePlaytestSandbox(approved),
-      /modified, untracked, or ignored/u
+      // The offending path is named, so the operator does not have to work out
+      // which file made the checkout dirty.
+      /commit or remove: untracked\.txt/u
     );
     rmSync(path.join(fixture.root, "untracked.txt"));
     assert.throws(
@@ -408,7 +456,7 @@ test("sandbox refuses ignored workspace-local files before they can be mounted",
     );
     assert.throws(
       () => preparePlaytestSandbox(approval(fixture.root)),
-      /ignored files/u
+      /commit or remove: [.]env/u
     );
   } finally {
     fixture.cleanup();

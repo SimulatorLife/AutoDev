@@ -250,12 +250,50 @@ function readCleanCheckoutSha(root: string): string {
     );
   }
   if (status !== "") {
+    // Name what is actually wrong. The approved checkout is meant to be clean,
+    // so an operator who gitignored `.autodev/` sees a generic "untracked or
+    // ignored" line and has to guess that the directory holding the playtest
+    // config, rubric and observation manifests is the thing to un-ignore.
+    const ignored = status
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .filter((line) => line.startsWith("!! "))
+      .map((line) => line.slice(3).trim());
+    const autodevIgnored = ignored.filter((path) =>
+      path === AUTODEV_INTEGRATION_DIR ||
+      path.startsWith(`${AUTODEV_INTEGRATION_DIR}/`)
+    );
+    if (autodevIgnored.length > 0) {
+      throw new PlaytestSandboxApprovalError(
+        `Approved checkout ignores ${AUTODEV_INTEGRATION_DIR}/, which holds the playtest config, rubric and observation manifests. Commit those files or stop ignoring ${AUTODEV_INTEGRATION_DIR}/ before running an approved batch.`
+      );
+    }
+    const named = [...ignored, ...modifiedPaths(status)].slice(0, 5);
     throw new PlaytestSandboxApprovalError(
-      "Approved checkout has modified, untracked, or ignored files."
+      named.length > 0
+        ? `Approved checkout is not clean; commit or remove: ${named.join(", ")}.`
+        : "Approved checkout has modified, untracked, or ignored files."
     );
   }
   return sha;
 }
+
+/** Paths from `git status --porcelain=v1` other than ignored entries. */
+function modifiedPaths(status: string): string[] {
+  return status
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0 && !line.startsWith("!!"))
+    .map((line) => line.slice(3).trim())
+    .filter((path) => path.length > 0);
+}
+
+/**
+ * The canonical integration directory a repository uses to declare AutoDev
+ * Playtesting support. Naming it in a failure is the difference between an
+ * operator knowing which path to un-ignore and guessing.
+ */
+const AUTODEV_INTEGRATION_DIR = ".autodev";
 
 function resolveApprovedCheckout(approval: WorkspacePlaytestApproval): {
   readonly root: string;
