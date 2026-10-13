@@ -15,6 +15,7 @@ export * from "./branching.ts";
 export * from "./build-identity.ts";
 export * from "./cadence.ts";
 export * from "./canonical-json.ts";
+export * from "./analysis-cost.ts";
 export * from "./cohort-standardization.ts";
 export * from "./comparison.ts";
 export * from "./compatibility.ts";
