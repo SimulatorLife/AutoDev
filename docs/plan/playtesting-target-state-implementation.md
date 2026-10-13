@@ -99,6 +99,33 @@ states what is implemented and, where applicable, what is still missing.
   and candidate units across a preregistered experiment), which is a larger and
   design-sensitive surface than the artifact above; it is deliberately left for
   that work rather than approximated with an unparied comparison.
+
+  **The same is true of the link above it, and this is what blocks a producer.**
+  `insertExperiment` exists in Data and has no Runtime caller, and neither
+  `insertExperiment` nor a getter appears on Runtime's
+  `PlaytestingRepositoryOps`. So the chain is model-only end to end:
+  preregistration, comparison and owner decision each lack a producer, and
+  `playtest.decideComparison` can only ever re-decide a comparison that nothing
+  creates.
+
+  Writing a preregistration path is blocked by a missing binding, not by effort.
+  `PlaytestExperiment` freezes `discoveryInventory` / `confirmationInventory` as
+  independent-unit ids, while `PlaytestBenchmark` freezes `seedInventory` as
+  seeds with a purpose (`discovery` / `confirmation` / `regression`) plus
+  `scenarioInventory`. Nothing relates the two: there is no declared mapping from
+  a seed or scenario to independent-unit identity. The only per-unit identity
+  Runtime persists is the batch assignment's own `seed` and `scenarioId`, which
+  come from the batch's allocation rather than from the approved benchmark. A
+  producer would therefore have to invent the unit population it freezes -- the
+  same fabricated judgement as the competence thresholds above, one level up.
+  Resolving that is a project decision about how independent units are derived,
+  and it is recorded here rather than guessed at.
+
+  One bridge already exists and is still unconnected: `competenceReportRefs` on
+  the benchmark is where a `PlayerPolicyValidity` record would be cited, and the
+  fixture's is empty. The artifact produced by `playtest.policyValidity` is
+  therefore not yet reachable from the benchmark that should attest to it.
+
 - [~] 5. Visual/human validation: consented study data, privacy controls,
   distinct human instruments, and refusal of unauthorized UI evidence are
   implemented and tested. The `PlayerPolicyValidity` artifact that measurement
