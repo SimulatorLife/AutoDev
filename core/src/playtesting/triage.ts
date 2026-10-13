@@ -48,7 +48,18 @@ const EVIDENCE_ORDER: Record<string, number> = {
   "not observed": 3
 };
 
-function getExposureRate(finding: PlaytestFinding): number {
+/**
+ * Exposure rate, or null when no denominator was recorded.
+ *
+ * This returned `0` when neither opportunity nor episode counts were
+ * available, and `0` is a claim: it says the finding was rarely exposed. A
+ * finding whose exposure nobody measured is not rarely exposed, it is
+ * unmeasured, and the old zero also leaked into `priorityScoreKey` as a
+ * fabricated `1.0000` -- the worst-looking possible score for a finding whose
+ * exposure was simply never observed. No test asserted that key, which is how
+ * it survived.
+ */
+function getExposureRate(finding: PlaytestFinding): number | null {
   if (
     finding.affectedOpportunities !== null &&
     finding.totalEligibleOpportunities !== null &&
@@ -63,7 +74,7 @@ function getExposureRate(finding: PlaytestFinding): number {
   ) {
     return finding.affectedEpisodes / finding.totalEligibleEpisodes;
   }
-  return 0;
+  return null;
 }
 
 /**
@@ -90,10 +101,19 @@ export function comparePlaytestFindings(
   const evB = EVIDENCE_ORDER[b.evidenceStatus] ?? 3;
   if (evA !== evB) return evA - evB;
 
-  // Higher exposure rate when exposed comes first
+  // Higher exposure rate when exposed comes first. An unmeasured rate is not
+  // zero: ordering it as zero would assert the finding was rarely exposed,
+  // which nobody observed. Measured exposure outranks unmeasured, so a finding
+  // we know less about cannot outrank one the run actually measured.
   const expA = getExposureRate(a);
   const expB = getExposureRate(b);
-  if (Math.abs(expA - expB) > 1e-6) {
+  if (expA === null && expB === null) {
+    // Neither was measured; fall through to breadth and the id tie-break.
+  } else if (expA === null) {
+    return 1;
+  } else if (expB === null) {
+    return -1;
+  } else if (Math.abs(expA - expB) > 1e-6) {
     return expB - expA; // Higher exposure first
   }
 
@@ -135,15 +155,19 @@ export function triagePlaytestFindings(
       ? override.forcedSeverity
       : finding.severity;
     const expRate = getExposureRate(finding);
-    const expPercent = Math.round(expRate * 100);
+    const expPercent = expRate === null ? null : Math.round(expRate * 100);
 
     let explanation = `${effectiveSeverity.toUpperCase()}: ${finding.title}. `;
     if (override) {
       explanation += `[Operator override by ${override.author}: ${override.reason}] `;
     } else {
       explanation += `Evidence status: ${finding.evidenceStatus}. `;
-      if (expRate > 0) {
+      if (expPercent !== null && expPercent > 0) {
         explanation += `Exposure rate: ${expPercent}%. `;
+      } else if (expRate === null) {
+        // Stated rather than omitted: an absent rate is a fact about the data,
+        // and leaving it out reads as a finding with no exposure at all.
+        explanation += `Exposure rate: not measured. `;
       }
       if (finding.affectedCohorts.length > 0) {
         explanation += `Affected cohorts: ${finding.affectedCohorts.join(", ")}.`;
@@ -154,7 +178,11 @@ export function triagePlaytestFindings(
       rank: index + 1,
       finding,
       effectiveSeverity,
-      priorityScoreKey: `${SEVERITY_ORDER[effectiveSeverity]}_${EVIDENCE_ORDER[finding.evidenceStatus] ?? 3}_${(1 - expRate).toFixed(4)}`,
+      // The exposure component is the measured complement, or the word
+      // `unmeasured` -- never a number derived from an absence.
+      priorityScoreKey: `${SEVERITY_ORDER[effectiveSeverity]}_${EVIDENCE_ORDER[finding.evidenceStatus] ?? 3}_${
+        expRate === null ? "unmeasured" : (1 - expRate).toFixed(4)
+      }`,
       explanation: explanation.trim(),
       override
     };

@@ -6343,6 +6343,83 @@ export function createPlaytestMcpServer(
       })
   );
 
+  // 10c. playtest.triageFindings
+  mcp.registerTool(
+    "playtest.triageFindings",
+    {
+      description:
+        "Rank a workspace's findings by the measurement contract §9 triage order and say why each one landed where it did. Findings whose exposure was never measured are reported as unmeasured rather than as zero exposure. Operator overrides are supplied per call, are carried with their author and reason, and are never persisted here.",
+      inputSchema: {
+        workspaceId: z.string().min(1).max(256).optional(),
+        severity: z.enum([...PLAYTESTS_SEVERITIES]).optional(),
+        status: z.enum([...PLAYTESTS_FINDING_STATUSES]).optional(),
+        verificationStage: z
+          .enum([...PLAYTESTS_VERIFICATION_STAGES])
+          .optional(),
+        overrides: z
+          .array(
+            z.object({
+              findingId: z.string().min(1).max(256),
+              author: z.string().min(1).max(256),
+              reason: z.string().min(1).max(1024),
+              forcedSeverity: z.enum([...PLAYTESTS_SEVERITIES])
+            })
+          )
+          .max(200)
+          .optional(),
+        cursor: z.string().max(2048).optional(),
+        limit: z.number().int().min(1).max(500).default(50)
+      }
+    },
+    (args) =>
+      safely(async () => {
+        const session = await sessionProvider.current();
+        assertPlaytestToolRole(
+          session.role,
+          FINDING_READER_ROLES,
+          "playtest.triageFindings"
+        );
+        const targetWorkspaceId = authorizeWorkspace(args.workspaceId, session);
+        if (!playtestRepository) {
+          throw new PlaytestMcpUnavailableError(
+            "Playtest data repository is not configured for triage."
+          );
+        }
+        const page = await playtestRepository.listFindings(
+          {
+            workspaceId: targetWorkspaceId,
+            ...(args.severity ? { severity: args.severity } : {}),
+            ...(args.status ? { status: args.status } : {}),
+            ...(args.verificationStage
+              ? { verificationStage: args.verificationStage }
+              : {})
+          },
+          {
+            limit: args.limit,
+            ...(args.cursor ? { cursor: args.cursor } : {})
+          }
+        );
+        const overrides = args.overrides ?? [];
+        const ranked = triagePlaytestFindings(page.rows, overrides);
+        const examined = new Set(page.rows.map((finding) => finding.findingId));
+        return {
+          ranked,
+          // A truncated page must not read as "these are the findings worth
+          // working on": the ranking is exactly as complete as the page.
+          examinedFindings: page.total,
+          rankedFindings: ranked.length,
+          nextCursor: page.nextCursor,
+          // An override naming a finding that is not in the examined page is
+          // inert. Naming it beats applying it silently or failing the call.
+          overridesNotInPage: overrides
+            .filter((override) => !examined.has(override.findingId))
+            .map((override) => override.findingId),
+          // Overrides rank a reading; this tool records nothing.
+          persisted: false as const
+        };
+      })
+  );
+
   // 11. playtest.branch
   mcp.registerTool(
     "playtest.branch",

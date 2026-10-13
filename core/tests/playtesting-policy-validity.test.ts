@@ -15,9 +15,11 @@ import {
   buildPlaytestPolicyValidity,
   type BuildPlaytestPolicyValidityInput,
   type PlaytestBenchmark,
+  type PlayerPolicyValidity,
   playtestBenchmarkHashInput,
   playtestHumanProxyRefusal,
-  playtestPolicyValidityHashInput} from "@simulatorlife/autodev-core";
+  playtestPolicyValidityHashInput
+} from "@simulatorlife/autodev-core";
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -278,7 +280,8 @@ test("the canonical hash input is stable and moves when the record moves", () =>
   assert.notEqual(playtestPolicyValidityHashInput(failed), baseline);
 
   // Key order must not matter, or two identical records would cite differently.
-  const reordered = { ...validity } as Record<string, unknown>;
-  const reversed = Object.fromEntries(Object.entries(reordered).reverse());
+  const reversed = Object.fromEntries(
+    Object.entries(validity).reverse()
+  ) as unknown as PlayerPolicyValidity;
   assert.equal(playtestPolicyValidityHashInput(reversed), baseline);
 });

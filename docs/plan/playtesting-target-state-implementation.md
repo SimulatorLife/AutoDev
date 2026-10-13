@@ -76,6 +76,31 @@ states what is implemented and, where applicable, what is still missing.
   regression is drafted rather than treated as closed, per the measurement
   contract's rule that external reopening follows explicit authority.
 
+  **Triage now runs over real findings, and it stopped fabricating a score.**
+  §9's ordering (`core/src/playtesting/triage.ts`) was Core policy with no
+  executor: nothing in Runtime or Console ran it over the findings the system
+  stores. `playtest.triageFindings` does, and reading it surfaced a defect in
+  the policy itself.
+
+  `getExposureRate` returned `0` when a finding recorded neither opportunity nor
+  episode denominators. Zero is a claim -- it says the finding was rarely
+  exposed -- and it also leaked into `priorityScoreKey` as the fabricated
+  worst-looking possible score, `1.0000`, for a finding whose exposure nobody
+  had observed. No test asserted that key, which is how it survived. It now
+  returns `null`, an unmeasured rate sorts behind a measured one rather than
+  being read as a low one, `priorityScoreKey` reads `unmeasured`, and the
+  explanation says "Exposure rate: not measured" instead of omitting the rate
+  and implying there was none. Reintroducing the `0` turns two tests red.
+
+  The tool itself: overrides are supplied per call, carried with their author
+  and reason, and never persisted (`persisted: false`); an override naming a
+  finding outside the examined page is reported in `overridesNotInPage` rather
+  than applied silently or failing the call; and `examinedFindings` /
+  `rankedFindings` / `nextCursor` state the window explicitly so a truncated
+  page cannot read as "these are the findings worth working on". Five controls
+  back this: ignoring overrides, swallowing out-of-page overrides, and the
+  earlier fabricated-zero all turn the relevant test red.
+
   **Still missing: counterexamples as a lifecycle step.** They remain
   registry/scoring fields only, and implementing them would require inventing
   the competence thresholds ("passed"/"failed"/"insufficient") that decide when
@@ -550,9 +575,11 @@ code-gatable gaps that synthetic coverage does not close:
   are not called by an owner workflow. `playtest.compare` only reads stored
   comparisons; there is no integrated immutable experiment → comparison →
   owner-decision cycle.
-- Several implemented Core helpers are not consumed by persisted workflows,
-  including diagnostic ladders, native timing, cohort standardization, finding
-  triage, cadence, and calibration scheduling.
+- Several implemented Core helpers are not consumed by persisted workflows.
+  Diagnostic ladders, native timing, cohort standardization, cadence and
+  calibration scheduling still are not; finding triage now has an executor
+  (`playtest.triageFindings`) and the player-policy-validity derivation has one
+  (`playtest.policyValidity`).
 - External gates still require exact target-game approval and evaluator/event/UI
   contracts, an authorized 1,000-episode/two-policy run, a second mechanically
   different adapter, authorized/held-out human evidence, upstream reuse/license

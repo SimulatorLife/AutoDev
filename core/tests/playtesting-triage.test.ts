@@ -160,3 +160,74 @@ test("operator override elevates finding with author and reason audit trail", ()
   assert.equal(triaged[1]!.finding.findingId, "f-maj");
   assert.equal(triaged[1]!.effectiveSeverity, "major");
 });
+
+test("an unmeasured exposure rate is reported unmeasured, not as zero", () => {
+  // `getExposureRate` used to return 0 when no denominator was recorded, which
+  // said the finding was rarely exposed and produced the fabricated
+  // worst-looking `priorityScoreKey` of `1.0000`. Nothing asserted that key.
+  const unmeasured = createFinding({
+    findingId: "finding-unmeasured-exposure",
+    title: "Exposure never observed",
+    evidenceStatus: "verified",
+    affectedEpisodes: null,
+    totalEligibleEpisodes: null,
+    affectedOpportunities: null,
+    totalEligibleOpportunities: null,
+    affectedCohorts: []
+  });
+  const measured = createFinding({
+    findingId: "finding-measured-exposure",
+    title: "Exposure observed",
+    evidenceStatus: "verified",
+    affectedEpisodes: 5,
+    totalEligibleEpisodes: 100
+  });
+
+  const ranked = triagePlaytestFindings([unmeasured, measured]);
+  const unranked = ranked.find(
+    (r) => r.finding.findingId === unmeasured.findingId
+  );
+  const measuredRank = ranked.find(
+    (r) => r.finding.findingId === measured.findingId
+  );
+
+  assert.ok(unranked && measuredRank);
+  // Measured exposure outranks unmeasured: a finding we know less about must
+  // not be treated as if the run showed it was rarely exposed.
+  assert.equal(measuredRank.rank, 1);
+  assert.equal(unranked.rank, 2);
+
+  assert.match(unranked.priorityScoreKey, /_unmeasured$/u);
+  assert.doesNotMatch(unranked.priorityScoreKey, /_1\.0000$/u);
+  // The explanation says so rather than omitting the rate and implying none.
+  assert.match(unranked.explanation, /Exposure rate: not measured/u);
+  assert.match(measuredRank.explanation, /Exposure rate: 5%/u);
+});
+
+test("two unmeasured-exposure findings fall through to breadth, then the id tie-break", () => {
+  const narrow = createFinding({
+    findingId: "finding-narrow",
+    evidenceStatus: "verified",
+    affectedEpisodes: null,
+    totalEligibleEpisodes: null,
+    affectedOpportunities: null,
+    totalEligibleOpportunities: null,
+    affectedCohorts: ["novice"]
+  });
+  const broad = createFinding({
+    findingId: "finding-broad",
+    evidenceStatus: "verified",
+    affectedEpisodes: null,
+    totalEligibleEpisodes: null,
+    affectedOpportunities: null,
+    totalEligibleOpportunities: null,
+    affectedCohorts: ["novice", "expert", "veteran"]
+  });
+
+  const ranked = triagePlaytestFindings([narrow, broad]);
+  // Breadth still orders them even though exposure is unknown for both.
+  assert.equal(ranked[0]?.finding.findingId, broad.findingId);
+  for (const row of ranked) {
+    assert.match(row.priorityScoreKey, /_unmeasured$/u);
+  }
+});
