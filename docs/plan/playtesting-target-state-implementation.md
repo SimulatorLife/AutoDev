@@ -67,11 +67,12 @@ normative specification; this checklist tracks implementation and evidence.
       known gap is per-assignment `win/loss/DNF/other` surfacing, recorded in the
       active slice below.
 - [~] Declarative game onboarding: `init`/`check`, the hash chain, the binding
-  contract and the generic adapter runtime all exist, and a real episode now
-  runs through the adapter entrypoint (`b6fe554e`). Two things still stand
-  between this and the acceptance below: the `generated-scaffold` tier's
-  conformance test, and a second, mechanically different game joining by
-  configuration alone.
+  contract and the generic adapter runtime all exist, a real episode runs
+  through the adapter entrypoint (`b6fe554e`), and the acceptance below is met
+  by a second, mechanically different game joining by configuration alone
+  (`e0cca05a`). What remains is the `generated-scaffold` tier and its
+  conformance test, which covers games that cannot onboard declaratively
+  without an AutoDev-generated body.
 - [ ] Documentation, test coverage, package checks and independent validation
       match the final integrated diff.
 
@@ -966,3 +967,13 @@ Delivery Slice 8's "only game adapter/scenarios/rubric change" restated as
 "only the declarative config changes" — an adapter is a protocol
 implementation, and treating that as an acceptable per-game cost is what this
 slice removes.
+
+**Met (`e0cca05a`).** `runtime/tests/playtesting-generic-adapter-episode.test.ts`
+onboards a second game that differs from the first in every dimension the runtime
+could have special-cased: CommonJS rather than ESM, code in its own source tree
+rather than beside the binding, a nested namespace reached by dotted binding
+paths, a different state machine, and a seeded RNG plus an optional method the
+first game did not bind. AutoDev's infrastructure is unchanged. Meeting it
+required two fixes the first game's fixture never reached — the entry module
+could only be declared beside the binding file, and a seeded RNG was advertised
+without the version the protocol requires it to name.
