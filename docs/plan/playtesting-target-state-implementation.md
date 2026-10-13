@@ -60,10 +60,11 @@ normative specification; this checklist tracks implementation and evidence.
 - [ ] Keyboard/mobile navigation, stable filter → finding → session → back,
       no fabricated video, source-mapped upstream UI logic actually executing,
       and performance on indexed queries, view changes, and replay selection.
-- [ ] Console run/watch and multi-session analysis: an operator can start an
+- [~] Console run/watch and multi-session analysis: an operator can start an
       approved run and watch every nonterminal batch progress without manual
-      refresh, and can select several persisted sessions and request analysis
-      over them together — see the active slice below.
+      refresh; the Runtime can dispatch analysis over an explicit selection of
+      sessions. The Console selection surface and its Control API route remain —
+      see the active slice below.
 - [ ] Declarative game onboarding: a second, mechanically different game joins
       Playtesting by adding one config file, with no adapter, protocol glue or
       hand-maintained digest — see the active slice below.
@@ -739,66 +740,108 @@ comparison inputs.
       ambiguous insert acknowledgement, and rejects stale or conflicting
       decisions. It does not open the game runner or write GitHub/releases.
 - [x] Console comparison history distinguishes derived eligibility from the
-      separately authored disposition, actor and reason. Runtime tests cover
+      separately authored disposition, actor and reason. Authorized operators
+      can submit an accessible same-origin promote/hold form with the current
+      expected version; the row updates in place and explicitly states that no
+      release/deployment occurred. Runtime tests cover Control API delegation,
       role denial, promotion gating, successful hold, exact retry, lost write
       acknowledgement, stale revision, and unchanged workspace approval.
+- [x] `pnpm typecheck` passed. Focused Core **72/72**, Data **25/25**, Runtime
+      owner/control/MCP **41/41**, Console route+render **10/10** passed. Browser
+      production build and owner/run usability E2E passed **7/7**, including the
+      owner form on a mobile viewport, keyboard traversal, cancellation of the
+      confirmation step, and successful version-checked recording.
+- [x] Full workspace suites: Core **285/285**, Data **365 passed / 9 skipped**,
+      Console **557/557**, Runtime **834 passed / 5 skipped**; root tests
+      **1,471 passed / 5 skipped**. Targeted ESLint, Prettier and
+      `git diff --check` passed. The browser's owner-decision backend was the
+      explicitly synthetic Control API fixture; no real game/release action ran.
+- [x] Final broad validation: full workspace suites Core **285/285**, Data
+      **365 passed / 9 skipped**, Console **557/557**, Runtime **834 passed / 5
+      skipped**; root tests **1,471 passed / 5 skipped**. Targeted lint, format,
+      and `git diff --check` pass for this slice.
 
 This adds the durable owner-decision endpoint, not the full experiment cycle.
 Comparison creation/analysis is still only a read of stored comparisons; fixed
 experiment arm execution, approved variant mapping, input-derived statistical
 analysis, and experiment lifecycle transitions remain unintegrated. The
+comparison decision form is synthetic-API usability evidence, not a real game
+experiment or release action. The
 per-comparison lock is process-local; cross-process writers remain unsupported
 until a durable coordinator is introduced.
 
-### Console run/watch and multi-session analysis (required, not implemented)
+### Console run/watch and multi-session analysis (partially implemented)
 
 This slice records a target-state requirement added to
 [`docs/playtesting-target-state.md`](../playtesting-target-state.md) §
-"Playtesting Console UX". It is **unimplemented**; nothing below may be read
-as delivered.
+"Playtesting Console UX".
+
+**Delivered (2026-10-13):**
+
+- [x] Live batch monitoring over the existing run-control owner: the
+      workspace-scoped active-runs read now carries each batch's live owner
+      record, so one request renders every nonterminal batch
+      (`ControlApiPlaytestingActiveRunsResponse`, `PlaytestActiveRunSummary`).
+      The Console polls with exponential backoff, stops once every batch is
+      terminal, and never advances batch state itself.
+- [x] A failed or unreachable read is an explicit `unavailable` state. Previously
+      read frames stay on screen labelled "Last known" and flagged
+      `data-stale`, rather than badging a frozen frame as current.
+- [x] Progress updates announce politely without moving focus; the focused
+      batch lives in bounded, shareable URL state (`liveBatch`) written through
+      the History API, so refresh and Back restore it.
+- [x] Cancellation is confirmed against a subsequent server-confirmed status
+      read before mutating, rather than asserting a terminal disposition
+      optimistically.
+- [x] Core owns the canonical run-state set. Runtime and the Console validate
+      against it, replacing two hand-maintained copies that had already diverged
+      — the Console's guard rejected `truncated` while Runtime emitted it.
+- [x] Multi-session dispatch: `playtest.prepareCrossSessionReview` takes an
+      explicit selection of 1..16 distinct sessions and returns every one of
+      them exactly once, as its own packet or as a named receipt. It excludes
+      partial, cancelled, crashed, infrastructure-failed and truncated sessions;
+      checks the per-batch critique cap across the whole selection rather than
+      per session; and never charges an ineligible session against the budget it
+      could not have used.
+
+**Still required:**
+
+- [ ] A Console surface that selects several persisted sessions and requests
+      analysis over them. The Runtime dispatch exists, but the Console reaches
+      Runtime only through the Control API, and no Control API route exposes
+      cross-session analysis — that route (threading the playtest repository and
+      artifact store through `PlaytestingRunControlApiOptions`) is the remaining
+      blocker, not the dispatch logic.
+- [ ] Browser E2E coverage for the live view: polling, backoff, the `stale`
+      state and keyboard/mobile use. The fixture
+      (`console/e2e/playtesting-control-api-fixture.ts`) does not yet intercept
+      `GET /control/playtesting/runs` or simulate a failing read, so the
+      `unavailable` state currently has only unit coverage.
+- [ ] Cross-session synthesis reporting that cites each contributing session's
+      own packet and labels itself cross-session, at the review-submission
+      boundary.
 
 Current state, from source:
 
-- `console/src/features/playtesting/PlaytestingRunControls.tsx` already composes
-  the bounded assignment inventory, starts an approved run through the typed
-  Control API, renders one run record, and cancels it. The synthetic browser
-  suite covers run start, manual status refresh and cancellation
+- `console/src/features/playtesting/PlaytestingRunControls.tsx` composes the
+  bounded assignment inventory, starts an approved run through the typed Control
+  API, renders one run record, and cancels it. The synthetic browser suite
+  covers run start, manual status refresh and cancellation
   (`console/e2e/playtesting-usability.spec.ts`).
-- Monitoring is therefore **operator-driven**, not live. `refreshStatus()` runs
-  only from an explicit click, and the cancellation notice asks the operator to
-  refresh to confirm the terminal disposition. `onRefresh` is bound to a single
-  run record, so there is no workspace-scoped active-runs view.
-- Analysis is **single-session by contract and has no batch entry point**.
-  `playtest.prepareReview` returns only the durable selected packet;
-  `playtest.submitReview` requires that packet/artifact/SHA-256 identity and
-  rejects citations outside it; new submissions must declare cross-session
-  context unavailable because the prepared packet is single-session. No Console
-  or MCP path selects N sessions and requests analysis over them together.
+- `console/src/features/playtesting/PlaytestingLiveRuns.ts` is the client island
+  that owns polling, the focused batch and the cancellation confirmation read;
+  `PlaytestingActiveRunsPanel.ts` renders it; `playtesting-active-runs.ts` holds
+  the pure read/terminal/backoff decisions so they are directly testable.
 
 Required work:
 
-- [ ] Live batch monitoring over the existing run-control owner: a
-      workspace-scoped active-runs view, automatic refresh until terminal
-      status, backoff, and an explicit `stale`/`unavailable` state on read
-      failure rather than a frozen last-good frame. No second status authority.
-- [ ] Live view keeps the required distinctions visible: assignment outcomes
-      versus gameplay outcomes, execution status versus `win/loss/DNF/other`,
-      infrastructure-loss assignments versus persisted episodes, and
-      `nonterminal-batch-recovered` versus a real result.
-- [ ] Cancellation confirmation requires a server-confirmed status read; it must
-      not assert a terminal disposition optimistically.
-- [ ] Live progress is `aria-live` polite, does not steal focus, is keyboard and
-      mobile usable, and survives refresh/Back through the shared
-      workspace/build URL state.
-- [ ] Multi-session analysis selection: explicit, bounded, shareable URL state
-      across a batch or filtered result set.
-- [ ] Runtime owns dispatch and keeps enforcing critique-budget reservation and
-      the per-batch cap; excludes partial, cancelled, crashed,
-      infrastructure-failed and truncated sessions; and reports selected
-      sessions that yielded packet-unavailable receipts instead of dropping them.
-- [ ] Cross-session claims cite into each contributing session's own packet and
-      are labelled cross-session, never presented as one session's grounded
-      evidence. The packet-bound citation invariant is unchanged.
+Remaining work on this list is recorded under "Still required" above; the
+Runtime dispatch, the live read and the confirmation read are delivered.
+
+The live view currently renders assignment outcomes and persisted episodes
+separately. It does not yet surface `win/loss/DNF/other` per assignment or the
+`nonterminal-batch-recovered` closure distinctly from a real result; the batch
+result carries the data and the panel does not yet distinguish it.
 
 Acceptance requires real-browser coverage of both paths against a labeled
 synthetic Control API fixture — live progress advancing without manual refresh,
@@ -806,7 +849,7 @@ an explicit stale state when the status read fails, and a multi-session
 selection that reserves capacity and rejects an out-of-cap request without
 truncation. That remains Console mechanics evidence, not a game run.
 
-### Declarative game onboarding: one config, no adapter (required, not implemented)
+### Declarative game onboarding: one config, no adapter (partially implemented)
 
 This slice records a target-state requirement added to
 [`docs/playtesting-target-state.md`](../playtesting-target-state.md) §
@@ -825,13 +868,19 @@ Current state, from RacingGame's first integration:
 - The game hand-maintains `evaluatorHash`, `schemaHash`, `actionSchemaHash`,
   `eventSchemaHash` and `contentHash` through a custom generator script, so any
   evaluator or schema edit silently invalidates a run until regenerated.
-- `playtest.config.json` is a hardcoded `CONFIG_FILENAME` resolved against the
+- `playtest.config.json` was a hardcoded `CONFIG_FILENAME` resolved against the
   checkout root (`runtime/src/playtesting/approved-configuration.ts`), so the
-  integration files cannot share one conventional directory.
+  integration files could not share one conventional directory. **Resolved** in
+  commit `7509b1c0`: the canonical location is
+  `.autodev/playtest.config.json` and referenced manifests resolve relative to
+  the config file, with an independent boundary refusing any manifest that
+  escapes that directory.
 - Approval runs `git status --porcelain=v1 --untracked-files=all
 --ignored=matching` and rejects any output
   (`runtime/src/playtesting/docker-sandbox.ts`), so a gitignored integration
-  directory fails with a message that does not name it.
+  directory failed with a message that did not name it. **Resolved** in commit
+  `476e6aa6`: the refusal names the offending paths and calls out `.autodev/`
+  explicitly.
 
 Required work:
 
@@ -842,13 +891,16 @@ Required work:
       convention-bound games onboard with the config alone; other games get an
       AutoDev-generated scaffold from the same config plus a conformance test
       that resolves every declared binding and drives a real episode.
-- [ ] A standard `.autodev/` home, with the config location made configurable so
-      the hardcoded `CONFIG_FILENAME` no longer pins it to the checkout root.
+- [x] A standard `.autodev/` home, with manifests resolved relative to the
+      config file rather than the checkout root, plus an independent Runtime
+      boundary refusing any manifest that escapes the config's own directory
+      (commit `7509b1c0`).
 - [ ] `autodev playtest init` to lay out the standard tree and
       `autodev playtest check` to verify it end to end before approval.
 - [ ] Hash chain fully generated and verified by `check`; no game edits or
       hand-maintains any digest.
-- [ ] Gitignoring `.autodev/` fails with a message naming that directory.
+- [x] Gitignoring `.autodev/` fails with a message naming that directory
+      (commit `476e6aa6`).
 - [ ] Measurement intent stays game-owned: scaffolding must not ship invented
       metric defaults, intended-experience claims or difficulty curves.
 
