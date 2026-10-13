@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
+  assertPlaytestEvidenceLocator,
   buildPlaytestCoverageManifestDraft,
   buildPlaytestPolicyValidity,
   defaultPlaytestRegistryDefaults,
@@ -33,7 +34,8 @@ import {
   type PlaytestPolicyCompetenceBounds,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
   PLAYTESTS_BATCH_SCHEMA,
-  PLAYTESTS_MEASUREMENT_VERSION} from "@simulatorlife/autodev-core";
+  PLAYTESTS_MEASUREMENT_VERSION
+} from "@simulatorlife/autodev-core";
 
 import { derivePlaytestPolicyValidity } from "../src/playtesting/policy-validity-run.ts";
 
@@ -531,4 +533,67 @@ test("records are returned in a stable order regardless of input order", () => {
     second.records.map((record) => record.validity.policyId),
     records.map((record) => record.validity.policyId)
   );
+});
+
+test("each record carries a citable identity a benchmark can attest to", () => {
+  const { records } = derivePlaytestPolicyValidity({
+    batch: batch(),
+    policyVersions: POLICY_VERSIONS,
+    createdAt: CREATED_AT
+  });
+  const heuristic = records.find(
+    (record) => record.validity.policyId === "heuristic"
+  );
+  assert.ok(heuristic);
+
+  // Content-addressed, so a citation cannot keep answering for a record that
+  // has since changed.
+  assert.match(heuristic.validityId, /^[a-f\d]{64}$/u);
+  assert.deepEqual(heuristic.locator, {
+    kind: "policy-validity",
+    id: heuristic.validityId
+  });
+  // The citation must satisfy the same closed vocabulary as every other
+  // evidence locator, or a benchmark would refuse to store it.
+  assert.doesNotThrow(() => assertPlaytestEvidenceLocator(heuristic.locator));
+
+  // Same run, same identity: the id is derived, not generated per call.
+  const again = derivePlaytestPolicyValidity({
+    batch: batch(),
+    policyVersions: POLICY_VERSIONS,
+    createdAt: CREATED_AT
+  });
+  assert.equal(
+    again.records.find((r) => r.validity.policyId === "heuristic")?.validityId,
+    heuristic.validityId
+  );
+});
+
+test("a different verdict is a different identity", () => {
+  const synthetic = derivePlaytestPolicyValidity({
+    batch: batch(),
+    policyVersions: POLICY_VERSIONS,
+    createdAt: CREATED_AT
+  });
+  const preregistered = derivePlaytestPolicyValidity({
+    batch: batch(),
+    policyVersions: POLICY_VERSIONS,
+    preregistration: {
+      heldOutHumanStateIdsByPolicyId: { heuristic: ["human-state-1"] },
+      boundsByPolicyId: { heuristic: BOUNDS }
+    },
+    createdAt: CREATED_AT
+  });
+
+  const before = synthetic.records.find(
+    (r) => r.validity.policyId === "heuristic"
+  );
+  const after = preregistered.records.find(
+    (r) => r.validity.policyId === "heuristic"
+  );
+  assert.ok(before && after);
+  assert.equal(before.validity.competence, "unvalidated-synthetic");
+  assert.equal(after.validity.competence, "insufficient");
+  // Otherwise the earlier citation would still read as current.
+  assert.notEqual(after.validityId, before.validityId);
 });

@@ -121,10 +121,28 @@ states what is implemented and, where applicable, what is still missing.
   Resolving that is a project decision about how independent units are derived,
   and it is recorded here rather than guessed at.
 
-  One bridge already exists and is still unconnected: `competenceReportRefs` on
-  the benchmark is where a `PlayerPolicyValidity` record would be cited, and the
-  fixture's is empty. The artifact produced by `playtest.policyValidity` is
-  therefore not yet reachable from the benchmark that should attest to it.
+  **The bridge to `competenceReportRefs` was unexpressible, and now is.** It is
+  a `PlaytestEvidenceLocator[]`, whose kind is a closed vocabulary
+  (`core/src/playtesting/types.ts`) that had no member for a validity record --
+  so the field whose whole purpose is to attest that a policy may stand in for a
+  player could only cite an `episode` or a `review`, neither of which is a
+  competence report. The test fixtures showed the pressure this created:
+  `competenceReportRefs: [{ kind: "episode", id: "policy-validity" }]` was an
+  invented value -- an episode whose id was the words "policy-validity".
+
+  `policy-validity` now joins the vocabulary, and the derived record carries a
+  citable identity: Core exposes `playtestPolicyValidityHashInput` (canonical
+  form only -- Core carries no hashing, because `node:crypto` cannot be bundled
+  into the browser-reachable console), and `playtest.policyValidity` takes the
+  SHA-256 and returns it as `validityId` plus the `{ kind, id }` locator a
+  benchmark would write. The identity is content-addressed, so a citation cannot
+  keep answering for a record whose verdict has since changed.
+
+  Extending the vocabulary is additive and backward-compatible: persisted
+  locators keep their existing kinds, and `assertPlaytestEvidenceLocator` still
+  rejects anything outside the closed set. Two controls confirm the change is
+  load-bearing -- a constant `validityId`, and removing the new kind, each turn
+  the relevant test red.
 
 - [~] 5. Visual/human validation: consented study data, privacy controls,
   distinct human instruments, and refusal of unauthorized UI evidence are

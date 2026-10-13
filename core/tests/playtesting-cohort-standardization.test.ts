@@ -66,7 +66,9 @@ function frozenBenchmark(
       { seed: "seed-regression", purpose: "regression" as const }
     ],
     policyVersions: { random: "hmac-sha256-v1" },
-    competenceReportRefs: [{ kind: "episode" as const, id: "policy-validity" }],
+    competenceReportRefs: [
+      { kind: "policy-validity" as const, id: "record-1" }
+    ],
     memoryResetRules: "One isolated episode; no shared learning memory.",
     engineEnvironmentHash: sha256("fixture-environment-v1"),
     actionSchemaHash: sha256("fixture-actions-v1"),
@@ -538,7 +540,7 @@ test("validation rejects negative, zero, and non-finite benchmark cohort weights
         { seed: "seed-regression", purpose: "regression" }
       ],
       policyVersions: { random: "hmac-sha256-v1" },
-      competenceReportRefs: [{ kind: "episode", id: "policy-validity" }],
+      competenceReportRefs: [{ kind: "policy-validity", id: "record-1" }],
       memoryResetRules: "One isolated episode; no shared learning memory.",
       engineEnvironmentHash: sha256("fixture-environment-v1"),
       actionSchemaHash: sha256("fixture-actions-v1"),

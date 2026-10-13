@@ -34,13 +34,15 @@
  * Nothing here invents a threshold. The competence verdict belongs to Core,
  * which applies bounds the project supplied or refuses to score.
  */
+import { createHash } from "node:crypto";
+
 import {
   buildPlaytestPolicyValidity,
   type PlayerPolicyValidity,
   type PlaytestBatch,
   playtestHumanProxyRefusal,
-  type PlaytestPolicyCompetenceBounds
-} from "@simulatorlife/autodev-core";
+  type PlaytestPolicyCompetenceBounds,
+  playtestPolicyValidityHashInput} from "@simulatorlife/autodev-core";
 
 /**
  * The project's §6 preregistration, supplied by the operator rather than by a
@@ -68,6 +70,17 @@ export interface DerivePlaytestPolicyValidityInput {
 
 export interface PlaytestDerivedPolicyValidity {
   readonly validity: PlayerPolicyValidity;
+  /**
+   * SHA-256 over Core's canonical form of the record.
+   *
+   * This is the id a `competenceReportRefs` locator cites, so a benchmark can
+   * attest to a specific validity record rather than to a policy name. It is
+   * computed here because Core carries no hashing: `node:crypto` cannot be
+   * bundled into the browser-reachable console package.
+   */
+  readonly validityId: string;
+  /** The citable locator for this record, as a benchmark would write it. */
+  readonly locator: { readonly kind: "policy-validity"; readonly id: string };
   /** §6's required downgrade sentence, or null when the policy passed. */
   readonly humanProxyRefusal: string | null;
   readonly observedEpisodes: number;
@@ -251,8 +264,13 @@ export function derivePlaytestPolicyValidity(
       createdAt: input.createdAt
     });
 
+    const validityId = createHash("sha256")
+      .update(playtestPolicyValidityHashInput(validity))
+      .digest("hex");
     records.push({
       validity,
+      validityId,
+      locator: { kind: "policy-validity", id: validityId },
       humanProxyRefusal: playtestHumanProxyRefusal(validity),
       observedEpisodes: counted.observedEpisodes,
       observedOpportunities: counted.observedOpportunities,

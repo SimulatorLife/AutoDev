@@ -7,13 +7,63 @@
  * unmeasured policy into one that may speak for a person.
  */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
+  assertPlaytestBenchmark,
   buildPlaytestPolicyValidity,
+  type BuildPlaytestPolicyValidityInput,
+  type PlaytestBenchmark,
+  playtestBenchmarkHashInput,
   playtestHumanProxyRefusal,
-  type BuildPlaytestPolicyValidityInput
-} from "@simulatorlife/autodev-core";
+  playtestPolicyValidityHashInput} from "@simulatorlife/autodev-core";
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+/** A valid frozen benchmark, used only to prove the citation is accepted. */
+function benchmarkFixture(): PlaytestBenchmark {
+  const withoutHash = {
+    benchmarkId: "benchmark-policy-validity-v1",
+    version: 1,
+    workspaceId: "owner/game",
+    referenceBuildSha: "a".repeat(40),
+    scenarioInventory: [
+      { scenarioId: "tutorial", family: "onboarding", weight: 1 }
+    ],
+    seedInventory: [
+      { seed: "seed-discovery", purpose: "discovery" as const },
+      { seed: "seed-confirmation", purpose: "confirmation" as const }
+    ],
+    policyVersions: { "policy-1": "1" },
+    competenceReportRefs: [],
+    memoryResetRules: "One isolated episode; no shared learning memory.",
+    engineEnvironmentHash: sha256("fixture-environment-v1"),
+    actionSchemaHash: sha256("fixture-actions-v1"),
+    observationSchemaHash: sha256("fixture-observations-v1"),
+    eventSchemaHash: sha256("fixture-events-v1"),
+    metricRegistryHash: sha256("fixture-registry-v1"),
+    rubricHash: sha256("fixture-rubric-v1"),
+    captureMode: "headless" as const,
+    measurementVersion: "playtesting-measurement-v2",
+    primaryMetricIds: ["legal-action-rejection"],
+    guardrailMetricIds: [],
+    practicalMargins: { "legal-action-rejection": 0.02 },
+    independentUnit: "episode" as const,
+    precisionPlanRef: "fixture-descriptive-only",
+    missingnessBound: 0.1,
+    refreshPolicy: "manual operator review only",
+    createdAt: "2026-10-10T00:00:00.000Z",
+    createdBy: "fixture-operator",
+    cohortWeights: { novice: 1 }
+  };
+  return {
+    ...withoutHash,
+    contentHash: sha256(playtestBenchmarkHashInput(withoutHash))
+  };
+}
 
 const BOUNDS = {
   minLegalityRate: 0.9,
@@ -76,15 +126,10 @@ test("an unmeasured criterion is insufficient, not passed", () => {
   // Repeatability was never measured. The criterion has not been met; it has
   // not been missed. Reporting `passed` here is precisely how an absent metric
   // becomes an authorization.
-  const validity = buildPlaytestPolicyValidity(
-    input({ repeatability: null })
-  );
+  const validity = buildPlaytestPolicyValidity(input({ repeatability: null }));
   assert.equal(validity.competence, "insufficient");
   assert.equal(validity.repeatability, null);
-  assert.match(
-    playtestHumanProxyRefusal(validity)!,
-    /never measured/u
-  );
+  assert.match(playtestHumanProxyRefusal(validity)!, /never measured/u);
 });
 
 test("measured metrics are applied against the caller's preregistered bounds", () => {
@@ -102,7 +147,11 @@ test("measured metrics are applied against the caller's preregistered bounds", (
     ["coverage", { coverage: 0.1 }]
   ] as const) {
     const validity = buildPlaytestPolicyValidity(input(overrides));
-    assert.equal(validity.competence, "failed", `${name} below bound must fail`);
+    assert.equal(
+      validity.competence,
+      "failed",
+      `${name} below bound must fail`
+    );
     assert.match(
       playtestHumanProxyRefusal(validity)!,
       /below a preregistered acceptance bound/u
@@ -153,7 +202,10 @@ test("identity is bound to one exact build and schema pair", () => {
     { workspaceId: "no-owner" },
     { cohortId: "has space" }
   ]) {
-    assert.throws(() => buildPlaytestPolicyValidity(input(overrides)), TypeError);
+    assert.throws(
+      () => buildPlaytestPolicyValidity(input(overrides)),
+      TypeError
+    );
   }
 });
 
@@ -181,4 +233,52 @@ test("the returned record copies its lists rather than aliasing the input", () =
   modes.push("lost-state");
   assert.deepEqual(validity.heldOutHumanStateIds, ["human-state-1"]);
   assert.deepEqual(validity.failureModes, ["stalled-progress"]);
+});
+
+test("a validity record is citable: the locator vocabulary names it and a benchmark accepts the citation", () => {
+  const validity = buildPlaytestPolicyValidity(input());
+
+  // `competenceReportRefs` exists to attest that a policy may stand in for a
+  // player. Before `policy-validity` joined the closed locator vocabulary the
+  // only expressible citations were an episode or a review, neither of which
+  // is a competence report -- so the field could not say what it was for.
+  const citation = {
+    kind: "policy-validity" as const,
+    id: playtestPolicyValidityHashInput(validity)
+  };
+  assert.doesNotThrow(() => {
+    assertPlaytestBenchmark({
+      ...benchmarkFixture(),
+      competenceReportRefs: [citation]
+    });
+  });
+
+  // An unknown kind is still refused; the vocabulary is extended, not relaxed.
+  assert.throws(
+    () =>
+      assertPlaytestBenchmark({
+        ...benchmarkFixture(),
+        competenceReportRefs: [{ kind: "competence", id: "x" }]
+      }),
+    TypeError
+  );
+});
+
+test("the canonical hash input is stable and moves when the record moves", () => {
+  const validity = buildPlaytestPolicyValidity(input());
+  const baseline = playtestPolicyValidityHashInput(validity);
+  assert.equal(playtestPolicyValidityHashInput(validity), baseline);
+
+  // A different verdict is a different record, so a citation that kept
+  // answering for it would silently attribute the old competence to the new.
+  const failed = buildPlaytestPolicyValidity(
+    input({ legalityRate: 0.1, repeatability: 0.1, actionAgreement: 0.1 })
+  );
+  assert.equal(failed.competence, "failed");
+  assert.notEqual(playtestPolicyValidityHashInput(failed), baseline);
+
+  // Key order must not matter, or two identical records would cite differently.
+  const reordered = { ...validity } as Record<string, unknown>;
+  const reversed = Object.fromEntries(Object.entries(reordered).reverse());
+  assert.equal(playtestPolicyValidityHashInput(reversed), baseline);
 });

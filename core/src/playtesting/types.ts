@@ -202,7 +202,14 @@ export const PLAYTESTS_LOCATOR_KINDS = [
   "replay-segment",
   "review",
   "finding",
-  "comparison"
+  "comparison",
+  /**
+   * A `PlayerPolicyValidity` record. Without this, `competenceReportRefs` --
+   * the field that exists to attest that a policy may stand in for a player --
+   * had no way to name one, and the only expressible citations were an episode
+   * or a review, neither of which is a competence report.
+   */
+  "policy-validity"
 ] as const;
 
 export type PlaytestLocatorKind = (typeof PLAYTESTS_LOCATOR_KINDS)[number];

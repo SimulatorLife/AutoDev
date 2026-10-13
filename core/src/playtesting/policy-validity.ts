@@ -22,7 +22,24 @@
  * authorizes a policy to speak for a player.
  */
 import type { PlayerPolicyValidity } from "./artifacts.ts";
+import { canonicalPlaytestJson } from "./canonical-json.ts";
 import type { PlaytestComparison } from "./types.ts";
+
+/**
+ * Canonical text a caller hashes to produce a citable record identity.
+ *
+ * Core carries no hashing on purpose: `node:crypto` cannot be bundled into the
+ * browser-reachable console package, and every other artifact here follows the
+ * same split -- Core supplies the canonical form, the caller (Runtime) takes
+ * the SHA-256. `competenceReportRefs` cites the digest as
+ * `{ kind: "policy-validity", id }`, so a changed record changes its own
+ * citation instead of silently continuing to answer for it.
+ */
+export function playtestPolicyValidityHashInput(
+  validity: PlayerPolicyValidity
+): string {
+  return canonicalPlaytestJson(validity);
+}
 
 /**
  * Acceptance bounds the caller preregistered against human data. Absent bounds
@@ -109,12 +126,16 @@ export function buildPlaytestPolicyValidity(
   }
   for (const hash of [input.observationSchemaHash, input.actionSchemaHash]) {
     if (!SHA256.test(hash)) {
-      throw new TypeError("Observation and action schema hashes must be SHA-256.");
+      throw new TypeError(
+        "Observation and action schema hashes must be SHA-256."
+      );
     }
   }
   for (const id of [input.cohortId, input.policyId, input.policyVersion]) {
     if (!BOUNDED_ID.test(id)) {
-      throw new TypeError("cohortId, policyId and policyVersion must be identifiers.");
+      throw new TypeError(
+        "cohortId, policyId and policyVersion must be identifiers."
+      );
     }
   }
   if (!isRate(input.coverage)) {
@@ -122,11 +143,11 @@ export function buildPlaytestPolicyValidity(
   }
   if (
     input.heldOutHumanStateIds.length > MAX_HELD_OUT_STATES ||
-    input.heldOutHumanStateIds.some(
-      (id) => !BOUNDED_ID.test(id)
-    )
+    input.heldOutHumanStateIds.some((id) => !BOUNDED_ID.test(id))
   ) {
-    throw new TypeError("Held-out human state ids must be bounded identifiers.");
+    throw new TypeError(
+      "Held-out human state ids must be bounded identifiers."
+    );
   }
   for (const metric of [
     input.legalityRate,
