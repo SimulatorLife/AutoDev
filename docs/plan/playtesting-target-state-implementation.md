@@ -75,7 +75,11 @@ normative specification; this checklist tracks implementation and evidence.
       (`e0cca05a`), and both tiers onboard a game — declaratively or through
       `init --scaffold` (`6c0b6aea`).
 - [ ] Documentation, test coverage, package checks and independent validation
-      match the final integrated diff.
+      match the final integrated diff. **Unmet.** Documentation and test
+      coverage for the two active slices are delivered and typecheck/format
+      clean; this item stays open because the browser acceptance above has not
+      executed and because Delivery Slices 1–8 remain unchecked. Neither is
+      something a green local suite substitutes for.
 
 ## Current evidence and gates
 
@@ -842,22 +846,36 @@ Remaining work on this list is recorded under "Still required" above; the
 Runtime dispatch, the live read and the confirmation read are delivered.
 
 The live view currently renders assignment outcomes and persisted episodes
-separately. It does not yet surface `win/loss/DNF/other` per assignment or the
-`nonterminal-batch-recovered` closure distinctly from a real result; the batch
-result carries the data and the panel does not yet distinguish it.
+separately. The tiles read the owner's own `PlaytestCompletionCounts`; four of
+them previously read keys no producer emits and so rendered "not observed"
+permanently (`e6c3fbd1`). Per-assignment `win/loss/DNF/other` — which comes
+from the game's own `game.outcome`, not from assignment counts — is still not
+surfaced per assignment; the batch result carries it and the panel aggregates.
 
 Acceptance requires real-browser coverage of both paths against a labeled
 synthetic Control API fixture — live progress advancing without manual refresh,
 an explicit stale state when the status read fails, and a multi-session
 selection that reserves capacity and rejects an out-of-cap request without
-truncation. That remains Console mechanics evidence, not a game run.
+truncation.
 
-### Declarative game onboarding: one config, no adapter (partially implemented)
+**Not yet run.** `console/e2e/playtesting-usability.spec.ts` covers all three
+(8 specs, listed by `npx playwright test --list`), but no spec has executed in
+this environment: Chromium dies at
+`bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer:
+Permission denied (1100)`, a macOS sandbox restriction, and no other engine is
+installed. What has been checked instead, over HTTP against the real fixture
+server: `/health`, the `runs-read-fail` toggle the spec drives, and the
+active-runs read's envelope. A unit test now compares the panel's count keys
+against the fixture's emitted keys, so a tile the fixture cannot satisfy fails
+without a browser. That is Console mechanics evidence, not a game run, and it is
+not the browser acceptance above.
+
+### Declarative game onboarding: one config, no adapter (delivered)
 
 This slice records a target-state requirement added to
 [`docs/playtesting-target-state.md`](../playtesting-target-state.md) §
-"Declarative game onboarding". It is **unimplemented**; nothing below may be
-read as delivered.
+"Declarative game onboarding". Both tiers are delivered; the items below carry
+their own checkboxes, and only the ones marked `[x]` may be read as delivered.
 
 Current state, from RacingGame's first integration:
 

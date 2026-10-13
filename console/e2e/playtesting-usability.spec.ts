@@ -495,13 +495,20 @@ test("live batches appear without operator action, and an unreadable read is sta
   // The focused batch is address state, so refresh restores it.
   await batch.getByRole("button", { name: "Show progress" }).click();
   await expect(batch).toHaveAttribute("data-focused", "true");
+
+  // The tiles name the owner's own counts. A tile pointed at a field the
+  // Runtime does not produce renders "not observed" forever, which is what
+  // four of these did before the keys were bound to PlaytestCompletionCounts.
+  await expect(batch).toContainText("Assignments started");
+  await expect(batch).toContainText("Assignments completed");
+  await expect(batch).not.toContainText("Assignments succeeded");
+  await expect(batch).not.toContainText("Assignments quota-blocked");
   await expect(page).toHaveURL(/liveBatch=batch-/u);
   await page.reload();
   const reloaded = page.getByRole("region", { name: "Live batches" });
-  await expect(reloaded.getByTestId("playtesting-active-run").first()).toHaveAttribute(
-    "data-focused",
-    "true"
-  );
+  await expect(
+    reloaded.getByTestId("playtesting-active-run").first()
+  ).toHaveAttribute("data-focused", "true");
 
   // An unreadable read is an explicit state, and the last known frame is
   // labelled as last known rather than badged as current.
@@ -514,14 +521,14 @@ test("live batches appear without operator action, and an unreadable read is sta
     await expect(degraded).toHaveAttribute("data-freshness", "unavailable", {
       timeout: 20_000
     });
-    await expect(degraded.getByText(/not confirmed current state/iu)).toBeVisible();
+    await expect(
+      degraded.getByText(/not confirmed current state/iu)
+    ).toBeVisible();
     await expect(
       degraded.getByTestId("playtesting-active-run-lastknown")
     ).toBeVisible();
   } finally {
-    await request.get(
-      `${FIXTURE_BASE_URL}/fixture/runs-read-fail?mode=off`
-    );
+    await request.get(`${FIXTURE_BASE_URL}/fixture/runs-read-fail?mode=off`);
   }
 
   // Progress is announced politely and does not move focus.

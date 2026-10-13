@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import React from "react";
@@ -383,5 +384,40 @@ test("the panel renders the owner's own counts rather than an absent reading", (
       markup
     ),
     "no tile may name a field the Runtime does not produce"
+  );
+});
+
+test("every count tile names a field the synthetic fixture actually emits", () => {
+  // The browser suite is the acceptance evidence for this panel, and it runs
+  // against the synthetic Control API fixture. A tile pointed at a field the
+  // fixture never emits would render "not observed" in the very run meant to
+  // prove the tiles work — so the two key sets are compared here, where it
+  // fails fast without a browser.
+  const fixture = readFileSync(
+    new URL("../e2e/playtesting-control-api-fixture.ts", import.meta.url),
+    "utf8"
+  );
+  const panel = readFileSync(
+    new URL(
+      "../src/features/playtesting/PlaytestingActiveRunsPanel.ts",
+      import.meta.url
+    ),
+    "utf8"
+  );
+  const emitted = new Set(
+    [
+      ...(
+        fixture.match(/const runCounts = \{([\s\S]*?)\n  \};/u)?.[1] ?? ""
+      ).matchAll(/^\s*(\w+):/gmu)
+    ].map((match) => match[1]!)
+  );
+  const read = [...panel.matchAll(/countLabel\(counts, "(\w+)"\)/gu)].map(
+    (match) => match[1]!
+  );
+  assert.ok(read.length > 0, "the panel must read at least one count");
+  assert.deepEqual(
+    read.filter((key) => !emitted.has(key)),
+    [],
+    "every tile must read a field the fixture emits"
   );
 });
