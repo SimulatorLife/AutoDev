@@ -15,7 +15,10 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../src/lib/server/form-mutation.ts";
-import { startPlaytestingRun } from "../../../playtesting/playtesting-server.ts";
+import {
+  fetchPlaytestingActiveRuns,
+  startPlaytestingRun
+} from "../../../playtesting/playtesting-server.ts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -34,6 +37,51 @@ function sendError(
   return NextResponse.json(
     { kind: "error", code, message },
     { status, headers: { "cache-control": "no-store" } }
+  );
+}
+
+/**
+ * Workspace-scoped live batch reads for the active-runs view. This is a read
+ * of the same typed run owner that starts and cancels runs; the Console never
+ * derives batch state from anywhere else.
+ */
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const workspaceId = request.nextUrl.searchParams.get("workspaceId")?.trim() ?? "";
+  if (
+    [...request.nextUrl.searchParams.keys()].some(
+      (key) => key !== "workspaceId"
+    ) ||
+    !WORKSPACE_ID_PATTERN.test(workspaceId)
+  ) {
+    return sendError(
+      400,
+      "autodev_console_playtesting_invalid_request",
+      "A canonical workspaceId is required to read active runs."
+    );
+  }
+  const config = readControlApiConfig();
+  if (!config) {
+    return sendError(
+      503,
+      "autodev_console_control_api_unavailable",
+      "The server-side Control API credential is not configured."
+    );
+  }
+  const result = await fetchPlaytestingActiveRuns(workspaceId, config);
+  if (result.kind !== "ok") {
+    return sendError(
+      result.kind === "http-error" || result.kind === "unauthorized"
+        ? result.status
+        : result.kind === "unreachable"
+          ? 503
+          : 502,
+      controlApiFailureCode(result),
+      result.message
+    );
+  }
+  return NextResponse.json(
+    { kind: "ok", data: result.data },
+    { status: 200, headers: { "cache-control": "no-store" } }
   );
 }
 

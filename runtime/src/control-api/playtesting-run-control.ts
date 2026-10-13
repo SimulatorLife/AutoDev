@@ -2,9 +2,12 @@ import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
+  CONTROL_API_PLAYTESTING_RUN_STATES,
   type ControlApiPlaytestingActiveRunsResponse,
   type ControlApiPlaytestingCancellationReason,
   type ControlApiPlaytestingCapabilitiesResponse,
+  type ControlApiPlaytestingComparisonDecisionRequest,
+  type ControlApiPlaytestingComparisonDecisionResponse,
   type ControlApiPlaytestingRunCancellationResponse,
   type ControlApiPlaytestingRunRecord,
   type ControlApiPlaytestingRunStartedResponse,
@@ -36,16 +39,11 @@ const CAPABILITIES_PATH = "/control/playtesting/capabilities";
 const WAIT_MILLISECONDS_PATTERN = /^(0|[1-9][0-9]{0,4})$/u;
 const RUN_ROUTE = /^\/control\/playtesting\/runs\/([^/]+)$/u;
 const CANCEL_ROUTE = /^\/control\/playtesting\/runs\/([^/]+)\/cancel$/u;
+const COMPARISON_DECISION_ROUTE =
+  /^\/control\/playtesting\/comparisons\/([^/]+)\/decision$/u;
 const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
 const BATCH_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
-const RUN_STATES = new Set([
-  "running",
-  "persisting",
-  "completed",
-  "failed",
-  "cancelled",
-  "truncated"
-]);
+const RUN_STATES = new Set<string>(CONTROL_API_PLAYTESTING_RUN_STATES);
 const CANCELLATION_REASONS = new Set<ControlApiPlaytestingCancellationReason>([
   "cancelled",
   "approval-revoked",
@@ -54,6 +52,13 @@ const CANCELLATION_REASONS = new Set<ControlApiPlaytestingCancellationReason>([
 
 const cancellationRequestSchema = z.strictObject({
   expectedStatus: z.literal("running")
+});
+const comparisonDecisionRequestSchema = z.strictObject({
+  workspaceId: z.string().regex(WORKSPACE_ID_PATTERN),
+  comparisonId: z.string().regex(BATCH_ID_PATTERN),
+  expectedVersion: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  disposition: z.enum(["promote", "hold"]),
+  reason: z.string().min(1).max(4000)
 });
 const batchAssignmentSchema = z.strictObject({
   scenario: z.string().min(1).max(256),
@@ -122,7 +127,10 @@ export interface PlaytestingRunControlApiOptions {
   readonly trustedSessionRole?: string;
   readonly audit?: (event: {
     readonly actor: string;
-    readonly action: "start_playtest_run" | "cancel_playtest_run";
+    readonly action:
+      | "start_playtest_run"
+      | "cancel_playtest_run"
+      | "record_playtest_comparison_decision";
     readonly workspaceId: string;
     readonly outcome: "ok" | "denied" | "error";
     readonly changes: Readonly<Record<string, unknown>> | null;
@@ -404,7 +412,11 @@ function workspaceQuery(
 function recordAudit(
   options: PlaytestingRunControlApiOptions,
   actor: PlaytestingRunControlActor,
-  action: "start_playtest_run" | "cancel_playtest_run" | undefined,
+  action:
+    | "start_playtest_run"
+    | "cancel_playtest_run"
+    | "record_playtest_comparison_decision"
+    | undefined,
   workspaceId: string,
   outcome: "ok" | "denied" | "error",
   changes: Readonly<Record<string, unknown>> | null,
@@ -499,6 +511,121 @@ async function startRun(
   }
 }
 
+async function comparisonDecisionRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  comparisonId: string
+): Promise<ControlApiPlaytestingComparisonDecisionRequest | null> {
+  const body = await readControlApiJsonObject(request);
+  if (!body.ok) {
+    sendError(response, body.status, body.code, body.message);
+    return null;
+  }
+  const parsed = comparisonDecisionRequestSchema.safeParse(body.body);
+  if (!parsed.success || parsed.data.comparisonId !== comparisonId) {
+    sendError(
+      response,
+      400,
+      "autodev_control_playtesting_invalid_request",
+      "The typed comparison decision request is invalid or does not match its path."
+    );
+    return null;
+  }
+  return parsed.data;
+}
+
+async function decideComparison(
+  request: IncomingMessage,
+  response: ServerResponse,
+  comparisonId: string,
+  actor: PlaytestingRunControlActor,
+  options: PlaytestingRunControlApiOptions,
+  runControl: PlaytestRunControl
+): Promise<void> {
+  if (actor.role !== "operator") {
+    recordAudit(
+      options,
+      actor,
+      "record_playtest_comparison_decision",
+      "unknown/unknown",
+      "denied",
+      null,
+      "operator_required"
+    );
+    sendError(
+      response,
+      403,
+      "autodev_control_playtesting_operator_required",
+      "Recording a comparison owner decision requires an authorized operator."
+    );
+    return;
+  }
+  const decision = await comparisonDecisionRequest(
+    request,
+    response,
+    comparisonId
+  );
+  if (!decision) return;
+  const { workspaceId, expectedVersion, disposition, reason } = decision;
+  const unavailable = workspaceError(workspaceId, options);
+  if (unavailable) {
+    sendError(
+      response,
+      unavailable.status,
+      unavailable.code,
+      unavailable.message
+    );
+    return;
+  }
+  const session = sessionFor(
+    request,
+    actor,
+    workspaceId,
+    response,
+    options.requireSessionHeader ?? false,
+    options.trustedSessionRole
+  );
+  if (!session) return;
+  try {
+    const comparison = await runControl.recordComparisonDecision(
+      session,
+      workspaceId,
+      comparisonId,
+      expectedVersion,
+      disposition,
+      reason
+    );
+    const body: ControlApiPlaytestingComparisonDecisionResponse = {
+      schema: "autodev-control-playtesting-comparison-decision-v1",
+      workspaceId,
+      comparison
+    };
+    recordAudit(
+      options,
+      actor,
+      "record_playtest_comparison_decision",
+      workspaceId,
+      "ok",
+      {
+        comparisonId,
+        version: comparison.version,
+        disposition: comparison.ownerDisposition,
+        decisionBy: comparison.ownerDecisionBy
+      }
+    );
+    sendJson(response, 200, body, { "cache-control": "no-store" });
+  } catch (error) {
+    recordRunError(
+      response,
+      error,
+      options,
+      actor,
+      "record_playtest_comparison_decision",
+      workspaceId
+    );
+  }
+}
+
 async function getCapabilities(
   request: IncomingMessage,
   response: ServerResponse,
@@ -576,7 +703,16 @@ async function listRuns(
     const body: ControlApiPlaytestingActiveRunsResponse = {
       schema: "autodev-control-playtesting-runs-v1",
       workspaceId: query.workspaceId,
-      runs: await runControl.listActiveRuns(session, query.workspaceId)
+      // The owner already read each live run; project that same record rather
+      // than re-reading it, so the list cannot disagree with the status route.
+      runs: (
+        await runControl.listActiveRuns(session, query.workspaceId)
+      ).map((run) => ({
+        batchId: run.batchId,
+        assignmentCount: run.assignmentCount,
+        createdAt: run.createdAt,
+        status: statusRecord(run.status)
+      }))
     };
     sendJson(response, 200, body, { "cache-control": "no-store" });
   } catch (error) {
@@ -744,7 +880,11 @@ function recordRunError(
   error: unknown,
   options: PlaytestingRunControlApiOptions,
   actor: PlaytestingRunControlActor,
-  action: "start_playtest_run" | "cancel_playtest_run" | undefined,
+  action:
+    | "start_playtest_run"
+    | "cancel_playtest_run"
+    | "record_playtest_comparison_decision"
+    | undefined,
   workspaceId: string
 ): void {
   if (error instanceof PlaytestMcpAuthorizationError) {
@@ -863,6 +1003,26 @@ function recordRunError(
   }
 }
 
+type RunControlRoute =
+  | { readonly kind: "capabilities" }
+  | { readonly kind: "collection" }
+  | { readonly kind: "status"; readonly batchId: string }
+  | { readonly kind: "cancel"; readonly batchId: string }
+  | { readonly kind: "comparison-decision"; readonly comparisonId: string };
+
+function runControlRoute(pathname: string): RunControlRoute | null {
+  if (pathname === CAPABILITIES_PATH) return { kind: "capabilities" };
+  if (pathname === RUNS_PATH) return { kind: "collection" };
+  const batchId = pathId(pathname, RUN_ROUTE);
+  if (batchId !== null) return { kind: "status", batchId };
+  const cancelBatchId = pathId(pathname, CANCEL_ROUTE);
+  if (cancelBatchId !== null) return { kind: "cancel", batchId: cancelBatchId };
+  const comparisonId = pathId(pathname, COMPARISON_DECISION_ROUTE);
+  return comparisonId === null
+    ? null
+    : { kind: "comparison-decision", comparisonId };
+}
+
 /** Typed Control API entry points delegate to the exact MCP run-control owner. */
 export async function handlePlaytestingRunControlRequest(
   request: IncomingMessage,
@@ -871,17 +1031,8 @@ export async function handlePlaytestingRunControlRequest(
   actor: PlaytestingRunControlActor,
   options: PlaytestingRunControlApiOptions = {}
 ): Promise<boolean> {
-  const batchId = pathId(pathname, RUN_ROUTE);
-  const cancelBatchId = pathId(pathname, CANCEL_ROUTE);
-  const isCollection = pathname === RUNS_PATH;
-  const isCapabilities = pathname === CAPABILITIES_PATH;
-  if (
-    !isCollection &&
-    !isCapabilities &&
-    batchId === null &&
-    cancelBatchId === null
-  )
-    return false;
+  const route = runControlRoute(pathname);
+  if (route === null) return false;
   const runControl = options.runControl;
   if (!runControl) {
     sendError(
@@ -892,64 +1043,80 @@ export async function handlePlaytestingRunControlRequest(
     );
     return true;
   }
-
   const method = request.method ?? "GET";
-  if (isCapabilities) {
-    if (method === "GET") {
-      await getCapabilities(
-        request,
-        response,
-        pathname,
-        actor,
-        options,
-        runControl
-      );
-    } else {
-      sendMethodNotAllowed(response, "GET");
+  switch (route.kind) {
+    case "capabilities": {
+      if (method === "GET") {
+        await getCapabilities(
+          request,
+          response,
+          pathname,
+          actor,
+          options,
+          runControl
+        );
+      } else {
+        sendMethodNotAllowed(response, "GET");
+      }
+      break;
     }
-    return true;
-  }
-  if (isCollection) {
-    if (method === "POST") {
-      await startRun(request, response, actor, options, runControl);
-    } else if (method === "GET") {
-      await listRuns(request, response, pathname, actor, options, runControl);
-    } else {
-      sendMethodNotAllowed(response, "GET, POST");
+    case "collection": {
+      if (method === "POST") {
+        await startRun(request, response, actor, options, runControl);
+      } else if (method === "GET") {
+        await listRuns(request, response, pathname, actor, options, runControl);
+      } else {
+        sendMethodNotAllowed(response, "GET, POST");
+      }
+      break;
     }
-    return true;
-  }
-  if (batchId !== null) {
-    if (method === "GET") {
-      await readRunStatus(
-        request,
-        response,
-        pathname,
-        batchId,
-        actor,
-        options,
-        runControl
-      );
-    } else {
-      sendMethodNotAllowed(response, "GET");
+    case "status": {
+      if (method === "GET") {
+        await readRunStatus(
+          request,
+          response,
+          pathname,
+          route.batchId,
+          actor,
+          options,
+          runControl
+        );
+      } else {
+        sendMethodNotAllowed(response, "GET");
+      }
+      break;
     }
-    return true;
-  }
-  if (cancelBatchId !== null) {
-    if (method === "POST") {
-      await cancelRun(
-        request,
-        response,
-        pathname,
-        cancelBatchId,
-        actor,
-        options,
-        runControl
-      );
-    } else {
-      sendMethodNotAllowed(response, "POST");
+    case "cancel": {
+      if (method === "POST") {
+        await cancelRun(
+          request,
+          response,
+          pathname,
+          route.batchId,
+          actor,
+          options,
+          runControl
+        );
+      } else {
+        sendMethodNotAllowed(response, "POST");
+      }
+      break;
     }
-    return true;
+    case "comparison-decision": {
+      if (method === "POST") {
+        await decideComparison(
+          request,
+          response,
+          route.comparisonId,
+          actor,
+          options,
+          runControl
+        );
+      } else {
+        sendMethodNotAllowed(response, "POST");
+      }
+      break;
+    }
   }
-  return false;
+  return true;
 }

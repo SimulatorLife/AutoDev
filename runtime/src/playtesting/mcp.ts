@@ -38,6 +38,7 @@ import {
   playtestCoverageManifestHashInput,
   type PlaytestCoveragePlanCell,
   playtestCoveragePlanForRegistry,
+  playtestCrossSessionInventoryHashInput,
   type PlaytestDimensionAnchor,
   type PlaytestEpisode,
   type PlaytestEvidenceLocator,
@@ -49,6 +50,7 @@ import {
   playtestFindingIdentityHashInput,
   playtestFindingIdFromFingerprint,
   type PlaytestKnownEvidenceIndex,
+  type PlaytestOwnerDisposition,
   type PlaytestReviewCandidate,
   type PlaytestReviewCompleteness,
   playtestReviewOutcomeKey,
@@ -70,6 +72,7 @@ import {
   PLAYTESTS_SEVERITIES,
   PLAYTESTS_VERIFICATION_STAGES,
   type PlaytestSessionReview,
+  recordPlaytestOwnerDecision,
   scorePlaytestDimensionAnchor,
   selectPlaytestBatchReviews,
   type WorkspacePlaytestApproval
@@ -156,6 +159,12 @@ export interface PlaytestActiveRunSummary {
   readonly batchId: string;
   readonly assignmentCount: number;
   readonly createdAt: string;
+  /**
+   * The same owner-read status the single-batch status route returns, so one
+   * workspace-scoped list renders every nonterminal batch without a second
+   * status authority or one request per batch.
+   */
+  readonly status: PlaytestRunStatus;
 }
 
 export interface PlaytestRunCancellationResult {
@@ -253,6 +262,14 @@ export interface PlaytestRunCapabilities {
 }
 
 export interface PlaytestRunControl {
+  recordComparisonDecision(
+    session: PlaytestMcpSession,
+    workspaceId: string,
+    comparisonId: string,
+    expectedVersion: number,
+    disposition: Exclude<PlaytestOwnerDisposition, "not-recorded">,
+    reason: string
+  ): Promise<PlaytestComparison>;
   getCapabilities(
     session: PlaytestMcpSession,
     workspaceId: string
@@ -317,6 +334,7 @@ export interface PlaytestingRepositoryOps extends PlaytestingReadRepository {
     workspaceId: string,
     comparisonId: string
   ): Promise<PlaytestComparison | null>;
+  insertComparison(comparison: PlaytestComparison): Promise<void>;
 }
 
 export interface PlaytestRunControlOptions {
@@ -364,6 +382,7 @@ const ANALYSIS_READER_ROLES = new Set([
   "validator",
   "operator"
 ]);
+const OWNER_DECISION_ROLES = new Set(["root", "operator"]);
 const FINDING_READER_ROLES = new Set([
   "root",
   "orchestrator",
@@ -499,10 +518,16 @@ const reviewClaimSchema = z.strictObject({
 });
 
 const reviewCompletenessSchema = z.strictObject({
-  crossSessionContext: z.strictObject({
-    status: z.literal("unavailable"),
-    reason: z.string().min(1).max(2000)
-  }),
+  crossSessionContext: z.union([
+    z.strictObject({
+      status: z.literal("available"),
+      evidenceRefs: z.array(evidenceLocatorSchema).min(1).max(4)
+    }),
+    z.strictObject({
+      status: z.literal("unavailable"),
+      reason: z.string().min(1).max(2000)
+    })
+  ]),
   alternatives: z.union([
     z.strictObject({ status: z.literal("provided") }),
     z.strictObject({
@@ -1657,6 +1682,21 @@ function activeRunProgress(run: ActivePlaytestRun): {
     reviewSelection: { status: "pending" },
     cancellation: run.reason,
     selectedReviewEpisodeIds: []
+  };
+}
+
+/**
+ * The single owner read of one live run. Both the workspace-scoped active-run
+ * list and the single-batch status route project through this, so a Console
+ * watching many batches and one watching one batch cannot disagree.
+ */
+function activeRunStatus(run: ActivePlaytestRun): PlaytestRunStatus {
+  return {
+    batchId: run.batchId,
+    status: run.phase,
+    cancellationReason: run.reason,
+    result: activeRunProgress(run),
+    error: null
   };
 }
 
@@ -2833,6 +2873,41 @@ function prepareReviewPacketReceipt(input: {
     (candidate) => candidate.assignmentId === assignmentId
   );
   const episode = context.observedEpisodes.get(assignmentId);
+  const assignmentById = new Map(
+    context.assignments.map((candidate) => [candidate.assignmentId, candidate])
+  );
+  const crossSessionCandidates = [...context.observedEpisodes.values()]
+    .filter(
+      (candidate) =>
+        candidate.episodeId !== episodeId &&
+        candidate.status === "completed" &&
+        candidate.completeness === "complete"
+    )
+    .map((candidate) => {
+      const siblingAssignment = candidate.assignmentId
+        ? assignmentById.get(candidate.assignmentId)
+        : undefined;
+      if (!siblingAssignment) {
+        throw new TypeError(
+          "Completed sibling episode has no frozen batch assignment."
+        );
+      }
+      return { episode: candidate, assignment: siblingAssignment };
+    });
+  const crossSessionInventoryHash = createHash("sha256")
+    .update(playtestCrossSessionInventoryHashInput(crossSessionCandidates))
+    .digest("hex");
+  const crossSessionSelectionSeed = createHash("sha256")
+    .update(
+      canonicalPlaytestJson({
+        purpose: "playtest-cross-session-packet-sample-v1",
+        assignmentManifestHash: context.manifest.contentHash,
+        targetAssignmentId: assignmentId,
+        targetEpisodeId: episodeId,
+        inventoryHash: crossSessionInventoryHash
+      })
+    )
+    .digest("hex");
   const sourceIdentity = {
     batchId: context.manifest.batchId,
     workspaceId: context.manifest.workspaceId,
@@ -2844,6 +2919,8 @@ function prepareReviewPacketReceipt(input: {
     rubricHash: context.prepared.rubricHash,
     selectionHash: context.manifest.contentHash,
     coverageManifestHash: input.coverageManifest.contentHash,
+    crossSessionInventoryHash,
+    crossSessionSelectionSeed,
     measurementVersion: PLAYTESTS_MEASUREMENT_VERSION,
     tokenBudget: input.tokenBudget,
     maxPacketBytes: input.maxPacketBytes,
@@ -2883,6 +2960,9 @@ function prepareReviewPacketReceipt(input: {
       assignment,
       registry: context.prepared.rubric,
       coverageManifest: input.coverageManifest,
+      crossSessionCandidates,
+      crossSessionSelectionSeed,
+      crossSessionInventoryHash,
       rubricHash: context.prepared.rubricHash,
       measurementVersion: PLAYTESTS_MEASUREMENT_VERSION,
       ...trace,
@@ -2902,7 +2982,8 @@ function prepareReviewPacketReceipt(input: {
     artifact = artifacts.writeArtifact({
       artifactId: packet.packetId,
       mediaType: PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
-      bytes: new TextEncoder().encode(canonicalPlaytestJson(packet))
+      bytes: new TextEncoder().encode(canonicalPlaytestJson(packet)),
+      pendingCommitId: context.manifest.batchId
     }).reference;
   } catch {
     return unavailable("artifact-store-failed");
@@ -2916,6 +2997,22 @@ function prepareReviewPacketReceipt(input: {
     failureReason: null,
     createdAt: input.generatedAt
   };
+}
+
+function finalizeReviewPacketArtifactMarkers(
+  artifacts: PlaytestArtifactStore,
+  batchId: string,
+  packets: readonly PlaytestReviewPacketReceipt[]
+): void {
+  for (const packet of packets) {
+    if (packet.status !== "prepared" || packet.artifact === null) continue;
+    try {
+      artifacts.markArtifactCommitted(packet.artifact, batchId);
+    } catch {
+      // The durable batch receipt is authoritative. A later startup pass
+      // reconciles this local marker from Data instead of failing the run.
+    }
+  }
 }
 
 function prepareReviewPackets(input: {
@@ -2980,6 +3077,7 @@ async function executeApprovedBatch(input: ExecuteBatchInput) {
   const outcomes: PlaytestAssignmentOutcome[] = [];
   let capabilities: PlaytestCapabilityAdvertisement | null = null;
   let approvalMonitor: NodeJS.Timeout | undefined;
+  let terminalWriteOutcomeUnknown = false;
   try {
     approvalMonitor = setInterval(() => {
       const reason = approvalIsStillExact(
@@ -3118,30 +3216,28 @@ async function executeApprovedBatch(input: ExecuteBatchInput) {
       cancelled: activeRun.reason !== null,
       aborted: false
     });
-    await input.repository.insertBatch(
-      batchRecordFor({
-        manifest: context.manifest,
-        prepared: context.prepared,
-        approval: input.approval,
-        revision: 2,
-        status: terminalStatus,
-        counts,
-        reviewSelection,
-        unobservedAssignments: outcomes.filter(
-          (outcome) => outcome.episodeId === null
-        ),
-        capabilities,
-        cancellationReason: activeRun.reason,
-        failureReason: null,
-        createdAt: context.manifest.createdAt,
-        startedAt: context.manifest.createdAt,
-        completedAt,
-        actualCritiques: 0,
-        coverageManifest,
-        reviewPackets
-      })
-    );
-    return {
+    const terminalBatch = batchRecordFor({
+      manifest: context.manifest,
+      prepared: context.prepared,
+      approval: input.approval,
+      revision: 2,
+      status: terminalStatus,
+      counts,
+      reviewSelection,
+      unobservedAssignments: outcomes.filter(
+        (outcome) => outcome.episodeId === null
+      ),
+      capabilities,
+      cancellationReason: activeRun.reason,
+      failureReason: null,
+      createdAt: context.manifest.createdAt,
+      startedAt: context.manifest.createdAt,
+      completedAt,
+      actualCritiques: 0,
+      coverageManifest,
+      reviewPackets
+    });
+    const completedResult = () => ({
       batchId: context.manifest.batchId,
       status: terminalStatus,
       assignmentCount: context.assignments.length,
@@ -3155,7 +3251,44 @@ async function executeApprovedBatch(input: ExecuteBatchInput) {
         reviewSelection.status === "selected"
           ? reviewSelection.selected.map((unit) => unit.episodeId)
           : []
-    };
+    });
+    try {
+      await input.repository.insertBatch(terminalBatch);
+    } catch (error) {
+      terminalWriteOutcomeUnknown = true;
+      let persisted: PlaytestBatch | null;
+      try {
+        persisted = await input.repository.getBatch(
+          input.workspaceId,
+          context.manifest.batchId
+        );
+      } catch {
+        // Do not append a conflicting failed revision when the commit result
+        // cannot be read. Status recovery will resolve the durable state.
+        throw error;
+      }
+      if (
+        persisted === null ||
+        canonicalPlaytestJson(persisted) !==
+          canonicalPlaytestJson(terminalBatch)
+      ) {
+        // A stale read may still hide a successful ClickHouse insert. Preserve
+        // revision history rather than overwriting an ambiguous terminal row.
+        throw error;
+      }
+      finalizeReviewPacketArtifactMarkers(
+        input.artifacts,
+        context.manifest.batchId,
+        reviewPackets
+      );
+      return completedResult();
+    }
+    finalizeReviewPacketArtifactMarkers(
+      input.artifacts,
+      context.manifest.batchId,
+      reviewPackets
+    );
+    return completedResult();
   } catch (error) {
     markRunPersisting(activeRun);
     const completedAt = new Date().toISOString();
@@ -3186,40 +3319,42 @@ async function executeApprovedBatch(input: ExecuteBatchInput) {
       episodes: incompleteEpisodes,
       generatedAt: completedAt
     });
-    try {
-      await input.repository.insertBatch(
-        batchRecordFor({
-          manifest: context.manifest,
-          prepared: context.prepared,
-          approval: input.approval,
-          revision: 2,
-          status: playtestBatchTerminalState({
-            assignmentCount: context.assignments.length,
-            outcomes: terminalOutcomes,
-            cancelled: activeRun.reason !== null,
-            aborted: true
-          }),
-          counts,
-          reviewSelection: {
-            status: "unavailable",
-            reason: "batch-incomplete"
-          },
-          reviewPackets: [],
-          unobservedAssignments: terminalOutcomes.filter(
-            (outcome) => outcome.episodeId === null
-          ),
-          capabilities,
-          cancellationReason: activeRun.reason,
-          failureReason: null,
-          createdAt: context.manifest.createdAt,
-          startedAt: context.manifest.createdAt,
-          completedAt,
-          actualCritiques: 0,
-          coverageManifest
-        })
-      );
-    } catch {
-      // Revision 1 remains the explicit incomplete assignment, never a success.
+    if (!terminalWriteOutcomeUnknown) {
+      try {
+        await input.repository.insertBatch(
+          batchRecordFor({
+            manifest: context.manifest,
+            prepared: context.prepared,
+            approval: input.approval,
+            revision: 2,
+            status: playtestBatchTerminalState({
+              assignmentCount: context.assignments.length,
+              outcomes: terminalOutcomes,
+              cancelled: activeRun.reason !== null,
+              aborted: true
+            }),
+            counts,
+            reviewSelection: {
+              status: "unavailable",
+              reason: "batch-incomplete"
+            },
+            reviewPackets: [],
+            unobservedAssignments: terminalOutcomes.filter(
+              (outcome) => outcome.episodeId === null
+            ),
+            capabilities,
+            cancellationReason: activeRun.reason,
+            failureReason: null,
+            createdAt: context.manifest.createdAt,
+            startedAt: context.manifest.createdAt,
+            completedAt,
+            actualCritiques: 0,
+            coverageManifest
+          })
+        );
+      } catch {
+        // Revision 1 remains the explicit incomplete assignment, never a success.
+      }
     }
     throw error;
   } finally {
@@ -4022,6 +4157,106 @@ export function createPlaytestRunControl(
     }
   };
   const playtestRunControl: PlaytestRunOwner = {
+    recordComparisonDecision(
+      session,
+      workspaceId,
+      comparisonId,
+      expectedVersion,
+      disposition,
+      reason
+    ) {
+      assertPlaytestToolRole(
+        session.role,
+        OWNER_DECISION_ROLES,
+        "playtest.decideComparison"
+      );
+      const authorizedWorkspaceId = authorizeWorkspace(workspaceId, session);
+      if (
+        !Number.isSafeInteger(expectedVersion) ||
+        expectedVersion < 1 ||
+        comparisonId.trim().length === 0
+      ) {
+        throw new PlaytestMcpValidationError(
+          "Comparison decision identity or expected revision is invalid."
+        );
+      }
+      const repository = requiredRunRepository(playtestRepository);
+      return withAssignmentLock(
+        assignmentLocks,
+        "comparison-owner-decision\0" +
+          authorizedWorkspaceId +
+          "\0" +
+          comparisonId,
+        async () => {
+          const current = await repository.getLatestComparison(
+            authorizedWorkspaceId,
+            comparisonId
+          );
+          if (
+            !current ||
+            current.comparisonId !== comparisonId ||
+            current.provenance.workspaceId !== authorizedWorkspaceId
+          ) {
+            throw new PlaytestMcpValidationError(
+              "The comparison does not exist in the authorized workspace."
+            );
+          }
+          if (current.version !== expectedVersion) {
+            if (
+              current.version === expectedVersion + 1 &&
+              current.ownerDecisionBy === session.actor &&
+              current.ownerDisposition === disposition &&
+              current.ownerDecisionReason === reason
+            ) {
+              return current;
+            }
+            throw new PlaytestMcpValidationError(
+              "The comparison revision changed; read the latest comparison before deciding."
+            );
+          }
+
+          let decided: PlaytestComparison;
+          try {
+            decided = recordPlaytestOwnerDecision(current, {
+              disposition,
+              decidedAt: new Date().toISOString(),
+              decidedBy: session.actor,
+              reason
+            });
+          } catch (error) {
+            if (error instanceof TypeError || error instanceof RangeError) {
+              throw new PlaytestMcpValidationError(error.message);
+            }
+            throw error;
+          }
+          try {
+            await repository.insertComparison(decided);
+            return decided;
+          } catch {
+            let latest: PlaytestComparison | null;
+            try {
+              latest = await repository.getLatestComparison(
+                authorizedWorkspaceId,
+                comparisonId
+              );
+            } catch {
+              throw new PlaytestMcpUnavailableError(
+                "Comparison decision persistence is ambiguous; retry the same decision against its expected version."
+              );
+            }
+            if (
+              latest &&
+              canonicalPlaytestJson(latest) === canonicalPlaytestJson(decided)
+            ) {
+              return latest;
+            }
+            throw new PlaytestMcpUnavailableError(
+              "Comparison decision was not durably confirmed; no release or deployment action was taken."
+            );
+          }
+        }
+      );
+    },
     getCapabilities(session, workspaceId) {
       assertRunStatusReader(session);
       const authorizedWorkspaceId = authorizeWorkspace(workspaceId, session);
@@ -4252,10 +4487,11 @@ export function createPlaytestRunControl(
       }
       return [...activeRuns.values()]
         .filter((run) => run.workspaceId === authorizedWorkspaceId)
-        .map(({ batchId, assignmentCount, createdAt }) => ({
-          batchId,
-          assignmentCount,
-          createdAt
+        .map((run) => ({
+          batchId: run.batchId,
+          assignmentCount: run.assignmentCount,
+          createdAt: run.createdAt,
+          status: activeRunStatus(run)
         }));
     },
     cancelRun(session, workspaceId, batchId) {
@@ -4354,13 +4590,7 @@ export function createPlaytestRunControl(
           "Run status expired before it could be read."
         );
       }
-      return {
-        batchId,
-        status: current.phase,
-        cancellationReason: current.reason,
-        result: activeRunProgress(current),
-        error: null
-      };
+      return activeRunStatus(current);
     },
     async shutdown() {
       const active = [...activeRuns.values()];
@@ -5015,6 +5245,39 @@ export function createPlaytestMcpServer(
       })
   );
 
+  mcp.registerTool(
+    "playtest.decideComparison",
+    {
+      description:
+        "Append a root/operator-authored promote-or-hold decision to the exact current stored comparison revision. Promotion records eligibility only; this tool never deploys, merges, or changes a workspace approval.",
+      inputSchema: z.strictObject({
+        workspaceId: z.string().min(1).max(256).optional(),
+        comparisonId: z.string().min(1).max(256),
+        expectedVersion: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+        disposition: z.enum(["promote", "hold"]),
+        reason: z.string().min(1).max(4000)
+      })
+    },
+    ({ workspaceId, comparisonId, expectedVersion, disposition, reason }) =>
+      safely(async () => {
+        const session = await sessionProvider.current();
+        assertPlaytestToolRole(
+          session.role,
+          OWNER_DECISION_ROLES,
+          "playtest.decideComparison"
+        );
+        const targetWorkspaceId = authorizeWorkspace(workspaceId, session);
+        return playtestRunControl.recordComparisonDecision(
+          session,
+          targetWorkspaceId,
+          comparisonId,
+          expectedVersion,
+          disposition,
+          reason
+        );
+      })
+  );
+
   // 8. playtest.prepareReview
   mcp.registerTool(
     "playtest.prepareReview",
@@ -5201,6 +5464,9 @@ export function createPlaytestMcpServer(
         const anchors = anchorsForReview(packet.packet, dimensionEvidence);
         const packetEvidenceRefs = [
           ...evidenceRefs,
+          ...(reportCompleteness.crossSessionContext.status === "available"
+            ? reportCompleteness.crossSessionContext.evidenceRefs
+            : []),
           ...findings.flatMap((finding) => finding.evidenceRefs),
           ...observations.flatMap((claim) => claim.evidenceRefs),
           ...interpretations.flatMap((claim) => claim.evidenceRefs),

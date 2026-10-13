@@ -2,6 +2,7 @@
 import type {
   ControlApiPlaytestingActiveRunsResponse,
   ControlApiPlaytestingCapabilitiesResponse,
+  ControlApiPlaytestingComparisonDecisionResponse,
   ControlApiPlaytestingRunCancellationResponse,
   ControlApiPlaytestingRunStartedResponse,
   ControlApiPlaytestingRunStatusResponse
@@ -20,21 +21,26 @@ import {
 
 const RUNS_PATH = "/control/playtesting/runs";
 const CAPABILITIES_PATH = "/control/playtesting/capabilities";
+const COMPARISONS_PATH = "/control/playtesting/comparisons";
 const SESSION_HEADER = "x-autodev-playtest-session";
 const ACTOR_PATTERN = /^[A-Za-z0-9@._:+-]{1,128}$/u;
 const PLAYTEST_CONTROL_ROLES = new Set([
   "playtester",
   "playtest-analyst",
-  "validator"
+  "validator",
+  "root",
+  "operator"
 ]);
 const MAX_RESPONSE_BYTES = 1_000_000;
+const MAX_ACTIVE_RUNS = 64;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
 export interface PlaytestControlApiRunClientOptions {
   readonly baseUrl: string;
   readonly serviceToken: string;
   readonly actor: string;
-  readonly sessionRole: "playtester" | "playtest-analyst" | "validator";
+  readonly sessionRole:
+    "playtester" | "playtest-analyst" | "validator" | "root" | "operator";
   readonly fetcher?: typeof fetch;
 }
 
@@ -201,6 +207,47 @@ export function createPlaytestControlApiRunClient(
   }
 
   return {
+    async recordComparisonDecision(
+      session,
+      workspaceId,
+      comparisonId,
+      expectedVersion,
+      disposition,
+      reason
+    ) {
+      const response =
+        assertResponse<ControlApiPlaytestingComparisonDecisionResponse>(
+          await request(
+            "POST",
+            COMPARISONS_PATH +
+              "/" +
+              encodeURIComponent(comparisonId) +
+              "/decision",
+            session,
+            {
+              workspaceId,
+              comparisonId,
+              expectedVersion,
+              disposition,
+              reason
+            }
+          ),
+          "autodev-control-playtesting-comparison-decision-v1",
+          workspaceId
+        );
+      if (
+        response.comparison.comparisonId !== comparisonId ||
+        response.comparison.version !== expectedVersion + 1 ||
+        response.comparison.ownerDecisionBy !== session.actor ||
+        response.comparison.ownerDisposition !== disposition ||
+        response.comparison.ownerDecisionReason !== reason
+      ) {
+        throw new PlaytestMcpUnavailableError(
+          "The Runtime Control API returned a mismatched comparison-decision acknowledgement."
+        );
+      }
+      return response.comparison;
+    },
     async getCapabilities(
       session,
       workspaceId
@@ -245,7 +292,23 @@ export function createPlaytestControlApiRunClient(
         "autodev-control-playtesting-runs-v1",
         workspaceId
       );
-      if (!Array.isArray(response.runs)) {
+      if (
+        !Array.isArray(response.runs) ||
+        response.runs.length > MAX_ACTIVE_RUNS ||
+        // Every entry now drives live progress rendering, so one malformed
+        // status record fails the whole read rather than a partial view.
+        !response.runs.every(
+          (run) =>
+            typeof run.batchId === "string" &&
+            run.batchId.length > 0 &&
+            typeof run.assignmentCount === "number" &&
+            Number.isSafeInteger(run.assignmentCount) &&
+            run.assignmentCount >= 0 &&
+            typeof run.createdAt === "string" &&
+            record(run.status) !== null &&
+            typeof run.status.status === "string"
+        )
+      ) {
         throw new PlaytestMcpUnavailableError(
           "The Runtime Control API returned invalid active-run data."
         );

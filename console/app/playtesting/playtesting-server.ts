@@ -2,13 +2,17 @@
 import {
   assertPlaytestCoverageManifest,
   assertPlaytestNumericResults,
+  type ControlApiPlaytestingActiveRunsResponse,
   type ControlApiPlaytestingCapabilitiesResponse,
+  type ControlApiPlaytestingComparisonDecisionRequest,
+  type ControlApiPlaytestingComparisonDecisionResponse,
   type ControlApiPlaytestingEntityMap,
   type ControlApiPlaytestingEpisodeDetailResponse,
   type ControlApiPlaytestingHumanValidationResponse,
   type ControlApiPlaytestingPageResponse,
   type ControlApiPlaytestingResource,
   type ControlApiPlaytestingRunCancellationResponse,
+  type ControlApiPlaytestingRunRecord,
   type ControlApiPlaytestingRunRequest,
   type ControlApiPlaytestingRunStartedResponse,
   type ControlApiPlaytestingRunStatusResponse,
@@ -21,7 +25,9 @@ import {
   type PlaytestExperiment,
   type PlaytestFinding,
   type PlaytestJsonValue,
+  isControlApiPlaytestingRunState,
   PLAYTESTS_BATCH_SCHEMA,
+  PLAYTESTS_COMPARISON_SCHEMA,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   type PlaytestSessionReview
@@ -48,7 +54,7 @@ const RESOURCE_SCHEMAS: Readonly<
   batches: PLAYTESTS_BATCH_SCHEMA,
   episodes: "autodev-playtest-episode-v3",
   findings: "",
-  comparisons: "autodev-playtest-comparison-v1",
+  comparisons: PLAYTESTS_COMPARISON_SCHEMA,
   benchmarks: "",
   experiments: "autodev-playtest-experiment-v1",
   "human-studies": "autodev-playtest-human-study-v1"
@@ -536,34 +542,94 @@ function isRunStartedResponse(
   );
 }
 
+/**
+ * The run record is shared by the single-batch status route and the
+ * workspace-scoped active-run list, so one predicate validates both.
+ */
+function isRunRecord(
+  value: unknown
+): value is ControlApiPlaytestingRunRecord {
+  if (
+    !isRecord(value) ||
+    !isNonEmptyString(value.batchId) ||
+    !isControlApiPlaytestingRunState(value.status) ||
+    (value.cancellationReason !== null &&
+      !isNonEmptyString(value.cancellationReason)) ||
+    (value.result !== null && !isJsonValue(value.result))
+  ) {
+    return false;
+  }
+  if (value.error === null) return true;
+  return (
+    isRecord(value.error) &&
+    isNonEmptyString(value.error.code) &&
+    isNonEmptyString(value.error.category) &&
+    typeof value.error.retryable === "boolean" &&
+    isNonEmptyString(value.error.message)
+  );
+}
+
 function isRunStatusResponse(
   value: unknown,
   workspaceId: string,
   batchId: string
 ): value is ControlApiPlaytestingRunStatusResponse {
-  if (
-    !isRecord(value) ||
-    value.schema !== "autodev-control-playtesting-run-status-v1" ||
-    value.workspaceId !== workspaceId ||
-    !isRecord(value.run) ||
-    value.run.batchId !== batchId ||
-    !["running", "persisting", "completed", "failed", "cancelled"].includes(
-      String(value.run.status)
-    ) ||
-    (value.run.cancellationReason !== null &&
-      !isNonEmptyString(value.run.cancellationReason)) ||
-    (value.run.result !== null && !isJsonValue(value.run.result))
-  ) {
-    return false;
-  }
-  if (value.run.error === null) return true;
   return (
-    isRecord(value.run.error) &&
-    isNonEmptyString(value.run.error.code) &&
-    isNonEmptyString(value.run.error.category) &&
-    typeof value.run.error.retryable === "boolean" &&
-    isNonEmptyString(value.run.error.message)
+    isRecord(value) &&
+    value.schema === "autodev-control-playtesting-run-status-v1" &&
+    value.workspaceId === workspaceId &&
+    isRunRecord(value.run) &&
+    value.run.batchId === batchId
   );
+}
+
+export async function fetchPlaytestingActiveRuns(
+  workspaceId: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiPlaytestingActiveRunsResponse>> {
+  if (!WORKSPACE_ID_PATTERN.test(workspaceId)) {
+    return invalidResponse(
+      "Playtesting active runs",
+      "a canonical workspace identifier"
+    );
+  }
+  const params = new URLSearchParams({ workspaceId });
+  const result = await fetchControlApi<unknown>(
+    `${CONTROL_API_PATHS.playtesting}/runs?${params}`,
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  const data = result.data;
+  if (
+    !isRecord(data) ||
+    data.schema !== "autodev-control-playtesting-runs-v1" ||
+    data.workspaceId !== workspaceId ||
+    !Array.isArray(data.runs) ||
+    // One malformed live entry fails the whole read rather than leaving the
+    // operator looking at a partial view presented as current.
+    !data.runs.every(
+      (run) =>
+        isRecord(run) &&
+        isNonEmptyString(run.batchId) &&
+        RUN_ID_PATTERN.test(run.batchId) &&
+        isCount(run.assignmentCount) &&
+        run.assignmentCount >= 0 &&
+        isNonEmptyString(run.createdAt) &&
+        isRunRecord(run.status) &&
+        run.status.batchId === run.batchId
+    )
+  ) {
+    return invalidResponse(
+      "Playtesting active runs",
+      "autodev-control-playtesting-runs-v1"
+    );
+  }
+  return {
+    kind: "ok",
+    data: data as unknown as ControlApiPlaytestingActiveRunsResponse
+  };
 }
 
 export async function startPlaytestingRun(
@@ -671,6 +737,51 @@ export async function cancelPlaytestingRun(
     cancellationRequested: data.cancellationRequested
   };
   return { kind: "ok", data: validData };
+}
+
+export async function recordPlaytestingComparisonDecision(
+  request: ControlApiPlaytestingComparisonDecisionRequest,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiPlaytestingComparisonDecisionResponse>> {
+  if (
+    !WORKSPACE_ID_PATTERN.test(request.workspaceId) ||
+    !ENTITY_ID_PATTERN.test(request.comparisonId) ||
+    !Number.isSafeInteger(request.expectedVersion) ||
+    request.expectedVersion < 1 ||
+    !["promote", "hold"].includes(request.disposition) ||
+    !isNonEmptyString(request.reason) ||
+    request.reason.length > 4000
+  ) {
+    return invalidResponse(
+      "Playtesting comparison decision",
+      "a bounded workspace, comparison revision, disposition, and reason"
+    );
+  }
+  const path = `${CONTROL_API_PATHS.playtesting}/comparisons/${encodeURIComponent(request.comparisonId)}/decision`;
+  const result = await postControlApi<unknown>(path, request, config, options);
+  if (result.kind !== "ok") return result;
+  const response = result.data;
+  if (
+    !isRecord(response) ||
+    response.schema !== "autodev-control-playtesting-comparison-decision-v1" ||
+    response.workspaceId !== request.workspaceId ||
+    !isRecord(response.comparison) ||
+    response.comparison.comparisonId !== request.comparisonId ||
+    response.comparison.version !== request.expectedVersion + 1 ||
+    response.comparison.ownerDisposition !== request.disposition ||
+    response.comparison.ownerDecisionReason !== request.reason ||
+    !isNonEmptyString(response.comparison.ownerDecisionBy)
+  ) {
+    return invalidResponse(
+      "Playtesting comparison decision",
+      "autodev-control-playtesting-comparison-decision-v1"
+    );
+  }
+  return {
+    kind: "ok",
+    data: response as unknown as ControlApiPlaytestingComparisonDecisionResponse
+  };
 }
 
 const HUMAN_SUPPRESSION_STATES = new Set([

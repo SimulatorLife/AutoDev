@@ -108,7 +108,14 @@ test("Playtest Control API client forwards typed run operations and host-bound s
         {
           batchId: "batch-1",
           assignmentCount: 1,
-          createdAt: "2026-10-10T00:00:00Z"
+          createdAt: "2026-10-10T00:00:00Z",
+          status: {
+            batchId: "batch-1",
+            status: "running",
+            cancellationReason: null,
+            result: null,
+            error: null
+          }
         }
       ]
     },
@@ -272,6 +279,66 @@ test("Playtest Control API client converts typed authorization errors without le
   );
 });
 
+test("Playtesting Control API client forwards an attributed, expected-revision owner decision", async () => {
+  let requestUrl = "";
+  let requestInit: RequestInit | undefined;
+  const actor = "root-operator";
+  const session: PlaytestMcpSession = {
+    workspaceId: WORKSPACE,
+    role: "operator",
+    actor,
+    taskId: "task-decision",
+    runId: "run-decision"
+  };
+  const client = createPlaytestControlApiRunClient({
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "decision-service-token",
+    actor: "runtime-service",
+    sessionRole: "operator",
+    fetcher: async (input, init) => {
+      requestUrl = String(input);
+      requestInit = init;
+      return jsonResponse({
+        schema: "autodev-control-playtesting-comparison-decision-v1",
+        workspaceId: WORKSPACE,
+        comparison: {
+          comparisonId: "comparison-1",
+          version: 3,
+          ownerDecisionBy: actor,
+          ownerDisposition: "hold",
+          ownerDecisionReason: "Wait for the independent confirmation run."
+        }
+      });
+    }
+  });
+  const result = await client.recordComparisonDecision(
+    session,
+    WORKSPACE,
+    "comparison-1",
+    2,
+    "hold",
+    "Wait for the independent confirmation run."
+  );
+  assert.equal(result.version, 3);
+  assert.equal(
+    requestUrl,
+    "http://127.0.0.1:4101/control/playtesting/comparisons/comparison-1/decision"
+  );
+  assert.equal(requestInit?.method, "POST");
+  assert.equal(JSON.parse(String(requestInit?.body)).expectedVersion, 2);
+  const headers = new Headers(requestInit?.headers);
+  assert.equal(headers.get("x-autodev-actor"), "runtime-service");
+  assert.equal(
+    JSON.parse(
+      Buffer.from(
+        headers.get("x-autodev-playtest-session")!,
+        "base64url"
+      ).toString("utf8")
+    ).actor,
+    actor
+  );
+});
+
 test("Playtesting MCP delegates run lifecycle through the authenticated shared Control API owner", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "playtesting-remote-owner-"));
   mkdirSync(path.join(root, "artifacts"), { recursive: true });
@@ -304,6 +371,11 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
   };
   const delegated: unknown[] = [];
   const runOwner: PlaytestRunControl = {
+    async recordComparisonDecision() {
+      throw new Error(
+        "Owner-decision route is not used by this run-only fixture."
+      );
+    },
     getCapabilities: (_receivedSession, workspaceId) => ({
       workspaceId,
       workspaceEnabled: true,
@@ -373,7 +445,14 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
         {
           batchId: "batch-remote-1",
           assignmentCount: 1,
-          createdAt: "2026-10-10T00:00:00.000Z"
+          createdAt: "2026-10-10T00:00:00.000Z",
+          status: {
+            batchId: "batch-remote-1",
+            status: "running",
+            cancellationReason: null,
+            result: null,
+            error: null
+          }
         }
       ];
     },

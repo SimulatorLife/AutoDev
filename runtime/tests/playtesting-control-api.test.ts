@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -16,6 +17,7 @@ import type {
   ControlApiPlaytestingHumanValidationResponse,
   HumanPlaytestStudy,
   PlaytestBenchmark,
+  PlaytestComparison,
   PlaytestEpisode
 } from "@simulatorlife/autodev-core";
 import {
@@ -157,6 +159,11 @@ async function callRunControl(
 
 function runControlFixture(calls: unknown[] = []): PlaytestRunControl {
   return {
+    async recordComparisonDecision() {
+      throw new Error(
+        "Owner-decision route is not used by this run-only fixture."
+      );
+    },
     getCapabilities: async (
       session,
       workspaceId
@@ -228,7 +235,14 @@ function runControlFixture(calls: unknown[] = []): PlaytestRunControl {
         {
           batchId: "batch-run-1",
           assignmentCount: 1,
-          createdAt: "2026-10-10T00:00:00.000Z"
+          createdAt: "2026-10-10T00:00:00.000Z",
+          status: {
+            batchId: "batch-run-1",
+            status: "running",
+            cancellationReason: null,
+            result: null,
+            error: null
+          }
         }
       ];
     },
@@ -307,6 +321,118 @@ test("Control API branch requests use the shared approved run owner and reject m
   assert.equal(calls.length, 1);
 });
 
+test("Control API comparison decisions are operator-authorized and delegate to the shared owner", async () => {
+  const calls: unknown[] = [];
+  const storedDecision = {
+    schema: "autodev-playtest-comparison-v2",
+    comparisonId: "comparison-1",
+    version: 2,
+    benchmarkId: "benchmark-1",
+    experimentId: "experiment-1",
+    baseline: { id: "build-a", version: 1 },
+    candidate: { id: "build-b", version: 1 },
+    freezeStatus: "frozen",
+    pairing: {
+      mode: "paired-initial-condition",
+      pairMap: {},
+      allocationPlanHash: null,
+      rngAlgorithm: null,
+      rngStreamVersion: null,
+      couplingDiagnostics: [],
+      exclusions: []
+    },
+    sourceFindingIds: [],
+    episodeRefs: [],
+    measurementVersion: "fixture-v1",
+    metrics: [],
+    decision: "hold-inconclusive",
+    ownerDecisionAt: "2026-10-12T12:00:00.000Z",
+    ownerDecisionReason: "Wait for confirmation.",
+    ownerDecisionBy: "operator-1",
+    ownerDisposition: "hold",
+    humanPreference: { answer: "not-collected", interval: null },
+    provenance: {
+      workspaceId: WORKSPACE,
+      measurementVersion: "fixture-v1",
+      generatedAt: "2026-10-12T12:00:00.000Z"
+    },
+    notes: ""
+  } as unknown as PlaytestComparison;
+  const baseOwner = runControlFixture(calls);
+  const runControl: PlaytestRunControl = {
+    ...baseOwner,
+    async recordComparisonDecision(
+      session,
+      workspaceId,
+      comparisonId,
+      expectedVersion,
+      disposition,
+      reason
+    ) {
+      calls.push({
+        operation: "comparison-decision",
+        session,
+        workspaceId,
+        comparisonId,
+        expectedVersion,
+        disposition,
+        reason
+      });
+      return storedDecision;
+    }
+  };
+  const operator = { actor: "operator-1", role: "operator" as const };
+  const options: PlaytestingRunControlApiOptions = { runControl };
+  const result = await callRunControl(
+    "POST",
+    "/control/playtesting/comparisons/comparison-1/decision",
+    operator,
+    options,
+    {
+      workspaceId: WORKSPACE,
+      comparisonId: "comparison-1",
+      expectedVersion: 1,
+      disposition: "hold",
+      reason: "Wait for confirmation."
+    }
+  );
+  assert.equal(result.status, 200);
+  assert.equal(
+    result.body.schema,
+    "autodev-control-playtesting-comparison-decision-v1"
+  );
+  assert.deepEqual(calls[0], {
+    operation: "comparison-decision",
+    session: {
+      workspaceId: WORKSPACE,
+      role: "operator",
+      actor:
+        "control-api:" +
+        createHash("sha256").update(operator.actor).digest("hex")
+    },
+    workspaceId: WORKSPACE,
+    comparisonId: "comparison-1",
+    expectedVersion: 1,
+    disposition: "hold",
+    reason: "Wait for confirmation."
+  });
+
+  const denied = await callRunControl(
+    "POST",
+    "/control/playtesting/comparisons/comparison-1/decision",
+    { actor: "viewer-1", role: "viewer" },
+    options,
+    {
+      workspaceId: WORKSPACE,
+      expectedVersion: 1,
+      disposition: "hold",
+      reason: "Not authorized."
+    }
+  );
+  assert.equal(denied.status, 403);
+  assert.equal(calls.length, 1);
+});
+
 test("Control API run, status, list, and cancel delegate to the shared Runtime run owner", async () => {
   const calls: unknown[] = [];
   const audit: unknown[] = [];
@@ -377,6 +503,14 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
   assert.equal(active.status, 200);
   assert.equal(active.body.schema, "autodev-control-playtesting-runs-v1");
   assert.equal((active.body.runs as unknown[]).length, 1);
+  // One workspace-scoped read must carry each batch's live owner record, so a
+  // Console watching many batches needs no second status authority or a
+  // request per batch.
+  const [listed] = active.body.runs as readonly {
+    readonly status: { readonly batchId: string; readonly status: string };
+  }[];
+  assert.equal(listed?.status.batchId, "batch-run-1");
+  assert.equal(listed?.status.status, "running");
   assert.equal(
     (calls[2] as { operation: string; session: { role: string } }).session.role,
     "control-viewer"

@@ -1010,6 +1010,29 @@ export type ControlApiMemoryInjectionUseAssessmentsResponse =
 export type ControlApiPlaytestingRunState =
   "running" | "persisting" | "completed" | "failed" | "cancelled" | "truncated";
 
+/**
+ * The canonical run-state set. Runtime validates against it and the Console
+ * validates responses against it, so a terminal state cannot exist on one side
+ * of the boundary and be rejected on the other.
+ */
+export const CONTROL_API_PLAYTESTING_RUN_STATES = [
+  "running",
+  "persisting",
+  "completed",
+  "failed",
+  "cancelled",
+  "truncated"
+] as const satisfies readonly ControlApiPlaytestingRunState[];
+
+export function isControlApiPlaytestingRunState(
+  value: unknown
+): value is ControlApiPlaytestingRunState {
+  return (
+    typeof value === "string" &&
+    (CONTROL_API_PLAYTESTING_RUN_STATES as readonly string[]).includes(value)
+  );
+}
+
 export type ControlApiPlaytestingCancellationReason =
   PlaytestBatchCancellationReason;
 
@@ -1075,6 +1098,11 @@ export interface ControlApiPlaytestingActiveRunsResponse {
     readonly batchId: string;
     readonly assignmentCount: number;
     readonly createdAt: string;
+    /**
+     * The same owner-read record the single-batch status route returns, so one
+     * list renders every nonterminal batch without a request per batch.
+     */
+    readonly status: ControlApiPlaytestingRunRecord;
   }[];
 }
 
@@ -1122,6 +1150,21 @@ export interface ControlApiPlaytestingRunCancellationResponse {
   readonly workspaceId: string;
   readonly batchId: string;
   readonly cancellationRequested: boolean;
+}
+
+/** Expected-revision owner action for one stored comparison; never a deploy command. */
+export interface ControlApiPlaytestingComparisonDecisionRequest {
+  readonly workspaceId: string;
+  readonly comparisonId: string;
+  readonly expectedVersion: number;
+  readonly disposition: "promote" | "hold";
+  readonly reason: string;
+}
+
+export interface ControlApiPlaytestingComparisonDecisionResponse {
+  readonly schema: "autodev-control-playtesting-comparison-decision-v1";
+  readonly workspaceId: string;
+  readonly comparison: PlaytestComparison;
 }
 
 /** Aggregated, suppression-aware human-study read; raw responses never cross this boundary. */
