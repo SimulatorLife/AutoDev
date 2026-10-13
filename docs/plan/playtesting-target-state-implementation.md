@@ -61,14 +61,14 @@ normative specification; this checklist tracks implementation and evidence.
       no fabricated video, source-mapped upstream UI logic actually executing,
       and performance on indexed queries, view changes, and replay selection.
 - [~] Console run/watch and multi-session analysis: an operator can start an
-      approved run and watch every nonterminal batch progress without manual
-      refresh; the Runtime can dispatch analysis over an explicit selection of
-      sessions. The Console selection surface and its Control API route remain —
-      see the active slice below.
+  approved run and watch every nonterminal batch progress without manual
+  refresh; the Runtime can dispatch analysis over an explicit selection of
+  sessions. The Console selection surface and its Control API route remain —
+  see the active slice below.
 - [~] Declarative game onboarding: `init`/`check` and a Core-owned hash chain
-      exist, but the generic adapter runtime and tiered onboarding are still
-      required before a second game joins by adding one config file — see the
-      active slice below.
+  exist, but the generic adapter runtime and tiered onboarding are still
+  required before a second game joins by adding one config file — see the
+  active slice below.
 - [ ] Documentation, test coverage, package checks and independent validation
       match the final integrated diff.
 
@@ -903,19 +903,19 @@ Required work:
       Driving it — rather than reading it — exposed three defects, each fixed at
       the source:
   - The entrypoint exported `main()` with no direct-execution block, so the
-        adapter image's entrypoint would have imported the module and exited
-        before opening stdout. The Runtime would have seen a timeout rather
-        than an adapter failure.
+    adapter image's entrypoint would have imported the module and exited
+    before opening stdout. The Runtime would have seen a timeout rather
+    than an adapter failure.
   - `--integration-dir .autodev` resolved against the process working
-        directory, which the sandbox sets to the *game's* approved directory.
-        A game with a subdirectory working directory could not find the binding
-        in its own checkout. It now resolves against the read-only mount.
+    directory, which the sandbox sets to the _game's_ approved directory.
+    A game with a subdirectory working directory could not find the binding
+    in its own checkout. It now resolves against the read-only mount.
   - `capabilities` was in `PLAYTESTS_REQUIRED_BINDINGS` while AutoDev derives
-        the advertisement and never dispatches it. Requiring it asked a game to
-        write a function nothing calls, and rejecting a binding for its absence
-        meant a correctly-scoped game could not onboard. Core now names
-        `PLAYTESTS_ADAPTER_OWNED_METHODS` and excludes those from the unbound
-        gap report, so a game is never sent to write a method AutoDev serves.
+    the advertisement and never dispatches it. Requiring it asked a game to
+    write a function nothing calls, and rejecting a binding for its absence
+    meant a correctly-scoped game could not onboard. Core now names
+    `PLAYTESTS_ADAPTER_OWNED_METHODS` and excludes those from the unbound
+    gap report, so a game is never sent to write a method AutoDev serves.
 - [x] Tiered onboarding with an explicitly stated tier, not an assumed one:
       `PLAYTESTS_INTEGRATION_DIR` and `PLAYTESTS_ADAPTER_CONTAINER_WORKSPACE`
       are single-owner Core constants. The `declarative` tier requires the

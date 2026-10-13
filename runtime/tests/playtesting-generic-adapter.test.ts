@@ -4,10 +4,10 @@ import test from "node:test";
 import {
   PLAYTESTS_ADAPTER_BINDING_SCHEMA,
   PLAYTESTS_PROTOCOL_VERSION,
-  playtestManifestHash,
   type PlaytestAdapterBinding
 } from "@simulatorlife/autodev-core";
 
+import { playtestManifestHash } from "../src/playtesting/hash-chain.ts";
 import {
   createGenericAdapter,
   GenericAdapterError,
@@ -78,9 +78,18 @@ test("capability digests are derived from the game's own schemas", async () => {
   const adapter = await adapterFor();
   const capabilities = adapter.capabilities;
   assert.equal(capabilities.protocolVersion, PLAYTESTS_PROTOCOL_VERSION);
-  assert.equal(capabilities.observationSchemaHash, playtestManifestHash(OBSERVATION_SCHEMA));
-  assert.equal(capabilities.actionSchemaHash, playtestManifestHash(ACTION_SCHEMA));
-  assert.equal(capabilities.eventSchemaHash, playtestManifestHash(EVENT_SCHEMA));
+  assert.equal(
+    capabilities.observationSchemaHash,
+    playtestManifestHash(OBSERVATION_SCHEMA)
+  );
+  assert.equal(
+    capabilities.actionSchemaHash,
+    playtestManifestHash(ACTION_SCHEMA)
+  );
+  assert.equal(
+    capabilities.eventSchemaHash,
+    playtestManifestHash(EVENT_SCHEMA)
+  );
   // A hand-written adapter stores these beside the schemas they describe and
   // drifts when a schema is edited. Nothing here is declared, only derived —
   // and the game is never asked to supply `capabilities` at all, because
@@ -149,11 +158,16 @@ test("determinism is declared from the binding, not assumed", async () => {
 test("dispatch reaches the game's declared function", async () => {
   const adapter = await adapterFor();
   assert.deepEqual(await adapter.invoke("observe", {}), { room: "atrium" });
-  assert.deepEqual(await adapter.invoke("legalActions", {}), ["north", "south"]);
+  assert.deepEqual(await adapter.invoke("legalActions", {}), [
+    "north",
+    "south"
+  ]);
   assert.deepEqual(await adapter.invoke("step", { action: "north" }), {
     took: "north"
   });
-  assert.deepEqual(await adapter.invoke("reset", { seed: "s1" }), { seed: "s1" });
+  assert.deepEqual(await adapter.invoke("reset", { seed: "s1" }), {
+    seed: "s1"
+  });
 });
 
 test("an unbound method is refused by name rather than answered from a default", async () => {

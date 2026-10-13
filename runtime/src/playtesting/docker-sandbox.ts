@@ -261,9 +261,10 @@ function readCleanCheckoutSha(root: string): string {
       .map((line) => line.trimEnd())
       .filter((line) => line.startsWith("!! "))
       .map((line) => line.slice(3).trim());
-    const autodevIgnored = ignored.filter((path) =>
-      path === AUTODEV_INTEGRATION_DIR ||
-      path.startsWith(`${AUTODEV_INTEGRATION_DIR}/`)
+    const autodevIgnored = ignored.filter(
+      (path) =>
+        path === AUTODEV_INTEGRATION_DIR ||
+        path.startsWith(`${AUTODEV_INTEGRATION_DIR}/`)
     );
     if (autodevIgnored.length > 0) {
       throw new PlaytestSandboxApprovalError(

@@ -18,17 +18,20 @@ import {
   PLAYTESTS_GENERIC_ADAPTER_COMMAND,
   PLAYTESTS_INTEGRATION_DIR,
   PLAYTESTS_REQUIRED_BINDINGS,
-  derivedBenchmarkDigests,
-  observationSchemaHash,
   type PlaytestAdapterBinding,
   type PlaytestObservationContract,
   resolvePlaytestAdapterBinding,
   unboundPlaytestMethods,
-  usesGenericPlaytestAdapter,
+  usesGenericPlaytestAdapter
+} from "@simulatorlife/autodev-core";
+
+import {
+  derivedBenchmarkDigests,
+  observationSchemaHash,
   playtestFileHash,
   playtestManifestHash,
   withObservationSchemaHash
-} from "@simulatorlife/autodev-core";
+} from "../playtesting/hash-chain.ts";
 import { unsupportedChoice } from "./command-choice.ts";
 
 export const PLAYTESTS_SUBCOMMANDS = ["init", "check"] as const;
@@ -69,8 +72,6 @@ export interface PlaytestCommandBackend {
   init(args?: readonly string[]): number;
   check(args?: readonly string[]): number;
 }
-
-
 
 function writeLine(message: string): void {
   process.stdout.write(`${message}\n`);
@@ -120,7 +121,11 @@ function integrationRoot(checkoutRoot: string): string {
   return path.join(checkoutRoot, PLAYTESTS_INTEGRATION_DIR);
 }
 
-function readJsonFile(file: string): { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly message: string } {
+function readJsonFile(
+  file: string
+):
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly message: string } {
   try {
     return { ok: true, value: JSON.parse(readFileSync(file, "utf8")) };
   } catch (error) {
@@ -138,11 +143,17 @@ function readJsonFile(file: string): { readonly ok: true; readonly value: unknow
  * silently fixed a digest would be indistinguishable from an integration that
  * was already correct.
  */
-export function checkPlaytestIntegration(checkoutRoot: string): PlaytestCheckReport {
+export function checkPlaytestIntegration(
+  checkoutRoot: string
+): PlaytestCheckReport {
   const problems: PlaytestCheckProblem[] = [];
   const hashes: Record<string, string> = {};
   const root = integrationRoot(checkoutRoot);
-  for (const name of [PLAYTESTS_CONFIG_FILE, PLAYTESTS_OBSERVATION_FILE, PLAYTESTS_RUBRIC_FILE]) {
+  for (const name of [
+    PLAYTESTS_CONFIG_FILE,
+    PLAYTESTS_OBSERVATION_FILE,
+    PLAYTESTS_RUBRIC_FILE
+  ]) {
     const file = path.join(root, name);
     const relative = path.posix.join(PLAYTESTS_INTEGRATION_DIR, name);
     if (!existsSync(file)) {
@@ -586,10 +597,7 @@ function reportCheck(checkoutRoot: string, writeHashes: boolean): number {
 export const defaultPlaytestBackend: PlaytestCommandBackend = {
   init: (args = []) => initPlaytestIntegration(checkoutRootFrom(args)),
   check: (args = []) =>
-    reportCheck(
-      checkoutRootFrom(args),
-      args.includes("--write-hashes")
-    )
+    reportCheck(checkoutRootFrom(args), args.includes("--write-hashes"))
 };
 
 export function dispatchPlaytestCommand(

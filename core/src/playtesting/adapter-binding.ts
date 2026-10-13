@@ -31,7 +31,8 @@ export const PLAYTESTS_BINDABLE_METHODS = [
   "cancel"
 ] as const;
 
-export type PlaytestBindableMethod = (typeof PLAYTESTS_BINDABLE_METHODS)[number];
+export type PlaytestBindableMethod =
+  (typeof PLAYTESTS_BINDABLE_METHODS)[number];
 
 /**
  * Methods the Runtime cannot proceed without. An adapter missing one is not a
@@ -99,7 +100,9 @@ export interface PlaytestAdapterBinding {
     readonly action: Readonly<Record<string, unknown>>;
     readonly event: Readonly<Record<string, unknown>>;
   }>;
-  readonly bindings: Readonly<Partial<Record<PlaytestBindableMethod, PlaytestBindingReference>>>;
+  readonly bindings: Readonly<
+    Partial<Record<PlaytestBindableMethod, PlaytestBindingReference>>
+  >;
 }
 
 export const PLAYTESTS_ADAPTER_BINDING_SCHEMA =
@@ -157,8 +160,7 @@ export function usesGenericPlaytestAdapter(
   command: readonly string[]
 ): boolean {
   return (
-    command.length > 0 &&
-    command[0] === PLAYTESTS_GENERIC_ADAPTER_COMMAND[0]
+    command.length > 0 && command[0] === PLAYTESTS_GENERIC_ADAPTER_COMMAND[0]
   );
 }
 
@@ -207,7 +209,10 @@ export function resolvePlaytestAdapterBinding(
   value: unknown
 ): PlaytestBindingResolution {
   if (!isRecord(value)) {
-    return { kind: "rejected", message: "The adapter binding must be an object." };
+    return {
+      kind: "rejected",
+      message: "The adapter binding must be an object."
+    };
   }
   if (value.schema !== PLAYTESTS_ADAPTER_BINDING_SCHEMA) {
     return {
@@ -216,7 +221,10 @@ export function resolvePlaytestAdapterBinding(
     };
   }
   if (value.schemaVersion !== 1) {
-    return { kind: "rejected", message: "Unsupported adapter binding version." };
+    return {
+      kind: "rejected",
+      message: "Unsupported adapter binding version."
+    };
   }
   if (value.tier !== "declarative" && value.tier !== "generated-scaffold") {
     return {
@@ -231,7 +239,10 @@ export function resolvePlaytestAdapterBinding(
       message: "The adapter binding must name an entry module."
     };
   }
-  if (typeof value.factory !== "string" || !EXPORT_NAME_PATTERN.test(value.factory)) {
+  if (
+    typeof value.factory !== "string" ||
+    !EXPORT_NAME_PATTERN.test(value.factory)
+  ) {
     return {
       kind: "rejected",
       message: "The adapter binding must name a factory export."
@@ -252,9 +263,7 @@ export function resolvePlaytestAdapterBinding(
   // The schemas are declared, never invented here, and each must be a JSON
   // object: AutoDev hashes exactly what the game wrote.
   for (const key of ["observation", "action", "event"]) {
-    const schema = isRecord(value.schemas)
-      ? value.schemas[key]
-      : undefined;
+    const schema = isRecord(value.schemas) ? value.schemas[key] : undefined;
     if (!isRecord(schema)) {
       return {
         kind: "rejected",

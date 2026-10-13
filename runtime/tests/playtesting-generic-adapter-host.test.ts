@@ -6,10 +6,10 @@ import {
   PLAYTESTS_ADAPTER_BINDING_SCHEMA,
   PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES,
   PLAYTESTS_PROTOCOL_VERSION,
-  playtestManifestHash,
   type PlaytestAdapterBinding
 } from "@simulatorlife/autodev-core";
 
+import { playtestManifestHash } from "../src/playtesting/hash-chain.ts";
 import { PlaytestAdapterClient } from "../src/playtesting/adapter-client.ts";
 import { startGenericAdapterHost } from "../src/playtesting/generic-adapter-host.ts";
 

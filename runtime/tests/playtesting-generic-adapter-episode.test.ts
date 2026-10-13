@@ -14,7 +14,13 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -47,9 +53,7 @@ import {
  * mount target is decided by the prepared request rather than by the host
  * filesystem.
  */
-function preparedFor(
-  command: readonly string[]
-): PreparedPlaytestSandbox {
+function preparedFor(command: readonly string[]): PreparedPlaytestSandbox {
   return {
     workspaceId: "fixture/game",
     checkoutRoot: "/host/checkout",
@@ -185,7 +189,10 @@ function checkout(workingDirectory: string): {
     `${JSON.stringify(
       {
         schemaVersion: 1,
-        adapter: { transport: "stdio-jsonl", command: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND] },
+        adapter: {
+          transport: "stdio-jsonl",
+          command: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND]
+        },
         modes: ["headless"],
         scenarios: ["default"]
       },
@@ -219,14 +226,22 @@ function checkout(workingDirectory: string): {
       2
     )}\n`
   );
-  return { root: realpathSync(root), cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return {
+    root: realpathSync(root),
+    cleanup: () => rmSync(root, { recursive: true, force: true })
+  };
 }
 
 test("a declarative game runs a full episode through the real adapter entrypoint", async () => {
   const fixture = checkout("game");
   const child = spawn(
     process.execPath,
-    ["--experimental-strip-types", ADAPTER_ENTRYPOINT, "--integration-dir", PLAYTESTS_INTEGRATION_DIR],
+    [
+      "--experimental-strip-types",
+      ADAPTER_ENTRYPOINT,
+      "--integration-dir",
+      PLAYTESTS_INTEGRATION_DIR
+    ],
     {
       cwd: path.join(fixture.root, "game"),
       stdio: ["pipe", "pipe", "pipe"],
@@ -239,7 +254,9 @@ test("a declarative game runs a full episode through the real adapter entrypoint
     }
   );
   const stderr: string[] = [];
-  child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk.toString("utf8")));
+  child.stderr?.on("data", (chunk: Buffer) =>
+    stderr.push(chunk.toString("utf8"))
+  );
   const client = new PlaytestAdapterClient({
     // The client writes requests into the child's stdin and reads replies from
     // its stdout, the same direction the Docker sandbox pipes use.
@@ -257,7 +274,11 @@ test("a declarative game runs a full episode through the real adapter entrypoint
       scenarioId: "default",
       approvedVariantHash: "c".repeat(64)
     });
-    assert.equal(opened.ok, true, opened.ok ? "" : `${opened.code} ${opened.message}`);
+    assert.equal(
+      opened.ok,
+      true,
+      opened.ok ? "" : `${opened.code} ${opened.message}`
+    );
 
     const observed = await client.call("game.observe", {
       episodeId: "episode-declarative-1",
@@ -265,7 +286,9 @@ test("a declarative game runs a full episode through the real adapter entrypoint
     });
     assert.equal(observed.ok, true);
     assert.deepEqual(
-      observed.ok ? (observed.result as { observation: unknown }).observation : null,
+      observed.ok
+        ? (observed.result as { observation: unknown }).observation
+        : null,
       { room: "atrium", step: 0 }
     );
 
@@ -303,14 +326,23 @@ test("a declarative game runs a full episode through the real adapter entrypoint
     child.kill("SIGKILL");
     fixture.cleanup();
   }
-  assert.deepEqual(stderr, [], "the adapter must not write to stderr on a clean run");
+  assert.deepEqual(
+    stderr,
+    [],
+    "the adapter must not write to stderr on a clean run"
+  );
 });
 
 test("an unbound method is refused by name over the real transport", async () => {
   const fixture = checkout("game");
   const child = spawn(
     process.execPath,
-    ["--experimental-strip-types", ADAPTER_ENTRYPOINT, "--integration-dir", PLAYTESTS_INTEGRATION_DIR],
+    [
+      "--experimental-strip-types",
+      ADAPTER_ENTRYPOINT,
+      "--integration-dir",
+      PLAYTESTS_INTEGRATION_DIR
+    ],
     {
       cwd: path.join(fixture.root, "game"),
       stdio: ["pipe", "pipe", "pipe"],

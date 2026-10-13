@@ -11,7 +11,7 @@ import {
   playtestFileHash,
   playtestManifestHash,
   withObservationSchemaHash
-} from "@simulatorlife/autodev-core";
+} from "../../runtime/src/playtesting/hash-chain.ts";
 
 import {
   checkPlaytestIntegration,
@@ -86,10 +86,7 @@ test("init writes a digest the checker accepts", () => {
   const { root } = checkout();
   initPlaytestIntegration(root);
   const contract = read(root, PLAYTESTS_OBSERVATION_FILE);
-  assert.equal(
-    contract.schemaHash,
-    observationSchemaHash(contract as never)
-  );
+  assert.equal(contract.schemaHash, observationSchemaHash(contract as never));
   assert.ok(observationSchemaHashMatches(contract as never));
   assert.equal(
     checkPlaytestIntegration(root).problems.filter(
@@ -134,9 +131,12 @@ test("check detects a hand-edited observation contract", () => {
   assert.match(mismatch!.file, /\.autodev\/playtest\.observation\.json/u);
 
   // The digest is regenerated from the content, not maintained by the game.
-  assert.equal(writePlaytestHashes(root).problems.filter(
-    (problem) => problem.severity === "error"
-  ).length, 0);
+  assert.equal(
+    writePlaytestHashes(root).problems.filter(
+      (problem) => problem.severity === "error"
+    ).length,
+    0
+  );
   const regenerated = read(root, PLAYTESTS_OBSERVATION_FILE);
   assert.equal(
     (regenerated.fields as Record<string, unknown>[])[0]!.fieldPath,
@@ -299,8 +299,8 @@ test("a game without declared bindings is told it still owns the protocol", () =
   // is reported rather than quietly treated as on-board.
   rmSync(bindingFile);
   const report = checkPlaytestIntegration(root);
-  const missing = report.problems.find(
-    (problem) => problem.file.endsWith(PLAYTESTS_BINDING_FILE)
+  const missing = report.problems.find((problem) =>
+    problem.file.endsWith(PLAYTESTS_BINDING_FILE)
   );
   assert.ok(missing, "a missing binding must be reported");
   assert.equal(missing!.severity, "warning");
