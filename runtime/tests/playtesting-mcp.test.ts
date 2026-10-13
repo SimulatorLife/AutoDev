@@ -11,15 +11,18 @@ import {
   buildPlaytestCoverageManifestDraft,
   buildPlaytestEvidencePacket,
   buildPlaytestFindingIdentity,
+  canonicalPlaytestJson,
   playtestAssignmentManifestHashInput,
   type PlaytestAssignmentOutcome,
   type PlaytestBatch,
+  type PlaytestBatchAssignment,
   type PlaytestCapabilityAdvertisement,
   type PlaytestComparison,
   type PlaytestCompletionCounts,
   type PlaytestCoverageManifest,
   playtestCoverageManifestHashInput,
   playtestCoveragePlanForRegistry,
+  playtestCrossSessionInventoryHashInput,
   type PlaytestDimensionRubric,
   type PlaytestEpisode,
   type PlaytestEvidenceTraceStep,
@@ -28,6 +31,7 @@ import {
   playtestReviewOutcomeKey,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
   PLAYTESTS_BATCH_SCHEMA,
+  PLAYTESTS_COMPARISON_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_MEASUREMENT_VERSION,
   type PlaytestSessionReview,
@@ -543,6 +547,25 @@ test("playtest stdio requires explicit trusted session context", () => {
       new Set(["playtester"])
     )
   );
+  for (const role of ["root", "operator"]) {
+    assert.doesNotThrow(() =>
+      assertPlaytestStdioSessionBinding(
+        { ...config, role },
+        {
+          status: "valid",
+          workspaces: [
+            {
+              id: WORKSPACE_ID,
+              baseBranch: "main",
+              enabled: true,
+              agentRoles: ["playtest-analyst"]
+            }
+          ]
+        },
+        new Set(["playtester"])
+      )
+    );
+  }
 });
 
 test("playtest MCP server: capabilities reports active or absent workspace approval without leaking host checkout paths", async () => {
@@ -785,6 +808,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
       getLatestComparison: async () => null,
+      insertComparison: async () => {},
       insertBatch: async (batch) => {
         insertedBatches.push(batch);
       },
@@ -1002,7 +1026,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     approvalRepo.approve(
       {
         ...boundedApproval,
-        limits: { ...boundedApproval.limits, episodeCount: 4 }
+        limits: { ...boundedApproval.limits, episodeCount: 5 }
       },
       null
     );
@@ -1051,9 +1075,22 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
 
     const successRun = await (server as any)._registeredTools[
       "playtest.run"
-    ].handler(
-      singleAssignmentRequest("tutorial", "random", "seed-exact-1", 25)
-    );
+    ].handler({
+      assignments: [
+        {
+          scenario: "tutorial",
+          policy: "random",
+          seed: "seed-exact-1",
+          maxSteps: 25
+        },
+        {
+          scenario: "tutorial",
+          policy: "random",
+          seed: "seed-exact-2",
+          maxSteps: 25
+        }
+      ]
+    });
     assert.equal(successRun.isError, undefined);
     const runResult = JSON.parse(successRun.content[0].text);
     assert.equal(runResult.status, "running");
@@ -1063,16 +1100,13 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     ].handler({ batchId: runResult.batchId, waitMs: 5000 });
     const completedRun = JSON.parse(completedRunResult.content[0].text);
     assert.equal(completedRun.status, "completed");
-    assert.equal(completedRun.result.assignmentCount, 1);
-    assert.deepEqual(completedRun.result.outcomes, [
-      {
-        assignmentId: "a-0001",
-        episodeId: "ep-run-1",
-        state: "completed",
-        started: true,
-        eligible: true
-      }
-    ]);
+    assert.equal(completedRun.result.assignmentCount, 2);
+    assert.deepEqual(
+      completedRun.result.outcomes.map(
+        (outcome: { episodeId: string }) => outcome.episodeId
+      ),
+      ["ep-run-1", "ep-run-seed-exact-2"]
+    );
     const unrecognizedViewer = {
       workspaceId: WORKSPACE_ID,
       role: "viewer",
@@ -1107,10 +1141,18 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     assert.equal(insertedBatches[1].reviewSelection.status, "selected");
     assert.equal(insertedBatches[1].reviewPackets.length, 1);
     assert.equal(insertedBatches[1].reviewPackets[0].status, "prepared");
+    const reviewedEpisodeId = insertedBatches[1].reviewPackets[0].episodeId;
+    assert.deepEqual(
+      artifacts.listPendingArtifacts({
+        mediaType: PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
+        limit: 100
+      }).entries,
+      []
+    );
     currentRole = "playtest-analyst";
     const preparedReview = await (server as any)._registeredTools[
       "playtest.prepareReview"
-    ].handler({ episodeId: "ep-run-1" });
+    ].handler({ episodeId: reviewedEpisodeId });
     assert.equal(preparedReview.isError, undefined);
     const preparedReviewPayload = JSON.parse(preparedReview.content[0].text);
     assert.equal(
@@ -1129,6 +1171,57 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
         reason: "missing"
       }
     ]);
+    assert.equal(
+      preparedReviewPayload.packet.crossSessionContext.status,
+      "included"
+    );
+    assert.equal(
+      preparedReviewPayload.packet.crossSessionContext.sessions.length,
+      1
+    );
+    assert.notEqual(
+      preparedReviewPayload.packet.crossSessionContext.sessions[0].episodeId,
+      reviewedEpisodeId
+    );
+    const siblingEpisodeId =
+      preparedReviewPayload.packet.crossSessionContext.sessions[0].episodeId;
+    const siblingEpisode = insertedEpisodes.find(
+      (episode) => episode.episodeId === siblingEpisodeId
+    );
+    const siblingAssignment =
+      insertedBatches[1].assignmentInventory.manifest.assignments.find(
+        (assignment: PlaytestBatchAssignment) =>
+          assignment.assignmentId === siblingEpisode?.assignmentId
+      );
+    assert.ok(siblingEpisode);
+    assert.ok(siblingAssignment);
+    const expectedInventoryHash = createHash("sha256")
+      .update(
+        playtestCrossSessionInventoryHashInput([
+          { episode: siblingEpisode, assignment: siblingAssignment }
+        ])
+      )
+      .digest("hex");
+    assert.equal(
+      preparedReviewPayload.packet.crossSessionContext.inventoryHash,
+      expectedInventoryHash
+    );
+    const expectedSelectionSeed = createHash("sha256")
+      .update(
+        canonicalPlaytestJson({
+          purpose: "playtest-cross-session-packet-sample-v1",
+          assignmentManifestHash:
+            insertedBatches[1].assignmentInventory.manifest.contentHash,
+          targetAssignmentId: insertedBatches[1].reviewPackets[0].assignmentId,
+          targetEpisodeId: reviewedEpisodeId,
+          inventoryHash: expectedInventoryHash
+        })
+      )
+      .digest("hex");
+    assert.equal(
+      preparedReviewPayload.packet.crossSessionContext.selectionSeed,
+      expectedSelectionSeed
+    );
     currentRole = "playtester";
     assert.equal(
       insertedBatches[1].measurementVersion,
@@ -1144,9 +1237,13 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     );
     assert.equal(capturedRuntimeVersion, "0.1.0");
     assert.equal(capturedMeasurementVersion, PLAYTESTS_MEASUREMENT_VERSION);
-    assert.equal(insertedEpisodes.length, 1);
-    assert.equal(insertedEpisodes[0]!.identity.seed, "seed-exact-1");
-    assert.equal(capturedSeed, "seed-exact-1");
+    assert.equal(insertedEpisodes.length, 2);
+    assert.ok(
+      insertedEpisodes.some(
+        (episode) => episode.identity.seed === "seed-exact-1"
+      )
+    );
+    assert.ok(["seed-exact-1", "seed-exact-2"].includes(capturedSeed!));
     assert.equal(capturedScenarioFamily, "tutorial-family");
     assert.deepEqual(capturedObservationContract, {
       schemaVersion: 1,
@@ -1174,7 +1271,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     const mismatchedStatus = JSON.parse(mismatchedFinished.content[0].text);
     assert.equal(mismatchedStatus.status, "failed");
     assert.equal(mismatchedStatus.error.code, "playtest_invalid_request");
-    assert.equal(insertedEpisodes.length, 1);
+    assert.equal(insertedEpisodes.length, 2);
     assert.equal(insertedBatches.length, 4);
     assert.equal(insertedBatches[3]!.revision, 2);
     assert.equal(insertedBatches[3]!.status, "failed");
@@ -1242,7 +1339,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       parsedMcpError(exhaustedBudgetRun).code,
       "playtest_invalid_request"
     );
-    assert.equal(insertedEpisodes.length, 3);
+    assert.equal(insertedEpisodes.length, 4);
   } finally {
     rmSync(tmpRoot, { recursive: true, force: true });
   }
@@ -1267,8 +1364,12 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
     const insertedEpisodes: PlaytestEpisode[] = [];
     let failEpisodeInsert = true;
     let failTerminalBatchInsert = false;
+    let commitTerminalThenThrow = false;
     const mockRepo: PlaytestingRepositoryOps = {
-      getBatch: async () => null,
+      getBatch: async (_workspaceId, batchId) =>
+        [...insertedBatches]
+          .reverse()
+          .find((batch) => batch.batchId === batchId) ?? null,
       listBatches: async () => {
         const latest = new Map<string, PlaytestBatch>();
         for (const batch of insertedBatches) {
@@ -1294,8 +1395,10 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
       getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
       getLatestComparison: async () => null,
+      insertComparison: async () => {},
       insertBatch: async (batch) => {
         if (failTerminalBatchInsert && batch.revision === 2) {
+          if (commitTerminalThenThrow) insertedBatches.push(batch);
           throw new Error("ClickHouse batch revision is unreachable");
         }
         insertedBatches.push(batch);
@@ -1485,6 +1588,28 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
         ?.status,
       "running"
     );
+
+    // A lost acknowledgement after a durable terminal insert must preserve its
+    // successful revision rather than append a contradictory failed revision.
+    commitTerminalThenThrow = true;
+    const thirdStart = await (server as any)._registeredTools[
+      "playtest.run"
+    ].handler(singleAssignmentRequest("tutorial", "random", "seed-3"));
+    const thirdStarted = JSON.parse(thirdStart.content[0].text);
+    const thirdWait = await (server as any)._registeredTools[
+      "playtest.wait"
+    ].handler({ batchId: thirdStarted.batchId, waitMs: 5000 });
+    const thirdStatus = JSON.parse(thirdWait.content[0].text);
+    assert.equal(thirdStatus.status, "completed");
+    assert.deepEqual(
+      insertedBatches
+        .filter((batch) => batch.batchId === thirdStarted.batchId)
+        .map(({ revision, status }) => ({ revision, status })),
+      [
+        { revision: 1, status: "running" },
+        { revision: 2, status: "completed" }
+      ]
+    );
   } finally {
     rmSync(tmpRoot, { recursive: true, force: true });
   }
@@ -1527,6 +1652,7 @@ test("playtest MCP: Docker preflight and adapter reset failures are never comple
         getLatestFindingByFingerprint: async () => null,
         getLatestReview: async () => null,
         getLatestComparison: async () => null,
+        insertComparison: async () => {},
         insertBatch: async (batch) => {
           insertedBatches.push(batch);
         },
@@ -1762,6 +1888,7 @@ test("playtest MCP serializes concurrent assignment reservations before checking
       getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
       getLatestComparison: async () => null,
+      insertComparison: async () => {},
       insertBatch: async (batch) => {
         batchRows.push(batch);
       },
@@ -1899,6 +2026,7 @@ test("playtest batch remains cancellable while a completed assignment persists a
       getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
       getLatestComparison: async () => null,
+      insertComparison: async () => {},
       insertBatch: async (batch) => {
         insertedBatches.push(batch);
       },
@@ -2082,6 +2210,7 @@ test("review sampling selects complete sessions only and preserves truncated ass
       getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
       getLatestComparison: async () => null,
+      insertComparison: async () => {},
       insertBatch: async (batch) => {
         insertedBatches.push(batch);
       },
@@ -2244,6 +2373,7 @@ test("playtest MCP: per-run cancellation and approval/workspace revocation abort
         getLatestFindingByFingerprint: async () => null,
         getLatestReview: async () => null,
         getLatestComparison: async () => null,
+        insertComparison: async () => {},
         insertBatch: async (batch) => {
           insertedBatches.push(batch);
         },
@@ -2572,6 +2702,7 @@ test("run status restores interrupted batch progress from Data and durably close
     getLatestFindingByFingerprint: async () => null,
     getLatestReview: async () => null,
     getLatestComparison: async () => null,
+    insertComparison: async () => {},
     insertBatch: async (batch) => {
       storedBatch = batch;
       batchWrites.push(batch);
@@ -2750,6 +2881,7 @@ test("playtest MCP: batch-only contract rejects unapproved cells and over-budget
       getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
       getLatestComparison: async () => null,
+      insertComparison: async () => {},
       insertBatch: async (batch) => {
         insertedBatches.push(batch);
       },
@@ -2967,6 +3099,7 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
       getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
       getLatestComparison: async () => null,
+      insertComparison: async () => {},
       insertBatch: async (batch) => {
         insertedBatches.push(batch);
       },
@@ -3519,6 +3652,23 @@ test("playtest MCP server: submitReview validates evidence against the real stor
         unsupportedVisualRubric
       ]),
       coverageManifest,
+      crossSessionCandidates: [
+        {
+          episode: episodeTwo,
+          assignment: assignmentManifest.assignments[1]!
+        }
+      ],
+      crossSessionSelectionSeed: "cross-session-fixture-seed-v1",
+      crossSessionInventoryHash: createHash("sha256")
+        .update(
+          playtestCrossSessionInventoryHashInput([
+            {
+              episode: episodeTwo,
+              assignment: assignmentManifest.assignments[1]!
+            }
+          ])
+        )
+        .digest("hex"),
       rubricHash: "f".repeat(64),
       measurementVersion: PLAYTESTS_MEASUREMENT_VERSION,
       traceHash: traceWrite.reference.sha256,
@@ -3632,6 +3782,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       getLatestReview: async (_ws, _episodeId, reviewId) =>
         insertedReviews.find((review) => review.reviewId === reviewId) ?? null,
       getLatestComparison: async () => null,
+      insertComparison: async () => {},
       insertBatch: async (batch) => {
         const latestReceipt = batch.reviewReceipts.at(-1);
         const existingReceipt = latestReceipt
@@ -3696,6 +3847,13 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     const preparedPayload = JSON.parse(preparedPacket.content[0].text);
     assert.equal(preparedPayload.packet.packetId, packet.packetId);
     assert.equal(preparedPayload.packetArtifact.sha256, packetArtifact.sha256);
+    assert.equal(preparedPayload.packet.crossSessionContext.status, "included");
+    assert.deepEqual(
+      preparedPayload.packet.crossSessionContext.sessions.map(
+        (sibling: { episodeId: string }) => sibling.episodeId
+      ),
+      [episodeTwo.episodeId]
+    );
     const unselectedPacket = await (server as any)._registeredTools[
       "playtest.prepareReview"
     ].handler({ episodeId: episodeTwo.episodeId });
@@ -3904,6 +4062,32 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       lastVerifiedBuild: null,
       nextReviewAt: null
     });
+    const forgedSiblingCitation = await submitReview({
+      episodeId: episodeOne.episodeId,
+      chronologicalSummary: "An unavailable sibling is not packet evidence.",
+      status: "hypothesis",
+      evidenceRefs: [{ kind: "episode", id: episodeOne.episodeId }],
+      reportCompleteness: {
+        crossSessionContext: {
+          status: "available",
+          evidenceRefs: [{ kind: "episode", id: "not-in-packet" }]
+        },
+        alternatives: {
+          status: "none-identified",
+          reason: "No alternatives in this test."
+        },
+        experiments: {
+          status: "none-recommended",
+          reason: "No experiments in this test."
+        },
+        followUp: { status: "none", reason: "No follow-up in this test." }
+      }
+    });
+    assert.equal(
+      parsedMcpError(forgedSiblingCitation).code,
+      "playtest_invalid_request"
+    );
+    assert.equal(insertedReviews.length, 0);
     const partialFindingReview = await submitReview({
       episodeId: episodeOne.episodeId,
       chronologicalSummary:
@@ -3936,8 +4120,8 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       ],
       reportCompleteness: {
         crossSessionContext: {
-          status: "unavailable",
-          reason: "The packet covers one session and no aggregate comparison."
+          status: "available",
+          evidenceRefs: [{ kind: "episode", id: episodeTwo.episodeId }]
         },
         alternatives: { status: "provided" },
         experiments: { status: "proposed" },
@@ -4906,8 +5090,8 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
       nextReviewAt: null
     };
 
-    const storedComparison: PlaytestComparison = {
-      schema: "autodev-playtest-comparison-v1",
+    let storedComparison: PlaytestComparison = {
+      schema: PLAYTESTS_COMPARISON_SCHEMA,
       comparisonId: "comp-stored-1",
       version: 1,
       benchmarkId: "bench-1",
@@ -4931,6 +5115,8 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
       decision: "hold-inconclusive",
       ownerDecisionAt: null,
       ownerDecisionReason: null,
+      ownerDecisionBy: null,
+      ownerDisposition: null,
       humanPreference: { answer: "not-collected", interval: null },
       provenance: {
         workspaceId: WORKSPACE_ID,
@@ -4939,6 +5125,7 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
       },
       notes: ""
     };
+    let loseOwnerDecisionAcknowledgement = false;
 
     let requestedBatchMetricPage: {
       readonly batchId?: string;
@@ -4993,6 +5180,13 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
         comparisonId === storedComparison.comparisonId
           ? storedComparison
           : null,
+      insertComparison: async (comparison) => {
+        storedComparison = comparison;
+        if (loseOwnerDecisionAcknowledgement) {
+          loseOwnerDecisionAcknowledgement = false;
+          throw new Error("Simulated lost comparison write acknowledgement.");
+        }
+      },
       insertBatch: async () => {},
       insertEpisode: async () => {},
       insertReview: async () => {},
@@ -5156,7 +5350,74 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
       "playtest.findings"
     ].handler({});
     assert.equal(parsedMcpError(analystFindingsRes).code, "playtest_forbidden");
+    const analystDecisionRes = await (server as any)._registeredTools[
+      "playtest.decideComparison"
+    ].handler({
+      comparisonId: storedComparison.comparisonId,
+      expectedVersion: 1,
+      disposition: "hold",
+      reason: "Analyst roles cannot decide releases."
+    });
+    assert.equal(parsedMcpError(analystDecisionRes).code, "playtest_forbidden");
     currentRole = "root";
+
+    const ineligiblePromotion = await (server as any)._registeredTools[
+      "playtest.decideComparison"
+    ].handler({
+      comparisonId: storedComparison.comparisonId,
+      expectedVersion: 1,
+      disposition: "promote",
+      reason: "Attempt to override the code-owned inconclusive result."
+    });
+    assert.equal(
+      parsedMcpError(ineligiblePromotion).code,
+      "playtest_invalid_request"
+    );
+    assert.equal(storedComparison.version, 1);
+
+    loseOwnerDecisionAcknowledgement = true;
+    const decisionRes = await (server as any)._registeredTools[
+      "playtest.decideComparison"
+    ].handler({
+      comparisonId: storedComparison.comparisonId,
+      expectedVersion: 1,
+      disposition: "hold",
+      reason: "Hold pending a fresh confirmation cohort."
+    });
+    assert.equal(decisionRes.isError, undefined);
+    const decided = JSON.parse(decisionRes.content[0].text);
+    assert.equal(decided.version, 2);
+    assert.equal(decided.ownerDisposition, "hold");
+    assert.equal(decided.ownerDecisionBy, "user-1");
+    assert.equal(
+      decided.ownerDecisionReason,
+      "Hold pending a fresh confirmation cohort."
+    );
+    assert.equal(storedComparison.version, 2);
+    assert.equal(approvalRepo.read(WORKSPACE_ID)?.revision, 1);
+
+    const idempotentDecisionRes = await (server as any)._registeredTools[
+      "playtest.decideComparison"
+    ].handler({
+      comparisonId: storedComparison.comparisonId,
+      expectedVersion: 1,
+      disposition: "hold",
+      reason: "Hold pending a fresh confirmation cohort."
+    });
+    assert.equal(idempotentDecisionRes.isError, undefined);
+    assert.equal(JSON.parse(idempotentDecisionRes.content[0].text).version, 2);
+    const staleDecisionRes = await (server as any)._registeredTools[
+      "playtest.decideComparison"
+    ].handler({
+      comparisonId: storedComparison.comparisonId,
+      expectedVersion: 1,
+      disposition: "hold",
+      reason: "A different stale decision."
+    });
+    assert.equal(
+      parsedMcpError(staleDecisionRes).code,
+      "playtest_invalid_request"
+    );
 
     // 6. findings
     const findingsRes = await (server as any)._registeredTools[

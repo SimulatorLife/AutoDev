@@ -17,6 +17,7 @@ import {
   type PlaytestMcpSession,
   type PlaytestMcpSessionProvider
 } from "./mcp.ts";
+import { reconcilePendingPlaytestPackets } from "./packet-artifact-reconciliation.ts";
 import { servePlaytestMcpStdio } from "./stdio.ts";
 
 export interface PlaytestStdioConfiguration {
@@ -44,9 +45,11 @@ export function assertPlaytestStdioSessionBinding(
       "The configured workspace is not in the canonical catalog."
     );
   }
+  const privilegedControlRole = PRIVILEGED_CONTROL_ROLES.has(config.role);
   if (
-    !configuredRoles.has(config.role) ||
-    (workspace.agentRoles !== null &&
+    (!configuredRoles.has(config.role) && !privilegedControlRole) ||
+    (!privilegedControlRole &&
+      workspace.agentRoles !== null &&
       !workspace.agentRoles.includes(config.role))
   ) {
     throw new Error(
@@ -57,6 +60,7 @@ export function assertPlaytestStdioSessionBinding(
 
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const SESSION_VALUE_PATTERN = /^[A-Za-z0-9@._:-]{1,256}$/u;
+const PRIVILEGED_CONTROL_ROLES = new Set(["root", "operator"]);
 
 function requiredSessionValue(env: NodeJS.ProcessEnv, key: string): string {
   const value = env[key]?.trim();
@@ -146,7 +150,12 @@ export async function main(
     }
     return store;
   };
-  artifactStoreForWorkspace(config.workspaceId);
+  const artifactStore = artifactStoreForWorkspace(config.workspaceId);
+  await reconcilePendingPlaytestPackets({
+    workspaceId: config.workspaceId,
+    artifacts: artifactStore,
+    repository: playtestRepository
+  });
 
   const server = createPlaytestMcpServer({
     sessionProvider,

@@ -4612,6 +4612,107 @@ export function createPlaytestRunControl(
   return playtestRunControl;
 }
 
+/**
+ * A selection is explicit and bounded: the operator names the sessions, and a
+ * session that cannot contribute evidence comes back as a named receipt rather
+ * than being dropped from the result.
+ */
+const MAX_CROSS_SESSION_SELECTIONS = 16;
+
+/** Why a selected session could not contribute an analyst packet. */
+const CROSS_SESSION_RECEIPT_REASONS = [
+  "unknown-session",
+  "excluded-ineligible-session",
+  "batch-not-completed",
+  "not-selected-for-review",
+  "critique-budget-exhausted",
+  "packet-unavailable",
+  "not-authorized"
+] as const;
+type CrossSessionReceiptReason =
+  (typeof CROSS_SESSION_RECEIPT_REASONS)[number];
+
+export interface PlaytestCrossSessionReceipt {
+  readonly episodeId: string;
+  readonly batchId: string | null;
+  readonly reason: CrossSessionReceiptReason;
+  /** Named, not a fabricated packet: why this session contributed nothing. */
+  readonly detail: string;
+}
+
+export interface PlaytestCrossSessionPacket {
+  readonly episodeId: string;
+  readonly batchId: string;
+  readonly packet: PlaytestEvidencePacket;
+  readonly artifact: PlaytestArtifactReference;
+}
+
+/** Per-batch critique headroom, so a selection cannot quietly overspend. */
+export interface PlaytestCrossSessionBudget {
+  readonly batchId: string;
+  readonly reviewCap: number;
+  readonly actualCritiques: number;
+  readonly reserved: number;
+  readonly requested: number;
+  readonly remaining: number;
+}
+
+/**
+ * Sessions that cannot support an analyst claim: partial, cancelled, crashed,
+ * infrastructure-failed or truncated. Excluded here and reported, so an
+ * analyst never reasons over a session whose evidence is incomplete.
+ */
+function crossSessionIneligibility(
+  episode: PlaytestEpisode,
+  batch: PlaytestBatch | null
+): string | null {
+  if (!batch) return "The session's batch is not available in this workspace.";
+  if (batch.status !== "completed") {
+    return `The session's batch is ${batch.status}, not completed.`;
+  }
+  switch (episode.status) {
+    case "completed":
+      return null;
+    case "assigned":
+    case "started":
+      return `The session is partial (${episode.status}).`;
+    case "crashed":
+      return "The session crashed.";
+    case "infrastructure-failed":
+      return "The session became infrastructure loss.";
+    case "cancelled":
+      return "The session was cancelled.";
+    case "budget-truncated":
+      return "The session was truncated before completion.";
+    default:
+      return "The session state is not analysable.";
+  }
+}
+
+/**
+ * A store that cannot be opened still has a bounded, typed shape, so callers
+ * report a packet that could not be read instead of failing opaquely.
+ */
+function safeArtifactStoreForWorkspace(
+  workspaceId: string,
+  open: (workspaceId: string) => PlaytestArtifactStore
+): PlaytestArtifactStore {
+  try {
+    return open(workspaceId);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "";
+    return {
+      boundWorkspaceId: () => workspaceId,
+      referenceForId: () => null,
+      readArtifact: () => {
+        throw new PlaytestMcpUnavailableError(
+          `Evidence artifact storage is unavailable${detail === "" ? "." : `: ${detail}`}`
+        );
+      }
+    } as unknown as PlaytestArtifactStore;
+  }
+}
+
 async function readPreparedReviewPacket(input: {
   readonly workspaceId: string;
   readonly episode: PlaytestEpisode;
@@ -4725,6 +4826,185 @@ async function readPreparedReviewPacket(input: {
     );
   }
   return { packet: typed, artifact: reference };
+}
+
+/**
+ * Dispatch analysis over an explicit, bounded selection.
+ *
+ * Runtime owns the whole decision: eligibility, the per-batch critique cap,
+ * and which selected sessions yielded packet-unavailable receipts. Every
+ * excluded or unreadable session is reported by name; nothing is dropped
+ * silently, because a silently dropped session would make the analyst's
+ * cross-session claims look grounded in evidence that was never read.
+ */
+async function prepareCrossSessionReview(input: {
+  readonly workspaceId: string;
+  readonly episodeIds: readonly string[];
+  readonly repository: PlaytestingRepositoryOps;
+  readonly artifacts: PlaytestArtifactStore;
+}): Promise<{
+  readonly packets: readonly PlaytestCrossSessionPacket[];
+  readonly receipts: readonly PlaytestCrossSessionReceipt[];
+  readonly budget: readonly PlaytestCrossSessionBudget[];
+}> {
+  const { workspaceId, episodeIds, repository, artifacts } = input;
+  const unique = [...new Set(episodeIds)];
+  if (unique.length === 0 || unique.length > MAX_CROSS_SESSION_SELECTIONS) {
+    throw new PlaytestMcpValidationError(
+      `A cross-session analysis must name between 1 and ${String(MAX_CROSS_SESSION_SELECTIONS)} distinct sessions.`
+    );
+  }
+  const packets: PlaytestCrossSessionPacket[] = [];
+  const receipts: PlaytestCrossSessionReceipt[] = [];
+  const resolved: {
+    readonly episodeId: string;
+    readonly episode: PlaytestEpisode;
+    readonly batch: PlaytestBatch;
+  }[] = [];
+
+  // Eligibility first, so an ineligible session is never charged against the
+  // critique budget it could never have used.
+  for (const episodeId of unique) {
+    const episode = await repository.getEpisode(workspaceId, episodeId);
+    if (!episode) {
+      receipts.push({
+        episodeId,
+        batchId: null,
+        reason: "unknown-session",
+        detail: "The session does not exist in the authorized workspace."
+      });
+      continue;
+    }
+    const batch = await repository.getBatch(workspaceId, episode.batchId);
+    const ineligible = crossSessionIneligibility(episode, batch);
+    if (ineligible !== null || !batch) {
+      receipts.push({
+        episodeId,
+        batchId: episode.batchId,
+        reason: "excluded-ineligible-session",
+        detail: ineligible ?? "The session's batch is unavailable."
+      });
+      continue;
+    }
+    if (
+      batch.reviewSelection.status !== "selected" ||
+      batch.assignmentInventory.status !== "frozen" ||
+      batch.coverageManifest === null
+    ) {
+      receipts.push({
+        episodeId,
+        batchId: episode.batchId,
+        reason: "not-selected-for-review",
+        detail:
+          "The session's batch has no persisted frozen review selection."
+      });
+      continue;
+    }
+    // Membership is checked here so an unselected session is reported as
+    // ineligible selection rather than surfacing as an authorization failure.
+    if (
+      episode.assignmentId !== null &&
+      !batch.reviewSelection.selected.some(
+        (entry) =>
+          entry.assignmentId === episode.assignmentId &&
+          entry.episodeId === episode.episodeId
+      )
+    ) {
+      receipts.push({
+        episodeId,
+        batchId: episode.batchId,
+        reason: "not-selected-for-review",
+        detail:
+          "The session was not among the frozen bounded review selection for its batch."
+      });
+      continue;
+    }
+    resolved.push({ episodeId, episode, batch });
+  }
+
+  // The per-batch cap is checked across the whole selection, not per session:
+  // N sessions that each fit under the cap must still not exceed it together.
+  const budgets: PlaytestCrossSessionBudget[] = [];
+  const allowed = new Map<string, PlaytestCrossSessionPacket["batchId"][]>();
+  for (const batchId of new Set(resolved.map((entry) => entry.batch.batchId))) {
+    const first = resolved.find((entry) => entry.batch.batchId === batchId)!;
+    const selection = first.batch.reviewSelection;
+    if (selection.status !== "selected") continue;
+    const requested = resolved.filter(
+      (entry) => entry.batch.batchId === batchId
+    ).length;
+    const reserved = first.batch.reviewReceipts.filter(
+      (receipt) => receipt.status === "reserved"
+    ).length;
+    const remaining = Math.max(
+      0,
+      selection.reviewCap -
+        first.batch.budget.actualCritiques -
+        reserved
+    );
+    budgets.push({
+      batchId,
+      reviewCap: selection.reviewCap,
+      actualCritiques: first.batch.budget.actualCritiques,
+      reserved,
+      requested,
+      remaining
+    });
+    allowed.set(
+      batchId,
+      resolved
+        .filter((entry) => entry.batch.batchId === batchId)
+        .slice(0, remaining)
+        .map((entry) => entry.episodeId)
+    );
+  }
+
+  for (const { episodeId, episode, batch } of resolved) {
+    const permitted = allowed.get(batch.batchId) ?? [];
+    if (!permitted.includes(episodeId)) {
+      receipts.push({
+        episodeId,
+        batchId: batch.batchId,
+        reason: "critique-budget-exhausted",
+        detail:
+          "The batch's frozen critique cap cannot cover this selection; the sessions past the cap are excluded rather than analysed unbudgeted."
+      });
+      continue;
+    }
+    try {
+      const prepared = await readPreparedReviewPacket({
+        workspaceId,
+        episode,
+        repository,
+        artifacts
+      });
+      packets.push({
+        episodeId,
+        batchId: batch.batchId,
+        packet: prepared.packet,
+        artifact: prepared.artifact
+      });
+    } catch (error) {
+      receipts.push({
+        episodeId,
+        batchId: batch.batchId,
+        reason:
+          error instanceof PlaytestMcpAuthorizationError
+            ? "not-authorized"
+            : "packet-unavailable",
+        detail:
+          error instanceof Error
+            ? error.message
+            : "The session packet could not be read."
+      });
+    }
+  }
+
+  return {
+    packets,
+    receipts,
+    budget: budgets.sort((a, b) => a.batchId.localeCompare(b.batchId))
+  };
 }
 
 type ReviewDimensionEvidence = z.infer<typeof reviewDimensionEvidenceSchema>;
@@ -5321,6 +5601,58 @@ export function createPlaytestMcpServer(
         return {
           packet: packet.packet,
           packetArtifact: packet.artifact
+        };
+      })
+  );
+
+  // 8b. playtest.prepareCrossSessionReview
+  mcp.registerTool(
+    "playtest.prepareCrossSessionReview",
+    {
+      description:
+        "Dispatch analysis over an explicit, bounded selection of persisted sessions. Runtime owns eligibility, the per-batch critique cap, and a named receipt for every selected session that contributed no packet. Each returned packet belongs to exactly one session, so cross-session synthesis must cite each contributing session's own packet and be reported as cross-session.",
+      inputSchema: {
+        workspaceId: z.string().min(1).max(256).optional(),
+        episodeIds: z
+          .array(z.string().min(1).max(256))
+          .min(1)
+          .max(MAX_CROSS_SESSION_SELECTIONS)
+      }
+    },
+    ({ workspaceId, episodeIds }) =>
+      safely(async () => {
+        const session = await sessionProvider.current();
+        if (!isReviewerRole(session.role)) {
+          throw new PlaytestMcpAuthorizationError(
+            "playtest.prepareCrossSessionReview requires the read-only playtest analyst role."
+          );
+        }
+        const targetWorkspaceId = authorizeWorkspace(workspaceId, session);
+        if (!playtestRepository) {
+          throw new PlaytestMcpUnavailableError(
+            "Playtest Data storage is unavailable for analyst packet retrieval."
+          );
+        }
+        const result = await prepareCrossSessionReview({
+          workspaceId: targetWorkspaceId,
+          episodeIds,
+          repository: playtestRepository,
+          // A store that cannot be opened is not a selection that failed: it
+          // is a packet that could not be read, and is reported per session
+          // rather than collapsing the whole dispatch into one opaque error.
+          artifacts: safeArtifactStoreForWorkspace(
+            targetWorkspaceId,
+            artifactStoreForWorkspace
+          )
+        });
+        // Every requested session appears exactly once, in packets or receipts,
+        // so a silent drop is structurally impossible.
+        return {
+          schema: "autodev-playtest-cross-session-v1" as const,
+          requested: episodeIds.length,
+          packets: result.packets,
+          receipts: result.receipts,
+          budget: result.budget
         };
       })
   );

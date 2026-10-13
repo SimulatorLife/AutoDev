@@ -690,6 +690,108 @@ test("missing and expired states with explicit error classes", () => {
   }
 });
 
+test("pending artifact references finalize idempotently and remain workspace-bound", () => {
+  const { root, cleanup } = createTempDir("artifact-store-pending-commit-");
+  try {
+    let now = 100_000;
+    const store = new PlaytestArtifactStore({
+      rootDirectory: root,
+      workspaceId: "test/retention",
+      retentionMs: 10_000,
+      now: () => now
+    });
+    const first = store.writeArtifact({
+      artifactId: "pending-packet-1",
+      mediaType: "application/vnd.autodev.playtest-evidence-packet+json",
+      bytes: new TextEncoder().encode("packet-one"),
+      pendingCommitId: "batch-1"
+    }).reference;
+    now += 1;
+    const second = store.writeArtifact({
+      artifactId: "pending-packet-2",
+      mediaType: "application/vnd.autodev.playtest-evidence-packet+json",
+      bytes: new TextEncoder().encode("packet-two"),
+      pendingCommitId: "batch-2"
+    }).reference;
+    const committed = store.writeArtifact({
+      artifactId: "committed-packet",
+      mediaType: "application/vnd.autodev.playtest-evidence-packet+json",
+      bytes: new TextEncoder().encode("packet-committed")
+    }).reference;
+    const reused = store.writeArtifact({
+      artifactId: "legacy-packet",
+      mediaType: "application/vnd.autodev.playtest-evidence-packet+json",
+      bytes: new TextEncoder().encode("legacy-packet")
+    }).reference;
+    store.writeArtifact({
+      artifactId: reused.artifactId,
+      mediaType: reused.mediaType,
+      bytes: new TextEncoder().encode("legacy-packet"),
+      pendingCommitId: "batch-legacy"
+    });
+    assert.equal(store.markArtifactCommitted(reused, "batch-legacy"), true);
+
+    const page = store.listPendingArtifacts({
+      mediaType: "application/vnd.autodev.playtest-evidence-packet+json",
+      limit: 1
+    });
+    assert.equal(page.truncated, true);
+    assert.deepEqual(
+      page.entries.map((entry) => entry.reference.artifactId),
+      [first.artifactId]
+    );
+    assert.equal(page.entries[0]?.pendingCommitId, "batch-1");
+    assert.equal(store.markArtifactCommitted(first, "batch-1"), true);
+    assert.equal(store.markArtifactCommitted(first, "batch-1"), false);
+    assert.throws(
+      () => store.markArtifactCommitted(second, "another-batch"),
+      /pending-commit identity/u
+    );
+    assert.equal(store.markArtifactCommitted(committed, "batch-3"), false);
+    assert.deepEqual(
+      store
+        .listPendingArtifacts({
+          mediaType: "application/vnd.autodev.playtest-evidence-packet+json",
+          limit: 10
+        })
+        .entries.map((entry) => entry.reference.artifactId),
+      [second.artifactId]
+    );
+
+    const oldMetadataPath = path.join(
+      root,
+      "test",
+      "retention",
+      "refs",
+      "committed-packet.json"
+    );
+    const oldMetadata = JSON.parse(readFileSync(oldMetadataPath, "utf8")) as {
+      pendingCommitId?: string | null;
+    } & Record<string, unknown>;
+    delete oldMetadata.pendingCommitId;
+    writeFileSync(oldMetadataPath, JSON.stringify(oldMetadata), {
+      mode: 0o600
+    });
+    assert.equal(
+      store.referenceForId(committed.artifactId)?.sha256,
+      committed.sha256
+    );
+    assert.equal(
+      store
+        .listPendingArtifacts({
+          mediaType: "application/vnd.autodev.playtest-evidence-packet+json",
+          limit: 10
+        })
+        .entries.some(
+          (entry) => entry.reference.artifactId === committed.artifactId
+        ),
+      false
+    );
+  } finally {
+    cleanup();
+  }
+});
+
 test("cleanup removes expired references, blobs, and windows while preserving active ones", () => {
   const { root, cleanup } = createTempDir("artifact-store-cleanup-");
   try {

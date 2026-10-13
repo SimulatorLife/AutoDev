@@ -207,6 +207,8 @@ const SHA256_HEX_PATTERN = /^[a-f\d]{64}$/iu;
 const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9_-]{4,128}$/u;
 const NON_ALPHANUMERIC_PATTERN = /[^A-Za-z0-9]/gu;
 const MEDIA_TYPE_TOKEN_PATTERN = /^[A-Za-z0-9!#$&^_.+-]+$/u;
+const MAX_ARTIFACT_REFERENCE_FILES_TO_SCAN = 100_000;
+const ARTIFACT_ID_COLLATOR = new Intl.Collator("en");
 
 /** Pure helper: bounded SHA-256 over a byte buffer. */
 function sha256Hex(bytes: Uint8Array): string {
@@ -356,6 +358,8 @@ interface PlaytestArtifactMetadata {
   readonly lineCount: number;
   readonly createdAt: number;
   readonly expiresAt: number;
+  /** Non-null while another durable store has not yet recorded this reference. */
+  readonly pendingCommitId: string | null;
 }
 
 /** Request payload for writeArtifact. */
@@ -363,6 +367,8 @@ export interface PlaytestArtifactWriteRequest {
   readonly artifactId?: string;
   readonly mediaType: string;
   readonly bytes: Uint8Array;
+  /** Optional durable owner whose commit finalizes this artifact reference. */
+  readonly pendingCommitId?: string;
 }
 
 /** Request payload for writeWindow. */
@@ -378,6 +384,20 @@ export interface PlaytestArtifactWriteResult {
   readonly lineCount: number;
   readonly createdAt: number;
   readonly expiresAt: number;
+}
+
+/** Indexed pending reference returned to Runtime's cross-store reconciler. */
+export interface PlaytestPendingArtifactReference {
+  readonly reference: PlaytestArtifactReference;
+  readonly pendingCommitId: string;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+}
+
+export interface PlaytestPendingArtifactList {
+  readonly entries: readonly PlaytestPendingArtifactReference[];
+  /** True when the bounded page did not include every pending reference. */
+  readonly truncated: boolean;
 }
 
 /** Window read result with the raw bounded JSONL bytes. */
@@ -545,6 +565,88 @@ function assertNotHumanResponse(mediaType: string): void {
   ) {
     throw new PlaytestArtifactFormatError(
       "Human responses must not enter this generic LLM artifact store; participant data is governed by a separate consent-scoped store."
+    );
+  }
+}
+
+function assertArtifactWriteRequest(
+  request: PlaytestArtifactWriteRequest,
+  maxBytes: number
+): void {
+  assertMediaType(request.mediaType);
+  assertNotHumanResponse(request.mediaType);
+  if (
+    request.pendingCommitId !== undefined &&
+    (typeof request.pendingCommitId !== "string" ||
+      !ARTIFACT_ID_PATTERN.test(request.pendingCommitId))
+  ) {
+    throw new PlaytestArtifactFormatError(
+      "pendingCommitId must be a valid opaque token."
+    );
+  }
+  if (!(request.bytes instanceof Uint8Array)) {
+    throw new PlaytestArtifactFormatError(
+      "Artifact payload must be a Uint8Array."
+    );
+  }
+  if (request.bytes.byteLength > maxBytes) {
+    throw new PlaytestArtifactOversizedError("blob", request.bytes.byteLength);
+  }
+}
+
+function pendingArtifactFromMetadata(input: {
+  readonly metadataFile: string;
+  readonly fileName: string;
+  readonly workspaceId: string;
+  readonly mediaType: string;
+  readonly fileSystem: PlaytestArtifactFileSystem;
+}): PlaytestPendingArtifactReference | null {
+  const metadata = readMetadata(input.metadataFile, input.fileSystem);
+  if (
+    metadata.workspaceId !== input.workspaceId ||
+    metadata.kind !== "blob" ||
+    metadata.mediaType !== input.mediaType ||
+    metadata.pendingCommitId === null
+  ) {
+    return null;
+  }
+  if (`${metadata.artifactId}.json` !== input.fileName) {
+    throw new PlaytestArtifactConfigurationError(
+      "Artifact reference filename does not match its metadata identity."
+    );
+  }
+  return {
+    reference: {
+      artifactId: metadata.artifactId,
+      sha256: metadata.sha256,
+      bytes: metadata.bytes,
+      mediaType: metadata.mediaType
+    },
+    pendingCommitId: metadata.pendingCommitId,
+    createdAt: metadata.createdAt,
+    expiresAt: metadata.expiresAt
+  };
+}
+
+function assertExistingBlobCompatible(
+  existing: PlaytestArtifactMetadata,
+  request: PlaytestArtifactWriteRequest,
+  workspaceId: string,
+  sha256: string
+): void {
+  if (
+    existing.workspaceId !== workspaceId ||
+    existing.kind !== "blob" ||
+    existing.sha256 !== sha256 ||
+    existing.bytes !== request.bytes.byteLength ||
+    existing.mediaType !== request.mediaType ||
+    (existing.pendingCommitId !== null &&
+      existing.pendingCommitId !== (request.pendingCommitId ?? null))
+  ) {
+    throw new PlaytestArtifactIntegrityError(
+      existing.artifactId,
+      sha256,
+      existing.sha256
     );
   }
 }
@@ -797,6 +899,16 @@ function readMetadata(
       "Artifact metadata timestamps must be finite numbers."
     );
   }
+  const pendingCommitId = parsed.pendingCommitId ?? null;
+  if (
+    pendingCommitId !== null &&
+    (typeof pendingCommitId !== "string" ||
+      !ARTIFACT_ID_PATTERN.test(pendingCommitId))
+  ) {
+    throw new PlaytestArtifactFormatError(
+      "Artifact metadata pendingCommitId must be a valid opaque token or null."
+    );
+  }
   return {
     artifactId: parsed.artifactId as string,
     workspaceId: parsed.workspaceId as string,
@@ -806,7 +918,8 @@ function readMetadata(
     mediaType: parsed.mediaType as string,
     lineCount: parsed.lineCount as number,
     createdAt: parsed.createdAt as number,
-    expiresAt: parsed.expiresAt as number
+    expiresAt: parsed.expiresAt as number,
+    pendingCommitId: pendingCommitId as string | null
   };
 }
 
@@ -945,6 +1058,188 @@ export class PlaytestArtifactStore {
   }
 
   /**
+   * List a bounded set of owner-pending references of one media type,
+   * including expired entries so the owner can apply its retention policy.
+   * Metadata is validated and workspace-scoped; no filesystem paths escape.
+   */
+  listPendingArtifacts(input: {
+    readonly mediaType: string;
+    readonly limit: number;
+  }): PlaytestPendingArtifactList {
+    assertMediaType(input.mediaType);
+    if (
+      !Number.isSafeInteger(input.limit) ||
+      input.limit < 1 ||
+      input.limit > 10_000
+    ) {
+      throw new PlaytestArtifactFormatError(
+        "Pending artifact list limit must be between 1 and 10,000."
+      );
+    }
+    const refsDirectory = safeJoin(this.root, this.workspaceId, "refs");
+    if (!this.fileSystem.existsSync(refsDirectory)) {
+      return { entries: [], truncated: false };
+    }
+    const refsDirectoryInfo = this.fileSystem.lstatSync(refsDirectory);
+    if (
+      refsDirectoryInfo.isSymbolicLink() ||
+      !refsDirectoryInfo.isDirectory()
+    ) {
+      throw new PlaytestArtifactConfigurationError(
+        "Artifact reference directory must be a real directory."
+      );
+    }
+    const entries: PlaytestPendingArtifactReference[] = [];
+    let scannedReferences = 0;
+    for (const file of this.fileSystem.readdirSync(refsDirectory, {
+      withFileTypes: true
+    })) {
+      if (!file.isFile() || !file.name.endsWith(".json")) continue;
+      scannedReferences += 1;
+      if (scannedReferences > MAX_ARTIFACT_REFERENCE_FILES_TO_SCAN) {
+        throw new PlaytestArtifactConfigurationError(
+          "Artifact reference inventory exceeds its bounded reconciliation scan."
+        );
+      }
+      const entry = pendingArtifactFromMetadata({
+        metadataFile: safeJoin(refsDirectory, file.name),
+        fileName: file.name,
+        workspaceId: this.workspaceId,
+        mediaType: input.mediaType,
+        fileSystem: this.fileSystem
+      });
+      if (entry) entries.push(entry);
+    }
+    entries.sort(
+      (left, right) =>
+        left.createdAt - right.createdAt ||
+        ARTIFACT_ID_COLLATOR.compare(
+          left.reference.artifactId,
+          right.reference.artifactId
+        )
+    );
+    const truncated = entries.length > input.limit;
+    return { entries: entries.slice(0, input.limit), truncated };
+  }
+
+  /** Mark a reference durable after its external owner has committed it. */
+  markArtifactCommitted(
+    reference: PlaytestArtifactReference,
+    pendingCommitId: string
+  ): boolean {
+    if (!ARTIFACT_ID_PATTERN.test(pendingCommitId)) {
+      throw new PlaytestArtifactFormatError(
+        "pendingCommitId must be a valid opaque token."
+      );
+    }
+    const auth = this.authorize(reference);
+    if (!auth.metadata) {
+      throw new PlaytestArtifactNotAuthorizedError(
+        reference.artifactId,
+        this.workspaceId
+      );
+    }
+    if (auth.metadata.kind !== "blob") {
+      throw new PlaytestArtifactFormatError(
+        "Only blob artifacts may carry an external commit marker."
+      );
+    }
+    if (
+      reference.sha256 !== auth.metadata.sha256 ||
+      reference.bytes !== auth.metadata.bytes ||
+      reference.mediaType !== auth.metadata.mediaType
+    ) {
+      throw new PlaytestArtifactIntegrityError(
+        reference.artifactId,
+        auth.metadata.sha256,
+        reference.sha256
+      );
+    }
+    if (auth.metadata.pendingCommitId === null) return false;
+    if (auth.metadata.pendingCommitId !== pendingCommitId) {
+      throw new PlaytestArtifactConfigurationError(
+        "Artifact pending-commit identity does not match its durable owner."
+      );
+    }
+    writeMetadata(
+      metadataPath(this.root, this.workspaceId, reference.artifactId),
+      { ...auth.metadata, pendingCommitId: null },
+      this.fileSystem
+    );
+    return true;
+  }
+
+  private writeBlobIfMissing(blobFile: string, bytes: Uint8Array): void {
+    if (this.fileSystem.existsSync(blobFile)) return;
+    const blobTmp = `${blobFile}${TMP_SUFFIX}.${mintToken(this.randomToken)}`;
+    try {
+      this.fileSystem.writeFileSync(blobTmp, bytes, FILE_MODE);
+      this.fileSystem.chmodSync(blobTmp, FILE_MODE);
+      this.fileSystem.renameSync(blobTmp, blobFile);
+    } catch (error) {
+      if (this.fileSystem.existsSync(blobTmp)) {
+        // Preserve partial evidence for diagnostics; do not auto-delete.
+        try {
+          this.fileSystem.chmodSync(blobTmp, FILE_MODE);
+        } catch {
+          // Ignore secondary chmod error.
+        }
+      }
+      throw error;
+    }
+  }
+
+  private writeBlobMetadata(input: {
+    readonly request: PlaytestArtifactWriteRequest;
+    readonly artifactId: string;
+    readonly sha256: string;
+    readonly now: number;
+    readonly expiresAt: number;
+  }): void {
+    const metadataFile = metadataPath(
+      this.root,
+      this.workspaceId,
+      input.artifactId
+    );
+    if (this.fileSystem.existsSync(metadataFile)) {
+      const existing = readMetadata(metadataFile, this.fileSystem);
+      assertExistingBlobCompatible(
+        existing,
+        input.request,
+        this.workspaceId,
+        input.sha256
+      );
+      if (
+        existing.pendingCommitId === null &&
+        input.request.pendingCommitId !== undefined
+      ) {
+        writeMetadata(
+          metadataFile,
+          { ...existing, pendingCommitId: input.request.pendingCommitId },
+          this.fileSystem
+        );
+      }
+      return;
+    }
+    writeMetadata(
+      metadataFile,
+      {
+        artifactId: input.artifactId,
+        workspaceId: this.workspaceId,
+        kind: "blob",
+        sha256: input.sha256,
+        bytes: input.request.bytes.byteLength,
+        mediaType: input.request.mediaType,
+        lineCount: 0,
+        createdAt: input.now,
+        expiresAt: input.expiresAt,
+        pendingCommitId: input.request.pendingCommitId ?? null
+      },
+      this.fileSystem
+    );
+  }
+
+  /**
    * Write an opaque artifact payload (frame, snapshot, trace, media).
    * Same content + same media type yields the same artifact id; writes
    * are content-deduplicated. Returns the opaque reference plus
@@ -953,19 +1248,7 @@ export class PlaytestArtifactStore {
   writeArtifact(
     request: PlaytestArtifactWriteRequest
   ): PlaytestArtifactWriteResult {
-    assertMediaType(request.mediaType);
-    assertNotHumanResponse(request.mediaType);
-    if (!(request.bytes instanceof Uint8Array)) {
-      throw new PlaytestArtifactFormatError(
-        "Artifact payload must be a Uint8Array."
-      );
-    }
-    if (request.bytes.byteLength > this.maxBytes) {
-      throw new PlaytestArtifactOversizedError(
-        "blob",
-        request.bytes.byteLength
-      );
-    }
+    assertArtifactWriteRequest(request, this.maxBytes);
     const sha256 = this.hash(request.bytes);
     const now = this.now();
     const expiresAt = now + this.retentionMs;
@@ -979,58 +1262,9 @@ export class PlaytestArtifactStore {
     );
     ensureOwnedDirectory(refsDirectory, this.root, this.fileSystem);
     ensureOwnedDirectory(blobsDirectory, this.root, this.fileSystem);
-    // Atomic write for the blob: write to a temp file in the same shard
-    // directory, then rename. If a blob with this hash already exists
-    // we skip the write (idempotent dedup) and only mint the reference.
-    if (!this.fileSystem.existsSync(blobFile)) {
-      const blobTmp = `${blobFile}${TMP_SUFFIX}.${mintToken(this.randomToken)}`;
-      try {
-        this.fileSystem.writeFileSync(blobTmp, request.bytes, FILE_MODE);
-        this.fileSystem.chmodSync(blobTmp, FILE_MODE);
-        this.fileSystem.renameSync(blobTmp, blobFile);
-      } catch (error) {
-        if (this.fileSystem.existsSync(blobTmp)) {
-          // Preserve partial evidence for diagnostics; do not auto-delete.
-          try {
-            this.fileSystem.chmodSync(blobTmp, FILE_MODE);
-          } catch {
-            // Ignore secondary chmod error
-          }
-        }
-        throw error;
-      }
-    }
+    this.writeBlobIfMissing(blobFile, request.bytes);
     const artifactId = request.artifactId ?? sha256;
-    const metadataFile = metadataPath(this.root, this.workspaceId, artifactId);
-    if (this.fileSystem.existsSync(metadataFile)) {
-      const existing = readMetadata(metadataFile, this.fileSystem);
-      if (
-        existing.workspaceId !== this.workspaceId ||
-        existing.kind !== "blob" ||
-        existing.sha256 !== sha256 ||
-        existing.bytes !== request.bytes.byteLength ||
-        existing.mediaType !== request.mediaType
-      ) {
-        throw new PlaytestArtifactIntegrityError(
-          artifactId,
-          sha256,
-          existing.sha256
-        );
-      }
-    } else {
-      const metadata: PlaytestArtifactMetadata = {
-        artifactId,
-        workspaceId: this.workspaceId,
-        kind: "blob",
-        sha256,
-        bytes: request.bytes.byteLength,
-        mediaType: request.mediaType,
-        lineCount: 0,
-        createdAt: now,
-        expiresAt
-      };
-      writeMetadata(metadataFile, metadata, this.fileSystem);
-    }
+    this.writeBlobMetadata({ request, artifactId, sha256, now, expiresAt });
     return {
       reference: {
         artifactId,
@@ -1116,7 +1350,8 @@ export class PlaytestArtifactStore {
         mediaType,
         lineCount: request.entries.length,
         createdAt: now,
-        expiresAt
+        expiresAt,
+        pendingCommitId: null
       },
       this.fileSystem
     );
