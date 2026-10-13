@@ -1039,14 +1039,23 @@ Observed after that fix, in the browser:
   "Select up to 16 persisted sessions", `data-selected="0"`, a selectable
   `playtesting-selection-option`, and the request button disabled at zero.
 
-Still not evidenced: an out-of-cap selection **rejection**, which needs more
-than 16 sessions in the fixture — it holds one — and the remaining five specs
-(cancellation, the 1,000-assignment composer, mobile overflow, the approval
-form, and finding→replay→back navigation). Manual driving is not the specs, so
-this item stays open; what changed is that two of its three named criteria now
-have real-browser evidence rather than HTTP-level proxies. A unit test still
-compares the panel's count keys against the fixture's emitted keys, so a tile
-the fixture cannot satisfy fails without a browser.
+Still not evidenced in a browser: an out-of-cap selection **rejection**,
+which needs more than 16 sessions in the fixture — it holds one. The
+rejection itself is implemented and unit-tested where it actually
+happens, `parsePlaytestingScope` (`the analysis selection is explicit,
+bounded and shareable` asserts a 17-session link yields an empty
+selection with `invalidQuery`, not 16 ids), so what a browser would add
+here is the rendering of that refusal rather than the refusal itself. The
+panel's own `next.slice(0, MAX)` is belt-and-braces behind that: the URL
+layer refuses an over-cap link and the checkboxes disable at the cap, so
+the slice guards an unreachable state and says nothing when it fires.
+The remaining five specs (cancellation, the 1,000-assignment composer,
+mobile overflow, the approval form, and finding→replay→back navigation)
+also remain unrun. Manual driving is not the specs, so this item stays
+open; what changed is that two of its three named criteria now have real
+browser evidence rather than HTTP-level proxies. A unit test still
+compares the panel's count keys against the fixture's emitted keys, so a
+tile the fixture cannot satisfy fails without a browser.
 
 ### Declarative game onboarding: one config, no adapter (delivered)
 
