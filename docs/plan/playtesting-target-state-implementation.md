@@ -103,11 +103,20 @@ states what is implemented and, where applicable, what is still missing.
   preregistered against relevant human data" (§6), and no such human data or
   preregistered bounds exist in this repository. Inventing them would fabricate
   the exact judgement the contract reserves for the project, so the path stays
-  unimplemented. Per §6, an unvalidated cohort must downgrade novice/learner UX
-  generalizations to model-specific signals and disable human-proxy
-  comparisons rather than leave an authoritative claim with a footnote — the
-  consumer that applies that downgrade is also missing, and is part of the same
-  gap.
+  unimplemented. The consumer §6 requires for that downgrade now exists:
+  `evaluateDiagnosticLadder`'s stage 2 took
+  `stage2ObserverCompetenceVerified: boolean`, so a caller could assert
+  observer competence on the strength of nothing and proceed to
+  human-confusion conclusions (`e278941a`). It now takes the independently
+  initialized, competence-checked observers themselves — an empty list is
+  unverified, never "verified, none needed" — which is also this artifact's
+  first consumer.
+
+  **Still missing: the producer.** `PlayerPolicyValidity` has a consumer now
+  but nothing constructs it, so no run yet supplies those observer references,
+  and its own fields remain unproduced. The implementable half is the
+  synthetic-cohort path above; the `competence: "passed" | "failed"` half
+  still needs acceptance bounds that do not exist here.
 
   The no-fabricated-frame guarantee _is_ structural rather than asserted:
   `game.observe.frame` is validated as an artifact reference carrying a SHA-256
