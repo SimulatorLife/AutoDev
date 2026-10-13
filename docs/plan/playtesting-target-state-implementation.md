@@ -930,17 +930,43 @@ an explicit stale state when the status read fails, and a multi-session
 selection that reserves capacity and rejects an out-of-cap request without
 truncation.
 
-**Not yet run.** `console/e2e/playtesting-usability.spec.ts` covers all three
-(8 specs, listed by `npx playwright test --list`), but no spec has executed in
-this environment: Chromium dies at
-`bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer:
-Permission denied (1100)`, a macOS sandbox restriction, and no other engine is
-installed. What has been checked instead, over HTTP against the real fixture
-server: `/health`, the `runs-read-fail` toggle the spec drives, and the
-active-runs read's envelope. A unit test now compares the panel's count keys
-against the fixture's emitted keys, so a tile the fixture cannot satisfy fails
-without a browser. That is Console mechanics evidence, not a game run, and it is
-not the browser acceptance above.
+**Partly evidenced in a real browser; the automated specs still have not run.**
+`console/e2e/playtesting-usability.spec.ts` still cannot execute here: Chromium
+dies at `bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer:
+Permission denied (1100)`, a macOS sandbox restriction that also defeats
+Playwright's bundled headless shell, and no other engine is installed. The
+session browser is not sandboxed that way, so the Console was driven by hand
+against the same labeled synthetic Control API fixture and the same running
+Console build the specs use. Driving it found a defect no unit test could see —
+the live view armed its poll timer once per effect run, so a nonterminal batch
+was read twice and then never again while the panel kept rendering a live
+"Running" badge over numbers that could no longer move (`f37b51be`).
+
+Observed after that fix, in the browser:
+
+- live progress — `data-freshness="live"`, `data-status="running"`, the batch
+  present after the start request with no operator action, an `aria-live`
+  region announcing it, and the focused batch reflected as
+  `liveBatch=batch-browser-001` with `data-focused="true"`;
+- the stale path — breaking the read flipped the panel to
+  `data-freshness="unavailable"` with "not confirmed current state", kept the
+  last-known row with `data-stale="true"`, and replaced its live status pill
+  with "Last known: Running";
+- the count tiles — the panel renders "Assignments started" / "Assignments
+  completed" and no longer names `succeeded` / `quota-blocked`, which is what
+  the spec asserts;
+- multi-session selection — the "Multi-session analysis" region renders with
+  "Select up to 16 persisted sessions", `data-selected="0"`, a selectable
+  `playtesting-selection-option`, and the request button disabled at zero.
+
+Still not evidenced: an out-of-cap selection **rejection**, which needs more
+than 16 sessions in the fixture — it holds one — and the remaining five specs
+(cancellation, the 1,000-assignment composer, mobile overflow, the approval
+form, and finding→replay→back navigation). Manual driving is not the specs, so
+this item stays open; what changed is that two of its three named criteria now
+have real-browser evidence rather than HTTP-level proxies. A unit test still
+compares the panel's count keys against the fixture's emitted keys, so a tile
+the fixture cannot satisfy fails without a browser.
 
 ### Declarative game onboarding: one config, no adapter (delivered)
 
