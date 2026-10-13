@@ -1085,6 +1085,13 @@ export interface ControlApiPlaytestingCapabilitiesResponse {
   }[];
   readonly limits: WorkspacePlaytestApproval["limits"] | null;
   readonly issueReporting: "disabled" | "review";
+  /**
+   * The game's checked-in `reporting.githubIssues`. Carried alongside the
+   * operator's `issueReporting` grant because neither has meaning alone, and an
+   * operator reading this view could otherwise not tell a game that asked for
+   * review from one that asked for nothing.
+   */
+  readonly configuredIssueReporting: "disabled" | "review";
   readonly humanStudyAllowed: boolean;
   readonly revokedAt: string | null;
   readonly runPreflight: "required-at-start";

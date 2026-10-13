@@ -215,6 +215,7 @@ function runControlFixture(calls: unknown[] = []): PlaytestRunControl {
           critiqueCount: 0
         },
         issueReporting: "disabled",
+        configuredIssueReporting: "disabled",
         humanStudyAllowed: false,
         revokedAt: null,
         runPreflight: "required-at-start"

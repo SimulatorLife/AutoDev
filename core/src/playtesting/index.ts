@@ -31,6 +31,7 @@ export * from "./human-preference.ts";
 export * from "./human-preference-import.ts";
 export * from "./human-study-aggregation.ts";
 export * from "./human-study-import.ts";
+export * from "./issue-drafts.ts";
 export * from "./metric-evaluation.ts";
 export * from "./native-timing.ts";
 export * from "./observability.ts";

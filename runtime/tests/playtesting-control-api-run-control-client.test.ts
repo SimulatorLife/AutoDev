@@ -90,6 +90,7 @@ test("Playtest Control API client forwards typed run operations and host-bound s
         critiqueCount: 0
       },
       issueReporting: "disabled",
+      configuredIssueReporting: "disabled",
       humanStudyAllowed: false,
       revokedAt: null,
       runPreflight: "required-at-start"
@@ -422,6 +423,7 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
         critiqueCount: 0
       },
       issueReporting: "disabled",
+      configuredIssueReporting: "disabled",
       humanStudyAllowed: false,
       revokedAt: null,
       runPreflight: "required-at-start"

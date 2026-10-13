@@ -72,6 +72,9 @@ import {
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_SEVERITIES,
   PLAYTESTS_VERIFICATION_STAGES,
+  buildPlaytestIssueDrafts,
+  playtestIssueReportingRefusal,
+  type PlaytestIssueDraft,
   type PlaytestSessionReview,
   recordPlaytestOwnerDecision,
   scorePlaytestDimensionAnchor,
@@ -90,6 +93,7 @@ import type { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev
 import { z } from "zod/v4";
 
 import type { PlaytestingReadRepository } from "../control-api/playtesting.ts";
+import { loadApprovedPlaytestDefinition } from "./approved-configuration.ts";
 import { mapConcurrentOrdered } from "../shared/map-concurrent-ordered.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import {
@@ -261,6 +265,14 @@ export interface PlaytestRunCapabilities {
   readonly humanStudyAllowed: boolean;
   readonly revokedAt: string | null;
   readonly runPreflight: "required-at-start";
+  /**
+   * The game's checked-in `reporting.githubIssues`. Carried here because the
+   * operator's `issueReporting` grant above means nothing without it: before
+   * this existed the config value was validated and read by no code path, so a
+   * game that asked for review and an operator who granted it were
+   * indistinguishable from a game that asked for nothing.
+   */
+  readonly configuredIssueReporting: "disabled" | "review";
 }
 
 export interface PlaytestRunControl {
@@ -4032,6 +4044,30 @@ function activeRunApproval(
   return approval;
 }
 
+/**
+ * The issue-reporting mode the game declared in its checked-in config, read
+ * from the approved checkout.
+ *
+ * Fail-closed on purpose. An absent approval, a revoked one, or a config that
+ * cannot be loaded reports no declared authority: a capability probe must not
+ * throw because a game has not onboarded yet, and an unreadable config is not
+ * evidence of authority. A config that is invalid but readable still says
+ * exactly what it declared — only failing to read it collapses to "disabled".
+ */
+function configuredIssueReporting(
+  repository: WorkspacePlaytestApprovalRepository | undefined,
+  workspaceId: string
+): "disabled" | "review" {
+  try {
+    const approval = repository?.read(workspaceId);
+    if (!approval || approval.revokedAt !== null) return "disabled";
+    return loadApprovedPlaytestDefinition(approval).configuration.reporting
+      .githubIssues;
+  } catch {
+    return "disabled";
+  }
+}
+
 function requiredRunRepository(
   repository: PlaytestingRepositoryOps | undefined
 ): PlaytestingRepositoryOps {
@@ -4302,6 +4338,9 @@ export function createPlaytestRunControl(
           policyProfiles: [],
           limits: null,
           issueReporting: "disabled",
+          // No readable catalog means no approved checkout and therefore no
+          // readable config: report no declared authority rather than guessing.
+          configuredIssueReporting: "disabled",
           humanStudyAllowed: false,
           revokedAt: null,
           runPreflight: "required-at-start"
@@ -4356,6 +4395,10 @@ export function createPlaytestRunControl(
         policyProfiles: profiles,
         limits: approval?.limits ?? null,
         issueReporting: approval?.issueReporting ?? "disabled",
+        configuredIssueReporting: configuredIssueReporting(
+          approvalRepository,
+          authorizedWorkspaceId
+        ),
         humanStudyAllowed: approval?.humanStudyAllowed ?? false,
         revokedAt: approval?.revokedAt ?? null,
         runPreflight: "required-at-start"
@@ -6145,7 +6188,83 @@ export function createPlaytestMcpServer(
       })
   );
 
-  // 10. playtest.branch
+  // 10. playtest.issueDrafts
+  mcp.registerTool(
+    "playtest.issueDrafts",
+    {
+      description:
+        "Propose review-gated issue drafts for a workspace's findings. AutoDev never publishes: drafts are returned for an operator to read, and every draft carries requiresOperatorAction.",
+      inputSchema: {
+        workspaceId: z.string().min(1).max(256).optional(),
+        severity: z.enum([...PLAYTESTS_SEVERITIES]).optional(),
+        status: z.enum([...PLAYTESTS_FINDING_STATUSES]).optional(),
+        verificationStage: z.enum([...PLAYTESTS_VERIFICATION_STAGES]).optional(),
+        cursor: z.string().max(2048).optional(),
+        limit: z.number().int().min(1).max(500).default(50)
+      }
+    },
+    (args) =>
+      safely(async () => {
+        const session = await sessionProvider.current();
+        assertPlaytestToolRole(
+          session.role,
+          FINDING_READER_ROLES,
+          "playtest.issueDrafts"
+        );
+        const targetWorkspaceId = authorizeWorkspace(args.workspaceId, session);
+        if (!playtestRepository) {
+          throw new PlaytestMcpUnavailableError(
+            "Playtest data repository is not configured for drafting issues."
+          );
+        }
+        // Both gates come from the owner's capabilities view, which already
+        // resolves the operator's grant and the game's checked-in declaration.
+        // Reading either from anywhere else would give the gate two answers.
+        const capabilities = await playtestRunControl.getCapabilities(
+          session,
+          targetWorkspaceId
+        );
+        const gates = {
+          configuredReporting: capabilities.configuredIssueReporting,
+          approvedReporting: capabilities.issueReporting
+        };
+        const page = await playtestRepository.listFindings(
+          {
+            workspaceId: targetWorkspaceId,
+            ...(args.severity ? { severity: args.severity } : {}),
+            ...(args.status ? { status: args.status } : {}),
+            ...(args.verificationStage
+              ? { verificationStage: args.verificationStage }
+              : {})
+          },
+          {
+            limit: args.limit,
+            ...(args.cursor ? { cursor: args.cursor } : {})
+          }
+        );
+        const drafts: readonly PlaytestIssueDraft[] = buildPlaytestIssueDrafts({
+          ...gates,
+          findings: page.rows
+        });
+        return {
+          drafts,
+          // A non-null refusal names the gate that withheld authority, so a
+          // caller can explain an empty result instead of guessing.
+          refusal: playtestIssueReportingRefusal({
+            ...gates,
+            findings: page.rows
+          }),
+          // Explicit about the window examined: a truncated page must not read
+          // as "these were all the issues worth filing".
+          examinedFindings: page.total,
+          nextCursor: page.nextCursor,
+          published: false as const,
+          requiresOperatorAction: true as const
+        };
+      })
+  );
+
+  // 11. playtest.branch
   mcp.registerTool(
     "playtest.branch",
     {
