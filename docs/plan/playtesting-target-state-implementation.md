@@ -142,13 +142,51 @@ states what is implemented and, where applicable, what is still missing.
 
 ## Cross-cutting acceptance ledger
 
-- [ ] Healthy/no-finding, absent adapter, malformed/interrupted/partial run,
-      known reproducible defect, unverified hypothesis, missing frames, model drift,
-      matched/unmatched cohorts, hidden-state exposure, no ratings/disagreement,
-      invalid links, unauthorized actions, and 10k-record query cases.
-- [ ] Measurement denominators, missingness, uncertainty, cohorts, sampling,
-      event/trace provenance, distinct execution/gameplay/interpretive status, and
-      protected human data are tested end to end.
+- [~] Scenario coverage audited against named tests. Of the thirteen cases in
+  the first bundle, twelve have a named test: no-finding (`many null/no-effect
+  outcomes remain visible`, `zero-denominator stratum: standardized rate is
+  null`); malformed/interrupted/partial run (`run status restores interrupted
+  batch progress from Data and durably closes unknown assignments`, `batch
+  assignment validation rejects duplicates, malformed and oversized
+  inventories`, `episode cancellation ... preserves partial evidence`);
+  known reproducible defect (`checkpoint equality requires exact hidden-state
+  and reproducible RNG identity`); unverified hypothesis
+  (`assertPlaytestFindingEvidenceStatusConsistent accepts a 'hypothesis'
+  finding`, `a hypothesis is never drafted as a confirmed defect`); missing
+  frames (`packet records a missing frame explicitly without fabricating a
+  frame locator`); model drift (`evidence packet refuses ... assignment drift`,
+  `a measured judge that drifts is failed, not insufficient`, `changed judge
+  invalidates critic measurements but not unchanged deterministic metrics`);
+  matched/unmatched cohorts (`three-build mix-shift gate`, `missing benchmark
+  stratum: ... unknown-incomplete-source-coverage`); hidden-state exposure
+  (`evidence packet refuses hidden/unverified trace data`); no
+  ratings/disagreement (`small-cell human sample (<5) suppresses
+  human-confirmed claim`, `an entirely unmeasured judge is insufficient`);
+  invalid links (`rejects a 'verified' finding citing a nonexistent locator`);
+  unauthorized actions (`playtest.run enforces role permissions`, `workspace
+  agent-role allowlists govern status, wait, and cancellation`); and 10k-record
+  queries (`data/tests/playtesting/playtest-repository.test.ts`, 10,000 rows).
+
+  **The one gap is `absent adapter`.** An adapter that cannot start at all is
+  covered at two edges only: the config layer refuses an adapter command that
+  differs from the approval (`command-mismatch`), and the core terminal-state
+  layer separates infrastructure loss from a game failure. The end-to-end path
+  where the binary is missing lives in `docker-sandbox.ts`, and those are the
+  tests this environment cannot run (`EPERM` teardown), so the case is named
+  rather than claimed.
+- [~] Measurement denominators, missingness, uncertainty, cohorts, sampling,
+  event/trace provenance, distinct execution/gameplay/interpretive status, and
+  protected human data each have a named test (`batch aggregates keep all nine
+  denominators with game and infrastructure apart`; `coverage preserves missing
+  assignments, missing metric rows, and unresolved historical cohorts`; `human
+  confusion requires uncertainty beyond the game-owned threshold`;
+  `allocatePlaytestSurveillanceStrata ... by largest remainder`; `version-one
+  restricted state migrates atomically without losing consent or PXI data`;
+  `batch terminal state separates cancellation, infrastructure loss and
+  truncation`). **Not checked, because "end to end" is not what these are.**
+  They exercise the arithmetic and the validators directly, not a real
+  authoritative playtesting run — which is Delivery Slice 6's gap, and checking
+  this box would assert the thing that slice says is missing.
 - [ ] Keyboard/mobile navigation, stable filter → finding → session → back,
       no fabricated video, source-mapped upstream UI logic actually executing,
       and performance on indexed queries, view changes, and replay selection.
