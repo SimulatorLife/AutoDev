@@ -22,6 +22,34 @@ export function playtestManifestHash(value: unknown): string {
 }
 
 /**
+ * The digest the approval path records for the rubric.
+ *
+ * It hashes the file's own bytes rather than a canonical re-encoding, because
+ * approval compares against bytes it read from the approved checkout. Generation
+ * and verification must agree with it exactly, so a differently-encoded but
+ * equivalent registry is a real difference here.
+ */
+export function playtestFileHash(bytes: string | Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/** Every digest field a benchmark carries that AutoDev derives, not the game. */
+export function derivedBenchmarkDigests(input: {
+  readonly rubricHash: string;
+  readonly observationSchemaHash: string;
+}): Readonly<{
+  readonly rubricHash: string;
+  readonly metricRegistryHash: string;
+  readonly observationSchemaHash: string;
+}> {
+  return {
+    rubricHash: input.rubricHash,
+    metricRegistryHash: input.rubricHash,
+    observationSchemaHash: input.observationSchemaHash
+  };
+}
+
+/**
  * The observation contract's content hash, computed over everything except the
  * `schemaHash` field itself — otherwise the digest could never be written into
  * the file it describes.

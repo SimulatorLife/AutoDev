@@ -15,8 +15,10 @@ import path from "node:path";
 
 import {
   assertPlaytestObservationContract,
+  derivedBenchmarkDigests,
   observationSchemaHash,
   type PlaytestObservationContract,
+  playtestFileHash,
   playtestManifestHash,
   withObservationSchemaHash
 } from "@simulatorlife/autodev-core";
@@ -66,6 +68,29 @@ function writeLine(message: string): void {
 
 function writeErrorLine(message: string): void {
   process.stderr.write(`${message}\n`);
+}
+
+/** The benchmark the config declares, resolved beside the config itself. */
+function declaredBenchmarkPath(checkoutRoot: string): string | null {
+  const root = integrationRoot(checkoutRoot);
+  const config = readJsonFile(path.join(root, PLAYTESTS_CONFIG_FILE));
+  if (!config.ok || !isPlainRecord(config.value)) return null;
+  const analysis = config.value.analysis;
+  if (!isPlainRecord(analysis) || typeof analysis.benchmark !== "string") {
+    return null;
+  }
+  const declared = analysis.benchmark;
+  if (declared.length === 0 || path.isAbsolute(declared)) return null;
+  // The declared name is the same relative reference the config's other
+  // manifests use, so it must stay inside the integration directory.
+  const resolved = path.resolve(root, declared);
+  const relative = path.relative(root, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  return existsSync(resolved) ? resolved : null;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function integrationRoot(checkoutRoot: string): string {
@@ -162,31 +187,126 @@ export function checkPlaytestIntegration(checkoutRoot: string): PlaytestCheckRep
       }
     }
   }
+
+  // The benchmark repeats the rubric and observation digests. Nothing in the
+  // repository tells a game which rubric its benchmark points at, so those three
+  // fields are verified here rather than trusted.
+  const digests = derivedDigests(checkoutRoot);
+  const benchmarkPath = declaredBenchmarkPath(checkoutRoot);
+  if (benchmarkPath && digests) {
+    const relative = path.relative(checkoutRoot, benchmarkPath);
+    const parsed = readJsonFile(benchmarkPath);
+    if (!parsed.ok) {
+      problems.push({
+        severity: "error",
+        code: "invalid-json",
+        file: relative,
+        message: `${relative} is not valid JSON: ${parsed.message}`
+      });
+    } else if (isPlainRecord(parsed.value)) {
+      const benchmark = parsed.value;
+      const expected = derivedBenchmarkDigests(digests);
+      for (const [field, value] of Object.entries(expected)) {
+        if (
+          typeof benchmark[field] !== "string" ||
+          benchmark[field]!.toLowerCase() !== value.toLowerCase()
+        ) {
+          problems.push({
+            severity: "error",
+            code: "hash-mismatch",
+            file: relative,
+            message: `${relative} records ${field} as ${String(benchmark[field])} but it is derived as ${value}. Run "autodev playtest check --write-hashes" to regenerate it.`
+          });
+        }
+      }
+    }
+  }
   return { problems, hashes };
 }
 
-/** Rewrite every digest this command owns, from the files' own content. */
+/**
+ * The digests AutoDev derives for this integration: the rubric's own bytes,
+ * and the benchmark's cross-references to it and to the observation contract.
+ *
+ * The benchmark repeats these three fields, which is exactly why a game
+ * hand-maintains them: nothing in the repo told it which rubric it was pointing
+ * at. They are read here and written by `--write-hashes`.
+ */
+function derivedDigests(checkoutRoot: string): {
+  readonly rubricHash: string;
+  readonly observationSchemaHash: string;
+} | null {
+  const root = integrationRoot(checkoutRoot);
+  const rubricFile = path.join(root, PLAYTESTS_RUBRIC_FILE);
+  const observationFile = path.join(root, PLAYTESTS_OBSERVATION_FILE);
+  if (!existsSync(rubricFile) || !existsSync(observationFile)) return null;
+  const observation = readJsonFile(observationFile);
+  if (!observation.ok) return null;
+  let contract: PlaytestObservationContract;
+  try {
+    assertPlaytestObservationContract(observation.value);
+    contract = observation.value;
+  } catch {
+    return null;
+  }
+  return {
+    rubricHash: playtestFileHash(readFileSync(rubricFile)),
+    observationSchemaHash: contract.schemaHash
+  };
+}
+
+/**
+ * Regenerate every digest this command owns, from the files' own content.
+ *
+ * Reads the rubric's bytes rather than a re-encoding, so what is written is
+ * what approval will compare against.
+ */
 export function writePlaytestHashes(checkoutRoot: string): PlaytestCheckReport {
   const root = integrationRoot(checkoutRoot);
   const observationFile = path.join(root, PLAYTESTS_OBSERVATION_FILE);
   const report = checkPlaytestIntegration(checkoutRoot);
-  if (!existsSync(observationFile)) return report;
-  const parsed = readJsonFile(observationFile);
-  if (!parsed.ok) return report;
-  let contract: PlaytestObservationContract;
-  try {
-    assertPlaytestObservationContract(parsed.value);
-    contract = parsed.value;
-  } catch {
-    return report;
+  const digests = derivedDigests(checkoutRoot);
+
+  if (digests && existsSync(observationFile)) {
+    const parsed = readJsonFile(observationFile);
+    if (parsed.ok) {
+      try {
+        assertPlaytestObservationContract(parsed.value);
+        const { schemaHash: _previous, ...content } = parsed.value;
+        writeFileSync(
+          observationFile,
+          `${JSON.stringify(withObservationSchemaHash(content), null, 2)}\n`,
+          "utf8"
+        );
+      } catch {
+        // Reported by the check below; nothing to regenerate.
+      }
+    }
   }
-  const { schemaHash: _previous, ...content } = contract;
-  const regenerated = withObservationSchemaHash(content);
-  writeFileSync(
-    observationFile,
-    `${JSON.stringify(regenerated, null, 2)}\n`,
-    "utf8"
-  );
+
+  if (digests) {
+    const benchmarkPath = declaredBenchmarkPath(checkoutRoot);
+    if (benchmarkPath) {
+      const parsed = readJsonFile(benchmarkPath);
+      if (parsed.ok && isPlainRecord(parsed.value)) {
+        writeFileSync(
+          benchmarkPath,
+          `${JSON.stringify(
+            {
+              ...parsed.value,
+              ...derivedBenchmarkDigests({
+                rubricHash: digests.rubricHash,
+                observationSchemaHash: digests.observationSchemaHash
+              })
+            },
+            null,
+            2
+          )}\n`,
+          "utf8"
+        );
+      }
+    }
+  }
   return checkPlaytestIntegration(checkoutRoot);
 }
 

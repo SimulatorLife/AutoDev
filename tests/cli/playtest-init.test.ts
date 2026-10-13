@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   observationSchemaHash,
   observationSchemaHashMatches,
+  playtestFileHash,
   playtestManifestHash,
   withObservationSchemaHash
 } from "@simulatorlife/autodev-core";
@@ -178,5 +179,82 @@ test("dispatch rejects an unknown subcommand and reports exit codes", () => {
   assert.throws(
     () => dispatchPlaytestCommand("definitely-not-a-command"),
     /unsupported playtest subcommand.*init, or check/u
+  );
+});
+test("the benchmark's derived digests are checked, not trusted", () => {
+  const { root } = checkout();
+  initPlaytestIntegration(root);
+  const rubricFile = path.join(root, ".autodev", PLAYTESTS_RUBRIC_FILE);
+  writeFileSync(
+    rubricFile,
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        metrics: [
+          {
+            metricId: "clarity",
+            label: "Clarity",
+            unit: null,
+            direction: "higher-is-better",
+            description: "The game's own clarity dimension."
+          }
+        ]
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+  const benchmarkFile = path.join(root, ".autodev", "playtest.benchmark.json");
+  writeFileSync(
+    benchmarkFile,
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        benchmarkId: "fixture",
+        // Digests the game wrote once and never revisited.
+        rubricHash: "0".repeat(64),
+        metricRegistryHash: "0".repeat(64),
+        observationSchemaHash: "0".repeat(64)
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+  const configFile = path.join(root, ".autodev", PLAYTESTS_CONFIG_FILE);
+  const config = read(root, PLAYTESTS_CONFIG_FILE) as {
+    analysis: Record<string, unknown>;
+  };
+  config.analysis.benchmark = "playtest.benchmark.json";
+  writeFileSync(configFile, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  const stale = checkPlaytestIntegration(root);
+  const mismatches = stale.problems.filter(
+    (problem) => problem.code === "hash-mismatch"
+  );
+  // All three derived fields, not just the observation one.
+  assert.equal(mismatches.length, 3);
+  assert.ok(
+    mismatches.every((problem) => /--write-hashes/u.test(problem.message)),
+    "every stale digest must say how to regenerate it"
+  );
+
+  assert.equal(
+    writePlaytestHashes(root).problems.filter(
+      (problem) => problem.severity === "error"
+    ).length,
+    0
+  );
+  const regenerated = readFileSync(benchmarkFile, "utf8");
+  assert.doesNotMatch(regenerated, /"0{64}"/u);
+  const rubricDigest = playtestFileHash(readFileSync(rubricFile, "utf8"));
+  assert.ok(regenerated.includes(rubricDigest));
+  // The rubric and metric registry are the same registry, so they share a digest.
+  const written = JSON.parse(regenerated) as Record<string, string>;
+  assert.equal(written.rubricHash, written.metricRegistryHash);
+  assert.equal(
+    written.observationSchemaHash,
+    read(root, PLAYTESTS_OBSERVATION_FILE).schemaHash
   );
 });
