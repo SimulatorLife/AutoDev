@@ -69,7 +69,7 @@ const STUBS = {
   provider: { start: () => 0 },
   hook: { run: () => 0 },
   repo: { bootstrap: () => 0 },
-  playtest: { init: () => 0, check: () => 0 },
+  playtest: { init: () => 0, check: () => 0, conformance: () => 0 },
   install: { install: () => 0 }
 };
 
@@ -90,7 +90,7 @@ test("a command invoked without its subcommand names the values it accepts", () 
       "session-start, subagent-start, root-delegation, or skill-read"
     ],
     ["repo", "repo subcommand", "bootstrap"],
-    ["playtest", "playtest subcommand", "init, or check"]
+    ["playtest", "playtest subcommand", "init, check, or conformance"]
   ] as const) {
     assert.throws(
       () => runMain([command], STUBS),
@@ -154,7 +154,7 @@ function acceptedList(command: string): string {
       return "bootstrap";
     }
     case "playtest": {
-      return "init, or check";
+      return "init, check, or conformance";
     }
     default: {
       throw new Error(`no accepted list for ${command}`);
@@ -184,7 +184,16 @@ test("help advertises exactly what each command accepts", async () => {
   const rows = advertisedCommands(await capture(["--", "--help"]));
   assert.deepEqual(
     [...rows.keys()],
-    ["check", "render", "router", "provider", "hook", "repo", "playtest", "install"]
+    [
+      "check",
+      "render",
+      "router",
+      "provider",
+      "hook",
+      "repo",
+      "playtest",
+      "install"
+    ]
   );
 
   for (const [command, choices] of rows) {

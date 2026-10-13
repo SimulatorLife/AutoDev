@@ -15,11 +15,11 @@ import path from "node:path";
 
 import {
   assertPlaytestObservationContract,
+  type PlaytestAdapterBinding,
+  type PlaytestObservationContract,
   PLAYTESTS_GENERIC_ADAPTER_COMMAND,
   PLAYTESTS_INTEGRATION_DIR,
   PLAYTESTS_REQUIRED_BINDINGS,
-  type PlaytestAdapterBinding,
-  type PlaytestObservationContract,
   resolvePlaytestAdapterBinding,
   unboundPlaytestMethods,
   usesGenericPlaytestAdapter
@@ -32,13 +32,15 @@ import {
   playtestManifestHash,
   withObservationSchemaHash
 } from "../playtesting/hash-chain.ts";
+import {
+  formatConformanceReport,
+  runPlaytestConformance
+} from "./playtest-conformance.ts";
 import { unsupportedChoice } from "./command-choice.ts";
 
-export const PLAYTESTS_SUBCOMMANDS = ["init", "check"] as const;
+export const PLAYTESTS_SUBCOMMANDS = ["init", "check", "conformance"] as const;
 export type PlaytestSubcommand = (typeof PLAYTESTS_SUBCOMMANDS)[number];
 
-/** The canonical integration directory a repository advertises support in. */
-export { PLAYTESTS_INTEGRATION_DIR };
 export const PLAYTESTS_CONFIG_FILE = "playtest.config.json";
 export const PLAYTESTS_OBSERVATION_FILE = "playtest.observation.json";
 export const PLAYTESTS_RUBRIC_FILE = "playtest.rubric.json";
@@ -71,6 +73,11 @@ export interface PlaytestCheckReport {
 export interface PlaytestCommandBackend {
   init(args?: readonly string[]): number;
   check(args?: readonly string[]): number;
+  /**
+   * Async because the episode is real: it loads the game's entry module and
+   * speaks the protocol to it, so it cannot be answered synchronously.
+   */
+  conformance(args?: readonly string[]): number | Promise<number>;
 }
 
 function writeLine(message: string): void {
@@ -226,28 +233,13 @@ export function checkPlaytestIntegration(
   // missing one means the game still hand-writes an adapter, which is the cost
   // this integration is meant to remove.
   const bindingFile = path.join(root, PLAYTESTS_BINDING_FILE);
-  if (!existsSync(bindingFile)) {
-    problems.push({
-      severity: "warning",
-      code: "missing-file",
-      file: path.posix.join(PLAYTESTS_INTEGRATION_DIR, PLAYTESTS_BINDING_FILE),
-      message:
-        "No adapter binding is declared, so this game still has to implement the protocol itself."
-    });
-  } else {
+  if (existsSync(bindingFile)) {
     const parsed = readJsonFile(bindingFile);
     const relative = path.posix.join(
       PLAYTESTS_INTEGRATION_DIR,
       PLAYTESTS_BINDING_FILE
     );
-    if (!parsed.ok) {
-      problems.push({
-        severity: "error",
-        code: "invalid-json",
-        file: relative,
-        message: `${relative} is not valid JSON: ${parsed.message}`
-      });
-    } else {
+    if (parsed.ok) {
       const resolution = resolvePlaytestAdapterBinding(parsed.value);
       if (resolution.kind === "rejected") {
         problems.push({
@@ -292,7 +284,22 @@ export function checkPlaytestIntegration(
           });
         }
       }
+    } else {
+      problems.push({
+        severity: "error",
+        code: "invalid-json",
+        file: relative,
+        message: `${relative} is not valid JSON: ${parsed.message}`
+      });
     }
+  } else {
+    problems.push({
+      severity: "warning",
+      code: "missing-file",
+      file: path.posix.join(PLAYTESTS_INTEGRATION_DIR, PLAYTESTS_BINDING_FILE),
+      message:
+        "No adapter binding is declared, so this game still has to implement the protocol itself."
+    });
   }
 
   // The benchmark repeats the rubric and observation digests. Nothing in the
@@ -566,7 +573,7 @@ export function initPlaytestIntegration(checkoutRoot: string): number {
 
 function checkoutRootFrom(args: readonly string[]): string {
   const index = args.indexOf("--checkout-root");
-  if (index >= 0 && index + 1 < args.length) {
+  if (index !== -1 && index + 1 < args.length) {
     return path.resolve(args[index + 1]!);
   }
   return process.cwd();
@@ -597,19 +604,41 @@ function reportCheck(checkoutRoot: string, writeHashes: boolean): number {
 export const defaultPlaytestBackend: PlaytestCommandBackend = {
   init: (args = []) => initPlaytestIntegration(checkoutRootFrom(args)),
   check: (args = []) =>
-    reportCheck(checkoutRootFrom(args), args.includes("--write-hashes"))
+    reportCheck(checkoutRootFrom(args), args.includes("--write-hashes")),
+  conformance: (args = []) => reportConformance(checkoutRootFrom(args))
 };
+
+/**
+ * Run the game's own episode and report where it stopped.
+ *
+ * Asynchronous because the episode is real: it loads the game's entry module
+ * and speaks the protocol to it. Exit code is non-zero when it does not hold
+ * up, so onboarding a game can gate on it.
+ */
+async function reportConformance(checkoutRoot: string): Promise<number> {
+  const report = await runPlaytestConformance(checkoutRoot);
+  const text = formatConformanceReport(report);
+  if (report.ok) {
+    writeLine(text);
+    return 0;
+  }
+  writeErrorLine(text);
+  return 1;
+}
 
 export function dispatchPlaytestCommand(
   subcommand: string,
   args: readonly string[] = [],
   backend: PlaytestCommandBackend = defaultPlaytestBackend
-): number {
+): number | Promise<number> {
   if (subcommand === "init") return backend.init(args);
   if (subcommand === "check") return backend.check(args);
+  if (subcommand === "conformance") return backend.conformance(args);
   throw unsupportedChoice(
     "playtest subcommand",
     subcommand,
     PLAYTESTS_SUBCOMMANDS
   );
 }
+
+export { PLAYTESTS_INTEGRATION_DIR } from "@simulatorlife/autodev-core";

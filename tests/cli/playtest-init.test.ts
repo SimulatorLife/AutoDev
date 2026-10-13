@@ -207,7 +207,7 @@ test("dispatch rejects an unknown subcommand and reports exit codes", () => {
   assert.equal(dispatchPlaytestCommand("check", ["--checkout-root", root]), 0);
   assert.throws(
     () => dispatchPlaytestCommand("definitely-not-a-command"),
-    /unsupported playtest subcommand.*init, or check/u
+    /unsupported playtest subcommand.*init, check, or conformance/u
   );
 });
 test("the benchmark's derived digests are checked, not trusted", () => {
