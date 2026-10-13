@@ -71,10 +71,13 @@ states what is implemented and, where applicable, what is still missing.
   fixture; the existing Postgres integration covers Memory, not playtesting.
 - [x] 7. Data/Console: indexed and cursor-paginated queries, addressable replay,
       stable URL state, explicit partial/error states and server-authoritative
-      actions are implemented, with a 10,000-row correctness test. **Caveat:** that
-      test asserts correctness, not latency; there is no timing assertion for
-      console navigation or replay selection, which the cross-cutting ledger
-      below also requires.
+      actions are implemented, with a 10,000-row correctness test. Navigation
+      and replay selection now have a calibrated timing assertion over the pure
+      address-state helpers (`30293c49`), which covers the console half of the
+      cross-cutting ledger's performance requirement. **Caveat:** the 10k test
+      asserts correctness rather than latency, and the browser-side rendering
+      path still has no timing assertion — that belongs with the browser
+      acceptance, which has not run.
 - [~] 8. Portability and first milestone: the second mechanically different game
   joins by configuration alone (`e0cca05a`), the 40-critique cap is enforced,
   and a synthetic 1,000-episode cycle records finding, comparison and a
