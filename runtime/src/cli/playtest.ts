@@ -36,6 +36,11 @@ import {
   formatConformanceReport,
   runPlaytestConformance
 } from "./playtest-conformance.ts";
+import {
+  PLAYTESTS_SCAFFOLD_BODY_COUNT,
+  scaffoldAdapterModule,
+  scaffoldBinding
+} from "./playtest-scaffold.ts";
 import { unsupportedChoice } from "./command-choice.ts";
 
 export const PLAYTESTS_SUBCOMMANDS = ["init", "check", "conformance"] as const;
@@ -579,6 +584,52 @@ function checkoutRootFrom(args: readonly string[]): string {
   return process.cwd();
 }
 
+/**
+ * Write the generated-scaffold pair: the module whose bodies throw, and the
+ * binding that declares AutoDev wrote them.
+ *
+ * Never overwrites. A game that has started implementing must not have its work
+ * replaced by a fresh set of stubs, so a second `--scaffold` is reported rather
+ * than silently regenerating over the top.
+ */
+function reportScaffold(checkoutRoot: string, args: readonly string[]): number {
+  const root = integrationRoot(checkoutRoot);
+  const factory = scaffoldFactoryFrom(args);
+  const fileName = "adapter.js";
+  const modulePath = path.join(root, fileName);
+  const bindingPath = path.join(root, PLAYTESTS_BINDING_FILE);
+  if (existsSync(modulePath) || existsSync(bindingPath)) {
+    writeErrorLine(
+      `${PLAYTESTS_INTEGRATION_DIR}/${fileName} or ${PLAYTESTS_BINDING_FILE} already exists; not regenerating over work in progress.`
+    );
+    return 1;
+  }
+  // The manifests the rest of the pipeline needs, so a scaffolded game is
+  // onboarded by this one command rather than by `init` plus a second run.
+  initPlaytestIntegration(checkoutRoot);
+  // init writes a `declarative` binding; the scaffold replaces it with one that
+  // says AutoDev generated the bodies.
+  writeFileSync(
+    modulePath,
+    scaffoldAdapterModule({ factory, fileName }),
+    "utf8"
+  );
+  writeFileSync(bindingPath, scaffoldBinding({ factory, fileName }), "utf8");
+  writeLine(
+    `generated ${PLAYTESTS_INTEGRATION_DIR}/${fileName} with ${PLAYTESTS_SCAFFOLD_BODY_COUNT} throwing bodies; replace each one, then run "autodev playtest conformance".`
+  );
+  return 0;
+}
+
+/** `--factory <name>`, defaulting to the conventional export name. */
+function scaffoldFactoryFrom(args: readonly string[]): string {
+  const index = args.indexOf("--factory");
+  const declared = index >= 0 ? args[index + 1] : undefined;
+  return declared && /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(declared)
+    ? declared
+    : "createGame";
+}
+
 function reportCheck(checkoutRoot: string, writeHashes: boolean): number {
   const report = writeHashes
     ? writePlaytestHashes(checkoutRoot)
@@ -602,7 +653,10 @@ function reportCheck(checkoutRoot: string, writeHashes: boolean): number {
 }
 
 export const defaultPlaytestBackend: PlaytestCommandBackend = {
-  init: (args = []) => initPlaytestIntegration(checkoutRootFrom(args)),
+  init: (args = []) =>
+    args.includes("--scaffold")
+      ? reportScaffold(checkoutRootFrom(args), args)
+      : initPlaytestIntegration(checkoutRootFrom(args)),
   check: (args = []) =>
     reportCheck(checkoutRootFrom(args), args.includes("--write-hashes")),
   conformance: (args = []) => reportConformance(checkoutRootFrom(args))
