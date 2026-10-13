@@ -112,11 +112,24 @@ states what is implemented and, where applicable, what is still missing.
   unverified, never "verified, none needed" — which is also this artifact's
   first consumer.
 
-  **Still missing: the producer.** `PlayerPolicyValidity` has a consumer now
-  but nothing constructs it, so no run yet supplies those observer references,
-  and its own fields remain unproduced. The implementable half is the
-  synthetic-cohort path above; the `competence: "passed" | "failed"` half
-  still needs acceptance bounds that do not exist here.
+  **The artifact now has a consumer and a producer**
+  (`core/src/playtesting/policy-validity.ts`, `e278941a`, `23a081be`).
+  `competence` is derived, never asserted, across three situations that are
+  deliberately not collapsed: no human decision states or no preregistered
+  bounds is `unvalidated-synthetic` (the contract's own word for absent data,
+  and absent bounds are not a permissive default); bounds without a measured
+  metric is `insufficient`, because a criterion never measured has not been
+  met; everything measured is applied against the caller's preregistered
+  bounds. The bounds are supplied by the caller because choosing those numbers
+  is the judgement §6 reserves for the project.
+  `playtestHumanProxyRefusal` carries §6's required downgrade — an
+  unvalidated cohort may not support a human-player claim — as a sentence a
+  caller must put in its own output.
+
+  **Still missing: a runtime path that produces these from a real run.** The
+  derivation is Core policy; nothing in Runtime or Console yet runs it against
+  observed episodes, so no `PlayerPolicyValidity` exists in a live system and
+  the ladder's observer list is still supplied by hand.
 
   The no-fabricated-frame guarantee _is_ structural rather than asserted:
   `game.observe.frame` is validated as an artifact reference carrying a SHA-256
