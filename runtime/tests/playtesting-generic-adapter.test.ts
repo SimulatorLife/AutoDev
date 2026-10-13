@@ -79,12 +79,22 @@ test("capability digests are derived from the game's own schemas", async () => {
   assert.equal(adapter.binding.bindings.capabilities !== undefined, true);
 });
 
-test("an unbound optional method is advertised as unavailable, not hidden", async () => {
-  const adapter = await adapterFor();
-  const optional = adapter.capabilities.optionalOperations;
-  // The game bound six methods; the seven it did not are named so the Runtime
-  // discovers the gap at negotiation rather than mid-run.
-  assert.equal(optional.length, 7);
+test("only optional operations the game actually bound are advertised", async () => {
+  const bare = await adapterFor();
+  // Nothing optional was bound, so nothing optional is offered. Advertising a
+  // method the game cannot serve would be a capability the Runtime only
+  // discovers when it calls it mid-run.
+  assert.deepEqual(bare.capabilities.optionalOperations, []);
+
+  const capable = await adapterFor({
+    bindings: {
+      ...binding().bindings,
+      fork: { export: "fork" },
+      captureFrame: { export: "captureFrame" }
+    }
+  });
+  const optional = capable.capabilities.optionalOperations;
+  assert.equal(optional.length, 2);
   assert.ok(optional.includes("game.fork" as never));
   assert.ok(optional.includes("game.captureFrame" as never));
   assert.equal(optional.includes("game.step" as never), false);

@@ -18,6 +18,7 @@ import {
   PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES,
   PLAYTESTS_ADAPTER_DEFAULT_QUOTAS,
   PLAYTESTS_ADAPTER_METHODS,
+  PLAYTESTS_OPTIONAL_ADAPTER_METHODS,
   type PlaytestAdapterBinding,
   PLAYTESTS_PROTOCOL_VERSION,
   PLAYTESTS_REQUIRED_BINDINGS,
@@ -113,14 +114,27 @@ export function buildCapabilityAdvertisement(
     observationSchemaHash,
     actionSchemaHash,
     eventSchemaHash,
-    // Only methods the game actually bound are advertised as optional
-    // operations. Advertising one it cannot serve is a capability lie the
-    // Runtime would discover as a mid-run failure.
-    optionalOperations: unbound.map(
-      protocolMethodFor
-    ) as PlaytestCapabilityAdvertisement["optionalOperations"],
-    // The protocol's own defaults, not limits this runtime invented.
-    quotas: options.quotas ?? { ...PLAYTESTS_ADAPTER_DEFAULT_QUOTAS },
+    // Only the optional methods this game actually bound are advertised, so
+    // the Runtime never offers itself an operation the game cannot serve. A
+    // method that is neither required nor bound is simply absent: calling it
+    // fails with a named refusal rather than being advertised as available.
+    optionalOperations: PLAYTESTS_OPTIONAL_ADAPTER_METHODS.filter((method) =>
+      bound.bindings[method.replace(/^game\./u, "") as PlaytestBindableMethod] !==
+      undefined
+    ) as unknown as PlaytestCapabilityAdvertisement["optionalOperations"],
+    // The protocol's own defaults for the four fields a capability advertisement
+    // may carry. The broader defaults constant also holds a transport grace
+    // the advertisement schema rejects, so it is projected rather than spread.
+    quotas:
+      options.quotas ??
+      ({
+        maxMessageBytes: PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.maxMessageBytes,
+        maxQueuedRequests: PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.maxQueuedRequests,
+        ordinaryCallTimeoutMs:
+          PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.ordinaryCallTimeoutMs,
+        resetReplayTimeoutMs:
+          PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.resetReplayTimeoutMs
+      } satisfies PlaytestCapabilityAdvertisement["quotas"]),
     deterministic: {
       // Declared, not assumed: an adapter without a seeded-RNG entry point
       // cannot restore engine RNG for a counterfactual, and reporting
