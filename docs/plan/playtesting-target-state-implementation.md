@@ -46,7 +46,7 @@ states what is implemented and, where applicable, what is still missing.
   policies are now registered (`random`, `first-legal`).
 
   **The cost check is no longer reachable-only-in-theory.** `evaluateJudgeCalibration`
-  was returning `passed` for a validation with *every* metric null, and
+  was returning `passed` for a validation with _every_ metric null, and
   discarding the artifact's own recorded `insufficient`/`stale` status
   (`8d5721ac`) — absence of evidence rendered as a positive claim, which is
   what keeps novice/expert generalizations and human-proxy comparisons
@@ -63,6 +63,7 @@ states what is implemented and, where applicable, what is still missing.
   the evaluator scores critic, deterministic and combined over one frozen
   coverage set — so `coverageMatched` is kept as an explicit guard rather than
   dropped as redundant.
+
 - [~] 4. Experiment/findings: preregistered comparisons, finding identity,
   exposure/evidence triage, and reproduction/fix lineage are implemented.
   **Gated issue drafting is implemented** (`core/src/playtesting/issue-drafts.ts`,
@@ -143,9 +144,20 @@ states what is implemented and, where applicable, what is still missing.
   Five controls turn a test red each: zero-padding unobserved cohorts, dropping
   unweighted cohorts, removing the insufficient-builds refusal, collapsing the
   fixed-weight rate into the raw rate, and treating each run as its own build.
-  Still not closed: the gate is descriptive point estimates only, and §10 is
-  explicit that intervals and independent-unit N must come from a statistics
-  library attached to real rows, which this slice does not do.
+  Still not closed, and recorded rather than designed around: the gate is
+  descriptive point estimates only, and §10 is explicit that intervals and
+  independent-unit N must come from a statistics library attached to real rows,
+  which this slice does not do. Separately, **the result is not yet citable**:
+  `PLAYTESTS_LOCATOR_KINDS` has no `cohort-standardization` kind, so a
+  `PlaytestComparison` — the artifact that would actually consume a mix shift —
+  has no way to name the analysis behind its decision. That is the same missing
+  link that was closed for policy-validity in `e3bb97db`, but it cannot be
+  closed the same way: adding the locator kind is easy and additive, whereas a
+  citation that points at nothing is worse than no citation, so it first needs a
+  decision on whether a standardization result is *persisted* like a comparison
+  or remains a derived read. That persistence surface is the one recorded above
+  as having no producer, so the two gaps share a single unresolved design
+  question and are left named together.
 
   **Still missing: counterexamples as a lifecycle step.** They remain
   registry/scoring fields only, and implementing them would require inventing
@@ -161,7 +173,7 @@ states what is implemented and, where applicable, what is still missing.
   comparison already fetched from storage. So `playtest.compare` lists an empty
   set, `playtest.decideComparison` refuses because there is nothing to decide,
   and `classifyPlaytestMetricComparison` -- reached only through that builder --
-  never runs outside tests. The comparison *model* is implemented; the producer
+  never runs outside tests. The comparison _model_ is implemented; the producer
   is not. This was not previously recorded and is stated here rather than left
   implicit, because a `[~]` slice that reads as delivered is how a later reader
   assumes a live system can compare two builds when it cannot.
@@ -321,27 +333,27 @@ states what is implemented and, where applicable, what is still missing.
 
 - [~] Scenario coverage audited against named tests. Of the thirteen cases in
   the first bundle, twelve have a named test: no-finding (`many null/no-effect
-  outcomes remain visible`, `zero-denominator stratum: standardized rate is
-  null`); malformed/interrupted/partial run (`run status restores interrupted
-  batch progress from Data and durably closes unknown assignments`, `batch
-  assignment validation rejects duplicates, malformed and oversized
-  inventories`, `episode cancellation ... preserves partial evidence`);
+outcomes remain visible`, `zero-denominator stratum: standardized rate is
+null`); malformed/interrupted/partial run (`run status restores interrupted
+batch progress from Data and durably closes unknown assignments`, `batch
+assignment validation rejects duplicates, malformed and oversized
+inventories`, `episode cancellation ... preserves partial evidence`);
   known reproducible defect (`checkpoint equality requires exact hidden-state
-  and reproducible RNG identity`); unverified hypothesis
+and reproducible RNG identity`); unverified hypothesis
   (`assertPlaytestFindingEvidenceStatusConsistent accepts a 'hypothesis'
-  finding`, `a hypothesis is never drafted as a confirmed defect`); missing
+finding`, `a hypothesis is never drafted as a confirmed defect`); missing
   frames (`packet records a missing frame explicitly without fabricating a
-  frame locator`); model drift (`evidence packet refuses ... assignment drift`,
+frame locator`); model drift (`evidence packet refuses ... assignment drift`,
   `a measured judge that drifts is failed, not insufficient`, `changed judge
-  invalidates critic measurements but not unchanged deterministic metrics`);
+invalidates critic measurements but not unchanged deterministic metrics`);
   matched/unmatched cohorts (`three-build mix-shift gate`, `missing benchmark
-  stratum: ... unknown-incomplete-source-coverage`); hidden-state exposure
+stratum: ... unknown-incomplete-source-coverage`); hidden-state exposure
   (`evidence packet refuses hidden/unverified trace data`); no
   ratings/disagreement (`small-cell human sample (<5) suppresses
-  human-confirmed claim`, `an entirely unmeasured judge is insufficient`);
+human-confirmed claim`, `an entirely unmeasured judge is insufficient`);
   invalid links (`rejects a 'verified' finding citing a nonexistent locator`);
   unauthorized actions (`playtest.run enforces role permissions`, `workspace
-  agent-role allowlists govern status, wait, and cancellation`); and 10k-record
+agent-role allowlists govern status, wait, and cancellation`); and 10k-record
   queries (`data/tests/playtesting/playtest-repository.test.ts`, 10,000 rows).
 
   **The one gap is `absent adapter`.** An adapter that cannot start at all is
@@ -351,16 +363,17 @@ states what is implemented and, where applicable, what is still missing.
   where the binary is missing lives in `docker-sandbox.ts`, and those are the
   tests this environment cannot run (`EPERM` teardown), so the case is named
   rather than claimed.
+
 - [~] Measurement denominators, missingness, uncertainty, cohorts, sampling,
   event/trace provenance, distinct execution/gameplay/interpretive status, and
   protected human data each have a named test (`batch aggregates keep all nine
-  denominators with game and infrastructure apart`; `coverage preserves missing
-  assignments, missing metric rows, and unresolved historical cohorts`; `human
-  confusion requires uncertainty beyond the game-owned threshold`;
+denominators with game and infrastructure apart`; `coverage preserves missing
+assignments, missing metric rows, and unresolved historical cohorts`; `human
+confusion requires uncertainty beyond the game-owned threshold`;
   `allocatePlaytestSurveillanceStrata ... by largest remainder`; `version-one
-  restricted state migrates atomically without losing consent or PXI data`;
+restricted state migrates atomically without losing consent or PXI data`;
   `batch terminal state separates cancellation, infrastructure loss and
-  truncation`). **Not checked, because "end to end" is not what these are.**
+truncation`). **Not checked, because "end to end" is not what these are.**
   They exercise the arithmetic and the validators directly, not a real
   authoritative playtesting run — which is Delivery Slice 6's gap, and checking
   this box would assert the thing that slice says is missing.
@@ -385,7 +398,7 @@ states what is implemented and, where applicable, what is still missing.
   reads ~1.0 and quadratic ~4.0, against a threshold of 2.5. Warm, and
   best-of-three per size. An injected quadratic turns it red (5.32x).
 
-  Comparing *totals* (4x work against 1x) was tried first and rejected on
+  Comparing _totals_ (4x work against 1x) was tried first and rejected on
   evidence: the larger sample runs four times longer, so it absorbs four times
   as much scheduler noise and the ratio inflated to a spurious 24.7x on a loaded
   runner. Dividing by each sample's own iteration count cancels that, because a
@@ -640,7 +653,7 @@ code-gatable gaps that synthetic coverage does not close:
   - **Cohort standardization** now has an executor
     (`runtime/src/playtesting/cohort-standardization-run.ts`,
     `playtest.cohortMixShift`). `PlaytestCohortObservation` is `{ numerator,
-    denominator, missing }` per cohort, derived by summing persisted episode
+denominator, missing }` per cohort, derived by summing persisted episode
     metric rows grouped by `policyCohort`, and the weights come from the
     approved benchmark's frozen `cohortWeights`.
   - **The diagnostic ladder** needs human evidence that does not exist here, so
@@ -649,6 +662,7 @@ code-gatable gaps that synthetic coverage does not close:
   - **Cadence / judge calibration** consumes `PlaytestJudgeValidation`, which
     is named by only two Core files and one Core test -- it has no producer, so
     there is nothing for `evaluateJudgeCalibration` to score.
+
 - External gates still require exact target-game approval and evaluator/event/UI
   contracts, an authorized 1,000-episode/two-policy run, a second mechanically
   different adapter, authorized/held-out human evidence, upstream reuse/license
@@ -1289,7 +1303,8 @@ the live view armed its poll timer once per effect run, so a nonterminal batch
 was read twice and then never again while the panel kept rendering a live
 "Running" badge over numbers that could no longer move (`f37b51be`).
 
-Observed after that fix, in the browser:
+Observed after that fix, in the browser (before the current assignment-result
+and packet-preparation copy changes):
 
 - live progress — `data-freshness="live"`, `data-status="running"`, the batch
   present after the start request with no operator action, an `aria-live`
@@ -1305,6 +1320,13 @@ Observed after that fix, in the browser:
 - multi-session selection — the "Multi-session analysis" region renders with
   "Select up to 16 persisted sessions", `data-selected="0"`, a selectable
   `playtesting-selection-option`, and the request button disabled at zero.
+
+This capture predates the current per-assignment outcome/link renderer and the
+copy that identifies the Console action as packet preparation rather than model
+analysis. This turn's browser-tester had no Playwright MCP tools or local browser
+binary, so those current rendered details remain unverified. Focused React
+render tests cover the outcome distinction/link and the packet-preparation
+copy; they are not browser acceptance evidence.
 
 Still not evidenced in a browser: an out-of-cap selection **rejection**,
 which needs more than 16 sessions in the fixture — it holds one. The
