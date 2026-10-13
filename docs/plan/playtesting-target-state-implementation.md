@@ -64,9 +64,30 @@ states what is implemented and, where applicable, what is still missing.
   downgraded to a footnote.
 - [~] 5. Visual/human validation: consented study data, privacy controls,
   distinct human instruments, and refusal of unauthorized UI evidence are
-  implemented and tested. **Missing: `heldOutHumanStateIds` is declared on a
-  Core type and used nowhere** — no producer populates it and no test reads
-  it, so held-out human state is not actually tracked.
+  implemented and tested. **Missing: the whole `PlayerPolicyValidity` artifact is
+  declared and never used.** `heldOutHumanStateIds` was flagged first, but a
+  whole-tree search finds `PlayerPolicyValidity` itself has no producer, no
+  consumer and no test — `core/src/playtesting/artifacts.ts` is the only file
+  that names it. So this is a larger gap than one unused field, and it stays
+  open rather than being closed by deleting the type, because measurement
+  contract §6 mandates the artifact.
+
+  The part that is implementable without inventing anything is the
+  synthetic-cohort path the contract already specifies: "absent data means
+  unvalidated-synthetic-cohort", with `heldOutHumanStateIds` empty ("when
+  available") and `competence: "unvalidated-synthetic"`. That verdict is the
+  contract's own answer, not a threshold this codebase gets to pick.
+
+  The part that is **not** implementable here is the human-data path.
+  `competence: "passed" | "failed"` requires "acceptance bounds
+  preregistered against relevant human data" (§6), and no such human data or
+  preregistered bounds exist in this repository. Inventing them would fabricate
+  the exact judgement the contract reserves for the project, so the path stays
+  unimplemented. Per §6, an unvalidated cohort must downgrade novice/learner UX
+  generalizations to model-specific signals and disable human-proxy
+  comparisons rather than leave an authoritative claim with a footnote — the
+  consumer that applies that downgrade is also missing, and is part of the same
+  gap.
 
   The no-fabricated-frame guarantee _is_ structural rather than asserted:
   `game.observe.frame` is validated as an artifact reference carrying a SHA-256
