@@ -68,12 +68,12 @@ normative specification; this checklist tracks implementation and evidence.
       (`e6c3fbd1`): four of the six tiles previously read keys no producer emits,
       so the batch's real outcomes were on screen as permanent absences, and the
       key type now makes that a compile error rather than a silent gap.
-- [~] Declarative game onboarding: `init`/`check`/`conformance`, the hash chain,
-  the binding contract and the generic adapter runtime all exist, a real episode
-  runs through the adapter entrypoint (`b6fe554e`), and the acceptance below is
-  met by a second, mechanically different game joining by configuration alone
-  (`e0cca05a`). What remains is the `generated-scaffold` tier: AutoDev writing
-  method bodies for a game that cannot onboard declaratively.
+- [x] Declarative game onboarding: `init`/`check`/`conformance`, the hash chain,
+      the binding contract and the generic adapter runtime all exist, a real episode
+      runs through the adapter entrypoint (`b6fe554e`), and the acceptance below is
+      met by a second, mechanically different game joining by configuration alone
+      (`e0cca05a`), and both tiers onboard a game — declaratively or through
+      `init --scaffold` (`6c0b6aea`).
 - [ ] Documentation, test coverage, package checks and independent validation
       match the final integrated diff.
 
