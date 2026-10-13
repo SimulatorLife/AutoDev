@@ -187,3 +187,120 @@ test("evaluateJudgeCalibration passes within tolerances and quarantines claims o
   assert.ok(driftedResult.quarantinedClaimTypes.includes("agency-critique"));
   assert.ok(driftedResult.quarantinedClaimTypes.includes("clarity-critique"));
 });
+
+/**
+ * An unmeasured judge is not a calibrated judge.
+ *
+ * Every tolerance check in `evaluateJudgeCalibration` is written to skip a
+ * null metric, which is correct in isolation — one absent measurement should
+ * not invent a failure. Together they meant a validation with nothing measured
+ * accumulated no failures and reported `passed`, and the artifact's own
+ * `status: "insufficient"` was discarded. These tests pin the opposite.
+ */
+const calibrationTolerances = {
+  minRepeatAgreement: 0.85,
+  minSecondJudgeAgreement: 0.8,
+  minDiagnosticPrecision: 0.75,
+  minDiagnosticRecall: 0.7,
+  maxHumanPredictionError: 0.2,
+  maxCostPerEpisode: 0.5
+};
+
+function judgeValidation(
+  overrides: Partial<PlaytestJudgeValidation> = {}
+): PlaytestJudgeValidation {
+  return {
+    validationId: "val-unmeasured",
+    workspaceId: "ws-1",
+    measurementVersion: "playtesting-measurement-v2",
+    referenceCorpusVersion: "corpus-v1",
+    repeatAgreement: null,
+    secondJudgeAgreement: null,
+    diagnosticPrecision: null,
+    diagnosticRecall: null,
+    humanPredictionError: null,
+    costPerReviewedEpisode: null,
+    thresholdsHash: "a".repeat(64),
+    status: "insufficient",
+    quarantinedClaimTypes: [],
+    createdAt: "2026-10-10T00:00:00Z",
+    ...overrides
+  };
+}
+
+test("an entirely unmeasured judge is insufficient, never calibrated", () => {
+  const result = evaluateJudgeCalibration(judgeValidation(), calibrationTolerances);
+  assert.equal(result.passed, false);
+  assert.equal(result.status, "insufficient");
+  assert.match(
+    result.failures.join(" "),
+    /No calibration metric was measured/u
+  );
+  // Absent evidence must still withdraw the claims it never supported, or the
+  // human-proxy generalizations stay authorized on the strength of nothing.
+  assert.deepEqual(result.quarantinedClaimTypes, [
+    "agency-critique",
+    "clarity-critique",
+    "pacing-critique"
+  ]);
+});
+
+test("one measured metric is enough to draw a conclusion", () => {
+  // The null-skipping behaviour is correct for a *partially* measured judge:
+  // a single real measurement must not be reported as unmeasured.
+  const result = evaluateJudgeCalibration(
+    judgeValidation({ repeatAgreement: 0.9 }),
+    calibrationTolerances
+  );
+  assert.equal(result.passed, false, "a stale recorded status still blocks a pass");
+  assert.equal(result.status, "insufficient");
+
+  const measured = evaluateJudgeCalibration(
+    judgeValidation({
+      repeatAgreement: 0.9,
+      status: "passed"
+    }),
+    calibrationTolerances
+  );
+  assert.equal(measured.passed, true);
+  assert.equal(measured.status, "passed");
+  assert.deepEqual(measured.failures, []);
+});
+
+test("a record the caller marked insufficient or stale cannot be upgraded to passed", () => {
+  for (const status of ["insufficient", "stale"] as const) {
+    const result = evaluateJudgeCalibration(
+      judgeValidation({
+        status,
+        repeatAgreement: 0.99,
+        secondJudgeAgreement: 0.99,
+        diagnosticPrecision: 0.99,
+        diagnosticRecall: 0.99,
+        humanPredictionError: 0,
+        costPerReviewedEpisode: 0
+      }),
+      calibrationTolerances
+    );
+    assert.equal(result.passed, false, `status "${status}" must not pass`);
+    assert.equal(result.status, "insufficient");
+    assert.match(result.failures.join(" "), /is not a passing state/u);
+    assert.ok(result.quarantinedClaimTypes.length > 0);
+  }
+});
+
+test("a measured judge that drifts is failed, not insufficient", () => {
+  const result = evaluateJudgeCalibration(
+    judgeValidation({
+      status: "passed",
+      repeatAgreement: 0.1,
+      secondJudgeAgreement: 0.1
+    }),
+    calibrationTolerances
+  );
+  // Metrics were measured and missed the bar: that is a failure, and calling
+  // it "insufficient" would hide a real regression behind an absence.
+  assert.equal(result.passed, false);
+  assert.equal(result.status, "failed");
+  assert.equal(result.failures.length, 2);
+  assert.ok(result.quarantinedClaimTypes.length > 0);
+});

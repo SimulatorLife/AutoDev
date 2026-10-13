@@ -40,7 +40,7 @@ export interface PlaytestJudgeCalibrationTolerances {
 export interface PlaytestJudgeCalibrationCheckResult {
   readonly passed: boolean;
   readonly validationId: string;
-  readonly status: "passed" | "failed";
+  readonly status: "passed" | "failed" | "insufficient";
   readonly failures: readonly string[];
   readonly quarantinedClaimTypes: readonly string[];
 }
@@ -170,6 +170,17 @@ export function evaluateJudgeCalibration(
 ): PlaytestJudgeCalibrationCheckResult {
   const failures: string[] = [];
 
+  // Counted before the checks, because every check below deliberately skips a
+  // null metric and that skip is only safe while something else was measured.
+  const measuredMetrics = [
+    validation.repeatAgreement,
+    validation.secondJudgeAgreement,
+    validation.diagnosticPrecision,
+    validation.diagnosticRecall,
+    validation.humanPredictionError,
+    validation.costPerReviewedEpisode
+  ].filter((metric) => metric !== null).length;
+
   if (
     validation.repeatAgreement !== null &&
     validation.repeatAgreement < tolerances.minRepeatAgreement
@@ -219,12 +230,44 @@ export function evaluateJudgeCalibration(
     );
   }
 
-  const passed = failures.length === 0;
+  // An unmeasured judge is not a passing judge. Every tolerance above is
+  // written to skip a null metric, which is right — one absent measurement
+  // should not invent a failure — but taken together they mean a validation
+  // with nothing measured accumulates no failures at all and would report
+  // `passed`. That is the same class of defect as a count tile reading a key
+  // no producer emits: absence of evidence rendered as a positive claim. The
+  // measurement contract is explicit that storage success is not verification,
+  // and that unvalidated cohorts must disable human-proxy comparisons rather
+  // than leave an authoritative claim with a footnote — which is why an
+  // insufficient result quarantines the same claim types a failure does.
+  const unmeasured = measuredMetrics === 0;
+  if (unmeasured) {
+    failures.push(
+      "No calibration metric was measured, so this judge is unvalidated rather than calibrated."
+    );
+  }
+
+  // A record the caller already marked insufficient or stale cannot be
+  // upgraded to `passed` by this check, however it was recorded.
+  const recordedUnusable =
+    validation.status === "insufficient" || validation.status === "stale";
+  if (recordedUnusable && failures.length === 0) {
+    failures.push(
+      `The recorded status "${validation.status}" is not a passing state, so no calibration conclusion can be drawn from it.`
+    );
+  }
+
+  const passed = failures.length === 0 && !unmeasured && !recordedUnusable;
 
   return {
     passed,
     validationId: validation.validationId,
-    status: passed ? "passed" : "failed",
+    status:
+      unmeasured || recordedUnusable
+        ? "insufficient"
+        : passed
+          ? "passed"
+          : "failed",
     failures,
     quarantinedClaimTypes: passed ? [] : claimTypesToQuarantineOnFailure
   };
