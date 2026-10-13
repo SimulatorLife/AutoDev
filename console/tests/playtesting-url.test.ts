@@ -195,8 +195,18 @@ test("the analysis selection is explicit, bounded and shareable", () => {
 test("view changes and replay selection stay fast on a saturated filter set", () => {
   // The Console's cross-cutting acceptance names performance on view changes and
   // replay selection. These are the pure address-state helpers behind both, so
-  // the budget is asserted here where it runs: a browser timing assertion would
-  // be the same measurement, unable to run in every environment.
+  // the assertion lives here where it runs: a browser timing assertion would be
+  // the same measurement, unable to run in every environment.
+  //
+  // What it guards is linearity, which is what the acceptance names and what
+  // this environment can actually measure. It deliberately does NOT assert a
+  // wall-clock ceiling or a cost relative to a calibration workload: both were
+  // built and both flaked, because the navigation path allocates several times
+  // more than a tight calibration loop and so absorbs memory pressure
+  // differently under a loaded runner. A guard that fails on contention trains
+  // people to ignore it, so only the measurement that survived three
+  // consecutive parallel runs is kept. Detecting a uniformly slower path is
+  // therefore not covered here; it needs the browser-side timing assertion.
   const scope = parsePlaytestingScope({
     view: "findings",
     workspaceId: "owner/game",
@@ -206,26 +216,48 @@ test("view changes and replay selection stay fast on a saturated filter set", ()
     policy: "random",
     cursor: "page-3"
   });
-  const iterations = 2_000;
-  const startedAt = performance.now();
-  for (let index = 0; index < iterations; index += 1) {
-    const href = playtestingEpisodeHref(scope, "episode:17", index % 200);
-    // Round-tripping through the parser is what a Back navigation costs.
-    const parsed = parsePlaytestingScope(
-      Object.fromEntries(new URL(href, "http://console.test").searchParams)
-    );
-    playtestingInspectorBackHref(parsed);
-    playtestingViewHref(scope, "sessions");
-    playtestingFilterHref(scope, { severity: "minor" });
-  }
-  const elapsed = performance.now() - startedAt;
-  // Generous enough not to flake on a loaded machine, tight enough to catch a
-  // regression that makes navigation quadratic rather than linear.
-  // Calibrated, not guessed: the healthy path measures ~35ms and an
-  // eight-fold regression measures ~270ms, so 150ms separates them while still
-  // leaving room for a loaded machine.
+
+  const roundTrips = (iterations: number): number => {
+    const startedAt = performance.now();
+    for (let index = 0; index < iterations; index += 1) {
+      const href = playtestingEpisodeHref(scope, "episode:17", index % 200);
+      // Round-tripping through the parser is what a Back navigation costs.
+      const parsed = parsePlaytestingScope(
+        Object.fromEntries(new URL(href, "http://console.test").searchParams)
+      );
+      playtestingInspectorBackHref(parsed);
+      playtestingViewHref(scope, "sessions");
+      playtestingFilterHref(scope, { severity: "minor" });
+    }
+    return performance.now() - startedAt;
+  };
+
+  // Warm up first: no sample should pay for JIT tiering.
+  roundTrips(500);
+  // Best of three per size, so one scheduler hiccup cannot decide the result.
+  const fastest = (run: (iterations: number) => number, n: number): number =>
+    Math.min(run(n), run(n), run(n));
+
+  const small = fastest(roundTrips, 500);
+  const large = fastest(roundTrips, 2000);
+
+  // Linearity: the property the acceptance names, measured per iteration.
+  //
+  // Comparing totals (4x work against 1x) is the obvious form and it is wrong
+  // here: the larger sample runs four times longer, so it absorbs four times
+  // as much scheduler noise and the ratio inflates for reasons that have
+  // nothing to do with the code. Dividing each total by its own iteration count
+  // cancels that -- a fixed pause adds more per iteration to the shorter run,
+  // which biases the comparison downward rather than flaking it.
+  //
+  // Per iteration, linear cost reads ~1.0 because each iteration costs the
+  // same; quadratic reads ~4.0 because each later iteration costs more than the
+  // last. The threshold sits between them.
+  const perIterationSmall = small / 500;
+  const perIterationLarge = large / 2000;
+  const growth = perIterationLarge / perIterationSmall;
   assert.ok(
-    elapsed < 150,
-    `${iterations} navigation round-trips took ${elapsed.toFixed(0)}ms`
+    growth < 2.5,
+    `Per-iteration cost grew ${growth.toFixed(2)}x when the run grew 4x; linear is ~1x and quadratic ~4x.`
   );
 });

@@ -296,6 +296,43 @@ states what is implemented and, where applicable, what is still missing.
 - [ ] Keyboard/mobile navigation, stable filter → finding → session → back,
       no fabricated video, source-mapped upstream UI logic actually executing,
       and performance on indexed queries, view changes, and replay selection.
+
+  **The view-changes/replay-selection timing assertion was measuring the test
+  runner, not the Console.** It carried a 150ms wall-clock ceiling for 2,000
+  navigation round-trips, calibrated when that path measured ~35ms unloaded.
+  Inside the parallel suite the same healthy path measures anywhere from ~35ms
+  to ~600ms on one machine, so the assertion failed on contention while the code
+  it guarded was unchanged. Two attempts to optimise the implementation were
+  measured and rejected: hand-rolling the `URLSearchParams` serializer (the
+  largest isolated cost) was **2x slower** than the native one, and threading
+  `step` through options instead of copying the scope was within noise. Neither
+  was kept, so `playtesting-url.ts` is untouched.
+
+  What changed is what the assertion measures. It now asserts **linearity** --
+  the property the acceptance actually names -- as per-iteration growth: 2,000
+  round-trips against 500, each total divided by its own iteration count. Linear
+  reads ~1.0 and quadratic ~4.0, against a threshold of 2.5. Warm, and
+  best-of-three per size. An injected quadratic turns it red (5.32x).
+
+  Comparing *totals* (4x work against 1x) was tried first and rejected on
+  evidence: the larger sample runs four times longer, so it absorbs four times
+  as much scheduler noise and the ratio inflated to a spurious 24.7x on a loaded
+  runner. Dividing by each sample's own iteration count cancels that, because a
+  fixed pause costs more per iteration in the shorter run and so biases the
+  comparison downward rather than flaking it.
+
+  **What this assertion no longer covers, stated plainly.** It no longer asserts
+  a wall-clock ceiling, and a cost-relative-to-calibration guard was built and
+  then removed: it also flaked (30.5x against a 25 threshold) because the
+  navigation path allocates several times more than a tight calibration loop and
+  absorbs memory pressure differently under load. Only the measurement that
+  survived three consecutive parallel runs was kept. Detecting a uniformly
+  slower path is therefore **not** covered here and needs the browser-side
+  timing assertion. A guard that fails on contention trains people to ignore it,
+  which is worse than a narrower one that holds.
+
+  The browser-side half of this item is still unevidenced and remains open.
+
 - [x] Console run/watch and multi-session analysis: an operator can start an
       approved run and watch every nonterminal batch progress without manual
       refresh, and dispatch analysis over an explicit selection of sessions.
