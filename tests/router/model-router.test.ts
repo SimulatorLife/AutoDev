@@ -872,7 +872,16 @@ test("backs off repeatedly failing providers and moves them behind healthy peers
     const second = cooldowns.cooldownProvider("claude", { now: 1000 });
     assert.equal(first.durationMs, 30_000);
     assert.equal(second.durationMs, 60_000);
-    assert.equal(cooldowns.nextRetryMs(["claude", "minimax"], 1000), 60_000);
+    assert.equal(
+      cooldowns.nextRetryMs(
+        [
+          { provider: "claude", model: "sonnet" },
+          { provider: "minimax", model: "MiniMax-M3" }
+        ],
+        1000
+      ),
+      60_000
+    );
 
     const providers = routing
       .roleCandidates("default", () => 0.5)

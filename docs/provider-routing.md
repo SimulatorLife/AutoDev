@@ -292,6 +292,18 @@ delegation paths:
   inside `exec`, exactly like a Codex-served one. Watched spawn tool names are defined in the execution contract
   (`providers.<provider>.spawnTools`); see "Counting subagents across providers".
 
+  Antigravity's native subagent `Model` accepts tier aliases, not concrete
+  model ids: the installed CLI accepts `inherit`, `flash_lite`, `flash`, and
+  `pro`, and rejects an explicit Claude 5.5 id. With a Claude 5.5 parent,
+  `Model: "inherit"` does run the child on that same Claude model; cross-model
+  Sonnet/Opus targeting from a Gemini parent is not supported by this CLI.
+  Google's [custom-subagent docs](https://antigravity.google/docs/subagents)
+  document `inherit`, `flash`, and `pro` as the model tiers. The separate
+  `autodev_spawn` Codex shim converts Antigravity child requests to
+  `{ agent_type, message }` and does not forward the native `Model` field, so
+  those real Codex child threads use their configured role/routing model rather
+  than inheriting the Antigravity Claude model implicitly.
+
   Browser-capable bridge roles follow the same role contract as native Codex
   roles. A Claude turn reaches its role's MCP servers through Codex's own
   `tools` global, so Codex's role TOML -- including the Playwright tool
@@ -497,6 +509,18 @@ Five rules are load-bearing:
 reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   headers -- produces a hard cooldown. An inferred limit stays on the transient
   ladder.
+- **Antigravity usage limits follow its separate model-family pools.** Its
+  usage panel separates Gemini models from Claude/GPT models. The router maps
+  Antigravity's Gemini ids to a first-party pool and its effort-suffixed Claude
+  ids to a shared third-party pool, so exhausting Claude Opus or Sonnet does
+  not take Gemini offline (and a Gemini limit does not disable Claude). This
+  scopes quota failures only; other Antigravity failures and all other
+  providers keep their provider-wide cooldown behavior. A successful request
+  clears only its own pool. Antigravity CLI limits currently arrive as inferred
+  stderr text, so they get a transient pool cooldown rather than a persisted
+  hard reset; AutoDev does not know remaining quota percentages. Use
+  Antigravity's [`/usage` panel](https://antigravity.google/docs/cli/commands/usage/)
+  for upstream quota totals.
 - **Probe failures ride their own ladder.** A local bridge restarting says
   nothing about the provider behind it, and escalating the provider's own backoff
   for it was how a one-minute outage became a ten-minute one.

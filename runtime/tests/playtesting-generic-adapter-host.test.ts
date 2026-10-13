@@ -3,15 +3,15 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import {
-  PLAYTESTS_ADAPTER_BINDING_SCHEMA,
+  type PlaytestAdapterBinding,
   PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES,
-  PLAYTESTS_PROTOCOL_VERSION,
-  type PlaytestAdapterBinding
+  PLAYTESTS_ADAPTER_BINDING_SCHEMA,
+  PLAYTESTS_PROTOCOL_VERSION
 } from "@simulatorlife/autodev-core";
 
-import { playtestManifestHash } from "../src/playtesting/hash-chain.ts";
 import { PlaytestAdapterClient } from "../src/playtesting/adapter-client.ts";
 import { startGenericAdapterHost } from "../src/playtesting/generic-adapter-host.ts";
+import { playtestManifestHash } from "../src/playtesting/hash-chain.ts";
 
 const OBSERVATION_SCHEMA = { type: "object", properties: { room: {} } };
 const ACTION_SCHEMA = { type: "object", properties: { move: {} } };

@@ -317,6 +317,98 @@ test(
 );
 
 test(
+  "an Antigravity quota limit cools only its Claude or Gemini usage pool",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const previousKey = process.env.LITELLM_API_KEY;
+    process.env.LITELLM_API_KEY = "antigravity-test-key";
+    const originalFetch = globalThis.fetch;
+    const requestedModels: string[] = [];
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (!String(input).endsWith("/responses"))
+        throw new Error(`Unexpected Antigravity test URL: ${String(input)}`);
+      const payload = JSON.parse(String(init?.body ?? "{}")) as {
+        model?: string;
+      };
+      requestedModels.push(payload.model ?? "");
+      return Response.json(
+        { error: { message: "quota exhausted" } },
+        {
+          status: 429,
+          headers: {
+            "content-type": "application/json",
+            "x-autodev-limit-class": "quota_exhausted",
+            "x-autodev-limit-source": "reported",
+            "x-autodev-limit-resets-at": new Date(
+              Date.now() + 3_600_000
+            ).toISOString()
+          }
+        }
+      );
+    }) as typeof fetch;
+
+    const request = async (model: string, requestId: string) =>
+      proxyFallbackChain(
+        responseRecorder(),
+        {
+          candidates: [{ ...route("antigravity", "LITELLM_API_KEY"), model }],
+          role: "worker",
+          subject: "worker turn",
+          sessionKey: "agy-quota-pool",
+          session: { key: "agy-quota-pool", scope: "identified" }
+        },
+        { model: "autodev/worker", input: [], stream: false },
+        false,
+        requestId,
+        null,
+        null
+      );
+
+    try {
+      await request("claude-opus-5-5-high", "req-agy-claude-quota");
+      assert.equal(
+        COOLDOWNS.get("antigravity", Date.now(), "claude-sonnet-5-5-medium")
+          ?.failureClass,
+        "quota_exhausted",
+        "Opus and Sonnet share the Antigravity third-party quota pool"
+      );
+      assert.equal(
+        COOLDOWNS.get("antigravity", Date.now(), "gemini-3.8-flash-medium"),
+        null,
+        "a Claude quota failure must not block first-party Gemini"
+      );
+
+      COOLDOWNS.clearAll();
+      await request("gemini-3.8-flash-medium", "req-agy-gemini-quota");
+      assert.equal(
+        COOLDOWNS.get("antigravity", Date.now(), "gemini-3.8-flash-high")
+          ?.failureClass,
+        "quota_exhausted",
+        "Gemini variants share the first-party quota pool"
+      );
+      assert.equal(
+        COOLDOWNS.get("antigravity", Date.now(), "claude-opus-5-5-high"),
+        null,
+        "a Gemini quota failure must not block third-party Claude"
+      );
+      assert.deepEqual(requestedModels, [
+        "claude-opus-5-5-high",
+        "gemini-3.8-flash-medium"
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
+      else process.env.LITELLM_API_KEY = previousKey;
+      COOLDOWNS.clearAll();
+    }
+  }
+);
+
+test(
   "a tool result goes back to the provider that streamed the call",
   { concurrency: false },
   async () => {

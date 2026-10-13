@@ -860,6 +860,92 @@ test("Playtesting reads distinguish unknown workspaces, unavailable catalogs, an
   );
 });
 
+test("default workspace-scoped Playtesting reads initialize Data schema once", async () => {
+  const originalFetch = globalThis.fetch;
+  let failSchemaInitialization = true;
+  const clickHouseCalls: { query: string; workspaceId: string | null }[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = new URL(String(input));
+    const query = url.searchParams.get("query") ?? "";
+    clickHouseCalls.push({
+      query,
+      workspaceId: url.searchParams.get("param_workspaceId")
+    });
+    if (
+      failSchemaInitialization &&
+      /^(?:CREATE TABLE|ALTER TABLE)/iu.test(query.trim())
+    ) {
+      return new Response("ClickHouse unavailable", { status: 503 });
+    }
+    return query.toLowerCase().includes("count(")
+      ? new Response('{"total":"0"}\n', { status: 200 })
+      : new Response("", { status: 200 });
+  }) as typeof fetch;
+
+  const callDefaultRepository = async (resource: "episodes" | "findings") => {
+    const url = `/control/playtesting/${resource}?workspaceId=${encodeURIComponent(WORKSPACE)}`;
+    const response = responseRecorder();
+    await handlePlaytestingControlApiRequest(
+      request("GET", url),
+      response as unknown as ServerResponse,
+      new URL(url, "http://127.0.0.1").pathname,
+      { actor: "console-viewer", role: "viewer" },
+      { readWorkspaceCatalog: catalog }
+    );
+    return {
+      status: response.statusCode,
+      body: JSON.parse(response.body ?? "{}") as Record<string, unknown>
+    };
+  };
+
+  try {
+    const unavailable = await callDefaultRepository("episodes");
+    assert.equal(unavailable.status, 503);
+    assert.equal(
+      (unavailable.body.error as { code: string }).code,
+      "autodev_control_playtesting_source_unavailable"
+    );
+
+    failSchemaInitialization = false;
+    const [episodes, findings] = await Promise.all([
+      callDefaultRepository("episodes"),
+      callDefaultRepository("findings")
+    ]);
+
+    assert.equal(episodes.status, 200);
+    assert.equal(findings.status, 200);
+    const schemaCalls = clickHouseCalls.filter((statement) =>
+      /^(?:CREATE TABLE|ALTER TABLE)/iu.test(statement.query.trim())
+    );
+    assert.ok(
+      schemaCalls.length > 0,
+      "default reads provision the Data schema"
+    );
+    const workspaceReads = clickHouseCalls.filter(
+      (statement) =>
+        /^SELECT/iu.test(statement.query.trim()) &&
+        /playtest_(?:episodes|findings)/iu.test(statement.query)
+    );
+    assert.ok(workspaceReads.length > 0);
+    assert.ok(
+      workspaceReads.every((statement) => statement.workspaceId === WORKSPACE)
+    );
+
+    const schemaCallCount = schemaCalls.length;
+    const repeated = await callDefaultRepository("episodes");
+    assert.equal(repeated.status, 200);
+    assert.equal(
+      clickHouseCalls.filter((statement) =>
+        /^(?:CREATE TABLE|ALTER TABLE)/iu.test(statement.query.trim())
+      ).length,
+      schemaCallCount,
+      "later reads reuse the successfully initialized schema"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Playtesting filters reject duplicate, unknown, invalid, and inverted values before Data", async () => {
   let reads = 0;
   const repository = readRepository({
@@ -1960,7 +2046,10 @@ test("cross-session analysis delegates to the owner and bounds the selection", a
     { episodeIds: ["episode-a", "episode-b"] }
   );
   assert.equal(selection.status, 200);
-  assert.equal(selection.body.schema, "autodev-control-playtesting-analysis-v1");
+  assert.equal(
+    selection.body.schema,
+    "autodev-control-playtesting-analysis-v1"
+  );
   assert.equal(selection.body.workspaceId, WORKSPACE);
   assert.equal(selection.body.requested, 2);
   // The owner decides eligibility, caps and receipts; the route must not

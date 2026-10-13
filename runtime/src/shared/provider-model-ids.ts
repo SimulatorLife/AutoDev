@@ -22,6 +22,20 @@
 export const ANTIGRAVITY_MODEL_PATTERN =
   /^(gemini-[A-Za-z0-9][A-Za-z0-9.-]*|claude-[a-z0-9-]*[a-z0-9]-(?:low|medium|high))$/;
 
+export type AntigravityQuotaPool = "first_party" | "third_party";
+
+/** Antigravity's currently routed Gemini and Claude families use separate quota pools. */
+export function providerQuotaPool(
+  provider: string,
+  model: string | null
+): AntigravityQuotaPool | null {
+  if (provider !== "antigravity" || model === null) return null;
+  if (!ANTIGRAVITY_MODEL_PATTERN.test(model)) return null;
+  if (model.startsWith("gemini-")) return "first_party";
+  if (model.startsWith("claude-")) return "third_party";
+  return null;
+}
+
 /**
  * Claude family aliases and Anthropic's lowercase, hyphen-separated ids --
  * never `claude-opus-5.5`, and never an agy effort-suffixed id.

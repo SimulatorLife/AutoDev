@@ -25,7 +25,7 @@ Follow this explicit evidence and report format with all 10 required sections:
 9. Evidence-status decision (`verified` | `corroborated` | `hypothesis` | `not observed`).
 10. Suggested follow-up (next investigation, not a code fix).
 
-Submit your finished review with `playtest.submitReview`, including the exact packet ID, artifact ID, and SHA-256 returned by `playtest.prepareReview`. Supply dimension-specific rationale/citations in `dimensionEvidence`, plus `alternativeExplanations`, falsifiable `experiments`, and the required `reportCompleteness` statuses. This session-only tool must mark cross-session context unavailable; alternative and experiment statuses must agree with their arrays; provide a concrete follow-up or explain why none is recommended. Runtime copies authoritative metrics from the packet and derives anchor categories only from the frozen metric/rubric contract. Do not create, comment on, or close a GitHub issue -- publication is root's decision, made separately from your submitted review.
+Submit your finished review with `playtest.submitReview`, including the exact packet ID, artifact ID, and SHA-256 returned by `playtest.prepareReview`. Supply dimension-specific rationale/citations in `dimensionEvidence`, plus `alternativeExplanations`, falsifiable `experiments`, and the required `reportCompleteness` statuses. Use cross-session context only from the frozen packet: when it includes sibling episode summaries, cite the whole sibling episode IDs in `reportCompleteness.crossSessionContext.evidenceRefs`; otherwise mark the section unavailable with the packet-specific reason. Never infer unsupplied sessions. Alternative and experiment statuses must agree with their arrays; provide a concrete follow-up or explain why none is recommended. Runtime copies authoritative metrics from the packet and derives anchor categories only from the frozen metric/rubric contract. Do not create, comment on, or close a GitHub issue -- publication is root's decision, made separately from your submitted review.
 
 Negative triggers and boundary enforcement:
 
@@ -33,4 +33,4 @@ Negative triggers and boundary enforcement:
 - Do not trigger for or perform code changes (e.g. "fix this code so the build passes", "refactor this module" -- use standard coding roles/skills).
 - You are read-only for source code and for gameplay: do not edit, create, or delete files, run or branch an episode, change game rules or rewards, or critique your own unreviewed conclusions as fact. Do not stage, commit, push, or spawn agents.
 
-Return your submitted review's evidence status (verified/corroborated/hypothesis/not observed), scored dimensions with uncertainty, and proposed follow-up experiments.
+Return the submitted review status (`hypothesis` or `not observed` only), scored dimensions with uncertainty, and proposed follow-up. Independent verification/corroboration is not currently implemented; do not imply that a stored analyst review proves a claim.

@@ -44,6 +44,7 @@ import {
   readLimitHeaders,
   terminalIncompleteEvents
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
+import { providerQuotaPool } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 import {
   AUTODEV_WORKSPACE_KEY_HEADER,
@@ -587,12 +588,21 @@ export function cooldownFor(
   failureClass: string,
   limit: ProviderLimit | null = null,
   model: string | null = null,
-  body: string | null = null
+  body: string | null = null,
+  provider: string | null = null
 ): CooldownOptions {
+  const resolvedFailureClass = limit?.limitClass ?? failureClass;
   return {
-    failureClass: limit?.limitClass ?? failureClass,
+    failureClass: resolvedFailureClass,
     resetsAt: limit?.resetsAt ?? null,
     structured: limit?.source === LIMIT_SOURCE_REPORTED,
+    scope:
+      resolvedFailureClass === "quota_exhausted" &&
+      provider !== null &&
+      model !== null &&
+      providerQuotaPool(provider, model) !== null
+        ? "pool"
+        : "provider",
     model,
     detail: body === null ? null : providerErrorDetail(body)
   };
@@ -2013,7 +2023,9 @@ function sendConcreteFailureResponse(args: {
         ? "router_provider_unavailable"
         : "router_upstream_error";
   const retryable = status === 502 || status === 503 || status === 504;
-  const retryAfterMs = retryable ? COOLDOWNS.nextRetryMs([route.provider]) : 0;
+  const retryAfterMs = retryable
+    ? COOLDOWNS.nextRetryMs([{ provider: route.provider, model: modelName }])
+    : 0;
   const retryAfterSeconds =
     retryAfterMs > 0 ? Math.max(1, Math.ceil(retryAfterMs / 1000)) : null;
   sendJson(
@@ -2306,7 +2318,13 @@ async function handleConcreteStatusFailure(
   if (result.retryable)
     COOLDOWNS.cooldownProvider(
       route.provider,
-      cooldownFor(failureClass, result.limit, modelName, result.body ?? null)
+      cooldownFor(
+        failureClass,
+        result.limit,
+        modelName,
+        result.body ?? null,
+        route.provider
+      )
     );
   sendConcreteFailureResponse({
     response,
@@ -2416,7 +2434,7 @@ async function handleConcreteTransportError(
   endConcreteRequest(activitySubject, requestId, "failure");
   COOLDOWNS.cooldownProvider(
     route.provider,
-    cooldownFor(failureClass, null, modelName)
+    cooldownFor(failureClass, null, modelName, null, route.provider)
   );
   sendConcreteFailureResponse({
     response,
@@ -3077,9 +3095,11 @@ async function runExhaustionWait(
       ROUTING_POLICY.routeDisabledReason(route, ctx.providerRole) === null &&
       !attempted.has(route.provider)
   );
-  const waitMs = COOLDOWNS.nextRetryMs(
-    waitCandidates.map(({ provider }) => provider)
-  );
+  const cooldownCandidates = waitCandidates.map(({ provider, model }) => ({
+    provider,
+    model
+  }));
+  const waitMs = COOLDOWNS.nextRetryMs(cooldownCandidates);
   const windowMs = exhaustionWaitWindowMs(ctx.isOrchestratorTurn);
   if (
     !state.deadlineReached &&
@@ -3111,7 +3131,7 @@ async function runExhaustionWait(
     ) {
       const now = Date.now();
       const remainingCooldownMs = COOLDOWNS.nextRetryMs(
-        waitCandidates.map(({ provider }) => provider),
+        cooldownCandidates,
         now
       );
       if (remainingCooldownMs <= 0)
@@ -3377,7 +3397,13 @@ async function handleCandidateSuccess(
         (responseResult.incompleteReason ? "unavailable" : "upstream_error");
       COOLDOWNS.cooldownProvider(
         route.provider,
-        cooldownFor(failureClass, responseResult.limit, route.model)
+        cooldownFor(
+          failureClass,
+          responseResult.limit,
+          route.model,
+          null,
+          route.provider
+        )
       );
       recordRouterEvent({
         phase: "result",
@@ -3406,7 +3432,7 @@ async function handleCandidateSuccess(
       );
       return "terminal";
     }
-    COOLDOWNS.clear(route.provider);
+    COOLDOWNS.clearAfterSuccess(route.provider, route.model);
     recordRouterEvent({
       phase: "result",
       requestId: ctx.requestId,
@@ -3436,7 +3462,7 @@ async function handleCandidateSuccess(
   } catch (streamError) {
     COOLDOWNS.cooldownProvider(
       route.provider,
-      cooldownFor("upstream_error", null, route.model)
+      cooldownFor("upstream_error", null, route.model, null, route.provider)
     );
     throw streamError;
   }
@@ -3488,7 +3514,13 @@ function handleCandidateUpstreamFailure(
   }
   COOLDOWNS.cooldownProvider(
     route.provider,
-    cooldownFor(failureClass, result.limit, route.model, result.body ?? null)
+    cooldownFor(
+      failureClass,
+      result.limit,
+      route.model,
+      result.body ?? null,
+      route.provider
+    )
   );
   return "fallback";
 }
@@ -3539,7 +3571,7 @@ function handleCandidateTransportError(
   });
   COOLDOWNS.cooldownProvider(
     route.provider,
-    cooldownFor(failureClass, null, route.model)
+    cooldownFor(failureClass, null, route.model, null, route.provider)
   );
   if (ctx.response.headersSent) {
     if (!ctx.response.writableEnded) {

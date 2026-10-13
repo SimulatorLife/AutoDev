@@ -1,6 +1,6 @@
 {
-  "schema": "autodev-cooldown-behavior-v1",
-  "description": "Deterministic boundary for the router cooldown model exercised by `cooldownProvider`, `clearProviderCooldown`, `cooldownAllowsLastResort`, `providerCooldownSummary`, and `nextProviderRetryMs`. The scenarios below pin every observable shape that the router produces today: config/probe/transient/hard cooldown classes, stated reset handling (future, past, far, missing), ladder escalation, the non-shortening rule that prevents a shorter failure from pulling a longer one back, last-resort eligibility, retry-after derivation, an `invalid_model` failure that cools down only the rejected model rather than its provider, and the structured candidate summary (provider, model, and the provider's own detail for configuration failures). Updating the fixture is itself the documented, intentional signal that cooldown behavior, ladder ceilings, or summary shape is meant to change.",
+  "schema": "autodev-cooldown-behavior-v2",
+  "description": "Deterministic boundary for the router cooldown model exercised by `cooldownProvider`, `clearProviderCooldown`, `cooldownAllowsLastResort`, `providerCooldownSummary`, and `nextProviderRetryMs`. The scenarios below pin every observable shape that the router produces today: config/probe/transient/hard cooldown classes, stated reset handling (future, past, far, missing), ladder escalation, the non-shortening rule that prevents a shorter failure from pulling a longer one back, last-resort eligibility, retry-after derivation from provider/model candidates, an `invalid_model` failure that cools down only the rejected model rather than its provider, and the structured candidate summary (provider, model, and the provider's own detail for configuration failures). Updating the fixture is itself the documented, intentional signal that cooldown behavior, ladder ceilings, or summary shape is meant to change.",
   "now": 1700000000000,
   "constants": {
     "providerCooldownMs": 30000,
@@ -277,7 +277,7 @@
         { "provider": "antigravity", "args": {} }
       ],
       "atDeltaMs": 0,
-      "providers": ["claude", "antigravity", "minimax"],
+      "retryCandidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity", "model": "gemini-3.8-flash-medium" }, { "provider": "minimax", "model": "MiniMax-M3" }],
       "expected": 5000
     },
     "retry_returns_ms_for_single_cooling_provider": {
@@ -285,13 +285,13 @@
         { "provider": "claude", "args": { "failureClass": "probe_unavailable" } }
       ],
       "atDeltaMs": 0,
-      "providers": ["claude"],
+      "retryCandidates": [{ "provider": "claude", "model": "sonnet" }],
       "expected": 5000
     },
     "retry_returns_zero_when_none_cooling": {
       "setup": [],
       "atDeltaMs": 0,
-      "providers": ["claude", "antigravity", "minimax"],
+      "retryCandidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity", "model": "gemini-3.8-flash-medium" }, { "provider": "minimax", "model": "MiniMax-M3" }],
       "expected": 0
     },
     "retry_skips_expired_entries_at_future_time": {
@@ -300,7 +300,7 @@
         { "provider": "antigravity", "args": {} }
       ],
       "atDeltaMs": 6000,
-      "providers": ["claude", "antigravity"],
+      "retryCandidates": [{ "provider": "claude", "model": "sonnet" }, { "provider": "antigravity", "model": "gemini-3.8-flash-medium" }],
       "expected": 24000
     },
     "summary_disabled_provider_reports_disabled_state": {

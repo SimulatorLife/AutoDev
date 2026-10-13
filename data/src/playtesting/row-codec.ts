@@ -6,6 +6,7 @@ import {
   assertPlaytestAssignmentManifest,
   assertPlaytestBenchmark,
   assertPlaytestBranchLineage,
+  assertPlaytestComparisonOwnerDecision,
   assertPlaytestCoverageManifest,
   assertPlaytestExperiment,
   assertPlaytestNumericResults,
@@ -20,6 +21,7 @@ import {
   type PlaytestBenchmark,
   playtestBenchmarkHashInput,
   type PlaytestComparison,
+  type PlaytestComparisonV1,
   playtestCoverageManifestHashInput,
   type PlaytestEpisode,
   type PlaytestEvidencePacketReference,
@@ -38,6 +40,7 @@ import {
   PLAYTESTS_BATCH_SCHEMA_V1,
   PLAYTESTS_BATCH_SCHEMA_V2,
   PLAYTESTS_COMPARISON_SCHEMA,
+  PLAYTESTS_COMPARISON_SCHEMA_V1,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA_V1,
   PLAYTESTS_EPISODE_SCHEMA_V2,
@@ -51,6 +54,7 @@ import {
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V2,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V3,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V4,
+  PLAYTESTS_SESSION_REVIEW_SCHEMA_V5,
   type PlaytestSessionReview
 } from "@simulatorlife/autodev-core";
 
@@ -492,6 +496,7 @@ export function encodeReview(
 export function encodeComparison(
   artifact: PlaytestComparison
 ): PlaytestIndexedComparisonRow {
+  assertPlaytestComparisonOwnerDecision(artifact);
   if (!artifact.sourceFindingIds.every(isPlaytestFindingId)) {
     throw new TypeError(
       "PlaytestComparison.sourceFindingIds must contain canonical stable finding IDs."
@@ -1432,7 +1437,8 @@ function isLegacyReviewSchema(schema: unknown): boolean {
     schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V1 ||
     schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V2 ||
     schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V3 ||
-    schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V4
+    schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V4 ||
+    schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V5
   );
 }
 
@@ -1466,6 +1472,7 @@ function migrateLegacyReview(
 ): PlaytestSessionReview {
   const isVersionOne = raw.schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V1;
   const isVersionFour = raw.schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V4;
+  const isVersionFive = raw.schema === PLAYTESTS_SESSION_REVIEW_SCHEMA_V5;
   if (!isVersionOne && raw.evidencePacket === undefined) {
     throw new PlaytestSourceUnavailableError(
       "ClickHouse legacy review is missing its evidence-packet field"
@@ -1477,6 +1484,21 @@ function migrateLegacyReview(
     } catch (error) {
       throw new PlaytestSourceUnavailableError(
         "ClickHouse legacy review has a malformed evidence-packet reference",
+        error
+      );
+    }
+  }
+  if (isVersionFive) {
+    const migrated = {
+      ...raw,
+      schema: PLAYTESTS_SESSION_REVIEW_SCHEMA
+    } as unknown as PlaytestSessionReview;
+    try {
+      assertPlaytestSessionReviewHasEvidence(migrated);
+      return migrated;
+    } catch (error) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse v5 review has malformed packet citations or report fields",
         error
       );
     }
@@ -1519,7 +1541,7 @@ function decodeCurrentReview(
 ): PlaytestSessionReview {
   if (raw.evidencePacket === undefined || raw.evidencePacket === null) {
     throw new PlaytestSourceUnavailableError(
-      "ClickHouse v5 playtest review is missing its evidence-packet reference"
+      "ClickHouse v6 playtest review is missing its evidence-packet reference"
     );
   }
   try {
@@ -1529,7 +1551,7 @@ function decodeCurrentReview(
     return review;
   } catch (error) {
     throw new PlaytestSourceUnavailableError(
-      "ClickHouse v5 review has a malformed packet reference, claim citation or report-completeness record",
+      "ClickHouse v6 review has a malformed packet reference, claim citation or report-completeness record",
       error
     );
   }
@@ -1583,12 +1605,48 @@ function migrateLegacyReviewClaims(
 export function decodeComparison(
   row: Record<string, unknown>
 ): PlaytestComparison {
-  const artifact = decodePayload<PlaytestComparison>(
+  const payload = decodePayload<Readonly<Record<string, unknown>>>(
     row,
     "comparisonId",
-    "version",
-    PLAYTESTS_COMPARISON_SCHEMA
+    "version"
   );
+  let artifact: PlaytestComparison;
+  if (payload.schema === PLAYTESTS_COMPARISON_SCHEMA_V1) {
+    const historical = payload as unknown as PlaytestComparisonV1;
+    if (
+      (historical.ownerDecisionAt !== null &&
+        typeof historical.ownerDecisionAt !== "string") ||
+      (historical.ownerDecisionReason !== null &&
+        typeof historical.ownerDecisionReason !== "string") ||
+      (historical.ownerDecisionAt === null) !==
+        (historical.ownerDecisionReason === null)
+    ) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse v1 comparison has an incomplete owner-decision record"
+      );
+    }
+    const hasHistoricalDecision = historical.ownerDecisionAt !== null;
+    artifact = {
+      ...historical,
+      schema: PLAYTESTS_COMPARISON_SCHEMA,
+      ownerDecisionBy: null,
+      ownerDisposition: hasHistoricalDecision ? "not-recorded" : null
+    };
+  } else if (payload.schema === PLAYTESTS_COMPARISON_SCHEMA) {
+    artifact = payload as unknown as PlaytestComparison;
+  } else {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse comparison payload has an unsupported schema version"
+    );
+  }
+  try {
+    assertPlaytestComparisonOwnerDecision(artifact);
+  } catch (error) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse comparison has a malformed owner-decision record",
+      error
+    );
+  }
   assertIndexMatches(row, "workspace_id", artifact.provenance.workspaceId);
   assertIndexMatches(row, "comparison_id", artifact.comparisonId);
   assertIndexMatches(row, "version", artifact.version);

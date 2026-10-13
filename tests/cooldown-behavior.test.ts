@@ -20,7 +20,7 @@ const contract = JSON.parse(
 
 assert.equal(
   contract.schema,
-  "autodev-cooldown-behavior-v1",
+  "autodev-cooldown-behavior-v2",
   "cooldown behavior contract must match its schema tag"
 );
 assert.equal(
@@ -130,10 +130,10 @@ function runScenario(name: string, scenario: JsonRecord): void {
   }
 
   // Retry scenarios pin the nextProviderRetryMs return value.
-  if ("providers" in scenario && typeof scenario.expected === "number") {
+  if ("retryCandidates" in scenario && typeof scenario.expected === "number") {
     const at = NOW + (scenario.atDeltaMs ?? 0);
     assert.equal(
-      cooldowns.nextRetryMs(scenario.providers, at),
+      cooldowns.nextRetryMs(scenario.retryCandidates, at),
       scenario.expected,
       `${name}: nextProviderRetryMs returns the earliest remaining ms`
     );

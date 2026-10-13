@@ -2,6 +2,7 @@
 
 import type {
   HumanPlaytestStudy,
+  PlaytestArtifactReference,
   PlaytestBatch,
   PlaytestBatchState,
   PlaytestBenchmark,
@@ -18,6 +19,13 @@ export interface PlaytestBatchFilter {
   readonly workspaceId: string;
   readonly buildSha?: string;
   readonly status?: PlaytestBatchState;
+}
+
+/** Durable batch-history facts needed to reconcile local packet artifacts. */
+export interface PlaytestBatchArtifactState {
+  readonly latestStatus: PlaytestBatchState | null;
+  /** Packet references appearing in any persisted batch revision. */
+  readonly packetArtifacts: readonly PlaytestArtifactReference[];
 }
 
 export interface PlaytestEpisodeFilter {

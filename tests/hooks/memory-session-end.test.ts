@@ -5,6 +5,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync
 } from "node:fs";
@@ -226,6 +227,23 @@ test("materialized Codex hook reads its installed secret and posts to the loopba
     await once(server, "listening");
     const address = server.address();
     assert.ok(address && typeof address !== "string");
+
+    // The materialized Runtime subtree must retain its ESM package boundary;
+    // otherwise direct Node execution reparses this .ts module and writes a
+    // MODULE_TYPELESS_PACKAGE_JSON warning to the hook's stderr contract.
+    const modulePackage = path.join(repositoryRoot, "runtime/src/package.json");
+    const installedModulePackage = runtimeTarget(
+      "runtime/src/package.json",
+      codexHome
+    );
+    materializeRuntimeFile(modulePackage, installedModulePackage, 0o644);
+    assert.equal(
+      runtimeFileMatches(modulePackage, installedModulePackage),
+      true
+    );
+    assert.deepEqual(JSON.parse(readFileSync(installedModulePackage, "utf8")), {
+      type: "module"
+    });
 
     const source = path.join(
       repositoryRoot,

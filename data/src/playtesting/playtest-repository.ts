@@ -17,6 +17,7 @@
 
 import type {
   HumanPlaytestStudy,
+  PlaytestArtifactReference,
   PlaytestBatch,
   PlaytestBenchmark,
   PlaytestComparison,
@@ -82,6 +83,7 @@ import {
   PLAYTEST_REVIEWS_TABLE
 } from "./schema.ts";
 import type {
+  PlaytestBatchArtifactState,
   PlaytestBatchFilter,
   PlaytestBenchmarkFilter,
   PlaytestComparisonFilter,
@@ -97,6 +99,7 @@ import type {
 /** The most rows one list read will return, whatever the caller asks for. */
 const MAX_PLAYTEST_PAGE_SIZE = 500;
 const DEFAULT_PLAYTEST_PAGE_SIZE = 50;
+const MAX_BATCH_ARTIFACT_HISTORY_ROWS = 128;
 const LINE_BREAK_PATTERN = /\r?\n/u;
 const COUNT_PATTERN = /^\d+$/u;
 const SHA256_HEX_PATTERN = /^[a-f\d]{64}$/iu;
@@ -234,6 +237,74 @@ export class PlaytestRepository {
     );
     const rows = parseNdjsonLines(text);
     return rows.length > 0 ? decodeBatch(rows[0]!) : null;
+  }
+
+  /**
+   * Read all bounded revisions for one batch so Runtime can safely decide
+   * whether a local pending packet reference was ever durably published.
+   * Historical references count: an uncertain insert acknowledgement must not
+   * make an earlier committed packet look like an orphan.
+   */
+  async getBatchArtifactState(
+    workspaceId: string,
+    batchId: string
+  ): Promise<PlaytestBatchArtifactState> {
+    if (workspaceId.trim().length === 0 || batchId.trim().length === 0) {
+      throw new TypeError("workspaceId and batchId are required.");
+    }
+    const rows = parseNdjsonLines(
+      await this.execute(
+        `SELECT * FROM ${PLAYTEST_BATCHES_TABLE} ` +
+          `WHERE workspace_id = {workspaceId:String} AND batch_id = {batchId:String} ` +
+          `ORDER BY revision DESC, cityHash64(payload_json) DESC, payload_json DESC ` +
+          `LIMIT {limit:UInt32} FORMAT JSONEachRow`,
+        {
+          workspaceId,
+          batchId,
+          limit: MAX_BATCH_ARTIFACT_HISTORY_ROWS + 1
+        }
+      )
+    );
+    if (rows.length > MAX_BATCH_ARTIFACT_HISTORY_ROWS) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse batch history exceeds the bounded packet-reconciliation limit."
+      );
+    }
+    const batches = rows.map(decodeBatch);
+    if (
+      batches.some(
+        (batch) =>
+          batch.workspaceId !== workspaceId || batch.batchId !== batchId
+      )
+    ) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse batch history contains a mismatched workspace or batch identity."
+      );
+    }
+    const packetArtifacts = new Map<string, PlaytestArtifactReference>();
+    for (const batch of batches) {
+      for (const receipt of batch.reviewPackets) {
+        if (receipt.status !== "prepared" || receipt.artifact === null) {
+          continue;
+        }
+        const prior = packetArtifacts.get(receipt.artifact.artifactId);
+        if (
+          prior &&
+          (prior.sha256 !== receipt.artifact.sha256 ||
+            prior.bytes !== receipt.artifact.bytes ||
+            prior.mediaType !== receipt.artifact.mediaType)
+        ) {
+          throw new PlaytestSourceUnavailableError(
+            "ClickHouse batch history contains conflicting packet artifact identities."
+          );
+        }
+        packetArtifacts.set(receipt.artifact.artifactId, receipt.artifact);
+      }
+    }
+    return {
+      latestStatus: batches[0]?.status ?? null,
+      packetArtifacts: [...packetArtifacts.values()]
+    };
   }
 
   async listBatches(

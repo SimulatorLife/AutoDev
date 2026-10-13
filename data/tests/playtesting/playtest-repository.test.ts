@@ -28,17 +28,21 @@ import {
   PLAYTESTS_BATCH_SCHEMA_V1,
   PLAYTESTS_BATCH_SCHEMA_V2,
   PLAYTESTS_COMPARISON_SCHEMA,
+  PLAYTESTS_COMPARISON_SCHEMA_V1,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA_V1,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
+  PLAYTESTS_REVIEW_SELECTION_SCHEMA,
+  PLAYTESTS_REVIEW_STRATIFICATION,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V1,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V2,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V3,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V4,
+  PLAYTESTS_SESSION_REVIEW_SCHEMA_V5,
   type PlaytestSessionReview,
   selectPlaytestBatchReviews
 } from "@simulatorlife/autodev-core";
@@ -53,6 +57,7 @@ import {
   decodeBatch,
   decodeComparison,
   decodeEpisode,
+  decodeExperiment,
   decodeFinding,
   decodeReview,
   encodeBatch,
@@ -426,6 +431,20 @@ test("legacy review schemas migrate with explicit packet and claim-citation gaps
     decodeReview(packetReviewRow as unknown as Record<string, unknown>),
     packetReview
   );
+  const schemaV5 = JSON.parse(packetReviewRow.payload_json) as Record<
+    string,
+    unknown
+  >;
+  schemaV5.schema = PLAYTESTS_SESSION_REVIEW_SCHEMA_V5;
+  const migratedV5 = decodeReview({
+    ...packetReviewRow,
+    payload_json: JSON.stringify(schemaV5)
+  } as unknown as Record<string, unknown>);
+  assert.equal(migratedV5.schema, PLAYTESTS_SESSION_REVIEW_SCHEMA);
+  assert.deepEqual(
+    migratedV5.reportCompleteness,
+    packetReview.reportCompleteness
+  );
   const schemaV4 = JSON.parse(packetReviewRow.payload_json) as Record<
     string,
     unknown
@@ -526,6 +545,8 @@ function comparison(
       index % 2 === 0 ? "eligible-for-owner-promotion" : "hold-inconclusive",
     ownerDecisionAt: null,
     ownerDecisionReason: null,
+    ownerDecisionBy: null,
+    ownerDisposition: null,
     humanPreference: { answer: "not-collected", interval: null },
     provenance: {
       workspaceId,
@@ -594,6 +615,7 @@ function experiment(
     (_, assignment) => `experiment-${index}-confirmation-${assignment + 1}`
   );
   const assignedUnits = [...discoveryInventory, ...confirmationInventory];
+  const state = index % 2 === 0 ? "approved" : "draft";
   const manifest: Omit<PlaytestExperiment, "contentHash"> = {
     schema: PLAYTESTS_EXPERIMENT_SCHEMA,
     experimentId: `experiment-${String(index).padStart(5, "0")}`,
@@ -614,7 +636,7 @@ function experiment(
       version: "2",
       contentHash: createHash("sha256").update("treatment").digest("hex")
     },
-    approvalId: null,
+    approvalId: state === "approved" ? "approval-fixture" : null,
     exposureUnit: "episode",
     allocationSeed: "seed-1",
     allocationMethod: "randomized",
@@ -636,7 +658,7 @@ function experiment(
     multiplicityPlan: "none",
     budget: { maxAssignments: 10, maxCritiques: 1, maxWallTimeMs: 1000 },
     stoppingRule: "fixed-budget",
-    state: index % 2 === 0 ? "approved" : "draft",
+    state,
     attemptIds: [],
     comparisonId: null,
     ownerDecision: null,
@@ -979,6 +1001,31 @@ test("Data verifies immutable benchmark and experiment content hashes before ind
       }),
     /Experiment contentHash does not match/u
   );
+  const unapproved = {
+    ...experimentArtifact,
+    state: "approved" as const,
+    approvalId: null
+  };
+  assert.throws(
+    () => encodeExperiment(unapproved),
+    /state "approved" requires an approvalId/u
+  );
+  const malformedPayload = {
+    ...unapproved,
+    contentHash: createHash("sha256")
+      .update(playtestExperimentHashInput(unapproved))
+      .digest("hex")
+  };
+  const encoded = encodeExperiment(experimentArtifact);
+  assert.throws(
+    () =>
+      decodeExperiment({
+        ...encoded,
+        state: "approved",
+        payload_json: JSON.stringify(malformedPayload)
+      } as unknown as Record<string, unknown>),
+    /state "approved" requires an approvalId/u
+  );
 });
 
 const SYNTHETIC_ID_COLUMNS = {
@@ -1247,6 +1294,118 @@ test("finding codec rejects workspace spoofing, fingerprint tampering, and legac
         })
       }),
     /identity|fingerprint|findingId/u
+  );
+});
+
+test("batch artifact state sees historical receipt refs and current status with workspace binding", async () => {
+  const packetArtifact = {
+    artifactId: "packet-artifact-1",
+    sha256: "f".repeat(64),
+    bytes: 512,
+    mediaType: PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE
+  } as const;
+  const selectedBatch = {
+    ...batch(),
+    revision: 2,
+    reviewSelection: {
+      schema: PLAYTESTS_REVIEW_SELECTION_SCHEMA,
+      status: "selected",
+      inventoryHash: "a".repeat(64),
+      seed: "selection-seed",
+      stratification: PLAYTESTS_REVIEW_STRATIFICATION,
+      maxReviewedSessions: 1,
+      critiqueBudget: 1,
+      reviewCap: 1,
+      reviewablePopulation: 1,
+      unreviewableAssignments: 0,
+      surveillance: { status: "disabled", budget: 0 },
+      discovery: { status: "disabled", budget: 0 },
+      selected: [
+        {
+          assignmentId: "a-00001",
+          episodeId: "episode-00001",
+          stream: "surveillance",
+          stratumKey: "heuristic/tutorial/win",
+          inclusionProbability: null,
+          discoveryRank: null,
+          signalValue: null
+        }
+      ],
+      selectedAt: "2026-10-01T00:00:01.000Z"
+    },
+    reviewPackets: [
+      {
+        status: "prepared",
+        packetId: "packet-history-1",
+        assignmentId: "a-00001",
+        episodeId: "episode-00001",
+        artifact: packetArtifact,
+        failureReason: null,
+        createdAt: "2026-10-01T00:00:01.000Z"
+      }
+    ]
+  } as unknown as PlaytestBatch;
+  const latestBatch = {
+    ...batch(),
+    revision: 3,
+    status: "failed",
+    reviewSelection: { status: "unavailable", reason: "batch-incomplete" }
+  } as PlaytestBatch;
+  const encodedHistory = [latestBatch, selectedBatch].map((artifact) => {
+    const row = encodeBatch(artifact);
+    return {
+      ...row,
+      workspace_id: artifact.workspaceId,
+      batch_id: artifact.batchId,
+      revision: artifact.revision,
+      status: artifact.status,
+      build_sha: artifact.buildSha
+    };
+  });
+  const capturedUrls: URL[] = [];
+  const fetchImpl: typeof fetch = async (input) => {
+    capturedUrls.push(new URL(String(input)));
+    return new Response(
+      encodedHistory.map((row) => JSON.stringify(row)).join("\n"),
+      { status: 200 }
+    );
+  };
+  const repo = new PlaytestRepository({ fetchImpl });
+  const state = await repo.getBatchArtifactState("workspace-a", "batch-0");
+  assert.equal(state.latestStatus, "failed");
+  assert.deepEqual(state.packetArtifacts, [packetArtifact]);
+  assert.equal(
+    capturedUrls[0]?.searchParams.get("param_workspaceId"),
+    "workspace-a"
+  );
+  assert.equal(capturedUrls[0]?.searchParams.get("param_batchId"), "batch-0");
+
+  const missing = new PlaytestRepository({
+    fetchImpl: async () => new Response("", { status: 200 })
+  });
+  assert.deepEqual(
+    await missing.getBatchArtifactState("workspace-a", "absent"),
+    {
+      latestStatus: null,
+      packetArtifacts: []
+    }
+  );
+});
+
+test("batch artifact state refuses history beyond its bounded read limit", async () => {
+  const history = Array.from({ length: 129 }, (_, index) => {
+    const artifact = { ...batch(), revision: 129 - index };
+    return encodeBatch(artifact);
+  });
+  const repo = new PlaytestRepository({
+    fetchImpl: async () =>
+      new Response(history.map((row) => JSON.stringify(row)).join("\n"), {
+        status: 200
+      })
+  });
+  await assert.rejects(
+    repo.getBatchArtifactState("workspace-a", "batch-0"),
+    /history exceeds the bounded packet-reconciliation limit/u
   );
 });
 
@@ -1752,6 +1911,39 @@ test("Core artifact round-trips preserve full canonical payloads and latest revi
       }
     ]
   };
+  const encodedComparison = encodeComparison(comparisonArtifact);
+  const {
+    ownerDecisionBy: _ownerDecisionBy,
+    ownerDisposition: _ownerDisposition,
+    ...legacyComparisonFields
+  } = comparisonArtifact;
+  const legacyComparison = {
+    ...legacyComparisonFields,
+    schema: PLAYTESTS_COMPARISON_SCHEMA_V1
+  };
+  assert.deepEqual(
+    decodeComparison({
+      ...encodedComparison,
+      payload_json: JSON.stringify(legacyComparison)
+    } as unknown as Record<string, unknown>),
+    {
+      ...legacyComparison,
+      schema: PLAYTESTS_COMPARISON_SCHEMA,
+      ownerDecisionBy: null,
+      ownerDisposition: null
+    }
+  );
+  const recordedLegacyComparison = {
+    ...legacyComparison,
+    ownerDecisionAt: "2026-01-02T00:00:00.000Z",
+    ownerDecisionReason: "Historical operator decision without identity."
+  };
+  const migratedRecordedDecision = decodeComparison({
+    ...encodedComparison,
+    payload_json: JSON.stringify(recordedLegacyComparison)
+  } as unknown as Record<string, unknown>);
+  assert.equal(migratedRecordedDecision.ownerDisposition, "not-recorded");
+  assert.equal(migratedRecordedDecision.ownerDecisionBy, null);
   const benchmarkArtifact = benchmark();
   const experimentArtifact = experiment();
 

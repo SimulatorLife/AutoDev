@@ -82,6 +82,25 @@ const FINDING_EVIDENCE_STATUSES = [
   "not observed"
 ] as const;
 
+let defaultPlaytestingRepository: PlaytestRepository | undefined;
+let defaultPlaytestingRepositorySchema: Promise<void> | undefined;
+
+/** Initialize the Data-owned tables once before the Runtime's first default read. */
+async function getDefaultPlaytestingRepository(): Promise<PlaytestRepository> {
+  defaultPlaytestingRepository ??= new PlaytestRepository();
+  if (!defaultPlaytestingRepositorySchema) {
+    defaultPlaytestingRepositorySchema = defaultPlaytestingRepository
+      .ensureSchema()
+      .catch((error: unknown) => {
+        // A failed initialization must be retryable after the backend is repaired.
+        defaultPlaytestingRepositorySchema = undefined;
+        throw error;
+      });
+  }
+  await defaultPlaytestingRepositorySchema;
+  return defaultPlaytestingRepository;
+}
+
 type FilterName =
   (typeof RESOURCE_FILTERS)[ControlApiPlaytestingResource][number];
 
@@ -1026,11 +1045,12 @@ export async function handlePlaytestingControlApiRequest(
     return true;
   }
 
-  const repository = options.repository ?? new PlaytestRepository();
   const artifactStoreForWorkspace =
     options.artifactStoreForWorkspace ??
     ((workspaceId: string) => new PlaytestArtifactStore({ workspaceId }));
   try {
+    const repository =
+      options.repository ?? (await getDefaultPlaytestingRepository());
     if (route.mediaId !== null) {
       const frame = await readEpisodeFrame(
         repository,
