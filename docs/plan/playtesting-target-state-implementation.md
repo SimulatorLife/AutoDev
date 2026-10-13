@@ -84,13 +84,9 @@ states what is implemented and, where applicable, what is still missing.
   downgraded to a footnote.
 - [~] 5. Visual/human validation: consented study data, privacy controls,
   distinct human instruments, and refusal of unauthorized UI evidence are
-  implemented and tested. **Missing: the whole `PlayerPolicyValidity` artifact is
-  declared and never used.** `heldOutHumanStateIds` was flagged first, but a
-  whole-tree search finds `PlayerPolicyValidity` itself has no producer, no
-  consumer and no test — `core/src/playtesting/artifacts.ts` is the only file
-  that names it. So this is a larger gap than one unused field, and it stays
-  open rather than being closed by deleting the type, because measurement
-  contract §6 mandates the artifact.
+  implemented and tested. The `PlayerPolicyValidity` artifact that measurement
+  contract §6 mandates now has a producer, a consumer and a runtime path; what
+  remains open is named below rather than closed by deleting the type.
 
   The part that is implementable without inventing anything is the
   synthetic-cohort path the contract already specifies: "absent data means
@@ -126,10 +122,36 @@ states what is implemented and, where applicable, what is still missing.
   unvalidated cohort may not support a human-player claim — as a sentence a
   caller must put in its own output.
 
-  **Still missing: a runtime path that produces these from a real run.** The
-  derivation is Core policy; nothing in Runtime or Console yet runs it against
-  observed episodes, so no `PlayerPolicyValidity` exists in a live system and
-  the ladder's observer list is still supplied by hand.
+  **A runtime path now produces these from a real run**
+  (`runtime/src/playtesting/policy-validity-run.ts`, `playtest.policyValidity`).
+  It reads the batch's own frozen coverage manifest rather than a page of the
+  episode table: the manifest is the content-addressed record of what each policy
+  and cohort was observed doing, and reading it avoids a truncated page
+  undercounting a policy's coverage or making totals depend on which page
+  answered. Policy versions come from the **approved benchmark on disk**, not
+  from the derivation, because a validity record pinned to a guessed version would
+  look checkable without being checkable -- the seam test
+  (`runtime/tests/playtesting-policy-validity-mcp.test.ts`) fails if the tool ever
+  stops reading that benchmark.
+
+  Three rules keep the result from fabricating authority, each covered by a test
+  and confirmed by a control:
+
+  - coverage is measured or the cell is **named, never scored `0`** -- a cell with
+    no eligible opportunities has no coverage figure, and `0` would assert the
+    policy was observed and never behaved (`no-eligible-opportunities`);
+  - the four competence metrics stay `null`, because each compares the policy
+    with a person and this run measured no person;
+  - human evidence arrives only as an operator preregistration block, never as a
+    tool input, so a caller cannot assert that human data exists on the strength
+    of a call. Nothing supplies that block yet, so every live record is
+    `unvalidated-synthetic` and carries `playtestHumanProxyRefusal`'s sentence.
+
+  **Still missing: the human-data path and its consumer.** The diagnostic ladder's
+  observer list is still supplied by hand, so nothing yet feeds the derived record
+  into `evaluateDiagnosticLadder`; and with no human data or preregistered bounds
+  in this repository, `competence: "passed" | "failed"` remains unreachable in a
+  live system rather than being asserted on synthetic evidence.
 
   The no-fabricated-frame guarantee _is_ structural rather than asserted:
   `game.observe.frame` is validated as an artifact reference carrying a SHA-256
@@ -230,8 +252,10 @@ states what is implemented and, where applicable, what is still missing.
       match the final integrated diff. **Unmet.** Documentation and test
       coverage for the two active slices are delivered and typecheck/format
       clean; this item stays open because the browser acceptance above has not
-      executed and because Delivery Slices 1–8 remain unchecked. Neither is
-      something a green local suite substitutes for.
+      executed. Delivery Slices 1, 2 and 7 are `[x]` and the rest are `[~]` with
+      named gaps, so the remaining reason is the browser acceptance rather than
+      an unchecked backlog. Neither is something a green local suite
+      substitutes for.
 
 ## Current evidence and gates
 

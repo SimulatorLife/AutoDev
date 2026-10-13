@@ -94,6 +94,7 @@ import { z } from "zod/v4";
 
 import type { PlaytestingReadRepository } from "../control-api/playtesting.ts";
 import { loadApprovedPlaytestDefinition } from "./approved-configuration.ts";
+import { derivePlaytestPolicyValidity } from "./policy-validity-run.ts";
 import { mapConcurrentOrdered } from "../shared/map-concurrent-ordered.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import {
@@ -5166,6 +5167,7 @@ export function createPlaytestMcpServer(
     sessionProvider,
     artifactStoreForWorkspace,
     playtestRepository,
+    approvalRepository,
     playtestRunControl
   } = options;
 
@@ -6198,7 +6200,9 @@ export function createPlaytestMcpServer(
         workspaceId: z.string().min(1).max(256).optional(),
         severity: z.enum([...PLAYTESTS_SEVERITIES]).optional(),
         status: z.enum([...PLAYTESTS_FINDING_STATUSES]).optional(),
-        verificationStage: z.enum([...PLAYTESTS_VERIFICATION_STAGES]).optional(),
+        verificationStage: z
+          .enum([...PLAYTESTS_VERIFICATION_STAGES])
+          .optional(),
         cursor: z.string().max(2048).optional(),
         limit: z.number().int().min(1).max(500).default(50)
       }
@@ -6260,6 +6264,81 @@ export function createPlaytestMcpServer(
           nextCursor: page.nextCursor,
           published: false as const,
           requiresOperatorAction: true as const
+        };
+      })
+  );
+
+  // 10b. playtest.policyValidity
+  mcp.registerTool(
+    "playtest.policyValidity",
+    {
+      description:
+        "Derive PlayerPolicyValidity for the policies a batch actually ran, per measurement contract §6. Reports a validity record plus the sentence a caller must carry when a policy may not stand in for a human player. This tool takes no human-evidence input: the held-out decision states and acceptance bounds are the project's preregistration, so with none registered every record is unvalidated-synthetic.",
+      inputSchema: {
+        workspaceId: z.string().min(1).max(256).optional(),
+        batchId: z.string().min(1).max(256)
+      }
+    },
+    (args) =>
+      safely(async () => {
+        const session = await sessionProvider.current();
+        assertPlaytestToolRole(
+          session.role,
+          ANALYSIS_READER_ROLES,
+          "playtest.policyValidity"
+        );
+        const targetWorkspaceId = authorizeWorkspace(args.workspaceId, session);
+        const repository = requiredRunRepository(playtestRepository);
+        const batch = await repository.getBatch(
+          targetWorkspaceId,
+          args.batchId
+        );
+        if (!batch) {
+          throw new PlaytestMcpValidationError(
+            `No batch '${args.batchId}' exists in this workspace.`
+          );
+        }
+
+        // Policy versions come from the approved benchmark rather than from
+        // this call: an id means whatever the approval said it means, and a
+        // validity record pinned to a guessed version would look checkable
+        // without being checkable. An unreadable approval is reported as an
+        // absent basis rather than silently substituted.
+        let policyVersions: Readonly<Record<string, string>> = {};
+        let policyVersionsBasis: string | null = null;
+        try {
+          const approval = approvalRepository?.read(targetWorkspaceId);
+          if (approval && approval.revokedAt === null) {
+            const definition = loadApprovedPlaytestDefinition(approval);
+            if (definition.benchmark) {
+              policyVersions = definition.benchmark.policyVersions;
+              policyVersionsBasis = definition.benchmarkHash;
+            }
+          }
+        } catch {
+          policyVersions = {};
+          policyVersionsBasis = null;
+        }
+
+        const derived = derivePlaytestPolicyValidity({
+          batch,
+          policyVersions,
+          createdAt: new Date().toISOString()
+        });
+
+        return {
+          batchId: batch.batchId,
+          batchStatus: batch.status,
+          buildSha: batch.buildSha,
+          // The content address of the frozen manifest the records rest on, so
+          // a reader can verify the basis rather than trust this summary.
+          coverageManifestHash: batch.coverageManifest?.contentHash ?? null,
+          policyVersionsBasis,
+          records: derived.records,
+          unmeasurable: derived.unmeasurable,
+          // No human-evidence source is wired yet; stating it keeps an absent
+          // preregistration from reading as an omitted field.
+          preregisteredHumanEvidence: false as const
         };
       })
   );
