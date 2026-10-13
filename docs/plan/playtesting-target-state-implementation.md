@@ -50,10 +50,20 @@ states what is implemented and, where applicable, what is still missing.
   no test. Counterexamples exist only as registry/scoring fields, not as a
   lifecycle step.
 - [~] 5. Visual/human validation: consented study data, privacy controls,
-  distinct human instruments and refusal of unauthorized UI evidence are
-  implemented and tested. **Missing: the no-fabricated-video guarantee** —
-  nothing asserts that an absent frame is stated rather than synthesized —
-  and `heldOutHumanStateIds` has no test.
+  distinct human instruments, and refusal of unauthorized UI evidence are
+  implemented and tested. **Missing: `heldOutHumanStateIds` is declared on a
+  Core type and used nowhere** — no producer populates it and no test reads
+  it, so held-out human state is not actually tracked.
+
+  The no-fabricated-frame guarantee _is_ structural rather than asserted:
+  `game.observe.frame` is validated as an artifact reference carrying a SHA-256
+  and a byte count (`assertArtifactReference`), staged bytes are verified
+  against that content-addressed reference before acceptance
+  (`docker-sandbox.ts`), and an absent frame becomes a named
+  `omittedArtifacts` receipt with `reason: "missing"` rather than a substitute
+  (`core/tests/playtesting-evidence-packet.test.ts`). A fabricated video would
+  have to hash to bytes that exist.
+
 - [~] 6. Human/statistical validity: the scientific lock is pinned and
   enforced (`statistics/lock-manifest.ts` raises on drift), and real SciPy
   intervals are recomputed in tests. **Missing: a real-data integration gate
