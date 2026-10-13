@@ -3,9 +3,14 @@ import test from "node:test";
 
 import { PlaytestLoopGuard } from "../src/playtesting/loop-guard.ts";
 import {
+  createBuiltinPlaytestPolicy,
+  createFirstLegalPlaytestPolicy,
   createScoredPlaytestPolicy,
-  createSeededRandomPlaytestPolicy
+  createSeededRandomPlaytestPolicy,
+  PLAYTESTS_BUILTIN_POLICY_IDS,
+  type PlaytestPolicyContext
 } from "../src/playtesting/policies.ts";
+import { resolvePolicy } from "../src/playtesting/mcp.ts";
 
 const visible = {
   goal: "reach exit",
@@ -137,4 +142,92 @@ test("target-owned scored policy has deterministic ties and rejects non-finite s
       legalActionIds: ["a"]
     });
   }, /finite/u);
+});
+
+test("first-legal policy is a second independent arm that never consults the seed", async () => {
+  const policy = createFirstLegalPlaytestPolicy();
+  assert.equal(policy.id, "first-legal");
+  assert.equal(policy.modelId, null);
+  const context = {
+    seed: "seed-a",
+    episodeId: "episode-1",
+    step: 0,
+    observation: {},
+    legalActionIds: ["zulu", "alpha", "mike"]
+  } as PlaytestPolicyContext;
+  // The point of the arm: a decision that cannot move when the seed, the step
+  // or the scheduling order changes, so an improvement is the heuristic's
+  // rather than the run's luck.
+  assert.equal((await policy.chooseAction(context)).actionId, "alpha");
+  assert.equal(
+    (await policy.chooseAction({ ...context, seed: "seed-b", step: 99 }))
+      .actionId,
+    "alpha"
+  );
+  assert.equal(
+    (
+      await policy.chooseAction({
+        ...context,
+        legalActionIds: ["mike", "alpha"]
+      })
+    ).actionId,
+    "alpha"
+  );
+});
+
+test("first-legal rejects malformed legal actions rather than choosing one", () => {
+  const policy = createFirstLegalPlaytestPolicy();
+  const base = {
+    seed: "s",
+    episodeId: "e",
+    step: 0,
+    observation: {}
+  };
+  assert.throws(
+    () =>
+      policy.chooseAction({
+        ...base,
+        legalActionIds: []
+      } as PlaytestPolicyContext),
+    /unique, non-empty/u
+  );
+  assert.throws(
+    () =>
+      policy.chooseAction({
+        ...base,
+        legalActionIds: ["a", "a"]
+      } as PlaytestPolicyContext),
+    /unique, non-empty/u
+  );
+});
+
+test("the built-in registry is the single owner of runnable policies", () => {
+  // Every id the registry advertises must actually construct, or a game could
+  // declare a policy the runner refuses.
+  for (const id of PLAYTESTS_BUILTIN_POLICY_IDS) {
+    assert.notEqual(
+      createBuiltinPlaytestPolicy(id),
+      null,
+      `${id} is advertised but cannot be constructed`
+    );
+  }
+  // And anything outside it is refused by construction, not by an ad-hoc branch
+  // at the call site.
+  assert.equal(createBuiltinPlaytestPolicy("not-a-policy"), null);
+  // Two independent policies, which is what a comparison arm requires.
+  assert.ok(PLAYTESTS_BUILTIN_POLICY_IDS.size >= 2);
+});
+
+test("every advertised policy resolves through the runner's own gate", () => {
+  // `createFirstLegalPlaytestPolicy` being correct does not prove a batch can
+  // use it: the runner resolves policies through its own gate, and a scored
+  // policy once sat unused behind a single-entry gate with passing tests. This
+  // drives that gate, not the factory.
+  for (const id of PLAYTESTS_BUILTIN_POLICY_IDS) {
+    const resolved = resolvePolicy(id);
+    assert.equal(resolved.id, id);
+    assert.ok(resolved.version.trim(), `${id} must report a version`);
+  }
+  // An id outside the registry is refused by name, with the runnable set named.
+  assert.throws(() => resolvePolicy("heuristic-v1"), /first-legal/u);
 });

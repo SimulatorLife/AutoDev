@@ -114,7 +114,8 @@ import {
   runPlaytestEpisode
 } from "./episode-runner.ts";
 import {
-  createSeededRandomPlaytestPolicy,
+  createBuiltinPlaytestPolicy,
+  PLAYTESTS_BUILTIN_POLICY_IDS,
   type PlaytestPolicy
 } from "./policies.ts";
 
@@ -381,7 +382,6 @@ export interface PlaytestMcpOptions extends PlaytestRunControlOptions {
 }
 
 /** Explicit supported policy baselines. No generic scored/heuristic fallback. */
-const SUPPORTED_POLICY_IDS: ReadonlySet<string> = new Set(["random"]);
 const RUNNER_ROLES = new Set(["playtester", "root", "orchestrator"]);
 const REVIEWER_ROLE = "playtest-analyst" as const;
 const RUN_STATUS_READER_ROLES = new Set([
@@ -3431,16 +3431,21 @@ function selectWindowRange(input: {
   }
   return { bytes, lineCount: matchedLines.length };
 }
-/** Resolve an explicitly supported policy baseline; never fabricate a heuristic. */
-function resolvePolicy(policyId: string): PlaytestPolicy {
-  if (policyId === "random") {
-    return createSeededRandomPlaytestPolicy({ id: policyId });
-  }
+/**
+ * Resolve an explicitly supported policy baseline; never fabricate a heuristic.
+ *
+ * Exported so the resolution seam itself is testable: a policy can be correct
+ * in `policies.ts` and still unreachable if nothing here constructs it, which
+ * is exactly how a scored policy sat unused behind a single-entry gate.
+ */
+export function resolvePolicy(policyId: string): PlaytestPolicy {
+  const policy = createBuiltinPlaytestPolicy(policyId);
+  if (policy !== null) return policy;
   throw new PlaytestMcpValidationError(
     'Policy "' +
       policyId +
       '" is not an explicitly supported baseline. Supported baselines: [' +
-      [...SUPPORTED_POLICY_IDS].join(", ") +
+      [...PLAYTESTS_BUILTIN_POLICY_IDS].join(", ") +
       "]."
   );
 }
@@ -4073,7 +4078,7 @@ function collectRunnableAssignments(input: {
     );
     for (const scenarioId of approval.allowedScenarios) {
       for (const policyId of approval.allowedPolicies) {
-        if (!SUPPORTED_POLICY_IDS.has(policyId)) continue;
+        if (!PLAYTESTS_BUILTIN_POLICY_IDS.has(policyId)) continue;
         try {
           // The capability probe mirrors batch admission exactly, so an
           // approved cell is only advertised when a batch would be accepted.
@@ -4288,7 +4293,7 @@ export function createPlaytestRunControl(
           gameBuild: null,
           allowedScenarios: [],
           approvedPolicies: [],
-          supportedPolicies: [...SUPPORTED_POLICY_IDS],
+          supportedPolicies: [...PLAYTESTS_BUILTIN_POLICY_IDS],
           runnablePolicies: [],
           unsupportedApprovedPolicies: [],
           configurationStatus: "not-checked",
@@ -4340,10 +4345,10 @@ export function createPlaytestRunControl(
         gameBuild: approval?.gameBuild ?? null,
         allowedScenarios: approval?.allowedScenarios ?? [],
         approvedPolicies,
-        supportedPolicies: [...SUPPORTED_POLICY_IDS],
+        supportedPolicies: [...PLAYTESTS_BUILTIN_POLICY_IDS],
         runnablePolicies,
         unsupportedApprovedPolicies: approvedPolicies.filter(
-          (policyId) => !SUPPORTED_POLICY_IDS.has(policyId)
+          (policyId) => !PLAYTESTS_BUILTIN_POLICY_IDS.has(policyId)
         ),
         configurationStatus: runnable.configurationStatus,
         maxBatchAssignments: runnable.maxBatchAssignments,
@@ -4653,7 +4658,6 @@ export function createPlaytestRunControl(
  * than being dropped from the result.
  */
 
-
 /** Why a selected session could not contribute an analyst packet. */
 const CROSS_SESSION_RECEIPT_REASONS = [
   "unknown-session",
@@ -4664,8 +4668,7 @@ const CROSS_SESSION_RECEIPT_REASONS = [
   "packet-unavailable",
   "not-authorized"
 ] as const;
-type CrossSessionReceiptReason =
-  (typeof CROSS_SESSION_RECEIPT_REASONS)[number];
+type CrossSessionReceiptReason = (typeof CROSS_SESSION_RECEIPT_REASONS)[number];
 
 export interface PlaytestCrossSessionReceipt {
   readonly episodeId: string;
@@ -4930,8 +4933,7 @@ async function prepareCrossSessionReview(input: {
         episodeId,
         batchId: episode.batchId,
         reason: "not-selected-for-review",
-        detail:
-          "The session's batch has no persisted frozen review selection."
+        detail: "The session's batch has no persisted frozen review selection."
       });
       continue;
     }
@@ -4973,9 +4975,7 @@ async function prepareCrossSessionReview(input: {
     ).length;
     const remaining = Math.max(
       0,
-      selection.reviewCap -
-        first.batch.budget.actualCritiques -
-        reserved
+      selection.reviewCap - first.batch.budget.actualCritiques - reserved
     );
     budgets.push({
       batchId,

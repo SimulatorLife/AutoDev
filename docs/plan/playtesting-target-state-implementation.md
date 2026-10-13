@@ -21,32 +21,57 @@ normative specification; this checklist tracks implementation and evidence.
 
 ## Delivery slices
 
-- [ ] 1. Recorder/runner: versioned adapter, validated player-visible schema,
+Audit (2026-10-13) against the code, not the section headings. Each item below
+states what is implemented and, where applicable, what is still missing.
+
+- [x] 1. Recorder/runner: versioned adapter, validated player-visible schema,
       approved isolation, provenance, bounded episode recording, security and
-      protocol validation.
-- [ ] 2. Analyst: source-verified timeline, bounded evidence selection,
+      protocol validation. Evidence: `adapter-client.ts` with protocol-version
+      and digest rejection (`playtesting-adapter.test.ts`), the player-visible
+      projection in `visible-observation.ts`, and the pinned networkless
+      container with hard quotas in `docker-sandbox.ts`.
+- [x] 2. Analyst: source-verified timeline, bounded evidence selection,
       null-safe anchored scoring, citation validation, deterministic/critic
-      separation, testable hypotheses, read-only role and skills.
-- [ ] 3. Policy/comprehension: policy provenance/drift, bounded pre-action
-      expectation probes, stratified surveillance/discovery sampling, explicit
-      deterministic-only coverage and costs.
-- [ ] 4. Experiment/findings: preregistered comparisons, finding identity,
-      exposure/evidence triage, counterexamples, reproduction/fix lineage, gated
-      issue publication.
-- [ ] 5. Visual/human validation: actual authorized UI evidence only, distinct
-      human instruments and consented study data, privacy controls and held-out
-      baseline/uncertainty; unsupported modalities remain explicit.
-- [ ] 6. Human/statistical validity: locked numerical methods, real-data
-      integration gates, sensitivity/coverage checks, no unsupported funness or
-      calibration claims.
-- [ ] 7. Data/Console: indexed and cursor-paginated workspace queries, top-level
-      resource and addressable session replay, stable URL state, accessible
-      responsive views, explicit partial/error states and server-authoritative
-      actions; test 10k indexed episodes and navigation/query/replay performance.
-- [ ] 8. Portability and first milestone: second mechanically different
-      adapter, 1,000 authoritative episodes, two independent policies, at most 40
-      complete-session critiques, deterministic-only coverage, and demonstrated
-      finding → candidate → comparison → next-cycle path.
+      separation, testable hypotheses, read-only role and skills. Evidence:
+      `mcp.ts` review preparation, the 64 KiB packet cap, citation resolution
+      against the real stored index, and a read-only role asserted in
+      `playtest-role-routing.test.ts`.
+- [~] 3. Policy/comprehension: policy provenance, bounded pre-action
+  expectation probes, and stratified surveillance/discovery sampling are
+  implemented. **Missing: explicit deterministic-only coverage and its cost
+  accounting.** There is no cost model in `coverage.ts`, `diagnostic-corpus.ts`
+  or `benchmark.ts`; the measurement contract lists it as separate
+  acceptance work. Two runnable policies are now registered
+  (`random`, `first-legal`, commit below).
+- [~] 4. Experiment/findings: preregistered comparisons, finding identity,
+  exposure/evidence triage, and reproduction/fix lineage are implemented.
+  **Missing: gated issue publication.** `githubIssues: "review"` is a
+  validated config value that nothing reads; there is no publisher path and
+  no test. Counterexamples exist only as registry/scoring fields, not as a
+  lifecycle step.
+- [~] 5. Visual/human validation: consented study data, privacy controls,
+  distinct human instruments and refusal of unauthorized UI evidence are
+  implemented and tested. **Missing: the no-fabricated-video guarantee** —
+  nothing asserts that an absent frame is stated rather than synthesized —
+  and `heldOutHumanStateIds` has no test.
+- [~] 6. Human/statistical validity: the scientific lock is pinned and
+  enforced (`statistics/lock-manifest.ts` raises on drift), and real SciPy
+  intervals are recomputed in tests. **Missing: a real-data integration gate
+  for playtesting specifically.** The 10k index test uses a synthetic
+  fixture; the existing Postgres integration covers Memory, not playtesting.
+- [x] 7. Data/Console: indexed and cursor-paginated queries, addressable replay,
+      stable URL state, explicit partial/error states and server-authoritative
+      actions are implemented, with a 10,000-row correctness test. **Caveat:** that
+      test asserts correctness, not latency; there is no timing assertion for
+      console navigation or replay selection, which the cross-cutting ledger
+      below also requires.
+- [~] 8. Portability and first milestone: the second mechanically different game
+  joins by configuration alone (`e0cca05a`), the 40-critique cap is enforced,
+  and a synthetic 1,000-episode cycle records finding, comparison and a
+  hold next-cycle state. **Missing: 1,000 authoritative episodes** — the
+  existing cycle is synthetic, which this document's own boundary
+  (`docs/playtesting-target-state.md`) excludes as production evidence — and
+  there was **no second reachable policy** until the registry below.
 
 ## Cross-cutting acceptance ledger
 

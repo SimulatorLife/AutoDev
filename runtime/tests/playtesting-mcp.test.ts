@@ -642,7 +642,13 @@ test("playtest MCP server: capabilities reports active or absent workspace appro
     assert.equal(approved.buildSha, "a".repeat(40));
     assert.deepEqual(approved.allowedScenarios, ["tutorial", "boss-fight"]);
     assert.deepEqual(approved.approvedPolicies, ["random", "heuristic-v1"]);
-    assert.deepEqual(approved.supportedPolicies, ["random"]);
+    // `first-legal` joins the runnable set: it is AutoDev-owned, consults no
+    // RNG, and so needs no game code. `heuristic-v1` stays unsupported, which
+    // is what this fixture exists to prove.
+    assert.deepEqual(approved.supportedPolicies, ["random", "first-legal"]);
+    // Runnable is supported *and* approved. This approval permits `random` and
+    // `heuristic-v1`, so `first-legal` is supported but not runnable here —
+    // the distinction the fixture exists to prove.
     assert.deepEqual(approved.runnablePolicies, ["random"]);
     assert.deepEqual(approved.unsupportedApprovedPolicies, ["heuristic-v1"]);
     assert.equal(approved.limits.maxStepsPerEpisode, 50);

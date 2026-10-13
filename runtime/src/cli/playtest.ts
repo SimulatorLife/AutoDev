@@ -41,6 +41,7 @@ import {
   scaffoldAdapterModule,
   scaffoldBinding
 } from "./playtest-scaffold.ts";
+import { PLAYTESTS_BUILTIN_POLICY_IDS } from "../playtesting/policies.ts";
 import { unsupportedChoice } from "./command-choice.ts";
 
 export const PLAYTESTS_SUBCOMMANDS = ["init", "check", "conformance"] as const;
@@ -60,7 +61,8 @@ export type PlaytestProblemCode =
   | "empty-rubric"
   | "empty-observation-fields"
   | "invalid-binding"
-  | "incomplete-binding";
+  | "incomplete-binding"
+  | "unknown-policy";
 
 export interface PlaytestCheckProblem {
   readonly severity: PlaytestProblemSeverity;
@@ -340,7 +342,36 @@ export function checkPlaytestIntegration(
       }
     }
   }
+  // A game config may name any policy string, so a declared policy that no code
+  // path constructs would otherwise be accepted here and refused mid-run, with
+  // the operator meeting it as an unexplained validation error on their first
+  // batch.
+  const declaredPolicies = configPolicies(checkoutRoot);
+  for (const policyId of declaredPolicies) {
+    if (!PLAYTESTS_BUILTIN_POLICY_IDS.has(policyId)) {
+      problems.push({
+        severity: "error",
+        code: "unknown-policy",
+        file: path.posix.join(PLAYTESTS_INTEGRATION_DIR, PLAYTESTS_CONFIG_FILE),
+        message: `${PLAYTESTS_INTEGRATION_DIR}/${PLAYTESTS_CONFIG_FILE} declares policy "${policyId}", which AutoDev cannot run. Supported policies: ${[...PLAYTESTS_BUILTIN_POLICY_IDS].join(", ")}.`
+      });
+    }
+  }
+
   return { problems, hashes };
+}
+
+/** The policies the checked-in config declares, or none when it declares none. */
+function configPolicies(checkoutRoot: string): readonly string[] {
+  const config = readJsonFile(
+    path.join(integrationRoot(checkoutRoot), PLAYTESTS_CONFIG_FILE)
+  );
+  if (!config.ok || !isPlainRecord(config.value)) return [];
+  const { policies } = config.value;
+  return Array.isArray(policies) &&
+    policies.every((entry) => typeof entry === "string")
+    ? (policies as string[])
+    : [];
 }
 
 /**

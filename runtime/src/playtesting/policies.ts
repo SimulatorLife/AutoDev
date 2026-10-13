@@ -156,3 +156,76 @@ export function createScoredPlaytestPolicy(options: {
     }
   };
 }
+
+/**
+ * Deterministic lowest-action-id baseline.
+ *
+ * Independent of the random policy in the way that matters for a comparison arm:
+ * it consults no seed and no RNG state, so its decisions cannot move when the
+ * seed, the worker count or the scheduling order changes. It always takes the
+ * lexicographically first legal action, which makes it the reference for
+ * whether an arm's improvement came from the heuristic rather than from luck.
+ *
+ * It is a policy in its own right rather than a scored wrapper, so it needs no
+ * game code and is therefore available to every onboarded game.
+ */
+export function createFirstLegalPlaytestPolicy(
+  options: {
+    readonly id?: string;
+    readonly cohort?: string;
+  } = {}
+): PlaytestPolicy {
+  const id = options.id ?? "first-legal";
+  const cohort = options.cohort ?? "deterministic";
+  if (!id.trim() || !cohort.trim()) {
+    throw new TypeError("First-legal policy id and cohort must be non-empty.");
+  }
+  return {
+    id,
+    version: "lowest-action-id-v1",
+    cohort,
+    strategy: "lexicographically-first-legal-action",
+    modelId: null,
+    modelRevision: null,
+    chooseAction(context) {
+      const actions = context.legalActionIds;
+      if (
+        actions.length === 0 ||
+        actions.some((actionId) => !actionId.trim()) ||
+        new Set(actions).size !== actions.length
+      ) {
+        throw new TypeError(
+          "First-legal policy requires unique, non-empty legal actions."
+        );
+      }
+      return {
+        actionId: [...actions].sort()[0]!,
+        prediction: null
+      };
+    }
+  };
+}
+
+/**
+ * The policies AutoDev can actually run, in one place.
+ *
+ * A game config may name any policy string, so this registry is what the
+ * onboarding check validates against. Without it, a game could declare a policy
+ * no code path constructs and meet the refusal as a mid-run failure.
+ */
+export const PLAYTESTS_BUILTIN_POLICY_IDS: ReadonlySet<string> = new Set([
+  "random",
+  "first-legal"
+]);
+
+/** Construct a built-in policy by id, or null when the id is not one. */
+export function createBuiltinPlaytestPolicy(
+  policyId: string
+): PlaytestPolicy | null {
+  if (policyId === "random")
+    return createSeededRandomPlaytestPolicy({ id: policyId });
+  if (policyId === "first-legal") {
+    return createFirstLegalPlaytestPolicy({ id: policyId });
+  }
+  return null;
+}

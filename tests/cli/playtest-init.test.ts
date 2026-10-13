@@ -432,3 +432,36 @@ test("a seeded RNG without a version is rejected rather than half-advertised", (
   );
   assert.deepEqual(accepted, []);
 });
+
+test("a declared policy AutoDev cannot run is caught at onboarding", () => {
+  const { root } = checkout();
+  initPlaytestIntegration(root);
+  const configFile = path.join(root, ".autodev", PLAYTESTS_CONFIG_FILE);
+  const config = read(root, PLAYTESTS_CONFIG_FILE) as {
+    policies: string[];
+  };
+  // A game may name any policy string, so nothing in the config stops it
+  // declaring one no code path constructs. Without this check the game would
+  // pass `check`, be approved, and meet the refusal mid-run.
+  config.policies = ["random", "a-policy-nobody-implemented"];
+  writeFileSync(configFile, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+  const problem = checkPlaytestIntegration(root).problems.find(
+    (entry) => entry.code === "unknown-policy"
+  );
+  assert.ok(problem, "an unrunnable policy must be reported");
+  assert.equal(problem!.severity, "error");
+  // Named, with the set that would work, so the operator can fix it in one edit.
+  assert.match(problem!.message, /a-policy-nobody-implemented/u);
+  assert.match(problem!.message, /random/u);
+
+  // Both advertised policies are accepted.
+  config.policies = ["random", "first-legal"];
+  writeFileSync(configFile, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  assert.deepEqual(
+    checkPlaytestIntegration(root).problems.filter(
+      (entry) => entry.code === "unknown-policy"
+    ),
+    []
+  );
+});
