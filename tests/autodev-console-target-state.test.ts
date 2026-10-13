@@ -615,20 +615,25 @@ test("canonical migration tracker records the current repository quality-gate ev
   // typecheck
   assert.match(
     migration,
-    /pnpm run typecheck passes the root project and all four workspaces/u,
-    "typecheck evidence must record the exact pnpm run typecheck result"
+    /`pnpm run typecheck` passed the root project and all four workspaces/u,
+    "typecheck evidence must record the current root and workspace typecheck result"
   );
-  // lint
+  // Lint/format status is evidence, not a desired green badge. Record current
+  // targeted validation and the real repository-wide failures explicitly.
   assert.match(
     migration,
-    /pnpm run lint:ci passes repository-wide with no errors or warnings/u,
-    "lint evidence must record the passing pnpm run lint:ci result"
+    /Repository-wide `pnpm run lint:ci` was not rerun/u,
+    "the tracker must not claim a repository-wide lint pass without current evidence"
   );
-  // format
   assert.match(
     migration,
-    /pnpm run format:check passes repository-wide/u,
-    "format-check evidence must record the exact pnpm run format:check result"
+    /repository-wide `pnpm run format:check` failed on 30 files/u,
+    "the tracker must record the observed repository-wide format failure"
+  );
+  assert.match(
+    migration,
+    /changed TypeScript sources passed targeted formatting/u,
+    "the tracker must distinguish targeted formatting from repository-wide formatting"
   );
 
   // p25 acceptance must record concrete OpenLIT patch-level evidence, not a
