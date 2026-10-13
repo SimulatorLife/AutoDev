@@ -510,6 +510,13 @@ type SyntheticRun = {
   cancellationRequested: boolean;
 };
 const syntheticRuns = new Map<string, SyntheticRun>();
+
+/**
+ * When set, the active-runs read fails. The Console must then show an explicit
+ * unavailable state; a test that never sees the read fail cannot tell a stale
+ * frame from a live one.
+ */
+let syntheticRunsReadFails = false;
 const syntheticRunEpisodes = new Map<string, Record<string, unknown>>();
 
 async function readJsonBody(
@@ -1025,8 +1032,27 @@ function handleSyntheticRunRead(response: ServerResponse, url: URL): boolean {
       .map(([batchId, run]) => ({
         batchId,
         assignmentCount: run.assignmentCount,
-        createdAt: FIXTURE_TIMESTAMP
+        createdAt: FIXTURE_TIMESTAMP,
+        // The same owner record the single-batch status route returns, so one
+        // workspace read renders every live batch.
+        status: {
+          batchId,
+          status: "running",
+          cancellationReason: null,
+          result: syntheticRunResult(batchId, run),
+          error: null
+        }
       }));
+    if (syntheticRunsReadFails) {
+      // A deliberately unreadable read: the Console must show an explicit
+      // unavailable state rather than freezing the last good frame.
+      sendJson(
+        response,
+        { error: { code: "synthetic_unavailable", message: "Synthetic run store is offline." } },
+        503
+      );
+      return true;
+    }
     sendJson(response, {
       schema: "autodev-control-playtesting-runs-v1",
       workspaceId: WORKSPACE_ID,
@@ -1137,6 +1163,13 @@ const server = createServer(
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (url.pathname === "/health") {
       response.writeHead(200).end("ok");
+      return;
+    }
+    // Fixture control, so a browser test can make the active-runs read fail
+    // and observe the Console's unavailable state rather than inferring it.
+    if (url.pathname === "/fixture/runs-read-fail") {
+      syntheticRunsReadFails = url.searchParams.get("mode") !== "off";
+      sendJson(response, { syntheticRunsReadFails });
       return;
     }
     if (

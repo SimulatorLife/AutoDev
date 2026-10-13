@@ -457,3 +457,74 @@ test("approved run start, status refresh, and cancellation stay in the Console w
   ).toBeVisible();
   expect(documentNavigations).toBe(0);
 });
+
+const FIXTURE_BASE_URL = "http://127.0.0.1:4311";
+
+/**
+ * The live view must be driven by the operator doing nothing, and an unreadable
+ * read must be visible rather than silent. The fixture's run read is switched
+ * off explicitly here so a passing run cannot be explained by the panel never
+ * having polled.
+ */
+test("live batches appear without operator action, and an unreadable read is stated", async ({
+  page,
+  request
+}) => {
+  const approvalForm = await fillSyntheticApprovalForm(page);
+  await approvalForm.getByRole("button", { name: "Approve" }).click();
+  await expect(
+    page.locator('[data-workspace-approval-state="active"]')
+  ).toBeVisible();
+
+  await page.goto("/playtesting?workspaceId=fixture/game");
+  const panel = page.getByRole("region", { name: "Live batches" });
+  await expect(panel).toBeVisible();
+  await expect(panel).toHaveAttribute("data-freshness", /live|idle/u);
+
+  const form = page.getByRole("form", { name: RUN_TWO_ASSIGNMENTS_LABEL });
+  await expect(form).toBeVisible();
+  await form.getByLabel("Seed 1").fill("live-1");
+  await form.getByLabel("Seed 2").fill("live-2");
+  await form.getByRole("button", { name: RUN_TWO_ASSIGNMENTS_LABEL }).click();
+
+  // No Refresh click: the batch appears because the view polls the owner.
+  const batch = panel.getByTestId("playtesting-active-run").first();
+  await expect(batch).toBeVisible();
+  await expect(batch).toHaveAttribute("data-status", "running");
+
+  // The focused batch is address state, so refresh restores it.
+  await batch.getByRole("button", { name: "Show progress" }).click();
+  await expect(batch).toHaveAttribute("data-focused", "true");
+  await expect(page).toHaveURL(/liveBatch=batch-/u);
+  await page.reload();
+  const reloaded = page.getByRole("region", { name: "Live batches" });
+  await expect(reloaded.getByTestId("playtesting-active-run").first()).toHaveAttribute(
+    "data-focused",
+    "true"
+  );
+
+  // An unreadable read is an explicit state, and the last known frame is
+  // labelled as last known rather than badged as current.
+  const response = await request.get(
+    `${FIXTURE_BASE_URL}/fixture/runs-read-fail?mode=on`
+  );
+  expect(response.ok()).toBe(true);
+  try {
+    const degraded = page.getByRole("region", { name: "Live batches" });
+    await expect(degraded).toHaveAttribute("data-freshness", "unavailable", {
+      timeout: 20_000
+    });
+    await expect(degraded.getByText(/not confirmed current state/iu)).toBeVisible();
+    await expect(
+      degraded.getByTestId("playtesting-active-run-lastknown")
+    ).toBeVisible();
+  } finally {
+    await request.get(
+      `${FIXTURE_BASE_URL}/fixture/runs-read-fail?mode=off`
+    );
+  }
+
+  // Progress is announced politely and does not move focus.
+  await expect(panel.locator("[aria-live='polite']")).toHaveCount(1);
+  expect(document.activeElement?.tagName).not.toBe("HTML");
+});

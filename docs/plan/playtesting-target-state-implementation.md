@@ -812,11 +812,17 @@ This slice records a target-state requirement added to
       cross-session analysis — that route (threading the playtest repository and
       artifact store through `PlaytestingRunControlApiOptions`) is the remaining
       blocker, not the dispatch logic.
-- [ ] Browser E2E coverage for the live view: polling, backoff, the `stale`
-      state and keyboard/mobile use. The fixture
-      (`console/e2e/playtesting-control-api-fixture.ts`) does not yet intercept
-      `GET /control/playtesting/runs` or simulate a failing read, so the
-      `unavailable` state currently has only unit coverage.
+- [~] Browser E2E coverage for the live view is **written but unrun here**.
+      `console/e2e/playtesting-usability.spec.ts:469` covers the batch appearing
+      with no operator action, the focused batch surviving a reload, the
+      `unavailable` state after a failed read, the "last known" labelling and
+      the polite live region. The fixture now serves the new list shape and
+      exposes `GET /fixture/runs-read-fail` to force a failing read.
+      All 8 specs in that file fail identically in this environment at Chromium
+      launch (`bootstrap_check_in ... Permission denied (1100)`), including the
+      7 that predate this work, so this is a sandbox restriction rather than a
+      code failure. The `unavailable` state therefore has unit and render
+      coverage but **no executed browser confirmation yet**.
 - [ ] Cross-session synthesis reporting that cites each contributing session's
       own packet and labels itself cross-session, at the review-submission
       boundary.
