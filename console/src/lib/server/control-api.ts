@@ -20,6 +20,7 @@ import { readFileSync } from "node:fs";
 import nodePath from "node:path";
 
 import {
+  assertWorkspacePlaytestApproval,
   type ControlApiAgentDetailResponse,
   type ControlApiAgentsResponse,
   type ControlApiConcurrencyStatus,
@@ -60,13 +61,15 @@ import {
   type ControlApiProvidersResponse,
   type ControlApiRoutingResponse,
   type ControlApiRuntimeResponse,
+  type ControlApiSkillContentPatchRequest,
+  type ControlApiSkillContentPatchResponse,
+  type ControlApiSkillContentResponse,
   type ControlApiSkillRolesPatchRequest,
   type ControlApiSkillRolesPatchResponse,
   type ControlApiSkillsResponse,
   type ControlApiToolsResponse,
-  type ControlApiWorkspacesResponse,
   type ControlApiWorkspacePlaytestApprovalResponse,
-  assertWorkspacePlaytestApproval,
+  type ControlApiWorkspacesResponse,
   type ConvergenceStatus,
   isSandboxMode,
   LOCAL_CONTROL_API_ACTOR,
@@ -2182,6 +2185,44 @@ export async function fetchSkills(
   };
 }
 
+function isControlApiSkillContentResponse(
+  value: unknown,
+  name: string
+): value is ControlApiSkillContentResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-skill-content-v1" &&
+    value.name === name &&
+    value.path === `.rulesync/skills/${name}/SKILL.md` &&
+    typeof value.content === "string" &&
+    typeof value.revision === "string" &&
+    CONTROL_API_REVISION_PATTERN.test(value.revision)
+  );
+}
+
+/** Server-only read of one existing canonical RuleSync skill source. */
+export async function fetchSkillContent(
+  name: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiSkillContentResponse>> {
+  const result = await fetchControlApi<unknown>(
+    `${CONTROL_API_PATHS.skills}/${encodeURIComponent(name)}/content`,
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  if (isControlApiSkillContentResponse(result.data, name)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_skill_content_response",
+    message:
+      "AutoDev Control API returned an incompatible canonical skill source; the Console cannot safely edit it."
+  };
+}
+
 /**
  * Narrows an assignment result.
  *
@@ -2232,6 +2273,48 @@ export async function patchSkillRoles(
     code: "autodev_control_api_invalid_skill_assignment_response",
     message:
       "AutoDev Control API returned an incompatible skill assignment response; the Console cannot tell which roles were written."
+  };
+}
+
+function isControlApiSkillContentPatchResponse(
+  value: unknown,
+  name: string
+): value is ControlApiSkillContentPatchResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-skill-content-patch-v1" &&
+    value.name === name &&
+    typeof value.revision === "string" &&
+    CONTROL_API_REVISION_PATTERN.test(value.revision) &&
+    typeof value.changed === "boolean" &&
+    value.projectionApplied === true &&
+    isReconciliationBundle(value.reconciliation)
+  );
+}
+
+/** Server-only revision-checked update of an existing canonical skill. */
+export async function patchSkillContent(
+  name: string,
+  payload: ControlApiSkillContentPatchRequest,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiSkillContentPatchResponse>> {
+  const result = await mutateControlApi<unknown>(
+    "PATCH",
+    `${CONTROL_API_PATHS.skills}/${encodeURIComponent(name)}/content`,
+    payload,
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  if (isControlApiSkillContentPatchResponse(result.data, name)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_skill_content_patch_response",
+    message:
+      "AutoDev Control API returned an incompatible skill update response; the Console cannot confirm that the projections were applied."
   };
 }
 

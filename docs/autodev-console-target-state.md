@@ -8,7 +8,7 @@
 >
 > **Focused Memory design:** [memory-target-state.md](memory-target-state.md) and [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
 >
-> **Last reviewed:** 2026-10-10 (Usage trace drill-down, canonical filter axes, request-time OpenLIT rendering, compact-navigation dismissal behavior, and the black/charcoal neutral background-surface hierarchy).
+> **Last reviewed:** 2026-10-13 (revision-checked RuleSync Skill editing, source-confirmed context-compaction Usage, and the black/charcoal neutral background-surface hierarchy).
 
 ## 1. Canonical-document contract
 
@@ -562,6 +562,8 @@ Used
 
 Canonical skill definitions and descriptive metadata come from `.rulesync/skills`; role eligibility is joined from the execution contract by skill name. One Skills table shows the complete canonical skill catalog, each skill's role-assignment checkboxes, and its state, including skills with no assigned roles; each checkbox change immediately submits the full assignment set through the revision-checked mutation route. There is no separate Save button or second assignment table. The page explicitly surfaces role references with no canonical source. A missing or invalid RuleSync catalog is not a successful empty catalog. Only an owning producer may assert observed exposure/use/error. Do not infer later stages from configuration or eligibility.
 
+Each skill links to a URL-addressable source detail view. Operators edit an existing `.rulesync/skills/<name>/SKILL.md` through a revision-checked **Save & Apply** operation; Runtime validates the canonical file and regenerates then checks the configured RuleSync skill projections before confirming success. Do not invent skill enable/disable state without a lossless canonical source and runtime meaning.
+
 ### Memory
 
 Memory must use the same AutoDev shell, tables, forms, filters, status patterns, and detail surfaces as the rest of the Console.
@@ -657,6 +659,8 @@ Prompt/context contents, request/session IDs, raw paths, and other high-cardinal
 
 Target Usage may show count/time-series and bounded breakdowns by workspace, provider, requested model, and agent/role where those dimensions are source-confirmed. A per-request compaction rate is valid only when the compaction numerator and logical-request denominator are defined for the **same scope and time range**. Unsupported/unobserved signals remain unavailable, never zero.
 
+The current Console derives its compaction count, time series, and workspace/requested-model/agent-role breakdowns from the source-confirmed `autodev.request_kind=compaction` attribute on successful logical routed-request spans. It does not query the `autodev.context.compactions` metric for these widgets: the pinned OpenLIT generic metric time-series path averages datapoints, which is not a valid counter aggregation. The widgets use OpenLIT's structured trace-query path, share the logical-request time range and applicable workspace/model/agent filters, and show a per-request rate only over that same scope. Provider and Skill filters do not have source-confirmed semantics on this logical-request signal, so compaction panels explicitly report unavailable when either filter is selected; they are not silently ignored and are never attributed to a guessed provider or Skill. Provider breakdown and metric-backed ingestion remain open until a source-confirmed query path can preserve counter semantics and scope.
+
 ### Git change metrics
 
 Git change-output telemetry is a target requirement for Usage and for bounded per-resource aggregate views. It answers "what did the work actually produce" next to "what did it cost".
@@ -738,7 +742,7 @@ Use the retained OpenLIT time-range control. Core owns the canonical `USAGE_VARI
 
 Widgets opt in only to variables whose semantics apply. Unsupported signal/filter combinations fail closed rather than silently changing semantics. Bind selections through typed parameterized inputs; never concatenate browser-controlled SQL. Provider-attempt spans carry only validated `autodev.workspace` and `autodev.agent.role` context from the logical request so those filters work without a cross-span join; these remain span attributes, never metric dimensions.
 
-The Console's same-origin server calls only fixed read-only Usage telemetry endpoints with a dedicated server-to-server credential. The summary endpoint is `POST /api/autodev/usage` (`autodev-openlit-usage-v3`): it accepts bounded time/filter selections, not raw SQL or arbitrary widget IDs, and returns fixed validated widget data, supported filter values, and a bounded recent-attempt list. The trace-detail endpoint accepts only a validated OpenTelemetry SpanId and resolves its TraceId server-side. Both use the dedicated Usage credential and never reuse mutation credentials.
+The Console's same-origin server calls only fixed read-only Usage telemetry endpoints with a dedicated server-to-server credential. The summary endpoint is `POST /api/autodev/usage` (`autodev-openlit-usage-v4`): it accepts bounded time/filter selections, not raw SQL or arbitrary widget IDs, and returns fixed validated widget data, supported filter values, and a bounded recent-attempt list. The trace-detail endpoint accepts only a validated OpenTelemetry SpanId and resolves its TraceId server-side. Both use the dedicated Usage credential and never reuse mutation credentials.
 
 Target views include logical requests, attempts/provider reliability, input/output/cache tokens, cost, latency, failures, MCP activity, relevant skill evidence, traces, and source-confirmed context compactions. Usage presents a bounded recent-attempt list; selecting a span opens its privacy-filtered trace detail. Current verified widgets/evidence belong in the migration tracker. Evaluation-to-trace navigation uses the same fixed read-only `GET /api/autodev/usage/span/:spanId` endpoint with the dedicated Usage service credential. It accepts only a validated OpenTelemetry SpanId, resolves its TraceId server-side, and returns at most 200 privacy-filtered span summaries (IDs/parent, operation/service, timestamp, duration, status) without span attributes, events, prompts, responses, tool arguments, SQL, or tenant context.
 
@@ -798,6 +802,8 @@ Target resource families include:
 /control/playtesting   # indexed reads plus typed run/status/cancel operations
 /control/github
 ```
+
+Canonical skill source reads and edits use `GET/PATCH /control/skills/:name/content`; the existing `PATCH /control/skills/:name` remains exclusively the complete desired role-assignment operation.
 
 Use named typed operations only; no arbitrary command endpoint.
 
@@ -860,6 +866,7 @@ Current OpenLIT version/image/patch evidence belongs in autodev-console-migratio
 - The Providers tab uses five columns — **Provider, Status, Active Agents, Roles, Agent Limits**. Status reads `Ready` only when the provider is healthy and fully configured, otherwise naming the blocking state. Active Agents reports the live Runtime count. Roles shows **Default, Smart, Orchestrator, Subagent** with distinct white-outline icons, `P1/P2/P3/Disabled` priority dropdowns and model selectors that dim when disabled. The Disabled priority is highlighted; P1–P3 use a neutral style. Agent Limits provides **Per session** and **Across sessions** steppers, an **Unlimited** button and a **Disable / Enable** button that preserves configured models, priorities and limits.
 - Agents and Models show active instance counts per configured role and model, respectively; the Providers and Models views refresh current counts every five seconds while open. Not-observed live state remains distinct from a measured zero.
 - Skills presents catalog metadata and role assignments in one table; every checkbox change auto-saves the complete role set, with revision-conflict/failure feedback and no separate Save button.
+- Each Skills row links to a URL-addressable canonical source editor. A skill edit uses the loaded source revision, validates and writes only the existing RuleSync `SKILL.md`, regenerates and checks the configured skill projections, and reports a failed apply without claiming convergence; do not add an enabled/disabled flag without lossless source/runtime semantics.
 - All editable configuration changes in the Console auto-save on change; Apply is reserved for intentionally staged filters, previews, or confirmation-bound actions.
 - Provider rows are not globally draggable: routing precedence is per-role and per-tier, edited through the role priority controls rather than a separate row-order setting.
 - Item-scoped controls are contextual: each appears on the item's list row and in its detail view inside the owning resource (provider toggles on Providers rows and provider detail; model toggles on Models rows, model detail, and the provider detail's model list), backed by one typed operation; other resources show read-only state with a link.

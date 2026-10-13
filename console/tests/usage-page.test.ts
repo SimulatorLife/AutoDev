@@ -7,9 +7,36 @@ import UsagePage from "../app/usage/page.ts";
 
 const usageToken = "usage-page-test-token";
 const traceSpanId = "0123456789abcdef";
+const usageWidgetIds = [
+  "logical-requests",
+  "input-tokens",
+  "output-tokens",
+  "cache-rate",
+  "p95-latency",
+  "attempts-by-provider",
+  "requests-by-agent",
+  "mcp-calls",
+  "mcp-duration",
+  "mcp-errors",
+  "mcp-by-tool",
+  "attempt-errors-by-provider",
+  "context-compactions",
+  "context-compactions-over-time",
+  "context-compactions-by-workspace",
+  "context-compactions-by-model",
+  "context-compactions-by-agent",
+  "skill-events-by-event",
+  "estimated-cost"
+] as const;
 const usageResponse = {
-  schema: "autodev-openlit-usage-v3",
-  widgets: [],
+  schema: "autodev-openlit-usage-v4",
+  widgets: usageWidgetIds.map((key) => ({
+    key,
+    querySucceeded: false,
+    observed: false,
+    partial: false,
+    rows: []
+  })),
   filterOptions: {
     workspace: { supported: true, values: [] },
     provider: { supported: true, values: ["openai"] },
@@ -66,7 +93,7 @@ function withUsageConfig(): () => void {
   };
 }
 
-test("UsagePage renders validated v3 metrics and selected trace using server-side OpenLIT calls", async () => {
+test("UsagePage renders a validated v4 snapshot and selected trace using server-side OpenLIT calls", async () => {
   const restore = withUsageConfig();
   try {
     const requests: { url: string; init: RequestInit | undefined }[] = [];

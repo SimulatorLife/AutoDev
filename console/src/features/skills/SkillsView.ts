@@ -12,6 +12,7 @@ import {
 } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { SourceValidationIssues } from "../../components/status/SourceValidationIssues.ts";
 import {
@@ -26,7 +27,10 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
-import { MONO_META_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  ACTION_LINK_CLASS,
+  MONO_META_CLASS
+} from "../../components/ui/text-classes.ts";
 import {
   assignmentUnavailableReason,
   SAVE_OUTCOME_MESSAGES,
@@ -118,9 +122,10 @@ export function SkillsView({
           "div",
           { className: "min-w-0" },
           React.createElement(
-            "span",
+            NavigationLink,
             {
-              className: "block font-mono font-semibold text-fg truncate",
+              href: `/skills/${encodeURIComponent(skill.name)}`,
+              className: `${ACTION_LINK_CLASS} block truncate font-mono font-semibold`,
               title: skill.name
             },
             skill.name
@@ -313,13 +318,13 @@ export function SkillsView({
             },
             SAVE_OUTCOME_MESSAGES[saveOutcome]
           ),
-      unavailable !== null
-        ? React.createElement(
+      unavailable === null
+        ? null
+        : React.createElement(
             "p",
             { className: CALLOUT_WARNING_CLASS, role: "status" },
             unavailable
-          )
-        : null,
+          ),
       React.createElement<DataTableProps<SkillDefinition>>(DataTable, {
         data: skills,
         columns,

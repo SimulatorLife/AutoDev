@@ -34,8 +34,27 @@ export type UsageWidgetId =
   | "mcp-by-tool"
   | "attempt-errors-by-provider"
   | "context-compactions"
+  | "context-compactions-over-time"
+  | "context-compactions-by-workspace"
+  | "context-compactions-by-model"
+  | "context-compactions-by-agent"
   | "skill-events-by-event"
   | "estimated-cost";
+
+/** One bounded time bucket from an observed Usage time-series widget. */
+export interface UsageTimeBucketCount {
+  readonly bucket: string;
+  readonly count: number;
+}
+
+/** One bounded category row from an observed Usage breakdown widget. */
+export interface UsageBreakdownCount {
+  readonly name: string;
+  readonly count: number;
+}
+
+/** Axes that do not have source-confirmed semantics for logical compaction spans. */
+export type UsageCompactionUnsupportedFilter = "provider" | "skill";
 
 export interface UsageWidgetConfig {
   readonly id: UsageWidgetId;
@@ -162,6 +181,16 @@ export interface UsageMetricsData {
   readonly attemptErrorsByProvider:
     readonly { readonly provider: string; readonly count: number }[] | null;
   readonly contextCompactions: number | null;
+  /** Source-confirmed compactions per logical routed request, as a percent. */
+  readonly contextCompactionRatePercent: number | null;
+  readonly contextCompactionsOverTime: readonly UsageTimeBucketCount[] | null;
+  readonly contextCompactionsByWorkspace: readonly UsageBreakdownCount[] | null;
+  readonly contextCompactionsByModel: readonly UsageBreakdownCount[] | null;
+  readonly contextCompactionsByAgent: readonly UsageBreakdownCount[] | null;
+  /** Provider/skill scopes are unsupported for this logical-request signal. */
+  readonly contextCompactionsUnsupportedFilters: readonly UsageCompactionUnsupportedFilter[];
+  /** True when one or more bounded compaction breakdowns may be truncated. */
+  readonly contextCompactionsBreakdownsPartial: boolean;
   readonly skillEventsByEvent:
     readonly { readonly event: string; readonly count: number }[] | null;
   readonly requestsByRole:

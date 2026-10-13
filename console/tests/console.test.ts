@@ -256,7 +256,6 @@ import {
   workspacesFromControlApi
 } from "../src/lib/server/views.ts";
 
-
 /** Find one rendered anchor by destination without depending on prop order. */
 function anchorMarkupForHref(markup: string, href: string): string {
   const escapedHref = href.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
@@ -1673,9 +1672,9 @@ test("a date field keeps its focus ring on every stop inside the control", () =>
     "the form controls must carry the :focus-within clause: " +
       css.slice(0, 200)
   );
-  const selectors = new Set((delegationClause[1] ?? "")
-    .split(",")
-    .map((part) => part.trim()));
+  const selectors = new Set(
+    (delegationClause[1] ?? "").split(",").map((part) => part.trim())
+  );
   for (const forbidden of ["a", "button", "summary", "[tabindex]"]) {
     assert.equal(
       selectors.has(forbidden),
@@ -3987,6 +3986,13 @@ test("Usage role and provider breakdowns use distinct semantic chart series", ()
     failedAttempts: 1,
     attemptErrorsByProvider: [{ provider: "codex", count: 1 }],
     contextCompactions: 1,
+    contextCompactionRatePercent: (1 / 3) * 100,
+    contextCompactionsOverTime: [{ bucket: "10/06 00:00", count: 1 }],
+    contextCompactionsByWorkspace: [{ name: "repo-a", count: 1 }],
+    contextCompactionsByModel: [{ name: "gpt-6-luna", count: 1 }],
+    contextCompactionsByAgent: [{ name: "orchestrator", count: 1 }],
+    contextCompactionsUnsupportedFilters: [],
+    contextCompactionsBreakdownsPartial: false,
     skillEventsByEvent: [{ event: "used", count: 1 }],
     requestsByRole: [{ role: "orchestrator", count: 3 }],
     attemptsByProvider: [{ provider: "codex", count: 5 }],
@@ -4064,6 +4070,13 @@ test("Usage values stay readable at large scales and keep unattributed groups ex
         failedAttempts: 0,
         attemptErrorsByProvider: [],
         contextCompactions: 0,
+        contextCompactionRatePercent: 0,
+        contextCompactionsOverTime: [],
+        contextCompactionsByWorkspace: [],
+        contextCompactionsByModel: [],
+        contextCompactionsByAgent: [],
+        contextCompactionsUnsupportedFilters: [],
+        contextCompactionsBreakdownsPartial: false,
         skillEventsByEvent: [],
         requestsByRole: [{ role: "", count: 126 }],
         attemptsByProvider: [{ provider: "codex", count: 3419 }],
@@ -4385,6 +4398,13 @@ test("UsageView with empty arrays still reports no synthetic counts", () => {
         failedAttempts: null,
         attemptErrorsByProvider: null,
         contextCompactions: null,
+        contextCompactionRatePercent: null,
+        contextCompactionsOverTime: null,
+        contextCompactionsByWorkspace: null,
+        contextCompactionsByModel: null,
+        contextCompactionsByAgent: null,
+        contextCompactionsUnsupportedFilters: [],
+        contextCompactionsBreakdownsPartial: false,
         skillEventsByEvent: null,
         requestsByRole: [],
         attemptsByProvider: [],
@@ -12125,24 +12145,39 @@ test("Pagination reports the rows on the page and offers only the directions tha
   const middle = renderToStaticMarkup(at(50, 50, 120)) ?? "";
   assert.match(middle, /aria-label="Records pagination"/);
   assert.match(middle, /51–100 of 120/);
-  assert.match(middle, /<a\b(?=[^>]*href="\/memory\?offset=0")(?=[^>]*rel="prev")[^>]*>/u);
-  assert.match(middle, /<a\b(?=[^>]*href="\/memory\?offset=100")(?=[^>]*rel="next")[^>]*>/u);
+  assert.match(
+    middle,
+    /<a\b(?=[^>]*href="\/memory\?offset=0")(?=[^>]*rel="prev")[^>]*>/u
+  );
+  assert.match(
+    middle,
+    /<a\b(?=[^>]*href="\/memory\?offset=100")(?=[^>]*rel="next")[^>]*>/u
+  );
 
   // The unavailable direction is inert text, not a dead link a keyboard
   // operator could focus and find did nothing.
   const first = renderToStaticMarkup(at(0, 50, 120)) ?? "";
   assert.match(first, /<span aria-disabled="true"[^>]*>Previous<\/span>/);
-  assert.match(first, /<a\b(?=[^>]*href="\/memory\?offset=50")(?=[^>]*rel="next")[^>]*>/u);
+  assert.match(
+    first,
+    /<a\b(?=[^>]*href="\/memory\?offset=50")(?=[^>]*rel="next")[^>]*>/u
+  );
 
   const last = renderToStaticMarkup(at(100, 50, 120)) ?? "";
   assert.match(last, /<span aria-disabled="true"[^>]*>Next<\/span>/);
-  assert.match(last, /<a\b(?=[^>]*href="\/memory\?offset=50")(?=[^>]*rel="prev")[^>]*>/u);
+  assert.match(
+    last,
+    /<a\b(?=[^>]*href="\/memory\?offset=50")(?=[^>]*rel="prev")[^>]*>/u
+  );
 
   // Past the end of a collection too small to paginate, the bar survives to
   // carry the way back.
   const pastEnd = renderToStaticMarkup(at(100, 50, 12)) ?? "";
   assert.match(pastEnd, /No rows on this page/);
-  assert.match(pastEnd, /<a\b(?=[^>]*href="\/memory\?offset=50")(?=[^>]*rel="prev")[^>]*>/u);
+  assert.match(
+    pastEnd,
+    /<a\b(?=[^>]*href="\/memory\?offset=50")(?=[^>]*rel="prev")[^>]*>/u
+  );
 });
 
 test("MemoryRecordsView and MemoryExperiencesView page a collection larger than one page", () => {
@@ -13358,9 +13393,7 @@ test("ProvidersView Models tab puts each model's toggle next to the model", () =
     );
     assert.ok(form, `${model.id} toggle must be next to the model`);
     assert.ok(
-      markup.includes(
-        `href="/providers/${model.provider}/models/${model.id}"`
-      ),
+      markup.includes(`href="/providers/${model.provider}/models/${model.id}"`),
       `${model.id} must link to its detail view`
     );
     assert.ok(
@@ -14622,7 +14655,9 @@ test("ToolsView applies URL-addressable source and role filters without losing c
   );
   // Filter is active for mcp only. Match the anchor as a whole so Next.js's
   // attribute ordering does not become part of the rendering contract.
-  const selectedMcpFilter = /<a\b(?=[^>]*data-source-filter="mcp")[^>]*>/u.exec(markup)?.[0];
+  const selectedMcpFilter = /<a\b(?=[^>]*data-source-filter="mcp")[^>]*>/u.exec(
+    markup
+  )?.[0];
   assert.ok(selectedMcpFilter, "the MCP source filter is rendered");
   assert.match(selectedMcpFilter, /bg-surface-raised/u);
   assert.match(markup, /Showing 1 of 4 tool entries/);
@@ -16666,10 +16701,7 @@ test("ClosePanelLink renders the shared close mark and keeps its accessible name
   );
 
   // A real link: following it dismisses the panel, with or without scripting.
-  assert.match(
-    anchorMarkupForHref(markup, "/memory?tab=records"),
-    /^<a\b/u
-  );
+  assert.match(anchorMarkupForHref(markup, "/memory?tab=records"), /^<a\b/u);
   // The mark comes from the shared icon set, not a raw glyph typed into the
   // view, so it shares the product's grid, stroke, and currentColor behaviour.
   assert.match(markup, /<svg[^>]*viewBox="0 0 24 24"/);

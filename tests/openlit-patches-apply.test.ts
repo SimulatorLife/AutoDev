@@ -203,6 +203,88 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /runWidgetQuery\(seedWidget, \{/u,
     "the Usage endpoint must hand the runner the seeded widget definition"
   );
+  assert.match(
+    usageRoute,
+    /schema: "autodev-openlit-usage-v4"/u,
+    "patch 54 exposes only the fixed v4 Usage response"
+  );
+  assert.doesNotMatch(
+    usageRoute,
+    /autodev-openlit-usage-v3|metricTimeSeries|queryConnectorTraces|SELECT\s|readContextCompactionWidgets|COMPACTION_TRACE_LIMIT/u,
+    "compaction widgets use the fixed structured trace query path, not a legacy version, raw SQL, or a parallel span aggregator"
+  );
+  const usageLayout = JSON.parse(
+    readFileSync(
+      join(
+        dir,
+        "src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json"
+      ),
+      "utf8"
+    )
+  ) as {
+    widgets: Record<
+      string,
+      { properties?: { xAxis?: unknown; yAxis?: unknown } }
+    >;
+  };
+  for (const [widget, id, axis] of [
+    [
+      "context-compactions-over-time",
+      "47c52af8-0c4a-4e85-8a9e-a8f85745b112",
+      "label"
+    ],
+    [
+      "context-compactions-by-workspace",
+      "47c52af8-0c4a-4e85-8a9e-a8f85745b113",
+      "g0"
+    ],
+    [
+      "context-compactions-by-model",
+      "47c52af8-0c4a-4e85-8a9e-a8f85745b114",
+      "g0"
+    ],
+    [
+      "context-compactions-by-agent",
+      "47c52af8-0c4a-4e85-8a9e-a8f85745b115",
+      "g0"
+    ]
+  ] as const) {
+    assert.ok(
+      usageRoute.includes(`"${widget}": "${id}"`),
+      `patch 54 must return the fixed ${widget} trace widget`
+    );
+    assert.equal(
+      usageLayout.widgets[id]?.properties?.xAxis,
+      axis,
+      `patch 54 must freeze ${widget} to its source-confirmed ${axis} axis`
+    );
+  }
+  assert.match(
+    usageRoute,
+    /const querySucceeded = !err && Array\.isArray\(data\)/u
+  );
+  assert.match(usageRoute, /rows\.length >= resultLimit/u);
+  const widgetQuerySource = usageRoute.slice(
+    usageRoute.indexOf("const widgetQueries = Promise.all("),
+    usageRoute.indexOf("const traceListPromise =")
+  );
+  assert.doesNotMatch(
+    widgetQuerySource,
+    /listSpans\(/u,
+    "compaction widgets must use OpenLIT's fixed structured queries; listSpans remains limited to the separate recent-attempt list"
+  );
+  assert.match(usageRoute, /async function readRecentAttempts\(/u);
+  const usageRouteTests = readFileSync(
+    join(dir, "src/client/src/__tests__/app/api/autodev/usage/route.test.ts"),
+    "utf8"
+  );
+  assert.match(usageRouteTests, /autodev-openlit-usage-v4/u);
+  assert.doesNotMatch(
+    usageRouteTests,
+    /autodev-openlit-usage-v3/u,
+    "the upstream API tests must not preserve a v3 compatibility expectation"
+  );
+  assert.match(usageRouteTests, /expect\(response\.status\)\.toBe\(200\)/u);
 
   // Dropped tables must be dropped on existing installs, not left behind.
   const dropAuthoring = readFileSync(

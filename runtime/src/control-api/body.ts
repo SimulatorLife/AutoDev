@@ -49,7 +49,7 @@ export async function readControlApiJsonObject(
         ok: false,
         status: 413,
         code: "autodev_control_api_payload_too_large",
-        message: "Control API body exceeds 64 KiB."
+        message: `Control API body exceeds ${maximumBytes} bytes.`
       };
     }
     chunks.push(bytes);

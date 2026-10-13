@@ -1,7 +1,9 @@
 import {
+  deriveContextCompactionRatePercent,
   isOpenTelemetrySpanId,
   isOpenTelemetryTraceId,
   USAGE_VARIABLE_IDS,
+  type UsageCompactionUnsupportedFilter,
   type UsageFilterOptions,
   type UsageFilterSelection,
   type UsageMetricsData,
@@ -41,6 +43,10 @@ const USAGE_WIDGET_IDS: readonly UsageWidgetId[] = [
   "mcp-by-tool",
   "attempt-errors-by-provider",
   "context-compactions",
+  "context-compactions-over-time",
+  "context-compactions-by-workspace",
+  "context-compactions-by-model",
+  "context-compactions-by-agent",
   "skill-events-by-event",
   "estimated-cost"
 ];
@@ -54,7 +60,9 @@ interface OpenLITRatio {
 
 interface OpenLITWidgetResult {
   readonly key: UsageWidgetId;
+  readonly querySucceeded: boolean;
   readonly observed: boolean;
+  readonly partial: boolean;
   readonly rows: readonly unknown[];
   readonly valuePath?: string;
   readonly ratio?: OpenLITRatio;
@@ -63,7 +71,7 @@ interface OpenLITWidgetResult {
 }
 
 interface OpenLITUsageResponse {
-  readonly schema: "autodev-openlit-usage-v3";
+  readonly schema: "autodev-openlit-usage-v4";
   readonly widgets: readonly OpenLITWidgetResult[];
   readonly filterOptions: Readonly<
     Record<
@@ -182,7 +190,7 @@ export class OpenLITUsageClient {
       }
       const parsed = parseOpenLITUsageResponse(body);
       if (!parsed) return { kind: "invalid-response" };
-      return { kind: "ok", data: toUsageSnapshot(parsed) };
+      return { kind: "ok", data: toUsageSnapshot(parsed, selection) };
     } catch {
       return { kind: "unreachable" };
     } finally {
@@ -262,7 +270,7 @@ function parseOpenLITTraceDetail(value: unknown): UsageTraceDetail | null {
 function parseOpenLITUsageResponse(
   value: unknown
 ): OpenLITUsageResponse | null {
-  if (!isRecord(value) || value.schema !== "autodev-openlit-usage-v3") {
+  if (!isRecord(value) || value.schema !== "autodev-openlit-usage-v4") {
     return null;
   }
   if (!Array.isArray(value.widgets)) return null;
@@ -276,12 +284,19 @@ function parseOpenLITUsageResponse(
     widgets.push(widget);
   }
 
+  if (
+    widgets.length !== USAGE_WIDGET_IDS.length ||
+    USAGE_WIDGET_IDS.some((id) => !seenWidgetIds.has(id))
+  ) {
+    return null;
+  }
+
   const filterOptions = parseFilterOptions(value.filterOptions);
   if (!filterOptions) return null;
   const traceList = parseOpenLITTraceList(value.traceList);
   if (!traceList) return null;
   return {
-    schema: "autodev-openlit-usage-v3",
+    schema: "autodev-openlit-usage-v4",
     widgets,
     filterOptions,
     traceList
@@ -356,7 +371,9 @@ function parseWidgetResult(candidate: unknown): OpenLITWidgetResult | null {
     !isRecord(candidate) ||
     typeof candidate.key !== "string" ||
     !USAGE_WIDGET_ID_SET.has(candidate.key) ||
+    typeof candidate.querySucceeded !== "boolean" ||
     typeof candidate.observed !== "boolean" ||
+    typeof candidate.partial !== "boolean" ||
     !Array.isArray(candidate.rows)
   ) {
     return null;
@@ -367,7 +384,9 @@ function parseWidgetResult(candidate: unknown): OpenLITWidgetResult | null {
   if (candidate.ratio !== undefined && ratio === null) return null;
   return {
     key: candidate.key as UsageWidgetId,
+    querySucceeded: candidate.querySucceeded,
     observed: candidate.observed,
+    partial: candidate.partial,
     rows: candidate.rows,
     ...(typeof candidate.valuePath === "string"
       ? { valuePath: candidate.valuePath }
@@ -451,6 +470,13 @@ function observedMetric(
   return numberValue(readValuePath(widget.rows, widget.valuePath));
 }
 
+function observedCount(widget: OpenLITWidgetResult | undefined): number | null {
+  const count = observedMetric(widget);
+  return count !== null && Number.isSafeInteger(count) && count >= 0
+    ? count
+    : null;
+}
+
 function ratioMetric(widget: OpenLITWidgetResult | undefined): number | null {
   if (!widget?.observed || !widget.ratio) return null;
   const numerator = numberValue(
@@ -479,7 +505,35 @@ function groupedRows(
   return rows;
 }
 
-function toUsageSnapshot(response: OpenLITUsageResponse): UsageSnapshot {
+function contextCompactionRows(
+  widget: OpenLITWidgetResult | undefined,
+  total: number | null
+): readonly { readonly name: string; readonly count: number }[] | null {
+  if (!widget?.querySucceeded) return null;
+  if (widget.rows.length === 0) return total === 0 ? [] : null;
+  const rows = groupedRows(widget);
+  return rows?.every((row) => Number.isSafeInteger(row.count) && row.count >= 0)
+    ? rows
+    : null;
+}
+
+function contextCompactionUnsupportedFilters(
+  selection: UsageFilterSelection
+): readonly UsageCompactionUnsupportedFilter[] {
+  const unsupported: UsageCompactionUnsupportedFilter[] = [];
+  if ((selection.values.provider?.length ?? 0) > 0) {
+    unsupported.push("provider");
+  }
+  if ((selection.values.skill?.length ?? 0) > 0) {
+    unsupported.push("skill");
+  }
+  return unsupported;
+}
+
+function toUsageSnapshot(
+  response: OpenLITUsageResponse,
+  selection: UsageFilterSelection
+): UsageSnapshot {
   const widgets = new Map(
     response.widgets.map((widget) => [widget.key, widget])
   );
@@ -488,8 +542,37 @@ function toUsageSnapshot(response: OpenLITUsageResponse): UsageSnapshot {
   const requests = groupedRows(widgets.get("requests-by-agent"));
   const calls = groupedRows(widgets.get("mcp-by-tool"));
   const skillEvents = groupedRows(widgets.get("skill-events-by-event"));
+  const unsupportedCompactionFilters =
+    contextCompactionUnsupportedFilters(selection);
+  const logicalRequests = observedCount(widgets.get("logical-requests"));
+  const compactions = observedCount(widgets.get("context-compactions"));
+  const compactionTimeSeries = contextCompactionRows(
+    widgets.get("context-compactions-over-time"),
+    compactions
+  );
+  const compactionsByWorkspace = contextCompactionRows(
+    widgets.get("context-compactions-by-workspace"),
+    compactions
+  );
+  const compactionsByModel = contextCompactionRows(
+    widgets.get("context-compactions-by-model"),
+    compactions
+  );
+  const compactionsByAgent = contextCompactionRows(
+    widgets.get("context-compactions-by-agent"),
+    compactions
+  );
+  const compactionsAvailable = unsupportedCompactionFilters.length === 0;
+  const breakdownsPartial = [
+    "context-compactions-by-workspace",
+    "context-compactions-by-model",
+    "context-compactions-by-agent"
+  ].some((id) => {
+    const widget = widgets.get(id as UsageWidgetId);
+    return widget?.querySucceeded === true && widget.partial;
+  });
   const metrics: UsageMetricsData = {
-    logicalRequests: observedMetric(widgets.get("logical-requests")),
+    logicalRequests,
     totalInputTokens: observedMetric(widgets.get("input-tokens")),
     totalOutputTokens: observedMetric(widgets.get("output-tokens")),
     cacheReadRate: ratioMetric(widgets.get("cache-rate")),
@@ -510,7 +593,24 @@ function toUsageSnapshot(response: OpenLITUsageResponse): UsageSnapshot {
       attemptErrors === null
         ? null
         : attemptErrors.map(({ name, count }) => ({ provider: name, count })),
-    contextCompactions: observedMetric(widgets.get("context-compactions")),
+    contextCompactions: compactionsAvailable ? compactions : null,
+    contextCompactionRatePercent: compactionsAvailable
+      ? deriveContextCompactionRatePercent(compactions, logicalRequests)
+      : null,
+    contextCompactionsOverTime: compactionsAvailable
+      ? (compactionTimeSeries?.map(({ name, count }) => ({
+          bucket: name,
+          count
+        })) ?? null)
+      : null,
+    contextCompactionsByWorkspace: compactionsAvailable
+      ? compactionsByWorkspace
+      : null,
+    contextCompactionsByModel: compactionsAvailable ? compactionsByModel : null,
+    contextCompactionsByAgent: compactionsAvailable ? compactionsByAgent : null,
+    contextCompactionsUnsupportedFilters: unsupportedCompactionFilters,
+    contextCompactionsBreakdownsPartial:
+      compactionsAvailable && breakdownsPartial,
     skillEventsByEvent:
       skillEvents === null
         ? null

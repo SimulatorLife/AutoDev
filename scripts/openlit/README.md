@@ -123,7 +123,7 @@ contract for the unified Console. It uses the existing typed `runWidgetQuery`,
 board variable specs, and datasource `distinctValues` adapter. Request input is
 limited to the seeded time range and bounded workspace/provider/model/agent/skill
 values; skill filtering is exposed only where source semantics support it. The
-`autodev-openlit-usage-v3` response carries validated fixed-widget data, filter
+`autodev-openlit-usage-v4` response carries validated fixed-widget data, filter
 options, and a privacy-filtered list of at most 25 recent provider attempts; it
 accepts no raw SQL or arbitrary widget selector. The endpoint has a dedicated
 `AUTODEV_OPENLIT_USAGE_TOKEN` and does not accept OpenLIT sessions or API keys.

@@ -200,13 +200,12 @@ test("a promoted skill can be assigned to a role, and the read reflects it", asy
   }
 });
 
-test("a skill is read from the catalog, not from a per-skill route", async () => {
+test("the role-assignment route is not a source read path", async () => {
   const h = harness();
   try {
-    // There was a GET here returning `autodev-control-skill-detail-v1` that no
-    // Console view read and no contract declared. Rather than leave a second
-    // way to read one skill, the route refuses the method and says where the
-    // read lives.
+    // Role assignment and source editing have separate owners and contracts.
+    // The assignment endpoint remains PATCH-only; canonical Markdown is read
+    // through the explicit `/content` subresource.
     const response = await h.call("GET", "/control/skills/release-checklist");
     assert.equal(response.status, 405);
     assert.equal(response.headers.allow, "PATCH");
@@ -214,7 +213,7 @@ test("a skill is read from the catalog, not from a per-skill route", async () =>
       String(
         (response.body as { error?: { message?: string } })?.error?.message
       ),
-      /Read a skill from \/control\/skills\./u
+      /Read canonical source from \/control\/skills\/:name\/content\./u
     );
   } finally {
     h.restore();

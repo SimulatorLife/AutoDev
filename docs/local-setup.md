@@ -721,6 +721,13 @@ node --test tests/rulesync-mcp.test.ts tests/rulesync-hooks-shadow.test.ts tests
 
 Rulesync does not replace AutoDev's live hook enforcement or role filtering. `.rulesync/skills/` is the single tracked source for every AutoDev skill, and its generated repository skill folders are live output. The repository skill folders each tool discovers inside AutoDev (`.github/skills/` for Copilot, `.claude/skills/` for Claude Code, `.agents/skills/` for Codex and Antigravity) are untracked Rulesync output. The installer generates them by running the pinned `node_modules/.bin/rulesync` with `rulesync.jsonc` (run `pnpm install --frozen-lockfile` first). Its `--check` reports edited, stale, or missing copies. `.gitignore` lists the first two. The installer writes `/.agents/skills/` to `.git/info/exclude` instead, because Antigravity does not load a gitignored `.agents/skills/`. Copilot's cloud agent generates its folder in `copilot-setup-steps.yml`. Each skill's Rulesync `targets` frontmatter selects its folders. Repository-only development skills such as `autodev-codex-request-capture`, `autodev-session-diagnostics`, and `opentelemetry` keep the default and reach every tool, with their bundled scripts (if any). `ccc`, `lsp-mcp-server`, and `orchestration` target only `copilot`, because Copilot's cloud agent has no user level. The remaining skills target nothing, because they already reach local tools at user level and a repository copy would list them twice. Repository-only skills are never installed at user level. Tools that read the repository without running setup, such as github.com Copilot chat and code review, see no repository skills. `tests/rulesync-skills.test.ts` generates the folders fresh and freezes that exposure. The installer symlinks Codex/user-level skills from `.rulesync/skills/`, and Antigravity continues to use its explicit `include_only` registration. Claude-served turns read skills through Codex's tools, so there is no Claude-specific skill view. Hook declarations are Rulesync-owned and generated into each provider's active repository location; AutoDev continues to own the implementation scripts. Codex's `prevent_idle_sleep` field is a known projection limitation, and Copilot/Antigravity projections remain intentionally lossy.
 
+The Console Skills detail view edits only an existing canonical `.rulesync/skills/<name>/SKILL.md`; Runtime revision-checks the source, then runs the pinned RuleSync skills-only generator and `--check` across the configured targets before confirming. For manual source edits, regenerate and verify the same projections with:
+
+```bash
+node_modules/.bin/rulesync generate --features skills
+node_modules/.bin/rulesync generate --features skills --check
+```
+
 To enable the router authentication boundary during a planned restart, run:
 
 ```bash
@@ -822,7 +829,7 @@ separately generated value in `$CODEX_HOME/openlit-secrets.env`;
 
 If `/usage` reports `autodev_openlit_usage_unreachable`, check that OpenLIT is running and that `AUTODEV_OPENLIT_USAGE_URL` points to an address reachable from the Console server. The local default is port 3000; start the OpenLIT stack with `scripts/openlit/up.sh` when Docker is available. A successful HTTP response with an invalid Usage schema is reported separately as `autodev_openlit_usage_invalid_response`; neither failure state renders metric panels or substitutes sample values.
 
-The AutoDev summary response is `autodev-openlit-usage-v3`, including validated widget data, filter options, and the bounded recent-attempt list. After changing the Usage patch set, rebuild and restart the patched OpenLIT stack with `scripts/openlit/up.sh`; the Console deliberately rejects older response contracts instead of silently dropping data.
+The AutoDev summary response is `autodev-openlit-usage-v4`, including validated widget data, filter options, and the bounded recent-attempt list. After changing the Usage patch set (including the v4 compaction widgets), rebuild and restart the patched OpenLIT stack with `scripts/openlit/up.sh`; the Console deliberately rejects older response contracts instead of silently dropping data.
 
 The two Console server-only tokens are seeded into the server environment by
 exactly one writer: `scripts/openlit/bootstrap-secrets.sh`, which is the same

@@ -16,6 +16,7 @@ import { BarChart } from "../../components/charts/BarChart.ts";
 import { FilterBar } from "../../components/filters/FilterBar.ts";
 import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectField.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
+import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import {
   PAGE_SECTION_STACK_CLASS,
@@ -102,6 +103,8 @@ const SUB_DOLLAR_COST_FORMATTER = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 6
 });
+const CONTEXT_COMPACTION_EMPTY_MESSAGE =
+  "No source-confirmed compactions were observed in this time range.";
 
 export function formatTokenCount(value: number | null): string {
   if (value === null) return NOT_OBSERVED_LABEL;
@@ -793,6 +796,8 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
   const attemptErrorsByProvider = metrics.attemptErrorsByProvider;
   const callsByTool = metrics.callsByTool;
   const skillEventsByEvent = metrics.skillEventsByEvent;
+  const compactionUnsupportedFilters =
+    metrics.contextCompactionsUnsupportedFilters;
 
   return React.createElement(
     React.Fragment,
@@ -911,9 +916,31 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
       React.createElement(
         "div",
         { className: PAGE_SECTION_STACK_CLASS },
+        compactionUnsupportedFilters.length > 0
+          ? React.createElement(
+              "p",
+              {
+                className: CALLOUT_WARNING_CLASS,
+                role: "status",
+                "data-context-compaction-scope": "not-applicable"
+              },
+              `Context compaction data is unavailable for the selected ${compactionUnsupportedFilters.join(" and ")} filter${compactionUnsupportedFilters.length === 1 ? "" : "s"}; this source attributes compactions to logical requests, not those dimensions.`
+            )
+          : null,
+        metrics.contextCompactionsBreakdownsPartial
+          ? React.createElement(
+              "p",
+              {
+                className: CALLOUT_WARNING_CLASS,
+                role: "status",
+                "data-context-compaction-breakdowns": "partial"
+              },
+              "A compaction breakdown reached its 20-row limit; the shown categories may be partial."
+            )
+          : null,
         React.createElement(
           StatGrid,
-          { columns: 3 },
+          { columns: 4 },
           React.createElement(StatCard, {
             title: "Physical Attempts",
             value: formatCount(metrics.physicalAttempts),
@@ -927,8 +954,116 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
           React.createElement(StatCard, {
             title: "Context Compactions",
             value: formatCount(metrics.contextCompactions),
-            subtitle: "Runtime-confirmed compactions"
+            subtitle: "Source-confirmed logical requests"
+          }),
+          React.createElement(StatCard, {
+            title: "Compactions per Request",
+            value: formatCacheRate(metrics.contextCompactionRatePercent),
+            subtitle: "Compactions / logical routed requests"
           })
+        ),
+        React.createElement(
+          "div",
+          { className: LIST_PANEL_CLASS },
+          React.createElement(
+            "h4",
+            { className: SECTION_HEADING_CLASS },
+            "Context Compactions Over Time"
+          ),
+          React.createElement(BarChart, {
+            data:
+              metrics.contextCompactionsOverTime === null
+                ? null
+                : metrics.contextCompactionsOverTime.map((item) => ({
+                    label: item.bucket,
+                    value: item.count,
+                    valueText: formatCount(item.count)
+                  })),
+            label: "Source-confirmed context compactions by time bucket",
+            notObservedMessage: "Compaction time-series data not observed.",
+            emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
+            barClass: "bg-chart-3",
+            valueClass: "text-chart-3"
+          })
+        ),
+        React.createElement(
+          "div",
+          { className: gridRowClass(3, "gap-6") },
+          React.createElement(
+            "div",
+            { className: LIST_PANEL_CLASS },
+            React.createElement(
+              "h4",
+              { className: SECTION_HEADING_CLASS },
+              "Context Compactions by Workspace"
+            ),
+            React.createElement(BarChart, {
+              data:
+                metrics.contextCompactionsByWorkspace === null
+                  ? null
+                  : metrics.contextCompactionsByWorkspace.map((item) => ({
+                      label: formatDimension(item.name),
+                      value: item.count,
+                      valueText: formatCount(item.count)
+                    })),
+              label: "Source-confirmed context compactions by workspace",
+              notObservedMessage:
+                "Workspace compaction breakdown not observed.",
+              emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
+              barClass: "bg-chart-1",
+              valueClass: "text-chart-1"
+            })
+          ),
+          React.createElement(
+            "div",
+            { className: LIST_PANEL_CLASS },
+            React.createElement(
+              "h4",
+              { className: SECTION_HEADING_CLASS },
+              "Context Compactions by Requested Model"
+            ),
+            React.createElement(BarChart, {
+              data:
+                metrics.contextCompactionsByModel === null
+                  ? null
+                  : metrics.contextCompactionsByModel.map((item) => ({
+                      label: formatDimension(item.name),
+                      value: item.count,
+                      valueText: formatCount(item.count)
+                    })),
+              label: "Source-confirmed context compactions by requested model",
+              notObservedMessage:
+                "Requested-model compaction breakdown not observed.",
+              emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
+              barClass: "bg-chart-2",
+              valueClass: "text-chart-2"
+            })
+          ),
+          React.createElement(
+            "div",
+            { className: LIST_PANEL_CLASS },
+            React.createElement(
+              "h4",
+              { className: SECTION_HEADING_CLASS },
+              "Context Compactions by Agent Role"
+            ),
+            React.createElement(BarChart, {
+              data:
+                metrics.contextCompactionsByAgent === null
+                  ? null
+                  : metrics.contextCompactionsByAgent.map((item) => ({
+                      label: formatDimension(item.name),
+                      value: item.count,
+                      valueText: formatCount(item.count)
+                    })),
+              label: "Source-confirmed context compactions by agent role",
+              notObservedMessage:
+                "Agent-role compaction breakdown not observed.",
+              emptyMessage: CONTEXT_COMPACTION_EMPTY_MESSAGE,
+              barClass: "bg-chart-4",
+              valueClass: "text-chart-4"
+            })
+          )
         ),
         React.createElement(
           "div",

@@ -31,6 +31,8 @@ import {
   type ControlApiProvidersResponse,
   type ControlApiRoutingResponse,
   type ControlApiRuntimeResponse,
+  type ControlApiSkillContentPatchResponse,
+  type ControlApiSkillContentResponse,
   type ControlApiSkillRolesPatchResponse,
   type ControlApiSkillsResponse,
   type ControlApiToolsResponse,
@@ -73,6 +75,9 @@ import {
   RuleSyncCommandHistoryUnavailableError,
   RuleSyncCommandValidationError,
   RuleSyncRepository,
+  RuleSyncSkillConflictError,
+  RuleSyncSkillSourceUnavailableError,
+  RuleSyncSkillValidationError,
   ToolCatalogAdapter
 } from "@simulatorlife/autodev-data";
 import {
@@ -95,7 +100,10 @@ import {
   WEB_SEARCH_TOOL
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
-import { materializeCommands } from "../platform/install-materializer.ts";
+import {
+  materializeCommands,
+  materializeRuleSyncSkillProjections
+} from "../platform/install-materializer.ts";
 import type { PlaytestRunControl } from "../playtesting/mcp.ts";
 import { getDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
 import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
@@ -163,7 +171,10 @@ function isAgentLimitBody(value: unknown): boolean {
 const MODEL_PATH = /^\/control\/models\/([a-zA-Z0-9._-]+)$/u;
 const AGENT_DETAIL_PATH = /^\/control\/agents\/([a-zA-Z0-9._-]+)$/u;
 const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
-const SKILL_DETAIL_PATH = /^\/control\/skills\/([a-zA-Z0-9._-]+)$/u;
+const SKILL_ROLES_PATH = /^\/control\/skills\/([a-zA-Z0-9._-]+)$/u;
+const SKILL_CONTENT_PATH = /^\/control\/skills\/([a-z0-9-]{1,64})\/content$/u;
+const SKILL_CONTENT_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
+const SKILL_CONTENT_REQUEST_MAX_BYTES = 300_000;
 
 /**
  * The contract's digest, read without throwing.
@@ -3459,7 +3470,373 @@ async function patchSkillRoles(
   } satisfies ControlApiSkillRolesPatchResponse);
 }
 
-async function skillDetailRoute(
+interface SkillContentPatchBody {
+  readonly expectedRevision: string;
+  readonly content: string;
+}
+
+type UpdatedRuleSyncSkillSource = Awaited<
+  ReturnType<RuleSyncRepository["updateSkillSource"]>
+>;
+
+interface SkillContentError {
+  readonly status: number;
+  readonly code: string;
+  readonly message: string;
+  readonly reason: string;
+}
+
+function skillContentReadError(error: unknown): SkillContentError | null {
+  if (error instanceof RuleSyncSkillConflictError) {
+    return {
+      status: 404,
+      code: "autodev_control_skill_not_found",
+      message: error.message,
+      reason: "unknown_skill"
+    };
+  }
+  if (error instanceof RuleSyncSkillValidationError) {
+    return {
+      status: 409,
+      code: "autodev_control_skill_source_invalid",
+      message: error.message,
+      reason: "invalid_source"
+    };
+  }
+  if (error instanceof RuleSyncSkillSourceUnavailableError) {
+    return {
+      status: 503,
+      code: "autodev_control_skill_source_unavailable",
+      message: error.message,
+      reason: "source_unavailable"
+    };
+  }
+  return null;
+}
+
+function readSkillContent(
+  response: ServerResponse,
+  name: string,
+  repository: RuleSyncRepository
+): void {
+  try {
+    const source = repository.readSkillSource(name);
+    sendJson(
+      response,
+      200,
+      {
+        schema: "autodev-control-skill-content-v1",
+        name: source.name,
+        path: source.path,
+        content: source.content,
+        revision: source.revision
+      } satisfies ControlApiSkillContentResponse,
+      { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+    );
+  } catch (error) {
+    const failure = skillContentReadError(error);
+    if (failure === null) throw error;
+    sendControlError(response, failure.status, failure.code, failure.message);
+  }
+}
+
+function auditSkillContentError(
+  actor: ControlApiActor,
+  resource: string,
+  reason: string
+): void {
+  auditMutation({
+    actor: actor.actor,
+    actorVerified: true,
+    role: actor.role,
+    action: "update_rule_sync_skill",
+    resource,
+    outcome: "error",
+    changes: null,
+    reason
+  });
+}
+
+async function readSkillContentPatchBody(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  resource: string
+): Promise<SkillContentPatchBody | null> {
+  const parsed = await readControlApiJsonObject(
+    request,
+    SKILL_CONTENT_REQUEST_MAX_BYTES
+  );
+  if (!parsed.ok) {
+    auditSkillContentError(actor, resource, parsed.code);
+    sendControlError(response, parsed.status, parsed.code, parsed.message);
+    return null;
+  }
+  const { body } = parsed;
+  if (
+    Object.keys(body).length === 2 &&
+    typeof body.content === "string" &&
+    typeof body.expectedRevision === "string" &&
+    SKILL_CONTENT_REVISION_PATTERN.test(body.expectedRevision)
+  ) {
+    return {
+      content: body.content,
+      expectedRevision: body.expectedRevision
+    };
+  }
+  auditSkillContentError(actor, resource, "invalid_body");
+  sendControlError(
+    response,
+    400,
+    "autodev_control_api_invalid_body",
+    "Skill content updates require exactly the expected source revision and Markdown content."
+  );
+  return null;
+}
+
+function skillContentUpdateError(error: unknown): SkillContentError | null {
+  if (error instanceof RuleSyncSkillConflictError) {
+    return {
+      status: 409,
+      code: "autodev_control_skill_content_conflict",
+      message: error.message,
+      reason: "revision_conflict"
+    };
+  }
+  if (error instanceof RuleSyncSkillValidationError) {
+    return {
+      status: 400,
+      code: "autodev_control_skill_source_invalid",
+      message: error.message,
+      reason: "invalid_source"
+    };
+  }
+  if (error instanceof RuleSyncSkillSourceUnavailableError) {
+    return {
+      status: 503,
+      code: "autodev_control_skill_source_unavailable",
+      message: error.message,
+      reason: "source_unavailable"
+    };
+  }
+  return null;
+}
+
+async function updateSkillContent(
+  response: ServerResponse,
+  actor: ControlApiActor,
+  resource: string,
+  name: string,
+  body: SkillContentPatchBody,
+  repository: RuleSyncRepository
+): Promise<UpdatedRuleSyncSkillSource | null> {
+  try {
+    return await repository.updateSkillSource({
+      name,
+      expectedRevision: body.expectedRevision,
+      content: body.content
+    });
+  } catch (error) {
+    const failure = skillContentUpdateError(error);
+    if (failure === null) throw error;
+    auditSkillContentError(actor, resource, failure.reason);
+    sendControlError(response, failure.status, failure.code, failure.message);
+    return null;
+  }
+}
+
+function applySkillContent(
+  response: ServerResponse,
+  actor: ControlApiActor,
+  resource: string,
+  repositoryRoot: string,
+  updated: UpdatedRuleSyncSkillSource
+): boolean {
+  try {
+    materializeRuleSyncSkillProjections(repositoryRoot);
+    return true;
+  } catch {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_skill",
+      resource,
+      outcome: "error",
+      changes: { name: updated.name, revision: updated.revision },
+      reason: "projection_apply_failed",
+      desiredGeneration: updated.revision,
+      observedGeneration: null
+    });
+    sendControlError(
+      response,
+      503,
+      "autodev_control_skill_apply_failed",
+      "Canonical skill source was updated, but RuleSync projection generation or verification failed. Reload the current source before retrying."
+    );
+    return false;
+  }
+}
+
+function confirmSkillContentApplied(
+  response: ServerResponse,
+  actor: ControlApiActor,
+  resource: string,
+  name: string,
+  body: SkillContentPatchBody,
+  updated: UpdatedRuleSyncSkillSource
+): void {
+  const appliedAt = new Date().toISOString();
+  const changed = updated.revision !== body.expectedRevision;
+  auditMutation({
+    actor: actor.actor,
+    actorVerified: true,
+    role: actor.role,
+    action: "update_rule_sync_skill",
+    resource,
+    outcome: "ok",
+    changes: {
+      name,
+      revision: updated.revision,
+      contentBytes: Buffer.byteLength(body.content, "utf8"),
+      changed
+    },
+    desiredGeneration: updated.revision,
+    observedGeneration: updated.revision
+  });
+  const reconciliation = buildReconciliationView({
+    evidence: {
+      desiredGeneration: updated.revision,
+      observedGeneration: updated.revision,
+      lastApplyAt: appliedAt,
+      lastObservationAt: appliedAt,
+      lastError: null
+    },
+    history: historyForResource(resource),
+    hasObservation: true,
+    restartRequired: false
+  });
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-control-skill-content-patch-v1",
+      name,
+      revision: updated.revision,
+      changed,
+      projectionApplied: true,
+      reconciliation
+    } satisfies ControlApiSkillContentPatchResponse,
+    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+  );
+}
+
+function rejectSkillContentMethod(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  pathname: string
+): void {
+  auditRejectedRequest(
+    request,
+    request.method ?? "GET",
+    pathname,
+    "method_not_allowed",
+    actor
+  );
+  response.setHeader("allow", "GET, PATCH");
+  sendControlError(
+    response,
+    405,
+    "autodev_control_api_method_not_allowed",
+    "Canonical skill content accepts GET and PATCH."
+  );
+}
+
+async function patchSkillContent(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  name: string,
+  resource: string,
+  repository: RuleSyncRepository,
+  repositoryRoot: string
+): Promise<void> {
+  if (actor.role !== "operator") {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_skill",
+      resource,
+      outcome: "denied",
+      changes: null,
+      reason: "operator_required"
+    });
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_forbidden",
+      "Updating canonical RuleSync skills requires an operator."
+    );
+    return;
+  }
+
+  const body = await readSkillContentPatchBody(
+    request,
+    response,
+    actor,
+    resource
+  );
+  if (body === null) return;
+  const updated = await updateSkillContent(
+    response,
+    actor,
+    resource,
+    name,
+    body,
+    repository
+  );
+  if (updated === null) return;
+  if (!applySkillContent(response, actor, resource, repositoryRoot, updated))
+    return;
+  confirmSkillContentApplied(response, actor, resource, name, body, updated);
+}
+
+/** Read or update one canonical RuleSync `SKILL.md`, never its assignments. */
+async function skillContentRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  pathname: string,
+  name: string,
+  options: ControlApiRequestOptions
+): Promise<boolean> {
+  const repositoryRoot = options.repositoryRoot ?? DEFAULT_REPO_ROOT;
+  const repository = new RuleSyncRepository(repositoryRoot);
+  const resource = `${CONTROL_API_PATHS.skills}/${name}/content`;
+  if (method === "GET") {
+    readSkillContent(response, name, repository);
+    return true;
+  }
+  if (method === "PATCH") {
+    await patchSkillContent(
+      request,
+      response,
+      actor,
+      name,
+      resource,
+      repository,
+      repositoryRoot
+    );
+    return true;
+  }
+  rejectSkillContentMethod(request, response, actor, pathname);
+  return true;
+}
+
+async function skillRolesRoute(
   request: IncomingMessage,
   response: ServerResponse,
   actor: ControlApiActor,
@@ -3485,11 +3862,6 @@ async function skillDetailRoute(
     );
     return true;
   }
-  // PATCH only. There was a GET here answering `autodev-control-skill-detail-v1`
-  // for one skill, and nothing consumed it: no Console view reads a skill by id,
-  // the documented read is the `/control/skills` collection, and the response
-  // had no contract declared in Core at all. Every field it returned is already
-  // on the collection row, so keeping it was a second way to read one thing.
   if (method === "PATCH") {
     await patchSkillRoles(request, response, actor, name, options);
     return true;
@@ -3500,9 +3872,46 @@ async function skillDetailRoute(
     response,
     405,
     "autodev_control_api_method_not_allowed",
-    "Skill routes accept PATCH. Read a skill from /control/skills."
+    "Skill role assignment accepts PATCH. Read canonical source from /control/skills/:name/content."
   );
   return true;
+}
+
+async function skillControlApiRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  pathname: string,
+  options: ControlApiRequestOptions
+): Promise<boolean> {
+  const contentMatch = pathname.match(SKILL_CONTENT_PATH);
+  if (contentMatch) {
+    await skillContentRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
+      contentMatch[1]!,
+      options
+    );
+    return true;
+  }
+  const rolesMatch = pathname.match(SKILL_ROLES_PATH);
+  if (rolesMatch) {
+    await skillRolesRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
+      rolesMatch[1]!,
+      options
+    );
+    return true;
+  }
+  return false;
 }
 
 async function promptDetailRoute(
@@ -3891,17 +4300,18 @@ export async function handleControlApiRequest(
       promptVersionsMatch.versionHash,
       options
     );
-  const skillMatch = pathname.match(SKILL_DETAIL_PATH);
-  if (skillMatch)
-    return skillDetailRoute(
+  if (
+    await skillControlApiRoute(
       request,
       response,
       actor,
       method,
       pathname,
-      skillMatch[1]!,
       options
-    );
+    )
+  ) {
+    return true;
+  }
   const promptMatch = pathname.match(PROMPT_DETAIL_PATH);
   if (promptMatch)
     return promptDetailRoute(

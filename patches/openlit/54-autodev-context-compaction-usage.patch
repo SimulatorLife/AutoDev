@@ -1,0 +1,487 @@
+diff --git a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+index 81e73d1..65e43f0 100644
+--- a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
++++ b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+@@ -67,12 +67,19 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+ 
+     expect(response.status).toBe(200);
+     const body = await response.json();
+-    expect(body.schema).toBe("autodev-openlit-usage-v3");
++    expect(body.schema).toBe("autodev-openlit-usage-v4");
+     expect(body.traceList).toEqual({ kind: "not-applicable", reason: "skill-filter" });
++    expect(body.widgets.every((widget: { querySucceeded: unknown; partial: unknown }) =>
++      typeof widget.querySucceeded === "boolean" && typeof widget.partial === "boolean"
++    )).toBe(true);
+     expect(body.widgets.map((widget: { key: string }) => widget.key)).toEqual(
+       expect.arrayContaining([
+         "attempt-errors-by-provider",
+         "context-compactions",
++        "context-compactions-over-time",
++        "context-compactions-by-workspace",
++        "context-compactions-by-model",
++        "context-compactions-by-agent",
+         "skill-events-by-event",
+         "estimated-cost"
+       ])
+@@ -95,7 +102,87 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+     }
+   });
+ 
+-  it("returns bounded, privacy-filtered recent provider attempts in the v3 response", async () => {
++  it("runs source-confirmed compaction time-series and bounded breakdown widgets", async () => {
++    const timeWidgetId = "47c52af8-0c4a-4e85-8a9e-a8f85745b112";
++    const workspaceWidgetId = "47c52af8-0c4a-4e85-8a9e-a8f85745b113";
++    const modelWidgetId = "47c52af8-0c4a-4e85-8a9e-a8f85745b114";
++    mockRunWidgetQuery.mockImplementation(async (widget: { id: string }) => {
++      if (widget.id === modelWidgetId) return { err: "query failed" };
++      if (widget.id === timeWidgetId) {
++        return { data: [{ label: "10/07 12:00", count: 1 }] };
++      }
++      if (widget.id === workspaceWidgetId) {
++        return {
++          data: Array.from({ length: 20 }, (_, index) => ({
++            g0: `workspace-${index}`,
++            compactions: index + 1
++          }))
++        };
++      }
++      return { data: [] };
++    });
++
++    const request = new NextRequest("http://localhost/api/autodev/usage", {
++      method: "POST",
++      headers: {
++        authorization: "Bearer server-only-usage-test-token",
++        "content-type": "application/json"
++      },
++      body: JSON.stringify({
++        selection: {
++          range: "24H",
++          values: {
++            workspace: ["repo-a"],
++            model: ["model-a"],
++            agent: ["orchestrator"]
++          }
++        }
++      })
++    });
++    const response = await POST(request);
++    const body = await response.json();
++    const widget = (key: string) =>
++      body.widgets.find((candidate: { key: string }) => candidate.key === key);
++
++    expect(response.status).toBe(200);
++    expect(body.schema).toBe("autodev-openlit-usage-v4");
++    expect(widget("context-compactions-over-time")).toMatchObject({
++      querySucceeded: true,
++      observed: true,
++      partial: false,
++      rows: [{ label: "10/07 12:00", count: 1 }],
++      xAxis: "label",
++      yAxis: "count"
++    });
++    expect(widget("context-compactions-by-workspace")).toMatchObject({
++      querySucceeded: true,
++      observed: true,
++      partial: true,
++      xAxis: "g0",
++      yAxis: "compactions"
++    });
++    expect(widget("context-compactions-by-model")).toMatchObject({
++      querySucceeded: false,
++      observed: false,
++      partial: false,
++      rows: []
++    });
++
++    const logicalWidget = usageDashboard.widgets["47c52af8-0c4a-4e85-8a9e-a8f85745b101"];
++    for (const widgetId of [
++      "47c52af8-0c4a-4e85-8a9e-a8f85745b109",
++      timeWidgetId,
++      workspaceWidgetId,
++      modelWidgetId,
++      "47c52af8-0c4a-4e85-8a9e-a8f85745b115"
++    ]) {
++      expect(usageDashboard.widgets[widgetId].properties.optInVariables).toEqual(
++        logicalWidget.properties.optInVariables
++      );
++    }
++  });
++
++  it("returns bounded, privacy-filtered recent provider attempts in the v4 response", async () => {
+     mockGetTelemetryAdapter.mockResolvedValue({ listSpans: mockListSpans });
+     mockListSpans.mockResolvedValue({
+       rows: [
+@@ -132,7 +219,7 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+     const body = await response.json();
+ 
+     expect(response.status).toBe(200);
+-    expect(body.schema).toBe("autodev-openlit-usage-v3");
++    expect(body.schema).toBe("autodev-openlit-usage-v4");
+     expect(body.traceList).toEqual({
+       kind: "observed",
+       partial: false,
+diff --git a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+index f6326ce..6cf9cb7 100644
+--- a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
++++ b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+@@ -7,6 +7,7 @@ type SeedWidget = {
+ 	config: {
+ 		query?: unknown;
+ 		structuredQuery?: {
++			mode?: string;
+ 			query?: {
+ 				filters?: unknown[];
+ 				aggregations?: unknown[];
+@@ -328,6 +329,52 @@ describe("AutoDev Usage dashboard seed", () => {
+ 		expect(query?.aggregations).toEqual([{ fn: "count", as: "compactions" }]);
+ 	});
+ 
++	it("adds source-scoped compaction time series and bounded logical dimensions", () => {
++		const logical = widgets.find(
++			(candidate) => candidate.title === "Logical routed requests",
++		);
++		const compaction = widgets.find(
++			(candidate) => candidate.title === "Context compactions",
++		);
++		const timeSeries = widgets.find(
++			(candidate) => candidate.title === "Context compactions over time",
++		);
++		expect(compaction?.properties.optInVariables).toEqual(
++			logical?.properties.optInVariables,
++		);
++		expect(timeSeries?.type).toBe("LINE_CHART");
++		expect(timeSeries?.properties).toMatchObject({
++			xAxis: "label",
++			yAxis: "count",
++			optInVariables: ["workspace", "model", "agent"],
++		});
++		expect(timeSeries?.config.structuredQuery?.mode).toBe("timeseries");
++		expect(timeSeries?.config.structuredQuery?.query?.filters).toEqual(
++			compaction?.config.structuredQuery?.query?.filters,
++		);
++		for (const [title, dimension] of [
++			["Context compactions by workspace", "autodev.workspace"],
++			["Context compactions by requested model", "autodev.requested_model"],
++			["Context compactions by agent role", "autodev.agent.role"],
++		] as const) {
++			const widget = widgets.find((candidate) => candidate.title === title);
++			const query = widget?.config.structuredQuery?.query;
++			expect(widget?.type).toBe("BAR_CHART");
++			expect(widget?.properties).toMatchObject({
++				xAxis: "g0",
++				yAxis: "compactions",
++				resultLimit: 20,
++				optInVariables: logical?.properties.optInVariables,
++			});
++			expect(query?.filters).toEqual(compaction?.config.structuredQuery?.query?.filters);
++			expect(query?.groupBy).toEqual([dimension]);
++			expect(query?.limit).toBe(20);
++			expect(query?.aggregations).toEqual([
++				{ fn: "count", as: "compactions" },
++			]);
++		}
++	});
++
+ 	it("groups skill observations by event and filters by bounded skill name", () => {
+ 		const widget = widgets.find((candidate) => candidate.title === "Skill events by event");
+ 		expect(widget).toBeDefined();
+diff --git a/src/client/src/app/api/autodev/usage/route.ts b/src/client/src/app/api/autodev/usage/route.ts
+index c706e27..40c032c 100644
+--- a/src/client/src/app/api/autodev/usage/route.ts
++++ b/src/client/src/app/api/autodev/usage/route.ts
+@@ -38,6 +38,10 @@ const USAGE_WIDGET_IDS = {
+ 	"mcp-by-tool": "47c52af8-0c4a-4e85-8a9e-a8f85745b204",
+ 	"attempt-errors-by-provider": "47c52af8-0c4a-4e85-8a9e-a8f85745b108",
+ 	"context-compactions": "47c52af8-0c4a-4e85-8a9e-a8f85745b109",
++	"context-compactions-over-time": "47c52af8-0c4a-4e85-8a9e-a8f85745b112",
++	"context-compactions-by-workspace": "47c52af8-0c4a-4e85-8a9e-a8f85745b113",
++	"context-compactions-by-model": "47c52af8-0c4a-4e85-8a9e-a8f85745b114",
++	"context-compactions-by-agent": "47c52af8-0c4a-4e85-8a9e-a8f85745b115",
+ 	"skill-events-by-event": "47c52af8-0c4a-4e85-8a9e-a8f85745b110",
+ 	"estimated-cost": "47c52af8-0c4a-4e85-8a9e-a8f85745b111",
+ } as const;
+@@ -167,12 +171,20 @@ export async function POST(request: NextRequest): Promise<Response> {
+ 					err = "Widget missing from the Usage seed";
+ 				}
+ 				const rows = Array.isArray(data) ? data : [];
++				const resultLimit = properties.resultLimit;
++				const querySucceeded = !err && Array.isArray(data);
+ 				return {
+ 					key,
++					querySucceeded,
+ 					observed:
+-						!err &&
+-						Array.isArray(data) &&
++						querySucceeded &&
+ 						isObservedCountPresent(rows, properties.observationCountPath),
++					partial:
++						querySucceeded &&
++						typeof resultLimit === "number" &&
++						Number.isSafeInteger(resultLimit) &&
++						resultLimit > 0 &&
++						rows.length >= resultLimit,
+ 					rows,
+ 					...(typeof properties.value === "string"
+ 						? { valuePath: properties.value }
+@@ -196,7 +208,7 @@ export async function POST(request: NextRequest): Promise<Response> {
+ 	]);
+ 
+ 	return Response.json({
+-		schema: "autodev-openlit-usage-v3",
++		schema: "autodev-openlit-usage-v4",
+ 		widgets,
+ 		filterOptions,
+ 		traceList,
+diff --git a/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
+index d8ec825..86fceb1 100644
+--- a/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
++++ b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
+@@ -754,6 +754,247 @@
+         }
+       }
+     },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b112": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b112",
++      "title": "Context compactions over time",
++      "description": "Time-bucketed count of successful logical routed-request spans carrying the source-confirmed compaction kind. Provider/skill filters do not apply to this logical-request signal.",
++      "type": "LINE_CHART",
++      "properties": {
++        "xAxis": "label",
++        "yAxis": "count",
++        "color": "#0ea5e9",
++        "optInVariables": [
++          "workspace",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "timeseries",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.request_kind",
++                "op": "eq",
++                "value": "compaction"
++              },
++              {
++                "target": "status",
++                "op": "eq",
++                "value": "OK"
++              }
++            ]
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b113": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b113",
++      "title": "Context compactions by workspace",
++      "description": "Counts source-confirmed logical compaction requests grouped by autodev.workspace. Provider and skill filters do not apply to this logical-request signal.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "compactions",
++        "color": "#10b981",
++        "resultLimit": 20,
++        "optInVariables": [
++          "workspace",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.request_kind",
++                "op": "eq",
++                "value": "compaction"
++              },
++              {
++                "target": "status",
++                "op": "eq",
++                "value": "OK"
++              }
++            ],
++            "groupBy": [
++              "autodev.workspace"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "compactions"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b114": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b114",
++      "title": "Context compactions by requested model",
++      "description": "Counts source-confirmed logical compaction requests grouped by autodev.requested_model. Provider and skill filters do not apply to this logical-request signal.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "compactions",
++        "color": "#8b5cf6",
++        "resultLimit": 20,
++        "optInVariables": [
++          "workspace",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.request_kind",
++                "op": "eq",
++                "value": "compaction"
++              },
++              {
++                "target": "status",
++                "op": "eq",
++                "value": "OK"
++              }
++            ],
++            "groupBy": [
++              "autodev.requested_model"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "compactions"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
++    },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b115": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b115",
++      "title": "Context compactions by agent role",
++      "description": "Counts source-confirmed logical compaction requests grouped by autodev.agent.role. Provider and skill filters do not apply to this logical-request signal.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "compactions",
++        "color": "#F36C06",
++        "resultLimit": 20,
++        "optInVariables": [
++          "workspace",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              },
++              {
++                "target": "attribute",
++                "scope": "span",
++                "key": "autodev.request_kind",
++                "op": "eq",
++                "value": "compaction"
++              },
++              {
++                "target": "status",
++                "op": "eq",
++                "value": "OK"
++              }
++            ],
++            "groupBy": [
++              "autodev.agent.role"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "compactions"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
++    },
+     "47c52af8-0c4a-4e85-8a9e-a8f85745b110": {
+       "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b110",
+       "title": "Skill events by event",

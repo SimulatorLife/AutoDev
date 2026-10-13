@@ -43,6 +43,9 @@ const MD_EXTENSION_PATTERN = /\.md$/u;
 const COMMANDS_SOURCE = ".rulesync/commands" as const;
 const COMMAND_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const COMMAND_CONTENT_MAX_BYTES = 48_000;
+const SKILL_SOURCE_MAX_BYTES = 48_000;
+const SKILL_SOURCE_UNSAFE_MESSAGE =
+  "Canonical RuleSync skill source could not be accessed safely.";
 const COMMAND_DIFF_MAX_BYTES = 196_608;
 const COMMAND_HISTORY_LIMIT = 20;
 const COMMAND_HISTORY_FETCH_LIMIT = COMMAND_HISTORY_LIMIT + 1;
@@ -63,25 +66,25 @@ const HOOK_EVENTS: ReadonlySet<string> = new Set([
   "beforeSubmitPrompt",
   "preToolUse"
 ]);
-const COMMAND_UPDATE_QUEUES = new Map<string, Promise<void>>();
+const SOURCE_UPDATE_QUEUES = new Map<string, Promise<void>>();
 
-async function withCommandUpdateLock<T>(
-  commandPath: string,
+async function withSourceUpdateLock<T>(
+  sourcePath: string,
   update: () => Promise<T>
 ): Promise<T> {
-  const previous = COMMAND_UPDATE_QUEUES.get(commandPath) ?? Promise.resolve();
+  const previous = SOURCE_UPDATE_QUEUES.get(sourcePath) ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((resolve) => {
     release = resolve;
   });
-  COMMAND_UPDATE_QUEUES.set(commandPath, current);
+  SOURCE_UPDATE_QUEUES.set(sourcePath, current);
   await previous;
   try {
     return await update();
   } finally {
     release();
-    if (COMMAND_UPDATE_QUEUES.get(commandPath) === current) {
-      COMMAND_UPDATE_QUEUES.delete(commandPath);
+    if (SOURCE_UPDATE_QUEUES.get(sourcePath) === current) {
+      SOURCE_UPDATE_QUEUES.delete(sourcePath);
     }
   }
 }
@@ -139,6 +142,25 @@ function skillFrontmatterProblem(
   return null;
 }
 
+function validateSkillSource(name: string, content: string): void {
+  const frontmatter = content.match(SKILL_FRONTMATTER_PATTERN);
+  if (!frontmatter) {
+    throw new RuleSyncSkillValidationError(
+      "Skill source must have YAML frontmatter."
+    );
+  }
+  let metadata: unknown;
+  try {
+    metadata = parseYaml(frontmatter[1]!);
+  } catch {
+    throw new RuleSyncSkillValidationError(
+      "Skill source frontmatter is not valid YAML."
+    );
+  }
+  const problem = skillFrontmatterProblem(metadata, name);
+  if (problem !== null) throw new RuleSyncSkillValidationError(problem);
+}
+
 /** One located fault in the skill catalog. */
 function invalidSkills(location: string, message: string): RuleSyncSkillsState {
   return {
@@ -147,6 +169,24 @@ function invalidSkills(location: string, message: string): RuleSyncSkillsState {
     issues: [{ location, message }],
     skills: []
   };
+}
+
+function skillCatalogError(state: RuleSyncSkillsState): Error {
+  return state.valid === null
+    ? new RuleSyncSkillSourceUnavailableError(
+        "Canonical RuleSync skill catalog has not been observed."
+      )
+    : new RuleSyncSkillValidationError(
+        "Canonical RuleSync skill catalog is invalid."
+      );
+}
+
+function skillDirectoryError(directory: CanonicalRuleSyncDirectory): Error {
+  return directory.valid === null
+    ? new RuleSyncSkillSourceUnavailableError(
+        "Canonical RuleSync skill catalog has not been observed."
+      )
+    : new Error(SKILL_SOURCE_UNSAFE_MESSAGE);
 }
 
 type SkillEntry =
@@ -207,6 +247,15 @@ function readSkillEntry(skillsDir: string, entry: Dirent): SkillEntry {
       issue: [
         skillLocation,
         `"${skillLocation}" is not a regular file in the skill directory.`
+      ]
+    };
+  }
+  if (skillStat.size > SKILL_SOURCE_MAX_BYTES) {
+    return {
+      kind: "invalid",
+      issue: [
+        skillLocation,
+        `"${skillLocation}" exceeds the ${SKILL_SOURCE_MAX_BYTES}-byte source limit.`
       ]
     };
   }
@@ -395,6 +444,19 @@ export interface RuleSyncSkillPromotionInput {
   readonly content: string;
 }
 
+export interface RuleSyncSkillSource {
+  readonly name: string;
+  readonly path: string;
+  readonly content: string;
+  readonly revision: string;
+}
+
+export interface RuleSyncSkillSourceUpdateInput {
+  readonly name: string;
+  readonly expectedRevision: string;
+  readonly content: string;
+}
+
 export interface RuleSyncSkillArtifact {
   readonly name: string;
   readonly path: string;
@@ -406,6 +468,20 @@ export class RuleSyncSkillConflictError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "RuleSyncSkillConflictError";
+  }
+}
+
+export class RuleSyncSkillValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RuleSyncSkillValidationError";
+  }
+}
+
+export class RuleSyncSkillSourceUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RuleSyncSkillSourceUnavailableError";
   }
 }
 
@@ -850,6 +926,20 @@ function hasControlCharacters(value: string): boolean {
   for (const character of value) {
     const code = character.codePointAt(0) ?? 0;
     if (code < 32 && character !== "\n" && character !== "\t") return true;
+  }
+  return false;
+}
+
+function hasUnsafeSkillSourceControls(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (
+      code < 32 &&
+      character !== "\n" &&
+      character !== "\r" &&
+      character !== "\t"
+    )
+      return true;
   }
   return false;
 }
@@ -1348,7 +1438,7 @@ export class RuleSyncRepository {
     } catch (error) {
       return Promise.reject(error);
     }
-    return withCommandUpdateLock(commandPath, async () => {
+    return withSourceUpdateLock(commandPath, async () => {
       const state = this.loadCommands();
       if (state.valid !== true) {
         throw new RuleSyncCommandValidationError(
@@ -1593,6 +1683,161 @@ export class RuleSyncRepository {
       uri: `rulesync://skills/${name}/SKILL.md`,
       revision
     };
+  }
+
+  readSkillSource(name: string): RuleSyncSkillSource {
+    if (!SKILL_NAME_PATTERN.test(name)) {
+      throw new RuleSyncSkillValidationError(
+        "Skill name must contain lowercase letters, digits, and hyphens."
+      );
+    }
+    const directory = resolveCanonicalRuleSyncDirectory(
+      this.repositoryRoot,
+      "skills"
+    );
+    if (directory.valid !== true || directory.path === null) {
+      throw skillDirectoryError(directory);
+    }
+    const skillDir = path.join(directory.path, name);
+    const skillPath = path.join(skillDir, "SKILL.md");
+    try {
+      const directoryStat = lstatSync(skillDir);
+      if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) {
+        throw new Error(SKILL_SOURCE_UNSAFE_MESSAGE);
+      }
+      const fileStat = lstatSync(skillPath);
+      if (!fileStat.isFile() || fileStat.isSymbolicLink()) {
+        throw new Error(SKILL_SOURCE_UNSAFE_MESSAGE);
+      }
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error;
+    }
+
+    const state = this.loadSkills();
+    if (state.valid !== true) throw skillCatalogError(state);
+    if (!state.skills.some((skill) => skill.name === name)) {
+      throw new RuleSyncSkillConflictError(
+        `Canonical skill "${name}" does not exist.`
+      );
+    }
+
+    const content = readFileSync(skillPath, "utf8");
+    if (Buffer.byteLength(content, "utf8") > SKILL_SOURCE_MAX_BYTES) {
+      throw new RuleSyncSkillValidationError(
+        "Canonical skill source exceeds its safe size bound."
+      );
+    }
+    const revision = createHash("sha256").update(content, "utf8").digest("hex");
+    return {
+      name,
+      path: `${SKILLS_SOURCE}/${name}/SKILL.md`,
+      content,
+      revision
+    };
+  }
+
+  updateSkillSource(
+    input: RuleSyncSkillSourceUpdateInput
+  ): Promise<RuleSyncSkillSource> {
+    const { name, expectedRevision, content } = input;
+    try {
+      if (!SKILL_NAME_PATTERN.test(name)) {
+        throw new RuleSyncSkillValidationError(
+          "Skill name must contain lowercase letters, digits, and hyphens."
+        );
+      }
+      if (!COMMAND_REVISION_PATTERN.test(expectedRevision)) {
+        throw new RuleSyncSkillValidationError(
+          "Expected skill revision is invalid."
+        );
+      }
+      if (
+        Buffer.byteLength(content, "utf8") > SKILL_SOURCE_MAX_BYTES ||
+        hasUnsafeSkillSourceControls(content)
+      ) {
+        throw new RuleSyncSkillValidationError(
+          "Skill source contains unsafe controls or exceeds its safe size bound."
+        );
+      }
+      validateSkillSource(name, content);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
+    const directory = resolveCanonicalRuleSyncDirectory(
+      this.repositoryRoot,
+      "skills"
+    );
+    if (directory.valid !== true || directory.path === null) {
+      return Promise.reject(skillDirectoryError(directory));
+    }
+    const skillsDir = directory.path;
+    const skillDir = path.join(skillsDir, name);
+    const skillPath = path.join(skillDir, "SKILL.md");
+    return withSourceUpdateLock(skillPath, async () => {
+      let directoryStat: Awaited<ReturnType<typeof lstat>>;
+      let fileStat: Awaited<ReturnType<typeof lstat>>;
+      try {
+        directoryStat = await lstat(skillDir);
+        fileStat = await lstat(skillPath);
+      } catch (error) {
+        if (!isMissingFileError(error)) throw error;
+        const state = this.loadSkills();
+        if (state.valid !== true) throw skillCatalogError(state);
+        throw new RuleSyncSkillConflictError(
+          `Canonical skill "${name}" no longer exists.`
+        );
+      }
+      if (
+        !directoryStat.isDirectory() ||
+        directoryStat.isSymbolicLink() ||
+        !fileStat.isFile() ||
+        fileStat.isSymbolicLink()
+      ) {
+        throw new Error(SKILL_SOURCE_UNSAFE_MESSAGE);
+      }
+      const state = this.loadSkills();
+      if (state.valid !== true) throw skillCatalogError(state);
+      if (!state.skills.some((skill) => skill.name === name)) {
+        throw new RuleSyncSkillConflictError(
+          `Canonical skill "${name}" no longer exists.`
+        );
+      }
+      const latestContent = await readFile(skillPath, "utf8");
+      const latestRevision = createHash("sha256")
+        .update(latestContent, "utf8")
+        .digest("hex");
+      if (latestRevision !== expectedRevision) {
+        throw new RuleSyncSkillConflictError(
+          `Canonical skill "${name}" changed since it was loaded.`
+        );
+      }
+      const temporaryPath = path.join(skillDir, `.${name}.${randomUUID()}.tmp`);
+      try {
+        await writeFile(temporaryPath, content, {
+          encoding: "utf8",
+          flag: "wx",
+          mode: 0o644
+        });
+        await rename(temporaryPath, skillPath);
+      } finally {
+        await unlink(temporaryPath).catch(() => undefined);
+      }
+      const persistedContent = await readFile(skillPath, "utf8");
+      if (persistedContent !== content) {
+        throw new RuleSyncSkillConflictError(
+          `Canonical skill "${name}" changed during the update.`
+        );
+      }
+      return {
+        name,
+        path: `${SKILLS_SOURCE}/${name}/SKILL.md`,
+        content: persistedContent,
+        revision: createHash("sha256")
+          .update(persistedContent, "utf8")
+          .digest("hex")
+      };
+    });
   }
 
   loadSkills(): RuleSyncSkillsState {

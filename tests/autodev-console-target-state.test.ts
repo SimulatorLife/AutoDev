@@ -741,7 +741,7 @@ test("Usage cost and unavailable evidence remain honest", () => {
     );
   assert.ok(usage, "the Usage dashboard contract must be present");
   const body = usage?.[1] ?? "";
-  assert.match(body, /`autodev-openlit-usage-v3`/u);
+  assert.match(body, /`autodev-openlit-usage-v4`/u);
   assert.match(body, /bounded recent-attempt list/u);
   assert.match(body, /Core owns the canonical `USAGE_VARIABLE_IDS` tuple/u);
   assert.match(body, /fixed OpenLIT endpoint mirrors this bounded list/u);
@@ -753,8 +753,27 @@ test("Usage cost and unavailable evidence remain honest", () => {
     body,
     /Provider-attempt spans carry only validated `autodev\.workspace` and `autodev\.agent\.role` context/u
   );
+  assert.match(
+    target,
+    /source-confirmed `autodev\.request_kind=compaction` attribute on successful logical routed-request spans/u
+  );
+  assert.match(
+    target,
+    /does not query the `autodev\.context\.compactions` metric for these widgets/u
+  );
+  assert.match(
+    target,
+    /Provider and Skill filters do not have source-confirmed semantics on this logical-request signal/u
+  );
+  assert.match(
+    migration,
+    /Provider\/Skill selections fail closed for these panels/u
+  );
   assert.match(migration, /provider attempt\/error breakdowns/u);
-  assert.match(migration, /Runtime-confirmed compaction counts/u);
+  assert.match(
+    migration,
+    /source-confirmed context-compaction counts, time series/u
+  );
   assert.match(migration, /skill event breakdowns filtered/u);
   assert.match(
     migration,

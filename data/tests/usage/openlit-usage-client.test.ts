@@ -9,6 +9,12 @@ const selection: UsageFilterSelection = {
   range: "7D",
   values: { provider: ["openai"], skill: ["agent-skill"] }
 };
+const supportedSelection: UsageFilterSelection = {
+  range: "7D",
+  values: {
+    workspace: ["repo-a"]
+  }
+};
 
 function response(body: unknown, status = 200): Response {
   return Response.json(body, {
@@ -17,72 +23,128 @@ function response(body: unknown, status = 200): Response {
   });
 }
 
+type UsageWidgetFixture = {
+  key: string;
+  querySucceeded: boolean;
+  observed: boolean;
+  partial: boolean;
+  rows: unknown[];
+  [key: string]: unknown;
+};
+
+function makeWidget(
+  key: string,
+  overrides: Record<string, unknown> = {}
+): UsageWidgetFixture {
+  return {
+    key,
+    querySucceeded: true,
+    observed: false,
+    partial: false,
+    rows: [],
+    ...overrides
+  };
+}
+
 const partialPayload = {
-  schema: "autodev-openlit-usage-v3",
+  schema: "autodev-openlit-usage-v4",
   widgets: [
-    {
-      key: "logical-requests",
+    makeWidget("logical-requests", {
       observed: true,
       rows: [{ requests: "12" }],
       valuePath: "0.requests"
-    },
-    {
-      key: "cache-rate",
-      observed: true,
-      rows: [{ cached: "3", input: "4" }],
-      ratio: { numerator: "0.cached", denominator: "0.input", multiplier: 100 }
-    },
-    {
-      key: "requests-by-agent",
+    }),
+    makeWidget("requests-by-agent", {
       observed: true,
       rows: [],
       xAxis: "role",
       yAxis: "requests"
-    },
-    {
-      key: "input-tokens",
-      observed: false,
-      rows: [],
-      valuePath: "0.input_tokens"
-    },
-    {
-      key: "p95-latency",
+    }),
+    makeWidget("input-tokens", { valuePath: "0.input_tokens" }),
+    makeWidget("output-tokens", {
+      observed: true,
+      rows: [{ output_tokens: "200" }],
+      valuePath: "0.output_tokens"
+    }),
+    makeWidget("cache-rate", {
+      observed: true,
+      rows: [{ cached: "3", input: "4" }],
+      ratio: { numerator: "0.cached", denominator: "0.input", multiplier: 100 }
+    }),
+    makeWidget("p95-latency", {
       observed: true,
       rows: [{ p95_seconds: "1.425" }],
       valuePath: "0.p95_seconds"
-    },
-    {
-      key: "mcp-duration",
+    }),
+    makeWidget("attempts-by-provider", {
+      observed: true,
+      rows: [{ provider: "openai", attempts: "5" }],
+      xAxis: "provider",
+      yAxis: "attempts"
+    }),
+    makeWidget("mcp-calls"),
+    makeWidget("mcp-duration", {
       observed: true,
       rows: [{ p95_seconds: "0.042" }],
       valuePath: "0.p95_seconds"
-    },
-    {
-      key: "attempt-errors-by-provider",
+    }),
+    makeWidget("mcp-errors"),
+    makeWidget("mcp-by-tool", {
+      observed: true,
+      rows: [],
+      xAxis: "tool",
+      yAxis: "calls"
+    }),
+    makeWidget("attempt-errors-by-provider", {
       observed: true,
       rows: [{ provider: "openai", failures: "2" }],
       xAxis: "provider",
       yAxis: "failures"
-    },
-    {
-      key: "context-compactions",
+    }),
+    makeWidget("context-compactions", {
       observed: true,
       rows: [{ compactions: "3" }],
       valuePath: "0.compactions"
-    },
-    {
-      key: "skill-events-by-event",
+    }),
+    makeWidget("context-compactions-over-time", {
+      observed: true,
+      rows: [
+        { label: "10/06 00:00", count: "1" },
+        { label: "10/07 00:00", count: "2" }
+      ],
+      xAxis: "label",
+      yAxis: "count"
+    }),
+    makeWidget("context-compactions-by-workspace", {
+      observed: true,
+      rows: [{ g0: "repo-a", compactions: "3" }],
+      xAxis: "g0",
+      yAxis: "compactions"
+    }),
+    makeWidget("context-compactions-by-model", {
+      observed: true,
+      partial: true,
+      rows: [{ g0: "gpt-6-luna", compactions: "3" }],
+      xAxis: "g0",
+      yAxis: "compactions"
+    }),
+    makeWidget("context-compactions-by-agent", {
+      observed: true,
+      rows: [{ g0: "orchestrator", compactions: "3" }],
+      xAxis: "g0",
+      yAxis: "compactions"
+    }),
+    makeWidget("skill-events-by-event", {
       observed: true,
       rows: [{ event: "used", events: "4" }],
       xAxis: "event",
       yAxis: "events"
-    },
-    {
-      key: "estimated-cost",
+    }),
+    makeWidget("estimated-cost", {
       observed: true,
       rows: [{ estimated_cost: "0.0081", costed_attempts: "2" }],
       valuePath: "0.estimated_cost"
-    }
+    })
   ],
   filterOptions: {
     workspace: { supported: true, values: ["repo-a"] },
@@ -91,7 +153,7 @@ const partialPayload = {
     agent: { supported: true, values: [] },
     skill: { supported: true, values: ["agent-skill"] }
   },
-  traceList: { kind: "not-applicable", reason: "skill-filter" }
+  traceList: { kind: "unavailable" }
 };
 
 test("OpenLITUsageClient sends typed URL filter state with server credentials", async () => {
@@ -107,7 +169,7 @@ test("OpenLITUsageClient sends typed URL filter state with server credentials", 
     }
   });
 
-  const result = await client.query(selection);
+  const result = await client.query(supportedSelection);
   assert.equal(result.kind, "ok");
   assert.equal(requestedUrl, "http://openlit.local/api/autodev/usage");
   assert.equal(requestedInit?.method, "POST");
@@ -115,7 +177,9 @@ test("OpenLITUsageClient sends typed URL filter state with server credentials", 
     (requestedInit?.headers as Record<string, string>).Authorization,
     "Bearer secret"
   );
-  assert.deepEqual(JSON.parse(String(requestedInit?.body)), { selection });
+  assert.deepEqual(JSON.parse(String(requestedInit?.body)), {
+    selection: supportedSelection
+  });
   if (result.kind !== "ok") return;
   assert.equal(result.data.metrics.logicalRequests, 12);
   assert.equal(result.data.metrics.cacheReadRate, 75);
@@ -127,6 +191,26 @@ test("OpenLITUsageClient sends typed URL filter state with server credentials", 
     { provider: "openai", count: 2 }
   ]);
   assert.equal(result.data.metrics.contextCompactions, 3);
+  assert.equal(result.data.metrics.contextCompactionRatePercent, 25);
+  assert.equal(result.data.metrics.contextCompactionsBreakdownsPartial, true);
+  assert.deepEqual(result.data.metrics.contextCompactionsOverTime, [
+    { bucket: "10/06 00:00", count: 1 },
+    { bucket: "10/07 00:00", count: 2 }
+  ]);
+  assert.deepEqual(result.data.metrics.contextCompactionsByWorkspace, [
+    { name: "repo-a", count: 3 }
+  ]);
+  assert.deepEqual(result.data.metrics.contextCompactionsByModel, [
+    { name: "gpt-6-luna", count: 3 }
+  ]);
+  assert.deepEqual(result.data.metrics.contextCompactionsByAgent, [
+    { name: "orchestrator", count: 3 }
+  ]);
+  assert.deepEqual(
+    result.data.metrics.contextCompactionsUnsupportedFilters,
+    []
+  );
+  assert.equal(result.data.metrics.contextCompactionsBreakdownsPartial, true);
   assert.deepEqual(result.data.metrics.skillEventsByEvent, [
     { event: "used", count: 4 }
   ]);
@@ -136,10 +220,81 @@ test("OpenLITUsageClient sends typed URL filter state with server credentials", 
   assert.equal(result.data.filterOptions.model, null);
   assert.deepEqual(result.data.filterOptions.agent, []);
   assert.deepEqual(result.data.filterOptions.skill, ["agent-skill"]);
-  assert.deepEqual(result.data.traceList, {
-    kind: "not-applicable",
-    reason: "skill-filter"
+  assert.deepEqual(result.data.traceList, { kind: "unavailable" });
+});
+
+test("OpenLITUsageClient does not claim compaction metrics for provider or skill filters", async () => {
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(partialPayload)
   });
+  const result = await client.query(selection);
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.equal(result.data.metrics.logicalRequests, 12);
+  assert.equal(result.data.metrics.contextCompactions, null);
+  assert.equal(result.data.metrics.contextCompactionRatePercent, null);
+  assert.equal(result.data.metrics.contextCompactionsOverTime, null);
+  assert.equal(result.data.metrics.contextCompactionsByWorkspace, null);
+  assert.equal(result.data.metrics.contextCompactionsByModel, null);
+  assert.equal(result.data.metrics.contextCompactionsByAgent, null);
+  assert.deepEqual(result.data.metrics.contextCompactionsUnsupportedFilters, [
+    "provider",
+    "skill"
+  ]);
+});
+
+test("OpenLITUsageClient distinguishes a successful empty series from a failed query", async () => {
+  const empty = structuredClone(partialPayload);
+  const compactions = empty.widgets.find(
+    (widget) => widget.key === "context-compactions"
+  );
+  assert.ok(compactions);
+  compactions.observed = true;
+  compactions.rows = [{ compactions: "0" }];
+  for (const key of [
+    "context-compactions-over-time",
+    "context-compactions-by-workspace",
+    "context-compactions-by-model",
+    "context-compactions-by-agent"
+  ]) {
+    const widget = empty.widgets.find((item) => item.key === key);
+    assert.ok(widget);
+    widget.querySucceeded = true;
+    widget.observed = false;
+    widget.rows = [];
+  }
+
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(empty)
+  });
+  const result = await client.query(supportedSelection);
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.equal(result.data.metrics.contextCompactions, 0);
+  assert.equal(result.data.metrics.contextCompactionRatePercent, 0);
+  assert.deepEqual(result.data.metrics.contextCompactionsOverTime, []);
+  assert.deepEqual(result.data.metrics.contextCompactionsByWorkspace, []);
+
+  const failed = structuredClone(empty);
+  const failedSeries = failed.widgets.find(
+    (widget) => widget.key === "context-compactions-over-time"
+  );
+  assert.ok(failedSeries);
+  failedSeries.querySucceeded = false;
+  const failedClient = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(failed)
+  });
+  const failedResult = await failedClient.query(supportedSelection);
+  assert.equal(failedResult.kind, "ok");
+  if (failedResult.kind !== "ok") return;
+  assert.equal(failedResult.data.metrics.contextCompactions, 0);
+  assert.equal(failedResult.data.metrics.contextCompactionsOverTime, null);
 });
 
 test("OpenLITUsageClient keeps the recent trace list bounded and privacy-filtered", async () => {
@@ -225,7 +380,7 @@ test("OpenLITUsageClient keeps authentication and HTTP failures explicit", async
     baseUrl: "http://openlit.local",
     serviceToken: "secret",
     fetchImpl: async () =>
-      response({ ...partialPayload, schema: "autodev-openlit-usage-v1" })
+      response({ ...partialPayload, schema: "autodev-openlit-usage-v3" })
   });
   assert.deepEqual(await previousSchema.query(selection), {
     kind: "invalid-response"
@@ -254,7 +409,11 @@ test("OpenLITUsageClient rejects duplicate widgets and keeps invalid ratios unav
   });
 
   const invalidRatio = structuredClone(partialPayload);
-  invalidRatio.widgets[1]!.rows = [{ cached: "3", input: "0" }];
+  const cacheWidget = invalidRatio.widgets.find(
+    (widget) => widget.key === "cache-rate"
+  );
+  assert.ok(cacheWidget);
+  cacheWidget.rows = [{ cached: "3", input: "0" }];
   const ratioClient = new OpenLITUsageClient({
     baseUrl: "http://openlit.local",
     serviceToken: "secret",
@@ -269,7 +428,11 @@ test("OpenLITUsageClient rejects duplicate widgets and keeps invalid ratios unav
 
 test("OpenLITUsageClient rejects malformed metric rows without fabricating values", async () => {
   const malformed = structuredClone(partialPayload);
-  malformed.widgets[0]!.rows = [{ requests: "NaN" }];
+  const logicalRequests = malformed.widgets.find(
+    (widget) => widget.key === "logical-requests"
+  );
+  assert.ok(logicalRequests);
+  logicalRequests.rows = [{ requests: "NaN" }];
   const client = new OpenLITUsageClient({
     baseUrl: "http://openlit.local",
     serviceToken: "secret",
@@ -279,7 +442,7 @@ test("OpenLITUsageClient rejects malformed metric rows without fabricating value
   assert.equal(result.kind, "ok");
   if (result.kind !== "ok") return;
   assert.equal(result.data.metrics.logicalRequests, null);
-  assert.equal(result.data.metrics.physicalAttempts, null);
+  assert.equal(result.data.metrics.physicalAttempts, 5);
 });
 
 test("OpenLITUsageClient distinguishes an unpriced empty cost sum from observed zero cost", async () => {

@@ -21,7 +21,9 @@ import {
   RuleSyncCommandHistoryUnavailableError,
   RuleSyncCommandValidationError,
   RuleSyncRepository,
-  RuleSyncSkillConflictError
+  RuleSyncSkillConflictError,
+  RuleSyncSkillSourceUnavailableError,
+  RuleSyncSkillValidationError
 } from "../src/index.ts";
 
 function git(repositoryRoot: string, args: readonly string[]): void {
@@ -825,6 +827,189 @@ test("RuleSync skill catalog distinguishes an absent, empty, and invalid source"
       ],
       skills: []
     });
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("RuleSyncRepository reads and revision-checks exact canonical skill source", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-skill-source-")
+  );
+  try {
+    const skillDir = path.join(repositoryRoot, ".rulesync", "skills", "audit");
+    await mkdir(skillDir, { recursive: true });
+    const skillPath = path.join(skillDir, "SKILL.md");
+    const original =
+      '---\nname: audit\ndescription: "An exact description."\ncustom: [one, two]\n---\n\n# Audit\n\nPreserve  exact markdown.\n';
+    const updated =
+      '---\r\nname: audit\r\ndescription: "Updated description."\r\ncustom: [two, one]\r\n---\r\n\r\n# Audit\r\n\r\nPreserve  every space and CRLF.\r\n';
+    await writeFile(skillPath, original);
+    const repo = new RuleSyncRepository(repositoryRoot);
+    const detail = repo.readSkillSource("audit");
+    assert.equal(detail.content, original);
+    assert.equal(detail.path, ".rulesync/skills/audit/SKILL.md");
+    assert.equal(
+      detail.revision,
+      createHash("sha256").update(original, "utf8").digest("hex")
+    );
+
+    const saved = await repo.updateSkillSource({
+      name: "audit",
+      expectedRevision: detail.revision,
+      content: updated
+    });
+    assert.equal(saved.content, updated);
+    assert.equal(
+      saved.revision,
+      createHash("sha256").update(updated, "utf8").digest("hex")
+    );
+    assert.equal(await readFile(skillPath, "utf8"), updated);
+    assert.equal(
+      repo.loadSkills().skills[0]?.description,
+      "Updated description."
+    );
+    await assert.rejects(
+      repo.updateSkillSource({
+        name: "audit",
+        expectedRevision: detail.revision,
+        content: original
+      }),
+      RuleSyncSkillConflictError
+    );
+    await assert.rejects(
+      repo.updateSkillSource({
+        name: "audit",
+        expectedRevision: "invalid",
+        content: updated
+      }),
+      RuleSyncSkillValidationError
+    );
+    await assert.rejects(
+      repo.updateSkillSource({
+        name: "missing",
+        expectedRevision: saved.revision,
+        content: updated.replace("name: audit", "name: missing")
+      }),
+      RuleSyncSkillConflictError
+    );
+
+    const unchanged = await readFile(skillPath, "utf8");
+    for (const content of [
+      "not frontmatter",
+      "---\nname: other\ndescription: Valid description.\n---\nBody\n",
+      '---\nname: audit\ndescription: "  "\n---\nBody\n',
+      `---\nname: audit\ndescription: Valid description.\n---\n${"x".repeat(48_001)}`,
+      "---\nname: audit\ndescription: Valid description.\n---\nBad\u0000control\n"
+    ]) {
+      await assert.rejects(
+        repo.updateSkillSource({
+          name: "audit",
+          expectedRevision: saved.revision,
+          content
+        }),
+        RuleSyncSkillValidationError
+      );
+      assert.equal(await readFile(skillPath, "utf8"), unchanged);
+    }
+
+    const contenders = ["First edit.", "Second edit."].map((body) =>
+      repo.updateSkillSource({
+        name: "audit",
+        expectedRevision: saved.revision,
+        content: `---\nname: audit\ndescription: Concurrent edit.\n---\n${body}\n`
+      })
+    );
+    const outcomes = await Promise.allSettled(contenders);
+    assert.equal(
+      outcomes.filter((outcome) => outcome.status === "fulfilled").length,
+      1
+    );
+    const rejected = outcomes.find(
+      (outcome): outcome is PromiseRejectedResult =>
+        outcome.status === "rejected"
+    );
+    assert.ok(rejected?.reason instanceof RuleSyncSkillConflictError);
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("RuleSync skill source updates refuse invalid catalogs and symlinked source files", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-skill-source-safe-")
+  );
+  try {
+    const skillsDir = path.join(repositoryRoot, ".rulesync", "skills");
+    const skillDir = path.join(skillsDir, "audit");
+    await mkdir(skillDir, { recursive: true });
+    const source =
+      "---\nname: audit\ndescription: Valid description.\n---\nBody.\n";
+    const outside = path.join(repositoryRoot, "outside.md");
+    const skillPath = path.join(skillDir, "SKILL.md");
+    await writeFile(outside, source);
+    await symlink(outside, skillPath);
+    const repo = new RuleSyncRepository(repositoryRoot);
+    assert.throws(
+      () => repo.readSkillSource("audit"),
+      (error: unknown) =>
+        error instanceof Error &&
+        !(error instanceof RuleSyncSkillValidationError)
+    );
+    await assert.rejects(
+      repo.updateSkillSource({
+        name: "audit",
+        expectedRevision: "0".repeat(64),
+        content: source
+      }),
+      (error: unknown) =>
+        error instanceof Error &&
+        !(error instanceof RuleSyncSkillValidationError)
+    );
+    assert.equal(await readFile(outside, "utf8"), source);
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("RuleSync skill source reads and writes preserve an unobserved catalog as unavailable", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-skill-source-unobserved-")
+  );
+  try {
+    const repository = new RuleSyncRepository(repositoryRoot);
+    assert.throws(
+      () => repository.readSkillSource("audit"),
+      RuleSyncSkillSourceUnavailableError
+    );
+    await assert.rejects(
+      repository.updateSkillSource({
+        name: "audit",
+        expectedRevision: "0".repeat(64),
+        content:
+          "---\nname: audit\ndescription: Valid description.\n---\nBody.\n"
+      }),
+      RuleSyncSkillSourceUnavailableError
+    );
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("RuleSync skill catalog rejects oversized sources before reading their contents", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-skill-source-oversized-")
+  );
+  try {
+    const skillDir = path.join(repositoryRoot, ".rulesync", "skills", "audit");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      path.join(skillDir, "SKILL.md"),
+      `---\nname: audit\ndescription: Too large.\n---\n${"x".repeat(48_001)}`
+    );
+    const state = new RuleSyncRepository(repositoryRoot).loadSkills();
+    assert.equal(state.valid, false);
+    assert.match(state.issues[0]?.message ?? "", /48000-byte source limit/u);
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
   }

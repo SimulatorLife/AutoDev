@@ -279,7 +279,7 @@ test("a control character in a cited experience id is refused", async () => {
   // compared safely downstream either.
   const { status, body } = await propose({
     ...withEvidence([VALID_EVIDENCE]),
-    experienceIds: ["exp-1 fake"]
+    experienceIds: ["exp-1" + String.fromCharCode(0) + "fake"]
   });
 
   assert.equal(status, 400);

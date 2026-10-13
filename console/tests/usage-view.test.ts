@@ -19,6 +19,14 @@ const selection: UsageFilterSelection = {
   range: "7D",
   values: { provider: ["openai"], skill: ["agent-skill"] }
 };
+const compactionSelection: UsageFilterSelection = {
+  range: "7D",
+  values: {
+    workspace: ["repo-a"],
+    model: ["gpt-6-luna"],
+    agent: ["orchestrator"]
+  }
+};
 
 const observedMetrics: UsageMetricsData = {
   logicalRequests: 42,
@@ -34,6 +42,16 @@ const observedMetrics: UsageMetricsData = {
   failedAttempts: 2,
   attemptErrorsByProvider: [{ provider: "openai", count: 2 }],
   contextCompactions: 3,
+  contextCompactionRatePercent: (3 / 42) * 100,
+  contextCompactionsOverTime: [
+    { bucket: "10/06 00:00", count: 1 },
+    { bucket: "10/07 00:00", count: 2 }
+  ],
+  contextCompactionsByWorkspace: [{ name: "repo-a", count: 3 }],
+  contextCompactionsByModel: [{ name: "gpt-6-luna", count: 3 }],
+  contextCompactionsByAgent: [{ name: "orchestrator", count: 3 }],
+  contextCompactionsUnsupportedFilters: [],
+  contextCompactionsBreakdownsPartial: false,
   skillEventsByEvent: [{ event: "used", count: 4 }],
   requestsByRole: [{ role: "Default", count: 42 }],
   attemptsByProvider: [{ provider: "openai", count: 48 }],
@@ -87,7 +105,10 @@ test("UsageView keeps scope filters but omits metrics until a snapshot is valida
 
 test("UsageView groups validated request, reliability, skill, and MCP metrics with shared components", () => {
   const markup = renderToStaticMarkup(
-    React.createElement(UsageView, { metrics: observedMetrics, selection })
+    React.createElement(UsageView, {
+      metrics: observedMetrics,
+      selection: compactionSelection
+    })
   );
 
   assert.match(markup, /Requests &amp; model usage/);
@@ -100,6 +121,11 @@ test("UsageView groups validated request, reliability, skill, and MCP metrics wi
   assert.match(markup, /MCP Calls by Tool Name/);
   assert.match(markup, /Failed Provider Attempts/);
   assert.match(markup, /Context Compactions/);
+  assert.match(markup, /Compactions per Request/);
+  assert.match(markup, /Context Compactions Over Time/);
+  assert.match(markup, /Context Compactions by Workspace/);
+  assert.match(markup, /Context Compactions by Requested Model/);
+  assert.match(markup, /Context Compactions by Agent Role/);
   assert.match(markup, /Failed attempts by provider/);
   assert.match(markup, /Skill observations by event/);
   assert.doesNotMatch(markup, /Shim-owned/);
@@ -110,8 +136,30 @@ test("UsageView groups validated request, reliability, skill, and MCP metrics wi
   const reliabilitySection = markup.slice(reliabilityStart, skillActivityStart);
   assert.match(
     reliabilitySection,
-    /<\/h3><div class="flex flex-col gap-6"><div class="[^"]*" data-stat-grid="3">[\s\S]*Failed attempts by provider/u
+    /<\/h3><div class="flex flex-col gap-6"><div class="[^"]*" data-stat-grid="4">[\s\S]*Failed attempts by provider/u
   );
+});
+
+test("UsageView fails compaction widgets closed for unsupported provider and skill scopes", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      metrics: {
+        ...observedMetrics,
+        contextCompactions: null,
+        contextCompactionRatePercent: null,
+        contextCompactionsOverTime: null,
+        contextCompactionsByWorkspace: null,
+        contextCompactionsByModel: null,
+        contextCompactionsByAgent: null,
+        contextCompactionsUnsupportedFilters: ["provider", "skill"]
+      },
+      selection
+    })
+  );
+  assert.match(markup, /data-context-compaction-scope="not-applicable"/u);
+  assert.match(markup, /provider and skill filters/u);
+  assert.match(markup, /Context compaction data is unavailable/u);
+  assert.match(markup, /Compaction time-series data not observed/u);
 });
 
 test("UsageView shows the bounded recent-attempt table and preserves filters when opening a trace", () => {
@@ -132,7 +180,16 @@ test("UsageView shows the bounded recent-attempt table and preserves filters whe
   };
   const markup = renderToStaticMarkup(
     React.createElement(UsageView, {
-      metrics: observedMetrics,
+      metrics: {
+        ...observedMetrics,
+        contextCompactions: null,
+        contextCompactionRatePercent: null,
+        contextCompactionsOverTime: null,
+        contextCompactionsByWorkspace: null,
+        contextCompactionsByModel: null,
+        contextCompactionsByAgent: null,
+        contextCompactionsUnsupportedFilters: ["provider", "skill"]
+      },
       traceList,
       selection
     })

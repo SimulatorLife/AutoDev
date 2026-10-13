@@ -407,6 +407,36 @@ export interface ControlApiSkillRolesPatchResponse {
   readonly revision: string;
 }
 
+/** Canonical RuleSync source for one existing skill. */
+export interface ControlApiSkillContentResponse {
+  readonly schema: "autodev-control-skill-content-v1";
+  readonly name: string;
+  readonly path: string;
+  /** Exact `.rulesync/skills/<name>/SKILL.md` text. */
+  readonly content: string;
+  /** SHA-256 of the exact source text; used for compare-and-swap writes. */
+  readonly revision: string;
+}
+
+/** Replaces one existing skill source against the revision the editor loaded. */
+export interface ControlApiSkillContentPatchRequest {
+  readonly expectedRevision: string;
+  readonly content: string;
+}
+
+export interface ControlApiSkillContentPatchResponse {
+  readonly schema: "autodev-control-skill-content-patch-v1";
+  readonly name: string;
+  readonly revision: string;
+  readonly changed: boolean;
+  /** RuleSync generation and its check both confirmed the source projection. */
+  readonly projectionApplied: true;
+  readonly reconciliation: {
+    readonly status: ReconciliationStatus;
+    readonly history: readonly OperationHistoryEntry[];
+  };
+}
+
 /**
  * One reason a canonical source could not be applied.
  *

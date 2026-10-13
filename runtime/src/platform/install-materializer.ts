@@ -458,6 +458,30 @@ function rulesync(
     env
   );
 }
+
+/**
+ * Regenerate and verify the canonical RuleSync skill projections without
+ * running unrelated feature generators. A successful generation alone is not
+ * enough to report convergence: the pinned CLI's `--check` must also confirm
+ * that every configured target matches the canonical `.rulesync/skills`
+ * source.
+ */
+export function materializeRuleSyncSkillProjections(
+  repositoryRoot: string
+): void {
+  const options = { repositoryRoot };
+  const args = [
+    "generate",
+    "--config",
+    path.join(repositoryRoot, "rulesync.jsonc"),
+    "--features",
+    "skills",
+    "--silent"
+  ];
+  rulesync(options, args);
+  rulesync(options, [...args, "--check"]);
+}
+
 const LINE_SPLIT_PATTERN = /\r?\n/u;
 const MD_EXTENSION_PATTERN = /\.md$/u;
 const IGNORE_DIRS_LINE_PATTERN = /^\s*IGNORE_DIRS\s*=/iu;
