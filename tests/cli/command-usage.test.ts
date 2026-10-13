@@ -69,6 +69,7 @@ const STUBS = {
   provider: { start: () => 0 },
   hook: { run: () => 0 },
   repo: { bootstrap: () => 0 },
+  playtest: { init: () => 0, check: () => 0 },
   install: { install: () => 0 }
 };
 
@@ -88,7 +89,8 @@ test("a command invoked without its subcommand names the values it accepts", () 
       "hook",
       "session-start, subagent-start, root-delegation, or skill-read"
     ],
-    ["repo", "repo subcommand", "bootstrap"]
+    ["repo", "repo subcommand", "bootstrap"],
+    ["playtest", "playtest subcommand", "init, or check"]
   ] as const) {
     assert.throws(
       () => runMain([command], STUBS),
@@ -113,7 +115,8 @@ test("an unusable value reports what was accepted, not just what was typed", () 
     ["router", "router command"],
     ["provider", "provider"],
     ["hook", "hook"],
-    ["repo", "repo subcommand"]
+    ["repo", "repo subcommand"],
+    ["playtest", "playtest subcommand"]
   ] as const) {
     assert.throws(
       () => runMain([command, "definitely-not-a-command"], STUBS),
@@ -150,6 +153,9 @@ function acceptedList(command: string): string {
     case "repo": {
       return "bootstrap";
     }
+    case "playtest": {
+      return "init, or check";
+    }
     default: {
       throw new Error(`no accepted list for ${command}`);
     }
@@ -162,7 +168,7 @@ test("an unknown command lists the families instead of blaming a migration", () 
     (error: unknown) => {
       assert.equal(
         messageOf(error),
-        "unsupported command: definitely-not-a-command (expected one of: check, render, router, provider, hook, repo, or install)"
+        "unsupported command: definitely-not-a-command (expected one of: check, render, router, provider, hook, repo, playtest, or install)"
       );
       return true;
     }
@@ -178,7 +184,7 @@ test("help advertises exactly what each command accepts", async () => {
   const rows = advertisedCommands(await capture(["--", "--help"]));
   assert.deepEqual(
     [...rows.keys()],
-    ["check", "render", "router", "provider", "hook", "repo", "install"]
+    ["check", "render", "router", "provider", "hook", "repo", "playtest", "install"]
   );
 
   for (const [command, choices] of rows) {

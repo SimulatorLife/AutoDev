@@ -35,6 +35,12 @@ import {
   type ProviderCommandBackend
 } from "./provider.ts";
 import {
+  defaultPlaytestBackend,
+  dispatchPlaytestCommand,
+  PLAYTESTS_SUBCOMMANDS,
+  type PlaytestCommandBackend
+} from "./playtest.ts";
+import {
   dispatchRepoCommand,
   REPO_SUBCOMMANDS,
   type RepoCommandBackend
@@ -215,6 +221,7 @@ const COMMAND_ROWS: readonly (readonly [string, string])[] = [
   ["provider", PROVIDER_NAMES.join("|")],
   ["hook", HOOK_NAMES.join("|")],
   ["repo", REPO_SUBCOMMANDS.join("|")],
+  ["playtest", PLAYTESTS_SUBCOMMANDS.join("|")],
   ["install", ""]
 ];
 
@@ -273,6 +280,7 @@ export interface CliBackends {
   hook?: HookCommandBackend;
   repo?: RepoCommandBackend;
   install?: InstallCommandBackend;
+  playtest?: PlaytestCommandBackend;
 }
 
 export function runMain(
@@ -313,6 +321,13 @@ export function runMain(
   }
   if (command === "repo") {
     return dispatchRepoCommand(subcommand ?? "", rest, backends.repo);
+  }
+  if (command === "playtest") {
+    return dispatchPlaytestCommand(
+      subcommand ?? "",
+      rest,
+      backends.playtest ?? defaultPlaytestBackend
+    );
   }
   if (command === "install") {
     const args = [subcommand, ...rest].filter(

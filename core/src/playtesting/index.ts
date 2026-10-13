@@ -13,6 +13,7 @@ export * from "./benchmark.ts";
 export * from "./branching.ts";
 export * from "./build-identity.ts";
 export * from "./cadence.ts";
+export * from "./hash-chain.ts";
 export * from "./canonical-json.ts";
 export * from "./cohort-standardization.ts";
 export * from "./comparison.ts";
