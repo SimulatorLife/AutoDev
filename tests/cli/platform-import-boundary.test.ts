@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
+import { builtinModules } from "node:module";
 import path from "node:path";
 import test from "node:test";
 
@@ -71,5 +72,78 @@ test("the CLI reaches install and router-ensure through the platform entry", () 
   assert.match(
     source("runtime/src/platform/index.ts"),
     /export \* from "\.\/router-ensure\.ts";/u
+  );
+});
+
+// Core is transpiled into the Console's browser bundle, so a Node built-in
+// reached from Core fails `next build` with an unhandled `node:` scheme that
+// names the scheme but not the module that asked for it. That is how the
+// Playtesting hash chain left Core for
+// `runtime/src/playtesting/hash-chain.ts`: every consumer was already there,
+// and Core is the package the client imports.
+//
+// Only static import/export specifiers are read. They are the form a barrel
+// graph resolves, which is the graph that broke; matching whole lines also keeps
+// this scan free of the prose and regex literals a comment-blind lexer would
+// have to understand.
+const staticSpecifier = [
+  /^(?:import|export)\b[^\n]*?\bfrom\s+["']([^"']+)["']/gmu,
+  /^import\s+["']([^"']+)["']/gmu
+];
+
+function builtinImports(fileSource: string): {
+  readonly line: number;
+  readonly specifier: string;
+}[] {
+  const builtins = new Set(
+    builtinModules.map((name) => name.replace(/^node:/u, ""))
+  );
+  const found: { line: number; specifier: string }[] = [];
+  for (const pattern of staticSpecifier) {
+    pattern.lastIndex = 0;
+    for (const match of fileSource.matchAll(pattern)) {
+      const specifier = match[1];
+      if (specifier === undefined) continue;
+      const bare = specifier.startsWith("node:")
+        ? specifier.slice("node:".length)
+        : specifier;
+      // A relative path is never a built-in, and a scoped package is never one
+      // either, so only bare specifiers can match.
+      if (!builtins.has(bare) || specifier.includes("/")) continue;
+      const line = fileSource.slice(0, match.index).split("\n").length;
+      found.push({ line, specifier });
+    }
+  }
+  return found.sort((left, right) => left.line - right.line);
+}
+
+test("Core reaches no Node built-in", () => {
+  const offenders = typescriptFiles(path.join(repositoryRoot, "core", "src"))
+    .flatMap((file) =>
+      builtinImports(source(file)).map(
+        (hit) => `${file}:${hit.line} imports ${hit.specifier}`
+      )
+    )
+    .sort();
+
+  assert.deepEqual(offenders, []);
+});
+
+test("the Core built-in scan reads imports rather than prose", () => {
+  // The control a clean tree cannot provide: with every Core module already
+  // free of built-ins, only a known violation shows the scan still bites. The
+  // commented lines are here because a guard that explains this rule in a
+  // docstring must not report its own explanation as an offender.
+  assert.deepEqual(
+    builtinImports(
+      [
+        'import { createHash } from "node:crypto";',
+        '// import { readFileSync } from "node:fs";',
+        " * import { tmpdir } from 'node:os';",
+        'import { canonicalNavGroupOf } from "./navigation.ts";',
+        'import { createHash } from "@simulatorlife/autodev-core";'
+      ].join("\n")
+    ),
+    [{ line: 1, specifier: "node:crypto" }]
   );
 });

@@ -9,11 +9,18 @@
  * Encoding is delegated to the canonical Playtesting JSON the rest of the
  * pipeline already hashes with, so a manifest cannot be hashed one way here and
  * another way at approval.
+ *
+ * It lives in the Runtime because it digests bytes the Runtime reads off disk,
+ * and because Core is imported by the Console's client bundle: Core stays
+ * resolvable in a browser, so a Node built-in cannot enter it.
+ * `tests/cli/platform-import-boundary.test.ts` holds that boundary.
  */
 import { createHash } from "node:crypto";
 
-import type { PlaytestObservationContract } from "./artifacts.ts";
-import { canonicalPlaytestJson } from "./canonical-json.ts";
+import {
+  canonicalPlaytestJson,
+  type PlaytestObservationContract
+} from "@simulatorlife/autodev-core";
 
 export function playtestManifestHash(value: unknown): string {
   return createHash("sha256")

@@ -83,7 +83,6 @@ jobs:
       - name: Validate AutoDev tests
         run: |
           pnpm run typecheck
-          pnpm run test:ts
           pnpm test
 
       - name: Validate provider scripts

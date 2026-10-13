@@ -5,6 +5,7 @@ export * from "./artifact-store.ts";
 export * from "./control-api-run-control-client.ts";
 export * from "./docker-sandbox.ts";
 export * from "./episode-runner.ts";
+export * from "./hash-chain.ts";
 export * from "./jsonl-framer.ts";
 export * from "./loop-guard.ts";
 export * from "./mcp.ts";
