@@ -6,23 +6,22 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  checkPlaytestIntegration,
+  dispatchPlaytestCommand,
+  initPlaytestIntegration,
+  PLAYTESTS_BINDING_FILE,
+  PLAYTESTS_CONFIG_FILE,
+  PLAYTESTS_OBSERVATION_FILE,
+  PLAYTESTS_RUBRIC_FILE,
+  writePlaytestHashes
+} from "../../runtime/src/cli/playtest.ts";
+import {
   observationSchemaHash,
   observationSchemaHashMatches,
   playtestFileHash,
   playtestManifestHash,
   withObservationSchemaHash
 } from "../../runtime/src/playtesting/hash-chain.ts";
-
-import {
-  checkPlaytestIntegration,
-  PLAYTESTS_BINDING_FILE,
-  dispatchPlaytestCommand,
-  initPlaytestIntegration,
-  PLAYTESTS_CONFIG_FILE,
-  PLAYTESTS_OBSERVATION_FILE,
-  PLAYTESTS_RUBRIC_FILE,
-  writePlaytestHashes
-} from "../../runtime/src/cli/playtest.ts";
 
 function checkout(): {
   readonly root: string;
@@ -407,4 +406,29 @@ test("a binding missing a game schema is rejected rather than defaulted", () => 
   // The schema is the game's own; an absent one is something only the game can
   // supply, so it is named instead of filled with a guess.
   assert.match(invalid!.message, /event schema/u);
+});
+
+test("a seeded RNG without a version is rejected rather than half-advertised", () => {
+  const { root } = checkout();
+  initPlaytestIntegration(root);
+  const binding = completeBinding(root);
+  binding.seededRng = { export: "restoreRng" };
+  writeBinding(root, binding);
+
+  const invalid = checkPlaytestIntegration(root).problems.find(
+    (problem) => problem.code === "invalid-binding"
+  );
+  // The Runtime refuses a seeded guarantee it cannot name, so accepting this
+  // would only move the failure to capability negotiation, where the game
+  // cannot act on it.
+  assert.ok(invalid, "a seeded RNG with no version must be rejected");
+  assert.match(invalid!.message, /rngVersion/u);
+
+  // Naming the version resolves it, and the game is then declarable as seeded.
+  binding.rngVersion = "pcg32@1";
+  writeBinding(root, binding);
+  const accepted = checkPlaytestIntegration(root).problems.filter(
+    (problem) => problem.code === "invalid-binding"
+  );
+  assert.deepEqual(accepted, []);
 });

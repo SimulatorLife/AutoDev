@@ -2,17 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  type PlaytestAdapterBinding,
   PLAYTESTS_ADAPTER_BINDING_SCHEMA,
-  PLAYTESTS_PROTOCOL_VERSION,
-  type PlaytestAdapterBinding
+  PLAYTESTS_PROTOCOL_VERSION
 } from "@simulatorlife/autodev-core";
 
-import { playtestManifestHash } from "../src/playtesting/hash-chain.ts";
 import {
   createGenericAdapter,
   GenericAdapterError,
   protocolMethodFor
 } from "../src/playtesting/generic-adapter.ts";
+import { playtestManifestHash } from "../src/playtesting/hash-chain.ts";
 
 const OBSERVATION_SCHEMA = { type: "object", properties: { room: {} } };
 const ACTION_SCHEMA = { type: "object", properties: { move: {} } };
@@ -59,7 +59,8 @@ function game(): Record<string, unknown> {
 
 async function adapterFor(
   overrides: Partial<PlaytestAdapterBinding> = {},
-  target: Record<string, unknown> = game()
+  target: Record<string, unknown> = game(),
+  rngVersion: string | null = "pcg32"
 ) {
   return createGenericAdapter({
     binding: binding(overrides),
@@ -70,7 +71,7 @@ async function adapterFor(
     observationSchema: OBSERVATION_SCHEMA,
     actionSchema: ACTION_SCHEMA,
     eventSchema: EVENT_SCHEMA,
-    rngVersion: "pcg32"
+    rngVersion
   });
 }
 
@@ -128,11 +129,35 @@ test("determinism is declared from the binding, not assumed", async () => {
   assert.equal(withoutRng.capabilities.deterministic.traceReplayable, false);
 
   const withRng = await adapterFor(
-    { seededRng: { export: "restoreRng" } },
+    { seededRng: { export: "restoreRng" }, rngVersion: "pcg32" },
     { ...game(), restoreRng: () => undefined }
   );
   assert.equal(withRng.capabilities.deterministic.seededRuns, true);
   assert.equal(withRng.capabilities.deterministic.rngVersion, "pcg32");
+
+  // A game that binds a seeded RNG but never names its version is refused
+  // outright. The Runtime rejects an unnamed seeded guarantee, so accepting it
+  // here would only move the failure to capability negotiation, where nothing
+  // about the message points at the field the game left out.
+  await assert.rejects(
+    adapterFor(
+      { seededRng: { export: "restoreRng" } },
+      { ...game(), restoreRng: () => undefined },
+      null
+    ),
+    /must declare the engine rngVersion/u
+  );
+  // Declaring the version beside the binding is what makes it declarable.
+  const named = await adapterFor(
+    {
+      seededRng: { export: "restoreRng" },
+      rngVersion: "pcg32@1"
+    },
+    { ...game(), restoreRng: () => undefined },
+    null
+  );
+  assert.equal(named.capabilities.deterministic.seededRuns, true);
+  assert.equal(named.capabilities.deterministic.rngVersion, "pcg32@1");
   // The reference must still resolve; declaring it without providing it would
   // advertise a capability the game cannot honour.
   await assert.rejects(

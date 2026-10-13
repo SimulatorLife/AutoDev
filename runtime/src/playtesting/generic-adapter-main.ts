@@ -92,19 +92,34 @@ export function readAdapterContext(integrationDir: string): EntryContext {
 /**
  * Import the game's entry module and call its factory.
  *
- * The module is resolved inside the integration directory and loaded by URL, so
- * the sandbox's read-only checkout mount is the only reachable filesystem.
+ * The module is resolved inside the approved checkout and loaded by URL, so the
+ * sandbox's read-only checkout mount is the boundary — not the integration
+ * directory. A game's code lives in its own source tree, and a binding that
+ * could only name a module beside the binding file would force every game to
+ * keep a copy of its entry point inside `.autodev/`.
  */
 export function createEntryLoader(
-  integrationDir: string
+  integrationDir: string,
+  checkoutRoot: string = PLAYTESTS_ADAPTER_CHECKOUT_ROOT
 ): GenericAdapterHostOptions["loadEntry"] {
   const root = path.resolve(integrationDir);
+  const boundary = path.resolve(checkoutRoot);
   return async ({ entry, factory }) => {
-    const resolved = path.resolve(root, entry);
-    const relative = path.relative(root, resolved);
-    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    // A relative entry is declared against the integration directory, so a
+    // binding that says `adapter.js` keeps working. An absolute entry is
+    // already stated in container terms and is taken as-is, then held to the
+    // same containment check.
+    const resolved = path.isAbsolute(entry)
+      ? path.normalize(entry)
+      : path.resolve(root, entry);
+    const relative = path.relative(boundary, resolved);
+    if (
+      relative === "" ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    ) {
       throw new TypeError(
-        "The declared entry module must resolve inside the integration directory."
+        "The declared entry module must resolve inside the approved checkout."
       );
     }
     const module: unknown = await import(pathToFileURL(resolved).href);
@@ -165,15 +180,14 @@ export function integrationDirFrom(
 
 /** Serve the protocol on stdio until the Runtime closes the stream. */
 export async function main(argv: readonly string[]): Promise<void> {
-  const integrationDir = integrationDirFrom(
-    argv,
+  const checkoutRoot =
     process.env[PLAYTESTS_ADAPTER_CHECKOUT_ROOT_ENV] ??
-      PLAYTESTS_ADAPTER_CHECKOUT_ROOT
-  );
+    PLAYTESTS_ADAPTER_CHECKOUT_ROOT;
+  const integrationDir = integrationDirFrom(argv, checkoutRoot);
   const context = readAdapterContext(integrationDir);
   const host = await startGenericAdapterHost({
     ...context,
-    loadEntry: createEntryLoader(integrationDir),
+    loadEntry: createEntryLoader(integrationDir, checkoutRoot),
     input: process.stdin,
     output: process.stdout
   });

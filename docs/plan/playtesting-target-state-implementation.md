@@ -60,15 +60,18 @@ normative specification; this checklist tracks implementation and evidence.
 - [ ] Keyboard/mobile navigation, stable filter → finding → session → back,
       no fabricated video, source-mapped upstream UI logic actually executing,
       and performance on indexed queries, view changes, and replay selection.
-- [~] Console run/watch and multi-session analysis: an operator can start an
-  approved run and watch every nonterminal batch progress without manual
-  refresh; the Runtime can dispatch analysis over an explicit selection of
-  sessions. The Console selection surface and its Control API route remain —
-  see the active slice below.
-- [~] Declarative game onboarding: `init`/`check` and a Core-owned hash chain
-  exist, but the generic adapter runtime and tiered onboarding are still
-  required before a second game joins by adding one config file — see the
-  active slice below.
+- [x] Console run/watch and multi-session analysis: an operator can start an
+      approved run and watch every nonterminal batch progress without manual
+      refresh, and dispatch analysis over an explicit selection of sessions.
+      Delivered in `e5fb5d13`, `3ec26041`, `959ffd37`, `2a3bc056`. The remaining
+      known gap is per-assignment `win/loss/DNF/other` surfacing, recorded in the
+      active slice below.
+- [~] Declarative game onboarding: `init`/`check`, the hash chain, the binding
+  contract and the generic adapter runtime all exist, and a real episode now
+  runs through the adapter entrypoint (`b6fe554e`). Two things still stand
+  between this and the acceptance below: the `generated-scaffold` tier's
+  conformance test, and a second, mechanically different game joining by
+  configuration alone.
 - [ ] Documentation, test coverage, package checks and independent validation
       match the final integrated diff.
 

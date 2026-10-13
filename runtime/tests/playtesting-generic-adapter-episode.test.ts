@@ -27,24 +27,25 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import {
-  PLAYTESTS_ADAPTER_BINDING_SCHEMA,
+  type PlaytestObservationContract,
   PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES,
+  PLAYTESTS_ADAPTER_BINDING_SCHEMA,
   PLAYTESTS_GENERIC_ADAPTER_COMMAND,
-  PLAYTESTS_INTEGRATION_DIR,
-  type PlaytestObservationContract
+  PLAYTESTS_INTEGRATION_DIR
 } from "@simulatorlife/autodev-core";
 
-import { withObservationSchemaHash } from "../src/playtesting/hash-chain.ts";
 import { PlaytestAdapterClient } from "../src/playtesting/adapter-client.ts";
 import {
   buildDockerRunArguments,
   type PreparedPlaytestSandbox
 } from "../src/playtesting/docker-sandbox.ts";
 import {
+  createEntryLoader,
+  integrationDirFrom,
   PLAYTESTS_ADAPTER_CHECKOUT_ROOT,
-  PLAYTESTS_ADAPTER_CHECKOUT_ROOT_ENV,
-  integrationDirFrom
+  PLAYTESTS_ADAPTER_CHECKOUT_ROOT_ENV
 } from "../src/playtesting/generic-adapter-main.ts";
+import { withObservationSchemaHash } from "../src/playtesting/hash-chain.ts";
 
 /**
  * The sandbox request for a prepared run, without touching a real checkout.
@@ -404,5 +405,237 @@ test("the mount the sandbox builds is the path the adapter resolves against", ()
   assert.equal(
     integrationDirFrom([], "/some/other/game/dir"),
     `/some/other/game/dir/${PLAYTESTS_INTEGRATION_DIR}`
+  );
+});
+
+/**
+ * Acceptance: a second, mechanically different game joins by configuration.
+ *
+ * This game is deliberately unlike the first one in every dimension the runtime
+ * could have accidentally special-cased: its code lives in its own source tree
+ * rather than beside the binding, it is CommonJS rather than ESM, its factory
+ * returns a nested namespace reached by a dotted binding path, its episode runs
+ * a different shape of state, and it binds a seeded RNG plus two optional
+ * methods the first game did not. AutoDev's infrastructure is unchanged.
+ */
+const SECOND_GAME_MODULE = `
+const state = { revision: 0, room: "cellar" };
+exports.makeGame = function makeGame() {
+  const api = {
+    reset: () => ({
+      episodeId: "episode-second-2",
+      revision: 0,
+      rngProvenance: {
+        algorithm: "xoshiro128ss",
+        version: "second-game-v1",
+        initialStateHash: "d".repeat(64),
+        reproducible: true
+      }
+    }),
+    observe: () => ({
+      episodeId: "episode-second-2",
+      revision: state.revision,
+      observation: { room: state.room, turn: state.revision },
+      turnContext: null,
+      frame: null
+    }),
+    legalActions: () => ({
+      episodeId: "episode-second-2",
+      revision: state.revision,
+      actions: [{ actionId: "ascend", description: "Ascend.", features: {} }]
+    }),
+    step: () => {
+      state.revision += 1;
+      state.room = state.revision >= 2 ? "attic" : "cellar";
+      return {
+        episodeId: "episode-second-2",
+        revision: state.revision,
+        acceptedActionId: "ascend",
+        eventIds: [],
+        terminal: state.revision >= 2
+      };
+    },
+    outcome: () => ({
+      episodeId: "episode-second-2",
+      revision: state.revision,
+      state: "terminal",
+      outcome: { room: state.room },
+      metrics: {},
+      evaluations: [],
+      missingReasons: []
+    }),
+    fork: () => ({
+      episodeId: "episode-second-2",
+      revision: state.revision,
+      rngCheckpoint: {
+        algorithm: "xoshiro128ss",
+        version: "second-game-v1",
+        stateHash: "e".repeat(64),
+        reproducible: true
+      }
+    })
+  };
+  api.restoreRng = () => true;
+  return { api };
+};
+`;
+
+test("a second, mechanically different game joins by configuration alone", async () => {
+  const root = mkdtempSync(
+    path.join(realpathSync(tmpdir()), "autodev-playtest-second-game-")
+  );
+  const integration = path.join(root, PLAYTESTS_INTEGRATION_DIR);
+  // The game's code lives in its own source tree, not beside the binding.
+  mkdirSync(path.join(root, "src", "engine"), { recursive: true });
+  mkdirSync(integration, { recursive: true });
+  writeFileSync(
+    path.join(root, "src", "engine", "second-game.cjs"),
+    SECOND_GAME_MODULE
+  );
+  writeFileSync(
+    path.join(integration, "playtest.observation.json"),
+    `${JSON.stringify(observationContract(), null, 2)}\n`
+  );
+  writeFileSync(
+    path.join(integration, "playtest.config.json"),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        adapter: {
+          transport: "stdio-jsonl",
+          command: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND]
+        },
+        modes: ["headless"],
+        scenarios: ["default"]
+      },
+      null,
+      2
+    )}\n`
+  );
+  writeFileSync(
+    path.join(integration, "playtest.binding.json"),
+    `${JSON.stringify(
+      {
+        schema: PLAYTESTS_ADAPTER_BINDING_SCHEMA,
+        schemaVersion: 1,
+        tier: "declarative",
+        // Reaches out of the integration directory into the game's own tree.
+        entry: "../src/engine/second-game.cjs",
+        factory: "makeGame",
+        schemas: {
+          observation: { type: "object", properties: { room: {}, turn: {} } },
+          action: { type: "object", properties: { actionId: {} } },
+          event: { type: "object", properties: {} }
+        },
+        // Dotted paths into a returned namespace, plus a seeded RNG and two
+        // optional methods the first game did not bind.
+        seededRng: { export: "api", path: "restoreRng" },
+        rngVersion: "xoshiro128ss@1",
+        bindings: {
+          reset: { export: "api", path: "reset" },
+          observe: { export: "api", path: "observe" },
+          legalActions: { export: "api", path: "legalActions" },
+          step: { export: "api", path: "step" },
+          outcome: { export: "api", path: "outcome" },
+          fork: { export: "api", path: "fork" }
+        }
+      },
+      null,
+      2
+    )}\n`
+  );
+
+  const child = spawn(
+    process.execPath,
+    [
+      "--experimental-strip-types",
+      ADAPTER_ENTRYPOINT,
+      "--integration-dir",
+      PLAYTESTS_INTEGRATION_DIR
+    ],
+    {
+      cwd: root,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        [PLAYTESTS_ADAPTER_CHECKOUT_ROOT_ENV]: root
+      }
+    }
+  );
+  const stderr: string[] = [];
+  child.stderr?.on("data", (chunk: Buffer) =>
+    stderr.push(chunk.toString("utf8"))
+  );
+  const client = new PlaytestAdapterClient({
+    stdin: child.stdin as PassThrough,
+    stdout: child.stdout as PassThrough,
+    stderr: new PassThrough(),
+    onExit: () => {}
+  });
+  try {
+    const capabilities = await client.negotiateCapabilities();
+    // The declaration the first game could not make: it binds a seeded RNG, so
+    // AutoDev may now advertise a reproducible rerun.
+    assert.equal(capabilities.deterministic.seededRuns, true);
+    // Only the optional methods this game actually bound are offered.
+    assert.deepEqual(capabilities.optionalOperations, ["game.fork"]);
+
+    const opened = await client.call("game.reset", {
+      seed: "seed-2",
+      scenarioId: "default",
+      approvedVariantHash: "f".repeat(64)
+    });
+    assert.equal(opened.ok, true);
+    assert.equal(
+      opened.ok ? (opened.result as { episodeId: string }).episodeId : null,
+      "episode-second-2"
+    );
+
+    const first = await client.step({
+      episodeId: "episode-second-2",
+      actionId: "ascend",
+      expectedRevision: 0
+    });
+    assert.equal(first.ok, true);
+    const second = await client.step({
+      episodeId: "episode-second-2",
+      actionId: "ascend",
+      expectedRevision: 1
+    });
+    assert.equal(second.ok, true);
+    // Its state machine advanced differently from the first game's.
+    assert.equal(
+      second.ok ? (second.result as { revision: number }).revision : null,
+      2
+    );
+
+    const settled = await client.call("game.outcome", {
+      episodeId: "episode-second-2",
+      expectedRevision: 2
+    });
+    assert.deepEqual(
+      settled.ok ? (settled.result as { outcome: unknown }).outcome : null,
+      { room: "attic" }
+    );
+    client.close();
+    assert.deepEqual(stderr, []);
+  } finally {
+    client.close();
+    child.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an entry module outside the approved checkout is still refused", () => {
+  const loader = createEntryLoader(
+    "/workspace/.autodev",
+    "/workspace"
+  ) as (input: { entry: string; factory: string }) => Promise<unknown>;
+  // The containment boundary is the read-only checkout mount, so widening the
+  // entry to the game's own source tree must not have widened it past the
+  // checkout itself.
+  return assert.rejects(
+    loader({ entry: "../../etc/passwd", factory: "makeGame" }),
+    /must resolve inside the approved checkout/u
   );
 });

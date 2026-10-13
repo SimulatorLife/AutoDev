@@ -25,16 +25,14 @@ import {
   type PlaytestBindableMethod,
   type PlaytestCapabilityAdvertisement,
   type PlaytestJsonSchema,
-  playtestManifestHash,
   resolvePlaytestAdapterBinding,
   unboundPlaytestMethods
 } from "@simulatorlife/autodev-core";
 
+import { playtestManifestHash } from "./hash-chain.ts";
+
 export type GenericAdapterFailureCode =
-  | "unresolved-binding"
-  | "unbound-method"
-  | "entry-error"
-  | "factory-error";
+  "unresolved-binding" | "unbound-method" | "entry-error" | "factory-error";
 
 export class GenericAdapterError extends Error {
   readonly code: GenericAdapterFailureCode;
@@ -80,9 +78,10 @@ export function protocolMethodFor(method: PlaytestBindableMethod): string {
   return `game.${method}`;
 }
 
-function referencePath(
-  reference: { readonly export: string; readonly path?: string }
-): readonly string[] {
+function referencePath(reference: {
+  readonly export: string;
+  readonly path?: string;
+}): readonly string[] {
   return reference.path === undefined
     ? [reference.export]
     : [reference.export, ...reference.path.split(".")];
@@ -96,12 +95,11 @@ export function buildCapabilityAdvertisement(
   options: GenericAdapterOptions,
   bound: PlaytestAdapterBinding
 ): PlaytestCapabilityAdvertisement {
-  const observationSchemaHash = playtestManifestHash(
-    options.observationSchema
-  );
+  const observationSchemaHash = playtestManifestHash(options.observationSchema);
   const actionSchemaHash = playtestManifestHash(options.actionSchema);
   const eventSchemaHash = playtestManifestHash(options.eventSchema);
   const unbound = unboundPlaytestMethods(bound);
+  const rngVersion = options.rngVersion ?? bound.rngVersion ?? null;
   return {
     protocolVersion: PLAYTESTS_PROTOCOL_VERSION,
     schemaHashAlgorithm: "sha256-canonical-json-v1",
@@ -118,9 +116,11 @@ export function buildCapabilityAdvertisement(
     // the Runtime never offers itself an operation the game cannot serve. A
     // method that is neither required nor bound is simply absent: calling it
     // fails with a named refusal rather than being advertised as available.
-    optionalOperations: PLAYTESTS_OPTIONAL_ADAPTER_METHODS.filter((method) =>
-      bound.bindings[method.replace(/^game\./u, "") as PlaytestBindableMethod] !==
-      undefined
+    optionalOperations: PLAYTESTS_OPTIONAL_ADAPTER_METHODS.filter(
+      (method) =>
+        bound.bindings[
+          method.replace(/^game\./u, "") as PlaytestBindableMethod
+        ] !== undefined
     ) as unknown as PlaytestCapabilityAdvertisement["optionalOperations"],
     // The protocol's own defaults for the four fields a capability advertisement
     // may carry. The broader defaults constant also holds a transport grace
@@ -139,9 +139,16 @@ export function buildCapabilityAdvertisement(
       // Declared, not assumed: an adapter without a seeded-RNG entry point
       // cannot restore engine RNG for a counterfactual, and reporting
       // seededRuns it cannot honour would make a rerun look reproducible.
-      seededRuns: bound.seededRng !== undefined,
-      rngVersion:
-        bound.seededRng === undefined ? null : options.rngVersion ?? null,
+      //
+      // Advertising `seededRuns` without naming the RNG version would also be a
+      // protocol violation — the Runtime rejects an advertisement whose seeded
+      // guarantee is unnamed, because an unnamed RNG cannot be matched against
+      // the benchmark that recorded it. A game that binds a seeded entry point
+      // but does not report its version is therefore treated as not having one:
+      // the honest advertisement is a rerun AutoDev will not claim it can
+      // reproduce.
+      seededRuns: bound.seededRng !== undefined && rngVersion !== null,
+      rngVersion: bound.seededRng === undefined ? null : rngVersion,
       traceReplayable: bound.bindings.replay !== undefined
     }
   };
@@ -201,9 +208,7 @@ export async function createGenericAdapter(
       current = (current as Record<string, unknown>)[segment];
     }
     return typeof current === "function"
-      ? (current as (
-          params: Readonly<Record<string, unknown>>
-        ) => unknown)
+      ? (current as (params: Readonly<Record<string, unknown>>) => unknown)
       : null;
   };
 

@@ -91,6 +91,15 @@ export interface PlaytestAdapterBinding {
    */
   readonly seededRng?: PlaytestBindingReference;
   /**
+   * The engine RNG version behind `seededRng`.
+   *
+   * Required alongside it, because the protocol refuses to advertise a seeded
+   * guarantee it cannot name: a rerun's RNG must be matchable against the
+   * benchmark that recorded it. A game that binds a seedable RNG without naming
+   * its version is not offered the seeded capability at all.
+   */
+  readonly rngVersion?: string;
+  /**
    * The game's own schemas. AutoDev derives their digests rather than reading
    * them from the file, which is what stops a hand-written adapter drifting
    * when a schema is edited.
@@ -258,6 +267,20 @@ export function resolvePlaytestAdapterBinding(
     return {
       kind: "rejected",
       message: "The seeded RNG binding is malformed."
+    };
+  }
+  // A seedable RNG with no version cannot be advertised: the Runtime rejects a
+  // seeded guarantee it cannot name, so requiring it here turns a silent
+  // capability mismatch into a message naming what the game left out.
+  if (
+    value.seededRng !== undefined &&
+    (typeof value.rngVersion !== "string" ||
+      value.rngVersion.trim().length === 0)
+  ) {
+    return {
+      kind: "rejected",
+      message:
+        "A seededRng binding must declare the engine rngVersion beside it, so a rerun can be matched against the benchmark that recorded it."
     };
   }
   // The schemas are declared, never invented here, and each must be a JSON
