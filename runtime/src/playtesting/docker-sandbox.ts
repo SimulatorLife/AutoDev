@@ -25,6 +25,7 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 
 import {
+  PLAYTESTS_ADAPTER_CONTAINER_WORKSPACE,
   PLAYTESTS_INTEGRATION_DIR,
   type PlaytestArtifactReference,
   type PlaytestMetricRegistry,
@@ -45,7 +46,7 @@ const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const RUN_ID_PATTERN = /^[A-Za-z\d][A-Za-z\d._:-]{0,127}$/u;
 const PATH_SEPARATOR_PATTERN = /[\\/]/u;
 const LINE_SPLIT_PATTERN = /\r?\n/u;
-const CONTAINER_WORKSPACE = "/workspace";
+const CONTAINER_WORKSPACE = PLAYTESTS_ADAPTER_CONTAINER_WORKSPACE;
 const CONTAINER_TEMP = "/tmp";
 const CONTAINER_ARTIFACTS = "/artifacts";
 const CONTAINER_INPUT_ARTIFACTS = "/run/autodev-playtest-input";

@@ -25,14 +25,56 @@ import {
   PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES,
   PLAYTESTS_GENERIC_ADAPTER_COMMAND,
   PLAYTESTS_INTEGRATION_DIR,
-  type PlaytestObservationContract,
-  withObservationSchemaHash
+  type PlaytestObservationContract
 } from "@simulatorlife/autodev-core";
 
+import { withObservationSchemaHash } from "../src/playtesting/hash-chain.ts";
 import { PlaytestAdapterClient } from "../src/playtesting/adapter-client.ts";
 import {
-  PLAYTESTS_ADAPTER_CHECKOUT_ROOT_ENV
+  buildDockerRunArguments,
+  type PreparedPlaytestSandbox
+} from "../src/playtesting/docker-sandbox.ts";
+import {
+  PLAYTESTS_ADAPTER_CHECKOUT_ROOT,
+  PLAYTESTS_ADAPTER_CHECKOUT_ROOT_ENV,
+  integrationDirFrom
 } from "../src/playtesting/generic-adapter-main.ts";
+
+/**
+ * The sandbox request for a prepared run, without touching a real checkout.
+ *
+ * `buildDockerRunArguments` validates its inputs before it builds argv, so the
+ * mount target is decided by the prepared request rather than by the host
+ * filesystem.
+ */
+function preparedFor(
+  command: readonly string[]
+): PreparedPlaytestSandbox {
+  return {
+    workspaceId: "fixture/game",
+    checkoutRoot: "/host/checkout",
+    checkoutSha: "a".repeat(64),
+    imageDigest: `ghcr.io/autodev/adapter@sha256:${"b".repeat(64)}`,
+    workingDirectory: "/host/checkout",
+    command: [...command],
+    limits: {
+      cpuCores: 1,
+      memoryBytes: 256 * 1024 * 1024,
+      processCount: 32,
+      wallTimeMs: 10_000,
+      artifactBytes: 64 * 1024,
+      workerCount: 1,
+      episodeCount: 1,
+      maxStepsPerEpisode: 10,
+      critiqueCount: 0
+    },
+    configuration: {} as PreparedPlaytestSandbox["configuration"],
+    observationContract: {} as PreparedPlaytestSandbox["observationContract"],
+    rubric: {} as PreparedPlaytestSandbox["rubric"],
+    benchmark: null,
+    rubricHash: "c".repeat(64)
+  };
+}
 
 const ADAPTER_ENTRYPOINT = new URL(
   "../src/playtesting/generic-adapter-main.ts",
@@ -304,4 +346,31 @@ test("an unbound method is refused by name over the real transport", async () =>
     child.kill("SIGKILL");
     fixture.cleanup();
   }
+});
+test("the mount the sandbox builds is the path the adapter resolves against", () => {
+  // These two are a pair: the sandbox mounts the checkout at one path and the
+  // adapter looks for the binding under another. If they drift, the adapter
+  // searches outside the read-only mount for a binding that is present, and the
+  // game fails onboarding with a file it can see in its own checkout.
+  const containerArgs = buildDockerRunArguments(
+    preparedFor(PLAYTESTS_GENERIC_ADAPTER_COMMAND),
+    "run-paired-paths",
+    realpathSync(tmpdir()),
+    undefined
+  );
+  const mounted = containerArgs.find((arg) => arg.startsWith("type=bind,"));
+  assert.ok(
+    mounted?.includes(`target=${PLAYTESTS_ADAPTER_CHECKOUT_ROOT},readonly`),
+    `the checkout must be mounted where the adapter looks: ${String(mounted)}`
+  );
+  assert.equal(
+    integrationDirFrom(["--integration-dir", PLAYTESTS_INTEGRATION_DIR]),
+    `${PLAYTESTS_ADAPTER_CHECKOUT_ROOT}/${PLAYTESTS_INTEGRATION_DIR}`
+  );
+  // The integration directory is checkout-root relative, never working
+  // directory relative: the game's own directory is not where it keeps this.
+  assert.equal(
+    integrationDirFrom([], "/some/other/game/dir"),
+    `/some/other/game/dir/${PLAYTESTS_INTEGRATION_DIR}`
+  );
 });

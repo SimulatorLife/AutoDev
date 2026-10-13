@@ -18,6 +18,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   assertPlaytestObservationContract,
   PLAYTESTS_ADAPTER_BINDING_SCHEMA,
+  PLAYTESTS_ADAPTER_CONTAINER_WORKSPACE,
   PLAYTESTS_INTEGRATION_DIR,
   type PlaytestJsonSchema
 } from "@simulatorlife/autodev-core";
@@ -132,7 +133,8 @@ export function createEntryLoader(
  * *game's* approved directory, which is frequently not the checkout root, so a
  * cwd-relative resolve would miss a binding that is present.
  */
-export const PLAYTESTS_ADAPTER_CHECKOUT_ROOT = "/workspace";
+export const PLAYTESTS_ADAPTER_CHECKOUT_ROOT =
+  PLAYTESTS_ADAPTER_CONTAINER_WORKSPACE;
 
 /**
  * Overrides the checkout root. The sandbox mounts the checkout at the fixed

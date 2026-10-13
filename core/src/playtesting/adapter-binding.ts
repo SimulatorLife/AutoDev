@@ -129,6 +129,16 @@ export const PLAYTESTS_AUTODEV_ADAPTER_IMAGE_DIGEST =
 export const PLAYTESTS_INTEGRATION_DIR = ".autodev";
 
 /**
+ * Where the sandbox mounts the approved checkout inside the container.
+ *
+ * Owned here, beside the adapter command that depends on it: the sandbox mounts
+ * here and the adapter resolves its integration directory here, so the two paths
+ * are a pair. Changing one without the other would leave the adapter looking
+ * outside the mount for a binding that is present.
+ */
+export const PLAYTESTS_ADAPTER_CONTAINER_WORKSPACE = "/workspace";
+
+/**
  * The command AutoDev's adapter image runs.
  *
  * A game bound through declarations does not declare this; the game under test
