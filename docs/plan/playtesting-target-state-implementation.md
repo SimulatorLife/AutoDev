@@ -45,10 +45,23 @@ states what is implemented and, where applicable, what is still missing.
   (`random`, `first-legal`, commit below).
 - [~] 4. Experiment/findings: preregistered comparisons, finding identity,
   exposure/evidence triage, and reproduction/fix lineage are implemented.
-  **Missing: gated issue publication.** `githubIssues: "review"` is a
-  validated config value that nothing reads; there is no publisher path and
-  no test. Counterexamples exist only as registry/scoring fields, not as a
-  lifecycle step.
+  **Gated issue drafting is implemented** (`core/src/playtesting/issue-drafts.ts`,
+  `playtest.issueDrafts`). Both gates now have readers: the game's checked-in
+  `reporting.githubIssues` is carried on the capabilities view as
+  `configuredIssueReporting`, and the operator's `issueReporting` alongside it,
+  so an operator can tell a game that asked for review from one that asked for
+  nothing. AutoDev drafts and never publishes — every draft carries
+  `requiresOperatorAction`, the body states that nothing was filed, and the
+  finding's `evidenceStatus`/`verificationStage` are rendered verbatim. A
+  regression is drafted rather than treated as closed, per the measurement
+  contract's rule that external reopening follows explicit authority.
+
+  **Still missing: counterexamples as a lifecycle step.** They remain
+  registry/scoring fields only, and implementing them would require inventing
+  the competence thresholds ("passed"/"failed"/"insufficient") that decide when
+  an omission is a defect — a domain judgement AutoDev has no authority to
+  fabricate. Deliberately left unimplemented and recorded here as a gap, not
+  downgraded to a footnote.
 - [~] 5. Visual/human validation: consented study data, privacy controls,
   distinct human instruments, and refusal of unauthorized UI evidence are
   implemented and tested. **Missing: `heldOutHumanStateIds` is declared on a
