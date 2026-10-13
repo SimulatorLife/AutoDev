@@ -15,9 +15,13 @@ import path from "node:path";
 
 import {
   assertPlaytestObservationContract,
+  PLAYTESTS_REQUIRED_BINDINGS,
   derivedBenchmarkDigests,
   observationSchemaHash,
+  type PlaytestAdapterBinding,
   type PlaytestObservationContract,
+  resolvePlaytestAdapterBinding,
+  unboundPlaytestMethods,
   playtestFileHash,
   playtestManifestHash,
   withObservationSchemaHash
@@ -32,6 +36,7 @@ export const PLAYTESTS_INTEGRATION_DIR = ".autodev";
 export const PLAYTESTS_CONFIG_FILE = "playtest.config.json";
 export const PLAYTESTS_OBSERVATION_FILE = "playtest.observation.json";
 export const PLAYTESTS_RUBRIC_FILE = "playtest.rubric.json";
+export const PLAYTESTS_BINDING_FILE = "playtest.binding.json";
 
 export type PlaytestProblemSeverity = "error" | "warning";
 export type PlaytestProblemCode =
@@ -40,7 +45,9 @@ export type PlaytestProblemCode =
   | "invalid-contract"
   | "hash-mismatch"
   | "empty-rubric"
-  | "empty-observation-fields";
+  | "empty-observation-fields"
+  | "invalid-binding"
+  | "incomplete-binding";
 
 export interface PlaytestCheckProblem {
   readonly severity: PlaytestProblemSeverity;
@@ -184,6 +191,62 @@ export function checkPlaytestIntegration(checkoutRoot: string): PlaytestCheckRep
           file: relative,
           message: `${relative} declares no metrics. AutoDev does not invent them; add the game's own dimensions, or the analysis will have nothing to score.`
         });
+      }
+    }
+  }
+
+  // The binding is what lets a game onboard without writing the protocol. A
+  // missing one means the game still hand-writes an adapter, which is the cost
+  // this integration is meant to remove.
+  const bindingFile = path.join(root, PLAYTESTS_BINDING_FILE);
+  if (!existsSync(bindingFile)) {
+    problems.push({
+      severity: "warning",
+      code: "missing-file",
+      file: path.posix.join(PLAYTESTS_INTEGRATION_DIR, PLAYTESTS_BINDING_FILE),
+      message:
+        "No adapter binding is declared, so this game still has to implement the protocol itself."
+    });
+  } else {
+    const parsed = readJsonFile(bindingFile);
+    const relative = path.posix.join(
+      PLAYTESTS_INTEGRATION_DIR,
+      PLAYTESTS_BINDING_FILE
+    );
+    if (!parsed.ok) {
+      problems.push({
+        severity: "error",
+        code: "invalid-json",
+        file: relative,
+        message: `${relative} is not valid JSON: ${parsed.message}`
+      });
+    } else {
+      const resolution = resolvePlaytestAdapterBinding(parsed.value);
+      if (resolution.kind === "rejected") {
+        problems.push({
+          severity: "error",
+          code: "invalid-binding",
+          file: relative,
+          message: `${relative} is not a usable adapter binding: ${resolution.message}`
+        });
+      } else {
+        // Every protocol method the game leaves unbound is named. AutoDev does
+        // not answer one from a default, so an unbound method is a refusal the
+        // operator would otherwise meet mid-run.
+        const unbound = unboundPlaytestMethods(
+          parsed.value as PlaytestAdapterBinding
+        );
+        const optional = unbound.filter(
+          (method) => !PLAYTESTS_REQUIRED_BINDINGS.includes(method)
+        );
+        if (optional.length > 0) {
+          problems.push({
+            severity: "warning",
+            code: "incomplete-binding",
+            file: relative,
+            message: `${relative} does not bind ${optional.join(", ")}; those protocol methods are unavailable for this game.`
+          });
+        }
       }
     }
   }

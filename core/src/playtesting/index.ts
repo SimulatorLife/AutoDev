@@ -7,6 +7,7 @@
  * module implements.
  */
 
+export * from "./adapter-binding.ts";
 export * from "./artifacts.ts";
 export * from "./batch-run.ts";
 export * from "./benchmark.ts";

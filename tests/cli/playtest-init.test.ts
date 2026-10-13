@@ -15,6 +15,7 @@ import {
 
 import {
   checkPlaytestIntegration,
+  PLAYTESTS_BINDING_FILE,
   dispatchPlaytestCommand,
   initPlaytestIntegration,
   PLAYTESTS_CONFIG_FILE,
@@ -118,7 +119,7 @@ test("check names missing files instead of reporting a generic failure", () => {
   const { root } = checkout();
   const report = checkPlaytestIntegration(root);
   const missing = report.problems.filter(
-    (problem) => problem.code === "missing-file"
+    (problem) => problem.code === "missing-file" && problem.severity === "error"
   );
   assert.equal(missing.length, 3);
   assert.ok(
@@ -257,4 +258,91 @@ test("the benchmark's derived digests are checked, not trusted", () => {
     written.observationSchemaHash,
     read(root, PLAYTESTS_OBSERVATION_FILE).schemaHash
   );
+});
+
+test("a game without declared bindings is told it still owns the protocol", () => {
+  const { root } = checkout();
+  initPlaytestIntegration(root);
+  // init writes no binding, so the game still hand-writes an adapter. That is
+  // reported rather than quietly treated as on-board.
+  const report = checkPlaytestIntegration(root);
+  const binding = report.problems.find(
+    (problem) => problem.file.endsWith(PLAYTESTS_BINDING_FILE)
+  );
+  assert.ok(binding, "a missing binding must be reported");
+  assert.equal(binding!.severity, "warning");
+  assert.match(binding!.message, /implement the protocol/u);
+
+  writeFileSync(
+    path.join(root, ".autodev", PLAYTESTS_BINDING_FILE),
+    `${JSON.stringify(
+      {
+        schema: "autodev-playtest-adapter-binding-v1",
+        schemaVersion: 1,
+        tier: "declarative",
+        entry: "adapter.js",
+        factory: "createGame",
+        bindings: {
+          capabilities: { export: "capabilities" },
+          reset: { export: "reset" },
+          observe: { export: "observe" },
+          legalActions: { export: "legalActions" },
+          step: { export: "step" },
+          outcome: { export: "outcome" }
+        }
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+  const bound = checkPlaytestIntegration(root);
+  // Every required method is bound, so nothing blocks.
+  assert.equal(
+    bound.problems.filter((problem) => problem.severity === "error").length,
+    0
+  );
+  // The optional methods this game left unbound are named rather than assumed.
+  const gap = bound.problems.find(
+    (problem) => problem.code === "incomplete-binding"
+  );
+  assert.ok(gap, "unbound optional methods must be reported by name");
+  assert.equal(gap!.severity, "warning");
+  assert.match(gap!.message, /fork/u);
+});
+
+test("an unusable binding is rejected with a named gap", () => {
+  const { root } = checkout();
+  initPlaytestIntegration(root);
+  writeFileSync(
+    path.join(root, ".autodev", PLAYTESTS_BINDING_FILE),
+    `${JSON.stringify(
+      {
+        schema: "autodev-playtest-adapter-binding-v1",
+        schemaVersion: 1,
+        tier: "declarative",
+        entry: "adapter.js",
+        factory: "createGame",
+        // `outcome` is missing: AutoDev will not supply a default for it.
+        bindings: {
+          capabilities: { export: "capabilities" },
+          reset: { export: "reset" },
+          observe: { export: "observe" },
+          legalActions: { export: "legalActions" },
+          step: { export: "step" }
+        }
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+  const report = checkPlaytestIntegration(root);
+  const invalid = report.problems.find(
+    (problem) => problem.code === "invalid-binding"
+  );
+  assert.ok(invalid);
+  assert.equal(invalid!.severity, "error");
+  assert.match(invalid!.message, /outcome/u);
+  assert.match(invalid!.message, /will not supply a default/u);
 });
