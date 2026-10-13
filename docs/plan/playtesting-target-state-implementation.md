@@ -63,9 +63,11 @@ normative specification; this checklist tracks implementation and evidence.
 - [x] Console run/watch and multi-session analysis: an operator can start an
       approved run and watch every nonterminal batch progress without manual
       refresh, and dispatch analysis over an explicit selection of sessions.
-      Delivered in `e5fb5d13`, `3ec26041`, `959ffd37`, `2a3bc056`. The remaining
-      known gap is per-assignment `win/loss/DNF/other` surfacing, recorded in the
-      active slice below.
+      Delivered in `e5fb5d13`, `3ec26041`, `959ffd37`, `2a3bc056`. Assignment
+      outcomes are surfaced from the owner's own `PlaytestCompletionCounts`
+      (`e6c3fbd1`): four of the six tiles previously read keys no producer emits,
+      so the batch's real outcomes were on screen as permanent absences, and the
+      key type now makes that a compile error rather than a silent gap.
 - [~] Declarative game onboarding: `init`/`check`, the hash chain, the binding
   contract and the generic adapter runtime all exist, a real episode runs
   through the adapter entrypoint (`b6fe554e`), and the acceptance below is met
