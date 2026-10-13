@@ -82,6 +82,23 @@ states what is implemented and, where applicable, what is still missing.
   an omission is a defect — a domain judgement AutoDev has no authority to
   fabricate. Deliberately left unimplemented and recorded here as a gap, not
   downgraded to a footnote.
+
+  **Newly recorded: nothing creates a comparison from a real run.** A whole-tree
+  search for `buildPlaytestComparison` finds only `core/src/playtesting/comparison.ts`
+  and test files, and the sole production `insertComparison` call
+  (`runtime/src/playtesting/mcp.ts:4291`) persists an owner decision onto a
+  comparison already fetched from storage. So `playtest.compare` lists an empty
+  set, `playtest.decideComparison` refuses because there is nothing to decide,
+  and `classifyPlaytestMetricComparison` -- reached only through that builder --
+  never runs outside tests. The comparison *model* is implemented; the producer
+  is not. This was not previously recorded and is stated here rather than left
+  implicit, because a `[~]` slice that reads as delivered is how a later reader
+  assumes a live system can compare two builds when it cannot.
+
+  Closing it needs the measurement contract's frozen pairing (matched baseline
+  and candidate units across a preregistered experiment), which is a larger and
+  design-sensitive surface than the artifact above; it is deliberately left for
+  that work rather than approximated with an unparied comparison.
 - [~] 5. Visual/human validation: consented study data, privacy controls,
   distinct human instruments, and refusal of unauthorized UI evidence are
   implemented and tested. The `PlayerPolicyValidity` artifact that measurement
