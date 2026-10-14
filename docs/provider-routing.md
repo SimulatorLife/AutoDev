@@ -1917,25 +1917,34 @@ installed agy rather than inferred from its help text:
   H1-delimited prompt. Verified live: the agent's prompt reaches the model, and
   an unknown name fails fast with `unknown agent "x" (no custom agents are
   available)` before any model call. AutoDev passes no `--agent` today.
-- **`excludeDefaultComponents` is unverified in both directions.** The
-  changelog says a custom agent can "opt out of default prompt sections and
-  built-in tools", and the field is real (`ExcludeDefaultComponents`). An
-  earlier note here asserted it was inert; that assertion was wrong, and it
-  rested on an instrument that cannot answer the question. `init.tools`
-  reports the same 60 entries with *and* without the flag, baselines included,
-  so it is a static list rather than the agent's effective tool set.
-  Behavioural probes are worse: asking the model what it can do returns the
-  scripted answer, because a custom agent's prompt governs its reply, and a
-  probe run through a bare working directory fails in the baselines too
-  (`view_file` errors there regardless of the flag). Treat this field as
-  unresolved, not disproven — and note that nothing in the shim design needs
-  it, because the hook below refuses the built-ins on its own.
-  One weak signal is worth re-testing rather than discarding: with
-  `excludeDefaultComponents` spelled in camelCase the model made no tool call
-  at all and reported having no such tool, while baselines and the
-  `exclude_default_components` spelling both attempted the call. That points
-  at camelCase being the recognised key and snake_case the inert one.
-- **`PreToolUse` hooks work, and are the real lever.** Hooks load from
+- **`excludeDefaultComponents: true` removes the built-in tools, and the
+  camelCase spelling is the one that works.** Measured against the installed agy
+  with a positive control at each end, asking the agent to read a real file and
+  watching for the tool step rather than the reply:
+
+  | agent frontmatter                | `view_file` | MCP tools |
+  | -------------------------------- | ----------- | --------- |
+  | none (no `--agent`)               | used        | —         |
+  | none, `--agent` selected         | used        | —         |
+  | `excludeDefaultComponents: true` | **absent**  | **used**  |
+  | camel + `enable_mcp_tools: true` | **absent**  | **used**  |
+  | `exclude_default_components`     | used        | —         |
+
+  So the field is the agy equivalent of Claude's `--tools ""`: the built-ins
+  leave the advertised tool set entirely, and MCP tools remain — which is the
+  split the shim needs, since the shim arrives as an MCP server. `enable_mcp_tools`
+  is not required for MCP to survive; adding it changed nothing. The
+  snake_case spelling is inert, which is worth knowing because the protobuf field
+  is `ExcludeDefaultComponents` and a reader may reasonably try either.
+
+  Two measuring notes, since this took several wrong turns to pin down.
+  `init.tools` is a static list of globally registered tools — it reports the same
+  60 entries in every arm, baselines included — so it cannot detect this at all.
+  And a behavioural probe driven by a custom agent's own prompt is worthless,
+  because that prompt governs the reply: an agent described as "bounded" answers
+  "I have no such tool" whatever it has. Watch for a tool *step*, and keep a
+  no-flag control at each end of the run.
+- **`PreToolUse` hooks work, and are the backstop.** Hooks load from
   `<workspace>/.agents/hooks.json`, keyed by hook name, with a Claude-shaped
   `matcher` / `PreToolUse` / `{type: "command", command, timeout}` body. A hook
   receives `{toolCall: {name, args}, stepIdx, ...}` on stdin and answers with
