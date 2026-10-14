@@ -2022,11 +2022,26 @@ const GEMINI_CONFIG_DIRECTORY = "config";
 const AGY_CLI_DIRECTORY = "antigravity-cli";
 const MCP_CONFIG_FILENAME = "mcp_config.json";
 const SETTINGS_FILENAME = "settings.json";
+/**
+ * Where this invocation keeps the agent definitions it owns.
+ *
+ * agy reads custom agents from `.agents/agents/<name>/agent.md` under a
+ * workspace root, and nothing else: an equivalent tree under $HOME is ignored,
+ * which rules out the isolated home's own `.agents`. `--add-dir` is what makes
+ * a directory a workspace root, so the definitions go here and the directory is
+ * added rather than the user's own workspace being written into.
+ */
+const INVOCATION_CUSTOMIZATION_DIRECTORY = "autodev";
 
 interface IsolatedHomeResult {
   isolatedHome: string;
   mcpConfig: AntigravityMcpConfig;
   settings: AntigravitySettings;
+  /**
+   * A directory of this invocation's own agent definitions, to be added to the
+   * CLI's workspace roots; null when the invocation needs none.
+   */
+  customizationDir: string | null;
   cleanup: () => void;
 }
 
@@ -2143,6 +2158,62 @@ function bridgeStdioMcpEntry(
     JSON.stringify(tools)
   ];
   return entry;
+}
+
+/** The name of the agent a Codex-tool turn is run as. */
+const CODEX_TOOLS_AGENT_NAME = "autodev-codex-tools";
+
+/** How this invocation runs agy: as a named agent, from a given workspace root. */
+interface AgyInvocation {
+  agentName: string;
+  customizationDir: string;
+}
+
+/**
+ * The agent a turn runs as when its tools are Codex's.
+ *
+ * `excludeDefaultComponents` is what makes the shim worth having: without it
+ * agy keeps its own file, shell and browser tools, reaches for them, and runs
+ * them inside its own runtime, where Codex's hooks, approvals and thread
+ * history cannot see the action. The model then spends a turn on work nobody
+ * recorded. Excluding them leaves the `codex` MCP server as the only way to
+ * act, so every action becomes a tool call Codex executes and the app renders.
+ *
+ * Rendered per invocation rather than shipped in the workspace: the definition
+ * belongs to a turn's tool surface, and a workspace is the user's own tree.
+ */
+function writeCodexToolsAgent(isolatedHome: string): string {
+  const root = pathApi.join(
+    isolatedHome,
+    INVOCATION_CUSTOMIZATION_DIRECTORY,
+    ".agents",
+    "agents",
+    CODEX_TOOLS_AGENT_NAME
+  );
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  writeFileSync(
+    pathApi.join(root, "agent.md"),
+    [
+      "---",
+      `name: ${CODEX_TOOLS_AGENT_NAME}`,
+      "description: >-",
+      "  Acts through the Codex agent that owns this conversation. Every tool",
+      "  call is handed to Codex, which runs it and records it in the thread.",
+      "excludeDefaultComponents: true",
+      "---",
+      "",
+      "You are acting inside someone else's agent. Codex owns this conversation:",
+      "it holds the sandbox, the approvals, and the history, and it executes the",
+      "tools you call.",
+      "",
+      "Everything you do goes through the `codex` MCP server -- reading files,",
+      "writing them, running commands, delegating. Do not describe a tool you",
+      "have not called as done. If a call returns an error, say what failed.",
+      ""
+    ].join("\n"),
+    { mode: 0o600 }
+  );
+  return pathApi.join(isolatedHome, INVOCATION_CUSTOMIZATION_DIRECTORY);
 }
 
 function bridgeSpawnMcpEntry(options?: IsolatedHomeOptions): JsonRecord {
@@ -2499,11 +2570,12 @@ function createIsolatedAntigravityHome(
     tempHome = mkdtempSync(pathApi.join(tmpdir(), "autodev-agy-home-"));
     chmodSync(tempHome, 0o700);
 
+    const toolTurnId = options?.toolTurnId ?? null;
     const mcpConfig = buildInvocationMcpConfig(
       agentRole,
       spawnSession,
       options,
-      options?.toolTurnId ?? null
+      toolTurnId
     );
     const settings = buildInvocationSettings(
       agentRole,
@@ -2545,7 +2617,13 @@ function createIsolatedAntigravityHome(
       process.once("exit", cleanupIsolatedHomesAtExit);
     activeIsolatedHomeCleanups.add(cleanup);
 
-    return { isolatedHome: tempHome, mcpConfig, settings, cleanup };
+    return {
+      isolatedHome: tempHome,
+      mcpConfig,
+      settings,
+      customizationDir: toolTurnId ? writeCodexToolsAgent(tempHome) : null,
+      cleanup
+    };
   } catch (error) {
     cleanup();
     throw error;
@@ -2579,7 +2657,8 @@ function agyArgs(
   model: string,
   effort: string,
   agentRole: string | null = null,
-  sandboxMode: "read-only" | "workspace-write" | null = null
+  sandboxMode: "read-only" | "workspace-write" | null = null,
+  invocation: AgyInvocation | null = null
 ): string[] {
   // The router forwards the declared sandbox via x-autodev-sandbox-mode. We
   // trust that header over roleContract(agentRole).readOnly because the
@@ -2611,7 +2690,29 @@ function agyArgs(
     "--output-format",
     "stream-json",
     "--print-timeout",
-    PRINT_TIMEOUT
+    PRINT_TIMEOUT,
+    // After -p's prompt on purpose: agy takes the token following -p as the
+    // prompt itself, so a flag placed between them is swallowed as text.
+    ...agyInvocationArgs(invocation)
+  ];
+}
+
+/**
+ * The flags that run agy as the Codex-tools agent, on a workspace root holding
+ * that agent's definition.
+ *
+ * Both are needed together. agy reads custom agents from `.agents/` under a
+ * workspace root and nowhere else, and `--add-dir` is what makes a directory a
+ * workspace root, so the agent is unreachable without it and unreadable
+ * without the flag naming it.
+ */
+function agyInvocationArgs(invocation: AgyInvocation | null): string[] {
+  if (!invocation?.customizationDir) return [];
+  return [
+    "--add-dir",
+    invocation.customizationDir,
+    "--agent",
+    invocation.agentName
   ];
 }
 
@@ -2669,6 +2770,14 @@ function runAgy(
   } catch (error) {
     return Promise.reject(error);
   }
+  // The agent exists exactly when the tools shim does, so a turn is never run
+  // with Codex's tools removed and nothing to replace them.
+  const invocation: AgyInvocation | null = isolatedState.customizationDir
+    ? {
+        agentName: CODEX_TOOLS_AGENT_NAME,
+        customizationDir: isolatedState.customizationDir
+      }
+    : null;
   return new Promise<RunAgyResult>((resolve, reject) => {
     let settled = false;
     const settle = (callback: () => void) => {
@@ -2690,7 +2799,7 @@ function runAgy(
       );
       child = spawn(
         CLI,
-        agyArgs(finalPrompt, model, effort, agentRole, sandboxMode),
+        agyArgs(finalPrompt, model, effort, agentRole, sandboxMode, invocation),
         {
           cwd,
           env: withAutoDevOtelResourceContext(

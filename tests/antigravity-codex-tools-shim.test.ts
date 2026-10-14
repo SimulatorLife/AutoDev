@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve as pathResolve } from "node:path";
 import test from "node:test";
@@ -8,7 +14,10 @@ import {
   CODEX_TOOLS_TURN_ENV,
   codexToolsMcpServer
 } from "@simulatorlife/autodev-runtime/mcp/codex-tools-shim";
-import { createIsolatedAntigravityHome } from "@simulatorlife/autodev-runtime/providers/antigravity";
+import {
+  agyArgs,
+  createIsolatedAntigravityHome
+} from "@simulatorlife/autodev-runtime/providers/antigravity";
 
 const REPO_ROOT = pathResolve(import.meta.dirname, "..");
 const ROLE = "orchestrator";
@@ -131,4 +140,89 @@ test("a turn that cannot park a call is not given the tools shim", () => {
     undefined,
     "a non-streaming turn has nowhere to continue a parked call, so it must not launch a shim"
   );
+});
+
+test("the invocation's own agent runs with Codex's tools and nothing else", () => {
+  const env = fixtureEnvironment();
+  try {
+    const isolated = createIsolatedAntigravityHome(ROLE, "session-shim", {
+      originalHome: env.userHome,
+      codexHome: env.codexHome,
+      cwd: REPO_ROOT,
+      toolTurnId: "turn-shim-test"
+    });
+    try {
+      const dir = isolated.customizationDir;
+      assert.ok(dir, "a turn with the shim must be given its agent definition");
+      assert.equal(
+        dir.startsWith(isolated.isolatedHome),
+        true,
+        "the definitions belong to this invocation, not to the user's workspace"
+      );
+      assert.equal(dir.startsWith(REPO_ROOT), false);
+
+      const definition = readFileSync(
+        join(dir, ".agents", "agents", "autodev-codex-tools", "agent.md"),
+        "utf8"
+      );
+      assert.match(
+        definition,
+        /^excludeDefaultComponents: true$/m,
+        "built-ins must leave the tool set or the shim is never reached for"
+      );
+      assert.match(definition, /^name: autodev-codex-tools$/m);
+
+      const args = agyArgs("prompt", "model", "high", ROLE, null, {
+        agentName: "autodev-codex-tools",
+        customizationDir: dir
+      });
+      assert.deepEqual(
+        args.slice(args.indexOf("--add-dir"), args.indexOf("--add-dir") + 4),
+        ["--add-dir", dir, "--agent", "autodev-codex-tools"]
+      );
+      // agy takes the token after -p as the prompt, so a flag sitting between
+      // them becomes the prompt text and the real prompt is ignored.
+      assert.equal(
+        args[args.indexOf("-p") + 1],
+        "prompt",
+        "-p must be followed immediately by the prompt"
+      );
+      assert.ok(
+        args.indexOf("--agent") > args.indexOf("-p"),
+        "the agent flag must come after the prompt"
+      );
+    } finally {
+      isolated.cleanup();
+    }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test("a turn without the shim is not run as the Codex-tools agent", () => {
+  const env = fixtureEnvironment();
+  try {
+    const isolated = createIsolatedAntigravityHome(ROLE, "session-shim", {
+      originalHome: env.userHome,
+      codexHome: env.codexHome,
+      cwd: REPO_ROOT,
+      toolTurnId: null
+    });
+    try {
+      assert.equal(
+        isolated.customizationDir,
+        null,
+        "an agent with no tools behind it leaves the model unable to act"
+      );
+      assert.ok(
+        !agyArgs("prompt", "model", "high", ROLE, null, null).includes(
+          "--agent"
+        )
+      );
+    } finally {
+      isolated.cleanup();
+    }
+  } finally {
+    env.cleanup();
+  }
 });
