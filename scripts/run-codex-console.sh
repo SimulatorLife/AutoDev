@@ -29,6 +29,22 @@ codex_home="${CODEX_HOME:-$HOME/.codex}"
 repo_root="${AUTODEV_REPO_ROOT:-}"
 console_port="${AUTODEV_CONSOLE_PORT:-3300}"
 
+# The port arrives from the LaunchAgent's EnvironmentVariables, so it is
+# untrusted input at this boundary. `${AUTODEV_CONSOLE_PORT:-3300}` treats any
+# non-empty value as a deliberate override, which turns a bad rendering (an
+# unsubstituted template placeholder, a hand-edited plist) into a `next start`
+# argument-parsing crash under KeepAlive. Reject it here with the actual value.
+if [[ ! "$console_port" =~ ^[0-9]{1,5}$ ]] ||
+  ((console_port < 1 || console_port > 65535)); then
+  printf '%s\n' \
+    "run-codex-console: AUTODEV_CONSOLE_PORT must be an integer from 1 to 65535" \
+    "  got: '$console_port'" \
+    "  This value is rendered into the LaunchAgent at install time; re-run" \
+    "  scripts/install.sh to re-render com.codex.autodev-console.plist, or export" \
+    "  a valid AUTODEV_CONSOLE_PORT before starting the service." >&2
+  exit 2
+fi
+
 if [[ -z "$repo_root" ]]; then
   script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
   repo_root="$(cd -- "$script_dir/.." && pwd)"

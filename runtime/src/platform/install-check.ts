@@ -35,7 +35,6 @@ import {
   checkPythonLanguageServer,
   resolveDependencyOptions
 } from "./dependencies.ts";
-import { resolveServiceNode } from "./host-arch.ts";
 import { createCodexMcpSource } from "./install-command.ts";
 import {
   CATALOGS,
@@ -59,7 +58,10 @@ import {
   SKILLS
 } from "./install-materializer.ts";
 import { readOtelIngressMode } from "./install-state.ts";
-import { launchAgentMatches } from "./macos/launchagent.ts";
+import {
+  launchAgentMatches,
+  resolveLaunchAgentValues
+} from "./macos/launchagent.ts";
 import {
   runtimeFileMatches,
   runtimeLinkMatches,
@@ -993,18 +995,18 @@ function checkLaunchAgents(
   paths: RunInstallPaths,
   failures: { value: number }
 ): void {
+  const values = resolveLaunchAgentValues({
+    repositoryRoot: paths.repositoryRoot,
+    home: paths.home,
+    codexHome: paths.codexHome
+  });
   for (const label of LAUNCH_LABELS)
     check(
       `LaunchAgent ${label}`,
       launchAgentMatches(
         path.join(paths.repositoryRoot, `config/launchagents/${label}.plist`),
         path.join(paths.home, "Library/LaunchAgents", `${label}.plist`),
-        {
-          codexHome: paths.codexHome,
-          home: paths.home,
-          repositoryRoot: paths.repositoryRoot,
-          nodeBin: resolveServiceNode(paths.home)
-        }
+        values
       ),
       failures
     );

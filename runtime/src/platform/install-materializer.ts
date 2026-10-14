@@ -36,8 +36,10 @@ import {
   updateAntigravityPermissions,
   updateAntigravitySkills
 } from "./antigravity-settings.ts";
-import { resolveServiceNode } from "./host-arch.ts";
-import { renderLaunchAgent } from "./macos/launchagent.ts";
+import {
+  type LaunchAgentPaths,
+  renderLaunchAgent,
+  resolveLaunchAgentValues} from "./macos/launchagent.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 import {
   linkRuntimeSource,
@@ -1233,16 +1235,13 @@ function applyAntigravityIfInstalled(
   );
 }
 
-function renderLaunchAgentsFor(
-  repositoryRoot: string,
-  home: string,
-  codexHome: string
-): void {
+function renderLaunchAgentsFor(paths: LaunchAgentPaths): void {
+  const values = resolveLaunchAgentValues(paths);
   for (const label of LAUNCH_LABELS)
     renderLaunchAgent(
-      path.join(repositoryRoot, `config/launchagents/${label}.plist`),
-      path.join(home, "Library", "LaunchAgents", `${label}.plist`),
-      { codexHome, home, repositoryRoot, nodeBin: resolveServiceNode(home) }
+      path.join(paths.repositoryRoot, `config/launchagents/${label}.plist`),
+      path.join(paths.home, "Library", "LaunchAgents", `${label}.plist`),
+      values
     );
 }
 
@@ -1549,11 +1548,11 @@ export function materializeInstallation(options: MaterializeOptions): void {
   );
   renderGlobalMcpIfNeeded(options);
   applyAntigravityIfInstalled(options, skillsRoot);
-  renderLaunchAgentsFor(
-    options.repositoryRoot,
-    options.home,
-    options.codexHome
-  );
+  renderLaunchAgentsFor({
+    repositoryRoot: options.repositoryRoot,
+    home: options.home,
+    codexHome: options.codexHome
+  });
   prepareRunLogs(options.codexHome);
 }
 function exists(filePath: string): boolean {

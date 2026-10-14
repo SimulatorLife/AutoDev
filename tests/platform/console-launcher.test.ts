@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -113,7 +114,8 @@ test("console LaunchAgent rendering replaces all placeholders without interpolat
       codexHome: "/tmp/codex/$val",
       home: "/tmp/home&safe",
       repositoryRoot: String.raw`/tmp/autodev\repo`,
-      nodeBin: "/opt/homebrew/bin/node"
+      nodeBin: "/opt/homebrew/bin/node",
+      consolePort: "4400"
     };
 
     renderLaunchAgent(plistPath, target, values);
@@ -135,7 +137,74 @@ test("console LaunchAgent rendering replaces all placeholders without interpolat
       !rendered.includes("__AUTODEV_NODE_BIN__"),
       "__AUTODEV_NODE_BIN__ placeholder must be replaced"
     );
+    assert.ok(
+      !rendered.includes("__AUTODEV_CONSOLE_PORT__"),
+      "__AUTODEV_CONSOLE_PORT__ placeholder must be replaced"
+    );
+    // The LaunchAgent hands this value to `next start --port`. An unresolved
+    // placeholder here is what crash-looped the console under KeepAlive.
+    assert.match(
+      rendered,
+      /<key>AUTODEV_CONSOLE_PORT<\/key>\s*<string>4400<\/string>/u,
+      "the console port must be rendered as the resolved value, not a template placeholder"
+    );
     assert.equal(launchAgentMatches(plistPath, target, values), true);
+  }));
+
+test("console launcher rejects a non-numeric port before starting Next", () =>
+  withTempDir((directory) => {
+    const fakeRepo = join(directory, "repo");
+    const codexHome = join(directory, "codex-home");
+    const consoleDir = join(fakeRepo, "console");
+    const fakeNode = join(directory, "fake-node");
+    const marker = join(directory, "node-was-invoked");
+
+    mkdirSync(join(consoleDir, ".next"), { recursive: true });
+    mkdirSync(join(consoleDir, "node_modules/next/dist/bin"), {
+      recursive: true
+    });
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(join(consoleDir, ".next/BUILD_ID"), "test-build-id-123\n");
+    writeFileSync(
+      join(consoleDir, "node_modules/next/dist/bin/next"),
+      "#!/usr/bin/env bash\nexit 0\n",
+      { mode: 0o755 }
+    );
+    writeFileSync(
+      fakeNode,
+      `#!/usr/bin/env bash\ntouch "${marker}"\nexit 0\n`,
+      { mode: 0o755 }
+    );
+
+    const result = spawnSync("bash", [runScriptPath], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: directory,
+        CODEX_HOME: codexHome,
+        AUTODEV_REPO_ROOT: fakeRepo,
+        AUTODEV_NODE_BIN: fakeNode,
+        // The exact value a mis-rendered plist shipped.
+        AUTODEV_CONSOLE_PORT: "__AUTODEV_CONSOLE_PORT__"
+      }
+    });
+
+    assert.notEqual(result.status, 0, "Launcher must refuse to start Next");
+    assert.match(
+      result.stderr,
+      /AUTODEV_CONSOLE_PORT must be an integer/u,
+      "Error must name the offending variable"
+    );
+    assert.match(
+      result.stderr,
+      /__AUTODEV_CONSOLE_PORT__/u,
+      "Error must echo the rejected value so the bad render is visible"
+    );
+    assert.equal(
+      existsSync(marker),
+      false,
+      "no Node process may run when the port is unusable"
+    );
   }));
 
 test("console launcher refuses to run and gives clear error if BUILD_ID is missing", () =>
