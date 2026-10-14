@@ -36,7 +36,12 @@ import {
   type SpawnToolCallOutput
 } from "@simulatorlife/autodev-runtime/agents";
 import {
-  codexToolCallEvents
+  type CodexTool,
+  codexToolCallEvents,
+  codexToolCallItem,
+  codexToolSurface,
+  mcpResultFromCodexOutput,
+  mcpToolDefinition
 } from "@simulatorlife/autodev-runtime/providers/claude-codex-tools";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
@@ -78,6 +83,13 @@ import {
   AUTODEV_WORKSPACE_KEY_HEADER,
   withAutoDevOtelResourceContext
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
+
+import {
+  CodexToolTurnRegistry,
+  type ParkableTurn,
+  toolErrorResult,
+  turnId
+} from "./codex-tool-turns.ts";
 
 // Bind the port only when run as a program. The shared request-shaping helpers
 // below are pure and worth testing directly; importing this file must not take
@@ -132,6 +144,14 @@ interface JsonObject {
 }
 type JsonValue = JsonPrimitive | JsonObject | JsonArray;
 type JsonRecord = JsonObject;
+/**
+ * The JSON shape the shared Codex-tool modules use.
+ *
+ * Those modules are shared with the Claude bridge, whose own JSON alias is
+ * loose, so a tool-call item crossing into this file stays loose until it is
+ * serialised into the SSE stream.
+ */
+type ShimJson = Record<string, unknown>;
 
 interface AntigravityMcpServerConfig extends JsonRecord {
   command?: string;
@@ -1104,6 +1124,35 @@ function createToolObserver(agentEvents: AgentReporter | null) {
       });
     }
   };
+  /**
+   * A tool agy called through the Codex shim rather than natively.
+   *
+   * These are the calls Codex executes, so they are reported on the same
+   * router events as the tools agy runs itself -- otherwise a turn whose work
+   * all went through Codex would read as having taken no tool calls at all,
+   * which is precisely what that path used to look like.
+   */
+  const observeShimCall = (tool: string, callId: string) => {
+    if (!agentEvents || !tool) return;
+    requested.add(callId);
+    void agentEvents.reportToolRequested({ tool, callId, server: "" });
+  };
+  const observeShimOutput = (
+    tool: string,
+    callId: string,
+    emittedAt: number,
+    isError: boolean
+  ) => {
+    if (!agentEvents || settled.has(callId)) return;
+    settled.add(callId);
+    void agentEvents.reportToolExecuted({
+      tool,
+      callId,
+      status: isError ? "error" : "ok",
+      durationMs: Date.now() - emittedAt,
+      server: ""
+    });
+  };
   // agy auto-denies a tool whose permission the run was not granted and says
   // so only on stderr, which this bridge already parses into the failure it
   // raises. That is the one case where the turn knows a tool the model asked
@@ -1124,7 +1173,12 @@ function createToolObserver(agentEvents: AgentReporter | null) {
       server
     });
   };
-  return { observeToolStep, reportPermissionDenial };
+  return {
+    observeToolStep,
+    observeShimCall,
+    observeShimOutput,
+    reportPermissionDenial
+  };
 }
 
 /**
@@ -3029,6 +3083,12 @@ interface ResponsesTurn {
   prompt: string;
   spawnTracker: ReturnType<typeof createSpawnTracker>;
   toolObserver: ReturnType<typeof createToolObserver>;
+  /**
+   * The Codex tools offered on this request. agy reaches them through the
+   * tools shim rather than running its own, so these are what the turn's MCP
+   * server advertises and what a shim call is matched against.
+   */
+  codexTools: CodexTool[];
   logTurnEnd: (outcome: string, detail?: string) => void;
 }
 
@@ -3116,6 +3176,7 @@ function prepareResponsesTurn(
     prompt,
     spawnTracker,
     toolObserver,
+    codexTools: codexToolSurface(payload).tools,
     logTurnEnd: createTurnLog(requestId)
   };
 }
@@ -3242,7 +3303,7 @@ class ResponseEventStream {
    * Claude bridge does, because Codex's renderer does not accept a tool call
    * nested inside a block that is still open.
    */
-  private readonly output: JsonRecord[] = [];
+  private readonly output: ShimJson[] = [];
   private messageIndex = 1;
   private nextOutputIndex = 2;
   private messageOpen = true;
@@ -3469,7 +3530,7 @@ class ResponseEventStream {
    * The call is emitted whole: its arguments are known by the time the bridge
    * hands it over, and Codex executes from the completed item.
    */
-  emitToolCall(item: JsonRecord): void {
+  emitToolCall(item: ShimJson): void {
     this.start();
     this.closeMessage();
     const index = this.nextOutputIndex++;
@@ -3580,7 +3641,42 @@ const THROTTLED_LIMIT_CLASSES = new Set([
  * whether a client close must kill agy or leave it to finish its delegation,
  * the keep-alive and delegation heartbeats, and how the turn ends.
  */
-class StreamingTurn {
+/** A shim call agy has made that Codex has not been handed yet. */
+interface QueuedCodexCall {
+  tool: CodexTool;
+  args: unknown;
+  resolve: (result: ShimJson) => void;
+}
+
+/** A shim call handed to Codex, awaiting its output on the next request. */
+interface AwaitingCodexCall {
+  tool: CodexTool;
+  emittedAt: number;
+  resolve: (result: ShimJson) => void;
+}
+
+/**
+ * How long a turn waits for Codex to answer a shim call before giving up.
+ *
+ * The wait is bounded by the same turn the bridge already keeps alive for
+ * delegation, so a lost continuation cannot strand an agy process indefinitely.
+ */
+const AGY_PARK_SECONDS = 1800;
+
+class StreamingTurn implements ParkableTurn {
+  /**
+   * The id a shim call names to reach this turn.
+   *
+   * A parked turn outlives its response, so this is what lets the shim's
+   * loopback call find the turn it belongs to rather than guessing.
+   */
+  readonly id = turnId(12);
+  /** Calls agy has made through the shim that Codex has not run yet. */
+  private readonly queued: QueuedCodexCall[] = [];
+  /** Calls handed to Codex, awaiting the output on its next request. */
+  private readonly awaiting = new Map<string, AwaitingCodexCall>();
+  private sequence = 0;
+  private parkTimer: NodeJS.Timeout | null = null;
   // Tracks the most recent spawn-step tool the bridge saw from agy, and how
   // many of the children it dispatched the spawn tracker still has open.
   // Active spawn steps and open children are both the dangerous case: the
@@ -3608,8 +3704,17 @@ class StreamingTurn {
   private readonly activeCommands = new Set<number | string>();
   private readonly activeWaits = new Set<number | string>();
   private readonly turn: ResponsesTurn;
-  private readonly stream: ResponseEventStream;
-  private readonly response: ServerResponse;
+  /**
+   * The response this turn is currently writing into.
+   *
+   * Mutable because a turn outlives one HTTP response: when agy calls a Codex
+   * tool through the shim, the bridge emits that call, ends the response, and
+   * keeps agy blocked until Codex returns the call's output on its next
+   * request. That request opens a fresh response and rebinds this turn onto it,
+   * so the rest of agy's run streams into the request that carries the result.
+   */
+  private stream: ResponseEventStream;
+  private response: ServerResponse;
   private child: ChildProcess | undefined;
   private keepAlive: NodeJS.Timeout | undefined;
   // Synthetic activity the bridge emits while agy is mid-delegation, so the
@@ -3624,14 +3729,18 @@ class StreamingTurn {
   // Why the client went away while agy was still delegating, if it did.
   private disconnectDetail: string | null = null;
 
+  private readonly registry: CodexToolTurnRegistry<StreamingTurn>;
+
   constructor(
     turn: ResponsesTurn,
     stream: ResponseEventStream,
-    response: ServerResponse
+    response: ServerResponse,
+    registry: CodexToolTurnRegistry<StreamingTurn>
   ) {
     this.turn = turn;
     this.stream = stream;
     this.response = response;
+    this.registry = registry;
   }
 
   attach(): void {
@@ -3649,6 +3758,154 @@ class StreamingTurn {
       // delegating when nobody was listening any more".
       this.clientGone("the client disconnected");
     });
+  }
+
+  /**
+   * End this response without ending the turn.
+   *
+   * A parked turn is waiting on Codex to execute a call, not on agy: agy is
+   * still alive and still blocked inside the shim's MCP call, and it resumes
+   * into whichever response carries that call's output back. The socket closing
+   * here is therefore expected and must not be read as the client going away,
+   * so the listener is removed before the response is closed.
+   */
+  park(): void {
+    this.detach();
+    this.stream.end();
+  }
+
+  /**
+   * Continue a parked turn on a new response.
+   *
+   * Codex answers a call on its next request, so the turn's output has to land
+   * in the response for *that* request rather than the one that ended when the
+   * call was emitted.
+   */
+  rebind(stream: ResponseEventStream, response: ServerResponse): void {
+    this.detach();
+    this.stream = stream;
+    this.response = response;
+    this.attach();
+  }
+
+  /** The MCP tool list the shim offers agy for this turn. */
+  toolDefinitions(): ShimJson[] {
+    return this.turn.codexTools.map(mcpToolDefinition);
+  }
+
+  /** True while Codex holds tool calls this turn is blocked on. */
+  get waitingOnCodex(): boolean {
+    return this.awaiting.size > 0 || this.queued.length > 0;
+  }
+
+  /**
+   * A tool call agy made through the shim; resolves with Codex's output.
+   *
+   * The call parks here rather than running: agy is blocked inside its MCP
+   * call, and the bridge owes Codex a `function_call` it will execute and
+   * answer on the next request.
+   */
+  requestTool(name: string, args: unknown): Promise<ShimJson> {
+    const tool = this.turn.codexTools.find(
+      (candidate) => candidate.name === name
+    );
+    if (!tool)
+      return Promise.resolve(
+        toolErrorResult(
+          `Codex did not offer a tool named ${name} on this turn.`
+        )
+      );
+    if (this.settled)
+      return Promise.resolve(
+        toolErrorResult("This turn has ended; the call was not run.")
+      );
+    return new Promise((resolve) => {
+      this.queued.push({ tool, args, resolve });
+      this.emitQueuedCalls();
+    });
+  }
+
+  /**
+   * Hand every queued call to Codex and end this response.
+   *
+   * The turn stays alive: agy is blocked in its MCP call and resumes when the
+   * result comes back, so the parked calls are released on a later request
+   * rather than here.
+   */
+  private emitQueuedCalls(): void {
+    if (this.settled || this.queued.length === 0) return;
+    this.stream.start();
+    for (const call of this.queued.splice(0)) {
+      const callId = `call_${this.id}_${++this.sequence}`;
+      const item = codexToolCallItem(call.tool, call.args, {
+        itemId: `${call.tool.kind === "custom" ? "ctc" : "fc"}_${turnId(12)}`,
+        callId
+      });
+      this.awaiting.set(callId, {
+        tool: call.tool,
+        emittedAt: Date.now(),
+        resolve: call.resolve
+      });
+      this.registry.bindCall(callId, this);
+      this.stream.emitToolCall(item);
+      this.turn.toolObserver.observeShimCall(call.tool.name, callId);
+    }
+    this.park();
+    this.startParkTimer();
+  }
+
+  /**
+   * Release the calls Codex answered, and resume streaming agy's run.
+   *
+   * Anything still awaiting after this is a call Codex never answered, and is
+   * failed rather than left hanging on a promise nobody will settle.
+   */
+  private releaseOutputs(outputs: Map<string, unknown>): void {
+    for (const [callId, output] of outputs) {
+      const call = this.awaiting.get(callId);
+      if (!call) continue;
+      this.awaiting.delete(callId);
+      const result = mcpResultFromCodexOutput(output);
+      call.resolve(result);
+      this.turn.toolObserver.observeShimOutput(
+        call.tool.name,
+        callId,
+        call.emittedAt,
+        result.isError === true
+      );
+    }
+    for (const call of this.awaiting.values())
+      call.resolve(
+        toolErrorResult(
+          "Codex returned no result for this call; it may not have run."
+        )
+      );
+    this.awaiting.clear();
+    this.clearParkTimer();
+  }
+
+  private startParkTimer(): void {
+    this.clearParkTimer();
+    // Bounds how long agy stays blocked with nobody left to answer it. Without
+    // it a dropped continuation strands the provider process for good.
+    this.parkTimer = setTimeout(() => {
+      this.parkTimer = null;
+      this.release("Codex never answered this turn's tool call.");
+    }, AGY_PARK_SECONDS * 1000);
+    this.parkTimer.unref?.();
+  }
+
+  private clearParkTimer(): void {
+    if (this.parkTimer) clearTimeout(this.parkTimer);
+    this.parkTimer = null;
+  }
+
+  /** Fail every outstanding call and end the turn. */
+  private release(message: string): void {
+    this.clearParkTimer();
+    for (const call of this.queued.splice(0)) call.resolve(toolErrorResult(message));
+    for (const call of this.awaiting.values()) call.resolve(toolErrorResult(message));
+    this.awaiting.clear();
   }
 
   detach(): void {
@@ -3799,6 +4056,20 @@ class StreamingTurn {
     if (this.child && !this.child.killed) this.child.kill("SIGTERM");
   }
 
+  /**
+   * End the turn and kill agy.
+   *
+   *
+   * This is the registry's overflow path and the bridge's shutdown path, so
+   * it reuses the existing disconnect handling rather than inventing a second
+   * teardown that could drift from it.
+   */
+  cancel(): void {
+    this.release("This turn was cancelled before Codex answered.");
+    this.clientGone("the turn was cancelled");
+    this.registry.remove(this);
+  }
+
   private observeStep(event: AgyStreamEvent, update: AgyStepUpdate): void {
     const toolInfo = isToolInfo(update.tool_info) ? update.tool_info : null;
     const stepToolName = String(update.tool_name ?? toolInfo?.name ?? "");
@@ -3929,6 +4200,12 @@ function stepActivityKey(update: AgyStepUpdate): string {
   return `${String(stepIndexOf(update) ?? "?")}:${update.state ?? "?"}:${update.step_type ?? "?"}:${update.tool_name ?? ""}`;
 }
 
+/**
+ * Live streaming turns, so a shim call from agy can find the turn that
+ * made it and a later request can find the turn that is parked.
+ */
+const codexToolTurns = new CodexToolTurnRegistry<StreamingTurn>();
+
 async function runStreamingTurn(
   turn: ResponsesTurn,
   response: ServerResponse
@@ -3936,7 +4213,7 @@ async function runStreamingTurn(
   const stream = new ResponseEventStream(response);
   stream.emitPreamble(turn.responseModel);
   stream.emitActivity("Antigravity started processing.", "initial");
-  const streaming = new StreamingTurn(turn, stream, response);
+  const streaming = new StreamingTurn(turn, stream, response, codexToolTurns);
   streaming.attach();
   try {
     streaming.complete(await runTurnAgy(turn, streaming.onEvent));
