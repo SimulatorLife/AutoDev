@@ -1917,14 +1917,24 @@ installed agy rather than inferred from its help text:
   H1-delimited prompt. Verified live: the agent's prompt reaches the model, and
   an unknown name fails fast with `unknown agent "x" (no custom agents are
   available)` before any model call. AutoDev passes no `--agent` today.
-- **`excludeDefaultComponents: true` does not remove the built-in tools.** The
+- **`excludeDefaultComponents` is unverified in both directions.** The
   changelog says a custom agent can "opt out of default prompt sections and
-  built-in tools", and the field is real (`ExcludeDefaultComponents`), but
-  against this build it is inert: `exclude_default_components`,
-  `excludeDefaultComponents`, `tools: []`, `tools:`, and a `subagent: true`
-  variant all left the advertised tool list at its full 60 entries, including
-  `run_command`, `view_file`, and `write_to_file`. Do not build on this field
-  without re-testing it against a newer agy.
+  built-in tools", and the field is real (`ExcludeDefaultComponents`). An
+  earlier note here asserted it was inert; that assertion was wrong, and it
+  rested on an instrument that cannot answer the question. `init.tools`
+  reports the same 60 entries with *and* without the flag, baselines included,
+  so it is a static list rather than the agent's effective tool set.
+  Behavioural probes are worse: asking the model what it can do returns the
+  scripted answer, because a custom agent's prompt governs its reply, and a
+  probe run through a bare working directory fails in the baselines too
+  (`view_file` errors there regardless of the flag). Treat this field as
+  unresolved, not disproven — and note that nothing in the shim design needs
+  it, because the hook below refuses the built-ins on its own.
+  One weak signal is worth re-testing rather than discarding: with
+  `excludeDefaultComponents` spelled in camelCase the model made no tool call
+  at all and reported having no such tool, while baselines and the
+  `exclude_default_components` spelling both attempted the call. That points
+  at camelCase being the recognised key and snake_case the inert one.
 - **`PreToolUse` hooks work, and are the real lever.** Hooks load from
   `<workspace>/.agents/hooks.json`, keyed by hook name, with a Claude-shaped
   `matcher` / `PreToolUse` / `{type: "command", command, timeout}` body. A hook
