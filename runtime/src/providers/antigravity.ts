@@ -69,6 +69,10 @@ import {
   WorkspaceResolutionError
 } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 import {
+  type AwaitedToolResults,
+  awaitedToolResults
+} from "@simulatorlife/autodev-runtime/shared/responses-continuation";
+import {
   resolveRuntimeSourcePath,
   resolveRuntimeSourceRoot
 } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
@@ -2883,6 +2887,13 @@ async function handleLocalRoute(
     await handleBridgeSpawnRoute(pathname, request, response);
     return true;
   }
+  if (
+    pathname === "/v1/bridge-tools/list" ||
+    pathname === "/v1/bridge-tools/call"
+  ) {
+    await handleBridgeToolsRoute(pathname, request, response);
+    return true;
+  }
   if (pathname === "/v1/models") {
     sendJson(response, 200, {
       object: "list",
@@ -2894,6 +2905,44 @@ async function handleLocalRoute(
     return true;
   }
   return false;
+}
+
+/**
+ * Handles the tools shim's loopback calls into this bridge.
+ *
+ * The shim runs as a grandchild of the bridge, spawned by agy, and reaches back
+ * over the same loopback port behind the same bearer check as the spawn routes.
+ * A turn that is not live any more is refused outright rather than offered a
+ * tool whose result could never arrive -- a shim call parked against a dead
+ * turn would hang agy until its own timeout, with nothing to show for it.
+ */
+async function handleBridgeToolsRoute(
+  pathname: string,
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<void> {
+  if (AUTH_TOKEN && request.headers.authorization !== `Bearer ${AUTH_TOKEN}`) {
+    sendJson(response, 401, { error: "invalid local gateway key" });
+    return;
+  }
+  const body = await readJsonBody(request);
+  const turn = codexToolTurns.byId(typeof body?.turn === "string" ? body.turn : "");
+  if (pathname.endsWith("/list")) {
+    sendJson(response, 200, { tools: turn ? turn.toolDefinitions() : [] });
+    return;
+  }
+  if (!turn) {
+    sendJson(response, 409, {
+      error:
+        "This Antigravity turn is no longer active; the call was not run."
+    });
+    return;
+  }
+  const result = await turn.requestTool(
+    typeof body?.name === "string" ? body.name : "",
+    body?.arguments ?? {}
+  );
+  if (!response.destroyed) sendJson(response, 200, result);
 }
 
 async function handleBridgeSpawnRoute(
@@ -3788,9 +3837,29 @@ class StreamingTurn implements ParkableTurn {
     this.attach();
   }
 
+  /**
+   * Resume a parked turn with the outputs Codex returned for its calls.
+   *
+   * Called after `rebind` has moved the turn onto the request that carries
+   * them, so the rest of agy's run streams into the response that answers the
+   * call rather than the one that asked for it.
+   */
+  resume(awaited: AwaitedToolResults): void {
+    this.releaseOutputs(awaited.outputs);
+  }
+
   /** The MCP tool list the shim offers agy for this turn. */
   toolDefinitions(): ShimJson[] {
     return this.turn.codexTools.map(mcpToolDefinition);
+  }
+
+  /**
+   * The model this turn is running, echoed by the response a continuation
+   * opens. A continuation is the same turn, so it must answer as the model the
+   * turn started on rather than as whatever the follow-up request asked for.
+   */
+  get responseModel(): JsonValue {
+    return this.turn.responseModel;
   }
 
   /** True while Codex holds tool calls this turn is blocked on. */
@@ -4214,6 +4283,10 @@ async function runStreamingTurn(
   stream.emitPreamble(turn.responseModel);
   stream.emitActivity("Antigravity started processing.", "initial");
   const streaming = new StreamingTurn(turn, stream, response, codexToolTurns);
+  // Registered for as long as agy runs, not just while a response is open: a
+  // shim call has to find the turn after the response carrying its call ended,
+  // and the continuation carrying its output has to find it again.
+  codexToolTurns.add(streaming);
   streaming.attach();
   try {
     streaming.complete(await runTurnAgy(turn, streaming.onEvent));
@@ -4226,7 +4299,41 @@ async function runStreamingTurn(
     // to nothing, or -- on a reused session key -- to the next turn. Closing
     // twice is harmless; the success path has already drained it.
     if (turn.spawnSession) spawnSessions.close(turn.spawnSession);
+    codexToolTurns.remove(streaming);
   }
+}
+
+/**
+ * Continue the parked turn these outputs belong to, if there is one.
+ *
+ * Codex answers a tool call on its next request, so a request carrying call
+ * outputs is the other half of a turn that already ended its response rather
+ * than the start of a new one. Starting a second agy here would leave the first
+ * blocked inside the shim with nothing left to answer it, and would bill the
+ * user for a second full turn's reasoning to answer one tool result.
+ *
+ * Only a streaming request can continue a turn: the parked turn writes SSE, and
+ * a request that asked for a single JSON body cannot be handed it. Codex always
+ * continues a call it received on a streamed response as another streamed
+ * request, so this only declines a combination that cannot arise.
+ */
+function continueParkedTurn(
+  response: ServerResponse,
+  payload: JsonObject
+): boolean {
+  if (!payload.stream) return false;
+  const awaited = awaitedToolResults(payload.input);
+  if (awaited.outputs.size === 0) return false;
+  const parked = codexToolTurns.forOutputs(awaited.outputs);
+  if (!parked) return false;
+  const stream = new ResponseEventStream(response);
+  stream.emitPreamble(parked.responseModel);
+  writeErrorLine(
+    `agy continuing turn=${parked.id} results=${awaited.outputs.size} messages=${awaited.messages.length}`
+  );
+  parked.rebind(stream, response);
+  parked.resume(awaited);
+  return true;
 }
 
 async function handleResponsesRequest(
@@ -4234,6 +4341,7 @@ async function handleResponsesRequest(
   response: ServerResponse,
   payload: JsonObject
 ): Promise<void> {
+  if (continueParkedTurn(response, payload)) return;
   const turn = prepareResponsesTurn(request, response, payload);
   if (!turn) return;
   if (payload.stream) await runStreamingTurn(turn, response);
