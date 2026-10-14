@@ -263,7 +263,15 @@ export class ProviderCooldowns {
         until,
         kind,
         failureClass,
-        resetsAt: kind === "hard" ? resetsAt : null,
+        // The provider's stated reset, kept even when the cooldown itself is
+        // transient. It is a fact the provider reported, not a scheduling
+        // decision: `until` is when the router will actually retry, and the two
+        // legitimately differ when an inferred limit names a window longer than
+        // the ladder lets us sleep through. Discarding it here is what made a
+        // quota saying "resets in 24m43s" surface as a bare "retry in 480s" --
+        // a number derived from the failure streak that had no relationship to
+        // the window the provider had just named.
+        resetsAt,
         since: now
       };
       const target = poolScoped ? this.poolCooldowns : this.cooldowns;

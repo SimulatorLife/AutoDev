@@ -1728,7 +1728,7 @@ function activityText(event: AgyStreamEvent): string {
 
   switch (stepType) {
     case "tool": {
-      return toolActivityText(toolName, state);
+      return toolActivityText(toolName, state, toolInfo, update);
     }
     case "agent_response": {
       return agentResponseActivityText(state);
@@ -1740,34 +1740,193 @@ function activityText(event: AgyStreamEvent): string {
   return "";
 }
 
-function toolActivityText(toolName: string, state: string): string {
-  const specific = specificToolActivityText(toolName, state);
+/** Longest single-line summary a tool call's arguments contribute. */
+const MAX_ACTIVITY_DETAIL_CHARS = 160;
+
+/**
+ * The one argument that identifies what a tool call actually did.
+ *
+ * agy names its arguments differently per tool (`view_file` takes a path,
+ * `run_command` a command, `write_to_file` a path plus a body, the MCP calls an
+ * arbitrary payload), and its step carries them as a JSON string often enough
+ * that assuming an object loses the call entirely. Each candidate is therefore
+ * read in order and the first that yields a string wins; a call whose arguments
+ * carry none of them still reports its name, which is the floor this has always
+ * had.
+ */
+const TOOL_ARGUMENT_KEYS = [
+  "path",
+  "file_path",
+  "filename",
+  "filePath",
+  "command",
+  "cmd",
+  "pattern",
+  "query",
+  "url",
+  "target",
+  "name",
+  "prompt"
+] as const;
+
+function toolCallDetail(
+  toolInfo: AgyToolInfo | null,
+  update: AgyStepUpdate | null
+): string {
+  // agy carries arguments on the step and repeats them on tool_info; either may
+  // be the populated one across CLI versions, so both are read.
+  return firstStringFieldIn(
+    [toolInfo?.args, update?.tool_input],
+    TOOL_ARGUMENT_KEYS
+  );
+}
+
+/** Collapse a value to a single bounded line so it cannot break the stream layout. */
+function oneLine(value: string): string {
+  const collapsed = value.replaceAll(/\s+/gu, " ").trim();
+  return collapsed.length > MAX_ACTIVITY_DETAIL_CHARS
+    ? `${collapsed.slice(0, MAX_ACTIVITY_DETAIL_CHARS - 1)}…`
+    : collapsed;
+}
+
+/** The first of `candidates` that parses as a JSON object. */
+function firstJsonRecord(...candidates: unknown[]): JsonRecord | null {
+  for (const candidate of candidates) {
+    if (isJsonRecord(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * The first of `candidates` holding a non-empty string under one of `keys`.
+ *
+ * Every candidate is searched rather than stopping at the first that parses:
+ * agy can repeat an empty `args` object alongside a populated `tool_input`, and
+ * taking the first record alone would drop the call's detail entirely.
+ */
+function firstStringFieldIn(
+  candidates: readonly unknown[],
+  keys: readonly string[]
+): string {
+  for (const candidate of candidates) {
+    if (!isJsonRecord(candidate)) continue;
+    for (const key of keys) {
+      const value = candidate[key];
+      if (typeof value === "string" && value.trim())
+        return oneLine(value.trim());
+    }
+  }
+  return "";
+}
+
+/** The first of `keys` holding a non-empty string in `record`. */
+function firstStringField(
+  record: JsonRecord | null,
+  keys: readonly string[]
+): string {
+  return record ? firstStringFieldIn([record], keys) : "";
+}
+
+/** How long a completed call took, when agy reported it. */
+function toolDurationSuffix(
+  toolInfo: AgyToolInfo | null,
+  update: AgyStepUpdate | null
+): string {
+  // The same duplication as arguments: a duration appears on the step and on
+  // tool_info across agy versions, and reading only one of them silently drops
+  // it from half the calls.
+  const seconds = [toolInfo?.duration_seconds, update?.duration_seconds].find(
+    (value) => typeof value === "number"
+  );
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0)
+    return "";
+  if (seconds < 1) return ` (${Math.round(seconds * 1000)}ms)`;
+  return ` (${Number.isInteger(seconds) ? seconds : seconds.toFixed(1)}s)`;
+}
+
+/**
+ * What a call produced when it produced nothing good.
+ *
+ * agy reports a failed command in `tool_info.error` and sometimes only in
+ * `output`; the old wording collapsed both to the bare word "error.", which
+ * reads as progress rather than as something needing attention.
+ */
+function toolOutcomeDetail(
+  toolInfo: AgyToolInfo | null,
+  state: string
+): string {
+  if (typeof toolInfo?.error === "string" && toolInfo.error.trim())
+    return oneLine(toolInfo.error.trim());
+  if (state === "DONE") return "";
+  return typeof toolInfo?.output === "string" ? oneLine(toolInfo.output) : "";
+}
+
+function toolActivityText(
+  toolName: string,
+  state: string,
+  toolInfo: AgyToolInfo | null = null,
+  update: AgyStepUpdate | null = null
+): string {
+  const specific = specificToolActivityText(toolName, state, toolInfo);
   if (specific) return specific;
-  if (state === "ACTIVE") return `Antigravity is using ${toolName}.`;
-  if (state === "DONE") return `Antigravity finished ${toolName}.`;
-  return `Antigravity tool ${toolName}: ${state.toLowerCase()}.`;
+  // What the call was, before how it went. The detail is what makes a tool
+  // step legible: "Antigravity is using run_command." and "Antigravity is
+  // using run_command: pnpm test." differ by the only part a reader wanted.
+  const detail = toolCallDetail(toolInfo, update);
+  const described = detail ? `${toolName}: ${detail}` : toolName;
+  const outcome = toolOutcomeDetail(toolInfo, state);
+  if (state === "ACTIVE") return `Antigravity is using ${described}.`;
+  if (state === "DONE")
+    return `Antigravity finished ${described}${toolDurationSuffix(toolInfo, update)}${outcome ? ` — ${outcome}` : ""}.`;
+  return `Antigravity tool ${described}: ${outcome || state.toLowerCase()}.`;
 }
 
 function specificToolActivityText(
   toolName: string,
-  state: string
+  state: string,
+  toolInfo: AgyToolInfo | null = null
 ): string | null {
   switch (toolName) {
     case "search_web": {
-      if (state === "ACTIVE") return "Antigravity is searching the web.";
-      if (state === "DONE") return "Antigravity finished searching the web.";
+      const query = searchQuery(toolInfo);
+      const subject = query ? ` for ${query}` : "";
+      if (state === "ACTIVE")
+        return `Antigravity is searching the web${subject}.`;
+      if (state === "DONE")
+        return `Antigravity finished searching the web${subject}.`;
       return null;
     }
     case "read_url_content": {
-      if (state === "ACTIVE") return "Antigravity is reading web URL content.";
+      const url = readUrlTarget(toolInfo);
+      const subject = url ? `: ${url}` : "";
+      if (state === "ACTIVE")
+        return `Antigravity is reading web URL content${subject}.`;
       if (state === "DONE")
-        return "Antigravity finished reading web URL content.";
+        return `Antigravity finished reading web URL content${subject}.`;
       return null;
     }
     default: {
       return null;
     }
   }
+}
+
+/** The query agy searched for, when it named one. */
+function searchQuery(toolInfo: AgyToolInfo | null): string {
+  return firstStringField(firstJsonRecord(toolInfo?.args), [
+    "query",
+    "q",
+    "search"
+  ]);
+}
+
+/** The URL agy fetched, when it named one. */
+function readUrlTarget(toolInfo: AgyToolInfo | null): string {
+  return firstStringField(firstJsonRecord(toolInfo?.args), [
+    "url",
+    "uri",
+    "target"
+  ]);
 }
 
 function agentResponseActivityText(state: string): string {

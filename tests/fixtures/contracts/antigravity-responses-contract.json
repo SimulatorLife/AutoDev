@@ -412,6 +412,99 @@
         ],
         "privacyToken": "contract task"
       }
+    },
+    "tool_activity_detail": {
+      "request": {
+        "stream": true
+      },
+      "cli": {
+        "events": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 1,
+              "step_type": "tool",
+              "tool_name": "run_command",
+              "state": "ACTIVE",
+              "tool_info": {
+                "args": {
+                  "command": "pnpm test --filter provider"
+                }
+              }
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 1,
+              "step_type": "tool",
+              "tool_name": "run_command",
+              "state": "DONE",
+              "duration_seconds": 2.4,
+              "tool_info": {
+                "args": {
+                  "command": "pnpm test --filter provider"
+                },
+                "error": "exit code 1"
+              }
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 2,
+              "step_type": "tool",
+              "tool_name": "view_file",
+              "state": "DONE",
+              "tool_input": {
+                "path": "src/providers/antigravity.ts"
+              },
+              "tool_info": {
+                "duration_seconds": 0.3
+              }
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 3,
+              "step_type": "agent_response",
+              "state": "ACTIVE"
+            }
+          },
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_index": 3,
+              "step_type": "agent_response",
+              "state": "DONE",
+              "text_delta": "the test failed"
+            }
+          },
+          {
+            "event": "result",
+            "result": {
+              "status": "SUCCESS",
+              "response": "the test failed"
+            }
+          }
+        ],
+        "exitCode": 0,
+        "stderr": ""
+      },
+      "expected": {
+        "status": 200,
+        "outputText": "the test failed",
+        "completedStatus": "completed",
+        "reasoningTextIncludes": [
+          "run_command: pnpm test --filter provider",
+          "view_file: src/providers/antigravity.ts",
+          "exit code 1",
+          "(2.4s)"
+        ],
+        "tool": "run_command",
+        "privacyToken": "contract task"
+      }
     }
   }
 }

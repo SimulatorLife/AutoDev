@@ -1785,6 +1785,27 @@ export function delay(
   });
 }
 
+/**
+ * How long the reader waits, when the provider named a reset and the router
+ * will not actually sleep until it.
+ *
+ * An inferred limit keeps its transient ladder rather than being trusted with a
+ * long sleep, so the two times routinely differ -- a quota that says "resets in
+ * 24m43s" against a 10-minute transient cooldown. Reporting only the provider's
+ * reset would overstate the wait; reporting only the ladder would hide the
+ * window the provider actually gave. Both are stated when they disagree, and the
+ * single time is enough when the retry lands on it.
+ */
+function cooldownWindow(entry: CooldownSummary, now: number): string {
+  const resetsAt = entry.resetsAt!;
+  const retrySeconds = Math.max(0, Math.ceil(entry.retryAfterMs / 1000));
+  const resetSeconds = Math.ceil((Date.parse(resetsAt) - now) / 1000);
+  if (Math.abs(resetSeconds - retrySeconds) <= 60)
+    return `resets at ${resetsAt}`;
+  const resetIn = resetSeconds > 0 ? `${Math.ceil(resetSeconds / 60)}m` : "now";
+  return `provider reports usage resets in ${resetIn} (${resetsAt}); retrying in ${retrySeconds}s`;
+}
+
 export function exhaustionBody({
   subject,
   summary,
@@ -1822,7 +1843,7 @@ export function exhaustionBody({
     if (entry.state === "config")
       return `${entry.provider}: ${entry.failureClass ?? "configuration error"} for ${entry.model ?? "its model"}${entry.detail ? ` (${entry.detail})` : ""}`;
     if (entry.resetsAt)
-      return `${entry.provider}: ${entry.failureClass ?? entry.state}, resets at ${entry.resetsAt}`;
+      return `${entry.provider}: ${entry.failureClass ?? entry.state}, ${cooldownWindow(entry, now)}`;
     return `${entry.provider}: ${entry.failureClass ?? entry.state}, retry in ${Math.ceil(entry.retryAfterMs / 1000)}s`;
   });
   const action = everyCandidateMisconfigured

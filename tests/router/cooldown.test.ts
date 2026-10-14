@@ -41,6 +41,32 @@ test("typed cooldowns preserve config, probe, transient, and hard ladders", () =
   assert.equal(hard.cooldownUntil, NOW + 3_600_000);
 });
 
+test("an inferred quota keeps the window the provider reported", () => {
+  // An inferred limit -- one read out of a CLI's stderr -- never earns a hard
+  // cooldown, so it stays on the transient ladder and is retried long before
+  // the window agy named. The deadline must stay short; the reported window is
+  // still a fact about the provider and has to survive into the entry, because
+  // it is what the reader is shown in place of a number derived from a failure
+  // streak. Dropping it is what produced a quota saying "resets in 24m43s"
+  // surfacing as "retry in 480s".
+  const cooldowns = new ProviderCooldowns();
+  const reset = new Date(NOW + 24 * 60_000 + 43_000).toISOString();
+  const inferred = cooldowns.cooldownProvider("antigravity", {
+    now: NOW,
+    failureClass: "quota_exhausted",
+    resetsAt: reset,
+    structured: false,
+    model: "gemini-3.8-flash-high"
+  });
+  assert.equal(inferred.kind, "transient");
+  // The retry deadline is the ladder's, not the provider's.
+  assert.equal(inferred.cooldownUntil, NOW + inferred.durationMs);
+  assert.ok(inferred.durationMs < 24 * 60_000);
+  // The window the provider stated is retained for display.
+  assert.equal(inferred.resetsAt, reset);
+  assert.equal(cooldowns.get("antigravity", NOW + 1)?.resetsAt, reset);
+});
+
 test("typed cooldowns keep monotonic deadlines, last-resort policy, and retry summaries", () => {
   const cooldowns = new ProviderCooldowns(undefined, {
     isProviderEnabled: (provider, _role) => provider !== "disabled"

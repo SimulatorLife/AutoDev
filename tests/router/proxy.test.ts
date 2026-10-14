@@ -211,6 +211,78 @@ test("declared limits, fallback classification, and exhaustion diagnostics remai
   });
 });
 
+test("an exhausted quota names the window the provider reported", () => {
+  // agy reports a quota as "Resets in 24m43s." on stderr. That is an inferred
+  // limit, so it keeps the transient ladder instead of sleeping 25 minutes on
+  // the strength of free text -- but the window it named is still the truth
+  // about the provider, and dropping it left the reader with a bare
+  // "retry in 480s" derived from a failure streak that had nothing to do with
+  // it. Both times are stated because they legitimately differ.
+  const resetsAt = new Date(Date.now() + 24 * 60_000 + 43_000).toISOString();
+  const summary: CooldownSummary[] = [
+    {
+      provider: "antigravity",
+      model: "gemini-3.8-flash-high",
+      state: "transient",
+      failureClass: "quota_exhausted",
+      resetsAt,
+      retryAfterMs: 480_000,
+      detail: null
+    }
+  ];
+  const body = exhaustionBody({
+    subject: "the orchestrator",
+    summary,
+    failures: ["antigravity: HTTP 429"],
+    model: "gemini-3.8-flash-high",
+    requestId: "req-quota",
+    lastResortAttempts: 1,
+    deadlineReached: false
+  });
+  const message = (body as any).error.message as string;
+  assert.match(message, /quota_exhausted/);
+  assert.match(message, /provider reports usage resets in 25m/);
+  assert.match(message, /retrying in 480s/);
+  // The provider's stated reset travels to the client as well, so a caller
+  // that can schedule around it does not have to parse the prose.
+  assert.equal(
+    exhaustionHeaders({ summary, requestId: "req-quota" })[
+      "x-autodev-limit-resets-at"
+    ],
+    resetsAt
+  );
+});
+
+test("a reset the retry actually lands on is stated once, not twice", () => {
+  const resetsAt = new Date(Date.now() + 480_000).toISOString();
+  const summary: CooldownSummary[] = [
+    {
+      provider: "antigravity",
+      model: "gemini-3.8-flash-high",
+      state: "hard",
+      failureClass: "quota_exhausted",
+      resetsAt,
+      retryAfterMs: 480_000,
+      detail: null
+    }
+  ];
+  const body = exhaustionBody({
+    subject: "the orchestrator",
+    summary,
+    failures: ["antigravity: HTTP 429"],
+    model: "gemini-3.8-flash-high",
+    requestId: "req-hard",
+    lastResortAttempts: 0,
+    deadlineReached: false
+  });
+  const message = (body as any).error.message as string;
+  assert.match(
+    message,
+    new RegExp(String.raw`resets at ${resetsAt.replaceAll(".", String.raw`\.`)}`)
+  );
+  assert.doesNotMatch(message, /retrying in/);
+});
+
 test(
   "concrete proxy retries one fallbackable status without rerouting",
   { concurrency: false },

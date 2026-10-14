@@ -245,11 +245,12 @@ process.exitCode = fixture.exitCode ?? 0;
       `${name}: SSE content type`
     );
     const sse = parseSse(body);
-    assert.deepEqual(
-      sse.map(({ event }) => event),
-      item.expected.eventTypes,
-      `${name}: SSE lifecycle`
-    );
+    if (item.expected.eventTypes)
+      assert.deepEqual(
+        sse.map(({ event }) => event),
+        item.expected.eventTypes,
+        `${name}: SSE lifecycle`
+      );
     assert.equal(sse.at(-1)?.event, "[DONE]", `${name}: terminal sentinel`);
     const completed = sse.find(({ event }) => event === "response.completed")
       ?.data.response;
@@ -265,6 +266,24 @@ process.exitCode = fixture.exitCode ?? 0;
         completed.output_text.startsWith(item.expected.outputTextPrefix),
         `${name}: partial output text`
       );
+    // agy runs its own tools, so the reasoning stream is the only place a
+    // reader sees what the turn did. These deltas are that record.
+    const reasoningText = sse
+      .filter(({ event }) => event === "response.reasoning_summary_text.delta")
+      .map(({ data }) => String(data.delta ?? ""))
+      .join("");
+    if (item.expected.reasoningTextIncludes)
+      for (const fragment of item.expected.reasoningTextIncludes)
+        assert.ok(
+          reasoningText.includes(fragment),
+          `${name}: reasoning should contain ${JSON.stringify(fragment)}, got ${JSON.stringify(reasoningText)}`
+        );
+    if (item.expected.reasoningTextExcludes)
+      for (const fragment of item.expected.reasoningTextExcludes)
+        assert.ok(
+          !reasoningText.includes(fragment),
+          `${name}: reasoning should not contain ${JSON.stringify(fragment)}, got ${JSON.stringify(reasoningText)}`
+        );
     assert.equal(
       completed.status,
       item.expected.completedStatus,

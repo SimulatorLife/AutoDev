@@ -619,6 +619,23 @@ than only in prose, on both the streamed and non-streamed paths:
 | `x-autodev-limit-resets-at` | ISO-8601 UTC                                                                 |
 | `x-autodev-limit-source`    | `reported` (the provider said so) or `inferred` (a bridge matched free text) |
 
+A stated reset is kept on the cooldown entry whether or not it is trusted long
+enough to sleep through. An `inferred` limit stays on the transient ladder — the
+corroboration rule above is unchanged, and a long sleep is still not taken on the
+strength of free text — but the window the provider named survives into
+`cooldownResetsAt` and the exhaustion body. The two times routinely disagree, so
+both are reported rather than one standing in for the other:
+
+```text
+antigravity: quota_exhausted, provider reports usage resets in 25m
+  (2026-10-14T16:47:21.728Z); retrying in 480s
+```
+
+Reporting only the provider's reset would overstate the wait, since the router
+will in fact retry sooner; reporting only the ladder hid the window the provider
+had just given. When the retry lands on the reset within a minute the single time
+is enough and is stated once.
+
 The same shape appears as `error.limit` in a non-streamed failure body and as
 `response.incomplete_details.provider_limit` on a streamed one, so the router
 reads one shape wherever it finds it. `@simulatorlife/autodev-runtime/shared/provider-limits` is the single implementation imported by all
@@ -1877,6 +1894,46 @@ the workspace (observed 2026-09-18, worker thread
 - **Routing.** The router prefers the provider that issued the calls a request
   is answering (see "Tool-result affinity"), so the continuation reaches the
   parked turn.
+
+### Antigravity: agy executes its own tools, so its reasoning stream is the record
+
+Antigravity is the opposite of the Claude bridge above, and the difference is
+structural rather than a gap that can be closed the same way. `agy` runs as a
+full agent runtime: the bridge gives it its own MCP servers
+(`runtime/src/providers/antigravity.ts`) and it runs its own tools inside its own
+process. Nothing is handed to Codex, so Codex has no `function_call` item to
+render, no change tracking, and no approvals to gate — which is why a turn shows
+no tool cards while plainly having run `view_file`, `run_command`, and
+`write_to_file`. Measured across the AutoDev workspace, Codex recorded 1 tool call
+for 393 Antigravity attempts, against ratios near 1.0 for codex, MiniMax, and
+Claude.
+
+The Codex-tools shim cannot fix this today, and the reason is worth recording so
+it is not attempted again. Claude runs with `--tools ""`, so every call is forced
+through the shim. `agy` has no `--tools` flag and no documented way to disable its
+built-ins; the only lever is `allow`/`deny` globs in
+`~/.gemini/antigravity-cli/settings.json`, which would leave the model unable to
+act rather than routing it through Codex. Registering the shim as an MCP server
+would only *add* tools beside agy's own, leaving execution split across two
+runtimes — worse to reason about than the honest status quo. Parity requires an
+agy capability that does not exist.
+
+What the bridge does instead is make its own stream legible, because agy's
+`step_update` events carry the detail and the old wording discarded it. Each tool
+step reports what it was called with and how it went, reading `args`/`tool_input`
+and `duration_seconds` from both places agy emits them, and the first field that
+identifies the call (`path`, `command`, `pattern`, `query`, `url`, …):
+
+```text
+Antigravity is using run_command: pnpm test --filter provider.
+Antigravity finished run_command: pnpm test --filter provider (2.4s) — exit code 1.
+Antigravity finished view_file: src/providers/antigravity.ts (300ms).
+```
+
+A failed call previously reported the bare word `error.`, which read as progress
+rather than as something needing attention. This is narration, not parity: it
+gives no tool cards, no diffs, and no approvals, and it should not be described as
+if it did.
 
 ### Tool-result affinity
 
