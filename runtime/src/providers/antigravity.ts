@@ -3972,19 +3972,11 @@ class StreamingTurn implements ParkableTurn {
 
   attach(): void {
     this.response.on("error", this.onResponseError);
+    this.response.on("close", this.onResponseClose);
     this.keepAlive = setInterval(() => {
       reportTurnHeartbeat(this.turn.agentEvents);
       this.stream.writeKeepAlive();
     }, 2000);
-    this.response.on("close", () => {
-      this.response.removeListener("error", this.onResponseError);
-      // The router aborting its upstream fetch -- its 15-minute timeout, or
-      // its own client going away -- reaches this bridge as nothing but a
-      // closed socket. Naming it is the difference between "agy died", "agy
-      // was killed because nobody was listening any more", and "agy was
-      // delegating when nobody was listening any more".
-      this.clientGone("the client disconnected");
-    });
   }
 
   /**
@@ -4157,9 +4149,18 @@ class StreamingTurn implements ParkableTurn {
     this.awaiting.clear();
   }
 
+  /**
+   * Stop listening to the response this turn is no longer writing into.
+   *
+   * Both listeners, not just the error one: parking ends the response on
+   * purpose, and leaving the close handler behind would read that ending as
+   * the client going away and kill an agy that is only waiting for Codex.
+   */
   detach(): void {
     clearInterval(this.keepAlive);
+    this.keepAlive = undefined;
     this.response.removeListener("error", this.onResponseError);
+    this.response.removeListener("close", this.onResponseClose);
   }
 
   readonly onEvent = (event: AgyEvent): void => {
@@ -4283,6 +4284,16 @@ class StreamingTurn implements ParkableTurn {
 
   private readonly onResponseError = (): void => {
     this.clientGone("the client connection errored");
+  };
+
+  // The router aborting its upstream fetch -- its 15-minute timeout, or its
+  // own client going away -- reaches this bridge as nothing but a closed
+  // socket. Naming it is the difference between "agy died", "agy was killed
+  // because nobody was listening any more", and "agy was delegating when
+  // nobody was listening any more". A named field so `detach` can remove it:
+  // parking closes the response deliberately, and this must not fire for it.
+  private readonly onResponseClose = (): void => {
+    this.clientGone("the client disconnected");
   };
 
   private clientGone(cause: string): void {
