@@ -39,7 +39,8 @@ import {
 import {
   type LaunchAgentPaths,
   renderLaunchAgent,
-  resolveLaunchAgentValues} from "./macos/launchagent.ts";
+  resolveLaunchAgentValues
+} from "./macos/launchagent.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 import {
   linkRuntimeSource,
