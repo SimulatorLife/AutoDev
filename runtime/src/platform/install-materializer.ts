@@ -113,6 +113,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/providers/claude.ts",
   "runtime/src/providers/claude-codex-tools.ts",
   "runtime/src/providers/claude-turn.ts",
+  "runtime/src/providers/codex-tool-turns.ts",
   "runtime/src/mcp/spawn-shim.ts",
   "runtime/src/mcp/tool-filter.ts",
   "runtime/src/mcp/codex-tools-shim.ts",

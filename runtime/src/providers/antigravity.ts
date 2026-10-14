@@ -35,7 +35,9 @@ import {
   SpawnSessionRegistry,
   type SpawnToolCallOutput
 } from "@simulatorlife/autodev-runtime/agents";
+import { codexToolsMcpServer } from "@simulatorlife/autodev-runtime/mcp/codex-tools-shim";
 import {
+  CODEX_TOOLS_SERVER,
   type CodexTool,
   codexToolCallEvents,
   codexToolCallItem,
@@ -2008,6 +2010,11 @@ interface IsolatedHomeOptions {
   cwd?: string;
   sandboxMode?: "read-only" | "workspace-write" | null;
   isolatedHome?: string;
+  /**
+   * The turn agy's Codex tools MCP server belongs to, or null to leave that
+   * server out of this home's config entirely.
+   */
+  toolTurnId?: string | null;
 }
 
 const GEMINI_DIRECTORY = ".gemini";
@@ -2155,10 +2162,26 @@ function bridgeSpawnMcpEntry(options?: IsolatedHomeOptions): JsonRecord {
   };
 }
 
+/**
+ * The MCP server that offers this turn Codex's tools.
+ *
+ * Without it agy has no way to reach a Codex tool at all, so the entry is
+ * registered for any turn that can hold one -- the spawn entry is the only one
+ * gated on the role, because delegation genuinely belongs to the orchestrator
+ * while Codex's tools belong to whoever was given them.
+ */
+function codexToolsMcpEntry(toolTurnId: string): AntigravityMcpServerConfig {
+  return codexToolsMcpServer(toolTurnId, {
+    url: `http://${HOST}:${PORT}`,
+    token: AUTH_TOKEN
+  });
+}
+
 function buildInvocationMcpConfig(
   agentRole: string | null,
   spawnSession: string | null = null,
-  options?: IsolatedHomeOptions
+  options?: IsolatedHomeOptions,
+  toolTurnId: string | null = null
 ): AntigravityMcpConfig {
   const contract = antigravityRoleContract(agentRole);
   const catalogue = bridgeMcpCatalogue(options?.codexHome);
@@ -2174,6 +2197,13 @@ function buildInvocationMcpConfig(
   }
   if (isOrchestratorRole(agentRole) && spawnSession)
     mcpServers.autodev_spawn = bridgeSpawnMcpEntry(options);
+  // A turn is offered the shim exactly when it has somewhere to park a call:
+  // streaming, and carrying at least one Codex tool. Minting the id under the
+  // same condition keeps "the shim was launched" and "there is a turn to park
+  // against" the same statement, which is what the loopback call relies on.
+  if (toolTurnId) {
+    mcpServers[CODEX_TOOLS_SERVER] = codexToolsMcpEntry(toolTurnId);
+  }
   return { mcpServers };
 }
 
@@ -2472,7 +2502,8 @@ function createIsolatedAntigravityHome(
     const mcpConfig = buildInvocationMcpConfig(
       agentRole,
       spawnSession,
-      options
+      options,
+      options?.toolTurnId ?? null
     );
     const settings = buildInvocationSettings(
       agentRole,
@@ -2625,13 +2656,15 @@ function runAgy(
   agentRole: string | null = null,
   sandboxMode: "read-only" | "workspace-write" | null = null,
   skillContext: string | null = null,
-  workspaceKey: unknown = null
+  workspaceKey: unknown = null,
+  toolTurnId: string | null = null
 ): Promise<RunAgyResult> {
   let isolatedState: IsolatedHomeResult;
   try {
     isolatedState = createIsolatedAntigravityHome(agentRole, spawnSession, {
       cwd,
-      sandboxMode
+      sandboxMode,
+      toolTurnId
     });
   } catch (error) {
     return Promise.reject(error);
@@ -2926,15 +2959,16 @@ async function handleBridgeToolsRoute(
     return;
   }
   const body = await readJsonBody(request);
-  const turn = codexToolTurns.byId(typeof body?.turn === "string" ? body.turn : "");
+  const turn = codexToolTurns.byId(
+    typeof body?.turn === "string" ? body.turn : ""
+  );
   if (pathname.endsWith("/list")) {
     sendJson(response, 200, { tools: turn ? turn.toolDefinitions() : [] });
     return;
   }
   if (!turn) {
     sendJson(response, 409, {
-      error:
-        "This Antigravity turn is no longer active; the call was not run."
+      error: "This Antigravity turn is no longer active; the call was not run."
     });
     return;
   }
@@ -3138,6 +3172,13 @@ interface ResponsesTurn {
    * server advertises and what a shim call is matched against.
    */
   codexTools: CodexTool[];
+  /**
+   * The id a Codex tool call from agy names to reach this turn, or null when
+   * this turn cannot park a call at all. Minted here rather than when the turn
+   * is constructed because agy's MCP config has to carry it, and agy is
+   * launched before the streaming turn that parks calls exists.
+   */
+  toolTurnId: string | null;
   logTurnEnd: (outcome: string, detail?: string) => void;
 }
 
@@ -3210,6 +3251,7 @@ function prepareResponsesTurn(
     `agy request model=${model} effort=${effort} role=${isOrchestratorRole(agentRole) ? "orchestrator" : "leaf"} cwd=${cwd}`
   );
   reportRoleExposure(agentEvents, bootstrapContract);
+  const codexTools = codexToolSurface(payload).tools;
   return {
     responseModel: payload.model ?? model,
     model,
@@ -3225,9 +3267,26 @@ function prepareResponsesTurn(
     prompt,
     spawnTracker,
     toolObserver,
-    codexTools: codexToolSurface(payload).tools,
+    codexTools,
+    // Only a streamed turn can park a call and be continued by the request
+    // carrying its output; a non-streamed one answers in a single body and has
+    // nowhere to put a continuation.
+    toolTurnId: payload.stream ? turnId(12) : null,
     logTurnEnd: createTurnLog(requestId)
   };
+}
+
+/**
+ * The turn agy's Codex tools MCP server is launched with, or null to leave that
+ * server out of the invocation entirely.
+ *
+ * A turn Codex offered no tools on is not given a server that would answer every
+ * listing with an empty array and every call with "Codex did not offer a tool":
+ * the server exists so agy can reach tools, and with none it is a way to be told
+ * so through the slowest possible channel.
+ */
+function codexToolsTurnId(turn: ResponsesTurn): string | null {
+  return turn.toolTurnId && turn.codexTools.length > 0 ? turn.toolTurnId : null;
 }
 
 function runTurnAgy(
@@ -3244,7 +3303,8 @@ function runTurnAgy(
     turn.agentRole,
     turn.sandboxMode,
     turn.skillContext,
-    turn.workspaceKey
+    turn.workspaceKey,
+    codexToolsTurnId(turn)
   );
 }
 
@@ -3523,7 +3583,9 @@ class ResponseEventStream {
       type: "message",
       role: "assistant",
       status: "completed",
-      content: [{ type: "output_text", text: this.segmentText, annotations: [] }]
+      content: [
+        { type: "output_text", text: this.segmentText, annotations: [] }
+      ]
     };
     this.output[this.messageIndex] = item;
     this.emit("response.output_text.done", {
@@ -3717,9 +3779,11 @@ class StreamingTurn implements ParkableTurn {
    * The id a shim call names to reach this turn.
    *
    * A parked turn outlives its response, so this is what lets the shim's
-   * loopback call find the turn it belongs to rather than guessing.
+   * loopback call find the turn it belongs to rather than guessing. Minted with
+   * the request because agy's MCP config carries it, and agy is launched before
+   * this turn exists.
    */
-  readonly id = turnId(12);
+  readonly id: string;
   /** Calls agy has made through the shim that Codex has not run yet. */
   private readonly queued: QueuedCodexCall[] = [];
   /** Calls handed to Codex, awaiting the output on its next request. */
@@ -3786,6 +3850,11 @@ class StreamingTurn implements ParkableTurn {
     response: ServerResponse,
     registry: CodexToolTurnRegistry<StreamingTurn>
   ) {
+    if (!turn.toolTurnId)
+      throw new Error(
+        "A streaming turn must carry a Codex tool turn id; it is what a shim call names to reach it"
+      );
+    this.id = turn.toolTurnId;
     this.turn = turn;
     this.stream = stream;
     this.response = response;
@@ -3972,8 +4041,10 @@ class StreamingTurn implements ParkableTurn {
   /** Fail every outstanding call and end the turn. */
   private release(message: string): void {
     this.clearParkTimer();
-    for (const call of this.queued.splice(0)) call.resolve(toolErrorResult(message));
-    for (const call of this.awaiting.values()) call.resolve(toolErrorResult(message));
+    for (const call of this.queued.splice(0))
+      call.resolve(toolErrorResult(message));
+    for (const call of this.awaiting.values())
+      call.resolve(toolErrorResult(message));
     this.awaiting.clear();
   }
 

@@ -5,6 +5,8 @@ import { createServer, type IncomingMessage } from "node:http";
 import { createInterface } from "node:readline";
 import test from "node:test";
 
+import { codexToolsMcpServer } from "@simulatorlife/autodev-runtime/mcp/codex-tools-shim";
+
 const REPO_ROOT = new URL("../../", import.meta.url);
 
 async function listen(
@@ -36,16 +38,21 @@ async function requestBody(request: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-test("stdio close flushes a source-owned MCP span with inherited safe resource context", async () => {
+test("a launch definition names the turn its shim reports back on", async () => {
   const exportedBodies: Buffer[] = [];
   const exporter = createServer(async (request, response) => {
     exportedBodies.push(await requestBody(request));
     response.writeHead(200, { "content-type": "application/x-protobuf" });
     response.end();
   });
+  // The turn the shim reports is the whole contract between the launcher and
+  // the bridge: a shim that launched with one key and reports another reaches a
+  // turn that does not exist, and every call is refused.
+  const reportedTurns: unknown[] = [];
   const bridge = createServer(async (request, response) => {
     const payload = JSON.parse((await requestBody(request)).toString("utf8"));
     assert.equal(payload.name, "read_file");
+    reportedTurns.push(payload.turn);
     response.writeHead(200, { "content-type": "application/json" });
     response.end(
       JSON.stringify({
@@ -57,22 +64,25 @@ test("stdio close flushes a source-owned MCP span with inherited safe resource c
 
   const exporterPort = await listen(exporter);
   const bridgePort = await listen(bridge);
-  const child = spawn(
-    process.execPath,
-    ["runtime/src/mcp/codex-tools-shim.ts"],
+  // Launched exactly as a bridge launches it, from the definition the launcher
+  // produced rather than a hand-written copy of its env.
+  const server = codexToolsMcpServer(
+    "turn-runtime-test",
+    { url: `http://127.0.0.1:${bridgePort}`, token: "" },
     {
-      cwd: REPO_ROOT,
-      env: {
-        PATH: process.env.PATH ?? "",
-        AUTODEV_BRIDGE_URL: `http://127.0.0.1:${bridgePort}`,
-        AUTODEV_CLAUDE_TURN: "turn-runtime-test",
-        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: `http://127.0.0.1:${exporterPort}/v1/traces`,
-        OTEL_RESOURCE_ATTRIBUTES:
-          "autodev.workspace=workspace-runtime-test,autodev.agent.role=worker"
-      },
-      stdio: ["pipe", "pipe", "pipe"]
+      OTEL_RESOURCE_ATTRIBUTES:
+        "autodev.workspace=workspace-runtime-test,autodev.agent.role=worker"
     }
   );
+  const child = spawn(server.command, server.args, {
+    cwd: REPO_ROOT,
+    env: {
+      PATH: process.env.PATH ?? "",
+      ...server.env,
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: `http://127.0.0.1:${exporterPort}/v1/traces`
+    },
+    stdio: ["pipe", "pipe", "pipe"]
+  });
   const replies = createInterface({ input: child.stdout });
   const replyLines = replies[Symbol.asyncIterator]();
   let stderr = "";
@@ -102,6 +112,7 @@ test("stdio close flushes a source-owned MCP span with inherited safe resource c
     const callReply = JSON.parse(call.value ?? "{}");
     assert.equal(callReply.id, 2);
     assert.equal(callReply.result?.content?.[0]?.text, "private tool output");
+    assert.deepEqual(reportedTurns, ["turn-runtime-test"]);
 
     child.stdin.end();
     const [exitCode] = await Promise.race([

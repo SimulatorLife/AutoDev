@@ -35,6 +35,7 @@ import {
   readOnlySystemPromptInjection,
   resolveAgentRole
 } from "@simulatorlife/autodev-runtime/agents";
+import { codexToolsMcpServer } from "@simulatorlife/autodev-runtime/mcp/codex-tools-shim";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
@@ -58,16 +59,11 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 import {
-  resolveRuntimeSourcePath,
-  resolveRuntimeSourceRoot
-} from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
-import {
   type AgentEventReporter,
   resolveAgentEventReporter
 } from "@simulatorlife/autodev-runtime/telemetry";
 import {
   AUTODEV_WORKSPACE_KEY_HEADER,
-  validatedAutoDevOtelResourceAttributes,
   withAutoDevOtelResourceContext
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
@@ -540,27 +536,13 @@ export function codexToolsMcpConfig(
   turnId: string,
   environment: NodeJS.ProcessEnv = process.env
 ): string {
-  const repoRoot = resolveRuntimeSourceRoot(
-    import.meta.dirname,
-    process.env.AUTODEV_REPO_ROOT
-  );
-  const shim = resolveRuntimeSourcePath(repoRoot, "mcp/codex-tools-shim.ts");
-  const resourceAttributes =
-    validatedAutoDevOtelResourceAttributes(environment);
   return JSON.stringify({
     mcpServers: {
-      [CODEX_TOOLS_SERVER]: {
-        command: process.env.AUTODEV_NODE_BIN ?? "node",
-        args: [shim],
-        env: {
-          ...(resourceAttributes
-            ? { OTEL_RESOURCE_ATTRIBUTES: resourceAttributes }
-            : {}),
-          AUTODEV_BRIDGE_URL: `http://${HOST}:${PORT}`,
-          AUTODEV_BRIDGE_TOKEN: AUTH_TOKEN,
-          AUTODEV_CLAUDE_TURN: turnId
-        }
-      }
+      [CODEX_TOOLS_SERVER]: codexToolsMcpServer(
+        turnId,
+        { url: `http://${HOST}:${PORT}`, token: AUTH_TOKEN },
+        environment
+      )
     }
   });
 }

@@ -1,13 +1,20 @@
 #!/usr/bin/env node
 
 /**
- * Codex's tools, as an MCP server the Claude CLI can call.
+ * Codex's tools, as an MCP server a bridged CLI can call.
  *
- * The Claude bridge runs the CLI with its built-in tools disabled, so every
- * action a Claude-served turn takes goes through here: `tools/list` returns
- * the tools Codex offered on the turn's request, and `tools/call` hands the
- * call to the bridge, which emits it to Codex and blocks until Codex returns
- * the output on its next request. See runtime/src/providers/claude-codex-tools.ts.
+ * A bridge serves a CLI as a model, not as a second agent runtime: it runs
+ * with its built-in tools disabled, so every action the turn takes goes through
+ * here. `tools/list` returns the tools Codex offered on the turn's request, and
+ * `tools/call` hands the call to the bridge, which emits it to Codex and blocks
+ * until Codex returns the output on its next request. See
+ * runtime/src/providers/claude-codex-tools.ts for the tool surface, and
+ * runtime/src/providers/codex-tool-turns.ts for the registry that joins a parked
+ * call back to the turn holding it.
+ *
+ * The Claude and Antigravity bridges both launch this; `codexToolsMcpServer`
+ * below is the one place that decides how, so the env contract read here and
+ * the env written for a launch cannot drift apart.
  *
  * Plain `node:http` rather than `fetch`: a Codex tool call can legitimately
  * outlast undici's default five-minute header timeout (a long test run, or a
@@ -19,6 +26,12 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
 import {
+  resolveRuntimeSourcePath,
+  resolveRuntimeSourceRoot
+} from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+import { validatedAutoDevOtelResourceAttributes } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
+
+import {
   recordToolCallSpan,
   shutdownTelemetry,
   type ToolCallOutcome
@@ -26,12 +39,66 @@ import {
 
 const BRIDGE_URL = process.env.AUTODEV_BRIDGE_URL ?? "";
 const BRIDGE_TOKEN = process.env.AUTODEV_BRIDGE_TOKEN ?? "";
-const TURN = process.env.AUTODEV_CLAUDE_TURN ?? "";
+/**
+ * The env var naming the turn a launched shim belongs to.
+ *
+ * Named for the bridge rather than for the CLI it happens to serve first: the
+ * turn, not the provider, is what a loopback call has to find.
+ */
+export const CODEX_TOOLS_TURN_ENV = "AUTODEV_BRIDGE_TURN";
+const TURN = process.env[CODEX_TOOLS_TURN_ENV] ?? "";
 const PROTOCOL_VERSION = "2025-06-18";
 
 type JsonRpcId = string | number | null;
 type JsonObject = Record<string, unknown>;
 type Send = (message: JsonObject) => void;
+
+/**
+ * The launch definition a bridge writes into its CLI's MCP config.
+ *
+ * Narrower than a plain JSON object on purpose: every value here is a string,
+ * and saying so lets the strict-typed callers assign it without a cast or a
+ * widened alias on their side. A type rather than an interface because an
+ * interface carries no implicit index signature, and the callers store it in
+ * JSON-shaped records that require one.
+ */
+type CodexToolsMcpServer = {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+};
+
+/**
+ * The MCP server entry that launches this shim against one turn's bridge.
+ *
+ * The turn id is per-launch because several bridged processes can be running
+ * at once, and a call has to reach the turn whose process made it rather than
+ * whichever turn happens to be live.
+ */
+export function codexToolsMcpServer(
+  turn: string,
+  bridge: { url: string; token: string },
+  environment: NodeJS.ProcessEnv = process.env
+): CodexToolsMcpServer {
+  const repoRoot = resolveRuntimeSourceRoot(
+    import.meta.dirname,
+    environment.AUTODEV_REPO_ROOT
+  );
+  const resourceAttributes =
+    validatedAutoDevOtelResourceAttributes(environment);
+  return {
+    command: environment.AUTODEV_NODE_BIN ?? process.execPath,
+    args: [resolveRuntimeSourcePath(repoRoot, "mcp/codex-tools-shim.ts")],
+    env: {
+      ...(resourceAttributes
+        ? { OTEL_RESOURCE_ATTRIBUTES: resourceAttributes }
+        : {}),
+      AUTODEV_BRIDGE_URL: bridge.url,
+      AUTODEV_BRIDGE_TOKEN: bridge.token,
+      [CODEX_TOOLS_TURN_ENV]: turn
+    }
+  };
+}
 
 interface JsonRpcMessage {
   id?: JsonRpcId;

@@ -17,6 +17,7 @@
     "./cli/control-api-compatibility": "./src/cli/control-api-compatibility.ts",
     "./hooks": "./src/hooks/index.ts",
     "./mcp": "./src/mcp/index.ts",
+    "./mcp/codex-tools-shim": "./src/mcp/codex-tools-shim.ts",
     "./mcp/process-registry": "./src/mcp/process-registry.ts",
     "./memory": "./src/memory/index.ts",
     "./platform": "./src/platform/index.ts",
