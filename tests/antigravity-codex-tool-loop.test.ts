@@ -596,3 +596,103 @@ test("a second tool call made while the turn is parked still reaches Codex", asy
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a continuation for a call no live turn owns starts a turn instead of hanging", async () => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-agy-codex-lost-"));
+  const home = join(root, "home");
+  const codexHome = join(root, "codex");
+  const workspace = join(root, "workspace");
+  const agyHome = join(home, ".gemini");
+  const agyCliDir = join(agyHome, "antigravity-cli");
+  const agyLog = join(root, "agy.jsonl");
+  const fakeAgy = join(root, "fake-agy.mjs");
+  const port = await reservePort();
+
+  mkdirSync(join(agyHome, "config"), { recursive: true });
+  mkdirSync(agyCliDir, { recursive: true });
+  mkdirSync(join(agyHome, "antigravity-browser-profile"), {
+    recursive: true
+  });
+  mkdirSync(join(codexHome, "provider-runtime"), { recursive: true });
+  mkdirSync(workspace, { recursive: true });
+  writeFileSync(join(agyHome, "config", "mcp_config.json"), "{}\n");
+  writeFileSync(
+    join(agyCliDir, "settings.json"),
+    '{"permissions":{"allow":[],"deny":[]}}\n'
+  );
+  writeFileSync(
+    join(codexHome, "provider-runtime", "mcp-servers.json"),
+    JSON.stringify({
+      playwright: { command: process.execPath, args: [] }
+    })
+  );
+  writeFileSync(
+    fakeAgy,
+    [
+      "#!/usr/bin/env node",
+      'import { appendFileSync } from "node:fs";',
+      `appendFileSync(${JSON.stringify(agyLog)}, process.pid + ${JSON.stringify("\n")});`,
+      String.raw`process.stdout.write(JSON.stringify({ event: "result", result: { status: "SUCCESS", response: "fresh turn" } }) + "\n");`,
+      "process.exit(0);",
+      ""
+    ].join("\n"),
+    { mode: 0o755 }
+  );
+  writeFileSync(agyLog, "");
+
+  const bridge = spawn(
+    process.execPath,
+    ["runtime/src/providers/antigravity.ts"],
+    {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        HOME: home,
+        CODEX_HOME: codexHome,
+        AGY_PROXY_PORT: String(port),
+        AGY_CLI_PATH: fakeAgy,
+        AGY_SKIP_PERMISSIONS: "true",
+        LITELLM_API_KEY: ""
+      },
+      stdio: ["ignore", "ignore", "pipe"]
+    }
+  );
+
+  try {
+    await waitForBridge(bridge);
+    // The call id belongs to nothing: its turn ended, or never existed here.
+    // Resuming must not be attempted, and the request must still be answered.
+    const response = await post(
+      port,
+      {
+        cwd: workspace,
+        input: [
+          ...TOOLS,
+          { type: "message", role: "user", content: "carry on" },
+          {
+            type: "function_call_output",
+            call_id: "call_from_a_turn_that_is_gone",
+            output: "stale"
+          }
+        ],
+        model: "gemini-3.8-flash-medium",
+        stream: true
+      },
+      AbortSignal.timeout(20_000)
+    );
+    assert.equal(response.status, 200, response.body);
+    const completed = sseEvents(response.body).find(
+      (event) => event.type === "response.completed"
+    );
+    assert.ok(completed, `the request must be answered: ${response.body}`);
+    assert.match(completed.response.output_text, /fresh turn/);
+    assert.equal(
+      readFileSync(agyLog, "utf8").trim().split("\n").length,
+      1,
+      "a stale continuation is a new turn, not a resume"
+    );
+  } finally {
+    await stopChild(bridge);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
