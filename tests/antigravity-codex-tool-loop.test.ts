@@ -79,6 +79,72 @@ server.kill();
 process.exit(0);
 `;
 
+/**
+ * The same stand-in, but with two calls in flight at once. The first parks the
+ * turn, so the second arrives when there is no live response left to emit it on
+ * -- which is exactly the window where a queued call can be lost.
+ */
+const PARALLEL_AGY = String.raw`
+import { spawn } from "node:child_process";
+import { appendFileSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const log = process.env.FAKE_AGY_LOG;
+appendFileSync(log, JSON.stringify({ pid: process.pid }) + "\n");
+process.stdout.write(JSON.stringify({ event: "step_update", step_update: { step_type: "text", text_delta: "looking" } }) + "\n");
+
+const config = JSON.parse(
+  readFileSync(join(process.env.HOME, ".gemini", "config", "mcp_config.json"), "utf8")
+);
+const definition = config.mcpServers.codex;
+if (!definition) {
+  process.stderr.write("no codex MCP server was configured\n");
+  process.exit(3);
+}
+const server = spawn(definition.command, definition.args, {
+  env: { ...process.env, ...definition.env },
+  stdio: ["pipe", "pipe", "inherit"]
+});
+
+let nextId = 1;
+const pending = new Map();
+let buffer = "";
+server.stdout.on("data", (chunk) => {
+  buffer += chunk.toString();
+  let newline;
+  while ((newline = buffer.indexOf("\n")) >= 0) {
+    const message = JSON.parse(buffer.slice(0, newline));
+    buffer = buffer.slice(newline + 1);
+    pending.get(message.id)?.(message.result ?? message.error);
+    pending.delete(message.id);
+  }
+});
+function rpc(method, params) {
+  const id = nextId++;
+  server.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+  return new Promise((resolve) => pending.set(id, resolve));
+}
+
+await rpc("initialize", { protocolVersion: "2025-06-18" });
+const names = ["first", "second"];
+const results = await Promise.all(
+  names.map((tool) =>
+    rpc("tools/call", { name: "read_file", arguments: { path: tool + ".md" } })
+  )
+);
+process.stdout.write(
+  JSON.stringify({
+    event: "result",
+    result: {
+      status: "SUCCESS",
+      response: "read both: " + results.map((r) => r.content?.[0]?.text ?? "?").join(", ")
+    }
+  }) + "\n"
+);
+server.kill();
+process.exit(0);
+`;
+
 async function reservePort(): Promise<number> {
   const server = createServer();
   await new Promise<void>((resolve, reject) => {
@@ -375,6 +441,156 @@ test("a call against a turn that is gone is refused rather than left to hang", a
     assert.equal(response.status, 409);
     const body = (await response.json()) as { error: string };
     assert.match(body.error, /no longer active/);
+  } finally {
+    await stopChild(bridge);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a second tool call made while the turn is parked still reaches Codex", async () => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-agy-codex-parallel-"));
+  const home = join(root, "home");
+  const codexHome = join(root, "codex");
+  const workspace = join(root, "workspace");
+  const agyHome = join(home, ".gemini");
+  const agyCliDir = join(agyHome, "antigravity-cli");
+  const agyLog = join(root, "agy.jsonl");
+  const fakeAgy = join(root, "fake-agy.mjs");
+  const port = await reservePort();
+
+  mkdirSync(join(agyHome, "config"), { recursive: true });
+  mkdirSync(agyCliDir, { recursive: true });
+  mkdirSync(join(agyHome, "antigravity-browser-profile"), {
+    recursive: true
+  });
+  mkdirSync(join(codexHome, "provider-runtime"), { recursive: true });
+  mkdirSync(workspace, { recursive: true });
+  writeFileSync(join(agyHome, "config", "mcp_config.json"), "{}\n");
+  writeFileSync(
+    join(agyCliDir, "settings.json"),
+    '{"permissions":{"allow":[],"deny":[]}}\n'
+  );
+  writeFileSync(
+    join(codexHome, "provider-runtime", "mcp-servers.json"),
+    JSON.stringify({
+      playwright: { command: process.execPath, args: [] }
+    })
+  );
+  writeFileSync(fakeAgy, `#!/usr/bin/env node\n${PARALLEL_AGY}`, {
+    mode: 0o755
+  });
+  writeFileSync(agyLog, "");
+
+  const bridge = spawn(
+    process.execPath,
+    ["runtime/src/providers/antigravity.ts"],
+    {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        HOME: home,
+        CODEX_HOME: codexHome,
+        AGY_PROXY_PORT: String(port),
+        AGY_CLI_PATH: fakeAgy,
+        AGY_SKIP_PERMISSIONS: "true",
+        FAKE_AGY_LOG: agyLog,
+        LITELLM_API_KEY: ""
+      },
+      stdio: ["ignore", "ignore", "pipe"]
+    }
+  );
+
+  // Each call is answered with the path it asked for, so a call that reached
+  // agy is distinguishable from one the bridge never emitted.
+  const callItems = (body: string) =>
+    sseEvents(body)
+      .filter(
+        (event) =>
+          event.type === "response.output_item.done" &&
+          event.item?.type === "function_call"
+      )
+      .map((event) => event.item as Record<string, any>);
+  const answer = (item: Record<string, any>) => [
+    item,
+    {
+      type: "function_call_output",
+      call_id: item.call_id,
+      output: "out:" + JSON.parse(item.arguments).path
+    }
+  ];
+
+  try {
+    await waitForBridge(bridge);
+
+    const input = [
+      ...TOOLS,
+      { type: "message", role: "user", content: "read both" }
+    ];
+    const first = await post(
+      port,
+      {
+        cwd: workspace,
+        input,
+        model: "gemini-3.8-flash-medium",
+        stream: true
+      },
+      AbortSignal.timeout(20_000)
+    );
+    assert.equal(first.status, 200, first.body);
+
+    const answered = new Set<string>();
+    let carried: Record<string, any>[] = [...input];
+    for (const item of callItems(first.body)) {
+      answered.add(item.call_id);
+      carried = [...carried, ...answer(item)];
+    }
+    assert.ok(answered.size > 0, `expected a first call: ${first.body}`);
+
+    // Keep answering whatever the bridge still owes Codex. A queued call that
+    // is never emitted shows up as a turn completing with only one answered.
+    let body = "";
+    for (let round = 0; round < 4; round += 1) {
+      const response = await post(
+        port,
+        {
+          cwd: workspace,
+          input: carried,
+          model: "gemini-3.8-flash-medium",
+          stream: true
+        },
+        AbortSignal.timeout(20_000)
+      );
+      assert.equal(response.status, 200, response.body);
+      body = response.body;
+      const fresh = callItems(body).filter(
+        (item) => !answered.has(item.call_id)
+      );
+      for (const item of fresh) {
+        answered.add(item.call_id);
+        carried = [...carried, ...answer(item)];
+      }
+      if (
+        fresh.length === 0 &&
+        sseEvents(body).some((event) => event.type === "response.completed")
+      )
+        break;
+    }
+
+    assert.equal(
+      answered.size,
+      2,
+      `both calls must reach Codex; answered ${answered.size}: ${body}`
+    );
+    assert.match(body, /read both: out:first\.md, out:second\.md/);
+    const launches = readFileSync(agyLog, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, any>);
+    assert.equal(
+      launches.filter((entry) => typeof entry.pid === "number").length,
+      1,
+      "one agy for the whole exchange"
+    );
   } finally {
     await stopChild(bridge);
     rmSync(root, { recursive: true, force: true });

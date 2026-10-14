@@ -3899,6 +3899,12 @@ class StreamingTurn implements ParkableTurn {
   private readonly awaiting = new Map<string, AwaitingCodexCall>();
   private sequence = 0;
   private parkTimer: NodeJS.Timeout | null = null;
+  /**
+   * True between ending this turn's response and the continuation that
+   * reopens one. A queued call arriving in that window has nowhere to be
+   * emitted, so it waits rather than being written into a closed socket.
+   */
+  private parked = false;
   // Tracks the most recent spawn-step tool the bridge saw from agy, and how
   // many of the children it dispatched the spawn tracker still has open.
   // Active spawn steps and open children are both the dangerous case: the
@@ -3989,6 +3995,7 @@ class StreamingTurn implements ParkableTurn {
    * so the listener is removed before the response is closed.
    */
   park(): void {
+    this.parked = true;
     this.detach();
     this.stream.end();
   }
@@ -4002,6 +4009,7 @@ class StreamingTurn implements ParkableTurn {
    */
   rebind(stream: ResponseEventStream, response: ServerResponse): void {
     this.detach();
+    this.parked = false;
     this.stream = stream;
     this.response = response;
     this.attach();
@@ -4016,6 +4024,9 @@ class StreamingTurn implements ParkableTurn {
    */
   resume(awaited: AwaitedToolResults): void {
     this.releaseOutputs(awaited.outputs);
+    // Anything agy asked for while this turn was parked is owed Codex now, on
+    // the response that just reopened -- not on the one that has already ended.
+    this.emitQueuedCalls();
   }
 
   /** The MCP tool list the shim offers agy for this turn. */
@@ -4072,7 +4083,11 @@ class StreamingTurn implements ParkableTurn {
    * rather than here.
    */
   private emitQueuedCalls(): void {
-    if (this.settled || this.queued.length === 0) return;
+    // A parked turn has no response left to emit on: every event would be
+    // written to a socket that has already ended and silently dropped, leaving
+    // agy blocked on a call Codex was never told about. The call waits in the
+    // queue and is emitted when a continuation reopens the response.
+    if (this.settled || this.parked || this.queued.length === 0) return;
     this.stream.start();
     for (const call of this.queued.splice(0)) {
       const callId = `call_${this.id}_${++this.sequence}`;
