@@ -1908,15 +1908,33 @@ no tool cards while plainly having run `view_file`, `run_command`, and
 for 393 Antigravity attempts, against ratios near 1.0 for codex, MiniMax, and
 Claude.
 
-The Codex-tools shim cannot fix this today, and the reason is worth recording so
-it is not attempted again. Claude runs with `--tools ""`, so every call is forced
-through the shim. `agy` has no `--tools` flag and no documented way to disable its
-built-ins; the only lever is `allow`/`deny` globs in
-`~/.gemini/antigravity-cli/settings.json`, which would leave the model unable to
-act rather than routing it through Codex. Registering the shim as an MCP server
-would only *add* tools beside agy's own, leaving execution split across two
-runtimes — worse to reason about than the honest status quo. Parity requires an
-agy capability that does not exist.
+The Codex-tools shim is the obvious candidate and is not currently in place for
+agy. Claude runs with `--tools ""`, so every call is *forced* through the shim:
+the built-ins are not in the model's tool list at all. agy has no `--tools`
+flag, but it does have a permissions file —
+`~/.gemini/antigravity-cli/settings.json`, with `allow`, `deny`, and `ask`
+lists — and the bridge already preserves and extends the user's `deny` entries
+(`runtime/src/providers/antigravity.ts`) while generating only `mcp(...)` grants
+of its own. `deny` is therefore the available lever, and it is already carrying
+entries such as `run_command(ccc *)`.
+
+Three things separate it from `--tools ""`, and none of them is "it cannot be
+done":
+
+- **Deny rejects; it does not remove.** agy still advertises `run_command`,
+  `view_file`, and `write_file` to the model, so it has to discover the denial
+  by making the call, and the shim's tools sit beside the built-ins rather than
+  replacing them. That is steering, not capability removal, and it leaves the
+  two-runtime ambiguity that the Claude design exists to remove.
+- **A denial is currently a provider failure.** The bridge classifies it as
+  `AGY_PERMISSION_DENIED` with phase `tool_permission` and reports it through
+  `agyProviderFailureDiagnostic`. A denial is an ordinary part of the flow once
+  it is used for steering, so that classification would have to change with it.
+- **The vocabulary is the permission namespace, not the tool names.** agy
+  reports its read tool as `view_file` while the permission rules that gate it
+  read `read_file(...)` — the form the bridge's read-only grants generate. A
+  deny glob that names the wrong identifier matches nothing and fails silently,
+  leaving the tool running, so the set has to be established rather than guessed.
 
 What the bridge does instead is make its own stream legible, because agy's
 `step_update` events carry the detail and the old wording discarded it. Each tool
