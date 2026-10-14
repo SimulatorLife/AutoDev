@@ -1909,32 +1909,44 @@ for 393 Antigravity attempts, against ratios near 1.0 for codex, MiniMax, and
 Claude.
 
 The Codex-tools shim is the obvious candidate and is not currently in place for
-agy. Claude runs with `--tools ""`, so every call is *forced* through the shim:
-the built-ins are not in the model's tool list at all. agy has no `--tools`
-flag, but it does have a permissions file —
-`~/.gemini/antigravity-cli/settings.json`, with `allow`, `deny`, and `ask`
-lists — and the bridge already preserves and extends the user's `deny` entries
-(`runtime/src/providers/antigravity.ts`) while generating only `mcp(...)` grants
-of its own. `deny` is therefore the available lever, and it is already carrying
-entries such as `run_command(ccc *)`.
+agy. Two agy mechanisms could carry it, and both were tested against the
+installed agy rather than inferred from its help text:
 
-Three things separate it from `--tools ""`, and none of them is "it cannot be
-done":
+- **`--agent` works.** agy takes `agy --agent <name>`, and custom agents load
+  from `<workspace>/.agents/agents/<name>/agent.md` with YAML frontmatter and an
+  H1-delimited prompt. Verified live: the agent's prompt reaches the model, and
+  an unknown name fails fast with `unknown agent "x" (no custom agents are
+  available)` before any model call. AutoDev passes no `--agent` today.
+- **`excludeDefaultComponents: true` does not remove the built-in tools.** The
+  changelog says a custom agent can "opt out of default prompt sections and
+  built-in tools", and the field is real (`ExcludeDefaultComponents`), but
+  against this build it is inert: `exclude_default_components`,
+  `excludeDefaultComponents`, `tools: []`, `tools:`, and a `subagent: true`
+  variant all left the advertised tool list at its full 60 entries, including
+  `run_command`, `view_file`, and `write_to_file`. Do not build on this field
+  without re-testing it against a newer agy.
+- **`PreToolUse` hooks work, and are the real lever.** Hooks load from
+  `<workspace>/.agents/hooks.json`, keyed by hook name, with a Claude-shaped
+  `matcher` / `PreToolUse` / `{type: "command", command, timeout}` body. A hook
+  receives `{toolCall: {name, args}, stepIdx, ...}` on stdin and answers with
+  `{decision: "allow"|"deny"|"ask"|"force_ask", reason?, permissionOverrides?,
+  overwrite?}`, where `overwrite` is a shallow merge into that same call's
+  arguments. There is **no reroute decision** -- a hook can rewrite arguments or
+  block, but cannot substitute a different tool -- so the shim must be *offered*
+  and the built-ins *refused*, not translated.
 
-- **Deny rejects; it does not remove.** agy still advertises `run_command`,
-  `view_file`, and `write_file` to the model, so it has to discover the denial
-  by making the call, and the shim's tools sit beside the built-ins rather than
-  replacing them. That is steering, not capability removal, and it leaves the
-  two-runtime ambiguity that the Claude design exists to remove.
-- **A denial is currently a provider failure.** The bridge classifies it as
-  `AGY_PERMISSION_DENIED` with phase `tool_permission` and reports it through
-  `agyProviderFailureDiagnostic`. A denial is an ordinary part of the flow once
-  it is used for steering, so that classification would have to change with it.
-- **The vocabulary is the permission namespace, not the tool names.** agy
-  reports its read tool as `view_file` while the permission rules that gate it
-  read `read_file(...)` — the form the bridge's read-only grants generate. A
-  deny glob that names the wrong identifier matches nothing and fails silently,
-  leaving the tool running, so the set has to be established rather than guessed.
+Two things a hook does better than the permissions file, both verified:
+`decision: "deny"` is a hard block that **survives
+`--dangerously-skip-permissions`** (the flag the bridge passes by default), and a
+denial comes back to the model as a `TOOL_ERROR` on the tool step, so the turn
+continues and the model adapts rather than the provider failing -- so the
+existing `AGY_PERMISSION_DENIED` classification does not become a false provider
+fault. The hook also sees the tool's own arguments, which carry a `toolSummary`
+string agy writes for the call.
+
+Ordering matters. Denying the built-ins while the shim is unregistered leaves
+agy with no execution path at all, so the shim and its parking land first; a
+`PreToolUse` deny on its own would break every Antigravity turn.
 
 What the bridge does instead is make its own stream legible, because agy's
 `step_update` events carry the detail and the old wording discarded it. Each tool
