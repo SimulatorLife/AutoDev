@@ -184,6 +184,13 @@ fi
 
 export AUTODEV_CONSOLE_PORT="$console_port"
 
+# `next start` resolves its project directory from the working directory
+# (getProjectDir resolves `directory || '.'`), and the LaunchAgent declares no
+# WorkingDirectory, so launchd starts this script at `/`. Next would then look
+# for `/.next/BUILD_ID`, fail to find the build this script just gated on, and
+# crash-loop under KeepAlive. Run from the directory whose `.next` we verified.
+cd "$console_dir"
+
 # exec() so launchd supervises the Next.js server directly (no extra shell
 # layer between KeepAlive and the worker). The server is bound to the
 # loopback interface only; the Console is a single-user UI and is reached

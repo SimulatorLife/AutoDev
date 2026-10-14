@@ -299,6 +299,7 @@ test("console launcher adheres to loopback binding contract, exact-key tokens, a
         'echo "SECRET_DB:${OPENLIT_DB_PASSWORD:-}"',
         'echo "SECRET_ENV:${SECRET_ENV_VAR:-}"',
         'echo "CONSOLE_PORT:${AUTODEV_CONSOLE_PORT:-}"',
+        'echo "PWD:$(pwd)"',
         "exit 0"
       ].join("\n")
     );
@@ -356,6 +357,16 @@ test("console launcher adheres to loopback binding contract, exact-key tokens, a
       args,
       /next start --hostname 127\.0\.0\.1 --port 3300/,
       "Must exec next start with --hostname 127.0.0.1 --port 3300"
+    );
+
+    // `next start` resolves its project dir from the working directory, and the
+    // LaunchAgent declares no WorkingDirectory, so launchd starts the script
+    // at `/`. Next must therefore be exec'd from the console directory whose
+    // `.next` the launcher just gated on, or it reports no production build.
+    assert.equal(
+      lines.PWD,
+      consoleDir,
+      "Next must be exec'd from the console directory that holds the production build"
     );
 
     // Verify token values came from openlit-secrets.env (not .env or inherited)
