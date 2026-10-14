@@ -1909,9 +1909,19 @@ no tool cards while plainly having run `view_file`, `run_command`, and
 for 393 Antigravity attempts, against ratios near 1.0 for codex, MiniMax, and
 Claude.
 
-The Codex-tools shim is the obvious candidate and is not currently in place for
-agy. Two agy mechanisms could carry it, and both were tested against the
-installed agy rather than inferred from its help text:
+What the bridge now does is run agy as an agent whose only tools are Codex's.
+The shim is registered in agy's `mcp_config` alongside the role's own servers,
+the turn's tools are mirrored into it, and the turn runs under an agent
+definition with `excludeDefaultComponents: true` — so the built-ins leave the
+advertised set and every action becomes a call Codex executes and the app
+renders. A turn parks while Codex runs a call: the response ends at the
+`function_call`, and the request carrying that call's output resumes the same
+agy rather than starting a second one. The registry that maps a shim call back
+to the turn holding it is shared with the Claude bridge
+(`runtime/src/providers/codex-tool-turns.ts`).
+
+Two agy mechanisms carry that, both tested against the installed agy rather
+than inferred from its help text:
 
 - **`--agent` works, and resolves from a workspace root and nowhere else.**
   agy takes `agy --agent <name>`, and custom agents load from
