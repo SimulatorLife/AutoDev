@@ -35,6 +35,9 @@ import {
   SpawnSessionRegistry,
   type SpawnToolCallOutput
 } from "@simulatorlife/autodev-runtime/agents";
+import {
+  codexToolCallEvents
+} from "@simulatorlife/autodev-runtime/providers/claude-codex-tools";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   type RoleContract,
@@ -1704,6 +1707,8 @@ function responsePayload(
 }
 
 const EVENT_OUTPUT_ITEM_ADDED = "response.output_item.added";
+const EVENT_CONTENT_PART_ADDED = "response.content_part.added";
+const EVENT_CONTENT_PART_DONE = "response.content_part.done";
 const EVENT_OUTPUT_ITEM_DONE = "response.output_item.done";
 const EVENT_REASONING_SUMMARY_TEXT_DELTA =
   "response.reasoning_summary_text.delta";
@@ -3215,7 +3220,12 @@ async function runNonStreamingTurn(
 class ResponseEventStream {
   readonly responseId = `resp_${randomBytes(12).toString("hex")}`;
   readonly reasoningId = `rs_${randomBytes(12).toString("hex")}`;
-  readonly itemId = `msg_${randomBytes(10).toString("hex")}`;
+  /**
+   * The id of the message block currently open. A turn that takes a tool call
+   * closes its message and opens another after it, so this changes; everything
+   * that names the assistant's text reads it rather than a fixed id.
+   */
+  private itemId = `msg_${randomBytes(10).toString("hex")}`;
   private readonly response: ServerResponse;
   private readonly pending: string[] = [];
   private readonly activityParts: string[] = [];
@@ -3226,6 +3236,17 @@ class ResponseEventStream {
   // Exactly what this client already received, so flushing it on a failure is
   // truthful by construction rather than a second guess at the turn's output.
   private sentText = "";
+  /**
+   * Completed output items in the order Codex must see them, and the index the
+   * next one takes. A tool call closes the open message first, exactly as the
+   * Claude bridge does, because Codex's renderer does not accept a tool call
+   * nested inside a block that is still open.
+   */
+  private readonly output: JsonRecord[] = [];
+  private messageIndex = 1;
+  private nextOutputIndex = 2;
+  private messageOpen = true;
+  private segmentText = "";
 
   constructor(response: ServerResponse) {
     this.response = response;
@@ -3301,12 +3322,13 @@ class ResponseEventStream {
 
   emitTextDelta(text: string): void {
     this.sentText += text;
+    this.segmentText += text;
     this.emit("response.output_text.delta", {
       type: "response.output_text.delta",
       item_id: this.itemId,
       delta: text,
       content_index: 0,
-      output_index: 1
+      output_index: this.messageIndex
     });
   }
 
@@ -3359,7 +3381,7 @@ class ResponseEventStream {
     });
     this.emit(EVENT_OUTPUT_ITEM_ADDED, {
       type: EVENT_OUTPUT_ITEM_ADDED,
-      output_index: 1,
+      output_index: this.messageIndex,
       item: {
         id: this.itemId,
         type: "message",
@@ -3368,13 +3390,94 @@ class ResponseEventStream {
         content: []
       }
     });
-    this.emit("response.content_part.added", {
-      type: "response.content_part.added",
+    this.emit(EVENT_CONTENT_PART_ADDED, {
+      type: EVENT_CONTENT_PART_ADDED,
       item_id: this.itemId,
-      output_index: 1,
+      output_index: this.messageIndex,
       content_index: 0,
       part: { type: "output_text", text: "", annotations: [] }
     });
+  }
+
+  /**
+   * Close the open message block, recording it in the output order.
+   *
+   * A tool call has to land between output items, not inside one, so this runs
+   * before each call and the next assistant text opens a fresh block after it.
+   */
+  closeMessage(): void {
+    if (!this.messageOpen) return;
+    this.messageOpen = false;
+    const item = {
+      id: this.itemId,
+      type: "message",
+      role: "assistant",
+      status: "completed",
+      content: [{ type: "output_text", text: this.segmentText, annotations: [] }]
+    };
+    this.output[this.messageIndex] = item;
+    this.emit("response.output_text.done", {
+      type: "response.output_text.done",
+      item_id: this.itemId,
+      text: this.segmentText,
+      content_index: 0,
+      output_index: this.messageIndex
+    });
+    this.emit(EVENT_CONTENT_PART_DONE, {
+      type: EVENT_CONTENT_PART_DONE,
+      item_id: this.itemId,
+      output_index: this.messageIndex,
+      content_index: 0,
+      part: { type: "output_text", text: this.segmentText, annotations: [] }
+    });
+    this.emit(EVENT_OUTPUT_ITEM_DONE, {
+      type: EVENT_OUTPUT_ITEM_DONE,
+      output_index: this.messageIndex,
+      item
+    });
+  }
+
+  /** Open the assistant message block that follows a tool call. */
+  private openMessage(): void {
+    this.itemId = `msg_${randomBytes(10).toString("hex")}`;
+    this.messageIndex = this.nextOutputIndex++;
+    this.segmentText = "";
+    this.messageOpen = true;
+    this.emit(EVENT_OUTPUT_ITEM_ADDED, {
+      type: EVENT_OUTPUT_ITEM_ADDED,
+      output_index: this.messageIndex,
+      item: {
+        id: this.itemId,
+        type: "message",
+        role: "assistant",
+        status: "in_progress",
+        content: []
+      }
+    });
+    this.emit(EVENT_CONTENT_PART_ADDED, {
+      type: EVENT_CONTENT_PART_ADDED,
+      item_id: this.itemId,
+      output_index: this.messageIndex,
+      content_index: 0,
+      part: { type: "output_text", text: "", annotations: [] }
+    });
+  }
+
+  /**
+   * Emit one tool call as a finished Codex output item, between message blocks.
+   *
+   * The call is emitted whole: its arguments are known by the time the bridge
+   * hands it over, and Codex executes from the completed item.
+   */
+  emitToolCall(item: JsonRecord): void {
+    this.start();
+    this.closeMessage();
+    const index = this.nextOutputIndex++;
+    this.output[index] = item;
+    for (const [eventName, body] of codexToolCallEvents(item, index))
+      this.emit(eventName, body);
+    // Whatever the model says after the call belongs to a new message item.
+    this.openMessage();
   }
 
   /** Closes both output items and returns the completed response payload. */
@@ -3387,15 +3490,6 @@ class ResponseEventStream {
       summary: [{ type: "summary_text", text: reasoningText }],
       content: []
     };
-    const completedMessage = responseMessageItem(result.text, this.itemId);
-    const completed = responsePayload(
-      model,
-      result.text,
-      result.result,
-      this.responseId,
-      this.itemId,
-      [completedReasoning, completedMessage]
-    );
     this.emit("response.reasoning_summary_text.done", {
       type: "response.reasoning_summary_text.done",
       item_id: this.reasoningId,
@@ -3415,26 +3509,20 @@ class ResponseEventStream {
       output_index: 0,
       item: completedReasoning
     });
-    this.emit("response.output_text.done", {
-      type: "response.output_text.done",
-      item_id: this.itemId,
-      text: result.text,
-      content_index: 0,
-      output_index: 1
-    });
-    this.emit("response.content_part.done", {
-      type: "response.content_part.done",
-      item_id: this.itemId,
-      output_index: 1,
-      content_index: 0,
-      part: { type: "output_text", text: result.text, annotations: [] }
-    });
-    this.emit(EVENT_OUTPUT_ITEM_DONE, {
-      type: EVENT_OUTPUT_ITEM_DONE,
-      output_index: 1,
-      item: completedMessage
-    });
-    return completed;
+    // The reasoning item is always first; whatever else the turn produced keeps
+    // the order it was emitted in, which is what Codex's renderer reconstructs
+    // the turn from. Closing the message last keeps the SSE lifecycle identical
+    // to a turn that never took a tool call.
+    this.output[0] = completedReasoning;
+    this.closeMessage();
+    return responsePayload(
+      model,
+      result.text,
+      result.result,
+      this.responseId,
+      this.itemId,
+      this.output.filter(Boolean)
+    );
   }
 
   /** Ends the turn as incomplete, carrying the work it names and why. */
