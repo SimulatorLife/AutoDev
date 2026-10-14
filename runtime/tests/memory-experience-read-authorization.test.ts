@@ -177,7 +177,7 @@ async function call(
       ? { repositoryId: "repo-1" }
       : {}),
     ...(grant.ask ? { includeTaskHistory: "true" } : {}),
-    ...(options.query ?? {})
+    ...options.query
   });
   const suffix = search.toString();
   const previous = process.env.AUTODEV_MEMORY_READ_TASK_HISTORY;

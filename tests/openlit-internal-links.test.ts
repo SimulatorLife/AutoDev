@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import test from "node:test";
 
@@ -57,13 +57,18 @@ function toRoute(file: string): string {
     relative(APP, file)
       .replace(/\/(page|route)\.tsx?$/, "")
       .split("/")
-      .filter((seg) => seg && !(seg.startsWith("(") && seg.endsWith(")")))
+      .filter((seg) => seg && (!seg.startsWith("(") || !seg.endsWith(")")))
       .join("/")
       .replace(/\/$/, "")
   );
 }
 
 const normalise = (r: string) => (r === "/" ? "/" : r.replace(/\/$/, ""));
+
+function before(value: string, marker: string): string {
+  const index = value.indexOf(marker);
+  return index === -1 ? value : value.slice(0, index);
+}
 
 /**
  * Does `target` resolve to a route?
@@ -76,16 +81,15 @@ const normalise = (r: string) => (r === "/" ? "/" : r.replace(/\/$/, ""));
  * a false positive on every one of them.
  */
 function matches(target: string, routes: Set<string>): boolean {
-  const base = normalise(
-    target.split("?")[0]!.split("#")[0]!.split("${")[0]!.replace(/\/$/, "")
-  );
+  const candidate = before(before(before(target, "?"), "#"), "${");
+  const base = normalise(candidate.replace(/\/$/, ""));
   if (routes.has(base)) return true;
   const segs = base.split("/").filter(Boolean);
   for (const route of routes) {
     const routeSegs = normalise(route).split("/").filter(Boolean);
     // `[...segments]` absorbs any number of trailing segments.
     const catchAll = routeSegs.findIndex((s) => s.startsWith("[..."));
-    if (catchAll >= 0) {
+    if (catchAll !== -1) {
       if (segs.length >= catchAll) return true;
       continue;
     }
@@ -122,6 +126,32 @@ const TARGET_PATTERNS: readonly { name: string; re: RegExp }[] = [
   }
 ];
 
+function deadTargetsInFile(
+  file: string,
+  pages: Set<string>,
+  api: Set<string>
+): string[] {
+  const body = readFileSync(file, "utf8");
+  const dead: string[] = [];
+  for (const { name, re } of TARGET_PATTERNS) {
+    re.lastIndex = 0;
+    for (const match of body.matchAll(re)) {
+      const target = match[1]!;
+      if (
+        !target.startsWith("/") ||
+        /^\/(_next|images|static)\b/.test(target)
+      ) {
+        continue;
+      }
+      const routes = target.startsWith("/api/") ? api : pages;
+      if (!matches(target, routes)) {
+        dead.push(`${relative(SRC, file)} (${name}) -> ${target}`);
+      }
+    }
+  }
+  return dead;
+}
+
 test(
   "every internal navigation target in the OpenLIT client resolves to a served route",
   {
@@ -137,23 +167,10 @@ test(
         api.add(normalise(toRoute(file)));
     }
 
-    const dead: string[] = [];
-    for (const file of walk(SRC)) {
-      if (!/\.tsx?$/.test(file) || file.includes("/__tests__/")) continue;
-      const body = readFileSync(file, "utf8");
-      for (const { name, re } of TARGET_PATTERNS) {
-        re.lastIndex = 0;
-        for (const m of body.matchAll(re)) {
-          const target = m[1]!;
-          if (!target.startsWith("/")) continue;
-          if (/^\/(_next|images|static)\b/.test(target)) continue;
-          const ok = target.startsWith("/api/")
-            ? matches(target, api)
-            : matches(target, pages);
-          if (!ok) dead.push(`${relative(SRC, file)} (${name}) -> ${target}`);
-        }
-      }
-    }
+    const sources = walk(SRC).filter(
+      (file) => /\.tsx?$/.test(file) && !file.includes("/__tests__/")
+    );
+    const dead = sources.flatMap((file) => deadTargetsInFile(file, pages, api));
 
     assert.deepEqual(
       dead,

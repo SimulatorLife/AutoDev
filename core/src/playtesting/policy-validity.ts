@@ -102,22 +102,7 @@ function assertBounds(bounds: PlaytestPolicyCompetenceBounds): void {
   }
 }
 
-/**
- * Derive the validity record for one build/cohort/policy.
- *
- * `competence` is never supplied by the caller. The three possible values map
- * to three distinct situations, and collapsing them is what would let an
- * unmeasured policy authorize a human-proxy claim:
- *
- * - `unvalidated-synthetic` — no human data or no preregistered bounds;
- * - `insufficient` — bounds exist but a required metric was not measured, so
- *   the criteria cannot be applied;
- * - `passed` / `failed` — every required metric was measured and applied
- *   against the preregistered bounds.
- */
-export function buildPlaytestPolicyValidity(
-  input: BuildPlaytestPolicyValidityInput
-): PlayerPolicyValidity {
+function assertPolicyIdentity(input: BuildPlaytestPolicyValidityInput): void {
   if (!BUILDER_ID.test(input.workspaceId)) {
     throw new TypeError("workspaceId must be an owner/repository pair.");
   }
@@ -138,6 +123,11 @@ export function buildPlaytestPolicyValidity(
       );
     }
   }
+}
+
+function assertPolicyMeasurements(
+  input: BuildPlaytestPolicyValidityInput
+): void {
   if (!isRate(input.coverage)) {
     throw new TypeError("coverage must be a proportion between 0 and 1.");
   }
@@ -160,6 +150,26 @@ export function buildPlaytestPolicyValidity(
     }
   }
   if (input.bounds !== undefined) assertBounds(input.bounds);
+}
+
+/**
+ * Derive the validity record for one build/cohort/policy.
+ *
+ * `competence` is never supplied by the caller. The three possible values map
+ * to three distinct situations, and collapsing them is what would let an
+ * unmeasured policy authorize a human-proxy claim:
+ *
+ * - `unvalidated-synthetic` — no human data or no preregistered bounds;
+ * - `insufficient` — bounds exist but a required metric was not measured, so
+ *   the criteria cannot be applied;
+ * - `passed` / `failed` — every required metric was measured and applied
+ *   against the preregistered bounds.
+ */
+export function buildPlaytestPolicyValidity(
+  input: BuildPlaytestPolicyValidityInput
+): PlayerPolicyValidity {
+  assertPolicyIdentity(input);
+  assertPolicyMeasurements(input);
 
   const hasHumanData = input.heldOutHumanStateIds.length > 0;
   const bounds = input.bounds;
@@ -176,7 +186,7 @@ export function buildPlaytestPolicyValidity(
       input.actionAgreement,
       input.distributionDivergence
     ];
-    if (measured.some((metric) => metric === null)) {
+    if (measured.includes(null)) {
       // A criterion that was never measured has not been met. Reporting
       // `passed` here is how an unmeasured metric becomes an authorization.
       competence = "insufficient";

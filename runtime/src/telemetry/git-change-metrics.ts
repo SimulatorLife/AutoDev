@@ -24,6 +24,7 @@ const GIT_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/iu;
 /** Git prints `-` in place of a count for binary files. */
 const BINARY_NUMSTAT_FIELD = "-";
+const NUMSTAT_COUNT_PATTERN = /^\d+$/u;
 const MAX_COMMITS_PER_OBSERVATION = 200;
 const MAX_CONCURRENT_COMMIT_MEASUREMENTS = 4;
 
@@ -135,8 +136,15 @@ export function parseNumstat(stdout: string): {
       partial = true;
       continue;
     }
-    const parsedAdded = Number.parseInt(added ?? "", 10);
-    const parsedRemoved = Number.parseInt(removed ?? "", 10);
+    if (
+      !NUMSTAT_COUNT_PATTERN.test(added ?? "") ||
+      !NUMSTAT_COUNT_PATTERN.test(removed ?? "")
+    ) {
+      partial = true;
+      continue;
+    }
+    const parsedAdded = Number(added);
+    const parsedRemoved = Number(removed);
     if (!Number.isInteger(parsedAdded) || !Number.isInteger(parsedRemoved)) {
       partial = true;
       continue;

@@ -3,13 +3,13 @@ import { createHash } from "node:crypto";
 import { safeMetricLabel } from "./metric-label.ts";
 import {
   autodevEnrichOtlpPayload,
+  checkOtelPayload,
   isAutodevAttributesEnabled,
   numberAttribute,
   type OtelAttributeMap,
   otelAttributes,
   type OtelAttributesInput,
   type OtelDataPoint,
-  checkOtelPayload,
   otelDurationMs,
   type OtelLogRecord,
   type OtelMetric,

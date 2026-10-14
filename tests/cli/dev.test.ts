@@ -13,7 +13,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
+import {
+  CONTROL_API_CONTRACT,
+  LOCAL_CONTROL_API_ACTOR
+} from "@simulatorlife/autodev-core";
+import { verifyControlApiCompatibility } from "@simulatorlife/autodev-runtime/cli/control-api-compatibility";
 import {
   type DevBackendDependencies,
   type DevCommandOptions,
@@ -23,8 +27,7 @@ import {
   isPortListening,
   readDevControlApiConfig,
   readDevOpenLITUsageConfig,
-  repoRoot,
-  verifyDevControlApi
+  repoRoot
 } from "@simulatorlife/autodev-runtime/cli/dev";
 
 interface RecordedCommand {
@@ -70,13 +73,19 @@ function createFakeDependencies(
   return { dependencies, commands, loggedMessages, sleptDurations };
 }
 
-test("package.json declares dev and dev:console scripts", () => {
-  const pkgPath = join(repoRoot, "package.json");
-  const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-  assert.equal(pkg.scripts.dev, "node runtime/src/cli/dev.ts");
+test("Console development uses only the backend-validated root entrypoint", () => {
+  const rootPackage = JSON.parse(
+    readFileSync(join(repoRoot, "package.json"), "utf8")
+  );
+  const consolePackage = JSON.parse(
+    readFileSync(join(repoRoot, "console/package.json"), "utf8")
+  );
+  assert.equal(rootPackage.scripts.dev, "node runtime/src/cli/dev.ts");
+  assert.equal(rootPackage.scripts["dev:console"], undefined);
+  assert.equal(consolePackage.scripts.dev, undefined);
   assert.equal(
-    pkg.scripts["dev:console"],
-    "pnpm --filter @simulatorlife/autodev-console dev"
+    consolePackage.scripts["dev:next"],
+    "next dev -p ${AUTODEV_CONSOLE_PORT:-3300}"
   );
 });
 
@@ -122,13 +131,35 @@ test("dev Control API config resolves the generated local default and explicit o
   }
 });
 
-test("dev Control API probe accepts the current provider and Playtesting contracts", async () => {
+test("dev Control API probe accepts the current provider, model-discovery, and Playtesting contracts", async () => {
   const requests: Array<{ url: string; headers: Headers }> = [];
   const responses = [
     Response.json({
+      schema: CONTROL_API_CONTRACT.schema,
+      version: CONTROL_API_CONTRACT.version
+    }),
+    Response.json({
       schema: "autodev-control-providers-v2",
       providers: [
-        { links: { usage: null, documentation: "https://example.test/docs" } }
+        {
+          id: "copilot",
+          links: { usage: null, documentation: "https://example.test/docs" }
+        }
+      ]
+    }),
+    Response.json({
+      schema: "autodev-control-provider-model-discovery-v1",
+      source: "runtime-provider-discovery",
+      providers: [
+        {
+          provider: "copilot",
+          discovery: {
+            status: "unavailable",
+            source: null,
+            lastAttemptAt: null,
+            reason: "No model listing is configured."
+          }
+        }
       ]
     }),
     Response.json({
@@ -139,19 +170,24 @@ test("dev Control API probe accepts the current provider and Playtesting contrac
   const fetchImpl: typeof fetch = async (input, init) => {
     requests.push({ url: String(input), headers: new Headers(init?.headers) });
     const response = responses.shift();
-    assert.ok(response, "probe must make only the two expected GET requests");
+    assert.ok(response, "probe must make only the four expected GET requests");
     return response;
   };
 
-  await verifyDevControlApi(
+  await verifyControlApiCompatibility(
     { baseUrl: "http://127.0.0.1:4101", serviceToken: "never-log-this" },
     fetchImpl
   );
 
-  assert.equal(requests.length, 2);
-  assert.equal(requests[0]?.url, "http://127.0.0.1:4101/control/providers");
+  assert.equal(requests.length, 4);
+  assert.equal(
+    requests[0]?.url,
+    `http://127.0.0.1:4101${CONTROL_API_CONTRACT.path}`
+  );
+  assert.equal(requests[1]?.url, "http://127.0.0.1:4101/control/providers");
+  assert.match(requests[2]?.url ?? "", /\/control\/provider-models$/u);
   assert.match(
-    requests[1]?.url ?? "",
+    requests[3]?.url ?? "",
     /\/control\/playtesting\/capabilities\?/u
   );
   assert.equal(
@@ -164,18 +200,106 @@ test("dev Control API probe accepts the current provider and Playtesting contrac
   );
 });
 
-test("dev Control API probe rejects the stale Providers v2 response without links", async () => {
-  let requestCount = 0;
-  const fetchImpl: typeof fetch = async () => {
-    requestCount += 1;
+test("dev Control API probe rejects a Runtime without the current contract handshake", async () => {
+  const requests: string[] = [];
+  const fetchImpl: typeof fetch = async (input) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.endsWith("/control/contracts")) {
+      return Response.json(
+        { error: { code: "autodev_control_api_unknown_path" } },
+        { status: 404 }
+      );
+    }
+    if (url.endsWith("/control/providers")) {
+      return Response.json({
+        schema: "autodev-control-providers-v2",
+        providers: [
+          {
+            id: "copilot",
+            links: { usage: null, documentation: "https://example.test/docs" }
+          }
+        ]
+      });
+    }
     return Response.json({
-      schema: "autodev-control-providers-v2",
-      providers: [{ id: "codex" }]
+      schema: "autodev-control-playtesting-capabilities-v1",
+      workspaceId: "autodev-dev-probe/not-configured"
     });
   };
 
   await assert.rejects(
-    verifyDevControlApi(
+    verifyControlApiCompatibility(
+      { baseUrl: "http://127.0.0.1:4101", serviceToken: "never-log-this" },
+      fetchImpl
+    ),
+    (error: Error) => {
+      assert.match(error.message, /contract endpoint returned HTTP 404/u);
+      assert.doesNotMatch(error.message, /never-log-this/u);
+      return true;
+    }
+  );
+  assert.deepEqual(requests, ["http://127.0.0.1:4101/control/contracts"]);
+});
+
+test("dev Control API probe names a missing contract endpoint without exposing credentials", async () => {
+  await assert.rejects(
+    verifyControlApiCompatibility(
+      { baseUrl: "http://127.0.0.1:4101", serviceToken: "probe-token" },
+      async () =>
+        Response.json(
+          { error: { code: "autodev_control_api_unknown_path" } },
+          { status: 404 }
+        )
+    ),
+    (error: Error) => {
+      assert.match(error.message, /contract endpoint returned HTTP 404/u);
+      assert.match(error.message, /version 3/u);
+      assert.match(error.message, /pnpm run install:codex/u);
+      assert.doesNotMatch(error.message, /probe-token/u);
+      return true;
+    }
+  );
+});
+
+test("dev Control API probe rejects an older published compatibility revision", async () => {
+  await assert.rejects(
+    verifyControlApiCompatibility(
+      { baseUrl: "http://127.0.0.1:4101", serviceToken: "probe-token" },
+      async () =>
+        Response.json({
+          schema: CONTROL_API_CONTRACT.schema,
+          version: CONTROL_API_CONTRACT.version - 1
+        })
+    ),
+    (error: Error) => {
+      assert.match(
+        error.message,
+        /Control API contract revision is missing or stale/u
+      );
+      assert.doesNotMatch(error.message, /probe-token/u);
+      return true;
+    }
+  );
+});
+
+test("dev Control API probe rejects the stale Providers v2 response without links", async () => {
+  let requestCount = 0;
+  const fetchImpl: typeof fetch = async () => {
+    requestCount += 1;
+    return requestCount === 1
+      ? Response.json({
+          schema: CONTROL_API_CONTRACT.schema,
+          version: CONTROL_API_CONTRACT.version
+        })
+      : Response.json({
+          schema: "autodev-control-providers-v2",
+          providers: [{ id: "codex" }]
+        });
+  };
+
+  await assert.rejects(
+    verifyControlApiCompatibility(
       { baseUrl: "http://127.0.0.1:4101", serviceToken: "probe-token" },
       fetchImpl
     ),
@@ -188,7 +312,48 @@ test("dev Control API probe rejects the stale Providers v2 response without link
       return true;
     }
   );
-  assert.equal(requestCount, 1);
+  assert.equal(requestCount, 2);
+});
+
+test("dev Control API probe blocks a Runtime missing model-discovery states", async () => {
+  let requestCount = 0;
+  const fetchImpl: typeof fetch = async () => {
+    requestCount += 1;
+    if (requestCount === 1) {
+      return Response.json({
+        schema: CONTROL_API_CONTRACT.schema,
+        version: CONTROL_API_CONTRACT.version
+      });
+    }
+    if (requestCount === 2) {
+      return Response.json({
+        schema: "autodev-control-providers-v2",
+        providers: [
+          { id: "copilot", links: { usage: null, documentation: null } }
+        ]
+      });
+    }
+    return Response.json(
+      { error: { code: "autodev_control_api_unknown_path" } },
+      { status: 404 }
+    );
+  };
+
+  await assert.rejects(
+    verifyControlApiCompatibility(
+      { baseUrl: "http://127.0.0.1:4101", serviceToken: "probe-token" },
+      fetchImpl
+    ),
+    (error: Error) => {
+      assert.match(
+        error.message,
+        /provider-model discovery response contract is missing/u
+      );
+      assert.doesNotMatch(error.message, /probe-token/u);
+      return true;
+    }
+  );
+  assert.equal(requestCount, 3);
 });
 
 test("dev OpenLIT Usage config resolves the server credential and URL", () => {
@@ -225,8 +390,29 @@ test("dev OpenLIT Usage config resolves the server credential and URL", () => {
 test("dev Control API probe rejects a Runtime that does not register Playtesting", async () => {
   const responses = [
     Response.json({
+      schema: CONTROL_API_CONTRACT.schema,
+      version: CONTROL_API_CONTRACT.version
+    }),
+    Response.json({
       schema: "autodev-control-providers-v2",
-      providers: [{ links: { usage: null, documentation: null } }]
+      providers: [
+        { id: "copilot", links: { usage: null, documentation: null } }
+      ]
+    }),
+    Response.json({
+      schema: "autodev-control-provider-model-discovery-v1",
+      source: "runtime-provider-discovery",
+      providers: [
+        {
+          provider: "copilot",
+          discovery: {
+            status: "unavailable",
+            source: null,
+            lastAttemptAt: null,
+            reason: "No model listing is configured."
+          }
+        }
+      ]
     }),
     Response.json(
       { error: { code: "autodev_control_api_unknown_path" } },
@@ -240,7 +426,7 @@ test("dev Control API probe rejects a Runtime that does not register Playtesting
   };
 
   await assert.rejects(
-    verifyDevControlApi(
+    verifyControlApiCompatibility(
       { baseUrl: "http://127.0.0.1:4101", serviceToken: "probe-token" },
       fetchImpl
     ),
@@ -267,7 +453,7 @@ test("dev Control API probe passes against the in-tree authenticated listener", 
     await once(server, "listening");
     const address = server.address();
     assert.ok(address && typeof address !== "string");
-    await verifyDevControlApi({
+    await verifyControlApiCompatibility({
       baseUrl: `http://127.0.0.1:${address.port}`,
       serviceToken
     });

@@ -30,16 +30,16 @@ import {
   type InstallCommandBackend
 } from "./install.ts";
 import {
+  defaultPlaytestBackend,
+  dispatchPlaytestCommand,
+  type PlaytestCommandBackend,
+  PLAYTESTS_SUBCOMMANDS
+} from "./playtest.ts";
+import {
   dispatchProviderCommand,
   PROVIDER_NAMES,
   type ProviderCommandBackend
 } from "./provider.ts";
-import {
-  defaultPlaytestBackend,
-  dispatchPlaytestCommand,
-  PLAYTESTS_SUBCOMMANDS,
-  type PlaytestCommandBackend
-} from "./playtest.ts";
 import {
   dispatchRepoCommand,
   REPO_SUBCOMMANDS,

@@ -421,6 +421,83 @@ function activeMemoryReadFailure(
   return null;
 }
 
+type SessionOutcomeReadResult = Awaited<
+  ReturnType<typeof fetchMemoryExperienceSessionOutcome>
+>;
+
+type ExperiencePageReads =
+  | { readonly requested: false }
+  | {
+      readonly requested: true;
+      readonly detail: MemoryExperienceDetailResult;
+      readonly outcomes: MemoryOutcomesResult;
+      readonly useAssessments: MemoryUseAssessmentsResult;
+      readonly sessionOutcome: SessionOutcomeReadResult;
+    };
+
+async function fetchSelectedRecordReads(
+  params: ParsedMemoryParams,
+  workspaceId: string,
+  config: ControlApiConfig
+): Promise<RecordDetailReads> {
+  if (params.activeTab !== "records" || !params.recordId) {
+    return { requested: false };
+  }
+  const [record, history, why] = await Promise.all([
+    fetchMemoryRecord(params.recordId, workspaceId, config),
+    fetchMemoryHistory(params.recordId, workspaceId, config),
+    fetchMemoryWhy(params.recordId, workspaceId, config)
+  ]);
+  return { requested: true, record, history, why };
+}
+
+async function fetchSelectedExperienceReads(
+  params: ParsedMemoryParams,
+  workspaceId: string,
+  config: ControlApiConfig
+): Promise<ExperiencePageReads> {
+  if (params.activeTab !== "experiences" || !params.experienceId) {
+    return { requested: false };
+  }
+  const [detail, outcomes, useAssessments, sessionOutcome] = await Promise.all([
+    fetchMemoryExperienceDetail(params.experienceId, workspaceId, config),
+    fetchMemoryExperienceOutcomes(params.experienceId, workspaceId, config),
+    fetchMemoryExperienceUseAssessments(
+      params.experienceId,
+      workspaceId,
+      config
+    ),
+    fetchMemoryExperienceSessionOutcome(
+      params.experienceId,
+      workspaceId,
+      config
+    )
+  ]);
+  return {
+    requested: true,
+    detail,
+    outcomes,
+    useAssessments,
+    sessionOutcome
+  };
+}
+
+function sessionOutcomeFromRead(
+  result: SessionOutcomeReadResult | null
+): MemorySessionOutcomeResult | null | undefined {
+  let outcome: MemorySessionOutcomeResult | null | undefined;
+  if (result?.kind === "ok") {
+    outcome = result.data.report;
+  } else if (
+    result &&
+    "code" in result &&
+    result.code === "autodev_memory_not_found"
+  ) {
+    outcome = null;
+  }
+  return outcome;
+}
+
 async function fetchMemoryPageData(
   params: ParsedMemoryParams,
   workspaceId: string,
@@ -458,155 +535,86 @@ async function fetchMemoryPageData(
     return { kind: "records-unavailable", result: recordsResult, status };
   }
 
-  const [
-    selectedRecord,
-    history,
-    why,
-    experiences,
-    selectedExperience,
-    cohorts,
-    useCohorts,
-    outcomes,
-    useAssessments,
-    sessionOutcomeResult
-  ] = await Promise.all([
-    params.activeTab === "records" && params.recordId
-      ? fetchMemoryRecord(params.recordId, workspaceId, config)
-      : Promise.resolve(null),
-    params.activeTab === "records" && params.recordId
-      ? fetchMemoryHistory(params.recordId, workspaceId, config)
-      : Promise.resolve(null),
-    // The Runtime's eligibility-bounded explanation, read with the detail: it
-    // reports which cited experiences this reader can still resolve, which is
-    // not the same answer as the citation list on the record itself.
-    params.activeTab === "records" && params.recordId
-      ? fetchMemoryWhy(params.recordId, workspaceId, config)
-      : Promise.resolve(null),
-    fetchMemoryExperiences(
-      {
-        workspaceId,
-        ...(params.query ? { query: params.query } : {}),
-        includeTaskHistory: true,
-        occurredFrom: params.occurredFrom,
-        occurredUntil: params.occurredUntil,
-        limit: params.limit,
-        offset: params.offset
-      },
-      config
-    ),
-    params.activeTab === "experiences" && params.experienceId
-      ? fetchMemoryExperienceDetail(params.experienceId, workspaceId, config)
-      : Promise.resolve(null),
-    fetchMemoryCohorts(
-      {
-        workspaceId,
-        repositoryId: workspaceId,
-        occurredFrom: params.occurredFrom,
-        occurredUntil: params.occurredUntil,
-        // Forwarded only when the URL actually named one, so an unfiltered
-        // cohort read stays unfiltered rather than carrying an empty array the
-        // Runtime would have to interpret.
-        ...(params.memoryMode === "all"
-          ? {}
-          : { memoryModes: [params.memoryMode] }),
-        ...(params.injectionResult === "all"
-          ? {}
-          : { injectionResults: [params.injectionResult] }),
-        ...(params.reportKind === "all"
-          ? {}
-          : { reportKinds: [params.reportKind] }),
-        ...(params.outcomeKind === "all"
-          ? {}
-          : { outcomeKinds: [params.outcomeKind] })
-      },
-      config
-    ),
-    params.activeTab === "cohorts"
-      ? fetchMemoryUseCohorts(
-          {
-            workspaceId,
-            repositoryId: workspaceId,
-            occurredFrom: params.occurredFrom,
-            occurredUntil: params.occurredUntil,
-            // The same three assignable modes both cohort reads accept.
-            ...(params.memoryMode === "all"
-              ? {}
-              : { memoryModes: [params.memoryMode] }),
-            ...(params.useKind === "all" ? {} : { useKinds: [params.useKind] })
-          },
-          config
-        )
-      : Promise.resolve(null),
-    // The evidence classes for the selected experience. Read together with the
-    // detail, and deliberately never merged into it: one is what the runtime
-    // observed, the others are what a reporter or curator separately claimed.
-    params.activeTab === "experiences" && params.experienceId
-      ? fetchMemoryExperienceOutcomes(params.experienceId, workspaceId, config)
-      : Promise.resolve(null),
-    params.activeTab === "experiences" && params.experienceId
-      ? fetchMemoryExperienceUseAssessments(
-          params.experienceId,
+  const [selectedRecord, selectedExperience, experiences, cohorts, useCohorts] =
+    await Promise.all([
+      fetchSelectedRecordReads(params, workspaceId, config),
+      fetchSelectedExperienceReads(params, workspaceId, config),
+      fetchMemoryExperiences(
+        {
           workspaceId,
-          config
-        )
-      : Promise.resolve(null),
-    params.activeTab === "experiences" && params.experienceId
-      ? fetchMemoryExperienceSessionOutcome(
-          params.experienceId,
+          ...(params.query ? { query: params.query } : {}),
+          includeTaskHistory: true,
+          occurredFrom: params.occurredFrom,
+          occurredUntil: params.occurredUntil,
+          limit: params.limit,
+          offset: params.offset
+        },
+        config
+      ),
+      fetchMemoryCohorts(
+        {
           workspaceId,
-          config
-        )
-      : Promise.resolve(null)
-  ]);
-
-  // The Runtime answers "this session has no outcome report" as not_found, which
-  // is an observed fact about the session rather than a failed read. Only a read
-  // that failed some other way leaves the panel unable to say anything, and a
-  // reader must never confuse the two.
-  const sessionOutcome =
-    sessionOutcomeResult === null
-      ? undefined
-      : sessionOutcomeResult.kind === "ok"
-        ? sessionOutcomeResult.data.report
-        : "code" in sessionOutcomeResult &&
-            sessionOutcomeResult.code === "autodev_memory_not_found"
-          ? null
-          : undefined;
+          repositoryId: workspaceId,
+          occurredFrom: params.occurredFrom,
+          occurredUntil: params.occurredUntil,
+          // Forwarded only when the URL actually named one, so an unfiltered
+          // cohort read stays unfiltered rather than carrying an empty array the
+          // Runtime would have to interpret.
+          ...(params.memoryMode === "all"
+            ? {}
+            : { memoryModes: [params.memoryMode] }),
+          ...(params.injectionResult === "all"
+            ? {}
+            : { injectionResults: [params.injectionResult] }),
+          ...(params.reportKind === "all"
+            ? {}
+            : { reportKinds: [params.reportKind] }),
+          ...(params.outcomeKind === "all"
+            ? {}
+            : { outcomeKinds: [params.outcomeKind] })
+        },
+        config
+      ),
+      params.activeTab === "cohorts"
+        ? fetchMemoryUseCohorts(
+            {
+              workspaceId,
+              repositoryId: workspaceId,
+              occurredFrom: params.occurredFrom,
+              occurredUntil: params.occurredUntil,
+              // The same three assignable modes both cohort reads accept.
+              ...(params.memoryMode === "all"
+                ? {}
+                : { memoryModes: [params.memoryMode] }),
+              ...(params.useKind === "all"
+                ? {}
+                : { useKinds: [params.useKind] })
+            },
+            config
+          )
+        : Promise.resolve(null)
+    ]);
 
   return {
     kind: "ok",
     data: {
       records: recordsResult.data,
-      // The read conditions written once, next to the reads they govern, rather
-      // than restated at each guard that inspects the results.
-      //
-      // The assertions are what those conditions buy: `Promise.all` widens each
-      // conditional element to `T | null`, and rather than let that nullability
-      // reach the guards -- where it became a "the response was not observed"
-      // failure for a case that cannot occur -- the condition that issued the
-      // read is restated once here and the value narrowed to match it.
-      selectedRecord:
-        params.activeTab === "records" && params.recordId
-          ? {
-              requested: true,
-              record: selectedRecord as MemoryRecordDetailResult,
-              history: history as MemoryHistoryResult,
-              why: why as MemoryWhyResult
-            }
-          : { requested: false },
-      selectedExperience:
-        params.activeTab === "experiences" && params.experienceId
-          ? {
-              requested: true,
-              experience: selectedExperience as MemoryExperienceDetailResult
-            }
-          : { requested: false },
+      selectedRecord,
+      selectedExperience: selectedExperience.requested
+        ? { requested: true, experience: selectedExperience.detail }
+        : { requested: false },
       experiences,
       cohorts,
       useCohorts,
-      outcomes,
-      useAssessments,
-      sessionOutcome,
+      outcomes: selectedExperience.requested
+        ? selectedExperience.outcomes
+        : null,
+      useAssessments: selectedExperience.requested
+        ? selectedExperience.useAssessments
+        : null,
+      sessionOutcome: sessionOutcomeFromRead(
+        selectedExperience.requested ? selectedExperience.sessionOutcome : null
+      ),
       status
     }
   };
@@ -707,44 +715,13 @@ function renderRecordsUnavailableShell(
   );
 }
 
-export const metadata: Metadata = {
-  title: "Memory"
-};
-
-export default async function MemoryPage(
-  props: PageProps
-): Promise<React.JSX.Element> {
-  const { config } = readNodeContext("/memory");
-
-  const rawParams = props.searchParams ? await props.searchParams : {};
-  const params = parseMemoryQueryParams(rawParams);
-
-  if (!config) return renderNoControlApiShell();
-
-  // Resolve the URL scope exclusively against the canonical workspace source.
-  const workspaceScope = await resolveMemoryWorkspaceScope(
-    config,
-    params.workspaceIdParam
-  );
-  if (workspaceScope.kind !== "ok") {
-    return renderMemoryUnavailable(
-      workspaceScope.title,
-      workspaceScope.code,
-      workspaceScope.message
-    );
-  }
-  const { workspaces, currentWorkspaceId } = workspaceScope.scope;
-
-  const pageResult = await fetchMemoryPageData(
-    params,
-    currentWorkspaceId,
-    config
-  );
-  if (pageResult.kind === "records-unavailable") {
-    return renderRecordsUnavailableShell(pageResult.result, pageResult.status);
-  }
-
-  const data = pageResult.data;
+function renderMemoryContent(
+  params: ParsedMemoryParams,
+  rawParams: Record<string, string | string[] | undefined>,
+  workspaces: readonly WorkspaceEntry[],
+  currentWorkspaceId: string,
+  data: MemoryPageReadData
+): React.JSX.Element {
   const activeReadFailure = activeMemoryReadFailure(params, data);
   if (activeReadFailure) {
     return renderMemorySourceUnavailable(
@@ -849,5 +826,51 @@ export default async function MemoryPage(
       controlFailed: isControlFailure(rawParams.control),
       controlRefusal: readControlRefusal(rawParams.refusal)
     })
+  );
+}
+
+export const metadata: Metadata = {
+  title: "Memory"
+};
+
+export default async function MemoryPage(
+  props: PageProps
+): Promise<React.JSX.Element> {
+  const { config } = readNodeContext("/memory");
+
+  const rawParams = props.searchParams ? await props.searchParams : {};
+  const params = parseMemoryQueryParams(rawParams);
+
+  if (!config) return renderNoControlApiShell();
+
+  // Resolve the URL scope exclusively against the canonical workspace source.
+  const workspaceScope = await resolveMemoryWorkspaceScope(
+    config,
+    params.workspaceIdParam
+  );
+  if (workspaceScope.kind !== "ok") {
+    return renderMemoryUnavailable(
+      workspaceScope.title,
+      workspaceScope.code,
+      workspaceScope.message
+    );
+  }
+  const { workspaces, currentWorkspaceId } = workspaceScope.scope;
+
+  const pageResult = await fetchMemoryPageData(
+    params,
+    currentWorkspaceId,
+    config
+  );
+  if (pageResult.kind === "records-unavailable") {
+    return renderRecordsUnavailableShell(pageResult.result, pageResult.status);
+  }
+
+  return renderMemoryContent(
+    params,
+    rawParams,
+    workspaces,
+    currentWorkspaceId,
+    pageResult.data
   );
 }

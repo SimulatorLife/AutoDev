@@ -3,15 +3,15 @@ import test from "node:test";
 
 import {
   MemoryAuthorizationError,
-  MemoryValidationError,
-  type MemoryService
+  type MemoryService,
+  MemoryValidationError
 } from "@simulatorlife/autodev-runtime/memory";
 
 import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
 import {
   makeRequest,
-  responseBody,
   type RecordedResponse,
+  responseBody,
   responseRecorder
 } from "./support/control-api-harness.ts";
 
@@ -32,7 +32,6 @@ import {
  */
 
 const RECORDS = "/control/memory/records";
-const COHORTS = "/control/memory/cohorts";
 const SCOPE = "workspaceId=ws-1";
 
 interface AuditEntry {
@@ -50,9 +49,9 @@ interface CallResult {
 }
 
 function errorCode(body: Record<string, unknown> | null): unknown {
-  const envelope = body?.["error"];
+  const envelope = body?.error;
   return typeof envelope === "object" && envelope !== null
-    ? (envelope as Record<string, unknown>)["code"]
+    ? (envelope as Record<string, unknown>).code
     : undefined;
 }
 
@@ -204,7 +203,7 @@ test("a failed read does not leak the underlying failure", async () => {
   );
 
   const message = String(
-    (body?.["error"] as Record<string, unknown> | undefined)?.["message"]
+    (body?.error as Record<string, unknown> | undefined)?.message
   );
   assert.doesNotMatch(message, /hunter2/u);
   assert.doesNotMatch(message, /ECONNREFUSED/u);

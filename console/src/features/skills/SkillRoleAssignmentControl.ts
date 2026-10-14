@@ -71,18 +71,18 @@ export function SkillRoleAssignmentControl({
         )
       )
     ),
-    !isObserved
-      ? React.createElement(
-          "p",
-          { className: MONO_META_CLASS },
-          NOT_OBSERVED_LABEL
-        )
-      : roles.length === 0
+    isObserved
+      ? roles.length === 0
         ? React.createElement(
             "p",
             { className: MONO_META_CLASS },
             "Unassigned — no agent role can invoke this skill."
           )
         : null
+      : React.createElement(
+          "p",
+          { className: MONO_META_CLASS },
+          NOT_OBSERVED_LABEL
+        )
   );
 }

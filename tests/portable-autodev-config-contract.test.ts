@@ -122,6 +122,16 @@ test("portable scalars are byte-for-byte pinned", async () => {
   }
 });
 
+test("portable Codex subprocess policy filters credential-bearing environment names", async () => {
+  const fixture = await readFixture();
+  const policy = fixture.sectionShapes.shell_environment_policy as {
+    readonly ignore_default_excludes?: boolean;
+    readonly filters?: Record<string, unknown>;
+  };
+  assert.equal(policy.ignore_default_excludes, false);
+  assert.equal(policy.filters?.["*PASSWORD*"], "exclude");
+});
+
 test("eight required sections are present and shaped", async () => {
   const fixture = await readFixture();
   const portable = loadPortable(PORTABLE_PATH);

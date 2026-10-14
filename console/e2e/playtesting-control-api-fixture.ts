@@ -12,12 +12,16 @@ import {
   playtestAssignmentManifestHashInput,
   type PlaytestComparison,
   playtestCoverageManifestHashInput,
+  type PlaytestCrossSessionSynthesis,
   playtestFindingIdentityHashInput,
   playtestReviewOutcomeKey,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
   PLAYTESTS_BATCH_SCHEMA,
   PLAYTESTS_COMPARISON_SCHEMA,
+  PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA,
+  PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
+  PLAYTESTS_MAX_ANALYSIS_SESSIONS,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   recordPlaytestOwnerDecision,
@@ -234,6 +238,32 @@ const latestReview = {
   createdAt: FIXTURE_TIMESTAMP,
   notes: "Synthetic fixture only; not game or human evidence."
 } as const;
+
+function syntheticReviewForPacket(
+  packet: { readonly episodeId: string; readonly packetId: string },
+  analysisId: string
+) {
+  const reviewId = `review-${analysisId}-${packet.episodeId}`;
+  return {
+    ...latestReview,
+    reviewId,
+    episodeId: packet.episodeId,
+    evidencePacket: {
+      ...latestReview.evidencePacket,
+      packetId: packet.packetId,
+      artifact: {
+        ...latestReview.evidencePacket.artifact,
+        artifactId: `packet-artifact-${reviewId}`
+      }
+    },
+    evidenceRefs: latestReview.evidenceRefs.map((reference) =>
+      reference.kind === "episode"
+        ? { ...reference, id: packet.episodeId }
+        : reference
+    )
+  };
+}
+
 const assignmentManifest = {
   ...assignmentManifestBase,
   contentHash: createHash("sha256")
@@ -366,7 +396,7 @@ const finding = {
   nextReviewAt: null
 };
 
-let comparison: PlaytestComparison = {
+const initialComparison: PlaytestComparison = {
   schema: PLAYTESTS_COMPARISON_SCHEMA,
   comparisonId: "comparison-1",
   version: 1,
@@ -457,6 +487,7 @@ let comparison: PlaytestComparison = {
   },
   notes: "Synthetic UI fixture; no comparison of real game builds."
 };
+let comparison: PlaytestComparison = structuredClone(initialComparison);
 
 function sendJson(
   response: ServerResponse,
@@ -510,6 +541,45 @@ type SyntheticRun = {
   cancellationRequested: boolean;
 };
 const syntheticRuns = new Map<string, SyntheticRun>();
+type SyntheticAnalystRun = {
+  readonly run: {
+    readonly analysisId: string;
+    readonly workspaceId: string;
+    readonly createdAt: string;
+    readonly requestedEpisodeIds: readonly string[];
+    readonly packets: readonly {
+      readonly episodeId: string;
+      readonly batchId: string;
+      readonly packetId: string;
+    }[];
+    readonly receipts: readonly {
+      readonly episodeId: string;
+      readonly batchId: string | null;
+      readonly reason: string;
+      readonly detail: string;
+    }[];
+    readonly budget: readonly {
+      readonly batchId: string;
+      readonly reviewCap: number;
+      readonly actualCritiques: number;
+      readonly reserved: number;
+      readonly requested: number;
+      readonly remaining: number;
+    }[];
+    synthesisId: string | null;
+  };
+  synthesis: PlaytestCrossSessionSynthesis | null;
+  remainingRunningReads: number;
+  status: "running" | "completed";
+  finishedAt: string | null;
+  readonly reviews: {
+    readonly episodeId: string;
+    readonly reviewId: string;
+    readonly status: "hypothesis";
+  }[];
+};
+const syntheticAnalystRuns = new Map<string, SyntheticAnalystRun>();
+let nextAnalystRunId = 1;
 
 /**
  * When set, the active-runs read fails. The Console must then show an explicit
@@ -517,7 +587,10 @@ const syntheticRuns = new Map<string, SyntheticRun>();
  * frame from a live one.
  */
 let syntheticRunsReadFails = false;
+let syntheticAnalystRunsReadFails = false;
+let syntheticAnalystTaskHistoryMissing = false;
 const syntheticRunEpisodes = new Map<string, Record<string, unknown>>();
+const syntheticRunReviews = new Map<string, Record<string, unknown>>();
 
 async function readJsonBody(
   request: IncomingMessage
@@ -648,6 +721,8 @@ const CANCEL_RUN_ROUTE = /^\/control\/playtesting\/runs\/([^/]+)\/cancel$/u;
 const STATUS_RUN_ROUTE = /^\/control\/playtesting\/runs\/([^/]+)$/u;
 const PLAYTEST_EPISODE_DETAIL_ROUTE =
   /^\/control\/playtesting\/episodes\/([^/]+)$/u;
+const PLAYTEST_EPISODE_WINDOW_ROUTE =
+  /^\/control\/playtesting\/episodes\/([^/]+)\/windows\/([^/]+)$/u;
 
 function activeSyntheticRunRequest(value: Record<string, unknown> | null): {
   readonly assignments: readonly {
@@ -719,6 +794,272 @@ function activeSyntheticRunRequest(value: Record<string, unknown> | null): {
     });
   }
   return { assignments };
+}
+
+async function handleSyntheticAnalysisMutation(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): Promise<boolean> {
+  if (url.pathname !== "/control/playtesting/analyses") return false;
+  if (request.method === "POST") {
+    const body = await readJsonBody(request);
+    const episodeIds = body?.episodeIds;
+    if (
+      !body ||
+      body.operation !== "dispatch" ||
+      !Array.isArray(episodeIds) ||
+      episodeIds.length === 0 ||
+      episodeIds.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS ||
+      !episodeIds.every((id) => typeof id === "string") ||
+      new Set(episodeIds).size !== episodeIds.length ||
+      url.searchParams.get("workspaceId") !== WORKSPACE_ID
+    ) {
+      response.writeHead(400).end();
+      return true;
+    }
+    const analysisId = `analysis-browser-${String(nextAnalystRunId++).padStart(3, "0")}`;
+    const packets = episodeIds.flatMap((episodeId) => {
+      const record =
+        episodeId === episode.episodeId
+          ? episode
+          : syntheticRunEpisodes.get(episodeId);
+      if (!record) return [];
+      return [
+        {
+          episodeId,
+          batchId: String(record.batchId),
+          packetId: `packet-${analysisId}-${episodeId}`
+        }
+      ];
+    });
+    const packetIds = new Set(packets.map((packet) => packet.episodeId));
+    const receipts = episodeIds
+      .filter((episodeId) => !packetIds.has(episodeId))
+      .map((episodeId) => ({
+        episodeId,
+        batchId: null,
+        reason: "unknown-session",
+        detail: "The synthetic fixture has no record for this session."
+      }));
+    const packetsByBatch = new Map<string, number>();
+    for (const packet of packets) {
+      packetsByBatch.set(
+        packet.batchId,
+        (packetsByBatch.get(packet.batchId) ?? 0) + 1
+      );
+    }
+    const budget = Array.from(packetsByBatch, ([batchId, requested]) => ({
+      batchId,
+      reviewCap: 1,
+      actualCritiques: 0,
+      reserved: requested,
+      requested,
+      remaining: Math.max(0, 1 - requested)
+    }));
+    const run: SyntheticAnalystRun = {
+      run: {
+        analysisId,
+        workspaceId: WORKSPACE_ID,
+        createdAt: FIXTURE_TIMESTAMP,
+        requestedEpisodeIds: episodeIds,
+        packets,
+        receipts,
+        budget,
+        synthesisId: null
+      },
+      synthesis: null,
+      remainingRunningReads: 1,
+      status: "running",
+      finishedAt: null,
+      reviews: []
+    };
+    syntheticAnalystRuns.set(analysisId, run);
+    sendJson(
+      response,
+      {
+        schema: "autodev-control-playtesting-analysis-v1",
+        operation: "dispatch",
+        workspaceId: WORKSPACE_ID,
+        requested: episodeIds.length,
+        packets,
+        receipts,
+        budget,
+        analysis: {
+          ...run.run,
+          status: "running",
+          finishedAt: null,
+          reviews: [],
+          synthesis: null,
+          error: null
+        }
+      },
+      202
+    );
+    return true;
+  }
+  if (request.method === "GET") {
+    if (syntheticAnalystRunsReadFails) {
+      sendJson(
+        response,
+        {
+          error: {
+            code: "synthetic_analyst_unavailable",
+            message: "Synthetic analyst status is offline."
+          }
+        },
+        503
+      );
+      return true;
+    }
+    if (url.searchParams.get("workspaceId") !== WORKSPACE_ID) {
+      response.writeHead(404).end();
+      return true;
+    }
+    const runs = Array.from(syntheticAnalystRuns.values(), (entry) => {
+      if (entry.status === "running" && entry.remainingRunningReads > 0) {
+        entry.remainingRunningReads -= 1;
+      } else if (entry.status === "running") {
+        entry.status = "completed";
+        entry.finishedAt = FIXTURE_TIMESTAMP;
+        entry.reviews.push(
+          ...entry.run.packets.map((packet) => {
+            const review = syntheticReviewForPacket(
+              packet,
+              entry.run.analysisId
+            );
+            syntheticRunReviews.set(packet.episodeId, review);
+            return {
+              episodeId: packet.episodeId,
+              reviewId: review.reviewId,
+              status: "hypothesis" as const
+            };
+          })
+        );
+        if (entry.run.packets.length >= 2) {
+          const sourcePackets = entry.run.packets
+            .map((packet) => ({
+              episodeId: packet.episodeId,
+              batchId: packet.batchId,
+              packetId: packet.packetId
+            }))
+            .sort((left, right) =>
+              left.episodeId < right.episodeId
+                ? -1
+                : left.episodeId > right.episodeId
+                  ? 1
+                  : 0
+            );
+          const metricSourceIndex = sourcePackets.findIndex(
+            (source) => source.episodeId === episode.episodeId
+          );
+          const metricAggregationRows =
+            metricSourceIndex === -1
+              ? []
+              : [
+                  {
+                    metricId: "legal-action-rejection",
+                    metricVersion: 1,
+                    phaseId: "tutorial",
+                    unit: "proportion",
+                    aggregation: "ratio-of-sums-within-scenario" as const,
+                    analysisUnit: "episode" as const,
+                    aggregationWindow: "phase" as const,
+                    buildSha: BUILD_SHA,
+                    gameBuild: "fixture-build-1",
+                    rubricHash: RUBRIC_HASH,
+                    evaluatorHash: "e".repeat(64),
+                    measurementVersion: MEASUREMENT_VERSION,
+                    scenarioId: "tutorial",
+                    scenarioFamily: "tutorial",
+                    policyId: "weak-bot",
+                    policyVersion: "1",
+                    cohort: "novice",
+                    observationMode: "headless" as const,
+                    sourcePacketIndices: [metricSourceIndex],
+                    sessionCount: 1,
+                    numerator: 0,
+                    denominator: 3,
+                    opportunityCount: 3,
+                    missing: 0,
+                    missingReasons: [],
+                    estimate: 0,
+                    coverage: 1,
+                    independentUnits: 1
+                  }
+                ];
+          entry.synthesis = {
+            schema: PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
+            synthesisId: `synthesis-${entry.run.analysisId}`,
+            version: 1,
+            analysisId: entry.run.analysisId,
+            workspaceId: WORKSPACE_ID,
+            authorRole: "playtest-analyst",
+            authorId: "analyst-browser-fixture",
+            modelId: null,
+            modelRevision: null,
+            promptHash: null,
+            generatedAt: FIXTURE_TIMESTAMP,
+            status: "hypothesis",
+            summary:
+              "Across the selected packets, the warning consistently precedes a no-progress action; this remains a hypothesis.",
+            contributors: entry.run.packets.map((packet) => ({ ...packet })),
+            packetEligibleEpisodeIds: entry.run.packets.map(
+              (packet) => packet.episodeId
+            ),
+            metricAggregation: {
+              schema: PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA,
+              workspaceId: WORKSPACE_ID,
+              analysisId: entry.run.analysisId,
+              status:
+                metricAggregationRows.length === 0
+                  ? "no-applicable-metrics"
+                  : "available",
+              method: "ratio-of-sums-within-identical-stratum-v1",
+              sourcePackets,
+              rows: metricAggregationRows,
+              omittedMetrics: [],
+              reason:
+                metricAggregationRows.length === 0
+                  ? "no-applicable-metric-rows"
+                  : null
+            },
+            claims: [
+              {
+                kind: "pattern",
+                text: "Both packets show the warning before progress stops.",
+                evidenceRefs: entry.run.packets.map((packet) => ({
+                  episodeId: packet.episodeId,
+                  packetId: packet.packetId,
+                  locator: { kind: "event" as const, id: "event-1", step: 1 }
+                }))
+              }
+            ],
+            experiments: []
+          };
+          entry.run.synthesisId = entry.synthesis.synthesisId;
+        }
+      }
+      return {
+        ...entry.run,
+        status: entry.status,
+        finishedAt: entry.finishedAt,
+        reviews: entry.reviews,
+        error: null
+      };
+    });
+    sendJson(response, {
+      schema: "autodev-control-playtesting-analyses-v1",
+      workspaceId: WORKSPACE_ID,
+      runs: syntheticAnalystTaskHistoryMissing ? [] : runs,
+      syntheses: Array.from(syntheticAnalystRuns.values()).flatMap((entry) =>
+        entry.synthesis === null ? [] : [entry.synthesis]
+      )
+    });
+    return true;
+  }
+  response.writeHead(405).end();
+  return true;
 }
 
 async function handleSyntheticRunMutation(
@@ -964,7 +1305,8 @@ function syntheticRunResult(
     episodeId: completed ? run.episodes[index]!.episodeId : null,
     state: completed ? "completed" : "cancelled",
     started: completed,
-    eligible: completed
+    eligible: completed,
+    gameOutcome: completed ? "unknown" : null
   }));
   const runCounts = {
     assigned: run.assignmentCount,
@@ -1048,7 +1390,12 @@ function handleSyntheticRunRead(response: ServerResponse, url: URL): boolean {
       // unavailable state rather than freezing the last good frame.
       sendJson(
         response,
-        { error: { code: "synthetic_unavailable", message: "Synthetic run store is offline." } },
+        {
+          error: {
+            code: "synthetic_unavailable",
+            message: "Synthetic run store is offline."
+          }
+        },
         503
       );
       return true;
@@ -1104,23 +1451,36 @@ function handleSyntheticPlaytestingRead(
       resource: "episode",
       readOnly: true,
       record,
-      latestReview: episodeId === episode.episodeId ? latestReview : null
+      latestReview:
+        episodeId === episode.episodeId
+          ? latestReview
+          : (syntheticRunReviews.get(episodeId) ?? null)
     });
     return true;
   }
-  if (
-    url.pathname ===
-    `/control/playtesting/episodes/${episode.episodeId}/windows/${TRACE_ID}`
-  ) {
+  const windowMatch = url.pathname.match(PLAYTEST_EPISODE_WINDOW_ROUTE);
+  if (windowMatch) {
+    const episodeId = decodeURIComponent(windowMatch[1]!);
+    const artifactId = decodeURIComponent(windowMatch[2]!);
+    const record =
+      episodeId === episode.episodeId
+        ? episode
+        : syntheticRunEpisodes.get(episodeId);
+    if (!record || artifactId !== TRACE_ID) {
+      response.writeHead(404).end();
+      return true;
+    }
+    const startStep = Number(url.searchParams.get("startStep"));
+    const endStep = Number(url.searchParams.get("endStep"));
     sendJson(response, {
       schema: "autodev-control-playtesting-window-v1",
       workspaceId: WORKSPACE_ID,
-      episodeId: episode.episodeId,
-      artifactId: TRACE_ID,
+      episodeId,
+      artifactId,
       sha256: "b".repeat(64),
       mediaType: "application/x-ndjson",
-      startStep: Number(url.searchParams.get("startStep")),
-      endStep: Number(url.searchParams.get("endStep")),
+      startStep,
+      endStep,
       sourceLineCount: 3,
       omittedLineCount: 0,
       entries: [
@@ -1136,8 +1496,7 @@ function handleSyntheticPlaytestingRead(
       ].filter(
         (entry) =>
           entry.step === undefined ||
-          (entry.step >= Number(url.searchParams.get("startStep")) &&
-            entry.step <= Number(url.searchParams.get("endStep")))
+          (entry.step >= startStep && entry.step <= endStep)
       )
     });
     return true;
@@ -1165,6 +1524,25 @@ const server = createServer(
       response.writeHead(200).end("ok");
       return;
     }
+    if (url.pathname === "/fixture/reset") {
+      if (request.method !== "POST") {
+        response.writeHead(405).end();
+        return;
+      }
+      workspaceApproval = null;
+      comparison = structuredClone(initialComparison);
+      syntheticRuns.clear();
+      syntheticRunEpisodes.clear();
+      syntheticRunReviews.clear();
+      syntheticAnalystRuns.clear();
+      nextRunId = 1;
+      nextAnalystRunId = 1;
+      syntheticRunsReadFails = false;
+      syntheticAnalystRunsReadFails = false;
+      syntheticAnalystTaskHistoryMissing = false;
+      sendJson(response, { reset: true });
+      return;
+    }
     // Fixture control, so a browser test can make the active-runs read fail
     // and observe the Console's unavailable state rather than inferring it.
     if (url.pathname === "/fixture/runs-read-fail") {
@@ -1172,11 +1550,23 @@ const server = createServer(
       sendJson(response, { syntheticRunsReadFails });
       return;
     }
+    if (url.pathname === "/fixture/analyses-read-fail") {
+      syntheticAnalystRunsReadFails = url.searchParams.get("mode") !== "off";
+      sendJson(response, { syntheticAnalystRunsReadFails });
+      return;
+    }
+    if (url.pathname === "/fixture/analyst-history") {
+      syntheticAnalystTaskHistoryMissing =
+        url.searchParams.get("mode") === "missing";
+      sendJson(response, { syntheticAnalystTaskHistoryMissing });
+      return;
+    }
     if (
       await handleSyntheticWorkspaceApproval(request, response, url.pathname)
     ) {
       return;
     }
+    if (await handleSyntheticAnalysisMutation(request, response, url)) return;
     if (await handleSyntheticRunMutation(request, response, url)) return;
     if (request.method !== "GET") {
       response.writeHead(405).end();
@@ -1195,6 +1585,155 @@ const server = createServer(
             baseBranch: "main",
             enabled: true,
             agentRoles: null
+          }
+        ]
+      });
+      return;
+    }
+    if (url.pathname === "/control/contracts") {
+      sendJson(response, {
+        schema: "autodev-control-api-contract-v1",
+        version: 3
+      });
+      return;
+    }
+    if (url.pathname === "/control/providers") {
+      const convergence = {
+        convergence: "not-observed",
+        desiredGeneration: "fixture",
+        observedGeneration: "fixture",
+        lastApplyAt: null,
+        lastObservationAt: null,
+        lastError: null,
+        explanation: "Provider fixture state."
+      };
+      const provider = (
+        id: string,
+        model: string | null,
+        groups: readonly { tier: string; group: number }[]
+      ) => ({
+        id,
+        links: { usage: null, documentation: null },
+        route: {
+          pattern: id === "claude" ? "^(sonnet|claude-.*)$" : "^gpt-.*$",
+          baseUrl: `http://127.0.0.1:4100/${id}`,
+          healthUrl: null
+        },
+        credential: { envKey: null, configured: true },
+        disabled: false,
+        roles: {
+          default: { priority: 1, model, mutable: true, convergence },
+          smart: { priority: 1, model, mutable: true, convergence },
+          orchestrator: { priority: 2, model, mutable: true, convergence },
+          subagent: { priority: 1, model, mutable: true, convergence }
+        },
+        agentLimits: null,
+        models: model === null ? [] : [{ tier: "default", model }],
+        priorities: groups,
+        orchestratorReasoningEffort: null,
+        health: null
+      });
+      sendJson(response, {
+        schema: "autodev-control-providers-v2",
+        orchestratorTier: "orchestrator",
+        tiers: [
+          { tier: "default", groups: [["claude"], ["codex"]] },
+          { tier: "orchestrator", groups: [["codex"], ["claude"]] }
+        ],
+        providers: [
+          provider("claude", "sonnet", [{ tier: "default", group: 1 }]),
+          provider("codex", "gpt-6-luna", [{ tier: "default", group: 2 }]),
+          provider("copilot", null, [])
+        ]
+      });
+      return;
+    }
+    if (url.pathname === "/control/models") {
+      const convergence = {
+        convergence: "not-observed",
+        desiredGeneration: "enabled=true",
+        observedGeneration: "enabled=true",
+        lastApplyAt: null,
+        lastObservationAt: null,
+        lastError: null,
+        explanation: "Model fixture state."
+      };
+      sendJson(response, {
+        schema: "autodev-control-models-v2",
+        source: "synthetic-provider-fixture",
+        models: [
+          {
+            id: "sonnet",
+            provider: "claude",
+            tiers: ["default", "smart", "subagent"],
+            displayName: "Claude Sonnet fixture",
+            enablement: { enabled: true, mutable: true, convergence }
+          },
+          {
+            id: "gpt-6-luna",
+            provider: "codex",
+            tiers: ["default"],
+            displayName: "Codex fixture",
+            enablement: { enabled: true, mutable: false, convergence }
+          }
+        ]
+      });
+      return;
+    }
+    if (url.pathname === "/control/provider-models") {
+      sendJson(response, {
+        schema: "autodev-control-provider-model-discovery-v1",
+        source: "runtime-provider-discovery",
+        providers: [
+          {
+            provider: "claude",
+            discovery: {
+              status: "observed",
+              source: "synthetic Claude listing",
+              observedAt: FIXTURE_TIMESTAMP,
+              lastAttemptAt: FIXTURE_TIMESTAMP,
+              models: [
+                {
+                  id: "sonnet",
+                  displayName: "Claude Sonnet fixture",
+                  routeability: { status: "supported" }
+                },
+                {
+                  id: "claude-preview-unroutable",
+                  displayName: "Claude Preview fixture",
+                  routeability: {
+                    status: "unsupported",
+                    reason: "The fixture Runtime has no route for this model."
+                  }
+                }
+              ]
+            }
+          },
+          {
+            provider: "codex",
+            discovery: {
+              status: "stale",
+              source: "synthetic Codex listing",
+              observedAt: "2026-10-09T00:00:00.000Z",
+              lastAttemptAt: FIXTURE_TIMESTAMP,
+              reason: "The latest synthetic provider read timed out.",
+              models: [
+                {
+                  id: "gpt-6-luna",
+                  displayName: "Codex fixture",
+                  routeability: { status: "supported" }
+                }
+              ]
+            }
+          },
+          {
+            provider: "copilot",
+            discovery: {
+              status: "unavailable",
+              source: null,
+              lastAttemptAt: null,
+              reason: "The fixture has no Copilot model listing adapter."
+            }
           }
         ]
       });

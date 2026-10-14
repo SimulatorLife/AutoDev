@@ -85,18 +85,8 @@ export interface PlaytestAdapterBinding {
   /** Named factory the module exports, called once per adapter process. */
   readonly factory: string;
   /**
-   * Bounded seedable RNG entry point. A game that declares one lets AutoDev
-   * restore engine RNG state for a counterfactual; one that does not gets
-   * reported as unreproducible rather than assumed reproducible.
-   */
-  readonly seededRng?: PlaytestBindingReference;
-  /**
-   * The engine RNG version behind `seededRng`.
-   *
-   * Required alongside it, because the protocol refuses to advertise a seeded
-   * guarantee it cannot name: a rerun's RNG must be matchable against the
-   * benchmark that recorded it. A game that binds a seedable RNG without naming
-   * its version is not offered the seeded capability at all.
+   * The engine RNG version used by `reset(seed)`. Without a version the Runtime
+   * does not claim seeded-run reproducibility.
    */
   readonly rngVersion?: string;
   /**
@@ -192,6 +182,7 @@ export type PlaytestBindingResolution =
 
 const EXPORT_NAME_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
 const PATH_SEGMENT_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
+const RNG_VERSION_PATTERN = /^[A-Za-z\d][A-Za-z\d._:+@-]{0,127}$/u;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -214,6 +205,70 @@ function validReference(value: unknown): boolean {
  * it still has to write instead of discovering it as an unexplained refusal
  * mid-run.
  */
+function bindingHeaderError(value: Record<string, unknown>): string | null {
+  if (value.schema !== PLAYTESTS_ADAPTER_BINDING_SCHEMA) {
+    return `The adapter binding must declare schema ${PLAYTESTS_ADAPTER_BINDING_SCHEMA}.`;
+  }
+  if (value.schemaVersion !== 1) return "Unsupported adapter binding version.";
+  if (value.tier !== "declarative" && value.tier !== "generated-scaffold") {
+    return "The adapter binding must state its onboarding tier as declarative or generated-scaffold.";
+  }
+  if (typeof value.entry !== "string" || value.entry.length === 0) {
+    return "The adapter binding must name an entry module.";
+  }
+  if (
+    typeof value.factory !== "string" ||
+    !EXPORT_NAME_PATTERN.test(value.factory)
+  ) {
+    return "The adapter binding must name a factory export.";
+  }
+  if (!isRecord(value.bindings)) {
+    return "The adapter binding must declare its protocol bindings.";
+  }
+  return null;
+}
+
+function bindingRngError(value: Record<string, unknown>): string | null {
+  if (
+    value.rngVersion !== undefined &&
+    (typeof value.rngVersion !== "string" ||
+      !RNG_VERSION_PATTERN.test(value.rngVersion))
+  ) {
+    return "The adapter binding rngVersion must be a bounded, named engine RNG version.";
+  }
+  return null;
+}
+
+function bindingSchemaError(value: Record<string, unknown>): string | null {
+  for (const key of ["observation", "action", "event"]) {
+    const schema = isRecord(value.schemas) ? value.schemas[key] : undefined;
+    if (!isRecord(schema)) {
+      return `The adapter binding must declare the game's ${key} schema.`;
+    }
+  }
+  return null;
+}
+
+function bindingMethodsError(value: Record<string, unknown>): string | null {
+  const bindings = value.bindings as Record<string, unknown>;
+  for (const [method, reference] of Object.entries(bindings)) {
+    if (
+      !(PLAYTESTS_BINDABLE_METHODS as readonly string[]).includes(method) ||
+      !validReference(reference)
+    ) {
+      return `The binding for "${method}" is not a resolvable protocol reference.`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Validate a binding and report every protocol method it cannot supply.
+ *
+ * An unbindable method is listed rather than defaulted, so a game is told what
+ * it still has to write instead of discovering it as an unexplained refusal
+ * mid-run.
+ */
 export function resolvePlaytestAdapterBinding(
   value: unknown
 ): PlaytestBindingResolution {
@@ -223,106 +278,36 @@ export function resolvePlaytestAdapterBinding(
       message: "The adapter binding must be an object."
     };
   }
-  if (value.schema !== PLAYTESTS_ADAPTER_BINDING_SCHEMA) {
-    return {
-      kind: "rejected",
-      message: `The adapter binding must declare schema ${PLAYTESTS_ADAPTER_BINDING_SCHEMA}.`
-    };
-  }
-  if (value.schemaVersion !== 1) {
-    return {
-      kind: "rejected",
-      message: "Unsupported adapter binding version."
-    };
-  }
-  if (value.tier !== "declarative" && value.tier !== "generated-scaffold") {
-    return {
-      kind: "rejected",
-      message:
-        "The adapter binding must state its onboarding tier as declarative or generated-scaffold."
-    };
-  }
-  if (typeof value.entry !== "string" || value.entry.length === 0) {
-    return {
-      kind: "rejected",
-      message: "The adapter binding must name an entry module."
-    };
-  }
-  if (
-    typeof value.factory !== "string" ||
-    !EXPORT_NAME_PATTERN.test(value.factory)
-  ) {
-    return {
-      kind: "rejected",
-      message: "The adapter binding must name a factory export."
-    };
-  }
-  if (!isRecord(value.bindings)) {
-    return {
-      kind: "rejected",
-      message: "The adapter binding must declare its protocol bindings."
-    };
-  }
-  if (value.seededRng !== undefined && !validReference(value.seededRng)) {
-    return {
-      kind: "rejected",
-      message: "The seeded RNG binding is malformed."
-    };
-  }
-  // A seedable RNG with no version cannot be advertised: the Runtime rejects a
-  // seeded guarantee it cannot name, so requiring it here turns a silent
-  // capability mismatch into a message naming what the game left out.
-  if (
-    value.seededRng !== undefined &&
-    (typeof value.rngVersion !== "string" ||
-      value.rngVersion.trim().length === 0)
-  ) {
-    return {
-      kind: "rejected",
-      message:
-        "A seededRng binding must declare the engine rngVersion beside it, so a rerun can be matched against the benchmark that recorded it."
-    };
-  }
-  // The schemas are declared, never invented here, and each must be a JSON
-  // object: AutoDev hashes exactly what the game wrote.
-  for (const key of ["observation", "action", "event"]) {
-    const schema = isRecord(value.schemas) ? value.schemas[key] : undefined;
-    if (!isRecord(schema)) {
-      return {
-        kind: "rejected",
-        message: `The adapter binding must declare the game's ${key} schema.`
-      };
-    }
-  }
-  for (const key of Object.keys(value.bindings)) {
-    if (
-      !(PLAYTESTS_BINDABLE_METHODS as readonly string[]).includes(key) ||
-      !validReference(value.bindings[key])
-    ) {
-      return {
-        kind: "rejected",
-        message: `The binding for "${key}" is not a resolvable protocol reference.`
-      };
-    }
-  }
-  const gaps: PlaytestBindingGap[] = [];
-  for (const method of PLAYTESTS_REQUIRED_BINDINGS) {
-    if (value.bindings[method] === undefined) {
-      gaps.push({
-        kind: "missing-required",
-        method,
-        message: `The game has no declared ${method} binding; AutoDev will not supply a default for it.`
-      });
-    }
-  }
-  const methods: Record<string, string> = {};
-  for (const [method, reference] of Object.entries(value.bindings)) {
-    if (!isRecord(reference)) continue;
-    methods[method] =
+  const error =
+    bindingHeaderError(value) ??
+    bindingRngError(value) ??
+    bindingSchemaError(value) ??
+    bindingMethodsError(value);
+  if (error !== null) return { kind: "rejected", message: error };
+
+  const rawBindings = value.bindings as Record<
+    string,
+    PlaytestBindingReference
+  >;
+  const gaps = PLAYTESTS_REQUIRED_BINDINGS.flatMap((method) =>
+    rawBindings[method] === undefined
+      ? [
+          {
+            kind: "missing-required" as const,
+            method,
+            message: `The game has no declared ${method} binding; AutoDev will not supply a default for it.`
+          }
+        ]
+      : []
+  );
+  const methods = Object.fromEntries(
+    Object.entries(rawBindings).map(([method, reference]) => [
+      method,
       typeof reference.path === "string"
         ? `${reference.export}.${reference.path}`
-        : String(reference.export);
-  }
+        : reference.export
+    ])
+  );
   return gaps.length > 0
     ? { kind: "rejected", message: gaps.map((gap) => gap.message).join(" ") }
     : { kind: "resolved", methods, gaps };

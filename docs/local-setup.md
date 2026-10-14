@@ -768,7 +768,7 @@ pnpm run dev
 Before launching the Next.js dev server (on port 3300 by default), `pnpm run dev` validates the Control API and coordinates the Console's backend dependencies:
 
 - **Secret synchronization:** Ensures `console/.env.local` is materialized from the canonical secrets in `$CODEX_HOME/openlit-secrets.env`, updating it only when missing or out of sync.
-- **Control API contract check:** Before starting Next.js, sends authenticated, read-only probes for the Providers v2 response and the workspace-scoped Playtesting capabilities endpoint used by the Console. This catches an installed Model Router that is still serving an older Runtime than the Console checkout; startup stops with the Runtime refresh instructions instead of opening a Console whose Providers or Playtesting pages cannot work. The probes do not log or return the service token.
+- **Control API contract check:** Before starting Next.js, validates the authenticated `/control/contracts` compatibility revision and makes read-only probes for Providers v2, provider-model-discovery v1, and workspace-scoped Playtesting capabilities. The revision advances whenever the Console begins requiring a new Control API capability, or an existing payload or authorization contract changes, so a stale installed Model Router cannot pass merely because some older routes still happen to match. Startup stops with Runtime refresh instructions instead of opening a partially broken Console; the probes do not log or return the service token.
 - **Backend reconciliation:** Checks Docker Engine, then invokes the canonical `scripts/openlit/up.sh` on every `pnpm run dev`. The locked image is reused when its pinned source/patch hash is unchanged, and Compose idempotently recreates only services whose image, environment, or bind-mounted config fingerprint changed. ClickHouse and OpenLIT readiness are checked after reconciliation; unchanged services and persistent volumes are preserved.
 - **Docker Engine prerequisite and automatic macOS launch:** Docker Engine is required for the local OpenLIT and ClickHouse Usage telemetry stack. On macOS (`darwin`), if the Docker daemon is not running, `pnpm run dev` automatically launches Docker Desktop (`open -a Docker`) and polls boundedly (up to 120 seconds) for Docker Engine to become responsive. On other platforms, Docker Engine must be running beforehand; if it is unavailable, startup fails immediately with a clear prerequisite error before attempting to start services.
 - **Service startup and bounded wait:** The canonical runner reconciles the ClickHouse and OpenLIT containers against the current pinned image and mounted configuration, starting or restarting only what is stale, then polls boundedly for both services to report readiness. If startup fails or times out, the command throws and halts so the Console is never spawned without required Usage telemetry.
@@ -784,50 +784,48 @@ bash scripts/openlit/up.sh
 bash scripts/openlit/down.sh
 ```
 
-### Standalone Console development
+### Console startup contract
 
-To run the AutoDev Console independently without backend orchestration (e.g. against already-running containers or a remote stack):
+Use `pnpm run dev` as the supported development entrypoint. Directly launching the Next.js workspace bypasses backend reconciliation and contract validation and is intentionally not exposed as a root script. The production Console launcher performs the same read-only Control API compatibility check and validates the OpenLIT Usage v4 response before it starts `next start`.
 
-```bash
-pnpm run dev:console
-# or: pnpm --filter @simulatorlife/autodev-console dev
-pnpm --filter @simulatorlife/autodev-console build
-pnpm --filter @simulatorlife/autodev-console start
-```
+The normal `pnpm run install:codex` release materializes the Console LaunchAgent, verifies that this Runtime owns the Console port, builds Next into a unique staging directory, leaves the active production artifact untouched on build failure, then reloads/verifies the managed Console after Runtime. `bash scripts/install.sh --materialize-only` deliberately skips both the production build and service restart for an active session. Stop a development server occupying the configured Console port before a normal install; the installer will not kill an unowned listener or publish over its build.
 
-`next dev` writes to `console/.next-dev`; `next build` (and the Runtime
-installer's console-build step) writes the production build that `next start`
-and the Console LaunchAgent serve to `console/.next`. The split lives in
-`console/src/lib/build-output.ts` (applied by `console/next.config.ts`), so a build cannot delete the chunks a running dev
-server loads (the `Cannot find module './<n>.js'` crash from `_document.js`).
-`console/next-env.d.ts` points at whichever directory generated it last, so it
-is gitignored; `pnpm --filter @simulatorlife/autodev-console typecheck` runs
-`next typegen` first, which regenerates it and the `console/.next/types` route
-types. The dev server's `console/.next-dev/types` stay out of the type-check.
+`next dev` writes to `console/.next-dev`; `next build` (and the Runtime installer’s console-build step) writes the production build that `next start` and the Console LaunchAgent serve to `console/.next`. The split lives in `console/src/lib/build-output.ts` (applied by `console/next.config.ts`), so a build cannot delete the chunks a running dev server loads (the `Cannot find module './<n>.js'` crash from `_document.js`). `console/next-env.d.ts` points at whichever directory generated it last, so it is gitignored; `pnpm --filter @simulatorlife/autodev-console typecheck` runs `next typegen` first, which regenerates it and the `console/.next/types` route types. The dev server’s `console/.next-dev/types` stay out of the type-check.
 
 The Console defaults to port 3300 (`AUTODEV_CONSOLE_PORT` overrides it). Set
 `AUTODEV_CONTROL_API_TOKEN` only in the Console server environment; the
 Control API base defaults to `http://127.0.0.1:4101` and can be configured with
-`AUTODEV_CONTROL_API_BASE_URL`. `pnpm run dev` probes that configured endpoint
-before starting Next.js and exits if its Providers or Playtesting contracts do
-not match the current Console. The Playtesting MCP uses a **separate,
-Playtesting-only** `AUTODEV_PLAYTEST_CONTROL_API_TOKEN` provisioned in the
-Runtime and the Playtest MCP process, plus the trusted
-`AUTODEV_PLAYTEST_CONTROL_API_ACTOR`, and the exact
-`AUTODEV_PLAYTEST_CONTROL_API_ROLE` (`playtester`, `playtest-analyst`, or
-`validator`); the configured role must match the MCP role. The Runtime accepts that credential
-only on typed `/control/playtesting/runs` start/list/status/cancel routes and
-rejects missing or role-escalated session context. Configure
+`AUTODEV_CONTROL_API_BASE_URL`. `pnpm run dev` validates the configured endpoint’s
+compatibility revision, Providers, provider-model discovery, and Playtesting contracts before starting
+Next.js. The production launcher runs the same Control API check and verifies
+the OpenLIT Usage v4 contract before `next start`; neither startup path starts
+with known-stale backend responses. The runner Playtesting MCP uses a **separate, Playtesting-only**
+`AUTODEV_PLAYTEST_CONTROL_API_TOKEN` provisioned in the Runtime and MCP process,
+plus the trusted `AUTODEV_PLAYTEST_CONTROL_API_ACTOR` and exact
+`AUTODEV_PLAYTEST_CONTROL_API_ROLE` (`playtester`, `validator`, or another
+configured run-control role); the configured role must match the MCP role. The
+Runtime accepts that role-bound credential only on typed Playtesting
+capability/run routes and rejects missing or role-escalated session context.
+The read-only analyst MCP does not use the Control API run-control client: its
+allowlisted packet/review operations read and write through the workspace-bound
+Playtesting repository and artifact store, and the analyst receives no Control
+API credentials. Console dispatch still uses the existing `run-provider-agent`
+role path and Runtime-owned task lifecycle.
+The dispatched role runs in a private empty directory and isolated Codex home
+(not the game checkout or the user's normal Codex profile), copies only the
+`playtest-analyst` role file, and uses only the `playtest-analysis` skill and
+that current read-only role, keeps the local-router credential, and removes
+unrelated API/MCP credentials.
+It never receives a game-run capability or the general Control API token. Configure
 `AUTODEV_CONTROL_API_BASE_URL` in the MCP process as a loopback URL, and set
 `AUTODEV_CONTROL_API_LISTEN_HOST`/`AUTODEV_CONTROL_API_LISTEN_PORT` on Runtime
-when enabling the private listener. Never pass the general Control API token
-into the Playtesting MCP or game adapter. The scoped Playtesting credential is
-not inherited by the game container. To query Usage, set
+when enabling the private listener. Neither Playtesting credential is inherited
+by the game adapter. To query Usage, set
 `AUTODEV_OPENLIT_USAGE_TOKEN` in the Console server environment to the
 separately generated value in `$CODEX_HOME/openlit-secrets.env`;
 `AUTODEV_OPENLIT_USAGE_URL` defaults to `http://127.0.0.1:3000`. The Console is the only Memory operator surface: durable records, experiences, and outcome cohorts are read through the Control API in `console/app/memory`. The transitional external Memory portal is gone, so `AUTODEV_OPENLIT_UI_URL` no longer has a consumer — delete it from `$CODEX_HOME/.env` and do not reintroduce it. The Console launcher forwards only the two URL variables the server actually reads (`AUTODEV_CONTROL_API_BASE_URL`, `AUTODEV_OPENLIT_USAGE_URL`). Do not source or expose the full secret file to browser code.
 
-If `/usage` reports `autodev_openlit_usage_unreachable`, check that OpenLIT is running and that `AUTODEV_OPENLIT_USAGE_URL` points to an address reachable from the Console server. The local default is port 3000; start the OpenLIT stack with `scripts/openlit/up.sh` when Docker is available. A successful HTTP response with an invalid Usage schema is reported separately as `autodev_openlit_usage_invalid_response`; neither failure state renders metric panels or substitutes sample values.
+If `/usage` reports `autodev_openlit_usage_unreachable`, check that OpenLIT is running and that `AUTODEV_OPENLIT_USAGE_URL` points to an address reachable from the Console server. The local default is port 3000; start the OpenLIT stack with `scripts/openlit/up.sh` when Docker is available. A successful HTTP response with an invalid Usage schema is reported separately as `autodev_openlit_usage_invalid_response`. Verify that OpenLIT serves the required AutoDev Usage v4 contract; if that live contract is valid, rebuild and restart the managed Console so its long-lived server process loads the matching bundle. Neither failure state renders metric panels or substitutes sample values.
 
 The AutoDev summary response is `autodev-openlit-usage-v4`, including validated widget data, filter options, and the bounded recent-attempt list. After changing the Usage patch set (including the v4 compaction widgets), rebuild and restart the patched OpenLIT stack with `scripts/openlit/up.sh`; the Console deliberately rejects older response contracts instead of silently dropping data.
 

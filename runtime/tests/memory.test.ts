@@ -17,34 +17,33 @@ import {
   emptyMemoryStatusCounts,
   type EvidenceReference,
   type ExperienceEnvelope,
+  type ExperienceListRequest,
+  type ExperienceOutcome,
+  type ExperienceSearchRequest,
   isMemoryExperienceVisibleTo,
   type MemoryActor,
-  type ExperienceListRequest,
-  type ExperienceSearchRequest,
-  type ExperienceOutcome,
+  type MemoryExecutionMode,
+  type MemoryExperiencePurgeReason,
   type MemoryExperiencePurgeRequest,
   type MemoryExperiencePurgeResult,
-  type MemoryExperiencePurgeReason,
   type MemoryExpiredExperienceRequest,
   type MemoryHistory,
   type MemoryInjectionEvent,
   type MemoryInjectionEventSessionLookup,
   type MemoryInjectionOutcomeCohortFilter,
+  type MemoryInjectionOutcomeJoin,
+  type MemoryInjectionOutcomeJoinPage,
+  type MemoryInjectionOutcomeJoinRequest,
+  type MemoryInjectionResult,
   type MemoryInjectionUseCohortCell,
   type MemoryInjectionUseCohortFilter,
   type MemoryInjectionUseCohortPage,
   type MemoryInjectionUseJoin,
   type MemoryInjectionUseJoinPage,
   type MemoryInjectionUseJoinRequest,
-  type MemoryInjectionOutcomeJoin,
-  type MemoryInjectionOutcomeJoinPage,
-  type MemoryInjectionOutcomeJoinRequest,
   type MemoryLifecycleEvent,
-  type MemoryExecutionMode,
-  type MemoryInjectionResult,
   type MemoryOutcomeReport,
   type MemoryOutcomeReportKind,
-  type MemoryUseKind,
   type MemoryPacket,
   type MemoryReadContext,
   type MemoryRecord,
@@ -60,6 +59,7 @@ import {
   type MemorySessionOutcomeCohortPage,
   type MemorySessionOutcomeReport,
   type MemoryStatusCounts,
+  type MemoryUseKind,
   type MemoryUseReport,
   type MemoryVersionedUpdate,
   sessionOutcomeReportBodyMatches,
@@ -1079,7 +1079,7 @@ test("capture refuses a transcript that contains no conversation to learn from",
   const transcript = [
     { type: "session_meta", payload: { id: "session-empty", cwd: "/repo" } }
   ]
-    .map((record) => JSON.stringify(record))
+    .map((transcriptRecord) => JSON.stringify(transcriptRecord))
     .join("\n");
 
   await assert.rejects(
@@ -1335,14 +1335,14 @@ test("curator retention purges a bounded completed-history batch and skips refer
     })
   );
   const service = makeService(repository);
-  const retentionContext = { ...context, canReadTaskHistory: true };
+  const scopedContext = { ...context, canReadTaskHistory: true };
 
   await assert.rejects(
     service.purgeExpiredExperiences({
       completedBefore: "2026-09-15T00:00:00.000Z",
       limit: 10,
       actor: worker,
-      context: retentionContext
+      context: scopedContext
     }),
     MemoryAuthorizationError
   );
@@ -1360,7 +1360,7 @@ test("curator retention purges a bounded completed-history batch and skips refer
       completedBefore: "2026-10-01T00:00:00.000Z",
       limit: 10,
       actor: root,
-      context: retentionContext
+      context: scopedContext
     }),
     MemoryValidationError
   );
@@ -1369,7 +1369,7 @@ test("curator retention purges a bounded completed-history batch and skips refer
       completedBefore: "2026-09-15T00:00:00.000Z",
       limit: 101,
       actor: root,
-      context: retentionContext
+      context: scopedContext
     }),
     MemoryValidationError
   );
@@ -1377,7 +1377,7 @@ test("curator retention purges a bounded completed-history batch and skips refer
     completedBefore: "2026-09-15T00:00:00.000Z",
     limit: 10,
     actor: root,
-    context: retentionContext
+    context: scopedContext
   });
 
   assert.deepEqual(report, {
@@ -2734,7 +2734,7 @@ test("the vector sanity ceiling is a ceiling, not the store's dimension", async 
   // actually enforced. Tightening this to the store's dimension would refuse
   // every provider that is not that exact width, which is why it is named and
   // commented rather than left as a bare 4096 for someone to read as a defect.
-  const atCeiling = new Array<number>(4096).fill(0.5);
+  const atCeiling = Array.from<number>({ length: 4096 }).fill(0.5);
   await makeService(repository, {
     embedder: { embed: async () => atCeiling }
   }).research(researchRequest());
@@ -4012,9 +4012,8 @@ test("the injection/outcome join refuses a memory mode list longer than the voca
   await assert.rejects(
     service.listInjectionOutcomeJoins(
       outcomeJoinRequest({
-        memoryModes: Array.from(
-          { length: 6 },
-          () => "jit"
+        memoryModes: Array.from({ length: 6 }).fill(
+          "jit"
         ) as unknown as MemoryExecutionMode[]
       })
     ),
@@ -4205,7 +4204,7 @@ test("experience search bounds the hit count it asks storage for and returns", a
 
   const defaulted = await service.searchExperiences(experienceSearchRequest());
   assert.equal(repository.experienceSearchRequests[1]?.limit, 10);
-  assert.equal(defaulted.length, 45 > 10 ? 10 : 45);
+  assert.equal(defaulted.length, Math.min(45, 10));
 });
 
 test("experience search hides another run's raw trajectory from an ordinary reader", async () => {
@@ -6602,7 +6601,9 @@ test("no MCP read tool returns an object belonging to another workspace", async 
     // the id anywhere in the payload would fail on the record itself rather
     // than on anything the reader was not entitled to.
     assert.deepEqual(
-      whyResult.sourceExperiences.map((experience) => experience.id),
+      whyResult.sourceExperiences.map(
+        (sourceExperience) => sourceExperience.id
+      ),
       [],
       "why resolved a cited experience belonging to another workspace"
     );

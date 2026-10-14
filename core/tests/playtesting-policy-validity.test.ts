@@ -14,8 +14,8 @@ import {
   assertPlaytestBenchmark,
   buildPlaytestPolicyValidity,
   type BuildPlaytestPolicyValidityInput,
-  type PlaytestBenchmark,
   type PlayerPolicyValidity,
+  type PlaytestBenchmark,
   playtestBenchmarkHashInput,
   playtestHumanProxyRefusal,
   playtestPolicyValidityHashInput

@@ -3,7 +3,8 @@
  *
  * Reuses resolveOpenLitClickHouseConnection and Data's existing
  * runParameterizedClickHouseStatement transport. Persists workspace-scoped
- * batches, episode summary/version rows, findings, reviews and comparisons
+ * batches, episode summary/version rows, findings, reviews, cross-session
+ * syntheses and comparisons
  * per docs/playtesting-target-state.md Section 9. Large JSONL/frames never
  * land here; episode rows retain only bounded content-hash manifests/opaque
  * refs into Runtime-owned artifact storage.
@@ -21,6 +22,7 @@ import type {
   PlaytestBatch,
   PlaytestBenchmark,
   PlaytestComparison,
+  PlaytestCrossSessionSynthesis,
   PlaytestEpisode,
   PlaytestExperiment,
   PlaytestFinding,
@@ -53,6 +55,7 @@ import {
   decodeBatch,
   decodeBenchmark,
   decodeComparison,
+  decodeCrossSessionSynthesis,
   decodeEpisode,
   decodeExperiment,
   decodeFinding,
@@ -62,6 +65,7 @@ import {
   encodeBatch,
   encodeBenchmark,
   encodeComparison,
+  encodeCrossSessionSynthesis,
   encodeEpisode,
   encodeExperiment,
   encodeFinding,
@@ -75,6 +79,7 @@ import {
   PLAYTEST_BATCHES_TABLE,
   PLAYTEST_BENCHMARKS_TABLE,
   PLAYTEST_COMPARISONS_TABLE,
+  PLAYTEST_CROSS_SESSION_SYNTHESES_TABLE,
   PLAYTEST_EPISODES_TABLE,
   PLAYTEST_EXPERIMENTS_TABLE,
   PLAYTEST_FINDINGS_TABLE,
@@ -315,12 +320,11 @@ export class PlaytestRepository {
     const cursor = decodePlaytestCursor(listOptions.cursor);
     const filterClause = buildBatchWhereClause(filter);
     const innerWhere = WORKSPACE_ID_PREDICATE;
-    let outerWhere: BoundWhereClause = {
-      clauses: ["rn = 1", ...filterClause.clauses.slice(1)],
-      params: filterClause.params
-    };
-    outerWhere = appendCursorClause(
-      outerWhere,
+    const outerWhere = appendCursorClause(
+      {
+        clauses: ["rn = 1", ...filterClause.clauses.slice(1)],
+        params: filterClause.params
+      },
       cursor,
       "created_at",
       "batch_id"
@@ -441,12 +445,11 @@ export class PlaytestRepository {
     const restClauses = filterClause.clauses.slice(1);
     const innerWhere = WORKSPACE_ID_PREDICATE;
 
-    let outerWhere: BoundWhereClause = {
-      clauses: ["rn = 1", ...restClauses],
-      params: filterClause.params
-    };
-    outerWhere = appendCursorClause(
-      outerWhere,
+    const outerWhere = appendCursorClause(
+      {
+        clauses: ["rn = 1", ...restClauses],
+        params: filterClause.params
+      },
       cursor,
       "assigned_at",
       "episode_id"
@@ -668,6 +671,70 @@ export class PlaytestRepository {
     );
     const rows = parseNdjsonLines(text);
     return rows.length > 0 ? decodeReview(rows[0]!) : null;
+  }
+
+  // ---- Cross-session synthesis --------------------------------------------
+
+  async insertCrossSessionSynthesis(
+    record: PlaytestCrossSessionSynthesis
+  ): Promise<void> {
+    const row = encodeCrossSessionSynthesis(record.workspaceId, record);
+    await this.execute(
+      `INSERT INTO ${PLAYTEST_CROSS_SESSION_SYNTHESES_TABLE} FORMAT JSONEachRow`,
+      {},
+      JSON.stringify(row) + "\n"
+    );
+  }
+
+  async getCrossSessionSynthesisForAnalysis(
+    workspaceId: string,
+    analysisId: string
+  ): Promise<PlaytestCrossSessionSynthesis | null> {
+    const text = await this.execute(
+      `SELECT * FROM ${PLAYTEST_CROSS_SESSION_SYNTHESES_TABLE} ` +
+        `WHERE workspace_id = {workspaceId:String} AND analysis_id = {analysisId:String} ` +
+        `ORDER BY version DESC, cityHash64(payload_json) DESC, payload_json DESC ` +
+        `LIMIT 1 FORMAT JSONEachRow`,
+      { workspaceId, analysisId }
+    );
+    const rows = parseNdjsonLines(text);
+    return rows.length > 0 ? decodeCrossSessionSynthesis(rows[0]!) : null;
+  }
+
+  async listCrossSessionSyntheses(
+    workspaceId: string,
+    listOptions: PlaytestListOptions = {}
+  ): Promise<PlaytestPage<PlaytestCrossSessionSynthesis>> {
+    const limit = clampLimit(listOptions.limit);
+    const cursor = decodePlaytestCursor(listOptions.cursor);
+    const where = appendCursorClause(
+      { clauses: [WORKSPACE_ID_PREDICATE], params: { workspaceId } },
+      cursor,
+      "created_at",
+      "synthesis_id"
+    );
+    const selectQuery =
+      `SELECT workspace_id, synthesis_id, analysis_id, version, created_at, payload_json ` +
+      `FROM ${PLAYTEST_CROSS_SESSION_SYNTHESES_TABLE} WHERE ${joinWhereClauses(where)} ` +
+      `ORDER BY created_at DESC, synthesis_id DESC LIMIT {limit:UInt32} FORMAT JSONEachRow`;
+    const countQuery =
+      `SELECT count() AS total FROM ${PLAYTEST_CROSS_SESSION_SYNTHESES_TABLE} ` +
+      `WHERE ${WORKSPACE_ID_PREDICATE} FORMAT JSONEachRow`;
+    const [rowsText, countText] = await Promise.all([
+      this.execute(selectQuery, { ...where.params, limit }),
+      this.execute(countQuery, { workspaceId })
+    ]);
+    const rawRows = parseNdjsonLines(rowsText);
+    const rows = rawRows.map(decodeCrossSessionSynthesis);
+    const total = parseTotalCount(countText);
+    const nextCursor =
+      rows.length === limit && rows.length > 0
+        ? encodePlaytestCursor({
+            orderedAt: String(rawRows.at(-1)!.created_at),
+            tiebreakId: rows.at(-1)!.synthesisId
+          })
+        : null;
+    return { rows, total, nextCursor };
   }
 
   // ---- Comparisons ---------------------------------------------------------

@@ -12,6 +12,7 @@ import {
   buildPlaytestComparison,
   buildPlaytestFindingIdentity,
   classifyPlaytestMetricComparison,
+  type GameCaptureEvent,
   type GameMetricEvaluation,
   type PlaytestAssignmentBranch,
   type PlaytestCapabilityAdvertisement,
@@ -66,7 +67,8 @@ function hash(value: unknown): string {
 
 function capabilities(
   engineBuild = GAME_BUILD,
-  supportsBranching = false
+  supportsBranching = false,
+  supportsCaptureEvents = false
 ): PlaytestCapabilityAdvertisement {
   const observationSchema = {
     type: "object",
@@ -98,9 +100,12 @@ function capabilities(
     observationSchemaHash: hash(observationSchema),
     actionSchemaHash: hash(actionSchema),
     eventSchemaHash: hash(eventSchema),
-    optionalOperations: supportsBranching
-      ? ["game.snapshot", "game.replay", "game.fork"]
-      : [],
+    optionalOperations: [
+      ...(supportsBranching
+        ? (["game.snapshot", "game.replay", "game.fork"] as const)
+        : []),
+      ...(supportsCaptureEvents ? (["game.captureEvents"] as const) : [])
+    ],
     quotas: {
       maxMessageBytes: 65_536,
       maxQueuedRequests: 8,
@@ -190,9 +195,14 @@ function sandboxFixture(
     readonly onStepRequest?: () => void;
     readonly episodeId?: string;
     readonly eventId?: string;
+    readonly rngProvenanceVersion?: string;
+    readonly rngReproducible?: boolean;
     readonly engineBuild?: string;
     readonly outcome?: "loss" | "win";
     readonly supportsBranching?: boolean;
+    readonly supportsCaptureEvents?: boolean;
+    readonly emitEventNotifications?: boolean;
+    readonly captureEventsOmittedCount?: number;
     readonly branchStep?: number;
     readonly replayMismatch?: "hidden-state" | "rng" | "fork-state" | null;
     readonly branchAlternativeNotLegal?: boolean;
@@ -228,6 +238,7 @@ function sandboxFixture(
   let requestBuffer = "";
   let revision = 0;
   let eventSequence = 0;
+  let stepEvents: GameCaptureEvent[] = [];
   let cancelCount = 0;
   let cleanupCount = 0;
   let resultResolve!: (value: PlaytestSandboxResult) => void;
@@ -326,14 +337,15 @@ function sandboxFixture(
       case "game.reset": {
         revision = 0;
         eventSequence = 0;
+        stepEvents = [];
         respond(id, {
           episodeId: options.episodeId ?? "fixture-episode-1",
           revision,
           rngProvenance: {
             algorithm: "fixture-rng",
-            version: "fixture-rng-v1",
+            version: options.rngProvenanceVersion ?? "fixture-rng-v1",
             initialStateHash: "e".repeat(64),
-            reproducible: true
+            reproducible: options.rngReproducible ?? true
           }
         });
         return;
@@ -376,27 +388,48 @@ function sandboxFixture(
           });
           return;
         }
-        eventSequence += 1;
-        notify("game.event", {
-          episodeId: params.episodeId,
+        const event: GameCaptureEvent = {
+          eventId: options.eventId ?? "event-1",
+          type: "choice-applied",
+          phaseId: "tutorial",
+          step: 0,
           revision,
-          eventSequence,
-          event: {
-            eventId: options.eventId ?? "event-1",
-            type: "choice-applied",
-            phaseId: "tutorial",
-            step: 1,
+          actor: "player",
+          fields: { secret: "hidden-event-value", visibleFact: "advance" }
+        };
+        stepEvents = [event];
+        if (options.emitEventNotifications !== false) {
+          eventSequence += 1;
+          notify("game.event", {
+            episodeId: params.episodeId,
             revision,
-            actor: "player",
-            fields: { secret: "hidden-event-value", visibleFact: "advance" }
-          }
-        });
+            eventSequence,
+            event
+          });
+        }
         respond(id, {
           episodeId: params.episodeId,
           revision,
           acceptedActionId: params.actionId,
           eventIds: [options.eventId ?? "event-1"],
           terminal: true
+        });
+        return;
+      }
+      case "game.captureEvents": {
+        const events =
+          options.captureEventsOmittedCount === undefined
+            ? stepEvents.filter(
+                (event) =>
+                  event.step >= Number(params.startStep) &&
+                  event.step <= Number(params.endStep)
+              )
+            : [];
+        respond(id, {
+          episodeId: params.episodeId,
+          revision,
+          events,
+          omittedCount: options.captureEventsOmittedCount ?? 0
         });
         return;
       }
@@ -434,7 +467,14 @@ function sandboxFixture(
     const params = request.params as Record<string, unknown>;
     sentMethods.push(method);
     if (method === "game.capabilities") {
-      respond(id, capabilities(options.engineBuild, options.supportsBranching));
+      respond(
+        id,
+        capabilities(
+          options.engineBuild,
+          options.supportsBranching,
+          options.supportsCaptureEvents
+        )
+      );
       return;
     }
     if (handleBranchRequest(method, id, params)) return;
@@ -743,6 +783,90 @@ test("episode runner executes one approved episode, filters hidden observation/e
     ]);
     assert.equal(sandbox.cleanupCount(), 1);
     assert.equal(sandbox.cancelCount(), 0);
+  } finally {
+    temporary.cleanup();
+  }
+});
+
+test("episode runner retrieves exact-step events from the generic adapter binding", async () => {
+  const temporary = store();
+  const sandbox = sandboxFixture({
+    supportsCaptureEvents: true,
+    emitEventNotifications: false
+  });
+  try {
+    const result = await runPlaytestEpisode(
+      runOptions(sandbox, temporary.artifacts)
+    );
+    assert.ok(result.episode);
+    assert.equal(result.episode.status, "completed");
+    assert.deepEqual(sandbox.sentMethods, [
+      "game.capabilities",
+      "game.reset",
+      "game.observe",
+      "game.legalActions",
+      "game.step",
+      "game.captureEvents",
+      "game.outcome"
+    ]);
+    assert.equal(result.steps[0]?.eventRefs[0]?.id, "event-1");
+    assert.equal(result.steps[0]?.eventRefs[0]?.step, 0);
+    assert.ok(!result.episode.missingReasons.includes("infrastructure-failed"));
+    assert.ok(result.traceReference);
+    const trace = new TextDecoder().decode(
+      temporary.artifacts.readWindow(result.traceReference).bytes
+    );
+    assert.match(trace, /"eventId":"event-1"/u);
+    assert.doesNotMatch(trace, /hidden-event-value/u);
+  } finally {
+    temporary.cleanup();
+  }
+});
+
+test("episode runner refuses reset RNG provenance that contradicts capabilities", async () => {
+  const temporary = store();
+  try {
+    for (const mismatch of [
+      { rngProvenanceVersion: "other-rng-v1" },
+      { rngReproducible: false }
+    ]) {
+      const sandbox = sandboxFixture(mismatch);
+      const result = await runPlaytestEpisode(
+        runOptions(sandbox, temporary.artifacts)
+      );
+      assert.ok(result.episode);
+      assert.equal(result.episode.status, "infrastructure-failed");
+      assert.ok(
+        result.episode.missingReasons.includes("infrastructure-failed")
+      );
+      assert.deepEqual(sandbox.sentMethods, [
+        "game.capabilities",
+        "game.reset"
+      ]);
+    }
+  } finally {
+    temporary.cleanup();
+  }
+});
+
+test("episode runner preserves omitted events as named missing evidence", async () => {
+  const temporary = store();
+  const sandbox = sandboxFixture({
+    supportsCaptureEvents: true,
+    emitEventNotifications: false,
+    captureEventsOmittedCount: 1
+  });
+  try {
+    const result = await runPlaytestEpisode(
+      runOptions(sandbox, temporary.artifacts)
+    );
+    assert.ok(result.episode);
+    assert.ok(
+      result.episode.missingReasons.includes(
+        "missing-action-or-revision-events"
+      )
+    );
+    assert.ok(result.episode.missingReasons.includes("infrastructure-failed"));
   } finally {
     temporary.cleanup();
   }

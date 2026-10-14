@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { PlaytestBatch, PlaytestEpisode } from "@simulatorlife/autodev-core";
+import type {
+  PlaytestBatch,
+  PlaytestEpisode
+} from "@simulatorlife/autodev-core";
 
 import {
   createPlaytestMcpServer,
   createPlaytestRunControl,
-  type PlaytestMcpOptions,
-  type PlaytestingRepositoryOps
+  type PlaytestingRepositoryOps,
+  type PlaytestMcpOptions
 } from "../src/playtesting/mcp.ts";
 
 const WORKSPACE_ID = "owner/game";
@@ -139,8 +142,8 @@ function serverFor(
     sessionProvider: {
       current: () => ({
         workspaceId: WORKSPACE_ID,
-        role: "playtest-analyst",
-        actor: "analyst-1"
+        role: "operator",
+        actor: "operator-1"
       })
     },
     artifactStoreForWorkspace: () => {
@@ -198,14 +201,16 @@ test("every selected session is returned as a packet or a named receipt", async 
       episode("episode-truncated", "batch-1", "budget-truncated"),
       episode("episode-partial", "batch-1", "started")
     ],
-    [batch("batch-1", {}, [
-      "episode-complete",
-      "episode-crashed",
-      "episode-infra",
-      "episode-cancelled",
-      "episode-truncated",
-      "episode-partial"
-    ])]
+    [
+      batch("batch-1", {}, [
+        "episode-complete",
+        "episode-crashed",
+        "episode-infra",
+        "episode-cancelled",
+        "episode-truncated",
+        "episode-partial"
+      ])
+    ]
   );
   const requested = [
     "episode-complete",
@@ -226,22 +231,19 @@ test("every selected session is returned as a packet or a named receipt", async 
   const byId = new Map(
     result.receipts.map((receipt) => [receipt.episodeId, receipt])
   );
-  assert.equal(byId.get("episode-crashed")?.reason, "excluded-ineligible-session");
-  assert.match(byId.get("episode-crashed")?.detail ?? "", /crashed/u);
-  assert.match(
-    byId.get("episode-infra")?.detail ?? "",
-    /infrastructure loss/u
+  assert.equal(
+    byId.get("episode-crashed")?.reason,
+    "excluded-ineligible-session"
   );
+  assert.match(byId.get("episode-crashed")?.detail ?? "", /crashed/u);
+  assert.match(byId.get("episode-infra")?.detail ?? "", /infrastructure loss/u);
   assert.match(byId.get("episode-cancelled")?.detail ?? "", /cancelled/u);
   assert.match(byId.get("episode-truncated")?.detail ?? "", /truncated/u);
   assert.match(byId.get("episode-partial")?.detail ?? "", /partial/u);
   assert.equal(byId.get("episode-unknown")?.reason, "unknown-session");
   // The one eligible session is named too: its packet could not be read here,
   // and that is reported rather than presented as analysed.
-  assert.equal(
-    byId.get("episode-complete")?.reason,
-    "packet-unavailable"
-  );
+  assert.equal(byId.get("episode-complete")?.reason, "packet-unavailable");
   assert.equal(result.packets.length, 0);
 });
 
@@ -301,7 +303,11 @@ test("an ineligible session is not charged against the critique budget", async (
       // Only one critique slot remains for the whole selection.
       batch(
         "batch-1",
-        { reviewSelection: { reviewCap: 1 } as unknown as PlaytestBatch["reviewSelection"] },
+        {
+          reviewSelection: {
+            reviewCap: 1
+          } as unknown as PlaytestBatch["reviewSelection"]
+        },
         ["episode-crashed", "episode-complete"]
       )
     ]
@@ -348,38 +354,38 @@ test("a selection is bounded and rejects duplicates as one selection", async () 
       >;
     }
   )._registeredTools["playtest.prepareCrossSessionReview"]!.handler({
-    episodeIds: Array.from({ length: 17 }, (_, index) => `episode-${String(index)}`)
+    episodeIds: Array.from(
+      { length: 17 },
+      (_, index) => `episode-${String(index)}`
+    )
   });
-  const response = tooMany as { isError?: boolean; content: { text: string }[] };
+  const response = tooMany as {
+    isError?: boolean;
+    content: { text: string }[];
+  };
   // The bound is enforced by the input schema, before any workspace read.
   assert.equal(response.isError, true);
   assert.match(response.content[0]!.text, /playtest_invalid_request/u);
 });
 
-test("the analyst role is required for cross-session dispatch", async () => {
+test("the analyst MCP role cannot dispatch cross-session packet preparation", async () => {
   const playtestRepository = {
     getEpisode: async () => null,
     getBatch: async () => null
   } as unknown as PlaytestingRepositoryOps;
-  const runControl = createPlaytestRunControl({
-    playtestRepository,
-    artifactStoreForWorkspace: () => {
-      throw new Error("no artifacts");
-    }
-  });
   const server = createPlaytestMcpServer({
     sessionProvider: {
       current: () => ({
         workspaceId: WORKSPACE_ID,
-        role: "playtest-tester",
-        actor: "tester-1"
+        role: "playtest-analyst",
+        actor: "analyst-1"
       })
     },
     artifactStoreForWorkspace: () => {
       throw new Error("no artifacts");
     },
     playtestRepository,
-    playtestRunControl: runControl
+    playtestRunControl: null
   } as unknown as PlaytestMcpOptions);
   const result = await (
     server as unknown as {

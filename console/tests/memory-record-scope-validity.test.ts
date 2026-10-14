@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { renderToStaticMarkup } from "react-dom/server";
-import React from "react";
 import test from "node:test";
 
 import type {
@@ -8,9 +6,11 @@ import type {
   MemoryScope,
   MemoryValidity
 } from "@simulatorlife/autodev-core";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
-import { MemoryRecordsView } from "../src/features/memory/MemoryRecordsView.ts";
 import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
+import { MemoryRecordsView } from "../src/features/memory/MemoryRecordsView.ts";
 
 /**
  * How a record names its scope, and when its claim is in force.
@@ -43,7 +43,7 @@ const TIMESTAMP = "2026-10-01T00:00:00.000Z";
 function record(
   id: string,
   scope: MemoryScope,
-  validity: MemoryValidity = { state: "verified", evidence: [] }
+  validity?: MemoryValidity
 ): MemoryRecord {
   return {
     id,
@@ -51,7 +51,7 @@ function record(
     status: "active",
     scope,
     claim: `Claim ${id}.`,
-    validity,
+    validity: validity ?? { state: "verified", evidence: [] },
     provenance: {
       experienceIds: [],
       evidence: [],

@@ -6,9 +6,10 @@ import {
   type PlaytestEvidenceCrossSessionContext,
   type PlaytestEvidenceCrossSessionEpisode,
   type PlaytestEvidenceMetricIntent,
+  type PlaytestEvidenceMetricIntentV2,
   type PlaytestEvidenceOmittedArtifact,
   type PlaytestEvidencePacket,
-  type PlaytestEvidencePacketV2,
+  type PlaytestEvidencePacketV3,
   type PlaytestEvidenceSelectionReason,
   type PlaytestEvidenceTraceEvent,
   type PlaytestEvidenceTraceStep,
@@ -29,6 +30,7 @@ import {
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1,
+  PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2,
   PLAYTESTS_GAME_MODES,
   PLAYTESTS_MISSING_REASONS
 } from "./types.ts";
@@ -107,6 +109,25 @@ const PACKET_KEYS = new Set([
 const PACKET_V1_KEYS = new Set(
   [...PACKET_KEYS].filter((key) => key !== "crossSessionContext")
 );
+const METRIC_INTENT_V2_KEYS = new Set([
+  "metricId",
+  "version",
+  "mechanicKey",
+  "audience",
+  "numerator",
+  "denominator",
+  "unit",
+  "polarity",
+  "targetBand",
+  "exposurePredicate",
+  "eventFields"
+]);
+const METRIC_INTENT_V3_KEYS = new Set([
+  ...METRIC_INTENT_V2_KEYS,
+  "analysisUnit",
+  "aggregationWindow",
+  "aggregation"
+]);
 
 interface SelectionRange {
   readonly startStep: number;
@@ -442,7 +463,10 @@ function metricIntentFor(
       polarity: metric.polarity,
       targetBand: metric.targetBand,
       exposurePredicate: metric.exposurePredicate,
-      eventFields: metric.eventFields
+      eventFields: metric.eventFields,
+      analysisUnit: metric.analysisUnit,
+      aggregationWindow: metric.aggregationWindow,
+      aggregation: metric.aggregation
     }));
 }
 
@@ -683,7 +707,7 @@ function buildPacketValue(input: {
   readonly windows: readonly PlaytestEvidenceWindow[];
   readonly omitted: readonly PlaytestOmittedEvidenceWindow[];
   readonly suppliedArtifacts: PlaytestEvidencePacket["suppliedArtifacts"];
-}): PlaytestEvidencePacketV2 {
+}): PlaytestEvidencePacketV3 {
   const { data, crossSessionContext, windows, omitted, suppliedArtifacts } =
     input;
   const episode = data.episode;
@@ -746,7 +770,7 @@ function buildPacketValue(input: {
 /** Freeze the exact selected evidence body before an analyst is called. */
 export function buildPlaytestEvidencePacket(
   input: BuildPlaytestEvidencePacketInput
-): PlaytestEvidencePacketV2 {
+): PlaytestEvidencePacketV3 {
   assertPlaytestEvidencePacketInputs(input);
   const maxWindows = input.maxWindows ?? 16;
   const maxSelectedSteps = input.maxSelectedSteps ?? 128;
@@ -1031,6 +1055,7 @@ export function assertPlaytestEvidencePacket(
   }
   if (
     (value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA &&
+      value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2 &&
       value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1) ||
     !isPlaytestEvidencePacketId(value.packetId) ||
     !isText(value.workspaceId) ||
@@ -1085,7 +1110,11 @@ export function assertPlaytestEvidencePacket(
   ) {
     throw new TypeError("Playtest evidence packet fields are invalid.");
   }
-  if (value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA) {
+  assertPacketMetricIntent(
+    value.metricIntent,
+    value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA
+  );
+  if (value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1) {
     assertCrossSessionContext(value.crossSessionContext, value);
   }
   assertPacketArtifactProvenance(value as unknown as PlaytestEvidencePacket);
@@ -1204,6 +1233,71 @@ export function assertPlaytestEvidencePacket(
     throw new RangeError(
       "Playtest evidence packet exceeds its window/token budget."
     );
+  }
+}
+
+function assertPacketMetricIntent(
+  value: unknown,
+  hasAggregationSemantics: boolean
+): asserts value is readonly (
+  PlaytestEvidenceMetricIntent | PlaytestEvidenceMetricIntentV2
+)[] {
+  if (!Array.isArray(value) || value.length > 1000) {
+    throw new TypeError("Evidence packet metric intent is malformed.");
+  }
+  const keys = hasAggregationSemantics
+    ? METRIC_INTENT_V3_KEYS
+    : METRIC_INTENT_V2_KEYS;
+  const metricIds = new Set<string>();
+  for (const intent of value) {
+    if (
+      !isRecord(intent) ||
+      Object.keys(intent).length !== keys.size ||
+      Object.keys(intent).some((key) => !keys.has(key)) ||
+      !isText(intent.metricId) ||
+      !isCount(intent.version, Number.MAX_SAFE_INTEGER) ||
+      intent.version === 0 ||
+      !isText(intent.mechanicKey) ||
+      !isText(intent.audience) ||
+      !isText(intent.numerator, 2000) ||
+      !isText(intent.denominator, 2000) ||
+      !isText(intent.unit) ||
+      !isText(intent.polarity) ||
+      !Array.isArray(intent.targetBand) ||
+      intent.targetBand.length !== 2 ||
+      intent.targetBand.some(
+        (bound) => bound !== null && typeof bound !== "number"
+      ) ||
+      !isText(intent.exposurePredicate) ||
+      !Array.isArray(intent.eventFields) ||
+      intent.eventFields.some((field) => !isText(field)) ||
+      metricIds.has(intent.metricId)
+    ) {
+      throw new TypeError("Evidence packet metric intent is malformed.");
+    }
+    if (
+      hasAggregationSemantics &&
+      (![
+        "episode",
+        "decision",
+        "cohort",
+        "learner-identity",
+        "participant"
+      ].includes(String(intent.analysisUnit)) ||
+        !["whole-episode", "phase", "session", "response"].includes(
+          String(intent.aggregationWindow)
+        ) ||
+        ![
+          "ratio-of-sums-within-scenario",
+          "native-item-mean-and-category-distribution",
+          "descriptive"
+        ].includes(String(intent.aggregation)))
+    ) {
+      throw new TypeError(
+        "Evidence packet metric aggregation semantics are malformed."
+      );
+    }
+    metricIds.add(intent.metricId);
   }
 }
 
@@ -1446,7 +1540,7 @@ function assertEpisodeLocatorWithinPacket(
     return;
   }
   const siblingEpisodes =
-    packet.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA &&
+    "crossSessionContext" in packet &&
     packet.crossSessionContext.status === "included"
       ? packet.crossSessionContext.sessions
       : [];

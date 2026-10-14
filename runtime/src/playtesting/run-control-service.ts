@@ -3,6 +3,7 @@ import { ConfigRepository } from "@simulatorlife/autodev-data";
 import { PlaytestRepository } from "@simulatorlife/autodev-data/playtesting";
 import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
 
+import { launchPlaytestAnalystProcess } from "./analyst-process.ts";
 import { PlaytestArtifactStore } from "./artifact-store.ts";
 import { createPlaytestRunControl, type PlaytestRunOwner } from "./mcp.ts";
 
@@ -30,7 +31,8 @@ export function getDefaultPlaytestRunControl(): PlaytestRunOwner {
     },
     approvalRepository,
     playtestRepository,
-    readWorkspaceCatalog: () => configRepository.readWorkspaceCatalog()
+    readWorkspaceCatalog: () => configRepository.readWorkspaceCatalog(),
+    launchAnalystProcess: launchPlaytestAnalystProcess
   });
   return defaultRunControl;
 }

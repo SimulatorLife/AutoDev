@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   type KillSignal,
   LABEL_ANTIGRAVITY_PROXY,
+  LABEL_AUTODEV_CONSOLE,
   LABEL_CLAUDE_BRIDGE,
   LABEL_COPILOT_PROXY,
   LABEL_MINIMAX_PROXY,
@@ -16,6 +17,7 @@ import {
 } from "@simulatorlife/autodev-runtime/platform/service-restart";
 
 const PORTS: Record<ManagedServiceLabel, number> = {
+  [LABEL_AUTODEV_CONSOLE]: 3300,
   [LABEL_MODEL_ROUTER]: 4100,
   [LABEL_CLAUDE_BRIDGE]: 4000,
   [LABEL_MINIMAX_PROXY]: 18_765,
@@ -23,6 +25,7 @@ const PORTS: Record<ManagedServiceLabel, number> = {
   [LABEL_COPILOT_PROXY]: 4003
 };
 const JOB_PIDS: Record<ManagedServiceLabel, number> = {
+  [LABEL_AUTODEV_CONSOLE]: 600,
   [LABEL_MODEL_ROUTER]: 100,
   [LABEL_CLAUDE_BRIDGE]: 200,
   [LABEL_MINIMAX_PROXY]: 300,
@@ -37,6 +40,7 @@ function options(
     repositoryRoot: "/repo",
     home: "/home",
     codexHome: "/home/.codex",
+    consolePort: 3300,
     readyAttempts: 3,
     readyDelayMs: 0,
     ...overrides
@@ -115,6 +119,9 @@ function deps(
     readFile: () => "",
     logTail: (filePath) => [`tail of ${filePath}`],
     commandAvailable: () => true,
+    buildConsole: () => {
+      calls.push("build-console");
+    },
     probe: async (url, jsonBody) => {
       probes.push(jsonBody === undefined ? url : `${url} ${jsonBody}`);
       return true;
@@ -181,6 +188,16 @@ test("a supervised restart reloads each service with bootstrap alone and runs no
     "RunAtLoad already starts the job; kickstart -k would kill it mid-startup"
   );
   assert.deepEqual(fake.runs, [], "launchd already verified every service");
+  assert.equal(
+    fake.calls.filter((call) => call === "build-console").length,
+    1,
+    "a managed restart builds exactly one Console artifact"
+  );
+  assert.ok(
+    fake.calls.indexOf("build-console") <
+      fake.calls.indexOf(`bootout:${LABEL_MODEL_ROUTER}`),
+    "the artifact is prepared only after service ownership is established and before the Runtime reload"
+  );
   assert.match(stderr, /supervised by launchd/u);
   assert.equal(stderr.includes("is not running"), false);
 });
@@ -278,6 +295,97 @@ test("a router port answered by a process other than the launchd job fails the i
   assert.match(
     stderr,
     /port 4100 is served by pid 68804, not the launchd job \(pid 100\)/u
+  );
+});
+
+test("the Console must become healthy on its managed port before install succeeds", async () => {
+  const base = deps();
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options(), {
+      ...base,
+      probe: async (url) => {
+        base.probes.push(url);
+        return !url.endsWith("/api/health");
+      }
+    })
+  );
+  assert.equal(status, 1);
+  assert.match(stderr, /com\.codex\.autodev-console is not running/u);
+  assert.match(stderr, /did not become ready/u);
+  assert.ok(base.probes.includes("http://127.0.0.1:3300/api/health"));
+});
+
+test("the Console listener must belong to the freshly loaded LaunchAgent", async () => {
+  const base = deps({}, { loaded: new Set([LABEL_AUTODEV_CONSOLE]) });
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options(), {
+      ...base,
+      listeningPids: (port) =>
+        port === 3300 ? [68_804] : base.listeningPids(port)
+    })
+  );
+  assert.equal(status, 1);
+  assert.match(
+    stderr,
+    /Console port 3300 is not owned by its managed LaunchAgent/u
+  );
+  assert.equal(base.calls.includes("build-console"), false);
+});
+
+test("an unowned Console listener prevents build publication and service restart", async () => {
+  const base = deps();
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options(), {
+      ...base,
+      listeningPids: (port) =>
+        port === 3300 ? [68_804] : base.listeningPids(port)
+    })
+  );
+  assert.equal(status, 1);
+  assert.match(stderr, /Console port 3300 is held by pid 68804 outside/u);
+  assert.equal(base.calls.includes("build-console"), false);
+  assert.equal(
+    base.calls.some((call) => call.startsWith("bootout:")),
+    false
+  );
+});
+
+test("a missing Console LaunchAgent or launcher prevents build publication", async () => {
+  for (const missingPath of [
+    "/home/Library/LaunchAgents/com.codex.autodev-console.plist",
+    "/home/.codex/hooks/run-codex-console.sh"
+  ]) {
+    const base = deps({ fileExists: (filePath) => filePath !== missingPath });
+    const [status, stderr] = await captureStderr(() =>
+      restartServices(options(), base)
+    );
+    assert.equal(status, 1);
+    assert.match(stderr, /must be materialized before publishing/u);
+    assert.equal(base.calls.includes("build-console"), false);
+    assert.equal(
+      base.calls.some((call) => call.startsWith("bootout:")),
+      false
+    );
+  }
+});
+
+test("a failed staged Console build leaves every running service untouched", async () => {
+  let buildAttempts = 0;
+  const base = deps({
+    buildConsole: () => {
+      buildAttempts += 1;
+      throw new Error("synthetic build failure");
+    }
+  });
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options(), base)
+  );
+  assert.equal(status, 1);
+  assert.match(stderr, /Console production build failed/u);
+  assert.equal(buildAttempts, 1);
+  assert.equal(
+    base.calls.some((call) => call.startsWith("bootout:")),
+    false
   );
 });
 
@@ -464,6 +572,15 @@ test("a bridge loaded from an earlier install path under the same CODEX_HOME is 
       `bootstrap:/home/Library/LaunchAgents/${LABEL_COPILOT_PROXY}.plist`
     )
   );
+  assert.ok(
+    fake.calls.indexOf(
+      `bootstrap:/home/Library/LaunchAgents/${LABEL_MODEL_ROUTER}.plist`
+    ) <
+      fake.calls.indexOf(
+        `bootstrap:/home/Library/LaunchAgents/${LABEL_AUTODEV_CONSOLE}.plist`
+      ),
+    "the Console starts only after Runtime so its backend compatibility gate sees the new contract"
+  );
 });
 
 test("a runtime rooted at another CODEX_HOME is left untouched", async () => {
@@ -475,13 +592,14 @@ test("a runtime rooted at another CODEX_HOME is left untouched", async () => {
   assert.deepEqual(fake.runs, []);
 });
 
-test("a missing launchctl starts bridges through direct ensure hooks", async () => {
+test("a missing launchctl refuses to report a Console restart as successful", async () => {
   const fake = deps({ commandAvailable: () => false });
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), fake)
   );
-  assert.equal(status, 0);
+  assert.equal(status, 1);
   assert.match(stderr, /launchctl unavailable \(sandbox\?\)/u);
+  assert.match(stderr, /Console service cannot be safely restarted/u);
   assert.deepEqual(fake.calls, []);
   assert.equal(
     fake.runs.some((run) => run.args.at(-1)?.includes("otel-collector")),

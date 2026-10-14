@@ -16,8 +16,8 @@ import test from "node:test";
 import {
   buildPlaytestFindingIdentity,
   buildPlaytestIssueDrafts,
-  playtestIssueReportingRefusal,
-  type PlaytestFinding
+  type PlaytestFinding,
+  playtestIssueReportingRefusal
 } from "../src/playtesting/index.ts";
 
 const FINGERPRINT = "a".repeat(64);
@@ -145,7 +145,11 @@ test("a hypothesis is never drafted as a confirmed defect", () => {
 });
 
 test("every draft states that AutoDev filed nothing", () => {
-  for (const evidenceStatus of ["verified", "corroborated", "hypothesis"] as const) {
+  for (const evidenceStatus of [
+    "verified",
+    "corroborated",
+    "hypothesis"
+  ] as const) {
     const draft = buildPlaytestIssueDrafts({
       configuredReporting: "review",
       approvedReporting: "review",
@@ -243,11 +247,17 @@ test("a draft carries the finding's evidence verbatim, not a summary of it", () 
   // is what a human reads, the fields are what a tool records.
   assert.match(
     draft.body,
-    new RegExp(`Evidence status: \\*\\*${draft.evidenceStatus}\\*\\*`, "u")
+    new RegExp(
+      String.raw`Evidence status: \*\*${draft.evidenceStatus}\*\*`,
+      "u"
+    )
   );
   assert.match(
     draft.body,
-    new RegExp(`Verification stage: \\*\\*${draft.verificationStage}\\*\\*`, "u")
+    new RegExp(
+      String.raw`Verification stage: \*\*${draft.verificationStage}\*\*`,
+      "u"
+    )
   );
   assert.match(draft.body, new RegExp(draft.findingId, "u"));
   assert.match(draft.body, new RegExp(draft.fingerprint, "u"));

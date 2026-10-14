@@ -73,6 +73,29 @@ export interface SkillsViewProps {
   readonly saveOutcome?: SkillAssignmentSaveOutcome | undefined;
 }
 
+function skillAssignmentSaveNotice(
+  saveOutcome: SkillAssignmentSaveOutcome | undefined
+): React.JSX.Element | null {
+  if (saveOutcome === undefined) return null;
+  const isUnconfirmed =
+    saveOutcome === "failed" ||
+    saveOutcome === "pending" ||
+    saveOutcome === "not-observed" ||
+    saveOutcome === "unconfirmed";
+  return React.createElement(
+    "p",
+    {
+      className: isUnconfirmed ? CALLOUT_WARNING_CLASS : CALLOUT_ERROR_CLASS,
+      role: isUnconfirmed ? "status" : "alert",
+      "data-testid": isUnconfirmed
+        ? "skill-assignment-status"
+        : "skill-assignment-failure",
+      "data-save-outcome": saveOutcome
+    },
+    SAVE_OUTCOME_MESSAGES[saveOutcome]
+  );
+}
+
 export function SkillsView({
   skills,
   eligibility,
@@ -110,7 +133,6 @@ export function SkillsView({
     skills,
     sourceValidity
   });
-
   const columns: ColumnDef<SkillDefinition>[] = [
     {
       id: "name",
@@ -154,7 +176,14 @@ export function SkillsView({
       weight: 360,
       cell: (skill) => {
         const item = eligibility.find((e) => e.skill === skill.name);
-        if (executionContractRevision === null || unavailable !== null) {
+        if (executionContractRevision === null) {
+          return chipList({
+            items: [],
+            emptyLabel: NOT_OBSERVED_LABEL,
+            testId: "skill-roles"
+          });
+        }
+        if (unavailable !== null) {
           return chipList({
             items: item?.roles ?? [],
             emptyLabel:
@@ -177,7 +206,7 @@ export function SkillsView({
       weight: 146,
       cell: (skill) => {
         const item = eligibility.find((e) => e.skill === skill.name);
-        if (item === undefined) {
+        if (item === undefined || executionContractRevision === null) {
           return React.createElement(StatusBadge, {
             status: NOT_OBSERVED_STATUS
           });
@@ -306,18 +335,7 @@ export function SkillsView({
         },
         "Agent Skills"
       ),
-      saveOutcome === undefined
-        ? null
-        : React.createElement(
-            "p",
-            {
-              className: CALLOUT_ERROR_CLASS,
-              role: "alert",
-              "data-testid": "skill-assignment-failure",
-              "data-save-outcome": saveOutcome
-            },
-            SAVE_OUTCOME_MESSAGES[saveOutcome]
-          ),
+      skillAssignmentSaveNotice(saveOutcome),
       unavailable === null
         ? null
         : React.createElement(

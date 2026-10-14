@@ -15,8 +15,8 @@ import {
 import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
 import {
   makeRequest,
-  responseBody,
   type RecordedResponse,
+  responseBody,
   responseRecorder
 } from "./support/control-api-harness.ts";
 

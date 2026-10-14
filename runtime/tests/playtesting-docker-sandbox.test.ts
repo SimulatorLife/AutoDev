@@ -25,6 +25,8 @@ import test from "node:test";
 
 import {
   defaultPlaytestRegistryDefaults,
+  PLAYTESTS_ADAPTER_BINDING_SCHEMA,
+  PLAYTESTS_GENERIC_ADAPTER_COMMAND,
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
 
@@ -40,8 +42,27 @@ import {
   preparePlaytestSandbox,
   runPlaytestSandbox
 } from "../src/playtesting/docker-sandbox.ts";
+import { playtestManifestHash } from "../src/playtesting/hash-chain.ts";
 
-const STANDARD_COMMAND = ["/usr/bin/python3", "adapter.py"] as const;
+const OBSERVATION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: { room: { type: "string" } },
+  required: ["room"]
+};
+const ACTION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: { actionId: { type: "string" } },
+  required: ["actionId"]
+};
+const EVENT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: { kind: { type: "string" } },
+  required: ["kind"]
+};
+const STANDARD_COMMAND = PLAYTESTS_GENERIC_ADAPTER_COMMAND;
 
 function fixtureRubric(): string {
   return (
@@ -50,7 +71,7 @@ function fixtureRubric(): string {
       workspaceId: "fixture/game",
       audience: "synthetic-fixture-only",
       registryVersion: "docker-sandbox-fixture-v2",
-      eventSchemaHash: "d".repeat(64),
+      eventSchemaHash: playtestManifestHash(EVENT_SCHEMA),
       defaults: {
         ...defaultPlaytestRegistryDefaults(),
         audience: "synthetic-fixture-only",
@@ -93,11 +114,14 @@ function fixtureRubric(): string {
   );
 }
 
-function configFor(command: readonly string[]): string {
+function configFor(): string {
   return (
     JSON.stringify({
       schemaVersion: 1,
-      adapter: { transport: "stdio-jsonl", command },
+      adapter: {
+        transport: "stdio-jsonl",
+        command: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND]
+      },
       modes: ["headless"],
       scenarios: ["default"],
       scenarioFamilies: { default: "default" },
@@ -130,7 +154,7 @@ function configFor(command: readonly string[]): string {
   );
 }
 
-function repository(command: readonly string[] = STANDARD_COMMAND): {
+function repository(): {
   readonly root: string;
   readonly cleanup: () => void;
 } {
@@ -138,13 +162,15 @@ function repository(command: readonly string[] = STANDARD_COMMAND): {
     path.join(realpathSync(tmpdir()), "autodev-playtest-repo-")
   );
   mkdirSync(path.join(root, ".autodev"));
-  writeFileSync(path.join(root, "adapter.py"), "print('adapter')\n");
-  writeFileSync(path.join(root, ".autodev", "playtest.config.json"), configFor(command));
+  writeFileSync(
+    path.join(root, ".autodev", "playtest.config.json"),
+    configFor()
+  );
   writeFileSync(
     path.join(root, ".autodev", "playtest.observation.json"),
     JSON.stringify({
       schemaVersion: 1,
-      schemaHash: "d".repeat(64),
+      schemaHash: playtestManifestHash(OBSERVATION_SCHEMA),
       mode: "headless",
       cohort: "fixture",
       visibilityMode: "structured",
@@ -161,14 +187,48 @@ function repository(command: readonly string[] = STANDARD_COMMAND): {
       conformanceFixtureHash: null
     }) + "\n"
   );
-  writeFileSync(path.join(root, ".autodev", "playtest.rubric.json"), fixtureRubric());
+  writeFileSync(
+    path.join(root, ".autodev", "playtest.binding.json"),
+    JSON.stringify(
+      {
+        schema: PLAYTESTS_ADAPTER_BINDING_SCHEMA,
+        schemaVersion: 1,
+        tier: "declarative",
+        entry: "node-fixture-game.mjs",
+        factory: "createGame",
+        schemas: {
+          observation: OBSERVATION_SCHEMA,
+          action: ACTION_SCHEMA,
+          event: EVENT_SCHEMA
+        },
+        bindings: {
+          reset: { export: "reset" },
+          observe: { export: "observe" },
+          legalActions: { export: "legalActions" },
+          step: { export: "step" },
+          outcome: { export: "outcome" }
+        }
+      },
+      null,
+      2
+    ) + "\n"
+  );
+  writeFileSync(
+    path.join(root, ".autodev", "node-fixture-game.mjs"),
+    "export function createGame() { return {}; }\n"
+  );
+  writeFileSync(
+    path.join(root, ".autodev", "playtest.rubric.json"),
+    fixtureRubric()
+  );
   execFileSync("git", ["init", "--quiet", root]);
   execFileSync("git", [
     "-C",
     root,
     "add",
-    "adapter.py",
     ".autodev/playtest.config.json",
+    ".autodev/playtest.binding.json",
+    ".autodev/node-fixture-game.mjs",
     ".autodev/playtest.observation.json",
     ".autodev/playtest.rubric.json"
   ]);
@@ -190,10 +250,7 @@ function repository(command: readonly string[] = STANDARD_COMMAND): {
   };
 }
 
-function approval(
-  root: string,
-  command: readonly string[] = STANDARD_COMMAND
-): WorkspacePlaytestApproval {
+function approval(root: string): WorkspacePlaytestApproval {
   const buildSha = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], {
     encoding: "utf8"
   }).trim();
@@ -205,12 +262,10 @@ function approval(
     checkoutRoot: realpathSync(root),
     buildSha,
     gameBuild: "fixture-game-build",
-    playtestConfigHash: createHash("sha256")
-      .update(configFor(command))
-      .digest("hex"),
+    playtestConfigHash: createHash("sha256").update(configFor()).digest("hex"),
     adapterImageDigest: `ghcr.io/fixture/game@sha256:${"a".repeat(64)}`,
     workingDirectory: ".",
-    adapterCommand: [...command],
+    adapterCommand: [...STANDARD_COMMAND],
     allowedScenarios: ["default"],
     allowedPolicies: ["heuristic"],
     limits: {
@@ -351,7 +406,7 @@ test("sandbox approval pins a clean checkout, command, image, and bounded resour
     const prepared = preparePlaytestSandbox(approval(fixture.root));
     assert.equal(prepared.checkoutRoot, fixture.root);
     assert.match(prepared.checkoutSha, /^[a-f\d]{40}$/u);
-    assert.deepEqual(prepared.command, ["/usr/bin/python3", "adapter.py"]);
+    assert.deepEqual(prepared.command, PLAYTESTS_GENERIC_ADAPTER_COMMAND);
     assert.equal(prepared.workingDirectory, fixture.root);
   } finally {
     fixture.cleanup();
@@ -518,7 +573,15 @@ test("Docker argv enforces a local, read-only, networkless container with hard q
       assert.ok(joined.includes("target=/workspace,readonly"));
       assert.ok(joined.includes("/artifacts:rw,noexec,nosuid,nodev"));
       assert.ok(joined.includes("ghcr.io/fixture/game@sha256:"));
-      assert.ok(joined.includes("--entrypoint /usr/bin/python3"));
+      const entrypointIndex = args.indexOf("--entrypoint");
+      assert.notEqual(entrypointIndex, -1);
+      assert.equal(
+        args[entrypointIndex + 1],
+        PLAYTESTS_GENERIC_ADAPTER_COMMAND[0]
+      );
+      assert.ok(
+        args.includes("AUTODEV_PLAYTEST_ENGINE_BUILD=" + prepared.gameBuild)
+      );
       assert.doesNotMatch(joined, /--gpus|DOCKER_HOST=.*tcp/u);
       assert.doesNotMatch(joined, /--env .*API_KEY|--env .*TOKEN/u);
     });
@@ -631,7 +694,11 @@ test("adversarial: docker unavailable and remote sockets fail closed", async () 
       () => assertLocalDockerAvailable("/no/such/socket.sock"),
       PlaytestSandboxUnavailableError
     );
-    const nonSocket = path.join(fixture.root, "adapter.py");
+    const nonSocket = path.join(
+      fixture.root,
+      ".autodev",
+      "node-fixture-game.mjs"
+    );
     assert.throws(
       () => assertLocalDockerAvailable(nonSocket),
       PlaytestSandboxUnavailableError
@@ -671,17 +738,19 @@ test("adversarial: pinned-image enforcement prevents execution without local ima
   }
 });
 
-test("adversarial: command arguments and metacharacters are preserved without shell", async () => {
+test("adversarial: Docker never uses a shell when serializing argv", async () => {
   const unescapedCommand = [
     "/bin/bash",
     "-c",
     "echo 'hello $WORLD' > /artifacts/out.txt; rm -rf /",
     "arg with spaces & pipes |"
   ];
-  const fixture = repository(unescapedCommand);
+  const fixture = repository();
   try {
-    const approved = approval(fixture.root, unescapedCommand);
-    const prepared = preparePlaytestSandbox(approved);
+    const approved = preparePlaytestSandbox(approval(fixture.root));
+    // Inject an adversarial argv vector at the low-level launcher seam. The
+    // approved-config path only permits AutoDev's generic adapter command.
+    const prepared = { ...approved, command: unescapedCommand };
 
     let capturedCommand = "";
     let capturedArgs: readonly string[] = [];

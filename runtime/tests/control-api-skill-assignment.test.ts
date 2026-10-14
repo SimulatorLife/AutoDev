@@ -186,7 +186,26 @@ test("a promoted skill can be assigned to a role, and the read reflects it", asy
       }
     );
     assert.equal(assigned.status, 200);
-    assert.deepEqual(assigned.body?.roles, ["worker"]);
+    assert.equal(assigned.body?.schema, "autodev-control-skill-assignment-v2");
+    assert.deepEqual(assigned.body?.desiredRoles, ["worker"]);
+    assert.deepEqual(assigned.body?.actualRoles, ["worker"]);
+    assert.equal(typeof assigned.body?.revision, "string");
+    const reconciliation = assigned.body?.reconciliation as {
+      status: {
+        convergence: string;
+        desiredGeneration: string | null;
+        observedGeneration: string | null;
+      };
+      history: readonly { action: string }[];
+    };
+    assert.equal(reconciliation.status.convergence, "converged");
+    assert.ok(reconciliation.status.desiredGeneration);
+    assert.equal(
+      reconciliation.status.observedGeneration,
+      reconciliation.status.desiredGeneration
+    );
+    assert.equal(reconciliation.history[0]?.action, "assign_skill_roles");
+    assert.equal(typeof assigned.body?.diff, "object");
     assert.deepEqual(h.skillRoles("worker"), ["release-checklist"]);
     assert.deepEqual(h.skillRoles("orchestrator"), []);
 
@@ -195,6 +214,41 @@ test("a promoted skill can be assigned to a role, and the read reflects it", asy
     // "no roles", and the assignment would appear to have done nothing.
     const after = await h.call("GET", "/control/skills");
     assert.deepEqual(rolesFromCatalog(after.body), ["worker"]);
+  } finally {
+    h.restore();
+  }
+});
+
+test("an observed empty assignment is distinct from missing observation", async () => {
+  const h = harness();
+  try {
+    const response = await h.call(
+      "PATCH",
+      "/control/skills/release-checklist",
+      {
+        expectedRevision: h.revision(),
+        roles: []
+      }
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body?.desiredRoles, []);
+    assert.deepEqual(response.body?.actualRoles, []);
+    const reconciliation = response.body?.reconciliation as {
+      status: {
+        convergence: string;
+        desiredGeneration: string | null;
+        observedGeneration: string | null;
+      };
+      history: readonly { action: string }[];
+    };
+    assert.equal(reconciliation.status.convergence, "converged");
+    assert.ok(reconciliation.status.desiredGeneration);
+    assert.equal(
+      reconciliation.status.desiredGeneration,
+      reconciliation.status.observedGeneration
+    );
+    assert.equal(reconciliation.history[0]?.action, "assign_skill_roles");
+    assert.equal(response.body?.schema, "autodev-control-skill-assignment-v2");
   } finally {
     h.restore();
   }

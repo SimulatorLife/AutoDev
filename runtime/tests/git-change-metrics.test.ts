@@ -181,6 +181,15 @@ test("an unclassifiable change status makes the commit partial", () => {
   assert.deepEqual(parsed.statuses, ["added"]);
 });
 
+test("malformed numstat counts are partial evidence, not parseInt prefixes", () => {
+  const parsed = parseNumstat("2lines\t3\tmalformed.txt\n4\t1\tvalid.txt\n");
+  assert.deepEqual(parsed, {
+    linesAdded: 4,
+    linesRemoved: 1,
+    partial: true
+  });
+});
+
 test("a commit git cannot read is omitted, never reported as zero changes", async () => {
   await withGitRepository(async (root) => {
     const changes = await measureGitCommitChanges({
@@ -262,6 +271,16 @@ test("the agent identity is bounded and round-trips through a real commit", asyn
       provider: "codex"
     });
 
+    const hyphenatedIdentity = gitCommitIdentity({
+      role: "playtest-analyst",
+      provider: "claude-code"
+    });
+    assert.ok(hyphenatedIdentity);
+    assert.deepEqual(gitCommitActorFromEmail(hyphenatedIdentity.email), {
+      role: "playtest-analyst",
+      provider: "claude-code"
+    });
+
     // An unknown role produces no identity at all, so the commit stays the
     // user's rather than becoming a fabricated agent commit.
     assert.equal(
@@ -275,7 +294,23 @@ test("the agent identity is bounded and round-trips through a real commit", asyn
         ?.email,
       "autodev-subagent-other@agents.autodev.local"
     );
+    const collapsedProvider = gitCommitIdentity({
+      role: "subagent",
+      provider: "some-random-vendor"
+    });
+    assert.ok(collapsedProvider);
+    assert.deepEqual(gitCommitActorFromEmail(collapsedProvider.email), {
+      role: "subagent",
+      provider: "other"
+    });
     // A human email is not an AutoDev identity.
     assert.equal(gitCommitActorFromEmail("dev@example.com"), null);
+    assert.equal(
+      gitCommitActorFromEmail(
+        `autodev-${"a".repeat(10_000)}-codex@agents.autodev.local`
+      ),
+      null,
+      "untrusted commit email input is length-bounded before parsing"
+    );
   });
 });

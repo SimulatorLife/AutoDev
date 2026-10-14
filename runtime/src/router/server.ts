@@ -11,12 +11,17 @@ import { pathToFileURL } from "node:url";
 import { beginShutdown } from "@simulatorlife/autodev-runtime/router/lifecycle";
 import {
   loadRouterState,
-  persistRouterStateNow
+  persistRouterStateNow,
+  scheduleRouterStatePersist
 } from "@simulatorlife/autodev-runtime/router/persistence";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
-import { handleControlApiRequest } from "../control-api/index.ts";
+import {
+  handleControlApiRequest,
+  setControlApiProviderModelDiscoverySource
+} from "../control-api/index.ts";
 import { shutdownDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
+import { createProviderModelDiscoveryService } from "../providers/model-discovery.ts";
 import { codexState, handle, HOST, PORT, refreshCodexState } from "./http.ts";
 import { closeOrchestratorMemoryHost } from "./memory-injection.ts";
 import {
@@ -145,6 +150,14 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   let controlServer: Server | null = null;
   let cleanedUp = false;
   let playtestingShutdown: Promise<void> | null = null;
+  const modelDiscovery = IS_MAIN
+    ? createProviderModelDiscoveryService({
+        onSnapshotChanged: scheduleRouterStatePersist
+      })
+    : null;
+  if (modelDiscovery) {
+    setControlApiProviderModelDiscoverySource(() => modelDiscovery.snapshot());
+  }
   const closePlaytestingSafely = (): Promise<void> => {
     if (playtestingShutdown !== null) return playtestingShutdown;
     playtestingShutdown = shutdownDefaultPlaytestRunControl().catch(() => {
@@ -188,6 +201,8 @@ export function startRouterServer(port = PORT, host = HOST): Server {
       codexState.livePollStarted = false;
     }
     if (controlServer?.listening) controlServer.close();
+    modelDiscovery?.stop();
+    if (modelDiscovery) setControlApiProviderModelDiscoverySource(null);
     void closePlaytestingSafely();
     void closeMemoryHostSafely();
     process.off("uncaughtException", onUncaughtException);
@@ -212,6 +227,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
           codexState.collector.startLivePoll();
         }
         void refreshCodexState();
+        modelDiscovery?.start();
         const controlListener = configuredControlApiListener();
         if (controlListener) {
           controlServer = createControlApiServer();

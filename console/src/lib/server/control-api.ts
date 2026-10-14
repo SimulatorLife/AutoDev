@@ -59,6 +59,8 @@ import {
   type ControlApiProviderAgentLimits,
   type ControlApiProviderEnabledPatchResponse,
   type ControlApiProviderLimitsPatchResponse,
+  type ControlApiProviderModelDiscovery,
+  type ControlApiProviderModelsResponse,
   type ControlApiProviderRolePatchResponse,
   type ControlApiProvidersResponse,
   type ControlApiRoutingResponse,
@@ -81,6 +83,7 @@ import {
   PROVIDER_ROLES,
   type ProviderRole,
   type ProviderRolePriority,
+  type ReconciliationDiff,
   type ReconciliationStatus
 } from "@simulatorlife/autodev-core";
 
@@ -578,6 +581,7 @@ export function postControlApi<T>(
 export const CONTROL_API_PATHS = {
   agents: "/control/agents",
   providers: "/control/providers",
+  providerModels: "/control/provider-models",
   models: "/control/models",
   mcps: "/control/mcps",
   tools: "/control/tools",
@@ -1106,6 +1110,124 @@ export async function fetchModels(
     code: "autodev_control_api_invalid_models_response",
     message:
       "AutoDev Control API returned an incompatible Models response; the Console requires the v2 model contract."
+  };
+}
+
+const PROVIDER_MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u;
+
+function isCanonicalTimestamp(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    Number.isFinite(Date.parse(value)) &&
+    new Date(value).toISOString() === value
+  );
+}
+
+function isDiscoveredProviderModel(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    !PROVIDER_MODEL_ID_PATTERN.test(value.id) ||
+    value.id.trim() !== value.id ||
+    (value.displayName !== null && typeof value.displayName !== "string") ||
+    !isRecord(value.routeability)
+  ) {
+    return false;
+  }
+  return (
+    value.routeability.status === "supported" ||
+    (value.routeability.status === "unsupported" &&
+      typeof value.routeability.reason === "string" &&
+      value.routeability.reason.trim().length > 0)
+  );
+}
+
+function isProviderModelDiscovery(
+  value: unknown
+): value is ControlApiProviderModelDiscovery {
+  if (!isRecord(value)) return false;
+  if (value.status === "unavailable") {
+    return (
+      (value.source === null ||
+        (typeof value.source === "string" && value.source.trim().length > 0)) &&
+      (value.lastAttemptAt === null ||
+        isCanonicalTimestamp(value.lastAttemptAt)) &&
+      typeof value.reason === "string" &&
+      value.reason.trim().length > 0
+    );
+  }
+  if (
+    (value.status !== "observed" && value.status !== "stale") ||
+    typeof value.source !== "string" ||
+    value.source.trim().length === 0 ||
+    !isCanonicalTimestamp(value.observedAt) ||
+    !isCanonicalTimestamp(value.lastAttemptAt) ||
+    !Array.isArray(value.models)
+  ) {
+    return false;
+  }
+  if (
+    value.status === "stale" &&
+    (typeof value.reason !== "string" || value.reason.trim().length === 0)
+  ) {
+    return false;
+  }
+  const ids = new Set<string>();
+  for (const model of value.models) {
+    if (!isDiscoveredProviderModel(model) || ids.has(model.id)) return false;
+    ids.add(model.id);
+  }
+  return true;
+}
+
+function isControlApiProviderModelsResponse(
+  value: unknown
+): value is ControlApiProviderModelsResponse {
+  if (
+    !isRecord(value) ||
+    value.schema !== "autodev-control-provider-model-discovery-v1" ||
+    value.source !== "runtime-provider-discovery" ||
+    !Array.isArray(value.providers)
+  ) {
+    return false;
+  }
+  const providerIds = new Set<string>();
+  for (const entry of value.providers) {
+    if (
+      !isRecord(entry) ||
+      typeof entry.provider !== "string" ||
+      entry.provider.trim() !== entry.provider ||
+      entry.provider.length === 0 ||
+      entry.provider.length > 128 ||
+      providerIds.has(entry.provider) ||
+      !isProviderModelDiscovery(entry.discovery)
+    ) {
+      return false;
+    }
+    providerIds.add(entry.provider);
+  }
+  return true;
+}
+
+/** Reads Runtime-owned provider availability without inventing a catalog. */
+export async function fetchProviderModelDiscovery(
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiProviderModelsResponse>> {
+  const result = await fetchControlApi<unknown>(
+    CONTROL_API_PATHS.providerModels,
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  if (isControlApiProviderModelsResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_provider_model_discovery_response",
+    message:
+      "AutoDev Control API returned an incompatible provider-model discovery response; the Console requires the v1 observed/stale/unavailable contract."
   };
 }
 
@@ -2292,23 +2414,60 @@ export async function fetchSkillContent(
 }
 
 /**
- * Narrows an assignment result.
- *
- * The roles come back from a re-read of the contract rather than from the
- * request, so accepting any string list here is what lets a write that did not
- * stick present as success. A response whose `roles` do not match what was asked
- * for is a lie the page would then render as the new truth.
+ * Validates the desired set against the request and preserves missing actual
+ * role evidence as `null`. A response is converged only when the Runtime's
+ * observed set and generations confirm the requested assignment.
  */
+function sameStringSet(
+  left: readonly string[],
+  right: readonly string[]
+): boolean {
+  if (left.length !== right.length) return false;
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.every((value, index) => value === sortedRight[index]);
+}
+
 function isControlApiSkillRolesPatchResponse(
-  value: unknown
+  value: unknown,
+  skillName: string,
+  requestedRoles: readonly string[]
 ): value is ControlApiSkillRolesPatchResponse {
+  if (
+    !isRecord(value) ||
+    value.schema !== "autodev-control-skill-assignment-v2" ||
+    value.skill !== skillName ||
+    !isStringList(value.desiredRoles) ||
+    !sameStringSet(value.desiredRoles, requestedRoles) ||
+    (value.actualRoles !== null && !isStringList(value.actualRoles)) ||
+    typeof value.revision !== "string" ||
+    !CONTROL_API_REVISION_PATTERN.test(value.revision) ||
+    !isReconciliationBundle(value.reconciliation) ||
+    !isReconciliationDiff(value.diff)
+  ) {
+    return false;
+  }
+
+  const reconciliation = value.reconciliation as {
+    readonly status: ReconciliationStatus;
+  };
+  const status = reconciliation.status;
+  const actualRoles = value.actualRoles as readonly string[] | null;
+  const diff = value.diff as ReconciliationDiff;
+  if (
+    status.desiredGeneration === null ||
+    diff.identifier !== status.desiredGeneration ||
+    (actualRoles === null && status.convergence === "converged") ||
+    (actualRoles !== null && status.convergence === "not-observed")
+  ) {
+    return false;
+  }
+
   return (
-    isRecord(value) &&
-    value.schema === "autodev-control-skill-assignment-v1" &&
-    typeof value.skill === "string" &&
-    isStringList(value.roles) &&
-    typeof value.revision === "string" &&
-    CONTROL_API_REVISION_PATTERN.test(value.revision)
+    status.convergence !== "converged" ||
+    (actualRoles !== null &&
+      sameStringSet(actualRoles, value.desiredRoles) &&
+      status.observedGeneration === status.desiredGeneration)
   );
 }
 
@@ -2333,7 +2492,7 @@ export async function patchSkillRoles(
     options
   );
   if (result.kind !== "ok") return result;
-  if (isControlApiSkillRolesPatchResponse(result.data)) {
+  if (isControlApiSkillRolesPatchResponse(result.data, name, payload.roles)) {
     return { kind: "ok", data: result.data };
   }
   return {

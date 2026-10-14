@@ -1,16 +1,17 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { mock, test } from "node:test";
+import { test } from "node:test";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   assignmentCounts,
+  assignmentOutcomes,
   createPollLoop,
-  INITIAL_POLL_INTERVAL_MS,
   freshnessForFailure,
   freshnessForSuccess,
+  INITIAL_POLL_INTERVAL_MS,
   isTerminal,
   isWatching,
   MAX_POLL_INTERVAL_MS,
@@ -18,10 +19,16 @@ import {
   type PlaytestingActiveRun,
   readActiveRuns
 } from "../src/features/playtesting/playtesting-active-runs.ts";
-import { PlaytestingActiveRunsPanel } from "../src/features/playtesting/PlaytestingActiveRunsPanel.ts";
 import { responseMessage } from "../src/features/playtesting/playtesting-run-messages.ts";
+import { parsePlaytestingScope } from "../src/features/playtesting/playtesting-url.ts";
+import { PlaytestingActiveRunsPanel } from "../src/features/playtesting/PlaytestingActiveRunsPanel.ts";
+import { PlaytestingAssignmentResults } from "../src/features/playtesting/PlaytestingAssignmentResults.ts";
 
 const WORKSPACE = "acme/game";
+const WORKSPACE_SCOPE = parsePlaytestingScope({
+  view: "sessions",
+  workspaceId: WORKSPACE
+});
 
 function record(
   status: string,
@@ -42,11 +49,11 @@ function envelope(runs: readonly PlaytestingActiveRun[]): unknown {
     data: {
       schema: "autodev-control-playtesting-runs-v1",
       workspaceId: WORKSPACE,
-      runs: runs.map((run) => ({
-        batchId: run.batchId,
-        assignmentCount: run.assignmentCount,
-        createdAt: run.createdAt,
-        status: run.record
+      runs: runs.map((entry) => ({
+        batchId: entry.batchId,
+        assignmentCount: entry.assignmentCount,
+        createdAt: entry.createdAt,
+        status: entry.record
       }))
     }
   };
@@ -190,15 +197,15 @@ test("a failed read is unavailable, never the previous frame's live", () => {
 });
 
 test("polling backs off on repeated failure and stays capped", () => {
-  assert.equal(nextPollDelayMs(0), 1_500);
-  assert.equal(nextPollDelayMs(1), 3_000);
-  assert.equal(nextPollDelayMs(2), 6_000);
+  assert.equal(nextPollDelayMs(0), 1500);
+  assert.equal(nextPollDelayMs(1), 3000);
+  assert.equal(nextPollDelayMs(2), 6000);
   assert.ok(nextPollDelayMs(3) > nextPollDelayMs(2));
-  for (const failures of [0, 1, 5, 20, 1_000, Number.MAX_SAFE_INTEGER]) {
+  for (const failures of [0, 1, 5, 20, 1000, Number.MAX_SAFE_INTEGER]) {
     assert.ok(nextPollDelayMs(failures) <= MAX_POLL_INTERVAL_MS);
-    assert.ok(nextPollDelayMs(failures) >= 1_500);
+    assert.ok(nextPollDelayMs(failures) >= 1500);
   }
-  assert.equal(nextPollDelayMs(1_000), MAX_POLL_INTERVAL_MS);
+  assert.equal(nextPollDelayMs(1000), MAX_POLL_INTERVAL_MS);
 });
 
 test("counts come from the owner's result, never recomputed", () => {
@@ -221,6 +228,107 @@ test("counts come from the owner's result, never recomputed", () => {
   );
 });
 
+test("assignment execution and game outcomes are read separately and all-or-nothing", () => {
+  const outcomes = [
+    {
+      assignmentId: "assignment-1",
+      episodeId: "episode-win",
+      state: "completed",
+      started: true,
+      eligible: true,
+      gameOutcome: "win"
+    },
+    {
+      assignmentId: "assignment-2",
+      episodeId: null,
+      state: "infrastructure-failed",
+      started: false,
+      eligible: false,
+      gameOutcome: null
+    }
+  ] as const;
+  assert.deepEqual(
+    assignmentOutcomes({
+      ...record("completed"),
+      result: { outcomes }
+    }),
+    outcomes
+  );
+  assert.equal(
+    assignmentOutcomes({
+      ...record("completed"),
+      result: {
+        outcomes: [
+          outcomes[0],
+          { ...outcomes[1], assignmentId: outcomes[0].assignmentId }
+        ]
+      }
+    }),
+    null,
+    "duplicate assignment results invalidate the complete list"
+  );
+  assert.equal(
+    assignmentOutcomes({
+      ...record("completed"),
+      result: {
+        outcomes: [
+          {
+            assignmentId: outcomes[0].assignmentId,
+            episodeId: outcomes[0].episodeId,
+            state: outcomes[0].state,
+            started: outcomes[0].started,
+            eligible: outcomes[0].eligible
+          }
+        ]
+      }
+    }),
+    null,
+    "a row without the owner-classified game outcome is not shown as complete"
+  );
+  assert.equal(
+    assignmentOutcomes({
+      ...record("completed"),
+      result: {
+        outcomes: [{ ...outcomes[1], state: "completed" }]
+      }
+    }),
+    null,
+    "a no-episode assignment cannot claim a completed execution"
+  );
+});
+
+test("an explicit unknown game result is not confused with an unobserved outcome", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(PlaytestingAssignmentResults, {
+      scope: WORKSPACE_SCOPE,
+      pending: false,
+      outcomes: [
+        {
+          assignmentId: "assignment-unknown",
+          episodeId: "episode-unknown",
+          state: "completed",
+          started: true,
+          eligible: true,
+          gameOutcome: "unknown"
+        },
+        {
+          assignmentId: "assignment-infrastructure-failed",
+          episodeId: null,
+          state: "infrastructure-failed",
+          started: false,
+          eligible: false,
+          gameOutcome: null
+        }
+      ]
+    })
+  );
+  assert.match(markup, /data-game-outcome="unknown"/u);
+  assert.match(markup, /Game outcome: Unclassified/u);
+  assert.match(markup, /data-execution-state="infrastructure-failed"/u);
+  assert.match(markup, /data-game-outcome="not-observed"/u);
+  assert.match(markup, /Game outcome: Not observed/u);
+});
+
 test("an unreadable response reports the server's message or an honest default", () => {
   assert.equal(
     responseMessage({
@@ -240,12 +348,8 @@ test("an unreadable response reports the server's message or an honest default",
     "The Console could not validate the server response."
   );
 });
-test("the panel never presents an unread read as current", async () => {
-  const React = await import("react");
-  const { renderToStaticMarkup } = await import("react-dom/server");
-  const { PlaytestingActiveRunsPanel } =
-    await import("../src/features/playtesting/PlaytestingActiveRunsPanel.ts");
-  const run = {
+test("the panel never presents an unread read as current", () => {
+  const liveRun = {
     batchId: "batch-live-1",
     assignmentCount: 4,
     createdAt: "2026-10-12T00:00:00.000Z",
@@ -253,8 +357,8 @@ test("the panel never presents an unread read as current", async () => {
   };
   const live = renderToStaticMarkup(
     React.createElement(PlaytestingActiveRunsPanel, {
-      workspaceId: WORKSPACE,
-      runs: [run],
+      scope: WORKSPACE_SCOPE,
+      runs: [liveRun],
       freshness: "live",
       lastFailure: null,
       watching: true,
@@ -276,8 +380,8 @@ test("the panel never presents an unread read as current", async () => {
 
   const unavailable = renderToStaticMarkup(
     React.createElement(PlaytestingActiveRunsPanel, {
-      workspaceId: WORKSPACE,
-      runs: [run],
+      scope: WORKSPACE_SCOPE,
+      runs: [liveRun],
       freshness: "unavailable",
       lastFailure: "Runtime is offline.",
       watching: false,
@@ -300,14 +404,10 @@ test("the panel never presents an unread read as current", async () => {
   assert.match(unavailable, /data-stale="true"/);
 });
 
-test("a terminal batch offers no cancel action and is marked terminal", async () => {
-  const React = await import("react");
-  const { renderToStaticMarkup } = await import("react-dom/server");
-  const { PlaytestingActiveRunsPanel } =
-    await import("../src/features/playtesting/PlaytestingActiveRunsPanel.ts");
+test("a terminal batch offers no cancel action and is marked terminal", () => {
   const markup = renderToStaticMarkup(
     React.createElement(PlaytestingActiveRunsPanel, {
-      workspaceId: WORKSPACE,
+      scope: WORKSPACE_SCOPE,
       runs: [
         {
           batchId: "batch-done",
@@ -341,7 +441,10 @@ test("the panel renders the owner's own counts rather than an absent reading", (
   // assertion that catches it.
   const markup = renderToStaticMarkup(
     React.createElement(PlaytestingActiveRunsPanel, {
-      workspaceId: "fixture/game",
+      scope: parsePlaytestingScope({
+        view: "sessions",
+        workspaceId: "fixture/game"
+      }),
       runs: [
         {
           batchId: "batch-1",
@@ -350,6 +453,24 @@ test("the panel renders the owner's own counts rather than an absent reading", (
           record: {
             ...record("running"),
             result: {
+              outcomes: [
+                {
+                  assignmentId: "assignment-001",
+                  episodeId: "episode-001",
+                  state: "completed",
+                  started: true,
+                  eligible: true,
+                  gameOutcome: "win"
+                },
+                {
+                  assignmentId: "assignment-002",
+                  episodeId: null,
+                  state: "infrastructure-failed",
+                  started: false,
+                  eligible: false,
+                  gameOutcome: null
+                }
+              ],
               counts: {
                 assigned: 4,
                 started: 4,
@@ -387,6 +508,15 @@ test("the panel renders the owner's own counts rather than an absent reading", (
     ),
     "no tile may name a field the Runtime does not produce"
   );
+  assert.match(markup, /Execution state: completed/);
+  assert.match(markup, /Game outcome: Win/);
+  assert.match(
+    markup,
+    /href="\/playtesting\/sessions\/episode-001\?view=sessions&amp;workspaceId=fixture%2Fgame&amp;step=0"/u
+  );
+  assert.match(markup, /No persisted session\./);
+  assert.match(markup, /data-execution-state="infrastructure-failed"/);
+  assert.match(markup, /data-game-outcome="not-observed"/);
 });
 
 test("every count tile names a field the synthetic fixture actually emits", () => {
@@ -407,13 +537,15 @@ test("every count tile names a field the synthetic fixture actually emits", () =
     "utf8"
   );
   const emitted = new Set(
-    [
-      ...(
-        fixture.match(/const runCounts = \{([\s\S]*?)\n  \};/u)?.[1] ?? ""
-      ).matchAll(/^\s*(\w+):/gmu)
-    ].map((match) => match[1]!)
+    Array.from(
+      (
+        fixture.match(/const runCounts = \{([\s\S]*?)\n {2}\};/u)?.[1] ?? ""
+      ).matchAll(/^\s*(\w+):/gmu),
+      (match) => match[1]!
+    )
   );
-  const read = [...panel.matchAll(/countLabel\(counts, "(\w+)"\)/gu)].map(
+  const read = Array.from(
+    panel.matchAll(/countLabel\(counts, "(\w+)"\)/gu),
     (match) => match[1]!
   );
   assert.ok(read.length > 0, "the panel must read at least one count");

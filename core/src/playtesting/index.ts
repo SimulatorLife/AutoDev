@@ -8,6 +8,7 @@
  */
 
 export * from "./adapter-binding.ts";
+export * from "./analysis-cost.ts";
 export * from "./artifacts.ts";
 export * from "./batch-run.ts";
 export * from "./benchmark.ts";
@@ -15,13 +16,14 @@ export * from "./branching.ts";
 export * from "./build-identity.ts";
 export * from "./cadence.ts";
 export * from "./canonical-json.ts";
-export * from "./analysis-cost.ts";
 export * from "./cohort-standardization.ts";
 export * from "./comparison.ts";
 export * from "./compatibility.ts";
 export * from "./comprehension.ts";
 export * from "./configuration.ts";
 export * from "./coverage.ts";
+export * from "./cross-session-synthesis.ts";
+export * from "./cross-session-metric-aggregation.ts";
 export * from "./diagnostic-corpus.ts";
 export * from "./evaluators.ts";
 export * from "./evidence.ts";
@@ -37,8 +39,8 @@ export * from "./metric-evaluation.ts";
 export * from "./native-timing.ts";
 export * from "./observability.ts";
 export * from "./operation-validation.ts";
-export * from "./protocol.ts";
 export * from "./policy-validity.ts";
+export * from "./protocol.ts";
 export * from "./protocol-types.ts";
 export * from "./registry.ts";
 export * from "./sampling.ts";

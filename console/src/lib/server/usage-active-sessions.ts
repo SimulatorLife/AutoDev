@@ -7,8 +7,8 @@ import type {
 
 import {
   type ControlApiConfig,
-  type ControlApiResult,
   controlApiFailureCode,
+  type ControlApiResult,
   fetchRuntime
 } from "./control-api.ts";
 

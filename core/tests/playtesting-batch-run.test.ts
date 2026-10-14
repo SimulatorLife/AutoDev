@@ -444,6 +444,29 @@ test("review budgets must satisfy surveillance + discovery <= max <= approved cr
   );
 });
 
+test("the first-milestone critique ceiling selects 40 complete sessions", () => {
+  const selection = selectPlaytestBatchReviews({
+    inventoryHash: "d".repeat(64),
+    maxReviewedSessions: 40,
+    critiqueBudget: 40,
+    surveillanceSessions: 40,
+    discoverySessions: 0,
+    discoverySignal: null,
+    candidates: Array.from({ length: 40 }, (_, index) =>
+      candidate({ assignmentId: `a-${String(index + 1)}` })
+    ),
+    unreviewableAssignments: 0,
+    selectedAt: "2026-10-11T00:00:00.000Z"
+  });
+
+  assert.equal(selection.reviewCap, 40);
+  assert.equal(selection.selected.length, 40);
+  assert.equal(
+    new Set(selection.selected.map((entry) => entry.episodeId)).size,
+    40
+  );
+});
+
 test("surveillance is deterministic, stratified and keeps inclusion probabilities", () => {
   const candidates: PlaytestReviewCandidate[] = Array.from(
     { length: 12 },

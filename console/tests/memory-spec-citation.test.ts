@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import test from "node:test";
 import ts from "typescript";
 
-import { MemoryCohortsView } from "../src/features/memory/MemoryCohortsView.ts";
 import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
+import { MemoryCohortsView } from "../src/features/memory/MemoryCohortsView.ts";
 
 /**
  * Operator-visible memory copy must not cite a spec section that does not exist.

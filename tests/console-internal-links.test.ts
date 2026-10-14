@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import test from "node:test";
 
@@ -11,7 +11,7 @@ import test from "node:test";
  * this class was automated (`/settings/database-config`, `/rule-engine/<id>`,
  * `/manage-models`, `/agents`) — each of them a page removed with a reference
  * left behind. `tests/openlit-internal-links.test.ts` covers the fork; this is
- * the same check for the Console's own thirteen routes, its navigation table
+ * the same check for the Console's own fourteen routes, its navigation table
  * and its server-side redirects.
  *
  * Written against the Console itself rather than a materialised tree, so it
@@ -41,6 +41,11 @@ function walk(dir: string, out: string[] = []): string[] {
 
 const normalise = (r: string) => (r === "/" ? "/" : r.replace(/\/$/, ""));
 
+function before(value: string, marker: string): string {
+  const index = value.indexOf(marker);
+  return index === -1 ? value : value.slice(0, index);
+}
+
 /**
  * Comments are stripped first because a JSDoc block describing a link contains
  * one verbatim, and `AppNav.ts` documents `<a href="/section">` in prose. A
@@ -50,8 +55,8 @@ const normalise = (r: string) => (r === "/" ? "/" : r.replace(/\/$/, ""));
  */
 function stripComments(source: string): string {
   return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+    .replaceAll(/\/\*[\s\S]*?\*\//g, "")
+    .replaceAll(/(^|[^:])\/\/[^\n]*/g, "$1");
 }
 
 function toRoute(file: string): string {
@@ -64,7 +69,7 @@ function toRoute(file: string): string {
     "/" +
     withoutFile
       .split("/")
-      .filter((seg) => seg && !(seg.startsWith("(") && seg.endsWith(")")))
+      .filter((seg) => seg && (!seg.startsWith("(") || !seg.endsWith(")")))
       .join("/")
       .replace(/\/$/, "")
   );
@@ -75,15 +80,14 @@ function toRoute(file: string): string {
  * runtime, so the target is truncated at the first `${` and wildcard-matched.
  */
 function matches(target: string, routes: Set<string>): boolean {
-  const base = normalise(
-    target.split("?")[0]!.split("#")[0]!.split("${")[0]!.replace(/\/$/, "")
-  );
+  const candidate = before(before(before(target, "?"), "#"), "${");
+  const base = normalise(candidate.replace(/\/$/, ""));
   if (routes.has(base)) return true;
   const segs = base.split("/").filter(Boolean);
   for (const route of routes) {
     const routeSegs = normalise(route).split("/").filter(Boolean);
     const catchAll = routeSegs.findIndex((s) => s.startsWith("[..."));
-    if (catchAll >= 0) {
+    if (catchAll !== -1) {
       if (segs.length >= catchAll) return true;
       continue;
     }
@@ -113,9 +117,8 @@ function matches(target: string, routes: Set<string>): boolean {
  * caller supplies the rest, so a segment-wise prefix is the correct test here.
  */
 function matchesApi(target: string, routes: Set<string>): boolean {
-  const base = normalise(
-    target.split("?")[0]!.split("${")[0]!.replace(/\/$/, "")
-  );
+  const candidate = before(before(target, "?"), "${");
+  const base = normalise(candidate.replace(/\/$/, ""));
   if (routes.has(base)) return true;
   const segs = base.split("/").filter(Boolean);
   for (const route of routes) {
@@ -141,6 +144,32 @@ const TARGET_PATTERNS: readonly { name: string; re: RegExp }[] = [
   }
 ];
 
+function deadTargetsInFile(
+  file: string,
+  pages: Set<string>,
+  api: Set<string>
+): string[] {
+  const body = stripComments(readFileSync(file, "utf8"));
+  const dead: string[] = [];
+  for (const { name, re } of TARGET_PATTERNS) {
+    re.lastIndex = 0;
+    for (const match of body.matchAll(re)) {
+      const target = match[1]!;
+      if (
+        !target.startsWith("/") ||
+        /^\/(_next|images|static|favicon)/.test(target)
+      ) {
+        continue;
+      }
+      const routes = target.startsWith("/api/") ? api : pages;
+      if (!matches(target, routes)) {
+        dead.push(`${relative(ROOT, file)} (${name}) -> ${target}`);
+      }
+    }
+  }
+  return dead;
+}
+
 test(
   "every internal navigation target in the Console resolves to a served route",
   { skip: available ? false : "console tree not present" },
@@ -154,26 +183,13 @@ test(
         api.add(normalise(toRoute(file)));
     }
 
-    const dead: string[] = [];
     const sources = [...walk(join(ROOT, "src")), ...walk(APP)].filter(
-      (f) =>
-        /\.tsx?$/.test(f) && !f.includes("/tests/") && !f.includes("__tests__")
+      (file) =>
+        /\.tsx?$/.test(file) &&
+        !file.includes("/tests/") &&
+        !file.includes("__tests__")
     );
-    for (const file of sources) {
-      const body = stripComments(readFileSync(file, "utf8"));
-      for (const { name, re } of TARGET_PATTERNS) {
-        re.lastIndex = 0;
-        for (const m of body.matchAll(re)) {
-          const target = m[1]!;
-          if (!target.startsWith("/")) continue;
-          if (/^\/(_next|images|static|favicon)/.test(target)) continue;
-          const ok = target.startsWith("/api/")
-            ? matches(target, api)
-            : matches(target, pages);
-          if (!ok) dead.push(`${relative(ROOT, file)} (${name}) -> ${target}`);
-        }
-      }
-    }
+    const dead = sources.flatMap((file) => deadTargetsInFile(file, pages, api));
 
     assert.deepEqual(
       dead,
@@ -272,7 +288,7 @@ test(
     // check cannot be satisfied by a stale build artefact.
     const core = readFileSync(CORE_NAV, "utf8");
     const sections = [...core.matchAll(/sections:\s*\[([^\]]*)\]/g)].flatMap(
-      (m) => [...m[1]!.matchAll(/"([^"]+)"/g)].map((s) => s[1]!)
+      (m) => Array.from(m[1]!.matchAll(/"([^"]+)"/g), (s) => s[1]!)
     );
     assert.ok(
       sections.length > 0,

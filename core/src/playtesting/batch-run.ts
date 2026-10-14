@@ -39,15 +39,22 @@ import {
 /** First-milestone bound: one batch freezes at most 1,000 assignments. */
 export const PLAYTESTS_MAX_BATCH_ASSIGNMENTS = 1000;
 
-/**
- * Bound on an explicit cross-session analysis selection.
- *
- * One authority for the number: Runtime's dispatch, the Control API route and
- * the Console must agree, or a selection the Console offers is refused by the
- * owner with a limit the operator never saw.
- */
-export const PLAYTESTS_MAX_ANALYSIS_SESSIONS = 16;
+/** First-milestone maximum complete sessions reviewed per batch. */
 export const PLAYTESTS_MAX_BATCH_REVIEW_SESSIONS = 40;
+
+/**
+ * Bound on one explicit Console analyst dispatch. It cannot exceed the
+ * preregistered per-batch critique ceiling.
+ */
+export const PLAYTESTS_MAX_ANALYSIS_SESSIONS =
+  PLAYTESTS_MAX_BATCH_REVIEW_SESSIONS;
+
+/**
+ * Prepared cross-session MCP reads return complete packets in one response;
+ * keep that transport bound separate from Console dispatch, which returns
+ * packet identifiers and lets the analyst read packets one at a time.
+ */
+export const PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS = 16;
 export const PLAYTESTS_MAX_ASSIGNMENT_MANIFEST_BYTES = 256 * 1024;
 export const PLAYTESTS_ASSIGNMENT_ID_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u;

@@ -10,8 +10,8 @@ import type { MemoryService } from "@simulatorlife/autodev-runtime/memory";
 import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
 import {
   makeRequest,
-  responseBody,
   type RecordedResponse,
+  responseBody,
   responseRecorder
 } from "./support/control-api-harness.ts";
 
@@ -49,7 +49,8 @@ async function callRoute(
   } else {
     process.env.AUTODEV_MEMORY_READ_TASK_HISTORY = "1";
   }
-  const pathname = path.split("?")[0] ?? path;
+  const queryIndex = path.indexOf("?");
+  const pathname = queryIndex === -1 ? path : path.slice(0, queryIndex);
   try {
     await handleMemoryControlApiRequest(
       makeRequest(options.method ?? "GET", `${path}?${SCOPE}`, body),

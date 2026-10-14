@@ -390,11 +390,17 @@ export class ProviderCooldowns {
   }
 
   persistedHardEntries(): PersistedCooldownEntry[] {
-    const providerEntries = Array.from(this.cooldowns.entries(), ([provider, entry]) => ({ provider, ...entry }));
-    const poolEntries = Array.from(this.poolCooldowns.entries(), ([key, entry]) => ({
+    const providerEntries = Array.from(
+      this.cooldowns.entries(),
+      ([provider, entry]) => ({ provider, ...entry })
+    );
+    const poolEntries = Array.from(
+      this.poolCooldowns.entries(),
+      ([key, entry]) => ({
         provider: key.slice(0, key.indexOf("\u0000")),
         ...entry
-      }));
+      })
+    );
     return [...providerEntries, ...poolEntries].filter(
       (entry) => entry.kind === "hard"
     );

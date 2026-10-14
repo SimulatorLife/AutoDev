@@ -70,11 +70,11 @@ function harness(): Harness {
   mkdirSync(path.dirname(skillPath), { recursive: true });
   writeFileSync(skillPath, ORIGINAL_SOURCE, "utf8");
   cpSync(
-    path.resolve(process.cwd(), "rulesync.jsonc"),
+    path.resolve(import.meta.dirname, "../../rulesync.jsonc"),
     path.join(repositoryRoot, "rulesync.jsonc")
   );
   symlinkSync(
-    path.resolve(process.cwd(), "node_modules"),
+    path.resolve(import.meta.dirname, "../../node_modules"),
     path.join(repositoryRoot, "node_modules"),
     "dir"
   );

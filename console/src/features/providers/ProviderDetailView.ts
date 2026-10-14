@@ -19,7 +19,10 @@ import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.t
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
-import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
   DataTable,
@@ -35,8 +38,19 @@ import {
 import { liveAgentCount } from "../live-agent-count.ts";
 import { ModelToggle } from "./ModelToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
+import {
+  type ProviderModelDiscoveryState,
+  providerModelDiscoveryView,
+  type ProviderModelRow,
+  providerModelRows,
+  unsupportedProviderModels
+} from "./provider-model-discovery.ts";
 import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
 import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
+import {
+  ProviderModelAvailabilityBadge,
+  ProviderModelDiscoveryBadge
+} from "./ProviderModelAvailabilityBadge.ts";
 import { ProviderRoleControls } from "./ProviderRoleControls.ts";
 
 export interface ProviderDetailViewProps {
@@ -45,6 +59,7 @@ export interface ProviderDetailViewProps {
   readonly orchestratorTier: string;
   /** This provider's models, or `null` when the Models collection is unavailable. */
   readonly models: readonly ControlApiModelRecord[] | null;
+  readonly modelDiscovery: ProviderModelDiscoveryState;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
   readonly controlFailed?: boolean | undefined;
 }
@@ -60,9 +75,11 @@ export interface ProviderDetailViewProps {
  */
 function RolesPanel({
   provider,
+  modelDiscovery,
   returnTo
 }: {
   readonly provider: ControlApiProviderRecord;
+  readonly modelDiscovery: ProviderModelDiscoveryState;
   readonly returnTo: string;
 }): React.JSX.Element {
   return React.createElement(
@@ -74,64 +91,58 @@ function RolesPanel({
       { className: "mb-3 " + MUTED_META_CLASS },
       "Selecting a priority or model applies immediately. Values refresh from the Runtime after submission."
     ),
-    React.createElement(ProviderRoleControls, { provider, returnTo })
+    React.createElement(ProviderRoleControls, {
+      provider,
+      modelDiscovery,
+      returnTo
+    })
   );
 }
 
 function ModelsPanel({
   provider,
   models,
+  modelDiscovery,
   runtime,
   returnTo
 }: {
   readonly provider: ControlApiProviderRecord;
   readonly models: readonly ControlApiModelRecord[] | null;
+  readonly modelDiscovery: ProviderModelDiscoveryState;
   readonly runtime: ControlApiRuntimeResponse | undefined;
   readonly returnTo: string;
 }): React.JSX.Element {
-  const heading = React.createElement(
-    "h3",
-    { className: SECTION_HEADING_CLASS },
-    "Models"
+  const rows = providerModelRows(models, modelDiscovery).filter(
+    (model) => model.provider === provider.id
   );
-  if (models === null) {
-    return React.createElement(
-      "section",
-      { className: DETAIL_PANEL_CLASS, "data-section": "provider-models" },
-      heading,
-      React.createElement(
-        "p",
-        {
-          className: "mb-3 text-xs text-warning",
-          "data-status": "unavailable"
-        },
-        "Model enablement could not be loaded; configured tier models are shown without controls."
-      ),
-      React.createElement(
-        "ul",
-        {
-          className: "flex flex-col gap-1 font-mono text-xs text-fg-secondary"
-        },
-        ...provider.models.map(({ tier, model }) =>
-          React.createElement("li", { key: tier }, `${tier}: ${model}`)
-        )
-      )
-    );
-  }
-  const columns: ColumnDef<ControlApiModelRecord>[] = [
+  const unsupported = unsupportedProviderModels(modelDiscovery).filter(
+    (model) => model.provider === provider.id
+  );
+  const discoveryView = providerModelDiscoveryView(modelDiscovery, provider.id);
+  const columns: ColumnDef<ProviderModelRow>[] = [
     {
       id: "model",
       header: "Model",
       cell: (model) =>
-        React.createElement(
-          NavigationLink,
-          {
-            href: modelPath(provider.id, model.id),
-            className: `font-mono text-xs text-fg ${ENTITY_LINK_CLASS}`,
-            "aria-label": `Open model ${model.id}`
-          },
-          model.id
-        )
+        model.enablement === null
+          ? React.createElement(
+              "span",
+              {
+                className: `font-mono text-xs text-fg ${ENTITY_LINK_CLASS}`,
+                "data-model-id": model.id,
+                title: model.id
+              },
+              model.id
+            )
+          : React.createElement(
+              NavigationLink,
+              {
+                href: modelPath(provider.id, model.id),
+                className: `font-mono text-xs text-fg ${ENTITY_LINK_CLASS}`,
+                "aria-label": `Open model ${model.id}`
+              },
+              model.id
+            )
     },
     {
       id: "tiers",
@@ -140,7 +151,7 @@ function ModelsPanel({
         React.createElement(
           "span",
           { className: MONO_VALUE_CLASS },
-          model.tiers.join(", ")
+          model.tiers.length === 0 ? "Not mapped" : model.tiers.join(", ")
         )
     },
     {
@@ -162,12 +173,20 @@ function ModelsPanel({
         )
     },
     {
+      id: "availability",
+      header: "Availability",
+      cell: (model) =>
+        React.createElement(ProviderModelAvailabilityBadge, {
+          availability: model.availability
+        })
+    },
+    {
       id: "enabled",
       header: "Enabled",
       cell: (model) =>
         React.createElement(ModelToggle, {
           model: model.id,
-          enablement: model.enablement,
+          enablement: model.enablement ?? undefined,
           returnTo
         })
     }
@@ -175,13 +194,96 @@ function ModelsPanel({
   return React.createElement(
     "section",
     { className: DETAIL_PANEL_CLASS, "data-section": "provider-models" },
-    heading,
-    React.createElement<DataTableProps<ControlApiModelRecord>>(DataTable, {
-      data: models,
+    React.createElement(
+      "div",
+      { className: "mb-3 flex flex-wrap items-center gap-2" },
+      React.createElement("h3", { className: SECTION_HEADING_CLASS }, "Models"),
+      React.createElement(ProviderModelDiscoveryBadge, {
+        discovery: discoveryView
+      })
+    ),
+    models === null
+      ? React.createElement(
+          "p",
+          {
+            className: `mb-3 ${MUTED_BODY_CLASS}`,
+            "data-model-routing-state": "unavailable"
+          },
+          "Runtime routing state could not be read. Observed provider models remain visible without assignment or enablement controls."
+        )
+      : null,
+    models === null && provider.models.length > 0
+      ? React.createElement(
+          "div",
+          { className: "mb-3", "data-section": "configured-tier-assignments" },
+          React.createElement(
+            "p",
+            { className: `mb-2 ${MUTED_META_CLASS}` },
+            "Configured tier assignments are routing choices, not proof of current provider availability."
+          ),
+          React.createElement(
+            "ul",
+            {
+              className:
+                "flex flex-col gap-1 font-mono text-xs text-fg-secondary"
+            },
+            ...provider.models.map(({ tier, model }) =>
+              React.createElement("li", { key: tier }, `${tier}: ${model}`)
+            )
+          )
+        )
+      : null,
+    React.createElement<DataTableProps<ProviderModelRow>>(DataTable, {
+      data: rows,
       columns,
-      keyExtractor: (model: ControlApiModelRecord) => model.id,
-      emptyMessage: "No models are configured for this provider."
-    })
+      keyExtractor: (model: ProviderModelRow) =>
+        `${model.provider}/${model.id}`,
+      emptyMessage:
+        "No configured or currently routeable models were reported for this provider."
+    }),
+    unsupported.length === 0
+      ? null
+      : React.createElement(
+          "div",
+          { className: "mt-4", "data-section": "unsupported-provider-models" },
+          React.createElement(
+            "h4",
+            { className: `mb-2 ${MUTED_META_CLASS}` },
+            "Discovered but not routeable"
+          ),
+          React.createElement(
+            "ul",
+            { className: "flex flex-col gap-2 list-none p-0 m-0" },
+            ...unsupported.map((model) =>
+              React.createElement(
+                "li",
+                {
+                  key: model.id,
+                  className: "flex flex-wrap items-center gap-2",
+                  "data-unsupported-model": model.id
+                },
+                React.createElement(
+                  "span",
+                  { className: "font-mono text-xs text-fg" },
+                  model.id
+                ),
+                React.createElement(StatusBadge, {
+                  status:
+                    model.discoveryStatus === "observed"
+                      ? "valid"
+                      : "unavailable",
+                  label:
+                    model.discoveryStatus === "observed" ? "Observed" : "Stale"
+                }),
+                React.createElement(
+                  "span",
+                  { className: MUTED_META_CLASS },
+                  model.reason
+                )
+              )
+            )
+          )
+        )
   );
 }
 
@@ -433,6 +535,7 @@ export function ProviderDetailView({
   tiers,
   orchestratorTier,
   models,
+  modelDiscovery,
   runtime,
   controlFailed
 }: ProviderDetailViewProps): React.JSX.Element {
@@ -498,8 +601,18 @@ export function ProviderDetailView({
       )
     ),
     controlFailed ? React.createElement(ControlFailureNotice) : null,
-    React.createElement(RolesPanel, { provider, returnTo }),
-    React.createElement(ModelsPanel, { provider, models, runtime, returnTo }),
+    React.createElement(RolesPanel, {
+      provider,
+      modelDiscovery,
+      returnTo
+    }),
+    React.createElement(ModelsPanel, {
+      provider,
+      models,
+      modelDiscovery,
+      runtime,
+      returnTo
+    }),
     React.createElement(RoutingPanel, { provider, tiers, orchestratorTier }),
     React.createElement(RoutePanel, { provider }),
     React.createElement(HealthPanel, { health: provider.health })

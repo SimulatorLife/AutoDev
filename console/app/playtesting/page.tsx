@@ -12,11 +12,8 @@ import {
   type PlaytestingFilterKey,
   type PlaytestingScope
 } from "../../src/features/playtesting/playtesting-url.ts";
-import {
-  PlaytestingRunControls,
-  type PlaytestingRunSetup
-} from "../../src/features/playtesting/PlaytestingRunControls.tsx";
-import { PlaytestingLiveRuns } from "../../src/features/playtesting/PlaytestingLiveRuns.ts";
+import type { PlaytestingRunSetup } from "../../src/features/playtesting/PlaytestingRunControls.tsx";
+import { PlaytestingRunDashboard } from "../../src/features/playtesting/PlaytestingRunDashboard.tsx";
 import { PlaytestingSelection } from "../../src/features/playtesting/PlaytestingSelection.ts";
 import {
   type PlaytestingHumanValidation,
@@ -329,15 +326,9 @@ function pageResult(
         workspaces,
         overview: loaded.data
       }),
-      React.createElement(PlaytestingRunControls, {
+      React.createElement(PlaytestingRunDashboard, {
         scope,
         setup: loaded.runSetup
-      }),
-      // Live monitoring sits with the run controls so starting a batch and
-      // watching it are one surface.
-      React.createElement(PlaytestingLiveRuns, {
-        workspaceId: scope.workspaceId!,
-        initialFocusedBatchId: scope.liveBatchId
       })
     );
   } else {
@@ -353,7 +344,7 @@ function pageResult(
       // selectable persisted sessions are the rows on screen.
       scope.view === "sessions" && loaded.data.resource === "episodes"
         ? React.createElement(PlaytestingSelection, {
-            workspaceId: scope.workspaceId!,
+            scope,
             initialSelectedEpisodeIds: scope.selectedEpisodeIds,
             selectableEpisodeIds: loaded.data.rows.map(
               (row) => (row as { episodeId: string }).episodeId

@@ -42,7 +42,8 @@ import {
   type PlaytestBatch,
   playtestHumanProxyRefusal,
   type PlaytestPolicyCompetenceBounds,
-  playtestPolicyValidityHashInput} from "@simulatorlife/autodev-core";
+  playtestPolicyValidityHashInput
+} from "@simulatorlife/autodev-core";
 
 /**
  * The project's §6 preregistration, supplied by the operator rather than by a

@@ -59,8 +59,7 @@ function game(): Record<string, unknown> {
 
 async function adapterFor(
   overrides: Partial<PlaytestAdapterBinding> = {},
-  target: Record<string, unknown> = game(),
-  rngVersion: string | null = "pcg32"
+  target: Record<string, unknown> = game()
 ) {
   return createGenericAdapter({
     binding: binding(overrides),
@@ -70,8 +69,7 @@ async function adapterFor(
     scenarioIds: ["tutorial"],
     observationSchema: OBSERVATION_SCHEMA,
     actionSchema: ACTION_SCHEMA,
-    eventSchema: EVENT_SCHEMA,
-    rngVersion
+    eventSchema: EVENT_SCHEMA
   });
 }
 
@@ -120,64 +118,47 @@ test("only optional operations the game actually bound are advertised", async ()
   assert.equal(optional.includes("game.step" as never), false);
 });
 
+test("generic adapter disposal releases the entry's engine resources once", async () => {
+  let closeCount = 0;
+  const target = {
+    ...game(),
+    async close() {
+      closeCount += 1;
+    }
+  };
+  const adapter = await adapterFor({}, target);
+
+  await adapter.close();
+  await adapter.close();
+
+  assert.equal(closeCount, 1);
+});
+
 test("determinism is declared from the binding, not assumed", async () => {
   const withoutRng = await adapterFor();
-  // No seeded-RNG entry point means AutoDev cannot restore engine RNG for a
-  // counterfactual. Claiming otherwise would make a rerun look reproducible.
+  // Without a named RNG version the Runtime cannot match a seeded rerun to the
+  // benchmark that recorded it.
   assert.equal(withoutRng.capabilities.deterministic.seededRuns, false);
   assert.equal(withoutRng.capabilities.deterministic.rngVersion, null);
   assert.equal(withoutRng.capabilities.deterministic.traceReplayable, false);
 
-  const withRng = await adapterFor(
-    { seededRng: { export: "restoreRng" }, rngVersion: "pcg32" },
-    { ...game(), restoreRng: () => undefined }
+  // A named reset RNG supports reproducible seeded runs without promising
+  // in-episode RNG restoration or counterfactual branching.
+  const seededOnly = await adapterFor({ rngVersion: "pcg32" });
+  assert.equal(seededOnly.capabilities.deterministic.seededRuns, true);
+  assert.equal(seededOnly.capabilities.deterministic.rngVersion, "pcg32");
+  assert.equal(seededOnly.capabilities.deterministic.traceReplayable, false);
+  await assert.rejects(
+    adapterFor({ rngVersion: "" }),
+    /bounded, named engine RNG version/u
   );
+
+  const withRng = await adapterFor({ rngVersion: "pcg32" });
   assert.equal(withRng.capabilities.deterministic.seededRuns, true);
   assert.equal(withRng.capabilities.deterministic.rngVersion, "pcg32");
-
-  // A game that binds a seeded RNG but never names its version is refused
-  // outright. The Runtime rejects an unnamed seeded guarantee, so accepting it
-  // here would only move the failure to capability negotiation, where nothing
-  // about the message points at the field the game left out.
-  await assert.rejects(
-    adapterFor(
-      { seededRng: { export: "restoreRng" } },
-      { ...game(), restoreRng: () => undefined },
-      null
-    ),
-    /must declare the engine rngVersion/u
-  );
-  // Declaring the version beside the binding is what makes it declarable.
-  const named = await adapterFor(
-    {
-      seededRng: { export: "restoreRng" },
-      rngVersion: "pcg32@1"
-    },
-    { ...game(), restoreRng: () => undefined },
-    null
-  );
+  const named = await adapterFor({ rngVersion: "pcg32@1" });
   assert.equal(named.capabilities.deterministic.seededRuns, true);
   assert.equal(named.capabilities.deterministic.rngVersion, "pcg32@1");
-  // The reference must still resolve; declaring it without providing it would
-  // advertise a capability the game cannot honour.
-  await assert.rejects(
-    createGenericAdapter({
-      binding: binding({ seededRng: { export: "notThere" } }),
-      loadEntry: () => game(),
-      engineBuild: "b",
-      modes: ["headless"],
-      scenarioIds: ["tutorial"],
-      observationSchema: OBSERVATION_SCHEMA,
-      actionSchema: ACTION_SCHEMA,
-      eventSchema: EVENT_SCHEMA
-    }),
-    (error: unknown) => {
-      assert.ok(error instanceof GenericAdapterError);
-      assert.equal(error.code, "unresolved-binding");
-      assert.match(error.message, /seededRng/u);
-      return true;
-    }
-  );
 });
 
 test("dispatch reaches the game's declared function", async () => {
@@ -221,6 +202,7 @@ test("a nested binding path reaches into a returned namespace", async () => {
 });
 
 test("a broken reference fails before any episode starts", async () => {
+  let closeCount = 0;
   // The reference exists but is not callable: a broken declaration, reported
   // at construction rather than as a transport failure later.
   await assert.rejects(
@@ -228,7 +210,13 @@ test("a broken reference fails before any episode starts", async () => {
       {
         bindings: { ...binding().bindings, observe: { export: "observe" } }
       },
-      { ...game(), observe: "not-a-function" }
+      {
+        ...game(),
+        observe: "not-a-function",
+        close() {
+          closeCount += 1;
+        }
+      }
     ),
     (error: unknown) => {
       assert.ok(error instanceof GenericAdapterError);
@@ -237,6 +225,7 @@ test("a broken reference fails before any episode starts", async () => {
       return true;
     }
   );
+  assert.equal(closeCount, 1);
 });
 
 test("a missing required binding is refused before the entry is loaded", async () => {

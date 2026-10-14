@@ -37,13 +37,24 @@ enabled = false
 [mcp_servers.codex_app]
 enabled = false
 
+[features]
+shell_tool = false
+multi_agent = false
+multi_agent_v2 = false
+hooks = false
+memories = false
+
 [tools]
 web_search = false
 
-# Planned Runtime-hosted playtesting MCP server (runtime/src/playtesting/mcp.ts,
-# registered in .rulesync/mcp.jsonc by the owning change). This role allowlists
-# only evidence reads, code-owned metrics/compare, packet preparation, and review submission; it
-# never gets run/branch (runner-only) or findings/issue-write (root-only).
+[shell_environment_policy]
+inherit = "none"
+ignore_default_excludes = false
+
+# Runtime-hosted Playtesting MCP server, registered through RuleSync. This role
+# allowlists evidence reads, code-owned metrics/compare, packet preparation,
+# review and cited batch-synthesis submission; it has no run/branch or
+# finding/issue-write tools.
 [mcp_servers.playtest]
 enabled = true
 default_tools_approval_mode = "approve"
@@ -55,7 +66,29 @@ enabled_tools = [
   "playtest.metrics",
   "playtest.compare",
   "playtest.submitReview",
+  "playtest.submitCrossSessionSynthesis",
 ]
+env_vars = [
+  "CLICKHOUSE_URL",
+  "OPENLIT_DB_USER",
+  "OPENLIT_DB_NAME",
+  "CODEX_HOME",
+  "AUTODEV_PLAYTEST_ROLE",
+  "AUTODEV_PLAYTEST_WORKSPACE_ID",
+  "AUTODEV_PLAYTEST_ACTOR_ID",
+  "AUTODEV_PLAYTEST_TASK_ID",
+  "AUTODEV_PLAYTEST_RUN_ID",
+  "AUTODEV_PLAYTEST_ANALYSIS_ID",
+  "AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS",
+  "AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION",
+  "AUTODEV_PLAYTEST_REPOSITORY_ROOT",
+  "AUTODEV_PLAYTEST_UV",
+  "AUTODEV_REPO_ROOT",
+  "AUTODEV_NODE_BIN",
+]
+
+[plugins."codex-app-tools@openai-bundled"]
+enabled = false
 
 [skills]
 include_instructions = false

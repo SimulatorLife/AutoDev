@@ -19,6 +19,9 @@ import { createHash } from "node:crypto";
 
 import {
   canonicalPlaytestJson,
+  type PlaytestBenchmark,
+  playtestBenchmarkHashInput,
+  type PlaytestJsonSchema,
   type PlaytestObservationContract
 } from "@simulatorlife/autodev-core";
 
@@ -44,44 +47,58 @@ export function playtestFileHash(bytes: string | Uint8Array): string {
 export function derivedBenchmarkDigests(input: {
   readonly rubricHash: string;
   readonly observationSchemaHash: string;
+  readonly actionSchemaHash: string;
+  readonly eventSchemaHash: string;
 }): Readonly<{
   readonly rubricHash: string;
   readonly metricRegistryHash: string;
   readonly observationSchemaHash: string;
+  readonly actionSchemaHash: string;
+  readonly eventSchemaHash: string;
 }> {
   return {
     rubricHash: input.rubricHash,
     metricRegistryHash: input.rubricHash,
-    observationSchemaHash: input.observationSchemaHash
+    observationSchemaHash: input.observationSchemaHash,
+    actionSchemaHash: input.actionSchemaHash,
+    eventSchemaHash: input.eventSchemaHash
   };
 }
 
-/**
- * The observation contract's content hash, computed over everything except the
- * `schemaHash` field itself — otherwise the digest could never be written into
- * the file it describes.
- */
-export function observationSchemaHash(
-  contract: Omit<PlaytestObservationContract, "schemaHash">
+/** SHA-256 over Core's canonical benchmark projection, excluding contentHash. */
+export function playtestBenchmarkContentHash(
+  benchmark: Omit<PlaytestBenchmark, "contentHash">
 ): string {
-  const { schemaHash: _omitted, ...content } =
-    contract as PlaytestObservationContract;
-  return playtestManifestHash(content);
+  return createHash("sha256")
+    .update(playtestBenchmarkHashInput(benchmark))
+    .digest("hex");
 }
 
-/** True when the file's recorded digest matches its own content. */
+/**
+ * The exact player-visible observation JSON Schema digest. The contract's
+ * `schemaHash` links its allowlist to the schema the adapter advertises; it is
+ * not a hash of the contract metadata, which is independently pinned by the
+ * approved clean checkout SHA.
+ */
+export function observationSchemaHash(schema: PlaytestJsonSchema): string {
+  return playtestManifestHash(schema);
+}
+
+/** True when the contract points at the adapter's declared observation schema. */
 export function observationSchemaHashMatches(
-  contract: PlaytestObservationContract
+  contract: PlaytestObservationContract,
+  schema: PlaytestJsonSchema
 ): boolean {
   return (
     contract.schemaHash.toLowerCase() ===
-    observationSchemaHash(contract).toLowerCase()
+    observationSchemaHash(schema).toLowerCase()
   );
 }
 
-/** The contract with its digest filled in, ready to serialize. */
+/** The contract linked to the adapter schema, ready to serialize. */
 export function withObservationSchemaHash(
-  contract: Omit<PlaytestObservationContract, "schemaHash">
+  contract: Omit<PlaytestObservationContract, "schemaHash">,
+  schema: PlaytestJsonSchema
 ): PlaytestObservationContract {
-  return { ...contract, schemaHash: observationSchemaHash(contract) };
+  return { ...contract, schemaHash: observationSchemaHash(schema) };
 }

@@ -100,9 +100,11 @@ test("execution contract defines read-only playtest roles with scoped tools", ()
     "playtest.listEpisodes",
     "playtest.readEpisode",
     "playtest.readWindow",
+    "playtest.prepareReview",
     "playtest.metrics",
     "playtest.compare",
-    "playtest.submitReview"
+    "playtest.submitReview",
+    "playtest.submitCrossSessionSynthesis"
   ]);
 
   // Ensure smart role does not have playtest MCP server added

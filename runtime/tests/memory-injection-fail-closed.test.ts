@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type {
-  MemoryRecord,
   MemoryReadContext,
+  MemoryRecord,
   MemoryRepository,
   MemorySearchHit
 } from "@simulatorlife/autodev-core";

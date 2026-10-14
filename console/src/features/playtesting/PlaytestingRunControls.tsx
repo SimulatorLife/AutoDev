@@ -1,7 +1,6 @@
 "use client";
 
 import type {
-  ControlApiPlaytestingCancellationReason,
   ControlApiPlaytestingCapabilitiesResponse,
   ControlApiPlaytestingRunRecord,
   ControlApiPlaytestingRunStartedResponse,
@@ -15,7 +14,6 @@ import {
   LIST_PANEL_CLASS,
   NESTED_PANEL_CLASS
 } from "../../components/layout/Panel.ts";
-import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import {
   NOT_OBSERVED_STATUS,
   StatusBadge
@@ -25,17 +23,14 @@ import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
-import {
-  batchStatusBadge
-} from "./playtesting-run-presentation.ts";
+import { assignmentOutcomes } from "./playtesting-active-runs.ts";
 import {
   CANCELLATION_REASON_LABELS,
   responseMessage
 } from "./playtesting-run-messages.ts";
-import {
-  playtestingEpisodeHref,
-  type PlaytestingScope
-} from "./playtesting-url.ts";
+import { batchStatusBadge } from "./playtesting-run-presentation.ts";
+import type { PlaytestingScope } from "./playtesting-url.ts";
+import { PlaytestingAssignmentResults } from "./PlaytestingAssignmentResults.ts";
 
 export type PlaytestingRunSetup =
   | {
@@ -599,15 +594,6 @@ function RunStatusPanel({
   readonly onCancel: () => void;
 }): React.JSX.Element {
   const result = objectRecord(run.result);
-  const rawOutcomes = result?.outcomes;
-  const outcomes = Array.isArray(rawOutcomes)
-    ? rawOutcomes.filter(
-        (outcome): outcome is Readonly<Record<string, PlaytestJsonValue>> =>
-          typeof outcome === "object" &&
-          outcome !== null &&
-          !Array.isArray(outcome)
-      )
-    : [];
   const counts = objectRecord(result?.counts ?? null);
   return (
     <section
@@ -636,50 +622,11 @@ function RunStatusPanel({
           assigned.
         </p>
       ) : null}
-      {outcomes.length > 0 ? (
-        <ul aria-label="Assignment outcomes" className="grid gap-1">
-          {outcomes.map((outcome, index) => {
-            const episodeId = outcome.episodeId;
-            const assignmentId = outcome.assignmentId;
-            const state = outcome.state;
-            return (
-              <li
-                key={typeof assignmentId === "string" ? assignmentId : index}
-                className="text-sm"
-              >
-                {typeof episodeId === "string" ? (
-                  <NavigationLink
-                    className="text-accent hover:underline"
-                    href={playtestingEpisodeHref(scope, episodeId, 0)}
-                  >
-                    Open{" "}
-                    {typeof assignmentId === "string"
-                      ? assignmentId
-                      : "assignment"}{" "}
-                    · {episodeId}
-                  </NavigationLink>
-                ) : (
-                  <span>
-                    {typeof assignmentId === "string"
-                      ? assignmentId
-                      : "Assignment"}{" "}
-                    ·{" "}
-                    {typeof state === "string" ? state : "no episode recorded"}
-                  </span>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      ) : run.result === null ? (
-        <p className={MUTED_META_CLASS}>
-          Assignment outcomes are not recorded yet.
-        </p>
-      ) : (
-        <p className={MUTED_META_CLASS}>
-          The batch has no persisted episode outcomes.
-        </p>
-      )}
+      <PlaytestingAssignmentResults
+        outcomes={assignmentOutcomes(run)}
+        scope={scope}
+        pending={run.result === null}
+      />
       <div className="mt-3 flex flex-wrap gap-2">
         <button
           className="min-h-10 rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
@@ -731,10 +678,12 @@ function RunStatusMessage({
 
 export function PlaytestingRunControls({
   setup,
-  scope
+  scope,
+  onRunStarted
 }: {
   readonly setup: PlaytestingRunSetup;
   readonly scope: PlaytestingScope;
+  readonly onRunStarted: () => void;
 }): React.JSX.Element {
   const capabilities = setup.kind === "available" ? setup.capabilities : null;
   const [pending, setPending] = useState(false);
@@ -787,6 +736,7 @@ export function PlaytestingRunControls({
         result: null,
         error: null
       });
+      onRunStarted();
       setNotice(
         "The Runtime confirmed an approved batch of " +
           String(envelope.data.assignmentCount) +

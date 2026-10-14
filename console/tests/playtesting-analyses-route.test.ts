@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { NextRequest } from "next/server.js";
 
-import { POST } from "../app/api/playtesting/analyses/route.ts";
+import { GET, POST } from "../app/api/playtesting/analyses/route.ts";
 
 const WORKSPACE_ID = "owner/game";
 const API_PATH = "http://console.test/api/playtesting/analyses";
@@ -38,7 +38,7 @@ function withToken<T>(run: () => Promise<T>): Promise<T> {
   });
 }
 
-test("the route forwards the selection and returns packets plus every receipt", async () => {
+test("the route dispatches the selected packets and returns every receipt", async () => {
   await withToken(async () => {
     const previousFetch = globalThis.fetch;
     let forwarded: unknown = null;
@@ -46,9 +46,12 @@ test("the route forwards the selection and returns packets plus every receipt", 
       forwarded = JSON.parse(String(init?.body));
       return Response.json({
         schema: "autodev-control-playtesting-analysis-v1",
+        operation: "dispatch",
         workspaceId: WORKSPACE_ID,
         requested: 3,
-        packets: [{ episodeId: "episode-a", batchId: "batch-1" }],
+        packets: [
+          { episodeId: "episode-a", batchId: "batch-1", packetId: "packet-a" }
+        ],
         receipts: [
           {
             episodeId: "episode-b",
@@ -68,22 +71,51 @@ test("the route forwards the selection and returns packets plus every receipt", 
             batchId: "batch-1",
             reviewCap: 4,
             actualCritiques: 0,
-            reserved: 0,
+            reserved: 1,
             requested: 2,
-            remaining: 4
+            remaining: 3
           }
-        ]
+        ],
+        analysis: {
+          analysisId: "analysis-1",
+          workspaceId: WORKSPACE_ID,
+          status: "running",
+          createdAt: "2026-10-14T12:00:00.000Z",
+          finishedAt: null,
+          requestedEpisodeIds: ["episode-a", "episode-b", "episode-c"],
+          packets: [
+            { episodeId: "episode-a", batchId: "batch-1", packetId: "packet-a" }
+          ],
+          receipts: [
+            {
+              episodeId: "episode-b",
+              batchId: "batch-1",
+              reason: "excluded-ineligible-session",
+              detail: "The session crashed."
+            },
+            {
+              episodeId: "episode-c",
+              batchId: null,
+              reason: "unknown-session",
+              detail: "The session does not exist in this workspace."
+            }
+          ],
+          budget: [],
+          reviews: [],
+          error: null
+        }
       });
     }) as typeof fetch;
     try {
       const response = await POST(
         request(WORKSPACE_ID, ["episode-a", "episode-b", "episode-c"])
       );
-      assert.equal(response.status, 200);
+      assert.equal(response.status, 202);
       // The workspace travels in the query, so the two authorities cannot
       // disagree; the body carries only the selection.
       assert.deepEqual(forwarded, {
-        episodeIds: ["episode-a", "episode-b", "episode-c"]
+        episodeIds: ["episode-a", "episode-b", "episode-c"],
+        operation: "dispatch"
       });
       const body = (await response.json()) as {
         kind: string;
@@ -108,6 +140,7 @@ test("a response that drops a selected session is refused", async () => {
     globalThis.fetch = (async () =>
       Response.json({
         schema: "autodev-control-playtesting-analysis-v1",
+        operation: "dispatch",
         workspaceId: WORKSPACE_ID,
         requested: 3,
         // Two of three accounted for. Accepting this would let the Console
@@ -121,7 +154,8 @@ test("a response that drops a selected session is refused", async () => {
             detail: "The session crashed."
           }
         ],
-        budget: []
+        budget: [],
+        analysis: null
       })) as typeof fetch;
     try {
       const response = await POST(
@@ -132,6 +166,53 @@ test("a response that drops a selected session is refused", async () => {
       // the status alone would let this pass for the wrong reason.
       const body = (await response.json()) as { code: string };
       assert.equal(body.code, "autodev_control_playtesting_invalid_response");
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+});
+
+test("status reads are workspace-scoped and keep the Runtime run identity", async () => {
+  await withToken(async () => {
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      Response.json({
+        schema: "autodev-control-playtesting-analyses-v1",
+        workspaceId: WORKSPACE_ID,
+        syntheses: [],
+        runs: [
+          {
+            analysisId: "analysis-1",
+            workspaceId: WORKSPACE_ID,
+            status: "running",
+            createdAt: "2026-10-14T12:00:00.000Z",
+            finishedAt: null,
+            requestedEpisodeIds: ["episode-a"],
+            packets: [
+              {
+                episodeId: "episode-a",
+                batchId: "batch-1",
+                packetId: "packet-a"
+              }
+            ],
+            receipts: [],
+            budget: [],
+            reviews: [],
+            error: null
+          }
+        ]
+      })) as typeof fetch;
+    try {
+      const statusRequest = new NextRequest(
+        `${API_PATH}?workspaceId=${encodeURIComponent(WORKSPACE_ID)}`
+      );
+      const response = await GET(statusRequest);
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as {
+        data: { runs: readonly unknown[] };
+      };
+      assert.equal(body.data.runs.length, 1);
+      assert.equal(response.headers.get("cache-control"), "no-store");
     } finally {
       globalThis.fetch = previousFetch;
     }

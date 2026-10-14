@@ -133,7 +133,7 @@ test("a model name past the bound is refused before routing is consulted", () =>
   // not a model, and there is no reason to run it through.
   let consulted = false;
   const watched = {
-    routeForModel: (model: string) => {
+    routeForModel: (_model: string) => {
       consulted = true;
       return route();
     }

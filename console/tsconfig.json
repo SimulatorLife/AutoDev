@@ -33,15 +33,23 @@
     "resolveJsonModule": true
   },
   "include": [
+    ".next-dev/types/**/*.ts",
+    ".next-staging-e2e-10054-63878/types/**/*.ts",
+    ".next-staging-e2e-10308-63988/types/**/*.ts",
+    ".next-staging-e2e-17142-49285/types/**/*.ts",
+    ".next-staging-e2e-29155-50906/types/**/*.ts",
+    ".next-staging-e2e-8736-63173/types/**/*.ts",
+    ".next-staging-e2e-9366-63532/types/**/*.ts",
+    ".next-staging-e2e-9716-63748/types/**/*.ts",
+    ".next/types/**/*.ts",
+    "app/**/*.ts",
+    "app/**/*.tsx",
     "next-env.d.ts",
     "src/**/*.ts",
     "src/**/*.tsx",
-    "app/**/*.ts",
-    "app/**/*.tsx",
     "tests/**/*.ts",
     "tests/**/*.tsx",
-    ".next/types/**/*.ts",
-    ".next-dev/types/**/*.ts"
+    ".next-staging-e2e-29995-51308/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

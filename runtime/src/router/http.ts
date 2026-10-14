@@ -90,6 +90,10 @@ import {
   setControlApiLiveAgentCountsSource,
   setControlApiProviderHealthSource
 } from "../control-api/index.ts";
+import {
+  providerModelDiscoveryPersistenceSnapshot,
+  restoreProviderModelDiscoveryPersistence
+} from "../providers/model-discovery.ts";
 import { safeMetricLabel } from "./metric-label.ts";
 import {
   checkOtelPayload,
@@ -502,6 +506,14 @@ function restorePersistedSection(args: {
     restoreProviderTelemetrySection(providerTelemetry, value);
     return;
   }
+  if (section === "providerModelDiscovery") {
+    if (!restoreProviderModelDiscoveryPersistence(value)) {
+      writeErrorLine(
+        "Warning: invalid persisted provider model-discovery state was discarded."
+      );
+    }
+    return;
+  }
   if (section === "usage") {
     restoreUsagePersistenceSnapshot(value);
     return;
@@ -620,6 +632,7 @@ const routerPersistence = new RouterPersistence({
   getSnapshot: () => ({
     ...ROUTING_POLICY.runtimeState(),
     providerTelemetry: Object.fromEntries(providerTelemetry),
+    providerModelDiscovery: providerModelDiscoveryPersistenceSnapshot(),
     usage: usagePersistenceSnapshot(),
     concurrency: concurrencyManager.telemetry,
     subagents: subagentRegistry.subagentTelemetry,

@@ -150,7 +150,8 @@ test("playtest-analyst.toml reuses autodev/smart but overrides to read-only, evi
       "playtest.prepareReview",
       "playtest.readEpisode",
       "playtest.readWindow",
-      "playtest.submitReview"
+      "playtest.submitReview",
+      "playtest.submitCrossSessionSynthesis"
     ].sort()
   );
   // Evidence/review authority only: never run/branch gameplay or write
@@ -179,6 +180,11 @@ test("playtester prompt forbids code/issue writes and self-critique", () => {
 test("playtest-analyst prompt forbids run/branch authority and direct issue creation", () => {
   const prompt = readText("agents/prompts/roles/playtest-analyst.md");
   assert.match(prompt, /playtest\.submitReview/);
+  assert.match(
+    prompt,
+    /Runtime-computed metric aggregation supplied with the task/u
+  );
+  assert.match(prompt, /Do not recompute it, average episode percentages/u);
   assert.match(prompt, /never run, branch, or extend gameplay/i);
   assert.match(prompt, /Do not create, comment on, or close a GitHub issue/i);
   assert.match(prompt, /read-only for source code/i);

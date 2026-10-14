@@ -46,11 +46,8 @@ export type ProposedPlaytestIssueDraftDisposition = Exclude<
  * Its `evidenceStatus` still carries the honesty: an unverified regression is
  * drafted as a hypothesis.
  */
-const PLAYTEST_ISSUE_CLOSED_STATUSES: readonly PlaytestFinding["status"][] = [
-  "fixed",
-  "withdrawn",
-  "stale"
-];
+const PLAYTEST_ISSUE_CLOSED_STATUSES: ReadonlySet<PlaytestFinding["status"]> =
+  new Set(["fixed", "withdrawn", "stale"]);
 
 /**
  * The closing directive, per disposition.
@@ -104,8 +101,10 @@ export interface BuildPlaytestIssueDraftsInput {
   readonly findings: readonly PlaytestFinding[];
 }
 
-function dispositionFor(finding: PlaytestFinding): PlaytestIssueDraftDisposition {
-  if (PLAYTEST_ISSUE_CLOSED_STATUSES.includes(finding.status)) {
+function dispositionFor(
+  finding: PlaytestFinding
+): PlaytestIssueDraftDisposition {
+  if (PLAYTEST_ISSUE_CLOSED_STATUSES.has(finding.status)) {
     return "no-issue-proposed";
   }
   // "hypothesis" and "not observed" are not claims about the game. A draft that
@@ -120,14 +119,15 @@ function bodyFor(
   finding: PlaytestFinding,
   disposition: ProposedPlaytestIssueDraftDisposition
 ): string {
-  const evidence = finding.evidenceRefs.length
-    ? finding.evidenceRefs
-        .map(
-          (ref) =>
-            `- ${ref.kind} ${ref.id}${ref.step === undefined ? "" : ` @ step ${ref.step}`}`
-        )
-        .join("\n")
-    : "- none recorded";
+  const evidence =
+    finding.evidenceRefs.length > 0
+      ? finding.evidenceRefs
+          .map(
+            (ref) =>
+              `- ${ref.kind} ${ref.id}${ref.step === undefined ? "" : ` @ step ${ref.step}`}`
+          )
+          .join("\n")
+      : "- none recorded";
   const denominators =
     finding.affectedEpisodes === null
       ? "not measured"
@@ -140,7 +140,7 @@ function bodyFor(
     `- Evidence status: **${finding.evidenceStatus}**`,
     `- Verification stage: **${finding.verificationStage}**`,
     `- Affected: ${denominators}`,
-    `- Cohorts: ${finding.affectedCohorts.length ? finding.affectedCohorts.join(", ") : "none recorded"}`,
+    `- Cohorts: ${finding.affectedCohorts.length > 0 ? finding.affectedCohorts.join(", ") : "none recorded"}`,
     `- Finding: \`${finding.findingId}\` v${finding.version} (fingerprint \`${finding.fingerprint}\`)`,
     "",
     "## Evidence",

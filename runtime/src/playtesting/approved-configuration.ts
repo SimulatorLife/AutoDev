@@ -17,15 +17,21 @@ import {
   assertPlaytestObservationContract,
   assertWorkspacePlaytestApproval,
   expandPlaytestRegistry,
+  type PlaytestAdapterBinding,
   type PlaytestBenchmark,
   playtestBenchmarkHashInput,
   type PlaytestGameConfiguration,
-  PLAYTESTS_INTEGRATION_DIR,
+  type PlaytestJsonSchema,
   type PlaytestMetricRegistry,
   type PlaytestObservationContract,
+  PLAYTESTS_INTEGRATION_DIR,
   PLAYTESTS_MEASUREMENT_VERSION,
+  resolvePlaytestAdapterBinding,
+  usesGenericPlaytestAdapter,
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
+
+import { observationSchemaHash, playtestManifestHash } from "./hash-chain.ts";
 
 /**
  * The one integration file a target game checks in, resolved against the
@@ -39,6 +45,7 @@ import {
 const CONFIG_PATH = `${PLAYTESTS_INTEGRATION_DIR}/playtest.config.json`;
 const CONFIG_LABEL = CONFIG_PATH;
 const CONFIG_UNAVAILABLE = "config-unavailable" as const;
+const TARGET_FILE_INVALID = "target-file-invalid" as const;
 const MAX_TARGET_FILE_BYTES = 1024 * 1024;
 
 export type ApprovedConfigurationFailure =
@@ -233,6 +240,12 @@ function assertMatchesApproval(
   configuration: PlaytestGameConfiguration,
   approval: WorkspacePlaytestApproval
 ): void {
+  if (!usesGenericPlaytestAdapter(configuration.adapter.command)) {
+    fail(
+      "command-mismatch",
+      "Approved Playtesting requires AutoDev's generic adapter; game-written protocol adapters are not supported."
+    );
+  }
   if (
     configuration.adapter.command.length !== approval.adapterCommand.length ||
     configuration.adapter.command.some(
@@ -280,10 +293,45 @@ function assertMatchesApproval(
   }
 }
 
+function loadApprovedAdapterBinding(root: string): PlaytestAdapterBinding {
+  const label = `${PLAYTESTS_INTEGRATION_DIR}/playtest.binding.json`;
+  const bytes = readApprovedWorkspaceFile(root, label, label);
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    fail(TARGET_FILE_INVALID, "The target adapter binding is invalid.");
+  }
+  const resolution = resolvePlaytestAdapterBinding(value);
+  if (resolution.kind === "rejected") {
+    fail(
+      TARGET_FILE_INVALID,
+      "The target adapter binding is invalid: " + resolution.message
+    );
+  }
+  return value as PlaytestAdapterBinding;
+}
+
+function assertObservationSchemaMatchesBinding(
+  contract: PlaytestObservationContract,
+  binding: PlaytestAdapterBinding
+): void {
+  const expected = observationSchemaHash(
+    binding.schemas.observation as PlaytestJsonSchema
+  );
+  if (contract.schemaHash.toLowerCase() !== expected.toLowerCase()) {
+    fail(
+      TARGET_FILE_INVALID,
+      "The observation contract schemaHash does not match the adapter binding's observation schema."
+    );
+  }
+}
+
 function assertBenchmarkMatchesTarget(input: {
   readonly benchmark: PlaytestBenchmark;
   readonly approval: WorkspacePlaytestApproval;
   readonly configuration: PlaytestGameConfiguration;
+  readonly binding: PlaytestAdapterBinding;
   readonly observationContract: PlaytestObservationContract;
   readonly rubric: PlaytestMetricRegistry;
   readonly rubricHash: string;
@@ -292,6 +340,7 @@ function assertBenchmarkMatchesTarget(input: {
     benchmark,
     approval,
     configuration,
+    binding,
     observationContract,
     rubric,
     rubricHash
@@ -306,6 +355,9 @@ function assertBenchmarkMatchesTarget(input: {
     benchmark.rubricHash !== rubricHash ||
     benchmark.metricRegistryHash !== rubricHash ||
     benchmark.observationSchemaHash !== observationContract.schemaHash ||
+    benchmark.actionSchemaHash !==
+      playtestManifestHash(binding.schemas.action) ||
+    benchmark.eventSchemaHash !== playtestManifestHash(binding.schemas.event) ||
     !configuration.modes.includes(benchmark.captureMode) ||
     benchmark.scenarioInventory.some(
       (scenario) =>
@@ -426,7 +478,7 @@ function loadApprovedObservationContract(
   } catch (error) {
     if (error instanceof ApprovedPlaytestConfigurationError) throw error;
     throw fail(
-      "target-file-invalid",
+      TARGET_FILE_INVALID,
       "The target observation contract is invalid or incompatible."
     );
   }
@@ -436,7 +488,8 @@ function loadApprovedRubric(
   root: string,
   configDirectory: string,
   configuration: PlaytestGameConfiguration,
-  approval: WorkspacePlaytestApproval
+  approval: WorkspacePlaytestApproval,
+  binding: PlaytestAdapterBinding
 ): { rubric: PlaytestMetricRegistry; rubricHash: string } {
   const rubricBytes = readConfigRelativeManifest(
     root,
@@ -452,10 +505,17 @@ function loadApprovedRubric(
     if (rubric.workspaceId !== approval.workspaceId) {
       throw new TypeError("The metric registry belongs to another workspace.");
     }
+    if (
+      rubric.eventSchemaHash !== playtestManifestHash(binding.schemas.event)
+    ) {
+      throw new TypeError(
+        "The metric registry event schema hash does not match the adapter binding."
+      );
+    }
   } catch (error) {
     if (error instanceof ApprovedPlaytestConfigurationError) throw error;
     fail(
-      "target-file-invalid",
+      TARGET_FILE_INVALID,
       "The target rubric or metric registry is invalid."
     );
   }
@@ -468,6 +528,7 @@ function loadApprovedBenchmark(
   configDirectory: string,
   configuration: PlaytestGameConfiguration,
   approval: WorkspacePlaytestApproval,
+  binding: PlaytestAdapterBinding,
   observationContract: PlaytestObservationContract,
   rubric: PlaytestMetricRegistry,
   rubricHash: string
@@ -496,6 +557,7 @@ function loadApprovedBenchmark(
       benchmark: parsed,
       approval,
       configuration,
+      binding,
       observationContract,
       rubric,
       rubricHash
@@ -504,8 +566,9 @@ function loadApprovedBenchmark(
   } catch (error) {
     if (error instanceof ApprovedPlaytestConfigurationError) throw error;
     throw fail(
-      "target-file-invalid",
-      "The target benchmark is invalid or incompatible."
+      TARGET_FILE_INVALID,
+      "The target benchmark is invalid or incompatible" +
+        (error instanceof Error ? ": " + error.message : ".")
     );
   }
 }
@@ -528,22 +591,26 @@ export function loadApprovedPlaytestDefinition(
   const root = resolveApprovedCheckoutRoot(approval);
   const { configuration, configHash, configDirectory } =
     loadApprovedConfiguration(root, approval);
+  const binding = loadApprovedAdapterBinding(root);
   const observationContract = loadApprovedObservationContract(
     root,
     configDirectory,
     configuration
   );
+  assertObservationSchemaMatchesBinding(observationContract, binding);
   const { rubric, rubricHash } = loadApprovedRubric(
     root,
     configDirectory,
     configuration,
-    approval
+    approval,
+    binding
   );
   const { benchmark, benchmarkHash } = loadApprovedBenchmark(
     root,
     configDirectory,
     configuration,
     approval,
+    binding,
     observationContract,
     rubric,
     rubricHash

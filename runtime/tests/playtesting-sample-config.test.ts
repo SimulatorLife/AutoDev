@@ -11,8 +11,13 @@ import {
   assertPlaytestObservationContract,
   expandPlaytestRegistry,
   playtestBenchmarkHashInput,
-  PLAYTESTS_MEASUREMENT_VERSION
+  PLAYTESTS_GENERIC_ADAPTER_COMMAND,
+  PLAYTESTS_MEASUREMENT_VERSION,
+  resolvePlaytestAdapterBinding,
+  usesGenericPlaytestAdapter
 } from "@simulatorlife/autodev-core";
+
+import { playtestManifestHash } from "../src/playtesting/hash-chain.ts";
 
 const FIXTURE_ROOT = fileURLToPath(
   new URL("fixtures/playtesting/", import.meta.url)
@@ -28,6 +33,7 @@ function sha256(bytes: Uint8Array | string): string {
 
 test("checked-in synthetic playtest config binds a valid rubric, observation, and immutable benchmark", () => {
   const config = readJson("playtest.config.json");
+  const binding = readJson("playtest.binding.json");
   const observation = readJson("playtest.observation.json");
   const rubric = readJson("playtest.rubric.json");
   const benchmark = readJson("playtest.benchmark.json");
@@ -40,6 +46,10 @@ test("checked-in synthetic playtest config binds a valid rubric, observation, an
   const rubricBytes = readFileSync(join(FIXTURE_ROOT, "playtest.rubric.json"));
 
   assertPlaytestGameConfiguration(config);
+  const bindingResult = resolvePlaytestAdapterBinding(binding);
+  assert.equal(bindingResult.kind, "resolved");
+  assert.ok(usesGenericPlaytestAdapter(config.adapter.command));
+  assert.deepEqual(config.adapter.command, PLAYTESTS_GENERIC_ADAPTER_COMMAND);
   assertPlaytestObservationContract(observation);
   assertPlaytestBenchmark(benchmark);
   const registry = expandPlaytestRegistry(rubric);
@@ -55,6 +65,13 @@ test("checked-in synthetic playtest config binds a valid rubric, observation, an
   const typedObservation = observation as {
     schemaHash: string;
     mode: string;
+  };
+  const typedBinding = binding as {
+    schemas: {
+      observation: Record<string, unknown>;
+      action: Record<string, unknown>;
+      event: Record<string, unknown>;
+    };
   };
   const typedBenchmark = benchmark as {
     benchmarkId: string;
@@ -83,6 +100,10 @@ test("checked-in synthetic playtest config binds a valid rubric, observation, an
     typedObservation.schemaHash,
     goldenCapabilities.result.observationSchemaHash
   );
+  assert.equal(
+    typedObservation.schemaHash,
+    playtestManifestHash(typedBinding.schemas.observation)
+  );
   assert.equal(typedBenchmark.benchmarkId, "benchmark-synthetic-fixture-v1");
   assert.equal(typedBenchmark.workspaceId, registry.workspaceId);
   assert.equal(
@@ -105,6 +126,14 @@ test("checked-in synthetic playtest config binds a valid rubric, observation, an
   assert.equal(
     typedBenchmark.eventSchemaHash,
     goldenCapabilities.result.eventSchemaHash
+  );
+  assert.equal(
+    typedBenchmark.actionSchemaHash,
+    playtestManifestHash(typedBinding.schemas.action)
+  );
+  assert.equal(
+    typedBenchmark.eventSchemaHash,
+    playtestManifestHash(typedBinding.schemas.event)
   );
   assert.equal(typedBenchmark.metricRegistryHash, sha256(rubricBytes));
   assert.equal(typedBenchmark.rubricHash, sha256(rubricBytes));

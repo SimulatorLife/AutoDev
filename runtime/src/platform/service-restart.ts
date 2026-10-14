@@ -13,8 +13,15 @@ import path from "node:path";
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
+import { buildConsole } from "./console-build.ts";
+import {
+  LABEL_AUTODEV_CONSOLE as CONSOLE_SERVICE_LABEL,
+  resolveConsolePort
+} from "./console-ensure.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 import { sleep } from "./sleep.ts";
+
+export { LABEL_AUTODEV_CONSOLE } from "./console-ensure.ts";
 
 const WHITESPACE_SPLIT_PATTERN = /\s+/u;
 const PID_NUMERIC_PATTERN = /^\d+$/u;
@@ -35,7 +42,8 @@ export const MANAGED_SERVICE_LABELS = [
   LABEL_CLAUDE_BRIDGE,
   LABEL_MINIMAX_PROXY,
   LABEL_ANTIGRAVITY_PROXY,
-  LABEL_COPILOT_PROXY
+  LABEL_COPILOT_PROXY,
+  CONSOLE_SERVICE_LABEL
 ] as const;
 export type ManagedServiceLabel = (typeof MANAGED_SERVICE_LABELS)[number];
 export type KillSignal = "SIGTERM" | "SIGKILL";
@@ -44,6 +52,7 @@ export interface ServiceRestartOptions {
   readonly repositoryRoot: string;
   readonly home: string;
   readonly codexHome: string;
+  readonly consolePort: number;
   readonly readyAttempts: number;
   readonly readyDelayMs: number;
 }
@@ -57,6 +66,7 @@ export interface ServiceRestartDeps {
   readonly readFile: (filePath: string) => string;
   readonly logTail: (filePath: string, lines: number) => readonly string[];
   readonly commandAvailable: (command: string) => boolean;
+  readonly buildConsole: () => void;
   /** GET the URL, or POST `jsonBody` as JSON when one is given. */
   readonly probe: (url: string, jsonBody?: string) => Promise<boolean>;
   readonly sleep: (ms: number) => Promise<void>;
@@ -96,40 +106,60 @@ const SERVICE_PORTS = {
   [LABEL_MINIMAX_PROXY]: 18_765,
   [LABEL_ANTIGRAVITY_PROXY]: 4002,
   [LABEL_COPILOT_PROXY]: 4003
-} as const satisfies Record<ManagedServiceLabel, number>;
+} as const satisfies Record<
+  Exclude<ManagedServiceLabel, typeof CONSOLE_SERVICE_LABEL>,
+  number
+>;
 
-const BRIDGE_SPECS: readonly ServiceSpec[] = [
-  {
-    label: LABEL_MODEL_ROUTER,
-    probe: "http://127.0.0.1:4100/health/readiness",
-    ownedPort: SERVICE_PORTS[LABEL_MODEL_ROUTER],
-    required: true
-  },
-  {
-    label: LABEL_CLAUDE_BRIDGE,
-    probe: "http://127.0.0.1:4000/health/liveliness",
-    ownedPort: SERVICE_PORTS[LABEL_CLAUDE_BRIDGE],
-    required: false
-  },
-  {
-    label: LABEL_MINIMAX_PROXY,
-    probe: "http://127.0.0.1:18765/health",
-    ownedPort: SERVICE_PORTS[LABEL_MINIMAX_PROXY],
-    required: false
-  },
-  {
-    label: LABEL_ANTIGRAVITY_PROXY,
-    probe: "http://127.0.0.1:4002/health/liveliness",
-    ownedPort: SERVICE_PORTS[LABEL_ANTIGRAVITY_PROXY],
-    required: false
-  },
-  {
-    label: LABEL_COPILOT_PROXY,
-    probe: "http://127.0.0.1:4003/health/liveliness",
-    ownedPort: SERVICE_PORTS[LABEL_COPILOT_PROXY],
-    required: false
-  }
-];
+function servicePort(
+  options: ServiceRestartOptions,
+  label: ManagedServiceLabel
+): number {
+  return label === CONSOLE_SERVICE_LABEL
+    ? options.consolePort
+    : SERVICE_PORTS[label];
+}
+
+function serviceSpecs(options: ServiceRestartOptions): readonly ServiceSpec[] {
+  return [
+    {
+      label: CONSOLE_SERVICE_LABEL,
+      probe: `http://127.0.0.1:${options.consolePort}/api/health`,
+      ownedPort: options.consolePort,
+      required: true
+    },
+    {
+      label: LABEL_MODEL_ROUTER,
+      probe: "http://127.0.0.1:4100/health/readiness",
+      ownedPort: SERVICE_PORTS[LABEL_MODEL_ROUTER],
+      required: true
+    },
+    {
+      label: LABEL_CLAUDE_BRIDGE,
+      probe: "http://127.0.0.1:4000/health/liveliness",
+      ownedPort: SERVICE_PORTS[LABEL_CLAUDE_BRIDGE],
+      required: false
+    },
+    {
+      label: LABEL_MINIMAX_PROXY,
+      probe: "http://127.0.0.1:18765/health",
+      ownedPort: SERVICE_PORTS[LABEL_MINIMAX_PROXY],
+      required: false
+    },
+    {
+      label: LABEL_ANTIGRAVITY_PROXY,
+      probe: "http://127.0.0.1:4002/health/liveliness",
+      ownedPort: SERVICE_PORTS[LABEL_ANTIGRAVITY_PROXY],
+      required: false
+    },
+    {
+      label: LABEL_COPILOT_PROXY,
+      probe: "http://127.0.0.1:4003/health/liveliness",
+      ownedPort: SERVICE_PORTS[LABEL_COPILOT_PROXY],
+      required: false
+    }
+  ];
+}
 
 export function resolveServiceRestartOptions(
   env: NodeJS.ProcessEnv = process.env
@@ -139,6 +169,7 @@ export function resolveServiceRestartOptions(
     repositoryRoot: env.AUTODEV_REPO_ROOT?.trim() || process.cwd(),
     home,
     codexHome: env.CODEX_HOME?.trim() || path.join(home, ".codex"),
+    consolePort: resolveConsolePort(env.AUTODEV_CONSOLE_PORT),
     readyAttempts: parseNonNegativeInteger(
       env.AUTODEV_SERVICE_READY_ATTEMPTS,
       DEFAULT_ATTEMPTS
@@ -170,7 +201,7 @@ function readLogTail(filePath: string, lines: number): string[] {
   }
 }
 
-function defaultDeps(): ServiceRestartDeps {
+function defaultDeps(options: ServiceRestartOptions): ServiceRestartDeps {
   return {
     launchd: new LaunchdClient(),
     fileExists: existsSync,
@@ -190,6 +221,8 @@ function defaultDeps(): ServiceRestartDeps {
         return false;
       }
     },
+    buildConsole: () =>
+      buildConsole({ repositoryRoot: options.repositoryRoot }),
     probe: async (url, jsonBody) => {
       try {
         const response = await fetch(url, {
@@ -230,7 +263,19 @@ function defaultDeps(): ServiceRestartDeps {
           .split(WHITESPACE_SPLIT_PATTERN)
           .filter((pid) => PID_NUMERIC_PATTERN.test(pid))
           .map(Number);
-      } catch {
+      } catch (error) {
+        const failure = error as {
+          status?: number | null;
+          stdout?: Buffer | string;
+          stderr?: Buffer | string;
+        };
+        if (
+          failure.status === 1 &&
+          !String(failure.stdout ?? "").trim() &&
+          !String(failure.stderr ?? "").trim()
+        ) {
+          return [];
+        }
         return null;
       }
     },
@@ -267,6 +312,9 @@ function serviceLauncher(
 ): string {
   const hooks = path.join(options.codexHome, "hooks");
   switch (label) {
+    case CONSOLE_SERVICE_LABEL: {
+      return path.join(hooks, "run-codex-console.sh");
+    }
     case LABEL_MODEL_ROUTER: {
       return path.join(hooks, "run-codex-model-router.sh");
     }
@@ -293,6 +341,17 @@ function serviceHook(
   label: ManagedServiceLabel
 ): string {
   switch (label) {
+    case CONSOLE_SERVICE_LABEL: {
+      return path.join(
+        options.repositoryRoot,
+        "console",
+        "node_modules",
+        "next",
+        "dist",
+        "bin",
+        "next"
+      );
+    }
     case LABEL_MODEL_ROUTER: {
       return path.join(options.codexHome, "src", "router", "server.ts");
     }
@@ -349,11 +408,12 @@ async function reapUnmanaged(
   options: ServiceRestartOptions,
   label: ManagedServiceLabel,
   deps: ServiceRestartDeps,
-  pids: readonly number[] = deps.listeningPids(SERVICE_PORTS[label]) ?? []
+  pids: readonly number[] = deps.listeningPids(servicePort(options, label)) ??
+    []
 ): Promise<boolean> {
   const [pid, ...rest] = pids;
   if (pid === undefined) return true;
-  const port = SERVICE_PORTS[label];
+  const port = servicePort(options, label);
   if (!deps.commandLine(pid)?.includes(serviceHook(options, label))) {
     writeErrorLine(
       `port ${port} held by a process this installer does not own (pid ${pid}); ${label} not started`
@@ -524,7 +584,7 @@ async function verifySupervisedServices(
   deps: ServiceRestartDeps,
   options: ServiceRestartOptions
 ): Promise<number> {
-  const specs = BRIDGE_SPECS;
+  const specs = serviceSpecs(options);
   const checks = await Promise.all(
     specs.map((spec) => checkService(deps, options, spec))
   );
@@ -585,6 +645,37 @@ function foreignLabels(
   );
 }
 
+function consolePortIsSafeToPublish(
+  options: ServiceRestartOptions,
+  deps: ServiceRestartDeps
+): boolean {
+  const listeners = deps.listeningPids(options.consolePort);
+  if (listeners === null) {
+    writeErrorLine(
+      `could not verify Console port ${options.consolePort}; refusing to replace its production build.`
+    );
+    return false;
+  }
+  if (listeners.length === 0) return true;
+
+  if (!deps.launchd.isLoaded(CONSOLE_SERVICE_LABEL)) {
+    writeErrorLine(
+      `Console port ${options.consolePort} is held by pid ${listeners.join(", ")} outside its managed LaunchAgent; refusing to replace the build.`
+    );
+    return false;
+  }
+
+  const job = parseJobState(readLaunchdJobDump(deps, CONSOLE_SERVICE_LABEL));
+  const unowned = listeners.filter((pid) => pid !== job.pid);
+  if (job.pid === null || unowned.length > 0) {
+    writeErrorLine(
+      `Console port ${options.consolePort} is not owned by its managed LaunchAgent; refusing to replace the build.`
+    );
+    return false;
+  }
+  return true;
+}
+
 /**
  * Replace a label's job: unload the old one, clear stray listeners, then
  * bootstrap. Every managed plist sets RunAtLoad, so bootstrap starts the
@@ -629,7 +720,7 @@ async function reloadLabels(
 
 export async function restartServices(
   options: ServiceRestartOptions = resolveServiceRestartOptions(),
-  deps: ServiceRestartDeps = defaultDeps()
+  deps: ServiceRestartDeps = defaultDeps(options)
 ): Promise<number> {
   const owner = plistOwner(options, deps);
   const foreignOwnerResult = foreignOwnedHookResult(options, owner);
@@ -639,7 +730,12 @@ export async function restartServices(
     writeErrorLine(
       "launchctl unavailable (sandbox?); starting bridges through the direct ensure-hook path."
     );
-    return runDirectEnsures(options, deps);
+    const status = await runDirectEnsures(options, deps);
+    if (status !== 0) return status;
+    writeErrorLine(
+      "the Console service cannot be safely restarted without launchd; start its managed LaunchAgent before serving traffic."
+    );
+    return 1;
   }
   const foreign = foreignLabels(deps, options);
   if (foreign.length > 0) {
@@ -652,6 +748,23 @@ export async function restartServices(
     );
     return 0;
   }
+  const consolePlist = plistPath(options, CONSOLE_SERVICE_LABEL);
+  const consoleLauncher = serviceLauncher(options, CONSOLE_SERVICE_LABEL);
+  if (!deps.fileExists(consolePlist) || !deps.fileExists(consoleLauncher)) {
+    writeErrorLine(
+      "the managed Console LaunchAgent and launcher must be materialized before publishing a production build."
+    );
+    return 1;
+  }
+  if (!consolePortIsSafeToPublish(options, deps)) return 1;
+  try {
+    deps.buildConsole();
+  } catch (error) {
+    writeErrorLine(
+      `Console production build failed; the currently served build was preserved: ${errorText(error)}`
+    );
+    return 1;
+  }
   const results = await reloadLabels(deps, options);
   const failedLabels = MANAGED_SERVICE_LABELS.filter(
     (_label, index) => results[index] === "failed"
@@ -660,10 +773,13 @@ export async function restartServices(
     writeErrorLine(
       `launchd could not load ${failedLabels.join(", ")}; starting bridges through the direct ensure-hook path.`
     );
-    return runDirectEnsures(options, deps);
+    const status = await runDirectEnsures(options, deps);
+    if (status !== 0) return status;
+    if (failedLabels.includes(CONSOLE_SERVICE_LABEL)) return 1;
+    return status;
   }
   writeErrorLine(
-    "Provider bridges supervised by launchd (KeepAlive; survive restart/crash/sleep)."
+    "Runtime services supervised by launchd (KeepAlive; survive restart/crash/sleep)."
   );
   return verifySupervisedServices(deps, options);
 }

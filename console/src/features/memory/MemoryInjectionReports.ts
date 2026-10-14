@@ -1,5 +1,5 @@
-import type { ControlApiMemoryInjectionOutcomeJoin } from "@simulatorlife/autodev-core";
 import {
+  type ControlApiMemoryInjectionOutcomeJoin,
   EXPERIENCE_OUTCOMES,
   MEMORY_EVIDENCE_KINDS,
   MEMORY_OUTCOME_REPORT_KINDS,
@@ -13,13 +13,13 @@ import { TextField } from "../../components/forms/TextField.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { MUTED_TEXT_CLASS } from "../../components/ui/text-classes.ts";
 import { codeOptions } from "./memory-code-options.ts";
+import { memoryListQuery, type MemoryListScope } from "./memory-list-url.ts";
 import {
   MEMORY_EVIDENCE_KIND_LABEL,
   MEMORY_OUTCOME_LABEL,
   MEMORY_REPORT_KIND_LABEL,
   MEMORY_USE_KIND_LABEL
 } from "./memory-status.ts";
-import { memoryListQuery, type MemoryListScope } from "./memory-list-url.ts";
 
 /**
  * What a person may assert about one observed injection.

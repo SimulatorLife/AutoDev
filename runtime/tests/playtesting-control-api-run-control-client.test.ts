@@ -224,6 +224,74 @@ test("Playtest Control API client forwards typed run operations and host-bound s
   assert.match(calls[4]!.url, /batch-1\/cancel\?workspaceId=fixture%2Fgame/u);
 });
 
+test("MCP packet preparation accepts only the packet-preparation response variant", async () => {
+  const session: PlaytestMcpSession = {
+    ...SESSION,
+    role: "operator"
+  };
+  const response = {
+    schema: "autodev-control-playtesting-analysis-v1",
+    operation: "prepare",
+    workspaceId: WORKSPACE,
+    requested: 1,
+    packets: [],
+    receipts: [],
+    budget: [],
+    analysis: null
+  };
+  let body = "";
+  const client = createPlaytestControlApiRunClient({
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "analyst-service-token",
+    actor: "playtest-runtime",
+    sessionRole: "operator",
+    fetcher: async (_input, init) => {
+      body = String(init?.body ?? "");
+      return jsonResponse(response);
+    }
+  });
+  assert.deepEqual(
+    await client.prepareCrossSessionReview(session, WORKSPACE, ["episode-1"]),
+    { packets: [], receipts: [], budget: [] }
+  );
+  assert.deepEqual(JSON.parse(body), { episodeIds: ["episode-1"] });
+
+  const wrongOperation = createPlaytestControlApiRunClient({
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "analyst-service-token",
+    actor: "playtest-runtime",
+    sessionRole: "operator",
+    fetcher: async () => jsonResponse({ ...response, operation: "dispatch" })
+  });
+  await assert.rejects(
+    wrongOperation.prepareCrossSessionReview(session, WORKSPACE, ["episode-1"]),
+    PlaytestMcpUnavailableError
+  );
+});
+
+test("full packet preparation retains its separate 16-session response bound", async () => {
+  let fetchCount = 0;
+  const client = createPlaytestControlApiRunClient({
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "packet-reader-token",
+    actor: "playtest-runtime",
+    sessionRole: "operator",
+    fetcher: async () => {
+      fetchCount += 1;
+      return jsonResponse({});
+    }
+  });
+  await assert.rejects(
+    client.prepareCrossSessionReview(
+      { ...SESSION, role: "operator" },
+      WORKSPACE,
+      Array.from({ length: 17 }, (_, index) => `episode-${index + 1}`)
+    ),
+    /Packet preparation requires 1-16 distinct sessions/u
+  );
+  assert.equal(fetchCount, 0);
+});
+
 test("Playtest Control API client fails closed for non-loopback URLs and incomplete host credentials", () => {
   assert.throws(
     () =>
@@ -242,6 +310,7 @@ test("Playtest Control API client fails closed for non-loopback URLs and incompl
     AUTODEV_PLAYTEST_CONTROL_API_ROLE: "playtester",
     AUTODEV_PLAYTEST_ROLE: "playtester"
   });
+  assert.ok(configured);
   assert.equal(typeof configured.startRun, "function");
   assert.throws(
     () =>
@@ -252,6 +321,23 @@ test("Playtest Control API client fails closed for non-loopback URLs and incompl
         AUTODEV_PLAYTEST_CONTROL_API_ROLE: "playtester"
       }),
     PlaytestMcpUnavailableError
+  );
+});
+
+test("analyst MCP setup does not require a Control API run-control credential", () => {
+  assert.equal(
+    playtestControlApiRunClientFromEnvironment({
+      AUTODEV_PLAYTEST_ROLE: "playtest-analyst"
+    }),
+    null
+  );
+  assert.throws(
+    () =>
+      playtestControlApiRunClientFromEnvironment({
+        AUTODEV_PLAYTEST_ROLE: "playtest-analyst",
+        AUTODEV_PLAYTEST_CONTROL_API_ROLE: "playtester"
+      }),
+    /does not match/u
   );
 });
 

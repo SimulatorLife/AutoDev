@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Client host for multi-session analysis selection.
+ * Client host for bounded multi-session analyst-packet selection.
  *
  * The selection is address state written through the History API, so a shared
  * link, a refresh and Back all reproduce the same sessions. Every status
@@ -9,49 +9,72 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 
+import {
+  parsePlaytestingScope,
+  type PlaytestingScope
+} from "./playtesting-url.ts";
 import { PlaytestingSelectionPanel } from "./PlaytestingSelectionPanel.ts";
 
-function readSelectionFromUrl(): string[] {
-  const raw = new URLSearchParams(window.location.search).get("sessions");
-  if (raw === null) return [];
-  return raw.split(",").filter((part) => part.length > 0);
+function readSelectionFromUrl(): {
+  readonly episodeIds: string[];
+  readonly rejected: boolean;
+} {
+  const params = new URLSearchParams(globalThis.location.search);
+  const selection = parsePlaytestingScope({
+    ...(params.has("view") ? { view: params.get("view") ?? "" } : {}),
+    ...(params.has("workspaceId")
+      ? { workspaceId: params.get("workspaceId") ?? "" }
+      : {}),
+    ...(params.has("sessions") ? { sessions: params.getAll("sessions") } : {})
+  });
+  return {
+    episodeIds: [...selection.selectedEpisodeIds],
+    rejected: selection.invalidSelection
+  };
 }
 
 export interface PlaytestingSelectionProps {
-  readonly workspaceId: string;
+  readonly scope: PlaytestingScope;
   readonly initialSelectedEpisodeIds: readonly string[];
   readonly selectableEpisodeIds: readonly string[];
 }
 
 export function PlaytestingSelection({
-  workspaceId,
+  scope,
   initialSelectedEpisodeIds,
   selectableEpisodeIds
 }: PlaytestingSelectionProps): React.JSX.Element {
   const [selected, setSelected] = useState<readonly string[]>(
     initialSelectedEpisodeIds
   );
+  const [rejectedSelection, setRejectedSelection] = useState(
+    scope.invalidSelection
+  );
 
   const changeSelection = useCallback((episodeIds: readonly string[]) => {
     setSelected(episodeIds);
-    const url = new URL(window.location.href);
+    setRejectedSelection(false);
+    const url = new URL(globalThis.location.href);
     if (episodeIds.length === 0) url.searchParams.delete("sessions");
     else url.searchParams.set("sessions", episodeIds.join(","));
-    window.history.pushState(null, "", url);
+    globalThis.history.pushState(null, "", url);
   }, []);
 
   useEffect(() => {
     const onPopState = (): void => {
-      setSelected(readSelectionFromUrl());
+      const selection = readSelectionFromUrl();
+      setSelected(selection.episodeIds);
+      setRejectedSelection(selection.rejected);
     };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    globalThis.addEventListener("popstate", onPopState);
+    return () => globalThis.removeEventListener("popstate", onPopState);
   }, []);
 
   return React.createElement(PlaytestingSelectionPanel, {
-    workspaceId,
+    scope,
     selectableEpisodeIds,
     selectedEpisodeIds: selected,
+    rejectedSelection,
     onSelectionChange: changeSelection
   });
 }

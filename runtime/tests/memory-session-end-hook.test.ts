@@ -142,7 +142,7 @@ test("a session id outside the pattern is refused", () => {
     "a".repeat(129),
     "has space",
     "has/slash",
-    "has\\backslash",
+    String.raw`has\backslash`,
     "has space",
     'quote"injection',
     42,

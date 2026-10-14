@@ -8,6 +8,8 @@ export const PLAYTEST_BATCHES_TABLE = "playtest_batches";
 export const PLAYTEST_EPISODES_TABLE = "playtest_episodes";
 export const PLAYTEST_FINDINGS_TABLE = "playtest_findings";
 export const PLAYTEST_REVIEWS_TABLE = "playtest_reviews";
+export const PLAYTEST_CROSS_SESSION_SYNTHESES_TABLE =
+  "playtest_cross_session_syntheses";
 export const PLAYTEST_COMPARISONS_TABLE = "playtest_comparisons";
 export const PLAYTEST_BENCHMARKS_TABLE = "playtest_benchmarks";
 export const PLAYTEST_EXPERIMENTS_TABLE = "playtest_experiments";
@@ -124,6 +126,18 @@ CREATE TABLE IF NOT EXISTS ${PLAYTEST_REVIEWS_TABLE} (
 ORDER BY (workspace_id, episode_id, review_id, version)
 `;
 
+const CREATE_PLAYTEST_CROSS_SESSION_SYNTHESES = `
+CREATE TABLE IF NOT EXISTS ${PLAYTEST_CROSS_SESSION_SYNTHESES_TABLE} (
+  workspace_id String,
+  synthesis_id String,
+  analysis_id String,
+  version UInt32,
+  created_at DateTime64(3),
+  payload_json String
+) ENGINE = MergeTree
+ORDER BY (workspace_id, analysis_id, version)
+`;
+
 const CREATE_PLAYTEST_COMPARISONS = `
 CREATE TABLE IF NOT EXISTS ${PLAYTEST_COMPARISONS_TABLE} (
   workspace_id String,
@@ -203,6 +217,7 @@ export const PLAYTEST_SCHEMA_STATEMENTS: readonly string[] = [
   CREATE_PLAYTEST_EPISODES,
   CREATE_PLAYTEST_FINDINGS,
   CREATE_PLAYTEST_REVIEWS,
+  CREATE_PLAYTEST_CROSS_SESSION_SYNTHESES,
   CREATE_PLAYTEST_COMPARISONS,
   CREATE_PLAYTEST_BENCHMARKS,
   CREATE_PLAYTEST_EXPERIMENTS,

@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  type MemoryMcpRuntime,
   memoryMcpSessionProvider,
   memoryStdioConfiguration,
-  startMemoryMcpFromEnvironment,
-  type MemoryMcpRuntime
+  startMemoryMcpFromEnvironment
 } from "../src/memory/mcp-main.ts";
 import type {
   PostgresMemoryHost,

@@ -10,23 +10,27 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { responseMessage } from "./playtesting-run-messages.ts";
 import {
   createPollLoop,
   freshnessForFailure,
   freshnessForSuccess,
   isWatching,
   nextPollDelayMs,
-  type PlaytestingActiveRun,
-  type PlaytestingActiveRunsFreshness,
   readActiveRuns
 } from "./playtesting-active-runs.ts";
+import { responseMessage } from "./playtesting-run-messages.ts";
 
-export type { PlaytestingActiveRun, PlaytestingActiveRunsFreshness };
+export type {
+  PlaytestingActiveRun,
+  PlaytestingActiveRunsFreshness
+} from "./playtesting-active-runs.ts";
+
+type ActiveRuns = NonNullable<ReturnType<typeof readActiveRuns>>;
+type ActiveRunsFreshness = ReturnType<typeof freshnessForSuccess>;
 
 export interface PlaytestingActiveRunsState {
-  readonly runs: readonly PlaytestingActiveRun[];
-  readonly freshness: PlaytestingActiveRunsFreshness;
+  readonly runs: ActiveRuns;
+  readonly freshness: ActiveRunsFreshness;
   readonly lastFailure: string | null;
   readonly lastUpdatedAt: number | null;
 }
@@ -45,9 +49,8 @@ export function usePlaytestingActiveRuns({
   readonly refresh: () => void;
   readonly watching: boolean;
 } {
-  const [runs, setRuns] = useState<readonly PlaytestingActiveRun[]>([]);
-  const [freshness, setFreshness] =
-    useState<PlaytestingActiveRunsFreshness>("idle");
+  const [runs, setRuns] = useState<ActiveRuns>([]);
+  const [freshness, setFreshness] = useState<ActiveRunsFreshness>("idle");
   const [lastFailure, setLastFailure] = useState<string | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -73,7 +76,7 @@ export function usePlaytestingActiveRuns({
   }, [workspaceId]);
 
   useEffect(() => {
-    if (!workspaceId) return;
+    if (!workspaceId) return () => undefined;
     const targetWorkspaceId = workspaceId;
     let cancelled = false;
     const controller = new AbortController();
@@ -91,7 +94,9 @@ export function usePlaytestingActiveRuns({
         if (!response.ok) throw new Error(responseMessage(payload));
         const next = readActiveRuns(payload, targetWorkspaceId);
         if (!next) {
-          throw new Error("The Runtime returned an incompatible runs response.");
+          throw new Error(
+            "The Runtime returned an incompatible runs response."
+          );
         }
         failures.current = 0;
         setRuns(next);

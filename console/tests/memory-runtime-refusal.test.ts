@@ -2,16 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { NextRequest } from "next/server.js";
-import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import * as memoryRoute from "../app/api/memory/route.ts";
+import { ControlFailureNotice } from "../src/components/status/ControlFailureNotice.ts";
 import {
   CONTROL_REFUSAL_REASONS,
   type ControlRefusalReason,
   readControlRefusal
 } from "../src/lib/control-failure.ts";
-import { ControlFailureNotice } from "../src/components/status/ControlFailureNotice.ts";
 
 /**
  * Every code the memory Control API can answer a mutation with, and the refusal
@@ -219,7 +219,7 @@ test("every refusal the route can emit has a sentence of its own", async () => {
   // code produces reads as coverage and is not. Only the refusals the route
   // raises on its own may be unreachable from a Runtime code, so anything else
   // unreachable is a sentence nobody will ever read.
-  const ROUTE_EMITTED: readonly ControlRefusalReason[] = [
+  const ROUTE_EMITTED = new Set<ControlRefusalReason>([
     "confirmation_missing",
     "reason_not_accepted",
     "reason_required",
@@ -228,8 +228,8 @@ test("every refusal the route can emit has a sentence of its own", async () => {
     "prior_required",
     "evidence_required",
     "provenance_required"
-  ];
-  const reachable = new Set(RUNTIME_CODES.map(([, , reason]) => reason));
+  ]);
+  const reachable = new Set(RUNTIME_CODES.map((entry) => entry[2]));
   // The fallback is reachable, but not through a listed code — through the
   // `default:` branch, for every code this build does not recognise. It was
   // reachable through a listed code only while `invalid_request` fell through,
@@ -243,7 +243,7 @@ test("every refusal the route can emit has a sentence of its own", async () => {
   );
 
   assert.deepEqual(
-    unreachable.filter((reason) => !ROUTE_EMITTED.includes(reason)),
+    unreachable.filter((reason) => !ROUTE_EMITTED.has(reason)),
     [],
     "every Runtime-derived refusal must be reachable from some Runtime code"
   );
@@ -252,7 +252,8 @@ test("every refusal the route can emit has a sentence of its own", async () => {
     "a failed operation must be distinguishable from the neutral fallback"
   );
 
-  for (const [, , reason] of RUNTIME_CODES) {
+  for (const entry of RUNTIME_CODES) {
+    const reason = entry[2];
     const markup = renderToStaticMarkup(
       React.createElement(ControlFailureNotice, { refusal: reason })
     );

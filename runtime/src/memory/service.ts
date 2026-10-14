@@ -1355,28 +1355,34 @@ export class MemoryService
    * escape a caller's `.catch()` chain while looking like an ordinary async
    * read.
    */
-  async getSessionOutcomeReport(
+  getSessionOutcomeReport(
     workspaceId: string,
     repositoryId: string,
     taskId: string,
     context: MemoryReadContext
   ): Promise<MemorySessionOutcomeReport | null> {
     if (context.workspaceId !== workspaceId) {
-      throw new MemoryAuthorizationError(
-        "Workspace mismatch in session outcome report retrieval."
+      return Promise.reject(
+        new MemoryAuthorizationError(
+          "Workspace mismatch in session outcome report retrieval."
+        )
       );
     }
     if (
       context.repositoryId !== undefined &&
       context.repositoryId !== repositoryId
     ) {
-      throw new MemoryAuthorizationError(
-        "Repository mismatch in session outcome report retrieval."
+      return Promise.reject(
+        new MemoryAuthorizationError(
+          "Repository mismatch in session outcome report retrieval."
+        )
       );
     }
     if (!context.canReadTaskHistory && context.taskId !== taskId) {
-      throw new MemoryAuthorizationError(
-        "Task history access required to read another session's outcome report."
+      return Promise.reject(
+        new MemoryAuthorizationError(
+          "Task history access required to read another session's outcome report."
+        )
       );
     }
     return this.repository.getSessionOutcomeReport(

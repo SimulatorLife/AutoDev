@@ -3,7 +3,6 @@ import test from "node:test";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-
 import type { MemoryReadContext } from "@simulatorlife/autodev-core";
 
 import {
@@ -12,8 +11,8 @@ import {
 } from "../src/memory/mcp.ts";
 import {
   MemoryConflictError,
-  MemoryValidationError,
-  type MemoryService
+  type MemoryService,
+  MemoryValidationError
 } from "../src/memory/service.ts";
 
 /**
@@ -464,7 +463,7 @@ test("a service refusal is answered without leaking its detail", async () => {
     const content = response.content as { text?: string }[];
     assert.match(content[0]?.text ?? "", /could not be completed/u);
     assert.ok(
-      !/exp-1/.test(content[0]?.text ?? ""),
+      !(content[0]?.text ?? "").includes("exp-1"),
       "the refusal must not echo the submission back to the model"
     );
   } finally {

@@ -4,12 +4,15 @@ import { readFileSync } from "node:fs";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
+  aggregatePlaytestCrossSessionMetrics,
   assertPlaytestAssignmentManifest,
   assertPlaytestAssignmentsMatchBenchmark,
   assertPlaytestBatchAssignments,
   assertPlaytestBranchLineage,
   assertPlaytestCheckpointDigest,
   assertPlaytestCoveragePlanCoversAssignments,
+  assertPlaytestCrossSessionMetricAggregation,
+  assertPlaytestCrossSessionSynthesis,
   assertPlaytestEvidenceLocatorsWithinPacket,
   assertPlaytestEvidencePacket,
   assertPlaytestFindingEvidenceStatusConsistent,
@@ -17,6 +20,7 @@ import {
   buildPlaytestCoverageManifestDraft,
   buildPlaytestEvidencePacket,
   buildPlaytestFindingIdentity,
+  buildPlaytestIssueDrafts,
   canonicalPlaytestJson,
   type PlaytestArtifactReference,
   type PlaytestAssignmentBranch,
@@ -30,6 +34,7 @@ import {
   playtestBatchCountsFromAssignments,
   type PlaytestBatchReviewSelection,
   playtestBatchTerminalState,
+  type PlaytestBenchmark,
   type PlaytestCapabilityAdvertisement,
   type PlaytestCheckpointDigest,
   type PlaytestComparison,
@@ -38,7 +43,11 @@ import {
   playtestCoverageManifestHashInput,
   type PlaytestCoveragePlanCell,
   playtestCoveragePlanForRegistry,
+  type PlaytestCrossSessionClaim,
+  type PlaytestCrossSessionExperiment,
   playtestCrossSessionInventoryHashInput,
+  type PlaytestCrossSessionMetricAggregation,
+  type PlaytestCrossSessionSynthesis,
   type PlaytestDimensionAnchor,
   type PlaytestEpisode,
   type PlaytestEvidenceLocator,
@@ -49,6 +58,8 @@ import {
   type PlaytestFindingIdentity,
   playtestFindingIdentityHashInput,
   playtestFindingIdFromFingerprint,
+  type PlaytestIssueDraft,
+  playtestIssueReportingRefusal,
   type PlaytestKnownEvidenceIndex,
   type PlaytestOwnerDisposition,
   type PlaytestReviewCandidate,
@@ -57,8 +68,10 @@ import {
   type PlaytestReviewPacketFailureReason,
   type PlaytestReviewPacketReceipt,
   type PlaytestReviewReceipt,
+  type PlaytestRunAssignmentOutcome,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
   PLAYTESTS_BATCH_SCHEMA,
+  PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EPISODE_STATES,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
@@ -67,20 +80,17 @@ import {
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_MAX_BATCH_REVIEW_SESSIONS,
+  PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS,
   PLAYTESTS_MEASUREMENT_VERSION,
   PLAYTESTS_RNG_POLICY_VERSION,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_SEVERITIES,
   PLAYTESTS_VERIFICATION_STAGES,
-  buildPlaytestIssueDrafts,
-  playtestIssueReportingRefusal,
-  type PlaytestBenchmark,
-  triagePlaytestFindings,
-  type PlaytestIssueDraft,
   type PlaytestSessionReview,
   recordPlaytestOwnerDecision,
   scorePlaytestDimensionAnchor,
   selectPlaytestBatchReviews,
+  triagePlaytestFindings,
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
 import {
@@ -95,16 +105,20 @@ import type { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev
 import { z } from "zod/v4";
 
 import type { PlaytestingReadRepository } from "../control-api/playtesting.ts";
-import { loadApprovedPlaytestDefinition } from "./approved-configuration.ts";
-import { standardizePlaytestCohorts } from "./cohort-standardization-run.ts";
-import { derivePlaytestPolicyValidity } from "./policy-validity-run.ts";
 import { mapConcurrentOrdered } from "../shared/map-concurrent-ordered.ts";
 import { writeErrorLine } from "../shared/output.ts";
+import type {
+  PlaytestAnalystProcess,
+  PlaytestAnalystProcessInput,
+  PlaytestAnalystProcessResult
+} from "./analyst-process.ts";
+import { loadApprovedPlaytestDefinition } from "./approved-configuration.ts";
 import {
   type PlaytestArtifactStore,
   type PlaytestArtifactWindowReadResult,
   PLAYTESTS_ARTIFACT_WINDOW_MEDIA_TYPE
 } from "./artifact-store.ts";
+import { standardizePlaytestCohorts } from "./cohort-standardization-run.ts";
 import {
   launchPlaytestSandbox,
   PlaytestSandboxApprovalError,
@@ -123,9 +137,10 @@ import {
 } from "./episode-runner.ts";
 import {
   createBuiltinPlaytestPolicy,
-  PLAYTESTS_BUILTIN_POLICY_IDS,
-  type PlaytestPolicy
+  type PlaytestPolicy,
+  PLAYTESTS_BUILTIN_POLICY_IDS
 } from "./policies.ts";
+import { derivePlaytestPolicyValidity } from "./policy-validity-run.ts";
 
 export class PlaytestMcpAuthorizationError extends Error {
   constructor(message: string) {
@@ -155,10 +170,26 @@ export interface PlaytestRunControlActor {
   readonly actor: string;
   readonly taskId?: string;
   readonly runId?: string;
+  /** Trusted Runtime analysis task id; present only in an analyst process. */
+  readonly analysisId?: string;
 }
 
 export interface PlaytestMcpSession extends PlaytestRunControlActor {
   readonly repositoryRoot?: string | null;
+  /** Runtime-bound packet selection for a dispatched analyst task. */
+  readonly selectedEpisodeIds?: readonly string[];
+  /** Runtime-computed immutable metric context for this exact analyst task. */
+  readonly metricAggregation?: PlaytestCrossSessionMetricAggregation;
+}
+
+function preparedAnalystPacketCacheKey(
+  session: PlaytestMcpSession,
+  workspaceId: string,
+  episodeId: string
+): string | null {
+  return session.role === REVIEWER_ROLE && session.analysisId
+    ? JSON.stringify([workspaceId, session.analysisId, episodeId])
+    : null;
 }
 
 export interface PlaytestMcpSessionProvider {
@@ -227,6 +258,57 @@ export interface PlaytestRunStatus {
     readonly retryable: boolean;
     readonly message: string;
   } | null;
+}
+
+export interface PlaytestAnalystReviewReceipt {
+  readonly episodeId: string;
+  readonly reviewId: string;
+  readonly status: PlaytestSessionReview["status"];
+}
+
+export interface PlaytestAnalystReviewRun {
+  readonly analysisId: string;
+  readonly workspaceId: string;
+  readonly status: "running" | "completed" | "partial" | "failed";
+  readonly createdAt: string;
+  readonly finishedAt: string | null;
+  readonly requestedEpisodeIds: readonly string[];
+  readonly packets: readonly {
+    readonly episodeId: string;
+    readonly batchId: string;
+    readonly packetId: string;
+  }[];
+  readonly receipts: readonly PlaytestCrossSessionReceipt[];
+  readonly budget: readonly PlaytestCrossSessionBudget[];
+  readonly reviews: readonly PlaytestAnalystReviewReceipt[];
+  readonly synthesisId: string | null;
+  readonly error: string | null;
+}
+
+export interface PlaytestAnalystReviewStatus {
+  readonly runs: readonly PlaytestAnalystReviewRun[];
+  readonly syntheses: readonly PlaytestCrossSessionSynthesis[];
+}
+
+export interface PlaytestAnalystReviewDispatch {
+  dispatchCrossSessionReview(
+    session: PlaytestMcpSession,
+    workspaceId: string,
+    episodeIds: readonly string[]
+  ): Promise<{
+    readonly run: PlaytestAnalystReviewRun | null;
+    readonly packets: readonly PlaytestCrossSessionPacket[];
+    readonly receipts: readonly PlaytestCrossSessionReceipt[];
+    readonly budget: readonly PlaytestCrossSessionBudget[];
+  }>;
+  listAnalystReviewRuns(
+    session: PlaytestMcpSession,
+    workspaceId: string
+  ): Promise<PlaytestAnalystReviewStatus>;
+}
+
+export interface PlaytestAnalystProcessLauncher {
+  (input: PlaytestAnalystProcessInput): PlaytestAnalystProcess;
 }
 
 /**
@@ -318,10 +400,10 @@ export interface PlaytestRunControl {
     waitMs: number
   ): Promise<PlaytestRunStatus>;
   /**
-   * Dispatch analysis over an explicit, bounded selection. The owner, not any
-   * caller, decides eligibility, the per-batch critique cap, and which selected
-   * sessions yielded packet-unavailable receipts, so the Console and the MCP
-   * tool cannot reach different answers about the same selection.
+   * Prepare evidence packets over an explicit, bounded selection. The owner,
+   * not any caller, decides eligibility, the per-batch critique cap, and which
+   * selected sessions yielded packet-unavailable receipts, so the Console and
+   * MCP tool cannot reach different answers about the same selection.
    */
   prepareCrossSessionReview(
     session: PlaytestRunControlActor,
@@ -335,12 +417,13 @@ export interface PlaytestRunControl {
 }
 
 /** Process owner lifecycle used by Runtime shutdown; MCP clients do not implement it. */
-export interface PlaytestRunOwner extends PlaytestRunControl {
+export interface PlaytestRunOwner
+  extends PlaytestRunControl, PlaytestAnalystReviewDispatch {
   shutdown(): Promise<void>;
 }
 
 export type PlaytestMcpServer = McpServer & {
-  readonly playtestRunControl: PlaytestRunControl;
+  readonly playtestRunControl: PlaytestRunControl | null;
 };
 
 export interface PlaytestingRepositoryOps extends PlaytestingReadRepository {
@@ -363,6 +446,21 @@ export interface PlaytestingRepositoryOps extends PlaytestingReadRepository {
     episodeId: string,
     reviewId: string
   ): Promise<PlaytestSessionReview | null>;
+  insertCrossSessionSynthesis(
+    synthesis: PlaytestCrossSessionSynthesis
+  ): Promise<void>;
+  getCrossSessionSynthesisForAnalysis(
+    workspaceId: string,
+    analysisId: string
+  ): Promise<PlaytestCrossSessionSynthesis | null>;
+  listCrossSessionSyntheses(
+    workspaceId: string,
+    listOptions?: { readonly cursor?: string; readonly limit?: number }
+  ): Promise<{
+    readonly rows: readonly PlaytestCrossSessionSynthesis[];
+    readonly total: number;
+    readonly nextCursor: string | null;
+  }>;
   getLatestComparison(
     workspaceId: string,
     comparisonId: string
@@ -389,17 +487,33 @@ export interface PlaytestRunControlOptions {
   ) => PreparedPlaytestSandbox;
   /** Overridable for tests; defaults to the real canonical workspace catalog. */
   readonly readWorkspaceCatalog?: () => WorkspaceCatalogRead;
+  readonly launchAnalystProcess?: PlaytestAnalystProcessLauncher;
 }
 
 export interface PlaytestMcpOptions extends PlaytestRunControlOptions {
   readonly sessionProvider: PlaytestMcpSessionProvider;
-  /** Process-shared Runtime owner; the MCP facade never creates another scheduler. */
-  readonly playtestRunControl: PlaytestRunControl;
+  /**
+   * Process-shared Runtime owner; the MCP facade never creates another
+   * scheduler. Null only for the analyst, whose allowlisted packet/review tools
+   * use the workspace-bound repository and do not call run control.
+   */
+  readonly playtestRunControl: PlaytestRunControl | null;
 }
 
 /** Explicit supported policy baselines. No generic scored/heuristic fallback. */
 const RUNNER_ROLES = new Set(["playtester", "root", "orchestrator"]);
 const REVIEWER_ROLE = "playtest-analyst" as const;
+
+function requirePlaytestRunControl(
+  control: PlaytestRunControl | null
+): PlaytestRunControl {
+  if (!control) {
+    throw new PlaytestMcpUnavailableError(
+      "The Runtime Playtesting run owner is unavailable to this MCP role."
+    );
+  }
+  return control;
+}
 const RUN_STATUS_READER_ROLES = new Set([
   ...RUNNER_ROLES,
   REVIEWER_ROLE,
@@ -414,6 +528,17 @@ const ANALYSIS_READER_ROLES = new Set([
   "validator",
   "operator"
 ]);
+const ANALYST_DISPATCH_ROLES = new Set(["root", "operator"]);
+const CROSS_SESSION_PACKET_READER_ROLES = new Set([
+  "root",
+  "orchestrator",
+  "validator",
+  "operator"
+]);
+const ANALYST_STATUS_READER_ROLES = new Set([
+  ...ANALYSIS_READER_ROLES,
+  "control-viewer"
+]);
 const OWNER_DECISION_ROLES = new Set(["root", "operator"]);
 const FINDING_READER_ROLES = new Set([
   "root",
@@ -423,6 +548,10 @@ const FINDING_READER_ROLES = new Set([
 ]);
 const APPROVAL_POLL_INTERVAL_MS = 50;
 const RUN_SHUTDOWN_GRACE_MS = 2000;
+const MAX_ACTIVE_ANALYST_RUNS = 4;
+const MAX_RETAINED_ANALYST_RUNS = 64;
+const CROSS_SESSION_PACKET_READ_CONCURRENCY = 4;
+const ANALYST_REVIEW_RUN_COLLATOR = new Intl.Collator();
 const MAX_FINDINGS_PER_REVIEW = 64;
 const PLAYTEST_INFRASTRUCTURE_FAILURE_STATE = "infrastructure-failed" as const;
 const MAX_REVIEW_PACKET_BYTES = 64 * 1024;
@@ -438,6 +567,84 @@ const SAFE_SESSION_VALUE_PATTERN = /^[A-Za-z0-9@._:-]{1,256}$/u;
 const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 const REVIEWABLE_STATUSES = ["hypothesis", "not observed"] as const;
 
+async function readPersistedAnalystReviews(
+  repository: PlaytestingRepositoryOps,
+  run: PlaytestAnalystReviewRun
+): Promise<readonly PlaytestAnalystReviewReceipt[]> {
+  const reviews = await Promise.all(
+    run.packets.map(async (packet) => {
+      const review = await repository.getLatestReviewForEpisode(
+        run.workspaceId,
+        packet.episodeId
+      );
+      return review?.evidencePacket?.packetId === packet.packetId
+        ? {
+            episodeId: packet.episodeId,
+            reviewId: review.reviewId,
+            status: review.status
+          }
+        : null;
+    })
+  );
+  return reviews.filter(
+    (review): review is PlaytestAnalystReviewReceipt => review !== null
+  );
+}
+
+function analystReviewRunStatus(input: {
+  readonly run: PlaytestAnalystReviewRun;
+  readonly result: PlaytestAnalystProcessResult;
+  readonly reviews: readonly PlaytestAnalystReviewReceipt[];
+  readonly reviewReadFailed: boolean;
+  readonly synthesisId: string | null;
+  readonly synthesisReadFailed: boolean;
+}): PlaytestAnalystReviewRun["status"] {
+  const synthesisRequired = input.run.packets.length >= 2;
+  if (
+    !input.reviewReadFailed &&
+    !input.synthesisReadFailed &&
+    input.reviews.length === input.run.packets.length &&
+    (!synthesisRequired || input.synthesisId !== null) &&
+    input.result.exitCode === 0 &&
+    !input.result.launchFailed &&
+    !input.result.timedOut
+  ) {
+    return "completed";
+  }
+  return input.reviews.length > 0 ? "partial" : "failed";
+}
+
+function analystReviewRunError(input: {
+  readonly status: PlaytestAnalystReviewRun["status"];
+  readonly run: PlaytestAnalystReviewRun;
+  readonly result: PlaytestAnalystProcessResult;
+  readonly reviews: readonly PlaytestAnalystReviewReceipt[];
+  readonly reviewReadFailed: boolean;
+  readonly synthesisId: string | null;
+  readonly synthesisReadFailed: boolean;
+}): string | null {
+  if (input.status === "completed") return null;
+  if (input.reviewReadFailed) {
+    return "Runtime could not verify the persisted analyst reviews.";
+  }
+  if (input.synthesisReadFailed) {
+    return "Runtime could not verify the persisted cross-session synthesis.";
+  }
+  if (input.run.packets.length >= 2 && input.synthesisId === null) {
+    return "The analyst did not persist a packet-grounded cross-session synthesis.";
+  }
+  if (input.result.timedOut) {
+    return "The analyst review exceeded its Runtime time limit.";
+  }
+  if (input.result.launchFailed) {
+    return "The Runtime could not start the analyst process.";
+  }
+  if (input.result.exitCode !== 0) {
+    return `The analyst process ended without completing all reviews (exit ${String(input.result.exitCode)}${input.result.signal ? `, ${input.result.signal}` : ""}).`;
+  }
+  return `The analyst submitted ${String(input.reviews.length)} of ${String(input.run.packets.length)} selected reviews.`;
+}
+
 interface ActivePlaytestRun {
   readonly batchId: string;
   readonly workspaceId: string;
@@ -449,7 +656,7 @@ interface ActivePlaytestRun {
   readonly reservedWorkers: number;
   readonly manifestHash: string;
   readonly createdAt: string;
-  readonly outcomes: Map<string, PlaytestAssignmentOutcome>;
+  readonly outcomes: Map<string, PlaytestRunAssignmentOutcome>;
   readonly controller: AbortController;
   phase: "running" | "persisting";
   reason: PlaytestBatchCancellationReason | null;
@@ -459,10 +666,27 @@ interface ActivePlaytestRun {
   readonly resolveCompletion: (status: PlaytestRunStatus) => void;
 }
 
+interface ActiveAnalystReviewRun {
+  readonly process: PlaytestAnalystProcess;
+}
+
 type RunCancellationReason = PlaytestBatchCancellationReason;
 
 function isReviewerRole(role: string): role is typeof REVIEWER_ROLE {
   return role === REVIEWER_ROLE;
+}
+
+function assertAnalystEpisodeSelected(
+  session: PlaytestMcpSession,
+  episodeId: string,
+  toolName: string
+): void {
+  if (!isReviewerRole(session.role)) return;
+  if (!session.selectedEpisodeIds?.includes(episodeId)) {
+    throw new PlaytestMcpAuthorizationError(
+      `${toolName} is limited to the sessions selected by Runtime for this analyst task.`
+    );
+  }
 }
 
 function assertPlaytestToolRole(
@@ -485,7 +709,9 @@ function assertSessionIdentity(session: PlaytestRunControlActor): void {
     (session.taskId !== undefined &&
       !SAFE_SESSION_VALUE_PATTERN.test(session.taskId)) ||
     (session.runId !== undefined &&
-      !SAFE_SESSION_VALUE_PATTERN.test(session.runId))
+      !SAFE_SESSION_VALUE_PATTERN.test(session.runId)) ||
+    (session.analysisId !== undefined &&
+      !SAFE_SESSION_VALUE_PATTERN.test(session.analysisId))
   ) {
     throw new PlaytestMcpAuthorizationError(
       "The trusted playtesting session identity is invalid."
@@ -549,6 +775,27 @@ const reviewClaimSchema = z.strictObject({
   evidenceRefs: z.array(evidenceLocatorSchema).min(1).max(64)
 });
 
+const crossSessionEvidenceRefSchema = z.strictObject({
+  episodeId: z.string().min(1).max(256),
+  packetId: z.string().min(1).max(128),
+  locator: evidenceLocatorSchema
+});
+
+const crossSessionClaimSchema = z.strictObject({
+  kind: z.enum(["pattern", "counterexample", "confounder"]),
+  text: z.string().min(1).max(8000),
+  evidenceRefs: z.array(crossSessionEvidenceRefSchema).min(1).max(64)
+});
+
+const crossSessionExperimentSchema = z.strictObject({
+  hypothesis: z.string().min(1).max(4000),
+  falsifier: z.string().min(1).max(4000),
+  metricId: z.string().min(1).max(256),
+  controls: z.array(z.string().min(1).max(4000)).min(1).max(16),
+  budget: z.string().min(1).max(4000),
+  evidenceRefs: z.array(crossSessionEvidenceRefSchema).min(1).max(64)
+});
+
 const reviewCompletenessSchema = z.strictObject({
   crossSessionContext: z.union([
     z.strictObject({
@@ -585,6 +832,21 @@ const reviewCompletenessSchema = z.strictObject({
     })
   ])
 });
+
+function playtestEvidenceLocatorFromInput(
+  locator: z.infer<typeof evidenceLocatorSchema>
+): PlaytestEvidenceLocator {
+  return {
+    kind: locator.kind,
+    id: locator.id,
+    ...(locator.step === undefined ? {} : { step: locator.step }),
+    ...(locator.revision === undefined ? {} : { revision: locator.revision }),
+    ...(locator.frameIndex === undefined
+      ? {}
+      : { frameIndex: locator.frameIndex }),
+    ...(locator.phaseId === undefined ? {} : { phaseId: locator.phaseId })
+  };
+}
 
 const reviewExperimentSchema = z.strictObject({
   hypothesis: z.string().min(1).max(4000),
@@ -701,6 +963,7 @@ function unionStringSet(
  */
 const findingAppendLocks = new Map<string, Promise<unknown>>();
 const batchReviewLocks = new Map<string, Promise<unknown>>();
+const crossSessionSynthesisLocks = new Map<string, Promise<void>>();
 
 function serializeBatchReview<T>(
   workspaceId: string,
@@ -1335,21 +1598,22 @@ function outcomeForPersistedAssignment(input: {
   readonly assignment: PlaytestBatchAssignment;
   readonly episode?: PlaytestEpisode | undefined;
   readonly unobserved?: PlaytestAssignmentOutcome | undefined;
-}): PlaytestAssignmentOutcome {
+}): PlaytestRunAssignmentOutcome {
   const { assignment, episode, unobserved } = input;
   if (episode && unobserved) {
     throw new PlaytestMcpUnavailableError(
       "A batch assignment has both an episode and a no-episode outcome."
     );
   }
-  if (unobserved) return unobserved;
+  if (unobserved) return { ...unobserved, gameOutcome: null };
   if (!episode) {
     return {
       assignmentId: assignment.assignmentId,
       episodeId: null,
       state: PLAYTEST_INFRASTRUCTURE_FAILURE_STATE,
       started: false,
-      eligible: false
+      eligible: false,
+      gameOutcome: null
     };
   }
   const state: PlaytestAssignmentTerminalState =
@@ -1361,14 +1625,15 @@ function outcomeForPersistedAssignment(input: {
     episodeId: episode.episodeId,
     state,
     started: episode.startedAt !== null,
-    eligible: state === "completed" && episode.completionCounts.eligible === 1
+    eligible: state === "completed" && episode.completionCounts.eligible === 1,
+    gameOutcome: episode.outcome
   };
 }
 
 function assignmentOutcomesFromPersistedBatch(
   batch: PlaytestBatch,
   episodes: readonly PlaytestEpisode[]
-): readonly PlaytestAssignmentOutcome[] {
+): readonly PlaytestRunAssignmentOutcome[] {
   if (batch.assignmentInventory.status !== "frozen") {
     throw new PlaytestMcpUnavailableError(
       "This batch has no frozen assignment manifest for status recovery."
@@ -1477,7 +1742,7 @@ function coverageFromStoredBatch(
 
 function batchRunResult(
   batch: PlaytestBatch,
-  outcomes: readonly PlaytestAssignmentOutcome[],
+  outcomes: readonly PlaytestRunAssignmentOutcome[],
   counts: PlaytestCompletionCounts,
   reviewSelection: PlaytestBatchReviewSelection,
   cancellation: PlaytestBatchCancellationReason | null
@@ -1504,7 +1769,7 @@ function batchRunResult(
 async function recoverInterruptedBatch(input: {
   readonly repository: PlaytestingRepositoryOps;
   readonly batch: PlaytestBatch;
-  readonly outcomes: readonly PlaytestAssignmentOutcome[];
+  readonly outcomes: readonly PlaytestRunAssignmentOutcome[];
   readonly counts: PlaytestCompletionCounts;
   readonly coverageManifest: PlaytestCoverageManifest | null;
 }): Promise<PlaytestRunStatus> {
@@ -1521,9 +1786,7 @@ async function recoverInterruptedBatch(input: {
     counts,
     coverageManifest,
     reviewSelection: { status: "unavailable", reason: "batch-incomplete" },
-    unobservedAssignments: outcomes.filter(
-      (outcome) => outcome.episodeId === null
-    ),
+    unobservedAssignments: unobservedAssignmentOutcomes(outcomes),
     failureReason: "nonterminal-batch-recovered",
     completedAt: new Date().toISOString()
   };
@@ -1551,7 +1814,7 @@ async function recoverInterruptedBatch(input: {
 
 function completedBatchRunStatus(input: {
   readonly batch: PlaytestBatch;
-  readonly outcomes: readonly PlaytestAssignmentOutcome[];
+  readonly outcomes: readonly PlaytestRunAssignmentOutcome[];
   readonly counts: PlaytestCompletionCounts;
   readonly coverageManifest: PlaytestCoverageManifest | null;
 }): PlaytestRunStatus {
@@ -1689,7 +1952,7 @@ function activeRunProgress(run: ActivePlaytestRun): {
   readonly assignmentCount: number;
   readonly manifestHash: string;
   readonly concurrency: number;
-  readonly outcomes: readonly PlaytestAssignmentOutcome[];
+  readonly outcomes: readonly PlaytestRunAssignmentOutcome[];
   readonly counts: PlaytestCompletionCounts;
   readonly reviewSelection: { readonly status: "pending" };
   readonly cancellation: RunCancellationReason | null;
@@ -2161,14 +2424,15 @@ function assignmentOutcomeFor(input: {
   readonly assignment: PlaytestBatchAssignment;
   readonly episode: PlaytestEpisode | null;
   readonly cancellation: RunCancellationReason | null;
-}): PlaytestAssignmentOutcome {
+}): PlaytestRunAssignmentOutcome {
   if (input.episode) {
     return {
       assignmentId: input.assignment.assignmentId,
       episodeId: input.episode.episodeId,
       state: input.episode.status as PlaytestAssignmentTerminalState,
       started: input.episode.startedAt !== null,
-      eligible: input.episode.completionCounts.eligible === 1
+      eligible: input.episode.completionCounts.eligible === 1,
+      gameOutcome: input.episode.outcome
     };
   }
   return {
@@ -2179,8 +2443,24 @@ function assignmentOutcomeFor(input: {
         ? PLAYTEST_INFRASTRUCTURE_FAILURE_STATE
         : "cancelled",
     started: false,
-    eligible: false
+    eligible: false,
+    gameOutcome: null
   };
+}
+
+/** Keep the live response projection out of the durable batch schema. */
+function unobservedAssignmentOutcomes(
+  outcomes: readonly PlaytestRunAssignmentOutcome[]
+): readonly PlaytestAssignmentOutcome[] {
+  return outcomes
+    .filter((outcome) => outcome.episodeId === null)
+    .map(({ assignmentId, episodeId, state, started, eligible }) => ({
+      assignmentId,
+      episodeId,
+      state,
+      started,
+      eligible
+    }));
 }
 
 function assertEpisodeMatchesAssignment(input: {
@@ -2368,7 +2648,7 @@ async function persistAssignmentResult(input: {
   readonly context: RegisteredBatchContext;
   readonly assignment: PlaytestBatchAssignment;
   readonly result: PlaytestEpisodeRunResult;
-}): Promise<PlaytestAssignmentOutcome> {
+}): Promise<PlaytestRunAssignmentOutcome> {
   const { execute, context, assignment, result } = input;
   const cancellation = context.activeRun.reason;
   const policy = context.policies.get(assignment.policyId)!;
@@ -3106,7 +3386,7 @@ async function executeApprovedBatch(input: ExecuteBatchInput) {
   );
   const { activeRun } = context;
   const concurrency = context.activeRun.reservedWorkers;
-  const outcomes: PlaytestAssignmentOutcome[] = [];
+  const outcomes: PlaytestRunAssignmentOutcome[] = [];
   let capabilities: PlaytestCapabilityAdvertisement | null = null;
   let approvalMonitor: NodeJS.Timeout | undefined;
   let terminalWriteOutcomeUnknown = false;
@@ -3256,9 +3536,7 @@ async function executeApprovedBatch(input: ExecuteBatchInput) {
       status: terminalStatus,
       counts,
       reviewSelection,
-      unobservedAssignments: outcomes.filter(
-        (outcome) => outcome.episodeId === null
-      ),
+      unobservedAssignments: unobservedAssignmentOutcomes(outcomes),
       capabilities,
       cancellationReason: activeRun.reason,
       failureReason: null,
@@ -3371,9 +3649,8 @@ async function executeApprovedBatch(input: ExecuteBatchInput) {
               reason: "batch-incomplete"
             },
             reviewPackets: [],
-            unobservedAssignments: terminalOutcomes.filter(
-              (outcome) => outcome.episodeId === null
-            ),
+            unobservedAssignments:
+              unobservedAssignmentOutcomes(terminalOutcomes),
             capabilities,
             cancellationReason: activeRun.reason,
             failureReason: null,
@@ -4194,9 +4471,12 @@ export function createPlaytestRunControl(
     runEpisodeHandler = runPlaytestEpisode,
     launchSandboxHandler,
     prepareSandboxHandler = preparePlaytestSandbox,
-    readWorkspaceCatalog = () => new ConfigRepository().readWorkspaceCatalog()
+    readWorkspaceCatalog = () => new ConfigRepository().readWorkspaceCatalog(),
+    launchAnalystProcess
   } = options;
   const activeRuns = new Map<string, ActivePlaytestRun>();
+  const analystReviewRuns = new Map<string, PlaytestAnalystReviewRun>();
+  const activeAnalystRuns = new Map<string, ActiveAnalystReviewRun>();
   const completedRuns = new Map<
     string,
     { readonly workspaceId: string; readonly status: PlaytestRunStatus }
@@ -4217,6 +4497,119 @@ export function createPlaytestRunControl(
       completedRuns.delete(oldest);
     }
   };
+  const pruneAnalystReviewHistory = (): void => {
+    while (analystReviewRuns.size > MAX_RETAINED_ANALYST_RUNS) {
+      let oldestTerminal: string | undefined;
+      for (const analysisId of analystReviewRuns.keys()) {
+        if (!activeAnalystRuns.has(analysisId)) {
+          oldestTerminal = analysisId;
+          break;
+        }
+      }
+      if (oldestTerminal === undefined) return;
+      analystReviewRuns.delete(oldestTerminal);
+    }
+  };
+
+  const finalizeAnalystRun = async (
+    analysisId: string,
+    result: PlaytestAnalystProcessResult
+  ): Promise<void> => {
+    const active = activeAnalystRuns.get(analysisId);
+    const current = analystReviewRuns.get(analysisId);
+    if (!active || !current) return;
+    activeAnalystRuns.delete(analysisId);
+
+    const repository = requiredRunRepository(playtestRepository);
+    let reviews: readonly PlaytestAnalystReviewReceipt[] = [];
+    let reviewReadFailed = false;
+    let synthesis: PlaytestCrossSessionSynthesis | null = null;
+    let synthesisReadFailed = false;
+    try {
+      reviews = await readPersistedAnalystReviews(repository, current);
+    } catch {
+      reviewReadFailed = true;
+    }
+    try {
+      synthesis = await repository.getCrossSessionSynthesisForAnalysis(
+        current.workspaceId,
+        current.analysisId
+      );
+    } catch {
+      synthesisReadFailed = true;
+    }
+    const status = analystReviewRunStatus({
+      run: current,
+      result,
+      reviews,
+      reviewReadFailed,
+      synthesisId: synthesis?.synthesisId ?? null,
+      synthesisReadFailed
+    });
+    analystReviewRuns.set(analysisId, {
+      ...current,
+      status,
+      finishedAt: new Date().toISOString(),
+      reviews,
+      synthesisId: synthesis?.synthesisId ?? null,
+      error: analystReviewRunError({
+        status,
+        run: current,
+        result,
+        reviews,
+        reviewReadFailed,
+        synthesisId: synthesis?.synthesisId ?? null,
+        synthesisReadFailed
+      })
+    });
+    pruneAnalystReviewHistory();
+  };
+
+  const unpersistedAnalystReservations = async (
+    workspaceId: string,
+    requestedBatchIds: readonly string[]
+  ): Promise<{
+    readonly counts: ReadonlyMap<string, number>;
+    readonly batches: ReadonlyMap<string, PlaytestBatch | null>;
+  }> => {
+    const repository = requiredRunRepository(playtestRepository);
+    const activeAnalysisRecords = Array.from(
+      activeAnalystRuns.keys(),
+      (analysisId) => analystReviewRuns.get(analysisId)
+    ).filter(
+      (run): run is PlaytestAnalystReviewRun =>
+        run !== undefined && run.workspaceId === workspaceId
+    );
+    const packetEntries = activeAnalysisRecords.flatMap((run) => run.packets);
+    const batchIds = [
+      ...new Set([
+        ...requestedBatchIds,
+        ...packetEntries.map((packet) => packet.batchId)
+      ])
+    ];
+    const batchRows = await Promise.all(
+      batchIds.map(
+        async (batchId) =>
+          [batchId, await repository.getBatch(workspaceId, batchId)] as const
+      )
+    );
+    const batches = new Map(batchRows);
+    const counts = new Map<string, number>();
+    for (const packet of packetEntries) {
+      const durableReservation = batches
+        .get(packet.batchId)
+        ?.reviewReceipts.some(
+          (receipt) =>
+            receipt.episodeId === packet.episodeId &&
+            receipt.packetId === packet.packetId
+        );
+      if (!durableReservation) {
+        counts.set(packet.batchId, (counts.get(packet.batchId) ?? 0) + 1);
+      }
+    }
+    return { counts, batches };
+  };
+
   const playtestRunControl: PlaytestRunOwner = {
     recordComparisonDecision(
       session,
@@ -4662,12 +5055,17 @@ export function createPlaytestRunControl(
     },
     async shutdown() {
       const active = [...activeRuns.values()];
+      const activeAnalysts = [...activeAnalystRuns.values()];
       for (const run of active) cancelActiveRun(run, "cancelled");
-      if (active.length === 0) return;
+      for (const analysis of activeAnalysts) analysis.process.terminate();
+      if (active.length === 0 && activeAnalysts.length === 0) return;
       let timeout: NodeJS.Timeout | undefined;
       try {
         await Promise.race([
-          Promise.allSettled(active.map((run) => run.completion)),
+          Promise.allSettled([
+            ...active.map((run) => run.completion),
+            ...activeAnalysts.map((analysis) => analysis.process.completion)
+          ]),
           new Promise<void>((resolve) => {
             timeout = setTimeout(resolve, RUN_SHUTDOWN_GRACE_MS);
           })
@@ -4676,21 +5074,294 @@ export function createPlaytestRunControl(
         if (timeout) clearTimeout(timeout);
       }
     },
-    async prepareCrossSessionReview(receivedSession, workspaceId, episodeIds) {
+    dispatchCrossSessionReview(session, workspaceId, episodeIds) {
+      assertPlaytestToolRole(
+        session.role,
+        ANALYST_DISPATCH_ROLES,
+        "Console playtest analyst dispatch"
+      );
+      const authorizedWorkspaceId = authorizeWorkspace(workspaceId, session);
+      const uniqueEpisodeIds = [...new Set(episodeIds)];
+      if (
+        uniqueEpisodeIds.length === 0 ||
+        uniqueEpisodeIds.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS ||
+        uniqueEpisodeIds.length !== episodeIds.length
+      ) {
+        throw new PlaytestMcpValidationError(
+          `Analyst dispatch requires 1-${String(PLAYTESTS_MAX_ANALYSIS_SESSIONS)} distinct sessions.`
+        );
+      }
+      return withAssignmentLock(
+        assignmentLocks,
+        "analyst-review-dispatch",
+        async () => {
+          if (!launchAnalystProcess) {
+            throw new PlaytestMcpUnavailableError(
+              "Runtime analyst dispatch is not configured."
+            );
+          }
+          if (activeAnalystRuns.size >= MAX_ACTIVE_ANALYST_RUNS) {
+            throw new PlaytestMcpUnavailableError(
+              "Runtime analyst capacity is full; wait for a current review to finish."
+            );
+          }
+          const prepared = await prepareCrossSessionReview({
+            workspaceId: authorizedWorkspaceId,
+            episodeIds: uniqueEpisodeIds,
+            selectionLimit: PLAYTESTS_MAX_ANALYSIS_SESSIONS,
+            repository: requiredRunRepository(playtestRepository),
+            artifacts: safeArtifactStoreForWorkspace(
+              authorizedWorkspaceId,
+              artifactStoreForWorkspace
+            )
+          });
+          const receipts = [...prepared.receipts];
+          const activeEpisodeIds = new Set(
+            [...analystReviewRuns.values()]
+              .filter(
+                (run) =>
+                  run.workspaceId === authorizedWorkspaceId &&
+                  run.status === "running"
+              )
+              .flatMap((run) => run.packets.map((packet) => packet.episodeId))
+          );
+          const reservationSnapshot = await unpersistedAnalystReservations(
+            authorizedWorkspaceId,
+            prepared.budget.map((entry) => entry.batchId)
+          );
+          const currentBudgets = prepared.budget.map((entry) => {
+            const batch = reservationSnapshot.batches.get(entry.batchId);
+            if (
+              !batch ||
+              batch.status !== "completed" ||
+              batch.reviewSelection.status !== "selected" ||
+              batch.assignmentInventory.status !== "frozen" ||
+              batch.coverageManifest === null
+            ) {
+              throw new PlaytestMcpUnavailableError(
+                "A selected review batch changed before analyst dispatch."
+              );
+            }
+            return {
+              ...entry,
+              reviewCap: batch.reviewSelection.reviewCap,
+              actualCritiques: batch.budget.actualCritiques,
+              reserved: batch.reviewReceipts.filter(
+                (receipt) => receipt.status === "reserved"
+              ).length,
+              remaining: Math.max(
+                0,
+                batch.reviewSelection.reviewCap -
+                  batch.budget.actualCritiques -
+                  batch.reviewReceipts.filter(
+                    (receipt) => receipt.status === "reserved"
+                  ).length
+              )
+            };
+          });
+          const remainingByBatch = new Map(
+            currentBudgets.map((entry) => [
+              entry.batchId,
+              Math.max(
+                0,
+                entry.remaining -
+                  (reservationSnapshot.counts.get(entry.batchId) ?? 0)
+              )
+            ])
+          );
+          const newlyReservedByBatch = new Map<string, number>();
+          const packets: PlaytestCrossSessionPacket[] = [];
+          const repository = requiredRunRepository(playtestRepository);
+          const packetReviewStates = await Promise.all(
+            prepared.packets.map(async (packet) => ({
+              packet,
+              alreadyRunning: activeEpisodeIds.has(packet.episodeId),
+              latest: activeEpisodeIds.has(packet.episodeId)
+                ? null
+                : await repository.getLatestReviewForEpisode(
+                    authorizedWorkspaceId,
+                    packet.episodeId
+                  )
+            }))
+          );
+          for (const { packet, alreadyRunning, latest } of packetReviewStates) {
+            if (alreadyRunning) {
+              receipts.push({
+                episodeId: packet.episodeId,
+                batchId: packet.batchId,
+                reason: "review-already-running",
+                detail:
+                  "An analyst review for this selected packet is already running."
+              });
+              continue;
+            }
+            if (latest?.evidencePacket?.packetId === packet.packet.packetId) {
+              receipts.push({
+                episodeId: packet.episodeId,
+                batchId: packet.batchId,
+                reason: "review-already-submitted",
+                detail:
+                  "This exact frozen evidence packet already has a submitted analyst review."
+              });
+              continue;
+            }
+            const remaining = remainingByBatch.get(packet.batchId) ?? 0;
+            if (remaining < 1) {
+              receipts.push({
+                episodeId: packet.episodeId,
+                batchId: packet.batchId,
+                reason: "critique-budget-exhausted",
+                detail:
+                  "The workspace's remaining critique capacity is reserved by another active analyst review."
+              });
+              continue;
+            }
+            remainingByBatch.set(packet.batchId, remaining - 1);
+            newlyReservedByBatch.set(
+              packet.batchId,
+              (newlyReservedByBatch.get(packet.batchId) ?? 0) + 1
+            );
+            packets.push(packet);
+          }
+          if (packets.length === 0) {
+            return {
+              run: null,
+              packets,
+              receipts,
+              budget: prepared.budget
+            };
+          }
+          if (activeAnalystRuns.size >= MAX_ACTIVE_ANALYST_RUNS) {
+            throw new PlaytestMcpUnavailableError(
+              "Runtime analyst capacity filled before this review could start."
+            );
+          }
+
+          const analysisId = randomUUID();
+          const createdAt = new Date().toISOString();
+          const metricAggregation = aggregatePlaytestCrossSessionMetrics({
+            workspaceId: authorizedWorkspaceId,
+            analysisId,
+            packets
+          });
+          const record: PlaytestAnalystReviewRun = {
+            analysisId,
+            workspaceId: authorizedWorkspaceId,
+            status: "running",
+            createdAt,
+            finishedAt: null,
+            requestedEpisodeIds: uniqueEpisodeIds,
+            packets: packets.map(({ episodeId, batchId, packet }) => ({
+              episodeId,
+              batchId,
+              packetId: packet.packetId
+            })),
+            receipts,
+            budget: currentBudgets.map((entry) => {
+              const activeReserved =
+                (reservationSnapshot.counts.get(entry.batchId) ?? 0) +
+                (newlyReservedByBatch.get(entry.batchId) ?? 0);
+              return {
+                ...entry,
+                reserved: entry.reserved + activeReserved,
+                remaining: Math.max(0, entry.remaining - activeReserved)
+              };
+            }),
+            reviews: [],
+            synthesisId: null,
+            error: null
+          };
+          let process: PlaytestAnalystProcess;
+          try {
+            process = launchAnalystProcess({
+              analysisId,
+              workspaceId: authorizedWorkspaceId,
+              actor: session.actor,
+              episodeIds: packets.map((packet) => packet.episodeId),
+              metricAggregation
+            });
+          } catch (error) {
+            throw new PlaytestMcpUnavailableError(
+              error instanceof Error
+                ? error.message
+                : "The analyst process could not be started."
+            );
+          }
+          analystReviewRuns.set(analysisId, record);
+          activeAnalystRuns.set(analysisId, { process });
+          void process.completion.then(
+            (result) => finalizeAnalystRun(analysisId, result),
+            () =>
+              finalizeAnalystRun(analysisId, {
+                exitCode: null,
+                signal: null,
+                timedOut: false,
+                launchFailed: true
+              })
+          );
+          pruneAnalystReviewHistory();
+          return {
+            run: record,
+            packets,
+            receipts,
+            budget: record.budget
+          };
+        }
+      );
+    },
+    async listAnalystReviewRuns(session, workspaceId) {
+      assertPlaytestToolRole(
+        session.role,
+        ANALYST_STATUS_READER_ROLES,
+        "Console playtest analyst status"
+      );
+      const authorizedWorkspaceId = authorizeWorkspace(workspaceId, session);
+      const repository = requiredRunRepository(playtestRepository);
+      const workspaceRuns = [...analystReviewRuns.values()]
+        .filter((run) => run.workspaceId === authorizedWorkspaceId)
+        .sort((left, right) =>
+          ANALYST_REVIEW_RUN_COLLATOR.compare(right.createdAt, left.createdAt)
+        );
+      const active = workspaceRuns.filter((run) => run.status === "running");
+      const recent = workspaceRuns
+        .filter((run) => run.status !== "running")
+        .slice(0, Math.max(0, 20 - active.length));
+      const persistedSyntheses = await repository.listCrossSessionSyntheses(
+        authorizedWorkspaceId,
+        { limit: 20 }
+      );
+      return {
+        runs: [...active, ...recent].sort((left, right) =>
+          ANALYST_REVIEW_RUN_COLLATOR.compare(right.createdAt, left.createdAt)
+        ),
+        syntheses: persistedSyntheses.rows
+      };
+    },
+    prepareCrossSessionReview(receivedSession, workspaceId, episodeIds) {
+      assertPlaytestToolRole(
+        receivedSession.role,
+        CROSS_SESSION_PACKET_READER_ROLES,
+        "playtest.prepareCrossSessionReview"
+      );
+      const authorizedWorkspaceId = authorizeWorkspace(
+        workspaceId,
+        receivedSession
+      );
       if (!playtestRepository) {
         throw new PlaytestMcpUnavailableError(
           "Playtest Data storage is unavailable for analyst packet retrieval."
         );
       }
       return prepareCrossSessionReview({
-        workspaceId,
+        workspaceId: authorizedWorkspaceId,
         episodeIds,
+        selectionLimit: PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS,
         repository: playtestRepository,
         // A store that cannot be opened is not a selection that failed: it is
         // a packet that could not be read, and is reported per session rather
         // than collapsing the whole dispatch into one opaque error.
         artifacts: safeArtifactStoreForWorkspace(
-          workspaceId,
+          authorizedWorkspaceId,
           artifactStoreForWorkspace
         )
       });
@@ -4706,16 +5377,16 @@ export function createPlaytestRunControl(
  */
 
 /** Why a selected session could not contribute an analyst packet. */
-const CROSS_SESSION_RECEIPT_REASONS = [
-  "unknown-session",
-  "excluded-ineligible-session",
-  "batch-not-completed",
-  "not-selected-for-review",
-  "critique-budget-exhausted",
-  "packet-unavailable",
-  "not-authorized"
-] as const;
-type CrossSessionReceiptReason = (typeof CROSS_SESSION_RECEIPT_REASONS)[number];
+type CrossSessionReceiptReason =
+  | "unknown-session"
+  | "excluded-ineligible-session"
+  | "batch-not-completed"
+  | "not-selected-for-review"
+  | "critique-budget-exhausted"
+  | "packet-unavailable"
+  | "not-authorized"
+  | "review-already-running"
+  | "review-already-submitted";
 
 export interface PlaytestCrossSessionReceipt {
   readonly episodeId: string;
@@ -4756,21 +5427,28 @@ function crossSessionIneligibility(
     return `The session's batch is ${batch.status}, not completed.`;
   }
   switch (episode.status) {
-    case "completed":
+    case "completed": {
       return null;
+    }
     case "assigned":
-    case "started":
+    case "started": {
       return `The session is partial (${episode.status}).`;
-    case "crashed":
+    }
+    case "crashed": {
       return "The session crashed.";
-    case "infrastructure-failed":
+    }
+    case "infrastructure-failed": {
       return "The session became infrastructure loss.";
-    case "cancelled":
+    }
+    case "cancelled": {
       return "The session was cancelled.";
-    case "budget-truncated":
+    }
+    case "budget-truncated": {
       return "The session was truncated before completion.";
-    default:
+    }
+    default: {
       return "The session state is not analysable.";
+    }
   }
 }
 
@@ -4914,7 +5592,7 @@ async function readPreparedReviewPacket(input: {
 }
 
 /**
- * Dispatch analysis over an explicit, bounded selection.
+ * Prepare packets for analysis over an explicit, bounded selection.
  *
  * Runtime owns the whole decision: eligibility, the per-batch critique cap,
  * and which selected sessions yielded packet-unavailable receipts. Every
@@ -4922,9 +5600,95 @@ async function readPreparedReviewPacket(input: {
  * silently, because a silently dropped session would make the analyst's
  * cross-session claims look grounded in evidence that was never read.
  */
+interface EligibleCrossSessionSelection {
+  readonly episodeId: string;
+  readonly episode: PlaytestEpisode;
+  readonly batch: PlaytestBatch;
+}
+
+type CrossSessionResolution =
+  | {
+      readonly kind: "eligible";
+      readonly selection: EligibleCrossSessionSelection;
+    }
+  | { readonly kind: "receipt"; readonly receipt: PlaytestCrossSessionReceipt };
+
+async function resolveCrossSessionEpisode(
+  workspaceId: string,
+  episodeId: string,
+  repository: PlaytestingRepositoryOps
+): Promise<CrossSessionResolution> {
+  const episode = await repository.getEpisode(workspaceId, episodeId);
+  if (!episode) {
+    return {
+      kind: "receipt",
+      receipt: {
+        episodeId,
+        batchId: null,
+        reason: "unknown-session",
+        detail: "The session does not exist in the authorized workspace."
+      }
+    };
+  }
+  const batch = await repository.getBatch(workspaceId, episode.batchId);
+  const ineligible = crossSessionIneligibility(episode, batch);
+  if (ineligible !== null || !batch) {
+    return {
+      kind: "receipt",
+      receipt: {
+        episodeId,
+        batchId: episode.batchId,
+        reason: "excluded-ineligible-session",
+        detail: ineligible ?? "The session's batch is unavailable."
+      }
+    };
+  }
+  if (
+    batch.reviewSelection.status !== "selected" ||
+    batch.assignmentInventory.status !== "frozen" ||
+    batch.coverageManifest === null
+  ) {
+    return {
+      kind: "receipt",
+      receipt: {
+        episodeId,
+        batchId: episode.batchId,
+        reason: "not-selected-for-review",
+        detail: "The session's batch has no persisted frozen review selection."
+      }
+    };
+  }
+  // Membership is checked here so an unselected session is reported as
+  // ineligible selection rather than surfacing as an authorization failure.
+  if (
+    episode.assignmentId !== null &&
+    !batch.reviewSelection.selected.some(
+      (entry) =>
+        entry.assignmentId === episode.assignmentId &&
+        entry.episodeId === episode.episodeId
+    )
+  ) {
+    return {
+      kind: "receipt",
+      receipt: {
+        episodeId,
+        batchId: episode.batchId,
+        reason: "not-selected-for-review",
+        detail:
+          "The session was not among the frozen bounded review selection for its batch."
+      }
+    };
+  }
+  return {
+    kind: "eligible",
+    selection: { episodeId, episode, batch }
+  };
+}
+
 async function prepareCrossSessionReview(input: {
   readonly workspaceId: string;
   readonly episodeIds: readonly string[];
+  readonly selectionLimit: number;
   readonly repository: PlaytestingRepositoryOps;
   readonly artifacts: PlaytestArtifactStore;
 }): Promise<{
@@ -4932,160 +5696,133 @@ async function prepareCrossSessionReview(input: {
   readonly receipts: readonly PlaytestCrossSessionReceipt[];
   readonly budget: readonly PlaytestCrossSessionBudget[];
 }> {
-  const { workspaceId, episodeIds, repository, artifacts } = input;
+  const { workspaceId, episodeIds, selectionLimit, repository, artifacts } =
+    input;
   const unique = [...new Set(episodeIds)];
-  if (unique.length === 0 || unique.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS) {
+  if (unique.length === 0 || unique.length > selectionLimit) {
     throw new PlaytestMcpValidationError(
-      `A cross-session analysis must name between 1 and ${String(PLAYTESTS_MAX_ANALYSIS_SESSIONS)} distinct sessions.`
+      `A cross-session analysis must name between 1 and ${String(selectionLimit)} distinct sessions.`
     );
   }
-  const packets: PlaytestCrossSessionPacket[] = [];
-  const receipts: PlaytestCrossSessionReceipt[] = [];
-  const resolved: {
-    readonly episodeId: string;
-    readonly episode: PlaytestEpisode;
-    readonly batch: PlaytestBatch;
-  }[] = [];
 
-  // Eligibility first, so an ineligible session is never charged against the
-  // critique budget it could never have used.
-  for (const episodeId of unique) {
-    const episode = await repository.getEpisode(workspaceId, episodeId);
-    if (!episode) {
-      receipts.push({
-        episodeId,
-        batchId: null,
-        reason: "unknown-session",
-        detail: "The session does not exist in the authorized workspace."
-      });
-      continue;
-    }
-    const batch = await repository.getBatch(workspaceId, episode.batchId);
-    const ineligible = crossSessionIneligibility(episode, batch);
-    if (ineligible !== null || !batch) {
-      receipts.push({
-        episodeId,
-        batchId: episode.batchId,
-        reason: "excluded-ineligible-session",
-        detail: ineligible ?? "The session's batch is unavailable."
-      });
-      continue;
-    }
-    if (
-      batch.reviewSelection.status !== "selected" ||
-      batch.assignmentInventory.status !== "frozen" ||
-      batch.coverageManifest === null
-    ) {
-      receipts.push({
-        episodeId,
-        batchId: episode.batchId,
-        reason: "not-selected-for-review",
-        detail: "The session's batch has no persisted frozen review selection."
-      });
-      continue;
-    }
-    // Membership is checked here so an unselected session is reported as
-    // ineligible selection rather than surfacing as an authorization failure.
-    if (
-      episode.assignmentId !== null &&
-      !batch.reviewSelection.selected.some(
-        (entry) =>
-          entry.assignmentId === episode.assignmentId &&
-          entry.episodeId === episode.episodeId
-      )
-    ) {
-      receipts.push({
-        episodeId,
-        batchId: episode.batchId,
-        reason: "not-selected-for-review",
-        detail:
-          "The session was not among the frozen bounded review selection for its batch."
-      });
-      continue;
-    }
-    resolved.push({ episodeId, episode, batch });
-  }
+  // Resolve eligibility concurrently, retaining request order so budget sampling
+  // and receipts remain deterministic for the same explicit selection.
+  const resolution = await Promise.all(
+    unique.map((episodeId) =>
+      resolveCrossSessionEpisode(workspaceId, episodeId, repository)
+    )
+  );
+  const resolved = resolution.flatMap((entry) =>
+    entry.kind === "eligible" ? [entry.selection] : []
+  );
+  const receipts = resolution.flatMap((entry) =>
+    entry.kind === "receipt" ? [entry.receipt] : []
+  );
 
   // The per-batch cap is checked across the whole selection, not per session:
   // N sessions that each fit under the cap must still not exceed it together.
+  const selectionsByBatch = new Map<string, EligibleCrossSessionSelection[]>();
+  for (const selection of resolved) {
+    const group = selectionsByBatch.get(selection.batch.batchId) ?? [];
+    group.push(selection);
+    selectionsByBatch.set(selection.batch.batchId, group);
+  }
   const budgets: PlaytestCrossSessionBudget[] = [];
-  const allowed = new Map<string, PlaytestCrossSessionPacket["batchId"][]>();
-  for (const batchId of new Set(resolved.map((entry) => entry.batch.batchId))) {
-    const first = resolved.find((entry) => entry.batch.batchId === batchId)!;
-    const selection = first.batch.reviewSelection;
-    if (selection.status !== "selected") continue;
-    const requested = resolved.filter(
-      (entry) => entry.batch.batchId === batchId
-    ).length;
-    const reserved = first.batch.reviewReceipts.filter(
+  const allowed = new Map<string, ReadonlySet<string>>();
+  for (const [batchId, selections] of selectionsByBatch) {
+    const batch = selections[0]!.batch;
+    if (batch.reviewSelection.status !== "selected") continue;
+    const requested = selections.length;
+    const reserved = batch.reviewReceipts.filter(
       (receipt) => receipt.status === "reserved"
     ).length;
     const remaining = Math.max(
       0,
-      selection.reviewCap - first.batch.budget.actualCritiques - reserved
+      batch.reviewSelection.reviewCap - batch.budget.actualCritiques - reserved
     );
     budgets.push({
       batchId,
-      reviewCap: selection.reviewCap,
-      actualCritiques: first.batch.budget.actualCritiques,
+      reviewCap: batch.reviewSelection.reviewCap,
+      actualCritiques: batch.budget.actualCritiques,
       reserved,
       requested,
       remaining
     });
     allowed.set(
       batchId,
-      resolved
-        .filter((entry) => entry.batch.batchId === batchId)
-        .slice(0, remaining)
-        .map((entry) => entry.episodeId)
+      new Set(
+        selections.slice(0, remaining).map((selection) => selection.episodeId)
+      )
     );
   }
 
-  for (const { episodeId, episode, batch } of resolved) {
-    const permitted = allowed.get(batch.batchId) ?? [];
-    if (!permitted.includes(episodeId)) {
-      receipts.push({
-        episodeId,
-        batchId: batch.batchId,
-        reason: "critique-budget-exhausted",
-        detail:
-          "The batch's frozen critique cap cannot cover this selection; the sessions past the cap are excluded rather than analysed unbudgeted."
-      });
-      continue;
+  const packetResults = await mapConcurrentOrdered(
+    resolved,
+    CROSS_SESSION_PACKET_READ_CONCURRENCY,
+    async (selection) => {
+      const { episodeId, episode, batch } = selection;
+      if (!(allowed.get(batch.batchId)?.has(episodeId) ?? false)) {
+        return {
+          kind: "receipt" as const,
+          receipt: {
+            episodeId,
+            batchId: batch.batchId,
+            reason: "critique-budget-exhausted" as const,
+            detail:
+              "The batch's frozen critique cap cannot cover this selection; the sessions past the cap are excluded rather than analysed unbudgeted."
+          }
+        };
+      }
+      try {
+        const prepared = await readPreparedReviewPacket({
+          workspaceId,
+          episode,
+          repository,
+          artifacts
+        });
+        return {
+          kind: "packet" as const,
+          packet: {
+            episodeId,
+            batchId: batch.batchId,
+            packet: prepared.packet,
+            artifact: prepared.artifact
+          }
+        };
+      } catch (error) {
+        return {
+          kind: "receipt" as const,
+          receipt: {
+            episodeId,
+            batchId: batch.batchId,
+            reason:
+              error instanceof PlaytestMcpAuthorizationError
+                ? ("not-authorized" as const)
+                : ("packet-unavailable" as const),
+            detail:
+              error instanceof Error
+                ? error.message
+                : "The session packet could not be read."
+          }
+        };
+      }
     }
-    try {
-      const prepared = await readPreparedReviewPacket({
-        workspaceId,
-        episode,
-        repository,
-        artifacts
-      });
-      packets.push({
-        episodeId,
-        batchId: batch.batchId,
-        packet: prepared.packet,
-        artifact: prepared.artifact
-      });
-    } catch (error) {
-      receipts.push({
-        episodeId,
-        batchId: batch.batchId,
-        reason:
-          error instanceof PlaytestMcpAuthorizationError
-            ? "not-authorized"
-            : "packet-unavailable",
-        detail:
-          error instanceof Error
-            ? error.message
-            : "The session packet could not be read."
-      });
-    }
-  }
+  );
+  const packets = packetResults.flatMap((entry) =>
+    entry.kind === "packet" ? [entry.packet] : []
+  );
+  receipts.push(
+    ...packetResults.flatMap((entry) =>
+      entry.kind === "receipt" ? [entry.receipt] : []
+    )
+  );
 
   return {
     packets,
     receipts,
-    budget: budgets.sort((a, b) => a.batchId.localeCompare(b.batchId))
+    budget: budgets.sort((a, b) =>
+      ANALYST_REVIEW_RUN_COLLATOR.compare(a.batchId, b.batchId)
+    )
   };
 }
 
@@ -5159,6 +5896,14 @@ function assertReviewExperimentMetrics(
 }
 
 export function createPlaytestMcpServer(
+  options: PlaytestMcpOptions & {
+    readonly playtestRunControl: PlaytestRunControl;
+  }
+): McpServer & { readonly playtestRunControl: PlaytestRunControl };
+export function createPlaytestMcpServer(
+  options: PlaytestMcpOptions
+): PlaytestMcpServer;
+export function createPlaytestMcpServer(
   options: PlaytestMcpOptions
 ): PlaytestMcpServer {
   const mcp = new McpServer(
@@ -5173,6 +5918,7 @@ export function createPlaytestMcpServer(
     approvalRepository,
     playtestRunControl
   } = options;
+  const preparedAnalystPackets = new Map<string, PlaytestEvidencePacket>();
 
   // 1. playtest.capabilities
   mcp.registerTool(
@@ -5188,7 +5934,10 @@ export function createPlaytestMcpServer(
       safely(async () => {
         const session = await sessionProvider.current();
         const targetWorkspaceId = authorizeWorkspace(workspaceId, session);
-        return playtestRunControl.getCapabilities(session, targetWorkspaceId);
+        return requirePlaytestRunControl(playtestRunControl).getCapabilities(
+          session,
+          targetWorkspaceId
+        );
       })
   );
 
@@ -5203,7 +5952,10 @@ export function createPlaytestMcpServer(
     (request) =>
       safely(async () => {
         const session = await sessionProvider.current();
-        return playtestRunControl.startRun(session, request);
+        return requirePlaytestRunControl(playtestRunControl).startRun(
+          session,
+          request
+        );
       })
   );
 
@@ -5221,10 +5973,9 @@ export function createPlaytestMcpServer(
         const session = await sessionProvider.current();
         const targetWorkspaceId = authorizeWorkspace(workspaceId, session);
         return {
-          runs: await playtestRunControl.listActiveRuns(
-            session,
-            targetWorkspaceId
-          )
+          runs: await requirePlaytestRunControl(
+            playtestRunControl
+          ).listActiveRuns(session, targetWorkspaceId)
         };
       })
   );
@@ -5244,7 +5995,7 @@ export function createPlaytestMcpServer(
       safely(async () => {
         const session = await sessionProvider.current();
         const targetWorkspaceId = authorizeWorkspace(workspaceId, session);
-        return playtestRunControl.waitForRun(
+        return requirePlaytestRunControl(playtestRunControl).waitForRun(
           session,
           targetWorkspaceId,
           batchId,
@@ -5267,7 +6018,7 @@ export function createPlaytestMcpServer(
       safely(async () => {
         const session = await sessionProvider.current();
         const targetWorkspaceId = authorizeWorkspace(workspaceId, session);
-        return playtestRunControl.cancelRun(
+        return requirePlaytestRunControl(playtestRunControl).cancelRun(
           session,
           targetWorkspaceId,
           batchId
@@ -5630,7 +6381,9 @@ export function createPlaytestMcpServer(
           "playtest.decideComparison"
         );
         const targetWorkspaceId = authorizeWorkspace(workspaceId, session);
-        return playtestRunControl.recordComparisonDecision(
+        return requirePlaytestRunControl(
+          playtestRunControl
+        ).recordComparisonDecision(
           session,
           targetWorkspaceId,
           comparisonId,
@@ -5660,6 +6413,11 @@ export function createPlaytestMcpServer(
             "playtest.prepareReview requires the read-only playtest analyst role."
           );
         }
+        assertAnalystEpisodeSelected(
+          session,
+          episodeId,
+          "playtest.prepareReview"
+        );
         const targetWorkspaceId = authorizeWorkspace(workspaceId, session);
         if (!playtestRepository) {
           throw new PlaytestMcpUnavailableError(
@@ -5681,6 +6439,14 @@ export function createPlaytestMcpServer(
           repository: playtestRepository,
           artifacts: artifactStoreForWorkspace(targetWorkspaceId)
         });
+        const cacheKey = preparedAnalystPacketCacheKey(
+          session,
+          targetWorkspaceId,
+          episodeId
+        );
+        if (cacheKey !== null) {
+          preparedAnalystPackets.set(cacheKey, packet.packet);
+        }
         return {
           packet: packet.packet,
           packetArtifact: packet.artifact
@@ -5693,36 +6459,27 @@ export function createPlaytestMcpServer(
     "playtest.prepareCrossSessionReview",
     {
       description:
-        "Dispatch analysis over an explicit, bounded selection of persisted sessions. Runtime owns eligibility, the per-batch critique cap, and a named receipt for every selected session that contributed no packet. Each returned packet belongs to exactly one session, so cross-session synthesis must cite each contributing session's own packet and be reported as cross-session.",
+        "Prepare bounded evidence packets for an explicit selection of persisted sessions. Runtime owns eligibility, the per-batch critique cap, and a named receipt for every selected session that contributed no packet. This tool does not invoke a model. Each packet belongs to exactly one session, so later cross-session synthesis must cite each contributing session's own packet and be reported as cross-session.",
       inputSchema: {
         workspaceId: z.string().min(1).max(256).optional(),
         episodeIds: z
           .array(z.string().min(1).max(256))
           .min(1)
-          .max(PLAYTESTS_MAX_ANALYSIS_SESSIONS)
+          .max(PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS)
       }
     },
     ({ workspaceId, episodeIds }) =>
       safely(async () => {
         const session = await sessionProvider.current();
-        if (!isReviewerRole(session.role)) {
-          throw new PlaytestMcpAuthorizationError(
-            "playtest.prepareCrossSessionReview requires the read-only playtest analyst role."
-          );
-        }
-        const targetWorkspaceId = authorizeWorkspace(workspaceId, session);
-        if (!playtestRepository) {
-          throw new PlaytestMcpUnavailableError(
-            "Playtest Data storage is unavailable for analyst packet retrieval."
-          );
-        }
-        // Routed through the same owner the Console reaches, so the MCP tool
-        // and the Control API cannot disagree about one selection.
-        const result = await playtestRunControl.prepareCrossSessionReview(
-          session,
-          targetWorkspaceId,
-          episodeIds
+        assertPlaytestToolRole(
+          session.role,
+          CROSS_SESSION_PACKET_READER_ROLES,
+          "playtest.prepareCrossSessionReview"
         );
+        const targetWorkspaceId = authorizeWorkspace(workspaceId, session);
+        const result = await requirePlaytestRunControl(
+          playtestRunControl
+        ).prepareCrossSessionReview(session, targetWorkspaceId, episodeIds);
         // Every requested session appears exactly once, in packets or receipts,
         // so a silent drop is structurally impossible.
         return {
@@ -5776,6 +6533,11 @@ export function createPlaytestMcpServer(
             "playtest.submitReview requires an authorized reviewer role."
           );
         }
+        assertAnalystEpisodeSelected(
+          session,
+          args.episodeId,
+          "playtest.submitReview"
+        );
         if (
           !Array.isArray(args.observations) ||
           args.observations.length === 0 ||
@@ -6138,6 +6900,193 @@ export function createPlaytestMcpServer(
       })
   );
 
+  // 9b. playtest.submitCrossSessionSynthesis
+  mcp.registerTool(
+    "playtest.submitCrossSessionSynthesis",
+    {
+      description:
+        "Persist one hypothesis-only batch synthesis. Every cited locator must belong to the exact Runtime-selected packet for that episode; this artifact is distinct from all per-session reviews.",
+      inputSchema: z.strictObject({
+        summary: z.string().min(1).max(16_000),
+        claims: z.array(crossSessionClaimSchema).min(1).max(64),
+        experiments: z.array(crossSessionExperimentSchema).max(32)
+      })
+    },
+    (args) =>
+      safely(async () => {
+        const session = await sessionProvider.current();
+        if (session.role !== REVIEWER_ROLE) {
+          throw new PlaytestMcpAuthorizationError(
+            "Cross-session synthesis is only available to Runtime-dispatched playtest analysts."
+          );
+        }
+        const analysisId = session.analysisId;
+        const selectedEpisodeIds = session.selectedEpisodeIds;
+        const metricAggregation = session.metricAggregation;
+        if (
+          !analysisId ||
+          !metricAggregation ||
+          !selectedEpisodeIds ||
+          selectedEpisodeIds.length < 2 ||
+          selectedEpisodeIds.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS ||
+          new Set(selectedEpisodeIds).size !== selectedEpisodeIds.length
+        ) {
+          throw new PlaytestMcpAuthorizationError(
+            "The trusted Runtime analysis identity, metric aggregation, or multi-session selection is missing."
+          );
+        }
+        const workspaceId = authorizeWorkspace(undefined, session);
+        try {
+          assertPlaytestCrossSessionMetricAggregation(
+            metricAggregation,
+            workspaceId,
+            analysisId,
+            selectedEpisodeIds
+          );
+        } catch {
+          throw new PlaytestMcpAuthorizationError(
+            "The Runtime metric aggregation is not bound to this analysis selection."
+          );
+        }
+        const repository = requiredRunRepository(playtestRepository);
+        const lockKey = JSON.stringify([workspaceId, analysisId]);
+        return withAssignmentLock(
+          crossSessionSynthesisLocks,
+          lockKey,
+          async () => {
+            const existing =
+              await repository.getCrossSessionSynthesisForAnalysis(
+                workspaceId,
+                analysisId
+              );
+            if (existing) return existing;
+
+            const packetsByEpisode = new Map<
+              string,
+              {
+                readonly episodeId: string;
+                readonly batchId: string;
+                readonly packet: PlaytestEvidencePacket;
+              }
+            >();
+            for (const episodeId of selectedEpisodeIds) {
+              const cacheKey = preparedAnalystPacketCacheKey(
+                session,
+                workspaceId,
+                episodeId
+              );
+              const packet =
+                cacheKey === null
+                  ? undefined
+                  : preparedAnalystPackets.get(cacheKey);
+              if (packet) {
+                packetsByEpisode.set(episodeId, {
+                  episodeId,
+                  batchId: packet.batchId,
+                  packet
+                });
+              }
+            }
+            const referencedEpisodes = new Set<string>();
+            const normalizedClaims: PlaytestCrossSessionClaim[] = [];
+            const normalizedExperiments: PlaytestCrossSessionExperiment[] = [];
+            const validateReferences = (
+              references: readonly z.infer<
+                typeof crossSessionEvidenceRefSchema
+              >[]
+            ): void => {
+              for (const reference of references) {
+                assertAnalystEpisodeSelected(
+                  session,
+                  reference.episodeId,
+                  "playtest.submitCrossSessionSynthesis"
+                );
+                const packet = packetsByEpisode.get(reference.episodeId);
+                if (!packet || packet.packet.packetId !== reference.packetId) {
+                  throw new PlaytestMcpAuthorizationError(
+                    "Every synthesis citation must match the frozen packet for its selected episode."
+                  );
+                }
+                try {
+                  assertPlaytestEvidenceLocatorsWithinPacket(
+                    [playtestEvidenceLocatorFromInput(reference.locator)],
+                    packet.packet
+                  );
+                } catch {
+                  throw new PlaytestMcpValidationError(
+                    "Every synthesis locator must resolve inside its cited frozen packet."
+                  );
+                }
+                referencedEpisodes.add(reference.episodeId);
+              }
+            };
+            for (const claim of args.claims) {
+              validateReferences(claim.evidenceRefs);
+              normalizedClaims.push({
+                ...claim,
+                evidenceRefs: claim.evidenceRefs.map((reference) => ({
+                  episodeId: reference.episodeId,
+                  packetId: reference.packetId,
+                  locator: playtestEvidenceLocatorFromInput(reference.locator)
+                }))
+              });
+            }
+            for (const experiment of args.experiments) {
+              validateReferences(experiment.evidenceRefs);
+              normalizedExperiments.push({
+                ...experiment,
+                evidenceRefs: experiment.evidenceRefs.map((reference) => ({
+                  episodeId: reference.episodeId,
+                  packetId: reference.packetId,
+                  locator: playtestEvidenceLocatorFromInput(reference.locator)
+                }))
+              });
+            }
+            if (referencedEpisodes.size < 2) {
+              throw new PlaytestMcpValidationError(
+                "A batch synthesis must cite evidence from at least two distinct selected sessions."
+              );
+            }
+            const contributors = selectedEpisodeIds.flatMap((episodeId) => {
+              const packet = packetsByEpisode.get(episodeId);
+              return packet && referencedEpisodes.has(episodeId)
+                ? [
+                    {
+                      episodeId,
+                      batchId: packet.batchId,
+                      packetId: packet.packet.packetId
+                    }
+                  ]
+                : [];
+            });
+            const synthesis: PlaytestCrossSessionSynthesis = {
+              schema: PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
+              synthesisId: randomUUID(),
+              version: 1,
+              analysisId,
+              workspaceId,
+              authorRole: REVIEWER_ROLE,
+              authorId: session.actor,
+              modelId: null,
+              modelRevision: null,
+              promptHash: null,
+              generatedAt: new Date().toISOString(),
+              status: "hypothesis",
+              summary: args.summary,
+              contributors,
+              packetEligibleEpisodeIds: [...selectedEpisodeIds],
+              metricAggregation,
+              claims: normalizedClaims,
+              experiments: normalizedExperiments
+            };
+            assertPlaytestCrossSessionSynthesis(synthesis);
+            await repository.insertCrossSessionSynthesis(synthesis);
+            return synthesis;
+          }
+        );
+      })
+  );
+
   // 9. playtest.findings
   mcp.registerTool(
     "playtest.findings",
@@ -6227,10 +7176,9 @@ export function createPlaytestMcpServer(
         // Both gates come from the owner's capabilities view, which already
         // resolves the operator's grant and the game's checked-in declaration.
         // Reading either from anywhere else would give the gate two answers.
-        const capabilities = await playtestRunControl.getCapabilities(
-          session,
-          targetWorkspaceId
-        );
+        const capabilities = await requirePlaytestRunControl(
+          playtestRunControl
+        ).getCapabilities(session, targetWorkspaceId);
         const gates = {
           configuredReporting: capabilities.configuredIssueReporting,
           approvedReporting: capabilities.issueReporting
@@ -6555,7 +7503,7 @@ export function createPlaytestMcpServer(
     }) =>
       safely(async () => {
         const session = await sessionProvider.current();
-        return playtestRunControl.startRun(session, {
+        return requirePlaytestRunControl(playtestRunControl).startRun(session, {
           workspaceId,
           parentEpisodeId,
           branchStep,

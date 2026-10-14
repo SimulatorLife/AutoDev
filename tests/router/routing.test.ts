@@ -67,6 +67,21 @@ test("typed routing policy resolves aliases, concrete models, credentials, and c
   );
 });
 
+test("provider IDs unify configured providers and route-only providers for discovery", () => {
+  const expected = [
+    ...new Set([
+      ...Object.keys(ROUTING_POLICY.config.providers),
+      ...ROUTING_POLICY.routes.map((route) => route.provider)
+    ])
+  ].sort(new Intl.Collator().compare);
+  assert.deepEqual(ROUTING_POLICY.providerIds(), expected);
+  assert.equal(
+    new Set(ROUTING_POLICY.providerIds()).size,
+    expected.length,
+    "the provider inventory must contain each identifier once"
+  );
+});
+
 test("MiniMax's configured smart assignment is reachable for the smart role", () => {
   const configuredModel = ROUTING_POLICY.configuredModel("minimax", "smart");
   assert.ok(configuredModel);
@@ -498,12 +513,15 @@ test("model enablement removes a model from every tier it serves and survives re
     "a disabled provider is reported before its model"
   );
 
-  // Only configured models can be disabled or restored.
+  // Interactive changes require a configured or observed-routeable model.
   policy.setModelEnabled("gpt-unconfigured", false);
   assert.equal(policy.isModelEnabled("gpt-unconfigured"), true);
   assert.deepEqual(policy.runtimeState().disabledModels, [
     CLAUDE_SMART_TEST_MODEL
   ]);
+
+  // Persisted disabled IDs must survive startup before background provider
+  // discovery completes, otherwise an observed model could briefly re-enable.
   policy.restoreRuntimeState({
     roleAssignments: {},
     disabledProviders: [],
@@ -513,7 +531,7 @@ test("model enablement removes a model from every tier it serves and survives re
   assert.deepEqual(policy.runtimeState(), {
     roleAssignments: {},
     disabledProviders: [],
-    disabledModels: [CLAUDE_DEFAULT_TEST_MODEL],
+    disabledModels: [CLAUDE_DEFAULT_TEST_MODEL, "gpt-unconfigured"],
     disabledAgentRoles: [],
     agentEnablementRevisions: {},
     providerLimits: {}

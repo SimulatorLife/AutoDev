@@ -242,12 +242,17 @@ enabled = false
 name = "skill-installer"
 enabled = false
 
+[shell_environment_policy]
+# Do not pass variables named KEY/SECRET/TOKEN to model-generated child processes.
+ignore_default_excludes = false
+
 [shell_environment_policy.set]
 NODE_OPTIONS = "--disable-warning=ExperimentalWarning"
 
 [shell_environment_policy.filters]
 "PATH" = "include"
 "HOME" = "include"
+"*PASSWORD*" = "exclude"
 
 # The bundled Codex App tools plugin owns request_user_input, which Plan mode
 # instructs the model to call. AutoDev enables the plugin and narrows it to that

@@ -1,0 +1,35 @@
+{
+  "schema": "autodev-playtest-adapter-binding-v1",
+  "schemaVersion": 1,
+  "tier": "declarative",
+  "entry": "node-fixture-game.mjs",
+  "factory": "createFixtureGame",
+  "schemas": {
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "room": { "type": "string" } },
+      "required": ["room"]
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "actionId": { "type": "string" } },
+      "required": ["actionId"]
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "kind": { "type": "string" } },
+      "required": ["kind"]
+    }
+  },
+  "bindings": {
+    "reset": { "export": "reset" },
+    "observe": { "export": "observe" },
+    "legalActions": { "export": "legalActions" },
+    "step": { "export": "step" },
+    "outcome": { "export": "outcome" },
+    "captureEvents": { "export": "captureEvents" }
+  }
+}

@@ -277,6 +277,16 @@ test("expandPlaytestRegistry rejects a metric missing a required field after exp
   assert.throws(() => expandPlaytestRegistry(broken), /evaluatorRef/u);
 });
 
+test("expandPlaytestRegistry rejects the retired top-level metrics field", () => {
+  const input = buildFixtureRegistryInput();
+  const broken = { ...input, metrics: [] };
+
+  assert.throws(
+    () => expandPlaytestRegistry(broken),
+    /unsupported field "metrics"/u
+  );
+});
+
 test("expandPlaytestRegistry rejects duplicate metric ids", () => {
   const input = buildFixtureRegistryInput();
   const duplicated = {

@@ -40,10 +40,11 @@ tmp/
 *.lock
 .probe/
 
-# Next.js output: production build (.next), dev server (.next-dev), and the
-# next-env.d.ts that points at whichever of them generated it last
+# Next.js output: production build (.next), dev server (.next-dev), staged
+# build output used by the installer/E2E server, and generated type references.
 console/.next/
 console/.next-dev/
+console/.next-staging-*/
 console/next-env.d.ts
 
 # Throwaway working files. A stub server or a captured page kept around to

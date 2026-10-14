@@ -1,19 +1,20 @@
 import assert from "node:assert/strict";
-import { renderToStaticMarkup } from "react-dom/server";
-import React from "react";
 import test from "node:test";
 
 import {
+  type ControlApiMemoryInjectionOutcomeJoin,
+  type ControlApiMemoryInjectionUseAssessment,
   EXPERIENCE_OUTCOMES,
+  type ExperienceEnvelope,
   MEMORY_EVIDENCE_KINDS,
   MEMORY_EXPERIENCE_PURGE_REASONS,
   MEMORY_OUTCOME_REPORT_KINDS,
-  MEMORY_USE_KINDS,
-  type ControlApiMemoryInjectionOutcomeJoin,
-  type ControlApiMemoryInjectionUseAssessment,
-  type ExperienceEnvelope
+  MEMORY_USE_KINDS
 } from "@simulatorlife/autodev-core";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
+import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
 import { MemoryExperiencesView } from "../src/features/memory/MemoryExperiencesView.ts";
 import {
   actionForm as formFor,
@@ -21,7 +22,6 @@ import {
   fieldValue,
   selectOptions
 } from "./support/memory-markup.ts";
-import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
 
 /**
  * The experiences tab's forms, read off the page.

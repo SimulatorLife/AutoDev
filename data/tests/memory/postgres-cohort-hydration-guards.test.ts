@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { PostgresMemoryRepository } from "../../src/memory/postgres-memory-repository.ts";
 import { MemoryHydrationError } from "../../src/memory/errors.ts";
-import { makeContext } from "./fixtures/builders.ts";
+import { PostgresMemoryRepository } from "../../src/memory/postgres-memory-repository.ts";
 import type {
   MemoryConnectionPool,
   MemoryQueryResult
 } from "../../src/memory/query-client.ts";
+import { makeContext } from "./fixtures/builders.ts";
 
 /**
  * The cohort aggregates refuse to hydrate a cell that cannot exist.

@@ -7,10 +7,12 @@ import path from "node:path";
 import { SpanStatusCode } from "@opentelemetry/api";
 import {
   buildReconciliationView,
+  CONTROL_API_CONTRACT,
   type ControlApiAgentDetailResponse,
   type ControlApiAgentEnablementPatchResponse,
   type ControlApiAgentRecord,
   type ControlApiAgentsResponse,
+  type ControlApiContractResponse,
   type ControlApiEvaluationsResponse,
   type ControlApiGithubResponse,
   type ControlApiHooksResponse,
@@ -27,6 +29,8 @@ import {
   type ControlApiProviderEnabledPatchResponse,
   type ControlApiProviderHealth,
   type ControlApiProviderLimitsPatchResponse,
+  type ControlApiProviderModelDiscovery,
+  type ControlApiProviderModelsResponse,
   type ControlApiProviderRoleAssignment,
   type ControlApiProviderRolePatchResponse,
   type ControlApiProvidersResponse,
@@ -129,8 +133,10 @@ import { handleWorkspacePlaytestingApprovalRequest } from "./workspace-playtesti
 
 export const CONTROL_API_BASE = "/control";
 export const CONTROL_API_PATHS = {
+  contracts: CONTROL_API_CONTRACT.path,
   agents: "/control/agents",
   providers: "/control/providers",
+  providerModels: "/control/provider-models",
   models: "/control/models",
   mcps: "/control/mcps",
   tools: "/control/tools",
@@ -146,6 +152,10 @@ export const CONTROL_API_PATHS = {
   github: "/control/github",
   playtesting: "/control/playtesting"
 } as const;
+
+const PLAYTESTING_CAPABILITIES_PATH = `${CONTROL_API_PATHS.playtesting}/capabilities`;
+const PLAYTESTING_RUNS_PATH = `${CONTROL_API_PATHS.playtesting}/runs`;
+const PLAYTEST_SERVICE_NOT_MATCHED = { kind: "not-matched" } as const;
 
 const PROVIDER_ROLE_PATH = new RegExp(
   `^/control/providers/([a-zA-Z0-9._-]+)/roles/(${PROVIDER_ROLES.join("|")})$`,
@@ -242,8 +252,10 @@ export interface ControlApiRequestOptions {
 export interface ControlApiActor {
   actor: string;
   role: ControlApiRole;
-  /** Private Playtesting-only credential, accepted solely on typed run routes. */
+  /** Private Playtesting credential; its route and bound role are enforced. */
   readonly playtestingService?: true;
+  readonly playtestingServiceRole?:
+    "playtester" | "validator" | "root" | "operator";
 }
 export interface ControlApiConfig {
   serviceToken: string;
@@ -492,6 +504,8 @@ export type ControlApiLiveAgentCountsSource = (
 
 let providerHealthSource: ControlApiProviderHealthSource | null = null;
 let liveAgentCountsSource: ControlApiLiveAgentCountsSource | null = null;
+let providerModelDiscoverySource:
+  (() => ControlApiProviderModelsResponse) | null = null;
 
 /**
  * The router registers its live per-provider evidence here. Without a
@@ -512,6 +526,13 @@ export function setControlApiLiveAgentCountsSource(
   source: ControlApiLiveAgentCountsSource | null
 ): void {
   liveAgentCountsSource = source;
+}
+
+/** Register the Runtime-owned provider model discovery snapshot. */
+export function setControlApiProviderModelDiscoverySource(
+  source: (() => ControlApiProviderModelsResponse) | null
+): void {
+  providerModelDiscoverySource = source;
 }
 
 function providerTierPriorities(
@@ -598,12 +619,7 @@ function rolesForEveryProviderRole(
 }
 
 function providersView(now: number): Record<string, unknown> {
-  const names = Array.from(
-    new Set([
-      ...Object.keys(ROUTING_POLICY.config.providers ?? {}),
-      ...ROUTES.map((route) => route.provider)
-    ])
-  ).sort(CONTROL_API_COLLATOR.compare);
+  const names = ROUTING_POLICY.providerIds();
   const reasoningEffort = ROUTING_POLICY.config.orchestrator.reasoningEffort;
   const health = providerHealthSource?.(now) ?? null;
   const providers = names.map((provider) => {
@@ -1591,6 +1607,74 @@ function agentDetailView(
   } satisfies ControlApiAgentDetailResponse;
 }
 
+function providerModelsView(): ControlApiProviderModelsResponse {
+  const discovery = providerModelDiscoverySource?.();
+  if (discovery) return discovery;
+  const providers = ROUTING_POLICY.providerIds().map((provider) => ({
+    provider,
+    discovery: {
+      status: "unavailable" as const,
+      source: null,
+      lastAttemptAt: null,
+      reason: "Runtime has not started provider model discovery."
+    }
+  }));
+  return {
+    schema: "autodev-control-provider-model-discovery-v1",
+    source: "runtime-provider-discovery",
+    providers
+  } satisfies ControlApiProviderModelsResponse;
+}
+
+function providerDiscoveryFor(
+  provider: string
+): ControlApiProviderModelDiscovery | null {
+  return (
+    providerModelDiscoverySource?.().providers.find(
+      (entry) => entry.provider === provider
+    )?.discovery ?? null
+  );
+}
+
+function providerHasCurrentModelDiscovery(
+  provider: string,
+  model: string
+): boolean {
+  const discovery = providerDiscoveryFor(provider);
+  return (
+    discovery?.status === "observed" &&
+    discovery.models.some(
+      (candidate) =>
+        candidate.id === model && candidate.routeability.status === "supported"
+    )
+  );
+}
+
+function modelHasCurrentDiscovery(model: string): boolean {
+  const discovery = providerModelDiscoverySource?.();
+  return (
+    discovery?.providers.some(
+      (entry) =>
+        entry.discovery.status === "observed" &&
+        entry.discovery.models.some(
+          (candidate) =>
+            candidate.id === model &&
+            candidate.routeability.status === "supported"
+        )
+    ) ?? false
+  );
+}
+
+function modelHasDiscoveryRecord(model: string): boolean {
+  return (
+    providerModelDiscoverySource?.().providers.some(
+      (entry) =>
+        entry.discovery.status !== "unavailable" &&
+        entry.discovery.models.some((candidate) => candidate.id === model)
+    ) ?? false
+  );
+}
+
 /** Display names from the Codex model catalog; absent names stay null. */
 function modelCatalogDisplayNames(repositoryRoot: string): Map<string, string> {
   const catalogPath = path.join(
@@ -1630,23 +1714,66 @@ function modelsView(
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
   const displayNames = modelCatalogDisplayNames(repositoryRoot);
-  const models = ROUTING_POLICY.configuredModels()
-    .map((entry) => ({
+  const byId = new Map<
+    string,
+    { readonly id: string; readonly provider: string; readonly tiers: string[] }
+  >();
+  for (const entry of ROUTING_POLICY.configuredModels()) {
+    byId.set(entry.model, {
       id: entry.model,
       provider: entry.provider,
-      tiers: entry.tiers,
-      displayName: displayNames.get(entry.model) ?? null,
-      enablement: {
-        enabled: ROUTING_POLICY.isModelEnabled(entry.model),
-        mutable: true,
-        convergence: modelConvergence(entry.model)
-      }
-    }))
-    .sort(
-      (left, right) =>
-        CONTROL_API_COLLATOR.compare(left.provider, right.provider) ||
-        CONTROL_API_COLLATOR.compare(left.id, right.id)
-    );
+      tiers: entry.tiers
+    });
+  }
+  const discovery = providerModelDiscoverySource?.();
+  const discoveryStatus = new Map(
+    (discovery?.providers ?? []).map((entry) => [
+      entry.provider,
+      entry.discovery.status
+    ])
+  );
+  const currentlyRouteableModelIds = new Set(
+    (discovery?.providers ?? []).flatMap((entry) =>
+      entry.discovery.status === "observed"
+        ? entry.discovery.models
+            .filter((model) => model.routeability.status === "supported")
+            .map((model) => model.id)
+        : []
+    )
+  );
+  for (const discovered of ROUTING_POLICY.discoveredModels()) {
+    const status = discoveryStatus.get(discovered.provider);
+    if (
+      discovered.routeability.status !== "supported" ||
+      (status !== "observed" && status !== "stale")
+    ) {
+      continue;
+    }
+    const configured = byId.get(discovered.id);
+    if (!configured) {
+      byId.set(discovered.id, {
+        id: discovered.id,
+        provider: discovered.provider,
+        tiers: []
+      });
+    }
+    if (!displayNames.has(discovered.id) && discovered.displayName !== null) {
+      displayNames.set(discovered.id, discovered.displayName);
+    }
+  }
+  const models = Array.from(byId.values(), (entry) => ({
+    ...entry,
+    displayName: displayNames.get(entry.id) ?? null,
+    enablement: {
+      enabled: ROUTING_POLICY.isModelEnabled(entry.id),
+      mutable: currentlyRouteableModelIds.has(entry.id),
+      convergence: modelConvergence(entry.id)
+    }
+  })).sort(
+    (left, right) =>
+      CONTROL_API_COLLATOR.compare(left.provider, right.provider) ||
+      CONTROL_API_COLLATOR.compare(left.id, right.id)
+  );
   return {
     schema: "autodev-control-models-v2",
     source: path.basename(ROUTING_POLICY.configFile),
@@ -2363,7 +2490,10 @@ async function patchProviderRole(
     priority === "disabled";
   const modelIsValid =
     model === null ||
-    (typeof model === "string" && ROUTING_POLICY.isConfiguredModel(model));
+    (typeof model === "string" &&
+      (model === ROUTING_POLICY.assignmentFor(provider, role)?.model ||
+        (ROUTING_POLICY.isModelAvailableForProvider(provider, model) &&
+          providerHasCurrentModelDiscovery(provider, model))));
   if (
     Object.keys(body).some((key) => key !== "priority" && key !== "model") ||
     !priorityIsValid ||
@@ -2374,7 +2504,7 @@ async function patchProviderRole(
       response,
       400,
       "autodev_control_api_bad_body",
-      'Provider role body must carry a priority of 1, 2, 3 or "disabled", and a model that is either null or a model this provider is configured for.'
+      'Provider role body must carry a priority of 1, 2, 3 or "disabled", and a model that is null, unchanged from the current assignment, or currently observed as routeable for this provider.'
     );
     return;
   }
@@ -2859,14 +2989,24 @@ function patchModel(
   actor: ControlApiActor,
   model: string
 ): Promise<void> {
+  const currentlyRouteable = modelHasCurrentDiscovery(model);
+  const knownToRuntime =
+    ROUTING_POLICY.isKnownModel(model) || modelHasDiscoveryRecord(model);
   return patchEnablement(request, response, actor, {
     action: "patch_model",
     resource: model,
     subject: "model",
-    known: ROUTING_POLICY.isConfiguredModel(model),
-    unknownReason: "unknown_model",
-    unknownCode: "autodev_control_api_unknown_model",
-    unknownMessage: "Unknown model.",
+    known: currentlyRouteable,
+    unknownStatus: knownToRuntime ? 409 : 404,
+    unknownReason: knownToRuntime
+      ? "model_not_currently_routeable"
+      : "unknown_model",
+    unknownCode: knownToRuntime
+      ? "autodev_control_api_model_not_currently_routeable"
+      : "autodev_control_api_unknown_model",
+    unknownMessage: knownToRuntime
+      ? "Model enablement requires a currently observed provider model that Runtime can route."
+      : "Unknown model.",
     current: () => ROUTING_POLICY.isModelEnabled(model),
     apply: (enabled) => ROUTING_POLICY.setModelEnabled(model, enabled),
     result: (enabled, previous) => {
@@ -2952,18 +3092,24 @@ function authorizeRequest(
 type ReadOnlyCollectionRenderer = (
   actor: ControlApiActor,
   repositoryRoot: string | undefined
-) => Record<string, unknown> | Promise<Record<string, unknown>>;
+) => object | Promise<object>;
 
 const READ_ONLY_COLLECTIONS: ReadonlyMap<string, ReadOnlyCollectionRenderer> =
   new Map<string, ReadOnlyCollectionRenderer>([
+    [
+      CONTROL_API_PATHS.contracts,
+      () =>
+        ({
+          schema: CONTROL_API_CONTRACT.schema,
+          version: CONTROL_API_CONTRACT.version
+        }) satisfies ControlApiContractResponse
+    ],
     [CONTROL_API_PATHS.agents, () => agentsView()],
     [CONTROL_API_PATHS.providers, () => providersView(Date.now())],
+    [CONTROL_API_PATHS.providerModels, () => providerModelsView()],
     [CONTROL_API_PATHS.models, () => modelsView()],
     [CONTROL_API_PATHS.mcps, () => mcpsView()],
-    [
-      CONTROL_API_PATHS.tools,
-      () => toolsView() as unknown as Record<string, unknown>
-    ],
+    [CONTROL_API_PATHS.tools, () => toolsView()],
     [CONTROL_API_PATHS.skills, (_actor, root) => skillsView(root)],
     [CONTROL_API_PATHS.hooks, (_actor, root) => hooksView(root)],
     [CONTROL_API_PATHS.permissions, () => permissionsView()],
@@ -3007,7 +3153,7 @@ async function readOnlyCollection(
     );
     return true;
   }
-  let body: Record<string, unknown>;
+  let body: object;
   try {
     body = await renderCollection(actor, options.repositoryRoot);
   } catch (error) {
@@ -3646,6 +3792,25 @@ async function patchSkillRoles(
   const observed = configuredRoleExposure("skills").find(
     (entry) => entry.name === name
   );
+  const currentContractContent = readContract(contractFile);
+  const currentContractRevision =
+    currentContractContent.length > 0
+      ? executionContractRevision(currentContractContent)
+      : null;
+  // `configuredRoleExposure` omits skills with no assigned roles. An empty
+  // assignment is observed only when the just-written source revision is the
+  // one the Runtime reloaded; otherwise absence from that projection stays
+  // unknown instead of becoming an observed empty set.
+  const actualRoles =
+    observed?.roles ??
+    (currentContractRevision === assigned.revision ? [] : null);
+  const roleGeneration = (roles: readonly string[]): string =>
+    createHash("sha256")
+      .update(JSON.stringify({ skill: name, roles: [...roles].sort() }), "utf8")
+      .digest("hex");
+  const desiredGeneration = roleGeneration(assigned.roles);
+  const observedGeneration =
+    actualRoles === null ? null : roleGeneration(actualRoles);
   auditMutation({
     actor: actor.actor,
     actorVerified: true,
@@ -3653,19 +3818,45 @@ async function patchSkillRoles(
     action: "assign_skill_roles",
     resource,
     outcome: "ok",
-    changes: { name, roles: assigned.roles, revision: assigned.revision },
-    desiredGeneration: assigned.revision,
-    observedGeneration:
-      observed !== undefined &&
-      assigned.roles.join("\n") === observed.roles.join("\n")
-        ? assigned.revision
-        : null
+    changes: {
+      name,
+      desiredRoles: assigned.roles,
+      actualRoles,
+      revision: assigned.revision
+    },
+    desiredGeneration,
+    observedGeneration
+  });
+  const latest = findLatestAuditFor(resource);
+  const reconciliation = buildReconciliationView({
+    evidence: {
+      desiredGeneration,
+      observedGeneration,
+      lastApplyAt: latest?.timestamp ?? null,
+      lastObservationAt:
+        actualRoles === null ? null : (latest?.timestamp ?? null),
+      lastError: boundReconciliationError(latest?.reason ?? null)
+    },
+    history: historyForResource(resource),
+    hasObservation: actualRoles !== null
+  });
+  const diff = reconcileDiffWithIdentifier({
+    summary:
+      actualRoles === null
+        ? "Skill role assignment was written; runtime roles are not observed."
+        : desiredGeneration === observedGeneration
+          ? "Desired and observed skill role assignments match."
+          : "Desired and observed skill role assignments differ.",
+    identifier: desiredGeneration
   });
   sendJson(response, 200, {
-    schema: "autodev-control-skill-assignment-v1",
+    schema: "autodev-control-skill-assignment-v2",
     skill: assigned.skill,
-    roles: observed?.roles ?? [],
-    revision: assigned.revision
+    desiredRoles: assigned.roles,
+    actualRoles,
+    revision: assigned.revision,
+    reconciliation,
+    diff
   } satisfies ControlApiSkillRolesPatchResponse);
 }
 
@@ -4265,8 +4456,7 @@ function playtestingRunControlRoute(
       requireSessionHeader: actor.playtestingService === true,
       ...(actor.playtestingService
         ? {
-            trustedSessionRole:
-              process.env.AUTODEV_PLAYTEST_CONTROL_API_ROLE?.trim() ?? ""
+            trustedSessionRole: actor.playtestingServiceRole ?? ""
           }
         : {}),
       audit: (event) =>
@@ -4311,20 +4501,24 @@ function authorizePlaytestingRunService(
   | { readonly kind: "not-matched" }
   | { readonly kind: "denied" }
   | { readonly kind: "authorized"; readonly actor: ControlApiActor } {
-  if (
-    pathname !== "/control/playtesting/runs" &&
-    !pathname.startsWith("/control/playtesting/runs/")
-  ) {
-    return { kind: "not-matched" };
-  }
-  const token = process.env.AUTODEV_PLAYTEST_CONTROL_API_TOKEN?.trim() ?? "";
+  const isRunControl =
+    pathname === PLAYTESTING_CAPABILITIES_PATH ||
+    pathname === PLAYTESTING_RUNS_PATH ||
+    pathname.startsWith(PLAYTESTING_RUNS_PATH + "/");
+  if (!isRunControl) return PLAYTEST_SERVICE_NOT_MATCHED;
+
   const authorization = header(request, "authorization");
+  if (!authorization) return PLAYTEST_SERVICE_NOT_MATCHED;
+  const configuredRole =
+    process.env.AUTODEV_PLAYTEST_CONTROL_API_ROLE?.trim() ?? "";
+  const configuredToken =
+    process.env.AUTODEV_PLAYTEST_CONTROL_API_TOKEN?.trim() ?? "";
   if (
-    !token ||
-    !authorization ||
-    !secretMatches(authorization, "Bearer " + token)
+    !["playtester", "validator", "root", "operator"].includes(configuredRole) ||
+    !configuredToken ||
+    !secretMatches(authorization, "Bearer " + configuredToken)
   ) {
-    return { kind: "not-matched" };
+    return PLAYTEST_SERVICE_NOT_MATCHED;
   }
   const actor = process.env.AUTODEV_PLAYTEST_CONTROL_API_ACTOR?.trim() ?? "";
   if (!ACTOR_ID_PATTERN.test(actor)) {
@@ -4338,7 +4532,14 @@ function authorizePlaytestingRunService(
   }
   return {
     kind: "authorized",
-    actor: { actor, role: "operator", playtestingService: true }
+    actor: {
+      actor,
+      role: "operator",
+      playtestingService: true,
+      playtestingServiceRole: configuredRole as NonNullable<
+        ControlApiActor["playtestingServiceRole"]
+      >
+    }
   };
 }
 

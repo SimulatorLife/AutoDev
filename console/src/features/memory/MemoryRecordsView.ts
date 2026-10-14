@@ -1,8 +1,8 @@
 import {
-  MEMORY_EVIDENCE_KINDS,
-  MEMORY_REASON_CODES,
   type ControlApiMemoryWhyResponse,
   type EvidenceReference,
+  MEMORY_EVIDENCE_KINDS,
+  MEMORY_REASON_CODES,
   type MemoryKind,
   type MemoryLifecycleEvent,
   type MemoryRecord,
@@ -580,6 +580,65 @@ interface RecordDetailPanelProps {
   readonly supersessionCandidates: readonly MemoryRecord[];
 }
 
+function LineagePanel(
+  record: MemoryRecord,
+  listScope: MemoryListScope
+): React.JSX.Element | null {
+  const supersedes = record.supersedes ?? [];
+  const supersededBy = record.supersededBy ?? [];
+  if (supersedes.length === 0 && supersededBy.length === 0) return null;
+
+  return React.createElement(
+    "div",
+    { className: "flex flex-col gap-2 text-xs" },
+    React.createElement("h3", { className: SECTION_HEADING_CLASS }, "Lineage"),
+    supersedes.length > 0
+      ? React.createElement(
+          "div",
+          { className: "flex items-center gap-2" },
+          React.createElement(
+            "span",
+            { className: MUTED_TEXT_CLASS },
+            "Supersedes:"
+          ),
+          supersedes.map((id) =>
+            React.createElement(
+              NavigationLink,
+              {
+                key: id,
+                href: memoryDetailHref(listScope, "recordId", id),
+                className: `font-mono ${ACTION_LINK_CLASS}`
+              },
+              id
+            )
+          )
+        )
+      : null,
+    supersededBy.length > 0
+      ? React.createElement(
+          "div",
+          { className: "flex items-center gap-2" },
+          React.createElement(
+            "span",
+            { className: MUTED_TEXT_CLASS },
+            "Superseded By:"
+          ),
+          supersededBy.map((id) =>
+            React.createElement(
+              NavigationLink,
+              {
+                key: id,
+                href: memoryDetailHref(listScope, "recordId", id),
+                className: `font-mono ${ACTION_LINK_CLASS}`
+              },
+              id
+            )
+          )
+        )
+      : null
+  );
+}
+
 function RecordDetailPanel({
   record,
   history,
@@ -707,63 +766,7 @@ function RecordDetailPanel({
     ),
 
     // Lineage (supersedes / supersededBy)
-    record.supersedes?.length || record.supersededBy?.length
-      ? React.createElement(
-          "div",
-          { className: "flex flex-col gap-2 text-xs" },
-          React.createElement(
-            "h3",
-            {
-              className: SECTION_HEADING_CLASS
-            },
-            "Lineage"
-          ),
-          record.supersedes?.length
-            ? React.createElement(
-                "div",
-                { className: "flex items-center gap-2" },
-                React.createElement(
-                  "span",
-                  { className: MUTED_TEXT_CLASS },
-                  "Supersedes:"
-                ),
-                record.supersedes.map((id) =>
-                  React.createElement(
-                    NavigationLink,
-                    {
-                      key: id,
-                      href: memoryDetailHref(listScope, "recordId", id),
-                      className: `font-mono ${ACTION_LINK_CLASS}`
-                    },
-                    id
-                  )
-                )
-              )
-            : null,
-          record.supersededBy?.length
-            ? React.createElement(
-                "div",
-                { className: "flex items-center gap-2" },
-                React.createElement(
-                  "span",
-                  { className: MUTED_TEXT_CLASS },
-                  "Superseded By:"
-                ),
-                record.supersededBy.map((id) =>
-                  React.createElement(
-                    NavigationLink,
-                    {
-                      key: id,
-                      href: memoryDetailHref(listScope, "recordId", id),
-                      className: `font-mono ${ACTION_LINK_CLASS}`
-                    },
-                    id
-                  )
-                )
-              )
-            : null
-        )
-      : null,
+    LineagePanel(record, listScope),
 
     // Transition History
     history && history.transitions && history.transitions.length > 0

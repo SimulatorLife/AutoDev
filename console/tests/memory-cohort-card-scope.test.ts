@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { renderToStaticMarkup } from "react-dom/server";
-import React from "react";
 import test from "node:test";
 
-import { MemoryCohortsView } from "../src/features/memory/MemoryCohortsView.ts";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
 import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
+import { MemoryCohortsView } from "../src/features/memory/MemoryCohortsView.ts";
 
 /**
  * A count must not be labelled as something broader than the number measures.

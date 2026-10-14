@@ -14,6 +14,7 @@
     "./cli/router-status-client": "./src/cli/router-status-client.ts",
     "./config": "./src/config/index.ts",
     "./control-api": "./src/control-api/index.ts",
+    "./cli/control-api-compatibility": "./src/cli/control-api-compatibility.ts",
     "./hooks": "./src/hooks/index.ts",
     "./mcp": "./src/mcp/index.ts",
     "./mcp/process-registry": "./src/mcp/process-registry.ts",

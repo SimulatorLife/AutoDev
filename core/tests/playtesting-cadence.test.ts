@@ -229,7 +229,10 @@ function judgeValidation(
 }
 
 test("an entirely unmeasured judge is insufficient, never calibrated", () => {
-  const result = evaluateJudgeCalibration(judgeValidation(), calibrationTolerances);
+  const result = evaluateJudgeCalibration(
+    judgeValidation(),
+    calibrationTolerances
+  );
   assert.equal(result.passed, false);
   assert.equal(result.status, "insufficient");
   assert.match(
@@ -252,7 +255,11 @@ test("one measured metric is enough to draw a conclusion", () => {
     judgeValidation({ repeatAgreement: 0.9 }),
     calibrationTolerances
   );
-  assert.equal(result.passed, false, "a stale recorded status still blocks a pass");
+  assert.equal(
+    result.passed,
+    false,
+    "a stale recorded status still blocks a pass"
+  );
   assert.equal(result.status, "insufficient");
 
   const measured = evaluateJudgeCalibration(

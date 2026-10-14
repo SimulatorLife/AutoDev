@@ -807,7 +807,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "a breadcrumb entry for a deleted route is dead data"
   );
   assert.equal(
-    breadcrumbs.split("regex: /^\\/costs$/").length - 1,
+    breadcrumbs.split(String.raw`regex: /^\/costs$/`).length - 1,
     1,
     "the /costs breadcrumb block was duplicated verbatim; keep exactly one"
   );
@@ -1064,9 +1064,11 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     join(dir, "src/client/src/helpers/client/trace.ts"),
     "utf8"
   );
+  const roundCase =
+    /type === "round"\) \{([^}]*)\}/u.exec(traceMapping)?.[1] ?? "";
   assert.match(
-    traceMapping,
-    /type === "round"\) \{\s*(?:\/\/[^\n]*\n\s*)*return String\(round\(/u,
+    roundCase,
+    /return String\(round\(/u,
     "round() must not be followed by a fixed precision that re-adds the trailing zeros"
   );
   for (const site of [
@@ -1090,14 +1092,15 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /const \{ data, isFetched, isLoading, error, fireRequest \} = useFetchWrapper\(\)/u,
     "a stat tile that never reads the hook's error cannot tell a failed read from a zero count"
   );
+  const compactStatCard = statCard.replaceAll(/\s+/gu, " ");
   assert.doesNotMatch(
-    statCard,
-    /pingStatus === "success"\s*\)\s*\n\s*fetchData\(\)/u,
+    compactStatCard,
+    /pingStatus === "success"\) fetchData\(\)/u,
     "gating the read on a successful ping leaves the tile loading forever when the ping fails or never settles"
   );
   assert.match(
     statCard,
-    /unreadable =\s*\n?\s*pingStatus === "failure" \|\| !!error \|\| \(isFetched && !data\)/u,
+    /unreadable =\s*pingStatus === "failure" \|\| !!error \|\| \(isFetched && !data\)/u,
     "an unreadable count must be its own state, distinct from loading and from zero"
   );
   assert.match(
@@ -1181,7 +1184,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     const body = readFileSync(join(clientSrc, rel), "utf8");
     return (
       body.includes('pingStatus === "success"') &&
-      !AFFORDANCE_GATES.has(rel.replace(/\\/gu, "/"))
+      !AFFORDANCE_GATES.has(rel.replaceAll("\\", "/"))
     );
   });
   assert.deepEqual(
@@ -1299,7 +1302,8 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "app/(playground)/dashboard/evaluations/metrics-per-time.tsx"
   ]) {
     const source = readFileSync(join(clientSrc, site), "utf8");
-    const axes = source.match(/<XAxis\s*\n\s*dataKey="request_time"/gu) ?? [];
+    const compactSource = source.replaceAll(/\s+/gu, " ");
+    const axes = compactSource.match(/<XAxis\s+dataKey="request_time"/gu) ?? [];
     assert.ok(
       axes.length > 0,
       `${site} is expected to draw a request_time axis; if it no longer does, this assertion is guarding nothing`

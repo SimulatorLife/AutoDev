@@ -33,11 +33,13 @@
   "actionSchemaHash": "22e4a3b73cfe95d3a70172d637aed29574eef4488dfb94c8e30aa075acfa5b40",
   "observationSchemaHash": "a4654f7fae58dc28d1f5ad541efe42768acbd851755ddcfe5594a64cfd3da012",
   "eventSchemaHash": "83b222c141d0ac9cf15696947e3cdcfeecf54fb985c94ca96b411e0e8e44f65e",
-  "metricRegistryHash": "686260014b98a1b025ac7f42913d5fa7b775a224d50b19867cd8898a5893a4ca",
-  "rubricHash": "686260014b98a1b025ac7f42913d5fa7b775a224d50b19867cd8898a5893a4ca",
+  "metricRegistryHash": "28de3a1e195982d4fe70312b1477cde52ec431aa18c349fda2cd51ed7969cbe9",
+  "rubricHash": "28de3a1e195982d4fe70312b1477cde52ec431aa18c349fda2cd51ed7969cbe9",
   "captureMode": "headless",
   "measurementVersion": "playtesting-measurement-v2",
-  "primaryMetricIds": ["legal-action-rejection"],
+  "primaryMetricIds": [
+    "legal-action-rejection"
+  ],
   "guardrailMetricIds": [],
   "practicalMargins": {
     "legal-action-rejection": 0.02
@@ -51,5 +53,5 @@
   "cohortWeights": {
     "onboarding": 1
   },
-  "contentHash": "c78533772dbe5df91cba080cef778f41744ed7224c772e8d92ed38c0b796bb72"
+  "contentHash": "bf8384f3b9b970f5a0be261f1d04d1e9f796228306aeebeaaa21ec907ec31e25"
 }

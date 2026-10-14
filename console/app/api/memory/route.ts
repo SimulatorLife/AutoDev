@@ -2,7 +2,6 @@ import {
   MEMORY_EXPERIENCE_PURGE_REASONS,
   MEMORY_REASON_CODES
 } from "@simulatorlife/autodev-core";
-
 import { type NextRequest, NextResponse } from "next/server.js";
 
 import {
@@ -397,35 +396,43 @@ function memoryRefusalFor(
   if (result.kind === "unreachable") return "unavailable";
   const code = "code" in result ? result.code : "";
   switch (code) {
-    case "autodev_memory_experience_referenced":
+    case "autodev_memory_experience_referenced": {
       return "still_cited";
-    case "autodev_memory_conflict":
+    }
+    case "autodev_memory_conflict": {
       return "conflicted";
-    case "autodev_memory_not_found":
+    }
+    case "autodev_memory_not_found": {
       return "not_found";
+    }
     case "autodev_memory_scope_forbidden":
     case "autodev_memory_viewer_forbidden":
     case "autodev_memory_task_history_forbidden":
-    case "autodev_memory_forbidden":
+    case "autodev_memory_forbidden": {
       return "forbidden";
-    case "autodev_memory_unavailable":
+    }
+    case "autodev_memory_unavailable": {
       return "unavailable";
+    }
     // The Runtime accepted the body and the operation then failed, which is a
     // different thing from the fallback's "declined without saying why". It said
     // exactly why, so telling the operator otherwise sends them to look for a
     // mistake in a form that was correct.
-    case "autodev_memory_operation_failed":
+    case "autodev_memory_operation_failed": {
       return "operation_failed";
+    }
     // A 400 carrying a specific reason: the request failed validation before
     // any work started. Mapping it to the fallback was wrong twice over — it
     // made the notice claim the Runtime said nothing, when the code names the
     // cause, and it left the operator with nothing to act on when the cause is
     // in a body the route assembled rather than one they filled in.
     case "autodev_memory_invalid_request":
-    case "autodev_memory_capture_invalid":
+    case "autodev_memory_capture_invalid": {
       return "request_invalid";
-    default:
+    }
+    default: {
       return "runtime_refused";
+    }
   }
 }
 
@@ -446,199 +453,216 @@ function memoryRefusalFor(
  * one the Runtime accepts, and whether cited memories are the injected set are all
  * the Runtime's to decide -- it holds the experience, and this route does not.
  */
+type MemoryActionResult =
+  Promise<ControlApiResult<unknown>> | ControlRefusalReason | null;
+
+function executePurge(
+  payload: MemoryActionPayload,
+  config: ControlApiConfig
+): MemoryActionResult {
+  // Purge erases an experience envelope irreversibly, so it targets the
+  // experience and requires explicit confirmation and a Runtime reason.
+  if (!payload.experienceId || payload.confirm !== "purge") {
+    return "confirmation_missing";
+  }
+  if (!(PURGE_REASONS as readonly string[]).includes(payload.reason)) {
+    return "reason_not_accepted";
+  }
+  return purgeMemoryExperience(
+    payload.experienceId,
+    payload.reason as (typeof PURGE_REASONS)[number],
+    { workspaceId: payload.workspaceId },
+    config
+  );
+}
+
+function executeVerify(
+  payload: MemoryActionPayload,
+  config: ControlApiConfig
+): MemoryActionResult {
+  // The Runtime reads a task and query, not the free-text reason by itself.
+  const task = payload.reason.trim();
+  if (!task) return "reason_required";
+  return transitionMemoryRecord(
+    payload.recordId,
+    "verify",
+    { workspaceId: payload.workspaceId, task, query: payload.reason },
+    config
+  );
+}
+
+function executeSupersede(
+  payload: MemoryActionPayload,
+  config: ControlApiConfig
+): MemoryActionResult {
+  // Name the prior record locally so a missing selection is not reported as
+  // an unrelated Runtime validation failure.
+  if (!payload.priorId) return "prior_required";
+  const task = payload.reason.trim();
+  if (!task) return "reason_required";
+  return transitionMemoryRecord(
+    payload.recordId,
+    "supersede",
+    {
+      workspaceId: payload.workspaceId,
+      priorId: payload.priorId,
+      task,
+      query: payload.reason
+    },
+    config
+  );
+}
+
+function executeInvalidate(
+  payload: MemoryActionPayload,
+  config: ControlApiConfig
+): MemoryActionResult {
+  // Invalidation is permanent and requires a bounded reason plus evidence.
+  if (payload.evidence.length === 0) return "evidence_required";
+  if (!isMemoryReasonCode(payload.reason)) return "reason_not_accepted";
+  return transitionMemoryRecord(
+    payload.recordId,
+    "invalidate",
+    {
+      workspaceId: payload.workspaceId,
+      reasonCode: payload.reason,
+      evidence: payload.evidence
+    },
+    config
+  );
+}
+
+function executeRevise(
+  payload: MemoryActionPayload,
+  config: ControlApiConfig
+): MemoryActionResult {
+  if (!payload.claim) return "claim_required";
+  if (payload.evidence.length === 0) return "evidence_required";
+  const experienceIds = [...new Set(payload.sourceExperienceIds)];
+  if (experienceIds.length === 0) return "provenance_required";
+  return transitionMemoryRecord(
+    payload.recordId,
+    "revise",
+    {
+      workspaceId: payload.workspaceId,
+      claim: payload.claim,
+      experienceIds,
+      evidence: payload.evidence
+    },
+    config
+  );
+}
+
+function executeOutcomeReport(
+  payload: MemoryActionPayload,
+  config: ControlApiConfig
+): MemoryActionResult {
+  if (payload.outcomeKind !== "unknown" && payload.evidence.length === 0) {
+    return "evidence_required";
+  }
+  return reportMemoryExperienceOutcome(
+    payload.experienceId,
+    {
+      workspaceId: payload.workspaceId,
+      correlationToken: payload.correlationToken,
+      outcomeKind: payload.outcomeKind,
+      reportKind: payload.reportKind,
+      evidence: payload.evidence
+    },
+    config
+  );
+}
+
+function executeUseReport(
+  payload: MemoryActionPayload,
+  config: ControlApiConfig
+): MemoryActionResult {
+  // The Runtime binds the curator assessment to the cited injection and ids.
+  return reportMemoryInjectionUse(
+    payload.experienceId,
+    {
+      workspaceId: payload.workspaceId,
+      injectionEventId: payload.injectionEventId,
+      useKind: payload.useKind,
+      usedMemoryIds: payload.usedMemoryIds,
+      evidence: payload.evidence
+    },
+    config
+  );
+}
+
+function executeSessionOutcomeReport(
+  payload: MemoryActionPayload,
+  config: ControlApiConfig
+): MemoryActionResult {
+  if (payload.outcomeKind !== "unknown" && payload.evidence.length === 0) {
+    return "evidence_required";
+  }
+  return reportMemoryExperienceSessionOutcome(
+    payload.experienceId,
+    {
+      workspaceId: payload.workspaceId,
+      outcomeKind: payload.outcomeKind,
+      reportKind: payload.reportKind,
+      evidence: payload.evidence
+    },
+    config
+  );
+}
+
+function executeSkillPromotion(
+  payload: MemoryActionPayload,
+  config: ControlApiConfig
+): MemoryActionResult {
+  const name =
+    payload.skillName || `memory-proc-${payload.recordId.slice(0, 8)}`;
+  const task = payload.reason.trim();
+  if (!task) return "reason_required";
+  if (!payload.promotedContent) return "content_required";
+  return promoteMemoryProcedureToSkill(
+    {
+      workspaceId: payload.workspaceId,
+      skillName: name,
+      description: `Promoted from durable procedure memory ${payload.recordId}`,
+      content: payload.promotedContent,
+      task,
+      query: payload.reason
+    },
+    config
+  );
+}
+
 function executeAction(
   payload: MemoryActionPayload,
   config: ControlApiConfig
-): Promise<ControlApiResult<unknown>> | ControlRefusalReason | null {
-  const {
-    action,
-    recordId,
-    experienceId,
-    workspaceId,
-    reason,
-    claim,
-    priorId,
-    skillName,
-    correlationToken,
-    outcomeKind,
-    reportKind,
-    useKind,
-    injectionEventId,
-    usedMemoryIds,
-    sourceExperienceIds,
-    promotedContent,
-    evidence,
-    confirm
-  } = payload;
-  switch (action) {
+): MemoryActionResult {
+  switch (payload.action) {
     case "purge": {
-      // Purge erases an experience envelope irreversibly, so it is validated
-      // separately from the record lifecycle: it targets `experienceId`, it
-      // needs a Runtime-accepted reason, and it needs explicit confirmation.
-      if (!experienceId) return "confirmation_missing";
-      if (confirm !== "purge") return "confirmation_missing";
-      if (!(PURGE_REASONS as readonly string[]).includes(reason))
-        return "reason_not_accepted";
-      return purgeMemoryExperience(
-        experienceId,
-        reason as (typeof PURGE_REASONS)[number],
-        { workspaceId },
-        config
-      );
+      return executePurge(payload, config);
     }
     case "verify": {
-      // The Runtime reads this action's body through `researchRequest`: a task
-      // and a query, nothing else. A free-text reason is not one of its keys,
-      // so sending one was a malformed request rather than a thin one.
-      const task = reason.trim();
-      if (!task) return "reason_required";
-      return transitionMemoryRecord(
-        recordId,
-        "verify",
-        { workspaceId, task, query: reason },
-        config
-      );
+      return executeVerify(payload, config);
     }
     case "supersede": {
-      // Supersession names the record it retires, and re-derives this one from a
-      // research request exactly as verify does. The prior id is checked here so
-      // the refusal names the missing selection rather than arriving as a
-      // generic 400 from the Runtime, which would send the operator to look at
-      // a form they had already filled in correctly.
-      if (!priorId) return "prior_required";
-      const task = reason.trim();
-      if (!task) return "reason_required";
-      return transitionMemoryRecord(
-        recordId,
-        "supersede",
-        { workspaceId, priorId, task, query: reason },
-        config
-      );
+      return executeSupersede(payload, config);
     }
     case "invalidate": {
-      // Invalidation is permanent and permanent things need a reason an audit
-      // record can count on, so the Runtime takes one of its bounded
-      // `reasonCode`s rather than free text, and evidence of what contradicted
-      // the record. Both are checked here so the refusal names the missing
-      // field instead of arriving as a generic 400 from the Runtime.
-      if (!evidence.length) return "evidence_required";
-      if (!isMemoryReasonCode(reason)) return "reason_not_accepted";
-      return transitionMemoryRecord(
-        recordId,
-        "invalidate",
-        { workspaceId, reasonCode: reason, evidence },
-        config
-      );
+      return executeInvalidate(payload, config);
     }
     case "revise": {
-      // A revision *is* the replacement text. Without one there is nothing to
-      // send, and saying "reason not accepted" would blame a reason the
-      // operator filled in perfectly.
-      if (!claim) return "claim_required";
-      if (!evidence.length) return "evidence_required";
-      // The Runtime requires the experiences a revision derives from, and the
-      // record's own provenance already names them — citing the record's
-      // sources is honest, where inventing a set would not be.
-      const experienceIds = [...new Set(sourceExperienceIds)];
-      // A record whose provenance cites no experiences cannot be revised from
-      // here at all: there is nothing to re-derive the claim from, and the form
-      // has no way to supply them. Reporting that as missing evidence blamed a
-      // field the operator had filled in correctly, which sends them to fix
-      // something that was never wrong.
-      if (experienceIds.length === 0) return "provenance_required";
-      return transitionMemoryRecord(
-        recordId,
-        "revise",
-        { workspaceId, claim, experienceIds, evidence },
-        config
-      );
+      return executeRevise(payload, config);
     }
     case "report-outcome": {
-      // An outcome binds to one observed injection, not to the experience, so it
-      // carries the correlation token the Runtime minted for that injection. The
-      // Runtime re-resolves it against the reporter's trusted scope, so a token
-      // that does not belong here fails there rather than binding a report to
-      // someone else's injection.
-      //
-      // Evidence is checked here rather than forwarded. A non-`unknown` outcome
-      // with none is refused by the Runtime, and naming the missing field locally
-      // says something the Runtime's message could not: the request never reached
-      // it, so the outcome is unrecorded rather than rejected.
-      if (outcomeKind !== "unknown" && evidence.length === 0) {
-        return "evidence_required";
-      }
-      return reportMemoryExperienceOutcome(
-        experienceId,
-        {
-          workspaceId,
-          correlationToken,
-          outcomeKind,
-          reportKind,
-          evidence
-        },
-        config
-      );
+      return executeOutcomeReport(payload, config);
     }
     case "report-use": {
-      // A curator assessment names the injection it judges and the memories it
-      // saw used. The Runtime holds the verdict to its own cited ids, so the
-      // Console forwards them without deciding anything.
-      return reportMemoryInjectionUse(
-        experienceId,
-        {
-          workspaceId,
-          injectionEventId,
-          useKind,
-          usedMemoryIds,
-          evidence
-        },
-        config
-      );
+      return executeUseReport(payload, config);
     }
     case "report-session-outcome": {
-      // How the session as a whole went, as distinct from what an individual
-      // injected packet was judged to have done. The Runtime binds one report
-      // per session key, so the form is withheld once one exists rather than
-      // inviting a submission that will come back a conflict.
-      //
-      // Evidence is checked here for the same reason as the injection outcome:
-      // a non-`unknown` outcome with none is refused by the Runtime, and saying
-      // so here is true — the request never reached it, so the session outcome
-      // is unrecorded rather than rejected.
-      if (outcomeKind !== "unknown" && evidence.length === 0) {
-        return "evidence_required";
-      }
-      return reportMemoryExperienceSessionOutcome(
-        experienceId,
-        {
-          workspaceId,
-          outcomeKind,
-          reportKind,
-          evidence
-        },
-        config
-      );
+      return executeSessionOutcomeReport(payload, config);
     }
     case "promote-skill": {
-      const name = skillName || `memory-proc-${recordId.slice(0, 8)}`;
-      // The Runtime requires the procedure's own `content` alongside the name
-      // and description, and a research context for the promotion. `memoryId`
-      // is not one of its keys — it lives in the path, not the body — so
-      // sending it was a malformed request.
-      const task = reason.trim();
-      if (!task) return "reason_required";
-      if (!promotedContent) return "content_required";
-      return promoteMemoryProcedureToSkill(
-        {
-          workspaceId,
-          skillName: name,
-          description: `Promoted from durable procedure memory ${recordId}`,
-          content: promotedContent,
-          task,
-          query: reason
-        },
-        config
-      );
+      return executeSkillPromotion(payload, config);
     }
     default: {
       return null;

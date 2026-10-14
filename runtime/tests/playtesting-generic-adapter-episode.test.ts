@@ -47,6 +47,11 @@ import {
 } from "../src/playtesting/generic-adapter-main.ts";
 import { withObservationSchemaHash } from "../src/playtesting/hash-chain.ts";
 
+const GAME_OBSERVATION_SCHEMA = {
+  type: "object",
+  properties: { room: {}, step: {} }
+};
+
 /**
  * The sandbox request for a prepared run, without touching a real checkout.
  *
@@ -59,6 +64,7 @@ function preparedFor(command: readonly string[]): PreparedPlaytestSandbox {
     workspaceId: "fixture/game",
     checkoutRoot: "/host/checkout",
     checkoutSha: "a".repeat(64),
+    gameBuild: "fixture-engine-v1",
     imageDigest: `ghcr.io/autodev/adapter@sha256:${"b".repeat(64)}`,
     workingDirectory: "/host/checkout",
     command: [...command],
@@ -95,6 +101,7 @@ const ADAPTER_ENTRYPOINT = new URL(
 const GAME_MODULE = `
 export function createGame() {
   let revision = 0;
+  let events = [];
   const episodeId = "episode-declarative-1";
   const at = () => revision;
   return {
@@ -122,14 +129,34 @@ export function createGame() {
     }),
     step: () => {
       revision += 1;
+      const eventId = "event-" + revision;
+      events = [
+        {
+          eventId,
+          type: "move",
+          phaseId: "atrium",
+          step: revision - 1,
+          revision,
+          actor: "player",
+          fields: { actionId: "north" }
+        }
+      ];
       return {
         episodeId,
         revision,
         acceptedActionId: "north",
-        eventIds: ["event-" + revision],
+        eventIds: [eventId],
         terminal: revision >= 3
       };
     },
+    captureEvents: ({ startStep, endStep }) => ({
+      episodeId,
+      revision: at(),
+      events: events.filter(
+        (event) => event.step >= startStep && event.step <= endStep
+      ),
+      omittedCount: 0
+    }),
     outcome: () => ({
       episodeId,
       revision: at(),
@@ -144,23 +171,26 @@ export function createGame() {
 `;
 
 function observationContract(): PlaytestObservationContract {
-  return withObservationSchemaHash({
-    schemaVersion: 1 as const,
-    mode: "headless" as const,
-    cohort: "default",
-    visibilityMode: "structured" as const,
-    fields: [
-      {
-        fieldPath: "room",
-        unit: null,
-        displayRounding: null,
-        revelationTiming: "before-action" as const,
-        playerRuleRef: "rules/room"
-      }
-    ],
-    uiEquivalence: "unverified" as const,
-    conformanceFixtureHash: null
-  });
+  return withObservationSchemaHash(
+    {
+      schemaVersion: 1 as const,
+      mode: "headless" as const,
+      cohort: "default",
+      visibilityMode: "structured" as const,
+      fields: [
+        {
+          fieldPath: "room",
+          unit: null,
+          displayRounding: null,
+          revelationTiming: "before-action" as const,
+          playerRuleRef: "rules/room"
+        }
+      ],
+      uiEquivalence: "unverified" as const,
+      conformanceFixtureHash: null
+    },
+    GAME_OBSERVATION_SCHEMA
+  );
 }
 
 /**
@@ -180,6 +210,11 @@ function checkout(workingDirectory: string): {
   const integration = path.join(root, PLAYTESTS_INTEGRATION_DIR);
   mkdirSync(integration, { recursive: true });
   mkdirSync(path.join(root, workingDirectory), { recursive: true });
+  writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ private: true, type: "module" }),
+    "utf8"
+  );
   writeFileSync(path.join(integration, "adapter.js"), GAME_MODULE);
   writeFileSync(
     path.join(integration, "playtest.observation.json"),
@@ -211,7 +246,7 @@ function checkout(workingDirectory: string): {
         entry: "adapter.js",
         factory: "createGame",
         schemas: {
-          observation: { type: "object", properties: { room: {}, step: {} } },
+          observation: GAME_OBSERVATION_SCHEMA,
           action: { type: "object", properties: { actionId: {} } },
           event: { type: "object", properties: { eventId: {} } }
         },
@@ -220,6 +255,7 @@ function checkout(workingDirectory: string): {
           observe: { export: "observe" },
           legalActions: { export: "legalActions" },
           step: { export: "step" },
+          captureEvents: { export: "captureEvents" },
           outcome: { export: "outcome" }
         }
       },
@@ -250,7 +286,8 @@ test("a declarative game runs a full episode through the real adapter entrypoint
         ...process.env,
         // The sandbox mounts the approved checkout at this path; the adapter
         // resolves its integration directory against it rather than against cwd.
-        [PLAYTESTS_ADAPTER_CHECKOUT_ROOT_ENV]: fixture.root
+        [PLAYTESTS_ADAPTER_CHECKOUT_ROOT_ENV]: fixture.root,
+        AUTODEV_PLAYTEST_ENGINE_BUILD: "fixture-engine-v1"
       }
     }
   );
@@ -269,6 +306,8 @@ test("a declarative game runs a full episode through the real adapter entrypoint
   try {
     const capabilities = await client.negotiateCapabilities();
     assert.equal(capabilities.protocolVersion, 1);
+    assert.equal(capabilities.engineBuild, "fixture-engine-v1");
+    assert.ok(capabilities.optionalOperations.includes("game.captureEvents"));
 
     const opened = await client.call("game.reset", {
       seed: "seed-1",
@@ -310,6 +349,21 @@ test("a declarative game runs a full episode through the real adapter entrypoint
     assert.equal(
       stepped.ok ? (stepped.result as { revision: number }).revision : null,
       1
+    );
+    const captured = await client.call("game.captureEvents", {
+      episodeId: "episode-declarative-1",
+      expectedRevision: 1,
+      startStep: 0,
+      endStep: 0
+    });
+    assert.equal(captured.ok, true);
+    assert.deepEqual(
+      captured.ok
+        ? (
+            captured.result as { events: readonly { eventId: string }[] }
+          ).events.map((event) => event.eventId)
+        : [],
+      ["event-1"]
     );
 
     const settled = await client.call("game.outcome", {
@@ -391,6 +445,10 @@ test("the mount the sandbox builds is the path the adapter resolves against", ()
     realpathSync(tmpdir()),
     undefined
   );
+  assert.ok(
+    containerArgs.includes("AUTODEV_PLAYTEST_ENGINE_BUILD=fixture-engine-v1"),
+    "the generic adapter must receive the exact approved game-build identity"
+  );
   const mounted = containerArgs.find((arg) => arg.startsWith("type=bind,"));
   assert.ok(
     mounted?.includes(`target=${PLAYTESTS_ADAPTER_CHECKOUT_ROOT},readonly`),
@@ -415,7 +473,7 @@ test("the mount the sandbox builds is the path the adapter resolves against", ()
  * could have accidentally special-cased: its code lives in its own source tree
  * rather than beside the binding, it is CommonJS rather than ESM, its factory
  * returns a nested namespace reached by a dotted binding path, its episode runs
- * a different shape of state, and it binds a seeded RNG plus two optional
+ * a different shape of state, and it declares a named seeded RNG version plus two optional
  * methods the first game did not. AutoDev's infrastructure is unchanged.
  */
 const SECOND_GAME_MODULE = `
@@ -475,7 +533,6 @@ exports.makeGame = function makeGame() {
       }
     })
   };
-  api.restoreRng = () => true;
   return { api };
 };
 `;
@@ -527,9 +584,8 @@ test("a second, mechanically different game joins by configuration alone", async
           action: { type: "object", properties: { actionId: {} } },
           event: { type: "object", properties: {} }
         },
-        // Dotted paths into a returned namespace, plus a seeded RNG and two
-        // optional methods the first game did not bind.
-        seededRng: { export: "api", path: "restoreRng" },
+        // Dotted paths into a returned namespace and two optional methods the
+        // first game did not bind.
         rngVersion: "xoshiro128ss@1",
         bindings: {
           reset: { export: "api", path: "reset" },

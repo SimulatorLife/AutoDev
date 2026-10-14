@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { renderToStaticMarkup } from "react-dom/server";
-import React from "react";
 import test from "node:test";
 
 import {
@@ -8,7 +6,10 @@ import {
   MEMORY_REASON_CODES,
   type MemoryRecord
 } from "@simulatorlife/autodev-core";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
+import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
 import { MemoryRecordsView } from "../src/features/memory/MemoryRecordsView.ts";
 import {
   actionForm,
@@ -16,7 +17,6 @@ import {
   fieldValue,
   selectOptions
 } from "./support/memory-markup.ts";
-import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
 
 /**
  * The rendered half of the governance contract.
@@ -99,7 +99,9 @@ function markupFor(testId: string): string {
     ]);
     if (markup.includes(`data-button="${testId}"`)) return markup;
   }
-  assert.fail(`${testId} is not offered for a record in any governed state`);
+  throw new Error(
+    `${testId} is not offered for a record in any governed state`
+  );
 }
 
 function formFor(testId: string): string {

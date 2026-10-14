@@ -228,7 +228,7 @@ function parseControlApiToken(line: string): string | null {
   // means a correct token *before* a torn one still wins, which switching to
   // dotenv's last-wins would have broken.
   const quoted = first === '"' || first === "'";
-  if (quoted && !(rawValue.length >= 2 && last === first)) return null;
+  if (quoted && (rawValue.length < 2 || last !== first)) return null;
   const value = quoted ? rawValue.slice(1, -1) : rawValue;
   return value || null;
 }

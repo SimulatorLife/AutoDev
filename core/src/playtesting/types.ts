@@ -62,6 +62,8 @@ export const PLAYTESTS_COVERAGE_MANIFEST_SCHEMA =
   "autodev-playtest-coverage-manifest-v1" as const;
 /** Bounded, evidence-linked analyst input artifact. */
 export const PLAYTESTS_EVIDENCE_PACKET_SCHEMA =
+  "autodev-playtest-evidence-packet-v3" as const;
+export const PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2 =
   "autodev-playtest-evidence-packet-v2" as const;
 export const PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1 =
   "autodev-playtest-evidence-packet-v1" as const;
@@ -99,6 +101,12 @@ export const PLAYTESTS_SESSION_REVIEW_SCHEMA_V2 =
   "autodev-playtest-session-review-v2" as const;
 export const PLAYTESTS_SESSION_REVIEW_SCHEMA_V1 =
   "autodev-playtest-session-review-v1" as const;
+export const PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA =
+  "autodev-playtest-cross-session-synthesis-v2" as const;
+export const PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA_V1 =
+  "autodev-playtest-cross-session-synthesis-v1" as const;
+export const PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA =
+  "autodev-playtest-cross-session-metric-aggregation-v1" as const;
 
 /** Standard JSON-RPC error codes are preserved verbatim. */
 export const PLAYTESTS_JSON_RPC_STANDARD_ERROR_CODES = {

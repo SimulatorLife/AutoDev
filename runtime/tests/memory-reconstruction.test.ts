@@ -7,7 +7,6 @@ import type {
 } from "@simulatorlife/autodev-core";
 
 import type { CurrentStateAssessment } from "../src/memory/service.ts";
-
 import { RoutedMemoryReconstructor } from "../src/router/memory-reconstruction.ts";
 
 /**
@@ -140,8 +139,8 @@ const VALID_REVIEW = {
   rationale: "The cited file still sets the budget to two."
 };
 
-function reviewResponse(review: unknown): unknown {
-  return { output_text: JSON.stringify(review) };
+function reviewResponse(value: unknown): unknown {
+  return { output_text: JSON.stringify(value) };
 }
 
 async function review(

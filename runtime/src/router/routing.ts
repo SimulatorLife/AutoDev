@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
+  type ControlApiDiscoveredProviderModel,
   PROVIDER_ROLES,
   type ProviderAgentLimits,
   type ProviderRole,
@@ -113,8 +114,14 @@ export interface ConfiguredModel {
   tiers: string[];
 }
 
+export interface DiscoveredProviderModel extends ControlApiDiscoveredProviderModel {
+  readonly provider: string;
+}
+
 const ORCHESTRATOR_ALIAS_PATTERN = /^autodev\/[a-z0-9-]+$/u;
 const AUTODEV_ROLE_PATTERN = /^autodev\/([a-z0-9-]+)$/iu;
+const ROUTING_MODEL_COLLATOR = new Intl.Collator();
+const PERSISTED_MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u;
 
 const DEFAULT_ROUTES: readonly ProviderRoute[] = [
   {
@@ -498,6 +505,10 @@ export class RoutingPolicy {
   >();
   private readonly disabledProviders = new Set<string>();
   private readonly disabledModels = new Set<string>();
+  private readonly discoveredProviderModels = new Map<
+    string,
+    Map<string, DiscoveredProviderModel>
+  >();
   private readonly disabledAgentRoles = new Set<string>();
   private readonly agentEnablementRevisions = new Map<string, number>();
   private readonly providerLimits = new Map<string, ProviderAgentLimits>();
@@ -666,6 +677,83 @@ export class RoutingPolicy {
     return [...byModel.values()];
   }
 
+  /** Providers visible to configuration and the request router share one set. */
+  providerIds(): string[] {
+    return [
+      ...new Set([
+        ...Object.keys(this.config.providers),
+        ...this.routes.map((route) => route.provider)
+      ])
+    ].sort((left, right) => ROUTING_MODEL_COLLATOR.compare(left, right));
+  }
+
+  /** Replace one provider's volatile, source-confirmed model snapshot. */
+  setDiscoveredProviderModels(
+    provider: unknown,
+    models: readonly ControlApiDiscoveredProviderModel[]
+  ): void {
+    if (typeof provider !== "string" || !provider.trim()) return;
+    const key = this.providerKey(provider);
+    const route = this.routes.find((candidate) => candidate.provider === key);
+    const discovered = new Map<string, DiscoveredProviderModel>();
+    for (const model of models) {
+      if (typeof model.id !== "string" || model.id.trim() !== model.id)
+        continue;
+      const routeMatches = route?.pattern.test(model.id) ?? false;
+      const routeability =
+        routeMatches && model.routeability.status === "supported"
+          ? model.routeability
+          : {
+              status: "unsupported" as const,
+              reason:
+                model.routeability.status === "unsupported"
+                  ? model.routeability.reason
+                  : "Runtime has no route for this model ID."
+            };
+      discovered.set(model.id, { ...model, routeability, provider: key });
+    }
+    this.discoveredProviderModels.set(key, discovered);
+  }
+
+  /** Provider-reported model IDs and routeability, not operator assignments. */
+  discoveredModels(): DiscoveredProviderModel[] {
+    return [...this.discoveredProviderModels.values()]
+      .flatMap((models) => [...models.values()])
+      .sort(
+        (left, right) =>
+          ROUTING_MODEL_COLLATOR.compare(left.provider, right.provider) ||
+          ROUTING_MODEL_COLLATOR.compare(left.id, right.id)
+      );
+  }
+
+  /** Whether one model is assigned or currently provider-discovered. */
+  isKnownModel(model: unknown): model is string {
+    if (this.isConfiguredModel(model)) return true;
+    if (typeof model !== "string" || model.trim().length === 0) return false;
+    const normalized = model.trim();
+    return this.discoveredModels().some(
+      (discovered) =>
+        discovered.id === normalized &&
+        discovered.routeability.status === "supported"
+    );
+  }
+
+  /** Model choices are scoped to their owner; an ID from another provider is not a choice. */
+  isModelAvailableForProvider(provider: unknown, model: unknown): boolean {
+    if (typeof provider !== "string" || typeof model !== "string") return false;
+    const key = this.providerKey(provider);
+    const modelId = model.trim();
+    if (!modelId) return false;
+    const configured = this.config.providers[key]?.models ?? {};
+    return (
+      Object.values(configured).some(
+        (configuredId) => configuredId.trim() === modelId
+      ) ||
+      this.discoveredProviderModels.get(key)?.get(modelId)?.routeability
+        .status === "supported"
+    );
+  }
+
   isConfiguredModel(model: unknown): model is string {
     return (
       typeof model === "string" &&
@@ -679,7 +767,7 @@ export class RoutingPolicy {
   }
 
   setModelEnabled(model: unknown, enabled: boolean): void {
-    if (!this.isConfiguredModel(model)) return;
+    if (!this.isKnownModel(model)) return;
     const key = model.trim();
     if (enabled) this.disabledModels.delete(key);
     else this.disabledModels.add(key);
@@ -773,7 +861,16 @@ export class RoutingPolicy {
   private restoreDisabledModels(raw: unknown): void {
     if (!Array.isArray(raw)) return;
     for (const model of raw) {
-      if (this.isConfiguredModel(model)) this.disabledModels.add(model.trim());
+      if (
+        typeof model === "string" &&
+        model.trim() === model &&
+        PERSISTED_MODEL_ID_PATTERN.test(model)
+      ) {
+        // Model enablement survives provider-list outages and router restarts.
+        // It is harmless to retain a disabled unknown ID: routing still requires
+        // a configured or freshly discovered provider model before selection.
+        this.disabledModels.add(model);
+      }
     }
   }
 

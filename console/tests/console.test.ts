@@ -56,6 +56,7 @@ import * as promptMutationRoute from "../app/api/prompts/[name]/route.ts";
 import * as providerLimitsRoute from "../app/api/providers/[provider]/limits/route.ts";
 import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]/route.ts";
 import * as providerRoute from "../app/api/providers/[provider]/route.ts";
+import * as skillRoleAssignmentRoute from "../app/api/skills/[name]/route.ts";
 import EvaluationsPage from "../app/evaluations/page.ts";
 import MemoryPage from "../app/memory/page.ts";
 import { FilterNotice } from "../src/components/filters/FilterNotice.ts";
@@ -114,8 +115,10 @@ import {
   singleValue,
   unreadWindow
 } from "../src/features/evaluations/evaluations-url.ts";
+import type { ProviderModelDiscoveryState } from "../src/features/providers/provider-model-discovery.ts";
 import { ProviderLimitsControls } from "../src/features/providers/ProviderLimitsControls.ts";
 import { ProviderRoleControls } from "../src/features/providers/ProviderRoleControls.ts";
+import { saveOutcomeForConvergence } from "../src/features/skills/SkillRoleAssignment.ts";
 import {
   AgentDetailView,
   AgentsView,
@@ -354,7 +357,7 @@ test("every canonical navigation resource has its own icon, and no icon is orpha
   //
   // This matters more than a normal exhaustiveness check because the two lists
   // involved used to be written out separately -- a type union and a `Set`
-  // literal of the same thirteen names -- so adding a resource to one left
+  // literal of the same fourteen names -- so adding a resource to one left
   // the other stale, and which one you had edited decided whether it typechecked.
   const missing = CANONICAL_NAVIGATION.filter(
     (section) => navIcon(section) === null
@@ -380,7 +383,7 @@ test("every canonical navigation resource has its own icon, and no icon is orpha
   assert.deepEqual(
     [...NAV_ICONS].sort(),
     [...CANONICAL_NAVIGATION].sort(),
-    "The nav icon set and the canonical navigation must be the same thirteen resources"
+    "The nav icon set and the canonical navigation must be the same fourteen resources"
   );
 
   // And the set must not borrow another resource's glyph. `navIcon` returns
@@ -3329,6 +3332,7 @@ test("no column is narrower than its own header", () => {
     ),
     renderToStaticMarkup(
       React.createElement(ProvidersView, {
+        modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
         providers: PROVIDERS_FIXTURE,
         models: { status: "available", data: MODELS_FIXTURE }
       })
@@ -10341,6 +10345,36 @@ const MODELS_FIXTURE: ControlApiModelsResponse = {
   ]
 };
 
+const PROVIDER_MODEL_DISCOVERY_FIXTURE: ProviderModelDiscoveryState = {
+  status: "available",
+  data: {
+    schema: "autodev-control-provider-model-discovery-v1",
+    source: "runtime-provider-discovery",
+    providers: PROVIDERS_FIXTURE.providers.map((provider) => ({
+      provider: provider.id,
+      discovery: {
+        status: "observed" as const,
+        source: "synthetic-provider-list",
+        observedAt: "2026-10-14T12:00:00.000Z",
+        lastAttemptAt: "2026-10-14T12:00:00.000Z",
+        models: Array.from(
+          new Set([
+            ...provider.models.map((entry) => entry.model),
+            ...MODELS_FIXTURE.models
+              .filter((model) => model.provider === provider.id)
+              .map((model) => model.id)
+          ]),
+          (id) => ({
+            id,
+            displayName: null,
+            routeability: { status: "supported" as const }
+          })
+        )
+      }
+    }))
+  }
+};
+
 function formTags(markup: string): string[] {
   return Array.from(markup.matchAll(/<form\b[^>]*>/gu), (match) => match[0]);
 }
@@ -13019,6 +13053,7 @@ test("Provider limits keep their labels readable and describe disabled state tru
 test("ProvidersView renders configuration columns and live provider counts", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProvidersView, {
+      modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       providers: PROVIDERS_FIXTURE,
       models: { status: "available", data: MODELS_FIXTURE }
     })
@@ -13048,6 +13083,16 @@ test("ProvidersView renders configuration columns and live provider counts", () 
     "Agent Limits"
   ]);
   for (const provider of PROVIDERS_FIXTURE.providers) {
+    const providerLink = anchorMarkupForHref(
+      markup,
+      `/providers/${encodeURIComponent(provider.id)}`
+    );
+    assert.ok(providerLink, `${provider.id} must link to its detail page`);
+    assert.ok(
+      providerLink.includes(`title="${provider.id}"`),
+      "a clipped provider identifier must remain available to sighted users on hover"
+    );
+
     const marker = `data-live-agent-provider="${provider.id}"`;
     const start = markup.indexOf(marker);
     assert.notEqual(start, -1);
@@ -13243,6 +13288,7 @@ test("ProvidersView renders configuration columns and live provider counts", () 
 test("a Disabled role's rendered form still submits the five fields its route requires", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProvidersView, {
+      modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       providers: PROVIDERS_FIXTURE,
       models: { status: "available", data: MODELS_FIXTURE }
     })
@@ -13317,15 +13363,15 @@ test("a Disabled role's rendered form still submits the five fields its route re
   assert.doesNotMatch(immutableBody, /data-apply-role|>Apply<\/button>/u);
 });
 
-test("a Disabled role whose model is no longer configured still submits a re-enable the Runtime accepts", () => {
-  // The Runtime rejects a role body that names a model its provider is not
-  // configured for, and it rejects the whole body rather than the model. A carry
-  // that forwarded such a model would make the role permanently un-re-enableable:
-  // the one control the row exists for would fail every time. The model also has
-  // no <option> to render into, so the operator can neither see nor change it.
+test("a Disabled role preserves its exact assignment while provider discovery is unavailable", () => {
+  // A provider timeout must not erase an operator's existing choice. The
+  // Console carries the exact current assignment while disabling new model
+  // choices; Runtime accepts that unchanged value but rejects a replacement
+  // until a current provider listing confirms it is routeable.
   const base = PROVIDERS_FIXTURE.providers[0]!;
   const markup = renderToStaticMarkup(
     React.createElement(ProvidersView, {
+      modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       providers: {
         ...PROVIDERS_FIXTURE,
         providers: [
@@ -13362,8 +13408,8 @@ test("a Disabled role whose model is no longer configured still submits a re-ena
   assert.ok(formTag, "the Disabled role form must be present");
   assert.equal(
     hiddenValue(markup, formTag, "model"),
-    "",
-    "a model this provider no longer offers must not be carried forward"
+    "a-removed-model",
+    "the exact existing assignment must be preserved during an unavailable read"
   );
   const start = markup.indexOf(formTag);
   const body = markup.slice(start, markup.indexOf("</form>", start));
@@ -13385,6 +13431,7 @@ test("a Disabled role whose model is no longer configured still submits a re-ena
 test("ProvidersView Models tab puts each model's toggle next to the model", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProvidersView, {
+      modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       providers: PROVIDERS_FIXTURE,
       models: { status: "available", data: MODELS_FIXTURE },
       runtime: {
@@ -13445,20 +13492,86 @@ test("ProvidersView Models tab puts each model's toggle next to the model", () =
 
   const unavailable = renderToStaticMarkup(
     React.createElement(ProvidersView, {
+      modelDiscovery: {
+        status: "unavailable",
+        message: "Runtime unreachable"
+      },
       providers: PROVIDERS_FIXTURE,
       models: { status: "unavailable", message: "Runtime unreachable" },
       activeTab: "models"
     })
   );
-  assert.match(unavailable, /data-status="unavailable"/);
+  assert.match(unavailable, /data-model-routing-state="unavailable"/);
+  assert.match(unavailable, /data-model-discovery-state="unavailable"/);
   assert.match(unavailable, /Runtime unreachable/);
-  assert.equal(unavailable.includes("<form"), false);
+  assert.equal(unavailable.includes('data-enablement-form="model"'), false);
+});
+
+test("Models tab keeps provider-reported IDs that Runtime cannot route visible without controls", () => {
+  const modelDiscovery = {
+    status: "available" as const,
+    data: {
+      ...PROVIDER_MODEL_DISCOVERY_FIXTURE.data,
+      providers: PROVIDER_MODEL_DISCOVERY_FIXTURE.data.providers.map(
+        (entry) => {
+          if (
+            entry.provider !== "claude" ||
+            entry.discovery.status !== "observed"
+          ) {
+            return entry;
+          }
+          return {
+            provider: entry.provider,
+            discovery: {
+              status: "observed" as const,
+              source: entry.discovery.source,
+              observedAt: entry.discovery.observedAt,
+              lastAttemptAt: entry.discovery.lastAttemptAt,
+              models: [
+                ...entry.discovery.models,
+                {
+                  id: "claude-preview-unroutable",
+                  displayName: "Claude Preview (unroutable)",
+                  routeability: {
+                    status: "unsupported" as const,
+                    reason: "Runtime has no route for this model ID."
+                  }
+                }
+              ]
+            }
+          };
+        }
+      )
+    }
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(ProvidersView, {
+      modelDiscovery,
+      providers: PROVIDERS_FIXTURE,
+      models: { status: "available", data: MODELS_FIXTURE },
+      activeTab: "models"
+    })
+  );
+  assert.match(markup, /data-section="unsupported-models"/u);
+  assert.match(markup, /data-unsupported-model="claude-preview-unroutable"/u);
+  assert.match(markup, /Runtime has no route for this model ID\./u);
+  assert.match(markup, /Observed · 3 models/u);
+  assert.doesNotMatch(
+    markup,
+    /href="\/providers\/claude\/models\/claude-preview-unroutable"/u
+  );
+  assert.equal(
+    formTags(markup).some((form) => form.includes("claude-preview-unroutable")),
+    false,
+    "unsupported models stay visible but have no enablement control"
+  );
 });
 
 test("ProviderDetailView keeps the provider's role and model toggles on its page", () => {
   const claude = PROVIDERS_FIXTURE.providers[0]!;
   const markup = renderToStaticMarkup(
     React.createElement(ProviderDetailView, {
+      modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       provider: claude,
       tiers: PROVIDERS_FIXTURE.tiers,
       orchestratorTier: PROVIDERS_FIXTURE.orchestratorTier,
@@ -13517,6 +13630,10 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
 
   const withoutModels = renderToStaticMarkup(
     React.createElement(ProviderDetailView, {
+      modelDiscovery: {
+        status: "unavailable",
+        message: "Runtime unreachable"
+      },
       provider: PROVIDERS_FIXTURE.providers[1]!,
       tiers: PROVIDERS_FIXTURE.tiers,
       orchestratorTier: PROVIDERS_FIXTURE.orchestratorTier,
@@ -13530,7 +13647,7 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
     withoutModels.includes('data-provider-link="documentation"'),
     false
   );
-  assert.match(withoutModels, /Model enablement could not be loaded/);
+  assert.match(withoutModels, /Runtime routing state could not be read/);
   assert.match(withoutModels, /has not reported live evidence/);
 });
 
@@ -13564,6 +13681,7 @@ test("ProviderDetailView reads an absent provider route without throwing", async
   const render = (provider: ControlApiProviderRecord): string =>
     renderToStaticMarkup(
       React.createElement(ProviderDetailView, {
+        modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
         provider,
         tiers: PROVIDERS_FIXTURE.tiers,
         orchestratorTier: PROVIDERS_FIXTURE.orchestratorTier,
@@ -13616,13 +13734,28 @@ test("ProviderDetailView reads an absent provider route without throwing", async
     }
   });
   assert.match(noHealthUrl, /None configured/);
-  assert.equal(noHealthUrl.includes(NOT_OBSERVED_LABEL), false);
+  const healthSectionStart = noHealthUrl.indexOf(
+    'data-section="provider-health"'
+  );
+  assert.notEqual(healthSectionStart, -1);
+  const healthSectionEnd = noHealthUrl.indexOf(
+    "</section>",
+    healthSectionStart
+  );
+  assert.ok(healthSectionEnd > healthSectionStart);
+  assert.equal(
+    noHealthUrl
+      .slice(healthSectionStart, healthSectionEnd)
+      .includes(NOT_OBSERVED_LABEL),
+    false
+  );
 });
 
 test("ModelDetailView renders the model toggle under its provider's breadcrumbs", () => {
   const sonnet = MODELS_FIXTURE.models[1]!;
   const markup = renderToStaticMarkup(
     React.createElement(ModelDetailView, {
+      modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       model: sonnet,
       provider: PROVIDERS_FIXTURE.providers[0]!
     })
@@ -13659,6 +13792,7 @@ test("ModelDetailView surfaces model convergence as its own verdict beside the t
     const model = MODELS_FIXTURE.models.find((entry) => entry.id === id)!;
     const markup = renderToStaticMarkup(
       React.createElement(ModelDetailView, {
+        modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
         model,
         provider: PROVIDERS_FIXTURE.providers[0]!
       })
@@ -13685,11 +13819,13 @@ test("ModelDetailView surfaces model convergence as its own verdict beside the t
 test("Providers surfaces report unconfirmed changes without optimistic state", () => {
   for (const element of [
     React.createElement(ProvidersView, {
+      modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       providers: PROVIDERS_FIXTURE,
       models: { status: "available", data: MODELS_FIXTURE },
       controlFailed: true
     }),
     React.createElement(ProviderDetailView, {
+      modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       provider: PROVIDERS_FIXTURE.providers[0]!,
       tiers: PROVIDERS_FIXTURE.tiers,
       orchestratorTier: PROVIDERS_FIXTURE.orchestratorTier,
@@ -13697,6 +13833,7 @@ test("Providers surfaces report unconfirmed changes without optimistic state", (
       controlFailed: true
     }),
     React.createElement(ModelDetailView, {
+      modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       model: MODELS_FIXTURE.models[0]!,
       provider: null,
       controlFailed: true
@@ -17926,6 +18063,7 @@ test("ProviderRoleControls wires role priority and model dropdowns to auto-submi
   const provider = PROVIDERS_FIXTURE.providers[0]!;
   const controls = ProviderRoleControls({
     provider,
+    modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
     returnTo: "/providers"
   });
 
@@ -18012,6 +18150,7 @@ test("ProviderRoleControls wires role priority and model dropdowns to auto-submi
   const markup = renderToStaticMarkup(
     React.createElement(ProviderRoleControls, {
       provider,
+      modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       returnTo: "/providers"
     })
   );
@@ -18117,6 +18256,7 @@ test("disabled role retains preserved model hidden input and disabled reasons wi
   const markup = renderToStaticMarkup(
     React.createElement(ProviderRoleControls, {
       provider: codex,
+      modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       returnTo: "/providers"
     })
   );
@@ -19575,7 +19715,7 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Provides revision-bound revocation fields and submits through the in-place workspace mutation handler."
     ],
     [
-      join("src", "features", "playtesting", "usePlaytestingActiveRuns.ts"),
+      join("src", "features", "playtesting", "use-playtesting-active-runs.ts"),
       "Polls the workspace-scoped active-runs read on an interval with backoff so live batch progress reflects the typed run owner without moving that read server-side."
     ],
     [
@@ -19597,6 +19737,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
     [
       join("src", "features", "playtesting", "PlaytestingRunControls.tsx"),
       "Starts, refreshes, and cancels typed approved runs through same-origin routes while history and authorization stay server-owned."
+    ],
+    [
+      join("src", "features", "playtesting", "PlaytestingRunDashboard.tsx"),
+      "Connects confirmed run starts to the live status reader without making client state authoritative."
     ],
     [
       join(
@@ -19838,6 +19982,11 @@ test("no execution contract means no assignment form and a reason, not a broken 
   );
   assert.match(markup, /data-skill-assignment-revision="none"/);
   assert.match(markup, /No execution contract was found/);
+  assert.match(markup, /Not observed/);
+  assert.doesNotMatch(
+    markup,
+    /Unassigned — no agent role can invoke this skill/
+  );
 });
 
 test("a refused assignment says what happened and claims nothing was written", () => {
@@ -19861,12 +20010,130 @@ test("a refused assignment says what happened and claims nothing was written", (
   );
 });
 
+test("skill assignment convergence maps to truthful return states", () => {
+  assert.equal(saveOutcomeForConvergence("converged"), undefined);
+  assert.equal(saveOutcomeForConvergence("pending"), "pending");
+  assert.equal(saveOutcomeForConvergence("not-observed"), "not-observed");
+  assert.equal(saveOutcomeForConvergence("error"), "unconfirmed");
+});
+
+test("skill assignment route redirects with Runtime pending and not-observed evidence", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "skill-assignment-route-token";
+  const outcomes: Array<{
+    readonly convergence: "pending" | "not-observed";
+    readonly actualRoles: readonly string[] | null;
+    readonly observedGeneration: string | null;
+  }> = [
+    {
+      convergence: "pending",
+      actualRoles: ["orchestrator"],
+      observedGeneration: "b".repeat(64)
+    },
+    {
+      convergence: "not-observed",
+      actualRoles: null,
+      observedGeneration: null
+    }
+  ];
+
+  globalThis.fetch = async () => {
+    const outcome = outcomes.shift();
+    assert.ok(outcome, "each route call consumes one bounded fake response");
+    const desiredGeneration = "a".repeat(64);
+    return Response.json({
+      schema: "autodev-control-skill-assignment-v2",
+      skill: "release-checklist",
+      desiredRoles: ["worker"],
+      actualRoles: outcome.actualRoles,
+      revision: "2".repeat(64),
+      reconciliation: {
+        status: {
+          convergence: outcome.convergence,
+          desiredGeneration,
+          observedGeneration: outcome.observedGeneration,
+          lastApplyAt: "2026-10-13T12:00:00.000Z",
+          lastObservationAt:
+            outcome.actualRoles === null ? null : "2026-10-13T12:00:00.000Z",
+          lastError: null,
+          explanation: "Runtime reconciliation fixture."
+        },
+        history: []
+      },
+      diff: {
+        summary: "Assignment observation fixture.",
+        identifier: desiredGeneration
+      }
+    });
+  };
+
+  try {
+    const locations: string[] = [];
+    for (const expected of [
+      "/skills?save=pending",
+      "/skills?save=not-observed"
+    ]) {
+      const response = await skillRoleAssignmentRoute.POST(
+        new NextRequest("http://console.test/api/skills/release-checklist", {
+          method: "POST",
+          headers: {
+            host: "console.test",
+            origin: "http://console.test",
+            "sec-fetch-site": "same-origin",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          body: new URLSearchParams({
+            expectedRevision: "1".repeat(64),
+            roles: "worker"
+          }).toString()
+        }),
+        { params: Promise.resolve({ name: "release-checklist" }) }
+      );
+      assert.equal(response.status, 303);
+      const location = response.headers.get("location");
+      assert.equal(location, expected);
+      locations.push(location ?? "");
+    }
+    assert.deepEqual(locations, [
+      "/skills?save=pending",
+      "/skills?save=not-observed"
+    ]);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined)
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
+  }
+});
+
+test("an unobserved skill assignment result is a warning, not an empty assignment", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(SkillsView, {
+      skills: [SKILL_ASSIGNMENT_SKILL],
+      eligibility: [{ skill: "release-checklist", roles: [] }],
+      unresolvedAssignments: [],
+      sourceValidity: true,
+      validationIssues: [],
+      assignmentRoles: ["orchestrator"],
+      executionContractRevision: "f".repeat(64),
+      saveOutcome: "not-observed"
+    })
+  );
+  assert.match(markup, /data-testid="skill-assignment-status"/);
+  assert.match(markup, /role="status"/);
+  assert.match(markup, /The desired role set was written/);
+  assert.match(markup, /an empty role set is not a confirmed unassignment/);
+  assert.doesNotMatch(markup, /role="alert"/);
+});
+
 test("patchSkillRoles PATCHes the skill resource and validates the assignment it reports", async () => {
   const config = {
     baseUrl: "http://127.0.0.1:4101",
     serviceToken: "server-only"
   };
   const calls: Array<{ url: string; method: string; body: unknown }> = [];
+  const generation = "a".repeat(64);
   const assigned = await patchSkillRoles(
     "release-checklist",
     { expectedRevision: "1".repeat(64), roles: ["worker"] },
@@ -19879,15 +20146,34 @@ test("patchSkillRoles PATCHes the skill resource and validates the assignment it
           body: init?.body === undefined ? null : JSON.parse(String(init.body))
         });
         return Response.json({
-          schema: "autodev-control-skill-assignment-v1",
+          schema: "autodev-control-skill-assignment-v2",
           skill: "release-checklist",
-          roles: ["worker"],
-          revision: "2".repeat(64)
+          desiredRoles: ["worker"],
+          actualRoles: ["worker"],
+          revision: "2".repeat(64),
+          reconciliation: {
+            status: {
+              convergence: "converged",
+              desiredGeneration: generation,
+              observedGeneration: generation,
+              lastApplyAt: "2026-10-13T12:00:00.000Z",
+              lastObservationAt: "2026-10-13T12:00:00.000Z",
+              lastError: null,
+              explanation: "Observed."
+            },
+            history: []
+          },
+          diff: { summary: "Role set applied.", identifier: generation }
         });
       }
     }
   );
   assert.equal(assigned.kind, "ok");
+  if (assigned.kind === "ok") {
+    assert.deepEqual(assigned.data.desiredRoles, ["worker"]);
+    assert.deepEqual(assigned.data.actualRoles, ["worker"]);
+    assert.equal(assigned.data.reconciliation.status.convergence, "converged");
+  }
   assert.deepEqual(calls, [
     {
       url: "http://127.0.0.1:4101/control/skills/release-checklist",
@@ -19896,8 +20182,8 @@ test("patchSkillRoles PATCHes the skill resource and validates the assignment it
     }
   ]);
 
-  // A response whose roles do not match what was asked for means the write did
-  // not stick. Accepting it would render the requested set as the new truth.
+  // A response whose desired set does not match this request cannot confirm
+  // this operation, even if the envelope is otherwise structurally valid.
   const lying = await patchSkillRoles(
     "release-checklist",
     { expectedRevision: "1".repeat(64), roles: ["worker"] },
@@ -19905,10 +20191,24 @@ test("patchSkillRoles PATCHes the skill resource and validates the assignment it
     {
       fetchImpl: async () =>
         Response.json({
-          schema: "autodev-control-skill-assignment-v1",
+          schema: "autodev-control-skill-assignment-v2",
           skill: "release-checklist",
-          roles: [],
-          revision: "not-a-digest"
+          desiredRoles: [],
+          actualRoles: [],
+          revision: "2".repeat(64),
+          reconciliation: {
+            status: {
+              convergence: "converged",
+              desiredGeneration: generation,
+              observedGeneration: generation,
+              lastApplyAt: "2026-10-13T12:00:00.000Z",
+              lastObservationAt: "2026-10-13T12:00:00.000Z",
+              lastError: null,
+              explanation: "Observed."
+            },
+            history: []
+          },
+          diff: { summary: "Role set applied.", identifier: generation }
         })
     }
   );
@@ -19918,6 +20218,44 @@ test("patchSkillRoles PATCHes the skill resource and validates the assignment it
       lying.code,
       "autodev_control_api_invalid_skill_assignment_response"
     );
+  }
+});
+
+test("patchSkillRoles preserves unobserved actual roles instead of converting them to empty", async () => {
+  const generation = "b".repeat(64);
+  const result = await patchSkillRoles(
+    "release-checklist",
+    { expectedRevision: "1".repeat(64), roles: ["worker"] },
+    { baseUrl: "http://127.0.0.1:4101", serviceToken: "server-only" },
+    {
+      fetchImpl: async () =>
+        Response.json({
+          schema: "autodev-control-skill-assignment-v2",
+          skill: "release-checklist",
+          desiredRoles: ["worker"],
+          actualRoles: null,
+          revision: "2".repeat(64),
+          reconciliation: {
+            status: {
+              convergence: "not-observed",
+              desiredGeneration: generation,
+              observedGeneration: null,
+              lastApplyAt: "2026-10-13T12:00:00.000Z",
+              lastObservationAt: null,
+              lastError: null,
+              explanation: "Runtime state is not observed."
+            },
+            history: []
+          },
+          diff: { summary: "Observation pending.", identifier: generation }
+        })
+    }
+  );
+
+  assert.equal(result.kind, "ok");
+  if (result.kind === "ok") {
+    assert.equal(result.data.actualRoles, null);
+    assert.equal(result.data.reconciliation.status.convergence, "not-observed");
   }
 });
 

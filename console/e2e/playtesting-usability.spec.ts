@@ -17,9 +17,28 @@ const REVOKE_FORM_NAME = "Revoke playtesting approval for fixture/game";
 const MAX_BUDGET_PREVIEW_PATTERN =
   /Batch budget preview: 1 of 1000 per-batch episode assignments/u;
 const BROWSER_BATCH_ID_PATTERN = /^batch-browser-\d{3}$/u;
+const RUNNING_STATUS = "running";
+const ANALYSIS_STATUS_ATTRIBUTE = "data-analysis-status";
+const ACTIVE_APPROVAL_SELECTOR = '[data-workspace-approval-state="active"]';
+const LIVE_OR_IDLE_FRESHNESS_PATTERN = /live|idle/u;
+const LIVE_BATCH_URL_PATTERN = /liveBatch=batch-/u;
+const LAST_KNOWN_STATE_PATTERN = /not confirmed current state/iu;
+const SYNTHETIC_REVIEW_ID_PATTERN = /Review review-fixture-1 · rubric/u;
 const FIXTURE_BUILD_SHA = "a".repeat(40);
 const FIXTURE_CONFIG_HASH = "b".repeat(64);
 const FIXTURE_IMAGE_DIGEST = "fixture/adapter@sha256:" + "c".repeat(64);
+const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
+const PLAYTESTING_OVERVIEW_URL = "/playtesting?workspaceId=fixture%2Fgame";
+const RUN_FORM_NAME = "Run an approved Playtesting batch";
+const RUN_STATUS_REGION_NAME = "Server-confirmed run status";
+const ANALYST_PANEL_NAME = "Multi-session analyst review";
+const START_ANALYST_REVIEW_LABEL = "Start analyst review";
+const ANALYST_RUN_TEST_ID = "playtesting-analysis-run";
+
+test.beforeEach(async ({ request }) => {
+  const response = await request.post(`${FIXTURE_BASE_URL}/fixture/reset`);
+  expect(response.ok()).toBe(true);
+});
 
 async function fillSyntheticApprovalForm(page: Page): Promise<Locator> {
   await page.goto("/workspaces/fixture/game");
@@ -72,7 +91,7 @@ async function fillSyntheticApprovalForm(page: Page): Promise<Locator> {
 test("workspace overview distinguishes batches, episodes, findings, and comparisons", async ({
   page
 }) => {
-  await page.goto("/playtesting?workspaceId=fixture%2Fgame");
+  await page.goto(PLAYTESTING_OVERVIEW_URL);
   await expect(
     page.getByRole("navigation", { name: "Playtesting views" })
   ).toBeVisible();
@@ -250,9 +269,7 @@ test("workspace approval is an accessible explicit exact-build form", async ({
     if (frame === page.mainFrame()) documentNavigations += 1;
   });
   await form.getByRole("button", { name: "Approve" }).click();
-  await expect(
-    page.locator('[data-workspace-approval-state="active"]')
-  ).toBeVisible();
+  await expect(page.locator(ACTIVE_APPROVAL_SELECTOR)).toBeVisible();
   await expect(
     page.getByText(FIXTURE_BUILD_SHA, { exact: true })
   ).toBeVisible();
@@ -294,13 +311,11 @@ test("batch composer generates and submits the full bounded 1,000-assignment inv
   const approvalForm = await fillSyntheticApprovalForm(page);
   await approvalForm.getByLabel("Episode count").fill("1000");
   await approvalForm.getByRole("button", { name: "Approve" }).click();
-  await expect(
-    page.locator('[data-workspace-approval-state="active"]')
-  ).toBeVisible();
+  await expect(page.locator(ACTIVE_APPROVAL_SELECTOR)).toBeVisible();
 
-  await page.goto("/playtesting?workspaceId=fixture%2Fgame");
+  await page.goto(PLAYTESTING_OVERVIEW_URL);
   const form = page.getByRole("form", {
-    name: "Run an approved Playtesting batch"
+    name: RUN_FORM_NAME
   });
   await expect(page.getByText(MAX_BUDGET_PREVIEW_PATTERN)).toBeVisible();
   await form.getByLabel("Additional assignments").fill("999");
@@ -324,7 +339,7 @@ test("batch composer generates and submits the full bounded 1,000-assignment inv
   await submit.click();
 
   const runStatus = page.getByRole("region", {
-    name: "Server-confirmed run status"
+    name: RUN_STATUS_REGION_NAME
   });
   await expect(runStatus).toBeVisible();
   await expect(
@@ -356,13 +371,11 @@ test("approved run start, status refresh, and cancellation stay in the Console w
 }) => {
   const approvalForm = await fillSyntheticApprovalForm(page);
   await approvalForm.getByRole("button", { name: "Approve" }).click();
-  await expect(
-    page.locator('[data-workspace-approval-state="active"]')
-  ).toBeVisible();
+  await expect(page.locator(ACTIVE_APPROVAL_SELECTOR)).toBeVisible();
 
-  await page.goto("/playtesting?workspaceId=fixture%2Fgame");
+  await page.goto(PLAYTESTING_OVERVIEW_URL);
   const form = page.getByRole("form", {
-    name: "Run an approved Playtesting batch"
+    name: RUN_FORM_NAME
   });
   await expect(form).toBeVisible();
   await expect(page.getByText(BUDGET_PREVIEW_PATTERN)).toBeVisible();
@@ -398,7 +411,7 @@ test("approved run start, status refresh, and cancellation stay in the Console w
   ).toBeEnabled();
   await form.getByRole("button", { name: RUN_TWO_ASSIGNMENTS_LABEL }).click();
   const runStatus = page.getByRole("region", {
-    name: "Server-confirmed run status"
+    name: RUN_STATUS_REGION_NAME
   });
   await expect(runStatus).toBeVisible();
   const cancelledBatchId = await runStatus.locator("strong").textContent();
@@ -411,7 +424,7 @@ test("approved run start, status refresh, and cancellation stay in the Console w
       }
     )
   ).toBeVisible();
-  await expect(page.getByText("Running", { exact: true })).toBeVisible();
+  await expect(runStatus.getByText("Running", { exact: true })).toBeVisible();
 
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: "Request cancellation" }).click();
@@ -424,7 +437,7 @@ test("approved run start, status refresh, and cancellation stay in the Console w
     )
   ).toBeVisible();
   await page.getByRole("button", { name: "Refresh server status" }).click();
-  await expect(page.getByText("Cancelled", { exact: true })).toBeVisible();
+  await expect(runStatus.getByText("Cancelled", { exact: true })).toBeVisible();
   await expect(
     page.getByText("Cancellation: Operator requested cancellation.", {
       exact: true
@@ -442,23 +455,166 @@ test("approved run start, status refresh, and cancellation stay in the Console w
   await page.getByRole("button", { name: "Refresh server status" }).click();
   await expect(
     page
-      .getByRole("region", { name: "Server-confirmed run status" })
+      .getByRole("region", { name: RUN_STATUS_REGION_NAME })
       .getByText("Completed", { exact: true })
   ).toBeVisible();
+  const assignmentOutcomes = runStatus.getByRole("region", {
+    name: "Assignment outcomes"
+  });
+  await expect(assignmentOutcomes).toContainText("Execution state: completed");
+  await expect(assignmentOutcomes).toContainText("Game outcome: Unclassified");
   await expect(
-    page.getByRole("link", {
-      name: `Open a-0001 · episode-${completedBatchId}-a-0001`
+    assignmentOutcomes.getByRole("link", {
+      name: `Open session episode-${completedBatchId}-a-0001`
     })
   ).toBeVisible();
   await expect(
-    page.getByRole("link", {
-      name: `Open a-0002 · episode-${completedBatchId}-a-0002`
+    assignmentOutcomes.getByRole("link", {
+      name: `Open session episode-${completedBatchId}-a-0002`
     })
   ).toBeVisible();
   expect(documentNavigations).toBe(0);
 });
 
-const FIXTURE_BASE_URL = "http://127.0.0.1:4311";
+test("operator can start, watch, and analyze a completed session from the same Console flow", async ({
+  page,
+  request
+}) => {
+  const approvalForm = await fillSyntheticApprovalForm(page);
+  await approvalForm.getByRole("button", { name: "Approve" }).click();
+  await expect(page.locator(ACTIVE_APPROVAL_SELECTOR)).toBeVisible();
+
+  await page.goto(PLAYTESTING_OVERVIEW_URL);
+  const runForm = page.getByRole("form", {
+    name: RUN_FORM_NAME
+  });
+  await runForm
+    .getByRole("button", { name: "Run 1 approved assignment" })
+    .click();
+  const runStatus = page.getByRole("region", {
+    name: RUN_STATUS_REGION_NAME
+  });
+  await expect(runStatus).toBeVisible();
+  const batchId = await runStatus.locator("strong").textContent();
+  expect(batchId).toMatch(BROWSER_BATCH_ID_PATTERN);
+  await page.getByRole("button", { name: "Refresh server status" }).click();
+  await expect(runStatus.getByText("Completed", { exact: true })).toBeVisible();
+
+  const episodeId = `episode-${batchId}-a-0001`;
+  const selectedEpisodeIds = ["episode-17", episodeId];
+  await expect(
+    runStatus.getByRole("link", { name: `Open session ${episodeId}` })
+  ).toBeVisible();
+  await page.goto(
+    `/playtesting?view=sessions&workspaceId=fixture%2Fgame&sessions=${encodeURIComponent(selectedEpisodeIds.join(","))}`
+  );
+  const analystPanel = page.getByRole("region", {
+    name: ANALYST_PANEL_NAME
+  });
+  await expect(analystPanel).toHaveAttribute("data-selected", "2");
+  await analystPanel
+    .getByRole("button", { name: START_ANALYST_REVIEW_LABEL })
+    .click();
+  const analystRun = analystPanel.getByTestId(ANALYST_RUN_TEST_ID);
+  await expect(analystRun).toHaveAttribute(
+    ANALYSIS_STATUS_ATTRIBUTE,
+    "completed"
+  );
+  await expect(analystRun).toContainText(
+    "Analyst process completed; 2 of 2 selected sessions have a persisted review."
+  );
+  const synthesis = analystRun.getByTestId(
+    "playtesting-cross-session-synthesis"
+  );
+  await expect(synthesis).toBeVisible();
+  await expect(synthesis).toContainText("hypotheses only");
+  await expect(synthesis).toContainText(
+    "Grounded in 2 of 2 packet-eligible selected sessions"
+  );
+  await expect(synthesis).toContainText("warning consistently precedes");
+  const metricAggregation = synthesis.getByTestId(
+    "playtesting-metric-aggregation"
+  );
+  await expect(metricAggregation).toHaveAttribute(
+    "data-aggregation-status",
+    "available"
+  );
+  const metricRow = metricAggregation.getByTestId(
+    "playtesting-metric-aggregate"
+  );
+  await expect(metricRow).toContainText("legal-action-rejection@1");
+  await expect(metricRow).toContainText("0 / 3 proportion · ratio 0");
+  await expect(metricRow).toContainText("independent N 1");
+  await expect(
+    metricRow.getByRole("link", { name: "Open episode-17" })
+  ).toBeVisible();
+  const synthesisClaim = synthesis.getByTestId(
+    "playtesting-cross-session-claim"
+  );
+  await expect(synthesisClaim).toContainText("Both packets show the warning");
+  await expect(
+    synthesisClaim.getByRole("link", {
+      name: `episode-17: event event-1 at step 1`
+    })
+  ).toBeVisible();
+  await expect(
+    synthesisClaim.getByRole("link", {
+      name: `${episodeId}: event event-1 at step 1`
+    })
+  ).toBeVisible();
+  await expect(
+    synthesis.getByRole("link", {
+      name: `Open contributing session ${episodeId}`
+    })
+  ).toBeVisible();
+  const hideProcessHistory = await request.get(
+    `${FIXTURE_BASE_URL}/fixture/analyst-history?mode=missing`
+  );
+  expect(hideProcessHistory.ok()).toBe(true);
+  const sessionsUrl = `/playtesting?view=sessions&workspaceId=fixture%2Fgame&sessions=${encodeURIComponent(selectedEpisodeIds.join(","))}`;
+  await page.goto(sessionsUrl);
+  const persistedSynthesis = page.getByTestId(
+    "playtesting-persisted-cross-session-synthesis"
+  );
+  await expect(persistedSynthesis).toBeVisible();
+  await expect(page.getByTestId(ANALYST_RUN_TEST_ID)).toHaveCount(0);
+  await expect(persistedSynthesis).toContainText(
+    "Saved batch-level synthesis; task status may have expired."
+  );
+  await expect(
+    persistedSynthesis.getByTestId("playtesting-metric-aggregate")
+  ).toContainText("legal-action-rejection@1");
+  const persistedClaim = persistedSynthesis.getByTestId(
+    "playtesting-cross-session-claim"
+  );
+  await expect(persistedClaim).toContainText("Both packets show the warning");
+  const contributingSession = persistedSynthesis.getByRole("link", {
+    name: `Open contributing session ${episodeId}`
+  });
+  await expect(contributingSession).toBeVisible();
+  await contributingSession.click();
+  await expect(page).toHaveURL(
+    new RegExp(String.raw`/playtesting/sessions/${episodeId}\?`, "u")
+  );
+  const reviewUrl = new URL(page.url());
+  expect(reviewUrl.searchParams.get("workspaceId")).toBe("fixture/game");
+  await expect(
+    page.getByRole("heading", { name: "Analyst review" })
+  ).toBeVisible();
+  await expect(
+    page.getByText("Synthetic reviewed session for UI usability only.", {
+      exact: true
+    })
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      new RegExp(
+        String.raw`Review review-analysis-browser-\d{3}-${episodeId} · rubric`,
+        "u"
+      )
+    )
+  ).toBeVisible();
+});
 
 /**
  * The live view must be driven by the operator doing nothing, and an unreadable
@@ -472,17 +628,23 @@ test("live batches appear without operator action, and an unreadable read is sta
 }) => {
   const approvalForm = await fillSyntheticApprovalForm(page);
   await approvalForm.getByRole("button", { name: "Approve" }).click();
-  await expect(
-    page.locator('[data-workspace-approval-state="active"]')
-  ).toBeVisible();
+  await expect(page.locator(ACTIVE_APPROVAL_SELECTOR)).toBeVisible();
 
   await page.goto("/playtesting?workspaceId=fixture/game");
   const panel = page.getByRole("region", { name: "Live batches" });
   await expect(panel).toBeVisible();
-  await expect(panel).toHaveAttribute("data-freshness", /live|idle/u);
+  await expect(panel).toHaveAttribute(
+    "data-freshness",
+    LIVE_OR_IDLE_FRESHNESS_PATTERN
+  );
 
-  const form = page.getByRole("form", { name: RUN_TWO_ASSIGNMENTS_LABEL });
+  const form = page.getByRole("form", {
+    name: RUN_FORM_NAME
+  });
   await expect(form).toBeVisible();
+  await form.getByLabel("Additional assignments").fill("1");
+  await form.getByRole("button", { name: "Generate assignments" }).click();
+  await expect(form.getByLabel("Seed 2")).toBeVisible();
   await form.getByLabel("Seed 1").fill("live-1");
   await form.getByLabel("Seed 2").fill("live-2");
   await form.getByRole("button", { name: RUN_TWO_ASSIGNMENTS_LABEL }).click();
@@ -490,7 +652,7 @@ test("live batches appear without operator action, and an unreadable read is sta
   // No Refresh click: the batch appears because the view polls the owner.
   const batch = panel.getByTestId("playtesting-active-run").first();
   await expect(batch).toBeVisible();
-  await expect(batch).toHaveAttribute("data-status", "running");
+  await expect(batch).toHaveAttribute("data-status", RUNNING_STATUS);
 
   // The focused batch is address state, so refresh restores it.
   await batch.getByRole("button", { name: "Show progress" }).click();
@@ -503,7 +665,7 @@ test("live batches appear without operator action, and an unreadable read is sta
   await expect(batch).toContainText("Assignments completed");
   await expect(batch).not.toContainText("Assignments succeeded");
   await expect(batch).not.toContainText("Assignments quota-blocked");
-  await expect(page).toHaveURL(/liveBatch=batch-/u);
+  await expect(page).toHaveURL(LIVE_BATCH_URL_PATTERN);
   await page.reload();
   const reloaded = page.getByRole("region", { name: "Live batches" });
   await expect(
@@ -521,9 +683,7 @@ test("live batches appear without operator action, and an unreadable read is sta
     await expect(degraded).toHaveAttribute("data-freshness", "unavailable", {
       timeout: 20_000
     });
-    await expect(
-      degraded.getByText(/not confirmed current state/iu)
-    ).toBeVisible();
+    await expect(degraded.getByText(LAST_KNOWN_STATE_PATTERN)).toBeVisible();
     await expect(
       degraded.getByTestId("playtesting-active-run-lastknown")
     ).toBeVisible();
@@ -533,5 +693,118 @@ test("live batches appear without operator action, and an unreadable read is sta
 
   // Progress is announced politely and does not move focus.
   await expect(panel.locator("[aria-live='polite']")).toHaveCount(1);
-  expect(document.activeElement?.tagName).not.toBe("HTML");
+  expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe(
+    "HTML"
+  );
+});
+
+test("Console dispatches analyst work, shows stale status, and links to the persisted review", async ({
+  page,
+  request
+}) => {
+  await page.goto(
+    "/playtesting?view=sessions&workspaceId=fixture%2Fgame&sessions=episode-17"
+  );
+  const panel = page.getByRole("region", {
+    name: ANALYST_PANEL_NAME
+  });
+  await expect(panel).toBeVisible();
+  await expect(
+    panel.getByRole("heading", { name: "Analyze selected sessions" })
+  ).toBeVisible();
+  const submit = panel.getByRole("button", {
+    name: START_ANALYST_REVIEW_LABEL
+  });
+  await expect(submit).toBeEnabled();
+  await submit.click();
+
+  const run = panel.getByTestId(ANALYST_RUN_TEST_ID).first();
+  await expect(run).toHaveAttribute(ANALYSIS_STATUS_ATTRIBUTE, RUNNING_STATUS);
+  const statusFailure = await request.get(
+    `${FIXTURE_BASE_URL}/fixture/analyses-read-fail?mode=on`
+  );
+  expect(statusFailure.ok()).toBe(true);
+  await expect(run).toHaveAttribute(ANALYSIS_STATUS_ATTRIBUTE, "stale", {
+    timeout: 10_000
+  });
+  await expect(run).toContainText("Last known status");
+  const statusRecovered = await request.get(
+    `${FIXTURE_BASE_URL}/fixture/analyses-read-fail?mode=off`
+  );
+  expect(statusRecovered.ok()).toBe(true);
+  await expect(run).toHaveAttribute(ANALYSIS_STATUS_ATTRIBUTE, "completed", {
+    timeout: 15_000
+  });
+  const reviewLink = run.getByRole("link", {
+    name: "Open hypothesis review for episode-17"
+  });
+  await expect(reviewLink).toBeVisible();
+  await reviewLink.hover();
+  await page.waitForTimeout(250);
+  await reviewLink.click();
+  await expect(page).toHaveURL(SESSION_17_URL_PATTERN);
+  await expect(page.getByText("Analyst review")).toBeVisible();
+  await expect(page.getByText(SYNTHETIC_REVIEW_ID_PATTERN)).toBeVisible();
+  await expect(
+    page.getByText("Synthetic reviewed session for UI usability only.", {
+      exact: true
+    })
+  ).toBeVisible();
+});
+
+test("the full 40-session critique ceiling reaches Runtime without truncation", async ({
+  page
+}) => {
+  const episodeIds = [
+    "episode-17",
+    ...Array.from({ length: 39 }, (_, index) => `unknown-${String(index + 1)}`)
+  ];
+  await page.goto(
+    `/playtesting?view=sessions&workspaceId=fixture%2Fgame&sessions=${encodeURIComponent(episodeIds.join(","))}`
+  );
+  const panel = page.getByRole("region", {
+    name: ANALYST_PANEL_NAME
+  });
+  await expect(panel).toHaveAttribute("data-selected", "40");
+  const dispatchRequest = page.waitForRequest(
+    (request) =>
+      request.url().includes("/api/playtesting/analyses") &&
+      request.method() === "POST"
+  );
+  await panel.getByRole("button", { name: START_ANALYST_REVIEW_LABEL }).click();
+  const request = await dispatchRequest;
+  const form = new URLSearchParams(request.postData() ?? "");
+  expect(JSON.parse(form.get("episodeIds") ?? "null")).toEqual(episodeIds);
+  const run = panel.getByTestId(ANALYST_RUN_TEST_ID).first();
+  await expect(run).toHaveAttribute(ANALYSIS_STATUS_ATTRIBUTE, RUNNING_STATUS);
+  await expect(run).toHaveAttribute(ANALYSIS_STATUS_ATTRIBUTE, "completed");
+  await expect(run).toContainText(
+    "Analyst process completed; 1 of 40 selected sessions have a persisted review."
+  );
+  await expect(run.getByTestId("playtesting-analysis-receipt")).toHaveCount(39);
+  await expect(run.getByTestId("playtesting-analysis-review-link")).toHaveCount(
+    1
+  );
+});
+
+test("an oversized shared analyst selection is refused without truncation", async ({
+  page
+}) => {
+  const oversized = Array.from(
+    { length: 41 },
+    (_, index) => `episode-${String(index + 1)}`
+  ).join(",");
+  await page.goto(
+    `/playtesting?view=sessions&workspaceId=fixture%2Fgame&sessions=${encodeURIComponent(oversized)}`
+  );
+  const panel = page.getByRole("region", {
+    name: ANALYST_PANEL_NAME
+  });
+  await expect(panel).toHaveAttribute("data-selected", "0");
+  await expect(
+    panel.getByTestId("playtesting-selection-invalid-query")
+  ).toContainText("nothing was truncated or started");
+  await expect(
+    panel.getByRole("button", { name: START_ANALYST_REVIEW_LABEL })
+  ).toBeDisabled();
 });

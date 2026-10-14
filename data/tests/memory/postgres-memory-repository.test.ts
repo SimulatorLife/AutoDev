@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type {
+  MemoryExpiredExperienceRequest,
+  MemoryLifecycleEvent,
+  MemoryRecord
+} from "@simulatorlife/autodev-core";
+
 import {
   MemoryConflictError,
   MemoryLifecycleError,
@@ -9,11 +15,6 @@ import {
 } from "../../src/memory/errors.ts";
 import { PostgresMemoryRepository } from "../../src/memory/postgres-memory-repository.ts";
 import type { MemoryConnectionPool } from "../../src/memory/query-client.ts";
-import type {
-  MemoryExpiredExperienceRequest,
-  MemoryLifecycleEvent,
-  MemoryRecord
-} from "@simulatorlife/autodev-core";
 import { MEMORY_EMBEDDING_DIMENSIONS } from "../../src/memory/schema.ts";
 import {
   makeContext,

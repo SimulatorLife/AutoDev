@@ -40,6 +40,9 @@ import {
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
 import { PlaytestSandboxUnavailableError } from "../src/playtesting/docker-sandbox.ts";
 import type {
+  PlaytestAnalystReviewDispatch,
+  PlaytestAnalystReviewRun,
+  PlaytestCrossSessionPacket,
   PlaytestRunCapabilities,
   PlaytestRunControl
 } from "../src/playtesting/mcp.ts";
@@ -157,7 +160,9 @@ async function callRunControl(
   };
 }
 
-function runControlFixture(calls: unknown[] = []): PlaytestRunControl {
+function runControlFixture(
+  calls: unknown[] = []
+): PlaytestRunControl & Partial<PlaytestAnalystReviewDispatch> {
   return {
     async recordComparisonDecision() {
       throw new Error(
@@ -229,6 +234,53 @@ function runControlFixture(calls: unknown[] = []): PlaytestRunControl {
           "assignments" in payload ? payload.assignments.length : 1,
         status: "running"
       };
+    },
+    listAnalystReviewRuns: (session, workspaceId) => {
+      calls.push({ operation: "analyst-status", session, workspaceId });
+      return Promise.resolve({ runs: [], syntheses: [] });
+    },
+    dispatchCrossSessionReview: async (session, workspaceId, episodeIds) => {
+      calls.push({
+        operation: "analyst-dispatch",
+        session,
+        workspaceId,
+        episodeIds: [...episodeIds]
+      });
+      const packets = episodeIds.map(
+        (episodeId, index) =>
+          ({
+            episodeId,
+            batchId: "batch-1",
+            packet: {
+              packetId: index === 0 ? "packet-a" : `packet-${index + 1}`
+            },
+            artifact: {
+              artifactId: `artifact-${index + 1}`,
+              sha256: "a".repeat(64),
+              bytes: 1,
+              mediaType: "application/json"
+            }
+          }) as unknown as PlaytestCrossSessionPacket
+      );
+      const run = {
+        analysisId: "analysis-1",
+        workspaceId,
+        status: "running",
+        createdAt: "2026-10-14T00:00:00.000Z",
+        finishedAt: null,
+        requestedEpisodeIds: [...episodeIds],
+        packets: packets.map((packet) => ({
+          episodeId: packet.episodeId,
+          batchId: packet.batchId,
+          packetId: packet.packet.packetId
+        })),
+        receipts: [],
+        budget: [],
+        reviews: [],
+        synthesisId: null,
+        error: null
+      } as PlaytestAnalystReviewRun;
+      return { run, packets, receipts: [], budget: [] };
     },
     prepareCrossSessionReview: async (
       session: { role: string },
@@ -1175,7 +1227,7 @@ test("Control API authenticates and routes workspace-scoped Playtesting reads", 
   }
 });
 
-test("scoped Playtesting Control API credential is limited to typed run routes", async () => {
+test("Playtesting run credentials cannot authorize cross-session analysis", async () => {
   const root = mkdtempSync(
     path.join(tmpdir(), "autodev-playtesting-scoped-api-")
   );
@@ -1199,16 +1251,19 @@ test("scoped Playtesting Control API credential is limited to typed run routes",
     "AUTODEV_CONTROL_OPERATORS",
     "AUTODEV_PLAYTEST_CONTROL_API_TOKEN",
     "AUTODEV_PLAYTEST_CONTROL_API_ACTOR",
-    "AUTODEV_PLAYTEST_CONTROL_API_ROLE"
+    "AUTODEV_PLAYTEST_CONTROL_API_ROLE",
+    "AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN"
   ] as const;
   const previous = new Map(envKeys.map((key) => [key, process.env[key]]));
   try {
-    delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    process.env.AUTODEV_CONTROL_API_TOKEN = "console-control-secret";
     process.env.AUTODEV_CONTROL_VIEWERS = "";
-    process.env.AUTODEV_CONTROL_OPERATORS = "";
+    process.env.AUTODEV_CONTROL_OPERATORS = "console-operator";
     process.env.AUTODEV_PLAYTEST_CONTROL_API_TOKEN = "scoped-playtest-secret";
     process.env.AUTODEV_PLAYTEST_CONTROL_API_ACTOR = "playtest-runtime";
     process.env.AUTODEV_PLAYTEST_CONTROL_API_ROLE = "playtester";
+    process.env.AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN =
+      "analyst-scoped-secret";
     const session = {
       workspaceId: WORKSPACE,
       role: "playtester",
@@ -1244,6 +1299,105 @@ test("scoped Playtesting Control API credential is limited to typed run routes",
     assert.equal(runResponse.statusCode, 202);
     assert.equal(delegatedCalls.length, 1);
 
+    const analystSession = {
+      workspaceId: WORKSPACE,
+      role: "playtest-analyst",
+      actor: "analyst-1",
+      taskId: "analysis-task-1",
+      runId: "analysis-run-1"
+    };
+    const analystRequest = runRequest(
+      "POST",
+      `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+      { episodeIds: ["episode-1"] }
+    );
+    analystRequest.headers = {
+      host: "127.0.0.1",
+      authorization: "Bearer analyst-scoped-secret",
+      "content-type": "application/json",
+      "x-autodev-playtest-session": Buffer.from(
+        JSON.stringify(analystSession)
+      ).toString("base64url")
+    };
+    const analystResponse = responseRecorder();
+    await handleControlApiRequest(
+      analystRequest,
+      analystResponse as unknown as ServerResponse,
+      `/control/playtesting/analyses`,
+      {
+        repositoryRoot: path.join(root, "repo"),
+        playtestingRunControl: runControlFixture(delegatedCalls)
+      }
+    );
+    assert.equal(analystResponse.statusCode, 401);
+    assert.equal(delegatedCalls.length, 1);
+
+    const consoleDispatchRequest = runRequest(
+      "POST",
+      `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+      { episodeIds: ["episode-1"], operation: "dispatch" }
+    );
+    consoleDispatchRequest.headers = {
+      host: "127.0.0.1",
+      authorization: "Bearer console-control-secret",
+      "x-autodev-actor": "console-operator",
+      "content-type": "application/json"
+    };
+    const consoleDispatchResponse = responseRecorder();
+    await handleControlApiRequest(
+      consoleDispatchRequest,
+      consoleDispatchResponse as unknown as ServerResponse,
+      "/control/playtesting/analyses",
+      {
+        repositoryRoot: path.join(root, "repo"),
+        playtestingRunControl: runControlFixture(delegatedCalls)
+      }
+    );
+    assert.equal(consoleDispatchResponse.statusCode, 202);
+    assert.deepEqual(delegatedCalls[1], {
+      operation: "analyst-dispatch",
+      session: {
+        workspaceId: WORKSPACE,
+        role: "operator",
+        actor: `control-api:${createHash("sha256")
+          .update("console-operator")
+          .digest("hex")}`
+      },
+      workspaceId: WORKSPACE,
+      episodeIds: ["episode-1"]
+    });
+
+    const analystCannotUseRunnerCredential = runRequest(
+      "POST",
+      "/control/playtesting/runs",
+      {
+        workspaceId: WORKSPACE,
+        assignments: [
+          { scenario: "tutorial", policy: "random", seed: "analyst-run-denied" }
+        ]
+      }
+    );
+    analystCannotUseRunnerCredential.headers = {
+      host: "127.0.0.1",
+      authorization: "Bearer analyst-scoped-secret",
+      "content-type": "application/json",
+      "x-autodev-playtest-session": Buffer.from(
+        JSON.stringify(analystSession)
+      ).toString("base64url")
+    };
+    const analystRunDenied = responseRecorder();
+    await handleControlApiRequest(
+      analystCannotUseRunnerCredential,
+      analystRunDenied as unknown as ServerResponse,
+      "/control/playtesting/runs",
+      {
+        repositoryRoot: path.join(root, "repo"),
+        playtestingRunControl: runControlFixture(delegatedCalls)
+      }
+    );
+    assert.equal(analystRunDenied.statusCode, 401);
+    assert.equal(delegatedCalls.length, 2);
+
     const missingSessionResponse = responseRecorder();
     const missingSessionRequest = runRequest(
       "POST",
@@ -1270,7 +1424,7 @@ test("scoped Playtesting Control API credential is limited to typed run routes",
       }
     );
     assert.equal(missingSessionResponse.statusCode, 401);
-    assert.equal(delegatedCalls.length, 1);
+    assert.equal(delegatedCalls.length, 2);
 
     const escalatedSessionRequest = runRequest(
       "POST",
@@ -1301,7 +1455,7 @@ test("scoped Playtesting Control API credential is limited to typed run routes",
       }
     );
     assert.equal(escalated.statusCode, 403);
-    assert.equal(delegatedCalls.length, 1);
+    assert.equal(delegatedCalls.length, 2);
 
     const forbiddenSurface = responseRecorder();
     await handleControlApiRequest(
@@ -1317,14 +1471,14 @@ test("scoped Playtesting Control API credential is limited to typed run routes",
       forbiddenSurface as unknown as ServerResponse,
       "/control/providers"
     );
-    assert.equal(forbiddenSurface.statusCode, 503);
+    assert.equal(forbiddenSurface.statusCode, 401);
     assert.equal(
       (
         JSON.parse(forbiddenSurface.body ?? "{}") as {
           error?: { code?: string };
         }
       ).error?.code,
-      "autodev_control_api_disabled"
+      "autodev_control_api_unauthorized"
     );
   } finally {
     for (const key of envKeys) {
@@ -2037,11 +2191,11 @@ test("cross-session analysis delegates to the owner and bounds the selection", a
   const options = {
     runControl: runControlFixture(calls)
   };
-  const viewer = { actor: "viewer-1", role: "viewer" as const };
+  const operator = { actor: "operator-1", role: "operator" as const };
   const selection = await callRunControl(
     "POST",
     `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
-    viewer,
+    operator,
     options,
     { episodeIds: ["episode-a", "episode-b"] }
   );
@@ -2052,10 +2206,11 @@ test("cross-session analysis delegates to the owner and bounds the selection", a
   );
   assert.equal(selection.body.workspaceId, WORKSPACE);
   assert.equal(selection.body.requested, 2);
+  assert.equal(selection.body.operation, "prepare");
   // The owner decides eligibility, caps and receipts; the route must not
   // answer a selection question on its own.
   const forwarded = calls.find(
-    (call) => (call as { operation?: string }).operation === "cross-session"
+    (entry) => (entry as { operation?: string }).operation === "cross-session"
   ) as { workspaceId: string; episodeIds: string[] } | undefined;
   assert.equal(forwarded?.workspaceId, WORKSPACE);
   assert.deepEqual(forwarded?.episodeIds, ["episode-a", "episode-b"]);
@@ -2064,7 +2219,7 @@ test("cross-session analysis delegates to the owner and bounds the selection", a
   const empty = await callRunControl(
     "POST",
     `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
-    viewer,
+    operator,
     options,
     { episodeIds: [] }
   );
@@ -2073,16 +2228,97 @@ test("cross-session analysis delegates to the owner and bounds the selection", a
   const oversized = await callRunControl(
     "POST",
     `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
-    viewer,
+    operator,
     options,
     { episodeIds: Array.from({ length: 17 }, (_, i) => `episode-${i}`) }
   );
   assert.equal(oversized.status, 400);
 
-  const wrongMethod = await callRunControl(
+  const status = await callRunControl(
     "GET",
     `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
-    viewer,
+    operator,
+    options
+  );
+  assert.equal(status.status, 200);
+  assert.equal(status.body.schema, "autodev-control-playtesting-analyses-v1");
+  assert.deepEqual(status.body.runs, []);
+  assert.deepEqual(status.body.syntheses, []);
+  const viewerDispatch = await callRunControl(
+    "POST",
+    `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    { actor: "viewer-1", role: "viewer" },
+    options,
+    { episodeIds: ["episode-a"], operation: "dispatch" }
+  );
+  assert.equal(viewerDispatch.status, 403);
+  assert.equal(
+    calls.some(
+      (entry) =>
+        (entry as { operation?: string }).operation === "analyst-dispatch"
+    ),
+    false
+  );
+
+  const dispatched = await callRunControl(
+    "POST",
+    `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    operator,
+    options,
+    { episodeIds: ["episode-a"], operation: "dispatch" }
+  );
+  assert.equal(dispatched.status, 202);
+  assert.equal(dispatched.body.operation, "dispatch");
+  assert.deepEqual(dispatched.body.packets, [
+    { episodeId: "episode-a", batchId: "batch-1", packetId: "packet-a" }
+  ]);
+  assert.equal("packet" in (dispatched.body.packets as object[])[0]!, false);
+  assert.equal(
+    (dispatched.body.analysis as { analysisId: string }).analysisId,
+    "analysis-1"
+  );
+  assert.ok(
+    calls.some(
+      (entry) =>
+        (entry as { operation?: string }).operation === "analyst-dispatch"
+    )
+  );
+
+  const fortySessions = Array.from(
+    { length: 40 },
+    (_, index) => `episode-${String(index + 1)}`
+  );
+  const dispatchAtLimit = await callRunControl(
+    "POST",
+    `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    operator,
+    options,
+    { episodeIds: fortySessions, operation: "dispatch" }
+  );
+  assert.equal(dispatchAtLimit.status, 202);
+  assert.equal(dispatchAtLimit.body.requested, 40);
+  assert.equal((dispatchAtLimit.body.packets as unknown[]).length, 40);
+  const lastDispatch = calls.at(-1) as
+    { operation?: string; episodeIds?: readonly string[] } | undefined;
+  assert.equal(lastDispatch?.operation, "analyst-dispatch");
+  assert.deepEqual(lastDispatch?.episodeIds, fortySessions);
+
+  const fortyOneSessions = [...fortySessions, "episode-41"];
+  const delegatedCountBeforeLimitCheck = calls.length;
+  const dispatchOverLimit = await callRunControl(
+    "POST",
+    `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    operator,
+    options,
+    { episodeIds: fortyOneSessions, operation: "dispatch" }
+  );
+  assert.equal(dispatchOverLimit.status, 400);
+  assert.equal(calls.length, delegatedCountBeforeLimitCheck);
+
+  const wrongMethod = await callRunControl(
+    "DELETE",
+    `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    operator,
     options
   );
   assert.equal(wrongMethod.status, 405);

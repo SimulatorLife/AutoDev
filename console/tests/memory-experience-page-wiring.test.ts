@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { renderToStaticMarkup } from "react-dom/server";
 import test from "node:test";
+
+import { renderToStaticMarkup } from "react-dom/server";
 
 import MemoryPage from "../app/memory/page.ts";
 
@@ -331,8 +332,8 @@ test("a drifted detail is refused rather than rendered as an experience", async 
   // members, so a stub that dropped several of them would still be refused with
   // the trajectory check intact, and the guard under test would go untested.
   const { markup } = await renderExperiencePage({
-    override: (path) => {
-      if (!/\/experiences\/[^/?]+\?/u.test(path)) return undefined;
+    override: (path, body) => {
+      if (!/\/experiences\/[^/?]+\?/u.test(path)) return body;
       const { trajectory: _trajectory, ...withoutTrajectory } = experience();
       return {
         schema: "autodev-memory-experience-v1",
@@ -363,9 +364,8 @@ test("an evidence page for another experience is not drawn as evidence for this 
   // used." An unreadable answer must not turn into an assertion that nobody
   // ever looked.
   const { markup } = await renderExperiencePage({
-    override: (path) => {
-      if (!/\/experiences\/[^/?]+\/use-assessments\b/u.test(path))
-        return undefined;
+    override: (path, body) => {
+      if (!/\/experiences\/[^/?]+\/use-assessments\b/u.test(path)) return body;
       return { ...USE_ASSESSMENTS_PAGE, experienceId: "exp-2" };
     }
   });
@@ -399,8 +399,8 @@ test("one unaddressable row refuses the whole outcomes page, not just its row", 
   // shorter list, which reads as "these were the only injections this session
   // had" — a claim about the run made from an unreadable answer.
   const { markup } = await renderExperiencePage({
-    override: (path) => {
-      if (!/\/experiences\/[^/?]+\/outcomes\b/u.test(path)) return undefined;
+    override: (path, body) => {
+      if (!/\/experiences\/[^/?]+\/outcomes\b/u.test(path)) return body;
       const { correlationToken: _token, ...tokenless } = injection(true);
       return evidencePage("autodev-memory-injection-outcomes-v1", [
         OUTCOME_ROW,
@@ -439,7 +439,7 @@ test("a failed session-outcome read is not drawn as a session with no outcome", 
 
   assert.match(
     markup,
-    new RegExp(`data-status="unavailable"[^>]*>\\s*[^<]*was not read`, "u"),
+    /data-status="unavailable"[^>]*>[^<]*was not read/u,
     "a failed read must render as unreadable, not empty"
   );
   assert.doesNotMatch(

@@ -159,6 +159,24 @@ test("the Runtime client negotiates against the generic host", async () => {
   client.close();
 });
 
+test("host shutdown awaits game entry cleanup exactly once", async () => {
+  let closeCount = 0;
+  const target = {
+    ...game(),
+    async close() {
+      closeCount += 1;
+    }
+  };
+  const { client, host } = await connect({}, target);
+  await client.negotiateCapabilities();
+
+  await host.close();
+  await host.close();
+
+  assert.equal(closeCount, 1);
+  client.close();
+});
+
 test("a bound method is callable through the real client", async () => {
   const { client } = await connect();
   await client.negotiateCapabilities();

@@ -26,7 +26,9 @@ import type {
   PlaytestBatch,
   PlaytestBatchCancellationReason,
   PlaytestBenchmark,
+  PlaytestCrossSessionSynthesis,
   PlaytestEpisode,
+  PlaytestEvidencePacket,
   PlaytestExperiment,
   PlaytestSessionReview
 } from "../playtesting/artifacts.ts";
@@ -34,7 +36,10 @@ import type {
   PlaytestHumanPreferenceCounts,
   PlaytestPreferenceSensitivityDecision
 } from "../playtesting/human-preference.ts";
-import type { PlaytestJsonValue } from "../playtesting/protocol-types.ts";
+import type {
+  PlaytestArtifactReference,
+  PlaytestJsonValue
+} from "../playtesting/protocol-types.ts";
 import type {
   PlaytestComparison,
   PlaytestFinding,
@@ -189,6 +194,50 @@ export interface ControlApiProviderLinks {
   readonly usage: string | null;
   /** The provider's documentation. */
   readonly documentation: string | null;
+}
+
+/** One source-reported model and whether this Runtime can route it. */
+export interface ControlApiDiscoveredProviderModel {
+  readonly id: string;
+  readonly displayName: string | null;
+  readonly routeability:
+    | { readonly status: "supported" }
+    | { readonly status: "unsupported"; readonly reason: string };
+}
+
+/** Provider-owned model availability, kept separate from operator routing. */
+export type ControlApiProviderModelDiscovery =
+  | {
+      readonly status: "observed";
+      readonly source: string;
+      readonly observedAt: string;
+      readonly lastAttemptAt: string;
+      readonly models: readonly ControlApiDiscoveredProviderModel[];
+    }
+  | {
+      readonly status: "stale";
+      readonly source: string;
+      readonly observedAt: string;
+      readonly lastAttemptAt: string;
+      readonly reason: string;
+      readonly models: readonly ControlApiDiscoveredProviderModel[];
+    }
+  | {
+      readonly status: "unavailable";
+      readonly source: string | null;
+      readonly lastAttemptAt: string | null;
+      readonly reason: string;
+    };
+
+export interface ControlApiProviderModelDiscoveryEntry {
+  readonly provider: string;
+  readonly discovery: ControlApiProviderModelDiscovery;
+}
+
+export interface ControlApiProviderModelsResponse {
+  readonly schema: "autodev-control-provider-model-discovery-v1";
+  readonly source: "runtime-provider-discovery";
+  readonly providers: readonly ControlApiProviderModelDiscoveryEntry[];
 }
 
 export interface ControlApiProviderRecord {
@@ -413,15 +462,14 @@ export interface ControlApiSkillRolesPatchRequest {
 }
 
 export interface ControlApiSkillRolesPatchResponse {
-  readonly schema: "autodev-control-skill-assignment-v1";
+  readonly schema: "autodev-control-skill-assignment-v2";
   readonly skill: string;
-  /**
-   * Roles as read back after the write, not as requested. The Runtime
-   * re-reads the contract to confirm, and reporting the requested set would
-   * hide the case where the file was changed underneath the write.
-   */
-  readonly roles: readonly string[];
+  readonly desiredRoles: readonly string[];
+  /** Null means no runtime observation; an empty array is observed-empty. */
+  readonly actualRoles: readonly string[] | null;
   readonly revision: string;
+  readonly reconciliation: ReconciliationView;
+  readonly diff: ReconciliationDiff;
 }
 
 /** Canonical RuleSync source for one existing skill. */
@@ -1191,6 +1239,111 @@ export interface ControlApiPlaytestingRunStatusResponse {
   readonly schema: "autodev-control-playtesting-run-status-v1";
   readonly workspaceId: string;
   readonly run: ControlApiPlaytestingRunRecord;
+}
+
+/** Read-only state of a Runtime-owned playtest-analyst dispatch. */
+export interface ControlApiPlaytestingAnalystRun {
+  readonly analysisId: string;
+  readonly workspaceId: string;
+  readonly status: "running" | "completed" | "partial" | "failed";
+  readonly createdAt: string;
+  readonly finishedAt: string | null;
+  readonly requestedEpisodeIds: readonly string[];
+  readonly packets: readonly {
+    readonly episodeId: string;
+    readonly batchId: string;
+    readonly packetId: string;
+  }[];
+  readonly receipts: readonly {
+    readonly episodeId: string;
+    readonly batchId: string | null;
+    readonly reason: string;
+    readonly detail: string;
+  }[];
+  readonly budget: readonly {
+    readonly batchId: string;
+    readonly reviewCap: number;
+    readonly actualCritiques: number;
+    readonly reserved: number;
+    readonly requested: number;
+    readonly remaining: number;
+  }[];
+  readonly reviews: readonly {
+    readonly episodeId: string;
+    readonly reviewId: string;
+    readonly status: PlaytestSessionReview["status"];
+  }[];
+  readonly synthesisId: string | null;
+  readonly error: string | null;
+}
+
+/** The MCP-only packet preparation operation; evidence stays out of Console views. */
+export interface ControlApiPlaytestingPacketPreparationResponse {
+  readonly schema: "autodev-control-playtesting-analysis-v1";
+  readonly operation: "prepare";
+  readonly workspaceId: string;
+  readonly requested: number;
+  readonly packets: readonly {
+    readonly episodeId: string;
+    readonly batchId: string;
+    readonly packet: PlaytestEvidencePacket;
+    readonly artifact: PlaytestArtifactReference;
+  }[];
+  readonly receipts: readonly {
+    readonly episodeId: string;
+    readonly batchId: string | null;
+    readonly reason: string;
+    readonly detail: string;
+  }[];
+  readonly budget: readonly {
+    readonly batchId: string;
+    readonly reviewCap: number;
+    readonly actualCritiques: number;
+    readonly reserved: number;
+    readonly requested: number;
+    readonly remaining: number;
+  }[];
+  readonly analysis: null;
+}
+
+/** Console-owned asynchronous dispatch; packets themselves never cross to the browser. */
+export interface ControlApiPlaytestingAnalysisDispatchResponse {
+  readonly schema: "autodev-control-playtesting-analysis-v1";
+  readonly operation: "dispatch";
+  readonly workspaceId: string;
+  readonly requested: number;
+  readonly packets: readonly {
+    readonly episodeId: string;
+    readonly batchId: string;
+    readonly packetId: string;
+  }[];
+  readonly receipts: readonly {
+    readonly episodeId: string;
+    readonly batchId: string | null;
+    readonly reason: string;
+    readonly detail: string;
+  }[];
+  readonly budget: readonly {
+    readonly batchId: string;
+    readonly reviewCap: number;
+    readonly actualCritiques: number;
+    readonly reserved: number;
+    readonly requested: number;
+    readonly remaining: number;
+  }[];
+  readonly analysis: ControlApiPlaytestingAnalystRun | null;
+}
+
+export type ControlApiPlaytestingAnalysisResponse =
+  | ControlApiPlaytestingPacketPreparationResponse
+  | ControlApiPlaytestingAnalysisDispatchResponse;
+
+export interface ControlApiPlaytestingAnalysesResponse {
+  readonly schema: "autodev-control-playtesting-analyses-v1";
+  readonly workspaceId: string;
+  readonly runs: readonly ControlApiPlaytestingAnalystRun[];
+  /** Persisted independently so aggregate results survive Runtime restarts. */
+  readonly syntheses: readonly PlaytestCrossSessionSynthesis[];
 }
 
 /** Confirmation that the operator is cancelling a currently running assignment. */

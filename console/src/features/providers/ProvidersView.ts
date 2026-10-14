@@ -1,6 +1,5 @@
 import type {
   ControlApiLiveAgentCounts,
-  ControlApiModelRecord,
   ControlApiModelsResponse,
   ControlApiProviderRecord,
   ControlApiProvidersResponse,
@@ -20,7 +19,10 @@ import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.t
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
-import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
@@ -46,11 +48,24 @@ import {
   providersPath
 } from "./paths.ts";
 import {
+  providerDiscoverySummaries,
+  type ProviderModelDiscoveryState,
+  providerModelDiscoveryView,
+  type ProviderModelRow,
+  providerModelRows,
+  type UnsupportedProviderModel,
+  unsupportedProviderModels
+} from "./provider-model-discovery.ts";
+import {
   ProviderStatusBadge,
   resolveProviderStatus
 } from "./provider-status.ts";
 import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
 import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
+import {
+  ProviderModelAvailabilityBadge,
+  ProviderModelDiscoveryBadge
+} from "./ProviderModelAvailabilityBadge.ts";
 import { ProviderRoleControls } from "./ProviderRoleControls.ts";
 
 export const PROVIDERS_VIEW_TABS: readonly TabDefinition[] = [
@@ -66,6 +81,7 @@ export type ProvidersModelsState =
 export interface ProvidersViewProps {
   readonly providers: ControlApiProvidersResponse;
   readonly models: ProvidersModelsState;
+  readonly modelDiscovery: ProviderModelDiscoveryState;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
   /** Raw `?tab=` value; unknown values fall back to the Providers tab. */
   readonly activeTab?: string | undefined;
@@ -82,6 +98,7 @@ function ProviderLink({
     {
       href: providerPath(provider),
       className: MONO_ID_LINK_CLASS,
+      title: provider,
       "aria-label": `Open provider ${provider}`
     },
     provider
@@ -98,7 +115,8 @@ function ProviderLink({
  */
 function providerColumns(
   returnTo: string,
-  liveAgents: ControlApiLiveAgentCounts | null | undefined
+  liveAgents: ControlApiLiveAgentCounts | null | undefined,
+  modelDiscovery: ProviderModelDiscoveryState
 ): ColumnDef<ControlApiProviderRecord>[] {
   return [
     {
@@ -156,6 +174,7 @@ function providerColumns(
       cell: (provider) =>
         React.createElement(ProviderRoleControls, {
           provider,
+          modelDiscovery,
           returnTo
         })
     },
@@ -183,7 +202,7 @@ function providerColumns(
 function modelColumns(
   returnTo: string,
   liveAgents: ControlApiLiveAgentCounts | null | undefined
-): ColumnDef<ControlApiModelRecord>[] {
+): ColumnDef<ProviderModelRow>[] {
   return [
     {
       id: "model",
@@ -193,15 +212,25 @@ function modelColumns(
         React.createElement(
           "div",
           { className: "flex flex-col gap-0.5" },
-          React.createElement(
-            Chip,
-            {
-              href: modelPath(model.provider, model.id),
-              label: `Open model ${model.id}`,
-              className: "w-fit font-mono text-fg"
-            },
-            model.id
-          ),
+          model.enablement === null
+            ? React.createElement(
+                "span",
+                {
+                  className: "w-fit font-mono text-fg",
+                  "data-model-id": model.id,
+                  title: model.id
+                },
+                model.id
+              )
+            : React.createElement(
+                Chip,
+                {
+                  href: modelPath(model.provider, model.id),
+                  label: `Open model ${model.id}`,
+                  className: "w-fit font-mono text-fg"
+                },
+                model.id
+              ),
           model.displayName === null
             ? null
             : React.createElement(
@@ -228,11 +257,7 @@ function modelColumns(
             className: "text-xs text-fg-secondary tabular-nums",
             "data-live-agent-model": model.id
           },
-          liveAgentCount(
-            liveAgents,
-            "byModel",
-            `${model.provider}/${model.id}`
-          )
+          liveAgentCount(liveAgents, "byModel", `${model.provider}/${model.id}`)
         )
     },
     {
@@ -249,12 +274,20 @@ function modelColumns(
         })
     },
     {
+      id: "availability",
+      header: "Availability",
+      cell: (model) =>
+        React.createElement(ProviderModelAvailabilityBadge, {
+          availability: model.availability
+        })
+    },
+    {
       id: "enabled",
       header: "Enabled",
       cell: (model) =>
         React.createElement(ModelToggle, {
           model: model.id,
-          enablement: model.enablement,
+          enablement: model.enablement ?? undefined,
           returnTo
         })
     }
@@ -340,10 +373,12 @@ function RoutingPriorityPanel({
 
 function ProvidersTab({
   providers,
-  runtime
+  runtime,
+  modelDiscovery
 }: {
   readonly providers: ControlApiProvidersResponse;
   readonly runtime: ControlApiRuntimeResponse | undefined;
+  readonly modelDiscovery: ProviderModelDiscoveryState;
 }): React.JSX.Element {
   const records = providers.providers;
   const healthObserved = records.every((provider) => provider.health !== null);
@@ -403,9 +438,10 @@ function ProvidersTab({
       React.createElement<DataTableProps<ControlApiProviderRecord>>(DataTable, {
         data: records,
         columns: providerColumns(
-        providersPath("providers"),
-        runtime?.liveAgents
-      ),
+          providersPath("providers"),
+          runtime?.liveAgents,
+          modelDiscovery
+        ),
         keyExtractor: (provider: ControlApiProviderRecord) => provider.id,
         emptyMessage: "No providers are configured."
       })
@@ -416,55 +452,215 @@ function ProvidersTab({
 
 function ModelsTab({
   models,
+  modelDiscovery,
   runtime
 }: {
   readonly models: ProvidersModelsState;
+  readonly modelDiscovery: ProviderModelDiscoveryState;
   readonly runtime: ControlApiRuntimeResponse | undefined;
 }): React.JSX.Element {
-  if (models.status === "unavailable") {
-    return React.createElement(
-      "div",
-      {
-        role: "alert",
-        "data-tab-panel": "models",
-        "data-status": "unavailable",
-        className: CALLOUT_WARNING_CLASS
-      },
-      `Models could not be loaded: ${models.message}`
-    );
-  }
+  const modelRows = providerModelRows(
+    models.status === "available" ? models.data.models : null,
+    modelDiscovery
+  );
+  const unsupportedModels = unsupportedProviderModels(modelDiscovery);
+  const summaries = providerDiscoverySummaries(modelDiscovery);
   return React.createElement(
-    "section",
+    "div",
     {
-      className: LIST_PANEL_CLASS,
-      "data-tab-panel": "models",
-      "data-section": "models"
+      className: PAGE_SECTION_STACK_CLASS,
+      "data-tab-panel": "models"
     },
+    models.status === "unavailable"
+      ? React.createElement(
+          "p",
+          {
+            role: "alert",
+            className: CALLOUT_WARNING_CLASS,
+            "data-model-routing-state": "unavailable"
+          },
+          `Runtime model routing state could not be loaded: ${models.message}`
+        )
+      : null,
+    modelDiscovery.status === "unavailable"
+      ? React.createElement(
+          "p",
+          {
+            role: "alert",
+            className: CALLOUT_WARNING_CLASS,
+            "data-model-discovery-state": "unavailable"
+          },
+          `Provider model availability could not be read: ${modelDiscovery.message}`
+        )
+      : null,
     React.createElement(
-      "div",
-      { className: "mb-3" },
-      React.createElement("h2", { className: SECTION_HEADING_CLASS }, "Models"),
+      "section",
+      {
+        className: LIST_PANEL_CLASS,
+        "data-section": "provider-model-discovery"
+      },
+      React.createElement(
+        "h2",
+        { className: `mb-3 ${SECTION_HEADING_CLASS}` },
+        "Provider model availability"
+      ),
+      summaries.length === 0
+        ? React.createElement(
+            "p",
+            { className: MUTED_TEXT_CLASS, "data-status": "not-observed" },
+            modelDiscovery.status === "available"
+              ? "Runtime has not reported provider model-discovery entries."
+              : "Provider availability is not observed."
+          )
+        : React.createElement(
+            "ul",
+            {
+              className: "flex flex-col gap-2 list-none p-0 m-0",
+              "data-provider-model-discovery-list": "true"
+            },
+            ...summaries.map((summary) => {
+              const discovery = providerModelDiscoveryView(
+                modelDiscovery,
+                summary.provider
+              );
+              return React.createElement(
+                "li",
+                {
+                  key: summary.provider,
+                  className: "flex flex-wrap items-center gap-2",
+                  "data-provider-discovery": summary.provider,
+                  "data-discovery-status": summary.status
+                },
+                React.createElement(ProviderLink, {
+                  provider: summary.provider
+                }),
+                React.createElement(ProviderModelDiscoveryBadge, {
+                  discovery
+                }),
+                summary.reason === null
+                  ? null
+                  : React.createElement(
+                      "span",
+                      { className: MUTED_META_CLASS },
+                      summary.reason
+                    )
+              );
+            })
+          )
+    ),
+    React.createElement(
+      "section",
+      {
+        className: LIST_PANEL_CLASS,
+        "data-section": "models"
+      },
+      React.createElement(
+        "h2",
+        { className: `mb-3 ${SECTION_HEADING_CLASS}` },
+        "Models"
+      ),
       React.createElement(
         "p",
-        { className: "mt-1 text-xs text-fg-muted" },
-        `Every model the routing configuration (${models.data.source}) maps a provider tier to. A disabled model is skipped for every tier it serves.`
-      )
-    ),
-    React.createElement<DataTableProps<ControlApiModelRecord>>(DataTable, {
-      data: models.data.models,
-      columns: modelColumns(
-        providersPath("models"),
-        runtime?.liveAgents
+        { className: "mb-3 text-xs text-fg-muted" },
+        models.status === "available"
+          ? `Provider-reported availability is shown separately from routing assignments (${models.data.source}). A disabled model is skipped for every tier it serves.`
+          : "Provider-reported model availability is shown separately from Runtime routing state."
       ),
-      keyExtractor: (model: ControlApiModelRecord) => model.id,
-      emptyMessage: "No models are configured."
-    })
+      React.createElement<DataTableProps<ProviderModelRow>>(DataTable, {
+        data: modelRows,
+        columns: modelColumns(providersPath("models"), runtime?.liveAgents),
+        keyExtractor: (model: ProviderModelRow) =>
+          `${model.provider}/${model.id}`,
+        emptyMessage:
+          "No routeable or configured provider models were reported by the available sources."
+      })
+    ),
+    unsupportedModels.length === 0
+      ? null
+      : React.createElement(
+          "section",
+          {
+            className: LIST_PANEL_CLASS,
+            "data-section": "unsupported-models"
+          },
+          React.createElement(
+            "h2",
+            { className: `mb-3 ${SECTION_HEADING_CLASS}` },
+            "Discovered but not routeable"
+          ),
+          React.createElement<DataTableProps<UnsupportedProviderModel>>(
+            DataTable,
+            {
+              data: unsupportedModels,
+              columns: [
+                {
+                  id: "model",
+                  header: "Model",
+                  align: "tokens",
+                  cell: (model) =>
+                    React.createElement(
+                      "span",
+                      {
+                        className: "font-mono text-fg",
+                        "data-unsupported-model": model.id,
+                        title: model.id
+                      },
+                      model.id
+                    )
+                },
+                {
+                  id: "provider",
+                  header: "Provider",
+                  cell: (model) =>
+                    React.createElement(ProviderLink, {
+                      provider: model.provider
+                    })
+                },
+                {
+                  id: "discovery",
+                  header: "Discovery",
+                  cell: (model) =>
+                    React.createElement(StatusBadge, {
+                      status:
+                        model.discoveryStatus === "observed"
+                          ? "valid"
+                          : "unavailable",
+                      label:
+                        model.discoveryStatus === "observed"
+                          ? "Observed"
+                          : "Stale"
+                    })
+                },
+                {
+                  id: "activeAgents",
+                  header: "Active Agents",
+                  cell: (model) =>
+                    liveAgentCount(
+                      runtime?.liveAgents,
+                      "byModel",
+                      `${model.provider}/${model.id}`
+                    )
+                },
+                {
+                  id: "reason",
+                  header: "Routeability",
+                  align: "prose",
+                  cell: (model) => model.reason
+                }
+              ],
+              keyExtractor: (model: UnsupportedProviderModel) =>
+                `${model.provider}/${model.id}`,
+              emptyMessage: "No unsupported provider models were reported."
+            }
+          )
+        )
   );
 }
 
 export function ProvidersView({
   providers,
   models,
+  modelDiscovery,
   runtime,
   activeTab,
   controlFailed
@@ -482,7 +678,11 @@ export function ProvidersView({
     }),
     controlFailed ? React.createElement(ControlFailureNotice) : null,
     tab === "models"
-      ? React.createElement(ModelsTab, { models, runtime })
-      : React.createElement(ProvidersTab, { providers, runtime })
+      ? React.createElement(ModelsTab, { models, modelDiscovery, runtime })
+      : React.createElement(ProvidersTab, {
+          providers,
+          modelDiscovery,
+          runtime
+        })
   );
 }

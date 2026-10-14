@@ -16,6 +16,7 @@ import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/
 import { httpHealthProbe } from "../platform/health-probe.ts";
 import { sleep } from "../platform/sleep.ts";
 import { waitForProbe } from "../platform/wait-for-probe.ts";
+import { verifyControlApiCompatibility } from "./control-api-compatibility.ts";
 
 export const IS_MAIN =
   Boolean(process.argv[1]) &&
@@ -142,10 +143,6 @@ const DOCKER_READY_TIMEOUT_MS = 120_000;
 const STACK_READY_TIMEOUT_MS = 120_000;
 const DOCKER_PROBE_TIMEOUT_MS = 5000;
 const DEFAULT_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
-const CONTROL_API_PROBE_TIMEOUT_MS = 5000;
-const DEV_PROBE_WORKSPACE_ID = "autodev-dev-probe/not-configured";
-// Fixed local actor; runtime-cli cannot depend on Core under the layer rules.
-const LOCAL_CONTROL_API_ACTOR = "autodev-local";
 const CONTROL_API_BASE_URL_DEFAULT_PATTERN =
   /^\$\{AUTODEV_CONTROL_API_BASE_URL:-([^{}]+)\}$/u;
 const OPENLIT_USAGE_BASE_URL_DEFAULT_PATTERN =
@@ -161,27 +158,6 @@ export interface DevControlApiConfig {
 export interface DevOpenLITUsageConfig {
   readonly baseUrl: string;
   readonly serviceToken: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isControlApiProvidersResponse(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    value.schema === "autodev-control-providers-v2" &&
-    Array.isArray(value.providers) &&
-    value.providers.every(
-      (provider) =>
-        isRecord(provider) &&
-        isRecord(provider.links) &&
-        (provider.links.usage === null ||
-          typeof provider.links.usage === "string") &&
-        (provider.links.documentation === null ||
-          typeof provider.links.documentation === "string")
-    )
-  );
 }
 
 function controlApiBaseUrlFromEnvFile(value: string | null): string | null {
@@ -239,113 +215,6 @@ export function readDevOpenLITUsageConfig(
     configuredBaseUrl ??
     DEFAULT_OPENLIT_USAGE_BASE_URL;
   return { baseUrl: baseUrl.replace(TRAILING_SLASHES, ""), serviceToken };
-}
-
-function controlApiStartupError(reason: string): Error {
-  return new Error(
-    `The configured AutoDev Control API is not compatible with this Console checkout (${reason}). The Console was not started. Refresh the Runtime with \`pnpm run install:codex\` when no active task depends on the Model Router. For a live session, use \`bash scripts/install.sh --materialize-only\` and restart the Model Router later.`
-  );
-}
-
-function controlApiUnavailableError(reason: string): Error {
-  return new Error(
-    `The configured AutoDev Control API could not be reached (${reason}). Verify AUTODEV_CONTROL_API_BASE_URL and that the Model Router's private Control API listener is running. The Console was not started.`
-  );
-}
-
-function controlApiAuthorizationError(): Error {
-  return new Error(
-    "The AutoDev Control API rejected the Console service credential or local actor. Verify AUTODEV_CONTROL_API_TOKEN and the Runtime actor allowlists. The Console was not started."
-  );
-}
-
-/** Fail before Next.js starts when its separately managed Runtime API is stale. */
-export async function verifyDevControlApi(
-  config: DevControlApiConfig,
-  fetchImpl: typeof fetch = globalThis.fetch
-): Promise<void> {
-  const headers = {
-    Authorization: `Bearer ${config.serviceToken}`,
-    "X-AutoDev-Actor": LOCAL_CONTROL_API_ACTOR,
-    Accept: "application/json"
-  };
-  const request = async (
-    pathAndQuery: string
-  ): Promise<{
-    readonly response: Response;
-    readonly body: unknown;
-  }> => {
-    const response = await fetchImpl(`${config.baseUrl}${pathAndQuery}`, {
-      method: "GET",
-      headers,
-      signal: AbortSignal.timeout(CONTROL_API_PROBE_TIMEOUT_MS)
-    });
-    return {
-      response,
-      body: await response.json().catch(() => null)
-    };
-  };
-
-  let providers: Awaited<ReturnType<typeof request>>;
-  try {
-    providers = await request("/control/providers");
-  } catch {
-    throw controlApiUnavailableError("the Providers endpoint did not respond");
-  }
-  if (providers.response.status === 401 || providers.response.status === 403) {
-    throw controlApiAuthorizationError();
-  }
-  if (providers.response.status >= 500) {
-    throw controlApiUnavailableError(
-      `the Providers endpoint returned HTTP ${providers.response.status}`
-    );
-  }
-  if (
-    !providers.response.ok ||
-    !isControlApiProvidersResponse(providers.body)
-  ) {
-    throw controlApiStartupError(
-      "the current Providers v2 response contract is missing"
-    );
-  }
-
-  const playtestingQuery = new URLSearchParams({
-    workspaceId: DEV_PROBE_WORKSPACE_ID
-  });
-  let playtesting: Awaited<ReturnType<typeof request>>;
-  try {
-    playtesting = await request(
-      `/control/playtesting/capabilities?${playtestingQuery.toString()}`
-    );
-  } catch {
-    throw controlApiUnavailableError(
-      "the workspace-scoped Playtesting endpoint did not respond"
-    );
-  }
-  if (
-    playtesting.response.status === 401 ||
-    playtesting.response.status === 403
-  ) {
-    throw controlApiAuthorizationError();
-  }
-  const apiError =
-    isRecord(playtesting.body) && isRecord(playtesting.body.error)
-      ? playtesting.body.error
-      : null;
-  const code =
-    apiError && typeof apiError.code === "string" ? apiError.code : "";
-  const currentPlaytestingCapabilities =
-    isRecord(playtesting.body) &&
-    playtesting.body.schema === "autodev-control-playtesting-capabilities-v1" &&
-    playtesting.body.workspaceId === DEV_PROBE_WORKSPACE_ID;
-  const currentPlaytestingError =
-    code.startsWith("autodev_control_playtesting_") &&
-    code !== "autodev_control_playtesting_unknown_path";
-  if (!currentPlaytestingCapabilities && !currentPlaytestingError) {
-    throw controlApiStartupError(
-      "the workspace-scoped Playtesting routes are missing"
-    );
-  }
 }
 
 export interface DevCommandOptions {
@@ -551,7 +420,7 @@ export async function ensureBackends(
 export async function startDev(): Promise<void> {
   try {
     ensureConsoleSecrets();
-    await verifyDevControlApi(readDevControlApiConfig());
+    await verifyControlApiCompatibility(readDevControlApiConfig());
     writeLine("[dev] ✔ AutoDev Control API matches the Console contracts.");
     await ensureBackends();
   } catch (error) {
@@ -570,7 +439,7 @@ export async function startDev(): Promise<void> {
   const extraArgs = process.argv.slice(2);
   const child = spawn(
     pnpmBin,
-    ["--filter", "@simulatorlife/autodev-console", "dev", ...extraArgs],
+    ["--filter", "@simulatorlife/autodev-console", "dev:next", ...extraArgs],
     {
       cwd: repoRoot,
       stdio: "inherit",

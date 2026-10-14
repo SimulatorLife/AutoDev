@@ -7,8 +7,8 @@ import type { MemoryService } from "@simulatorlife/autodev-runtime/memory";
 import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
 import {
   makeRequest,
-  responseBody,
   type RecordedResponse,
+  responseBody,
   responseRecorder
 } from "./support/control-api-harness.ts";
 
@@ -63,9 +63,9 @@ interface CallResult {
 }
 
 function errorCode(body: Record<string, unknown> | null): unknown {
-  const envelope = body?.["error"];
+  const envelope = body?.error;
   return typeof envelope === "object" && envelope !== null
-    ? (envelope as Record<string, unknown>)["code"]
+    ? (envelope as Record<string, unknown>).code
     : undefined;
 }
 
@@ -102,7 +102,7 @@ function recordingService(options: { readonly visible?: boolean } = {}) {
     recordSessionOutcomeReport: async (input: Record<string, unknown>) => {
       state.recorded = input;
       return {
-        id: String((input["report"] as { id: string }).id),
+        id: String((input.report as { id: string }).id),
         appended: true
       };
     },
@@ -216,9 +216,9 @@ test("a use assessment records how many memories were used, never which", async 
     "the audit must not name the memories that were used"
   );
   // The ids do reach the service, which is what the assessment is for.
-  assert.deepEqual(recorded?.["usedMemoryIds"], ["mem-1", "mem-2"]);
-  assert.equal(recorded?.["experienceId"], EXPERIENCE_ID);
-  assert.equal(recorded?.["injectionEventId"], "inj-1");
+  assert.deepEqual(recorded?.usedMemoryIds, ["mem-1", "mem-2"]);
+  assert.equal(recorded?.experienceId, EXPERIENCE_ID);
+  assert.equal(recorded?.injectionEventId, "inj-1");
 });
 
 test("a use assessment is refused without repository scope", async () => {
@@ -361,9 +361,8 @@ test("a session outcome is named by the session, not by the caller", async () =>
 
   assert.equal(first.status, 200);
   assert.equal(second.status, 200);
-  const firstReport = first.recorded?.["report"] as { id?: string } | undefined;
-  const secondReport = second.recorded?.["report"] as
-    { id?: string } | undefined;
+  const firstReport = first.recorded?.report as { id?: string } | undefined;
+  const secondReport = second.recorded?.report as { id?: string } | undefined;
   assert.ok(firstReport?.id, "no report reached the service");
   assert.equal(secondReport?.id, firstReport.id);
   assert.match(String(firstReport.id), /^memory-session-outcome-/u);
@@ -382,10 +381,8 @@ test("a different session gets a different session-outcome identity", async () =
     overrides: { taskId: "task-2" }
   });
 
-  const firstId = (first.recorded?.["report"] as { id?: string } | undefined)
-    ?.id;
-  const secondId = (second.recorded?.["report"] as { id?: string } | undefined)
-    ?.id;
+  const firstId = (first.recorded?.report as { id?: string } | undefined)?.id;
+  const secondId = (second.recorded?.report as { id?: string } | undefined)?.id;
   assert.ok(firstId && secondId, "a report never reached the service");
   assert.notEqual(
     secondId,
@@ -405,10 +402,8 @@ test("the same session in a different repository gets a different identity", asy
     overrides: { repositoryId: "owner/repo-2" }
   });
 
-  const firstId = (first.recorded?.["report"] as { id?: string } | undefined)
-    ?.id;
-  const secondId = (second.recorded?.["report"] as { id?: string } | undefined)
-    ?.id;
+  const firstId = (first.recorded?.report as { id?: string } | undefined)?.id;
+  const secondId = (second.recorded?.report as { id?: string } | undefined)?.id;
   assert.ok(firstId && secondId, "a report never reached the service");
   assert.notEqual(secondId, firstId);
 });
@@ -425,10 +420,8 @@ test("the same session id in another workspace gets another identity", async () 
     overrides: { workspaceId: "ws-2" }
   });
 
-  const firstId = (first.recorded?.["report"] as { id?: string } | undefined)
-    ?.id;
-  const secondId = (second.recorded?.["report"] as { id?: string } | undefined)
-    ?.id;
+  const firstId = (first.recorded?.report as { id?: string } | undefined)?.id;
+  const secondId = (second.recorded?.report as { id?: string } | undefined)?.id;
   assert.ok(firstId && secondId, "a report never reached the service");
   assert.notEqual(secondId, firstId);
 });
@@ -439,7 +432,7 @@ test("a session outcome names the reporter who filed it", async () => {
   // the whole record unattributable, which is the one thing an audit trail
   // cannot be.
   const { recorded } = await call("POST", "session-outcome", SESSION_OUTCOME);
-  const report = recorded?.["report"] as
+  const report = recorded?.report as
     { reporterId?: string; reporterAuthority?: string } | undefined;
 
   assert.equal(report?.reporterId, "test-operator");
@@ -451,7 +444,7 @@ test("a session outcome carries no run scope the caller could widen", async () =
   // is about one session, not a run of it. Asserting the absence is the point —
   // an added field would be a new way to claim something about a session.
   const { recorded } = await call("POST", "session-outcome", SESSION_OUTCOME);
-  const report = recorded?.["report"] as Record<string, unknown> | undefined;
+  const report = recorded?.report as Record<string, unknown> | undefined;
 
   for (const absent of ["scope", "runId", "agentId", "correlationToken"]) {
     assert.equal(
@@ -475,7 +468,7 @@ test("a claimed session outcome needs evidence, and `unknown` stands alone", asy
 
   assert.equal(claimed.status, 400);
   assert.equal(unknown.status, 200);
-  const report = unknown.recorded?.["report"] as
+  const report = unknown.recorded?.report as
     { outcomeKind?: string; reasonCode?: string } | undefined;
   assert.equal(report?.outcomeKind, "unknown");
   assert.equal(report?.reasonCode, "reporter_unknown");
@@ -497,8 +490,8 @@ test("reading a session outcome answers from the captured session", async () => 
   const { status, body } = await call("GET", "session-outcomes");
 
   assert.equal(status, 200);
-  assert.equal(body?.["schema"], "autodev-memory-session-outcome-report-v1");
-  assert.equal(body?.["experienceId"], EXPERIENCE_ID);
+  assert.equal(body?.schema, "autodev-memory-session-outcome-report-v1");
+  assert.equal(body?.experienceId, EXPERIENCE_ID);
 });
 
 test("an unreported session outcome is an absence, not a failure", async () => {

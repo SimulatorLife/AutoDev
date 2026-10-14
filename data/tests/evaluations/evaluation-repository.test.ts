@@ -208,7 +208,7 @@ test("EvaluationRepository.listEvaluations returns parsed rows with custom fetch
     // of everything the table holds. Answering both is what lets a caller tell a
     // bounded window from the whole history.
     if (/COUNT\(\*\)/u.test(query)) {
-      return new Response(JSON.stringify({ total: "1" }), { status: 200 });
+      return Response.json({ total: "1" }, { status: 200 });
     }
     assert.match(query, /FROM openlit\.openlit_evaluation/);
     return new Response(sampleRow, { status: 200 });
@@ -243,7 +243,7 @@ test("EvaluationRepository reports the table's own size, not the size of the win
   const mockFetch: typeof fetch = async (input) => {
     const query = decodeURIComponent(String(input));
     if (/COUNT\(\*\)/u.test(query)) {
-      return new Response(JSON.stringify({ total: "5000" }), { status: 200 });
+      return Response.json({ total: "5000" }, { status: 200 });
     }
     return new Response(rows, { status: 200 });
   };
@@ -293,7 +293,7 @@ test("EvaluationRepository never reports a total below the rows it returned", as
   const mockFetch: typeof fetch = async (input) => {
     const query = decodeURIComponent(String(input));
     if (/COUNT\(\*\)/u.test(query)) {
-      return new Response(JSON.stringify({ total: "0" }), { status: 200 });
+      return Response.json({ total: "0" }, { status: 200 });
     }
     return new Response(rows, { status: 200 });
   };

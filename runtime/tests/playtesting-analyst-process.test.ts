@@ -1,0 +1,205 @@
+import assert from "node:assert/strict";
+import type { ChildProcess, spawn, SpawnOptions } from "node:child_process";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import path from "node:path";
+import test from "node:test";
+
+import { PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA } from "@simulatorlife/autodev-core";
+
+import {
+  launchPlaytestAnalystProcess,
+  type PlaytestAnalystProcessResult
+} from "../src/playtesting/analyst-process.ts";
+
+function aggregationFor(episodeIds: readonly string[]) {
+  const sources = episodeIds.map((episodeId, index) => ({
+    episodeId,
+    batchId: `batch-${String(index + 1)}`,
+    packetId: `packet-${String(index + 1)}`
+  }));
+  return {
+    schema: PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA,
+    workspaceId: "owner/RacingGame",
+    analysisId: "analysis-123",
+    status:
+      episodeIds.length >= 2
+        ? ("no-applicable-metrics" as const)
+        : ("insufficient-packets" as const),
+    method: "ratio-of-sums-within-identical-stratum-v1" as const,
+    sourcePackets: sources,
+    rows: [],
+    omittedMetrics: [],
+    reason:
+      episodeIds.length >= 2
+        ? ("no-applicable-metric-rows" as const)
+        : ("fewer-than-two-packets" as const)
+  };
+}
+
+test("analyst dispatch uses the existing provider-agent role with a read-only scoped context", async () => {
+  const calls: {
+    command: string;
+    args: readonly string[];
+    options: SpawnOptions;
+  }[] = [];
+  const eventHandlers = new Map<string, (...args: unknown[]) => void>();
+  const child = {
+    once(event: string, handler: (...args: unknown[]) => void) {
+      eventHandlers.set(event, handler);
+      return child;
+    },
+    kill: () => true,
+    emitForTest(event: string, ...args: unknown[]) {
+      eventHandlers.get(event)?.(...args);
+    }
+  } as unknown as ChildProcess & {
+    emitForTest(event: string, ...args: unknown[]): void;
+  };
+  const spawnProcess = ((
+    command: string,
+    args: string[],
+    options: SpawnOptions
+  ) => {
+    calls.push({ command, args, options });
+    return child;
+  }) as unknown as typeof spawn;
+  const processHandle = launchPlaytestAnalystProcess(
+    {
+      analysisId: "analysis-123",
+      workspaceId: "owner/RacingGame",
+      actor: "control-api:abcd",
+      episodeIds: ["episode-1", "episode-2"],
+      metricAggregation: aggregationFor(["episode-1", "episode-2"])
+    },
+    {
+      environment: {
+        AUTODEV_CONTROL_API_BASE_URL: "http://127.0.0.1:4101",
+        AUTODEV_CONTROL_API_LISTEN_HOST: "127.0.0.1",
+        AUTODEV_CONTROL_API_LISTEN_PORT: "4101",
+        AUTODEV_CONTROL_API_TOKEN: "general-secret",
+        AUTODEV_PLAYTEST_CONTROL_API_ACTOR: "playtest-runtime",
+        AUTODEV_PLAYTEST_CONTROL_API_ROLE: "playtester",
+        AUTODEV_PLAYTEST_CONTROL_API_TOKEN: "runner-secret",
+        AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN: "analyst-secret"
+      },
+      spawnProcess
+    }
+  );
+
+  assert.equal(calls.length, 1);
+  const [call] = calls;
+  assert.ok(call);
+  const spawnOptions = call.options;
+  const childEnvironment = spawnOptions.env ?? {};
+  assert.equal(call.command, process.execPath);
+  assert.equal(call.args[1], "--role");
+  assert.equal(call.args[2], "playtest-analyst");
+  assert.equal(call.args[3], "--cwd");
+  assert.equal(call.args[4], spawnOptions.cwd);
+  assert.equal(typeof spawnOptions.cwd, "string");
+  assert.deepEqual(readdirSync(String(spawnOptions.cwd)), []);
+  assert.equal(statSync(String(spawnOptions.cwd)).mode & 0o777, 0o700);
+  assert.ok(call.args[0]?.endsWith("/runtime/src/cli/provider-agent.ts"));
+  assert.match(call.args.at(-1) ?? "", /episode-1[\s\S]*episode-2/u);
+  assert.match(
+    call.args.at(-1) ?? "",
+    /deterministic selected-session metric aggregation/u
+  );
+  assert.match(
+    call.args.at(-1) ?? "",
+    /ratio-of-sums-within-identical-stratum-v1/u
+  );
+  assert.doesNotMatch(call.args.join(" "), /analyst-secret|runner-secret/u);
+  assert.equal(spawnOptions.stdio, "ignore");
+  assert.equal(childEnvironment.AUTODEV_PLAYTEST_ROLE, "playtest-analyst");
+  assert.equal(childEnvironment.AUTODEV_PLAYTEST_ANALYSIS_ID, "analysis-123");
+  assert.equal(
+    childEnvironment.AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS,
+    JSON.stringify(["episode-1", "episode-2"])
+  );
+  assert.equal(
+    childEnvironment.AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION,
+    JSON.stringify(aggregationFor(["episode-1", "episode-2"]))
+  );
+  assert.equal(childEnvironment.AUTODEV_PLAYTEST_ACTOR_ID, "control-api:abcd");
+  assert.equal(
+    childEnvironment.AUTODEV_PLAYTEST_TASK_ID,
+    "playtest-analysis-analysis-123"
+  );
+  assert.equal(childEnvironment.AUTODEV_PLAYTEST_CONTROL_API_ROLE, undefined);
+  assert.equal(childEnvironment.AUTODEV_PLAYTEST_CONTROL_API_ACTOR, undefined);
+  assert.equal(childEnvironment.AUTODEV_PLAYTEST_CONTROL_API_TOKEN, undefined);
+  assert.equal(childEnvironment.AUTODEV_CONTROL_API_BASE_URL, undefined);
+  assert.equal(childEnvironment.AUTODEV_CONTROL_API_LISTEN_HOST, undefined);
+  assert.equal(childEnvironment.AUTODEV_CONTROL_API_LISTEN_PORT, undefined);
+  assert.equal(
+    childEnvironment.AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN,
+    undefined
+  );
+  assert.equal(childEnvironment.AUTODEV_CONTROL_API_TOKEN, undefined);
+  assert.equal(childEnvironment.AUTODEV_MEMORY_MODE, "disabled");
+  assert.equal(childEnvironment.AUTODEV_PLAYTEST_ANALYSIS_MODE, "1");
+  assert.equal(
+    path.dirname(String(childEnvironment.CODEX_HOME)),
+    childEnvironment.HOME
+  );
+  assert.ok(existsSync(String(childEnvironment.CODEX_HOME)));
+
+  const resultPromise = processHandle.completion;
+  child.emitForTest("close", 0, null);
+  const result: PlaytestAnalystProcessResult = await resultPromise;
+  assert.equal(existsSync(String(spawnOptions.cwd)), false);
+  assert.equal(existsSync(String(childEnvironment.HOME)), false);
+  assert.deepEqual(result, {
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    launchFailed: false
+  });
+});
+
+test("analyst dispatch needs no unused Control API credential", async () => {
+  const eventHandlers = new Map<string, (...args: unknown[]) => void>();
+  const child = {
+    once(event: string, handler: (...args: unknown[]) => void) {
+      eventHandlers.set(event, handler);
+      return child;
+    },
+    kill: () => true,
+    emitForTest(event: string, ...args: unknown[]) {
+      eventHandlers.get(event)?.(...args);
+    }
+  } as unknown as ChildProcess & {
+    emitForTest(event: string, ...args: unknown[]): void;
+  };
+  let spawnCount = 0;
+  const spawnProcess = ((
+    _command: string,
+    _args: string[],
+    _options: SpawnOptions
+  ) => {
+    spawnCount += 1;
+    return child;
+  }) as unknown as typeof spawn;
+  const processHandle = launchPlaytestAnalystProcess(
+    {
+      analysisId: "analysis-123",
+      workspaceId: "owner/RacingGame",
+      actor: "control-api:abcd",
+      episodeIds: ["episode-1"],
+      metricAggregation: aggregationFor(["episode-1"])
+    },
+    {
+      environment: {},
+      spawnProcess
+    }
+  );
+  assert.equal(spawnCount, 1);
+  eventHandlers.get("close")?.(0, null);
+  assert.deepEqual(await processHandle.completion, {
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    launchFailed: false
+  });
+});

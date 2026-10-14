@@ -9,6 +9,12 @@ import React from "react";
 import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectField.ts";
 import { Icon, type IconName } from "../../components/icons/Icon.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  providerModelAvailability,
+  providerModelChoices,
+  type ProviderModelDiscoveryState,
+  providerModelDiscoveryView
+} from "./provider-model-discovery.ts";
 
 /**
  * The Roles column: the four fixed roles, each with its priority and its model.
@@ -46,14 +52,6 @@ const ROLE_ICONS = {
   Record<ProviderRole, { readonly name: IconName }>
 >;
 
-/**
- * The models a role may be set to, deduplicated and ordered.
- *
- * A provider maps several tiers to the same model, so the raw list repeats; the
- * dropdown offering the same model twice would read as two choices when it is
- * one. Sorted rather than left in tier order because the list is a set of
- * choices, not a ranking -- the priority dropdown is where ranking lives.
- */
 const MODEL_COLLATOR = new Intl.Collator();
 
 /** The priority dropdown's selected value for an assignment. */
@@ -65,20 +63,64 @@ function priorityOptionSelected(
     : String(assignment.priority);
 }
 
-/**
- * The models a role may be set to, deduplicated and ordered.
- *
- * A provider maps several tiers to the same model, so the raw list repeats; the
- * dropdown offering the same model twice would read as two choices when it is
- * one. Sorted rather than left in tier order because the list is a set of
- * choices, not a ranking -- the priority dropdown is where ranking lives.
- */
 function availableModels(
-  provider: ControlApiProviderRecord
-): readonly string[] {
-  return [...new Set(provider.models.map(({ model }) => model.trim()))].sort(
-    (left, right) => MODEL_COLLATOR.compare(left, right)
-  );
+  discovery: ProviderModelDiscoveryState,
+  provider: string
+): readonly { readonly id: string; readonly label: string }[] {
+  return providerModelChoices(discovery, provider)
+    .map(({ id }) => ({ id, label: id }))
+    .sort((left, right) => MODEL_COLLATOR.compare(left.id, right.id));
+}
+
+function preservedModelLabel(
+  discovery: ProviderModelDiscoveryState,
+  provider: string,
+  model: string
+): string {
+  const availability = providerModelAvailability(discovery, provider, model);
+  switch (availability.status) {
+    case "unsupported": {
+      return `${model} — unsupported by Runtime`;
+    }
+    case "stale": {
+      return `${model} — last known, stale`;
+    }
+    case "not-listed": {
+      return `${model} — not in current provider listing`;
+    }
+    case "unavailable": {
+      return `${model} — provider availability unavailable`;
+    }
+    case "not-observed": {
+      return `${model} — provider availability not observed`;
+    }
+    case "observed": {
+      return model;
+    }
+  }
+  return model;
+}
+
+function modelDiscoveryDisabledReason(
+  discovery: ProviderModelDiscoveryState,
+  provider: string
+): string | null {
+  const state = providerModelDiscoveryView(discovery, provider);
+  switch (state.status) {
+    case "observed": {
+      return null;
+    }
+    case "stale": {
+      return `Provider model availability is stale. Existing assignments are preserved; new model choices require a current provider listing. ${state.reason}`;
+    }
+    case "unavailable": {
+      return `Provider model availability is unavailable. Existing assignments are preserved. ${state.reason}`;
+    }
+    case "not-observed": {
+      return `Provider model availability is not observed. Existing assignments are preserved. ${state.reason}`;
+    }
+  }
+  return null;
 }
 
 /**
@@ -99,7 +141,7 @@ function RoleModelSelect({
   readonly provider: string;
   readonly role: ProviderRole;
   readonly assignment: ControlApiProviderRoleAssignment;
-  readonly models: readonly string[];
+  readonly models: readonly { readonly id: string; readonly label: string }[];
   readonly disabledReason: string | undefined;
 }): React.JSX.Element {
   const roleDisabled = assignment.priority === "disabled";
@@ -124,7 +166,7 @@ function RoleModelSelect({
     ...(disabledReason === undefined ? {} : { disabled: true, disabledReason }),
     options: [
       { value: "", label: "Not set" },
-      ...models.map((model) => ({ value: model, label: model }))
+      ...models.map(({ id, label }) => ({ value: id, label }))
     ]
   });
 }
@@ -134,12 +176,14 @@ function RoleRow({
   role,
   assignment,
   models,
+  discovery,
   returnTo
 }: {
   readonly provider: string;
   readonly role: ProviderRole;
   readonly assignment: ControlApiProviderRoleAssignment;
-  readonly models: readonly string[];
+  readonly models: readonly { readonly id: string; readonly label: string }[];
+  readonly discovery: ProviderModelDiscoveryState;
   readonly returnTo: string;
 }): React.JSX.Element {
   const roleDisabled = assignment.priority === "disabled";
@@ -153,7 +197,17 @@ function RoleRow({
     blockedReason ??
     (roleDisabled
       ? "This role is set to Disabled. Choose a priority to change its model."
-      : undefined);
+      : (modelDiscoveryDisabledReason(discovery, provider) ?? undefined));
+  const modelOptions = [...models];
+  if (
+    assignment.model !== null &&
+    !modelOptions.some(({ id }) => id === assignment.model)
+  ) {
+    modelOptions.push({
+      id: assignment.model,
+      label: preservedModelLabel(discovery, provider, assignment.model)
+    });
+  }
 
   return React.createElement(
     "form",
@@ -215,7 +269,7 @@ function RoleRow({
       provider,
       role,
       assignment,
-      models,
+      models: modelOptions,
       disabledReason: modelReason
     }),
     // A natively `disabled` control is not submitted by the browser, and the
@@ -228,13 +282,10 @@ function RoleRow({
     // contributes nothing. This is the same shape the Agent Limits steppers use
     // for their current state.
     //
-    // The carry holds the preserved model only while this provider still offers
-    // it. A model that has since been removed from the configuration has no
-    // `<option>` to render into, so the operator can neither see nor change it,
-    // and the Runtime rejects the whole body when a role names a model it is not
-    // configured for -- which would leave the role permanently un-re-enableable,
-    // trading one unreachable control for another. Carrying nothing instead
-    // clears the model, which the operator can then choose again.
+    // A model unavailable in the latest provider snapshot remains visible and
+    // is carried unchanged. Runtime permits preserving that exact assignment
+    // while rejecting any new model choice that is not currently observed and
+    // routeable; a temporary discovery outage must not erase operator intent.
     ...(modelReason === undefined
       ? []
       : [
@@ -242,10 +293,7 @@ function RoleRow({
             key: "preserved-model",
             type: "hidden",
             name: "model",
-            value:
-              assignment.model && models.includes(assignment.model)
-                ? assignment.model
-                : ""
+            value: assignment.model ?? ""
           })
         ])
   );
@@ -259,12 +307,14 @@ function RoleRow({
  */
 export function ProviderRoleControls({
   provider,
+  modelDiscovery,
   returnTo
 }: {
   readonly provider: ControlApiProviderRecord;
+  readonly modelDiscovery: ProviderModelDiscoveryState;
   readonly returnTo: string;
 }): React.JSX.Element {
-  const models = availableModels(provider);
+  const models = availableModels(modelDiscovery, provider.id);
   return React.createElement(
     "ul",
     {
@@ -280,6 +330,7 @@ export function ProviderRoleControls({
           role,
           assignment: provider.roles[role],
           models,
+          discovery: modelDiscovery,
           returnTo
         })
       )

@@ -155,6 +155,8 @@ test("UsagePage fails closed on a stale response schema while retaining its filt
     );
 
     assert.match(markup, /Usage telemetry response was invalid/);
+    assert.match(markup, /required AutoDev Usage v4 contract/);
+    assert.match(markup, /restart the managed Console/);
     assert.match(markup, /data-usage-observed="false"/);
     assert.match(markup, /Selected: openai/);
     assert.match(markup, /name="provider" value="openai"/);

@@ -21,14 +21,14 @@ import test from "node:test";
 import { PLAYTESTS_ADAPTER_BINDING_SCHEMA } from "@simulatorlife/autodev-core";
 
 import {
-  formatConformanceReport,
-  runPlaytestConformance
-} from "../../runtime/src/cli/playtest-conformance.ts";
-import {
   checkPlaytestIntegration,
   initPlaytestIntegration,
   PLAYTESTS_BINDING_FILE
 } from "../../runtime/src/cli/playtest.ts";
+import {
+  formatConformanceReport,
+  runPlaytestConformance
+} from "../../runtime/src/cli/playtest-conformance.ts";
 
 const WORKING_GAME = `
 export function createGame() {
@@ -176,10 +176,53 @@ test("a method returning a loosely shaped result fails at that method", async ()
       report.failures.some((entry) => entry.stage === "observe"),
       `expected an observe failure, got ${JSON.stringify(report.failures)}`
     );
+    assert.deepEqual(
+      report.methodsExercised,
+      ["reset"],
+      "a failed observation must stop the episode before legal actions or step"
+    );
   } finally {
     fixture.cleanup();
   }
 });
+
+test(
+  "a game factory that never resolves fails within the conformance deadline",
+  { timeout: 20_000 },
+  async () => {
+    const fixture = checkout(
+      "export async function createGame() { await new Promise(() => {}); }\n"
+    );
+    try {
+      const report = await runPlaytestConformance(fixture.root);
+      assert.equal(report.ok, false);
+      assert.equal(report.failures[0]?.stage, "entry");
+      assert.match(report.failures[0]?.message ?? "", /deadline/u);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+);
+
+test(
+  "an adapter method that never resolves cannot extend the conformance deadline",
+  { timeout: 20_000 },
+  async () => {
+    const entry = WORKING_GAME.replace(
+      "reset: () => ({",
+      "reset: () => new Promise(() => {}),\n    unusedResetShape: () => ({"
+    );
+    const fixture = checkout(entry);
+    try {
+      const report = await runPlaytestConformance(fixture.root);
+      assert.equal(report.ok, false);
+      assert.equal(report.failures[0]?.stage, "reset");
+      assert.match(report.failures[0]?.message ?? "", /deadline/u);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+);
 
 test("a game that advertises no legal action is reported as unable to advance", async () => {
   const fixture = checkout(
@@ -226,10 +269,10 @@ test("a checkout with no integration directory says so", async () => {
   }
 });
 
-test("a binding that declares a seeded RNG without a version is caught here too", async () => {
+test("a binding that declares an invalid RNG version is caught here too", async () => {
   const fixture = checkout(WORKING_GAME);
   try {
-    setBinding(fixture.root, { seededRng: { export: "createGame" } });
+    setBinding(fixture.root, { rngVersion: "" });
     const report = await runPlaytestConformance(fixture.root);
     // The same rule `check` enforces, proven through the runtime that owns it,
     // so a binding edited between the two gates cannot pass both.

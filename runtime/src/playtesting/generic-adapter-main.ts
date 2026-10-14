@@ -17,15 +17,15 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   assertPlaytestObservationContract,
+  type PlaytestJsonSchema,
   PLAYTESTS_ADAPTER_BINDING_SCHEMA,
   PLAYTESTS_ADAPTER_CONTAINER_WORKSPACE,
-  PLAYTESTS_INTEGRATION_DIR,
-  type PlaytestJsonSchema
+  PLAYTESTS_INTEGRATION_DIR
 } from "@simulatorlife/autodev-core";
 
 import {
-  startGenericAdapterHost,
-  type GenericAdapterHostOptions
+  type GenericAdapterHostOptions,
+  startGenericAdapterHost
 } from "./generic-adapter-host.ts";
 
 /** Bounded so a hostile or corrupt file cannot be read into memory whole. */
@@ -174,7 +174,7 @@ export function integrationDirFrom(
 ): string {
   const index = argv.indexOf("--integration-dir");
   const declared =
-    index >= 0 && index + 1 < argv.length ? argv[index + 1]! : null;
+    index !== -1 && index + 1 < argv.length ? argv[index + 1]! : null;
   return path.resolve(checkoutRoot, declared ?? PLAYTESTS_INTEGRATION_DIR);
 }
 
@@ -191,8 +191,11 @@ export async function main(argv: readonly string[]): Promise<void> {
     input: process.stdin,
     output: process.stdout
   });
-  await host.serve();
-  host.close();
+  try {
+    await host.serve();
+  } finally {
+    await host.close();
+  }
 }
 
 // The adapter image runs this file as its entrypoint. Without this block the

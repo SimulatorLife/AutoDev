@@ -263,6 +263,23 @@ test("console launcher adheres to loopback binding contract, exact-key tokens, a
         })
     );
 
+    const controlPreflightIndex = result.stdout.indexOf(
+      "verify-control-api.ts"
+    );
+    const usagePreflightIndex = result.stdout.indexOf(
+      "verify-usage-contract.ts"
+    );
+    const nextStartIndex = result.stdout.indexOf("next start --hostname");
+    assert.ok(controlPreflightIndex !== -1, "Control API preflight must run");
+    assert.ok(
+      usagePreflightIndex > controlPreflightIndex,
+      "Usage preflight follows Control API validation"
+    );
+    assert.ok(
+      nextStartIndex > usagePreflightIndex,
+      "Next starts only after both backends validate"
+    );
+
     // Verify next binary invocation arguments: must bind to loopback 127.0.0.1 and port 3300
     const args = lines.ARGS;
     assert.ok(args, "fake Node process must report the launched arguments");

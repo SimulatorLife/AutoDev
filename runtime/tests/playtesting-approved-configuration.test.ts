@@ -20,6 +20,8 @@ import { fileURLToPath } from "node:url";
 import {
   defaultPlaytestRegistryDefaults,
   playtestBenchmarkHashInput,
+  PLAYTESTS_ADAPTER_BINDING_SCHEMA,
+  PLAYTESTS_GENERIC_ADAPTER_COMMAND,
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
 
@@ -27,10 +29,49 @@ import {
   ApprovedPlaytestConfigurationError,
   loadApprovedPlaytestDefinition
 } from "../src/playtesting/approved-configuration.ts";
+import { playtestManifestHash } from "../src/playtesting/hash-chain.ts";
+
+const OBSERVATION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: { room: { type: "string" } },
+  required: ["room"]
+};
+
+const ADAPTER_BINDING = {
+  schema: PLAYTESTS_ADAPTER_BINDING_SCHEMA,
+  schemaVersion: 1,
+  tier: "declarative",
+  entry: "node-fixture-game.mjs",
+  factory: "createFixtureGame",
+  schemas: {
+    observation: OBSERVATION_SCHEMA,
+    action: {
+      type: "object",
+      properties: { actionId: { type: "string" } },
+      required: ["actionId"]
+    },
+    event: {
+      type: "object",
+      properties: { kind: { type: "string" } },
+      required: ["kind"]
+    }
+  },
+  bindings: {
+    reset: { export: "reset" },
+    observe: { export: "observe" },
+    legalActions: { export: "legalActions" },
+    step: { export: "step" },
+    outcome: { export: "outcome" }
+  }
+} as const;
 
 const CONFIG = {
   schemaVersion: 1,
-  adapter: { transport: "stdio-jsonl", command: ["node", "adapter.mjs"] },
+  adapter: {
+    transport: "stdio-jsonl",
+    command: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND]
+  },
   modes: ["headless"],
   scenarios: ["tutorial", "edge"],
   scenarioFamilies: { tutorial: "onboarding", edge: "edge-cases" },
@@ -67,7 +108,7 @@ const RUBRIC =
     workspaceId: "owner/fixture",
     audience: "synthetic-fixture-only",
     registryVersion: "approved-fixture-rubric-v1",
-    eventSchemaHash: "d".repeat(64),
+    eventSchemaHash: playtestManifestHash(ADAPTER_BINDING.schemas.event),
     defaults: defaultPlaytestRegistryDefaults(),
     metricDefinitions: [
       {
@@ -106,7 +147,7 @@ const RUBRIC =
 const OBSERVATION =
   JSON.stringify({
     schemaVersion: 1,
-    schemaHash: "d".repeat(64),
+    schemaHash: playtestManifestHash(OBSERVATION_SCHEMA),
     mode: "headless",
     cohort: "exploratory",
     visibilityMode: "structured",
@@ -143,7 +184,7 @@ function approval(
     playtestConfigHash: digest(configBytes),
     adapterImageDigest: `ghcr.io/owner/fixture@sha256:${"b".repeat(64)}`,
     workingDirectory: ".",
-    adapterCommand: ["node", "adapter.mjs"],
+    adapterCommand: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND],
     allowedScenarios: ["tutorial"],
     allowedPolicies: ["random"],
     limits: {
@@ -193,6 +234,8 @@ function setupSampleBenchmark(): {
   mkdirSync(autodev(root));
   for (const filename of [
     "playtest.config.json",
+    "playtest.binding.json",
+    "node-fixture-game.mjs",
     "playtest.observation.json",
     "playtest.rubric.json",
     "playtest.benchmark.json"
@@ -223,6 +266,14 @@ function setup(): { readonly root: string; readonly cleanup: () => void } {
     OBSERVATION
   );
   writeFileSync(integration_file(root, "playtest.rubric.json"), RUBRIC);
+  writeFileSync(
+    integration_file(root, "playtest.binding.json"),
+    JSON.stringify(ADAPTER_BINDING) + "\n"
+  );
+  writeFileSync(
+    integration_file(root, "node-fixture-game.mjs"),
+    "export function createFixtureGame() { return {}; }\n"
+  );
   return {
     root,
     cleanup: () => rmSync(root, { recursive: true, force: true })
@@ -263,11 +314,84 @@ test("approved config verifies exact raw-byte digest and bound settings without 
   try {
     const result = loadApprovedPlaytestDefinition(approval(fixture.root));
     assert.equal(result.configHash, approval(fixture.root).playtestConfigHash);
-    assert.deepEqual(result.configuration.adapter.command, [
-      "node",
-      "adapter.mjs"
-    ]);
+    assert.deepEqual(
+      result.configuration.adapter.command,
+      PLAYTESTS_GENERIC_ADAPTER_COMMAND
+    );
     assert.deepEqual(result.configuration.scenarios, ["tutorial", "edge"]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("approved runtime refuses handwritten protocol commands even when exactly approved", () => {
+  const fixture = setup();
+  try {
+    const legacyConfig = {
+      ...CONFIG,
+      adapter: { transport: "stdio-jsonl", command: ["node", "adapter.mjs"] }
+    };
+    const configBytes = JSON.stringify(legacyConfig) + "\n";
+    writeFileSync(
+      integration_file(fixture.root, "playtest.config.json"),
+      configBytes
+    );
+    expectCategory(
+      () =>
+        loadApprovedPlaytestDefinition(
+          approval(
+            fixture.root,
+            { adapterCommand: ["node", "adapter.mjs"] },
+            configBytes
+          )
+        ),
+      "command-mismatch"
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("approved runtime verifies the observation contract against the binding schema", () => {
+  const fixture = setup();
+  try {
+    const binding = JSON.parse(
+      readFileSync(
+        integration_file(fixture.root, "playtest.binding.json"),
+        "utf8"
+      )
+    ) as typeof ADAPTER_BINDING;
+    const changed = {
+      ...binding,
+      schemas: {
+        ...binding.schemas,
+        observation: {
+          ...binding.schemas.observation,
+          properties: { room: { type: "number" } }
+        }
+      }
+    };
+    writeFileSync(
+      integration_file(fixture.root, "playtest.binding.json"),
+      JSON.stringify(changed) + "\n"
+    );
+    expectCategory(
+      () => loadApprovedPlaytestDefinition(approval(fixture.root)),
+      "target-file-invalid"
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("approved runtime refuses an absent adapter binding before Docker setup", () => {
+  const fixture = setup();
+  try {
+    unlinkSync(integration_file(fixture.root, "playtest.binding.json"));
+    expectCategory(
+      () => loadApprovedPlaytestDefinition(approval(fixture.root)),
+      "target-file-unavailable"
+    );
   } finally {
     fixture.cleanup();
   }
@@ -280,7 +404,7 @@ test("approved target bundle loads its rubric registry and content-hashed benchm
       approval(
         fixture.root,
         {
-          adapterCommand: ["node", "node-fixture-adapter.mjs"],
+          adapterCommand: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND],
           allowedScenarios: ["tutorial"],
           allowedPolicies: ["random"],
           limits: { ...approval(fixture.root).limits, critiqueCount: 0 }
@@ -325,7 +449,7 @@ test("approved target bundle refuses a stale benchmark content hash", () => {
           approval(
             fixture.root,
             {
-              adapterCommand: ["node", "node-fixture-adapter.mjs"],
+              adapterCommand: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND],
               allowedScenarios: ["tutorial"],
               allowedPolicies: ["random"],
               limits: { ...approval(fixture.root).limits, critiqueCount: 0 }
@@ -350,7 +474,7 @@ test("approved target bundle rejects a well-hashed benchmark for another workspa
           approval(
             fixture.root,
             {
-              adapterCommand: ["node", "node-fixture-adapter.mjs"],
+              adapterCommand: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND],
               allowedScenarios: ["tutorial"],
               allowedPolicies: ["random"],
               limits: { ...approval(fixture.root).limits, critiqueCount: 0 }

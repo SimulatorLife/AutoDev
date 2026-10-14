@@ -1,11 +1,12 @@
 /** MCP-side client for the single Runtime Control API run owner. */
-import type {
-  ControlApiPlaytestingActiveRunsResponse,
-  ControlApiPlaytestingCapabilitiesResponse,
-  ControlApiPlaytestingComparisonDecisionResponse,
-  ControlApiPlaytestingRunCancellationResponse,
-  ControlApiPlaytestingRunStartedResponse,
-  ControlApiPlaytestingRunStatusResponse
+import {
+  type ControlApiPlaytestingActiveRunsResponse,
+  type ControlApiPlaytestingCapabilitiesResponse,
+  type ControlApiPlaytestingComparisonDecisionResponse,
+  type ControlApiPlaytestingRunCancellationResponse,
+  type ControlApiPlaytestingRunStartedResponse,
+  type ControlApiPlaytestingRunStatusResponse,
+  PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS
 } from "@simulatorlife/autodev-core";
 
 import { PlaytestSandboxApprovalError } from "./docker-sandbox.ts";
@@ -27,7 +28,6 @@ const SESSION_HEADER = "x-autodev-playtest-session";
 const ACTOR_PATTERN = /^[A-Za-z0-9@._:+-]{1,128}$/u;
 const PLAYTEST_CONTROL_ROLES = new Set([
   "playtester",
-  "playtest-analyst",
   "validator",
   "root",
   "operator"
@@ -40,8 +40,7 @@ export interface PlaytestControlApiRunClientOptions {
   readonly baseUrl: string;
   readonly serviceToken: string;
   readonly actor: string;
-  readonly sessionRole:
-    "playtester" | "playtest-analyst" | "validator" | "root" | "operator";
+  readonly sessionRole: "playtester" | "validator" | "root" | "operator";
   readonly fetcher?: typeof fetch;
 }
 
@@ -214,9 +213,12 @@ export function createPlaytestControlApiRunClient(
      * eligibility, cap and receipt decisions.
      */
     async prepareCrossSessionReview(session, workspaceId, episodeIds) {
-      if (episodeIds.length === 0) {
+      if (
+        episodeIds.length === 0 ||
+        episodeIds.length > PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS
+      ) {
         throw new PlaytestMcpValidationError(
-          "A cross-session analysis must name at least one session."
+          `Packet preparation requires 1-${String(PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS)} distinct sessions.`
         );
       }
       const response = await request(
@@ -230,14 +232,26 @@ export function createPlaytestControlApiRunClient(
         "autodev-control-playtesting-analysis-v1",
         workspaceId
       );
-      if (!Array.isArray(data.packets) || !Array.isArray(data.receipts)) {
+      if (
+        data.operation !== "prepare" ||
+        !Array.isArray(data.packets) ||
+        !Array.isArray(data.receipts)
+      ) {
         throw new PlaytestMcpUnavailableError(
           "The Runtime Control API returned an invalid analysis response."
         );
       }
-      return data as unknown as Awaited<
-        ReturnType<PlaytestRunControl["prepareCrossSessionReview"]>
-      >;
+      return {
+        packets: data.packets as Awaited<
+          ReturnType<PlaytestRunControl["prepareCrossSessionReview"]>
+        >["packets"],
+        receipts: data.receipts as Awaited<
+          ReturnType<PlaytestRunControl["prepareCrossSessionReview"]>
+        >["receipts"],
+        budget: data.budget as Awaited<
+          ReturnType<PlaytestRunControl["prepareCrossSessionReview"]>
+        >["budget"]
+      };
     },
     async recordComparisonDecision(
       session,
@@ -413,7 +427,17 @@ export function createPlaytestControlApiRunClient(
 export function playtestControlApiRunClientFromEnvironment(
   env: NodeJS.ProcessEnv = process.env,
   fetcher?: typeof fetch
-): PlaytestRunControl {
+): PlaytestRunControl | null {
+  const sessionRole = env.AUTODEV_PLAYTEST_CONTROL_API_ROLE?.trim() ?? "";
+  const configuredMcpRole = env.AUTODEV_PLAYTEST_ROLE?.trim() ?? "";
+  if (configuredMcpRole === "playtest-analyst") {
+    if (sessionRole && sessionRole !== configuredMcpRole) {
+      throw new PlaytestMcpUnavailableError(
+        "The configured Playtesting MCP role does not match its Control API session role."
+      );
+    }
+    return null;
+  }
   const configuredUrl = env.AUTODEV_CONTROL_API_BASE_URL?.trim();
   const host = env.AUTODEV_CONTROL_API_LISTEN_HOST?.trim();
   const port = env.AUTODEV_CONTROL_API_LISTEN_PORT?.trim() || "4101";
@@ -425,8 +449,6 @@ export function playtestControlApiRunClientFromEnvironment(
   }
   const serviceToken = env.AUTODEV_PLAYTEST_CONTROL_API_TOKEN?.trim() ?? "";
   const actor = env.AUTODEV_PLAYTEST_CONTROL_API_ACTOR?.trim() ?? "";
-  const sessionRole = env.AUTODEV_PLAYTEST_CONTROL_API_ROLE?.trim() ?? "";
-  const configuredMcpRole = env.AUTODEV_PLAYTEST_ROLE?.trim() ?? "";
   if (
     !serviceToken ||
     !actor ||

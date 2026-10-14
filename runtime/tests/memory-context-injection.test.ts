@@ -3,14 +3,11 @@ import test from "node:test";
 
 import type {
   EvidenceReference,
-  MemoryExpiredExperienceRequest,
   MemoryPacket,
   MemoryReadContext,
   MemoryRecord,
   MemoryRepository,
-  MemorySearchHit,
-  MemorySearchRequest,
-  MemoryVersionedUpdate
+  MemorySearchHit
 } from "@simulatorlife/autodev-core";
 
 import {

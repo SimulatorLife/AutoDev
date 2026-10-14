@@ -7,6 +7,8 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import {
+  aggregatePlaytestCrossSessionMetrics,
+  assertPlaytestCrossSessionMetricAggregation,
   assertPlaytestEvidencePacket,
   buildPlaytestCoverageManifestDraft,
   buildPlaytestEvidencePacket,
@@ -23,15 +25,19 @@ import {
   playtestCoverageManifestHashInput,
   playtestCoveragePlanForRegistry,
   playtestCrossSessionInventoryHashInput,
+  type PlaytestCrossSessionSynthesis,
   type PlaytestDimensionRubric,
   type PlaytestEpisode,
   type PlaytestEvidenceTraceStep,
   type PlaytestFinding,
   playtestFindingIdentityHashInput,
   playtestReviewOutcomeKey,
+  type PlaytestRunAssignmentOutcome,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
   PLAYTESTS_BATCH_SCHEMA,
   PLAYTESTS_COMPARISON_SCHEMA,
+  PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA,
+  PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_MEASUREMENT_VERSION,
   type PlaytestSessionReview,
@@ -42,6 +48,10 @@ import type { WorkspaceCatalogRead } from "@simulatorlife/autodev-data";
 import { PlaytestSourceUnavailableError } from "@simulatorlife/autodev-data/playtesting";
 import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
 
+import type {
+  PlaytestAnalystProcess,
+  PlaytestAnalystProcessResult
+} from "../src/playtesting/analyst-process.ts";
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
 import {
   PlaytestSandboxUnavailableError,
@@ -53,6 +63,7 @@ import {
   createPlaytestRunControl,
   type PlaytestingRepositoryOps,
   type PlaytestMcpOptions,
+  type PlaytestMcpServer,
   type PlaytestMcpSession,
   type PlaytestRunControl,
   type PlaytestRunOwner
@@ -66,6 +77,34 @@ import { createSeededRandomPlaytestPolicy } from "../src/playtesting/policies.ts
 import { fixturePlaytestMetricRegistry } from "./support/playtesting-metric-registry.ts";
 
 const WORKSPACE_ID = "owner/game";
+
+function analystMetricAggregation(
+  episodeIds: readonly string[],
+  analysisId = "analysis-1"
+) {
+  const sourcePackets = episodeIds.map((episodeId, index) => ({
+    episodeId,
+    batchId: `batch-${String(index + 1)}`,
+    packetId: `packet-${String(index + 1)}`
+  }));
+  return {
+    schema: PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA,
+    workspaceId: WORKSPACE_ID,
+    analysisId,
+    status:
+      episodeIds.length >= 2
+        ? ("no-applicable-metrics" as const)
+        : ("insufficient-packets" as const),
+    method: "ratio-of-sums-within-identical-stratum-v1" as const,
+    sourcePackets,
+    rows: [],
+    omittedMetrics: [],
+    reason:
+      episodeIds.length >= 2
+        ? ("no-applicable-metric-rows" as const)
+        : ("fewer-than-two-packets" as const)
+  };
+}
 
 function singleAssignmentRequest(
   scenario = "tutorial",
@@ -86,12 +125,37 @@ function singleAssignmentRequest(
 }
 
 type TestPlaytestMcpOptions = Omit<PlaytestMcpOptions, "playtestRunControl"> & {
-  readonly playtestRunControl?: PlaytestRunControl;
+  readonly playtestRunControl?: PlaytestRunControl | null;
 };
 
-function createTestPlaytestMcpServer(options: TestPlaytestMcpOptions) {
+type TestPlaytestMcpServerWithControl = PlaytestMcpServer & {
+  readonly playtestRunControl: PlaytestRunControl;
+};
+type TestPlaytestMcpServerWithoutControl = PlaytestMcpServer & {
+  readonly playtestRunControl: null;
+};
+
+function createTestPlaytestMcpServer(
+  options: Omit<TestPlaytestMcpOptions, "playtestRunControl">
+): TestPlaytestMcpServerWithControl;
+function createTestPlaytestMcpServer(
+  options: TestPlaytestMcpOptions & {
+    readonly playtestRunControl: PlaytestRunControl;
+  }
+): TestPlaytestMcpServerWithControl;
+function createTestPlaytestMcpServer(
+  options: TestPlaytestMcpOptions & { readonly playtestRunControl: null }
+): TestPlaytestMcpServerWithoutControl;
+function createTestPlaytestMcpServer(
+  options: TestPlaytestMcpOptions
+): PlaytestMcpServer;
+function createTestPlaytestMcpServer(
+  options: TestPlaytestMcpOptions
+): PlaytestMcpServer {
   const playtestRunControl =
-    options.playtestRunControl ?? createPlaytestRunControl(options);
+    options.playtestRunControl === undefined
+      ? createPlaytestRunControl(options)
+      : options.playtestRunControl;
   return createPlaytestMcpServer({ ...options, playtestRunControl });
 }
 
@@ -165,6 +229,7 @@ function fixturePreparedSandbox(
     workspaceId: approval.workspaceId,
     checkoutRoot: approval.checkoutRoot,
     checkoutSha: approval.buildSha,
+    gameBuild: approval.gameBuild,
     imageDigest: approval.adapterImageDigest,
     workingDirectory: approval.workingDirectory,
     command: approval.adapterCommand,
@@ -420,7 +485,7 @@ async function triggerCancellation(
   }
 }
 
-test("playtest stdio requires explicit trusted session context", () => {
+test("playtest stdio requires explicit trusted session context", async () => {
   assert.throws(() => playtestStdioConfiguration({}), /session context/);
   assert.throws(
     () =>
@@ -439,6 +504,106 @@ test("playtest stdio requires explicit trusted session context", () => {
     AUTODEV_PLAYTEST_TASK_ID: "task-1",
     AUTODEV_PLAYTEST_RUN_ID: "run-1"
   };
+  const analystEnv = {
+    ...validEnv,
+    AUTODEV_PLAYTEST_ROLE: "playtest-analyst",
+    AUTODEV_PLAYTEST_ANALYSIS_ID: "analysis-1",
+    AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS: JSON.stringify(["episode-1"]),
+    AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION: JSON.stringify(
+      analystMetricAggregation(["episode-1"])
+    )
+  };
+  assert.throws(
+    () =>
+      playtestStdioConfiguration({
+        ...analystEnv,
+        AUTODEV_PLAYTEST_ANALYSIS_ID: undefined
+      }),
+    /session context/
+  );
+  const analystConfig = playtestStdioConfiguration(analystEnv);
+  assert.deepEqual(analystConfig.selectedEpisodeIds, ["episode-1"]);
+  assert.equal(analystConfig.analysisId, "analysis-1");
+  assert.deepEqual(
+    analystConfig.metricAggregation,
+    analystMetricAggregation(["episode-1"])
+  );
+  const analystSession = await Promise.resolve(
+    playtestMcpSessionProvider(analystConfig).current()
+  );
+  assert.deepEqual(analystSession.selectedEpisodeIds, ["episode-1"]);
+  assert.equal(analystSession.analysisId, "analysis-1");
+  assert.deepEqual(
+    analystSession.metricAggregation,
+    analystMetricAggregation(["episode-1"])
+  );
+  assert.throws(
+    () =>
+      playtestStdioConfiguration({
+        ...analystEnv,
+        AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS: undefined
+      }),
+    /analyst session selection/
+  );
+  assert.throws(
+    () =>
+      playtestStdioConfiguration({
+        ...analystEnv,
+        AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION: undefined
+      }),
+    /analyst session selection/
+  );
+  for (const selectedEpisodeIds of [
+    "not-json",
+    JSON.stringify([]),
+    JSON.stringify(["episode-1", "episode-1"]),
+    JSON.stringify(["episode with spaces"]),
+    JSON.stringify(
+      Array.from({ length: 41 }, (_, index) => `episode-${String(index)}`)
+    )
+  ]) {
+    assert.throws(
+      () =>
+        playtestStdioConfiguration({
+          ...analystEnv,
+          AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS: selectedEpisodeIds
+        }),
+      /analyst session selection/
+    );
+  }
+  const maximumSelection = Array.from({ length: 40 }, (_, index) => {
+    const prefix = `episode-${String(index)}-`;
+    return `${prefix}${"x".repeat(256 - prefix.length)}`;
+  });
+  assert.deepEqual(
+    playtestStdioConfiguration({
+      ...analystEnv,
+      AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS: JSON.stringify(maximumSelection),
+      AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION: JSON.stringify(
+        analystMetricAggregation(maximumSelection)
+      )
+    }).selectedEpisodeIds,
+    maximumSelection
+  );
+  assert.throws(
+    () =>
+      assertPlaytestStdioSessionBinding(
+        { ...analystConfig, selectedEpisodeIds: ["episode-1", "episode-1"] },
+        {
+          status: "valid",
+          workspaces: [
+            {
+              id: WORKSPACE_ID,
+              baseBranch: "main",
+              enabled: true,
+              agentRoles: null
+            }
+          ]
+        },
+        new Set(["playtest-analyst"])
+      ),
+    /analyst session selection/
+  );
   const config = playtestStdioConfiguration(validEnv);
   assert.deepEqual(config, {
     workspaceId: WORKSPACE_ID,
@@ -769,6 +934,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
 
   try {
     let currentRole = "playtest-analyst";
+    let selectedEpisodeIds: readonly string[] = [];
     let mismatchNegotiatedSchemaHash = false;
     let malformedTraceEventStep = false;
     let malformedFrameStep = false;
@@ -780,6 +946,13 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     let capturedMeasurementVersion: string | null = null;
     let capturedEnvironmentHash: string | null = null;
     let capturedRuntimeVersion: string | null = null;
+    const analystDispatch: {
+      input?: Parameters<
+        NonNullable<PlaytestMcpOptions["launchAnalystProcess"]>
+      >[0];
+      finish?: (result: PlaytestAnalystProcessResult) => void;
+    } = {};
+    const latestReviews = new Map<string, PlaytestSessionReview>();
 
     const mockRepo: PlaytestingRepositoryOps = {
       getBatch: async (_workspaceId, batchId) =>
@@ -809,7 +982,8 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       listHumanStudies: async () => ({ rows: [], total: 0, nextCursor: null }),
       getEpisode: async (_ws, epId) =>
         insertedEpisodes.find((e) => e.episodeId === epId) ?? null,
-      getLatestReviewForEpisode: async () => null,
+      getLatestReviewForEpisode: async (_workspaceId, episodeId) =>
+        latestReviews.get(episodeId) ?? null,
       getFinding: async () => null,
       getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
@@ -821,6 +995,13 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       insertEpisode: async (episode) => {
         insertedEpisodes.push(episode);
       },
+      insertCrossSessionSynthesis: async () => {},
+      getCrossSessionSynthesisForAnalysis: async () => null,
+      listCrossSessionSyntheses: async () => ({
+        rows: [],
+        total: 0,
+        nextCursor: null
+      }),
       insertReview: async () => {},
       insertFinding: async () => {}
     };
@@ -830,13 +1011,30 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
         current: () => ({
           workspaceId: WORKSPACE_ID,
           role: currentRole,
-          actor: "actor-1"
+          actor: "actor-1",
+          selectedEpisodeIds
         })
       },
       artifactStoreForWorkspace: () => artifacts,
       approvalRepository: approvalRepo,
       playtestRepository: mockRepo,
       readWorkspaceCatalog: enabledWorkspaceCatalog(),
+      launchAnalystProcess: (input) => {
+        analystDispatch.input = input;
+        return {
+          completion: new Promise((resolve) => {
+            analystDispatch.finish = resolve;
+          }),
+          terminate() {
+            analystDispatch.finish?.({
+              exitCode: null,
+              signal: "SIGTERM",
+              timedOut: false,
+              launchFailed: false
+            });
+          }
+        } satisfies PlaytestAnalystProcess;
+      },
       prepareSandboxHandler: (approval) => {
         const prepared = fixturePreparedSandbox(approval);
         return {
@@ -1028,7 +1226,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     );
 
     // Save active approval
-    const boundedApproval = createApproval();
+    const boundedApproval = createApproval({ checkoutRoot: tmpRoot });
     approvalRepo.approve(
       {
         ...boundedApproval,
@@ -1113,6 +1311,13 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       ),
       ["ep-run-1", "ep-run-seed-exact-2"]
     );
+    assert.deepEqual(
+      completedRun.result.outcomes.map(
+        (outcome: PlaytestRunAssignmentOutcome) => outcome.gameOutcome
+      ),
+      ["win", "win"],
+      "the owner reports each game's classified outcome separately from execution status"
+    );
     const unrecognizedViewer = {
       workspaceId: WORKSPACE_ID,
       role: "viewer",
@@ -1130,7 +1335,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     );
     await assert.rejects(
       Promise.resolve().then(() =>
-        server.playtestRunControl.listActiveRuns(
+        server.playtestRunControl!.listActiveRuns(
           unrecognizedViewer,
           WORKSPACE_ID
         )
@@ -1156,6 +1361,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       []
     );
     currentRole = "playtest-analyst";
+    selectedEpisodeIds = [reviewedEpisodeId];
     const preparedReview = await (server as any)._registeredTools[
       "playtest.prepareReview"
     ].handler({ episodeId: reviewedEpisodeId });
@@ -1228,6 +1434,101 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       preparedReviewPayload.packet.crossSessionContext.selectionSeed,
       expectedSelectionSeed
     );
+
+    const operatorSession: PlaytestMcpSession = {
+      workspaceId: WORKSPACE_ID,
+      role: "operator",
+      actor: "console-operator"
+    };
+    const analystOwner = server.playtestRunControl as PlaytestRunOwner;
+    const dispatchSelection = [
+      reviewedEpisodeId,
+      ...Array.from(
+        { length: 39 },
+        (_, index) => `unknown-episode-${index + 1}`
+      )
+    ];
+    const dispatched = await analystOwner.dispatchCrossSessionReview(
+      operatorSession,
+      WORKSPACE_ID,
+      dispatchSelection
+    );
+    assert.ok(dispatched.run);
+    assert.equal(dispatched.run.status, "running");
+    assert.deepEqual(dispatched.run.requestedEpisodeIds, dispatchSelection);
+    assert.equal(dispatched.receipts.length, 39);
+    assert.deepEqual(analystDispatch.input?.episodeIds, [reviewedEpisodeId]);
+    assert.equal(
+      analystDispatch.input?.metricAggregation.status,
+      "insufficient-packets"
+    );
+    assert.deepEqual(
+      analystDispatch.input?.metricAggregation.sourcePackets.map(
+        (source) => source.episodeId
+      ),
+      [reviewedEpisodeId]
+    );
+    assert.throws(
+      () =>
+        analystOwner.dispatchCrossSessionReview(operatorSession, WORKSPACE_ID, [
+          ...dispatchSelection,
+          "overflow-episode"
+        ]),
+      /Analyst dispatch requires 1-40 distinct sessions/u
+    );
+    assert.equal(
+      dispatched.run.packets[0]?.packetId,
+      preparedReviewPayload.packet.packetId
+    );
+    assert.equal(dispatched.run.budget[0]?.reserved, 1);
+    assert.equal(dispatched.run.budget[0]?.remaining, 4);
+    const initialAnalystStatus = await analystOwner.listAnalystReviewRuns(
+      operatorSession,
+      WORKSPACE_ID
+    );
+    assert.equal(
+      initialAnalystStatus.runs[0]?.analysisId,
+      dispatched.run.analysisId
+    );
+    assert.deepEqual(initialAnalystStatus.syntheses, []);
+    latestReviews.set(reviewedEpisodeId, {
+      episodeId: reviewedEpisodeId,
+      reviewId: "review-console-dispatch-1",
+      evidencePacket: {
+        packetId: preparedReviewPayload.packet.packetId,
+        artifact: preparedReviewPayload.packetArtifact
+      },
+      status: "hypothesis"
+    } as PlaytestSessionReview);
+    const finishAnalystProcess = analystDispatch.finish;
+    assert.ok(finishAnalystProcess);
+    finishAnalystProcess({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      launchFailed: false
+    });
+    let completedAnalysis = (
+      await analystOwner.listAnalystReviewRuns(operatorSession, WORKSPACE_ID)
+    ).runs[0];
+    for (
+      let attempt = 0;
+      attempt < 10 && completedAnalysis?.status === "running";
+      attempt += 1
+    ) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      completedAnalysis = (
+        await analystOwner.listAnalystReviewRuns(operatorSession, WORKSPACE_ID)
+      ).runs[0];
+    }
+    assert.equal(completedAnalysis?.status, "completed");
+    assert.deepEqual(completedAnalysis?.reviews, [
+      {
+        episodeId: reviewedEpisodeId,
+        reviewId: "review-console-dispatch-1",
+        status: "hypothesis"
+      }
+    ]);
     currentRole = "playtester";
     assert.equal(
       insertedBatches[1].measurementVersion,
@@ -1304,6 +1605,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       "trace-malformed"
     );
     currentRole = "playtest-analyst";
+    selectedEpisodeIds = ["ep-run-seed-malformed-trace"];
     const unavailableReviewPacket = await (server as any)._registeredTools[
       "playtest.prepareReview"
     ].handler({ episodeId: "ep-run-seed-malformed-trace" });
@@ -1413,6 +1715,13 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
         if (failEpisodeInsert) throw new Error("ClickHouse is unreachable");
         insertedEpisodes.push(episode);
       },
+      insertCrossSessionSynthesis: async () => {},
+      getCrossSessionSynthesisForAnalysis: async () => null,
+      listCrossSessionSyntheses: async () => ({
+        rows: [],
+        total: 0,
+        nextCursor: null
+      }),
       insertReview: async () => {},
       insertFinding: async () => {}
     };
@@ -1665,6 +1974,13 @@ test("playtest MCP: Docker preflight and adapter reset failures are never comple
         insertEpisode: async (episode) => {
           insertedEpisodes.push(episode);
         },
+        insertCrossSessionSynthesis: async () => {},
+        getCrossSessionSynthesisForAnalysis: async () => null,
+        listCrossSessionSyntheses: async () => ({
+          rows: [],
+          total: 0,
+          nextCursor: null
+        }),
         insertReview: async () => {},
         insertFinding: async () => {}
       };
@@ -1719,6 +2035,7 @@ test("playtest MCP: Docker preflight and adapter reset failures are never comple
       assert.equal(finished.result.outcomes.length, 1);
       assert.equal(finished.result.outcomes[0]!.state, "infrastructure-failed");
       assert.equal(finished.result.outcomes[0]!.episodeId, null);
+      assert.equal(finished.result.outcomes[0]!.gameOutcome, null);
       assert.equal(finished.result.counts.infrastructureFailed, 1);
       assert.equal(finished.error, null);
       assert.equal(
@@ -1899,6 +2216,13 @@ test("playtest MCP serializes concurrent assignment reservations before checking
         batchRows.push(batch);
       },
       insertEpisode: async () => {},
+      insertCrossSessionSynthesis: async () => {},
+      getCrossSessionSynthesisForAnalysis: async () => null,
+      listCrossSessionSyntheses: async () => ({
+        rows: [],
+        total: 0,
+        nextCursor: null
+      }),
       insertReview: async () => {},
       insertFinding: async () => {}
     };
@@ -2040,6 +2364,13 @@ test("playtest batch remains cancellable while a completed assignment persists a
         insertedEpisodes.push(episode);
         if (insertedEpisodes.length === 1) notifyFirstPersisted();
       },
+      insertCrossSessionSynthesis: async () => {},
+      getCrossSessionSynthesisForAnalysis: async () => null,
+      listCrossSessionSyntheses: async () => ({
+        rows: [],
+        total: 0,
+        nextCursor: null
+      }),
       insertReview: async () => {},
       insertFinding: async () => {}
     };
@@ -2223,6 +2554,13 @@ test("review sampling selects complete sessions only and preserves truncated ass
       insertEpisode: async (episode) => {
         insertedEpisodes.push(episode);
       },
+      insertCrossSessionSynthesis: async () => {},
+      getCrossSessionSynthesisForAnalysis: async () => null,
+      listCrossSessionSyntheses: async () => ({
+        rows: [],
+        total: 0,
+        nextCursor: null
+      }),
       insertReview: async () => {},
       insertFinding: async () => {}
     };
@@ -2386,6 +2724,13 @@ test("playtest MCP: per-run cancellation and approval/workspace revocation abort
         insertEpisode: async (episode) => {
           insertedEpisodes.push(episode);
         },
+        insertCrossSessionSynthesis: async () => {},
+        getCrossSessionSynthesisForAnalysis: async () => null,
+        listCrossSessionSyntheses: async () => ({
+          rows: [],
+          total: 0,
+          nextCursor: null
+        }),
         insertReview: async () => {},
         insertFinding: async () => {}
       };
@@ -2707,6 +3052,13 @@ test("run status restores interrupted batch progress from Data and durably close
     getFinding: async () => null,
     getLatestFindingByFingerprint: async () => null,
     getLatestReview: async () => null,
+    insertCrossSessionSynthesis: async () => {},
+    getCrossSessionSynthesisForAnalysis: async () => null,
+    listCrossSessionSyntheses: async () => ({
+      rows: [],
+      total: 0,
+      nextCursor: null
+    }),
     getLatestComparison: async () => null,
     insertComparison: async () => {},
     insertBatch: async (batch) => {
@@ -2745,25 +3097,28 @@ test("run status restores interrupted batch progress from Data and durably close
     assert.equal(recovered.status, "failed");
     assert.equal(recovered.error?.code, "playtest_run_interrupted");
     const result = recovered.result as {
-      readonly outcomes: readonly PlaytestAssignmentOutcome[];
+      readonly outcomes: readonly PlaytestRunAssignmentOutcome[];
       readonly counts: PlaytestCompletionCounts;
     };
     assert.deepEqual(
       result.outcomes.map((outcome) => ({
         assignmentId: outcome.assignmentId,
         episodeId: outcome.episodeId,
-        state: outcome.state
+        state: outcome.state,
+        gameOutcome: outcome.gameOutcome
       })),
       [
         {
           assignmentId: "a-0001",
           episodeId: recordedEpisode.episodeId,
-          state: "completed"
+          state: "completed",
+          gameOutcome: recordedEpisode.outcome
         },
         {
           assignmentId: "a-0002",
           episodeId: null,
-          state: "infrastructure-failed"
+          state: "infrastructure-failed",
+          gameOutcome: null
         }
       ]
     );
@@ -2892,6 +3247,13 @@ test("playtest MCP: batch-only contract rejects unapproved cells and over-budget
         insertedBatches.push(batch);
       },
       insertEpisode: async () => {},
+      insertCrossSessionSynthesis: async () => {},
+      getCrossSessionSynthesisForAnalysis: async () => null,
+      listCrossSessionSyntheses: async () => ({
+        rows: [],
+        total: 0,
+        nextCursor: null
+      }),
       insertReview: async () => {},
       insertFinding: async () => {}
     };
@@ -3112,6 +3474,13 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
       insertEpisode: async (episode) => {
         insertedEpisodes.push(episode);
       },
+      insertCrossSessionSynthesis: async () => {},
+      getCrossSessionSynthesisForAnalysis: async () => null,
+      listCrossSessionSyntheses: async () => ({
+        rows: [],
+        total: 0,
+        nextCursor: null
+      }),
       insertReview: async () => {},
       insertFinding: async () => {}
     };
@@ -3368,6 +3737,87 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
   }
 });
 
+test("analyst status can restore persisted cross-session syntheses without task memory", async () => {
+  const synthesis = {
+    schema: PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
+    synthesisId: "synthesis-restored-1",
+    version: 1 as const,
+    analysisId: "analysis-restored-1",
+    workspaceId: WORKSPACE_ID,
+    authorRole: "playtest-analyst" as const,
+    authorId: "analyst-1",
+    modelId: null,
+    modelRevision: null,
+    promptHash: null,
+    generatedAt: "2026-10-14T12:00:00.000Z",
+    status: "hypothesis" as const,
+    summary: "The warning recurs before progress stops.",
+    packetEligibleEpisodeIds: ["episode-1", "episode-2"],
+    contributors: [
+      { episodeId: "episode-1", batchId: "batch-1", packetId: "packet-1" },
+      { episodeId: "episode-2", batchId: "batch-2", packetId: "packet-2" }
+    ],
+    metricAggregation: {
+      schema: PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA,
+      workspaceId: WORKSPACE_ID,
+      analysisId: "analysis-restored-1",
+      status: "no-applicable-metrics",
+      method: "ratio-of-sums-within-identical-stratum-v1",
+      sourcePackets: [
+        { episodeId: "episode-1", batchId: "batch-1", packetId: "packet-1" },
+        { episodeId: "episode-2", batchId: "batch-2", packetId: "packet-2" }
+      ],
+      rows: [],
+      omittedMetrics: [],
+      reason: "no-applicable-metric-rows"
+    },
+    claims: [
+      {
+        kind: "pattern" as const,
+        text: "The same warning precedes no progress in both sessions.",
+        evidenceRefs: [
+          {
+            episodeId: "episode-1",
+            packetId: "packet-1",
+            locator: { kind: "event" as const, id: "event-1", step: 2 }
+          },
+          {
+            episodeId: "episode-2",
+            packetId: "packet-2",
+            locator: { kind: "event" as const, id: "event-2", step: 2 }
+          }
+        ]
+      }
+    ],
+    experiments: []
+  };
+  let requestedWorkspaceId: string | null = null;
+  const repository = {
+    listCrossSessionSyntheses: async (
+      workspaceId: string,
+      options: { readonly limit?: number }
+    ) => {
+      requestedWorkspaceId = workspaceId;
+      assert.equal(options.limit, 20);
+      return { rows: [synthesis], total: 1, nextCursor: null };
+    }
+  } as unknown as PlaytestingRepositoryOps;
+  const owner = createPlaytestRunControl({
+    artifactStoreForWorkspace: () =>
+      new PlaytestArtifactStore({ workspaceId: WORKSPACE_ID }),
+    playtestRepository: repository,
+    readWorkspaceCatalog: enabledWorkspaceCatalog()
+  });
+
+  const status = await owner.listAnalystReviewRuns(
+    { workspaceId: WORKSPACE_ID, role: "operator", actor: "console-operator" },
+    WORKSPACE_ID
+  );
+  assert.equal(requestedWorkspaceId, WORKSPACE_ID);
+  assert.deepEqual(status.runs, []);
+  assert.deepEqual(status.syntheses, [synthesis]);
+});
+
 test("playtest MCP server: submitReview validates evidence against the real stored index and enforces analyst role", async () => {
   const tmpRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mcp-test-"))
@@ -3384,6 +3834,9 @@ test("playtest MCP server: submitReview validates evidence against the real stor
 
   try {
     let currentRole = "playtester";
+    let selectedEpisodeIds: readonly string[] = [];
+    const analysisId = "analysis-cross-session-1";
+    const insertedSyntheses: PlaytestCrossSessionSynthesis[] = [];
     const insertedReviews: PlaytestSessionReview[] = [];
     const insertedFindings: PlaytestFinding[] = [];
     const existingFindingOverrides = new Map<string, PlaytestFinding>();
@@ -3565,7 +4018,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       maxReviewedSessions: 9,
       critiqueBudget: 9,
       surveillanceSessions: 0,
-      discoverySessions: 1,
+      discoverySessions: 2,
       discoverySignal: {
         metricId: "anomaly",
         version: 1,
@@ -3691,6 +4144,62 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       mediaType: PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
       bytes: new TextEncoder().encode(JSON.stringify(packet))
     }).reference;
+    const packetTwo = buildPlaytestEvidencePacket({
+      packetId: "packet-ep-2",
+      episode: episodeTwo,
+      assignment: assignmentManifest.assignments[1],
+      registry: fixturePlaytestMetricRegistry(WORKSPACE_ID, "anomaly", [
+        reviewDimensionRubric,
+        unsupportedVisualRubric
+      ]),
+      coverageManifest,
+      crossSessionCandidates: [
+        { episode: episodeOne, assignment: assignmentManifest.assignments[0]! }
+      ],
+      crossSessionSelectionSeed: "cross-session-fixture-seed-v2",
+      crossSessionInventoryHash: createHash("sha256")
+        .update(
+          playtestCrossSessionInventoryHashInput([
+            {
+              episode: episodeOne,
+              assignment: assignmentManifest.assignments[0]!
+            }
+          ])
+        )
+        .digest("hex"),
+      rubricHash: "f".repeat(64),
+      measurementVersion: PLAYTESTS_MEASUREMENT_VERSION,
+      traceHash: traceWrite.reference.sha256,
+      traceSteps,
+      frameHashes: {},
+      modelId: null,
+      modelRevision: null,
+      promptHash: null,
+      tokenBudget: 32_768,
+      generatedAt: realEpisode.assignedAt
+    });
+    assertPlaytestEvidencePacket(packetTwo);
+    const packetTwoArtifact = artifacts.writeArtifact({
+      mediaType: PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
+      bytes: new TextEncoder().encode(JSON.stringify(packetTwo))
+    }).reference;
+    const metricAggregation = aggregatePlaytestCrossSessionMetrics({
+      workspaceId: WORKSPACE_ID,
+      analysisId,
+      packets: [
+        {
+          episodeId: episodeOne.episodeId,
+          batchId: episodeOne.batchId,
+          packet
+        },
+        {
+          episodeId: episodeTwo.episodeId,
+          batchId: episodeTwo.batchId,
+          packet: packetTwo
+        }
+      ]
+    });
+    selectedEpisodeIds = [episodeOne.episodeId, "ep-does-not-exist"];
     let storedBatch: PlaytestBatch = {
       schema: PLAYTESTS_BATCH_SCHEMA,
       batchId: "batch-1",
@@ -3718,6 +4227,15 @@ test("playtest MCP server: submitReview validates evidence against the real stor
           assignmentId: "a-0001",
           episodeId: episodeOne.episodeId,
           artifact: packetArtifact,
+          failureReason: null,
+          createdAt: realEpisode.assignedAt
+        },
+        {
+          status: "prepared",
+          packetId: packetTwo.packetId,
+          assignmentId: "a-0002",
+          episodeId: episodeTwo.episodeId,
+          artifact: packetTwoArtifact,
           failureReason: null,
           createdAt: realEpisode.assignedAt
         }
@@ -3807,6 +4325,18 @@ test("playtest MCP server: submitReview validates evidence against the real stor
         storedBatch = batch;
       },
       insertEpisode: async () => {},
+      insertCrossSessionSynthesis: async (synthesis) => {
+        insertedSyntheses.push(synthesis);
+      },
+      getCrossSessionSynthesisForAnalysis: async (_workspaceId, taskId) =>
+        insertedSyntheses.find(
+          (synthesis) => synthesis.analysisId === taskId
+        ) ?? null,
+      listCrossSessionSyntheses: async () => ({
+        rows: insertedSyntheses,
+        total: insertedSyntheses.length,
+        nextCursor: null
+      }),
       insertReview: async (review) => {
         insertedReviews.push(review);
       },
@@ -3833,12 +4363,16 @@ test("playtest MCP server: submitReview validates evidence against the real stor
         current: () => ({
           workspaceId: WORKSPACE_ID,
           role: currentRole,
-          actor: "analyst-1"
+          actor: "analyst-1",
+          selectedEpisodeIds,
+          ...(analysisId === undefined ? {} : { analysisId }),
+          ...(metricAggregation === undefined ? {} : { metricAggregation })
         })
       },
       artifactStoreForWorkspace: () => artifacts,
       approvalRepository: approvalRepo,
-      playtestRepository: mockRepo
+      playtestRepository: mockRepo,
+      playtestRunControl: null
     });
 
     const runnerPacket = await (server as any)._registeredTools[
@@ -3860,10 +4394,112 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       ),
       [episodeTwo.episodeId]
     );
+    const analystCrossSession = await (server as any)._registeredTools[
+      "playtest.prepareCrossSessionReview"
+    ].handler({ episodeIds: [episodeOne.episodeId, episodeTwo.episodeId] });
+    assert.equal(
+      parsedMcpError(analystCrossSession).code,
+      "playtest_forbidden"
+    );
     const unselectedPacket = await (server as any)._registeredTools[
       "playtest.prepareReview"
     ].handler({ episodeId: episodeTwo.episodeId });
     assert.equal(parsedMcpError(unselectedPacket).code, "playtest_forbidden");
+    selectedEpisodeIds = [episodeOne.episodeId, episodeTwo.episodeId];
+    assert.doesNotThrow(() =>
+      assertPlaytestCrossSessionMetricAggregation(
+        metricAggregation,
+        WORKSPACE_ID,
+        analysisId,
+        selectedEpisodeIds
+      )
+    );
+    const synthesisTool = (server as any)._registeredTools[
+      "playtest.submitCrossSessionSynthesis"
+    ];
+    const synthesisInput = {
+      summary: "Both sessions show the same warning before progress stops.",
+      claims: [
+        {
+          kind: "pattern",
+          text: "The warning precedes a no-progress action in both packets.",
+          evidenceRefs: [
+            {
+              episodeId: episodeOne.episodeId,
+              packetId: packet.packetId,
+              locator: { kind: "event", id: "evt-real-1", step: 0 }
+            },
+            {
+              episodeId: episodeTwo.episodeId,
+              packetId: packetTwo.packetId,
+              locator: { kind: "event", id: "evt-real-2", step: 1 }
+            }
+          ]
+        }
+      ],
+      experiments: []
+    };
+    const synthesisBeforeSecondPacketRead =
+      await synthesisTool.handler(synthesisInput);
+    assert.equal(
+      parsedMcpError(synthesisBeforeSecondPacketRead).code,
+      "playtest_forbidden"
+    );
+    const secondPreparedPacket = await (server as any)._registeredTools[
+      "playtest.prepareReview"
+    ].handler({ episodeId: episodeTwo.episodeId });
+    assert.equal(secondPreparedPacket.isError, undefined);
+    assert.equal(
+      JSON.parse(secondPreparedPacket.content[0].text).packet.packetId,
+      packetTwo.packetId
+    );
+
+    const synthesisClaim = synthesisInput.claims[0]!;
+    const wrongPacketSynthesis = await synthesisTool.handler({
+      ...synthesisInput,
+      claims: [
+        {
+          ...synthesisClaim,
+          evidenceRefs: [
+            synthesisClaim.evidenceRefs[0]!,
+            {
+              ...synthesisClaim.evidenceRefs[1]!,
+              packetId: packet.packetId
+            }
+          ]
+        }
+      ]
+    });
+    assert.equal(
+      parsedMcpError(wrongPacketSynthesis).code,
+      "playtest_forbidden"
+    );
+    assert.equal(insertedSyntheses.length, 0);
+    const submittedSynthesis = await synthesisTool.handler(synthesisInput);
+    assert.equal(
+      submittedSynthesis.isError,
+      undefined,
+      submittedSynthesis.content[0]?.text
+    );
+    const submittedSynthesisPayload = JSON.parse(
+      submittedSynthesis.content[0].text
+    );
+    assert.equal(submittedSynthesisPayload.status, "hypothesis");
+    assert.deepEqual(
+      submittedSynthesisPayload.metricAggregation,
+      metricAggregation
+    );
+    assert.deepEqual(
+      submittedSynthesisPayload.contributors.map(
+        (contributor: { episodeId: string }) => contributor.episodeId
+      ),
+      [episodeOne.episodeId, episodeTwo.episodeId]
+    );
+    const retrySynthesis = await synthesisTool.handler(synthesisInput);
+    assert.equal(retrySynthesis.isError, undefined);
+    assert.equal(insertedSyntheses.length, 1);
+    assert.equal(insertedSyntheses[0]?.analysisId, "analysis-cross-session-1");
+    selectedEpisodeIds = [episodeOne.episodeId, "ep-does-not-exist"];
     const packetArgs = {
       packetId: packet.packetId,
       packetArtifactId: packetArtifact.artifactId,
@@ -4658,6 +5294,15 @@ test("playtest MCP server: submitReview validates evidence against the real stor
         }
       ]
     };
+    const unselectedSubmission = await submitReview({
+      ...validReviewInput,
+      episodeId: episodeTwo.episodeId
+    });
+    assert.equal(
+      parsedMcpError(unselectedSubmission).code,
+      "playtest_forbidden"
+    );
+
     const contradictoryCompleteness = await submitReview({
       ...validReviewInput,
       experiments: [],
@@ -5195,6 +5840,13 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
       },
       insertBatch: async () => {},
       insertEpisode: async () => {},
+      insertCrossSessionSynthesis: async () => {},
+      getCrossSessionSynthesisForAnalysis: async () => null,
+      listCrossSessionSyntheses: async () => ({
+        rows: [],
+        total: 0,
+        nextCursor: null
+      }),
       insertReview: async () => {},
       insertFinding: async () => {}
     };

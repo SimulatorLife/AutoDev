@@ -2,6 +2,7 @@
 
 import { type NextRequest, NextResponse } from "next/server.js";
 
+import { saveOutcomeForConvergence } from "../../../../src/features/skills/SkillRoleAssignment.ts";
 import {
   patchSkillRoles,
   readControlApiConfig
@@ -15,6 +16,14 @@ const SKILL_NAME_PATTERN = /^[a-zA-Z0-9._-]{1,128}$/u;
 const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const ROLE_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const MAX_FORM_BODY_BYTES = 8000;
+type SaveOutcome =
+  | "conflict"
+  | "validation"
+  | "not-found"
+  | "failed"
+  | "pending"
+  | "not-observed"
+  | "unconfirmed";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,13 +34,8 @@ export const runtime = "nodejs";
  * because this boundary has no client JavaScript to render a failure with, so
  * `save=` is the only channel back to the operator.
  */
-function redirectToSkills(
-  name: string,
-  saveOutcome?: "conflict" | "validation" | "not-found" | "failed"
-): NextResponse {
-  const query = saveOutcome
-    ? `?save=${saveOutcome}&skill=${encodeURIComponent(name)}`
-    : "";
+function redirectToSkills(saveOutcome?: SaveOutcome): NextResponse {
+  const query = saveOutcome ? `?save=${saveOutcome}` : "";
   return new NextResponse(null, {
     status: 303,
     headers: { location: `/skills${query}` }
@@ -40,8 +44,11 @@ function redirectToSkills(
 
 function saveOutcomeForFailure(
   result: Awaited<ReturnType<typeof patchSkillRoles>>
-): "conflict" | "validation" | "not-found" | "failed" {
-  if (result.kind !== "http-error") return "failed";
+): SaveOutcome {
+  if (result.kind !== "http-error") {
+    return result.kind === "unauthorized" ? "failed" : "unconfirmed";
+  }
+  if (result.status >= 500) return "unconfirmed";
   switch (result.code) {
     case "autodev_control_execution_contract_conflict": {
       return "conflict";
@@ -59,18 +66,27 @@ function saveOutcomeForFailure(
   }
 }
 
+function saveOutcomeForResult(
+  result: Awaited<ReturnType<typeof patchSkillRoles>>
+): SaveOutcome | undefined {
+  if (result.kind !== "ok") return saveOutcomeForFailure(result);
+  return saveOutcomeForConvergence(
+    result.data.reconciliation.status.convergence
+  );
+}
+
 export async function POST(
   request: NextRequest,
   context: { params: Promise<{ name: string }> }
 ): Promise<NextResponse> {
   const { name } = await context.params;
   if (!SKILL_NAME_PATTERN.test(name) || !isSameOriginMutation(request)) {
-    return redirectToSkills(name, "failed");
+    return redirectToSkills("failed");
   }
 
   const form = await readStrictUrlEncodedFormBody(request, MAX_FORM_BODY_BYTES);
   if (!form || !form.has("expectedRevision")) {
-    return redirectToSkills(name, "failed");
+    return redirectToSkills("failed");
   }
 
   const expectedRevision = form.get("expectedRevision");
@@ -86,18 +102,16 @@ export async function POST(
     roles.some((role) => !ROLE_PATTERN.test(role)) ||
     new Set(roles).size !== roles.length
   ) {
-    return redirectToSkills(name, "failed");
+    return redirectToSkills("failed");
   }
 
   const config = readControlApiConfig();
-  if (!config) return redirectToSkills(name, "failed");
+  if (!config) return redirectToSkills("failed");
 
   const result = await patchSkillRoles(
     name,
     { expectedRevision, roles },
     config
   );
-  return result.kind === "ok"
-    ? redirectToSkills(name)
-    : redirectToSkills(name, saveOutcomeForFailure(result));
+  return redirectToSkills(saveOutcomeForResult(result));
 }

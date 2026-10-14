@@ -76,7 +76,10 @@ function usage(
     Record<PlaytestAnalysisArmUsage["arm"], Partial<PlaytestAnalysisArmUsage>>
   > = {}
 ): PlaytestAnalysisArmUsage[] {
-  const base: Record<PlaytestAnalysisArmUsage["arm"], PlaytestAnalysisArmUsage> = {
+  const base: Record<
+    PlaytestAnalysisArmUsage["arm"],
+    PlaytestAnalysisArmUsage
+  > = {
     critic: { arm: "critic", measuredCost: 30, critiquesRun: 30 },
     deterministic: { arm: "deterministic", measuredCost: 0, critiquesRun: 0 },
     combined: { arm: "combined", measuredCost: 30, critiquesRun: 30 }
@@ -229,9 +232,6 @@ test("a run that reviewed nothing reports no cost at all", () => {
   // 500 units were genuinely spent, but over zero reviewed episodes the
   // per-episode figure is undefined. Reporting 0 here would claim the spend
   // was free; reporting 500 would invent a denominator.
-  assert.equal(
-    comparison.coverage.critic?.adequatelyReviewedEpisodes,
-    0
-  );
+  assert.equal(comparison.coverage.critic?.adequatelyReviewedEpisodes, 0);
   assert.equal(comparison.costPerReviewedEpisode.critic, null);
 });

@@ -554,7 +554,7 @@ test("the outcome list applies its own filters and refuses a context without a s
   console.log(
     "EVENT ROWS",
     JSON.stringify(
-      [...base.tables.memory_injection_events.values()].map((r) => ({
+      Array.from(base.tables.memory_injection_events.values(), (r) => ({
         id: r.id,
         token: r.correlation_token,
         ws: r.scope_workspace_id,

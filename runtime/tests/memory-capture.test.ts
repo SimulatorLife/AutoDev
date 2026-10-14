@@ -16,15 +16,13 @@ import { join } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import type {
-  ExperienceEnvelope,
-  MemoryActor,
-  MemoryReadContext
-} from "@simulatorlife/autodev-core";
 import {
   EXPERIENCE_OUTCOMES,
   EXPERIENCE_VALIDATION_STATES,
-  MEMORY_EVIDENCE_KINDS
+  type ExperienceEnvelope,
+  MEMORY_EVIDENCE_KINDS,
+  type MemoryActor,
+  type MemoryReadContext
 } from "@simulatorlife/autodev-core";
 
 import {

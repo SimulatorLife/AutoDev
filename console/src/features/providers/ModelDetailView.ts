@@ -27,11 +27,17 @@ import { ENTITY_LINK_CLASS } from "../../components/ui/text-classes.ts";
 import { liveAgentCount } from "../live-agent-count.ts";
 import { ModelToggle } from "./ModelToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
+import {
+  providerModelAvailability,
+  type ProviderModelDiscoveryState
+} from "./provider-model-discovery.ts";
+import { ProviderModelAvailabilityBadge } from "./ProviderModelAvailabilityBadge.ts";
 
 export interface ModelDetailViewProps {
   readonly model: ControlApiModelRecord;
   /** The owning provider's record, or `null` when Providers is unavailable. */
   readonly provider: ControlApiProviderRecord | null;
+  readonly modelDiscovery: ProviderModelDiscoveryState;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
   readonly controlFailed?: boolean | undefined;
 }
@@ -65,9 +71,15 @@ function ProviderRoleState({
 export function ModelDetailView({
   model,
   provider,
+  modelDiscovery,
   runtime,
   controlFailed
 }: ModelDetailViewProps): React.JSX.Element {
+  const availability = providerModelAvailability(
+    modelDiscovery,
+    model.provider,
+    model.id
+  );
   return React.createElement(
     PageBody,
     { feature: "model-detail" },
@@ -123,6 +135,7 @@ export function ModelDetailView({
         { className: SECTION_HEADING_CLASS },
         "Enablement"
       ),
+      React.createElement(ProviderModelAvailabilityBadge, { availability }),
       React.createElement(ModelToggle, {
         model: model.id,
         enablement: model.enablement,

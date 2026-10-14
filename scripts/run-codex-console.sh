@@ -18,7 +18,9 @@
 #   4. Reads only the two optional nonsecret URL overrides the Console server
 #      consumes (AUTODEV_CONTROL_API_BASE_URL, AUTODEV_OPENLIT_USAGE_URL) from
 #      CODEX_HOME/.env if present; anything else in that file is ignored.
-#   5. exec()s next start bound to 127.0.0.1 on AUTODEV_CONSOLE_PORT (default
+#   5. Validates the current Control API and OpenLIT Usage contracts before
+#      serving pages.
+#   6. exec()s next start bound to 127.0.0.1 on AUTODEV_CONSOLE_PORT (default
 #      3300).
 
 set -euo pipefail
@@ -157,6 +159,12 @@ if [[ ! -f "$next_bin" ]]; then
   echo "  Reinstall console/node_modules (the Runtime installer links it)." >&2
   exit 127
 fi
+
+# Never serve a Console whose Runtime or Usage backend cannot satisfy the
+# checked-out contracts. These checks are read-only and do not restart either
+# backend; stale Runtime installs must be refreshed during a safe window.
+"$NODE_BIN" "$repo_root/runtime/src/cli/verify-control-api.ts"
+"$NODE_BIN" "$repo_root/data/src/usage/verify-usage-contract.ts"
 
 export AUTODEV_CONSOLE_PORT="$console_port"
 

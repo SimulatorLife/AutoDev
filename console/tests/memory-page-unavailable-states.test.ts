@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { renderToStaticMarkup } from "react-dom/server";
 import test from "node:test";
+
+import { renderToStaticMarkup } from "react-dom/server";
 
 import MemoryPage from "../app/memory/page.ts";
 

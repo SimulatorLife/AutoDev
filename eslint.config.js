@@ -52,7 +52,10 @@ const baseIgnorePatterns = [
   "**/coverage/**",
   "**/.next/**",
   "**/.next-dev/**",
+  "**/.next-*/**",
   ".tmp/**",
+  "**/.probe/**",
+  "**/.scratch-*/**",
   "**/*.md",
   ".DS_Store",
   "docs/**",
@@ -241,7 +244,10 @@ const architecturePolicies = [
     "runtime-shared",
     "runtime-telemetry"
   ]),
+  // CLI commands consume Core-owned schemas when checking or generating
+  // manifests; they do not reimplement those contracts.
   allowOnly("runtime-cli", [
+    "core",
     "runtime-config",
     "runtime-platform",
     "runtime-router",

@@ -26,15 +26,17 @@ import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
-
 import {
   assignmentCounts,
+  assignmentOutcomes,
   isTerminal,
   type PlaytestingActiveRun,
   type PlaytestingActiveRunsFreshness
 } from "./playtesting-active-runs.ts";
-import { batchStatusBadge } from "./playtesting-run-presentation.ts";
 import { runStateLabel } from "./playtesting-run-messages.ts";
+import { batchStatusBadge } from "./playtesting-run-presentation.ts";
+import type { PlaytestingScope } from "./playtesting-url.ts";
+import { PlaytestingAssignmentResults } from "./PlaytestingAssignmentResults.ts";
 
 const FRESHNESS_NOTICE: Readonly<
   Record<PlaytestingActiveRunsFreshness, string | null>
@@ -80,30 +82,46 @@ function stat(label: string, value: number | null): React.JSX.Element {
  * Values come from the owner's `PlaytestCompletionCounts`; the Console never
  * recomputes them, and the keys read here are that contract's own.
  */
-function runProgress(run: PlaytestingActiveRun): React.JSX.Element {
+function runProgress(
+  run: PlaytestingActiveRun,
+  scope: PlaytestingScope
+): React.JSX.Element {
   const counts = assignmentCounts(run.record);
   return React.createElement(
-    "dl",
-    { className: "grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4" },
-    stat("Assignments started", countLabel(counts, "started")),
-    stat("Assignments completed", countLabel(counts, "completed")),
-    stat("Assignments crashed", countLabel(counts, "crashed")),
-    stat(
-      "Assignments infra-failed",
-      countLabel(counts, "infrastructureFailed")
+    "div",
+    { className: "flex flex-col gap-3" },
+    React.createElement(
+      "dl",
+      { className: "grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4" },
+      stat("Assignments started", countLabel(counts, "started")),
+      stat("Assignments completed", countLabel(counts, "completed")),
+      stat("Assignments crashed", countLabel(counts, "crashed")),
+      stat(
+        "Assignments infra-failed",
+        countLabel(counts, "infrastructureFailed")
+      ),
+      stat("Assignments cancelled", countLabel(counts, "cancelled")),
+      stat(
+        "Assignments budget-truncated",
+        countLabel(counts, "budgetTruncated")
+      ),
+      stat("Sessions reviewed", countLabel(counts, "reviewed")),
+      stat("Assignments in batch", run.assignmentCount),
+      // A count with no observation is left unnamed rather than shown as a zero,
+      // which is why these read the owner's keys verbatim.
+      stat("Sessions eligible", countLabel(counts, "eligible"))
     ),
-    stat("Assignments cancelled", countLabel(counts, "cancelled")),
-    stat("Assignments budget-truncated", countLabel(counts, "budgetTruncated")),
-    stat("Sessions reviewed", countLabel(counts, "reviewed")),
-    stat("Assignments in batch", run.assignmentCount),
-    // A count with no observation is left unnamed rather than shown as a zero,
-    // which is why these read the owner's keys verbatim.
-    stat("Sessions eligible", countLabel(counts, "eligible"))
+    React.createElement(PlaytestingAssignmentResults, {
+      outcomes: assignmentOutcomes(run.record),
+      scope,
+      pending: run.record.result === null
+    })
   );
 }
 
 function runRow(
   run: PlaytestingActiveRun,
+  scope: PlaytestingScope,
   freshness: PlaytestingActiveRunsFreshness,
   focusedBatchId: string | null,
   onFocusBatch: (batchId: string | null) => void,
@@ -191,13 +209,17 @@ function runRow(
         )
       : null,
     focused
-      ? React.createElement("div", { className: "mt-3" }, runProgress(run))
+      ? React.createElement(
+          "div",
+          { className: "mt-3" },
+          runProgress(run, scope)
+        )
       : null
   );
 }
 
 export interface PlaytestingActiveRunsPanelProps {
-  readonly workspaceId: string | null;
+  readonly scope: PlaytestingScope;
   readonly runs: readonly PlaytestingActiveRun[];
   readonly freshness: PlaytestingActiveRunsFreshness;
   readonly lastFailure: string | null;
@@ -211,7 +233,7 @@ export interface PlaytestingActiveRunsPanelProps {
 }
 
 export function PlaytestingActiveRunsPanel({
-  workspaceId,
+  scope,
   runs,
   freshness,
   lastFailure,
@@ -222,35 +244,38 @@ export function PlaytestingActiveRunsPanel({
   onCancel,
   busyBatchId
 }: PlaytestingActiveRunsPanelProps): React.JSX.Element {
+  const workspaceId = scope.workspaceId;
   const notice = FRESHNESS_NOTICE[freshness];
   const nonterminal = runs.filter((run) => !isTerminal(run.record));
   const terminal = runs.filter((run) => isTerminal(run.record));
-  const body = !workspaceId
-    ? React.createElement(
-        "p",
-        { className: MUTED_BODY_CLASS },
-        "Choose a workspace to watch its running batches."
-      )
-    : runs.length === 0 && freshness !== "unavailable"
+  const body =
+    workspaceId === null
       ? React.createElement(
           "p",
           { className: MUTED_BODY_CLASS },
-          "No batches are running in this workspace."
+          "Choose a workspace to watch its running batches."
         )
-      : React.createElement(
-          "ul",
-          { className: "flex flex-col gap-3" },
-          ...[...nonterminal, ...terminal].map((run) =>
-            runRow(
-              run,
-              freshness,
-              focusedBatchId,
-              onFocusBatch,
-              onCancel,
-              busyBatchId
-            )
+      : runs.length === 0 && freshness !== "unavailable"
+        ? React.createElement(
+            "p",
+            { className: MUTED_BODY_CLASS },
+            "No batches are running in this workspace."
           )
-        );
+        : React.createElement(
+            "ul",
+            { className: "flex flex-col gap-3" },
+            ...[...nonterminal, ...terminal].map((run) =>
+              runRow(
+                run,
+                scope,
+                freshness,
+                focusedBatchId,
+                onFocusBatch,
+                onCancel,
+                busyBatchId
+              )
+            )
+          );
   return React.createElement(
     "section",
     {

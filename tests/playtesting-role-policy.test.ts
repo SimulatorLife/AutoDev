@@ -140,6 +140,19 @@ test("playtest-analyst reuses autodev/smart model tier without inheriting smart 
   const analystTools = analystRole.tools as Record<string, unknown> | undefined;
   assert.equal(smartTools?.web_search, true);
   assert.equal(analystTools?.web_search, false);
+  assert.equal(
+    analystTools?.view_image,
+    undefined,
+    "the installed Codex schema has no tools.view_image setting"
+  );
+  const analystFeatures = analystRole.features as Record<string, unknown>;
+  assert.equal(analystFeatures.shell_tool, false);
+  assert.equal(analystFeatures.multi_agent, false);
+  assert.equal(analystFeatures.multi_agent_v2, false);
+  const analystShellPolicy = analystRole.shell_environment_policy as
+    Record<string, unknown> | undefined;
+  assert.equal(analystShellPolicy?.inherit, "none");
+  assert.equal(analystShellPolicy?.ignore_default_excludes, false);
 
   // smart role has lsp, playwright, cocoindex, codegraphcontext enabled:
   const smartServers = getMcpServers(smartRole);
@@ -158,8 +171,44 @@ test("playtest-analyst reuses autodev/smart model tier without inheriting smart 
     );
   }
 
-  // analyst has only evidence reading, metrics/compare, and submitReview:
+  // analyst has only evidence reading, bounded packet preparation,
+  // metrics/compare, per-session reviews, and cited batch synthesis:
   assert.equal(isServerEnabled(analystServers, "playtest"), true);
+  const analystPlaytestServer = analystServers.playtest as Record<
+    string,
+    unknown
+  >;
+  const analystEnvironmentVariables = analystPlaytestServer.env_vars;
+  assert.ok(Array.isArray(analystEnvironmentVariables));
+  assert.equal(
+    new Set(analystEnvironmentVariables).size,
+    analystEnvironmentVariables.length,
+    "analyst MCP environment allowlist must not contain duplicate variables"
+  );
+  for (const controlApiVariable of [
+    "AUTODEV_CONTROL_API_BASE_URL",
+    "AUTODEV_PLAYTEST_CONTROL_API_TOKEN",
+    "AUTODEV_PLAYTEST_CONTROL_API_ACTOR",
+    "AUTODEV_PLAYTEST_CONTROL_API_ROLE"
+  ]) {
+    assert.ok(
+      !analystEnvironmentVariables.includes(controlApiVariable),
+      `analyst MCP must not receive ${controlApiVariable}`
+    );
+  }
+  assert.ok(
+    !analystEnvironmentVariables.includes("AUTODEV_OPENLIT_USAGE_TOKEN")
+  );
+  const analystPlugins = analystRole.plugins as Record<string, unknown>;
+  assert.equal(
+    (
+      analystPlugins["codex-app-tools@openai-bundled"] as Record<
+        string,
+        unknown
+      >
+    ).enabled,
+    false
+  );
   const analystPlaytestTools = getEnabledTools(analystServers, "playtest");
   assert.deepEqual(
     [...analystPlaytestTools].sort(),
@@ -170,7 +219,8 @@ test("playtest-analyst reuses autodev/smart model tier without inheriting smart 
       "playtest.prepareReview",
       "playtest.readEpisode",
       "playtest.readWindow",
-      "playtest.submitReview"
+      "playtest.submitReview",
+      "playtest.submitCrossSessionSynthesis"
     ].sort()
   );
 
@@ -347,6 +397,11 @@ test("playtest-analysis skill enforces workspace gate, negative triggers, and nu
   assert.match(skillText, /"file a GitHub issue for this bug"/);
   assert.match(skillText, /playtest\.prepareReview/);
   assert.match(skillText, /packet is the citation boundary/i);
+  assert.match(
+    skillText,
+    /Runtime-supplied selected-session metric aggregation/i
+  );
+  assert.match(skillText, /not a matched-seed effect/i);
 
   // References exist and are linked:
   assert.ok(

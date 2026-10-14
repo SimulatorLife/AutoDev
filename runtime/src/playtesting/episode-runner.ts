@@ -3,7 +3,9 @@ import { performance } from "node:perf_hooks";
 
 import {
   assertWorkspacePlaytestApproval,
+  canonicalPlaytestJson,
   type GameCaptureEvent,
+  type GameCaptureEventsResult,
   type GameForkResult,
   type GameLegalAction,
   type GameObserveResult,
@@ -504,6 +506,13 @@ function captureEvent(
   context: EpisodeExecutionContext,
   event: GameCaptureEvent
 ): void {
+  const existing = context.eventById.get(event.eventId);
+  if (existing !== undefined) {
+    if (canonicalPlaytestJson(existing) !== canonicalPlaytestJson(event)) {
+      context.missingReasons.add(INFRASTRUCTURE_FAILED);
+    }
+    return;
+  }
   if (context.eventById.size >= MAX_TRACE_EVENT_COUNT) return;
   context.eventById.set(event.eventId, event);
   context.events.push(event);
@@ -552,6 +561,44 @@ function eventsMatchStep(
   ids: readonly string[]
 ): boolean {
   return ids.every((id) => context.eventById.has(id));
+}
+
+/** Retrieve the exact step's game-authored events when the adapter supports it. */
+async function captureEventsForStep(
+  context: EpisodeExecutionContext,
+  step: number,
+  eventIds: readonly string[]
+): Promise<void> {
+  if (
+    !context.capabilities?.optionalOperations.includes("game.captureEvents")
+  ) {
+    return;
+  }
+  const captured = await callAdapter<GameCaptureEventsResult>(
+    context.client,
+    "game.captureEvents",
+    {
+      episodeId: context.episodeId,
+      expectedRevision: context.revision,
+      startStep: step,
+      endStep: step
+    }
+  );
+  context.simulationWallMs += captured.durationMs;
+  const expectedEventIds = new Set(eventIds);
+  for (const event of captured.value.events) {
+    if (
+      event.step !== step ||
+      event.revision !== context.revision ||
+      !expectedEventIds.has(event.eventId)
+    ) {
+      context.missingReasons.add(INFRASTRUCTURE_FAILED);
+    }
+    captureEvent(context, event);
+  }
+  if (captured.value.omittedCount > 0) {
+    context.missingReasons.add("missing-action-or-revision-events");
+  }
 }
 
 function storeCapabilities(
@@ -634,6 +681,17 @@ async function negotiateAndInitialize(
   });
   context.simulationWallMs += reset.durationMs;
   storeReset(context, reset.value, startedAt);
+  const reproducibilityMatches =
+    reset.value.rngProvenance.reproducible ===
+    capabilities.deterministic.seededRuns;
+  const rngVersionMatches =
+    !capabilities.deterministic.seededRuns ||
+    reset.value.rngProvenance.version === capabilities.deterministic.rngVersion;
+  if (!reproducibilityMatches || !rngVersionMatches) {
+    throw new TypeError(
+      "game.reset RNG provenance does not match the capability advertisement."
+    );
+  }
 }
 
 async function initializeBranch(
@@ -933,6 +991,7 @@ async function runOneStep(
   });
   context.simulationWallMs += stepResult.durationMs;
   context.revision = stepResult.value.revision;
+  await captureEventsForStep(context, step, stepResult.value.eventIds);
   capturePendingFrame(context, step, observation.value.frame);
   const eventRefs = eventReferences(context, stepResult.value.eventIds);
   if (!eventsMatchStep(context, stepResult.value.eventIds)) {

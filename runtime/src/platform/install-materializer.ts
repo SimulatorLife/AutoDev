@@ -65,12 +65,16 @@ export const RUNTIME_MODULES = [
   "runtime/src/playtesting/artifact-store.ts",
   "runtime/src/playtesting/adapter-client.ts",
   "runtime/src/playtesting/approved-configuration.ts",
+  "runtime/src/playtesting/cohort-standardization-run.ts",
   "runtime/src/playtesting/docker-sandbox.ts",
   "runtime/src/playtesting/episode-runner.ts",
+  "runtime/src/playtesting/hash-chain.ts",
   "runtime/src/playtesting/jsonl-framer.ts",
   "runtime/src/playtesting/loop-guard.ts",
   "runtime/src/playtesting/mcp.ts",
+  "runtime/src/playtesting/analyst-process.ts",
   "runtime/src/playtesting/packet-artifact-reconciliation.ts",
+  "runtime/src/playtesting/policy-validity-run.ts",
   "runtime/src/playtesting/policies.ts",
   "runtime/src/playtesting/run-control-service.ts",
   "runtime/src/playtesting/visible-observation.ts",
@@ -86,7 +90,9 @@ export const RUNTIME_MODULES = [
   "runtime/src/playtesting/statistics/python_script/analysis.py",
   "runtime/src/playtesting/statistics/python_script/library_versions.py",
   "runtime/src/shared/map-concurrent-ordered.ts",
+  "runtime/src/shared/provider-model-ids.ts",
   "runtime/src/shared/output.ts",
+  "runtime/src/shared/runtime-source-root.ts",
   "runtime/vendor/jev-playtest-lab/src/core.js",
   "runtime/src/control-api/index.ts",
   "runtime/src/router/subagents.ts",
@@ -99,6 +105,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/router/http.ts",
   "runtime/src/router/server.ts",
   "runtime/src/providers/minimax.ts",
+  "runtime/src/providers/model-discovery.ts",
   "runtime/src/providers/copilot.ts",
   "runtime/src/providers/antigravity.ts",
   "runtime/src/providers/claude.ts",
@@ -138,6 +145,8 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/install-state.ts",
   "runtime/src/platform/dependencies.ts",
   "runtime/src/platform/health-probe.ts",
+  "runtime/src/platform/console-build.ts",
+  "runtime/src/platform/console-ensure.ts",
   "runtime/src/platform/install-materializer.ts",
   "runtime/src/platform/install-command.ts",
   "runtime/src/platform/install-check.ts",
@@ -234,6 +243,7 @@ export const OBSOLETE_CLAUDE_SKILL_VIEWS = path.join(
 );
 export const HOOKS = [
   "enforce-root-delegation.sh",
+  "ensure-codex-console.sh",
   "ensure-codex-antigravity-proxy.sh",
   "ensure-codex-claude-bridge.sh",
   "ensure-codex-copilot-proxy.sh",
@@ -242,7 +252,8 @@ export const HOOKS = [
   "run-codex-antigravity-proxy.sh",
   "run-codex-claude-bridge.sh",
   "run-codex-copilot-cli-responses-proxy.sh",
-  "run-codex-model-router.sh"
+  "run-codex-model-router.sh",
+  "run-codex-console.sh"
 ] as const;
 export const MCP_LAUNCHERS = ["run-autodev-mcp.sh"] as const;
 export const PROFILES = ["claude", "minimax", "antigravity"] as const;
@@ -280,6 +291,7 @@ export const SKILLS = [
 export const LEGACY_SKILL_DIRS = ["skills", "agents/skills"] as const;
 export const RULES = ["default.rules"] as const;
 export const LAUNCH_LABELS = [
+  "com.codex.autodev-console",
   "com.codex.model-router",
   "com.codex.claude-bridge",
   "com.codex.minimax-proxy",
@@ -1239,6 +1251,8 @@ function prepareRunLogs(codexHome: string): void {
   mkdirSync(runDir, { recursive: true, mode: 0o700 });
   chmodSync(runDir, 0o700);
   for (const name of [
+    "codex-autodev-console.launchd.out.log",
+    "codex-autodev-console.launchd.err.log",
     "codex-model-router.launchd.out.log",
     "codex-model-router.launchd.err.log"
   ]) {

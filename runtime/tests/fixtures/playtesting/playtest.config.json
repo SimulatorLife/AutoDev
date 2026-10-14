@@ -2,14 +2,24 @@
   "schemaVersion": 1,
   "adapter": {
     "transport": "stdio-jsonl",
-    "command": ["node", "node-fixture-adapter.mjs"]
+    "command": [
+      "/opt/autodev/playtest-adapter/main.js",
+      "--integration-dir",
+      ".autodev"
+    ]
   },
-  "modes": ["headless"],
-  "scenarios": ["tutorial"],
+  "modes": [
+    "headless"
+  ],
+  "scenarios": [
+    "tutorial"
+  ],
   "scenarioFamilies": {
     "tutorial": "onboarding"
   },
-  "policies": ["random"],
+  "policies": [
+    "random"
+  ],
   "budget": {
     "episodes": 1000,
     "maxStepsPerEpisode": 20,

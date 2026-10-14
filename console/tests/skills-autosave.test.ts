@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -8,9 +9,7 @@ import {
   type FormSubmissionEvent,
   handleFormSubmission
 } from "../src/components/navigation/FormNavigationOwner.ts";
-import {
-  SkillRoleAssignmentControl
-} from "../src/features/skills/SkillRoleAssignmentControl.ts";
+import { SkillRoleAssignmentControl } from "../src/features/skills/SkillRoleAssignmentControl.ts";
 import {
   SkillsView,
   type SkillsViewProps
@@ -29,7 +28,13 @@ function parseSkillAssignmentForm(markup: string, skillName: string) {
   assert.notEqual(formEnd, -1, `form for skill ${skillName} missing end`);
   const formHtml = markup.slice(formStart, formEnd + "</form>".length);
 
-  const inputs: { name: string; value: string; type: string; checked: boolean; submitOnChange: boolean }[] = [];
+  const inputs: {
+    name: string;
+    value: string;
+    type: string;
+    checked: boolean;
+    submitOnChange: boolean;
+  }[] = [];
   for (const match of formHtml.matchAll(/<input\b([^>]*?)\/?>/gu)) {
     const attrs = match[1] ?? "";
     const name = /\sname="([^"]*)"/u.exec(attrs)?.[1] ?? "";
@@ -40,7 +45,8 @@ function parseSkillAssignmentForm(markup: string, skillName: string) {
     inputs.push({ name, value, type, checked, submitOnChange });
   }
 
-  const hasSubmitButton = /<(?:button|input)\b[^>]*(?:type="submit"|Save)[^>]*>/iu.test(formHtml);
+  const hasSubmitButton =
+    /<(?:button|input)\b[^>]*(?:type="submit"|Save)[^>]*>/iu.test(formHtml);
   const hasSubmitOnChange = /\sdata-submit-on-change="true"/u.test(formHtml);
 
   return {
@@ -67,7 +73,11 @@ test("SkillsView combines catalog metadata and role assignments into a single ta
     path: ".rulesync/skills/dynamic-skill-beta/SKILL.md"
   };
 
-  const dynamicRoles = ["custom-role-worker", "custom-role-lead", "custom-role-tester"];
+  const dynamicRoles = [
+    "custom-role-worker",
+    "custom-role-lead",
+    "custom-role-tester"
+  ];
   const revision = "a1b2c3d4".repeat(8);
 
   const markup = renderToStaticMarkup(
@@ -90,18 +100,39 @@ test("SkillsView combines catalog metadata and role assignments into a single ta
   assert.equal(tableCount, 1, "the page must render exactly one table");
 
   // Proves there is no second assignment list or section.
-  assert.equal(markup.includes("Role assignment"), false, "there must not be a separate Role assignment heading or section");
-  assert.equal(countOccurrences(markup, /<ul\b/gu), 0, "there must not be a second <ul> assignment list");
+  assert.equal(
+    markup.includes("Role assignment"),
+    false,
+    "there must not be a separate Role assignment heading or section"
+  );
+  assert.equal(
+    countOccurrences(markup, /<ul\b/gu),
+    0,
+    "there must not be a second <ul> assignment list"
+  );
 
   // Proves both skills have assignment controls in their table rows.
   for (const skill of [dynamicSkillA, dynamicSkillB]) {
     const parsed = parseSkillAssignmentForm(markup, skill.name);
-    assert.ok(parsed, `skill ${skill.name} must have an in-row assignment form`);
-    assert.equal(parsed.hasSubmitButton, false, `skill ${skill.name} form must not have a submit button`);
-    assert.equal(parsed.hasSubmitOnChange, true, `skill ${skill.name} form must declare data-submit-on-change`);
+    assert.ok(
+      parsed,
+      `skill ${skill.name} must have an in-row assignment form`
+    );
+    assert.equal(
+      parsed.hasSubmitButton,
+      false,
+      `skill ${skill.name} form must not have a submit button`
+    );
+    assert.equal(
+      parsed.hasSubmitOnChange,
+      true,
+      `skill ${skill.name} form must declare data-submit-on-change`
+    );
 
     // Proves expectedRevision hidden input is present.
-    const revisionInput = parsed.inputs.find((i) => i.name === "expectedRevision");
+    const revisionInput = parsed.inputs.find(
+      (i) => i.name === "expectedRevision"
+    );
     assert.ok(revisionInput, "expectedRevision input must be present");
     assert.equal(revisionInput.value, revision);
 
@@ -117,11 +148,15 @@ test("SkillsView combines catalog metadata and role assignments into a single ta
 
   // Alpha had worker role checked; Beta had no roles checked.
   const parsedA = parseSkillAssignmentForm(markup, dynamicSkillA.name)!;
-  const checkedRolesA = parsedA.inputs.filter((i) => i.name === "roles" && i.checked).map((i) => i.value);
+  const checkedRolesA = parsedA.inputs
+    .filter((i) => i.name === "roles" && i.checked)
+    .map((i) => i.value);
   assert.deepEqual(checkedRolesA, ["custom-role-worker"]);
 
   const parsedB = parseSkillAssignmentForm(markup, dynamicSkillB.name)!;
-  const checkedRolesB = parsedB.inputs.filter((i) => i.name === "roles" && i.checked).map((i) => i.value);
+  const checkedRolesB = parsedB.inputs
+    .filter((i) => i.name === "roles" && i.checked)
+    .map((i) => i.value);
   assert.deepEqual(checkedRolesB, []);
   assert.match(markup, /Unassigned — no agent role can invoke this skill/);
 });
@@ -147,13 +182,25 @@ test("no Save button exists anywhere in the SkillsView markup", () => {
     })
   );
 
-  assert.doesNotMatch(markup, /<button\b[^>]*>\s*Save\s*<\/button>/iu, "must not contain a Save button");
-  assert.doesNotMatch(markup, /type="submit"/u, "must not contain any submit button in the view");
-  assert.doesNotMatch(markup, /data-testid="skill-assign-/u, "must not contain obsolete Save button test IDs");
+  assert.doesNotMatch(
+    markup,
+    /<button\b[^>]*>\s*Save\s*<\/button>/iu,
+    "must not contain a Save button"
+  );
+  assert.doesNotMatch(
+    markup,
+    /type="submit"/u,
+    "must not contain any submit button in the view"
+  );
+  assert.doesNotMatch(
+    markup,
+    /data-testid="skill-assign-/u,
+    "must not contain obsolete Save button test IDs"
+  );
 });
 
 test("autosave submit-on-change contract is wired on every role checkbox", () => {
-  let submitted = false;
+  let submitted: boolean;
   const fakeForm = {
     requestSubmit: () => {
       submitted = true;
@@ -254,7 +301,11 @@ test("FormNavigationOwner canonical path intercepts skill autosave form POSTs an
   assert.equal(result.intercepted, true);
   assert.equal(result.method, "POST");
   assert.equal(result.status, "completed");
-  assert.equal(refreshed, true, "FormNavigationOwner must refresh in place on successful redirect");
+  assert.equal(
+    refreshed,
+    true,
+    "FormNavigationOwner must refresh in place on successful redirect"
+  );
   assert.equal(fetchMethod, "POST");
   assert.equal(fetchUrl, `http://localhost:3300${action}`);
 
@@ -304,7 +355,11 @@ test("clearing all checkboxes unassigns the skill and submits empty roles set", 
   assert.equal(result.status, "completed");
   const params = new URLSearchParams(fetchBody);
   assert.equal(params.get("expectedRevision"), revision);
-  assert.deepEqual(params.getAll("roles"), [], "unassigning must post zero roles");
+  assert.deepEqual(
+    params.getAll("roles"),
+    [],
+    "unassigning must post zero roles"
+  );
 });
 
 test("expectedRevision conflict protection and visible failure feedback", () => {
@@ -328,26 +383,38 @@ test("expectedRevision conflict protection and visible failure feedback", () => 
   const markup = renderToStaticMarkup(React.createElement(SkillsView, props));
   assert.match(markup, /data-testid="skill-assignment-failure"/);
   assert.match(markup, /data-save-outcome="conflict"/);
-  assert.match(markup, /The execution contract changed after this page was loaded/);
+  assert.match(
+    markup,
+    /The execution contract changed after this page was loaded/
+  );
 
   // Also verify validation, not-found, and failed outcomes render visible notices
   const validationMarkup = renderToStaticMarkup(
     React.createElement(SkillsView, { ...props, saveOutcome: "validation" })
   );
   assert.match(validationMarkup, /data-save-outcome="validation"/);
-  assert.match(validationMarkup, /The execution contract refused that assignment/);
+  assert.match(
+    validationMarkup,
+    /The execution contract refused that assignment/
+  );
 
   const notFoundMarkup = renderToStaticMarkup(
     React.createElement(SkillsView, { ...props, saveOutcome: "not-found" })
   );
   assert.match(notFoundMarkup, /data-save-outcome="not-found"/);
-  assert.match(notFoundMarkup, /That skill is not in the RuleSync catalog any more/);
+  assert.match(
+    notFoundMarkup,
+    /That skill is not in the RuleSync catalog any more/
+  );
 
   const failedMarkup = renderToStaticMarkup(
     React.createElement(SkillsView, { ...props, saveOutcome: "failed" })
   );
   assert.match(failedMarkup, /data-save-outcome="failed"/);
-  assert.match(failedMarkup, /The role assignment was not applied/);
+  assert.match(
+    failedMarkup,
+    /The assignment request could not be completed\. Reload to inspect the current roles/
+  );
 });
 
 test("distinguishes unavailable sources and renders appropriate reasons without broken mutation forms", () => {
@@ -369,7 +436,11 @@ test("distinguishes unavailable sources and renders appropriate reasons without 
       executionContractRevision: null
     })
   );
-  assert.doesNotMatch(noContractMarkup, /action="\/api\/skills\//, "no form when contract is missing");
+  assert.doesNotMatch(
+    noContractMarkup,
+    /action="\/api\/skills\//,
+    "no form when contract is missing"
+  );
   assert.match(noContractMarkup, /No execution contract was found/);
   assert.match(noContractMarkup, /data-skill-assignment-revision="none"/);
 
@@ -385,7 +456,11 @@ test("distinguishes unavailable sources and renders appropriate reasons without 
       executionContractRevision: "e".repeat(64)
     })
   );
-  assert.doesNotMatch(noRolesMarkup, /action="\/api\/skills\//, "no form when contract has no roles");
+  assert.doesNotMatch(
+    noRolesMarkup,
+    /action="\/api\/skills\//,
+    "no form when contract has no roles"
+  );
   assert.match(noRolesMarkup, /The execution contract declares no roles/);
 
   // 3. Invalid RuleSync catalog
@@ -407,7 +482,10 @@ test("distinguishes unavailable sources and renders appropriate reasons without 
   );
   assert.doesNotMatch(invalidCatalogMarkup, /action="\/api\/skills\//);
   assert.match(invalidCatalogMarkup, /The RuleSync skill catalog is invalid/);
-  assert.match(invalidCatalogMarkup, /RuleSync `\.rulesync\/skills\/` is invalid/);
+  assert.match(
+    invalidCatalogMarkup,
+    /RuleSync `\.rulesync\/skills\/` is invalid/
+  );
 
   // 4. Unobserved RuleSync catalog
   const unobservedMarkup = renderToStaticMarkup(
@@ -422,5 +500,8 @@ test("distinguishes unavailable sources and renders appropriate reasons without 
     })
   );
   assert.doesNotMatch(unobservedMarkup, /action="\/api\/skills\//);
-  assert.match(unobservedMarkup, /RuleSync `\.rulesync\/skills\/` has not been observed/);
+  assert.match(
+    unobservedMarkup,
+    /RuleSync `\.rulesync\/skills\/` has not been observed/
+  );
 });

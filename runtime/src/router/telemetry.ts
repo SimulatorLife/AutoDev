@@ -112,7 +112,7 @@ export const GIT_ATTRIBUTION_VALUES = Object.freeze([
  * Process-local commit-idempotency bound. A commit observed by two producers
  * (a session and a later reconciliation pass) must still be counted once.
  */
-const MAX_TRACKED_GIT_COMMITS = 1_000;
+const MAX_TRACKED_GIT_COMMITS = 1000;
 const trackedGitCommits = new Set<string>();
 
 function claimGitCommit(commit: string): boolean {
@@ -993,14 +993,14 @@ type LogicalSpanAttributes = Record<string, string | number | boolean>;
  */
 function addAutoDevSpanContext(
   attributes: LogicalSpanAttributes,
-  context: {
+  requestContext: {
     readonly workspace?: { readonly key?: string | null } | null | undefined;
     readonly role?: string | null | undefined;
   }
 ): void {
-  const workspace = safeAutoDevWorkspaceKey(context.workspace?.key);
+  const workspace = safeAutoDevWorkspaceKey(requestContext.workspace?.key);
   if (workspace) attributes[ATTR_AUTODEV_WORKSPACE] = workspace;
-  const role = safeAutoDevAgentRole(context.role);
+  const role = safeAutoDevAgentRole(requestContext.role);
   if (role) attributes[ATTR_AUTODEV_AGENT_ROLE] = role;
 }
 

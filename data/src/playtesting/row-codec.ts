@@ -8,12 +8,14 @@ import {
   assertPlaytestBranchLineage,
   assertPlaytestComparisonOwnerDecision,
   assertPlaytestCoverageManifest,
+  assertPlaytestCrossSessionSynthesis,
   assertPlaytestExperiment,
   assertPlaytestNumericResults,
   assertPlaytestSessionReviewHasEvidence,
   type HumanPlaytestStudy,
   isPlaytestEvidencePacketId,
   isPlaytestFindingId,
+  migratePlaytestCrossSessionSynthesisV1,
   PLAYTEST_REVIEW_SECTION_NOT_RECORDED,
   type PlaytestAssignmentManifest,
   playtestAssignmentManifestHashInput,
@@ -23,6 +25,7 @@ import {
   type PlaytestComparison,
   type PlaytestComparisonV1,
   playtestCoverageManifestHashInput,
+  type PlaytestCrossSessionSynthesis,
   type PlaytestEpisode,
   type PlaytestEvidencePacketReference,
   type PlaytestExperiment,
@@ -41,6 +44,8 @@ import {
   PLAYTESTS_BATCH_SCHEMA_V2,
   PLAYTESTS_COMPARISON_SCHEMA,
   PLAYTESTS_COMPARISON_SCHEMA_V1,
+  PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
+  PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA_V1,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA_V1,
   PLAYTESTS_EPISODE_SCHEMA_V2,
@@ -134,6 +139,15 @@ export interface PlaytestIndexedReviewRow {
   readonly author_role: string;
   readonly rubric_hash: string;
   readonly measurement_version: string;
+  readonly created_at: string;
+  readonly payload_json: string;
+}
+
+export interface PlaytestIndexedCrossSessionSynthesisRow {
+  readonly workspace_id: string;
+  readonly synthesis_id: string;
+  readonly analysis_id: string;
+  readonly version: number;
   readonly created_at: string;
   readonly payload_json: string;
 }
@@ -489,6 +503,26 @@ export function encodeReview(
     rubric_hash: artifact.rubricHash,
     measurement_version: artifact.measurementVersion,
     created_at: toClickHouseDateTime(artifact.createdAt),
+    payload_json: payloadJson(artifact)
+  };
+}
+
+export function encodeCrossSessionSynthesis(
+  workspaceId: string,
+  artifact: PlaytestCrossSessionSynthesis
+): PlaytestIndexedCrossSessionSynthesisRow {
+  assertPlaytestCrossSessionSynthesis(artifact);
+  if (artifact.workspaceId !== workspaceId) {
+    throw new TypeError(
+      "Cross-session synthesis workspace does not match its storage scope."
+    );
+  }
+  return {
+    workspace_id: requiredRef(workspaceId, "workspaceId"),
+    synthesis_id: requiredRef(artifact.synthesisId, "synthesisId"),
+    analysis_id: requiredRef(artifact.analysisId, "analysisId"),
+    version: artifact.version,
+    created_at: toClickHouseDateTime(artifact.generatedAt),
     payload_json: payloadJson(artifact)
   };
 }
@@ -1600,6 +1634,33 @@ function migrateLegacyReviewClaims(
     // visibly unlinked legacy evidence rather than inventing references.
     evidenceRefs: []
   }));
+}
+
+export function decodeCrossSessionSynthesis(
+  row: Record<string, unknown>
+): PlaytestCrossSessionSynthesis {
+  const payload = decodePayload<unknown>(row, "synthesisId", "version");
+  const artifact =
+    isRecord(payload) &&
+    payload.schema === PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA_V1
+      ? migratePlaytestCrossSessionSynthesisV1(payload)
+      : (payload as PlaytestCrossSessionSynthesis);
+  try {
+    if (artifact.schema !== PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA) {
+      throw new TypeError("Cross-session synthesis schema is unsupported.");
+    }
+    assertPlaytestCrossSessionSynthesis(artifact);
+  } catch (error) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse returned a malformed cross-session synthesis",
+      error
+    );
+  }
+  assertIndexMatches(row, "workspace_id", artifact.workspaceId);
+  assertIndexMatches(row, "analysis_id", artifact.analysisId);
+  assertIndexMatches(row, "synthesis_id", artifact.synthesisId);
+  assertIndexMatches(row, "version", artifact.version);
+  return artifact;
 }
 
 export function decodeComparison(

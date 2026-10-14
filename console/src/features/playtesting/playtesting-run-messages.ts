@@ -48,15 +48,16 @@ export const CANCELLATION_REASON_LABELS: Readonly<
  * Each run state keeps its own label. A truncated batch is not a failed one,
  * and a recovered nonterminal closure is not a result.
  */
-const RUN_STATE_LABELS: Readonly<Record<ControlApiPlaytestingRunState, string>> =
-  {
-    running: "Running",
-    persisting: "Saving evidence",
-    completed: "Completed",
-    failed: "Failed",
-    cancelled: "Cancelled",
-    truncated: "Truncated"
-  };
+const RUN_STATE_LABELS: Readonly<
+  Record<ControlApiPlaytestingRunState, string>
+> = {
+  running: "Running",
+  persisting: "Saving evidence",
+  completed: "Completed",
+  failed: "Failed",
+  cancelled: "Cancelled",
+  truncated: "Truncated"
+};
 
 export function runStateLabel(status: string): string {
   return (
@@ -70,12 +71,15 @@ export function runStateBadgeTone(
   status: string
 ): "valid" | "pending" | "unavailable" {
   switch (status) {
-    case "completed":
+    case "completed": {
       return "valid";
+    }
     case "running":
-    case "persisting":
+    case "persisting": {
       return "pending";
-    default:
+    }
+    default: {
       return "unavailable";
+    }
   }
 }

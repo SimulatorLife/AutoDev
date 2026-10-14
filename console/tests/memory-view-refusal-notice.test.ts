@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { renderToStaticMarkup } from "react-dom/server";
-import React from "react";
 import test from "node:test";
 
-import { MemoryView } from "../src/features/memory/MemoryView.ts";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
 import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
+import { MemoryView } from "../src/features/memory/MemoryView.ts";
 
 /**
  * The memory page has to say when a governed action did not happen.

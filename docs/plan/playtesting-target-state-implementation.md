@@ -154,7 +154,7 @@ states what is implemented and, where applicable, what is still missing.
   link that was closed for policy-validity in `e3bb97db`, but it cannot be
   closed the same way: adding the locator kind is easy and additive, whereas a
   citation that points at nothing is worse than no citation, so it first needs a
-  decision on whether a standardization result is *persisted* like a comparison
+  decision on whether a standardization result is _persisted_ like a comparison
   or remains a derived read. That persistence surface is the one recorded above
   as having no producer, so the two gaps share a single unresolved design
   question and are left named together.
@@ -377,9 +377,10 @@ truncation`). **Not checked, because "end to end" is not what these are.**
   They exercise the arithmetic and the validators directly, not a real
   authoritative playtesting run — which is Delivery Slice 6's gap, and checking
   this box would assert the thing that slice says is missing.
-- [ ] Keyboard/mobile navigation, stable filter → finding → session → back,
-      no fabricated video, source-mapped upstream UI logic actually executing,
-      and performance on indexed queries, view changes, and replay selection.
+- [~] Keyboard/mobile navigation, stable filter → finding → session → back,
+  no fabricated media, source-mapped UI logic, and performance on indexed
+  queries, view changes, and replay selection. Production Playwright covers
+  the navigation/mobile path against an explicitly synthetic fixture.
 
   **The view-changes/replay-selection timing assertion was measuring the test
   runner, not the Console.** It carried a 150ms wall-clock ceiling for 2,000
@@ -415,41 +416,41 @@ truncation`). **Not checked, because "end to end" is not what these are.**
   timing assertion. A guard that fails on contention trains people to ignore it,
   which is worse than a narrower one that holds.
 
-  The browser-side half of this item is still unevidenced and remains open.
+  The synthetic browser suite now covers the navigation/mobile portion, but
+  it does not establish timing on an indexed live Data set or actual RacingGame
+  results. Those remain open; no wall-clock threshold was relaxed.
 
-- [x] Console run/watch and multi-session analysis: an operator can start an
-      approved run and watch every nonterminal batch progress without manual
-      refresh, and dispatch analysis over an explicit selection of sessions.
-      Delivered in `e5fb5d13`, `3ec26041`, `959ffd37`, `2a3bc056`. Assignment
-      outcomes are surfaced from the owner's own `PlaytestCompletionCounts`
-      (`e6c3fbd1`): four of the six tiles previously read keys no producer emits,
-      so the batch's real outcomes were on screen as permanent absences, and the
-      key type now makes that a compile error rather than a silent gap.
+- [x] Console run/watch and analyst dispatch: the operator starts approved work,
+      watches every nonterminal batch without manual refresh, and can dispatch
+      bounded analyst reviews. Runtime remains the single owner of runs, task status,
+      eligibility, critique budget, and receipts. Assignment outcomes are surfaced
+      from the owner's `PlaytestCompletionCounts` (`e6c3fbd1`), not inferred from
+      aggregate counters. The synthetic browser suite covers start→watch→cancel,
+      stale reads, dispatch→running→persisted review links, and oversized-selection
+      refusal; the target-game run gate is recorded separately below.
 - [x] Declarative game onboarding: `init`/`check`/`conformance`, the hash chain,
       the binding contract and the generic adapter runtime all exist, a real episode
       runs through the adapter entrypoint (`b6fe554e`), and the acceptance below is
       met by a second, mechanically different game joining by configuration alone
       (`e0cca05a`), and both tiers onboard a game — declaratively or through
       `init --scaffold` (`6c0b6aea`).
-- [ ] Documentation, test coverage, package checks and independent validation
-      match the final integrated diff. **Unmet.** Documentation and test
-      coverage for the two active slices are delivered and typecheck/format
-      clean; this item stays open because the browser acceptance above has not
-      executed. Delivery Slices 1, 2 and 7 are `[x]` and the rest are `[~]` with
-      named gaps, so the remaining reason is the browser acceptance rather than
-      an unchecked backlog. Neither is something a green local suite
-      substitutes for.
+- [~] Documentation, test coverage, package checks and independent validation
+  match the final integrated diff. Documentation, focused tests, typechecks,
+  and the synthetic Playwright acceptance have executed. Full end-to-end
+  RacingGame evidence remains unverified: no active exact-build/image
+  approval exists, and the target checkout is dirty. Delivery Slices 1, 2
+  and 7 are `[x]`; the remaining slices keep their named empirical gaps.
 
 ## Current evidence and gates
 
-Initial inspection found substantial in-progress playtesting changes in the
-worktree (including Core human preference/comprehension/triage/cadence/native
-timing, Data human response indexing, Runtime statistics, Console display and
-tests). These are preserved and must be reviewed as existing changes, not
-assumed complete. CodeGraphContext returned no playtesting symbols; targeted
-CocoIndex searches were used to locate the active paths. No real target game,
-workspace approval, run authorization, or human-study authorization was
-provided, so those empirical acceptance gates cannot be represented as passed.
+The playtesting worktree contains substantial concurrent changes across Core,
+Data, Runtime, Console, and tests. They are preserved and must be reviewed as
+existing changes, not assumed complete. CodeGraphContext returned no
+playtesting symbols; targeted CocoIndex searches were used to locate the active
+paths. The current read-only Control API approval lookup returns no RacingGame
+approval, and the target checkout has uncommitted changes, so there is no
+current clean build identity or bounded authorization for a real episode or
+model call. Those empirical acceptance gates cannot be represented as passed.
 
 ## Prior validation snapshot (2026-10-11)
 
@@ -912,8 +913,8 @@ reclamation gap without claiming a distributed transaction.
 
 Remaining work is substantial: source/adapter provenance and trust-boundary
 verification, model/prompt identity propagation, deterministic cross-session
-aggregation and an aggregate-grounded synthesis workflow, actual
-analyst-inference and independent claim-validator integration, the
+aggregation, actual analyst-inference and independent claim-validator
+integration, the
 experiment/finding-to-owner-decision cycle, remaining helper integrations,
 human validation, UI/upstream reuse audits, a second mechanically different
 adapter, and the explicitly authorized empirical first-milestone gates. This slice does not complete Delivery Slices 1, 2, 4, 5,
@@ -1191,9 +1192,9 @@ This slice records a target-state requirement added to
 - [x] Core owns the canonical run-state set. Runtime and the Console validate
       against it, replacing two hand-maintained copies that had already diverged
       — the Console's guard rejected `truncated` while Runtime emitted it.
-- [x] Multi-session dispatch: `playtest.prepareCrossSessionReview` takes an
-      explicit selection of 1..16 distinct sessions and returns every one of
-      them exactly once, as its own packet or as a named receipt. It excludes
+- [x] Bounded full-packet preparation: `playtest.prepareCrossSessionReview`
+      takes 1..16 distinct sessions per response and returns every one exactly
+      once, as its own packet or as a named receipt. It excludes
       partial, cancelled, crashed, infrastructure-failed and truncated sessions;
       checks the per-batch critique cap across the whole selection rather than
       per session; and never charges an ineligible session against the budget it
@@ -1208,8 +1209,10 @@ This slice records a target-state requirement added to
       Console holds the selection in bounded `sessions` URL state written
       through the History API, and refuses a response whose packets and
       receipts do not account for every selected session.
-- [x] `PLAYTESTS_MAX_ANALYSIS_SESSIONS` lives in Core, so the limit the
-      operator sees and the one Runtime enforces cannot drift.
+- [x] `PLAYTESTS_MAX_ANALYSIS_SESSIONS` lives in Core and equals the
+      first-milestone 40-review ceiling. Console dispatch can select all 40 at
+      once; direct full-packet preparation remains separately capped at 16, and
+      its client rejects aggregate responses beyond the 1 MB transport bound.
 - [x] Live status outcomes carry the game's own `gameOutcome` separately from
       assignment execution `state`; it is sourced from the persisted episode,
       while no-episode assignments carry null. This ephemeral Runtime projection
@@ -1260,91 +1263,163 @@ permanently (`e6c3fbd1`). A row without a persisted episode has no game outcome,
 and a game that cannot classify a persisted result reports `unknown`; neither is
 reconstructed from execution state.
 
-**RacingGame target preflight (read-only, 2026-10-13):** The accessible
-`SimulatorLife/RacingGame` repository's `main` was at
-`a327d4edb12608c33519d96fcbf0b95b0413a212`. Its tracked `.autodev/` directory
-contains adapter/manifests, but no `.autodev/playtest.config.json`; the only
-playtest config is still root `playtest.config.json` and invokes the game's
-hand-written `.autodev/adapter/playtest-adapter.mjs`. This does not match the
-current approved Runtime contract, which reads the canonical `.autodev/` config
-and AutoDev generic adapter binding. No RacingGame checkout is present in the
-workspace, and no exact build approval/run authorization was supplied. The UI
-path is therefore implemented but cannot yet be represented as a real
-RacingGame end-to-end run; no game or synthetic substitute was launched.
+**RacingGame generic-binding migration (2026-10-13):** The local
+`/Users/henrykirk/Desktop/RacingGame` branch advanced concurrently to
+`6a8ca817b`, which includes the generic migration and concurrent UI/E2E changes.
+The remaining modified precision-plan, presentation and E2E files were preserved; the
+precision-plan edit in this tree records the review-cap assumptions. RacingGame now
+uses AutoDev's generic adapter command and declares
+`.autodev/playtest.binding.json`; its game-owned methods are isolated from
+protocol transport. The TypeScript binding source is compiled by Vite into a
+single dependency-free ESM entry in the approved checkout, so the Docker run
+never depends on ignored `node_modules`. Arbitrary Console seeds map
+reproducibly into RacingGame's nonzero uint32 RNG seed, and events use the
+zero-based Runtime decision-step contract. The config enables at most one
+surveillance review per batch; Workspace approval still controls the effective
+critique ceiling.
 
-**Direct Console analyst invocation remains open.** The current same-origin
-`/api/playtesting/analyses` action calls Runtime's
-`prepareCrossSessionReview`: it prepares bounded evidence packets, receipts and
-budget reservations, but it does not invoke `playtest-analyst` or a model. The
-Console copy now says “Prepare review packets” and makes that boundary explicit;
-the session inspector can render a persisted `latestReview` after the analyst
-role submits one. The targeted architecture review found no canonical,
-provider-neutral Control API for starting/retrieving an agent run from Console.
-Completing direct Console analysis needs an explicit Runtime-owned analyst
-dispatch/status contract that preserves analyst-role authorization, workspace
-scope, packet identity and critique budgets. Do not route straight to a model
-provider or create a second run scheduler.
+Hash ownership is now split at the source: RacingGame generates only evaluator
+hashes and engine-environment provenance; AutoDev owns the observation schema
+link, action/event schema hashes, rubric/metric-registry links, and benchmark
+content hash. I ran the game-owned manifest check and AutoDev's read-only
+integration check; both pass, with only the expected warning for unsupported
+optional replay/snapshot/frame capabilities. `autodev playtest check --write-hashes`
+regenerated the AutoDev-owned links. The pure RacingGame binding/seed test is
+**5/5**, and the generic ESM bundle is current. No adapter conformance or game
+episode was run.
 
-Acceptance requires real-browser coverage of both paths against a labeled
-synthetic Control API fixture — live progress advancing without manual refresh,
-an explicit stale state when the status read fails, and a multi-session
-selection that reserves capacity and rejects an out-of-cap request without
-truncation.
+Validation refresh (2026-10-14): `pnpm run typecheck:src` and
+`pnpm run typecheck:tests` now both pass. RacingGame's read-only
+`playtest:game-manifests:check` also passes and confirms the generic ESM bundle
+is current. `pnpm run build:prod` succeeds and verifies the production delivery
+(34 hashed assets, 27 compressed resources); this is a build check, not a game
+execution. The source-boundary test previously
+wrote virtual ESLint fixtures under `src/ui`; two stale generated copies had
+been left there and caused `typecheck:src` to compile their deliberately
+missing import. The test now uses `ESLint.lintText` with virtual in-repository
+paths, preserving all four boundary assertions without creating files in the
+compiler include tree. The two confirmed stale test artifacts were moved out
+of the checkout; no gameplay source was run. Earlier focused Runtime/CLI tests
+covering binding/version validation, reset provenance, event capture, cleanup
+and approved-config hashing passed **66/66** after the latest semantic fixes. A
+broader loaded run had two generic-adapter process timeouts (**88/90**); those
+exact cases and the full generic adapter process file passed separately
+(**2/2** and **5/5**) with their original 10-second deadline. CLI init/check/
+conformance tests passed **28/28**, and focused Console Playtesting
+route/render/control tests passed **64/64**. No exact build authorization,
+pinned-image approval, or bounded Workspace run authorization is present; the
+RacingGame checkout currently has concurrent uncommitted changes, so its HEAD
+alone is not an authorized build identity.
 
-**Partly evidenced in a real browser; the automated specs still have not run.**
-`console/e2e/playtesting-usability.spec.ts` still cannot execute here: Chromium
-dies at `bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer:
-Permission denied (1100)`, a macOS sandbox restriction that also defeats
-Playwright's bundled headless shell, and no other engine is installed. The
-session browser is not sandboxed that way, so the Console was driven by hand
-against the same labeled synthetic Control API fixture and the same running
-Console build the specs use. Driving it found a defect no unit test could see —
-the live view armed its poll timer once per effect run, so a nonterminal batch
-was read twice and then never again while the panel kept rendering a live
-"Running" badge over numbers that could no longer move (`f37b51be`).
+**Direct Console analyst invocation and browser acceptance (implemented, 2026-10-14).**
 
-Observed after that fix, in the browser (before the current assignment-result
-and packet-preparation copy changes):
+- `POST /control/playtesting/analyses` has an explicit dispatch operation while
+  the analyst MCP's packet-preparation operation remains read-only. Runtime's
+  existing `PlaytestRunOwner` serializes dispatch reservations through its shared
+  lock, rejects duplicate/already-reviewed/already-running sessions, enforces the
+  per-batch critique budget and global active-task bound, and owns task state.
+  `GET /control/playtesting/analyses` returns workspace-filtered status and keeps
+  every active task visible ahead of terminal history.
+- Runtime launches the existing `run-provider-agent` role path, not a provider
+  call or second scheduler. The child runs the current read-only
+  `playtest-analyst` role in a private empty directory and isolated Codex home.
+  It receives the trusted workspace/actor/task/run identity, workspace-bound
+  Playtesting MCP data access, and local-router credential, but no Control API
+  URL/token or run-control client. It reviews exactly the selected episode IDs
+  using their frozen packets. Shell/web/delegation and all other MCPs are disabled;
+  it cannot read the game checkout, run gameplay, or publish issues. The game
+  adapter receives none of these credentials.
+- The Console starts review only after an explicit operator action, polls the
+  same owner with backoff, shows last-known tasks as stale on failures or a lost
+  Runtime process, links each persisted review to its session inspector, and
+  renders every ineligible/over-budget receipt. Dispatch accepts up to the
+  first-milestone 40-session critique ceiling; full-packet preparation remains
+  separately bounded at 16. A confirmed batch start now
+  re-arms the adjacent live-run reader immediately rather than waiting for a
+  manual refresh. Invalid shareable selections over 40 are explicitly rejected
+  with zero selected and no truncation.
+- Runtime process/role/auth/owner tests exercise the trusted dispatch and
+  status lifecycle. The full labeled-synthetic browser usability spec
+  (`console/e2e/playtesting-usability.spec.ts`) passes **12/12**, covering
+  run-start→live status→cancellation, stale reads, analyst start→running→stored
+  review link, mobile layout, and out-of-cap selection refusal. The added
+  same-browser journey starts an approved synthetic run, confirms its completed
+  persisted episode, selects it, dispatches analyst work, and opens the resulting
+  stored-review detail.
 
-- live progress — `data-freshness="live"`, `data-status="running"`, the batch
-  present after the start request with no operator action, an `aria-live`
-  region announcing it, and the focused batch reflected as
-  `liveBatch=batch-browser-001` with `data-focused="true"`;
-- the stale path — breaking the read flipped the panel to
-  `data-freshness="unavailable"` with "not confirmed current state", kept the
-  last-known row with `data-stale="true"`, and replaced its live status pill
-  with "Last known: Running";
-- the count tiles — the panel renders "Assignments started" / "Assignments
-  completed" and no longer names `succeeded` / `quota-blocked`, which is what
-  the spec asserts;
-- multi-session selection — the "Multi-session analysis" region renders with
-  "Select up to 16 persisted sessions", `data-selected="0"`, a selectable
-  `playtesting-selection-option`, and the request button disabled at zero.
+**Analyst credential boundary (2026-10-14):** The analyst's allowlisted
+`prepareReview`, `submitReview`, `metrics`, and `compare` tools use the
+workspace-bound Playtesting repository/artifact store directly; none calls the
+Control API run owner. Cross-session packet preparation remains restricted to
+root/orchestrator/validator/operator roles; the analyst has no runner credential
+and cannot use that run-control operation. The MCP therefore starts without a
+run-control client for `playtest-analyst`, and the analyst receives no Control
+API URL, token, actor, or role credentials. The Runtime-bound packet IDs are
+passed through the provider-agent environment allowlist into the stdio MCP
+session. Startup requires a nonempty list of at most 40 distinct, syntactically
+valid IDs; `prepareReview` and `submitReview` refuse any episode outside that
+exact list, so a prompt or tool call cannot widen the Console-selected scope.
+Runtime removed the obsolete
+`AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN` authentication path for
+`/control/playtesting/analyses`; Console dispatch remains operator-authorized by
+the normal server-side Control API credential, while packet preparation and
+review submission keep the analyst role check in the Playtesting MCP. Regression
+tests prove the analyst's single-session packet/review path works with no run
+owner and an analyst session is refused by the cross-session run-control tool.
+**Verification refresh (2026-10-14):** Root **1,549 passed / 5 skipped**;
+Core **331 passed**; Data **374 passed / 9 skipped**; Console **611 passed**;
+Runtime **934 passed / 5 skipped**; all workspace/root typechecks passed. The
+production Console build and labeled-synthetic Playtesting browser spec passed
+**12/12** with alternate fixture ports, including one complete synthetic Console
+run-to-review journey.
+The directly changed dispatch/auth/UI files pass targeted ESLint and
+Prettier checks. The repository-wide `pnpm lint:ci` still reports 219 findings
+in other concurrently modified files; no lint rules or performance thresholds
+were relaxed. `autodev playtest check --checkout-root
+/Users/henrykirk/Desktop/RacingGame` passes, with only the expected warning that
+optional invariants/snapshot/replay/fork/captureFrame capabilities are not bound. This
+is a read-only check; no RacingGame conformance episode or real model call was
+run. The earlier one-off saturated-filter timing failure did not recur in the
+standalone Console suite or five consecutive URL-performance test runs; its
+threshold was not changed.
 
-This capture predates the current per-assignment outcome/link renderer and the
-copy that identifies the Console action as packet preparation rather than model
-analysis. This turn's browser-tester had no Playwright MCP tools or local browser
-binary, so those current rendered details remain unverified. Focused React
-render tests cover the outcome distinction/link and the packet-preparation
-copy; they are not browser acceptance evidence.
+**Batch-level cross-session synthesis (2026-10-14):** Multi-session dispatch now asks the existing read-only analyst process for one separate synthesis after its independent per-session reviews when at least two frozen packets were available. Core owns the versioned `PlaytestCrossSessionSynthesis` artifact, separately records the complete Runtime packet-eligible selection and the subset actually cited, and rejects fewer than two contributors, non-hypothesis verdicts, citations outside a contributor's exact `(episodeId, packetId)`, non-session locators, and payloads over 64 KiB. Runtime binds the MCP process to a trusted `analysisId` and the exact packet IDs chosen by the run owner. The analyst MCP retains only packets actually returned by `playtest.prepareReview` in that process and accepts synthesis citations only when they resolve inside the exact delivered packet; it writes the immutable artifact through Data. The analyst has no Control API token or run-control permission. Data persists a dedicated `playtest_cross_session_syntheses` read model and returns workspace-scoped pages, and the analyses status response carries durable synthesis summaries in addition to in-memory task rows. The Console displays the synthesis separately, labels it hypotheses-only, and renders links for every packet citation and contributor; after Runtime restarts, the persisted synthesis remains renderable even when its task row is gone. Core/Data/Runtime/Console tests and a synthetic browser run→two-session dispatch→citation-render flow exercise this path. This does not claim independent verification, model/prompt provenance, empirical RacingGame evidence, or synthesis quality.
 
-Still not evidenced in a browser: an out-of-cap selection **rejection**,
-which needs more than 16 sessions in the fixture — it holds one. The
-rejection itself is implemented and unit-tested where it actually
-happens, `parsePlaytestingScope` (`the analysis selection is explicit,
-bounded and shareable` asserts a 17-session link yields an empty
-selection with `invalidQuery`, not 16 ids), so what a browser would add
-here is the rendering of that refusal rather than the refusal itself. The
-panel's own `next.slice(0, MAX)` is belt-and-braces behind that: the URL
-layer refuses an over-cap link and the checkboxes disable at the cap, so
-the slice guards an unreachable state and says nothing when it fires.
-The remaining five specs (cancellation, the 1,000-assignment composer,
-mobile overflow, the approval form, and finding→replay→back navigation)
-also remain unrun. Manual driving is not the specs, so this item stays
-open; what changed is that two of its three named criteria now have real
-browser evidence rather than HTTP-level proxies. A unit test still
-compares the panel's count keys against the fixture's emitted keys, so a
-tile the fixture cannot satisfy fails without a browser.
+Verification after this vertical slice: Core cross-synthesis contract **7/7**;
+Data Playtesting repository **27/27**; Runtime/Control API/provider analyst
+focused suite **97/97**; Console production build and synthetic Playtesting
+browser flow **12/12**; root/Core/Data/Runtime/Console typechecks pass. Changed
+files pass targeted ESLint, Prettier, and `git diff --check`.
+
+**Installed service probe (2026-10-14):** The current server-side Control API
+read for `/control/contracts` returns `404 autodev_control_api_unknown_path`
+(expected contract version 3), and a real RacingGame episode-page read returns
+`autodev_control_playtesting_source_unavailable` although ClickHouse `/ping`
+returns 200; a direct read identified ClickHouse error 60 (`UNKNOWN_TABLE`).
+The live Playtest tables are not initialized. The current source initializes
+those tables on the first workspace-scoped read, but the installed Runtime lacks
+that code as well as the contract route. The Console's supported startup gate
+therefore cannot use this installed Runtime as-is. A fresh read-only
+`node runtime/src/cli/verify-control-api.ts` check also exits 1 on the same 404
+(expected `autodev-control-api-contract-v1` version 3)
+and refuses to start Console. No manual schema DDL, compatibility fallback,
+installation, or service restart was attempted; the canonical Runtime
+deployment/restart is a separate required step before using the real Console.
+The canonical workspace id is `SimulatorLife/RacingGame` (from the current
+`config/workspaces.json`), and its approval lookup returns absent. The running
+Console on port 3300 returns `autodev_control_playtesting_source_unavailable`
+for that workspace; the earlier `owner/RacingGame` probe was not the canonical
+workspace identity. The target checkout remains dirty, so no gameplay or model
+call is authorized.
+
+Task status is held in Runtime process memory rather than a durable task ledger.
+If Runtime restarts, a browser that knew the active task keeps it marked stale;
+already-persisted per-session reviews and batch syntheses remain available from
+Data. The browser fixture is
+synthetic and never substitutes for a target-game result. Exact RacingGame
+build/image approval and an operator-authorized bounded run are still required.
+No RacingGame episode, real provider/model call, or human study was performed
+for these implementation tests.
 
 ### Declarative game onboarding: one config, no adapter (delivered)
 
@@ -1384,21 +1459,23 @@ Required work:
 - [x] Generic adapter runtime binding to a game from declarations
       (`core/src/playtesting/adapter-binding.ts`,
       `runtime/src/playtesting/generic-adapter.ts`): entry module and factory,
-      a reference per protocol method, and a seeded-RNG entry point. The
-      capability advertisement's schema digests are computed from the game's own
-      declared schemas rather than written into a file, which is what a
-      hand-written adapter drifts on. An unbound method is refused by name
-      instead of answered from a default.
+      a reference per protocol method, and a named reset `rngVersion` (with
+      snapshot/replay/fork reserved for actual counterfactual state
+      restoration). The capability advertisement's schema digests are computed
+      from the game's own declared schemas rather than written into a file,
+      which is what a hand-written adapter drifts on. An unbound method is
+      refused by name instead of answered from a default.
 - [x] The remaining host wiring: `createGenericAdapter` is served over the
-      `stdio-jsonl` transport the config declares, and a real episode runs
-      through it. `runtime/src/playtesting/generic-adapter-main.ts` is
-      AutoDev's adapter entrypoint — it reads the binding from the approved
+      `stdio-jsonl` transport the config declares, and a complete **synthetic
+      game** episode runs through it. `runtime/src/playtesting/generic-adapter-main.ts`
+      is AutoDev's adapter entrypoint — it reads the binding from the approved
       integration directory, imports the game's entry module by URL, and serves
       the protocol on stdio. `runtime/tests/playtesting-generic-adapter-episode.test.ts`
-      writes a real game to disk, invokes that entrypoint as a process, and
-      drives `reset`/`observe`/`legalActions`/`step`/`outcome` through the
-      production `PlaytestAdapterClient`. Docker is the only substitution;
-      the protocol, the client state machine and the binding are real.
+      writes a test game to disk, invokes that entrypoint as a process, and
+      drives `reset`/`observe`/`legalActions`/`step`/`captureEvents`/`outcome`
+      through the production `PlaytestAdapterClient`. Docker is the only
+      substitution; the protocol, the client state machine and binding are real.
+      This is generic protocol evidence, not a RacingGame run.
       Driving it — rather than reading it — exposed three defects, each fixed at
       the source:
   - The entrypoint exported `main()` with no direct-execution block, so the
@@ -1415,20 +1492,36 @@ Required work:
     meant a correctly-scoped game could not onboard. Core now names
     `PLAYTESTS_ADAPTER_OWNED_METHODS` and excludes those from the unbound
     gap report, so a game is never sent to write a method AutoDev serves.
+  - The sandbox previously omitted the approved `gameBuild` from the generic
+    adapter environment, so its capabilities advertised `"unpinned"` and
+    failed the Runtime's exact-build gate. `PreparedPlaytestSandbox` now carries
+    the operator-approved build identity into the container.
+  - A generic game could bind `captureEvents`, but the episode runner never
+    called it; unlike a hand-written adapter, the generic host has no
+    game-owned notification channel. Runtime now requests the exact zero-based
+    decision-step range when the method is advertised, deduplicates returned
+    events against `game.event` notifications, and preserves omissions as
+    named missing evidence. Regression tests cover both the generic stdio
+    binding and the runner's retrieval/omission behavior.
+  - Independent lifecycle review caught that a factory-created engine could
+    leak if its required binding failed before `createGenericAdapter` returned.
+    The owner now awaits the game's `close()` hook on normal host shutdown and
+    validation/capability-construction failure; a regression proves cleanup
+    happens exactly once on the refusal path.
 - [x] Tiered onboarding with an explicitly stated tier, not an assumed one:
       `PLAYTESTS_INTEGRATION_DIR` and `PLAYTESTS_ADAPTER_CONTAINER_WORKSPACE`
-      are single-owner Core constants. The `declarative` tier requires the
-      config's adapter command to be AutoDev's, so the tier is a fact rather
-      than a claim; a binding that omits a required method is rejected with
-      every gap named at once; an optional method the game leaves unbound is
-      named rather than assumed; and `check` reports a game with no binding as
-      still owning the protocol rather than on-board. The conformance test is
-      `autodev playtest conformance` (`a2c7127d`), which loads the game's real
-      entry and drives a real episode through the production host and client.
-      The `generated-scaffold` tier — AutoDev writing method bodies for a game
-      that cannot onboard declaratively — remains unimplemented; a game that
-      needs it is currently refused a tier it cannot earn rather than handed a
-      generated body.
+      are single-owner Core constants. Both tiers require AutoDev's generic
+      adapter command; `declarative` means the game supplied its own entry
+      module, while `generated-scaffold` means AutoDev generated throwing method
+      bodies that the game must implement. A binding that omits a required
+      method is rejected with every gap named at once; an optional method the
+      game leaves unbound is named rather than assumed; and `check` rejects a
+      game with no binding instead of retaining a handwritten protocol path.
+      `init --scaffold` writes the generated module/binding but does not make it
+      runnable: conformance reaches the throwing body and fails until the game
+      implements it. The conformance test is `autodev playtest conformance`
+      (`a2c7127d`), which exercises the declared entry through the production
+      host and client.
 - [x] A standard `.autodev/` home, with manifests resolved relative to the
       config file rather than the checkout root, plus an independent Runtime
       boundary refusing any manifest that escapes the config's own directory
@@ -1437,29 +1530,41 @@ Required work:
       `autodev playtest check` to verify it end to end before approval. `check`
       reads and reports; `init` writes, so a checker that silently repaired a
       digest could not be mistaken for an integration that was already correct.
-- [x] Hash chain: the observation contract's `schemaHash` is computed by the
-      Runtime (`runtime/src/playtesting/hash-chain.ts`) and regenerated by
-      `check --write-hashes`, encoding through the `canonicalPlaytestJson` the
-      rest of the pipeline already hashes with. Generation, verification and
-      approval all run in the Runtime, so the chain still has one owner; it
-      cannot live in Core, which the Console compiles into a browser bundle and
-      which `tests/cli/platform-import-boundary.test.ts` holds free of Node
-      built-ins. The chain is now closed end to end: the rubric's digest and
-      the benchmark's `rubricHash`/`metricRegistryHash`/`observationSchemaHash`
-      are derived from file content by `check` and verified against it, rather
-      than read and trusted. A benchmark carrying stale digests is reported
+- [x] Hash chain: the observation contract's `schemaHash` is the Runtime-derived
+      canonical digest of `binding.schemas.observation`, the same schema the
+      generic adapter advertises. `check --write-hashes` regenerates that link;
+      the approved checkout SHA pins the contract's remaining metadata.
+      Generation, verification and approval all run in the Runtime, so the
+      chain still has one owner; it cannot live in Core, which the Console
+      compiles into a browser bundle and which
+      `tests/cli/platform-import-boundary.test.ts` holds free of Node built-ins.
+      The chain is now closed end to end: the rubric's raw-byte digest,
+      observation/action/event schema digests, benchmark
+      `rubricHash`/`metricRegistryHash` links and `contentHash` are derived by
+      `check`/`--write-hashes` and verified, rather than read and trusted. A benchmark carrying stale digests is reported
       with all three fields named and the command that regenerates them.
       (An earlier defect had `derivedDigests` resolve the integration directory
       for one call site and the checkout root for another, so the benchmark
       checks silently never ran.)
 - [x] Gitignoring `.autodev/` fails with a message naming that directory
       (commit `476e6aa6`).
+      **Conformance execution bound (2026-10-14):** The declaration check now places
+      one 15-second deadline across asynchronous game entry/factory loading and the
+      protocol exercise, passing the remaining time to each client request. A failed
+      `observe` stops before legal-action/step calls. Tests cover a never-resolving
+      factory and reset, and an invalid observation proving that no action executes.
+      Synchronous CPU-bound code still cannot be preempted while conformance executes
+      the declared game module in-process; process-level isolation remains a separate
+      security requirement for approved gameplay runs.
+
 - [x] Measurement intent stays game-owned: scaffolding ships none. `init` writes
       an empty rubric and reports it as empty rather than filling it with
       plausible defaults, and a generated placeholder registry would be
       indistinguishable from one the game chose. Observation schemas are
       placeholders the game replaces, and the digests over all of them are
       derived rather than declared.
+
+**Conformance deadline hardening (2026-10-14):** The 15-second deadline now spans asynchronous entry/factory loading and the protocol calls, and is passed as remaining time to each request. A failed `observe` stops before legal-action/step calls. Regression tests use never-resolving factories and `reset` methods; both fail at the conformance deadline instead of leaving the CLI waiting on the adapter. Because the conformance entry still runs in-process, a synchronous CPU-bound module cannot be preempted by this asynchronous deadline.
 
 Acceptance requires a second, mechanically different game to join by adding one
 config file and no code, with AutoDev infrastructure unchanged. That is
@@ -1472,8 +1577,20 @@ slice removes.
 onboards a second game that differs from the first in every dimension the runtime
 could have special-cased: CommonJS rather than ESM, code in its own source tree
 rather than beside the binding, a nested namespace reached by dotted binding
-paths, a different state machine, and a seeded RNG plus an optional method the
-first game did not bind. AutoDev's infrastructure is unchanged. Meeting it
-required two fixes the first game's fixture never reached — the entry module
-could only be declared beside the binding file, and a seeded RNG was advertised
-without the version the protocol requires it to name.
+paths, a different state machine, and a named RNG version. AutoDev's
+infrastructure is unchanged. Meeting it required two fixes the first game's
+fixture never reached — the entry module could only be declared beside the
+binding file, and seeded runs needed a named RNG version independent of
+optional in-episode state restoration.
+
+### Selected-session deterministic metric aggregation (2026-10-14)
+
+The earlier aggregate-grounded-analysis gap is partially closed for a Runtime-dispatched, bounded set of frozen analyst packets. This is deliberately separate from the remaining indexed cohort/population aggregates and the matched-seed comparison pipeline in measurement §§1 and 4.
+
+- [x] Core now groups packet metrics only when build, game build, rubric/evaluator hash, measurement version, scenario/family, policy/version, cohort, modality, metric/version/phase, aggregation window, analysis unit, and unit all match. For registry-declared `ratio-of-sums-within-scenario`, it sums numerator, denominator, opportunity and missing counts and derives the pooled ratio/coverage; it never averages episode estimates. It records exact source packet references, sorted omitted-metric reasons, and a bounded unavailable state rather than dropping an oversized result.
+- [x] Metric intent is frozen in evidence-packet schema v3. Packet v1/v2 remains readable for historical review, but Core refuses to pool it without the exact aggregation and analysis-unit semantics. Episode is the only independent unit counted from these packet summaries; learner/participant/cluster/decision/cohort counts remain null because cross-session identity deduplication is unavailable.
+- [x] The existing Runtime run owner computes this descriptive aggregate from the final packet set before launching the analyst. It passes the trusted result to the isolated process and copies that Runtime-supplied value into synthesis schema v2; the model cannot supply or edit aggregate numbers. Data one-way migrates synthesis v1 with explicit `not-recorded` aggregation, without reconstructing history.
+- [x] Console displays the deterministic rows, source-session links, missing/coverage counts and unavailable reasons separately from cited analyst hypotheses. It labels this as selected-session descriptive arithmetic, not a matched-seed effect, confidence interval, or population estimate.
+- [x] Focused Core tests cover ratio-of-sums versus mean-of-ratios, exact cohort strata, non-episode independent units, legacy packets and selection/provenance validation. Runtime tests cover trusted aggregate handoff/persistence, analyst environment binding and synthesis submission; Data tests cover schema migration; Console tests cover numeric rendering and source links. Synthetic fixtures only; no RacingGame episode/provider call was run.
+- [ ] Still open: Data-indexed aggregation over complete assignment inventories and the matched-seed/cohort comparison builder. This slice only summarizes the exact selected review packets and cannot establish population denominators, comparison intervals, or promotion status.
+- [ ] Real RacingGame validation remains gated: canonical workspace approval is absent, the adapter probe reports an optional-method binding gap, and the installed Control API is still pre-v3. No install/restart, target-game execution, model/provider call, or approval change was performed.

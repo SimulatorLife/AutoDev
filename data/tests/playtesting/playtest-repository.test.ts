@@ -15,6 +15,7 @@ import {
   playtestBenchmarkHashInput,
   type PlaytestComparison,
   playtestCoverageManifestHashInput,
+  type PlaytestCrossSessionSynthesis,
   type PlaytestEpisode,
   type PlaytestExperiment,
   playtestExperimentHashInput,
@@ -29,6 +30,9 @@ import {
   PLAYTESTS_BATCH_SCHEMA_V2,
   PLAYTESTS_COMPARISON_SCHEMA,
   PLAYTESTS_COMPARISON_SCHEMA_V1,
+  PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA,
+  PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
+  PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA_V1,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA_V1,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
@@ -56,6 +60,7 @@ import {
 import {
   decodeBatch,
   decodeComparison,
+  decodeCrossSessionSynthesis,
   decodeEpisode,
   decodeExperiment,
   decodeFinding,
@@ -63,6 +68,7 @@ import {
   encodeBatch,
   encodeBenchmark,
   encodeComparison,
+  encodeCrossSessionSynthesis,
   encodeEpisode,
   encodeExperiment,
   encodeFinding,
@@ -514,6 +520,68 @@ test("legacy review schemas migrate with explicit packet and claim-citation gaps
     /artifact metadata/u
   );
 });
+
+function crossSessionSynthesis(
+  overrides: Partial<PlaytestCrossSessionSynthesis> = {}
+): PlaytestCrossSessionSynthesis {
+  const contributors = [
+    { episodeId: "episode-1", batchId: "batch-1", packetId: "packet-1" },
+    { episodeId: "episode-2", batchId: "batch-2", packetId: "packet-2" }
+  ] as const;
+  const base: PlaytestCrossSessionSynthesis = {
+    schema: PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
+    synthesisId: "synthesis-1",
+    version: 1,
+    analysisId: "analysis-1",
+    workspaceId: "workspace-a/game",
+    authorRole: "playtest-analyst",
+    authorId: "analyst-1",
+    modelId: null,
+    modelRevision: null,
+    promptHash: null,
+    generatedAt: "2026-10-01T00:00:00.000Z",
+    status: "hypothesis",
+    summary: "The same warning preceded a no-progress action in both sessions.",
+    contributors,
+    packetEligibleEpisodeIds: contributors.map((entry) => entry.episodeId),
+    metricAggregation: {
+      schema: PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA,
+      workspaceId: "workspace-a/game",
+      analysisId: "analysis-1",
+      status: "no-applicable-metrics",
+      method: "ratio-of-sums-within-identical-stratum-v1",
+      sourcePackets: contributors,
+      rows: [],
+      omittedMetrics: [],
+      reason: "no-applicable-metric-rows"
+    },
+    claims: [
+      {
+        kind: "pattern",
+        text: "Both sessions recorded the warning before progress stopped.",
+        evidenceRefs: contributors.map((contributor) => ({
+          episodeId: contributor.episodeId,
+          packetId: contributor.packetId,
+          locator: {
+            kind: "event" as const,
+            id: `warning-${contributor.episodeId}`,
+            step: 2
+          }
+        }))
+      }
+    ],
+    experiments: []
+  };
+  const result = { ...base, ...overrides };
+  return {
+    ...result,
+    metricAggregation: overrides.metricAggregation ?? {
+      ...base.metricAggregation,
+      workspaceId: result.workspaceId,
+      analysisId: result.analysisId
+    }
+  };
+}
 
 function comparison(
   index = 1,
@@ -1033,6 +1101,8 @@ const SYNTHETIC_ID_COLUMNS = {
   episodeId: "episode_id",
   findingId: "finding_id",
   reviewId: "review_id",
+  synthesisId: "synthesis_id",
+  analysisId: "analysis_id",
   comparisonId: "comparison_id",
   benchmarkId: "benchmark_id",
   experimentId: "experiment_id",
@@ -1070,6 +1140,9 @@ function tableKeyColumn(table: string): string {
     }
     case "playtest_reviews": {
       return "review_id";
+    }
+    case "playtest_cross_session_syntheses": {
+      return "synthesis_id";
     }
     case "playtest_benchmarks": {
       return "benchmark_id";
@@ -1227,6 +1300,52 @@ function makeClickHouseFetch() {
   };
   return { fetchImpl, calls, tables };
 }
+
+test("cross-session synthesis codec enforces its canonical workspace and packet identities", () => {
+  const artifact = crossSessionSynthesis();
+  const encoded = encodeCrossSessionSynthesis("workspace-a/game", artifact);
+  assert.equal(encoded.analysis_id, artifact.analysisId);
+  assert.deepEqual(
+    decodeCrossSessionSynthesis(encoded as unknown as Record<string, unknown>),
+    artifact
+  );
+  assert.throws(
+    () => encodeCrossSessionSynthesis("workspace-b/game", artifact),
+    /workspace does not match/u
+  );
+  const forged = {
+    ...artifact,
+    claims: [
+      {
+        ...artifact.claims[0]!,
+        evidenceRefs: [
+          { ...artifact.claims[0]!.evidenceRefs[0]!, packetId: "packet-2" },
+          ...artifact.claims[0]!.evidenceRefs.slice(1)
+        ]
+      }
+    ]
+  };
+  assert.throws(() => encodeCrossSessionSynthesis("workspace-a/game", forged));
+});
+
+test("cross-session synthesis codec migrates v1 without inferring metric history", () => {
+  const artifact = crossSessionSynthesis();
+  const encoded = encodeCrossSessionSynthesis("workspace-a/game", artifact);
+  const historical = { ...artifact } as Record<string, unknown>;
+  delete historical.metricAggregation;
+  historical.schema = PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA_V1;
+  const migrated = decodeCrossSessionSynthesis({
+    ...encoded,
+    payload_json: JSON.stringify(historical)
+  });
+  assert.equal(migrated.schema, PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA);
+  assert.equal(migrated.metricAggregation.status, "not-recorded");
+  assert.equal(
+    migrated.metricAggregation.reason,
+    "historical-synthesis-predates-aggregation"
+  );
+  assert.deepEqual(migrated.metricAggregation.rows, []);
+});
 
 test("comparison codec rejects legacy finding aliases on write and read", () => {
   const current = comparison();
@@ -1996,6 +2115,16 @@ test("Core artifact round-trips preserve full canonical payloads and latest revi
     ),
     reviewArtifact
   );
+  const synthesisArtifact = crossSessionSynthesis();
+  await repo.insertCrossSessionSynthesis(synthesisArtifact);
+  assert.deepEqual(
+    await repo.getCrossSessionSynthesisForAnalysis(
+      "workspace-a/game",
+      synthesisArtifact.analysisId
+    ),
+    synthesisArtifact
+  );
+
   assert.deepEqual(
     await repo.getLatestComparison(
       "workspace-a",
@@ -2228,7 +2357,7 @@ test("idempotent schema stores complete canonical payloads but no human-response
   assert.equal(
     queries.filter((query) => query.includes("CREATE TABLE IF NOT EXISTS"))
       .length,
-    18
+    20
   );
   assert.equal(
     queries.filter((query) =>
@@ -2393,6 +2522,62 @@ test("comparisons, benchmarks, and experiments support cursor pagination, full t
       state: "approved"
     }),
     7
+  );
+});
+
+test("cross-session syntheses support workspace-scoped cursor pagination and full counts", async () => {
+  const fake = makeClickHouseFetch();
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const rows = Array.from({ length: 18 }, (_, index) => {
+    const workspaceId = index < 11 ? "workspace-a/game" : "workspace-b/game";
+    const sequence = String(index + 1).padStart(3, "0");
+    return crossSessionSynthesis({
+      synthesisId: `synthesis-${sequence}`,
+      analysisId: `analysis-${sequence}`,
+      workspaceId,
+      generatedAt: new Date(Date.UTC(2026, 9, 1, 0, 0, index)).toISOString()
+    });
+  });
+  fake.tables.set(
+    "playtest_cross_session_syntheses",
+    rows.map(
+      (row) =>
+        encodeCrossSessionSynthesis(row.workspaceId, row) as unknown as Record<
+          string,
+          unknown
+        >
+    )
+  );
+
+  const first = await repository.listCrossSessionSyntheses("workspace-a/game", {
+    limit: 4
+  });
+  assert.equal(first.total, 11);
+  assert.equal(first.rows.length, 4);
+  assert.ok(first.nextCursor);
+  assert.ok(first.rows.every((row) => row.workspaceId === "workspace-a/game"));
+  const second = await repository.listCrossSessionSyntheses(
+    "workspace-a/game",
+    {
+      limit: 4,
+      cursor: first.nextCursor!
+    }
+  );
+  assert.equal(second.total, 11);
+  assert.equal(second.rows.length, 4);
+  assert.ok(second.nextCursor);
+  assert.equal(
+    new Set([...first.rows, ...second.rows].map((row) => row.synthesisId)).size,
+    8
+  );
+  assert.ok(
+    fake.calls.every((url) => {
+      const query = url.searchParams.get("query") ?? "";
+      return (
+        !query.includes("playtest_cross_session_syntheses") ||
+        url.searchParams.get("param_workspaceId") === "workspace-a/game"
+      );
+    })
   );
 });
 

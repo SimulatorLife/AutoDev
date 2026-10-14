@@ -115,9 +115,9 @@ test("the sent body is exactly what the Runtime reads", async () => {
     "outcomeKind",
     "reportKind"
   ]);
-  assert.equal(body["outcomeKind"], "success");
-  assert.equal(body["reportKind"], "task");
-  assert.deepEqual(body["evidence"], [
+  assert.equal(body.outcomeKind, "success");
+  assert.equal(body.reportKind, "task");
+  assert.deepEqual(body.evidence, [
     { kind: "trajectory", uri: "codex://session/exp-1" }
   ]);
 });
@@ -184,7 +184,7 @@ test("an `unknown` session outcome needs no evidence", async () => {
   assert.equal(status, 303);
   assert.equal(sent.length, 1);
   const body = JSON.parse(sent[0]?.body ?? "{}") as Record<string, unknown>;
-  assert.equal(body["outcomeKind"], "unknown");
+  assert.equal(body.outcomeKind, "unknown");
 });
 
 test("a conflicting second outcome is reported as a conflict", async () => {

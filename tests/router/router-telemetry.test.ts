@@ -24,6 +24,8 @@ import {
 } from "@simulatorlife/autodev-runtime/router/proxy";
 import type { Candidate } from "@simulatorlife/autodev-runtime/router/routing";
 import {
+  ATTR_AUTODEV_GIT_ATTRIBUTION,
+  ATTR_AUTODEV_GIT_PARTIAL,
   compactCompactionDimension,
   COMPACTION_DIMENSION_ALLOWLISTS,
   COMPACTION_DIMENSION_OTHER,
@@ -31,8 +33,6 @@ import {
   endLogicalRequestSpan,
   flushTelemetryMetrics,
   getFinishedSpans,
-  ATTR_AUTODEV_GIT_ATTRIBUTION,
-  ATTR_AUTODEV_GIT_PARTIAL,
   METRIC_CONTEXT_COMPACTIONS,
   METRIC_GIT_COMMITS,
   METRIC_GIT_FILES_ADDED,
@@ -42,8 +42,8 @@ import {
   METRIC_GIT_LINES_REMOVED,
   recordContextCompaction,
   recordGitCommit,
-  resetTrackedGitCommitsForTest,
   resetTelemetryExporter,
+  resetTrackedGitCommitsForTest,
   resolveOtlpSignalEndpoint,
   sanitizeCategoricalLabel,
   setTelemetryExporter,

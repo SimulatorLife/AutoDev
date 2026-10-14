@@ -145,12 +145,13 @@ function errorResponse(message: string): Buffer {
 function buildResponder(
   answers: ReadonlyMap<string, FakeQueryResult>
 ): (sql: string) => FakeQueryResult {
-  const normalised = [...answers].map(
-    ([key, value]) => [key.replace(/\s+/gu, " ").trim(), value] as const
+  const normalised = Array.from(
+    answers,
+    ([key, value]) => [key.replaceAll(/\s+/gu, " ").trim(), value] as const
   );
 
   return (sql: string) => {
-    const flat = sql.replace(/\s+/gu, " ").trim();
+    const flat = sql.replaceAll(/\s+/gu, " ").trim();
     let best: FakeQueryResult | undefined;
     let bestLength = -1;
     for (const [key, value] of normalised) {
@@ -173,8 +174,8 @@ function startupResponse(): Buffer {
   return Buffer.concat([
     framed("R", int32(0)), // AuthenticationOk
     framed("S", Buffer.concat([cstring("server_version"), cstring("15.0")])),
-    framed("S", Buffer.concat([cstring("server_encoding"), cstring("UTF8")])),
-    framed("S", Buffer.concat([cstring("client_encoding"), cstring("UTF8")])),
+    framed("S", Buffer.concat([cstring("server_encoding"), cstring("utf8")])),
+    framed("S", Buffer.concat([cstring("client_encoding"), cstring("utf8")])),
     framed("S", Buffer.concat([cstring("DateStyle"), cstring("ISO, MDY")])),
     framed("S", Buffer.concat([cstring("TimeZone"), cstring("UTC")])),
     framed("S", Buffer.concat([cstring("integer_datetimes"), cstring("on")])),
@@ -187,11 +188,217 @@ function startupResponse(): Buffer {
   ]);
 }
 
+interface ProtocolState {
+  buffer: Buffer;
+  started: boolean;
+  preparedSql: string | null;
+  boundParams: string[];
+}
+
+interface ProtocolMessage {
+  readonly tag: string;
+  readonly body: Buffer;
+}
+
+type StatementList = { sql: string; params: string[] }[];
+type QueryResponder = (sql: string) => FakeQueryResult;
+
+function consumeStartupPacket(
+  state: ProtocolState,
+  socket: net.Socket
+): boolean {
+  if (state.buffer.length < 4) return false;
+  const length = state.buffer.readUInt32BE(0);
+  if (state.buffer.length < length) return false;
+  const version = state.buffer.readUInt32BE(4);
+  if (version === 80_877_103) {
+    // SSLRequest: decline, and read the startup packet that follows.
+    socket.write(Buffer.from("N", "ascii"));
+  } else {
+    state.started = true;
+    socket.write(startupResponse());
+  }
+  state.buffer = state.buffer.subarray(length);
+  return true;
+}
+
+function readProtocolMessage(state: ProtocolState): ProtocolMessage | null {
+  if (state.buffer.length < 5) return null;
+  const tagByte = state.buffer.at(0);
+  if (tagByte === undefined) return null;
+  const length = state.buffer.readUInt32BE(1);
+  if (state.buffer.length < length + 1) return null;
+  const message = {
+    tag: String.fromCharCode(tagByte),
+    body: state.buffer.subarray(5, length + 1)
+  };
+  state.buffer = state.buffer.subarray(length + 1);
+  return message;
+}
+
+function writeQueryResult(
+  sql: string,
+  params: string[],
+  socket: net.Socket,
+  statements: StatementList,
+  respond: QueryResponder
+): void {
+  statements.push({ sql, params });
+  const result = respond(sql);
+  socket.write(
+    Buffer.concat([
+      rowDescription(result.columns),
+      ...result.rows.map(dataRow),
+      framed(
+        "C",
+        cstring(result.commandComplete ?? `SELECT ${result.rows.length}`)
+      ),
+      framed("Z", Buffer.from("I", "ascii"))
+    ])
+  );
+}
+
+function handleSimpleQuery(
+  body: Buffer,
+  socket: net.Socket,
+  statements: StatementList,
+  respond: QueryResponder
+): void {
+  // Each semicolon-separated statement receives its own completion and ready message.
+  const sql = body.subarray(0, -1).toString("utf8");
+  for (const statement of sql
+    .split(";")
+    .filter((piece) => piece.trim() !== "")) {
+    writeQueryResult(statement, [], socket, statements, respond);
+  }
+}
+
+function handleParseMessage(
+  body: Buffer,
+  state: ProtocolState,
+  socket: net.Socket
+): void {
+  // Parse carries a statement name, query text, and then parameter type OIDs.
+  const nameEnd = body.indexOf(0);
+  const queryEnd = body.indexOf(0, nameEnd + 1);
+  state.preparedSql = body.subarray(nameEnd + 1, queryEnd).toString("utf8");
+  state.boundParams = [];
+  socket.write(framed("1", Buffer.alloc(0))); // ParseComplete
+}
+
+function handleBindMessage(
+  body: Buffer,
+  state: ProtocolState,
+  socket: net.Socket
+): void {
+  // Bind carries portal and statement names, format codes, then text parameters.
+  let offset = 0;
+  offset = body.indexOf(0, offset) + 1;
+  offset = body.indexOf(0, offset) + 1;
+  const formatCount = body.readInt16BE(offset);
+  offset += 2 + formatCount * 2;
+  const paramCount = body.readInt16BE(offset);
+  offset += 2;
+  state.boundParams = [];
+  for (let index = 0; index < paramCount; index += 1) {
+    const size = body.readInt32BE(offset);
+    offset += 4;
+    if (size === -1) {
+      state.boundParams.push("NULL");
+    } else {
+      state.boundParams.push(
+        body.subarray(offset, offset + size).toString("utf8")
+      );
+      offset += size;
+    }
+  }
+  socket.write(framed("2", Buffer.alloc(0))); // BindComplete
+}
+
+function handleExecuteMessage(
+  state: ProtocolState,
+  socket: net.Socket,
+  statements: StatementList,
+  respond: QueryResponder
+): void {
+  const sql = state.preparedSql ?? "";
+  writeQueryResult(sql, state.boundParams, socket, statements, respond);
+  state.preparedSql = null;
+}
+
+function handleProtocolMessage(
+  message: ProtocolMessage,
+  state: ProtocolState,
+  socket: net.Socket,
+  statements: StatementList,
+  respond: QueryResponder
+): boolean {
+  switch (message.tag) {
+    case "Q": {
+      handleSimpleQuery(message.body, socket, statements, respond);
+      return true;
+    }
+    case "P": {
+      handleParseMessage(message.body, state, socket);
+      return true;
+    }
+    case "B": {
+      handleBindMessage(message.body, state, socket);
+      return true;
+    }
+    case "D": {
+      // Describe is answered on Execute, once the statement is known.
+      return true;
+    }
+    case "E": {
+      handleExecuteMessage(state, socket, statements, respond);
+      return true;
+    }
+    case "C": {
+      socket.write(framed("3", Buffer.alloc(0))); // CloseComplete
+      return true;
+    }
+    case "X": {
+      socket.end();
+      return false;
+    }
+    default: {
+      return true;
+    }
+  }
+}
+
+function receiveProtocolData(
+  chunk: Buffer,
+  state: ProtocolState,
+  socket: net.Socket,
+  statements: StatementList,
+  respond: QueryResponder
+): void {
+  state.buffer = Buffer.concat([state.buffer, chunk]);
+  try {
+    for (;;) {
+      if (!state.started) {
+        if (!consumeStartupPacket(state, socket)) return;
+        continue;
+      }
+      const message = readProtocolMessage(state);
+      if (message === null) return;
+      if (!handleProtocolMessage(message, state, socket, statements, respond)) {
+        return;
+      }
+    }
+  } catch (error) {
+    socket.write(errorResponse((error as Error).message));
+    socket.end();
+  }
+}
+
 export async function startFakePostgresServer(
   answers: ReadonlyMap<string, FakeQueryResult>
 ): Promise<FakePostgresServer> {
   const respond = buildResponder(answers);
-  const statements: { sql: string; params: string[] }[] = [];
+  const statements: StatementList = [];
   const sockets = new Set<net.Socket>();
   let opened = 0;
 
@@ -201,150 +408,15 @@ export async function startFakePostgresServer(
     socket.on("close", () => sockets.delete(socket));
     socket.on("error", () => socket.destroy());
 
-    let buffer = Buffer.alloc(0);
-    let started = false;
-    // State for the extended query protocol: the statement being prepared and
-    // the parameters bound to it, replayed when Execute arrives.
-    let preparedSql: string | null = null;
-    let boundParams: string[] = [];
-
-    socket.on("data", (chunk) => {
-      buffer = Buffer.concat([buffer, chunk]);
-      try {
-        for (;;) {
-          if (!started) {
-            if (buffer.length < 4) return;
-            const length = buffer.readUInt32BE(0);
-            if (buffer.length < length) return;
-            const version = buffer.readUInt32BE(4);
-            if (version === 80877103) {
-              // SSLRequest: decline, and read the startup packet that follows.
-              socket.write(Buffer.from("N", "ascii"));
-              buffer = buffer.subarray(length);
-              continue;
-            }
-            started = true;
-            buffer = buffer.subarray(length);
-            socket.write(startupResponse());
-            continue;
-          }
-          if (buffer.length < 5) return;
-          const tagByte = buffer.at(0);
-          if (tagByte === undefined) return;
-          const tag = String.fromCharCode(tagByte);
-          const length = buffer.readUInt32BE(1);
-          if (buffer.length < length + 1) return;
-          const body = buffer.subarray(5, length + 1);
-          buffer = buffer.subarray(length + 1);
-
-          if (tag === "Q") {
-            // Simple query: every semicolon-separated statement, each followed
-            // by its own result and a ReadyForQuery.
-            const sql = body.subarray(0, body.length - 1).toString("utf8");
-            const pieces = sql
-              .split(";")
-              .filter((piece) => piece.trim() !== "");
-            for (const piece of pieces) {
-              statements.push({ sql: piece, params: [] });
-              const result = respond(piece);
-              socket.write(
-                Buffer.concat([
-                  rowDescription(result.columns),
-                  ...result.rows.map(dataRow),
-                  framed(
-                    "C",
-                    cstring(
-                      result.commandComplete ?? `SELECT ${result.rows.length}`
-                    )
-                  ),
-                  framed("Z", Buffer.from("I", "ascii"))
-                ])
-              );
-            }
-            continue;
-          }
-
-          if (tag === "P") {
-            // Parse: statement name, query text, then an int16 count followed
-            // by that many int32 parameter type OIDs. The query runs from
-            // after the name's terminator to its own terminator; the type
-            // list starts immediately after that.
-            const nul = body.indexOf(0);
-            const second = body.indexOf(0, nul + 1);
-            preparedSql = body.subarray(nul + 1, second).toString("utf8");
-            boundParams = [];
-            socket.write(framed("1", Buffer.alloc(0))); // ParseComplete
-            continue;
-          }
-
-          if (tag === "B") {
-            // Bind: skip the portal and statement names and the format codes,
-            // then read each parameter as text.
-            let offset = 0;
-            offset = body.indexOf(0, offset) + 1;
-            offset = body.indexOf(0, offset) + 1;
-            const formatCount = body.readInt16BE(offset);
-            offset += 2 + formatCount * 2;
-            const paramCount = body.readInt16BE(offset);
-            offset += 2;
-            boundParams = [];
-            for (let index = 0; index < paramCount; index += 1) {
-              const size = body.readInt32BE(offset);
-              offset += 4;
-              if (size === -1) {
-                boundParams.push("NULL");
-              } else {
-                boundParams.push(
-                  body.subarray(offset, offset + size).toString("utf8")
-                );
-                offset += size;
-              }
-            }
-            socket.write(framed("2", Buffer.alloc(0))); // BindComplete
-            continue;
-          }
-
-          if (tag === "D") {
-            // Describe: answered on Execute, once the statement is known.
-            continue;
-          }
-
-          if (tag === "E") {
-            const sql = preparedSql ?? "";
-            statements.push({ sql, params: boundParams });
-            preparedSql = null;
-            const result = respond(sql);
-            socket.write(
-              Buffer.concat([
-                rowDescription(result.columns),
-                ...result.rows.map(dataRow),
-                framed(
-                  "C",
-                  cstring(
-                    result.commandComplete ?? `SELECT ${result.rows.length}`
-                  )
-                ),
-                framed("Z", Buffer.from("I", "ascii"))
-              ])
-            );
-            continue;
-          }
-
-          if (tag === "C") {
-            socket.write(framed("3", Buffer.alloc(0))); // CloseComplete
-            continue;
-          }
-
-          if (tag === "X") {
-            socket.end();
-            return;
-          }
-        }
-      } catch (error) {
-        socket.write(errorResponse((error as Error).message));
-        socket.end();
-      }
-    });
+    const state: ProtocolState = {
+      buffer: Buffer.alloc(0),
+      started: false,
+      preparedSql: null,
+      boundParams: []
+    };
+    socket.on("data", (chunk) =>
+      receiveProtocolData(chunk, state, socket, statements, respond)
+    );
   });
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

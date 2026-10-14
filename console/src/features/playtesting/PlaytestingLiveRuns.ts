@@ -10,9 +10,10 @@
 import type { ControlApiPlaytestingRunRecord } from "@simulatorlife/autodev-core";
 import React, { useCallback, useEffect, useState } from "react";
 
-import { PlaytestingActiveRunsPanel } from "./PlaytestingActiveRunsPanel.ts";
 import { responseMessage } from "./playtesting-run-messages.ts";
-import { usePlaytestingActiveRuns } from "./usePlaytestingActiveRuns.ts";
+import type { PlaytestingScope } from "./playtesting-url.ts";
+import { PlaytestingActiveRunsPanel } from "./PlaytestingActiveRunsPanel.ts";
+import { usePlaytestingActiveRuns } from "./use-playtesting-active-runs.ts";
 
 async function postCancel(
   workspaceId: string,
@@ -54,7 +55,10 @@ async function confirmBatchStillRunning(
   );
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) return false;
-  const envelope = payload as { kind?: unknown; data?: { run?: { status?: unknown } } };
+  const envelope = payload as {
+    kind?: unknown;
+    data?: { run?: { status?: unknown } };
+  };
   const status =
     envelope.kind === "ok" ? envelope.data?.run?.status : undefined;
   return status === "running" || status === "persisting";
@@ -62,17 +66,27 @@ async function confirmBatchStillRunning(
 
 export interface PlaytestingLiveRunsProps {
   readonly workspaceId: string;
+  readonly scope: PlaytestingScope;
   /** Focused batch, read from the URL so refresh and Back restore it. */
   readonly initialFocusedBatchId: string | null;
+  /** A confirmed local start asks the same status hook for an immediate read. */
+  readonly refreshGeneration: number;
 }
 
 export function PlaytestingLiveRuns({
   workspaceId,
-  initialFocusedBatchId
+  scope,
+  initialFocusedBatchId,
+  refreshGeneration
 }: PlaytestingLiveRunsProps): React.JSX.Element {
-  const { state, refresh, watching } = usePlaytestingActiveRuns({ workspaceId });
+  const { state, refresh, watching } = usePlaytestingActiveRuns({
+    workspaceId
+  });
   const [busyBatchId, setBusyBatchId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  useEffect(() => {
+    if (refreshGeneration > 0) refresh();
+  }, [refresh, refreshGeneration]);
   const [focusedBatchId, setFocusedBatchId] = useState<string | null>(
     initialFocusedBatchId
   );
@@ -82,20 +96,20 @@ export function PlaytestingLiveRuns({
   // the operator to the batch they were watching instead of a bare list.
   const focusBatch = useCallback((batchId: string | null) => {
     setFocusedBatchId(batchId);
-    const url = new URL(window.location.href);
+    const url = new URL(globalThis.location.href);
     if (batchId === null) url.searchParams.delete("liveBatch");
     else url.searchParams.set("liveBatch", batchId);
-    window.history.pushState(null, "", url);
+    globalThis.history.pushState(null, "", url);
   }, []);
 
   useEffect(() => {
     const onPopState = (): void => {
       setFocusedBatchId(
-        new URLSearchParams(window.location.search).get("liveBatch")
+        new URLSearchParams(globalThis.location.search).get("liveBatch")
       );
     };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    globalThis.addEventListener("popstate", onPopState);
+    return () => globalThis.removeEventListener("popstate", onPopState);
   }, []);
 
   const cancel = useCallback(
@@ -136,7 +150,7 @@ export function PlaytestingLiveRuns({
     "div",
     { className: "flex flex-col gap-4" },
     React.createElement(PlaytestingActiveRunsPanel, {
-      workspaceId,
+      scope,
       runs: state.runs,
       freshness: state.freshness,
       lastFailure: state.lastFailure,
@@ -160,4 +174,3 @@ export function PlaytestingLiveRuns({
       : null
   );
 }
-

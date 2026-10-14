@@ -79,6 +79,7 @@ function setupCheckout(): {
   );
   mkdirSync(path.join(root, ".autodev"));
   for (const filename of [
+    "playtest.binding.json",
     "playtest.config.json",
     "playtest.observation.json",
     "playtest.rubric.json",

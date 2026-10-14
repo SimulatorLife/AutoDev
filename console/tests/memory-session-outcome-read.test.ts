@@ -183,7 +183,7 @@ const REJECTIONS: ReadonlyArray<readonly [string, unknown]> = [
         outcomeKind: "failure",
         reportKind: "task",
         reporterId: "operator@example",
-        reportedAt: 1759827600000,
+        reportedAt: 1_759_827_600_000,
         reasonCode: "reporter_supplied",
         evidence: []
       }

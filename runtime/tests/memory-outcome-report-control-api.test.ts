@@ -10,8 +10,8 @@ import type { MemoryService } from "@simulatorlife/autodev-runtime/memory";
 import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
 import {
   makeRequest,
-  responseBody,
   type RecordedResponse,
+  responseBody,
   responseRecorder
 } from "./support/control-api-harness.ts";
 
@@ -78,9 +78,9 @@ function experience(overrides: Partial<ExperienceEnvelope> = {}) {
 }
 
 function errorCode(body: Record<string, unknown> | null): unknown {
-  const envelope = body?.["error"];
+  const envelope = body?.error;
   return typeof envelope === "object" && envelope !== null
-    ? (envelope as Record<string, unknown>)["code"]
+    ? (envelope as Record<string, unknown>).code
     : undefined;
 }
 
@@ -183,13 +183,13 @@ test("the write is authorized against the captured session, not the caller's win
   const { status, recorded } = await report(CLAIMED);
 
   assert.equal(status, 200);
-  assert.equal(recorded?.context["workspaceId"], "ws-1");
-  assert.equal(recorded?.context["repositoryId"], "owner/repo-1");
-  assert.equal(recorded?.context["taskId"], "task-1");
-  assert.equal(recorded?.context["runId"], "run-1");
-  assert.equal(recorded?.context["agentId"], "agent-orch");
+  assert.equal(recorded?.context.workspaceId, "ws-1");
+  assert.equal(recorded?.context.repositoryId, "owner/repo-1");
+  assert.equal(recorded?.context.taskId, "task-1");
+  assert.equal(recorded?.context.runId, "run-1");
+  assert.equal(recorded?.context.agentId, "agent-orch");
   assert.equal(
-    recorded?.context["canReadGlobal"],
+    recorded?.context.canReadGlobal,
     false,
     "an outcome write must not carry global read authority"
   );

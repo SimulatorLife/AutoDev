@@ -72,6 +72,7 @@ function setupCheckout(githubIssues: "disabled" | "review"): {
   );
   mkdirSync(path.join(root, ".autodev"));
   for (const filename of [
+    "playtest.binding.json",
     "playtest.config.json",
     "playtest.observation.json",
     "playtest.rubric.json",
@@ -154,7 +155,10 @@ function finding(
     identity: buildPlaytestFindingIdentity({
       workspaceId: WORKSPACE_ID,
       mechanicKey: "action-execution",
-      failureSignature: { events: ["action.rejected"], witness: overrides.findingId },
+      failureSignature: {
+        events: ["action.rejected"],
+        witness: overrides.findingId
+      },
       scope: { scenarioFamily: "onboarding" }
     }),
     fingerprint: "a".repeat(64),
@@ -323,10 +327,9 @@ test("a game asking for review cannot grant itself the operator's withheld autho
   let api: Harness | undefined;
   try {
     // The config still says review; the operator withheld the grant.
-    api = await harness(
-      approval(checkout, { issueReporting: "disabled" }),
-      [finding({ findingId: "finding-verified" })]
-    );
+    api = await harness(approval(checkout, { issueReporting: "disabled" }), [
+      finding({ findingId: "finding-verified" })
+    ]);
     const capabilities = await api.callCapabilities();
     assert.equal(capabilities.configuredIssueReporting, "review");
     assert.equal(capabilities.issueReporting, "disabled");
@@ -374,9 +377,7 @@ test("an unreadable checkout config fails closed rather than claiming authority"
     // Destroy the config after the approval's digest was computed: the
     // approval is still "review", but nothing readable declares review.
     rmSync(path.join(checkout.root, ".autodev", "playtest.config.json"));
-    api = await harness(approved, [
-      finding({ findingId: "finding-verified" })
-    ]);
+    api = await harness(approved, [finding({ findingId: "finding-verified" })]);
 
     const capabilities = await api.callCapabilities();
     assert.equal(capabilities.configuredIssueReporting, "disabled");

@@ -124,12 +124,14 @@
       ]
     },
     "shell_environment_policy": {
+      "ignore_default_excludes": false,
       "set": {
         "NODE_OPTIONS": "--disable-warning=ExperimentalWarning"
       },
       "filters": {
         "PATH": "include",
-        "HOME": "include"
+        "HOME": "include",
+        "*PASSWORD*": "exclude"
       }
     },
     "plugins": {

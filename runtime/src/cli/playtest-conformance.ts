@@ -21,12 +21,11 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 
 import {
-  assertPlaytestObservationContract,
-  PLAYTESTS_ADAPTER_BINDING_SCHEMA,
-  PLAYTESTS_INTEGRATION_DIR,
   type PlaytestAdapterBinding,
   type PlaytestBindableMethod,
-  type PlaytestJsonSchema
+  type PlaytestJsonSchema,
+  PLAYTESTS_ADAPTER_BINDING_SCHEMA,
+  PLAYTESTS_INTEGRATION_DIR
 } from "@simulatorlife/autodev-core";
 
 import { PlaytestAdapterClient } from "../playtesting/adapter-client.ts";
@@ -57,6 +56,43 @@ function failure(stage: string, error: unknown): ConformanceFailure {
     stage,
     message: error instanceof Error ? error.message : String(error)
   };
+}
+
+function remainingDeadlineMs(deadlineAt: number, stage: string): number {
+  const remaining = Math.floor(deadlineAt - performance.now());
+  if (remaining <= 0) {
+    throw new Error(
+      `Conformance exceeded its ${String(CONFORMANCE_DEADLINE_MS)}ms deadline before ${stage}.`
+    );
+  }
+  return remaining;
+}
+
+async function beforeDeadline<T>(
+  operation: Promise<T>,
+  deadlineAt: number,
+  stage: string
+): Promise<T> {
+  const remaining = remainingDeadlineMs(deadlineAt, stage);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Conformance exceeded its ${String(CONFORMANCE_DEADLINE_MS)}ms deadline during ${stage}.`
+              )
+            ),
+          remaining
+        );
+      })
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /**
@@ -103,6 +139,7 @@ function readDeclaredContext(
 export async function runPlaytestConformance(
   checkoutRoot: string
 ): Promise<ConformanceReport> {
+  const deadlineAt = performance.now() + CONFORMANCE_DEADLINE_MS;
   const integrationDir = path.resolve(checkoutRoot, PLAYTESTS_INTEGRATION_DIR);
   if (!existsSync(integrationDir)) {
     return {
@@ -137,9 +174,10 @@ export async function runPlaytestConformance(
   const failures: ConformanceFailure[] = [];
   let episodeId: string | null = null;
 
-  let host: Awaited<ReturnType<typeof startGenericAdapterHost>> | null = null;
+  let host: Awaited<ReturnType<typeof startGenericAdapterHost>>;
+  let abandonedHostStart = false;
   try {
-    host = await startGenericAdapterHost({
+    const startingHost = startGenericAdapterHost({
       binding,
       loadEntry: createConformanceEntryLoader(integrationDir, checkoutRoot),
       engineBuild: "conformance",
@@ -151,7 +189,17 @@ export async function runPlaytestConformance(
       input: clientToHost,
       output: hostToClient
     });
+    const closingLateHost = startingHost.then(async (started) => {
+      if (abandonedHostStart) await started.close();
+      return started;
+    });
+    host = await beforeDeadline(
+      closingLateHost,
+      deadlineAt,
+      "loading the game entry"
+    );
   } catch (error) {
+    abandonedHostStart = true;
     return {
       ok: false,
       tier: binding.tier,
@@ -173,7 +221,9 @@ export async function runPlaytestConformance(
     method: PlaytestBindableMethod,
     params: Readonly<Record<string, unknown>>
   ): Promise<Record<string, unknown> | null> => {
-    const result = await client.call(`game.${method}` as never, params);
+    const result = await client.call(`game.${method}` as never, params, {
+      deadlineMs: remainingDeadlineMs(deadlineAt, `game.${method}`)
+    });
     if (!result.ok) {
       failures.push({
         stage: method,
@@ -186,7 +236,9 @@ export async function runPlaytestConformance(
   };
 
   try {
-    const capabilities = await client.negotiateCapabilities();
+    const capabilities = await client.negotiateCapabilities(
+      remainingDeadlineMs(deadlineAt, "capability negotiation")
+    );
     // An advertisement the Runtime could never use would fail the first batch,
     // so it is proven here where the operator can act on it.
     if (capabilities.observationSchemaHash.length !== 64) {
@@ -211,6 +263,8 @@ export async function runPlaytestConformance(
       episodeId,
       expectedRevision: revision
     });
+    if (observed === null) return finish();
+    if (observed === null) return finish();
 
     // The action to take is the game's own: conformance steps through an action
     // it advertised, rather than one AutoDev invented, so a game that only
@@ -227,15 +281,7 @@ export async function runPlaytestConformance(
               actions?: readonly { actionId?: unknown }[];
             }
           ).actions?.[0]?.actionId;
-    if (typeof actionId !== "string") {
-      if (advertised !== null) {
-        failures.push({
-          stage: "step",
-          message:
-            "The game advertised no legal actions, so an episode could not advance."
-        });
-      }
-    } else {
+    if (typeof actionId === "string") {
       const stepped = await call("step", {
         episodeId,
         actionId,
@@ -246,6 +292,14 @@ export async function runPlaytestConformance(
           episodeId,
           expectedRevision:
             typeof stepped.revision === "number" ? stepped.revision : revision
+        });
+      }
+    } else {
+      if (advertised !== null) {
+        failures.push({
+          stage: "step",
+          message:
+            "The game advertised no legal actions, so an episode could not advance."
         });
       }
     }
@@ -331,4 +385,5 @@ export function formatConformanceReport(report: ConformanceReport): string {
 }
 
 /** Re-exported so the observation contract assertion stays owned here. */
-export { assertPlaytestObservationContract };
+
+export { assertPlaytestObservationContract } from "@simulatorlife/autodev-core";

@@ -79,7 +79,9 @@ export interface PlaytestAnalysisCostComparison {
 
 const ARM_KEYS = ["critic", "deterministic", "combined"] as const;
 
-function coverageOf(score: PlaytestDiagnosticSourceScore): PlaytestAnalysisArmCoverage {
+function coverageOf(
+  score: PlaytestDiagnosticSourceScore
+): PlaytestAnalysisArmCoverage {
   return {
     eligibleEpisodes: score.eligibleEpisodes,
     adequatelyReviewedEpisodes: score.adequatelyReviewedEpisodes
@@ -113,10 +115,7 @@ function assertUsage(
         `${entry.arm} measuredCost must be a finite non-negative number.`
       );
     }
-    if (
-      !Number.isSafeInteger(entry.critiquesRun) ||
-      entry.critiquesRun < 0
-    ) {
+    if (!Number.isSafeInteger(entry.critiquesRun) || entry.critiquesRun < 0) {
       throw new TypeError(
         `${entry.arm} critiquesRun must be a non-negative integer.`
       );
@@ -144,7 +143,9 @@ export function comparePlaytestAnalysisCost(
     const armUsage = byArm.get(arm);
     // A missing usage entry is unmeasured, not free.
     perEpisode[arm] =
-      armUsage === undefined ? null : costPerReviewedEpisode(armUsage, armCoverage);
+      armUsage === undefined
+        ? null
+        : costPerReviewedEpisode(armUsage, armCoverage);
   }
 
   const mismatches: string[] = [];
@@ -157,7 +158,8 @@ export function comparePlaytestAnalysisCost(
       );
     }
     if (
-      candidate.adequatelyReviewedEpisodes !== reference.adequatelyReviewedEpisodes
+      candidate.adequatelyReviewedEpisodes !==
+      reference.adequatelyReviewedEpisodes
     ) {
       mismatches.push(
         `${arm} had ${candidate.adequatelyReviewedEpisodes} adequately reviewed episodes against deterministic's ${reference.adequatelyReviewedEpisodes}`

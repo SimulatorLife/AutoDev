@@ -38,9 +38,10 @@ export function actionForm(markup: string, testId: string): string {
 
 /** The `name` of every control in a form, in document order. */
 export function fieldNames(form: string): string[] {
-  return [...form.matchAll(/<(?:input|select|textarea)\b[^>]*>/gu)]
-    .map((match) => /\bname="([^"]*)"/u.exec(match[0])?.[1])
-    .filter((name): name is string => name !== undefined);
+  return Array.from(
+    form.matchAll(/<(?:input|select|textarea)\b[^>]*>/gu),
+    (match) => /\bname="([^"]*)"/u.exec(match[0])?.[1]
+  ).filter((name): name is string => name !== undefined);
 }
 
 /**
@@ -59,29 +60,30 @@ export function fieldNames(form: string): string[] {
  */
 export function fieldValue(scope: string, name: string): string | undefined {
   const tag = new RegExp(
-    `<(input|textarea|select)\\b[^>]*\\bname="${name}"[^>]*>`,
+    String.raw`<(input|textarea|select)\b[^>]*\bname="${name}"[^>]*>`,
     "u"
   ).exec(scope);
-  if (!tag) return undefined;
-  if (tag[1] === "select") {
+  let value: string | undefined;
+  if (tag?.[1] === "select") {
     const body = scope.slice(tag.index, scope.indexOf("</select>", tag.index));
-    return /<option[^>]*\bvalue="([^"]*)"/u.exec(body)?.[1] ?? "";
-  }
-  if (tag[1] === "textarea") {
+    value = /<option[^>]*\bvalue="([^"]*)"/u.exec(body)?.[1] ?? "";
+  } else if (tag?.[1] === "textarea") {
     // A textarea's value is its text, not an attribute; React escapes it on the
     // way out, so it has to be read back the way it will arrive on submit.
     const text = scope.slice(
       tag.index + tag[0].length,
       scope.indexOf("</textarea>", tag.index)
     );
-    return text
+    value = text
       .replaceAll("&lt;", "<")
       .replaceAll("&gt;", ">")
       .replaceAll("&quot;", '"')
       .replaceAll("&#x27;", "'")
       .replaceAll("&amp;", "&");
+  } else if (tag) {
+    value = /\bvalue="([^"]*)"/u.exec(tag[0])?.[1] ?? "";
   }
-  return /\bvalue="([^"]*)"/u.exec(tag[0])?.[1] ?? "";
+  return value;
 }
 
 /** Every option a select offers, so a bounded vocabulary can be compared. */
@@ -94,12 +96,14 @@ export function selectEntries(
   scope: string,
   name: string
 ): { value: string; label: string }[] {
-  const open = new RegExp(`<select\\b[^>]*\\bname="${name}"[^>]*>`, "u").exec(
-    scope
-  );
+  const open = new RegExp(
+    String.raw`<select\b[^>]*\bname="${name}"[^>]*>`,
+    "u"
+  ).exec(scope);
   assert.ok(open, `no select named ${name}`);
   const body = scope.slice(open.index, scope.indexOf("</select>", open.index));
-  return [...body.matchAll(/<option[^>]*value="([^"]*)"[^>]*>([^<]*)</gu)].map(
+  return Array.from(
+    body.matchAll(/<option[^>]*value="([^"]*)"[^>]*>([^<]*)</gu),
     (match) => ({ value: match[1]!, label: match[2]! })
   );
 }
@@ -114,15 +118,19 @@ export function allOptions(
   markup: string,
   name: string
 ): { value: string; label: string }[][] {
-  return [
-    ...markup.matchAll(new RegExp(`<select\\b[^>]*name="${name}"[^>]*>`, "gu"))
-  ].map((match) => {
-    const body = markup.slice(
-      match.index,
-      markup.indexOf("</select>", match.index)
-    );
-    return [
-      ...body.matchAll(/<option[^>]*value="([^"]*)"[^>]*>([^<]*)</gu)
-    ].map((option) => ({ value: option[1]!, label: option[2]! }));
-  });
+  return Array.from(
+    markup.matchAll(
+      new RegExp(String.raw`<select\b[^>]*name="${name}"[^>]*>`, "gu")
+    ),
+    (match) => {
+      const body = markup.slice(
+        match.index,
+        markup.indexOf("</select>", match.index)
+      );
+      return Array.from(
+        body.matchAll(/<option[^>]*value="([^"]*)"[^>]*>([^<]*)</gu),
+        (option) => ({ value: option[1]!, label: option[2]! })
+      );
+    }
+  );
 }

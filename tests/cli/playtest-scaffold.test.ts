@@ -20,7 +20,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { runPlaytestConformance } from "../../runtime/src/cli/playtest-conformance.ts";
 import {
   dispatchPlaytestCommand,
   PLAYTESTS_BINDING_FILE,
@@ -28,6 +27,7 @@ import {
   PLAYTESTS_OBSERVATION_FILE,
   PLAYTESTS_RUBRIC_FILE
 } from "../../runtime/src/cli/playtest.ts";
+import { runPlaytestConformance } from "../../runtime/src/cli/playtest-conformance.ts";
 import {
   PLAYTESTS_SCAFFOLD_BODY_COUNT,
   scaffoldAdapterModule,
@@ -218,10 +218,10 @@ test("the generated module and binding agree on the factory", () => {
   };
   assert.match(
     module,
-    new RegExp(`export function ${binding.factory}\\(\\)`, "u")
+    new RegExp(String.raw`export function ${binding.factory}\(\)`, "u")
   );
   for (const reference of Object.values(binding.bindings)) {
-    assert.match(module, new RegExp(`\\b${reference.export}\\(`, "u"));
+    assert.match(module, new RegExp(String.raw`\b${reference.export}\(`, "u"));
   }
 });
 

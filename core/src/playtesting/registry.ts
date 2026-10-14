@@ -63,6 +63,17 @@ export type PlaytestMetricRequiredField =
   (typeof PLAYTESTS_METRIC_REQUIRED_FIELDS)[number];
 
 const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
+const REGISTRY_INPUT_FIELDS = new Set([
+  "schemaVersion",
+  "workspaceId",
+  "audience",
+  "registryVersion",
+  "eventSchemaHash",
+  "defaults",
+  "metricDefinitions",
+  "coverageRequirements",
+  "dimensionRubrics"
+]);
 
 /** A registry-level defaults block. */
 export interface PlaytestRegistryDefaults {
@@ -854,6 +865,13 @@ function expandCoverageRequirements(
 export function expandPlaytestRegistry(input: unknown): PlaytestMetricRegistry {
   if (!isPlainObject(input)) {
     throw new TypeError("Metric registry must be a plain object.");
+  }
+  for (const key of Object.keys(input)) {
+    if (!REGISTRY_INPUT_FIELDS.has(key)) {
+      throw new TypeError(
+        `Metric registry contains unsupported field "${key}".`
+      );
+    }
   }
   if (input.schemaVersion !== 2) {
     throw new TypeError("Metric registry schemaVersion must be the integer 2.");

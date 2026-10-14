@@ -4,6 +4,8 @@ import test from "node:test";
 
 import { canonicalPlaytestJson } from "../src/playtesting/canonical-json.ts";
 import {
+  aggregatePlaytestCrossSessionMetrics,
+  assertPlaytestCrossSessionMetricAggregation,
   assertPlaytestEvidenceLocatorsWithinPacket,
   assertPlaytestEvidencePacket,
   buildPlaytestCoverageManifestDraft,
@@ -21,8 +23,8 @@ import {
   type PlaytestMetricRegistry,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_SCHEMA,
-  PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1
-} from "../src/playtesting/index.ts";
+  PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1,
+  PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2} from "../src/playtesting/index.ts";
 
 const WORKSPACE_ID = "owner/evidence-fixture";
 const BATCH_ID = "batch-evidence-1";
@@ -31,7 +33,9 @@ const RUBRIC_HASH = "b".repeat(64);
 const EVALUATOR_HASH = "c".repeat(64);
 const GENERATED_AT = "2026-10-12T00:00:00.000Z";
 
-function registry(): PlaytestMetricRegistry {
+function registry(
+  analysisUnit: "episode" | "learner-identity" = "episode"
+): PlaytestMetricRegistry {
   return expandPlaytestRegistry({
     schemaVersion: 2,
     workspaceId: WORKSPACE_ID,
@@ -44,6 +48,7 @@ function registry(): PlaytestMetricRegistry {
         metricId: "decision-rate",
         version: 1,
         mechanicKey: "race-choice",
+        analysisUnit,
         scenarioEligibility: ["tutorial"],
         aggregationWindow: "phase",
         exposurePredicate: "eligible-race-decision-v1",
@@ -337,6 +342,175 @@ test("evidence packet always carries terminal and event-bearing steps plus deter
   assert.doesNotThrow(() => assertPlaytestEvidencePacket(packet));
 });
 
+test("cross-session aggregate uses ratio-of-sums and keeps exact metric strata", () => {
+  const first = build();
+  const second = {
+    ...first,
+    packetId: "packet-2",
+    episodeId: "episode-2",
+    assignmentId: "assignment-2",
+    metrics: [
+      {
+        ...metric(),
+        numerator: 1,
+        denominator: 4,
+        opportunityCount: 5,
+        coverage: 0.8,
+        estimate: 0.25,
+        missing: 1
+      }
+    ]
+  };
+  const aggregation = aggregatePlaytestCrossSessionMetrics({
+    workspaceId: WORKSPACE_ID,
+    analysisId: "analysis-1",
+    packets: [
+      { episodeId: first.episodeId, batchId: first.batchId, packet: first },
+      { episodeId: second.episodeId, batchId: second.batchId, packet: second }
+    ]
+  });
+
+  assert.equal(aggregation.status, "available");
+  assert.equal(aggregation.rows.length, 1);
+  assert.deepEqual(aggregation.rows[0]?.sourcePacketIndices, [0, 1]);
+  assert.deepEqual(
+    aggregation.sourcePackets.map((packet) => packet.packetId),
+    ["packet-1", "packet-2"]
+  );
+  assert.equal(aggregation.rows[0]?.numerator, 2);
+  assert.equal(aggregation.rows[0]?.denominator, 5);
+  assert.equal(aggregation.rows[0]?.opportunityCount, 6);
+  assert.equal(aggregation.rows[0]?.missing, 1);
+  assert.equal(aggregation.rows[0]?.estimate, 0.4);
+  assert.equal(aggregation.rows[0]?.coverage, 5 / 6);
+  assert.equal(aggregation.rows[0]?.independentUnits, 2);
+  assert.doesNotThrow(() =>
+    assertPlaytestCrossSessionMetricAggregation(
+      aggregation,
+      WORKSPACE_ID,
+      "analysis-1",
+      ["episode-1", "episode-2"]
+    )
+  );
+  assert.throws(
+    () =>
+      assertPlaytestCrossSessionMetricAggregation(
+        aggregation,
+        WORKSPACE_ID,
+        "analysis-1",
+        ["episode-1"]
+      ),
+    /unique selected packet identities/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestCrossSessionMetricAggregation(
+        {
+          ...aggregation,
+          rows: [{ ...aggregation.rows[0]!, estimate: 0.9 }]
+        },
+        WORKSPACE_ID,
+        "analysis-1",
+        ["episode-1", "episode-2"]
+      ),
+    /sufficient statistics/u
+  );
+
+  const differentCohort = {
+    ...second,
+    packetId: "packet-3",
+    episodeId: "episode-3",
+    assignmentId: "assignment-3",
+    cohort: "expert"
+  };
+  const separated = aggregatePlaytestCrossSessionMetrics({
+    workspaceId: WORKSPACE_ID,
+    analysisId: "analysis-2",
+    packets: [
+      { episodeId: first.episodeId, batchId: first.batchId, packet: first },
+      {
+        episodeId: differentCohort.episodeId,
+        batchId: differentCohort.batchId,
+        packet: differentCohort
+      }
+    ]
+  });
+  assert.equal(separated.rows.length, 2);
+  assert.deepEqual(separated.rows.map((row) => row.cohort).sort(), [
+    "expert",
+    "novice"
+  ]);
+});
+
+test("cross-session aggregates never sum non-episode independent-unit counts", () => {
+  const first = build({ registry: registry("learner-identity") });
+  const second = {
+    ...first,
+    packetId: "packet-2",
+    episodeId: "episode-2",
+    assignmentId: "assignment-2",
+    metrics: [
+      {
+        ...metric(),
+        numerator: 1,
+        denominator: 2,
+        opportunityCount: 2,
+        coverage: 1,
+        estimate: 0.5,
+        independentUnits: 1
+      }
+    ]
+  };
+  const aggregation = aggregatePlaytestCrossSessionMetrics({
+    workspaceId: WORKSPACE_ID,
+    analysisId: "analysis-learner",
+    packets: [
+      { episodeId: first.episodeId, batchId: first.batchId, packet: first },
+      { episodeId: second.episodeId, batchId: second.batchId, packet: second }
+    ]
+  });
+  assert.equal(aggregation.status, "available");
+  assert.equal(aggregation.rows[0]?.independentUnits, null);
+});
+
+test("historical packets are not pooled when frozen aggregation semantics are absent", () => {
+  const first = build();
+  const oldIntent = first.metricIntent.map(
+    ({
+      analysisUnit: _unit,
+      aggregationWindow: _window,
+      aggregation: _aggregation,
+      ...intent
+    }) => intent
+  );
+  const historical = {
+    ...first,
+    schema: PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2,
+    packetId: "packet-2",
+    episodeId: "episode-2",
+    assignmentId: "assignment-2",
+    metricIntent: oldIntent
+  };
+  const aggregation = aggregatePlaytestCrossSessionMetrics({
+    workspaceId: WORKSPACE_ID,
+    analysisId: "analysis-historical",
+    packets: [
+      { episodeId: first.episodeId, batchId: first.batchId, packet: first },
+      {
+        episodeId: historical.episodeId,
+        batchId: historical.batchId,
+        packet: historical
+      }
+    ]
+  });
+  assert.equal(aggregation.status, "unavailable");
+  assert.equal(
+    aggregation.reason,
+    "historical-packet-predates-aggregation-semantics"
+  );
+  assert.deepEqual(aggregation.rows, []);
+});
+
 test("cross-session packets include a deterministic bounded sibling sample and scoped citations", () => {
   const candidates = Array.from({ length: 5 }, (_, index) => {
     const assignmentId = `sibling-assignment-${String(index + 1)}`;
@@ -393,14 +567,30 @@ test("cross-session packets include a deterministic bounded sibling sample and s
   );
 });
 
-test("packet validator reads legacy v1 without upgrading it and rejects malformed v2 context", () => {
+test("packet validator preserves v1/v2 history and rejects malformed v3 context", () => {
   const packet = build();
   const { crossSessionContext: _crossSessionContext, ...legacyFields } = packet;
+  const legacyIntent = packet.metricIntent.map(
+    ({
+      analysisUnit: _analysisUnit,
+      aggregationWindow: _window,
+      aggregation: _aggregation,
+      ...intent
+    }) => intent
+  );
   const legacyPacket = {
     ...legacyFields,
-    schema: PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1
+    schema: PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1,
+    metricIntent: legacyIntent
   };
   assert.doesNotThrow(() => assertPlaytestEvidencePacket(legacyPacket));
+  assert.doesNotThrow(() =>
+    assertPlaytestEvidencePacket({
+      ...packet,
+      schema: PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2,
+      metricIntent: legacyIntent
+    })
+  );
   assert.throws(
     () =>
       assertPlaytestEvidencePacket({

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -9,7 +10,6 @@ import {
   truncate,
   writeFile
 } from "node:fs/promises";
-import { realpathSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -500,7 +500,7 @@ test("the store is asked to read the scope the router observed", async () => {
 
     await capture(store);
 
-    assert.equal(store.contexts.length >= 1, true, "the store was never read");
+    assert.equal(store.contexts.length > 0, true, "the store was never read");
     for (const context of store.contexts) {
       assert.equal(context.workspaceId, "workspace-a");
       assert.equal(context.repositoryId, "owner/repo");
@@ -668,7 +668,7 @@ test("a bound Claude capture stores an envelope scoped by the binding", async ()
     );
     // The envelope and the store read it under agree on which session this was,
     // so the write cannot have been scoped to something the request named.
-    assert.equal(store.contexts.length >= 1, true, "the store was never read");
+    assert.equal(store.contexts.length > 0, true, "the store was never read");
     assert.equal(store.contexts[0]?.taskId, CLAUDE_SESSION_ID);
     assert.equal(store.contexts[0]?.workspaceId, "ws_a");
   });

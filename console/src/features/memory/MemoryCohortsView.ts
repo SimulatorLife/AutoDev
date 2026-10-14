@@ -1,15 +1,13 @@
-import type {
-  MemoryInjectionUseCohortCell,
-  MemoryInjectionUseCohortPage,
-  MemorySessionOutcomeCohortCell,
-  MemorySessionOutcomeCohortPage
-} from "@simulatorlife/autodev-core";
 import {
   EXPERIENCE_OUTCOMES,
   MEMORY_INJECTION_RESULTS,
   MEMORY_OUTCOME_REPORT_KINDS,
   MEMORY_SESSION_COHORT_ASSIGNED_MODES,
-  MEMORY_USE_KINDS
+  MEMORY_USE_KINDS,
+  type MemoryInjectionUseCohortCell,
+  type MemoryInjectionUseCohortPage,
+  type MemorySessionOutcomeCohortCell,
+  type MemorySessionOutcomeCohortPage
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
@@ -36,7 +34,7 @@ import {
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
 import { SUCCESS_TONE_CLASS } from "../../components/ui/tones.ts";
-import { codeOptions, type CodeOption } from "./memory-code-options.ts";
+import { type CodeOption, codeOptions } from "./memory-code-options.ts";
 import { memoryFilterHref, type MemoryListScope } from "./memory-list-url.ts";
 import {
   MEMORY_COHORT_MODE_LABEL,

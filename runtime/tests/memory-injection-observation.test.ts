@@ -2,19 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type {
-  MemoryRecord,
   MemoryReadContext,
+  MemoryRecord,
   MemoryRepository,
   MemorySearchHit
 } from "@simulatorlife/autodev-core";
 
+import type { PostgresMemoryHost } from "../src/memory/postgres.ts";
+import { MemoryService } from "../src/memory/service.ts";
 import {
   clearTrustedMemoryContextsForTest,
   injectOrchestratorMemory,
   type OrchestratorMemoryRequest
 } from "../src/router/memory-injection.ts";
-import type { PostgresMemoryHost } from "../src/memory/postgres.ts";
-import { MemoryService } from "../src/memory/service.ts";
 
 /**
  * The injection observation — the record every outcome and use cohort is built
@@ -60,8 +60,8 @@ function capturingRepository(
     purgeExperience: async () => "not_visible",
     proposeMemory: async () => undefined,
     getMemory: async () => null,
-    searchMemories: async (request) =>
-      request.limit === undefined ? hits : hits.slice(0, request.limit),
+    searchMemories: async (query) =>
+      query.limit === undefined ? hits : hits.slice(0, query.limit),
     listMemories: async () => ({
       items: [],
       total: 0,
@@ -92,24 +92,24 @@ function capturingRepository(
       limit: 50,
       offset: 0
     }),
-    aggregateInjectionOutcomeCohorts: async (request) => ({
+    aggregateInjectionOutcomeCohorts: async (query) => ({
       schema: "autodev-memory-injection-outcome-cohorts-v1",
-      workspaceId: request.context.workspaceId,
-      repositoryId: request.context.repositoryId ?? "",
-      occurredFrom: request.occurredFrom,
-      occurredUntil: request.occurredUntil,
+      workspaceId: query.context.workspaceId,
+      repositoryId: query.context.repositoryId ?? "",
+      occurredFrom: query.occurredFrom,
+      occurredUntil: query.occurredUntil,
       cells: [],
       exposureCount: 0,
       reportCount: 0
     }),
     recordSessionOutcomeReport: async () => ({ appended: false, id: "" }),
     getSessionOutcomeReport: async () => null,
-    aggregateSessionOutcomeCohorts: async (request) => ({
+    aggregateSessionOutcomeCohorts: async (query) => ({
       schema: "autodev-memory-session-outcome-cohorts-v1",
-      workspaceId: request.context.workspaceId,
-      repositoryId: request.context.repositoryId ?? "",
-      occurredFrom: request.occurredFrom,
-      occurredUntil: request.occurredUntil,
+      workspaceId: query.context.workspaceId,
+      repositoryId: query.context.repositoryId ?? "",
+      occurredFrom: query.occurredFrom,
+      occurredUntil: query.occurredUntil,
       cells: [],
       sessionCount: 0,
       reportedSessionCount: 0,
@@ -127,12 +127,12 @@ function capturingRepository(
       limit: 50,
       offset: 0
     }),
-    aggregateInjectionUseCohorts: async (request) => ({
+    aggregateInjectionUseCohorts: async (query) => ({
       schema: "autodev-memory-injection-use-cohorts-v1",
-      workspaceId: request.context.workspaceId,
-      repositoryId: request.context.repositoryId ?? "",
-      occurredFrom: request.occurredFrom,
-      occurredUntil: request.occurredUntil,
+      workspaceId: query.context.workspaceId,
+      repositoryId: query.context.repositoryId ?? "",
+      occurredFrom: query.occurredFrom,
+      occurredUntil: query.occurredUntil,
       cells: [],
       exposureCount: 0
     })

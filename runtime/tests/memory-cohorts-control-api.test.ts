@@ -10,8 +10,8 @@ import type { MemoryService } from "@simulatorlife/autodev-runtime/memory";
 import { handleMemoryControlApiRequest } from "../src/control-api/memory.ts";
 import {
   makeRequest,
-  responseBody,
   type RecordedResponse,
+  responseBody,
   responseRecorder
 } from "./support/control-api-harness.ts";
 
@@ -235,7 +235,7 @@ test("GET /control/memory/cohorts forwards bounded mode and result filters", asy
 });
 
 test("GET /control/memory/cohorts rejects viewer role with 403", async () => {
-  const { response, body } = await callCohortRoute(
+  const { response } = await callCohortRoute(
     mockMemoryService(),
     [],
     DEFAULT_QUERY,

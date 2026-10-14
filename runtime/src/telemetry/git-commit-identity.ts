@@ -38,8 +38,16 @@ const KNOWN_PROVIDERS = new Set([
   "gemini",
   "minimax",
   "openai",
-  "qwen"
+  "qwen",
+  OTHER_LABEL
 ]);
+const IDENTITY_EMAIL_PREFIX = "autodev-";
+const IDENTITY_EMAIL_SUFFIX = `@${IDENTITY_DOMAIN}`;
+const IDENTITY_EMAIL_PROVIDERS = [...KNOWN_PROVIDERS].sort(
+  (left, right) => right.length - left.length
+);
+const MAX_IDENTITY_EMAIL_LENGTH =
+  IDENTITY_EMAIL_PREFIX.length + 32 + 1 + 32 + IDENTITY_EMAIL_SUFFIX.length;
 
 export interface GitCommitActor {
   readonly role: string;
@@ -105,9 +113,6 @@ export function gitCommitIdentityEnv(options: {
   };
 }
 
-const IDENTITY_EMAIL_PATTERN =
-  /^autodev-([a-z0-9-]+?)-([a-z0-9-]+)@agents\.autodev\.local$/u;
-
 /**
  * Recover the actor from a commit's committer identity.
  *
@@ -119,11 +124,26 @@ export function gitCommitActorFromEmail(
   email: string | null | undefined
 ): GitCommitActor | null {
   if (typeof email !== "string") return null;
-  const match = IDENTITY_EMAIL_PATTERN.exec(email.trim().toLowerCase());
-  if (!match) return null;
-  const [, role, provider] = match;
-  if (!role || !provider) return null;
-  return { role, provider };
+  const normalized = email.trim().toLowerCase();
+  if (
+    normalized.length > MAX_IDENTITY_EMAIL_LENGTH ||
+    !normalized.startsWith(IDENTITY_EMAIL_PREFIX) ||
+    !normalized.endsWith(IDENTITY_EMAIL_SUFFIX)
+  ) {
+    return null;
+  }
+
+  const identity = normalized.slice(
+    IDENTITY_EMAIL_PREFIX.length,
+    -IDENTITY_EMAIL_SUFFIX.length
+  );
+  for (const provider of IDENTITY_EMAIL_PROVIDERS) {
+    const providerSuffix = `-${provider}`;
+    if (!identity.endsWith(providerSuffix)) continue;
+    const role = boundedRole(identity.slice(0, -providerSuffix.length));
+    if (role) return { role, provider };
+  }
+  return null;
 }
 
 /** Whether a committer identity belongs to an AutoDev agent. */

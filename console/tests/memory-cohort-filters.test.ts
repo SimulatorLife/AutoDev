@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { renderToStaticMarkup } from "react-dom/server";
-import React from "react";
 import test from "node:test";
 
 import {
@@ -10,9 +8,10 @@ import {
   MEMORY_SESSION_COHORT_ASSIGNED_MODES,
   MEMORY_USE_KINDS
 } from "@simulatorlife/autodev-core";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
-import { MemoryCohortsView } from "../src/features/memory/MemoryCohortsView.ts";
-import { selectEntries, selectOptions } from "./support/memory-markup.ts";
+import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
 import {
   MEMORY_COHORT_MODE_LABEL,
   MEMORY_INJECTION_RESULT_LABEL,
@@ -20,7 +19,8 @@ import {
   MEMORY_REPORT_KIND_LABEL,
   MEMORY_USE_KIND_LABEL
 } from "../src/features/memory/memory-status.ts";
-import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
+import { MemoryCohortsView } from "../src/features/memory/MemoryCohortsView.ts";
+import { selectEntries, selectOptions } from "./support/memory-markup.ts";
 
 /**
  * The cohort filter bar offers Core's vocabularies, not its own.

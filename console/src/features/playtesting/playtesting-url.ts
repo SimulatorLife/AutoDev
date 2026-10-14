@@ -37,10 +37,10 @@ export const PLAYTESTING_FILTER_KEYS = [
 ] as const;
 
 const FILTERS_BY_VIEW: Readonly<
-  Record<PlaytestingView, readonly PlaytestingFilterKey[]>
+  Record<PlaytestingView, ReadonlySet<PlaytestingFilterKey>>
 > = {
-  overview: [],
-  sessions: [
+  overview: new Set<PlaytestingFilterKey>(),
+  sessions: new Set<PlaytestingFilterKey>([
     "buildSha",
     "scenario",
     "policy",
@@ -51,9 +51,18 @@ const FILTERS_BY_VIEW: Readonly<
     "reviewStatus",
     "startedAtFrom",
     "startedAtTo"
-  ],
-  findings: ["severity", "status", "verificationStage", "evidenceStatus"],
-  compare: ["benchmarkId", "experimentId", "decision"]
+  ]),
+  findings: new Set<PlaytestingFilterKey>([
+    "severity",
+    "status",
+    "verificationStage",
+    "evidenceStatus"
+  ]),
+  compare: new Set<PlaytestingFilterKey>([
+    "benchmarkId",
+    "experimentId",
+    "decision"
+  ])
 };
 export type PlaytestingFilterKey = (typeof PLAYTESTING_FILTER_KEYS)[number];
 
@@ -95,6 +104,7 @@ export interface PlaytestingScope {
   readonly liveBatchId: string | null;
   /** Explicit analysis selection; bounded by the same limit Runtime enforces. */
   readonly selectedEpisodeIds: readonly string[];
+  readonly invalidSelection: boolean;
   readonly invalidQuery: boolean;
 }
 
@@ -119,17 +129,24 @@ function parseSessionSelection(value: string | undefined): {
   readonly invalid: boolean;
 } {
   if (value === undefined) return { episodeIds: [], invalid: false };
-  if (value.length === 0 || value.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS * 257) {
+  if (
+    value.length === 0 ||
+    value.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS * 257
+  ) {
     return { episodeIds: [], invalid: true };
   }
   const parts = value.split(",");
   const episodeIds: string[] = [];
   for (const part of parts) {
     if (part.length === 0) return { episodeIds: [], invalid: true };
-    if (!SESSION_ID_PATTERN.test(part)) return { episodeIds: [], invalid: true };
+    if (!SESSION_ID_PATTERN.test(part))
+      return { episodeIds: [], invalid: true };
     if (!episodeIds.includes(part)) episodeIds.push(part);
   }
-  if (episodeIds.length === 0 || episodeIds.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS) {
+  if (
+    episodeIds.length === 0 ||
+    episodeIds.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS
+  ) {
     return { episodeIds: [], invalid: true };
   }
   return { episodeIds, invalid: false };
@@ -143,16 +160,17 @@ function hasControlCharacters(value: string): boolean {
   return false;
 }
 
-function single(value: string | readonly string[] | undefined): {
-  readonly value: string | undefined;
-  readonly invalid: boolean;
-} {
-  if (value === undefined || typeof value === "string") {
-    return { value, invalid: false };
-  }
-  return value.length === 1
-    ? { value: value[0], invalid: false }
-    : { value: undefined, invalid: value.length > 1 };
+function singleValue(
+  value: string | readonly string[] | undefined
+): string | undefined {
+  if (value === undefined || typeof value === "string") return value;
+  return value.length === 1 ? value[0] : undefined;
+}
+
+function hasRepeatedValues(
+  value: string | readonly string[] | undefined
+): boolean {
+  return Array.isArray(value) && value.length > 1;
 }
 
 function isView(value: string | undefined): value is PlaytestingView {
@@ -163,18 +181,21 @@ function isView(value: string | undefined): value is PlaytestingView {
 }
 
 function normalizedFilters(
-  input: Record<string, string | readonly string[] | undefined>
+  input: Record<string, string | readonly string[] | undefined>,
+  view: PlaytestingView
 ): {
   readonly filters: Partial<Record<PlaytestingFilterKey, string>>;
   readonly invalid: boolean;
 } {
   const filters: Partial<Record<PlaytestingFilterKey, string>> = {};
+  const supported = FILTERS_BY_VIEW[view];
   let invalid = false;
   for (const key of PLAYTESTING_FILTER_KEYS) {
-    const selected = single(input[key]);
-    invalid ||= selected.invalid;
-    if (!selected.value) continue;
-    const value = selected.value.trim();
+    const raw = input[key];
+    const candidate = singleValue(raw);
+    if (hasRepeatedValues(raw)) invalid = true;
+    if (!candidate) continue;
+    const value = candidate.trim();
     if (value.length === 0 || value.length > 256) {
       invalid = true;
       continue;
@@ -183,6 +204,10 @@ function normalizedFilters(
       (key === "buildSha" || key === "referenceBuildSha") &&
       !HASH_PATTERN.test(value)
     ) {
+      invalid = true;
+      continue;
+    }
+    if (!supported.has(key)) {
       invalid = true;
       continue;
     }
@@ -216,57 +241,38 @@ function parseStep(value: string | undefined): {
   return { step: Number(value), invalid: false };
 }
 
-function filtersForView(
-  view: PlaytestingView,
-  input: Readonly<Partial<Record<PlaytestingFilterKey, string>>>
-): {
-  readonly filters: Partial<Record<PlaytestingFilterKey, string>>;
-  readonly invalid: boolean;
-} {
-  const supported = new Set(FILTERS_BY_VIEW[view]);
-  const filters: Partial<Record<PlaytestingFilterKey, string>> = {};
-  let invalid = false;
-  for (const key of PLAYTESTING_FILTER_KEYS) {
-    const value = input[key];
-    if (value === undefined) continue;
-    if (supported.has(key)) filters[key] = value;
-    else invalid = true;
-  }
-  return { filters, invalid };
-}
-
 export function parsePlaytestingScope(
   input: Record<string, string | readonly string[] | undefined>
 ): PlaytestingScope {
-  const rawView = single(input.view);
-  const rawWorkspace = single(input.workspaceId);
-  const rawLimit = single(input.limit);
-  const rawCursor = single(input.cursor);
-  const rawStep = single(input.step);
-  const rawReturnFinding = single(input.returnFinding);
-  const rawLiveBatch = single(input.liveBatch);
-  const rawSelection = single(input.sessions);
-  const parsedFilters = normalizedFilters(input);
-  const view = isView(rawView.value) ? rawView.value : "overview";
-  const scopedFilters = filtersForView(view, parsedFilters.filters);
-  const parsedLimit = parseLimit(rawLimit.value);
-  const parsedStep = parseStep(rawStep.value);
-  const workspaceId = rawWorkspace.value?.trim() || null;
-  const cursor = rawCursor.value?.trim() || null;
-  const candidateFindingId = rawReturnFinding.value?.trim() || null;
+  const rawView = singleValue(input.view);
+  const rawWorkspace = singleValue(input.workspaceId);
+  const rawLimit = singleValue(input.limit);
+  const rawCursor = singleValue(input.cursor);
+  const rawStep = singleValue(input.step);
+  const rawReturnFinding = singleValue(input.returnFinding);
+  const rawLiveBatch = singleValue(input.liveBatch);
+  const rawSelection = singleValue(input.sessions);
+  const view = isView(rawView) ? rawView : "overview";
+  const parsedFilters = normalizedFilters(input, view);
+  const parsedLimit = parseLimit(rawLimit);
+  const parsedStep = parseStep(rawStep);
+  const workspaceId = rawWorkspace?.trim() || null;
+  const cursor = rawCursor?.trim() || null;
+  const candidateFindingId = rawReturnFinding?.trim() || null;
   const returnFindingId =
     candidateFindingId && FINDING_ID_PATTERN.test(candidateFindingId)
       ? candidateFindingId
       : null;
-  const candidateLiveBatchId = rawLiveBatch.value?.trim() || null;
+  const candidateLiveBatchId = rawLiveBatch?.trim() || null;
   const liveBatchId =
     candidateLiveBatchId && BATCH_ID_PATTERN.test(candidateLiveBatchId)
       ? candidateLiveBatchId
       : null;
   const liveBatchInvalid =
     candidateLiveBatchId !== null && liveBatchId === null;
-  const selection = parseSessionSelection(rawSelection.value);
-  const selectionInvalid = rawSelection.invalid || selection.invalid;
+  const selection = parseSessionSelection(rawSelection);
+  const selectionInvalid =
+    hasRepeatedValues(input.sessions) || selection.invalid;
   const workspaceInvalid =
     workspaceId !== null &&
     (workspaceId.length > 256 || hasControlCharacters(workspaceId));
@@ -277,25 +283,25 @@ export function parsePlaytestingScope(
   return {
     view,
     workspaceId,
-    filters: scopedFilters.filters,
+    filters: parsedFilters.filters,
     limit: parsedLimit.limit,
     cursor,
     step: parsedStep.step,
     returnFindingId,
     liveBatchId,
     selectedEpisodeIds: selection.episodeIds,
+    invalidSelection: selectionInvalid,
     invalidQuery:
-      rawView.invalid ||
-      (rawView.value !== undefined && !isView(rawView.value)) ||
-      rawWorkspace.invalid ||
-      rawLimit.invalid ||
-      rawCursor.invalid ||
-      rawStep.invalid ||
-      rawReturnFinding.invalid ||
-      rawLiveBatch.invalid ||
+      hasRepeatedValues(input.view) ||
+      (rawView !== undefined && !isView(rawView)) ||
+      hasRepeatedValues(input.workspaceId) ||
+      hasRepeatedValues(input.limit) ||
+      hasRepeatedValues(input.cursor) ||
+      hasRepeatedValues(input.step) ||
+      hasRepeatedValues(input.returnFinding) ||
+      hasRepeatedValues(input.liveBatch) ||
       selectionInvalid ||
       parsedFilters.invalid ||
-      scopedFilters.invalid ||
       parsedLimit.invalid ||
       parsedStep.invalid ||
       workspaceInvalid ||
@@ -354,7 +360,7 @@ export function playtestingViewHref(
   scope: PlaytestingScope,
   view: PlaytestingView
 ): string {
-  const supported = new Set(FILTERS_BY_VIEW[view]);
+  const supported = FILTERS_BY_VIEW[view];
   const filters: Partial<Record<PlaytestingFilterKey, string>> = {};
   for (const key of supported) {
     const value = scope.filters[key];

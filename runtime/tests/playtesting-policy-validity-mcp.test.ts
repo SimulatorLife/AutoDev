@@ -84,6 +84,8 @@ function setupCheckout(): {
   mkdirSync(path.join(root, ".autodev"));
   for (const filename of [
     "playtest.config.json",
+    "playtest.binding.json",
+    "node-fixture-game.mjs",
     "playtest.observation.json",
     "playtest.rubric.json",
     "playtest.benchmark.json"

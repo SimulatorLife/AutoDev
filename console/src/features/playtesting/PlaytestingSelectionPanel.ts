@@ -1,53 +1,37 @@
 "use client";
 
-/**
- * Multi-session analysis over an explicit selection.
- *
- * The selection lives in the URL, so a shared link, a refresh and Back all
- * reproduce the same set of sessions. Runtime decides which of them can
- * contribute evidence; this surface renders its answer and shows every receipt
- * by name, because a session that silently contributed nothing would make a
- * cross-session claim look better grounded than it is.
- */
-import { PLAYTESTS_MAX_ANALYSIS_SESSIONS } from "@simulatorlife/autodev-core";
-import React, { useCallback, useEffect, useState } from "react";
+/** Bounded Console selection and live dispatch to the read-only analyst role. */
+import {
+  type ControlApiPlaytestingAnalysesResponse,
+  type ControlApiPlaytestingAnalysisDispatchResponse,
+  PLAYTESTS_MAX_ANALYSIS_SESSIONS
+} from "@simulatorlife/autodev-core";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { FIELD_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
-import {
-  MUTED_BODY_CLASS,
-  MUTED_META_CLASS
-} from "../../components/ui/text-classes.ts";
+import { MUTED_BODY_CLASS } from "../../components/ui/text-classes.ts";
 import { responseMessage } from "./playtesting-run-messages.ts";
+import type { PlaytestingScope } from "./playtesting-url.ts";
+import { PlaytestingAnalysisResults } from "./PlaytestingAnalysisResults.ts";
 
-export interface PlaytestingAnalysisResult {
-  readonly requested: number;
-  readonly packets: readonly {
-    readonly episodeId: string;
-    readonly batchId: string;
-  }[];
-  readonly receipts: readonly {
-    readonly episodeId: string;
-    readonly batchId: string | null;
-    readonly reason: string;
-    readonly detail: string;
-  }[];
-  readonly budget: readonly {
-    readonly batchId: string;
-    readonly reviewCap: number;
-    readonly actualCritiques: number;
-    readonly reserved: number;
-    readonly requested: number;
-    readonly remaining: number;
-  }[];
+const ANALYSIS_STATUS_POLL_MS = 1500;
+const ANALYSIS_STATUS_MAX_POLL_MS = 8000;
+const ANALYSIS_RUN_COLLATOR = new Intl.Collator(undefined, { numeric: true });
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function postAnalysis(
+async function dispatchAnalystReview(
   workspaceId: string,
   episodeIds: readonly string[]
 ): Promise<
-  | { readonly ok: true; readonly data: PlaytestingAnalysisResult }
+  | {
+      readonly ok: true;
+      readonly data: ControlApiPlaytestingAnalysisDispatchResponse;
+    }
   | { readonly ok: false; readonly message: string }
 > {
   const body = new URLSearchParams({
@@ -66,34 +50,162 @@ async function postAnalysis(
   if (!response.ok) {
     return { ok: false, message: responseMessage(payload) };
   }
-  const data = (payload as { kind?: unknown; data?: unknown });
-  if (data.kind !== "ok" || typeof data.data !== "object") {
+  const envelope = isRecord(payload) ? payload : null;
+  const data = isRecord(envelope?.data) ? envelope.data : null;
+  if (
+    envelope?.kind !== "ok" ||
+    !data ||
+    data.schema !== "autodev-control-playtesting-analysis-v1" ||
+    data.operation !== "dispatch" ||
+    data.workspaceId !== workspaceId ||
+    data.requested !== episodeIds.length ||
+    !Array.isArray(data.packets) ||
+    !Array.isArray(data.receipts) ||
+    (data.analysis !== null && !isRecord(data.analysis))
+  ) {
     return { ok: false, message: responseMessage(payload) };
   }
-  return { ok: true, data: data.data as PlaytestingAnalysisResult };
+  return {
+    ok: true,
+    data: data as unknown as ControlApiPlaytestingAnalysisDispatchResponse
+  };
 }
 
 export interface PlaytestingSelectionPanelProps {
-  readonly workspaceId: string | null;
+  readonly scope: PlaytestingScope;
   readonly selectableEpisodeIds: readonly string[];
   readonly selectedEpisodeIds: readonly string[];
+  readonly rejectedSelection: boolean;
   readonly onSelectionChange: (episodeIds: readonly string[]) => void;
 }
 
 export function PlaytestingSelectionPanel({
-  workspaceId,
+  scope,
   selectableEpisodeIds,
   selectedEpisodeIds,
+  rejectedSelection,
   onSelectionChange
 }: PlaytestingSelectionPanelProps): React.JSX.Element {
+  const workspaceId = scope.workspaceId;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<PlaytestingAnalysisResult | null>(null);
+  const [resultState, setResultState] = useState<{
+    readonly workspaceId: string;
+    readonly selectionKey: string;
+    readonly data: ControlApiPlaytestingAnalysisDispatchResponse;
+  } | null>(null);
+  const [runsState, setRunsState] = useState<{
+    readonly workspaceId: string;
+    readonly runs: ControlApiPlaytestingAnalysesResponse["runs"];
+    readonly syntheses: ControlApiPlaytestingAnalysesResponse["syntheses"];
+  } | null>(null);
+  const [statusState, setStatusState] = useState<{
+    readonly workspaceId: string;
+    readonly stale: boolean;
+  } | null>(null);
+  const [watchGeneration, setWatchGeneration] = useState(0);
+  const knownRuns = useRef<{
+    readonly workspaceId: string;
+    readonly runs: ControlApiPlaytestingAnalysesResponse["runs"];
+    readonly syntheses: ControlApiPlaytestingAnalysesResponse["syntheses"];
+  } | null>(null);
+
+  const selectionKey = selectedEpisodeIds.join("\0");
+  const result =
+    resultState?.workspaceId === workspaceId &&
+    resultState.selectionKey === selectionKey
+      ? resultState.data
+      : null;
+  const runs = runsState?.workspaceId === workspaceId ? runsState.runs : [];
+  const syntheses =
+    runsState?.workspaceId === workspaceId ? runsState.syntheses : [];
+  const stale = statusState?.workspaceId === workspaceId && statusState.stale;
 
   useEffect(() => {
-    setResult(null);
     setError(null);
-  }, [selectedEpisodeIds.join(",")]);
+  }, [workspaceId, selectionKey]);
+
+  useEffect(() => {
+    if (!workspaceId) return () => {};
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let delay = ANALYSIS_STATUS_POLL_MS;
+    let hasSuccessfulRead = false;
+    let lastKnownActive = false;
+    let keepPolling = true;
+    const controller = new AbortController();
+
+    const poll = async (): Promise<void> => {
+      try {
+        const response = await fetch(
+          `/api/playtesting/analyses?workspaceId=${encodeURIComponent(workspaceId)}`,
+          { headers: { accept: "application/json" }, signal: controller.signal }
+        );
+        const payload: unknown = await response.json().catch(() => null);
+        const envelope = isRecord(payload) ? payload : null;
+        const data = isRecord(envelope?.data) ? envelope.data : null;
+        if (
+          !response.ok ||
+          envelope?.kind !== "ok" ||
+          !data ||
+          data.schema !== "autodev-control-playtesting-analyses-v1" ||
+          data.workspaceId !== workspaceId ||
+          !Array.isArray(data.runs) ||
+          !Array.isArray(data.syntheses)
+        ) {
+          throw new Error(responseMessage(payload));
+        }
+        if (cancelled) return;
+        hasSuccessfulRead = true;
+        const incomingRuns =
+          data.runs as ControlApiPlaytestingAnalysesResponse["runs"];
+        const incomingSyntheses =
+          data.syntheses as ControlApiPlaytestingAnalysesResponse["syntheses"];
+        const previousRuns =
+          knownRuns.current?.workspaceId === workspaceId
+            ? knownRuns.current.runs
+            : [];
+        const incomingIds = new Set(incomingRuns.map((run) => run.analysisId));
+        const missingActiveRuns = previousRuns.filter(
+          (run) => run.status === "running" && !incomingIds.has(run.analysisId)
+        );
+        const nextRuns = [...incomingRuns, ...missingActiveRuns].sort(
+          (left, right) =>
+            ANALYSIS_RUN_COLLATOR.compare(right.createdAt, left.createdAt)
+        );
+        knownRuns.current = {
+          workspaceId,
+          runs: nextRuns,
+          syntheses: incomingSyntheses
+        };
+        setRunsState({
+          workspaceId,
+          runs: nextRuns,
+          syntheses: incomingSyntheses
+        });
+        setStatusState({ workspaceId, stale: missingActiveRuns.length > 0 });
+        lastKnownActive = nextRuns.some((run) => run.status === "running");
+        keepPolling = lastKnownActive;
+      } catch {
+        if (cancelled) return;
+        setStatusState({ workspaceId, stale: true });
+        // Keep retrying after a failed read if the last known list was active;
+        // an initial failure also gets bounded retries until one source read works.
+        keepPolling = !hasSuccessfulRead || lastKnownActive;
+      }
+      if (!cancelled && keepPolling) {
+        timer = setTimeout(() => void poll(), delay);
+        delay = Math.min(ANALYSIS_STATUS_MAX_POLL_MS, delay * 2);
+      }
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (timer) clearTimeout(timer);
+    };
+  }, [workspaceId, watchGeneration]);
 
   const toggle = useCallback(
     (episodeId: string) => {
@@ -105,23 +217,75 @@ export function PlaytestingSelectionPanel({
     [onSelectionChange, selectedEpisodeIds]
   );
 
-  const analyze = useCallback(async () => {
+  const start = useCallback(async () => {
     if (!workspaceId || selectedEpisodeIds.length === 0) return;
     setPending(true);
     setError(null);
     try {
-      const outcome = await postAnalysis(workspaceId, selectedEpisodeIds);
-      if (outcome.ok) setResult(outcome.data);
-      else setError(outcome.message);
+      const outcome = await dispatchAnalystReview(
+        workspaceId,
+        selectedEpisodeIds
+      );
+      if (outcome.ok) {
+        setResultState({
+          workspaceId,
+          selectionKey,
+          data: outcome.data
+        });
+        const analysis = outcome.data.analysis;
+        if (analysis !== null) {
+          const currentRuns =
+            knownRuns.current?.workspaceId === workspaceId
+              ? knownRuns.current.runs
+              : [];
+          const nextRuns = [
+            analysis,
+            ...currentRuns.filter(
+              (run) => run.analysisId !== analysis.analysisId
+            )
+          ];
+          const currentSyntheses =
+            knownRuns.current?.workspaceId === workspaceId
+              ? knownRuns.current.syntheses
+              : [];
+          knownRuns.current = {
+            workspaceId,
+            runs: nextRuns,
+            syntheses: currentSyntheses
+          };
+          setRunsState({
+            workspaceId,
+            runs: nextRuns,
+            syntheses: currentSyntheses
+          });
+        }
+        setStatusState({ workspaceId, stale: false });
+        setWatchGeneration((generation) => generation + 1);
+      } else {
+        setError(outcome.message);
+      }
     } finally {
       setPending(false);
     }
-  }, [selectedEpisodeIds, workspaceId]);
+  }, [selectedEpisodeIds, selectionKey, workspaceId]);
+
+  const resultRunId = result?.analysis?.analysisId;
+  const focusedRun =
+    (resultRunId ? runs.find((run) => run.analysisId === resultRunId) : null) ??
+    result?.analysis ??
+    runs[0] ??
+    null;
+  const displayedRuns = focusedRun
+    ? [
+        focusedRun,
+        ...runs.filter((run) => run.analysisId !== focusedRun.analysisId)
+      ]
+    : runs;
 
   return React.createElement(
     "section",
     {
-      "aria-label": "Multi-session analysis",
+      "aria-label": "Multi-session analyst review",
       className: LIST_PANEL_CLASS,
       "data-testid": "playtesting-selection",
       "data-selected": String(selectedEpisodeIds.length)
@@ -129,13 +293,24 @@ export function PlaytestingSelectionPanel({
     React.createElement(
       "h2",
       { className: SECTION_HEADING_CLASS },
-      "Multi-session analysis"
+      "Analyze selected sessions"
     ),
     React.createElement(
       "p",
       { className: MUTED_BODY_CLASS },
-      `Select up to ${String(PLAYTESTS_MAX_ANALYSIS_SESSIONS)} persisted sessions. The selection is shareable through this page's URL.`
+      `Select up to ${String(PLAYTESTS_MAX_ANALYSIS_SESSIONS)} persisted sessions. The selection is shareable through this page's URL. Runtime dispatches the read-only playtest-analyst over eligible frozen packets, enforces critique budgets, and reports every excluded session. This action does not run gameplay.`
     ),
+    rejectedSelection
+      ? React.createElement(
+          "p",
+          {
+            className: `${MUTED_BODY_CLASS} border-l-2 border-l-amber-500 pl-3`,
+            role: "alert",
+            "data-testid": "playtesting-selection-invalid-query"
+          },
+          `The shared session selection was rejected. Choose between 1 and ${String(PLAYTESTS_MAX_ANALYSIS_SESSIONS)} distinct sessions; nothing was truncated or started.`
+        )
+      : null,
     React.createElement(
       "ul",
       { className: "flex flex-col gap-1" },
@@ -168,11 +343,10 @@ export function PlaytestingSelectionPanel({
       {
         type: "button",
         className: FIELD_CONTROL_CLASS,
-        disabled:
-          pending || !workspaceId || selectedEpisodeIds.length === 0,
-        onClick: () => void analyze()
+        disabled: pending || !workspaceId || selectedEpisodeIds.length === 0,
+        onClick: () => void start()
       },
-      pending ? "Requesting analysis" : "Request analysis"
+      pending ? "Starting analyst review" : "Start analyst review"
     ),
     error
       ? React.createElement(
@@ -184,79 +358,12 @@ export function PlaytestingSelectionPanel({
           error
         )
       : null,
-    result
-      ? React.createElement(AnalysisResultView, { result })
-      : null
-  );
-}
-
-function AnalysisResultView({
-  result
-}: {
-  readonly result: PlaytestingAnalysisResult;
-}): React.JSX.Element {
-  return React.createElement(
-    "div",
-    {
-      "data-testid": "playtesting-selection-result",
-      className: "flex flex-col gap-2"
-    },
-    React.createElement(
-      "p",
-      { className: MUTED_BODY_CLASS },
-      `Analysed ${String(result.packets.length)} of ${String(
-        result.requested
-      )} selected ${result.requested === 1 ? "session" : "sessions"}.`
-    ),
-    result.packets.length > 0
-      ? React.createElement(
-          "ul",
-          { className: "list-none p-0 m-0 flex flex-col gap-1" },
-          ...result.packets.map((packet) =>
-            React.createElement(
-              "li",
-              {
-                key: packet.episodeId,
-                className: MUTED_META_CLASS,
-                "data-testid": "playtesting-selection-packet"
-              },
-              `${packet.episodeId} — ${packet.batchId}`
-            )
-          )
-        )
-      : null,
-    // Every excluded or unreadable session is named. A dropped session would
-    // let the count above read as better-grounded than the selection is.
-    result.receipts.length > 0
-      ? React.createElement(
-          "ul",
-          { className: "list-none p-0 m-0 flex flex-col gap-1" },
-          ...result.receipts.map((receipt) =>
-            React.createElement(
-              "li",
-              {
-                key: receipt.episodeId,
-                className: MUTED_BODY_CLASS,
-                "data-testid": "playtesting-selection-receipt",
-                "data-reason": receipt.reason
-              },
-              `${receipt.episodeId}: ${receipt.reason} — ${receipt.detail}`
-            )
-          )
-        )
-      : null,
-    ...result.budget.map((entry) =>
-      React.createElement(
-        "p",
-        {
-          key: entry.batchId,
-          className: MUTED_META_CLASS,
-          "data-testid": "playtesting-selection-budget"
-        },
-        `${entry.batchId}: ${String(entry.remaining)} of ${String(
-          entry.reviewCap
-        )} critiques remain; ${String(entry.requested)} requested.`
-      )
-    )
+    React.createElement(PlaytestingAnalysisResults, {
+      result,
+      runs: displayedRuns,
+      syntheses,
+      stale,
+      scope
+    })
   );
 }

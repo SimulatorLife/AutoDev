@@ -119,6 +119,7 @@ export interface RouterPersistenceSnapshot {
   disabledSubagentProviders?: string[] | undefined;
   disabledModels?: string[] | undefined;
   providerTelemetry?: Record<string, unknown> | undefined;
+  providerModelDiscovery?: unknown;
   usage?: unknown;
   concurrency?: unknown;
   subagents?: unknown;

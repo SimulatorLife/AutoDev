@@ -3,10 +3,12 @@
   "workspaceId": "owner/fixture",
   "audience": "synthetic-fixture-only",
   "registryVersion": "synthetic-fixture-registry-v2",
-  "eventSchemaHash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "eventSchemaHash": "83b222c141d0ac9cf15696947e3cdcfeecf54fb985c94ca96b411e0e8e44f65e",
   "defaults": {
     "audience": "synthetic-fixture-only",
-    "scenarioEligibility": ["tutorial"],
+    "scenarioEligibility": [
+      "tutorial"
+    ],
     "analysisUnit": "episode",
     "aggregationWindow": "whole-episode",
     "aggregation": "ratio-of-sums-within-scenario",
@@ -15,7 +17,12 @@
     "minIndependentUnits": 1,
     "precisionPlanRef": "fixture-descriptive-only",
     "missingPolicy": "null-with-reason-and-missing-count",
-    "provenance": ["episodeId", "eventId", "buildSha", "evaluatorHash"],
+    "provenance": [
+      "episodeId",
+      "eventId",
+      "buildSha",
+      "evaluatorHash"
+    ],
     "humanConstruct": null,
     "meaningfulMargin": null,
     "guardrailMargin": null,
@@ -42,8 +49,13 @@
       "denominator": "all fresh advertised legal requests",
       "unit": "proportion",
       "polarity": "lower",
-      "targetBand": [0, 0],
-      "notObservable": ["missing-action-or-revision-events"]
+      "targetBand": [
+        0,
+        0
+      ],
+      "notObservable": [
+        "missing-action-or-revision-events"
+      ]
     }
   ],
   "coverageRequirements": [

@@ -5,7 +5,8 @@ import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 
 const NOT_OBSERVED_REASON =
   "Current state is not observed, so it cannot be changed here.";
-const IMMUTABLE_REASON = "Runtime reports this setting as read-only.";
+const IMMUTABLE_REASON =
+  "A current provider listing and a routeable Runtime model are required to change enablement.";
 
 /**
  * Control chrome per state. The pill states the item's current value and its

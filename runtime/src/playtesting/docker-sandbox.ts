@@ -25,10 +25,10 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 
 import {
-  PLAYTESTS_ADAPTER_CONTAINER_WORKSPACE,
-  PLAYTESTS_INTEGRATION_DIR,
   type PlaytestArtifactReference,
   type PlaytestMetricRegistry,
+  PLAYTESTS_ADAPTER_CONTAINER_WORKSPACE,
+  PLAYTESTS_INTEGRATION_DIR,
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
 
@@ -66,6 +66,8 @@ export interface PreparedPlaytestSandbox {
   readonly workspaceId: string;
   readonly checkoutRoot: string;
   readonly checkoutSha: string;
+  /** Exact game-build label the operator approved, supplied to the adapter. */
+  readonly gameBuild: string;
   readonly imageDigest: string;
   readonly workingDirectory: string;
   readonly command: readonly string[];
@@ -262,9 +264,9 @@ function readCleanCheckoutSha(root: string): string {
       .filter((line) => line.startsWith("!! "))
       .map((line) => line.slice(3).trim());
     const autodevIgnored = ignored.filter(
-      (path) =>
-        path === AUTODEV_INTEGRATION_DIR ||
-        path.startsWith(`${AUTODEV_INTEGRATION_DIR}/`)
+      (ignoredPath) =>
+        ignoredPath === AUTODEV_INTEGRATION_DIR ||
+        ignoredPath.startsWith(`${AUTODEV_INTEGRATION_DIR}/`)
     );
     if (autodevIgnored.length > 0) {
       throw new PlaytestSandboxApprovalError(
@@ -288,7 +290,7 @@ function modifiedPaths(status: string): string[] {
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0 && !line.startsWith("!!"))
     .map((line) => line.slice(3).trim())
-    .filter((path) => path.length > 0);
+    .filter((entryPath) => entryPath.length > 0);
 }
 
 /**
@@ -361,6 +363,7 @@ export function preparePlaytestSandbox(
     workspaceId: approval.workspaceId,
     checkoutRoot: checkout.root,
     checkoutSha: checkout.sha,
+    gameBuild: approval.gameBuild,
     imageDigest: approval.adapterImageDigest,
     workingDirectory: checkout.workingDirectory,
     command: [...configuredCommand],
@@ -624,6 +627,8 @@ export function buildDockerRunArguments(
     "LANG=C.UTF-8",
     "--env",
     "TZ=UTC",
+    "--env",
+    "AUTODEV_PLAYTEST_ENGINE_BUILD=" + request.gameBuild,
     "--env",
     "AUTODEV_PLAYTEST_OUTPUT_DIR=" + CONTAINER_ARTIFACTS,
     ...(inputArtifactDirectory === undefined

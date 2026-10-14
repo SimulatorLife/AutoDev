@@ -1,11 +1,33 @@
-import type { SkillDefinition } from "@simulatorlife/autodev-core";
+import type {
+  ConvergenceStatus,
+  SkillDefinition
+} from "@simulatorlife/autodev-core";
 
 /** Why an immediate skill-assignment mutation did not persist. */
 export type SkillAssignmentSaveOutcome =
   | "conflict"
   | "validation"
   | "not-found"
-  | "failed";
+  | "failed"
+  | "pending"
+  | "not-observed"
+  | "unconfirmed";
+
+const SAVE_OUTCOME_BY_CONVERGENCE: Readonly<
+  Record<ConvergenceStatus, SkillAssignmentSaveOutcome | undefined>
+> = {
+  converged: undefined,
+  pending: "pending",
+  "not-observed": "not-observed",
+  error: "unconfirmed"
+};
+
+/** Map the Runtime's reconciliation result to the page return state. */
+export function saveOutcomeForConvergence(
+  convergence: ConvergenceStatus
+): SkillAssignmentSaveOutcome | undefined {
+  return SAVE_OUTCOME_BY_CONVERGENCE[convergence];
+}
 
 export function skillSaveOutcome(
   value: string | readonly string[] | undefined
@@ -14,7 +36,10 @@ export function skillSaveOutcome(
   return outcome === "conflict" ||
     outcome === "validation" ||
     outcome === "not-found" ||
-    outcome === "failed"
+    outcome === "failed" ||
+    outcome === "pending" ||
+    outcome === "not-observed" ||
+    outcome === "unconfirmed"
     ? outcome
     : undefined;
 }
@@ -28,7 +53,14 @@ export const SAVE_OUTCOME_MESSAGES: Readonly<
     "The execution contract refused that assignment, so nothing was written. One of these roles may no longer exist in it.",
   "not-found":
     "That skill is not in the RuleSync catalog any more, so nothing was written. Reload to see the current catalog.",
-  failed: "The role assignment was not applied."
+  failed:
+    "The assignment request could not be completed. Reload to inspect the current roles before trying again.",
+  pending:
+    "The desired role set was written, but the Runtime currently reports a different role set. Review the observed roles before retrying.",
+  "not-observed":
+    "The desired role set was written, but the Runtime returned no actual role observation. Reload before retrying; an empty role set is not a confirmed unassignment.",
+  unconfirmed:
+    "The response could not confirm whether the assignment was applied. Reload to inspect observed roles before retrying."
 };
 
 /** Why assignment controls are absent for every skill in the current source. */

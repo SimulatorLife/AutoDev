@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server.js";
+import { type NextRequest, NextResponse } from "next/server.js";
 
 import {
   controlApiFailureCode,
@@ -8,7 +8,10 @@ import {
   isSameOriginMutation,
   readStrictUrlEncodedFormBody
 } from "../../../../src/lib/server/form-mutation.ts";
-import { requestPlaytestingAnalysis } from "../../../playtesting/playtesting-server.ts";
+import {
+  listPlaytestingAnalyses,
+  requestPlaytestingAnalysis
+} from "../../../playtesting/playtesting-server.ts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -43,7 +46,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
   const form = await readStrictUrlEncodedFormBody(request, MAX_BODY_BYTES);
-  if (form === null || [...form.keys()].some((key) => !ALLOWED_FIELDS.has(key))) {
+  if (
+    form === null ||
+    [...form.keys()].some((key) => !ALLOWED_FIELDS.has(key))
+  ) {
     return sendError(
       400,
       "autodev_console_playtesting_invalid_request",
@@ -92,7 +98,57 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       "The server-side Control API credential is not configured."
     );
   }
-  const result = await requestPlaytestingAnalysis(workspaceId, episodeIds, config);
+  const result = await requestPlaytestingAnalysis(
+    workspaceId,
+    episodeIds,
+    config
+  );
+  if (result.kind !== "ok") {
+    return sendError(
+      result.kind === "http-error" || result.kind === "unauthorized"
+        ? result.status
+        : result.kind === "unreachable"
+          ? 503
+          : 502,
+      controlApiFailureCode(result),
+      result.message
+    );
+  }
+  return NextResponse.json(
+    { kind: "ok", data: result.data },
+    {
+      status: result.data.analysis === null ? 200 : 202,
+      headers: { "cache-control": "no-store" }
+    }
+  );
+}
+
+/** Workspace-scoped status for the Runtime-owned analyst task list. */
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const values = request.nextUrl.searchParams.getAll("workspaceId");
+  const workspaceId = values[0]?.trim() ?? "";
+  if (
+    values.length !== 1 ||
+    [...request.nextUrl.searchParams.keys()].some(
+      (key) => key !== "workspaceId"
+    ) ||
+    !WORKSPACE_ID_PATTERN.test(workspaceId)
+  ) {
+    return sendError(
+      400,
+      "autodev_console_playtesting_invalid_request",
+      "A canonical workspaceId is required to read analyst review status."
+    );
+  }
+  const config = readControlApiConfig();
+  if (!config) {
+    return sendError(
+      503,
+      "autodev_console_control_api_unavailable",
+      "The server-side Control API credential is not configured."
+    );
+  }
+  const result = await listPlaytestingAnalyses(workspaceId, config);
   if (result.kind !== "ok") {
     return sendError(
       result.kind === "http-error" || result.kind === "unauthorized"

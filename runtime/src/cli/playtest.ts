@@ -15,7 +15,9 @@ import path from "node:path";
 
 import {
   assertPlaytestObservationContract,
+  expandPlaytestRegistry,
   type PlaytestAdapterBinding,
+  type PlaytestJsonSchema,
   type PlaytestObservationContract,
   PLAYTESTS_GENERIC_ADAPTER_COMMAND,
   PLAYTESTS_INTEGRATION_DIR,
@@ -28,10 +30,13 @@ import {
 import {
   derivedBenchmarkDigests,
   observationSchemaHash,
+  playtestBenchmarkContentHash,
   playtestFileHash,
   playtestManifestHash,
   withObservationSchemaHash
 } from "../playtesting/hash-chain.ts";
+import { PLAYTESTS_BUILTIN_POLICY_IDS } from "../playtesting/policies.ts";
+import { unsupportedChoice } from "./command-choice.ts";
 import {
   formatConformanceReport,
   runPlaytestConformance
@@ -41,8 +46,6 @@ import {
   scaffoldAdapterModule,
   scaffoldBinding
 } from "./playtest-scaffold.ts";
-import { PLAYTESTS_BUILTIN_POLICY_IDS } from "../playtesting/policies.ts";
-import { unsupportedChoice } from "./command-choice.ts";
 
 export const PLAYTESTS_SUBCOMMANDS = ["init", "check", "conformance"] as const;
 export type PlaytestSubcommand = (typeof PLAYTESTS_SUBCOMMANDS)[number];
@@ -51,12 +54,19 @@ export const PLAYTESTS_CONFIG_FILE = "playtest.config.json";
 export const PLAYTESTS_OBSERVATION_FILE = "playtest.observation.json";
 export const PLAYTESTS_RUBRIC_FILE = "playtest.rubric.json";
 export const PLAYTESTS_BINDING_FILE = "playtest.binding.json";
+const SCAFFOLD_FACTORY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
+const SCAFFOLD_ADAPTER_SCHEMAS: PlaytestAdapterBinding["schemas"] = {
+  observation: { type: "object", properties: {} },
+  action: { type: "object", properties: {} },
+  event: { type: "object", properties: {} }
+};
 
 export type PlaytestProblemSeverity = "error" | "warning";
 export type PlaytestProblemCode =
   | "missing-file"
   | "invalid-json"
   | "invalid-contract"
+  | "invalid-rubric"
   | "hash-mismatch"
   | "empty-rubric"
   | "empty-observation-fields"
@@ -157,17 +167,49 @@ function readJsonFile(
  * silently fixed a digest would be indistinguishable from an integration that
  * was already correct.
  */
+const REQUIRED_PLAYTEST_FILES = [
+  PLAYTESTS_CONFIG_FILE,
+  PLAYTESTS_OBSERVATION_FILE,
+  PLAYTESTS_RUBRIC_FILE
+] as const;
+
+type RequiredPlaytestFile = (typeof REQUIRED_PLAYTEST_FILES)[number];
+
+/**
+ * Verify one integration directory.
+ *
+ * Reads only; it never repairs. init writes, check reports, so a check that
+ * silently fixed a digest would be indistinguishable from an integration that
+ * was already correct.
+ */
 export function checkPlaytestIntegration(
   checkoutRoot: string
 ): PlaytestCheckReport {
   const problems: PlaytestCheckProblem[] = [];
   const hashes: Record<string, string> = {};
+  const files = readRequiredPlaytestFiles(checkoutRoot, problems, hashes);
+  const binding = checkAdapterBinding(checkoutRoot, problems);
+
+  checkObservationContract(
+    files.get(PLAYTESTS_OBSERVATION_FILE),
+    binding,
+    problems
+  );
+  checkMetricRegistry(files.get(PLAYTESTS_RUBRIC_FILE), problems);
+  checkBenchmarkDigests(checkoutRoot, problems);
+  checkDeclaredPolicies(checkoutRoot, problems);
+
+  return { problems, hashes };
+}
+
+function readRequiredPlaytestFiles(
+  checkoutRoot: string,
+  problems: PlaytestCheckProblem[],
+  hashes: Record<string, string>
+): ReadonlyMap<RequiredPlaytestFile, unknown> {
   const root = integrationRoot(checkoutRoot);
-  for (const name of [
-    PLAYTESTS_CONFIG_FILE,
-    PLAYTESTS_OBSERVATION_FILE,
-    PLAYTESTS_RUBRIC_FILE
-  ]) {
+  const files = new Map<RequiredPlaytestFile, unknown>();
+  for (const name of REQUIRED_PLAYTEST_FILES) {
     const file = path.join(root, name);
     const relative = path.posix.join(PLAYTESTS_INTEGRATION_DIR, name);
     if (!existsSync(file)) {
@@ -175,7 +217,7 @@ export function checkPlaytestIntegration(
         severity: "error",
         code: "missing-file",
         file: relative,
-        message: `Run "autodev playtest init" to create ${relative}.`
+        message: 'Run "autodev playtest init" to create ' + relative + "."
       });
       continue;
     }
@@ -185,180 +227,271 @@ export function checkPlaytestIntegration(
         severity: "error",
         code: "invalid-json",
         file: relative,
-        message: `${relative} is not valid JSON: ${parsed.message}`
+        message: relative + " is not valid JSON: " + parsed.message
       });
       continue;
     }
     hashes[name] = playtestManifestHash(parsed.value);
-
-    if (name === PLAYTESTS_OBSERVATION_FILE) {
-      // The same assertion approval applies, so `check` cannot pass a contract
-      // that would later be rejected, or reject one approval would accept.
-      try {
-        assertPlaytestObservationContract(parsed.value);
-      } catch (error) {
-        problems.push({
-          severity: "error",
-          code: "invalid-contract",
-          file: relative,
-          message: `${relative} does not satisfy the observation contract: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        });
-        continue;
-      }
-      const contract = parsed.value;
-      const expected = observationSchemaHash(contract);
-      if (contract.schemaHash.toLowerCase() !== expected.toLowerCase()) {
-        // The game does not maintain this digest; `autodev playtest check
-        // --write-hashes` regenerates it from the contract's own content.
-        problems.push({
-          severity: "error",
-          code: "hash-mismatch",
-          file: relative,
-          message: `${relative} records schemaHash ${contract.schemaHash} but its content hashes to ${expected}. Run "autodev playtest check --write-hashes" to regenerate it.`
-        });
-      }
-    }
-
-    if (name === PLAYTESTS_RUBRIC_FILE) {
-      const rubric = parsed.value as { metrics?: unknown };
-      if (!Array.isArray(rubric.metrics) || rubric.metrics.length === 0) {
-        // Empty is reported as empty. A generated placeholder registry would
-        // read as the game's own measurement intent.
-        problems.push({
-          severity: "warning",
-          code: "empty-rubric",
-          file: relative,
-          message: `${relative} declares no metrics. AutoDev does not invent them; add the game's own dimensions, or the analysis will have nothing to score.`
-        });
-      }
-    }
+    files.set(name, parsed.value);
   }
+  return files;
+}
 
-  // The binding is what lets a game onboard without writing the protocol. A
-  // missing one means the game still hand-writes an adapter, which is the cost
-  // this integration is meant to remove.
-  const bindingFile = path.join(root, PLAYTESTS_BINDING_FILE);
-  if (existsSync(bindingFile)) {
-    const parsed = readJsonFile(bindingFile);
-    const relative = path.posix.join(
-      PLAYTESTS_INTEGRATION_DIR,
-      PLAYTESTS_BINDING_FILE
-    );
-    if (parsed.ok) {
-      const resolution = resolvePlaytestAdapterBinding(parsed.value);
-      if (resolution.kind === "rejected") {
-        problems.push({
-          severity: "error",
-          code: "invalid-binding",
-          file: relative,
-          message: `${relative} is not a usable adapter binding: ${resolution.message}`
-        });
-      } else {
-        // Every protocol method the game leaves unbound is named. AutoDev does
-        // not answer one from a default, so an unbound method is a refusal the
-        // operator would otherwise meet mid-run.
-        const binding = parsed.value as PlaytestAdapterBinding;
-        // A game that claims the declarative tier onboarded with no protocol
-        // code, which means AutoDev's adapter runs it. A config still pointing
-        // at a game-written command would make the tier a claim rather than a
-        // fact.
-        const command = configAdapterCommand(checkoutRoot);
-        if (
-          binding.tier === "declarative" &&
-          command !== null &&
-          !usesGenericPlaytestAdapter(command)
-        ) {
-          problems.push({
-            severity: "error",
-            code: "invalid-binding",
-            file: relative,
-            message:
-              "This binding declares the declarative tier, so the config's adapter command must be AutoDev's generic adapter rather than a game-written one."
-          });
-        }
-        const unbound = unboundPlaytestMethods(binding);
-        const optional = unbound.filter(
-          (method) => !PLAYTESTS_REQUIRED_BINDINGS.includes(method)
-        );
-        if (optional.length > 0) {
-          problems.push({
-            severity: "warning",
-            code: "incomplete-binding",
-            file: relative,
-            message: `${relative} does not bind ${optional.join(", ")}; those protocol methods are unavailable for this game.`
-          });
-        }
-      }
-    } else {
-      problems.push({
-        severity: "error",
-        code: "invalid-json",
-        file: relative,
-        message: `${relative} is not valid JSON: ${parsed.message}`
-      });
-    }
-  } else {
+function checkObservationContract(
+  value: unknown,
+  binding: PlaytestAdapterBinding | null,
+  problems: PlaytestCheckProblem[]
+): void {
+  if (value === undefined) return;
+  const relative = path.posix.join(
+    PLAYTESTS_INTEGRATION_DIR,
+    PLAYTESTS_OBSERVATION_FILE
+  );
+  let contract: PlaytestObservationContract;
+  try {
+    assertPlaytestObservationContract(value);
+    contract = value;
+  } catch (error) {
+    problems.push({
+      severity: "error",
+      code: "invalid-contract",
+      file: relative,
+      message:
+        relative +
+        " does not satisfy the observation contract: " +
+        (error instanceof Error ? error.message : String(error))
+    });
+    return;
+  }
+  if (binding === null) return;
+  const expected = observationSchemaHash(
+    binding.schemas.observation as PlaytestJsonSchema
+  );
+  if (contract.schemaHash.toLowerCase() !== expected.toLowerCase()) {
+    problems.push({
+      severity: "error",
+      code: "hash-mismatch",
+      file: relative,
+      message:
+        relative +
+        " records schemaHash " +
+        contract.schemaHash +
+        " but the adapter binding's observation schema hashes to " +
+        expected +
+        '. Run "autodev playtest check --write-hashes" to regenerate it.'
+    });
+  }
+}
+
+function checkMetricRegistry(
+  value: unknown,
+  problems: PlaytestCheckProblem[]
+): void {
+  const relative = path.posix.join(
+    PLAYTESTS_INTEGRATION_DIR,
+    PLAYTESTS_RUBRIC_FILE
+  );
+  if (
+    !isPlainRecord(value) ||
+    value.schemaVersion !== 2 ||
+    !Array.isArray(value.metricDefinitions)
+  ) {
+    problems.push({
+      severity: "error",
+      code: "invalid-rubric",
+      file: relative,
+      message:
+        relative +
+        " must be a v2 metric registry with a metricDefinitions array."
+    });
+    return;
+  }
+  if (value.metricDefinitions.length === 0 && Object.keys(value).length === 2) {
     problems.push({
       severity: "warning",
-      code: "missing-file",
-      file: path.posix.join(PLAYTESTS_INTEGRATION_DIR, PLAYTESTS_BINDING_FILE),
+      code: "empty-rubric",
+      file: relative,
       message:
-        "No adapter binding is declared, so this game still has to implement the protocol itself."
+        relative +
+        " declares no metrics. AutoDev does not invent them; add the game's own dimensions, or the analysis will have nothing to score."
+    });
+    return;
+  }
+  try {
+    expandPlaytestRegistry(value);
+  } catch (error) {
+    problems.push({
+      severity: "error",
+      code: "invalid-rubric",
+      file: relative,
+      message:
+        relative +
+        " is not a valid v2 metric registry: " +
+        (error instanceof Error ? error.message : String(error))
+    });
+  }
+}
+
+function checkAdapterBinding(
+  checkoutRoot: string,
+  problems: PlaytestCheckProblem[]
+): PlaytestAdapterBinding | null {
+  const bindingFile = path.join(
+    integrationRoot(checkoutRoot),
+    PLAYTESTS_BINDING_FILE
+  );
+  const relative = path.posix.join(
+    PLAYTESTS_INTEGRATION_DIR,
+    PLAYTESTS_BINDING_FILE
+  );
+  if (!existsSync(bindingFile)) {
+    problems.push({
+      severity: "error",
+      code: "missing-file",
+      file: relative,
+      message:
+        'No adapter binding is declared. Run "autodev playtest init" and bind the game-owned methods; game-written protocol adapters are not supported.'
+    });
+    return null;
+  }
+  const parsed = readJsonFile(bindingFile);
+  if (!parsed.ok) {
+    problems.push({
+      severity: "error",
+      code: "invalid-json",
+      file: relative,
+      message: relative + " is not valid JSON: " + parsed.message
+    });
+    return null;
+  }
+  const resolution = resolvePlaytestAdapterBinding(parsed.value);
+  if (resolution.kind === "rejected") {
+    problems.push({
+      severity: "error",
+      code: "invalid-binding",
+      file: relative,
+      message:
+        relative + " is not a usable adapter binding: " + resolution.message
+    });
+    return null;
+  }
+
+  const binding = parsed.value as PlaytestAdapterBinding;
+  const command = configAdapterCommand(checkoutRoot);
+  if (command !== null && !usesGenericPlaytestAdapter(command)) {
+    problems.push({
+      severity: "error",
+      code: "invalid-binding",
+      file: relative,
+      message:
+        "An adapter binding must use AutoDev's generic adapter command; game-written protocol adapters are not supported."
     });
   }
 
-  // The benchmark repeats the rubric and observation digests. Nothing in the
-  // repository tells a game which rubric its benchmark points at, so those three
-  // fields are verified here rather than trusted.
+  const optional = unboundPlaytestMethods(binding).filter(
+    (method) => !PLAYTESTS_REQUIRED_BINDINGS.includes(method)
+  );
+  if (optional.length > 0) {
+    problems.push({
+      severity: "warning",
+      code: "incomplete-binding",
+      file: relative,
+      message:
+        relative +
+        " does not bind " +
+        optional.join(", ") +
+        "; those protocol methods are unavailable for this game."
+    });
+  }
+  return binding;
+}
+
+function checkBenchmarkDigests(
+  checkoutRoot: string,
+  problems: PlaytestCheckProblem[]
+): void {
   const digests = derivedDigests(checkoutRoot);
   const benchmarkPath = declaredBenchmarkPath(checkoutRoot);
-  if (benchmarkPath && digests) {
-    const relative = path.relative(checkoutRoot, benchmarkPath);
-    const parsed = readJsonFile(benchmarkPath);
-    if (!parsed.ok) {
-      problems.push({
-        severity: "error",
-        code: "invalid-json",
-        file: relative,
-        message: `${relative} is not valid JSON: ${parsed.message}`
-      });
-    } else if (isPlainRecord(parsed.value)) {
-      const benchmark = parsed.value;
-      const expected = derivedBenchmarkDigests(digests);
-      for (const [field, value] of Object.entries(expected)) {
-        if (
-          typeof benchmark[field] !== "string" ||
-          benchmark[field]!.toLowerCase() !== value.toLowerCase()
-        ) {
-          problems.push({
-            severity: "error",
-            code: "hash-mismatch",
-            file: relative,
-            message: `${relative} records ${field} as ${String(benchmark[field])} but it is derived as ${value}. Run "autodev playtest check --write-hashes" to regenerate it.`
-          });
-        }
-      }
-    }
+  if (benchmarkPath === null || digests === null) return;
+  const relative = path.relative(checkoutRoot, benchmarkPath);
+  const parsed = readJsonFile(benchmarkPath);
+  if (!parsed.ok) {
+    problems.push({
+      severity: "error",
+      code: "invalid-json",
+      file: relative,
+      message: relative + " is not valid JSON: " + parsed.message
+    });
+    return;
   }
-  // A game config may name any policy string, so a declared policy that no code
-  // path constructs would otherwise be accepted here and refused mid-run, with
-  // the operator meeting it as an unexplained validation error on their first
-  // batch.
-  const declaredPolicies = configPolicies(checkoutRoot);
-  for (const policyId of declaredPolicies) {
-    if (!PLAYTESTS_BUILTIN_POLICY_IDS.has(policyId)) {
-      problems.push({
-        severity: "error",
-        code: "unknown-policy",
-        file: path.posix.join(PLAYTESTS_INTEGRATION_DIR, PLAYTESTS_CONFIG_FILE),
-        message: `${PLAYTESTS_INTEGRATION_DIR}/${PLAYTESTS_CONFIG_FILE} declares policy "${policyId}", which AutoDev cannot run. Supported policies: ${[...PLAYTESTS_BUILTIN_POLICY_IDS].join(", ")}.`
-      });
-    }
-  }
+  if (!isPlainRecord(parsed.value)) return;
 
-  return { problems, hashes };
+  const benchmark = parsed.value;
+  const expected = derivedBenchmarkDigests(digests);
+  for (const [field, value] of Object.entries(expected)) {
+    if (
+      typeof benchmark[field] !== "string" ||
+      benchmark[field]!.toLowerCase() !== value.toLowerCase()
+    ) {
+      problems.push({
+        severity: "error",
+        code: "hash-mismatch",
+        file: relative,
+        message:
+          relative +
+          " records " +
+          field +
+          " as " +
+          String(benchmark[field]) +
+          " but it is derived as " +
+          value +
+          '. Run "autodev playtest check --write-hashes" to regenerate it.'
+      });
+    }
+  }
+  const expectedContentHash = playtestBenchmarkContentHash(benchmark as never);
+  if (
+    typeof benchmark.contentHash !== "string" ||
+    benchmark.contentHash.toLowerCase() !== expectedContentHash.toLowerCase()
+  ) {
+    problems.push({
+      severity: "error",
+      code: "hash-mismatch",
+      file: relative,
+      message:
+        relative +
+        " records contentHash as " +
+        String(benchmark.contentHash) +
+        " but its content hashes to " +
+        expectedContentHash +
+        '. Run "autodev playtest check --write-hashes" to regenerate it.'
+    });
+  }
+}
+
+function checkDeclaredPolicies(
+  checkoutRoot: string,
+  problems: PlaytestCheckProblem[]
+): void {
+  const configFile = path.posix.join(
+    PLAYTESTS_INTEGRATION_DIR,
+    PLAYTESTS_CONFIG_FILE
+  );
+  for (const policyId of configPolicies(checkoutRoot)) {
+    if (PLAYTESTS_BUILTIN_POLICY_IDS.has(policyId)) continue;
+    problems.push({
+      severity: "error",
+      code: "unknown-policy",
+      file: configFile,
+      message:
+        configFile +
+        ' declares policy "' +
+        policyId +
+        '", which AutoDev cannot run. Supported policies: ' +
+        [...PLAYTESTS_BUILTIN_POLICY_IDS].join(", ") +
+        "."
+    });
+  }
 }
 
 /** The policies the checked-in config declares, or none when it declares none. */
@@ -374,6 +507,19 @@ function configPolicies(checkoutRoot: string): readonly string[] {
     : [];
 }
 
+function readAdapterBinding(
+  checkoutRoot: string
+): PlaytestAdapterBinding | null {
+  const parsed = readJsonFile(
+    path.join(integrationRoot(checkoutRoot), PLAYTESTS_BINDING_FILE)
+  );
+  if (!parsed.ok) return null;
+  const resolution = resolvePlaytestAdapterBinding(parsed.value);
+  return resolution.kind === "resolved"
+    ? (parsed.value as PlaytestAdapterBinding)
+    : null;
+}
+
 /**
  * The digests AutoDev derives for this integration: the rubric's own bytes,
  * and the benchmark's cross-references to it and to the observation contract.
@@ -385,23 +531,30 @@ function configPolicies(checkoutRoot: string): readonly string[] {
 function derivedDigests(checkoutRoot: string): {
   readonly rubricHash: string;
   readonly observationSchemaHash: string;
+  readonly actionSchemaHash: string;
+  readonly eventSchemaHash: string;
 } | null {
   const root = integrationRoot(checkoutRoot);
   const rubricFile = path.join(root, PLAYTESTS_RUBRIC_FILE);
   const observationFile = path.join(root, PLAYTESTS_OBSERVATION_FILE);
-  if (!existsSync(rubricFile) || !existsSync(observationFile)) return null;
+  const binding = readAdapterBinding(checkoutRoot);
+  if (!existsSync(rubricFile) || !existsSync(observationFile) || !binding) {
+    return null;
+  }
   const observation = readJsonFile(observationFile);
   if (!observation.ok) return null;
-  let contract: PlaytestObservationContract;
   try {
     assertPlaytestObservationContract(observation.value);
-    contract = observation.value;
   } catch {
     return null;
   }
   return {
     rubricHash: playtestFileHash(readFileSync(rubricFile)),
-    observationSchemaHash: contract.schemaHash
+    observationSchemaHash: observationSchemaHash(
+      binding.schemas.observation as PlaytestJsonSchema
+    ),
+    actionSchemaHash: playtestManifestHash(binding.schemas.action),
+    eventSchemaHash: playtestManifestHash(binding.schemas.event)
   };
 }
 
@@ -414,18 +567,25 @@ function derivedDigests(checkoutRoot: string): {
 export function writePlaytestHashes(checkoutRoot: string): PlaytestCheckReport {
   const root = integrationRoot(checkoutRoot);
   const observationFile = path.join(root, PLAYTESTS_OBSERVATION_FILE);
-  const report = checkPlaytestIntegration(checkoutRoot);
   const digests = derivedDigests(checkoutRoot);
 
   if (digests && existsSync(observationFile)) {
     const parsed = readJsonFile(observationFile);
-    if (parsed.ok) {
+    const binding = readAdapterBinding(checkoutRoot);
+    if (parsed.ok && binding) {
       try {
         assertPlaytestObservationContract(parsed.value);
         const { schemaHash: _previous, ...content } = parsed.value;
         writeFileSync(
           observationFile,
-          `${JSON.stringify(withObservationSchemaHash(content), null, 2)}\n`,
+          `${JSON.stringify(
+            withObservationSchemaHash(
+              content,
+              binding.schemas.observation as PlaytestJsonSchema
+            ),
+            null,
+            2
+          )}\n`,
           "utf8"
         );
       } catch {
@@ -439,15 +599,17 @@ export function writePlaytestHashes(checkoutRoot: string): PlaytestCheckReport {
     if (benchmarkPath) {
       const parsed = readJsonFile(benchmarkPath);
       if (parsed.ok && isPlainRecord(parsed.value)) {
+        const { contentHash: _previous, ...content } = parsed.value;
+        const updated = {
+          ...content,
+          ...derivedBenchmarkDigests(digests)
+        };
         writeFileSync(
           benchmarkPath,
           `${JSON.stringify(
             {
-              ...parsed.value,
-              ...derivedBenchmarkDigests({
-                rubricHash: digests.rubricHash,
-                observationSchemaHash: digests.observationSchemaHash
-              })
+              ...updated,
+              contentHash: playtestBenchmarkContentHash(updated as never)
             },
             null,
             2
@@ -518,27 +680,34 @@ export function initPlaytestIntegration(checkoutRoot: string): number {
     );
   }
 
+  const declaredBinding = readAdapterBinding(checkoutRoot);
+  const observationSchema =
+    declaredBinding?.schemas.observation ??
+    SCAFFOLD_ADAPTER_SCHEMAS.observation;
   const observationPath = path.join(root, PLAYTESTS_OBSERVATION_FILE);
   if (!existsSync(observationPath)) {
-    const contract = withObservationSchemaHash({
-      schemaVersion: 1 as const,
-      mode: "headless" as const,
-      cohort: "default",
-      visibilityMode: "structured" as const,
-      // One required placeholder so the contract is well formed; the game
-      // replaces it with what a player can actually observe.
-      fields: [
-        {
-          fieldPath: "replace-with-observable-field",
-          unit: null,
-          displayRounding: null,
-          revelationTiming: "before-action" as const,
-          playerRuleRef: "replace-with-the-rule-a-player-can-see"
-        }
-      ],
-      uiEquivalence: "unverified" as const,
-      conformanceFixtureHash: null
-    });
+    const contract = withObservationSchemaHash(
+      {
+        schemaVersion: 1 as const,
+        mode: "headless" as const,
+        cohort: "default",
+        visibilityMode: "structured" as const,
+        // One required placeholder so the contract is well formed; the game
+        // replaces it with what a player can actually observe.
+        fields: [
+          {
+            fieldPath: "replace-with-observable-field",
+            unit: null,
+            displayRounding: null,
+            revelationTiming: "before-action" as const,
+            playerRuleRef: "replace-with-the-rule-a-player-can-see"
+          }
+        ],
+        uiEquivalence: "unverified" as const,
+        conformanceFixtureHash: null
+      },
+      observationSchema as PlaytestJsonSchema
+    );
     writeFileSync(
       observationPath,
       `${JSON.stringify(contract, null, 2)}\n`,
@@ -552,10 +721,10 @@ export function initPlaytestIntegration(checkoutRoot: string): number {
       rubricPath,
       `${JSON.stringify(
         {
-          schemaVersion: 1,
+          schemaVersion: 2,
           // Deliberately empty. AutoDev will not guess the game's quality
           // dimensions; an invented metric would read as the game's own.
-          metrics: []
+          metricDefinitions: []
         },
         null,
         2
@@ -579,11 +748,7 @@ export function initPlaytestIntegration(checkoutRoot: string): number {
           factory: "createGame",
           // Placeholders, clearly marked: a game must declare what its own
           // schemas are rather than inherit these.
-          schemas: {
-            observation: { type: "object", properties: {} },
-            action: { type: "object", properties: {} },
-            event: { type: "object", properties: {} }
-          },
+          schemas: SCAFFOLD_ADAPTER_SCHEMAS,
           // No `capabilities` binding: AutoDev derives the advertisement from
           // these schemas, so a game-supplied one would never be called.
           bindings: {
@@ -655,8 +820,8 @@ function reportScaffold(checkoutRoot: string, args: readonly string[]): number {
 /** `--factory <name>`, defaulting to the conventional export name. */
 function scaffoldFactoryFrom(args: readonly string[]): string {
   const index = args.indexOf("--factory");
-  const declared = index >= 0 ? args[index + 1] : undefined;
-  return declared && /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(declared)
+  const declared = index === -1 ? undefined : args[index + 1];
+  return declared && SCAFFOLD_FACTORY_PATTERN.test(declared)
     ? declared
     : "createGame";
 }

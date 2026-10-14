@@ -1,10 +1,21 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { realpathSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import {
+  defaultPlaytestRegistryDefaults,
+  expandPlaytestRegistry,
+  type PlaytestMetricRegistryInput,
+  PLAYTESTS_REGISTRY_SCHEMA
+} from "../../core/src/playtesting/index.ts";
 import {
   checkPlaytestIntegration,
   dispatchPlaytestCommand,
@@ -18,9 +29,9 @@ import {
 import {
   observationSchemaHash,
   observationSchemaHashMatches,
+  playtestBenchmarkContentHash,
   playtestFileHash,
-  playtestManifestHash,
-  withObservationSchemaHash
+  playtestManifestHash
 } from "../../runtime/src/playtesting/hash-chain.ts";
 
 function checkout(): {
@@ -68,6 +79,48 @@ function writeBinding(root: string, binding: Record<string, unknown>): void {
   );
 }
 
+function nonEmptyRegistry(): PlaytestMetricRegistryInput {
+  const metric = {
+    metricId: "fixture-rate",
+    version: 1,
+    mechanicKey: "fixture-mechanic",
+    exposurePredicate: "fixture-opportunity-v1",
+    eventFields: ["fact.value"],
+    evaluatorRef: "game/evaluator.ts#fixture-rate",
+    evaluatorHash: "f".repeat(64),
+    numerator: "successes",
+    denominator: "opportunities",
+    unit: "proportion",
+    polarity: "higher" as const,
+    targetBand: [0, 1] as const,
+    notObservable: ["unobserved"] as const
+  };
+  return {
+    schemaVersion: 2,
+    workspaceId: "fixture/game",
+    audience: "fixture-player",
+    registryVersion: "fixture-v2",
+    eventSchemaHash: "d".repeat(64),
+    defaults: defaultPlaytestRegistryDefaults(),
+    metricDefinitions: [metric],
+    coverageRequirements: [
+      {
+        coverageMetricId: metric.metricId,
+        mechanicKey: metric.mechanicKey,
+        phaseId: null,
+        scenarioFamily: "tutorial",
+        cohort: "novice",
+        policy: "fixture-heuristic",
+        modality: "headless",
+        requiredOpportunities: 1,
+        requiredIndependentUnits: 1,
+        unsupportedReason: null
+      }
+    ],
+    dimensionRubrics: []
+  };
+}
+
 test("init lays out one recognizable integration directory", () => {
   const { root } = checkout();
   assert.equal(initPlaytestIntegration(root), 0);
@@ -85,8 +138,11 @@ test("init writes a digest the checker accepts", () => {
   const { root } = checkout();
   initPlaytestIntegration(root);
   const contract = read(root, PLAYTESTS_OBSERVATION_FILE);
-  assert.equal(contract.schemaHash, observationSchemaHash(contract as never));
-  assert.ok(observationSchemaHashMatches(contract as never));
+  const binding = read(root, PLAYTESTS_BINDING_FILE);
+  const observationSchema = (binding.schemas as Record<string, unknown>)
+    .observation as Record<string, unknown>;
+  assert.equal(contract.schemaHash, observationSchemaHash(observationSchema));
+  assert.ok(observationSchemaHashMatches(contract as never, observationSchema));
   assert.equal(
     checkPlaytestIntegration(root).problems.filter(
       (problem) => problem.severity === "error"
@@ -101,8 +157,10 @@ test("scaffolding invents no measurement intent", () => {
   // An empty rubric is reported as empty. A generated placeholder registry
   // would be indistinguishable from one the game chose, and would quietly
   // become the game's own stated intent.
-  const rubric = read(root, PLAYTESTS_RUBRIC_FILE) as { metrics: unknown[] };
-  assert.deepEqual(rubric.metrics, []);
+  const rubric = read(root, PLAYTESTS_RUBRIC_FILE);
+  assert.equal(rubric.schemaVersion, 2);
+  assert.deepEqual(rubric.metricDefinitions, []);
+  assert.equal("metrics" in rubric, false);
   const report = checkPlaytestIntegration(root);
   assert.ok(
     report.problems.some((problem) => problem.code === "empty-rubric"),
@@ -110,26 +168,80 @@ test("scaffolding invents no measurement intent", () => {
   );
 });
 
-test("check detects a hand-edited observation contract", () => {
+test("an empty metricDefinitions array does not hide a malformed registry envelope", () => {
   const { root } = checkout();
   initPlaytestIntegration(root);
-  const contract = read(root, PLAYTESTS_OBSERVATION_FILE);
-  const fields = contract.fields as Record<string, unknown>[];
-  fields[0]!.fieldPath = "a-field-the-game-actually-added";
+  const rubric = read(root, PLAYTESTS_RUBRIC_FILE);
+  rubric.unexpected = true;
   writeFileSync(
-    path.join(root, ".autodev", PLAYTESTS_OBSERVATION_FILE),
-    `${JSON.stringify(contract, null, 2)}\n`,
+    path.join(root, ".autodev", PLAYTESTS_RUBRIC_FILE),
+    `${JSON.stringify(rubric, null, 2)}\n`,
+    "utf8"
+  );
+
+  const problems = checkPlaytestIntegration(root).problems;
+  assert.ok(problems.some((problem) => problem.code === "invalid-rubric"));
+  assert.ok(!problems.some((problem) => problem.code === "empty-rubric"));
+});
+
+test("a non-empty Core v2 registry is not reported as an empty rubric", () => {
+  const { root } = checkout();
+  initPlaytestIntegration(root);
+  const input = nonEmptyRegistry();
+  const expanded = expandPlaytestRegistry(input);
+  assert.equal(expanded.schema, PLAYTESTS_REGISTRY_SCHEMA);
+  writeFileSync(
+    path.join(root, ".autodev", PLAYTESTS_RUBRIC_FILE),
+    `${JSON.stringify(input, null, 2)}\n`,
+    "utf8"
+  );
+
+  assert.deepEqual(
+    checkPlaytestIntegration(root).problems.filter(
+      (problem) => problem.code === "empty-rubric"
+    ),
+    []
+  );
+});
+
+test("a non-v2 rubric is rejected", () => {
+  const { root } = checkout();
+  initPlaytestIntegration(root);
+  writeFileSync(
+    path.join(root, ".autodev", PLAYTESTS_RUBRIC_FILE),
+    `${JSON.stringify({ schemaVersion: 1, metrics: [] })}\n`,
+    "utf8"
+  );
+  assert.ok(
+    checkPlaytestIntegration(root).problems.some(
+      (problem) => problem.code === "invalid-rubric"
+    )
+  );
+});
+
+test("check detects observation schema drift against its declared binding", () => {
+  const { root } = checkout();
+  initPlaytestIntegration(root);
+  const binding = read(root, PLAYTESTS_BINDING_FILE);
+  const schemas = binding.schemas as Record<string, Record<string, unknown>>;
+  schemas.observation = {
+    ...schemas.observation,
+    additionalProperties: false
+  };
+  writeFileSync(
+    path.join(root, ".autodev", PLAYTESTS_BINDING_FILE),
+    `${JSON.stringify(binding, null, 2)}\n`,
     "utf8"
   );
   const report = checkPlaytestIntegration(root);
   const mismatch = report.problems.find(
     (problem) => problem.code === "hash-mismatch"
   );
-  assert.ok(mismatch, "editing a field without regenerating must be detected");
+  assert.ok(mismatch, "schema drift without regeneration must be detected");
   assert.match(mismatch!.message, /--write-hashes/u);
   assert.match(mismatch!.file, /\.autodev\/playtest\.observation\.json/u);
 
-  // The digest is regenerated from the content, not maintained by the game.
+  // AutoDev regenerates the schema link from the binding it also verifies.
   assert.equal(
     writePlaytestHashes(root).problems.filter(
       (problem) => problem.severity === "error"
@@ -138,8 +250,8 @@ test("check detects a hand-edited observation contract", () => {
   );
   const regenerated = read(root, PLAYTESTS_OBSERVATION_FILE);
   assert.equal(
-    (regenerated.fields as Record<string, unknown>[])[0]!.fieldPath,
-    "a-field-the-game-actually-added"
+    regenerated.schemaHash,
+    observationSchemaHash(schemas.observation)
   );
 });
 
@@ -149,7 +261,7 @@ test("check names missing files instead of reporting a generic failure", () => {
   const missing = report.problems.filter(
     (problem) => problem.code === "missing-file" && problem.severity === "error"
   );
-  assert.equal(missing.length, 3);
+  assert.equal(missing.length, 4);
   assert.ok(
     missing.every((problem) => problem.file.startsWith(".autodev/")),
     "every missing path must be checkout-relative and openable"
@@ -157,47 +269,22 @@ test("check names missing files instead of reporting a generic failure", () => {
   assert.ok(missing.every((problem) => /playtest init/u.test(problem.message)));
 });
 
-test("the canonical digest ignores key order but not content", () => {
-  const contract = withObservationSchemaHash({
-    schemaVersion: 1,
-    mode: "headless",
-    cohort: "default",
-    visibilityMode: "structured",
-    fields: [
-      {
-        fieldPath: "room",
-        unit: null,
-        displayRounding: null,
-        revelationTiming: "before-action",
-        playerRuleRef: "rules/room"
-      }
-    ],
-    uiEquivalence: "unverified",
-    conformanceFixtureHash: null
-  });
-  const reordered = {
-    conformanceFixtureHash: null,
-    uiEquivalence: "unverified",
-    fields: [
-      {
-        playerRuleRef: "rules/room",
-        revelationTiming: "before-action",
-        displayRounding: null,
-        unit: null,
-        fieldPath: "room"
-      }
-    ],
-    visibilityMode: "structured",
-    cohort: "default",
-    mode: "headless",
-    schemaVersion: 1
+test("the schema digest ignores key order but changes with the declared schema", () => {
+  const schema = {
+    type: "object",
+    properties: { room: { type: "string" } }
   };
-  // A reformat must not invalidate a run.
-  assert.equal(playtestManifestHash(reordered), contract.schemaHash);
-  // A real change must.
+  const reordered = {
+    properties: { room: { type: "string" } },
+    type: "object"
+  };
+  assert.equal(observationSchemaHash(reordered), observationSchemaHash(schema));
   assert.notEqual(
-    playtestManifestHash({ ...reordered, cohort: "other" }),
-    contract.schemaHash
+    observationSchemaHash({
+      ...reordered,
+      properties: { room: { type: "number" } }
+    }),
+    observationSchemaHash(schema)
   );
 });
 
@@ -218,16 +305,7 @@ test("the benchmark's derived digests are checked, not trusted", () => {
     rubricFile,
     `${JSON.stringify(
       {
-        schemaVersion: 1,
-        metrics: [
-          {
-            metricId: "clarity",
-            label: "Clarity",
-            unit: null,
-            direction: "higher-is-better",
-            description: "The game's own clarity dimension."
-          }
-        ]
+        ...nonEmptyRegistry()
       },
       null,
       2
@@ -262,8 +340,9 @@ test("the benchmark's derived digests are checked, not trusted", () => {
   const mismatches = stale.problems.filter(
     (problem) => problem.code === "hash-mismatch"
   );
-  // All three derived fields, not just the observation one.
-  assert.equal(mismatches.length, 3);
+  // Registry, observation/action/event schema, and benchmark content digests
+  // are all owned by AutoDev rather than hand-maintained in the game.
+  assert.equal(mismatches.length, 6);
   assert.ok(
     mismatches.every((problem) => /--write-hashes/u.test(problem.message)),
     "every stale digest must say how to regenerate it"
@@ -286,9 +365,17 @@ test("the benchmark's derived digests are checked, not trusted", () => {
     written.observationSchemaHash,
     read(root, PLAYTESTS_OBSERVATION_FILE).schemaHash
   );
+  const binding = read(root, PLAYTESTS_BINDING_FILE);
+  const schemas = binding.schemas as Record<string, Record<string, unknown>>;
+  assert.equal(written.actionSchemaHash, playtestManifestHash(schemas.action));
+  assert.equal(written.eventSchemaHash, playtestManifestHash(schemas.event));
+  assert.equal(
+    written.contentHash,
+    playtestBenchmarkContentHash(written as never)
+  );
 });
 
-test("a game without declared bindings is told it still owns the protocol", () => {
+test("a game without a binding is rejected instead of retaining a handwritten protocol path", () => {
   const { root } = checkout();
   initPlaytestIntegration(root);
   const bindingFile = path.join(root, ".autodev", PLAYTESTS_BINDING_FILE);
@@ -302,8 +389,11 @@ test("a game without declared bindings is told it still owns the protocol", () =
     problem.file.endsWith(PLAYTESTS_BINDING_FILE)
   );
   assert.ok(missing, "a missing binding must be reported");
-  assert.equal(missing!.severity, "warning");
-  assert.match(missing!.message, /implement the protocol/u);
+  assert.equal(missing!.severity, "error");
+  assert.match(
+    missing!.message,
+    /game-written protocol adapters are not supported/u
+  );
 
   // Binding every method resolves every gap: a game that declares its protocol
   // surface is onboarded, not still owning the protocol.
@@ -369,26 +459,28 @@ test("an unusable binding is rejected with a named gap", () => {
   assert.doesNotMatch(invalid!.message, /\binvariants\b/u);
 });
 
-test("the declarative tier is a fact, not a claim", () => {
+test("every binding tier requires AutoDev's generic protocol adapter", () => {
   const { root } = checkout();
   initPlaytestIntegration(root);
   const configFile = path.join(root, ".autodev", PLAYTESTS_CONFIG_FILE);
   const config = read(root, PLAYTESTS_CONFIG_FILE) as {
     adapter: Record<string, unknown>;
   };
-  // A binding claiming no protocol code, pointed at a game-written command, is
-  // the tier being asserted rather than earned.
   config.adapter.command = ["./my-own-adapter.js"];
   writeFileSync(configFile, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-  writeBinding(root, completeBinding(root));
+  for (const tier of ["declarative", "generated-scaffold"] as const) {
+    const binding = completeBinding(root);
+    binding.tier = tier;
+    writeBinding(root, binding);
 
-  const report = checkPlaytestIntegration(root);
-  const invalid = report.problems.find(
-    (problem) => problem.code === "invalid-binding"
-  );
-  assert.ok(invalid, "a declarative tier must require AutoDev's adapter");
-  assert.equal(invalid!.severity, "error");
-  assert.match(invalid!.message, /generic adapter/u);
+    const report = checkPlaytestIntegration(root);
+    const invalid = report.problems.find(
+      (problem) => problem.code === "invalid-binding"
+    );
+    assert.ok(invalid, `${tier} must require AutoDev's adapter`);
+    assert.equal(invalid!.severity, "error");
+    assert.match(invalid!.message, /generic adapter/u);
+  }
 });
 
 test("a binding missing a game schema is rejected rather than defaulted", () => {
@@ -408,23 +500,20 @@ test("a binding missing a game schema is rejected rather than defaulted", () => 
   assert.match(invalid!.message, /event schema/u);
 });
 
-test("a seeded RNG without a version is rejected rather than half-advertised", () => {
+test("an invalid RNG version is rejected rather than half-advertised", () => {
   const { root } = checkout();
   initPlaytestIntegration(root);
   const binding = completeBinding(root);
-  binding.seededRng = { export: "restoreRng" };
+  binding.rngVersion = "";
   writeBinding(root, binding);
 
   const invalid = checkPlaytestIntegration(root).problems.find(
     (problem) => problem.code === "invalid-binding"
   );
-  // The Runtime refuses a seeded guarantee it cannot name, so accepting this
-  // would only move the failure to capability negotiation, where the game
-  // cannot act on it.
-  assert.ok(invalid, "a seeded RNG with no version must be rejected");
+  assert.ok(invalid, "an empty RNG version must be rejected");
   assert.match(invalid!.message, /rngVersion/u);
 
-  // Naming the version resolves it, and the game is then declarable as seeded.
+  // A named version is the source of the seeded-runs capability.
   binding.rngVersion = "pcg32@1";
   writeBinding(root, binding);
   const accepted = checkPlaytestIntegration(root).problems.filter(

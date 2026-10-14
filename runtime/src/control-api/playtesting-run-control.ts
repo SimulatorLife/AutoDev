@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   CONTROL_API_PLAYTESTING_RUN_STATES,
   type ControlApiPlaytestingActiveRunsResponse,
+  type ControlApiPlaytestingAnalysesResponse,
   type ControlApiPlaytestingCancellationReason,
   type ControlApiPlaytestingCapabilitiesResponse,
   type ControlApiPlaytestingComparisonDecisionRequest,
@@ -14,7 +15,8 @@ import {
   type ControlApiPlaytestingRunStatusResponse,
   type PlaytestJsonValue,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
-  PLAYTESTS_MAX_BATCH_ASSIGNMENTS
+  PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
+  PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS
 } from "@simulatorlife/autodev-core";
 import { ConfigRepository } from "@simulatorlife/autodev-data";
 import { PlaytestSourceUnavailableError } from "@simulatorlife/autodev-data/playtesting";
@@ -25,6 +27,7 @@ import {
   PlaytestSandboxUnavailableError
 } from "../playtesting/docker-sandbox.ts";
 import {
+  type PlaytestAnalystReviewDispatch,
   PlaytestMcpAuthorizationError,
   type PlaytestMcpSession,
   PlaytestMcpUnavailableError,
@@ -42,12 +45,34 @@ const ANALYSES_PATH = "/control/playtesting/analyses";
  * Bounded, explicit selection. The workspace is not in the body: the query
  * string is its single authority, so the two can never disagree.
  */
-const analysisRequestSchema = z.object({
-  episodeIds: z
-    .array(z.string().min(1).max(256))
-    .min(1)
-    .max(PLAYTESTS_MAX_ANALYSIS_SESSIONS)
-});
+const analysisRequestSchema = z
+  .strictObject({
+    episodeIds: z
+      .array(z.string().min(1).max(256))
+      .min(1)
+      .max(PLAYTESTS_MAX_ANALYSIS_SESSIONS),
+    operation: z.enum(["prepare", "dispatch"]).optional()
+  })
+  .superRefine((value, context) => {
+    const selectionLimit =
+      value.operation === "dispatch"
+        ? PLAYTESTS_MAX_ANALYSIS_SESSIONS
+        : PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS;
+    if (value.episodeIds.length > selectionLimit) {
+      context.addIssue({
+        code: "custom",
+        message: `This operation accepts at most ${String(selectionLimit)} selected sessions.`,
+        path: ["episodeIds"]
+      });
+    }
+    if (new Set(value.episodeIds).size !== value.episodeIds.length) {
+      context.addIssue({
+        code: "custom",
+        message: "Selected sessions must be distinct.",
+        path: ["episodeIds"]
+      });
+    }
+  });
 const CAPABILITIES_PATH = "/control/playtesting/capabilities";
 const WAIT_MILLISECONDS_PATTERN = /^(0|[1-9][0-9]{0,4})$/u;
 const RUN_ROUTE = /^\/control\/playtesting\/runs\/([^/]+)$/u;
@@ -106,7 +131,6 @@ const processSessionSchema = z.strictObject({
   workspaceId: z.string().regex(WORKSPACE_ID_PATTERN),
   role: z.enum([
     "playtester",
-    "playtest-analyst",
     "validator",
     "root",
     "orchestrator",
@@ -135,7 +159,8 @@ export interface PlaytestingRunControlApiOptions {
     ConfigRepository["readWorkspaceCatalog"]
   >;
   /** The same Runtime run owner used by MCP; this route owns no scheduler. */
-  readonly runControl?: PlaytestRunControl;
+  readonly runControl?: PlaytestRunControl &
+    Partial<PlaytestAnalystReviewDispatch>;
   readonly requireSessionHeader?: boolean;
   readonly trustedSessionRole?: string;
   readonly audit?: (event: {
@@ -375,17 +400,80 @@ function pathId(pathname: string, pattern: RegExp): string | null {
 }
 
 /**
- * Cross-session analysis over an explicit selection. Every rule — eligibility,
- * the per-batch critique cap, and which selected sessions produced no packet —
- * belongs to the Runtime owner; this route only authorizes and forwards.
+ * Cross-session packet preparation over an explicit selection. Every rule —
+ * eligibility, the per-batch critique cap, and which selected sessions
+ * produced no packet — belongs to the Runtime owner; this route only
+ * authorizes and forwards.
  */
+async function listAnalystReviewRuns(
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  actor: PlaytestingRunControlActor,
+  options: PlaytestingRunControlApiOptions,
+  runControl: PlaytestRunControl & Partial<PlaytestAnalystReviewDispatch>
+): Promise<void> {
+  const query = workspaceQuery(
+    request,
+    pathname,
+    ["workspaceId"],
+    options,
+    response
+  );
+  if (!query) return;
+  const session = sessionFor(
+    request,
+    actor,
+    query.workspaceId,
+    response,
+    options.requireSessionHeader ?? false,
+    options.trustedSessionRole
+  );
+  if (!session) return;
+  if (!runControl.listAnalystReviewRuns) {
+    sendError(
+      response,
+      503,
+      "autodev_control_playtesting_unavailable",
+      "Runtime analyst review status is not available."
+    );
+    return;
+  }
+  try {
+    const status = await runControl.listAnalystReviewRuns(
+      session,
+      query.workspaceId
+    );
+    sendJson(
+      response,
+      200,
+      {
+        schema: "autodev-control-playtesting-analyses-v1",
+        workspaceId: query.workspaceId,
+        runs: status.runs,
+        syntheses: status.syntheses
+      } satisfies ControlApiPlaytestingAnalysesResponse,
+      { "cache-control": "no-store" }
+    );
+  } catch (error) {
+    recordRunError(
+      response,
+      error,
+      options,
+      actor,
+      "request_playtest_analysis",
+      query.workspaceId
+    );
+  }
+}
+
 async function requestCrossSessionReview(
   request: IncomingMessage,
   response: ServerResponse,
   pathname: string,
   actor: PlaytestingRunControlActor,
   options: PlaytestingRunControlApiOptions,
-  runControl: PlaytestRunControl
+  runControl: PlaytestRunControl & Partial<PlaytestAnalystReviewDispatch>
 ): Promise<void> {
   const query = workspaceQuery(
     request,
@@ -420,13 +508,61 @@ async function requestCrossSessionReview(
       response,
       400,
       "autodev_control_playtesting_invalid_request",
-      `A cross-session analysis must name between 1 and ${String(
-        PLAYTESTS_MAX_ANALYSIS_SESSIONS
+      `${parsedBody.body.operation === "dispatch" ? "Analyst dispatch" : "Packet preparation"} requires 1-${String(
+        parsedBody.body.operation === "dispatch"
+          ? PLAYTESTS_MAX_ANALYSIS_SESSIONS
+          : PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS
       )} distinct sessions.`
     );
     return;
   }
   try {
+    const dispatch = parsed.data.operation === "dispatch";
+    if (dispatch) {
+      if (actor.role !== "operator") {
+        sendError(
+          response,
+          403,
+          "autodev_control_playtesting_operator_required",
+          "Dispatching a playtest analyst requires an authorized operator."
+        );
+        return;
+      }
+      if (!runControl.dispatchCrossSessionReview) {
+        sendError(
+          response,
+          503,
+          "autodev_control_playtesting_unavailable",
+          "Runtime analyst dispatch is not available."
+        );
+        return;
+      }
+      const result = await runControl.dispatchCrossSessionReview(
+        session,
+        query.workspaceId,
+        parsed.data.episodeIds
+      );
+      sendJson(
+        response,
+        202,
+        {
+          schema: "autodev-control-playtesting-analysis-v1",
+          operation: "dispatch",
+          workspaceId: query.workspaceId,
+          requested: parsed.data.episodeIds.length,
+          packets: result.packets.map((packet) => ({
+            episodeId: packet.episodeId,
+            batchId: packet.batchId,
+            packetId: packet.packet.packetId
+          })),
+          receipts: result.receipts,
+          budget: result.budget,
+          analysis: result.run
+        },
+        { "cache-control": "no-store" }
+      );
+      return;
+    }
     const result = await runControl.prepareCrossSessionReview(
       session,
       query.workspaceId,
@@ -437,11 +573,13 @@ async function requestCrossSessionReview(
       200,
       {
         schema: "autodev-control-playtesting-analysis-v1",
+        operation: "prepare",
         workspaceId: query.workspaceId,
         requested: parsed.data.episodeIds.length,
         packets: result.packets,
         receipts: result.receipts,
-        budget: result.budget
+        budget: result.budget,
+        analysis: null
       },
       { "cache-control": "no-store" }
     );
@@ -455,6 +593,40 @@ async function requestCrossSessionReview(
       query.workspaceId
     );
   }
+}
+
+async function handleAnalystReviewMethod(
+  method: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  actor: PlaytestingRunControlActor,
+  options: PlaytestingRunControlApiOptions,
+  runControl: PlaytestRunControl & Partial<PlaytestAnalystReviewDispatch>
+): Promise<void> {
+  if (method === "POST") {
+    await requestCrossSessionReview(
+      request,
+      response,
+      pathname,
+      actor,
+      options,
+      runControl
+    );
+    return;
+  }
+  if (method === "GET") {
+    await listAnalystReviewRuns(
+      request,
+      response,
+      pathname,
+      actor,
+      options,
+      runControl
+    );
+    return;
+  }
+  sendMethodNotAllowed(response, "GET, POST");
 }
 
 function sendMethodNotAllowed(response: ServerResponse, allow: string): void {
@@ -798,14 +970,16 @@ async function listRuns(
   );
   if (!session) return;
   try {
+    const activeRuns = await runControl.listActiveRuns(
+      session,
+      query.workspaceId
+    );
     const body: ControlApiPlaytestingActiveRunsResponse = {
       schema: "autodev-control-playtesting-runs-v1",
       workspaceId: query.workspaceId,
       // The owner already read each live run; project that same record rather
       // than re-reading it, so the list cannot disagree with the status route.
-      runs: (
-        await runControl.listActiveRuns(session, query.workspaceId)
-      ).map((run) => ({
+      runs: activeRuns.map((run) => ({
         batchId: run.batchId,
         assignmentCount: run.assignmentCount,
         createdAt: run.createdAt,
@@ -1172,18 +1346,15 @@ export async function handlePlaytestingRunControlRequest(
       break;
     }
     case "analyses": {
-      if (method === "POST") {
-        await requestCrossSessionReview(
-          request,
-          response,
-          pathname,
-          actor,
-          options,
-          runControl
-        );
-      } else {
-        sendMethodNotAllowed(response, "POST");
-      }
+      await handleAnalystReviewMethod(
+        method,
+        request,
+        response,
+        pathname,
+        actor,
+        options,
+        runControl
+      );
       break;
     }
     case "status": {

@@ -3,8 +3,8 @@ import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import test from "node:test";
 
-import { codexState } from "@simulatorlife/autodev-runtime/router/http";
 import { getDefaultPlaytestRunControl } from "@simulatorlife/autodev-runtime/playtesting";
+import { codexState } from "@simulatorlife/autodev-runtime/router/http";
 
 test("control-only listener exposes only authenticated Control API routes", async () => {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
@@ -130,7 +130,8 @@ test("router listener close shuts down the shared Playtest run owner exactly onc
     const closed = once(server, "close");
     server.close();
     await closed;
-    for (let attempt = 0; attempt < 50 && shutdownCount === 0; attempt += 1) {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (shutdownCount > 0) break;
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
     assert.equal(shutdownCount, 1);

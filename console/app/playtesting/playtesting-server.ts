@@ -3,6 +3,9 @@ import {
   assertPlaytestCoverageManifest,
   assertPlaytestNumericResults,
   type ControlApiPlaytestingActiveRunsResponse,
+  type ControlApiPlaytestingAnalysesResponse,
+  type ControlApiPlaytestingAnalysisDispatchResponse,
+  type ControlApiPlaytestingAnalystRun,
   type ControlApiPlaytestingCapabilitiesResponse,
   type ControlApiPlaytestingComparisonDecisionRequest,
   type ControlApiPlaytestingComparisonDecisionResponse,
@@ -18,6 +21,7 @@ import {
   type ControlApiPlaytestingRunStatusResponse,
   type ControlApiPlaytestingWindowResponse,
   type HumanPlaytestStudy,
+  isControlApiPlaytestingRunState,
   type PlaytestBatch,
   type PlaytestBenchmark,
   type PlaytestComparison,
@@ -25,7 +29,6 @@ import {
   type PlaytestExperiment,
   type PlaytestFinding,
   type PlaytestJsonValue,
-  isControlApiPlaytestingRunState,
   PLAYTESTS_BATCH_SCHEMA,
   PLAYTESTS_COMPARISON_SCHEMA,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
@@ -547,9 +550,7 @@ function isRunStartedResponse(
  * The run record is shared by the single-batch status route and the
  * workspace-scoped active-run list, so one predicate validates both.
  */
-function isRunRecord(
-  value: unknown
-): value is ControlApiPlaytestingRunRecord {
+function isRunRecord(value: unknown): value is ControlApiPlaytestingRunRecord {
   if (
     !isRecord(value) ||
     !isNonEmptyString(value.batchId) ||
@@ -633,30 +634,119 @@ export async function fetchPlaytestingActiveRuns(
   };
 }
 
-/**
- * Cross-session analysis over an explicit selection. Runtime owns eligibility,
- * the critique cap and the packet-unavailable receipts; the Console forwards
- * the selection and renders what comes back, so it can never disagree.
- */
-export interface ControlApiPlaytestingAnalysisResponse {
-  readonly schema: "autodev-control-playtesting-analysis-v1";
-  readonly workspaceId: string;
-  readonly requested: number;
-  readonly packets: readonly { readonly episodeId: string; readonly batchId: string }[];
-  readonly receipts: readonly {
-    readonly episodeId: string;
-    readonly batchId: string | null;
-    readonly reason: string;
-    readonly detail: string;
-  }[];
-  readonly budget: readonly {
-    readonly batchId: string;
-    readonly reviewCap: number;
-    readonly actualCritiques: number;
-    readonly reserved: number;
-    readonly requested: number;
-    readonly remaining: number;
-  }[];
+function isPlaytestingAnalystRun(
+  value: unknown
+): value is ControlApiPlaytestingAnalystRun {
+  if (!isRecord(value)) return false;
+  const requestedEpisodeIds = value.requestedEpisodeIds;
+  const packets = value.packets;
+  const receipts = value.receipts;
+  const budget = value.budget;
+  const reviews = value.reviews;
+  if (
+    !isNonEmptyString(value.analysisId) ||
+    !isNonEmptyString(value.workspaceId) ||
+    !["running", "completed", "partial", "failed"].includes(
+      String(value.status)
+    ) ||
+    !isNonEmptyString(value.createdAt) ||
+    (value.finishedAt !== null && !isNonEmptyString(value.finishedAt)) ||
+    !Array.isArray(requestedEpisodeIds) ||
+    !requestedEpisodeIds.every(isNonEmptyString) ||
+    !Array.isArray(packets) ||
+    !packets.every(
+      (packet) =>
+        isRecord(packet) &&
+        isNonEmptyString(packet.episodeId) &&
+        isNonEmptyString(packet.batchId) &&
+        isNonEmptyString(packet.packetId)
+    ) ||
+    !Array.isArray(receipts) ||
+    !receipts.every(
+      (receipt) =>
+        isRecord(receipt) &&
+        isNonEmptyString(receipt.episodeId) &&
+        (receipt.batchId === null || isNonEmptyString(receipt.batchId)) &&
+        isNonEmptyString(receipt.reason) &&
+        isNonEmptyString(receipt.detail)
+    ) ||
+    !Array.isArray(budget) ||
+    !budget.every(
+      (entry) =>
+        isRecord(entry) &&
+        isNonEmptyString(entry.batchId) &&
+        isCount(entry.reviewCap) &&
+        isCount(entry.actualCritiques) &&
+        isCount(entry.reserved) &&
+        isCount(entry.requested) &&
+        isCount(entry.remaining)
+    ) ||
+    !Array.isArray(reviews) ||
+    !reviews.every(
+      (review) =>
+        isRecord(review) &&
+        isNonEmptyString(review.episodeId) &&
+        isNonEmptyString(review.reviewId) &&
+        ["verified", "corroborated", "hypothesis", "not observed"].includes(
+          String(review.status)
+        )
+    ) ||
+    (value.error !== null && typeof value.error !== "string")
+  ) {
+    return false;
+  }
+  const accountedEpisodeIds = [
+    ...packets.map((packet) => (isRecord(packet) ? packet.episodeId : null)),
+    ...receipts.map((receipt) => (isRecord(receipt) ? receipt.episodeId : null))
+  ];
+  return (
+    packets.length + receipts.length === requestedEpisodeIds.length &&
+    new Set(accountedEpisodeIds).size === requestedEpisodeIds.length &&
+    accountedEpisodeIds.every(
+      (episodeId) =>
+        typeof episodeId === "string" && requestedEpisodeIds.includes(episodeId)
+    )
+  );
+}
+
+export async function listPlaytestingAnalyses(
+  workspaceId: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiPlaytestingAnalysesResponse>> {
+  if (!WORKSPACE_ID_PATTERN.test(workspaceId)) {
+    return invalidResponse(
+      "Playtesting analyst status",
+      "a canonical workspaceId"
+    );
+  }
+  const params = new URLSearchParams({ workspaceId });
+  const result = await fetchControlApi(
+    `${CONTROL_API_PATHS.playtesting}/analyses?${params}`,
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  const data = result.data;
+  if (
+    !isRecord(data) ||
+    data.schema !== "autodev-control-playtesting-analyses-v1" ||
+    data.workspaceId !== workspaceId ||
+    !Array.isArray(data.runs) ||
+    !Array.isArray(data.syntheses) ||
+    !data.runs.every(
+      (run) => isPlaytestingAnalystRun(run) && run.workspaceId === workspaceId
+    )
+  ) {
+    return invalidResponse(
+      "Playtesting analyst status",
+      "autodev-control-playtesting-analyses-v1"
+    );
+  }
+  return {
+    kind: "ok",
+    data: data as unknown as ControlApiPlaytestingAnalysesResponse
+  };
 }
 
 export async function requestPlaytestingAnalysis(
@@ -664,7 +754,7 @@ export async function requestPlaytestingAnalysis(
   episodeIds: readonly string[],
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
-): Promise<ControlApiResult<ControlApiPlaytestingAnalysisResponse>> {
+): Promise<ControlApiResult<ControlApiPlaytestingAnalysisDispatchResponse>> {
   const selected = [...new Set(episodeIds)];
   if (
     !WORKSPACE_ID_PATTERN.test(workspaceId) ||
@@ -680,7 +770,7 @@ export async function requestPlaytestingAnalysis(
   const params = new URLSearchParams({ workspaceId });
   const result = await postControlApi(
     `${CONTROL_API_PATHS.playtesting}/analyses?${params}`,
-    { episodeIds: selected },
+    { episodeIds: selected, operation: "dispatch" },
     config,
     options
   );
@@ -689,13 +779,37 @@ export async function requestPlaytestingAnalysis(
   if (
     !isRecord(data) ||
     data.schema !== "autodev-control-playtesting-analysis-v1" ||
+    data.operation !== "dispatch" ||
     data.workspaceId !== workspaceId ||
     data.requested !== selected.length ||
     !Array.isArray(data.packets) ||
+    !data.packets.every(
+      (packet) =>
+        isRecord(packet) &&
+        isNonEmptyString(packet.episodeId) &&
+        isNonEmptyString(packet.batchId) &&
+        isNonEmptyString(packet.packetId)
+    ) ||
     !Array.isArray(data.receipts) ||
+    (data.analysis !== null && !isPlaytestingAnalystRun(data.analysis)) ||
+    (data.analysis !== null &&
+      (data.analysis.workspaceId !== workspaceId ||
+        data.analysis.requestedEpisodeIds.length !== selected.length ||
+        !data.analysis.requestedEpisodeIds.every((id) =>
+          selected.includes(id)
+        ))) ||
+    (data.packets.length > 0 && data.analysis === null) ||
     // Every requested session is accounted for. A missing one would let the
     // Console show "3 sessions analysed" from a selection of 4.
     [...data.packets, ...data.receipts].length !== selected.length ||
+    new Set(
+      [...data.packets, ...data.receipts].map((entry) =>
+        isRecord(entry) ? entry.episodeId : null
+      )
+    ).size !== selected.length ||
+    ![...data.packets, ...data.receipts].every(
+      (entry) => isRecord(entry) && selected.includes(String(entry.episodeId))
+    ) ||
     !data.receipts.every(
       (receipt) =>
         isRecord(receipt) &&
@@ -711,7 +825,7 @@ export async function requestPlaytestingAnalysis(
   }
   return {
     kind: "ok",
-    data: data as unknown as ControlApiPlaytestingAnalysisResponse
+    data: data as unknown as ControlApiPlaytestingAnalysisDispatchResponse
   };
 }
 

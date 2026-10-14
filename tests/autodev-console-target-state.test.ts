@@ -354,11 +354,45 @@ test("AutoDev Console target stays reduced, unified, and TypeScript-first", () =
     /Changing or submitting any Console form or control must not cause a full document reload: configuration changes auto-save, filters may use an explicit Apply action where staged URL state is intentional, and GET\/POST updates use in-place client navigation while preserving URL state and server-confirmed feedback\./u,
     "acceptance contract must guard no-document-reload invariant for all Console form submissions"
   );
-  // The Providers table is one configuration surface with the live agent count,
-  // so the guard pins its current columns rather than accepting any layout.
+  // Pin the actual §9 Providers contract, not a later summary that could stay
+  // green while the detailed table contradicts it.
+  const providersHeading = "### Providers\n";
+  const providersStart = target.indexOf(providersHeading);
+  const providersEnd =
+    providersStart === -1
+      ? -1
+      : target.indexOf("\n### ", providersStart + providersHeading.length);
+  const providersSection =
+    providersStart === -1
+      ? ""
+      : target.slice(
+          providersStart,
+          providersEnd < 0 ? undefined : providersEnd
+        );
+  assert.ok(providersSection.length > 0, "the Providers target section exists");
+  assert.ok(
+    providersSection.includes("exactly **five primary columns**"),
+    "the canonical Providers table must include all five product columns"
+  );
+  assert.match(
+    providersSection,
+    /^\| \*\*Active Agents\*\*\s+\|/mu,
+    "Active Agents is part of the canonical Providers table"
+  );
+  assert.match(
+    providersSection,
+    /Model availability is provider-owned, observed state[\s\S]*outside request, routing, and page-load hot paths[\s\S]*observed list[\s\S]*stale last-known list[\s\S]*unavailable source[\s\S]*A provider-discovered ID is not automatically routeable[\s\S]*cannot be selected until the route supports them[\s\S]*IDs are preserved verbatim, including case/u,
+    "provider model discovery must be bounded, provider-owned, and explicit about freshness"
+  );
+  assert.match(
+    providersSection,
+    /New role assignments and model-enablement writes require a provider's current observed, routeable list[\s\S]*preserve it unchanged/u,
+    "stale discovery may preserve an existing routing choice but cannot authorize a new model"
+  );
   assert.match(
     target,
-    /single five-column configuration table \(Provider, Status, Active Agents, Roles, Agent Limits\)/u
+    /GET \/control\/provider-models/u,
+    "provider model discovery must have a typed read-only Runtime boundary"
   );
   for (const removedColumn of [
     "Role Enablement",
@@ -574,7 +608,10 @@ test("root quality scripts validate all code workspaces", () => {
     readFileSync(new URL("package.json", repositoryRoot), "utf8")
   ) as { scripts: Record<string, string> };
 
-  assert.match(manifest.scripts.test ?? "", /test:root.*--recursive.*test/u);
+  assert.match(
+    manifest.scripts.test ?? "",
+    /test:root.*--recursive.*--workspace-concurrency=1.*test/u
+  );
   assert.match(
     manifest.scripts.typecheck ?? "",
     /typecheck:root.*--recursive.*typecheck/u
@@ -618,22 +655,17 @@ test("canonical migration tracker records the current repository quality-gate ev
     /`pnpm run typecheck` passed the root project and all four workspaces/u,
     "typecheck evidence must record the current root and workspace typecheck result"
   );
-  // Lint/format status is evidence, not a desired green badge. Record current
-  // targeted validation and the real repository-wide failures explicitly.
+  // Lint/format status is evidence, not a desired green badge. Generated
+  // artifacts are excluded and repository-wide source lint is clean.
   assert.match(
     migration,
-    /Repository-wide `pnpm run lint:ci` was not rerun/u,
-    "the tracker must not claim a repository-wide lint pass without current evidence"
+    /`pnpm run lint:ci` pass/u,
+    "the tracker must report the current repository-wide lint result"
   );
   assert.match(
     migration,
-    /repository-wide `pnpm run format:check` failed on 30 files/u,
-    "the tracker must record the observed repository-wide format failure"
-  );
-  assert.match(
-    migration,
-    /changed TypeScript sources passed targeted formatting/u,
-    "the tracker must distinguish targeted formatting from repository-wide formatting"
+    /Repository-wide `pnpm run format:check` and `pnpm run lint:ci` pass/u,
+    "the tracker must record the current repository-wide formatting result"
   );
 
   // p25 acceptance must record concrete OpenLIT patch-level evidence, not a
@@ -796,6 +828,31 @@ test("Usage cost and unavailable evidence remain honest", () => {
   assert.match(
     migration,
     /Full trace search\/exploration beyond the bounded recent-attempt list remains/u
+  );
+});
+
+test("skill-role mutation preserves desired, actual, and unobserved states", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+  const controlApi =
+    /## 11\. Control API and authorization\n([\s\S]*?)(?=\n### )/u.exec(
+      target
+    )?.[1] ?? "";
+  assert.match(
+    controlApi,
+    /`PATCH \/control\/skills\/:name` remains exclusively the complete desired role-assignment operation/u
+  );
+  assert.match(controlApi, /`actualRoles: \[\]` is an observed unassignment/u);
+  assert.match(
+    controlApi,
+    /`actualRoles: null` means the Runtime could not confirm/u
+  );
+  assert.match(
+    controlApi,
+    /includes the shared reconciliation view and a bounded diff/u
+  );
+  assert.match(
+    controlApi,
+    /accepts `converged` only when the confirmed actual set matches/u
   );
 });
 

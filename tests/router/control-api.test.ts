@@ -15,6 +15,7 @@ import test from "node:test";
 
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import {
+  type ControlApiProviderModelDiscovery,
   LOCAL_CONTROL_API_ACTOR,
   PROVIDER_ROLES,
   type ProviderRoleAssignment
@@ -29,6 +30,7 @@ import {
   githubWorkflowsView,
   handleControlApiRequest,
   setControlApiProviderHealthSource,
+  setControlApiProviderModelDiscoverySource,
   setGithubActionsAdapterForTests
 } from "@simulatorlife/autodev-runtime/control-api";
 import {
@@ -272,6 +274,116 @@ test("Control API grants local single-user operator access only when no external
     );
     assert.equal(localWithExternalPolicy.response.statusCode, 403);
   } finally {
+    restoreEnv(saved);
+  }
+});
+
+test("provider model discovery is an authenticated read-only snapshot, separate from routing assignments", async () => {
+  const saved = saveEnv();
+  const priorState = ROUTING_POLICY.runtimeState();
+  try {
+    configure();
+    setControlApiProviderModelDiscoverySource(() => ({
+      schema: "autodev-control-provider-model-discovery-v1",
+      source: "runtime-provider-discovery",
+      providers: [
+        {
+          provider: "antigravity",
+          discovery: {
+            status: "observed",
+            source: "agy models",
+            observedAt: "2026-10-14T12:00:00.000Z",
+            lastAttemptAt: "2026-10-14T12:00:00.000Z",
+            models: [
+              {
+                id: "gemini-3.8-flash-low",
+                displayName: "Gemini Flash Low",
+                routeability: { status: "supported" }
+              },
+              {
+                id: "gpt-oss-120b-medium",
+                displayName: "GPT OSS Medium",
+                routeability: {
+                  status: "unsupported",
+                  reason:
+                    "Runtime has no route and quota ownership for this model ID."
+                }
+              }
+            ]
+          }
+        },
+        {
+          provider: "copilot",
+          discovery: {
+            status: "unavailable",
+            source: null,
+            lastAttemptAt: null,
+            reason:
+              "No machine-readable model discovery adapter is configured for this provider."
+          }
+        }
+      ]
+    }));
+
+    const result = await call("GET", CONTROL_API_PATHS.providerModels, {
+      actor: "viewer-a"
+    });
+    assert.equal(result.response.statusCode, 200);
+    assert.equal(
+      result.body.schema,
+      "autodev-control-provider-model-discovery-v1"
+    );
+    assert.equal(result.body.providers[0].discovery.status, "observed");
+    assert.deepEqual(
+      result.body.providers[0].discovery.models.map(
+        (model: { id: string; routeability: { status: string } }) => [
+          model.id,
+          model.routeability.status
+        ]
+      ),
+      [
+        ["gemini-3.8-flash-low", "supported"],
+        ["gpt-oss-120b-medium", "unsupported"]
+      ]
+    );
+    assert.equal(result.body.providers[1].discovery.status, "unavailable");
+    assert.deepEqual(ROUTING_POLICY.runtimeState(), priorState);
+
+    const mutation = await call("POST", CONTROL_API_PATHS.providerModels, {
+      actor: "operator-a",
+      body: {}
+    });
+    assert.equal(mutation.response.statusCode, 405);
+    assert.deepEqual(ROUTING_POLICY.runtimeState(), priorState);
+  } finally {
+    setControlApiProviderModelDiscoverySource(null);
+    restoreEnv(saved);
+  }
+});
+
+test("unobserved provider discovery publishes every known provider exactly once", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    setControlApiProviderModelDiscoverySource(null);
+    const result = await call("GET", CONTROL_API_PATHS.providerModels, {
+      actor: "viewer-a"
+    });
+    assert.equal(result.response.statusCode, 200);
+    assert.deepEqual(
+      result.body.providers.map(
+        (entry: { provider: string }) => entry.provider
+      ),
+      ROUTING_POLICY.providerIds()
+    );
+    assert.ok(
+      result.body.providers.every(
+        (entry: { discovery: { status: string } }) =>
+          entry.discovery.status === "unavailable"
+      )
+    );
+  } finally {
+    setControlApiProviderModelDiscoverySource(null);
     restoreEnv(saved);
   }
 });
@@ -961,7 +1073,7 @@ test("models v2 lists each routed model once with its provider, tiers, and enabl
       // than inferring convergence from equal strings.
       assert.deepEqual(model.enablement, {
         enabled: ROUTING_POLICY.isModelEnabled(model.id),
-        mutable: true,
+        mutable: false,
         convergence: {
           convergence: "not-observed",
           desiredGeneration: `enabled=${ROUTING_POLICY.isModelEnabled(model.id)}`,
@@ -983,11 +1095,79 @@ test("models v2 lists each routed model once with its provider, tiers, and enabl
   }
 });
 
+test("model enablement becomes mutable only for an observed routeable provider model", async () => {
+  const saved = saveEnv();
+  const entry = ROUTING_POLICY.configuredModels()[0]!;
+  const previousDiscovered = ROUTING_POLICY.discoveredModels()
+    .filter((model) => model.provider === entry.provider)
+    .map(({ id, displayName, routeability }) => ({
+      id,
+      displayName,
+      routeability
+    }));
+  try {
+    configure();
+    setControlApiProviderModelDiscoverySource(() => ({
+      schema: "autodev-control-provider-model-discovery-v1",
+      source: "runtime-provider-discovery",
+      providers: [
+        {
+          provider: entry.provider,
+          discovery: {
+            status: "observed",
+            source: "fixture provider listing",
+            observedAt: "2026-10-14T12:00:00.000Z",
+            lastAttemptAt: "2026-10-14T12:00:00.000Z",
+            models: [
+              {
+                id: entry.model,
+                displayName: null,
+                routeability: { status: "supported" }
+              }
+            ]
+          }
+        }
+      ]
+    }));
+    ROUTING_POLICY.setDiscoveredProviderModels(entry.provider, [
+      {
+        id: entry.model,
+        displayName: null,
+        routeability: { status: "supported" }
+      }
+    ]);
+
+    const result = await call("GET", CONTROL_API_PATHS.models, {
+      actor: "viewer-a"
+    });
+    assert.equal(result.response.statusCode, 200);
+    const discovered = result.body.models.find(
+      (model: { id: string }) => model.id === entry.model
+    );
+    assert.equal(discovered?.enablement.mutable, true);
+  } finally {
+    setControlApiProviderModelDiscoverySource(null);
+    ROUTING_POLICY.setDiscoveredProviderModels(
+      entry.provider,
+      previousDiscovered
+    );
+    restoreEnv(saved);
+  }
+});
+
 test("operator model PATCH validates, persists, audits, and rolls back on persistence failure", async () => {
   const saved = saveEnv();
   const originalPersistence = getDefaultPersistenceManager();
-  const model = ROUTING_POLICY.configuredModels()[0]!.model;
+  const configured = ROUTING_POLICY.configuredModels()[0]!;
+  const { model, provider } = configured;
   const path = CONTROL_API_PATHS.models + "/" + model;
+  const previousDiscovered = ROUTING_POLICY.discoveredModels()
+    .filter((entry) => entry.provider === provider)
+    .map(({ id, displayName, routeability }) => ({
+      id,
+      displayName,
+      routeability
+    }));
   let persistCalls = 0;
   let failPersist = false;
   setDefaultPersistenceManager({
@@ -999,6 +1179,31 @@ test("operator model PATCH validates, persists, audits, and rolls back on persis
   } as unknown as RouterPersistence);
   try {
     configure();
+    setControlApiProviderModelDiscoverySource(() => ({
+      schema: "autodev-control-provider-model-discovery-v1",
+      source: "runtime-provider-discovery",
+      providers: [
+        {
+          provider,
+          discovery: {
+            status: "observed",
+            source: "fixture provider listing",
+            observedAt: "2026-10-14T12:00:00.000Z",
+            lastAttemptAt: "2026-10-14T12:00:00.000Z",
+            models: [
+              {
+                id: model,
+                displayName: null,
+                routeability: { status: "supported" }
+              }
+            ]
+          }
+        }
+      ]
+    }));
+    ROUTING_POLICY.setDiscoveredProviderModels(provider, [
+      { id: model, displayName: null, routeability: { status: "supported" } }
+    ]);
     const viewer = await call("PATCH", path, {
       actor: "viewer-a",
       body: { enabled: false }
@@ -1090,6 +1295,194 @@ test("operator model PATCH validates, persists, audits, and rolls back on persis
   } finally {
     resetTelemetryExporter();
     ROUTING_POLICY.resetDisabledModels();
+    setControlApiProviderModelDiscoverySource(null);
+    ROUTING_POLICY.setDiscoveredProviderModels(provider, previousDiscovered);
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("operator cannot change model enablement without current routeable availability", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  const configured = ROUTING_POLICY.configuredModels()[0]!;
+  const previousDiscovered = ROUTING_POLICY.discoveredModels()
+    .filter((entry) => entry.provider === configured.provider)
+    .map(({ id, displayName, routeability }) => ({
+      id,
+      displayName,
+      routeability
+    }));
+  let persistCalls = 0;
+  setDefaultPersistenceManager({
+    async persistNow() {
+      persistCalls += 1;
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    setControlApiProviderModelDiscoverySource(() => ({
+      schema: "autodev-control-provider-model-discovery-v1",
+      source: "runtime-provider-discovery",
+      providers: [
+        {
+          provider: configured.provider,
+          discovery: {
+            status: "unavailable",
+            source: "fixture provider listing",
+            lastAttemptAt: "2026-10-14T12:00:00.000Z",
+            reason: "Provider model listing is unavailable."
+          }
+        }
+      ]
+    }));
+    ROUTING_POLICY.setDiscoveredProviderModels(configured.provider, []);
+
+    const result = await call(
+      "PATCH",
+      `${CONTROL_API_PATHS.models}/${encodeURIComponent(configured.model)}`,
+      { actor: "operator-a", body: { enabled: false } }
+    );
+    assert.equal(result.response.statusCode, 409);
+    assert.equal(
+      result.body.error.code,
+      "autodev_control_api_model_not_currently_routeable"
+    );
+    assert.equal(ROUTING_POLICY.isModelEnabled(configured.model), true);
+    assert.equal(persistCalls, 0);
+  } finally {
+    setControlApiProviderModelDiscoverySource(null);
+    ROUTING_POLICY.setDiscoveredProviderModels(
+      configured.provider,
+      previousDiscovered
+    );
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("provider role edits preserve an unavailable current model but accept new models only from current routeable discovery", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  const provider = "claude";
+  const role = "subagent" as const;
+  const previousAssignment = ROUTING_POLICY.assignmentFor(provider, role);
+  const previousDiscovered = ROUTING_POLICY.discoveredModels()
+    .filter((entry) => entry.provider === provider)
+    .map(({ id, displayName, routeability }) => ({
+      id,
+      displayName,
+      routeability
+    }));
+  const discoveredModel = {
+    id: "claude-opus-6-0",
+    displayName: null,
+    routeability: { status: "supported" as const }
+  };
+  let persistCalls = 0;
+  setDefaultPersistenceManager({
+    async persistNow() {
+      persistCalls += 1;
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  const publishDiscovery = (discovery: ControlApiProviderModelDiscovery) =>
+    setControlApiProviderModelDiscoverySource(() => ({
+      schema: "autodev-control-provider-model-discovery-v1",
+      source: "runtime-provider-discovery",
+      providers: [{ provider, discovery }]
+    }));
+  try {
+    configure();
+    ROUTING_POLICY.setProviderAssignment(provider, role, {
+      priority: 1,
+      model: "sonnet"
+    });
+    publishDiscovery({
+      status: "stale",
+      source: "fixture provider listing",
+      observedAt: "2026-10-14T11:00:00.000Z",
+      lastAttemptAt: "2026-10-14T12:00:00.000Z",
+      reason: "Provider model listing timed out.",
+      models: [discoveredModel]
+    });
+    ROUTING_POLICY.setDiscoveredProviderModels(provider, [discoveredModel]);
+
+    const preserved = await call(
+      "PATCH",
+      `${CONTROL_API_PATHS.providers}/${provider}/roles/${role}`,
+      {
+        actor: "operator-a",
+        body: { priority: 2, model: "sonnet" }
+      }
+    );
+    assert.equal(preserved.response.statusCode, 200);
+    assert.equal(preserved.body.model, "sonnet");
+    assert.equal(ROUTING_POLICY.assignmentFor(provider, role)?.priority, 2);
+
+    const staleChoice = await call(
+      "PATCH",
+      `${CONTROL_API_PATHS.providers}/${provider}/roles/${role}`,
+      {
+        actor: "operator-a",
+        body: { priority: 3, model: discoveredModel.id }
+      }
+    );
+    assert.equal(staleChoice.response.statusCode, 400);
+
+    publishDiscovery({
+      status: "observed",
+      source: "fixture provider listing",
+      observedAt: "2026-10-14T12:01:00.000Z",
+      lastAttemptAt: "2026-10-14T12:01:00.000Z",
+      models: [discoveredModel]
+    });
+    const availableChoice = await call(
+      "PATCH",
+      `${CONTROL_API_PATHS.providers}/${provider}/roles/${role}`,
+      {
+        actor: "operator-a",
+        body: { priority: 3, model: discoveredModel.id }
+      }
+    );
+    assert.equal(availableChoice.response.statusCode, 200);
+    assert.equal(availableChoice.body.model, discoveredModel.id);
+
+    publishDiscovery({
+      status: "unavailable",
+      source: "fixture provider listing",
+      lastAttemptAt: "2026-10-14T12:02:00.000Z",
+      reason: "Provider model listing is unavailable."
+    });
+    ROUTING_POLICY.setDiscoveredProviderModels(provider, []);
+    const preserveDuringOutage = await call(
+      "PATCH",
+      `${CONTROL_API_PATHS.providers}/${provider}/roles/${role}`,
+      {
+        actor: "operator-a",
+        body: { priority: 1, model: discoveredModel.id }
+      }
+    );
+    assert.equal(preserveDuringOutage.response.statusCode, 200);
+    assert.equal(preserveDuringOutage.body.model, discoveredModel.id);
+
+    const newUnobservedChoice = await call(
+      "PATCH",
+      `${CONTROL_API_PATHS.providers}/${provider}/roles/${role}`,
+      {
+        actor: "operator-a",
+        body: { priority: 2, model: "claude-opus-6-1" }
+      }
+    );
+    assert.equal(newUnobservedChoice.response.statusCode, 400);
+    assert.ok(persistCalls >= 3);
+  } finally {
+    setControlApiProviderModelDiscoverySource(null);
+    ROUTING_POLICY.setDiscoveredProviderModels(provider, previousDiscovered);
+    if (previousAssignment)
+      ROUTING_POLICY.setProviderAssignment(provider, role, previousAssignment);
+    else ROUTING_POLICY.clearProviderAssignment(provider, role);
     setDefaultPersistenceManager(originalPersistence);
     restoreEnv(saved);
   }

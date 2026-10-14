@@ -2018,7 +2018,7 @@ function buildReadOnlyInvocationSettings({
     : workspaceRoot;
   const workspaceReadGrants = [
     `read_file(${workspaceRoot})`,
-    ...(workspaceReal !== workspaceRoot ? [`read_file(${workspaceReal})`] : [])
+    ...(workspaceReal === workspaceRoot ? [] : [`read_file(${workspaceReal})`])
   ];
 
   const agentRoot = pathApi.join(home, ".agents");
@@ -2033,11 +2033,11 @@ function buildReadOnlyInvocationSettings({
 
   const sharedReadGrants = [
     `read_file(${agentRoot})`,
-    ...(agentReal !== agentRoot ? [`read_file(${agentReal})`] : []),
+    ...(agentReal === agentRoot ? [] : [`read_file(${agentReal})`]),
     `read_file(${resolvedCodexHome})`,
-    ...(codexReal !== resolvedCodexHome ? [`read_file(${codexReal})`] : []),
+    ...(codexReal === resolvedCodexHome ? [] : [`read_file(${codexReal})`]),
     `read_file(${geminiRoot})`,
-    ...(geminiReal !== geminiRoot ? [`read_file(${geminiReal})`] : [])
+    ...(geminiReal === geminiRoot ? [] : [`read_file(${geminiReal})`])
   ];
 
   if (isolatedHome) {

@@ -14,52 +14,56 @@
 import type { Readable, Writable } from "node:stream";
 
 import {
-  PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES,
-  PLAYTESTS_ADAPTER_DEFAULT_QUOTAS,
-  PLAYTESTS_ADAPTER_METHODS,
   type PlaytestBindableMethod,
   type PlaytestJsonRpcNotification,
   type PlaytestJsonRpcRequest,
-  type PlaytestJsonRpcResponse
+  type PlaytestJsonRpcResponse,
+  PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES,
+  PLAYTESTS_ADAPTER_DEFAULT_QUOTAS,
+  PLAYTESTS_ADAPTER_METHODS
 } from "@simulatorlife/autodev-core";
 
 import {
   createGenericAdapter,
-  GenericAdapterError,
-  protocolMethodFor,
   type GenericAdapter,
+  GenericAdapterError,
   type GenericAdapterOptions
 } from "./generic-adapter.ts";
 import { JsonLineFramer } from "./jsonl-framer.ts";
 
+const GAME_METHOD_PREFIX_PATTERN = /^game\./u;
+
 const METHOD_BY_NAME: ReadonlyMap<string, PlaytestBindableMethod> = new Map(
   PLAYTESTS_ADAPTER_METHODS.map((method) => [
     method,
-    method.replace(/^game\./u, "") as PlaytestBindableMethod
+    method.replace(GAME_METHOD_PREFIX_PATTERN, "") as PlaytestBindableMethod
   ])
 );
 
-const INVALID_REQUEST = -32600;
-const METHOD_NOT_FOUND = -32601;
-const INTERNAL_ERROR = -32603;
+const INVALID_REQUEST = -32_600;
+const METHOD_NOT_FOUND = -32_601;
+const INTERNAL_ERROR = -32_603;
+const PARSE_ERROR = -32_700;
 
 /** Parse one line into a request, rejecting anything the protocol forbids. */
-export function parseAdapterRequest(line: string): {
-  readonly ok: true;
-  readonly request: PlaytestJsonRpcRequest;
-} | {
-  readonly ok: false;
-  readonly code: number;
-  readonly message: string;
-  readonly id: string | null;
-} {
+export function parseAdapterRequest(line: string):
+  | {
+      readonly ok: true;
+      readonly request: PlaytestJsonRpcRequest;
+    }
+  | {
+      readonly ok: false;
+      readonly code: number;
+      readonly message: string;
+      readonly id: string | null;
+    } {
   let value: unknown;
   try {
     value = JSON.parse(line);
   } catch {
     return {
       ok: false,
-      code: -32700,
+      code: PARSE_ERROR,
       message: "Adapter request is not valid JSON.",
       id: null
     };
@@ -77,7 +81,7 @@ export function parseAdapterRequest(line: string): {
   if (
     candidate.jsonrpc !== "2.0" ||
     typeof candidate.method !== "string" ||
-    !Object.prototype.hasOwnProperty.call(candidate, "id")
+    !Object.hasOwn(candidate, "id")
   ) {
     return {
       ok: false,
@@ -102,7 +106,7 @@ export interface GenericAdapterHost {
   serve(): Promise<void>;
   /** Forward a game-emitted notification, e.g. `game.event`. */
   notify(method: string, params: Readonly<Record<string, unknown>>): void;
-  close(): void;
+  close(): Promise<void>;
 }
 
 function errorResponse(
@@ -134,12 +138,13 @@ export async function startGenericAdapterHost(
 ): Promise<GenericAdapterHost> {
   const adapter = await createGenericAdapter(options);
   const framer = new JsonLineFramer(
-    options.maximumLineBytes ??
-      PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.maxMessageBytes
+    options.maximumLineBytes ?? PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.maxMessageBytes
   );
   let closed = false;
 
-  const write = (envelope: PlaytestJsonRpcResponse | PlaytestJsonRpcNotification): void => {
+  const write = (
+    envelope: PlaytestJsonRpcResponse | PlaytestJsonRpcNotification
+  ): void => {
     if (closed) return;
     options.output.write(`${JSON.stringify(envelope)}\n`);
   };
@@ -228,11 +233,13 @@ export async function startGenericAdapterHost(
         params
       } as unknown as PlaytestJsonRpcNotification);
     },
-    close: () => {
+    close: async () => {
+      if (closed) return;
       closed = true;
       options.input.off("data", onData);
+      await adapter.close();
     }
   };
 }
 
-export { protocolMethodFor };
+export { protocolMethodFor } from "./generic-adapter.ts";

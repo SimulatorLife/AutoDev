@@ -154,6 +154,7 @@ test("the analysis selection is explicit, bounded and shareable", () => {
     "episode-3"
   ]);
   assert.equal(scope.invalidQuery, false);
+  assert.equal(scope.invalidSelection, false);
   // A shared link reproduces exactly the operator's selection.
   assert.match(
     playtestingListHref(scope),
@@ -167,14 +168,23 @@ test("the analysis selection is explicit, bounded and shareable", () => {
     ["episode-1"]
   );
 
-  // Over the bound Runtime enforces, a malformed id, an empty entry and a
-  // repeated key are refused rather than trimmed to something that looks valid.
-  const seventeen = Array.from(
-    { length: 17 },
+  const forty = Array.from(
+    { length: 40 },
+    (_, index) => `episode-${index}`
+  ).join(",");
+  const atLimit = parsePlaytestingScope({ sessions: forty });
+  assert.equal(atLimit.selectedEpisodeIds.length, 40);
+  assert.equal(atLimit.invalidSelection, false);
+  assert.match(playtestingListHref(atLimit), /sessions=/u);
+
+  // Beyond the batch review ceiling, a malformed id, an empty entry and a
+  // repeated key are refused rather than trimmed to something valid.
+  const fortyOne = Array.from(
+    { length: 41 },
     (_, index) => `episode-${index}`
   ).join(",");
   for (const value of [
-    seventeen,
+    fortyOne,
     "episode-1,",
     "episode 1",
     "a".repeat(257),
@@ -183,6 +193,7 @@ test("the analysis selection is explicit, bounded and shareable", () => {
   ]) {
     const parsed = parsePlaytestingScope({ sessions: value });
     assert.deepEqual(parsed.selectedEpisodeIds, [], value);
+    assert.equal(parsed.invalidSelection, true, value);
     assert.equal(parsed.invalidQuery, true, value);
   }
   assert.equal(

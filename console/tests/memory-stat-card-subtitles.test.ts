@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { renderToStaticMarkup } from "react-dom/server";
-import React from "react";
 import test from "node:test";
 
-import { MemoryView } from "../src/features/memory/MemoryView.ts";
-import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
 import type { MemoryRecord } from "@simulatorlife/autodev-core";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import type { MemoryListScope } from "../src/features/memory/memory-list-url.ts";
+import { MemoryView } from "../src/features/memory/MemoryView.ts";
 
 /**
  * What the top stat cards claim about the list underneath them.

@@ -27,7 +27,7 @@
  *   - `utils/validation.ts`, which matches macOS/Linux path roots inside error
  *     message text
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 export function isDir(p: string): boolean {
@@ -69,7 +69,7 @@ function toRoute(app: string, file: string): string {
     "/" +
     withoutFile
       .split("/")
-      .filter((seg) => seg && !(seg.startsWith("(") && seg.endsWith(")")))
+      .filter((seg) => seg && (!seg.startsWith("(") || !seg.endsWith(")")))
       .join("/")
       .replace(/\/$/u, "")
   );
@@ -111,7 +111,7 @@ function matches(target: string, routes: Set<string>): boolean {
   for (const route of routes) {
     const routeSegs = normalise(route).split("/").filter(Boolean);
     const catchAll = routeSegs.findIndex((s) => s.startsWith("[..."));
-    if (catchAll >= 0) {
+    if (catchAll !== -1) {
       if (
         segs.length >= catchAll &&
         segs.slice(0, catchAll).every((s, i) => routeSegs[i] === s)
@@ -165,7 +165,7 @@ function matchesApi(target: string, routes: Set<string>): boolean {
   for (const route of routes) {
     const routeSegs = normalise(route).split("/").filter(Boolean);
     const catchAll = routeSegs.findIndex((s) => s.startsWith("[..."));
-    if (catchAll >= 0) {
+    if (catchAll !== -1) {
       if (
         segs.length >= catchAll &&
         segs.slice(0, catchAll).every((s, i) => routeSegs[i] === s)
@@ -198,36 +198,61 @@ const FILE_NOT_ABOUT_ROUTES: Record<string, string> = {
 
 const stripComments = (source: string) =>
   source
-    .replace(/\/\*[\s\S]*?\*\//gu, "")
-    .replace(/(^|[^:])\/\/[^\n]*/gu, "$1");
+    .replaceAll(/\/\*[\s\S]*?\*\//gu, "")
+    .replaceAll(/(^|[^:])\/\/[^\n]*/gu, "$1");
+
+function isNonRouteLiteral(target: string): boolean {
+  return (
+    /^\/(_next|images|static|favicon)/u.test(target) ||
+    NOT_A_PATH.some((pattern) => pattern.test(target))
+  );
+}
+
+function literalHasRoute(
+  target: string,
+  pages: Set<string>,
+  api: Set<string>
+): boolean {
+  const isMatcher = /:\w+\*$/u.test(target);
+  const candidate = isMatcher ? stripMatcher(target) : target;
+  if (candidate === "/api" || candidate.startsWith("/api/")) {
+    return matchesApi(candidate, api);
+  }
+  return isMatcher
+    ? matchesAsMatcherPrefix(candidate, pages)
+    : matches(target, pages);
+}
+
+function deadPathLiteralsInFile(
+  file: string,
+  src: string,
+  pages: Set<string>,
+  api: Set<string>
+): string[] {
+  const rel = relative(src, file);
+  if (rel in FILE_NOT_ABOUT_ROUTES) return [];
+
+  const body = stripComments(readFileSync(file, "utf8"));
+  const dead: string[] = [];
+  PATH_LITERAL.lastIndex = 0;
+  for (const match of body.matchAll(PATH_LITERAL)) {
+    const target = match[1]!;
+    if (isNonRouteLiteral(target) || literalHasRoute(target, pages, api)) {
+      continue;
+    }
+    dead.push(`${rel} -> ${target}`);
+  }
+  return dead;
+}
 
 /** Every path literal under `client/src` that resolves to no route. */
 export function deadPathLiterals(client: string): string[] {
   const src = join(client, "src");
   const { pages, api } = readRouteSets(client);
-  const dead: string[] = [];
-  for (const file of walk(src)) {
-    if (!/\.tsx?$/u.test(file) || file.includes("__tests__")) continue;
-    const rel = relative(src, file);
-    if (rel in FILE_NOT_ABOUT_ROUTES) continue;
-    const body = stripComments(readFileSync(file, "utf8"));
-    PATH_LITERAL.lastIndex = 0;
-    for (const m of body.matchAll(PATH_LITERAL)) {
-      const target = m[1]!;
-      if (/^\/(_next|images|static|favicon)/u.test(target)) continue;
-      if (NOT_A_PATH.some((re) => re.test(target))) continue;
-      const matcher = /:\w+\*$/u.test(target);
-      const stripped = matcher ? stripMatcher(target) : target;
-      const isApi = stripped === "/api" || stripped.startsWith("/api/");
-      const ok = isApi
-        ? matchesApi(stripped, api)
-        : matcher
-          ? matchesAsMatcherPrefix(stripped, pages)
-          : matches(target, pages);
-      if (!ok) dead.push(`${rel} -> ${target}`);
-    }
-  }
-  return dead;
+  const files = walk(src).filter(
+    (file) => /\.tsx?$/u.test(file) && !file.includes("__tests__")
+  );
+  return files.flatMap((file) => deadPathLiteralsInFile(file, src, pages, api));
 }
 
 /**

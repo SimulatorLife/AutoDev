@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  context,
   type ContextManager,
   ROOT_CONTEXT,
   type Span,
-  context,
   trace
 } from "@opentelemetry/api";
 import {
@@ -20,13 +20,13 @@ import {
   MemoryValidationError
 } from "@simulatorlife/autodev-runtime/memory";
 
+import type { PostgresMemoryHost } from "../src/memory/postgres.ts";
+import { MemoryService } from "../src/memory/service.ts";
 import {
   clearTrustedMemoryContextsForTest,
   injectOrchestratorMemory,
   type OrchestratorMemoryRequest
 } from "../src/router/memory-injection.ts";
-import { MemoryService } from "../src/memory/service.ts";
-import type { PostgresMemoryHost } from "../src/memory/postgres.ts";
 
 /**
  * The failure classification on a failed injection observation, and the promise

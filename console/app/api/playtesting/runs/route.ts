@@ -46,7 +46,8 @@ function sendError(
  * derives batch state from anywhere else.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const workspaceId = request.nextUrl.searchParams.get("workspaceId")?.trim() ?? "";
+  const workspaceId =
+    request.nextUrl.searchParams.get("workspaceId")?.trim() ?? "";
   if (
     [...request.nextUrl.searchParams.keys()].some(
       (key) => key !== "workspaceId"

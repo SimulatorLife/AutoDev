@@ -214,6 +214,10 @@ test("agent, provider, and model views render counts from one Runtime projection
     React.createElement(ProvidersView, {
       providers,
       models: { status: "available", data: models },
+      modelDiscovery: {
+        status: "unavailable",
+        message: "Fixture not observed."
+      },
       runtime: runtime(ACTIVE_COUNTS),
       activeTab: "models"
     })
@@ -226,6 +230,10 @@ test("agent, provider, and model views render counts from one Runtime projection
       tiers: [],
       orchestratorTier: "root",
       models: [],
+      modelDiscovery: {
+        status: "unavailable",
+        message: "Fixture not observed."
+      },
       runtime: runtime(ACTIVE_COUNTS)
     })
   );

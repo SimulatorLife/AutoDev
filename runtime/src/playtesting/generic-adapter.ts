@@ -15,21 +15,21 @@
  *   bookkeeping the protocol expects is applied identically for every method.
  */
 import {
-  PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES,
-  PLAYTESTS_ADAPTER_DEFAULT_QUOTAS,
-  PLAYTESTS_ADAPTER_METHODS,
-  PLAYTESTS_OPTIONAL_ADAPTER_METHODS,
   type PlaytestAdapterBinding,
-  PLAYTESTS_PROTOCOL_VERSION,
-  PLAYTESTS_REQUIRED_BINDINGS,
   type PlaytestBindableMethod,
   type PlaytestCapabilityAdvertisement,
   type PlaytestJsonSchema,
-  resolvePlaytestAdapterBinding,
-  unboundPlaytestMethods
+  PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES,
+  PLAYTESTS_ADAPTER_DEFAULT_QUOTAS,
+  PLAYTESTS_OPTIONAL_ADAPTER_METHODS,
+  PLAYTESTS_PROTOCOL_VERSION,
+  PLAYTESTS_REQUIRED_BINDINGS,
+  resolvePlaytestAdapterBinding
 } from "@simulatorlife/autodev-core";
 
 import { playtestManifestHash } from "./hash-chain.ts";
+
+const GAME_METHOD_PREFIX_PATTERN = /^game\./u;
 
 export type GenericAdapterFailureCode =
   "unresolved-binding" | "unbound-method" | "entry-error" | "factory-error";
@@ -70,7 +70,6 @@ export interface GenericAdapterOptions {
   readonly actionSchema: PlaytestJsonSchema;
   readonly eventSchema: PlaytestJsonSchema;
   readonly quotas?: PlaytestCapabilityAdvertisement["quotas"];
-  readonly rngVersion?: string | null;
 }
 
 /** Protocol method name for a declared binding, e.g. `legalActions` -> `game.legalActions`. */
@@ -87,6 +86,19 @@ function referencePath(reference: {
     : [reference.export, ...reference.path.split(".")];
 }
 
+function entryClose(game: BoundGame): () => Promise<void> {
+  let closing: Promise<void> | null = null;
+  return () => {
+    if (closing) return closing;
+    const close = game.close;
+    closing =
+      typeof close === "function"
+        ? Promise.resolve((close as () => void | Promise<void>).call(game))
+        : Promise.resolve();
+    return closing;
+  };
+}
+
 /**
  * The capability advertisement, with every digest derived from the game's own
  * schemas. A game declares schemas; it does not declare their hashes.
@@ -98,8 +110,7 @@ export function buildCapabilityAdvertisement(
   const observationSchemaHash = playtestManifestHash(options.observationSchema);
   const actionSchemaHash = playtestManifestHash(options.actionSchema);
   const eventSchemaHash = playtestManifestHash(options.eventSchema);
-  const unbound = unboundPlaytestMethods(bound);
-  const rngVersion = options.rngVersion ?? bound.rngVersion ?? null;
+  const rngVersion = bound.rngVersion ?? null;
   return {
     protocolVersion: PLAYTESTS_PROTOCOL_VERSION,
     schemaHashAlgorithm: "sha256-canonical-json-v1",
@@ -119,7 +130,10 @@ export function buildCapabilityAdvertisement(
     optionalOperations: PLAYTESTS_OPTIONAL_ADAPTER_METHODS.filter(
       (method) =>
         bound.bindings[
-          method.replace(/^game\./u, "") as PlaytestBindableMethod
+          method.replace(
+            GAME_METHOD_PREFIX_PATTERN,
+            ""
+          ) as PlaytestBindableMethod
         ] !== undefined
     ) as unknown as PlaytestCapabilityAdvertisement["optionalOperations"],
     // The protocol's own defaults for the four fields a capability advertisement
@@ -136,19 +150,11 @@ export function buildCapabilityAdvertisement(
           PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.resetReplayTimeoutMs
       } satisfies PlaytestCapabilityAdvertisement["quotas"]),
     deterministic: {
-      // Declared, not assumed: an adapter without a seeded-RNG entry point
-      // cannot restore engine RNG for a counterfactual, and reporting
-      // seededRuns it cannot honour would make a rerun look reproducible.
-      //
-      // Advertising `seededRuns` without naming the RNG version would also be a
-      // protocol violation — the Runtime rejects an advertisement whose seeded
-      // guarantee is unnamed, because an unnamed RNG cannot be matched against
-      // the benchmark that recorded it. A game that binds a seeded entry point
-      // but does not report its version is therefore treated as not having one:
-      // the honest advertisement is a rerun AutoDev will not claim it can
-      // reproduce.
-      seededRuns: bound.seededRng !== undefined && rngVersion !== null,
-      rngVersion: bound.seededRng === undefined ? null : rngVersion,
+      // `reset(seed)` is reproducible only when the target declares the exact
+      // RNG version. Counterfactual restoration is expressed through the
+      // separate snapshot/replay/fork protocol operations.
+      seededRuns: rngVersion !== null,
+      rngVersion,
       traceReplayable: bound.bindings.replay !== undefined
     }
   };
@@ -162,6 +168,8 @@ export interface GenericAdapter {
     method: PlaytestBindableMethod,
     params: Readonly<Record<string, unknown>>
   ): Promise<unknown>;
+  /** Release engine resources opened by the game's entry factory. */
+  close(): Promise<void>;
 }
 
 /**
@@ -196,6 +204,7 @@ export async function createGenericAdapter(
       }`
     );
   }
+  const closeGame = entryClose(game);
 
   const resolve = (
     method: PlaytestBindableMethod
@@ -212,60 +221,54 @@ export async function createGenericAdapter(
       : null;
   };
 
-  // A required binding that resolves to a non-function is a broken declaration,
-  // not a missing capability: the reference exists but cannot be called.
-  for (const method of PLAYTESTS_REQUIRED_BINDINGS) {
-    if (binding.bindings[method] !== undefined && resolve(method) === null) {
-      throw new GenericAdapterError(
-        "unresolved-binding",
-        `The declared ${method} binding does not resolve to a function on the object ${binding.factory} returned.`
-      );
-    }
-  }
-  // The seeded-RNG reference is resolved too. Advertising seededRuns while the
-  // reference points at nothing would tell the Runtime a rerun is reproducible
-  // when engine RNG cannot actually be restored.
-  if (binding.seededRng !== undefined) {
-    let current: unknown = game;
-    for (const segment of referencePath(binding.seededRng)) {
-      if (typeof current !== "object" || current === null) {
-        current = undefined;
-        break;
+  try {
+    // A required binding that resolves to a non-function is a broken
+    // declaration, not a missing capability.
+    for (const method of PLAYTESTS_REQUIRED_BINDINGS) {
+      if (binding.bindings[method] !== undefined && resolve(method) === null) {
+        throw new GenericAdapterError(
+          "unresolved-binding",
+          `The declared ${method} binding does not resolve to a function on the object ${binding.factory} returned.`
+        );
       }
-      current = (current as Record<string, unknown>)[segment];
     }
-    if (typeof current !== "function") {
-      throw new GenericAdapterError(
-        "unresolved-binding",
-        "The declared seededRng binding does not resolve to a function on the object the factory returned."
-      );
-    }
-  }
 
-  return {
-    binding,
-    capabilities: buildCapabilityAdvertisement(options, binding),
-    invoke: async (method, params) => {
-      const target = resolve(method);
-      if (target === null) {
-        throw new GenericAdapterError(
-          "unbound-method",
-          `The game has no usable ${protocolMethodFor(method)} binding; AutoDev will not answer it with a default.`
-        );
+    return {
+      binding,
+      capabilities: buildCapabilityAdvertisement(options, binding),
+      close: closeGame,
+      invoke: async (method, params) => {
+        const target = resolve(method);
+        if (target === null) {
+          throw new GenericAdapterError(
+            "unbound-method",
+            `The game has no usable ${protocolMethodFor(method)} binding; AutoDev will not answer it with a default.`
+          );
+        }
+        try {
+          return await target(params);
+        } catch (error) {
+          if (error instanceof GenericAdapterError) throw error;
+          throw new GenericAdapterError(
+            "factory-error",
+            `The bound ${protocolMethodFor(method)} failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
       }
-      try {
-        return await target(params);
-      } catch (error) {
-        if (error instanceof GenericAdapterError) throw error;
-        throw new GenericAdapterError(
-          "factory-error",
-          `The bound ${protocolMethodFor(method)} failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
+    };
+  } catch (error) {
+    try {
+      await closeGame();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "The game binding was refused and its entry resources could not be fully released."
+      );
     }
-  };
+    throw error;
+  }
 }
 
 /** The capability error code used when a game refuses a declared method. */

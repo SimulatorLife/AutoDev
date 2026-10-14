@@ -184,6 +184,7 @@ export interface GameForkResult {
 }
 
 export interface GameCaptureRangeParams extends GameEpisodeRevisionParams {
+  /** Inclusive, zero-based decision-step bounds, matching PlaytestEpisodeStep.step. */
   readonly startStep: number;
   readonly endStep: number;
 }
@@ -192,6 +193,7 @@ export interface GameCaptureEvent {
   readonly eventId: string;
   readonly type: string;
   readonly phaseId: string | null;
+  /** Zero-based decision step, matching GameCaptureRangeParams and the trace. */
   readonly step: number;
   readonly revision: number;
   readonly actor: string | null;

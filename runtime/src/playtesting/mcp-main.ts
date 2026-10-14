@@ -2,6 +2,11 @@
 import { fileURLToPath } from "node:url";
 
 import {
+  assertPlaytestCrossSessionMetricAggregation,
+  type PlaytestCrossSessionMetricAggregation,
+  PLAYTESTS_MAX_ANALYSIS_SESSIONS
+} from "@simulatorlife/autodev-core";
+import {
   ConfigRepository,
   type WorkspaceCatalogRead
 } from "@simulatorlife/autodev-data";
@@ -27,6 +32,9 @@ export interface PlaytestStdioConfiguration {
   readonly taskId: string;
   readonly runId: string;
   readonly repositoryRoot: string | null;
+  readonly analysisId?: string;
+  readonly selectedEpisodeIds?: readonly string[];
+  readonly metricAggregation?: PlaytestCrossSessionMetricAggregation;
 }
 
 export function assertPlaytestStdioSessionBinding(
@@ -34,6 +42,27 @@ export function assertPlaytestStdioSessionBinding(
   catalog: WorkspaceCatalogRead,
   configuredRoles: ReadonlySet<string>
 ): void {
+  if (
+    config.role === "playtest-analyst" &&
+    (!config.analysisId ||
+      !SESSION_VALUE_PATTERN.test(config.analysisId) ||
+      !isValidSelectedEpisodeIds(config.selectedEpisodeIds) ||
+      !config.metricAggregation)
+  ) {
+    throw new Error(ANALYST_SELECTION_ERROR);
+  }
+  if (config.role === "playtest-analyst") {
+    try {
+      assertPlaytestCrossSessionMetricAggregation(
+        config.metricAggregation,
+        config.workspaceId,
+        config.analysisId!,
+        config.selectedEpisodeIds!
+      );
+    } catch {
+      throw new Error(ANALYST_SELECTION_ERROR);
+    }
+  }
   if (catalog.status !== "valid") {
     throw new Error("The canonical workspace catalog is unavailable.");
   }
@@ -60,6 +89,9 @@ export function assertPlaytestStdioSessionBinding(
 
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const SESSION_VALUE_PATTERN = /^[A-Za-z0-9@._:-]{1,256}$/u;
+const EPISODE_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
+const ANALYST_SELECTION_ERROR =
+  "The trusted analyst session selection is missing or invalid.";
 const PRIVILEGED_CONTROL_ROLES = new Set(["root", "operator"]);
 
 function requiredSessionValue(env: NodeJS.ProcessEnv, key: string): string {
@@ -74,6 +106,67 @@ function requiredSessionValue(env: NodeJS.ProcessEnv, key: string): string {
     );
   }
   return value;
+}
+
+function isValidSelectedEpisodeIds(value: unknown): value is readonly string[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= PLAYTESTS_MAX_ANALYSIS_SESSIONS &&
+    value.every(
+      (episodeId) =>
+        typeof episodeId === "string" && EPISODE_ID_PATTERN.test(episodeId)
+    ) &&
+    new Set(value).size === value.length
+  );
+}
+
+function selectedEpisodeIdsFromEnvironment(
+  env: NodeJS.ProcessEnv
+): readonly string[] {
+  const raw = env.AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS?.trim();
+  const maximumEncodedLength =
+    2 +
+    PLAYTESTS_MAX_ANALYSIS_SESSIONS * 258 +
+    (PLAYTESTS_MAX_ANALYSIS_SESSIONS - 1);
+  if (!raw || raw.length > maximumEncodedLength) {
+    throw new Error(ANALYST_SELECTION_ERROR);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(ANALYST_SELECTION_ERROR);
+  }
+  if (!isValidSelectedEpisodeIds(parsed)) {
+    throw new Error(ANALYST_SELECTION_ERROR);
+  }
+  return parsed;
+}
+
+function metricAggregationFromEnvironment(input: {
+  readonly env: NodeJS.ProcessEnv;
+  readonly workspaceId: string;
+  readonly analysisId: string;
+  readonly episodeIds: readonly string[];
+}): PlaytestCrossSessionMetricAggregation {
+  const raw = input.env.AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION?.trim();
+  if (!raw || new TextEncoder().encode(raw).byteLength > 64 * 1024) {
+    throw new Error(ANALYST_SELECTION_ERROR);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+    assertPlaytestCrossSessionMetricAggregation(
+      parsed,
+      input.workspaceId,
+      input.analysisId,
+      input.episodeIds
+    );
+  } catch {
+    throw new Error(ANALYST_SELECTION_ERROR);
+  }
+  return parsed;
 }
 
 export function playtestStdioConfiguration(
@@ -91,6 +184,23 @@ export function playtestStdioConfiguration(
     throw new Error("The trusted playtesting workspace identity is invalid.");
   }
   const repositoryRoot = env.AUTODEV_PLAYTEST_REPOSITORY_ROOT?.trim() || null;
+  const analysisId =
+    role === "playtest-analyst"
+      ? requiredSessionValue(env, "AUTODEV_PLAYTEST_ANALYSIS_ID")
+      : undefined;
+  const selectedEpisodeIds =
+    role === "playtest-analyst"
+      ? selectedEpisodeIdsFromEnvironment(env)
+      : undefined;
+  const metricAggregation =
+    role === "playtest-analyst"
+      ? metricAggregationFromEnvironment({
+          env,
+          workspaceId,
+          analysisId: analysisId!,
+          episodeIds: selectedEpisodeIds!
+        })
+      : undefined;
 
   return {
     workspaceId,
@@ -98,7 +208,10 @@ export function playtestStdioConfiguration(
     actor,
     taskId,
     runId,
-    repositoryRoot
+    repositoryRoot,
+    ...(analysisId === undefined ? {} : { analysisId }),
+    ...(selectedEpisodeIds === undefined ? {} : { selectedEpisodeIds }),
+    ...(metricAggregation === undefined ? {} : { metricAggregation })
   };
 }
 
@@ -111,7 +224,16 @@ export function playtestMcpSessionProvider(
     actor: config.actor,
     taskId: config.taskId,
     runId: config.runId,
-    repositoryRoot: config.repositoryRoot
+    repositoryRoot: config.repositoryRoot,
+    ...(config.analysisId === undefined
+      ? {}
+      : { analysisId: config.analysisId }),
+    ...(config.selectedEpisodeIds === undefined
+      ? {}
+      : { selectedEpisodeIds: config.selectedEpisodeIds }),
+    ...(config.metricAggregation === undefined
+      ? {}
+      : { metricAggregation: config.metricAggregation })
   };
   return {
     current: () => session

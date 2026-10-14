@@ -28,9 +28,11 @@ import {
   type PlaytestReviewReceipt,
   type PLAYTESTS_BATCH_SCHEMA,
   type PLAYTESTS_COVERAGE_MANIFEST_SCHEMA,
+  type PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
   type PLAYTESTS_EPISODE_SCHEMA,
   type PLAYTESTS_EVIDENCE_PACKET_SCHEMA,
   type PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1,
+  type PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2,
   type PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_GAME_MODES,
   type PLAYTESTS_HUMAN_STUDY_SCHEMA,
@@ -64,6 +66,7 @@ export interface PlaytestObservationField {
 
 export interface PlaytestObservationContract {
   readonly schemaVersion: 1;
+  /** SHA-256 canonical JSON digest of the adapter binding's observation schema. */
   readonly schemaHash: string;
   readonly mode: "headless" | "browser" | "native-visual";
   readonly cohort: string;
@@ -176,6 +179,17 @@ export interface PlaytestEpisode {
   readonly nativeDurationMs: number | null;
   readonly completeness: "complete" | "partial" | "unknown";
   readonly missingReasons: readonly PlaytestMissingReason[];
+}
+
+/**
+ * Assignment result returned by the live run owner. `state` is Runtime's
+ * execution/episode disposition; `gameOutcome` is the game's separately
+ * classified result. A missing episode has no game outcome, while a persisted
+ * episode may explicitly report `unknown`. This projection is not stored in
+ * the batch artifact: persisted episodes own game outcomes.
+ */
+export interface PlaytestRunAssignmentOutcome extends PlaytestAssignmentOutcome {
+  readonly gameOutcome: PlaytestGameOutcomeKind | null;
 }
 
 export const PLAYTESTS_BATCH_STATES = [
@@ -444,7 +458,7 @@ export interface PlaytestEvidenceOmittedArtifact {
 }
 
 /** Target-owned metric semantics supplied with the exact session evidence. */
-export interface PlaytestEvidenceMetricIntent {
+export interface PlaytestEvidenceMetricIntentV2 {
   readonly metricId: string;
   readonly version: number;
   readonly mechanicKey: string;
@@ -456,6 +470,18 @@ export interface PlaytestEvidenceMetricIntent {
   readonly targetBand: readonly [number | null, number | null];
   readonly exposurePredicate: string;
   readonly eventFields: readonly string[];
+}
+
+/** Metric intent fields needed to pool only semantically additive rows. */
+export interface PlaytestEvidenceMetricIntent extends PlaytestEvidenceMetricIntentV2 {
+  readonly analysisUnit:
+    "episode" | "decision" | "cohort" | "learner-identity" | "participant";
+  readonly aggregationWindow:
+    "whole-episode" | "phase" | "session" | "response";
+  readonly aggregation:
+    | "ratio-of-sums-within-scenario"
+    | "native-item-mean-and-category-distribution"
+    | "descriptive";
 }
 
 /** Numeric-only source projection for one sibling episode in a packet. */
@@ -531,7 +557,7 @@ export interface PlaytestEvidencePacketFields {
   readonly rubricHash: string;
   readonly rubricVersion: string;
   readonly audience: string;
-  readonly metricIntent: readonly PlaytestEvidenceMetricIntent[];
+  readonly metricIntent: readonly PlaytestEvidenceMetricIntentV2[];
   readonly dimensionRubrics: readonly PlaytestDimensionRubric[];
   readonly metrics: readonly PlaytestNumericResult[];
   readonly coverageCells: readonly PlaytestCoverageManifestCell[];
@@ -560,14 +586,22 @@ export interface PlaytestEvidencePacketV1 extends PlaytestEvidencePacketFields {
 
 /** New bounded packet with a deterministic sample of sibling episode summaries. */
 export interface PlaytestEvidencePacketV2 extends PlaytestEvidencePacketFields {
-  readonly schema: typeof PLAYTESTS_EVIDENCE_PACKET_SCHEMA;
+  readonly schema: typeof PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2;
   readonly crossSessionContext: PlaytestEvidenceCrossSessionContext;
 }
 
-/** Readable packet history; new builders create only schema v2 packets. */
+/** New packets freeze aggregation semantics alongside each metric intent. */
+export interface PlaytestEvidencePacketV3 extends PlaytestEvidencePacketFields {
+  readonly schema: typeof PLAYTESTS_EVIDENCE_PACKET_SCHEMA;
+  readonly metricIntent: readonly PlaytestEvidenceMetricIntent[];
+  readonly crossSessionContext: PlaytestEvidenceCrossSessionContext;
+}
+
+/** Readable packet history; new builders create only schema v3 packets. */
 export type PlaytestEvidencePacket =
   | PlaytestEvidencePacketV1
-  | PlaytestEvidencePacketV2;
+  | PlaytestEvidencePacketV2
+  | PlaytestEvidencePacketV3;
 
 /** JSON media type used by Runtime's content-addressed packet artifact store. */
 export const PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE =
@@ -612,6 +646,135 @@ export interface PlaytestSessionReview {
 export interface PlaytestEvidencePacketReference {
   readonly packetId: string;
   readonly artifact: PlaytestArtifactReference;
+}
+
+/** Evidence citation tied to the exact session packet used in a batch synthesis. */
+export interface PlaytestCrossSessionEvidenceRef {
+  readonly episodeId: string;
+  readonly packetId: string;
+  readonly locator: PlaytestEvidenceLocator;
+}
+
+/** One cross-session theme; this is always a hypothesis, never verification. */
+export interface PlaytestCrossSessionClaim {
+  readonly kind: "pattern" | "counterexample" | "confounder";
+  readonly text: string;
+  readonly evidenceRefs: readonly PlaytestCrossSessionEvidenceRef[];
+}
+
+/** Falsifiable follow-up grounded in one or more contributing session packets. */
+export interface PlaytestCrossSessionExperiment {
+  readonly hypothesis: string;
+  readonly falsifier: string;
+  readonly metricId: string;
+  readonly controls: readonly string[];
+  readonly budget: string;
+  readonly evidenceRefs: readonly PlaytestCrossSessionEvidenceRef[];
+}
+
+export interface PlaytestCrossSessionMetricPacketRef {
+  readonly episodeId: string;
+  readonly batchId: string;
+  readonly packetId: string;
+}
+
+/** A descriptive pooled ratio over one exact measurement stratum. */
+export interface PlaytestCrossSessionMetricAggregate {
+  readonly metricId: string;
+  readonly metricVersion: number | string;
+  readonly phaseId: string | null;
+  readonly unit: string;
+  readonly aggregation: "ratio-of-sums-within-scenario";
+  readonly aggregationWindow: PlaytestEvidenceMetricIntent["aggregationWindow"];
+  readonly analysisUnit:
+    "episode" | "decision" | "cohort" | "learner-identity" | "participant";
+  readonly buildSha: string;
+  readonly gameBuild: string;
+  readonly rubricHash: string;
+  readonly evaluatorHash: string;
+  readonly measurementVersion: string;
+  readonly scenarioId: string;
+  readonly scenarioFamily: string;
+  readonly policyId: string;
+  readonly policyVersion: string;
+  readonly cohort: string;
+  readonly observationMode: "headless" | "browser" | "native-visual";
+  /** Indices into the aggregation's canonical, episode-sorted sourcePackets list. */
+  readonly sourcePacketIndices: readonly number[];
+  readonly sessionCount: number;
+  readonly numerator: number;
+  readonly denominator: number;
+  readonly opportunityCount: number | null;
+  readonly missing: number;
+  readonly missingReasons: readonly PlaytestMissingReason[];
+  readonly estimate: number | null;
+  readonly coverage: number | null;
+  /** Learner/participant/cluster identity is intentionally not summed. */
+  readonly independentUnits: number | null;
+}
+
+export interface PlaytestCrossSessionMetricAggregationFields {
+  readonly workspaceId: string;
+  readonly analysisId: string;
+  readonly status:
+    | "available"
+    | "partial"
+    | "no-applicable-metrics"
+    | "insufficient-packets"
+    | "unavailable"
+    | "not-recorded";
+  readonly method: "ratio-of-sums-within-identical-stratum-v1";
+  readonly sourcePackets: readonly PlaytestCrossSessionMetricPacketRef[];
+  readonly rows: readonly PlaytestCrossSessionMetricAggregate[];
+  readonly omittedMetrics: readonly {
+    readonly metricId: string;
+    readonly metricVersion: number | string;
+    readonly reason:
+      "unsupported-aggregation" | "missing-frozen-semantics" | "not-recorded";
+  }[];
+  readonly reason:
+    | "fewer-than-two-packets"
+    | "no-applicable-metric-rows"
+    | "no-supported-aggregation"
+    | "aggregation-result-exceeds-budget"
+    | "historical-packet-predates-aggregation-semantics"
+    | "historical-synthesis-predates-aggregation"
+    | null;
+}
+
+/** Runtime/Core computed from the exact frozen packets, never model-authored. */
+export interface PlaytestCrossSessionMetricAggregation extends PlaytestCrossSessionMetricAggregationFields {
+  readonly schema: "autodev-playtest-cross-session-metric-aggregation-v1";
+}
+
+/**
+ * Immutable, separately-owned synthesis across selected session packets.
+ * It cannot be confused with a single-session review or claim verification.
+ */
+export interface PlaytestCrossSessionSynthesis {
+  readonly schema: typeof PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA;
+  readonly synthesisId: string;
+  readonly version: 1;
+  readonly analysisId: string;
+  readonly workspaceId: string;
+  readonly authorRole: "playtest-analyst";
+  readonly authorId: string;
+  readonly modelId: string | null;
+  readonly modelRevision: string | null;
+  readonly promptHash: string | null;
+  readonly generatedAt: string;
+  readonly status: "hypothesis";
+  readonly summary: string;
+  readonly contributors: readonly {
+    readonly episodeId: string;
+    readonly batchId: string;
+    readonly packetId: string;
+  }[];
+  /** Every packet id allowed into the analysis, including packets not cited. */
+  readonly packetEligibleEpisodeIds: readonly string[];
+  readonly metricAggregation: PlaytestCrossSessionMetricAggregation;
+  readonly claims: readonly PlaytestCrossSessionClaim[];
+  readonly experiments: readonly PlaytestCrossSessionExperiment[];
 }
 
 /** Instrument identities accepted by the consented human-study import path. */

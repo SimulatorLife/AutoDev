@@ -6,11 +6,11 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
-    "dev": "next dev -p ${AUTODEV_CONSOLE_PORT:-3300}",
+    "dev:next": "next dev -p ${AUTODEV_CONSOLE_PORT:-3300}",
     "build": "next build",
     "start": "next start -p ${AUTODEV_CONSOLE_PORT:-3300}",
     "test": "node --test",
-    "test:playtesting:browser": "pnpm build && playwright test --config=playwright.config.ts",
+    "test:playtesting:browser": "playwright test --config=playwright.config.ts",
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
