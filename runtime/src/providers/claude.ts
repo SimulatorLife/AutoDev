@@ -81,11 +81,11 @@ import {
 import {
   type ClaudeCliEvent,
   ClaudeTurn,
-  ClaudeTurnRegistry,
   ResponseStream,
   type TurnFailure,
   type TurnReporter
 } from "./claude-turn.ts";
+import { CodexToolTurnRegistry } from "./codex-tool-turns.ts";
 
 // Bind the port only when run as a program, so this file can be imported for
 // its pure helpers without taking the port out from under the running bridge.
@@ -907,7 +907,7 @@ export async function* runClaudeStream(
 }
 
 // Live turns, parked or streaming. See runtime/src/providers/claude-turn.ts.
-const turns = new ClaudeTurnRegistry();
+const turns = new CodexToolTurnRegistry<ClaudeTurn>();
 
 /** How an error ends a turn: a provider limit, a timeout, or an interruption. */
 export function describeFailure(error: unknown): TurnFailure {

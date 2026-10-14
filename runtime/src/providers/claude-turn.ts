@@ -15,7 +15,6 @@
  * turn keeps everything that happened before the interruption.
  */
 
-import { randomBytes } from "node:crypto";
 import type { ServerResponse } from "node:http";
 
 import {
@@ -35,6 +34,11 @@ import {
   mcpToolDefinition,
   renderCodexTranscript
 } from "./claude-codex-tools.ts";
+import {
+  type CodexToolTurnRegistry,
+  toolErrorResult,
+  turnId
+} from "./codex-tool-turns.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -87,10 +91,6 @@ export interface ResponseStreamOptions {
   sendError: (response: ServerResponse, failure: TurnFailure) => void;
 }
 
-function hex(bytes: number): string {
-  return randomBytes(bytes).toString("hex");
-}
-
 /**
  * The Responses stream for one HTTP request.
  *
@@ -99,7 +99,7 @@ function hex(bytes: number): string {
  * router can cool down on) instead of a 200 stream that says it failed.
  */
 export class ResponseStream {
-  readonly id = `resp_${hex(12)}`;
+  readonly id = `resp_${turnId(12)}`;
   private sequence = 0;
   private started = false;
   private ended = false;
@@ -217,7 +217,7 @@ export class ResponseStream {
     if (!this.reasoning) {
       this.reasoning = {
         index: this.output.length,
-        id: `rs_${hex(12)}`,
+        id: `rs_${turnId(12)}`,
         text: ""
       };
       this.output.push({
@@ -263,7 +263,7 @@ export class ResponseStream {
     if (!this.message) {
       this.message = {
         index: this.output.length,
-        id: `msg_${hex(10)}`,
+        id: `msg_${turnId(10)}`,
         text: ""
       };
       this.output.push({
@@ -471,7 +471,7 @@ interface AwaitingCall {
 
 export interface ClaudeTurnOptions {
   tools: CodexTool[];
-  registry: ClaudeTurnRegistry;
+  registry: CodexToolTurnRegistry<ClaudeTurn>;
   /** How long a turn may wait for Codex to return a tool's output. */
   parkMs: number;
   /** How long to gather tool calls the CLI issues together before emitting them. */
@@ -479,12 +479,8 @@ export interface ClaudeTurnOptions {
   describeFailure: (error: unknown) => TurnFailure;
 }
 
-function toolErrorResult(text: string): JsonRecord {
-  return { content: [{ type: "text", text }], isError: true };
-}
-
 export class ClaudeTurn {
-  readonly id = hex(12);
+  readonly id = turnId(12);
   private readonly abortController = new AbortController();
   private stream: ResponseStream | null = null;
   private reporter: TurnReporter | null = null;
@@ -739,7 +735,7 @@ export class ClaudeTurn {
     for (const call of this.queued.splice(0)) {
       const callId = `call_${this.id}_${++this.sequence}`;
       const item = codexToolCallItem(call.tool, call.args, {
-        itemId: `${call.tool.kind === "custom" ? "ctc" : "fc"}_${hex(12)}`,
+        itemId: `${call.tool.kind === "custom" ? "ctc" : "fc"}_${turnId(12)}`,
         callId
       });
       this.awaiting.set(callId, {
@@ -807,57 +803,3 @@ export function nativeToolSummary(name: string, input: JsonRecord): string {
  * Live turns, reachable by id (from the shim) and by the call ids they
  * emitted (from Codex's continuation requests).
  */
-export class ClaudeTurnRegistry {
-  private readonly turns = new Map<string, ClaudeTurn>();
-  private readonly calls = new Map<string, ClaudeTurn>();
-  private readonly maxTurns: number;
-
-  constructor(maxTurns = 32) {
-    this.maxTurns = maxTurns;
-  }
-
-  add(turn: ClaudeTurn): void {
-    // Bounded: an abandoned turn is reclaimed by its park timer, and this cap
-    // keeps a burst of them from holding unbounded CLI processes meanwhile.
-    while (this.turns.size >= this.maxTurns) {
-      const oldest = this.turns.values().next().value;
-      if (!oldest) break;
-      oldest.cancel();
-    }
-    this.turns.set(turn.id, turn);
-  }
-
-  bindCall(callId: string, turn: ClaudeTurn): void {
-    this.calls.set(callId, turn);
-  }
-
-  byId(id: string): ClaudeTurn | null {
-    return this.turns.get(id) ?? null;
-  }
-
-  /** The turn waiting on any of these call outputs, if one is still alive. */
-  forOutputs(outputs: Map<string, unknown>): ClaudeTurn | null {
-    for (const callId of outputs.keys()) {
-      const turn = this.calls.get(callId);
-      if (turn) return turn;
-    }
-    return null;
-  }
-
-  /** Cancel every live turn, killing its CLI. Returns how many there were. */
-  cancelAll(): number {
-    const live = [...this.turns.values()];
-    for (const turn of live) turn.cancel();
-    return live.length;
-  }
-
-  remove(turn: ClaudeTurn): void {
-    this.turns.delete(turn.id);
-    for (const [callId, owner] of this.calls)
-      if (owner === turn) this.calls.delete(callId);
-  }
-
-  status(): { turns: number; maxTurns: number } {
-    return { turns: this.turns.size, maxTurns: this.maxTurns };
-  }
-}
