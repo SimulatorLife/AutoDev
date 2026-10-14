@@ -208,6 +208,10 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /schema: "autodev-openlit-usage-v4"/u,
     "patch 54 exposes only the fixed v4 Usage response"
   );
+  assert.match(usageRoute, /USAGE_VARIABLE_SOURCES/u);
+  assert.match(usageRoute, /key: "service\.name"/u);
+  assert.match(usageRoute, /scope: "resource"/u);
+  assert.match(usageRoute, /autodev-codex-tools-mcp/u);
   assert.doesNotMatch(
     usageRoute,
     /autodev-openlit-usage-v3|metricTimeSeries|queryConnectorTraces|SELECT\s|readContextCompactionWidgets|COMPACTION_TRACE_LIMIT/u,
@@ -285,6 +289,24 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "the upstream API tests must not preserve a v3 compatibility expectation"
   );
   assert.match(usageRouteTests, /expect\(response\.status\)\.toBe\(200\)/u);
+  assert.match(
+    usageRouteTests,
+    /const lookups = mockFetchVariableAllowedValues\.mock\.calls/u
+  );
+  assert.match(usageRouteTests, /scope: "resource"/u);
+  assert.match(usageRouteTests, /autodev-codex-tools-mcp/u);
+  const variableLookup = readFileSync(
+    join(
+      dir,
+      "src/client/src/lib/platform/dashboard-variables/distinct-values.ts"
+    ),
+    "utf8"
+  );
+  assert.match(
+    variableLookup,
+    /filters: req\.filters/u,
+    "bounded filter lookup must carry service scope into the source adapter"
+  );
 
   // Dropped tables must be dropped on existing installs, not left behind.
   const dropAuthoring = readFileSync(

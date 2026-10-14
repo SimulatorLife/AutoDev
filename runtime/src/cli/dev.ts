@@ -148,9 +148,17 @@ const DEV_PROBE_WORKSPACE_ID = "autodev-dev-probe/not-configured";
 const LOCAL_CONTROL_API_ACTOR = "autodev-local";
 const CONTROL_API_BASE_URL_DEFAULT_PATTERN =
   /^\$\{AUTODEV_CONTROL_API_BASE_URL:-([^{}]+)\}$/u;
+const OPENLIT_USAGE_BASE_URL_DEFAULT_PATTERN =
+  /^\$\{AUTODEV_OPENLIT_USAGE_URL:-([^{}]+)\}$/u;
 const TRAILING_SLASHES = /\/+$/u;
+const DEFAULT_OPENLIT_USAGE_BASE_URL = "http://127.0.0.1:3000";
 
 export interface DevControlApiConfig {
+  readonly baseUrl: string;
+  readonly serviceToken: string;
+}
+
+export interface DevOpenLITUsageConfig {
   readonly baseUrl: string;
   readonly serviceToken: string;
 }
@@ -202,6 +210,34 @@ export function readDevControlApiConfig(
       parseToken(consoleEnv, "AUTODEV_CONTROL_API_BASE_URL")
     ) ||
     DEFAULT_CONTROL_API_BASE_URL;
+  return { baseUrl: baseUrl.replace(TRAILING_SLASHES, ""), serviceToken };
+}
+
+/** Read the same server-only Usage credential and URL used by the Console. */
+export function readDevOpenLITUsageConfig(
+  root = repoRoot,
+  env: NodeJS.ProcessEnv = process.env
+): DevOpenLITUsageConfig {
+  const consoleEnv = path.join(root, "console", ".env.local");
+  const serviceToken =
+    env.AUTODEV_OPENLIT_USAGE_TOKEN?.trim() ||
+    parseToken(consoleEnv, "AUTODEV_OPENLIT_USAGE_TOKEN");
+  if (!serviceToken) {
+    throw new Error(
+      "OpenLIT Usage credentials are missing. Run the Console secret bootstrap before starting the dev server."
+    );
+  }
+
+  const configuredBaseUrl =
+    env.AUTODEV_OPENLIT_USAGE_URL?.trim() ||
+    parseToken(consoleEnv, "AUTODEV_OPENLIT_USAGE_URL");
+  const defaultExpression = configuredBaseUrl
+    ? OPENLIT_USAGE_BASE_URL_DEFAULT_PATTERN.exec(configuredBaseUrl)
+    : null;
+  const baseUrl =
+    defaultExpression?.[1] ??
+    configuredBaseUrl ??
+    DEFAULT_OPENLIT_USAGE_BASE_URL;
   return { baseUrl: baseUrl.replace(TRAILING_SLASHES, ""), serviceToken };
 }
 
@@ -316,6 +352,7 @@ export interface DevCommandOptions {
   readonly cwd: string;
   readonly stdio: "ignore" | "inherit";
   readonly timeoutMs?: number;
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 export interface DevCommandResult {
@@ -334,6 +371,7 @@ export interface DevBackendDependencies {
   ) => DevCommandResult;
   readonly isPortListening: (port: number) => Promise<boolean>;
   readonly isOpenlitHttpReady: () => Promise<boolean>;
+  readonly openlitUsageConfig: () => DevOpenLITUsageConfig;
   readonly sleep: (milliseconds: number) => Promise<void>;
   readonly writeLine: (message: string) => void;
 }
@@ -346,7 +384,8 @@ function runDevCommand(
   const result = spawnSync(command, [...args], {
     cwd: options.cwd,
     stdio: options.stdio,
-    timeout: options.timeoutMs
+    timeout: options.timeoutMs,
+    env: options.env
   });
   return { status: result.status, error: result.error };
 }
@@ -360,6 +399,7 @@ function defaultBackendDependencies(): DevBackendDependencies {
     isOpenlitHttpReady: httpHealthProbe(`http://127.0.0.1:${OPENLIT_PORT}`, {
       cache: "no-store"
     }),
+    openlitUsageConfig: () => readDevOpenLITUsageConfig(),
     sleep,
     writeLine
   };
@@ -461,10 +501,19 @@ export async function ensureBackends(
   dependencies.writeLine(
     "[dev] Reconciling the OpenLIT and ClickHouse Usage services..."
   );
+  const usageConfig = dependencies.openlitUsageConfig();
   const started = dependencies.runCommand(
     "bash",
     [path.join(dependencies.repoRoot, "scripts", "openlit", "up.sh")],
-    { cwd: dependencies.repoRoot, stdio: "inherit" }
+    {
+      cwd: dependencies.repoRoot,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        AUTODEV_OPENLIT_USAGE_URL: usageConfig.baseUrl,
+        AUTODEV_OPENLIT_USAGE_TOKEN: usageConfig.serviceToken
+      }
+    }
   );
   if (!commandSucceeded(started)) {
     const detail = started.error?.message;
@@ -483,7 +532,7 @@ export async function ensureBackends(
   }
 
   dependencies.writeLine(
-    "[dev] ✔ OpenLIT Usage and ClickHouse are ready (ports 3000, 8123)."
+    "[dev] ✔ OpenLIT Usage v4 and ClickHouse are ready (ports 3000, 8123)."
   );
   const routerActive = await dependencies.isPortListening(4100);
   if (routerActive) {

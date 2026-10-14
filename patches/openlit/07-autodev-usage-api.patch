@@ -110,7 +110,7 @@ new file mode 100644
 index 0000000..be3cac91
 --- /dev/null
 +++ b/src/client/src/app/api/autodev/usage/route.ts
-@@ -0,0 +1,358 @@
+@@ -0,0 +1,397 @@
 +import { NextRequest } from "next/server";
 +import usageDashboard from "@/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json";
 +import type { MetricParams } from "@/lib/platform/common";
@@ -183,6 +183,23 @@ index 0000000..be3cac91
 +	["model", "autodev.requested_model"],
 +	["agent", "autodev.agent.role"]
 +] as const satisfies readonly (readonly [UsageVariableId, string])[];
++
++const USAGE_VARIABLE_SOURCES: Record<
++	UsageVariableId,
++	readonly { readonly serviceName: string; readonly scope: "resource" | "span" }[]
++> = {
++	workspace: [
++		{ serviceName: "autodev-router", scope: "span" },
++		{ serviceName: "autodev-codex-tools-mcp", scope: "resource" },
++	],
++	provider: [{ serviceName: "autodev-router", scope: "span" }],
++	model: [{ serviceName: "autodev-router", scope: "span" }],
++	agent: [
++		{ serviceName: "autodev-router", scope: "span" },
++		{ serviceName: "autodev-codex-tools-mcp", scope: "resource" },
++	],
++	skill: [{ serviceName: "autodev-router", scope: "span" }],
++};
 +
 +const WIDGETS = usageDashboard.widgets as Record<string, SeedWidget>;
 +const DASHBOARD_VARIABLES =
@@ -332,15 +349,37 @@ index 0000000..be3cac91
 +	const entries = await Promise.all(
 +		DASHBOARD_VARIABLES.map(async (spec) => {
 +			try {
-+				const result = await fetchVariableAllowedValues({
-+					adapter,
-+					signal: spec.signal,
-+					scope: spec.scope,
-+					key: spec.key,
-+					timeRange,
-+					limit: 256,
-+				});
-+				return [spec.id, result] as const;
++				const sources = USAGE_VARIABLE_SOURCES[spec.id as UsageVariableId];
++				if (!sources) {
++					return [spec.id, { supported: false, values: [] }] as const;
++				}
++				const results = await Promise.all(
++					sources.map(({ serviceName, scope }) =>
++						fetchVariableAllowedValues({
++						adapter,
++						signal: spec.signal,
++						scope,
++						key: spec.key,
++						timeRange,
++						filters: [
++							{
++								target: "attribute",
++								scope: "resource",
++								key: "service.name",
++								op: "eq",
++								value: serviceName,
++							},
++						],
++						limit: 256,
++						aiSelector: false,
++					})
++					),
++				);
++				const supported = results.every((result) => result.supported);
++				const values = supported
++					? Array.from(new Set(results.flatMap((result) => result.values))).sort().slice(0, 256)
++					: [];
++				return [spec.id, { supported, values }] as const;
 +			} catch {
 +				return [spec.id, { supported: false, values: [] }] as const;
 +			}

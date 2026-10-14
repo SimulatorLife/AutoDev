@@ -750,10 +750,23 @@ test("Usage cost and unavailable evidence remain honest", () => {
   assert.match(body, /bounded recent-attempt list/u);
   assert.match(body, /Core owns the canonical `USAGE_VARIABLE_IDS` tuple/u);
   assert.match(body, /fixed OpenLIT endpoint mirrors this bounded list/u);
+  assert.match(body, /Filter-option discovery must be time-bounded/u);
+  assert.match(
+    body,
+    /Do not enumerate distinct values across unrelated OpenLIT telemetry services/u
+  );
   assert.match(body, /gen_ai\.usage\.cost/u);
   assert.match(body, /estimate, not a provider bill/u);
   assert.match(body, /empty aggregate is not a measured `\$0`/u);
   assert.match(body, /one shared unavailable state/u);
+  assert.match(
+    body,
+    /validates a bounded Usage snapshot through the same Data client\/parser/u
+  );
+  assert.match(
+    body,
+    /healthy OpenLIT root page is not proof that its Usage API matches the Console contract/u
+  );
   assert.match(
     body,
     /Provider-attempt spans carry only validated `autodev\.workspace` and `autodev\.agent\.role` context/u

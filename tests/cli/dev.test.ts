@@ -22,6 +22,7 @@ import {
   ensureConsoleSecrets,
   isPortListening,
   readDevControlApiConfig,
+  readDevOpenLITUsageConfig,
   repoRoot,
   verifyDevControlApi
 } from "@simulatorlife/autodev-runtime/cli/dev";
@@ -53,6 +54,10 @@ function createFakeDependencies(
     },
     isPortListening: async () => true,
     isOpenlitHttpReady: async () => true,
+    openlitUsageConfig: () => ({
+      baseUrl: "http://127.0.0.1:3000",
+      serviceToken: "test-usage-token"
+    }),
     sleep: async (milliseconds) => {
       sleptDurations.push(milliseconds);
     },
@@ -186,6 +191,37 @@ test("dev Control API probe rejects the stale Providers v2 response without link
   assert.equal(requestCount, 1);
 });
 
+test("dev OpenLIT Usage config resolves the server credential and URL", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "autodev-dev-usage-config-"));
+  const consoleDir = join(tempDir, "console");
+  mkdirSync(consoleDir, { recursive: true });
+  writeFileSync(
+    join(consoleDir, ".env.local"),
+    [
+      "AUTODEV_OPENLIT_USAGE_TOKEN=file-token",
+      "AUTODEV_OPENLIT_USAGE_URL=${AUTODEV_OPENLIT_USAGE_URL:-http://127.0.0.1:3000}"
+    ].join("\n")
+  );
+  try {
+    assert.deepEqual(readDevOpenLITUsageConfig(tempDir, {}), {
+      baseUrl: "http://127.0.0.1:3000",
+      serviceToken: "file-token"
+    });
+    assert.deepEqual(
+      readDevOpenLITUsageConfig(tempDir, {
+        AUTODEV_OPENLIT_USAGE_TOKEN: "env-token",
+        AUTODEV_OPENLIT_USAGE_URL: "https://usage.example.test/"
+      }),
+      {
+        baseUrl: "https://usage.example.test",
+        serviceToken: "env-token"
+      }
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("dev Control API probe rejects a Runtime that does not register Playtesting", async () => {
   const responses = [
     Response.json({
@@ -278,6 +314,15 @@ test("OpenLIT reconciliation fingerprints mounted config for service restarts", 
     openlitService,
     /io\.autodev\.openlit\.collector-config-sha256: \$\{AUTODEV_OPENLIT_OTEL_CONFIG_HASH/u
   );
+  assert.match(
+    runner,
+    /Verifying the deployed AutoDev Usage response contract[\s\S]*openlit:verify-usage/u
+  );
+  assert.match(runner, /CONSOLE_USAGE_TOKEN_OVERRIDE=/u);
+  assert.match(
+    runner,
+    /AUTODEV_OPENLIT_USAGE_TOKEN=.*CONSOLE_USAGE_TOKEN_OVERRIDE/u
+  );
 });
 
 test("isPortListening resolves false on closed port and true on listening port", async () => {
@@ -362,12 +407,20 @@ test("already-ready services still reconcile the current image and config", asyn
   );
   assert.deepEqual(commands[0]?.args, ["info"]);
   assert.deepEqual(commands[1]?.args, ["/mock/repo/scripts/openlit/up.sh"]);
+  assert.equal(
+    commands[1]?.options.env?.AUTODEV_OPENLIT_USAGE_URL,
+    "http://127.0.0.1:3000"
+  );
+  assert.equal(
+    commands[1]?.options.env?.AUTODEV_OPENLIT_USAGE_TOKEN,
+    "test-usage-token"
+  );
   assert.ok(
     loggedMessages.some((msg) => msg.includes("Reconciling the OpenLIT"))
   );
   assert.ok(
     loggedMessages.some((msg) =>
-      msg.includes("OpenLIT Usage and ClickHouse are ready")
+      msg.includes("OpenLIT Usage v4 and ClickHouse are ready")
     )
   );
 });

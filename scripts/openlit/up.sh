@@ -19,6 +19,7 @@ LOCK_FILE="${AUTODEV_OPENLIT_LOCK_FILE:-$CODEX_HOME/openlit-patched.lock}"
 OTLP_KEY_FILE="${AUTODEV_OPENLIT_OTLP_KEY_FILE:-$CODEX_HOME/openlit-otlp-api-key}"
 COMPOSE_DIR="$(cd "$(dirname "$COMPOSE_FILE")" && pwd)"
 ASSET_DIR="$COMPOSE_DIR/assets"
+CONSOLE_USAGE_TOKEN_OVERRIDE="${AUTODEV_OPENLIT_USAGE_TOKEN:-}"
 
 fingerprint_files() {
 	local file
@@ -40,11 +41,13 @@ fi
 # Compose does not detect changes to the contents of bind-mounted files.
 # Include their fingerprints in service labels so `compose up` recreates only
 # the affected container while leaving its durable volume untouched.
-export AUTODEV_OPENLIT_CLICKHOUSE_CONFIG_HASH="$(fingerprint_files \
+AUTODEV_OPENLIT_CLICKHOUSE_CONFIG_HASH="$(fingerprint_files \
 	"$ASSET_DIR/clickhouse-config.xml" \
 	"$ASSET_DIR/clickhouse-init.sh")"
-export AUTODEV_OPENLIT_OTEL_CONFIG_HASH="$(fingerprint_files \
+export AUTODEV_OPENLIT_CLICKHOUSE_CONFIG_HASH
+AUTODEV_OPENLIT_OTEL_CONFIG_HASH="$(fingerprint_files \
 	"$ASSET_DIR/otel-collector-config.yaml")"
+export AUTODEV_OPENLIT_OTEL_CONFIG_HASH
 
 if ! command -v docker >/dev/null 2>&1; then
 	echo "up.sh: docker is required" >&2
@@ -153,6 +156,10 @@ if [[ "$OPENLIT_READY" -ne 1 ]]; then
 	echo "up.sh: OpenLIT did not become HTTP-ready on port ${PORT:-3000} within 120 seconds; inspect the openlit container logs" >&2
 	exit 5
 fi
+
+echo "==> Verifying the deployed AutoDev Usage response contract"
+AUTODEV_OPENLIT_USAGE_TOKEN="${CONSOLE_USAGE_TOKEN_OVERRIDE:-$AUTODEV_OPENLIT_USAGE_TOKEN}" \
+	pnpm --filter @simulatorlife/autodev-data openlit:verify-usage
 
 echo "==> Synchronizing rulesync prompts to AutoDev Prompt Hub"
 OPENLIT_DB_PASSWORD="$OPENLIT_DB_PASSWORD" pnpm --filter @simulatorlife/autodev-data openlit:sync-prompts || echo "Warning: prompt synchronization failed" >&2

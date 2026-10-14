@@ -132,9 +132,11 @@ The standalone Console reads the same secret from its server environment as
 
 The endpoint only reports metrics for successful individual widget queries.
 Query errors remain explicitly unobserved, and unsupported distinct-value
-capabilities produce unavailable filters rather than fabricated options. Trace
-attempts are bounded observations; selecting one resolves detail through the
-fixed read-only span route. The retained OpenLIT app is configured for
+capabilities produce unavailable filters rather than fabricated options.
+Filter-option discovery is bounded to the selected time window and scoped to
+the AutoDev service(s) that emit each attribute; it never scans unrelated
+OpenLIT services for dropdown values. Trace attempts are bounded observations;
+selecting one resolves detail through the fixed read-only span route. The retained OpenLIT app is configured for
 request-time rendering because its telemetry pages consume URL search state;
 image builds must not prerender those pages.
 
@@ -223,12 +225,15 @@ Control API, receiver, and Usage tokens are stored together in
 OpenLIT is ready, the runner also synchronizes the tracked prompt/agent,
 provider-model, and workspace catalogs to the local OpenLIT instance.
 
-The root `pnpm run dev` calls this lifecycle when OpenLIT HTTP (`:3000`) and
-ClickHouse (`:8123`) are not already healthy, before it launches the Console.
-On macOS it starts Docker Desktop if its Engine is not running; on other
-platforms the Docker Engine must be running. The containers and their durable
-volumes stay available after the Console process exits. Use `down.sh` when an
-operator explicitly wants to stop the stack.
+The root `pnpm run dev` reconciles this lifecycle on every startup, before it
+launches the Console; HTTP health alone does not establish that a running image
+matches the current patch set. `up.sh` verifies the deployed Usage response
+through the Data client/parser and fails startup if the v4 contract is stale or
+invalid. The build is reused when its source and patch hash match, and Compose
+recreates only affected services while preserving durable volumes. On macOS the
+runner starts Docker Desktop if its Engine is not running; on other platforms
+the Docker Engine must be running. Use `down.sh` only when an operator
+explicitly wants to stop the stack.
 
 | Script                  | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -236,7 +241,7 @@ operator explicitly wants to stop the stack.
 | `build-local.sh`        | Build the patched image and record source, patch, image-ID, and digest metadata outside the repo.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `bootstrap-secrets.sh`  | Generate/preserve strong DB, Control API, OTLP receiver, and Console Usage tokens. Writes the canonical `$CODEX_HOME/openlit-secrets.env` (mode 0600, outside the repo) and additionally materializes the two Console server-only tokens plus their local base URL defaults into `console/.env.local` (mode 0600, ignored by `.env.*`) for Next.js to auto-load on `pnpm run dev` and the standalone Console commands. The launchd-managed Console (`scripts/run-codex-console.sh`) continues to source the canonical secret file directly and does not depend on `console/.env.local`. |
 | `bootstrap-otlp-key.sh` | Materialize the same generated receiver token for producers; it does not call an OpenLIT API.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `up.sh`                 | Build or reuse the locked patch-matched image, prepare secrets, start Compose, and wait for ClickHouse/OpenLIT readiness.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `up.sh`                 | Build or reuse the locked patch-matched image, prepare secrets, start Compose, wait for ClickHouse/OpenLIT readiness, and validate the live Usage v4 response through Data.                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `down.sh`               | Stop the local stack while preserving its durable ClickHouse and OpenLIT data volumes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 The bring-up runner cleans up only its own fresh scratch clone. It never edits the
