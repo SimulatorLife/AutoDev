@@ -3490,11 +3490,23 @@ class StreamingTurn {
       );
     this.settled = true;
     if (!this.stream.isWritable()) return;
-    // agy reports a usage limit as nothing but an error string, so this is the
-    // one place the difference between "out of quota" and "the CLI crashed"
-    // can be recovered. It is only ever `inferred`, never enough on its own
-    // to take the provider out for a long cooldown, but it is enough to pick a
-    // status the router can act on and a retry hint it can size a wait against.
+    // agy states a usage limit as prose on stderr -- "Individual quota reached.
+    // Please upgrade your subscription to increase your limits. Resets in
+    // 24m43s." -- so this is the one place the difference between "out of
+    // quota" and "the CLI crashed" can be recovered. It is only ever `inferred`,
+    // never enough on its own to take the provider out for a hard-cooldown
+    // window, but it is enough to pick a status the router can act on and a
+    // retry hint it can size a wait against.
+    //
+    // The class is load-bearing beyond the wording. Reading `quota reached` as
+    // `quota_exhausted` rather than letting the `429` in agy's status carry it
+    // to `throttled` is what scopes the cooldown to the exhausted model family
+    // instead of the whole provider, so a spent first-party Gemini quota stops
+    // being retried while an assigned Claude model on the same provider stays
+    // servable. agy also emits a structured `AGY_ERROR` envelope naming
+    // `RESOURCE_EXHAUSTED`, which is reported rather than inferred evidence and
+    // would let the cooldown honour a hard window; that envelope is not read
+    // here, so this limit stays inferred by design.
     const limit = classifyCliLimit(message, agyFailure(error).exitCode);
     if (!this.stream.started) {
       this.sendFailureStatus(error, limit);

@@ -319,3 +319,83 @@ test("typed bridges consume the Runtime-owned provider-limit contract", () => {
     /truncationNotice\(\{ provider, limit: failure\.limit, reason: failure\.reason \}\)/
   );
 });
+
+test("an exhausted subscription quota is a hard limit, not a transient rate limit", () => {
+  // The exact wording agy emits when the account's individual quota is spent,
+  // as captured from the bridge log. The `429` in `RESOURCE_EXHAUSTED (code
+  // 429)` used to carry it past the quota pattern to the rate-limit catch-all,
+  // so an exhausted quota was classified `throttled`: a transient cooldown on a
+  // failure streak, scoped to the whole provider instead of the exhausted model
+  // family, which kept every retry aimed at a quota that had already said no.
+  const limit = classifyCliLimit(
+    "status ERROR; Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 33m13s.; exit code 3; stderr: error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 33m13s.",
+    3
+  );
+  assert.equal(limit?.limitClass, "quota_exhausted");
+  assert.equal(limit?.limitType, "quota");
+  // `inferred` still holds: this is prose on stderr, so it picks the class and
+  // the status without being able to take the provider out for the hard window.
+  assert.equal(limit?.source, LIMIT_SOURCE_INFERRED);
+  assert.ok(
+    isHardLimitClass(limit?.limitClass ?? ""),
+    "an exhausted quota is one of the classes that must not be retried into"
+  );
+});
+
+test("a bare 429 with no quota wording is still a rate limit", () => {
+  // The fix must not swallow genuine throttling: widening the quota pattern is
+  // only correct while an unqualified 429 still classifies as throttled.
+  const limit = classifyCliLimit("upstream returned 429 Too Many Requests", 1);
+  assert.equal(limit?.limitClass, "throttled");
+  assert.equal(limit?.limitType, "rate");
+});
+
+test("a stated reset duration becomes the reset time it names", () => {
+  const now = Date.parse("2026-10-14T14:53:09.219Z");
+  const limit = classifyCliLimit(
+    "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 24m43s.",
+    3,
+    now
+  );
+  assert.equal(limit?.limitClass, "quota_exhausted");
+  // Before this, `Resets in 24m43s` matched nothing at all -- the absolute
+  // pattern admits no `h`/`m`/`s` and needs four characters -- so the router was
+  // told only the streak, never the window the provider had just named.
+  assert.equal(limit?.resetsAt, "2026-10-14T15:17:52.219Z");
+  assert.equal(retryAfterSecondsFromLimit(limit, now), 1483);
+});
+
+test("reset durations parse in every unit combination agy states them in", () => {
+  const now = Date.parse("2026-10-14T14:53:09.219Z");
+  const cases: readonly [string, string][] = [
+    ["Resets in 24m43s.", "2026-10-14T15:17:52.219Z"],
+    ["Resets in 33m13s.", "2026-10-14T15:26:22.219Z"],
+    ["Resets in 8h40m0s.", "2026-10-14T23:33:09.219Z"],
+    ["Resets in 14h23m32s.", "2026-10-15T05:16:41.219Z"]
+  ];
+  for (const [stated, expected] of cases) {
+    assert.equal(
+      classifyCliLimit(`Individual quota reached. ${stated}`, 3, now)
+        ?.resetsAt,
+      expected,
+      stated
+    );
+  }
+  // "Resets in" with no window after it states nothing, so it must not resolve
+  // to the current instant -- that would cool a provider down for zero time and
+  // invite the immediate retry this exists to prevent.
+  assert.equal(
+    classifyCliLimit("Individual quota reached. Resets in .", 3, now)?.resetsAt,
+    null
+  );
+});
+
+test("an absolute reset time still wins over a duration in the same message", () => {
+  const now = Date.parse("2026-10-14T14:53:09.219Z");
+  const limit = classifyCliLimit(
+    "quota exhausted; resets at 2026-10-14T18:00:00Z and in 24m43s",
+    3,
+    now
+  );
+  assert.equal(limit?.resetsAt, "2026-10-14T18:00:00.000Z");
+});

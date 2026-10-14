@@ -124,7 +124,7 @@ const CLI_LIMIT_PATTERNS = Object.freeze([
     limitClass: "quota_exhausted",
     limitType: "quota",
     pattern:
-      /quota (?:exceeded|exhausted)|out of (?:credit|quota)|insufficient (?:credit|quota|fund)|billing|usage limit reached|weekly limit/i
+      /quota (?:exceeded|exhausted|reached)|quota limit|out of (?:credit|quota)|insufficient (?:credit|quota|fund)|billing|usage limit reached|weekly limit/i
   },
   {
     limitClass: "session_limit",
@@ -142,6 +142,58 @@ const RESETS_AT_PATTERN =
   /reset(?:s|ting)?(?: at| on| in)?[:\s]+([0-9TZ:.\-+ ]{4,40})/i;
 
 /**
+ * The other way a provider states a reset: a remaining duration rather than a
+ * clock time. agy reports "Resets in 24m43s." and "Resets in 14h23m32s.".
+ *
+ * `RESETS_AT_PATTERN` cannot match either -- its character class admits no
+ * `h`, `m`, or `s`, and it requires at least four characters -- so every one of
+ * these messages arrived with `resetsAt: null`, and the router sized its wait
+ * from the failure streak instead of the window the provider had just named. A
+ * quota that states it resets in 25 minutes was cooled down for 8.
+ */
+const RESETS_IN_DURATION_PATTERN = /reset(?:s|ting)?\s+in\s+([0-9hms]+)/i;
+
+/** One `24m43s`-style component: an amount and the unit it is counted in. */
+const DURATION_COMPONENT_PATTERN = /(\d+)\s*([hms])/g;
+
+const MS_PER_SECOND = 1000;
+const MS_PER_MINUTE = 60 * MS_PER_SECOND;
+const MS_PER_HOUR = 60 * MS_PER_MINUTE;
+
+/**
+ * Milliseconds in a stated window such as `24m43s` or `14h23m32s`, or null when
+ * it names no window. The window is matched as a flat run of digits and unit
+ * letters and split here rather than by nested optional groups in the pattern:
+ * stacked optionals over overlapping separators are the shape that backtracks,
+ * and this runs against a provider's stderr tail.
+ */
+function durationMsFromWindow(window: string): number | null {
+  let total = 0;
+  let components = 0;
+  for (const [, digits, unit] of window.matchAll(DURATION_COMPONENT_PATTERN)) {
+    const amount = Number(digits);
+    if (!Number.isFinite(amount)) return null;
+    total +=
+      amount *
+      (unit === "h" ? MS_PER_HOUR : unit === "m" ? MS_PER_MINUTE : MS_PER_SECOND);
+    components += 1;
+  }
+  return components > 0 && total > 0 ? total : null;
+}
+
+/** The absolute reset time a stated duration lands on, or null when none is stated. */
+function resetsAtFromDuration(text: string, now: number): string | null {
+  const window = text.match(RESETS_IN_DURATION_PATTERN)?.[1];
+  // "Resets in" with no window after it states nothing, so it must not resolve
+  // to the current instant: that would cool a provider down for zero time and
+  // invite the immediate retry this exists to prevent.
+  if (!window) return null;
+  const durationMs = durationMsFromWindow(window);
+  if (durationMs === null) return null;
+  return new Date(now + durationMs).toISOString();
+}
+
+/**
  * Best-effort classification of a CLI failure message. Always reports
  * `inferred`: this reads free text, and a bridge that hands the router a
  * 4000-character stderr tail must not be able to lock a provider out for the
@@ -150,19 +202,23 @@ const RESETS_AT_PATTERN =
  */
 export function classifyCliLimit(
   message: unknown,
-  exitCode: number | null = null
+  exitCode: number | null = null,
+  now = Date.now()
 ): ProviderLimit | null {
   const text = String(message ?? "");
   if (!text.trim()) return null;
   const match = CLI_LIMIT_PATTERNS.find(({ pattern }) => pattern.test(text));
   if (!match) return null;
-  const resetsMatch = text.match(RESETS_AT_PATTERN);
+  const absoluteMatch = text.match(RESETS_AT_PATTERN);
+  const absoluteResetsAt = absoluteMatch?.[1]
+    ? normalizeResetsAt(absoluteMatch[1].trim())
+    : null;
   return {
     limitClass: match.limitClass,
     limitType: match.limitType,
-    resetsAt: resetsMatch?.[1]
-      ? normalizeResetsAt(resetsMatch[1].trim())
-      : null,
+    // A stated duration is a window relative to *now*, so it resolves against
+    // the same clock the router cools down against.
+    resetsAt: absoluteResetsAt ?? resetsAtFromDuration(text, now),
     source: LIMIT_SOURCE_INFERRED,
     exitCode: Number.isInteger(exitCode) ? exitCode : null
   };

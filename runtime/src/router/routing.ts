@@ -1044,7 +1044,18 @@ export class RoutingPolicy {
   ): Candidate[] {
     if (!tier) return [];
     return this.providerPriority(tier, random, role).flatMap((provider) => {
-      const model = this.configuredModel(provider, tier);
+      // A provider-role assignment's model is the operator's explicit choice for
+      // this provider and role; the tier's configured model is the default it
+      // falls back to. Reading only the tier made the model half of a role
+      // assignment write-only: the control API validated it, persisted it, and
+      // reported `converged` -- reading back the same in-memory object it had
+      // just written -- while every request resolved the tier's model instead.
+      // The Console's model selector therefore reported a change that no request
+      // ever saw, which is why choosing Claude Opus on a provider could not alter
+      // the model that ran.
+      const model =
+        this.assignmentFor(provider, role)?.model ??
+        this.configuredModel(provider, tier);
       if (!model || !this.isModelEnabled(model)) return [];
       const route = this.routeForModel(model);
       return route ? [{ ...route, model }] : [];

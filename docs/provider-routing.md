@@ -28,6 +28,16 @@ process receives a role-scoped temporary MCP home. `smart` uses the configured
 model. Every role uses the `local_model_router` with an `autodev/<role>` model
 alias.
 
+A provider's role assignment may name its own model, and that assignment wins
+over the tier's configured model for that provider and role. The Console's
+Providers tab and `PATCH /control/providers/<provider>/roles/<role>` both write
+it; it is an operator override layered on top of the routing config's tier
+defaults, not a second place to define tiers. Clearing the assignment restores
+the tier's model. A model named by an assignment must route to the same provider
+and must be enabled, or the provider drops out of that role's candidates rather
+than falling back — a role assignment that names an unusable model removes that
+provider from the role rather than silently serving a different one.
+
 ### Model routing, provider catalogs, and UI data (DRY model architecture)
 
 [`config/model-routing.json`](file://config/model-routing.json) is the single source for which model each provider uses at each routing tier and which providers are eligible for that tier. Provider-specific [`config/catalogs/*-model-catalog.json`](file://config/catalogs) files own model metadata such as display names, context windows, and supported reasoning levels. These are separate responsibilities: the routing config references catalog model IDs; it is not a second list of model metadata.
@@ -521,6 +531,20 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   hard reset; AutoDev does not know remaining quota percentages. Use
   Antigravity's [`/usage` panel](https://antigravity.google/docs/cli/commands/usage/)
   for upstream quota totals.
+
+  Only the `quota_exhausted` class arms that pool scope, so the classification is
+  load-bearing rather than cosmetic. Antigravity states an exhausted
+  subscription as "Individual quota reached. Please upgrade your subscription to
+  increase your limits. Resets in 24m43s.", and the `429` in the surrounding
+  `RESOURCE_EXHAUSTED (code 429)` once matched the rate-limit catch-all ahead of
+  the quota wording. That classed it `throttled`, which is neither a hard limit
+  nor pool-scoped: the cooldown covered the whole provider, so a spent Gemini
+  quota took an assigned Claude model offline with it — the opposite of what this
+  section describes — and it retried on the transient ladder into a quota that
+  had already answered. The reset is also stated as a remaining duration
+  (`24m43s`, `14h23m32s`) rather than a clock time, which the absolute-time
+  pattern could not read; both the class and the duration are parsed now, so
+  `/status` and the 503 body report the window the provider actually named.
 - **Probe failures ride their own ladder.** A local bridge restarting says
   nothing about the provider behind it, and escalating the provider's own backoff
   for it was how a one-minute outage became a ten-minute one.

@@ -13601,3 +13601,62 @@ test("autodevEnrichOtlpPayload preserves aggregation semantics on metrics", () =
   for (const key of ["skill", "status", "autodev.skill"])
     assert.equal(afterKeys.has(key), true);
 });
+
+test("a provider-role assignment's model is the model a request runs", () => {
+  // The model half of a role assignment used to be write-only. `tierCandidates`
+  // resolved `configuredModel(provider, tier)` and never consulted the
+  // assignment, while the control API validated that model, persisted it, and
+  // reported `converged` by reading back the same in-memory object it had just
+  // written. So the Console accepted "orchestrator -> Claude Opus", showed the
+  // change as applied, and every request still ran the tier's model.
+  const tier = routing.config.orchestrator.tier;
+  const providers = [
+    ...new Set(routing.orchestratorCandidates(() => 0).map((c) => c.provider))
+  ];
+  let exercised = 0;
+  for (const provider of providers) {
+    const tierModel = routing.configuredModel(provider, tier);
+    if (!tierModel) continue;
+    const alternative = Object.values(
+      routing.config.providers[provider]?.models ?? {}
+    ).find(
+      (model) =>
+        model !== tierModel &&
+        routing.isModelEnabled(model) &&
+        routing.routeForModel(model)?.provider === provider
+    );
+    if (!alternative) continue;
+    const previous = routing.assignmentFor(provider, "orchestrator") ?? null;
+    try {
+      routing.setProviderAssignment(provider, "orchestrator", {
+        priority: 1,
+        model: alternative
+      });
+      assert.equal(
+        routing
+          .orchestratorCandidates(() => 0)
+          .find((entry) => entry.provider === provider)?.model,
+        alternative,
+        `${provider} must run the model its orchestrator assignment names`
+      );
+      exercised += 1;
+    } finally {
+      if (previous)
+        routing.setProviderAssignment(provider, "orchestrator", previous);
+      else routing.clearProviderAssignment(provider, "orchestrator");
+    }
+    // With no assignment the provider must fall back to its tier's configured
+    // model, which is what every unassigned provider has always used.
+    assert.equal(
+      routing
+        .orchestratorCandidates(() => 0)
+        .find((entry) => entry.provider === provider)?.model,
+      tierModel,
+      `${provider} must fall back to its tier model with no assignment`
+    );
+  }
+  assert.ok(
+    exercised > 0,
+    "at least one orchestrator provider must offer an alternative model"
+  );
+});
