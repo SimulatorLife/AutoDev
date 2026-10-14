@@ -545,6 +545,7 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   (`24m43s`, `14h23m32s`) rather than a clock time, which the absolute-time
   pattern could not read; both the class and the duration are parsed now, so
   `/status` and the 503 body report the window the provider actually named.
+
 - **Probe failures ride their own ladder.** A local bridge restarting says
   nothing about the provider behind it, and escalating the provider's own backoff
   for it was how a one-minute outage became a ten-minute one.
@@ -1912,11 +1913,32 @@ The Codex-tools shim is the obvious candidate and is not currently in place for
 agy. Two agy mechanisms could carry it, and both were tested against the
 installed agy rather than inferred from its help text:
 
-- **`--agent` works.** agy takes `agy --agent <name>`, and custom agents load
-  from `<workspace>/.agents/agents/<name>/agent.md` with YAML frontmatter and an
-  H1-delimited prompt. Verified live: the agent's prompt reaches the model, and
-  an unknown name fails fast with `unknown agent "x" (no custom agents are
-  available)` before any model call. AutoDev passes no `--agent` today.
+- **`--agent` works, and resolves from a workspace root and nowhere else.**
+  agy takes `agy --agent <name>`, and custom agents load from
+  `<workspace>/.agents/agents/<name>/agent.md` with YAML frontmatter and an
+  H1-delimited prompt. An unknown name fails fast with
+  `unknown agent "x" (available: ...)` before any model call, and the message
+  lists what _is_ registered — which is what makes it usable as a probe.
+
+  "Workspace root" is the whole of it. Measured with a name-defined-nowhere
+  control at each end: an agent under the process's cwd resolved, and a
+  byte-identical one under `$HOME/.agents/agents/` did not. `$HOME` is not a
+  customization root for agents, so the bridge's isolated home cannot hold one.
+
+  What does work is `--add-dir`, which makes a directory a workspace root. An
+  agent under an added directory resolved and appeared in the registry that the
+  control arm reported. The bridge writes each turn's agent definition into the
+  invocation's own directory and adds it, rather than writing into the user's
+  workspace — a per-turn artifact in someone's own tree is not a thing to leave
+  behind, and two concurrent turns in one workspace would race on the same path.
+
+  Two more measured details of the same probe. agy takes the token after `-p`
+  as the prompt itself, so a flag placed between `-p` and its prompt is
+  swallowed as prompt text and the real prompt is silently ignored;
+  `--agent`/`--add-dir` therefore go last. And the agent registry is cached
+  globally across runs, so a freshly created agent name can fail to resolve for
+  a while even though the file is on disk.
+
 - **`excludeDefaultComponents: true` removes the built-in tools, and the
   camelCase spelling is the one that works.** Measured against the installed agy
   with a positive control at each end, asking the agent to read a real file and
@@ -1924,7 +1946,7 @@ installed agy rather than inferred from its help text:
 
   | agent frontmatter                | `view_file` | MCP tools |
   | -------------------------------- | ----------- | --------- |
-  | none (no `--agent`)               | used        | —         |
+  | none (no `--agent`)              | used        | —         |
   | none, `--agent` selected         | used        | —         |
   | `excludeDefaultComponents: true` | **absent**  | **used**  |
   | camel + `enable_mcp_tools: true` | **absent**  | **used**  |
@@ -1942,30 +1964,45 @@ installed agy rather than inferred from its help text:
   60 entries in every arm, baselines included — so it cannot detect this at all.
   And a behavioural probe driven by a custom agent's own prompt is worthless,
   because that prompt governs the reply: an agent described as "bounded" answers
-  "I have no such tool" whatever it has. Watch for a tool *step*, and keep a
+  "I have no such tool" whatever it has. Watch for a tool _step_, and keep a
   no-flag control at each end of the run.
-- **`PreToolUse` hooks work, and are the backstop.** Hooks load from
-  `<workspace>/.agents/hooks.json`, keyed by hook name, with a Claude-shaped
-  `matcher` / `PreToolUse` / `{type: "command", command, timeout}` body. A hook
-  receives `{toolCall: {name, args}, stepIdx, ...}` on stdin and answers with
-  `{decision: "allow"|"deny"|"ask"|"force_ask", reason?, permissionOverrides?,
-  overwrite?}`, where `overwrite` is a shallow merge into that same call's
-  arguments. There is **no reroute decision** -- a hook can rewrite arguments or
-  block, but cannot substitute a different tool -- so the shim must be *offered*
-  and the built-ins *refused*, not translated.
 
-Two things a hook does better than the permissions file, both verified:
-`decision: "deny"` is a hard block that **survives
-`--dangerously-skip-permissions`** (the flag the bridge passes by default), and a
-denial comes back to the model as a `TOOL_ERROR` on the tool step, so the turn
-continues and the model adapts rather than the provider failing -- so the
-existing `AGY_PERMISSION_DENIED` classification does not become a false provider
-fault. The hook also sees the tool's own arguments, which carry a `toolSummary`
-string agy writes for the call.
+- **`PreToolUse` hooks load but do not fire under `-p`, so they are not a
+  backstop.** This corrects an earlier claim here that they work and that
+  `decision: "deny"` survives `--dangerously-skip-permissions`. The hooks are
+  found and parsed — agy's own log says `loaded 4 named hooks from 1 hooks.json
+file(s)` — but no hook command executed during a turn that demonstrably called
+  a built-in (`view_file`, two `step_update` tool events, and `run_command`
+  approval granted). Four matcher spellings were tried in one run: the tool's
+  own name, `""`, `".*"`, and `"*"`; none fired. The probe's hook commands were
+  plain `cat >> <file>` and `printf`, with no dependency on `PATH` or `node`,
+  so a failed command cannot explain a file that stayed empty.
 
-Ordering matters. Denying the built-ins while the shim is unregistered leaves
-agy with no execution path at all, so the shim and its parking land first; a
-`PreToolUse` deny on its own would break every Antigravity turn.
+  What is _not_ ruled out is folder trust: agy's changelog records a fix for
+  workspace hooks not loading "after trusting a folder", and the probe folder
+  was created minutes earlier and had never been opened. Until that is
+  measured, a deny hook must not be described as a safety guarantee — a backstop
+  that never fires reads like one and is not.
+
+  For the same reason, the settings file is not a backstop today either, for a
+  reason that has nothing to do with hooks: headless mode _does_ auto-deny a
+  tool with no allow-rule (agy says so and names the fix — "a tool required the
+  `read_file` permission that headless mode cannot prompt for, so it was
+  auto-denied. Add an allow-rule under `permissions.allow` in settings.json"),
+  but `agyArgs` passes `--dangerously-skip-permissions` by default, which
+  approves every permission request and so removes that gate. Making the
+  settings authoritative for these turns means dropping that flag for them and
+  granting the MCP entry point by name, which is a separate change with its own
+  verification.
+
+  The one fact that does matter for the shim's shape: MCP tools are not separate
+  advertised tools. agy reaches every MCP server through a single built-in,
+  `call_mcp_tool`, which is why `excludeDefaultComponents` has to leave it.
+  `init.tools` lists all 60 built-ins, of which `call_mcp_tool` is the only one
+  that can reach Codex's tools.
+
+Ordering matters, and it is why the shim landed first: removing the built-ins
+while the shim is unregistered would leave agy with no execution path at all.
 
 What the bridge does instead is make its own stream legible, because agy's
 `step_update` events carry the detail and the old wording discarded it. Each tool
