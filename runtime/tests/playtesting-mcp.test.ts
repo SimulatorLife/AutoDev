@@ -82,11 +82,19 @@ function analystMetricAggregation(
   episodeIds: readonly string[],
   analysisId = "analysis-1"
 ) {
-  const sourcePackets = episodeIds.map((episodeId, index) => ({
-    episodeId,
-    batchId: `batch-${String(index + 1)}`,
-    packetId: `packet-${String(index + 1)}`
-  }));
+  const sourcePackets = episodeIds
+    .map((episodeId, index) => ({
+      episodeId,
+      batchId: `batch-${String(index + 1)}`,
+      packetId: `packet-${String(index + 1)}`
+    }))
+    .sort((left, right) =>
+      left.episodeId < right.episodeId
+        ? -1
+        : left.episodeId > right.episodeId
+          ? 1
+          : 0
+    );
   return {
     schema: PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA,
     workspaceId: WORKSPACE_ID,

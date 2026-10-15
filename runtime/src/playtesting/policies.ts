@@ -39,16 +39,20 @@ export function createSeededRandomPlaytestPolicy(
   options: {
     readonly id?: string;
     readonly cohort?: string;
+    readonly version?: string;
   } = {}
 ): PlaytestPolicy {
   const id = options.id ?? "random";
   const cohort = options.cohort ?? "exploratory";
-  if (!id.trim() || !cohort.trim()) {
-    throw new TypeError("Random policy id and cohort must be non-empty.");
+  const version = options.version ?? "hmac-sha256-v1";
+  if (!id.trim() || !cohort.trim() || !version.trim()) {
+    throw new TypeError(
+      "Random policy id, cohort, and version must be non-empty."
+    );
   }
   return {
     id,
-    version: "hmac-sha256-v1",
+    version,
     cohort,
     strategy: "uniform-legal-action",
     modelId: null,
@@ -173,16 +177,20 @@ export function createFirstLegalPlaytestPolicy(
   options: {
     readonly id?: string;
     readonly cohort?: string;
+    readonly version?: string;
   } = {}
 ): PlaytestPolicy {
   const id = options.id ?? "first-legal";
   const cohort = options.cohort ?? "deterministic";
-  if (!id.trim() || !cohort.trim()) {
-    throw new TypeError("First-legal policy id and cohort must be non-empty.");
+  const version = options.version ?? "lowest-action-id-v1";
+  if (!id.trim() || !cohort.trim() || !version.trim()) {
+    throw new TypeError(
+      "First-legal policy id, cohort, and version must be non-empty."
+    );
   }
   return {
     id,
-    version: "lowest-action-id-v1",
+    version,
     cohort,
     strategy: "lexicographically-first-legal-action",
     modelId: null,
@@ -220,12 +228,13 @@ export const PLAYTESTS_BUILTIN_POLICY_IDS: ReadonlySet<string> = new Set([
 
 /** Construct a built-in policy by id, or null when the id is not one. */
 export function createBuiltinPlaytestPolicy(
-  policyId: string
+  policyId: string,
+  options: { readonly version?: string } = {}
 ): PlaytestPolicy | null {
   if (policyId === "random")
-    return createSeededRandomPlaytestPolicy({ id: policyId });
+    return createSeededRandomPlaytestPolicy({ id: policyId, ...options });
   if (policyId === "first-legal") {
-    return createFirstLegalPlaytestPolicy({ id: policyId });
+    return createFirstLegalPlaytestPolicy({ id: policyId, ...options });
   }
   return null;
 }

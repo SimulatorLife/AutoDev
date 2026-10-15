@@ -11,6 +11,7 @@ import {
   accessSync,
   chmodSync,
   constants,
+  existsSync,
   lstatSync,
   mkdtempSync,
   readdirSync,
@@ -394,7 +395,15 @@ export function localDockerSocket(
   home = homedir()
 ): string {
   if (platform === "darwin") {
-    return path.join(home, ".docker", "run", "docker.sock");
+    const userSocket = path.join(home, ".docker", "run", "docker.sock");
+    if (
+      home === homedir() &&
+      !existsSync(userSocket) &&
+      existsSync("/var/run/docker.sock")
+    ) {
+      return "/var/run/docker.sock";
+    }
+    return userSocket;
   }
   if (platform === "linux") {
     return "/var/run/docker.sock";

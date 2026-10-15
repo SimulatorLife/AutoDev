@@ -1,8 +1,9 @@
 import { expect, type Page, test } from "@playwright/test";
 
 const UNSUPPORTED_MODEL_ID = "claude-preview-unroutable";
+const STALE_AVAILABILITY_TITLE = /availability is stale/u;
 
-async function documentFitsViewport(page: Page): Promise<boolean> {
+function documentFitsViewport(page: Page): Promise<boolean> {
   return page.evaluate(
     () => document.documentElement.scrollWidth <= window.innerWidth
   );
@@ -26,9 +27,9 @@ test("Providers distinguishes live, stale, unavailable, and unsupported models",
   await expect(
     page.locator('[data-provider-discovery="claude"]')
   ).toContainText("Observed · 2 models");
-  await expect(
-    page.locator('[data-provider-discovery="codex"]')
-  ).toContainText("Stale · 1 last-known models");
+  await expect(page.locator('[data-provider-discovery="codex"]')).toContainText(
+    "Stale · 1 last-known models"
+  );
   await expect(
     page.locator('[data-provider-discovery="copilot"]')
   ).toContainText("Unavailable");
@@ -41,7 +42,6 @@ test("Providers distinguishes live, stale, unavailable, and unsupported models",
   expect(await documentFitsViewport(page)).toBe(true);
 
   await page.goto("/providers?tab=providers");
-  await expect(page.locator('[data-tab-panel="providers"]')).toBeVisible();
   await expect(page.locator('[data-tab-panel="providers"]')).toBeVisible();
   const currentModel = page.locator(
     '[data-select="role-model-claude-default"]'
@@ -57,7 +57,7 @@ test("Providers distinguishes live, stale, unavailable, and unsupported models",
 
   const staleModel = page.locator('[data-select="role-model-codex-default"]');
   await expect(staleModel).toBeDisabled();
-  await expect(staleModel).toHaveAttribute("title", /availability is stale/u);
+  await expect(staleModel).toHaveAttribute("title", STALE_AVAILABILITY_TITLE);
   const staleForm = page.locator('[data-role-form="codex-default"]');
   await expect(staleForm.locator('input[name="model"]')).toHaveValue(
     "gpt-6-luna"

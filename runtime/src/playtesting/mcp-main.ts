@@ -43,7 +43,7 @@ export function assertPlaytestStdioSessionBinding(
   configuredRoles: ReadonlySet<string>
 ): void {
   if (
-    config.role === "playtest-analyst" &&
+    config.role === ANALYST_ROLE &&
     (!config.analysisId ||
       !SESSION_VALUE_PATTERN.test(config.analysisId) ||
       !isValidSelectedEpisodeIds(config.selectedEpisodeIds) ||
@@ -51,7 +51,7 @@ export function assertPlaytestStdioSessionBinding(
   ) {
     throw new Error(ANALYST_SELECTION_ERROR);
   }
-  if (config.role === "playtest-analyst") {
+  if (config.role === ANALYST_ROLE) {
     try {
       assertPlaytestCrossSessionMetricAggregation(
         config.metricAggregation,
@@ -90,6 +90,7 @@ export function assertPlaytestStdioSessionBinding(
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const SESSION_VALUE_PATTERN = /^[A-Za-z0-9@._:-]{1,256}$/u;
 const EPISODE_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
+const ANALYST_ROLE = "playtest-analyst" as const;
 const ANALYST_SELECTION_ERROR =
   "The trusted analyst session selection is missing or invalid.";
 const PRIVILEGED_CONTROL_ROLES = new Set(["root", "operator"]);
@@ -185,15 +186,13 @@ export function playtestStdioConfiguration(
   }
   const repositoryRoot = env.AUTODEV_PLAYTEST_REPOSITORY_ROOT?.trim() || null;
   const analysisId =
-    role === "playtest-analyst"
+    role === ANALYST_ROLE
       ? requiredSessionValue(env, "AUTODEV_PLAYTEST_ANALYSIS_ID")
       : undefined;
   const selectedEpisodeIds =
-    role === "playtest-analyst"
-      ? selectedEpisodeIdsFromEnvironment(env)
-      : undefined;
+    role === ANALYST_ROLE ? selectedEpisodeIdsFromEnvironment(env) : undefined;
   const metricAggregation =
-    role === "playtest-analyst"
+    role === ANALYST_ROLE
       ? metricAggregationFromEnvironment({
           env,
           workspaceId,

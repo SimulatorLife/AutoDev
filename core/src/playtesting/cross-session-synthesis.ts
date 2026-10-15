@@ -164,7 +164,10 @@ function assertSynthesisMetricAggregationSources(
 ): void {
   if (aggregation.status === "not-recorded") return;
   const packetForEpisode = new Map(
-    aggregation.sourcePackets.map((source) => [source.episodeId, source.packetId])
+    aggregation.sourcePackets.map((source) => [
+      source.episodeId,
+      source.packetId
+    ])
   );
   for (const [episodeId, packetId] of contributors) {
     if (packetForEpisode.get(episodeId) !== packetId) {

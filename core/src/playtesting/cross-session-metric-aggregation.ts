@@ -10,9 +10,10 @@ import { canonicalPlaytestJson } from "./canonical-json.ts";
 import { assertPlaytestEvidencePacket } from "./evidence-packet.ts";
 import { assertPlaytestNumericResults } from "./metric-evaluation.ts";
 import {
+  type PlaytestMissingReason,
   PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA,
-  PLAYTESTS_MISSING_REASONS,
-  type PlaytestMissingReason
+  PLAYTESTS_EVIDENCE_PACKET_SCHEMA,
+  PLAYTESTS_MISSING_REASONS
 } from "./types.ts";
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9@._:-]{1,256}$/u;
@@ -23,6 +24,7 @@ const MAX_METRIC_AGGREGATION_BYTES = 16 * 1024;
 const MAX_METRIC_AGGREGATE_ROWS = 256;
 const MAX_SYNTHESIS_PAYLOAD_BYTES = 64 * 1024;
 const AGGREGATION_METHOD = "ratio-of-sums-within-identical-stratum-v1" as const;
+const RATIO_OF_SUMS_AGGREGATION = "ratio-of-sums-within-scenario" as const;
 const NOT_RECORDED_STATUS = "not-recorded" as const;
 const HISTORICAL_AGGREGATION_REASON =
   "historical-synthesis-predates-aggregation" as const;
@@ -62,7 +64,9 @@ function isSha256(value: unknown): value is string {
 function isMetricVersion(value: unknown): value is number | string {
   return (
     (typeof value === "number" && Number.isSafeInteger(value) && value >= 1) ||
-    (typeof value === "string" && value.trim().length > 0 && value.length <= 256)
+    (typeof value === "string" &&
+      value.trim().length > 0 &&
+      value.length <= 256)
   );
 }
 
@@ -76,7 +80,7 @@ interface MetricAccumulator {
   readonly intent: {
     readonly analysisUnit: PlaytestCrossSessionMetricAggregate["analysisUnit"];
     readonly aggregationWindow: PlaytestCrossSessionMetricAggregate["aggregationWindow"];
-    readonly aggregation: "ratio-of-sums-within-scenario";
+    readonly aggregation: typeof RATIO_OF_SUMS_AGGREGATION;
   };
   readonly identity: Omit<
     PlaytestCrossSessionMetricAggregate,
@@ -146,7 +150,7 @@ function metricAggregationRefusal(
 ): MetricAggregationRefusal | null {
   if (
     packets.some(
-      ({ packet }) => packet.schema !== "autodev-playtest-evidence-packet-v3"
+      ({ packet }) => packet.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA
     )
   ) {
     return {
@@ -185,7 +189,7 @@ function collectMetricAggregates(input: {
         : 0
   );
   for (const { packet } of packets) {
-    if (packet.schema !== "autodev-playtest-evidence-packet-v3") {
+    if (packet.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA) {
       throw new TypeError(
         "Cross-session metric aggregation requires frozen v3 metric semantics."
       );
@@ -201,7 +205,7 @@ function collectMetricAggregates(input: {
           "Cross-session packet metric rows must match their frozen registry intent."
         );
       }
-      if (intent.aggregation !== "ratio-of-sums-within-scenario") {
+      if (intent.aggregation !== RATIO_OF_SUMS_AGGREGATION) {
         addUnsupportedMetric(omitted, metric.metricId, metric.metricVersion);
         continue;
       }
@@ -210,7 +214,11 @@ function collectMetricAggregates(input: {
         workspaceId: input.workspaceId,
         packet,
         metric,
-        intent
+        intent: {
+          analysisUnit: intent.analysisUnit,
+          aggregationWindow: intent.aggregationWindow,
+          aggregation: RATIO_OF_SUMS_AGGREGATION
+        }
       });
     }
   }
@@ -238,13 +246,10 @@ function addMetricContribution(input: {
   readonly workspaceId: string;
   readonly packet: Extract<
     PlaytestEvidencePacket,
-    { readonly schema: "autodev-playtest-evidence-packet-v3" }
+    { readonly schema: typeof PLAYTESTS_EVIDENCE_PACKET_SCHEMA }
   >;
   readonly metric: PlaytestEvidencePacket["metrics"][number];
-  readonly intent: Extract<
-    PlaytestEvidencePacket,
-    { readonly schema: "autodev-playtest-evidence-packet-v3" }
-  >["metricIntent"][number];
+  readonly intent: MetricAccumulator["intent"];
 }): void {
   const { accumulators, workspaceId, packet, metric, intent } = input;
   const identity = {
@@ -252,7 +257,7 @@ function addMetricContribution(input: {
     metricVersion: metric.metricVersion,
     phaseId: metric.phaseId,
     unit: metric.unit,
-    aggregation: intent.aggregation,
+    aggregation: RATIO_OF_SUMS_AGGREGATION,
     analysisUnit: intent.analysisUnit,
     aggregationWindow: intent.aggregationWindow,
     buildSha: packet.buildSha,
@@ -286,7 +291,8 @@ function addMetricContribution(input: {
   };
   const groupKey = canonicalPlaytestJson(validatedIdentity);
   const accumulator =
-    accumulators.get(groupKey) ?? newMetricAccumulator(validatedIdentity, intent);
+    accumulators.get(groupKey) ??
+    newMetricAccumulator(validatedIdentity, intent);
   addSufficientStatistics(accumulator, metric);
   accumulator.packetIds.add(packet.packetId);
   assertAccumulatorCounts(accumulator);
@@ -347,9 +353,7 @@ function aggregateRows(
   );
   return [...accumulators.entries()]
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    .map(([, accumulator]) =>
-      aggregateRow(accumulator, sourceIndexByPacketId)
-    );
+    .map(([, accumulator]) => aggregateRow(accumulator, sourceIndexByPacketId));
 }
 
 function aggregateRow(
@@ -397,9 +401,17 @@ function sortedMetricOmissions(
 ): PlaytestCrossSessionMetricAggregation["omittedMetrics"] {
   return [...omissions.values()].sort((left, right) => {
     const leftKey =
-      String(left.metricId) + "@" + String(left.metricVersion) + ":" + left.reason;
+      String(left.metricId) +
+      "@" +
+      String(left.metricVersion) +
+      ":" +
+      left.reason;
     const rightKey =
-      String(right.metricId) + "@" + String(right.metricVersion) + ":" + right.reason;
+      String(right.metricId) +
+      "@" +
+      String(right.metricVersion) +
+      ":" +
+      right.reason;
     return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
   });
 }
@@ -415,7 +427,10 @@ function metricAggregationOutcome(input: {
     return metricAggregationResult({
       workspaceId: input.workspaceId,
       analysisId: input.analysisId,
-      status: input.omittedMetrics.length === 0 ? "no-applicable-metrics" : "unavailable",
+      status:
+        input.omittedMetrics.length === 0
+          ? "no-applicable-metrics"
+          : "unavailable",
       sourcePackets: input.sourcePackets,
       omittedMetrics: input.omittedMetrics,
       reason:
@@ -573,28 +588,82 @@ const METRIC_AGGREGATE_ROW_KEYS = new Set([
   "independentUnits"
 ]);
 
+interface MetricAggregationEnvelope extends Record<string, unknown> {
+  readonly sourcePackets: readonly unknown[];
+  readonly rows: readonly unknown[];
+  readonly omittedMetrics: readonly unknown[];
+  readonly status: PlaytestCrossSessionMetricAggregation["status"];
+  readonly reason: PlaytestCrossSessionMetricAggregation["reason"];
+}
+
 function assertCrossSessionMetricAggregation(
   value: unknown,
   workspaceId: string,
   analysisId: string,
   selectedEpisodeIds: ReadonlySet<string>
 ): asserts value is PlaytestCrossSessionMetricAggregation {
+  assertMetricAggregationEnvelope(value, workspaceId, analysisId);
+  const sourceEpisodeIds = assertMetricAggregationSources(
+    value.sourcePackets,
+    selectedEpisodeIds
+  );
+  if (value.status === NOT_RECORDED_STATUS) {
+    assertHistoricalMetricAggregation(value);
+    return;
+  }
+  assertSelectedMetricPacketCoverage(sourceEpisodeIds, selectedEpisodeIds);
+  assertMetricAggregationOmissions(value.omittedMetrics);
+  assertMetricAggregationRows(value.rows, value.sourcePackets.length);
+  assertMetricAggregationStatus(value);
+}
+
+function assertMetricAggregationEnvelope(
+  value: unknown,
+  workspaceId: string,
+  analysisId: string
+): asserts value is MetricAggregationEnvelope {
+  if (!isRecord(value)) {
+    throw new TypeError("Cross-session metric aggregation is malformed.");
+  }
+  assertMetricAggregationIdentity(value, workspaceId, analysisId);
+  assertMetricAggregationLists(value);
+}
+
+function assertMetricAggregationIdentity(
+  value: Record<string, unknown>,
+  workspaceId: string,
+  analysisId: string
+): void {
   if (
-    !isRecord(value) ||
     Object.keys(value).length !== METRIC_AGGREGATION_KEYS.size ||
     Object.keys(value).some((key) => !METRIC_AGGREGATION_KEYS.has(key)) ||
     value.schema !== PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA ||
     value.workspaceId !== workspaceId ||
     value.analysisId !== analysisId ||
     value.method !== AGGREGATION_METHOD ||
-    ![
-      "available",
-      "partial",
-      "no-applicable-metrics",
-      "insufficient-packets",
-      "unavailable",
-      "not-recorded"
-    ].includes(String(value.status)) ||
+    !isAggregationStatus(value.status)
+  ) {
+    throw new TypeError(
+      "Cross-session metric aggregation identity is invalid."
+    );
+  }
+}
+
+function isAggregationStatus(
+  value: unknown
+): value is PlaytestCrossSessionMetricAggregation["status"] {
+  return [
+    "available",
+    "partial",
+    "no-applicable-metrics",
+    "insufficient-packets",
+    "unavailable",
+    NOT_RECORDED_STATUS
+  ].includes(String(value));
+}
+
+function assertMetricAggregationLists(value: Record<string, unknown>): void {
+  if (
     !Array.isArray(value.sourcePackets) ||
     value.sourcePackets.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS ||
     !Array.isArray(value.rows) ||
@@ -602,48 +671,83 @@ function assertCrossSessionMetricAggregation(
     !Array.isArray(value.omittedMetrics) ||
     value.omittedMetrics.length > 1000
   ) {
-    throw new TypeError("Cross-session metric aggregation is malformed.");
+    throw new TypeError(
+      "Cross-session metric aggregation lists are malformed."
+    );
   }
-  const sourcePacketCount = (value.sourcePackets as readonly unknown[]).length;
+}
+
+function assertMetricAggregationSources(
+  value: readonly unknown[],
+  selectedEpisodeIds: ReadonlySet<string>
+): ReadonlySet<string> {
   const sourceEpisodeIds = new Set<string>();
   const sourcePacketIds = new Set<string>();
   let previousEpisodeId: string | null = null;
-  for (const source of value.sourcePackets) {
-    if (
-      !isRecord(source) ||
-      Object.keys(source).length !== 3 ||
-      Object.keys(source).some(
-        (key) => !["episodeId", "batchId", "packetId"].includes(key)
-      ) ||
-      !isIdentifier(source.episodeId) ||
-      !isIdentifier(source.batchId) ||
-      !isIdentifier(source.packetId) ||
-      sourceEpisodeIds.has(source.episodeId) ||
-      sourcePacketIds.has(source.packetId) ||
-      (previousEpisodeId !== null && source.episodeId < previousEpisodeId) ||
-      !selectedEpisodeIds.has(source.episodeId)
-    ) {
+  for (const source of value) {
+    if (!isMetricPacketReference(source, sourceEpisodeIds, sourcePacketIds)) {
       throw new TypeError(
         "Cross-session metric packet sources must be unique selected packet identities."
       );
     }
-    sourceEpisodeIds.add(source.episodeId);
-    sourcePacketIds.add(source.packetId);
-    previousEpisodeId = source.episodeId;
-  }
-  if (value.status === NOT_RECORDED_STATUS) {
+    const episodeId = (source as { readonly episodeId: string }).episodeId;
     if (
-      value.sourcePackets.length > 0 ||
-      value.rows.length > 0 ||
-      value.omittedMetrics.length > 0 ||
-      value.reason !== HISTORICAL_AGGREGATION_REASON
+      (previousEpisodeId !== null && episodeId < previousEpisodeId) ||
+      !selectedEpisodeIds.has(episodeId)
     ) {
       throw new TypeError(
-        "Historical cross-session synthesis must identify unavailable aggregation."
+        "Cross-session metric packet sources must match the sorted trusted selection."
       );
     }
-    return;
+    sourceEpisodeIds.add(episodeId);
+    sourcePacketIds.add((source as { readonly packetId: string }).packetId);
+    previousEpisodeId = episodeId;
   }
+  return sourceEpisodeIds;
+}
+
+function isMetricPacketReference(
+  value: unknown,
+  episodeIds: ReadonlySet<string>,
+  packetIds: ReadonlySet<string>
+): value is {
+  readonly episodeId: string;
+  readonly batchId: string;
+  readonly packetId: string;
+} {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === 3 &&
+    !Object.keys(value).some(
+      (key) => !["episodeId", "batchId", "packetId"].includes(key)
+    ) &&
+    isIdentifier(value.episodeId) &&
+    isIdentifier(value.batchId) &&
+    isIdentifier(value.packetId) &&
+    !episodeIds.has(value.episodeId) &&
+    !packetIds.has(value.packetId)
+  );
+}
+
+function assertHistoricalMetricAggregation(
+  value: MetricAggregationEnvelope
+): void {
+  if (
+    value.sourcePackets.length > 0 ||
+    value.rows.length > 0 ||
+    value.omittedMetrics.length > 0 ||
+    value.reason !== HISTORICAL_AGGREGATION_REASON
+  ) {
+    throw new TypeError(
+      "Historical cross-session synthesis must identify unavailable aggregation."
+    );
+  }
+}
+
+function assertSelectedMetricPacketCoverage(
+  sourceEpisodeIds: ReadonlySet<string>,
+  selectedEpisodeIds: ReadonlySet<string>
+): void {
   if (
     sourceEpisodeIds.size !== selectedEpisodeIds.size ||
     [...selectedEpisodeIds].some(
@@ -654,195 +758,293 @@ function assertCrossSessionMetricAggregation(
       "Cross-session aggregation must bind every packet selected for its analysis."
     );
   }
-  const omittedKeys = new Set<string>();
-  for (const omitted of value.omittedMetrics) {
-    if (
-      !isRecord(omitted) ||
-      Object.keys(omitted).length !== 3 ||
-      Object.keys(omitted).some(
-        (key) => !["metricId", "metricVersion", "reason"].includes(key)
-      ) ||
-      !isIdentifier(omitted.metricId) ||
-      !isMetricVersion(omitted.metricVersion) ||
-      ![
-        "unsupported-aggregation",
-        "missing-frozen-semantics",
-        "not-recorded"
-      ].includes(String(omitted.reason))
-    ) {
-      throw new TypeError("Cross-session omitted metric record is malformed.");
-    }
+}
+
+function assertMetricAggregationOmissions(value: readonly unknown[]): void {
+  const seen = new Set<string>();
+  for (const omitted of value) {
+    assertOmittedMetric(omitted);
     const key = canonicalPlaytestJson(omitted);
-    if (omittedKeys.has(key)) {
+    if (seen.has(key)) {
       throw new TypeError(
         "Cross-session omitted metric records must be unique."
       );
     }
-    omittedKeys.add(key);
+    seen.add(key);
   }
+}
 
-  const aggregateKeys = new Set<string>();
-  for (const row of value.rows) {
-    if (
-      !isRecord(row) ||
-      Object.keys(row).length !== METRIC_AGGREGATE_ROW_KEYS.size ||
-      Object.keys(row).some((key) => !METRIC_AGGREGATE_ROW_KEYS.has(key)) ||
-      !isIdentifier(row.metricId) ||
-      !isMetricVersion(row.metricVersion) ||
-      (row.phaseId !== null && !isIdentifier(row.phaseId)) ||
-      !isText(row.unit, 256) ||
-      row.aggregation !== "ratio-of-sums-within-scenario" ||
-      ![
-        "episode",
-        "decision",
-        "cohort",
-        "learner-identity",
-        "participant"
-      ].includes(String(row.analysisUnit)) ||
-      !["whole-episode", "phase", "session", "response"].includes(
-        String(row.aggregationWindow)
-      ) ||
-      !/^(?:[a-f\d]{40}|[a-f\d]{64})$/iu.test(String(row.buildSha)) ||
-      !isText(row.gameBuild) ||
-      !isSha256(row.rubricHash) ||
-      !isSha256(row.evaluatorHash) ||
-      !isText(row.measurementVersion) ||
-      !isIdentifier(row.scenarioId) ||
-      !isIdentifier(row.scenarioFamily) ||
-      !isIdentifier(row.policyId) ||
-      !isIdentifier(row.policyVersion) ||
-      !isIdentifier(row.cohort) ||
-      !["headless", "browser", "native-visual"].includes(
-        String(row.observationMode)
-      ) ||
-      !Array.isArray(row.sourcePacketIndices) ||
-      row.sourcePacketIndices.length === 0 ||
-      row.sourcePacketIndices.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS ||
-      !isCount(row.sessionCount) ||
-      row.sessionCount !== row.sourcePacketIndices.length ||
-      row.sourcePacketIndices.some(
-        (index) => !isCount(index) || index >= sourcePacketCount
-      ) ||
-      row.sourcePacketIndices.some(
-        (index, position, indices) =>
-          position > 0 && index <= (indices[position - 1] as number)
-      ) ||
-      new Set(row.sourcePacketIndices).size !==
-        row.sourcePacketIndices.length ||
-      !isFiniteNumber(row.numerator) ||
-      !isFiniteNumber(row.denominator) ||
-      row.denominator < 0 ||
-      (row.opportunityCount !== null && !isCount(row.opportunityCount)) ||
-      !isCount(row.missing) ||
-      !Array.isArray(row.missingReasons) ||
-      row.missingReasons.some(
-        (reason) => !PLAYTESTS_MISSING_REASONS.includes(reason as never)
-      ) ||
-      new Set(row.missingReasons).size !== row.missingReasons.length ||
-      (row.estimate !== null && !isFiniteNumber(row.estimate)) ||
-      (row.coverage !== null &&
-        (!isFiniteNumber(row.coverage) ||
-          row.coverage < 0 ||
-          row.coverage > 1)) ||
-      (row.independentUnits !== null && !isCount(row.independentUnits))
-    ) {
-      throw new TypeError("Cross-session metric aggregate row is malformed.");
-    }
-    if (
-      row.analysisUnit === "episode"
-        ? row.independentUnits !== row.sessionCount
-        : row.independentUnits !== null
-    ) {
-      throw new TypeError(
-        "Cross-session independent units must be episode-deduplicated or explicitly unavailable."
-      );
-    }
-    const opportunityCount = row.opportunityCount as number | null;
-    if (
-      row.denominator === 0
-        ? row.estimate !== null
-        : row.estimate === null ||
-          Math.abs(row.estimate - row.numerator / row.denominator) > 1e-12
-    ) {
-      throw new TypeError(
-        "Cross-session pooled estimate disagrees with its sufficient statistics."
-      );
-    }
-    if (
-      opportunityCount === null
-        ? row.coverage !== null
-        : opportunityCount === 0
-          ? row.coverage !== 0 || row.denominator !== 0
-          : row.coverage === null ||
-            Math.abs(row.coverage - row.denominator / opportunityCount) > 1e-12
-    ) {
-      throw new TypeError(
-        "Cross-session aggregate coverage disagrees with its opportunity counts."
-      );
-    }
-    if (
-      opportunityCount !== null &&
-      (row.denominator > opportunityCount ||
-        row.missing > opportunityCount ||
-        row.denominator + row.missing > opportunityCount)
-    ) {
-      throw new TypeError(
-        "Cross-session aggregate exposure counts are inconsistent."
-      );
-    }
-    const identity = canonicalPlaytestJson({
-      metricId: row.metricId,
-      metricVersion: row.metricVersion,
-      phaseId: row.phaseId,
-      unit: row.unit,
-      aggregation: row.aggregation,
-      analysisUnit: row.analysisUnit,
-      aggregationWindow: row.aggregationWindow,
-      buildSha: row.buildSha,
-      gameBuild: row.gameBuild,
-      rubricHash: row.rubricHash,
-      evaluatorHash: row.evaluatorHash,
-      measurementVersion: row.measurementVersion,
-      scenarioId: row.scenarioId,
-      scenarioFamily: row.scenarioFamily,
-      policyId: row.policyId,
-      policyVersion: row.policyVersion,
-      cohort: row.cohort,
-      observationMode: row.observationMode
-    });
-    if (aggregateKeys.has(identity)) {
+function assertOmittedMetric(
+  value: unknown
+): asserts value is PlaytestCrossSessionMetricAggregation["omittedMetrics"][number] {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 3 ||
+    Object.keys(value).some(
+      (key) => !["metricId", "metricVersion", "reason"].includes(key)
+    ) ||
+    !isIdentifier(value.metricId) ||
+    !isMetricVersion(value.metricVersion) ||
+    ![
+      "unsupported-aggregation",
+      "missing-frozen-semantics",
+      "not-recorded"
+    ].includes(String(value.reason))
+  ) {
+    throw new TypeError("Cross-session omitted metric record is malformed.");
+  }
+}
+
+function assertMetricAggregationRows(
+  value: readonly unknown[],
+  sourcePacketCount: number
+): void {
+  const seen = new Set<string>();
+  for (const row of value) {
+    const identity = assertMetricAggregateRow(row, sourcePacketCount);
+    if (seen.has(identity)) {
       throw new TypeError(
         "Cross-session metric aggregation rows must be unique."
       );
     }
-    aggregateKeys.add(identity);
+    seen.add(identity);
   }
+}
 
-  const status = value.status;
+function assertMetricAggregateRow(
+  value: unknown,
+  sourcePacketCount: number
+): string {
+  if (!isRecord(value)) {
+    throw new TypeError("Cross-session metric aggregate row is malformed.");
+  }
+  assertMetricAggregateKeys(value);
+  assertMetricAggregateSemantics(value);
+  assertMetricAggregateProvenance(value);
+  assertMetricAggregateSourceIndices(value, sourcePacketCount);
+  assertMetricAggregateCounts(value);
+  assertMetricAggregateMeasures(value);
+  return metricAggregateIdentity(value);
+}
+
+function assertMetricAggregateKeys(value: Record<string, unknown>): void {
+  if (
+    Object.keys(value).length !== METRIC_AGGREGATE_ROW_KEYS.size ||
+    Object.keys(value).some((key) => !METRIC_AGGREGATE_ROW_KEYS.has(key))
+  ) {
+    throw new TypeError(
+      "Cross-session metric aggregate row has unknown fields."
+    );
+  }
+}
+
+function assertMetricAggregateSemantics(value: Record<string, unknown>): void {
+  if (
+    !isIdentifier(value.metricId) ||
+    !isMetricVersion(value.metricVersion) ||
+    (value.phaseId !== null && !isIdentifier(value.phaseId)) ||
+    !isText(value.unit, 256) ||
+    value.aggregation !== RATIO_OF_SUMS_AGGREGATION ||
+    ![
+      "episode",
+      "decision",
+      "cohort",
+      "learner-identity",
+      "participant"
+    ].includes(String(value.analysisUnit)) ||
+    !["whole-episode", "phase", "session", "response"].includes(
+      String(value.aggregationWindow)
+    ) ||
+    !["headless", "browser", "native-visual"].includes(
+      String(value.observationMode)
+    )
+  ) {
+    throw new TypeError(
+      "Cross-session metric aggregate semantics are invalid."
+    );
+  }
+}
+
+function assertMetricAggregateProvenance(value: Record<string, unknown>): void {
+  if (
+    !BUILD_SHA_PATTERN.test(String(value.buildSha)) ||
+    !isText(value.gameBuild) ||
+    !isSha256(value.rubricHash) ||
+    !isSha256(value.evaluatorHash) ||
+    !isText(value.measurementVersion) ||
+    !isIdentifier(value.scenarioId) ||
+    !isIdentifier(value.scenarioFamily) ||
+    !isIdentifier(value.policyId) ||
+    !isIdentifier(value.policyVersion) ||
+    !isIdentifier(value.cohort)
+  ) {
+    throw new TypeError(
+      "Cross-session metric aggregate provenance is invalid."
+    );
+  }
+}
+
+function assertMetricAggregateSourceIndices(
+  value: Record<string, unknown>,
+  sourcePacketCount: number
+): void {
+  if (
+    !Array.isArray(value.sourcePacketIndices) ||
+    value.sourcePacketIndices.length === 0 ||
+    value.sourcePacketIndices.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS ||
+    value.sourcePacketIndices.some(
+      (index) => !isCount(index) || index >= sourcePacketCount
+    ) ||
+    value.sourcePacketIndices.some(
+      (index, position, indices) =>
+        position > 0 && index <= (indices[position - 1] as number)
+    )
+  ) {
+    throw new TypeError(
+      "Cross-session metric aggregate packet indices are invalid."
+    );
+  }
+}
+
+function assertMetricAggregateCounts(value: Record<string, unknown>): void {
+  if (
+    !isCount(value.sessionCount) ||
+    value.sessionCount !==
+      (value.sourcePacketIndices as readonly unknown[]).length ||
+    !isFiniteNumber(value.numerator) ||
+    !isFiniteNumber(value.denominator) ||
+    value.denominator < 0 ||
+    (value.opportunityCount !== null && !isCount(value.opportunityCount)) ||
+    !isCount(value.missing) ||
+    !Array.isArray(value.missingReasons) ||
+    value.missingReasons.some(
+      (reason) => !PLAYTESTS_MISSING_REASONS.includes(reason as never)
+    ) ||
+    new Set(value.missingReasons).size !== value.missingReasons.length ||
+    (value.independentUnits !== null && !isCount(value.independentUnits))
+  ) {
+    throw new TypeError("Cross-session metric aggregate counts are invalid.");
+  }
+}
+
+function assertMetricAggregateMeasures(value: Record<string, unknown>): void {
+  if (
+    (value.estimate !== null && !isFiniteNumber(value.estimate)) ||
+    (value.coverage !== null &&
+      (!isFiniteNumber(value.coverage) ||
+        value.coverage < 0 ||
+        value.coverage > 1))
+  ) {
+    throw new TypeError("Cross-session metric aggregate measures are invalid.");
+  }
+  if (
+    value.analysisUnit === "episode"
+      ? value.independentUnits !== value.sessionCount
+      : value.independentUnits !== null
+  ) {
+    throw new TypeError(
+      "Cross-session independent units must be episode-deduplicated or explicitly unavailable."
+    );
+  }
+  const opportunityCount = value.opportunityCount as number | null;
+  const denominator = value.denominator as number;
+  const missing = value.missing as number;
+  assertPooledEstimate(value);
+  assertAggregateCoverage(value, opportunityCount);
+  if (
+    opportunityCount !== null &&
+    (denominator > opportunityCount ||
+      missing > opportunityCount ||
+      denominator + missing > opportunityCount)
+  ) {
+    throw new TypeError(
+      "Cross-session aggregate exposure counts are inconsistent."
+    );
+  }
+}
+
+function assertPooledEstimate(value: Record<string, unknown>): void {
+  if (
+    value.denominator === 0
+      ? value.estimate !== null
+      : value.estimate === null ||
+        Math.abs(
+          (value.estimate as number) -
+            (value.numerator as number) / (value.denominator as number)
+        ) > 1e-12
+  ) {
+    throw new TypeError(
+      "Cross-session pooled estimate disagrees with its sufficient statistics."
+    );
+  }
+}
+
+function assertAggregateCoverage(
+  value: Record<string, unknown>,
+  opportunityCount: number | null
+): void {
+  if (
+    opportunityCount === null
+      ? value.coverage !== null
+      : opportunityCount === 0
+        ? value.coverage !== 0 || value.denominator !== 0
+        : value.coverage === null ||
+          Math.abs(
+            (value.coverage as number) -
+              (value.denominator as number) / opportunityCount
+          ) > 1e-12
+  ) {
+    throw new TypeError(
+      "Cross-session aggregate coverage disagrees with its opportunity counts."
+    );
+  }
+}
+
+function metricAggregateIdentity(value: Record<string, unknown>): string {
+  return canonicalPlaytestJson({
+    metricId: value.metricId,
+    metricVersion: value.metricVersion,
+    phaseId: value.phaseId,
+    unit: value.unit,
+    aggregation: value.aggregation,
+    analysisUnit: value.analysisUnit,
+    aggregationWindow: value.aggregationWindow,
+    buildSha: value.buildSha,
+    gameBuild: value.gameBuild,
+    rubricHash: value.rubricHash,
+    evaluatorHash: value.evaluatorHash,
+    measurementVersion: value.measurementVersion,
+    scenarioId: value.scenarioId,
+    scenarioFamily: value.scenarioFamily,
+    policyId: value.policyId,
+    policyVersion: value.policyVersion,
+    cohort: value.cohort,
+    observationMode: value.observationMode
+  });
+}
+
+function assertMetricAggregationStatus(value: MetricAggregationEnvelope): void {
+  const { status, rows, sourcePackets, omittedMetrics, reason } = value;
   if (
     (status === "available" &&
-      (value.rows.length === 0 ||
-        value.omittedMetrics.length > 0 ||
-        value.reason !== null)) ||
+      (rows.length === 0 || omittedMetrics.length > 0 || reason !== null)) ||
     (status === "partial" &&
-      (value.rows.length === 0 ||
-        value.omittedMetrics.length === 0 ||
-        value.reason !== null)) ||
+      (rows.length === 0 || omittedMetrics.length === 0 || reason !== null)) ||
     (status === "no-applicable-metrics" &&
-      (value.rows.length > 0 ||
-        value.omittedMetrics.length > 0 ||
-        value.reason !== "no-applicable-metric-rows")) ||
+      (rows.length > 0 ||
+        omittedMetrics.length > 0 ||
+        reason !== "no-applicable-metric-rows")) ||
     (status === "insufficient-packets" &&
-      (value.sourcePackets.length >= 2 ||
-        value.rows.length > 0 ||
-        value.reason !== "fewer-than-two-packets")) ||
+      (sourcePackets.length >= 2 ||
+        rows.length > 0 ||
+        reason !== "fewer-than-two-packets")) ||
     (status === "unavailable" &&
-      (value.rows.length > 0 ||
+      (rows.length > 0 ||
         ![
           "no-supported-aggregation",
           "aggregation-result-exceeds-budget",
           "historical-packet-predates-aggregation-semantics"
-        ].includes(String(value.reason))))
+        ].includes(String(reason))))
   ) {
     throw new TypeError(
       "Cross-session metric aggregation status is inconsistent."
@@ -870,10 +1072,12 @@ export function assertPlaytestCrossSessionMetricAggregation(
     analysisId,
     new Set(episodeIds)
   );
-  if (value.status === NOT_RECORDED_STATUS && options.allowNotRecorded !== true) {
+  if (
+    value.status === NOT_RECORDED_STATUS &&
+    options.allowNotRecorded !== true
+  ) {
     throw new TypeError(
       "New analyst dispatches cannot use historical unaggregated synthesis data."
     );
   }
 }
-

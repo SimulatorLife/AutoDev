@@ -2261,7 +2261,10 @@ function prepareApprovedBatch(input: {
       );
     }
     if (!policies.has(request.policy)) {
-      policies.set(request.policy, resolvePolicy(request.policy));
+      policies.set(
+        request.policy,
+        resolvePolicy(request.policy, prepared.benchmark)
+      );
     }
     const branch = branchPlan?.manifest ?? undefined;
     const replayPrefixSteps = branch?.branchStep ?? 0;
@@ -3731,8 +3734,15 @@ function selectWindowRange(input: {
  * in `policies.ts` and still unreachable if nothing here constructs it, which
  * is exactly how a scored policy sat unused behind a single-entry gate.
  */
-export function resolvePolicy(policyId: string): PlaytestPolicy {
-  const policy = createBuiltinPlaytestPolicy(policyId);
+export function resolvePolicy(
+  policyId: string,
+  benchmark?: PlaytestBenchmark | null
+): PlaytestPolicy {
+  const version = benchmark?.policyVersions?.[policyId];
+  const policy = createBuiltinPlaytestPolicy(
+    policyId,
+    version ? { version } : undefined
+  );
   if (policy !== null) return policy;
   throw new PlaytestMcpValidationError(
     'Policy "' +
@@ -4399,18 +4409,20 @@ function collectRunnableAssignments(input: {
         try {
           // The capability probe mirrors batch admission exactly, so an
           // approved cell is only advertised when a batch would be accepted.
+          const probeSeed =
+            prepared.benchmark?.seedInventory?.[0]?.seed ?? "probe";
           prepareApprovedBatch({
             workspaceId,
             approval,
             prepared,
             batchId: "batch-capability-probe",
             assignments: [
-              { scenario: scenarioId, policy: policyId, seed: "probe" }
+              { scenario: scenarioId, policy: policyId, seed: probeSeed }
             ],
             branchPlan: null
           });
           const scenarioFamily = scenarioFamilyFor(prepared, scenarioId);
-          const policy = resolvePolicy(policyId);
+          const policy = resolvePolicy(policyId, prepared.benchmark);
           assignments.push({
             scenarioId,
             scenarioFamily,

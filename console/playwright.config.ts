@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
 import { once } from "node:events";
+import { existsSync } from "node:fs";
 import { createServer } from "node:net";
 
 import { defineConfig, devices } from "@playwright/test";
@@ -27,7 +27,10 @@ async function availablePort(): Promise<number> {
   return port;
 }
 
-function configuredPort(value: string | undefined, name: string): number | null {
+function configuredPort(
+  value: string | undefined,
+  name: string
+): number | null {
   if (value === undefined) return null;
   const port = Number(value);
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {

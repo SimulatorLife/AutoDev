@@ -24,7 +24,8 @@ import {
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1,
-  PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2} from "../src/playtesting/index.ts";
+  PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2
+} from "../src/playtesting/index.ts";
 
 const WORKSPACE_ID = "owner/evidence-fixture";
 const BATCH_ID = "batch-evidence-1";
@@ -400,7 +401,7 @@ test("cross-session aggregate uses ratio-of-sums and keeps exact metric strata",
         "analysis-1",
         ["episode-1"]
       ),
-    /unique selected packet identities/u
+    /sorted trusted selection/u
   );
   assert.throws(
     () =>

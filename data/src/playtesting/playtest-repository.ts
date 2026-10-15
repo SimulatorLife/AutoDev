@@ -331,7 +331,7 @@ export class PlaytestRepository {
     );
 
     const selectQuery =
-      `SELECT workspace_id, batch_id, revision, status, created_at, payload_json FROM (` +
+      `SELECT workspace_id, batch_id, revision, build_sha, status, created_at, payload_json FROM (` +
       `SELECT *, row_number() OVER (PARTITION BY workspace_id, batch_id ORDER BY revision DESC, cityHash64(payload_json) DESC, payload_json DESC) AS rn ` +
       `FROM ${PLAYTEST_BATCHES_TABLE} WHERE ${innerWhere}) ` +
       `WHERE ${joinWhereClauses(outerWhere)} ORDER BY created_at DESC, batch_id DESC ` +
@@ -456,7 +456,7 @@ export class PlaytestRepository {
     );
 
     const selectQuery =
-      `SELECT workspace_id, batch_id, episode_id, revision, status, game_outcome, assigned_at, created_at, payload_json FROM (` +
+      `SELECT workspace_id, batch_id, episode_id, revision, scenario, policy, assignment_id, cohort, status, game_outcome, assigned_at, created_at, payload_json FROM (` +
       `SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id ORDER BY revision DESC, cityHash64(payload_json) DESC, payload_json DESC) AS rn ` +
       `FROM ${PLAYTEST_EPISODES_TABLE} WHERE ${innerWhere}) ` +
       `WHERE ${joinWhereClauses(outerWhere)} ORDER BY assigned_at DESC, episode_id DESC ` +

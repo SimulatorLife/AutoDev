@@ -1203,7 +1203,14 @@ function assembleEpisode(
   }
   const classifiedOutcome =
     context.outcome?.state === "terminal"
-      ? (options.classifyOutcome?.(context.outcome.outcome) ?? "unknown")
+      ? (options.classifyOutcome?.(context.outcome.outcome) ??
+         ((PLAYTESTS_GAME_OUTCOMES as readonly string[]).includes(
+           typeof context.outcome.outcome === "string"
+             ? context.outcome.outcome
+             : ""
+         )
+           ? (context.outcome.outcome as PlaytestEpisode["outcome"])
+           : "unknown"))
       : "unknown";
   if (
     !(PLAYTESTS_GAME_OUTCOMES as readonly string[]).includes(classifiedOutcome)
