@@ -1914,11 +1914,20 @@ The shim is registered in agy's `mcp_config` alongside the role's own servers,
 the turn's tools are mirrored into it, and the turn runs under an agent
 definition with `excludeDefaultComponents: true` — so the built-ins leave the
 advertised set and every action becomes a call Codex executes and the app
-renders. A turn parks while Codex runs a call: the response ends at the
+renders. A turn parks while Codex runs a call: the response **completes** at the
 `function_call`, and the request carrying that call's output resumes the same
 agy rather than starting a second one. The registry that maps a shim call back
 to the turn holding it is shared with the Claude bridge
 (`runtime/src/providers/codex-tool-turns.ts`).
+
+Parking has to close the response as a finished turn, not just end the stream.
+A stream that ends with no terminal event is what a crashed provider looks like,
+and the router says so — `closeSseStream` turns any such upstream stream into an
+incomplete response — so ending at the call would report every tool call as the
+provider having stopped unexpectedly, while the turn in fact continues and
+succeeds. A completed response whose output is a `function_call` is what a native
+Responses turn ending at a tool call looks like, and it is what the Claude
+bridge has always emitted when it parks.
 
 Two agy mechanisms carry that, both tested against the installed agy rather
 than inferred from its help text:

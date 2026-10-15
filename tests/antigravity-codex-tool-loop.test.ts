@@ -310,6 +310,24 @@ test("a Codex tool agy called is parked, and the continuation resumes the same t
       "the parked turn ends its response"
     );
 
+    // A turn parked at a tool call has finished, not been cut short. Ending
+    // here with no terminal event is what a crashed provider looks like, and
+    // the router reports any such stream as an incomplete turn -- so every tool
+    // call would be announced to the client as the provider dying.
+    const parked = sseEvents(first.body).find(
+      (event) => event.type === "response.completed"
+    );
+    assert.ok(
+      parked,
+      `a parked turn must close as completed, not silently: ${first.body}`
+    );
+    assert.equal(parked.response.status, "completed");
+    assert.doesNotMatch(
+      first.body,
+      /Incomplete:|stopped unexpectedly/,
+      "a parked turn is not a truncated turn"
+    );
+
     // `output_item.added` announces the item with empty arguments, exactly as
     // Codex expects; the arguments land on the `done` event.
     const added = sseEvents(first.body).find(
@@ -569,11 +587,21 @@ test("a second tool call made while the turn is parked still reaches Codex", asy
         answered.add(item.call_id);
         carried = [...carried, ...answer(item)];
       }
-      if (
-        fresh.length === 0 &&
-        sseEvents(body).some((event) => event.type === "response.completed")
-      )
-        break;
+      // Every parked round now closes as completed, so "has a completed event"
+      // no longer means the turn is over. The turn is over when the completion
+      // it closed with owes nothing: its output carries no unanswered call.
+      const terminal = sseEvents(body).filter(
+        (event) => event.type === "response.completed"
+      );
+      const last = terminal.at(-1);
+      const stillOwed = Array.isArray(last?.response?.output)
+        ? last.response.output.some(
+            (item: { type?: string }) =>
+              item?.type === "function_call" ||
+              item?.type === "custom_tool_call"
+          )
+        : false;
+      if (!stillOwed && terminal.length > 0) break;
     }
 
     assert.equal(

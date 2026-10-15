@@ -1770,6 +1770,7 @@ const EVENT_OUTPUT_ITEM_ADDED = "response.output_item.added";
 const EVENT_CONTENT_PART_ADDED = "response.content_part.added";
 const EVENT_CONTENT_PART_DONE = "response.content_part.done";
 const EVENT_OUTPUT_ITEM_DONE = "response.output_item.done";
+const EVENT_RESPONSE_COMPLETED = "response.completed";
 const EVENT_REASONING_SUMMARY_TEXT_DELTA =
   "response.reasoning_summary_text.delta";
 
@@ -3762,7 +3763,10 @@ class ResponseEventStream {
   }
 
   /** Closes both output items and returns the completed response payload. */
-  emitCompletedItems(model: JsonValue, result: RunAgyResult): ResponsePayload {
+  emitCompletedItems(
+    model: JsonValue,
+    result: { text: string; result: JsonValue }
+  ): ResponsePayload {
     const reasoningText = this.reasoningText;
     const completedReasoning = {
       id: this.reasoningId,
@@ -3804,6 +3808,38 @@ class ResponseEventStream {
       this.itemId,
       this.output.filter(Boolean)
     );
+  }
+
+  /**
+   * Close the response at a tool call, as a finished turn rather than a
+   * truncated one.
+   *
+   * Ending here without a terminal event is what a crashed provider looks
+   * like, and the router says so: its `closeSseStream` turns any upstream
+   * stream that ends without `response.completed` into an incomplete response,
+   * so every tool call would be reported to the client as the provider having
+   * stopped unexpectedly. It is not stopped -- it is waiting for the output of
+   * the call in this payload, which is exactly what a native Responses turn
+   * ending at a tool call looks like. The Claude bridge has always closed a
+   * park this way.
+   *
+   * The turn itself is not settled: it resumes onto the next request, which
+   * brings its own stream.
+   */
+  completeParked(model: JsonValue): void {
+    this.start();
+    const completed = this.emitCompletedItems(model, {
+      text: this.sentText,
+      // agy has not finished, so there is no usage to report yet. Reporting
+      // zeros rather than inventing a number is what responsePayload does with
+      // a result it cannot read.
+      result: null
+    });
+    this.emit(EVENT_RESPONSE_COMPLETED, {
+      type: EVENT_RESPONSE_COMPLETED,
+      response: completed
+    });
+    this.end();
   }
 
   /** Ends the turn as incomplete, carrying the work it names and why. */
@@ -3997,7 +4033,10 @@ class StreamingTurn implements ParkableTurn {
   park(): void {
     this.parked = true;
     this.detach();
-    this.stream.end();
+    // Detached first, so closing the response here is not read as the client
+    // going away. The completion is emitted afterwards, onto a socket nobody is
+    // listening to for keep-alives any more.
+    this.stream.completeParked(this.turn.responseModel);
   }
 
   /**
@@ -4234,8 +4273,8 @@ class StreamingTurn implements ParkableTurn {
         `agy delegating ${delegation.childCount} subagent(s) through Codex`
       );
     }
-    this.stream.emit("response.completed", {
-      type: "response.completed",
+    this.stream.emit(EVENT_RESPONSE_COMPLETED, {
+      type: EVENT_RESPONSE_COMPLETED,
       response: completed
     });
     this.settled = true;
