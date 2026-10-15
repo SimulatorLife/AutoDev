@@ -34,6 +34,9 @@
   },
   "include": [
     ".next-dev/types/**/*.ts",
+    ".next-staging-37166/types/**/*.ts",
+    ".next-staging-52935/types/**/*.ts",
+    ".next-staging-68153/types/**/*.ts",
     ".next-staging-e2e-10054-63878/types/**/*.ts",
     ".next-staging-e2e-10308-63988/types/**/*.ts",
     ".next-staging-e2e-17142-49285/types/**/*.ts",
@@ -50,7 +53,7 @@
     "src/**/*.tsx",
     "tests/**/*.ts",
     "tests/**/*.tsx",
-    ".next-staging-37166/types/**/*.ts"
+    ".next-staging-42753/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
