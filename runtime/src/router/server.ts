@@ -17,9 +17,11 @@ import {
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import {
+  getControlApiAvailability,
   handleControlApiRequest,
   setControlApiProviderModelDiscoverySource
 } from "../control-api/index.ts";
+import { warmupDefaultPlaytestingRepository } from "../control-api/playtesting.ts";
 import { shutdownDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
 import { createProviderModelDiscoveryService } from "../providers/model-discovery.ts";
 import { codexState, handle, HOST, PORT, refreshCodexState } from "./http.ts";
@@ -221,6 +223,15 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     server.listen(port, host, () => {
       if (cleanedUp) return;
       try {
+        if (getControlApiAvailability().enabled) {
+          try {
+            void warmupDefaultPlaytestingRepository().catch(() => {
+              writeErrorLine("Playtesting schema startup warmup failed.");
+            });
+          } catch {
+            writeErrorLine("Playtesting schema startup warmup failed.");
+          }
+        }
         if (!codexState.livePollStarted) {
           livePollStarted = true;
           codexState.livePollStarted = true;

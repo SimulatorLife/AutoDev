@@ -123,6 +123,41 @@ test("an oversized shareable selection is explicitly rejected without truncation
   assert.match(markup, /disabled=""/u);
 });
 
+test("dispatch with no prepared packet renders the Runtime receipt and session link", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(PlaytestingAnalysisResults, {
+      scope,
+      result: {
+        schema: "autodev-control-playtesting-analysis-v1",
+        operation: "dispatch",
+        workspaceId: "fixture/game",
+        requested: 1,
+        packets: [],
+        receipts: [
+          {
+            episodeId: "episode-unverified",
+            batchId: "batch-unverified",
+            reason: "packet-unavailable",
+            detail:
+              "The selected session packet is unavailable: packet-validation-failed."
+          }
+        ],
+        budget: [],
+        analysis: null
+      },
+      runs: [],
+      syntheses: [],
+      stale: false
+    })
+  );
+
+  assert.match(markup, /No analyst process was started/u);
+  assert.match(markup, /playtesting-analysis-dispatch-receipt/u);
+  assert.match(markup, /packet-unavailable/u);
+  assert.match(markup, /packet-validation-failed/u);
+  assert.match(markup, /Open session episode-unverified/u);
+});
+
 test("persisted analyst review and unavailable receipts link to their full session details", () => {
   const markup = renderToStaticMarkup(
     React.createElement(PlaytestingAnalysisResults, {

@@ -2896,6 +2896,12 @@ class ReviewPacketPreparationError extends Error {
 
 const PACKET_TRACE_UNAVAILABLE_REASON = "trace-unavailable" as const;
 const PACKET_TRACE_MALFORMED_REASON = "trace-malformed" as const;
+const PACKET_OBSERVATION_EQUIVALENCE_UNVERIFIED_REASON =
+  "observation-equivalence-unverified" as const;
+const OBSERVATION_EQUIVALENCE_UNVERIFIED_DETAIL =
+  "Player-visible analyst review is withheld because RacingGame " +
+  "observation/UI equivalence is unverified for this episode's trace; " +
+  "the step is recorded without being projected into player-visible evidence.";
 const OMITTED_FRAME_REASONS = {
   missing: "missing",
   expired: "expired",
@@ -3097,6 +3103,12 @@ function projectTraceSteps(input: {
       );
     }
     seenSteps.add(step);
+    if (entry.observationVisibility === "unverified") {
+      throw new ReviewPacketPreparationError(
+        PACKET_OBSERVATION_EQUIVALENCE_UNVERIFIED_REASON,
+        OBSERVATION_EQUIVALENCE_UNVERIFIED_DETAIL
+      );
+    }
     const events = projectTraceEvents(entry.events, step);
     const selectedActionId = entry.selectedActionId;
     if (
@@ -4896,6 +4908,12 @@ export function createPlaytestRunControl(
           const safeError = playtestMcpErrorDetails(error);
           if (safeError.code === "playtest_internal_error") {
             writeErrorLine("playtest-mcp: internal operation failure.");
+            writeErrorLine(
+              "DEBUG2: " +
+                (error instanceof Error
+                  ? (error.stack ?? error.message)
+                  : String(error))
+            );
           }
           finishRun(
             registeredBatchId,
@@ -5536,9 +5554,11 @@ async function readPreparedReviewPacket(input: {
   }
   if (receipt.status === "unavailable") {
     throw new PlaytestMcpUnavailableError(
-      "The selected session packet is unavailable: " +
-        receipt.failureReason +
-        "."
+      receipt.failureReason === PACKET_OBSERVATION_EQUIVALENCE_UNVERIFIED_REASON
+        ? OBSERVATION_EQUIVALENCE_UNVERIFIED_DETAIL
+        : "The selected session packet is unavailable: " +
+            receipt.failureReason +
+            "."
     );
   }
   const reference = artifacts.referenceForId(receipt.artifact.artifactId);
@@ -7541,6 +7561,12 @@ async function safely<T>(operation: () => Promise<T>) {
     const safeError = playtestMcpErrorDetails(error);
     if (safeError.code === "playtest_internal_error") {
       writeErrorLine("playtest-mcp: internal operation failure.");
+      writeErrorLine(
+        "DEBUG: " +
+          (error instanceof Error
+            ? (error.stack ?? error.message)
+            : String(error))
+      );
     }
     return {
       isError: true,

@@ -289,6 +289,50 @@ function crossSessionSynthesisView(
   );
 }
 
+type AnalysisReceipt =
+  ControlApiPlaytestingAnalysisDispatchResponse["receipts"][number];
+
+function analysisReceiptList(
+  receipts: readonly AnalysisReceipt[],
+  scope: PlaytestingScope,
+  testId: string
+): React.JSX.Element | null {
+  if (receipts.length === 0) return null;
+  return React.createElement(
+    "ul",
+    {
+      className: "list-none p-0 m-0 flex flex-col gap-1",
+      "aria-label": "Analyst packet availability receipts"
+    },
+    ...receipts.map((receipt) =>
+      React.createElement(
+        "li",
+        {
+          key: `${receipt.episodeId}:${receipt.batchId ?? "unknown"}:${receipt.reason}`,
+          className: MUTED_META_CLASS,
+          "data-testid": testId,
+          "data-reason": receipt.reason
+        },
+        scope.workspaceId === null
+          ? `${receipt.episodeId}: ${receipt.reason} — ${receipt.detail}`
+          : React.createElement(
+              React.Fragment,
+              null,
+              React.createElement(
+                NavigationLink,
+                {
+                  className: EVIDENCE_LINK_CLASS,
+                  href: playtestingEpisodeHref(scope, receipt.episodeId, 0)
+                },
+                `Open session ${receipt.episodeId}`
+              ),
+              `: ${receipt.reason} — ${receipt.detail}`
+            )
+      )
+    )
+  );
+}
+
 function statusDescription(run: ControlApiPlaytestingAnalystRun): string {
   const requested = run.requestedEpisodeIds.length;
   const persisted = run.reviews.length;
@@ -388,42 +432,7 @@ export function PlaytestingAnalysisResults({
             )
           )
         : null,
-      run.receipts.length > 0
-        ? React.createElement(
-            "ul",
-            { className: "list-none p-0 m-0 flex flex-col gap-1" },
-            ...run.receipts.map((receipt) =>
-              React.createElement(
-                "li",
-                {
-                  key: receipt.episodeId,
-                  className: MUTED_META_CLASS,
-                  "data-testid": "playtesting-analysis-receipt",
-                  "data-reason": receipt.reason
-                },
-                scope.workspaceId === null
-                  ? `${receipt.episodeId}: ${receipt.reason} — ${receipt.detail}`
-                  : React.createElement(
-                      React.Fragment,
-                      null,
-                      React.createElement(
-                        NavigationLink,
-                        {
-                          className: EVIDENCE_LINK_CLASS,
-                          href: playtestingEpisodeHref(
-                            scope,
-                            receipt.episodeId,
-                            0
-                          )
-                        },
-                        `Open session ${receipt.episodeId}`
-                      ),
-                      `: ${receipt.reason} — ${receipt.detail}`
-                    )
-              )
-            )
-          )
-        : null,
+      analysisReceiptList(run.receipts, scope, "playtesting-analysis-receipt"),
       ...run.budget.map((entry) =>
         React.createElement(
           "p",
@@ -461,17 +470,26 @@ export function PlaytestingAnalysisResults({
       )
     );
 
-  const noRunMessage =
-    result !== null && result.analysis === null && result.packets.length === 0
-      ? React.createElement(
-          "p",
-          {
-            className: MUTED_BODY_CLASS,
-            "data-testid": "playtesting-analysis-not-started"
-          },
-          `No analyst process was started: Runtime found no new reviewable packet among ${String(result.requested)} selected sessions.`
-        )
-      : null;
+  const noAnalysisStarted = result !== null && result.analysis === null;
+  const noRunMessage = noAnalysisStarted
+    ? React.createElement(
+        "p",
+        {
+          className: MUTED_BODY_CLASS,
+          "data-testid": "playtesting-analysis-not-started"
+        },
+        result.packets.length === 0
+          ? `No analyst process was started: Runtime found no new reviewable packet among ${String(result.requested)} selected sessions.`
+          : "Runtime returned prepared packets but did not start an analyst process."
+      )
+    : null;
+  const dispatchReceipts = noAnalysisStarted
+    ? analysisReceiptList(
+        result.receipts,
+        scope,
+        "playtesting-analysis-dispatch-receipt"
+      )
+    : null;
 
   return React.createElement(
     "div",
@@ -480,6 +498,7 @@ export function PlaytestingAnalysisResults({
       className: "flex flex-col gap-3"
     },
     noRunMessage,
+    dispatchReceipts,
     ...persistedSynthesisItems,
     stale && runs.length === 0 && syntheses.length === 0
       ? React.createElement(

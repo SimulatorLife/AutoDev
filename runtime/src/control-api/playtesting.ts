@@ -83,22 +83,28 @@ const FINDING_EVIDENCE_STATUSES = [
 ] as const;
 
 let defaultPlaytestingRepository: PlaytestRepository | undefined;
-let defaultPlaytestingRepositorySchema: Promise<void> | undefined;
+let defaultPlaytestingRepositorySchema: Promise<PlaytestRepository> | undefined;
 
-/** Initialize the Data-owned tables once before the Runtime's first default read. */
-async function getDefaultPlaytestingRepository(): Promise<PlaytestRepository> {
-  defaultPlaytestingRepository ??= new PlaytestRepository();
+/** Start the Data-owned schema initialization, sharing it with default reads. */
+export function warmupDefaultPlaytestingRepository(): Promise<PlaytestRepository> {
+  const repository = (defaultPlaytestingRepository ??=
+    new PlaytestRepository());
   if (!defaultPlaytestingRepositorySchema) {
-    defaultPlaytestingRepositorySchema = defaultPlaytestingRepository
+    defaultPlaytestingRepositorySchema = repository
       .ensureSchema()
+      .then(() => repository)
       .catch((error: unknown) => {
         // A failed initialization must be retryable after the backend is repaired.
         defaultPlaytestingRepositorySchema = undefined;
         throw error;
       });
   }
-  await defaultPlaytestingRepositorySchema;
-  return defaultPlaytestingRepository;
+  return defaultPlaytestingRepositorySchema;
+}
+
+/** Initialize the Data-owned tables once before the Runtime's first default read. */
+function getDefaultPlaytestingRepository(): Promise<PlaytestRepository> {
+  return warmupDefaultPlaytestingRepository();
 }
 
 type FilterName =

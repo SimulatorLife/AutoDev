@@ -692,6 +692,7 @@ export interface PlaytestReviewReceipt {
 export const PLAYTESTS_REVIEW_PACKET_FAILURE_REASONS = [
   "trace-unavailable",
   "trace-malformed",
+  "observation-equivalence-unverified",
   "rubric-mismatch",
   "packet-budget-exceeded",
   "packet-validation-failed",

@@ -946,6 +946,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     let mismatchNegotiatedSchemaHash = false;
     let malformedTraceEventStep = false;
     let malformedFrameStep = false;
+    let unverifiedObservationStep = false;
     const insertedEpisodes: PlaytestEpisode[] = [];
     const insertedBatches: any[] = [];
     let capturedObservationContract: unknown = null;
@@ -1073,7 +1074,10 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
             phaseId: "tutorial",
             revisionBefore: step,
             revisionAfter: step + 1,
-            observationVisibility: "structured",
+            observationVisibility:
+              unverifiedObservationStep && step === 7
+                ? "unverified"
+                : "structured",
             visibleObservation: { step },
             legalActionIds: ["advance", "wait"],
             selectedActionId: "advance",
@@ -1645,6 +1649,101 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       "trace-malformed"
     );
     malformedFrameStep = false;
+
+    // A complete episode whose trace records an unverified observation/UI
+    // equivalence step must receive a typed, read-only "unavailable" packet
+    // receipt instead of the generic validation-failure collapse, and no
+    // analyst process may start for it.
+    unverifiedObservationStep = true;
+    const unverifiedObservationEpisodeId = "ep-run-seed-unverified-observation";
+    const analystDispatchSnapshotBeforeUnverified = analystDispatch.input;
+    const unverifiedObservationRun = await (server as any)._registeredTools[
+      "playtest.run"
+    ].handler(
+      singleAssignmentRequest(
+        "tutorial",
+        "random",
+        "seed-unverified-observation"
+      )
+    );
+    const unverifiedObservationStarted = JSON.parse(
+      unverifiedObservationRun.content[0].text
+    );
+    const unverifiedObservationFinished = await (server as any)
+      ._registeredTools["playtest.wait"].handler({
+        batchId: unverifiedObservationStarted.batchId,
+        waitMs: 5000
+      });
+    assert.equal(
+      JSON.parse(unverifiedObservationFinished.content[0].text).status,
+      "completed"
+    );
+    const unverifiedObservationBatchCandidates = insertedBatches.filter(
+      (batch) =>
+        batch.reviewPackets[0]?.episodeId === unverifiedObservationEpisodeId
+    );
+    const unverifiedObservationBatch =
+      unverifiedObservationBatchCandidates[
+        unverifiedObservationBatchCandidates.length - 1
+      ];
+    assert.ok(unverifiedObservationBatch);
+    assert.equal(
+      unverifiedObservationBatch.reviewPackets[0].status,
+      "unavailable"
+    );
+    assert.equal(
+      unverifiedObservationBatch.reviewPackets[0].failureReason,
+      "observation-equivalence-unverified"
+    );
+
+    currentRole = "playtest-analyst";
+    selectedEpisodeIds = [unverifiedObservationEpisodeId];
+    const unverifiedObservationReviewPacket = await (server as any)
+      ._registeredTools["playtest.prepareReview"].handler({
+        episodeId: unverifiedObservationEpisodeId
+      });
+    const unverifiedObservationError = parsedMcpError(
+      unverifiedObservationReviewPacket
+    );
+    assert.equal(unverifiedObservationError.code, "playtest_unavailable");
+    assert.match(
+      String(unverifiedObservationError.message),
+      /withheld/u
+    );
+    assert.match(
+      String(unverifiedObservationError.message),
+      /observation\/UI equivalence is unverified/u
+    );
+    currentRole = "playtester";
+
+    const unverifiedObservationDispatch =
+      await analystOwner.dispatchCrossSessionReview(operatorSession, WORKSPACE_ID, [
+        unverifiedObservationEpisodeId
+      ]);
+    assert.equal(unverifiedObservationDispatch.run, null);
+    assert.equal(unverifiedObservationDispatch.receipts.length, 1);
+    assert.equal(
+      unverifiedObservationDispatch.receipts[0]?.episodeId,
+      unverifiedObservationEpisodeId
+    );
+    assert.equal(
+      unverifiedObservationDispatch.receipts[0]?.reason,
+      "packet-unavailable"
+    );
+    assert.match(
+      String(unverifiedObservationDispatch.receipts[0]?.detail),
+      /withheld/u
+    );
+    assert.match(
+      String(unverifiedObservationDispatch.receipts[0]?.detail),
+      /observation\/UI equivalence is unverified/u
+    );
+    // No analyst process was launched for the withheld episode.
+    assert.equal(
+      analystDispatch.input,
+      analystDispatchSnapshotBeforeUnverified
+    );
+    unverifiedObservationStep = false;
 
     const exhaustedBudgetRun = await (server as any)._registeredTools[
       "playtest.run"
