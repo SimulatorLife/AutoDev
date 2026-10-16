@@ -28,7 +28,8 @@ import {
   PLAYTESTS_MEASUREMENT_VERSION,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   type PlaytestSessionReview,
-  type WorkspacePlaytestApproval
+  type WorkspacePlaytestApproval,
+  type WorkspacePlaytestBuild
 } from "@simulatorlife/autodev-core";
 
 import type {
@@ -141,18 +142,27 @@ function observationContract(): PlaytestObservationContract {
   };
 }
 
+/** The committed build a batch resolved from the approved checkout. */
+function build(
+  overrides: Partial<WorkspacePlaytestBuild> = {}
+): WorkspacePlaytestBuild {
+  return {
+    buildSha: "a".repeat(40),
+    gameBuild: GAME_BUILD,
+    configHash: "b".repeat(64),
+    ...overrides
+  };
+}
+
 function approval(
   overrides: Partial<WorkspacePlaytestApproval> = {}
 ): WorkspacePlaytestApproval {
   return {
-    schema: "autodev-workspace-playtest-approval-v1",
+    schema: "autodev-workspace-playtest-approval-v2",
     workspaceId: WORKSPACE_ID,
     revision: 1,
     approvalId: "fixture-approval",
     checkoutRoot: "/tmp/approved-fixture-game",
-    buildSha: "a".repeat(40),
-    gameBuild: GAME_BUILD,
-    playtestConfigHash: "b".repeat(64),
     adapterImageDigest: `ghcr.io/owner/adapter@sha256:${"c".repeat(64)}`,
     workingDirectory: ".",
     adapterCommand: ["/usr/bin/node", "adapter.mjs"],
@@ -553,7 +563,6 @@ function branchExecution(
   branchStep = 2,
   alternativeActionId = "wait"
 ): NonNullable<Parameters<typeof runPlaytestEpisode>[0]["branch"]> {
-  const approved = approval();
   const advertised = capabilities(GAME_BUILD, true);
   const parentEpisode: PlaytestEpisode = {
     schema: "autodev-playtest-episode-v3",
@@ -565,10 +574,10 @@ function branchExecution(
     identity: {
       workspaceId: WORKSPACE_ID,
       repository: WORKSPACE_ID,
-      buildSha: approved.buildSha,
+      buildSha: build().buildSha,
       gameBuild: GAME_BUILD,
       scenarioId: "tutorial",
-      configHash: approved.playtestConfigHash,
+      configHash: build().configHash,
       seed: "seed-1",
       rngInitialStateHash: "e".repeat(64),
       rngAlgorithm: "fixture-rng",
@@ -679,6 +688,7 @@ function runOptions(
 ): Parameters<typeof runPlaytestEpisode>[0] {
   return {
     approval: approval(),
+    build: build(),
     sandbox,
     artifacts,
     batchId: "batch-1",
@@ -904,11 +914,12 @@ async function runSyntheticArm(input: {
       }),
       input.artifacts,
       {
-        approval: approval({
+        build: build({
           buildSha: input.arm.buildSha,
           gameBuild: input.arm.gameBuild
         }),
         batchId: input.arm.batchId,
+        assignmentId: "a-" + String(input.index + 1).padStart(4, "0"),
         seed: input.seed,
         measurementVersion: PLAYTESTS_MEASUREMENT_VERSION,
         metricRegistry: input.metricRegistry
@@ -970,6 +981,28 @@ async function runSyntheticImprovementEpisodes(input: {
   }
   return { episodes, baselineOutcomes, candidateOutcomes };
 }
+
+test("persisted episode identity is Runtime-owned, so a game's seed-derived episode id never collides across builds", async () => {
+  const temporary = store();
+  try {
+    // RacingGame-style adapters derive their episode handle from the seed, so
+    // the same seed on a new commit returns the same handle.
+    const run = async (batchId: string, buildSha: string) =>
+      runPlaytestEpisode(
+        runOptions(
+          sandboxFixture({ episodeId: "game-episode-from-seed" }),
+          temporary.artifacts,
+          { batchId, build: build({ buildSha }) }
+        )
+      );
+    const first = await run("batch-old-commit", "a".repeat(40));
+    const second = await run("batch-new-commit", "c".repeat(40));
+    assert.equal(first.episode?.episodeId, "batch-old-commit.a-0001");
+    assert.equal(second.episode?.episodeId, "batch-new-commit.a-0001");
+  } finally {
+    temporary.cleanup();
+  }
+});
 
 test("synthetic 1,000-episode improvement cycle records evidence, finding, comparison, and a hold next-cycle state", async () => {
   const temporary = store();
@@ -1324,7 +1357,7 @@ test("synthetic 1,000-episode improvement cycle records evidence, finding, compa
         repository: WORKSPACE_ID,
         buildSha: index === 0 ? baselineBuild : candidateBuild,
         gameBuild: index === 0 ? baselineGameBuild : candidateGameBuild,
-        configHash: approval().playtestConfigHash,
+        configHash: build().configHash,
         rubricHash: "c".repeat(64),
         actionSchemaHash: episodes[0]!.identity.actionSchemaHash,
         observationSchemaHash: episodes[0]!.identity.observationSchemaHash,

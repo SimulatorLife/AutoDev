@@ -12,6 +12,7 @@ import {
   type PlaytestingFilterKey,
   type PlaytestingScope
 } from "../../src/features/playtesting/playtesting-url.ts";
+import { PlaytestingReadiness } from "../../src/features/playtesting/PlaytestingReadiness.tsx";
 import type { PlaytestingRunSetup } from "../../src/features/playtesting/PlaytestingRunControls.tsx";
 import { PlaytestingRunDashboard } from "../../src/features/playtesting/PlaytestingRunDashboard.tsx";
 import { PlaytestingSelection } from "../../src/features/playtesting/PlaytestingSelection.ts";
@@ -36,8 +37,10 @@ import {
 import {
   fetchPlaytestingHumanValidation,
   fetchPlaytestingPage,
+  fetchPlaytestingReadiness,
   fetchPlaytestingRunCapabilities,
-  type PlaytestingPageRequest
+  type PlaytestingPageRequest,
+  playtestingReadinessFailure
 } from "./playtesting-server.ts";
 
 export const dynamic = "force-dynamic";
@@ -71,7 +74,15 @@ interface ViewLoadFailure {
   readonly result: Exclude<ControlApiResult<unknown>, { readonly kind: "ok" }>;
 }
 
-type ViewLoadResult = OverviewLoadSuccess | ListLoadSuccess | ViewLoadFailure;
+interface ViewLoadInitializing {
+  readonly kind: "initializing";
+}
+
+type ViewLoadResult =
+  | OverviewLoadSuccess
+  | ListLoadSuccess
+  | ViewLoadFailure
+  | ViewLoadInitializing;
 
 function resourceUnavailable(
   result: Exclude<ControlApiResult<unknown>, { readonly kind: "ok" }>
@@ -109,10 +120,23 @@ function firstFailure(
   return { kind: "unavailable", result };
 }
 
+async function waitForPlaytestingReadiness(
+  scope: PlaytestingScope,
+  config: ControlApiConfig
+): Promise<ViewLoadFailure | ViewLoadInitializing | null> {
+  const readiness = await fetchPlaytestingReadiness(scope.workspaceId!, config);
+  if (readiness.kind !== "ok") {
+    return { kind: "unavailable", result: readiness };
+  }
+  return readiness.data.status === "ready" ? null : { kind: "initializing" };
+}
+
 async function loadOverview(
   scope: PlaytestingScope,
   config: ControlApiConfig
 ): Promise<ViewLoadResult> {
+  const readiness = await waitForPlaytestingReadiness(scope, config);
+  if (readiness !== null) return readiness;
   const [batches, episodes, findings, comparisons, capabilities] =
     await Promise.all([
       fetchPlaytestingPage("batches", pageRequest(scope, "batches", 5), config),
@@ -245,6 +269,8 @@ async function loadList(
   scope: PlaytestingScope,
   config: ControlApiConfig
 ): Promise<ViewLoadResult> {
+  const readiness = await waitForPlaytestingReadiness(scope, config);
+  if (readiness !== null) return readiness;
   if (scope.view === "sessions") {
     const result = await fetchPlaytestingPage(
       "episodes",
@@ -315,9 +341,22 @@ function pageResult(
   loaded: ViewLoadResult
 ): React.JSX.Element {
   let content: React.ReactNode;
-  if (loaded.kind === "unavailable")
-    content = resourceUnavailable(loaded.result);
-  else if (loaded.kind === "overview") {
+  if (loaded.kind === "initializing") {
+    content = React.createElement(PlaytestingReadiness, {
+      workspaceId: scope.workspaceId!,
+      initialStatus: "initializing"
+    });
+  } else if (loaded.kind === "unavailable") {
+    const readinessFailure = playtestingReadinessFailure(loaded.result);
+    content = readinessFailure
+      ? React.createElement(PlaytestingReadiness, {
+          workspaceId: scope.workspaceId!,
+          initialStatus: readinessFailure.status,
+          initialCode: readinessFailure.code,
+          initialMessage: readinessFailure.message
+        })
+      : resourceUnavailable(loaded.result);
+  } else if (loaded.kind === "overview") {
     content = React.createElement(
       React.Fragment,
       null,

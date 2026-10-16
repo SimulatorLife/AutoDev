@@ -13,7 +13,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { responseMessage } from "./playtesting-run-messages.ts";
 import type { PlaytestingScope } from "./playtesting-url.ts";
 import { PlaytestingActiveRunsPanel } from "./PlaytestingActiveRunsPanel.ts";
-import { usePlaytestingActiveRuns } from "./use-playtesting-active-runs.ts";
+import type { usePlaytestingActiveRuns } from "./use-playtesting-active-runs.ts";
 
 async function postCancel(
   workspaceId: string,
@@ -69,24 +69,19 @@ export interface PlaytestingLiveRunsProps {
   readonly scope: PlaytestingScope;
   /** Focused batch, read from the URL so refresh and Back restore it. */
   readonly initialFocusedBatchId: string | null;
-  /** A confirmed local start asks the same status hook for an immediate read. */
-  readonly refreshGeneration: number;
+  /** The dashboard's single status owner, shared with the run start card. */
+  readonly live: ReturnType<typeof usePlaytestingActiveRuns>;
 }
 
 export function PlaytestingLiveRuns({
   workspaceId,
   scope,
   initialFocusedBatchId,
-  refreshGeneration
+  live
 }: PlaytestingLiveRunsProps): React.JSX.Element {
-  const { state, refresh, watching } = usePlaytestingActiveRuns({
-    workspaceId
-  });
+  const { state, refresh, watching } = live;
   const [busyBatchId, setBusyBatchId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  useEffect(() => {
-    if (refreshGeneration > 0) refresh();
-  }, [refresh, refreshGeneration]);
   const [focusedBatchId, setFocusedBatchId] = useState<string | null>(
     initialFocusedBatchId
   );

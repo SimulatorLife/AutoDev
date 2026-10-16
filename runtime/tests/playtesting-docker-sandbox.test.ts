@@ -44,6 +44,44 @@ import {
 } from "../src/playtesting/docker-sandbox.ts";
 import { playtestManifestHash } from "../src/playtesting/hash-chain.ts";
 
+/** Runtime snapshot root, isolated from the operator's CODEX_HOME. */
+const SNAPSHOT_ROOT = realpathSync(
+  mkdtempSync(path.join(tmpdir(), "autodev-playtest-snapshots-"))
+);
+test.after(() => rmSync(SNAPSHOT_ROOT, { recursive: true, force: true }));
+
+function prepare(
+  approved: WorkspacePlaytestApproval,
+  now?: () => number
+): ReturnType<typeof preparePlaytestSandbox> {
+  return preparePlaytestSandbox(approved, {
+    snapshotRoot: SNAPSHOT_ROOT,
+    ...(now === undefined ? {} : { now })
+  });
+}
+
+function headSha(root: string): string {
+  return execFileSync("git", ["-C", root, "rev-parse", "HEAD"], {
+    encoding: "utf8"
+  }).trim();
+}
+
+function commitAll(root: string, message: string): void {
+  execFileSync("git", ["-C", root, "add", "--all"]);
+  execFileSync("git", [
+    "-C",
+    root,
+    "-c",
+    "user.email=test@example.invalid",
+    "-c",
+    "user.name=Playtest test",
+    "commit",
+    "--quiet",
+    "-m",
+    message
+  ]);
+}
+
 const OBSERVATION_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -251,18 +289,12 @@ function repository(): {
 }
 
 function approval(root: string): WorkspacePlaytestApproval {
-  const buildSha = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], {
-    encoding: "utf8"
-  }).trim();
   return {
-    schema: "autodev-workspace-playtest-approval-v1",
+    schema: "autodev-workspace-playtest-approval-v2",
     workspaceId: "fixture/game",
     revision: 1,
     approvalId: "approval-1",
     checkoutRoot: realpathSync(root),
-    buildSha,
-    gameBuild: "fixture-game-build",
-    playtestConfigHash: createHash("sha256").update(configFor()).digest("hex"),
     adapterImageDigest: `ghcr.io/fixture/game@sha256:${"a".repeat(64)}`,
     workingDirectory: ".",
     adapterCommand: [...STANDARD_COMMAND],
@@ -400,29 +432,102 @@ class MockChildProcess extends EventEmitter {
   }
 }
 
-test("sandbox approval pins a clean checkout, command, image, and bounded resources", () => {
+test("sandbox snapshots the checkout's latest commit with its own config hash", () => {
   const fixture = repository();
   try {
-    const prepared = preparePlaytestSandbox(approval(fixture.root));
-    assert.equal(prepared.checkoutRoot, fixture.root);
-    assert.match(prepared.checkoutSha, /^[a-f\d]{40}$/u);
+    const prepared = prepare(approval(fixture.root));
+    const sha = headSha(fixture.root);
+    assert.equal(prepared.sourceCheckoutRoot, fixture.root);
+    assert.deepEqual(prepared.build, {
+      buildSha: sha,
+      gameBuild: sha,
+      configHash: createHash("sha256").update(configFor()).digest("hex")
+    });
+    assert.ok(prepared.checkoutRoot.startsWith(SNAPSHOT_ROOT + path.sep));
+    assert.equal(path.basename(prepared.checkoutRoot), sha);
+    assert.equal(prepared.workingDirectory, prepared.checkoutRoot);
     assert.deepEqual(prepared.command, PLAYTESTS_GENERIC_ADAPTER_COMMAND);
-    assert.equal(prepared.workingDirectory, fixture.root);
+    assert.equal(
+      readFileSync(
+        path.join(prepared.checkoutRoot, ".autodev", "playtest.config.json"),
+        "utf8"
+      ),
+      configFor()
+    );
   } finally {
     fixture.cleanup();
   }
 });
 
-test("a gitignored .autodev/ is refused by name, not by a generic dirtiness message", () => {
-  // The failure an operator actually hits: they gitignore `.autodev/` and the
-  // checkout stops being clean. A generic "modified, untracked, or ignored"
-  // message leaves them guessing which path to un-ignore, and `.autodev/` is
-  // exactly the directory holding the config, rubric and observation manifest.
+test("uncommitted, untracked, and ignored files never reach the build snapshot", () => {
+  const fixture = repository();
+  try {
+    writeFileSync(path.join(fixture.root, ".gitignore"), ".env\n");
+    commitAll(fixture.root, "ignore local secret files");
+    writeFileSync(path.join(fixture.root, ".env"), "API_SECRET=no\n");
+    writeFileSync(path.join(fixture.root, "untracked.txt"), "no\n");
+    writeFileSync(
+      path.join(fixture.root, ".autodev", "node-fixture-game.mjs"),
+      "export function createGame() { throw new Error('in progress'); }\n"
+    );
+    const prepared = prepare(approval(fixture.root));
+    assert.equal(prepared.build.buildSha, headSha(fixture.root));
+    assert.equal(existsSync(path.join(prepared.checkoutRoot, ".env")), false);
+    assert.equal(
+      existsSync(path.join(prepared.checkoutRoot, "untracked.txt")),
+      false
+    );
+    assert.equal(
+      readFileSync(
+        path.join(prepared.checkoutRoot, ".autodev", "node-fixture-game.mjs"),
+        "utf8"
+      ),
+      "export function createGame() { return {}; }\n"
+    );
+    // The operator's own index and working tree are untouched.
+    assert.equal(
+      execFileSync("git", ["-C", fixture.root, "status", "--porcelain"], {
+        encoding: "utf8"
+      }),
+      " M .autodev/node-fixture-game.mjs\n?? untracked.txt\n"
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("each batch follows the newest commit without re-approval and prunes stale snapshots", () => {
   const fixture = repository();
   try {
     const approved = approval(fixture.root);
-    // Untrack the directory first: a path still in the index is not reported as
-    // ignored, so the failure under test would never occur.
+    let clock = Date.parse("2026-10-15T00:00:00.000Z");
+    const first = prepare(approved, () => clock);
+    assert.equal(
+      prepare(approved, () => clock).checkoutRoot,
+      first.checkoutRoot
+    );
+
+    writeFileSync(path.join(fixture.root, "CHANGELOG.md"), "next build\n");
+    commitAll(fixture.root, "next build");
+    clock += 3 * 60 * 60 * 1000;
+    const second = prepare(approved, () => clock);
+    assert.equal(second.build.buildSha, headSha(fixture.root));
+    assert.notEqual(second.build.buildSha, first.build.buildSha);
+    assert.notEqual(second.checkoutRoot, first.checkoutRoot);
+    assert.ok(existsSync(path.join(second.checkoutRoot, "CHANGELOG.md")));
+    assert.equal(
+      existsSync(first.checkoutRoot),
+      false,
+      "a snapshot unused for longer than the retention window is pruned"
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("a commit that does not track .autodev/ is refused before any sandbox", () => {
+  const fixture = repository();
+  try {
     execFileSync("git", [
       "-C",
       fixture.root,
@@ -433,52 +538,23 @@ test("a gitignored .autodev/ is refused by name, not by a generic dirtiness mess
       ".autodev"
     ]);
     writeFileSync(path.join(fixture.root, ".gitignore"), ".autodev/\n");
-    execFileSync("git", ["-C", fixture.root, "add", ".gitignore"]);
-    execFileSync("git", [
-      "-C",
-      fixture.root,
-      "-c",
-      "user.email=fixture@example.com",
-      "-c",
-      "user.name=fixture",
-      "commit",
-      "--quiet",
-      "-m",
-      "ignore autodev"
-    ]);
+    commitAll(fixture.root, "ignore autodev");
     assert.throws(
-      () => preparePlaytestSandbox(approved),
-      /ignores \.autodev\//u
-    );
-    assert.throws(
-      () => preparePlaytestSandbox(approved),
-      /playtest config, rubric and observation manifests/u
+      () => prepare(approval(fixture.root)),
+      /playtest\.config\.json/u
     );
   } finally {
     fixture.cleanup();
   }
 });
 
-test("sandbox refuses a changed build, dirty checkout, and unapproved command", () => {
+test("sandbox refuses an adapter command the operator did not approve", () => {
   const fixture = repository();
   try {
-    const approved = approval(fixture.root);
-    assert.throws(
-      () => preparePlaytestSandbox({ ...approved, buildSha: "f".repeat(40) }),
-      PlaytestSandboxApprovalError
-    );
-    writeFileSync(path.join(fixture.root, "untracked.txt"), "no\n");
-    assert.throws(
-      () => preparePlaytestSandbox(approved),
-      // The offending path is named, so the operator does not have to work out
-      // which file made the checkout dirty.
-      /commit or remove: untracked\.txt/u
-    );
-    rmSync(path.join(fixture.root, "untracked.txt"));
     assert.throws(
       () =>
-        preparePlaytestSandbox({
-          ...approved,
+        prepare({
+          ...approval(fixture.root),
           adapterCommand: ["/bin/sh", "-c", "touch /tmp/unauthorized"]
         }),
       /exact operator approval/u
@@ -488,44 +564,15 @@ test("sandbox refuses a changed build, dirty checkout, and unapproved command", 
   }
 });
 
-test("sandbox refuses ignored workspace-local files before they can be mounted", () => {
-  const fixture = repository();
-  try {
-    writeFileSync(path.join(fixture.root, ".gitignore"), ".env\n");
-    execFileSync("git", ["-C", fixture.root, "add", ".gitignore"]);
-    execFileSync("git", [
-      "-C",
-      fixture.root,
-      "-c",
-      "user.email=test@example.invalid",
-      "-c",
-      "user.name=Playtest test",
-      "commit",
-      "--quiet",
-      "-m",
-      "ignore local secret files"
-    ]);
-    writeFileSync(
-      path.join(fixture.root, ".env"),
-      "API_SECRET=must-not-mount\n"
-    );
-    assert.throws(
-      () => preparePlaytestSandbox(approval(fixture.root)),
-      /commit or remove: [.]env/u
-    );
-  } finally {
-    fixture.cleanup();
-  }
-});
-
-test("sandbox rejects workspace escapes and unpinned container images", () => {
+test("sandbox rejects committed workspace escapes, missing directories, and unpinned images", () => {
   const fixture = repository();
   const outside = mkdtempSync(path.join(tmpdir(), "autodev-playtest-outside-"));
   try {
     symlinkSync(outside, path.join(fixture.root, "outside"));
+    commitAll(fixture.root, "commit an escaping symlink");
     assert.throws(
       () =>
-        preparePlaytestSandbox({
+        prepare({
           ...approval(fixture.root),
           workingDirectory: "outside"
         }),
@@ -533,7 +580,15 @@ test("sandbox rejects workspace escapes and unpinned container images", () => {
     );
     assert.throws(
       () =>
-        preparePlaytestSandbox({
+        prepare({
+          ...approval(fixture.root),
+          workingDirectory: "not-committed"
+        }),
+      /does not exist in the latest commit/u
+    );
+    assert.throws(
+      () =>
+        prepare({
           ...approval(fixture.root),
           adapterImageDigest: "fixture/game:latest"
         }),
@@ -549,7 +604,7 @@ test("sandbox rejects workspace escapes and unpinned container images", () => {
 test("Docker argv enforces a local, read-only, networkless container with hard quotas", async () => {
   const fixture = repository();
   try {
-    const prepared = preparePlaytestSandbox(approval(fixture.root));
+    const prepared = prepare(approval(fixture.root));
     await withLocalSocket(async (socket) => {
       const args = buildDockerRunArguments(
         prepared,
@@ -569,7 +624,7 @@ test("Docker argv enforces a local, read-only, networkless container with hard q
       assert.ok(args.includes("--pids-limit"));
       assert.ok(args.includes("--memory-swap"));
       assert.ok(args.includes("--cpus"));
-      assert.ok(joined.includes("type=bind,source=" + fixture.root));
+      assert.ok(joined.includes("type=bind,source=" + prepared.checkoutRoot));
       assert.ok(joined.includes("target=/workspace,readonly"));
       assert.ok(joined.includes("/artifacts:rw,noexec,nosuid,nodev"));
       assert.ok(joined.includes("ghcr.io/fixture/game@sha256:"));
@@ -580,7 +635,9 @@ test("Docker argv enforces a local, read-only, networkless container with hard q
         PLAYTESTS_GENERIC_ADAPTER_COMMAND[0]
       );
       assert.ok(
-        args.includes("AUTODEV_PLAYTEST_ENGINE_BUILD=" + prepared.gameBuild)
+        args.includes(
+          "AUTODEV_PLAYTEST_ENGINE_BUILD=" + prepared.build.gameBuild
+        )
       );
       assert.doesNotMatch(joined, /--gpus|DOCKER_HOST=.*tcp/u);
       assert.doesNotMatch(joined, /--env .*API_KEY|--env .*TOKEN/u);
@@ -593,7 +650,7 @@ test("Docker argv enforces a local, read-only, networkless container with hard q
 test("branch traces enter through a SHA-addressed read-only mount and are removed after exit", async () => {
   const fixture = repository();
   try {
-    const prepared = preparePlaytestSandbox(approval(fixture.root));
+    const prepared = prepare(approval(fixture.root));
     const bytes = Buffer.from("verified replay trace", "utf8");
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const reference = {
@@ -689,7 +746,7 @@ test("Docker host resolution refuses remote-only platforms", () => {
 test("adversarial: docker unavailable and remote sockets fail closed", async () => {
   const fixture = repository();
   try {
-    const prepared = preparePlaytestSandbox(approval(fixture.root));
+    const prepared = prepare(approval(fixture.root));
     assert.throws(
       () => assertLocalDockerAvailable("/no/such/socket.sock"),
       PlaytestSandboxUnavailableError
@@ -717,7 +774,7 @@ test("adversarial: docker unavailable and remote sockets fail closed", async () 
 test("adversarial: pinned-image enforcement prevents execution without local image and pulls", async () => {
   const fixture = repository();
   try {
-    const prepared = preparePlaytestSandbox(approval(fixture.root));
+    const prepared = prepare(approval(fixture.root));
     await withLocalSocket(async (socket) => {
       await assert.rejects(async () => {
         await launchPlaytestSandbox(prepared, {
@@ -747,7 +804,7 @@ test("adversarial: Docker never uses a shell when serializing argv", async () =>
   ];
   const fixture = repository();
   try {
-    const approved = preparePlaytestSandbox(approval(fixture.root));
+    const approved = prepare(approval(fixture.root));
     // Inject an adversarial argv vector at the low-level launcher seam. The
     // approved-config path only permits AutoDev's generic adapter command.
     const prepared = { ...approved, command: unescapedCommand };
@@ -793,7 +850,7 @@ test("adversarial: Docker never uses a shell when serializing argv", async () =>
 test("adversarial: cancellation kills child process and forces container removal", async () => {
   const fixture = repository();
   try {
-    const prepared = preparePlaytestSandbox(approval(fixture.root));
+    const prepared = prepare(approval(fixture.root));
     const dockerCommands: string[][] = [];
 
     await withLocalSocket(async (socket) => {
@@ -850,7 +907,7 @@ test("adversarial: wall-time timeout terminates container and preserves partial 
         wallTimeMs: 1000
       }
     };
-    const prepared = preparePlaytestSandbox(approved);
+    const prepared = prepare(approved);
     const dockerCommands: string[][] = [];
 
     await withLocalSocket(async (socket) => {
@@ -892,7 +949,7 @@ test("adversarial: wall-time timeout terminates container and preserves partial 
 test("adversarial: process spawn error is captured with clean container teardown", async () => {
   const fixture = repository();
   try {
-    const prepared = preparePlaytestSandbox(approval(fixture.root));
+    const prepared = prepare(approval(fixture.root));
 
     await withLocalSocket(async (socket) => {
       const mockChild = new MockChildProcess();
@@ -926,7 +983,7 @@ test("adversarial: process spawn error is captured with clean container teardown
 test("adversarial: exit code is captured and reported on non-zero exit", async () => {
   const fixture = repository();
   try {
-    const prepared = preparePlaytestSandbox(approval(fixture.root));
+    const prepared = prepare(approval(fixture.root));
 
     await withLocalSocket(async (socket) => {
       const mockChild = new MockChildProcess();
@@ -968,7 +1025,7 @@ test("adversarial: exit code is captured and reported on non-zero exit", async (
 test("adversarial: output limits abort execution and force kill container", async () => {
   const fixture = repository();
   try {
-    const prepared = preparePlaytestSandbox(approval(fixture.root));
+    const prepared = prepare(approval(fixture.root));
 
     await withLocalSocket(async (socket) => {
       const mockChild = new MockChildProcess();
@@ -1007,7 +1064,7 @@ test("adversarial: output limits abort execution and force kill container", asyn
 test("adversarial: artifact symlink rejection, byte quota, and staging cleanup", async () => {
   const fixture = repository();
   try {
-    const prepared = preparePlaytestSandbox(approval(fixture.root));
+    const prepared = prepare(approval(fixture.root));
 
     await withLocalSocket(async (socket) => {
       // 1. Symlink rejection
@@ -1132,7 +1189,7 @@ test("adversarial: sanitized environment strips host credentials and disallows G
     process.env.AWS_SECRET_ACCESS_KEY = "aws-adversarial-secret";
     process.env.DOCKER_AUTH = "docker-adversarial-auth";
 
-    const prepared = preparePlaytestSandbox(approval(fixture.root));
+    const prepared = prepare(approval(fixture.root));
 
     let spawnedEnv: NodeJS.ProcessEnv | undefined;
     let spawnedArgs: readonly string[] = [];
@@ -1178,7 +1235,7 @@ test("adversarial: sanitized environment strips host credentials and disallows G
 test("runPlaytestSandbox runs an approved container sandbox to completion", async () => {
   const fixture = repository();
   try {
-    const prepared = preparePlaytestSandbox(approval(fixture.root));
+    const prepared = prepare(approval(fixture.root));
     await withLocalSocket(async (socket) => {
       const mockChild = new MockChildProcess();
       const result = await runPlaytestSandbox(prepared, {

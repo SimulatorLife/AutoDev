@@ -14,7 +14,7 @@
  * genuinely unavailable here; a file on disk is not.
  */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   copyFileSync,
   mkdirSync,
@@ -44,6 +44,10 @@ import {
   type PlaytestingRepositoryOps,
   type PlaytestMcpSession
 } from "../src/playtesting/mcp.ts";
+import {
+  commitFixtureCheckout,
+  isolatedPlaytestPreparer
+} from "./support/playtest-checkout.ts";
 
 // Must match the sample fixture's bound rubric workspace; the loader checks it.
 const WORKSPACE_ID = "owner/fixture";
@@ -51,15 +55,11 @@ const SAMPLE_FIXTURE_ROOT = fileURLToPath(
   new URL("fixtures/playtesting/", import.meta.url)
 );
 
-function digest(bytes: Uint8Array | string): string {
-  return createHash("sha256").update(bytes).digest("hex");
-}
-
 /**
  * A real checkout whose `.autodev/playtest.config.json` declares
- * `reporting.githubIssues`. The config is rewritten rather than substituted so
- * the approval's `playtestConfigHash` still has to match the exact bytes on
- * disk, which is what makes this a boundary test.
+ * `reporting.githubIssues`. The config is rewritten and committed rather than
+ * substituted, so the Runtime reads the declared authority from the exact
+ * committed build it would run, which is what makes this a boundary test.
  */
 function setupCheckout(githubIssues: "disabled" | "review"): {
   readonly root: string;
@@ -90,6 +90,7 @@ function setupCheckout(githubIssues: "disabled" | "review"): {
   >;
   const configuration = { ...config, reporting: { githubIssues } };
   writeFileSync(configPath, JSON.stringify(configuration) + "\n");
+  commitFixtureCheckout(root);
   return {
     root,
     configBytes: readFileSync(configPath),
@@ -112,16 +113,13 @@ function approval(
   // doing exactly its job.
   const budget = checkout.configuration.budget;
   return {
-    schema: "autodev-workspace-playtest-approval-v1",
+    schema: "autodev-workspace-playtest-approval-v2",
     revision: 1,
     approvalId: "approval-issue-drafts",
     workspaceId: WORKSPACE_ID,
     approvedBy: "operator@example.com",
     approvedAt: "2026-10-10T00:00:00.000Z",
     checkoutRoot: checkout.root,
-    buildSha: "a".repeat(40),
-    gameBuild: "fixture-build-1",
-    playtestConfigHash: digest(checkout.configBytes),
     adapterImageDigest: `sha256:${"c".repeat(64)}`,
     workingDirectory: ".",
     adapterCommand: [...checkout.configuration.adapter.command],
@@ -216,7 +214,9 @@ async function harness(
   const approvalRepo = new WorkspacePlaytestApprovalRepository(
     path.join(tmpRoot, "approvals")
   );
+  const preparer = isolatedPlaytestPreparer();
   const playtestRunControl = createPlaytestRunControl({
+    prepareSandboxHandler: preparer.prepare,
     artifactStoreForWorkspace: () => artifacts,
     playtestRepository: findingsRepository(rows),
     approvalRepository: approvalRepo,
@@ -265,7 +265,10 @@ async function harness(
   return {
     callIssueDrafts: () => call("playtest.issueDrafts", {}),
     callCapabilities: () => call("playtest.capabilities", {}),
-    cleanup: () => rmSync(tmpRoot, { recursive: true, force: true })
+    cleanup: () => {
+      preparer.cleanup();
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
   };
 }
 
@@ -286,6 +289,19 @@ test("playtest.issueDrafts drafts findings when the checked-in config asks for r
     const capabilities = await api.callCapabilities();
     assert.equal(capabilities.configuredIssueReporting, "review");
     assert.equal(capabilities.issueReporting, "review");
+    // The latest commit, resolved without any per-commit approval, and the
+    // only seeds its frozen benchmark admits.
+    assert.equal(
+      capabilities.buildSha,
+      execFileSync("git", ["-C", checkout.root, "rev-parse", "HEAD"], {
+        encoding: "utf8"
+      }).trim()
+    );
+    assert.deepEqual(capabilities.admissibleSeeds, [
+      { seed: "fixture-discovery", purpose: "discovery" },
+      { seed: "fixture-confirmation", purpose: "confirmation" },
+      { seed: "fixture-regression", purpose: "regression" }
+    ]);
 
     const result = await api.callIssueDrafts();
     assert.equal(result.refusal, null);
@@ -374,9 +390,10 @@ test("an unreadable checkout config fails closed rather than claiming authority"
   let api: Harness | undefined;
   try {
     const approved = approval(checkout);
-    // Destroy the config after the approval's digest was computed: the
-    // approval is still "review", but nothing readable declares review.
+    // The latest commit drops the config: the approval is still "review",
+    // but nothing in the build that would run declares review.
     rmSync(path.join(checkout.root, ".autodev", "playtest.config.json"));
+    commitFixtureCheckout(checkout.root);
     api = await harness(approved, [finding({ findingId: "finding-verified" })]);
 
     const capabilities = await api.callCapabilities();

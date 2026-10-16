@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   assertWorkspacePlaytestApproval,
   type ControlApiWorkspacePlaytestApprovalResponse,
+  WORKSPACE_PLAYTEST_APPROVAL_SCHEMA,
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
 import { ConfigRepository } from "@simulatorlife/autodev-data";
@@ -23,9 +24,6 @@ const FILTER_VALUE_MAX_CHARS = 256;
 const APPROVAL_BODY_KEYS = [
   "expectedRevision",
   "checkoutRoot",
-  "buildSha",
-  "gameBuild",
-  "playtestConfigHash",
   "adapterImageDigest",
   "workingDirectory",
   "adapterCommand",
@@ -235,17 +233,11 @@ async function approveWorkspace(
   try {
     const revision = expectedRevision(parsed.body);
     const candidate: WorkspacePlaytestApproval = {
-      schema: "autodev-workspace-playtest-approval-v1",
+      schema: WORKSPACE_PLAYTEST_APPROVAL_SCHEMA,
       workspaceId: route.workspaceId,
       revision: 1,
       approvalId: randomUUID(),
       checkoutRoot: requiredString(parsed.body.checkoutRoot, "checkoutRoot"),
-      buildSha: requiredString(parsed.body.buildSha, "buildSha"),
-      gameBuild: requiredString(parsed.body.gameBuild, "gameBuild"),
-      playtestConfigHash: requiredString(
-        parsed.body.playtestConfigHash,
-        "playtestConfigHash"
-      ),
       adapterImageDigest: requiredString(
         parsed.body.adapterImageDigest,
         "adapterImageDigest"
@@ -279,7 +271,7 @@ async function approveWorkspace(
     report(options, actor, action, route.workspaceId, "ok", {
       approvalId: approved.approvalId,
       revision: approved.revision,
-      buildSha: approved.buildSha,
+      checkoutRoot: approved.checkoutRoot,
       adapterImageDigest: approved.adapterImageDigest
     });
     sendJson(

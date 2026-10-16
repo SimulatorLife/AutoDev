@@ -27,7 +27,10 @@ import {
 } from "@simulatorlife/autodev-data/playtesting";
 import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
 
-import { handleControlApiRequest } from "../src/control-api/index.ts";
+import {
+  handleControlApiRequest,
+  warmupDefaultPlaytestingRepository
+} from "../src/control-api/index.ts";
 import {
   handlePlaytestingControlApiRequest,
   type PlaytestingReadRepository
@@ -200,6 +203,7 @@ function runControlFixture(
             maxStepsPerEpisode: 20
           }
         ],
+        admissibleSeeds: null,
         policyProfiles: [
           {
             policyId: "random",
@@ -232,6 +236,7 @@ function runControlFixture(
         batchId: "batch-run-1",
         assignmentCount:
           "assignments" in payload ? payload.assignments.length : 1,
+        createdAt: "2026-10-15T00:00:00.000Z",
         status: "running"
       };
     },
@@ -542,6 +547,7 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
     workspaceId: WORKSPACE,
     batchId: "batch-run-1",
     assignmentCount: 1,
+    createdAt: "2026-10-15T00:00:00.000Z",
     status: "running"
   });
   const delegatedStart = calls[1] as {
@@ -912,7 +918,7 @@ test("Playtesting reads distinguish unknown workspaces, unavailable catalogs, an
   );
 });
 
-test("default workspace-scoped Playtesting reads initialize Data schema once", async () => {
+test("default workspace-scoped Playtesting reads gate on readiness and reuse an explicit schema retry", async () => {
   const originalFetch = globalThis.fetch;
   let failSchemaInitialization = true;
   const clickHouseCalls: { query: string; workspaceId: string | null }[] = [];
@@ -949,16 +955,70 @@ test("default workspace-scoped Playtesting reads initialize Data schema once", a
       body: JSON.parse(response.body ?? "{}") as Record<string, unknown>
     };
   };
+  const callReadiness = async (
+    method: "GET" | "POST",
+    role: "viewer" | "operator" = "viewer"
+  ) => {
+    const readinessPath =
+      method === "POST"
+        ? "/control/playtesting/initialize"
+        : "/control/playtesting/readiness";
+    const url = `${readinessPath}?workspaceId=${encodeURIComponent(WORKSPACE)}`;
+    const response = responseRecorder();
+    await handlePlaytestingControlApiRequest(
+      request(method, url),
+      response as unknown as ServerResponse,
+      new URL(url, "http://127.0.0.1").pathname,
+      {
+        actor: role === "operator" ? "playtest-operator" : "console-viewer",
+        role
+      },
+      { readWorkspaceCatalog: catalog }
+    );
+    return {
+      status: response.statusCode,
+      body: JSON.parse(response.body ?? "{}") as Record<string, unknown>
+    };
+  };
 
   try {
-    const unavailable = await callDefaultRepository("episodes");
+    const initializing = await callDefaultRepository("episodes");
+    assert.equal(initializing.status, 503);
+    assert.equal(
+      (initializing.body.error as { code: string }).code,
+      "autodev_control_playtesting_source_initializing"
+    );
+    await assert.rejects(warmupDefaultPlaytestingRepository());
+
+    const unavailable = await callReadiness("GET");
     assert.equal(unavailable.status, 503);
     assert.equal(
       (unavailable.body.error as { code: string }).code,
       "autodev_control_playtesting_source_unavailable"
     );
+    const failedSchemaCallCount = clickHouseCalls.filter((statement) =>
+      /^(?:CREATE TABLE|ALTER TABLE)/iu.test(statement.query.trim())
+    ).length;
+    const unavailableRead = await callDefaultRepository("episodes");
+    assert.equal(unavailableRead.status, 503);
+    assert.equal(
+      (unavailableRead.body.error as { code: string }).code,
+      "autodev_control_playtesting_source_unavailable"
+    );
+    assert.equal(
+      clickHouseCalls.filter((statement) =>
+        /^(?:CREATE TABLE|ALTER TABLE)/iu.test(statement.query.trim())
+      ).length,
+      failedSchemaCallCount,
+      "a viewer resource read must not restart failed schema DDL"
+    );
 
     failSchemaInitialization = false;
+    const retry = await callReadiness("POST", "operator");
+    assert.equal(retry.status, 200);
+    assert.equal((retry.body as { status: string }).status, "initializing");
+    await warmupDefaultPlaytestingRepository();
+
     const [episodes, findings] = await Promise.all([
       callDefaultRepository("episodes"),
       callDefaultRepository("findings")
@@ -971,7 +1031,7 @@ test("default workspace-scoped Playtesting reads initialize Data schema once", a
     );
     assert.ok(
       schemaCalls.length > 0,
-      "default reads provision the Data schema"
+      "the explicit retry provisions the Data schema"
     );
     const workspaceReads = clickHouseCalls.filter(
       (statement) =>
@@ -1548,16 +1608,13 @@ test("authorized human-study API registers consent, imports idempotently, suppre
   );
   approvalRepository.approve(
     {
-      schema: "autodev-workspace-playtest-approval-v1",
+      schema: "autodev-workspace-playtest-approval-v2",
       revision: 1,
       approvalId: "human-approval-1",
       workspaceId: WORKSPACE,
       approvedBy: "study-operator",
       approvedAt: "2026-10-10T00:00:00.000Z",
       checkoutRoot: path.join(root, "game"),
-      buildSha: buildA,
-      gameBuild: "human-fixture-game",
-      playtestConfigHash: "c".repeat(64),
       adapterImageDigest: "ghcr.io/fixture/adapter@sha256:" + "d".repeat(64),
       workingDirectory: ".",
       adapterCommand: ["./adapter"],

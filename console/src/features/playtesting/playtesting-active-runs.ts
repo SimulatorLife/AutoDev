@@ -91,6 +91,77 @@ export function isTerminal(record: ControlApiPlaytestingRunRecord): boolean {
   return TERMINAL_RUN_STATES.has(record.status);
 }
 
+/**
+ * Read one run-status envelope for exactly this workspace and batch. The
+ * active-runs read lists only nonterminal batches, so a batch that finished
+ * between polls is resolved through this status read rather than dropped.
+ */
+export function readRunStatus(
+  value: unknown,
+  workspaceId: string,
+  batchId: string
+): ControlApiPlaytestingRunRecord | null {
+  if (!isRecord(value) || value.kind !== "ok" || !isRecord(value.data)) {
+    return null;
+  }
+  const { schema, workspaceId: echoed, run } = value.data;
+  return schema === "autodev-control-playtesting-run-status-v1" &&
+    echoed === workspaceId &&
+    isRecord(run) &&
+    run.batchId === batchId &&
+    typeof run.status === "string"
+    ? (run as unknown as ControlApiPlaytestingRunRecord)
+    : null;
+}
+
+/** Watched batches the latest active read no longer lists: they finished. */
+export function departedRuns(
+  previous: readonly PlaytestingActiveRun[],
+  next: readonly PlaytestingActiveRun[]
+): readonly PlaytestingActiveRun[] {
+  const listed = new Set(next.map((run) => run.batchId));
+  return previous.filter(
+    (run) => !isTerminal(run.record) && !listed.has(run.batchId)
+  );
+}
+
+/**
+ * Seed the single status owner with the exact start acknowledgement before its
+ * first active-list read. A very short batch may already be terminal by then,
+ * so the next poll must resolve the seeded run through its status route.
+ */
+export function trackStartedRun(
+  previous: readonly PlaytestingActiveRun[],
+  started: PlaytestingActiveRun
+): readonly PlaytestingActiveRun[] {
+  const active = previous.filter(
+    (run) => !isTerminal(run.record) && run.batchId !== started.batchId
+  );
+  return mergeRunsRead(previous, [...active, started], []);
+}
+
+/**
+ * The tracked set after one read: the active list, then departed batches with
+ * their server-read status, then batches already resolved terminal earlier.
+ * A finished batch therefore stays visible with its final status instead of
+ * vanishing at the moment it completes.
+ */
+export function mergeRunsRead(
+  previous: readonly PlaytestingActiveRun[],
+  next: readonly PlaytestingActiveRun[],
+  resolvedDepartures: readonly PlaytestingActiveRun[]
+): readonly PlaytestingActiveRun[] {
+  const seen = new Set<string>();
+  const merged: PlaytestingActiveRun[] = [];
+  const retainedTerminal = previous.filter((run) => isTerminal(run.record));
+  for (const run of [...next, ...resolvedDepartures, ...retainedTerminal]) {
+    if (seen.has(run.batchId)) continue;
+    seen.add(run.batchId);
+    merged.push(run);
+  }
+  return merged.slice(0, MAX_TRACKED_RUNS);
+}
+
 /** Polling continues only while some batch is genuinely nonterminal. */
 export function isWatching(runs: readonly PlaytestingActiveRun[]): boolean {
   return runs.some((run) => !isTerminal(run.record));

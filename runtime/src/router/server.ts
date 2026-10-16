@@ -19,9 +19,9 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   getControlApiAvailability,
   handleControlApiRequest,
-  setControlApiProviderModelDiscoverySource
+  setControlApiProviderModelDiscoverySource,
+  warmupDefaultPlaytestingRepository
 } from "../control-api/index.ts";
-import { warmupDefaultPlaytestingRepository } from "../control-api/playtesting.ts";
 import { shutdownDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
 import { createProviderModelDiscoveryService } from "../providers/model-discovery.ts";
 import { codexState, handle, HOST, PORT, refreshCodexState } from "./http.ts";

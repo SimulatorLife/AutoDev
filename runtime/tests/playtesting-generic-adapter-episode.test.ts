@@ -62,9 +62,13 @@ const GAME_OBSERVATION_SCHEMA = {
 function preparedFor(command: readonly string[]): PreparedPlaytestSandbox {
   return {
     workspaceId: "fixture/game",
+    sourceCheckoutRoot: "/host/checkout",
     checkoutRoot: "/host/checkout",
-    checkoutSha: "a".repeat(64),
-    gameBuild: "fixture-engine-v1",
+    build: {
+      buildSha: "a".repeat(64),
+      gameBuild: "fixture-engine-v1",
+      configHash: "c".repeat(64)
+    },
     imageDigest: `ghcr.io/autodev/adapter@sha256:${"b".repeat(64)}`,
     workingDirectory: "/host/checkout",
     command: [...command],
@@ -83,6 +87,7 @@ function preparedFor(command: readonly string[]): PreparedPlaytestSandbox {
     observationContract: {} as PreparedPlaytestSandbox["observationContract"],
     rubric: {} as PreparedPlaytestSandbox["rubric"],
     benchmark: null,
+    benchmarkHash: null,
     rubricHash: "c".repeat(64)
   };
 }

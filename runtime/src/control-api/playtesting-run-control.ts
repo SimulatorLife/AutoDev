@@ -766,7 +766,8 @@ async function startRun(
     };
     recordAudit(options, actor, "start_playtest_run", workspaceId, "ok", {
       batchId: started.batchId,
-      assignmentCount: started.assignmentCount
+      assignmentCount: started.assignmentCount,
+      createdAt: started.createdAt
     });
     sendJson(response, 202, body, { "cache-control": "no-store" });
   } catch (error) {

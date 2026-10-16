@@ -52,7 +52,7 @@ export type WorkspaceApprovalLookup = ReadonlyMap<
  * authoritative probe; until that adapter exists, availability is `Not observed`.
  *
  * Playtesting approval is a *different* fact, and one this view can report:
- * Workspaces owns the exact-build approval boundary a game adapter runs
+ * Workspaces owns the checkout approval boundary a game adapter runs
  * under, and the Control API answers it per workspace, so each row's badge
  * is a server-fetched, per-workspace read rather than an inferred summary.
  */
@@ -195,7 +195,7 @@ export function WorkspacesView({
       React.createElement(StatCard, {
         title: "Approved for Playtesting",
         value: approvedCount,
-        subtitle: "Active exact-build approvals"
+        subtitle: "Active checkout approvals"
       }),
       React.createElement(StatCard, {
         title: "Tenancy Model",

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import React from "react";
 
 import { parsePlaytestingScope } from "../../../../src/features/playtesting/playtesting-url.ts";
+import { PlaytestingReadiness } from "../../../../src/features/playtesting/PlaytestingReadiness.tsx";
 import { PlaytestingSessionView } from "../../../../src/features/playtesting/PlaytestingSessionView.ts";
 import {
   controlApiFailureCode,
@@ -15,7 +16,8 @@ import {
 } from "../../../_console.ts";
 import {
   fetchPlaytestingEpisode,
-  fetchPlaytestingWindow
+  fetchPlaytestingWindow,
+  playtestingReadinessFailure
 } from "../../playtesting-server.ts";
 
 export const dynamic = "force-dynamic";
@@ -95,15 +97,20 @@ export default async function PlaytestingSessionPage({
   }
 
   if (result.kind !== "ok") {
-    return React.createElement(
-      ConsolePageShell,
-      { section },
-      React.createElement(ResourceUnavailable, {
-        title: "Playtesting episode could not be loaded",
-        code: controlApiFailureCode(result),
-        message: result.message
-      })
-    );
+    const readinessFailure = playtestingReadinessFailure(result);
+    const content = readinessFailure
+      ? React.createElement(PlaytestingReadiness, {
+          workspaceId: scope.workspaceId,
+          initialStatus: readinessFailure.status,
+          initialCode: readinessFailure.code,
+          initialMessage: readinessFailure.message
+        })
+      : React.createElement(ResourceUnavailable, {
+          title: "Playtesting episode could not be loaded",
+          code: controlApiFailureCode(result),
+          message: result.message
+        });
+    return React.createElement(ConsolePageShell, { section }, content);
   }
 
   const detail = result.data;

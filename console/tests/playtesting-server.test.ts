@@ -8,7 +8,9 @@ import {
   fetchPlaytestingFrame,
   fetchPlaytestingHumanValidation,
   fetchPlaytestingPage,
+  fetchPlaytestingReadiness,
   fetchPlaytestingWindow,
+  playtestingReadinessFailure,
   startPlaytestingRun
 } from "../app/playtesting/playtesting-server.ts";
 import { fetchControlApiBinary } from "../src/lib/server/control-api.ts";
@@ -68,6 +70,131 @@ test("run client forwards the canonical maximum batch and rejects a larger inven
 function response(payload: unknown, status = 200): Response {
   return Response.json(payload, { status });
 }
+
+test("Playtesting readiness validates workspace and reports schema startup without waiting for Data", async () => {
+  let requested = "";
+  const result = await fetchPlaytestingReadiness(workspaceId, config, {
+    fetchImpl: (async (input) => {
+      requested = String(input);
+      return response({
+        schema: "autodev-control-playtesting-readiness-v1",
+        workspaceId,
+        status: "initializing"
+      });
+    }) as typeof fetch
+  });
+  assert.equal(result.kind, "ok");
+  if (result.kind === "ok") assert.equal(result.data.status, "initializing");
+  assert.match(requested, /\/control\/playtesting\/readiness\?/u);
+  assert.match(requested, /workspaceId=owner%2Fgame/u);
+
+  const rejected = await fetchPlaytestingReadiness("not-canonical", config, {
+    fetchImpl: (async () => {
+      throw new Error("invalid workspace must be rejected locally");
+    }) as typeof fetch
+  });
+  assert.equal(rejected.kind, "invalid-response");
+});
+
+test("Playtesting readiness retry uses the operator-only initialization route", async () => {
+  let method = "";
+  let requested = "";
+  const result = await fetchPlaytestingReadiness(workspaceId, config, {
+    retry: true,
+    fetchImpl: (async (input, init) => {
+      requested = String(input);
+      method = init?.method ?? "GET";
+      return response({
+        schema: "autodev-control-playtesting-readiness-v1",
+        workspaceId,
+        status: "initializing"
+      });
+    }) as typeof fetch
+  });
+  assert.equal(result.kind, "ok");
+  assert.equal(method, "POST");
+  assert.match(requested, /\/control\/playtesting\/initialize\?/u);
+});
+
+test("Playtesting readiness rejects cross-workspace or malformed status responses", async () => {
+  const result = await fetchPlaytestingReadiness(workspaceId, config, {
+    fetchImpl: (async () =>
+      response({
+        schema: "autodev-control-playtesting-readiness-v1",
+        workspaceId: "other/game",
+        status: "ready"
+      })) as typeof fetch
+  });
+  assert.equal(result.kind, "invalid-response");
+});
+
+test("resource initialization errors share the readiness UX mapping", () => {
+  assert.deepEqual(
+    playtestingReadinessFailure({
+      kind: "http-error",
+      status: 503,
+      code: "autodev_control_playtesting_source_initializing",
+      message: "Schema DDL is still running."
+    }),
+    {
+      status: "initializing",
+      code: "autodev_control_playtesting_source_initializing",
+      message: "Schema DDL is still running."
+    }
+  );
+  assert.equal(
+    playtestingReadinessFailure({
+      kind: "http-error",
+      status: 503,
+      code: "autodev_control_playtesting_source_unavailable",
+      message: "Schema initialization failed."
+    })?.status,
+    "unavailable"
+  );
+  assert.equal(
+    playtestingReadinessFailure({
+      kind: "http-error",
+      status: 404,
+      code: "autodev_control_playtesting_episode_not_found",
+      message: "Episode not found."
+    }),
+    null
+  );
+});
+
+test("resource read transient errors map to the shared readiness state", () => {
+  assert.deepEqual(
+    playtestingReadinessFailure({
+      kind: "http-error",
+      status: 503,
+      code: "autodev_control_playtesting_source_initializing",
+      message: "The schema is still initializing."
+    }),
+    {
+      status: "initializing",
+      code: "autodev_control_playtesting_source_initializing",
+      message: "The schema is still initializing."
+    }
+  );
+  assert.equal(
+    playtestingReadinessFailure({
+      kind: "http-error",
+      status: 503,
+      code: "autodev_control_playtesting_source_unavailable",
+      message: "Schema initialization failed."
+    })?.status,
+    "unavailable"
+  );
+  assert.equal(
+    playtestingReadinessFailure({
+      kind: "http-error",
+      status: 404,
+      code: "autodev_control_playtesting_episode_not_found",
+      message: "The episode was not found."
+    }),
+    null
+  );
+});
 
 test("Playtesting page fetch sends server-bound identity and validates keyset totals", async () => {
   let requested = "";

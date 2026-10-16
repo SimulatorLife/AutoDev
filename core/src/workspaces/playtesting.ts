@@ -1,6 +1,6 @@
 /** Workspaces-owned local approval boundary for running a target game. */
 export const WORKSPACE_PLAYTEST_APPROVAL_SCHEMA =
-  "autodev-workspace-playtest-approval-v1" as const;
+  "autodev-workspace-playtest-approval-v2" as const;
 
 export interface WorkspacePlaytestLimits {
   readonly cpuCores: number;
@@ -18,6 +18,10 @@ export interface WorkspacePlaytestLimits {
  * Operator-authored approval stored by Workspaces, not by a game adapter.
  * Model-controlled requests may select only a scenario/seed/policy within this
  * record; they cannot change the checkout, command, image, budgets or grants.
+ *
+ * The approval authorizes a checkout, not one commit: every batch runs the
+ * checkout's latest committed build, resolved by the Runtime at batch start
+ * and recorded as that batch's {@link WorkspacePlaytestBuild}.
  */
 export interface WorkspacePlaytestApproval {
   readonly schema: typeof WORKSPACE_PLAYTEST_APPROVAL_SCHEMA;
@@ -26,9 +30,6 @@ export interface WorkspacePlaytestApproval {
   readonly approvalId: string;
   /** Canonical local real path, resolved when the operator approves it. */
   readonly checkoutRoot: string;
-  readonly buildSha: string;
-  readonly gameBuild: string;
-  readonly playtestConfigHash: string;
   readonly adapterImageDigest: string;
   readonly workingDirectory: string;
   readonly adapterCommand: readonly string[];
@@ -45,8 +46,18 @@ export interface WorkspacePlaytestApproval {
   readonly revocationReason: string | null;
 }
 
+/**
+ * The exact committed build one batch executes: the approved checkout's HEAD
+ * commit at batch start, the game-build label supplied to its adapter, and the
+ * SHA-256 of that commit's playtest.config.json.
+ */
+export interface WorkspacePlaytestBuild {
+  readonly buildSha: string;
+  readonly gameBuild: string;
+  readonly configHash: string;
+}
+
 const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
-const GIT_REVISION_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const IMAGE_NAME_PATTERN = /^[a-z0-9][a-z0-9._/:+-]{0,254}$/u;
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const IMAGE_DIGEST_MARKER = "@sha256:";
@@ -234,9 +245,6 @@ export function assertWorkspacePlaytestApproval(
     "revision",
     "approvalId",
     "checkoutRoot",
-    "buildSha",
-    "gameBuild",
-    "playtestConfigHash",
     "adapterImageDigest",
     "workingDirectory",
     "adapterCommand",
@@ -268,7 +276,7 @@ export function assertWorkspacePlaytestApproval(
   if (!Number.isSafeInteger(value.revision) || (value.revision as number) < 1) {
     throw new TypeError("Workspace approval revision must be positive.");
   }
-  for (const field of ["approvalId", "gameBuild", "approvedBy"] as const) {
+  for (const field of ["approvalId", "approvedBy"] as const) {
     if (!nonEmpty(value[field]))
       throw new TypeError(
         "Workspace approval " + field + " must be non-empty."
@@ -281,12 +289,6 @@ export function assertWorkspacePlaytestApproval(
     throw new TypeError(
       "Workspace approval checkoutRoot must be an absolute local path."
     );
-  }
-  if (!GIT_REVISION_PATTERN.test(String(value.buildSha))) {
-    throw new TypeError("Workspace approval buildSha must be a Git SHA.");
-  }
-  if (!SHA256_PATTERN.test(String(value.playtestConfigHash))) {
-    throw new TypeError("Workspace approval config hash must be SHA-256.");
   }
   if (!isWorkspacePlaytestImageDigest(value.adapterImageDigest)) {
     throw new TypeError(

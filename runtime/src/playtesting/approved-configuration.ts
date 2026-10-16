@@ -1,4 +1,4 @@
-/** Load and bind target-owned playtest files to one exact Workspaces approval. */
+/** Load one committed build's target-owned playtest files under a Workspaces approval. */
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -54,7 +54,6 @@ export type ApprovedConfigurationFailure =
   | "config-unavailable"
   | "config-too-large"
   | "config-invalid"
-  | "config-hash-mismatch"
   | "target-file-unavailable"
   | "target-file-too-large"
   | "target-file-invalid"
@@ -378,15 +377,10 @@ function assertBenchmarkMatchesTarget(input: {
   }
 }
 
-/**
- * Read exact target-owned files, validate their schemas and bind the config's
- * raw-byte SHA-256 to the approval. This performs no execution.
- */
-function resolveApprovedCheckoutRoot(
-  approval: WorkspacePlaytestApproval
-): string {
+/** The committed-build snapshot must be a real, non-symlinked directory. */
+function resolveSnapshotRoot(snapshotRoot: string): string {
   try {
-    const root = path.resolve(approval.checkoutRoot);
+    const root = path.resolve(snapshotRoot);
     const rootInfo = lstatSync(root);
     if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
       fail(
@@ -410,7 +404,7 @@ function resolveApprovedCheckoutRoot(
   }
 }
 
-function loadApprovedConfiguration(
+function loadCommittedConfiguration(
   root: string,
   approval: WorkspacePlaytestApproval
 ): {
@@ -425,12 +419,6 @@ function loadApprovedConfiguration(
     true
   );
   const configHash = createHash("sha256").update(configBytes).digest("hex");
-  if (configHash !== approval.playtestConfigHash.toLowerCase()) {
-    fail(
-      "config-hash-mismatch",
-      "Checked-in playtest.config.json does not match the approved SHA-256."
-    );
-  }
 
   let configuration: PlaytestGameConfiguration;
   try {
@@ -573,8 +561,14 @@ function loadApprovedBenchmark(
   }
 }
 
+/**
+ * Read the target-owned files of one committed-build snapshot, validate their
+ * schemas against the operator approval, and derive the config's raw-byte
+ * SHA-256 for that build's provenance. This performs no execution.
+ */
 export function loadApprovedPlaytestDefinition(
-  approval: WorkspacePlaytestApproval
+  approval: WorkspacePlaytestApproval,
+  snapshotRoot: string
 ): ApprovedPlaytestDefinition {
   try {
     assertWorkspacePlaytestApproval(approval);
@@ -588,9 +582,9 @@ export function loadApprovedPlaytestDefinition(
     );
   }
 
-  const root = resolveApprovedCheckoutRoot(approval);
+  const root = resolveSnapshotRoot(snapshotRoot);
   const { configuration, configHash, configDirectory } =
-    loadApprovedConfiguration(root, approval);
+    loadCommittedConfiguration(root, approval);
   const binding = loadApprovedAdapterBinding(root);
   const observationContract = loadApprovedObservationContract(
     root,

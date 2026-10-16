@@ -22,6 +22,7 @@ import {
   type PlaytestCheckpointDigest,
   type PlaytestEpisode,
   type PlaytestEpisodeIdentity,
+  playtestEpisodeRecordId,
   type PlaytestEpisodeStep,
   type PlaytestEvidenceLocator,
   type PlaytestJsonValue,
@@ -34,7 +35,8 @@ import {
   PLAYTESTS_GAME_OUTCOMES,
   samePlaytestCheckpoint,
   samePlaytestRngCheckpoint,
-  type WorkspacePlaytestApproval
+  type WorkspacePlaytestApproval,
+  type WorkspacePlaytestBuild
 } from "@simulatorlife/autodev-core";
 
 import {
@@ -78,6 +80,8 @@ export interface PlaytestEpisodeBranchExecution {
 
 export interface PlaytestEpisodeRunOptions {
   readonly approval: WorkspacePlaytestApproval;
+  /** The latest committed build this batch resolved and snapshotted at start. */
+  readonly build: WorkspacePlaytestBuild;
   readonly sandbox: PlaytestSandboxHandle;
   readonly artifacts: PlaytestArtifactStore;
   readonly batchId: string;
@@ -183,6 +187,7 @@ interface EpisodeExecutionContext {
   capabilities: PlaytestCapabilityAdvertisement | null;
   reset: GameResetResult | null;
   startedAt: string | null;
+  /** The adapter's protocol handle for this episode; never a persisted key. */
   episodeId: string;
   revision: number;
   simulationWallMs: number;
@@ -647,9 +652,9 @@ async function negotiateAndInitialize(
   const { options, client } = context;
   const capabilities = await client.negotiateCapabilities();
   storeCapabilities(context, capabilities);
-  if (capabilities.engineBuild !== options.approval.gameBuild) {
+  if (capabilities.engineBuild !== options.build.gameBuild) {
     throw new TypeError(
-      "Adapter build does not match the approved game build."
+      "Adapter build does not match the resolved committed game build."
     );
   }
   if (!capabilities.scenarioIds.includes(options.scenarioId)) {
@@ -677,7 +682,7 @@ async function negotiateAndInitialize(
   const reset = await callAdapter<GameResetResult>(client, "game.reset", {
     seed: options.seed,
     scenarioId: options.scenarioId,
-    approvedVariantHash: options.approval.playtestConfigHash
+    approvedVariantHash: options.build.configHash
   });
   context.simulationWallMs += reset.durationMs;
   storeReset(context, reset.value, startedAt);
@@ -714,9 +719,8 @@ async function initializeBranch(
     branch.parentEpisode.identity.workspaceId !==
       options.approval.workspaceId ||
     branch.parentEpisode.identity.buildSha.toLowerCase() !==
-      options.approval.buildSha.toLowerCase() ||
-    branch.parentEpisode.identity.configHash !==
-      options.approval.playtestConfigHash ||
+      options.build.buildSha ||
+    branch.parentEpisode.identity.configHash !== options.build.configHash ||
     branch.parentEpisode.identity.scenarioId !== options.scenarioId ||
     branch.parentEpisode.identity.seed !== options.seed ||
     branch.parentEpisode.identity.observationSchemaHash !==
@@ -732,7 +736,7 @@ async function initializeBranch(
   }
   const replay = await callAdapter<GameReplayResult>(client, "game.replay", {
     trace: branch.manifest.parentTrace,
-    expectedBuildSha: options.approval.buildSha,
+    expectedBuildSha: options.build.buildSha,
     throughStep: branch.manifest.branchStep
   });
   context.simulationWallMs += replay.durationMs;
@@ -1140,7 +1144,7 @@ function evaluateMetrics(
       registry: context.options.metricRegistry,
       evaluations: context.outcome.evaluations,
       workspaceId: provenance.workspaceId,
-      buildSha: context.options.approval.buildSha,
+      buildSha: context.options.build.buildSha,
       rubricHash: context.options.rubricHash,
       measurementVersion: provenance.measurementVersion,
       generatedAt: provenance.generatedAt,
@@ -1204,13 +1208,13 @@ function assembleEpisode(
   const classifiedOutcome =
     context.outcome?.state === "terminal"
       ? (options.classifyOutcome?.(context.outcome.outcome) ??
-         ((PLAYTESTS_GAME_OUTCOMES as readonly string[]).includes(
-           typeof context.outcome.outcome === "string"
-             ? context.outcome.outcome
-             : ""
-         )
-           ? (context.outcome.outcome as PlaytestEpisode["outcome"])
-           : "unknown"))
+        ((PLAYTESTS_GAME_OUTCOMES as readonly string[]).includes(
+          typeof context.outcome.outcome === "string"
+            ? context.outcome.outcome
+            : ""
+        )
+          ? (context.outcome.outcome as PlaytestEpisode["outcome"])
+          : "unknown"))
       : "unknown";
   if (
     !(PLAYTESTS_GAME_OUTCOMES as readonly string[]).includes(classifiedOutcome)
@@ -1226,17 +1230,17 @@ function assembleEpisode(
   const generatedAt = new Date((options.now ?? Date.now)()).toISOString();
   const provenance: PlaytestProvenance = {
     workspaceId: options.approval.workspaceId,
-    buildSha: options.approval.buildSha,
+    buildSha: options.build.buildSha,
     measurementVersion: options.measurementVersion,
     generatedAt
   };
   const identity: PlaytestEpisodeIdentity = {
     workspaceId: options.approval.workspaceId,
     repository: options.repository,
-    buildSha: options.approval.buildSha,
+    buildSha: options.build.buildSha,
     gameBuild: context.capabilities.engineBuild,
     scenarioId: options.scenarioId,
-    configHash: options.approval.playtestConfigHash,
+    configHash: options.build.configHash,
     seed: options.seed,
     rngInitialStateHash: context.reset.rngProvenance.initialStateHash,
     rngAlgorithm: context.reset.rngProvenance.algorithm,
@@ -1257,7 +1261,7 @@ function assembleEpisode(
     status === "completed" && context.missingReasons.size === 0;
   return {
     schema: PLAYTESTS_EPISODE_SCHEMA,
-    episodeId: context.episodeId,
+    episodeId: playtestEpisodeRecordId(options.batchId, options.assignmentId),
     revision: 1,
     batchId: options.batchId,
     assignmentId: options.assignmentId,

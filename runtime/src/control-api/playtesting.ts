@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
+  CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
   CONTROL_API_PLAYTESTING_RESOURCES,
   type ControlApiPlaytestingEntityMap,
   type ControlApiPlaytestingEpisodeDetailResponse,
@@ -75,6 +76,8 @@ const RESOURCE_FILTERS: Readonly<
   "human-studies": ["benchmarkId", "instrument", "approved"]
 };
 const REVIEW_STATUSES = ["reviewed", "unreviewed"] as const;
+const WORKSPACE_ID_REQUIRED =
+  "A valid workspaceId query parameter is required.";
 const FINDING_EVIDENCE_STATUSES = [
   "verified",
   "corroborated",
@@ -84,22 +87,42 @@ const FINDING_EVIDENCE_STATUSES = [
 
 let defaultPlaytestingRepository: PlaytestRepository | undefined;
 let defaultPlaytestingRepositorySchema: Promise<PlaytestRepository> | undefined;
+let defaultPlaytestingRepositorySchemaState:
+  "idle" | "initializing" | "ready" | "unavailable" = "idle";
 
 /** Start the Data-owned schema initialization, sharing it with default reads. */
 export function warmupDefaultPlaytestingRepository(): Promise<PlaytestRepository> {
   const repository = (defaultPlaytestingRepository ??=
     new PlaytestRepository());
   if (!defaultPlaytestingRepositorySchema) {
+    defaultPlaytestingRepositorySchemaState = "initializing";
     defaultPlaytestingRepositorySchema = repository
       .ensureSchema()
-      .then(() => repository)
+      .then(() => {
+        defaultPlaytestingRepositorySchemaState = "ready";
+        return repository;
+      })
       .catch((error: unknown) => {
         // A failed initialization must be retryable after the backend is repaired.
+        defaultPlaytestingRepositorySchemaState = "unavailable";
         defaultPlaytestingRepositorySchema = undefined;
         throw error;
       });
   }
   return defaultPlaytestingRepositorySchema;
+}
+
+function startDefaultPlaytestingRepositoryWarmup(): void {
+  void warmupDefaultPlaytestingRepository().catch(() => undefined);
+}
+
+function defaultPlaytestingRepositoryReadiness():
+  "initializing" | "ready" | "unavailable" {
+  return defaultPlaytestingRepositorySchemaState === "ready"
+    ? "ready"
+    : defaultPlaytestingRepositorySchemaState === "unavailable"
+      ? "unavailable"
+      : "initializing";
 }
 
 /** Initialize the Data-owned tables once before the Runtime's first default read. */
@@ -327,7 +350,7 @@ function pageRequest(
 
   const workspaceId = oneValue(params, "workspaceId");
   if (!workspaceId || !WORKSPACE_ID_PATTERN.test(workspaceId)) {
-    throw new TypeError("A valid workspaceId query parameter is required.");
+    throw new TypeError(WORKSPACE_ID_REQUIRED);
   }
   const limitText = oneValue(params, "limit");
   const limit =
@@ -360,7 +383,7 @@ function episodeDetailWorkspace(params: URLSearchParams): string {
   }
   const workspaceId = oneValue(params, "workspaceId");
   if (!workspaceId || !WORKSPACE_ID_PATTERN.test(workspaceId)) {
-    throw new TypeError("A valid workspaceId query parameter is required.");
+    throw new TypeError(WORKSPACE_ID_REQUIRED);
   }
   return workspaceId;
 }
@@ -391,7 +414,7 @@ function windowRequest(params: URLSearchParams): WindowRequest {
   }
   const workspaceId = oneValue(params, "workspaceId");
   if (!workspaceId || !WORKSPACE_ID_PATTERN.test(workspaceId)) {
-    throw new TypeError("A valid workspaceId query parameter is required.");
+    throw new TypeError(WORKSPACE_ID_REQUIRED);
   }
   const startText = oneValue(params, "startStep");
   const endText = oneValue(params, "endStep");
@@ -986,17 +1009,263 @@ function respondDataFailure(response: ServerResponse, error: unknown): boolean {
   return false;
 }
 
-/** Authenticated, workspace-scoped Playtesting read API. */
-export async function handlePlaytestingControlApiRequest(
+function parseReadinessWorkspace(
+  params: URLSearchParams,
+  response: ServerResponse
+): string | null {
+  try {
+    for (const key of params.keys()) {
+      if (key !== "workspaceId") {
+        throw new TypeError(`Unknown '${key}' query parameter.`);
+      }
+    }
+    const workspaceId = oneValue(params, "workspaceId");
+    if (!workspaceId || !WORKSPACE_ID_PATTERN.test(workspaceId)) {
+      throw new TypeError(WORKSPACE_ID_REQUIRED);
+    }
+    return workspaceId;
+  } catch (error) {
+    sendPlaytestingError(
+      response,
+      400,
+      "autodev_control_playtesting_invalid_request",
+      error instanceof Error ? error.message : "Invalid readiness request."
+    );
+    return null;
+  }
+}
+
+function readinessWorkspaceId(
+  params: URLSearchParams,
+  response: ServerResponse,
+  options: PlaytestingControlApiOptions
+): string | null {
+  const workspaceId = parseReadinessWorkspace(params, response);
+  if (workspaceId === null) return null;
+  const readWorkspaceCatalog =
+    options.readWorkspaceCatalog ??
+    (() => new ConfigRepository(options.repositoryRoot).readWorkspaceCatalog());
+  const catalog = readWorkspaceCatalog();
+  if (catalog.status !== "valid") {
+    sendPlaytestingError(
+      response,
+      503,
+      "autodev_control_playtesting_workspace_catalog_unavailable",
+      "The canonical workspace catalog is unavailable."
+    );
+    return null;
+  }
+  if (!workspaceExists(workspaceId, catalog)) {
+    sendPlaytestingError(
+      response,
+      404,
+      "autodev_control_playtesting_workspace_not_found",
+      "The requested workspace was not found."
+    );
+    return null;
+  }
+  return workspaceId;
+}
+
+function sendPlaytestingReadiness(
+  response: ServerResponse,
+  workspaceId: string,
+  status: "initializing" | "ready"
+): void {
+  sendJson(
+    response,
+    200,
+    {
+      schema: CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
+      workspaceId,
+      status
+    },
+    {
+      "cache-control": "no-store",
+      ...(status === "initializing" ? { "retry-after": "1" } : {})
+    }
+  );
+}
+
+function handlePlaytestingReadinessRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  params: URLSearchParams,
+  actor: PlaytestingControlActor,
+  options: PlaytestingControlApiOptions
+): boolean {
+  if ((request.method ?? "GET") !== "GET") {
+    request.resume();
+    response.setHeader("allow", "GET");
+    sendPlaytestingError(
+      response,
+      405,
+      "autodev_control_playtesting_read_only",
+      "Playtesting readiness is a GET-only resource."
+    );
+    return true;
+  }
+  if (actor.role !== "viewer" && actor.role !== "operator") {
+    sendPlaytestingError(
+      response,
+      403,
+      "autodev_control_playtesting_forbidden",
+      "Playtesting read access is not authorized."
+    );
+    return true;
+  }
+  const workspaceId = readinessWorkspaceId(params, response, options);
+  if (workspaceId === null) return true;
+
+  if (options.repository !== undefined) {
+    sendPlaytestingReadiness(response, workspaceId, "ready");
+    return true;
+  }
+  if (defaultPlaytestingRepositorySchemaState === "idle") {
+    startDefaultPlaytestingRepositoryWarmup();
+  }
+  const status = defaultPlaytestingRepositoryReadiness();
+  if (status === "unavailable") {
+    sendPlaytestingError(
+      response,
+      503,
+      "autodev_control_playtesting_source_unavailable",
+      "The Playtesting Data source could not initialize its schema. An operator can retry initialization."
+    );
+    return true;
+  }
+  sendPlaytestingReadiness(response, workspaceId, status);
+  return true;
+}
+
+function handlePlaytestingInitializationRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  params: URLSearchParams,
+  actor: PlaytestingControlActor,
+  options: PlaytestingControlApiOptions
+): boolean {
+  if ((request.method ?? "GET") !== "POST") {
+    request.resume();
+    response.setHeader("allow", "POST");
+    sendPlaytestingError(
+      response,
+      405,
+      "autodev_control_playtesting_initialization_method_not_allowed",
+      "Playtesting schema initialization accepts POST only."
+    );
+    return true;
+  }
+  if (actor.role !== "operator") {
+    sendPlaytestingError(
+      response,
+      403,
+      "autodev_control_playtesting_initialization_forbidden",
+      "Only an operator can retry Playtesting schema initialization."
+    );
+    request.resume();
+    return true;
+  }
+  const hasBody =
+    request.headers["transfer-encoding"] !== undefined ||
+    (request.headers["content-length"] !== undefined &&
+      request.headers["content-length"] !== "0");
+  if (hasBody) {
+    request.resume();
+    sendPlaytestingError(
+      response,
+      400,
+      "autodev_control_playtesting_invalid_request",
+      "Playtesting schema initialization does not accept a request body."
+    );
+    return true;
+  }
+  const workspaceId = readinessWorkspaceId(params, response, options);
+  if (workspaceId === null) return true;
+  if (options.repository !== undefined) {
+    sendPlaytestingReadiness(response, workspaceId, "ready");
+    return true;
+  }
+  startDefaultPlaytestingRepositoryWarmup();
+  const status = defaultPlaytestingRepositoryReadiness();
+  if (status === "unavailable") {
+    sendPlaytestingError(
+      response,
+      503,
+      "autodev_control_playtesting_source_unavailable",
+      "The Playtesting Data source could not initialize its schema."
+    );
+    return true;
+  }
+  sendPlaytestingReadiness(response, workspaceId, status);
+  return true;
+}
+
+function playtestingReadQuery(
+  response: ServerResponse,
+  route: ParsedRoute,
+  params: URLSearchParams,
+  options: PlaytestingControlApiOptions
+): PageRequest | WindowRequest | null {
+  const query = parseQuery(route, params, response);
+  if (query === null) return null;
+  const readWorkspaceCatalog =
+    options.readWorkspaceCatalog ??
+    (() => new ConfigRepository(options.repositoryRoot).readWorkspaceCatalog());
+  const catalog = readWorkspaceCatalog();
+  if (catalog.status !== "valid") {
+    sendPlaytestingError(
+      response,
+      503,
+      "autodev_control_playtesting_workspace_catalog_unavailable",
+      "The canonical workspace catalog is unavailable."
+    );
+    return null;
+  }
+  if (!workspaceExists(query.workspaceId, catalog)) {
+    sendPlaytestingError(
+      response,
+      404,
+      "autodev_control_playtesting_workspace_not_found",
+      "The requested workspace was not found."
+    );
+    return null;
+  }
+  return query;
+}
+
+function defaultRepositoryReadyForRead(
+  response: ServerResponse,
+  options: PlaytestingControlApiOptions
+): boolean {
+  if (options.repository !== undefined) return true;
+  if (defaultPlaytestingRepositorySchemaState === "idle") {
+    startDefaultPlaytestingRepositoryWarmup();
+  }
+  const readiness = defaultPlaytestingRepositoryReadiness();
+  if (readiness === "ready") return true;
+  if (readiness === "initializing") response.setHeader("retry-after", "1");
+  sendPlaytestingError(
+    response,
+    503,
+    readiness === "initializing"
+      ? "autodev_control_playtesting_source_initializing"
+      : "autodev_control_playtesting_source_unavailable",
+    readiness === "initializing"
+      ? "The Playtesting Data schema is initializing. Readiness can be checked without waiting for schema creation."
+      : "The Playtesting Data source is unavailable."
+  );
+  return false;
+}
+
+async function servePlaytestingResourceRead(
   request: IncomingMessage,
   response: ServerResponse,
   pathname: string,
   actor: PlaytestingControlActor,
-  options: PlaytestingControlApiOptions = {}
+  options: PlaytestingControlApiOptions
 ): Promise<boolean> {
-  const parsed = requestParams(request, pathname);
-  if (!parsed.pathname.startsWith(CONTROL_PATH)) return false;
-  const route = routeFor(parsed.pathname);
+  const route = routeFor(pathname);
   if (route === null) {
     sendPlaytestingError(
       response,
@@ -1007,6 +1276,7 @@ export async function handlePlaytestingControlApiRequest(
     return true;
   }
   if ((request.method ?? "GET") !== "GET") {
+    request.resume();
     response.setHeader("allow", "GET");
     sendPlaytestingError(
       response,
@@ -1025,29 +1295,9 @@ export async function handlePlaytestingControlApiRequest(
     );
     return true;
   }
-
-  const query = parseQuery(route, parsed.params, response);
-  if (query === null) return true;
-  const readWorkspaceCatalog =
-    options.readWorkspaceCatalog ??
-    (() => new ConfigRepository(options.repositoryRoot).readWorkspaceCatalog());
-  const catalog = readWorkspaceCatalog();
-  if (catalog.status !== "valid") {
-    sendPlaytestingError(
-      response,
-      503,
-      "autodev_control_playtesting_workspace_catalog_unavailable",
-      "The canonical workspace catalog is unavailable."
-    );
-    return true;
-  }
-  if (!workspaceExists(query.workspaceId, catalog)) {
-    sendPlaytestingError(
-      response,
-      404,
-      "autodev_control_playtesting_workspace_not_found",
-      "The requested workspace was not found."
-    );
+  const parsed = requestParams(request, pathname);
+  const query = playtestingReadQuery(response, route, parsed.params, options);
+  if (query === null || !defaultRepositoryReadyForRead(response, options)) {
     return true;
   }
 
@@ -1097,4 +1347,45 @@ export async function handlePlaytestingControlApiRequest(
     if (respondDataFailure(response, error)) return true;
     throw error;
   }
+}
+
+/** Authenticated, workspace-scoped Playtesting read API. */
+export function handlePlaytestingControlApiRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  actor: PlaytestingControlActor,
+  options: PlaytestingControlApiOptions = {}
+): Promise<boolean> {
+  const parsed = requestParams(request, pathname);
+  if (!parsed.pathname.startsWith(CONTROL_PATH)) return Promise.resolve(false);
+  if (parsed.pathname === `${CONTROL_PATH}readiness`) {
+    return Promise.resolve(
+      handlePlaytestingReadinessRequest(
+        request,
+        response,
+        parsed.params,
+        actor,
+        options
+      )
+    );
+  }
+  if (parsed.pathname === `${CONTROL_PATH}initialize`) {
+    return Promise.resolve(
+      handlePlaytestingInitializationRequest(
+        request,
+        response,
+        parsed.params,
+        actor,
+        options
+      )
+    );
+  }
+  return servePlaytestingResourceRead(
+    request,
+    response,
+    parsed.pathname,
+    actor,
+    options
+  );
 }

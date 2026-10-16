@@ -19,13 +19,12 @@ const MAX_BUDGET_PREVIEW_PATTERN =
 const BROWSER_BATCH_ID_PATTERN = /^batch-browser-\d{3}$/u;
 const RUNNING_STATUS = "running";
 const ANALYSIS_STATUS_ATTRIBUTE = "data-analysis-status";
+const CANCEL_RUN_ROUTE_PATTERN = /\/api\/playtesting\/runs\/[^/]+\/cancel$/u;
 const ACTIVE_APPROVAL_SELECTOR = '[data-workspace-approval-state="active"]';
 const LIVE_OR_IDLE_FRESHNESS_PATTERN = /live|idle/u;
 const LIVE_BATCH_URL_PATTERN = /liveBatch=batch-/u;
 const LAST_KNOWN_STATE_PATTERN = /not confirmed current state/iu;
 const SYNTHETIC_REVIEW_ID_PATTERN = /Review review-fixture-1 · rubric/u;
-const FIXTURE_BUILD_SHA = "a".repeat(40);
-const FIXTURE_CONFIG_HASH = "b".repeat(64);
 const FIXTURE_IMAGE_DIGEST = "fixture/adapter@sha256:" + "c".repeat(64);
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const PLAYTESTING_OVERVIEW_URL = "/playtesting?workspaceId=fixture%2Fgame";
@@ -52,7 +51,6 @@ async function fillSyntheticApprovalForm(page: Page): Promise<Locator> {
   await expect(
     form.getByLabel("Checkout root (absolute local path)")
   ).toBeVisible();
-  await expect(form.getByLabel("Build SHA (Git revision)")).toBeVisible();
   await expect(
     form.getByLabel("Adapter image digest (sha256:...)")
   ).toBeVisible();
@@ -62,11 +60,6 @@ async function fillSyntheticApprovalForm(page: Page): Promise<Locator> {
   await form
     .getByLabel("Working directory (relative to checkout)")
     .fill("server");
-  await form.getByLabel("Build SHA (Git revision)").fill(FIXTURE_BUILD_SHA);
-  await form.getByLabel("Game build identifier").fill("fixture-game-1");
-  await form
-    .getByLabel("Playtest config hash (SHA-256)")
-    .fill(FIXTURE_CONFIG_HASH);
   await form
     .getByLabel("Adapter image digest (sha256:...)")
     .fill(FIXTURE_IMAGE_DIGEST);
@@ -122,6 +115,97 @@ test("workspace overview distinguishes batches, episodes, findings, and comparis
   await expect(
     page.getByText("Comparisons", { exact: true }).first()
   ).toBeVisible();
+});
+
+test("Playtesting overview waits for Data schema readiness before reading results", async ({
+  page,
+  request
+}) => {
+  const configured = await request.post(
+    `${FIXTURE_BASE_URL}/fixture/readiness?pendingPolls=1`
+  );
+  expect(configured.ok()).toBe(true);
+
+  await page.goto(PLAYTESTING_OVERVIEW_URL);
+  const readinessPanel = page.locator('[data-status="initializing"]');
+  await expect(
+    readinessPanel.getByRole("heading", {
+      name: "Playtesting data is starting up"
+    })
+  ).toBeVisible();
+  await expect(page.getByText("Latest batch")).toBeVisible({ timeout: 10_000 });
+  await expect(readinessPanel).toHaveCount(0);
+});
+
+test("direct session links wait for Data schema readiness before loading evidence", async ({
+  page,
+  request
+}) => {
+  const configured = await request.post(
+    `${FIXTURE_BASE_URL}/fixture/readiness?pendingPolls=1`
+  );
+  expect(configured.ok()).toBe(true);
+
+  const browserReadiness = page.waitForResponse(
+    async (response) => {
+      if (
+        response.request().method() !== "GET" ||
+        !response.url().includes("/api/playtesting/readiness")
+      ) {
+        return false;
+      }
+      const payload = (await response.json().catch(() => null)) as {
+        readonly kind?: unknown;
+        readonly data?: { readonly status?: unknown };
+      } | null;
+      return payload?.kind === "ok" && payload.data?.status === "ready";
+    },
+    { timeout: 20_000 }
+  );
+  const sessionRefresh = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      response.url().includes("/playtesting/sessions/episode-17") &&
+      response.url().includes("_rsc"),
+    { timeout: 20_000 }
+  );
+  await page.goto(
+    "/playtesting/sessions/episode-17?workspaceId=fixture%2Fgame",
+    { waitUntil: "networkidle" }
+  );
+  const readinessPanel = page.locator('[data-status="initializing"]');
+  await expect(
+    readinessPanel.getByRole("heading", {
+      name: "Playtesting data is starting up"
+    })
+  ).toBeVisible();
+  await browserReadiness;
+  await sessionRefresh;
+  await expect(page.getByText("Execution status")).toBeVisible({
+    timeout: 10_000
+  });
+  await expect(readinessPanel).toHaveCount(0);
+});
+
+test("operator retries unavailable Playtesting schema initialization from the overview", async ({
+  page,
+  request
+}) => {
+  const configured = await request.post(
+    `${FIXTURE_BASE_URL}/fixture/readiness?unavailable=on`
+  );
+  expect(configured.ok()).toBe(true);
+
+  await page.goto(PLAYTESTING_OVERVIEW_URL);
+  await page.waitForLoadState("networkidle");
+  await expect(
+    page.getByRole("heading", { name: "Playtesting data is unavailable" })
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Retry initialization" }).click();
+  await expect(page.getByText("Latest batch")).toBeVisible({ timeout: 10_000 });
+  await expect(
+    page.getByRole("heading", { name: "Playtesting data is unavailable" })
+  ).toHaveCount(0);
 });
 
 test("operator records a version-checked owner decision without deploying or changing approval", async ({
@@ -259,7 +343,7 @@ test("mobile session list has no horizontal page overflow and tabs are keyboard 
   await expect(page).toHaveURL(VIEW_COMPARE_PATTERN);
 });
 
-test("workspace approval is an accessible explicit exact-build form", async ({
+test("workspace approval is an accessible checkout form that tracks the latest commit", async ({
   page
 }) => {
   const form = await fillSyntheticApprovalForm(page);
@@ -271,7 +355,10 @@ test("workspace approval is an accessible explicit exact-build form", async ({
   await form.getByRole("button", { name: "Approve" }).click();
   await expect(page.locator(ACTIVE_APPROVAL_SELECTOR)).toBeVisible();
   await expect(
-    page.getByText(FIXTURE_BUILD_SHA, { exact: true })
+    page.getByText(
+      "Latest commit of the checkout, resolved at each batch start",
+      { exact: true }
+    )
   ).toBeVisible();
   await expect(
     page.getByRole("form", {
@@ -366,7 +453,7 @@ test("batch composer generates and submits the full bounded 1,000-assignment inv
   ).toBeVisible();
 });
 
-test("approved run start, status refresh, and cancellation stay in the Console without document navigation", async ({
+test("approved run start, automatic status watching, and cancellation stay in the Console without document navigation", async ({
   page
 }) => {
   const approvalForm = await fillSyntheticApprovalForm(page);
@@ -390,10 +477,7 @@ test("approved run start, status refresh, and cancellation stay in the Console w
   });
   if (await collapseSidebar.isVisible()) await collapseSidebar.click();
 
-  let documentNavigations = 0;
-  page.on("framenavigated", (frame) => {
-    if (frame === page.mainFrame()) documentNavigations += 1;
-  });
+  const documentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
   await form.getByLabel("Seed 1").fill("hold");
   await form.getByLabel("Additional assignments").fill("1");
   await form.getByRole("button", { name: "Generate assignments" }).click();
@@ -427,16 +511,16 @@ test("approved run start, status refresh, and cancellation stay in the Console w
   await expect(runStatus.getByText("Running", { exact: true })).toBeVisible();
 
   page.once("dialog", (dialog) => void dialog.accept());
+  const cancellation = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      CANCEL_RUN_ROUTE_PATTERN.test(response.url())
+  );
   await page.getByRole("button", { name: "Request cancellation" }).click();
-  await expect(
-    page.getByText(
-      "Cancellation was requested; refresh status to confirm its terminal disposition.",
-      {
-        exact: true
-      }
-    )
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Refresh server status" }).click();
+  const cancellationResponse = await cancellation;
+  expect(cancellationResponse.status()).toBe(202);
+  // The shared status owner confirms the terminal state without a manual
+  // refresh; the transient "requested" notice is not the confirmation.
   await expect(runStatus.getByText("Cancelled", { exact: true })).toBeVisible();
   await expect(
     page.getByText("Cancellation: Operator requested cancellation.", {
@@ -452,7 +536,6 @@ test("approved run start, status refresh, and cancellation stay in the Console w
   );
   const completedBatchId = await runStatus.locator("strong").textContent();
   expect(completedBatchId).toMatch(BROWSER_BATCH_ID_PATTERN);
-  await page.getByRole("button", { name: "Refresh server status" }).click();
   await expect(
     page
       .getByRole("region", { name: RUN_STATUS_REGION_NAME })
@@ -473,7 +556,9 @@ test("approved run start, status refresh, and cancellation stay in the Console w
       name: `Open session episode-${completedBatchId}-a-0002`
     })
   ).toBeVisible();
-  expect(documentNavigations).toBe(0);
+  expect(await page.evaluate(() => performance.timeOrigin)).toBe(
+    documentTimeOrigin
+  );
 });
 
 test("operator can start, watch, and analyze a completed session from the same Console flow", async ({
@@ -497,7 +582,6 @@ test("operator can start, watch, and analyze a completed session from the same C
   await expect(runStatus).toBeVisible();
   const batchId = await runStatus.locator("strong").textContent();
   expect(batchId).toMatch(BROWSER_BATCH_ID_PATTERN);
-  await page.getByRole("button", { name: "Refresh server status" }).click();
   await expect(runStatus.getByText("Completed", { exact: true })).toBeVisible();
 
   const episodeId = `episode-${batchId}-a-0001`;
@@ -592,6 +676,7 @@ test("operator can start, watch, and analyze a completed session from the same C
     name: `Open contributing session ${episodeId}`
   });
   await expect(contributingSession).toBeVisible();
+  await page.waitForLoadState("networkidle");
   await contributingSession.click();
   await expect(page).toHaveURL(
     new RegExp(String.raw`/playtesting/sessions/${episodeId}\?`, "u")
@@ -645,8 +730,8 @@ test("live batches appear without operator action, and an unreadable read is sta
   await form.getByLabel("Additional assignments").fill("1");
   await form.getByRole("button", { name: "Generate assignments" }).click();
   await expect(form.getByLabel("Seed 2")).toBeVisible();
-  await form.getByLabel("Seed 1").fill("live-1");
-  await form.getByLabel("Seed 2").fill("live-2");
+  await form.getByLabel("Seed 1").fill("hold");
+  await form.getByLabel("Seed 2").fill("hold-2");
   await form.getByRole("button", { name: RUN_TWO_ASSIGNMENTS_LABEL }).click();
 
   // No Refresh click: the batch appears because the view polls the owner.

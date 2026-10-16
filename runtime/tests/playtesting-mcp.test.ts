@@ -167,20 +167,24 @@ function createTestPlaytestMcpServer(
   return createPlaytestMcpServer({ ...options, playtestRunControl });
 }
 
+/** The committed build the fixture sandbox resolves for every batch. */
+const FIXTURE_BUILD = {
+  buildSha: "a".repeat(40),
+  gameBuild: "fixture-build-1",
+  configHash: "b".repeat(64)
+} as const;
+
 function createApproval(
   overrides: Partial<WorkspacePlaytestApproval> = {}
 ): WorkspacePlaytestApproval {
   return {
-    schema: "autodev-workspace-playtest-approval-v1",
+    schema: "autodev-workspace-playtest-approval-v2",
     revision: 1,
     approvalId: "approval-fixture-1",
     workspaceId: WORKSPACE_ID,
     approvedBy: "operator@example.com",
     approvedAt: "2026-10-10T00:00:00.000Z",
     checkoutRoot: "/tmp/fixture-checkout",
-    buildSha: "a".repeat(40),
-    gameBuild: "fixture-build-1",
-    playtestConfigHash: "b".repeat(64),
     adapterImageDigest: "sha256:" + "c".repeat(64),
     workingDirectory: "server",
     adapterCommand: ["./server", "--playtest"],
@@ -235,9 +239,9 @@ function fixturePreparedSandbox(
 ): PreparedPlaytestSandbox {
   return {
     workspaceId: approval.workspaceId,
+    sourceCheckoutRoot: approval.checkoutRoot,
     checkoutRoot: approval.checkoutRoot,
-    checkoutSha: approval.buildSha,
-    gameBuild: approval.gameBuild,
+    build: FIXTURE_BUILD,
     imageDigest: approval.adapterImageDigest,
     workingDirectory: approval.workingDirectory,
     command: approval.adapterCommand,
@@ -288,6 +292,7 @@ function fixturePreparedSandbox(
       conformanceFixtureHash: null
     },
     benchmark: null,
+    benchmarkHash: null,
     rubric: fixturePlaytestMetricRegistry(approval.workspaceId),
     rubricHash: "e".repeat(64)
   };
@@ -311,7 +316,7 @@ function capabilitiesForRun(
   return {
     protocolVersion: 1,
     schemaHashAlgorithm: "sha256-canonical-json-v1",
-    engineBuild: options.approval.gameBuild,
+    engineBuild: options.build.gameBuild,
     modes: [options.observationContract.mode],
     scenarioIds: options.approval.allowedScenarios,
     observationSchema: { type: "object" },
@@ -339,6 +344,7 @@ function episodeForRun(
   options: Pick<
     PlaytestEpisodeRunOptions,
     | "approval"
+    | "build"
     | "repository"
     | "batchId"
     | "assignmentId"
@@ -363,10 +369,10 @@ function episodeForRun(
     identity: {
       workspaceId: options.repository,
       repository: options.repository,
-      buildSha: options.approval.buildSha,
-      gameBuild: options.approval.gameBuild,
+      buildSha: options.build.buildSha,
+      gameBuild: options.build.gameBuild,
       scenarioId: options.scenarioId,
-      configHash: options.approval.playtestConfigHash,
+      configHash: options.build.configHash,
       seed: options.seed,
       rngInitialStateHash: null,
       rngAlgorithm: "fixture-rng",
@@ -1048,6 +1054,12 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
         const prepared = fixturePreparedSandbox(approval);
         return {
           ...prepared,
+          observationContract: {
+            ...prepared.observationContract,
+            uiEquivalence: unverifiedObservationStep
+              ? "unverified"
+              : prepared.observationContract.uiEquivalence
+          },
           configuration: {
             ...prepared.configuration,
             analysis: {
@@ -1112,10 +1124,10 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
             identity: {
               workspaceId: opts.repository,
               repository: opts.repository,
-              buildSha: opts.approval.buildSha,
-              gameBuild: opts.approval.gameBuild,
+              buildSha: opts.build.buildSha,
+              gameBuild: opts.build.gameBuild,
               scenarioId: opts.scenarioId,
-              configHash: opts.approval.playtestConfigHash,
+              configHash: opts.build.configHash,
               seed: opts.seed,
               rngInitialStateHash: null,
               rngAlgorithm: null,
@@ -1187,7 +1199,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       },
       launchSandboxHandler: async (prepared) => {
         assert.equal(prepared.workspaceId, WORKSPACE_ID);
-        assert.equal(prepared.checkoutSha, createApproval().buildSha);
+        assert.equal(prepared.build.buildSha, FIXTURE_BUILD.buildSha);
         const stdin = new PassThrough();
         const stdout = new PassThrough();
         const stderr = new PassThrough();
@@ -1242,7 +1254,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     approvalRepo.approve(
       {
         ...boundedApproval,
-        limits: { ...boundedApproval.limits, episodeCount: 5 }
+        limits: { ...boundedApproval.limits, episodeCount: 6 }
       },
       null
     );
@@ -1550,10 +1562,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       insertedEpisodes[0]!.identity.environmentHash,
       capturedEnvironmentHash
     );
-    assert.notEqual(
-      capturedEnvironmentHash,
-      createApproval().playtestConfigHash
-    );
+    assert.notEqual(capturedEnvironmentHash, FIXTURE_BUILD.configHash);
     assert.equal(capturedRuntimeVersion, "0.1.0");
     assert.equal(capturedMeasurementVersion, PLAYTESTS_MEASUREMENT_VERSION);
     assert.equal(insertedEpisodes.length, 2);
@@ -1669,11 +1678,12 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     const unverifiedObservationStarted = JSON.parse(
       unverifiedObservationRun.content[0].text
     );
-    const unverifiedObservationFinished = await (server as any)
-      ._registeredTools["playtest.wait"].handler({
-        batchId: unverifiedObservationStarted.batchId,
-        waitMs: 5000
-      });
+    const unverifiedObservationFinished = await (
+      server as any
+    )._registeredTools["playtest.wait"].handler({
+      batchId: unverifiedObservationStarted.batchId,
+      waitMs: 5000
+    });
     assert.equal(
       JSON.parse(unverifiedObservationFinished.content[0].text).status,
       "completed"
@@ -1683,9 +1693,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
         batch.reviewPackets[0]?.episodeId === unverifiedObservationEpisodeId
     );
     const unverifiedObservationBatch =
-      unverifiedObservationBatchCandidates[
-        unverifiedObservationBatchCandidates.length - 1
-      ];
+      unverifiedObservationBatchCandidates.at(-1);
     assert.ok(unverifiedObservationBatch);
     assert.equal(
       unverifiedObservationBatch.reviewPackets[0].status,
@@ -1698,28 +1706,31 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
 
     currentRole = "playtest-analyst";
     selectedEpisodeIds = [unverifiedObservationEpisodeId];
-    const unverifiedObservationReviewPacket = await (server as any)
-      ._registeredTools["playtest.prepareReview"].handler({
-        episodeId: unverifiedObservationEpisodeId
-      });
+    const unverifiedObservationReviewPacket = await (
+      server as any
+    )._registeredTools["playtest.prepareReview"].handler({
+      episodeId: unverifiedObservationEpisodeId
+    });
     const unverifiedObservationError = parsedMcpError(
       unverifiedObservationReviewPacket
     );
     assert.equal(unverifiedObservationError.code, "playtest_unavailable");
-    assert.match(
-      String(unverifiedObservationError.message),
-      /withheld/u
+    assert.equal(
+      unverifiedObservationError.message,
+      "The requested playtesting capability or storage is unavailable."
     );
-    assert.match(
-      String(unverifiedObservationError.message),
-      /observation\/UI equivalence is unverified/u
+    assert.doesNotMatch(
+      unverifiedObservationError.message,
+      /observation\/UI equivalence|withheld/iu
     );
     currentRole = "playtester";
 
     const unverifiedObservationDispatch =
-      await analystOwner.dispatchCrossSessionReview(operatorSession, WORKSPACE_ID, [
-        unverifiedObservationEpisodeId
-      ]);
+      await analystOwner.dispatchCrossSessionReview(
+        operatorSession,
+        WORKSPACE_ID,
+        [unverifiedObservationEpisodeId]
+      );
     assert.equal(unverifiedObservationDispatch.run, null);
     assert.equal(unverifiedObservationDispatch.receipts.length, 1);
     assert.equal(
@@ -1754,7 +1765,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       parsedMcpError(exhaustedBudgetRun).code,
       "playtest_invalid_request"
     );
-    assert.equal(insertedEpisodes.length, 4);
+    assert.equal(insertedEpisodes.length, 5);
   } finally {
     rmSync(tmpRoot, { recursive: true, force: true });
   }
@@ -1858,10 +1869,10 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
           identity: {
             workspaceId: opts.repository,
             repository: opts.repository,
-            buildSha: opts.approval.buildSha,
-            gameBuild: opts.approval.gameBuild,
+            buildSha: opts.build.buildSha,
+            gameBuild: opts.build.gameBuild,
             scenarioId: opts.scenarioId,
-            configHash: opts.approval.playtestConfigHash,
+            configHash: opts.build.configHash,
             seed: opts.seed,
             rngInitialStateHash: null,
             rngAlgorithm: null,
@@ -3012,8 +3023,8 @@ test("run status restores interrupted batch progress from Data and durably close
     schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
     batchId: "batch-after-restart",
     workspaceId: WORKSPACE_ID,
-    buildSha: approval.buildSha,
-    configHash: approval.playtestConfigHash,
+    buildSha: FIXTURE_BUILD.buildSha,
+    configHash: FIXTURE_BUILD.configHash,
     rubricHash: prepared.rubricHash,
     approvalRevision: approval.revision,
     createdAt,
@@ -3062,6 +3073,7 @@ test("run status restores interrupted batch progress from Data and durably close
     ...episodeForRun(
       {
         approval,
+        build: FIXTURE_BUILD,
         repository: WORKSPACE_ID,
         batchId: manifest.batchId,
         assignmentId: "a-0001",
@@ -3083,9 +3095,9 @@ test("run status restores interrupted batch progress from Data and durably close
     revision: 1,
     workspaceId: WORKSPACE_ID,
     repository: WORKSPACE_ID,
-    buildSha: approval.buildSha,
-    gameBuild: approval.gameBuild,
-    configHash: approval.playtestConfigHash,
+    buildSha: FIXTURE_BUILD.buildSha,
+    gameBuild: FIXTURE_BUILD.gameBuild,
+    configHash: FIXTURE_BUILD.configHash,
     rubricHash: prepared.rubricHash,
     actionSchemaHash: recordedEpisode.identity.actionSchemaHash,
     observationSchemaHash: observationContract.schemaHash,
@@ -3127,7 +3139,7 @@ test("run status restores interrupted batch progress from Data and durably close
     createdAt,
     provenance: {
       workspaceId: WORKSPACE_ID,
-      buildSha: approval.buildSha,
+      buildSha: FIXTURE_BUILD.buildSha,
       measurementVersion: PLAYTESTS_MEASUREMENT_VERSION,
       generatedAt: createdAt
     },
@@ -3471,6 +3483,7 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
     const parent = episodeForRun(
       {
         approval,
+        build: FIXTURE_BUILD,
         repository: WORKSPACE_ID,
         batchId: "batch-source",
         assignmentId: "a-source",
@@ -3643,6 +3656,7 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
         const episode = episodeForRun(
           {
             approval: options.approval,
+            build: options.build,
             repository: options.repository,
             batchId: options.batchId,
             assignmentId: options.assignmentId,

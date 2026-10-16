@@ -319,7 +319,9 @@ export function createPlaytestControlApiRunClient(
         response.status !== "running" ||
         typeof response.batchId !== "string" ||
         !Number.isSafeInteger(response.assignmentCount) ||
-        response.assignmentCount < 1
+        response.assignmentCount < 1 ||
+        typeof response.createdAt !== "string" ||
+        !Number.isFinite(Date.parse(response.createdAt))
       ) {
         throw new PlaytestMcpUnavailableError(
           "The Runtime Control API returned an invalid batch acknowledgement."
@@ -328,6 +330,7 @@ export function createPlaytestControlApiRunClient(
       return {
         batchId: response.batchId,
         assignmentCount: response.assignmentCount,
+        createdAt: response.createdAt,
         status: "running"
       };
     },

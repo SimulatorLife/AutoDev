@@ -19704,15 +19704,19 @@ test("client behavior stays in explicitly approved interaction islands", () => {
     ],
     [
       join("src", "features", "workspaces", "WorkspaceDetailView.ts"),
-      "Submits exact-build approval and revocation through same-origin routes in place, then renders only the server-confirmed approval state."
+      "Submits checkout approval and revocation through same-origin routes in place, then renders only the server-confirmed approval state."
     ],
     [
       join("src", "features", "workspaces", "WorkspacePlaytestApprovalForm.ts"),
-      "Provides labelled exact-build fields and submits through the in-place workspace mutation handler."
+      "Provides labelled checkout-approval fields and submits through the in-place workspace mutation handler."
     ],
     [
       join("src", "features", "workspaces", "WorkspacePlaytestRevokeForm.ts"),
       "Provides revision-bound revocation fields and submits through the in-place workspace mutation handler."
+    ],
+    [
+      join("src", "features", "playtesting", "PlaytestingReadiness.tsx"),
+      "Polls Data-owned schema readiness, and offers an operator-only retry, while every page read remains server-owned."
     ],
     [
       join("src", "features", "playtesting", "use-playtesting-active-runs.ts"),

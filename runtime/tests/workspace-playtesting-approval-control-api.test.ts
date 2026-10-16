@@ -54,9 +54,6 @@ function approvalBody(expectedRevision: number | null) {
   return {
     expectedRevision,
     checkoutRoot: "/Users/operator/fixture-game",
-    buildSha: "a".repeat(40),
-    gameBuild: "fixture-build",
-    playtestConfigHash: "b".repeat(64),
     adapterImageDigest: `ghcr.io/owner/adapter@sha256:${"c".repeat(64)}`,
     workingDirectory: ".",
     adapterCommand: ["/usr/bin/node", "adapter.mjs"],
@@ -149,6 +146,17 @@ test("Workspace Control API approval is operator-only, exact, revisioned, and re
       approvalBody(null)
     );
     assert.equal(viewerWrite.status, 403);
+
+    // An approval authorizes the checkout; a pinned commit is not accepted.
+    const pinned = await call(
+      root,
+      repository,
+      "POST",
+      base,
+      "workspace-operator",
+      { ...approvalBody(null), buildSha: "a".repeat(40) }
+    );
+    assert.equal(pinned.status, 400);
 
     const approved = await call(
       root,

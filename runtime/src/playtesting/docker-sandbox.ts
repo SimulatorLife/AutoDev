@@ -13,12 +13,15 @@ import {
   constants,
   existsSync,
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -29,8 +32,8 @@ import {
   type PlaytestArtifactReference,
   type PlaytestMetricRegistry,
   PLAYTESTS_ADAPTER_CONTAINER_WORKSPACE,
-  PLAYTESTS_INTEGRATION_DIR,
-  type WorkspacePlaytestApproval
+  type WorkspacePlaytestApproval,
+  type WorkspacePlaytestBuild
 } from "@simulatorlife/autodev-core";
 
 import type {
@@ -65,10 +68,12 @@ const DEFAULT_FILE_SYSTEM = { accessSync, statSync };
 
 export interface PreparedPlaytestSandbox {
   readonly workspaceId: string;
+  /** The operator's approved checkout the build was resolved from. */
+  readonly sourceCheckoutRoot: string;
+  /** Runtime-owned, read-only snapshot of exactly `build.buildSha`; the sandbox mounts this. */
   readonly checkoutRoot: string;
-  readonly checkoutSha: string;
-  /** Exact game-build label the operator approved, supplied to the adapter. */
-  readonly gameBuild: string;
+  /** The committed build resolved at preparation; game build is supplied to the adapter. */
+  readonly build: WorkspacePlaytestBuild;
   readonly imageDigest: string;
   readonly workingDirectory: string;
   readonly command: readonly string[];
@@ -77,6 +82,7 @@ export interface PreparedPlaytestSandbox {
   readonly observationContract: ApprovedPlaytestDefinition["observationContract"];
   readonly rubric: PlaytestMetricRegistry;
   readonly benchmark: ApprovedPlaytestDefinition["benchmark"];
+  readonly benchmarkHash: ApprovedPlaytestDefinition["benchmarkHash"];
   readonly rubricHash: string;
 }
 
@@ -212,41 +218,52 @@ function isWithin(parent: string, child: string): boolean {
   );
 }
 
-function readCleanCheckoutSha(root: string): string {
-  const canonicalRoot = realpathSync(root);
-  if (canonicalRoot !== path.resolve(root)) {
-    throw new PlaytestSandboxApprovalError(
-      "Approved checkout root must be stored as its canonical real path."
-    );
-  }
+const GIT_COMMAND_TIMEOUT_MS = 10_000;
+const SNAPSHOT_COMMAND_TIMEOUT_MS = 180_000;
+/**
+ * Snapshots unused for longer than this are pruned. It exceeds the largest
+ * approvable wall time, and every prepare/launch refreshes its snapshot's mtime.
+ */
+const SNAPSHOT_RETENTION_MS = 2 * 60 * 60 * 1000;
+const SNAPSHOT_PARTIAL_MARKER = ".partial-";
+
+/** Runtime-owned root for read-only committed-build snapshots. */
+export function defaultPlaytestSnapshotRoot(): string {
+  const codexHome =
+    process.env.CODEX_HOME?.trim() || path.join(homedir(), ".codex");
+  return path.join(codexHome, "playtesting", "snapshots");
+}
+
+export interface PlaytestSandboxPrepareOptions {
+  /** Root for committed-build snapshots; defaults to {@link defaultPlaytestSnapshotRoot}. */
+  readonly snapshotRoot?: string;
+  readonly now?: () => number;
+}
+
+function runGit(
+  cwd: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+  timeout = GIT_COMMAND_TIMEOUT_MS
+): string {
+  return execFileSync("git", args, {
+    cwd,
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout,
+    maxBuffer: 1024 * 1024
+  }).trim();
+}
+
+/** The approved checkout's latest committed build; uncommitted edits are never run. */
+function resolveCommittedHead(root: string): string {
   let sha: string;
-  let status: string;
   try {
-    sha = execFileSync("git", ["rev-parse", "HEAD"], {
-      cwd: canonicalRoot,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 3000
-    }).trim();
-    status = execFileSync(
-      "git",
-      [
-        "status",
-        "--porcelain=v1",
-        "--untracked-files=all",
-        "--ignored=matching"
-      ],
-      {
-        cwd: canonicalRoot,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 3000,
-        maxBuffer: 256 * 1024
-      }
-    );
+    sha = runGit(root, ["rev-parse", "--verify", "HEAD^{commit}"]);
   } catch {
     throw new PlaytestSandboxApprovalError(
-      "Approved checkout is not a readable Git working tree."
+      "Approved checkout is not a readable Git repository with a commit."
     );
   }
   if (!SHA_PATTERN.test(sha)) {
@@ -254,73 +271,129 @@ function readCleanCheckoutSha(root: string): string {
       "Checkout HEAD is not a valid Git SHA."
     );
   }
-  if (status !== "") {
-    // Name what is actually wrong. The approved checkout is meant to be clean,
-    // so an operator who gitignored `.autodev/` sees a generic "untracked or
-    // ignored" line and has to guess that the directory holding the playtest
-    // config, rubric and observation manifests is the thing to un-ignore.
-    const ignored = status
-      .split("\n")
-      .map((line) => line.trimEnd())
-      .filter((line) => line.startsWith("!! "))
-      .map((line) => line.slice(3).trim());
-    const autodevIgnored = ignored.filter(
-      (ignoredPath) =>
-        ignoredPath === AUTODEV_INTEGRATION_DIR ||
-        ignoredPath.startsWith(`${AUTODEV_INTEGRATION_DIR}/`)
-    );
-    if (autodevIgnored.length > 0) {
-      throw new PlaytestSandboxApprovalError(
-        `Approved checkout ignores ${AUTODEV_INTEGRATION_DIR}/, which holds the playtest config, rubric and observation manifests. Commit those files or stop ignoring ${AUTODEV_INTEGRATION_DIR}/ before running an approved batch.`
-      );
-    }
-    const named = [...ignored, ...modifiedPaths(status)].slice(0, 5);
-    throw new PlaytestSandboxApprovalError(
-      named.length > 0
-        ? `Approved checkout is not clean; commit or remove: ${named.join(", ")}.`
-        : "Approved checkout has modified, untracked, or ignored files."
-    );
-  }
-  return sha;
+  return sha.toLowerCase();
 }
 
-/** Paths from `git status --porcelain=v1` other than ignored entries. */
-function modifiedPaths(status: string): string[] {
-  return status
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .filter((line) => line.length > 0 && !line.startsWith("!!"))
-    .map((line) => line.slice(3).trim())
-    .filter((entryPath) => entryPath.length > 0);
+function ensureOwnerDirectory(directory: string): void {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const info = lstatSync(directory);
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw new PlaytestSandboxApprovalError(
+      "Playtest snapshot directories must be real directories."
+    );
+  }
 }
 
 /**
- * The canonical integration directory a repository uses to declare AutoDev
- * Playtesting support. Naming it in a failure is the difference between an
- * operator knowing which path to un-ignore and guessing.
+ * Check out exactly one commit into a Runtime-owned directory through a
+ * temporary index, so the operator's index and working tree are untouched
+ * and in-progress edits cannot leak into the build.
  */
-const AUTODEV_INTEGRATION_DIR = PLAYTESTS_INTEGRATION_DIR;
+function checkoutCommit(
+  sourceRoot: string,
+  sha: string,
+  destination: string
+): void {
+  const indexFile = destination + ".index";
+  const env = { ...process.env, GIT_INDEX_FILE: indexFile };
+  try {
+    runGit(sourceRoot, ["read-tree", sha], env, SNAPSHOT_COMMAND_TIMEOUT_MS);
+    runGit(
+      sourceRoot,
+      ["checkout-index", "--all", "--force", "--prefix=" + destination + "/"],
+      env,
+      SNAPSHOT_COMMAND_TIMEOUT_MS
+    );
+  } finally {
+    rmSync(indexFile, { force: true });
+  }
+}
 
-function resolveApprovedCheckout(approval: WorkspacePlaytestApproval): {
+function pruneStaleSnapshots(
+  workspaceDirectory: string,
+  keep: string,
+  now: number
+): void {
+  for (const entry of readdirSync(workspaceDirectory)) {
+    if (entry === keep) continue;
+    const candidate = path.join(workspaceDirectory, entry);
+    try {
+      if (now - lstatSync(candidate).mtimeMs > SNAPSHOT_RETENTION_MS) {
+        rmSync(candidate, { recursive: true, force: true });
+      }
+    } catch {
+      // A concurrent prune or materialization owns this entry.
+    }
+  }
+}
+
+/** Refresh a snapshot's last-use time so retention never prunes it mid-batch. */
+function touchSnapshot(snapshotRoot: string, now: number): void {
+  const time = new Date(now);
+  utimesSync(snapshotRoot, time, time);
+}
+
+/** Materialize (or reuse) the immutable snapshot of one committed build. */
+function materializeCommitSnapshot(input: {
+  readonly workspaceId: string;
+  readonly sourceRoot: string;
+  readonly sha: string;
+  readonly snapshotRoot: string;
+  readonly now: number;
+}): string {
+  const root = path.resolve(input.snapshotRoot);
+  ensureOwnerDirectory(root);
+  const workspaceDirectory = path.join(
+    realpathSync(root),
+    createHash("sha256").update(input.workspaceId).digest("hex").slice(0, 32)
+  );
+  ensureOwnerDirectory(workspaceDirectory);
+  const destination = path.join(workspaceDirectory, input.sha);
+  if (!existsSync(destination)) {
+    const partial =
+      destination + SNAPSHOT_PARTIAL_MARKER + randomUUID().slice(0, 8);
+    try {
+      mkdirSync(partial, { mode: 0o700 });
+      checkoutCommit(input.sourceRoot, input.sha, partial);
+      renameSync(partial, destination);
+    } catch (error) {
+      rmSync(partial, { recursive: true, force: true });
+      // Another prepare published the same commit first; its snapshot is identical.
+      if (!existsSync(destination)) {
+        throw new PlaytestSandboxApprovalError(
+          "The approved checkout's latest commit could not be snapshotted: " +
+            (error instanceof Error ? error.message : String(error))
+        );
+      }
+    }
+  }
+  touchSnapshot(destination, input.now);
+  pruneStaleSnapshots(workspaceDirectory, input.sha, input.now);
+  return destination;
+}
+
+/**
+ * The paths a sandbox mounts are the Runtime's snapshot of the latest commit;
+ * the approved working directory is resolved inside that snapshot.
+ */
+function resolveCommittedBuildCheckout(
+  approval: WorkspacePlaytestApproval,
+  options: PlaytestSandboxPrepareOptions
+): {
+  readonly sourceRoot: string;
   readonly root: string;
   readonly workingDirectory: string;
   readonly sha: string;
 } {
-  const root = realpathSync(approval.checkoutRoot);
-  if (root !== path.resolve(approval.checkoutRoot)) {
+  const sourceRoot = realpathSync(approval.checkoutRoot);
+  if (sourceRoot !== path.resolve(approval.checkoutRoot)) {
     throw new PlaytestSandboxApprovalError(
       "Approved checkout root is not the canonical real path."
     );
   }
-  if (!statSync(root).isDirectory()) {
+  if (!statSync(sourceRoot).isDirectory()) {
     throw new PlaytestSandboxApprovalError(
       "Approved checkout is not a directory."
-    );
-  }
-  // Docker's --mount argument is CSV-like; a comma could add a mount option.
-  if (root.includes(",")) {
-    throw new PlaytestSandboxApprovalError(
-      "Checkout paths containing commas are unsupported."
     );
   }
   if (
@@ -332,9 +405,30 @@ function resolveApprovedCheckout(approval: WorkspacePlaytestApproval): {
       "Working directory must stay inside the approved checkout."
     );
   }
-  const workingDirectory = realpathSync(
-    path.resolve(root, approval.workingDirectory)
-  );
+  const sha = resolveCommittedHead(sourceRoot);
+  const root = materializeCommitSnapshot({
+    workspaceId: approval.workspaceId,
+    sourceRoot,
+    sha,
+    snapshotRoot: options.snapshotRoot ?? defaultPlaytestSnapshotRoot(),
+    now: (options.now ?? Date.now)()
+  });
+  // Docker's --mount argument is CSV-like; a comma could add a mount option.
+  if (root.includes(",")) {
+    throw new PlaytestSandboxApprovalError(
+      "Snapshot paths containing commas are unsupported."
+    );
+  }
+  let workingDirectory: string;
+  try {
+    workingDirectory = realpathSync(
+      path.resolve(root, approval.workingDirectory)
+    );
+  } catch {
+    throw new PlaytestSandboxApprovalError(
+      "The approved working directory does not exist in the latest commit."
+    );
+  }
   if (
     !isWithin(root, workingDirectory) ||
     !statSync(workingDirectory).isDirectory()
@@ -343,50 +437,41 @@ function resolveApprovedCheckout(approval: WorkspacePlaytestApproval): {
       "Working directory escapes the approved checkout."
     );
   }
-  const sha = readCleanCheckoutSha(root);
-  if (sha.toLowerCase() !== approval.buildSha.toLowerCase()) {
-    throw new PlaytestSandboxApprovalError(
-      "Checkout HEAD no longer matches the approved build SHA."
-    );
-  }
-  return { root, workingDirectory, sha };
+  return { sourceRoot, root, workingDirectory, sha };
 }
 
-/** Load the hashed target config and bind it to the exact clean checkout. */
+/**
+ * Resolve the approved checkout's latest committed build, snapshot it, and
+ * load that commit's own target configuration. Each batch therefore runs
+ * whatever is committed at its start, with no per-commit approval.
+ */
 export function preparePlaytestSandbox(
-  approval: WorkspacePlaytestApproval
+  approval: WorkspacePlaytestApproval,
+  options: PlaytestSandboxPrepareOptions = {}
 ): PreparedPlaytestSandbox {
-  const definition = loadApprovedPlaytestDefinition(approval);
+  const checkout = resolveCommittedBuildCheckout(approval, options);
+  const definition = loadApprovedPlaytestDefinition(approval, checkout.root);
   const { configuration } = definition;
-  const configuredCommand = configuration.adapter.command;
-  const checkout = resolveApprovedCheckout(approval);
   return {
     workspaceId: approval.workspaceId,
+    sourceCheckoutRoot: checkout.sourceRoot,
     checkoutRoot: checkout.root,
-    checkoutSha: checkout.sha,
-    gameBuild: approval.gameBuild,
+    build: {
+      buildSha: checkout.sha,
+      gameBuild: checkout.sha,
+      configHash: definition.configHash
+    },
     imageDigest: approval.adapterImageDigest,
     workingDirectory: checkout.workingDirectory,
-    command: [...configuredCommand],
+    command: [...configuration.adapter.command],
     limits: { ...approval.limits },
     configuration,
     observationContract: definition.observationContract,
     rubric: definition.rubric,
     benchmark: definition.benchmark,
+    benchmarkHash: definition.benchmarkHash,
     rubricHash: definition.rubricHash
   };
-}
-
-/** Recheck after execution so concurrent host changes invalidate the attempt. */
-export function assertPlaytestCheckoutUnchanged(
-  prepared: PreparedPlaytestSandbox
-): void {
-  const currentSha = readCleanCheckoutSha(prepared.checkoutRoot);
-  if (currentSha.toLowerCase() !== prepared.checkoutSha.toLowerCase()) {
-    throw new PlaytestSandboxApprovalError(
-      "Checkout changed during the playtest attempt."
-    );
-  }
 }
 
 /** Resolve only a local Docker Engine socket; remote Docker contexts are rejected. */
@@ -637,7 +722,7 @@ export function buildDockerRunArguments(
     "--env",
     "TZ=UTC",
     "--env",
-    "AUTODEV_PLAYTEST_ENGINE_BUILD=" + request.gameBuild,
+    "AUTODEV_PLAYTEST_ENGINE_BUILD=" + request.build.gameBuild,
     "--env",
     "AUTODEV_PLAYTEST_OUTPUT_DIR=" + CONTAINER_ARTIFACTS,
     ...(inputArtifactDirectory === undefined
@@ -931,7 +1016,6 @@ function stageContainerArtifacts(
 }
 
 function determineSandboxFailure(options: {
-  readonly checkoutError: Error | null;
   readonly timedOut: boolean;
   readonly cancelled: boolean;
   readonly outputLimitExceeded: boolean;
@@ -945,9 +1029,6 @@ function determineSandboxFailure(options: {
   readonly stderrTail: readonly string[];
   readonly stagedArtifacts: readonly StagedPlaytestArtifact[];
 }): Error | null {
-  if (options.checkoutError) {
-    return options.checkoutError;
-  }
   if (options.timedOut) {
     return new PlaytestSandboxExecutionError(
       `Playtest sandbox wall time limit (${options.wallTimeMs} ms) exceeded.`,
@@ -1173,6 +1254,7 @@ export async function launchPlaytestSandbox(
   const spawnFn: PlaytestSpawnFn =
     options?.spawn ?? (spawn as unknown as PlaytestSpawnFn);
   const nowFn = options?.now ?? Date.now;
+  touchSnapshot(prepared.checkoutRoot, nowFn());
   const { staged: stagedInputArtifacts, maxOutputBytes: maxArtifactBytes } =
     prepareStagedInput(prepared, options, configCleanup);
   await verifyApprovedImage(
@@ -1339,13 +1421,6 @@ export async function launchPlaytestSandbox(
     finalized = true;
     clearTimeout(wallTimer);
 
-    let checkoutError: Error | null = null;
-    try {
-      assertPlaytestCheckoutUnchanged(prepared);
-    } catch (error) {
-      checkoutError = error instanceof Error ? error : new Error(String(error));
-    }
-
     const stagingResult = stageContainerArtifacts(
       socket,
       configDirectory,
@@ -1375,7 +1450,6 @@ export async function launchPlaytestSandbox(
     }
 
     const failure = determineSandboxFailure({
-      checkoutError,
       timedOut,
       cancelled,
       outputLimitExceeded,

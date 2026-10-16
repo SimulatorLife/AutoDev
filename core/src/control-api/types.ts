@@ -1153,6 +1153,7 @@ export interface ControlApiPlaytestingCapabilitiesResponse {
   readonly operatorActionsAvailable: boolean;
   readonly approved: boolean;
   readonly approvalRevision: number | null;
+  /** The approved checkout's latest committed build at read time; null when unresolvable. */
   readonly buildSha: string | null;
   readonly gameBuild: string | null;
   readonly allowedScenarios: readonly string[];
@@ -1172,6 +1173,17 @@ export interface ControlApiPlaytestingCapabilitiesResponse {
     readonly strategy: string;
     readonly maxStepsPerEpisode: number;
   }[];
+  /**
+   * Seeds the latest build's frozen benchmark admits, in inventory order.
+   * `null` when that build freezes no benchmark, so any bounded printable
+   * seed is admissible. A run request outside this list is refused.
+   */
+  readonly admissibleSeeds:
+    | readonly {
+        readonly seed: string;
+        readonly purpose: "discovery" | "confirmation" | "regression";
+      }[]
+    | null;
   readonly policyProfiles: readonly {
     readonly policyId: string;
     readonly version: string;
@@ -1231,6 +1243,8 @@ export interface ControlApiPlaytestingRunStartedResponse {
   readonly workspaceId: string;
   readonly batchId: string;
   readonly assignmentCount: number;
+  /** The exact Runtime-registered timestamp, shared with active-run reads. */
+  readonly createdAt: string;
   readonly status: "running";
 }
 
@@ -1497,6 +1511,17 @@ export const CONTROL_API_PLAYTESTING_RESOURCES = [
 ] as const;
 export type ControlApiPlaytestingResource =
   (typeof CONTROL_API_PLAYTESTING_RESOURCES)[number];
+
+/** Schema identifier for the Data-owned Playtesting readiness response. */
+export const CONTROL_API_PLAYTESTING_READINESS_SCHEMA =
+  "autodev-control-playtesting-readiness-v1" as const;
+
+/** Readiness of the Data-owned Playtesting schema before resource reads begin. */
+export interface ControlApiPlaytestingReadinessResponse {
+  readonly schema: typeof CONTROL_API_PLAYTESTING_READINESS_SCHEMA;
+  readonly workspaceId: string;
+  readonly status: "initializing" | "ready";
+}
 
 /** Data's keyset page carried across the authenticated Control API boundary. */
 export interface ControlApiPlaytestingPage<T> {

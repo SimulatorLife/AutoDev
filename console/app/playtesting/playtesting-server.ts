@@ -2,6 +2,7 @@
 import {
   assertPlaytestCoverageManifest,
   assertPlaytestNumericResults,
+  CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
   type ControlApiPlaytestingActiveRunsResponse,
   type ControlApiPlaytestingAnalysesResponse,
   type ControlApiPlaytestingAnalysisDispatchResponse,
@@ -13,6 +14,7 @@ import {
   type ControlApiPlaytestingEpisodeDetailResponse,
   type ControlApiPlaytestingHumanValidationResponse,
   type ControlApiPlaytestingPageResponse,
+  type ControlApiPlaytestingReadinessResponse,
   type ControlApiPlaytestingResource,
   type ControlApiPlaytestingRunCancellationResponse,
   type ControlApiPlaytestingRunRecord,
@@ -45,6 +47,7 @@ import {
   CONTROL_API_PATHS,
   type ControlApiBinaryData,
   type ControlApiConfig,
+  controlApiFailureCode,
   type ControlApiResult,
   fetchControlApi,
   fetchControlApiBinary,
@@ -66,8 +69,67 @@ const RESOURCE_SCHEMAS: Readonly<
 const SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const ENTITY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const PLAYTESTING_READINESS_LABEL = "Playtesting readiness";
+const CANONICAL_WORKSPACE_REQUIREMENT = "a canonical workspaceId";
 export type PlaytestingPage<Row> =
   ControlApiPlaytestingPageResponse<Row>["page"];
+
+export async function fetchPlaytestingReadiness(
+  workspaceId: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions & { readonly retry?: boolean } = {}
+): Promise<ControlApiResult<ControlApiPlaytestingReadinessResponse>> {
+  if (!WORKSPACE_ID_PATTERN.test(workspaceId)) {
+    return invalidResponse(
+      PLAYTESTING_READINESS_LABEL,
+      CANONICAL_WORKSPACE_REQUIREMENT
+    );
+  }
+  const path = `${options.retry ? CONTROL_API_PATHS.playtestingInitialization : CONTROL_API_PATHS.playtestingReadiness}?workspaceId=${encodeURIComponent(workspaceId)}`;
+  const result = options.retry
+    ? await postControlApi<unknown>(path, undefined, config, options)
+    : await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  const value = result.data;
+  return isRecord(value) &&
+    value.schema === CONTROL_API_PLAYTESTING_READINESS_SCHEMA &&
+    value.workspaceId === workspaceId &&
+    (value.status === "initializing" || value.status === "ready")
+    ? {
+        kind: "ok",
+        data: value as unknown as ControlApiPlaytestingReadinessResponse
+      }
+    : invalidResponse(
+        PLAYTESTING_READINESS_LABEL,
+        CONTROL_API_PLAYTESTING_READINESS_SCHEMA
+      );
+}
+
+export interface PlaytestingReadinessFailure {
+  readonly status: "initializing" | "unavailable";
+  readonly code: string;
+  readonly message: string;
+}
+
+export function playtestingReadinessFailure(
+  result: Exclude<ControlApiResult<unknown>, { readonly kind: "ok" }>
+): PlaytestingReadinessFailure | null {
+  const code = controlApiFailureCode(result);
+  if (
+    code !== "autodev_control_playtesting_source_initializing" &&
+    code !== "autodev_control_playtesting_source_unavailable"
+  ) {
+    return null;
+  }
+  return {
+    status:
+      code === "autodev_control_playtesting_source_initializing"
+        ? "initializing"
+        : "unavailable",
+    code,
+    message: result.message
+  };
+}
 
 export interface PlaytestingPageRequest {
   readonly workspaceId: string;
@@ -357,7 +419,7 @@ export async function fetchPlaytestingPage<
   >
 > {
   if (!WORKSPACE_ID_PATTERN.test(request.workspaceId)) {
-    return invalidResponse("Playtesting page", "a canonical workspaceId");
+    return invalidResponse("Playtesting page", CANONICAL_WORKSPACE_REQUIREMENT);
   }
   const result = await fetchControlApi<unknown>(
     pagePath(request, resource),
@@ -483,6 +545,17 @@ function isPlaytestingCapabilitiesResponse(
         Number.isSafeInteger(assignment.maxStepsPerEpisode) &&
         (assignment.maxStepsPerEpisode as number) > 0
     ) &&
+    (value.admissibleSeeds === null ||
+      (Array.isArray(value.admissibleSeeds) &&
+        value.admissibleSeeds.length > 0 &&
+        value.admissibleSeeds.every(
+          (entry) =>
+            isRecord(entry) &&
+            isNonEmptyString(entry.seed) &&
+            (entry.purpose === "discovery" ||
+              entry.purpose === "confirmation" ||
+              entry.purpose === "regression")
+        ))) &&
     Array.isArray(value.policyProfiles) &&
     value.policyProfiles.every(
       (profile) =>
@@ -514,7 +587,7 @@ export async function fetchPlaytestingRunCapabilities(
   if (!WORKSPACE_ID_PATTERN.test(workspaceId)) {
     return invalidResponse(
       "Playtesting capabilities",
-      "a canonical workspaceId"
+      CANONICAL_WORKSPACE_REQUIREMENT
     );
   }
   const path = `${CONTROL_API_PATHS.playtesting}/capabilities?workspaceId=${encodeURIComponent(workspaceId)}`;
@@ -717,7 +790,7 @@ export async function listPlaytestingAnalyses(
   if (!WORKSPACE_ID_PATTERN.test(workspaceId)) {
     return invalidResponse(
       "Playtesting analyst status",
-      "a canonical workspaceId"
+      CANONICAL_WORKSPACE_REQUIREMENT
     );
   }
   const params = new URLSearchParams({ workspaceId });

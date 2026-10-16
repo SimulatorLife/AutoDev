@@ -1,19 +1,55 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import type { IncomingMessage, Server } from "node:http";
+import type { Server } from "node:http";
 import test from "node:test";
 
-import {
-  handlePlaytestingControlApiRequest,
-  warmupDefaultPlaytestingRepository
-} from "../src/control-api/playtesting.ts";
-import { startRouterServer } from "../src/router/server.ts";
+import { warmupDefaultPlaytestingRepository } from "../src/control-api/index.ts";
+import { handlePlaytestingControlApiRequest } from "../src/control-api/playtesting.ts";
 import { codexState } from "../src/router/http.ts";
+import { startRouterServer } from "../src/router/server.ts";
 import {
   makeRequest,
   responseBody,
   responseRecorder
 } from "./support/control-api-harness.ts";
+
+test("GET-only Playtesting readiness drains a rejected request body", async () => {
+  const requestBody = makeRequest(
+    "POST",
+    "/control/playtesting/readiness?workspaceId=fixture/game",
+    { ignored: "body" }
+  );
+  const bodyConsumed = once(requestBody, "end");
+  const response = responseRecorder();
+  await handlePlaytestingControlApiRequest(
+    requestBody,
+    response,
+    "/control/playtesting/readiness",
+    { actor: "warmup-viewer", role: "viewer" }
+  );
+  await bodyConsumed;
+  assert.equal(response.statusCode, 405);
+  assert.equal(response.headers.allow, "GET");
+});
+
+test("GET-only Playtesting routes drain rejected request bodies", async () => {
+  for (const pathname of [
+    "/control/playtesting/readiness",
+    "/control/playtesting/batches"
+  ]) {
+    const url = `${pathname}?workspaceId=fixture%2Fgame`;
+    const incoming = makeRequest("POST", url, { ignored: "body" });
+    const drained = once(incoming, "end");
+    const response = responseRecorder();
+    await handlePlaytestingControlApiRequest(incoming, response, pathname, {
+      actor: "warmup-viewer",
+      role: "viewer"
+    });
+    await drained;
+    assert.equal(response.statusCode, 405);
+    assert.equal(response.headers.allow, "GET");
+  }
+});
 
 test(
   "router startup warms the shared Playtesting schema without blocking other routes",
@@ -47,7 +83,7 @@ test(
     process.env.CLICKHOUSE_URL = "http://clickhouse.test:8123";
     process.env.AUTODEV_CONTROL_API_TOKEN = "";
     process.env.AUTODEV_CONTROL_VIEWERS = "";
-    process.env.AUTODEV_CONTROL_OPERATORS = "";
+    process.env.AUTODEV_CONTROL_OPERATORS = "warmup-operator";
     delete process.env.AUTODEV_CONTROL_API_LISTEN_HOST;
     delete process.env.AUTODEV_CONTROL_API_LISTEN_PORT;
     globalThis.fetch = async (input, init) => {
@@ -111,7 +147,7 @@ test(
       process.env.AUTODEV_CONTROL_API_TOKEN =
         "playtesting-warmup-control-token-0123456789";
       process.env.AUTODEV_CONTROL_VIEWERS = "warmup-viewer";
-      process.env.AUTODEV_CONTROL_OPERATORS = "";
+      process.env.AUTODEV_CONTROL_OPERATORS = "warmup-operator";
       router = startRouterServer(0, "127.0.0.1");
       await once(router, "listening");
       await firstQueryStarted;
@@ -138,65 +174,153 @@ test(
       );
       assert.equal(providersResponse.status, 200);
 
-      const readResponse = responseRecorder();
-      let readFinished = false;
-      const firstRead = handlePlaytestingControlApiRequest(
+      const pendingReadinessResponse = responseRecorder();
+      await handlePlaytestingControlApiRequest(
         makeRequest(
           "GET",
-          "/control/playtesting/batches?workspaceId=fixture/game"
+          "/control/playtesting/readiness?workspaceId=fixture/game"
         ),
-        readResponse,
-        "/control/playtesting/batches",
+        pendingReadinessResponse,
+        "/control/playtesting/readiness",
         { actor: "warmup-viewer", role: "viewer" },
         readOptions
-      ).then(() => {
-        readFinished = true;
-      });
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      assert.equal(
-        readFinished,
-        false,
-        "the read should share the pending warmup"
       );
+      assert.equal(pendingReadinessResponse.statusCode, 200);
       assert.equal(
-        clickhouseQueries.length,
-        startupDdlCount,
-        "the overlapping read must not start duplicate DDL"
+        (responseBody(pendingReadinessResponse) as { status: string }).status,
+        "initializing"
       );
 
-      schemaReleased = true;
-      releaseSchema();
-      await firstRead;
-      assert.equal(readResponse.statusCode, 503);
-      assert.equal(
-        (responseBody(readResponse)?.error as { code: string }).code,
-        "autodev_control_playtesting_source_unavailable"
-      );
-
-      const failedAttemptQueryCount = clickhouseQueries.length;
-      const retryResponse = responseRecorder();
+      const pendingReadResponse = responseRecorder();
       await handlePlaytestingControlApiRequest(
         makeRequest(
           "GET",
           "/control/playtesting/batches?workspaceId=fixture/game"
         ),
-        retryResponse,
+        pendingReadResponse,
         "/control/playtesting/batches",
         { actor: "warmup-viewer", role: "viewer" },
         readOptions
       );
+      assert.equal(pendingReadResponse.statusCode, 503);
+      assert.equal(
+        (responseBody(pendingReadResponse)?.error as { code: string }).code,
+        "autodev_control_playtesting_source_initializing"
+      );
+      assert.equal(pendingReadResponse.headers["retry-after"], "1");
+      assert.equal(
+        clickhouseQueries.length,
+        startupDdlCount,
+        "the pending-read response must not start duplicate schema work"
+      );
+
+      schemaReleased = true;
+      releaseSchema();
+      await startupInitialization.catch(() => undefined);
+
+      const failedReadinessResponse = responseRecorder();
+      await handlePlaytestingControlApiRequest(
+        makeRequest(
+          "GET",
+          "/control/playtesting/readiness?workspaceId=fixture/game"
+        ),
+        failedReadinessResponse,
+        "/control/playtesting/readiness",
+        { actor: "warmup-viewer", role: "viewer" },
+        readOptions
+      );
+      assert.equal(failedReadinessResponse.statusCode, 503);
+      assert.equal(
+        (responseBody(failedReadinessResponse)?.error as { code: string }).code,
+        "autodev_control_playtesting_source_unavailable"
+      );
+
+      const failedAttemptQueryCount = clickhouseQueries.length;
+      const readRoutePostResponse = responseRecorder();
+      await handlePlaytestingControlApiRequest(
+        makeRequest(
+          "POST",
+          "/control/playtesting/readiness?workspaceId=fixture/game"
+        ),
+        readRoutePostResponse,
+        "/control/playtesting/readiness",
+        { actor: "warmup-operator", role: "operator" },
+        readOptions
+      );
+      assert.equal(readRoutePostResponse.statusCode, 405);
+      assert.equal(clickhouseQueries.length, failedAttemptQueryCount);
+
+      const viewerRetryResponse = responseRecorder();
+      await handlePlaytestingControlApiRequest(
+        makeRequest(
+          "POST",
+          "/control/playtesting/initialize?workspaceId=fixture/game"
+        ),
+        viewerRetryResponse,
+        "/control/playtesting/initialize",
+        { actor: "warmup-viewer", role: "viewer" },
+        readOptions
+      );
+      assert.equal(viewerRetryResponse.statusCode, 403);
+      assert.equal(clickhouseQueries.length, failedAttemptQueryCount);
+
+      const retryResponse = responseRecorder();
+      await handlePlaytestingControlApiRequest(
+        makeRequest(
+          "POST",
+          "/control/playtesting/initialize?workspaceId=fixture/game"
+        ),
+        retryResponse,
+        "/control/playtesting/initialize",
+        { actor: "warmup-operator", role: "operator" },
+        readOptions
+      );
       assert.equal(retryResponse.statusCode, 200);
+      assert.equal(
+        (responseBody(retryResponse) as { status: string }).status,
+        "initializing"
+      );
+      await warmupDefaultPlaytestingRepository();
       assert.ok(
         clickhouseQueries.length > failedAttemptQueryCount,
-        "a failed schema initialization must be reset so a later read can retry"
+        "an explicit operator retry must repeat Data's schema initialization"
       );
       assert.equal(
         clickhouseQueries[failedAttemptQueryCount],
         clickhouseQueries[0],
         "the retry must repeat Data's schema initialization"
       );
+
+      const readyResponse = responseRecorder();
+      await handlePlaytestingControlApiRequest(
+        makeRequest(
+          "GET",
+          "/control/playtesting/readiness?workspaceId=fixture/game"
+        ),
+        readyResponse,
+        "/control/playtesting/readiness",
+        { actor: "warmup-viewer", role: "viewer" },
+        readOptions
+      );
+      assert.equal(readyResponse.statusCode, 200);
       assert.equal(
-        (responseBody(retryResponse)?.page as { total: number }).total,
+        (responseBody(readyResponse) as { status: string }).status,
+        "ready"
+      );
+      const retryReadResponse = responseRecorder();
+      await handlePlaytestingControlApiRequest(
+        makeRequest(
+          "GET",
+          "/control/playtesting/batches?workspaceId=fixture/game"
+        ),
+        retryReadResponse,
+        "/control/playtesting/batches",
+        { actor: "warmup-viewer", role: "viewer" },
+        readOptions
+      );
+      assert.equal(retryReadResponse.statusCode, 200);
+      assert.equal(
+        (responseBody(retryReadResponse)?.page as { total: number }).total,
         0
       );
 

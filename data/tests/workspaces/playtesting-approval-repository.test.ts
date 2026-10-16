@@ -39,14 +39,11 @@ function approval(
   overrides: Partial<WorkspacePlaytestApproval> = {}
 ): WorkspacePlaytestApproval {
   return {
-    schema: "autodev-workspace-playtest-approval-v1",
+    schema: "autodev-workspace-playtest-approval-v2",
     workspaceId: "owner/game",
     revision: 1,
     approvalId: "approval-1",
     checkoutRoot: "/Users/operator/game",
-    buildSha: "a".repeat(40),
-    gameBuild: "game-build-1",
-    playtestConfigHash: "b".repeat(64),
     adapterImageDigest: `ghcr.io/owner/adapter@sha256:${"c".repeat(64)}`,
     workingDirectory: ".",
     adapterCommand: ["/usr/bin/node", "adapter.mjs"],
@@ -199,6 +196,35 @@ test("Workspaces approval repository fails closed on malformed JSON and invalid 
         ),
       /timestamp is invalid/u
     );
+  } finally {
+    root.cleanup();
+  }
+});
+
+test("Workspaces approval repository migrates a stored per-commit v1 approval to track the latest commit", () => {
+  const root = temporaryRoot();
+  try {
+    const repository = new WorkspacePlaytestApprovalRepository(root.path);
+    const current = repository.approve(approval(), null);
+    const key = createHash("sha256").update("owner/game").digest("hex");
+    const recordPath = path.join(root.path, key, "approval.json");
+    writeFileSync(
+      recordPath,
+      JSON.stringify({
+        ...current,
+        schema: "autodev-workspace-playtest-approval-v1",
+        buildSha: "a".repeat(40),
+        gameBuild: "game-build-1",
+        playtestConfigHash: "b".repeat(64)
+      }),
+      "utf8"
+    );
+
+    const migrated = repository.read("owner/game");
+    assert.deepEqual(migrated, current);
+    // The migration is one-way and durable: the stored record is rewritten.
+    assert.deepEqual(JSON.parse(readFileSync(recordPath, "utf8")), current);
+    assert.equal(lstatSync(recordPath).mode & 0o777, 0o600);
   } finally {
     root.cleanup();
   }

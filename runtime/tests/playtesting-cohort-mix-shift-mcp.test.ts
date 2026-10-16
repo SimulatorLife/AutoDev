@@ -16,7 +16,6 @@
  * weight this test supplied.
  */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import {
   copyFileSync,
   mkdirSync,
@@ -49,11 +48,14 @@ import {
   type PlaytestingRepositoryOps,
   type PlaytestMcpSession
 } from "../src/playtesting/mcp.ts";
+import {
+  commitFixtureCheckout,
+  isolatedPlaytestPreparer
+} from "./support/playtest-checkout.ts";
 
 const WORKSPACE_ID = "owner/fixture";
 const REFERENCE_BATCH_ID = "batch-mix-reference";
 const CANDIDATE_BATCH_ID = "batch-mix-candidate";
-const APPROVAL_SHA = "a".repeat(40);
 const REFERENCE_SHA = "1".repeat(40);
 const CANDIDATE_SHA = "2".repeat(40);
 const CREATED_AT = "2026-10-12T00:00:00.000Z";
@@ -63,10 +65,6 @@ const METRIC_ID = "legal-action-rejection";
 const SAMPLE_FIXTURE_ROOT = fileURLToPath(
   new URL("fixtures/playtesting/", import.meta.url)
 );
-
-function digest(bytes: Uint8Array | string): string {
-  return createHash("sha256").update(bytes).digest("hex");
-}
 
 function setupCheckout(): {
   readonly root: string;
@@ -90,6 +88,7 @@ function setupCheckout(): {
       path.join(root, ".autodev", filename)
     );
   }
+  commitFixtureCheckout(root);
   const configPath = path.join(root, ".autodev", "playtest.config.json");
   return {
     root,
@@ -108,16 +107,13 @@ function approval(checkout: {
 }): WorkspacePlaytestApproval {
   const budget = checkout.configuration.budget;
   return {
-    schema: "autodev-workspace-playtest-approval-v1",
+    schema: "autodev-workspace-playtest-approval-v2",
     revision: 1,
     approvalId: "approval-mix-shift",
     workspaceId: WORKSPACE_ID,
     approvedBy: "operator@example.com",
     approvedAt: "2026-10-10T00:00:00.000Z",
     checkoutRoot: checkout.root,
-    buildSha: APPROVAL_SHA,
-    gameBuild: "fixture-build-1",
-    playtestConfigHash: digest(checkout.configBytes),
     adapterImageDigest: `sha256:${"c".repeat(64)}`,
     workingDirectory: ".",
     adapterCommand: [...checkout.configuration.adapter.command],
@@ -371,7 +367,9 @@ async function harness(options: {
     }
   } as unknown as PlaytestingRepositoryOps;
 
+  const preparer = isolatedPlaytestPreparer();
   const playtestRunControl = createPlaytestRunControl({
+    prepareSandboxHandler: preparer.prepare,
     artifactStoreForWorkspace: () => artifacts,
     playtestRepository: repository,
     approvalRepository: approvalRepo,
@@ -397,7 +395,8 @@ async function harness(options: {
     artifactStoreForWorkspace: () => artifacts,
     playtestRepository: repository,
     approvalRepository: approvalRepo,
-    playtestRunControl
+    playtestRunControl,
+    prepareSandboxHandler: preparer.prepare
   });
   approvalRepo.approve(options.approved, null);
 
@@ -431,7 +430,10 @@ async function harness(options: {
       );
       return result.content.find((part) => part.text)?.text ?? "";
     },
-    cleanup: () => rmSync(tmpRoot, { recursive: true, force: true })
+    cleanup: () => {
+      preparer.cleanup();
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
   };
 }
 

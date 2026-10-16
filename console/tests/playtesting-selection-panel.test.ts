@@ -139,7 +139,7 @@ test("dispatch with no prepared packet renders the Runtime receipt and session l
             batchId: "batch-unverified",
             reason: "packet-unavailable",
             detail:
-              "The selected session packet is unavailable: packet-validation-failed."
+              "Player-visible analyst review is withheld because the game's observation/UI equivalence is unverified for this episode's trace; the step is recorded without being projected into player-visible evidence."
           }
         ],
         budget: [],
@@ -154,7 +154,7 @@ test("dispatch with no prepared packet renders the Runtime receipt and session l
   assert.match(markup, /No analyst process was started/u);
   assert.match(markup, /playtesting-analysis-dispatch-receipt/u);
   assert.match(markup, /packet-unavailable/u);
-  assert.match(markup, /packet-validation-failed/u);
+  assert.match(markup, /observation\/UI equivalence is unverified/u);
   assert.match(markup, /Open session episode-unverified/u);
 });
 

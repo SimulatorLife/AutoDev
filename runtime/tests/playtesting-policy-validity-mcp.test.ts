@@ -58,6 +58,10 @@ import {
   type PlaytestingRepositoryOps,
   type PlaytestMcpSession
 } from "../src/playtesting/mcp.ts";
+import {
+  commitFixtureCheckout,
+  isolatedPlaytestPreparer
+} from "./support/playtest-checkout.ts";
 
 const WORKSPACE_ID = "owner/fixture";
 const BATCH_ID = "batch-policy-validity-seam";
@@ -95,6 +99,7 @@ function setupCheckout(): {
       path.join(root, ".autodev", filename)
     );
   }
+  commitFixtureCheckout(root);
   const configPath = path.join(root, ".autodev", "playtest.config.json");
   return {
     root,
@@ -116,16 +121,13 @@ function approval(
 ): WorkspacePlaytestApproval {
   const budget = checkout.configuration.budget;
   return {
-    schema: "autodev-workspace-playtest-approval-v1",
+    schema: "autodev-workspace-playtest-approval-v2",
     revision: 1,
     approvalId: "approval-policy-validity",
     workspaceId: WORKSPACE_ID,
     approvedBy: "operator@example.com",
     approvedAt: "2026-10-10T00:00:00.000Z",
     checkoutRoot: checkout.root,
-    buildSha: BUILD_SHA,
-    gameBuild: "fixture-build-1",
-    playtestConfigHash: digest(checkout.configBytes),
     adapterImageDigest: `sha256:${"c".repeat(64)}`,
     workingDirectory: ".",
     adapterCommand: [...checkout.configuration.adapter.command],
@@ -169,7 +171,10 @@ function batchFromApproved(
   options: { readonly manifest: PlaytestCoverageManifest | null }
 ): PlaytestBatch {
   const manifest = assignmentManifest();
-  const definition = loadApprovedPlaytestDefinition(approved);
+  const definition = loadApprovedPlaytestDefinition(
+    approved,
+    approved.checkoutRoot
+  );
   const benchmark = definition.benchmark;
   return {
     schema: PLAYTESTS_BATCH_SCHEMA,
@@ -177,9 +182,9 @@ function batchFromApproved(
     revision: 1,
     workspaceId: WORKSPACE_ID,
     repository: WORKSPACE_ID,
-    buildSha: approved.buildSha,
-    gameBuild: approved.gameBuild,
-    configHash: approved.playtestConfigHash,
+    buildSha: BUILD_SHA,
+    gameBuild: "fixture-build-1",
+    configHash: definition.configHash,
     rubricHash: definition.rubricHash,
     actionSchemaHash: benchmark?.actionSchemaHash ?? null,
     observationSchemaHash: definition.observationContract.schemaHash,
@@ -221,7 +226,7 @@ function batchFromApproved(
     createdAt: CREATED_AT,
     provenance: {
       workspaceId: WORKSPACE_ID,
-      buildSha: approved.buildSha,
+      buildSha: BUILD_SHA,
       measurementVersion: PLAYTESTS_MEASUREMENT_VERSION,
       generatedAt: CREATED_AT
     },
@@ -259,7 +264,10 @@ function manifestForApproved(approved: WorkspacePlaytestApproval): {
   readonly manifest: PlaytestCoverageManifest;
   readonly rubricHash: string;
 } {
-  const definition = loadApprovedPlaytestDefinition(approved);
+  const definition = loadApprovedPlaytestDefinition(
+    approved,
+    approved.checkoutRoot
+  );
   const draft = buildPlaytestCoverageManifestDraft({
     rubricHash: definition.rubricHash,
     assignmentManifestHash: digest(`assignments:${ASSIGNMENT.assignmentId}`),
@@ -267,7 +275,7 @@ function manifestForApproved(approved: WorkspacePlaytestApproval): {
     generatedAt: CREATED_AT,
     batchId: BATCH_ID,
     workspaceId: WORKSPACE_ID,
-    buildSha: approved.buildSha,
+    buildSha: BUILD_SHA,
     plan: playtestCoveragePlanForRegistry(definition.rubric),
     assignments: [ASSIGNMENT],
     episodes: [episodeFor(4)]
@@ -358,7 +366,9 @@ async function harness(
     }
   } as unknown as PlaytestingRepositoryOps;
 
+  const preparer = isolatedPlaytestPreparer();
   const playtestRunControl = createPlaytestRunControl({
+    prepareSandboxHandler: preparer.prepare,
     artifactStoreForWorkspace: () => artifacts,
     playtestRepository: repository,
     approvalRepository: approvalRepo,
@@ -384,7 +394,8 @@ async function harness(
     artifactStoreForWorkspace: () => artifacts,
     playtestRepository: repository,
     approvalRepository: approvalRepo,
-    playtestRunControl
+    playtestRunControl,
+    prepareSandboxHandler: preparer.prepare
   });
   approvalRepo.approve(approved, null);
 
@@ -418,7 +429,10 @@ async function harness(
       );
       return result.content.find((part) => part.text)?.text ?? "";
     },
-    cleanup: () => rmSync(tmpRoot, { recursive: true, force: true })
+    cleanup: () => {
+      preparer.cleanup();
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
   };
 }
 
@@ -441,7 +455,10 @@ test("policy validity is derived from the run, with the policy version taken fro
 
       // The basis is named and is the approved benchmark's own hash, so a
       // reader can check which declaration supplied the versions.
-      const definition = loadApprovedPlaytestDefinition(approved);
+      const definition = loadApprovedPlaytestDefinition(
+        approved,
+        approved.checkoutRoot
+      );
       assert.equal(result.policyVersionsBasis, definition.benchmarkHash);
 
       const records = result.records as readonly {

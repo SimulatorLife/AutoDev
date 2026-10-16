@@ -150,7 +150,9 @@ export const CONTROL_API_PATHS = {
   memory: "/control/memory",
   evaluations: "/control/evaluations",
   github: "/control/github",
-  playtesting: "/control/playtesting"
+  playtesting: "/control/playtesting",
+  playtestingReadiness: "/control/playtesting/readiness",
+  playtestingInitialization: "/control/playtesting/initialize"
 } as const;
 
 const PLAYTESTING_CAPABILITIES_PATH = `${CONTROL_API_PATHS.playtesting}/capabilities`;
@@ -4773,3 +4775,4 @@ export async function handleControlApiRequest(
   );
   return true;
 }
+export { warmupDefaultPlaytestingRepository } from "./playtesting.ts";

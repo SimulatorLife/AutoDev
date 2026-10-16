@@ -35,7 +35,7 @@ Do not trigger for requests such as:
 
 ## Workspace and build authorization gate
 
-Verify the exact authorized workspace and build before execution: workspace enablement alone is not run approval. The game adapter runs only for an authorized workspace and approved checkout/build SHA; reject unauthorized workspaces, unapproved builds, or commands outside the approved allowlist.
+Verify the exact authorized workspace and build before execution: workspace enablement alone is not run approval. The game adapter runs only for an authorized workspace and approved checkout/build SHA: the Runtime resolves the approved checkout's latest commit at batch start, runs a read-only snapshot of exactly that commit, and records it as the batch build SHA, so uncommitted edits never run and no per-commit approval exists; reject unauthorized workspaces, unapproved builds, or commands outside the approved allowlist.
 
 ## Workflow
 

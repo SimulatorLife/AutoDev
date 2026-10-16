@@ -41,7 +41,9 @@ export interface WorkspacePlaytestApprovalFormProps {
 }
 
 /**
- * The operator form that grants an exact-build playtesting approval.
+ * The operator form that grants a checkout playtesting approval. Each batch
+ * runs the checkout's latest commit, resolved by the Runtime at batch start,
+ * so the form names no commit and a new commit needs no re-approval.
  *
  * Every field here is the whole grant: the Runtime refuses a game-run request
  * for anything this approval does not name, so a field left blank is not a
@@ -101,27 +103,6 @@ export function WorkspacePlaytestApprovalForm({
         defaultValue: priorApproval?.workingDirectory,
         placeholder: "server",
         testId: "workspace-approval-working-directory"
-      }),
-      React.createElement(TextField, {
-        name: "buildSha",
-        label: "Build SHA (Git revision)",
-        defaultValue: priorApproval?.buildSha,
-        placeholder: "a".repeat(40),
-        testId: "workspace-approval-build-sha"
-      }),
-      React.createElement(TextField, {
-        name: "gameBuild",
-        label: "Game build identifier",
-        defaultValue: priorApproval?.gameBuild,
-        placeholder: "fixture-game-1.0.0",
-        testId: "workspace-approval-game-build"
-      }),
-      React.createElement(TextField, {
-        name: "playtestConfigHash",
-        label: "Playtest config hash (SHA-256)",
-        defaultValue: priorApproval?.playtestConfigHash,
-        placeholder: "e".repeat(64),
-        testId: "workspace-approval-config-hash"
       }),
       React.createElement(TextField, {
         name: "adapterImageDigest",

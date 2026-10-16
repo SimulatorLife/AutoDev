@@ -9,15 +9,19 @@ import {
   assignmentCounts,
   assignmentOutcomes,
   createPollLoop,
+  departedRuns,
   freshnessForFailure,
   freshnessForSuccess,
   INITIAL_POLL_INTERVAL_MS,
   isTerminal,
   isWatching,
   MAX_POLL_INTERVAL_MS,
+  mergeRunsRead,
   nextPollDelayMs,
   type PlaytestingActiveRun,
-  readActiveRuns
+  readActiveRuns,
+  readRunStatus,
+  trackStartedRun
 } from "../src/features/playtesting/playtesting-active-runs.ts";
 import { responseMessage } from "../src/features/playtesting/playtesting-run-messages.ts";
 import { parsePlaytestingScope } from "../src/features/playtesting/playtesting-url.ts";
@@ -687,4 +691,88 @@ test("the loop applies the caller's backoff for each arm", async (t) => {
   } finally {
     t.mock.timers.reset();
   }
+});
+
+function tracked(batchId: string, status: string): PlaytestingActiveRun {
+  return {
+    batchId,
+    assignmentCount: 1,
+    createdAt: "2026-10-15T00:00:00.000Z",
+    record: record(status, batchId)
+  };
+}
+
+test("a start acknowledgement seeds a batch before a fast completion can disappear from the active list", () => {
+  const prior = tracked("batch-existing", "running");
+  const started = tracked("batch-fast", "running");
+  const seeded = trackStartedRun([prior], started);
+  assert.deepEqual(
+    seeded.map((entry) => entry.batchId),
+    ["batch-existing", "batch-fast"]
+  );
+
+  // The first active-list read observes that the new batch already completed.
+  // It is still in the tracked set, so the hook resolves its terminal status.
+  const departed = departedRuns(seeded, [prior]);
+  assert.deepEqual(
+    departed.map((entry) => entry.batchId),
+    ["batch-fast"]
+  );
+  const completed = tracked("batch-fast", "completed");
+  const merged = mergeRunsRead(seeded, [prior], [completed]);
+  assert.deepEqual(
+    merged.map((entry) => [entry.batchId, entry.record.status]),
+    [
+      ["batch-existing", "running"],
+      ["batch-fast", "completed"]
+    ]
+  );
+});
+
+test("a watched batch that leaves the active list is resolved to its terminal status, not dropped", () => {
+  const running = tracked("batch-1", "running");
+  const otherRunning = tracked("batch-2", "running");
+  // The Runtime lists only nonterminal batches, so batch-1 finishing removes it.
+  const next = [otherRunning];
+  assert.deepEqual(
+    departedRuns([running, otherRunning], next).map((entry) => entry.batchId),
+    ["batch-1"]
+  );
+  const completed = tracked("batch-1", "completed");
+  const merged = mergeRunsRead([running, otherRunning], next, [completed]);
+  assert.deepEqual(
+    merged.map((entry) => [entry.batchId, entry.record.status]),
+    [
+      ["batch-2", "running"],
+      ["batch-1", "completed"]
+    ]
+  );
+  // Once terminal it is retained on later reads and never re-resolved;
+  // only the still-running batch would be read again if it departed.
+  assert.deepEqual(
+    departedRuns(merged, []).map((entry) => entry.batchId),
+    ["batch-2"]
+  );
+  assert.deepEqual(
+    mergeRunsRead(merged, [otherRunning], []).map((entry) => entry.batchId),
+    ["batch-2", "batch-1"]
+  );
+});
+
+test("run-status reads are bound to the exact workspace and batch", () => {
+  const statusEnvelope = {
+    kind: "ok",
+    data: {
+      schema: "autodev-control-playtesting-run-status-v1",
+      workspaceId: WORKSPACE,
+      run: record("completed")
+    }
+  };
+  assert.equal(
+    readRunStatus(statusEnvelope, WORKSPACE, "batch-1")?.status,
+    "completed"
+  );
+  assert.equal(readRunStatus(statusEnvelope, "other/game", "batch-1"), null);
+  assert.equal(readRunStatus(statusEnvelope, WORKSPACE, "batch-2"), null);
+  assert.equal(readRunStatus({ kind: "error" }, WORKSPACE, "batch-1"), null);
 });

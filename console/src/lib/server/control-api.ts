@@ -595,6 +595,8 @@ export const CONTROL_API_PATHS = {
   evaluations: "/control/evaluations",
   github: "/control/github",
   playtesting: "/control/playtesting",
+  playtestingReadiness: "/control/playtesting/readiness",
+  playtestingInitialization: "/control/playtesting/initialize",
   memoryRecords: "/control/memory/records",
   memoryExperiences: "/control/memory/experiences",
   memoryCohorts: "/control/memory/cohorts",

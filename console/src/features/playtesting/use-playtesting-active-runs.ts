@@ -12,11 +12,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   createPollLoop,
+  departedRuns,
   freshnessForFailure,
   freshnessForSuccess,
   isWatching,
+  mergeRunsRead,
   nextPollDelayMs,
-  readActiveRuns
+  readActiveRuns,
+  readRunStatus,
+  trackStartedRun
 } from "./playtesting-active-runs.ts";
 import { responseMessage } from "./playtesting-run-messages.ts";
 
@@ -47,6 +51,8 @@ export function usePlaytestingActiveRuns({
 }: UsePlaytestingActiveRunsOptions): {
   readonly state: PlaytestingActiveRunsState;
   readonly refresh: () => void;
+  /** Tracks the exact start acknowledgement before the first active-list read. */
+  readonly trackRun: (run: ActiveRuns[number]) => void;
   readonly watching: boolean;
 } {
   const [runs, setRuns] = useState<ActiveRuns>([]);
@@ -55,6 +61,8 @@ export function usePlaytestingActiveRuns({
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const [nonce, setNonce] = useState(0);
   const failures = useRef(0);
+  const runsRef = useRef<ActiveRuns>(runs);
+  runsRef.current = runs;
 
   const watching = isWatching(runs);
   // The poll loop outlives any single render, so it asks these through refs
@@ -67,8 +75,21 @@ export function usePlaytestingActiveRuns({
     setNonce((value) => value + 1);
   }, []);
 
+  const trackRun = useCallback((run: ActiveRuns[number]) => {
+    const next = trackStartedRun(runsRef.current, run);
+    runsRef.current = next;
+    setRuns(next);
+    setLastUpdatedAt(Date.now());
+    setLastFailure(null);
+    setFreshness(freshnessForSuccess(next));
+    // Re-arm the self-scheduling loop immediately, even if it was already
+    // watching another batch and a render alone would not restart the effect.
+    setNonce((value) => value + 1);
+  }, []);
+
   useEffect(() => {
     failures.current = 0;
+    runsRef.current = [];
     setRuns([]);
     setLastFailure(null);
     setLastUpdatedAt(null);
@@ -98,11 +119,42 @@ export function usePlaytestingActiveRuns({
             "The Runtime returned an incompatible runs response."
           );
         }
+        // A watched batch absent from the active list has finished; read its
+        // terminal status so the view shows how it ended.
+        const resolved = await Promise.all(
+          departedRuns(runsRef.current, next).map(async (run) => {
+            const statusResponse = await fetch(
+              `/api/playtesting/runs/${encodeURIComponent(run.batchId)}?${query}`,
+              {
+                headers: { accept: "application/json" },
+                signal: controller.signal
+              }
+            );
+            const statusPayload: unknown = await statusResponse.json();
+            if (!statusResponse.ok) {
+              throw new Error(responseMessage(statusPayload));
+            }
+            const record = readRunStatus(
+              statusPayload,
+              targetWorkspaceId,
+              run.batchId
+            );
+            if (!record) {
+              throw new Error(
+                "The Runtime returned an incompatible run-status response."
+              );
+            }
+            return { ...run, record };
+          })
+        );
+        if (cancelled) return;
+        const merged = mergeRunsRead(runsRef.current, next, resolved);
         failures.current = 0;
-        setRuns(next);
+        runsRef.current = merged;
+        setRuns(merged);
         setLastUpdatedAt(Date.now());
         setLastFailure(null);
-        setFreshness(freshnessForSuccess(next));
+        setFreshness(freshnessForSuccess(merged));
       } catch (error) {
         if (cancelled || controller.signal.aborted) return;
         failures.current += 1;
@@ -138,6 +190,7 @@ export function usePlaytestingActiveRuns({
   return {
     state: { runs, freshness, lastFailure, lastUpdatedAt },
     refresh,
+    trackRun,
     watching
   };
 }

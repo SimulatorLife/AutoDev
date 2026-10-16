@@ -5,11 +5,11 @@
  * validates its same-origin browser context, and forwards a typed POST to
  * Runtime using the server-side Control API credential. The browser never
  * receives that credential and never bypasses Runtime -- this route only
- * assembles the exact-build approval body the Runtime's
+ * assembles the checkout approval body the Runtime's
  * `/control/workspaces/:id/playtesting-approval` route reads, it never
  * decides whether the approval is accepted.
  *
- * Every field is required: an exact-build approval with an omitted field is
+ * Every field is required: a checkout approval with an omitted field is
  * not a narrower grant, it is a malformed one, so a missing or malformed
  * field fails the submission closed rather than sending a partial body the
  * Runtime would reject anyway for a less specific reason.
@@ -119,9 +119,6 @@ function parseExpectedRevision(raw: string | null): number | null | undefined {
 interface WorkspaceApprovalSubmission {
   readonly expectedRevision: number | null;
   readonly checkoutRoot: string;
-  readonly buildSha: string;
-  readonly gameBuild: string;
-  readonly playtestConfigHash: string;
   readonly adapterImageDigest: string;
   readonly workingDirectory: string;
   readonly adapterCommand: readonly string[];
@@ -154,9 +151,6 @@ function parseApprovalSubmission(
   if (expectedRevision === undefined) return null;
 
   const checkoutRoot = requiredField(form, "checkoutRoot");
-  const buildSha = requiredField(form, "buildSha");
-  const gameBuild = requiredField(form, "gameBuild");
-  const playtestConfigHash = requiredField(form, "playtestConfigHash");
   const adapterImageDigest = requiredField(form, "adapterImageDigest");
   const workingDirectory = requiredField(form, "workingDirectory");
   const adapterCommand = requiredList(form, "adapterCommand");
@@ -170,9 +164,6 @@ function parseApprovalSubmission(
   const humanStudyRaw = form.get("humanStudyAllowed");
   if (
     checkoutRoot === null ||
-    buildSha === null ||
-    gameBuild === null ||
-    playtestConfigHash === null ||
     adapterImageDigest === null ||
     workingDirectory === null ||
     adapterCommand === null ||
@@ -191,9 +182,6 @@ function parseApprovalSubmission(
   return {
     expectedRevision,
     checkoutRoot,
-    buildSha,
-    gameBuild,
-    playtestConfigHash,
     adapterImageDigest,
     workingDirectory,
     adapterCommand,

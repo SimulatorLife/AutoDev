@@ -7,7 +7,7 @@ import * as revokeRoute from "../app/api/workspaces/[owner]/[repository]/playtes
 import * as approvalRoute from "../app/api/workspaces/[owner]/[repository]/playtesting-approval/route.ts";
 
 /**
- * The Console-side form routes for the Workspaces-owned exact-build
+ * The Console-side form routes for the Workspaces-owned checkout
  * playtesting approval boundary.
  *
  * Every case here is one the operator-facing form can actually produce:
@@ -100,9 +100,6 @@ const APPROVE_FIELDS = {
   returnTo: RETURN_TO,
   checkoutRoot: "/home/operator/games/fixture",
   workingDirectory: "server",
-  buildSha: "a".repeat(40),
-  gameBuild: "fixture-game-1.0.0",
-  playtestConfigHash: "e".repeat(64),
   adapterImageDigest: "fixture/adapter@sha256:" + "f".repeat(64),
   adapterCommand: "node, server.js",
   allowedScenarios: "tutorial, level-1",
@@ -128,14 +125,11 @@ function okApprovalResponse(): Response {
       workspaceId: WORKSPACE_ID,
       workspaceEnabled: true,
       approval: {
-        schema: "autodev-workspace-playtest-approval-v1",
+        schema: "autodev-workspace-playtest-approval-v2",
         workspaceId: WORKSPACE_ID,
         revision: 1,
         approvalId: "synthetic-approval-1",
         checkoutRoot: "/tmp/synthetic-game",
-        buildSha: "a".repeat(40),
-        gameBuild: "fixture-game-1",
-        playtestConfigHash: "b".repeat(64),
         adapterImageDigest: "fixture/adapter@sha256:" + "c".repeat(64),
         workingDirectory: "server",
         adapterCommand: ["node", "adapter.mjs"],
@@ -242,7 +236,7 @@ test("an in-place revision conflict returns the freshly read approval state", as
   assert.equal(body.currentApproval.approval.revision, 2);
 });
 
-test("the sent approval body carries the whole exact-build grant, nothing else", async () => {
+test("the sent approval body carries the whole checkout grant, and no pinned commit", async () => {
   const { sent } = await withMockedFetch(okApprovalResponse, () =>
     approvalRoute.POST(
       request(APPROVAL_PATH, {
@@ -258,9 +252,6 @@ test("the sent approval body carries the whole exact-build grant, nothing else",
     new Set([
       "expectedRevision",
       "checkoutRoot",
-      "buildSha",
-      "gameBuild",
-      "playtestConfigHash",
       "adapterImageDigest",
       "workingDirectory",
       "adapterCommand",
@@ -428,14 +419,11 @@ function okRevokeResponse(): Response {
       workspaceId: WORKSPACE_ID,
       workspaceEnabled: true,
       approval: {
-        schema: "autodev-workspace-playtest-approval-v1",
+        schema: "autodev-workspace-playtest-approval-v2",
         workspaceId: WORKSPACE_ID,
         revision: 2,
         approvalId: "synthetic-approval-1",
         checkoutRoot: "/tmp/synthetic-game",
-        buildSha: "a".repeat(40),
-        gameBuild: "fixture-game-1",
-        playtestConfigHash: "b".repeat(64),
         adapterImageDigest: "fixture/adapter@sha256:" + "c".repeat(64),
         workingDirectory: "server",
         adapterCommand: ["node", "adapter.mjs"],

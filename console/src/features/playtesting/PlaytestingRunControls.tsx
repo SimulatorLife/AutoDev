@@ -4,7 +4,6 @@ import type {
   ControlApiPlaytestingCapabilitiesResponse,
   ControlApiPlaytestingRunRecord,
   ControlApiPlaytestingRunStartedResponse,
-  ControlApiPlaytestingRunStatusResponse,
   PlaytestJsonValue
 } from "@simulatorlife/autodev-core";
 import React, { useRef, useState } from "react";
@@ -29,6 +28,11 @@ import {
   responseMessage
 } from "./playtesting-run-messages.ts";
 import { batchStatusBadge } from "./playtesting-run-presentation.ts";
+import {
+  initialPlaytestingSeed,
+  isAdmissiblePlaytestingSeed,
+  nextPlaytestingSeed
+} from "./playtesting-run-seeds.ts";
 import type { PlaytestingScope } from "./playtesting-url.ts";
 import { PlaytestingAssignmentResults } from "./PlaytestingAssignmentResults.ts";
 
@@ -94,6 +98,7 @@ function RunRequestForm({
   readonly onSubmit: (request: RunSubmission) => void;
 }): React.JSX.Element {
   const runnableAssignments = capabilities.runnableAssignments;
+  const admissibleSeeds = capabilities.admissibleSeeds;
   const first = runnableAssignments[0]!;
   const maxAssignments = capabilities.maxBatchAssignments;
   const nextId = useRef(2);
@@ -103,7 +108,7 @@ function RunRequestForm({
         id: 1,
         scenarioId: first.scenarioId,
         policyId: first.policyId,
-        seed: "seed-1",
+        seed: initialPlaytestingSeed(admissibleSeeds),
         maxSteps: String(first.maxStepsPerEpisode)
       }
     ]
@@ -133,7 +138,7 @@ function RunRequestForm({
       );
       const steps = Number(assignment.maxSteps);
       return (
-        assignment.seed.trim().length > 0 &&
+        isAdmissiblePlaytestingSeed(admissibleSeeds, assignment.seed) &&
         !duplicateCells.has(
           JSON.stringify([
             assignment.scenarioId,
@@ -200,12 +205,16 @@ function RunRequestForm({
     });
   }
 
+  const addableSeed = nextPlaytestingSeed(
+    admissibleSeeds,
+    assignments,
+    assignments[0]!.scenarioId,
+    assignments[0]!.policyId
+  );
+
   function addAssignment(): void {
-    if (assignments.length >= maxAssignments) return;
+    if (assignments.length >= maxAssignments || addableSeed === null) return;
     const template = assignments[0]!;
-    const seeds = new Set(assignments.map((assignment) => assignment.seed));
-    let seedNumber = assignments.length + 1;
-    while (seeds.has("seed-" + String(seedNumber))) seedNumber += 1;
     const id = nextId.current++;
     setAssignments((current) => [
       ...current,
@@ -213,7 +222,7 @@ function RunRequestForm({
         id,
         scenarioId: template.scenarioId,
         policyId: template.policyId,
-        seed: "seed-" + String(seedNumber),
+        seed: addableSeed,
         maxSteps: template.maxSteps
       }
     ]);
@@ -269,47 +278,57 @@ function RunRequestForm({
       className="grid gap-3"
       onSubmit={submit}
     >
-      <fieldset className={`${NESTED_PANEL_CLASS} grid gap-3 md:grid-cols-3`}>
-        <legend className="px-1 text-sm font-semibold">
-          Generate seed variations
-        </legend>
-        <label className="flex flex-col gap-1 text-xs text-fg-muted">
-          Seed prefix
-          <input
-            className={FIELD_CONTROL_CLASS}
-            disabled={pending}
-            maxLength={256}
-            value={seedPrefix}
-            onChange={(event) => setSeedPrefix(event.currentTarget.value)}
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-fg-muted">
-          Additional assignments
-          <input
-            className={FIELD_CONTROL_CLASS}
-            disabled={pending || remainingBatchCapacity < 1}
-            max={remainingBatchCapacity}
-            min={1}
-            type="number"
-            value={additionalAssignments}
-            onChange={(event) =>
-              setAdditionalAssignments(event.currentTarget.value)
-            }
-          />
-        </label>
-        <button
-          className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
-          disabled={pending || !canGenerateAssignments}
-          onClick={generateAssignments}
-          type="button"
-        >
-          Generate assignments
-        </button>
-        <p className={`${MUTED_META_CLASS} md:col-span-3`}>
-          Generated rows copy the first assignment&apos;s scenario, policy and
-          step budget, using distinct prefix-number seeds.
+      {admissibleSeeds === null ? (
+        <fieldset className={`${NESTED_PANEL_CLASS} grid gap-3 md:grid-cols-3`}>
+          <legend className="px-1 text-sm font-semibold">
+            Generate seed variations
+          </legend>
+          <label className="flex flex-col gap-1 text-xs text-fg-muted">
+            Seed prefix
+            <input
+              className={FIELD_CONTROL_CLASS}
+              disabled={pending}
+              maxLength={256}
+              value={seedPrefix}
+              onChange={(event) => setSeedPrefix(event.currentTarget.value)}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-fg-muted">
+            Additional assignments
+            <input
+              className={FIELD_CONTROL_CLASS}
+              disabled={pending || remainingBatchCapacity < 1}
+              max={remainingBatchCapacity}
+              min={1}
+              type="number"
+              value={additionalAssignments}
+              onChange={(event) =>
+                setAdditionalAssignments(event.currentTarget.value)
+              }
+            />
+          </label>
+          <button
+            className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
+            disabled={pending || !canGenerateAssignments}
+            onClick={generateAssignments}
+            type="button"
+          >
+            Generate assignments
+          </button>
+          <p className={`${MUTED_META_CLASS} md:col-span-3`}>
+            Generated rows copy the first assignment&apos;s scenario, policy and
+            step budget, using distinct prefix-number seeds.
+          </p>
+        </fieldset>
+      ) : (
+        <p className={MUTED_META_CLASS}>
+          Seeds come from the latest build&apos;s frozen benchmark inventory:{" "}
+          {admissibleSeeds
+            .map((entry) => entry.seed + " (" + entry.purpose + ")")
+            .join(", ")}
+          . Each scenario/policy cell can use each seed once per batch.
         </p>
-      </fieldset>
+      )}
       <ol aria-label="Batch assignments" className="grid gap-3">
         {displayedAssignments.map((assignment, index) => {
           const row = index + 1;
@@ -388,21 +407,44 @@ function RunRequestForm({
                 </p>
                 <label className="flex flex-col gap-1 text-xs text-fg-muted">
                   Seed {row}
-                  <input
-                    className={FIELD_CONTROL_CLASS}
-                    disabled={pending}
-                    maxLength={256}
-                    name={`seed-${row}`}
-                    required
-                    value={assignment.seed}
-                    onChange={(event) => {
-                      const seed = event.currentTarget.value;
-                      updateAssignment(assignment.id, (current) => ({
-                        ...current,
-                        seed
-                      }));
-                    }}
-                  />
+                  {admissibleSeeds === null ? (
+                    <input
+                      className={FIELD_CONTROL_CLASS}
+                      disabled={pending}
+                      maxLength={256}
+                      name={`seed-${row}`}
+                      required
+                      value={assignment.seed}
+                      onChange={(event) => {
+                        const seed = event.currentTarget.value;
+                        updateAssignment(assignment.id, (current) => ({
+                          ...current,
+                          seed
+                        }));
+                      }}
+                    />
+                  ) : (
+                    <select
+                      className={FIELD_CONTROL_CLASS}
+                      disabled={pending}
+                      name={`seed-${row}`}
+                      required
+                      value={assignment.seed}
+                      onChange={(event) => {
+                        const seed = event.currentTarget.value;
+                        updateAssignment(assignment.id, (current) => ({
+                          ...current,
+                          seed
+                        }));
+                      }}
+                    >
+                      {admissibleSeeds.map((entry) => (
+                        <option key={entry.seed} value={entry.seed}>
+                          {entry.seed + " · " + entry.purpose}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </label>
                 <label className="flex flex-col gap-1 text-xs text-fg-muted">
                   Step budget {row}
@@ -467,7 +509,11 @@ function RunRequestForm({
       ) : null}
       <button
         className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
-        disabled={pending || assignments.length >= maxAssignments}
+        disabled={
+          pending ||
+          assignments.length >= maxAssignments ||
+          addableSeed === null
+        }
         onClick={addAssignment}
         type="button"
       >
@@ -489,8 +535,9 @@ function RunRequestForm({
           remain bounded by the frozen selection and approved critique cap.
         </p>
         <p className={MUTED_META_CLASS}>
-          Build {capabilities.buildSha} · {capabilities.gameBuild} · the Runtime
-          rechecks exact approval before launch.
+          Latest committed build {capabilities.buildSha} · the Runtime resolves
+          the checkout&apos;s latest commit again when the batch starts and runs
+          that exact snapshot; uncommitted edits are never run.
         </p>
       </div>
       <button
@@ -539,7 +586,7 @@ function setupMessage(
     return {
       label: "Approval required",
       message:
-        "Workspaces must approve an exact build, adapter image, and command before any game process can run."
+        "Workspaces must approve the checkout, adapter image, and command before any game process can run."
     };
   }
   if (!capabilities.workspaceEnabled) {
@@ -565,7 +612,7 @@ function setupMessage(
     return {
       label: "Preflight required",
       message:
-        "The checked-in target configuration must pass the Runtime's exact-build preflight before this run form is enabled."
+        "The latest commit's target configuration must pass the Runtime's preflight before this run form is enabled."
     };
   }
   if (capabilities.runnableAssignments.length === 0) {
@@ -679,11 +726,19 @@ function RunStatusMessage({
 export function PlaytestingRunControls({
   setup,
   scope,
-  onRunStarted
+  onRunStarted,
+  liveRecords,
+  onRefreshStatus
 }: {
   readonly setup: PlaytestingRunSetup;
   readonly scope: PlaytestingScope;
-  readonly onRunStarted: () => void;
+  readonly onRunStarted: (
+    started: ControlApiPlaytestingRunStartedResponse
+  ) => void;
+  /** Server-read records from the dashboard's single live status owner. */
+  readonly liveRecords: ReadonlyMap<string, ControlApiPlaytestingRunRecord>;
+  /** Asks that owner for an immediate server read. */
+  readonly onRefreshStatus: () => void;
 }): React.JSX.Element {
   const capabilities = setup.kind === "available" ? setup.capabilities : null;
   const [pending, setPending] = useState(false);
@@ -724,7 +779,13 @@ export function PlaytestingRunControls({
         envelope.kind !== "ok" ||
         envelope.data?.schema !==
           "autodev-control-playtesting-run-started-v1" ||
-        envelope.data.workspaceId !== capabilities.workspaceId
+        envelope.data.workspaceId !== capabilities.workspaceId ||
+        typeof envelope.data.batchId !== "string" ||
+        !Number.isSafeInteger(envelope.data.assignmentCount) ||
+        envelope.data.assignmentCount < 1 ||
+        typeof envelope.data.createdAt !== "string" ||
+        !Number.isFinite(Date.parse(envelope.data.createdAt)) ||
+        envelope.data.status !== "running"
       ) {
         setFailure("The Runtime did not confirm the run assignment.");
         return;
@@ -736,7 +797,7 @@ export function PlaytestingRunControls({
         result: null,
         error: null
       });
-      onRunStarted();
+      onRunStarted(envelope.data);
       setNotice(
         "The Runtime confirmed an approved batch of " +
           String(envelope.data.assignmentCount) +
@@ -748,45 +809,6 @@ export function PlaytestingRunControls({
       setFailure(
         "The same-origin run request could not reach the Console server."
       );
-    } finally {
-      setPending(false);
-    }
-  }
-
-  async function refreshStatus(): Promise<void> {
-    if (!run || !capabilities) return;
-    setPending(true);
-    setFailure(null);
-    try {
-      const query = new URLSearchParams({
-        workspaceId: capabilities.workspaceId
-      });
-      const response = await fetch(
-        `/api/playtesting/runs/${encodeURIComponent(run.batchId)}?${query.toString()}`,
-        { headers: { accept: "application/json" }, cache: "no-store" }
-      );
-      const payload: unknown = await response.json();
-      if (!response.ok) {
-        setFailure(responseMessage(payload));
-        return;
-      }
-      const envelope = payload as {
-        kind?: unknown;
-        data?: ControlApiPlaytestingRunStatusResponse;
-      };
-      if (
-        envelope.kind !== "ok" ||
-        envelope.data?.schema !== "autodev-control-playtesting-run-status-v1" ||
-        envelope.data.workspaceId !== capabilities.workspaceId ||
-        envelope.data.run.batchId !== run.batchId
-      ) {
-        setFailure("The Runtime returned an incompatible run-status response.");
-        return;
-      }
-      setRun(envelope.data.run);
-      setNotice("Run status refreshed from the Runtime.");
-    } catch {
-      setFailure("The run status could not be refreshed.");
     } finally {
       setPending(false);
     }
@@ -819,6 +841,7 @@ export function PlaytestingRunControls({
       setNotice(
         "Cancellation was requested; refresh status to confirm its terminal disposition."
       );
+      onRefreshStatus();
     } catch {
       setFailure(
         "The cancellation request could not reach the Console server."
@@ -842,7 +865,7 @@ export function PlaytestingRunControls({
       </h2>
       <p className={MUTED_BODY_CLASS}>
         Batch requests contain an ordered list of typed scenario, policy, seed,
-        and step-budget assignments. Workspaces owns exact-build approval; the
+        and step-budget assignments. Workspaces owns checkout approval; the
         Runtime confirms assignment outcomes, status, and cancellation.
       </p>
       {unavailable ? (
@@ -870,11 +893,11 @@ export function PlaytestingRunControls({
       ) : null}
       {run && capabilities ? (
         <RunStatusPanel
-          run={run}
+          run={liveRecords.get(run.batchId) ?? run}
           capabilities={capabilities}
           scope={scope}
           pending={pending}
-          onRefresh={() => void refreshStatus()}
+          onRefresh={onRefreshStatus}
           onCancel={() => void cancelRun()}
         />
       ) : null}

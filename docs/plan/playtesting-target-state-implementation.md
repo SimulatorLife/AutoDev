@@ -437,8 +437,8 @@ truncation`). **Not checked, because "end to end" is not what these are.**
 - [~] Documentation, test coverage, package checks and independent validation
   match the final integrated diff. Documentation, focused tests, typechecks,
   and the synthetic Playwright acceptance have executed. Full end-to-end
-  RacingGame evidence remains unverified: no active exact-build/image
-  approval exists, and the target checkout is dirty. Delivery Slices 1, 2
+  RacingGame evidence remains unverified: no active approval matches the current
+  local build, and the target checkout is dirty. Delivery Slices 1, 2
   and 7 are `[x]`; the remaining slices keep their named empirical gaps.
 
 ## Current evidence and gates
@@ -448,14 +448,14 @@ Data, Runtime, Console, and tests. They are preserved and must be reviewed as
 existing changes, not assumed complete. CodeGraphContext returned no
 playtesting symbols; targeted CocoIndex searches were used to locate the active
 paths. The earlier 2026-10-14 approval lookup and installed-API probe below are
-historical and have since changed. A fresh 2026-10-15 capability read reports an
-active Workspace approval revision 3 for build `beb03c21ec2faa1e5bc2a5bd9cd232f1dd70f031`;
-the local RacingGame `HEAD` is `db3c38cd955ea31ab7741ee14f37aca5a82418dd`.
-The canonical ESM adapter generator has been rerun for this source commit and
-`playtest:game-manifests:check` passes. The generated bundle is current, but the
-working tree has five modified paths (the bundle and four in-progress game
-files). The active approval still covers only `beb03c21...`, so the dirty tree
-is not approved for execution.
+historical and have since changed. A fresh 2026-10-15 capability read reports an active Workspace approval
+revision 3 for build `beb03c21ec2faa1e5bc2a5bd9cd232f1dd70f031`. The local
+RacingGame `HEAD` is now `a1f3a95360e879d8562ab223bd448f6e1dc4ed50`;
+in-progress RacingGame UI/effects/test edits make the worktree dirty. The canonical ESM adapter
+remains current and `playtest:game-manifests:check` passes because those files
+are outside its bundle. The active approval covers only `beb03c21...`; it does not cover the current
+local `HEAD`. The managed Console's one-assignment action still targets the old
+approved build, and it was not submitted.
 
 ## Prior validation snapshot (2026-10-11)
 
@@ -1414,24 +1414,40 @@ independent source validator confirmed Console route wiring but could not finish
 its Runtime-owner and analyst-citation audit after the Router error. No fresh
 real-game or model evidence exists.
 
-### Playtesting first-read schema initialization latency (partially addressed)
+### Playtesting first-read schema initialization latency (source path updated; rollout open)
 
-- [~] Runtime now starts Data-owned `PlaytestRepository.ensureSchema()` as a
-  best-effort startup warmup and the default Playtesting read shares the
-  same in-flight promise. A failed warmup logs only a fixed, sanitized
-  message, resets the promise for a later Playtesting retry, and does not
-  block the model Router or unrelated Control API routes.
-- [x] `runtime/tests/playtesting-schema-warmup.test.ts` verifies startup DDL,
-      shared initialization with the first Data read, no duplicate DDL, explicit
-      source-unavailable behavior, retry after failure, and unrelated provider
-      routes remaining available. The focused Runtime Playtesting/Router test
-      command passed **24/24**; Runtime typecheck, targeted Prettier, and
-      `git diff --check` passed. The Console's 5-second request deadline was not
-      changed.
-- [ ] The asynchronous warmup does not guarantee a read arriving before schema
-      initialization finishes stays within five seconds. A safe Runtime update
-      and first-page verification are still required; live Data tables were not
-      dropped or recreated to repeat the cold path.
+- [x] Runtime starts Data-owned `PlaytestRepository.ensureSchema()` as a
+  best-effort startup warmup and tracks `idle/initializing/ready/unavailable`
+  without exposing backend errors. Pending resource reads now return an explicit
+  `503 autodev_control_playtesting_source_initializing` with `Retry-After: 1`
+  instead of holding the Console request open for the DDL duration. The separate,
+  workspace-scoped `GET /control/playtesting/readiness` is nonblocking and
+  GET-only; only an operator can explicitly retry through
+  `POST /control/playtesting/initialize`; a failed state remains typed and
+  viewer/resource GETs do not silently reissue DDL. Unrelated Control API routes
+  remain available.
+- [x] Console preflights overview/list queries; a direct session detail uses its
+  single episode read and maps a fast `initializing`/`unavailable` response to
+  the same readiness panel, avoiding a redundant status round trip. An
+  initializing page polls the same-origin readiness
+  proxy with bounded backoff; ready triggers a server refresh, while an
+  unavailable response stops and offers an operator retry. The 5-second Control
+  API request deadline is unchanged. Console Playtesting server/route/selection
+  tests pass **22/22**, Control API compatibility tests **2/2**, Runtime
+  schema-warmup tests **3/3**, the Runtime Playtesting Control API suite **21/21**,
+  and the focused MCP equivalence refusal test **1/1**. Core, Runtime, and Console
+  typechecks and ESLint on changed source/tests pass.
+- [~] The production Playwright readiness-flow specs for overview, direct
+  session links, and operator retry are checked in against the labeled synthetic
+  fixture. Two production webServer builds exceeded the existing 120-second
+  deadline during Next compile, before the browser specs began; the threshold
+  was not raised. Separately, a temporary source `next dev` server plus that
+  labeled fixture passed headless Playwright probes for overview pending→ready,
+  direct-session pending→ready, and operator retry unavailable→ready. This is
+  source-UI plumbing evidence only, not RacingGame or production-build evidence.
+  The temporary dev server and fixture were stopped. Managed Runtime/Console remain
+  on contract v3; revision v4 requires a safe rollout before live first-page
+  acceptance. No live Data tables were dropped or recreated.
 
 **RacingGame stored-result audit (2026-10-15):** The live workspace-scoped Data
 read contains one completed headless episode
@@ -1441,17 +1457,30 @@ build `beb03c21ec2faa1e5bc2a5bd9cd232f1dd70f031`. Recorded facts are wager-hit
 `0/2190`, and game outcome `unknown`. These are one episode's descriptive
 metrics, not a population estimate or human/player-experience finding.
 
+**Live Console evidence view (2026-10-15):** A read-only headless Playwright
+browser opened the existing managed Console at port 3300 directly to the real
+workspace-scoped episode. The response was HTTP 200 and rendered the episode ID,
+`Deterministic metrics`, wager-hit `3 / 4`, bankroll delta `51 / 3`, legal-action
+rejection `0 / 2190`, and the explicit message that no analyst review is
+recorded. The trace displays `observationVisibility: unverified`. A separate
+read-only overview probe saw the run form enabled for one assignment and showed
+the approved `beb03c21...` build; it was not submitted. This is real persisted
+RacingGame evidence in the current Console, not a synthetic fixture. It proves
+deterministic result browsing and an available action for the old approved
+build, not authorization for local `HEAD` `a1f3a953...`, a fresh run, UI
+conformance, or analyst review.
+
 The frozen assignment/episode cohort is `exploratory`; the original three
 coverage cells used literal cohort `all`, so the immutable batch manifest
 reports zero assigned and `not-assigned` despite metric rows. The game-owned
 rubric now uses `exploratory`; AutoDev regenerated its benchmark hash links and
 the focused binding test passed **6/6**. The previous batch manifest and old
 rubric hash were not rewritten. A `playtest:game-manifests:check` first found
-the ESM stale while RacingGame source edits were active. After those edits were
-committed at `db3c38cd955ea31ab7741ee14f37aca5a82418dd`, the canonical
-generator refreshed the ESM and the manifest check passed. The bundle now
-matches that HEAD; four concurrent source/test edits also remain, so the target
-worktree is not clean.
+the ESM stale while RacingGame source edits were active. After the source was
+committed and the target advanced to `a1f3a95360e879d8562ab223bd448f6e1dc4ed50`,
+the canonical generator refreshed the ESM and the manifest check passed. Two
+later UI/test edits leave the worktree dirty, but the adapter bundle remains
+current because those paths are outside its input.
 
 The batch's frozen one-session selection is eligible under critique budget 1,
 but its persisted review-packet receipt is `unavailable` with
@@ -1460,15 +1489,15 @@ steps carry `observationVisibility: "unverified"`, consistent with the game's
 `uiEquivalence: "unverified"` contract. Core deliberately accepts only
 `structured`/`visual-only` steps in player-visible analyst packets, and the
 analyst prompt rejects unverified traces; do not widen that boundary or dispatch
-a model. No review was submitted. The Console now renders Runtime dispatch
-receipts even when no analyst process starts; the focused selection/results
-suite passes **7/7**. After that change, the filtered production Playwright
-spec `pnpm exec playwright test --config=playwright.config.ts
+a model. No review was submitted. Runtime now classifies unverified observation/UI
+equivalence as the typed `observation-equivalence-unverified` packet failure;
+the Console renders dispatch receipts even when no analyst process starts. The
+focused selection/results suite passes **7/7**. The old immutable batch retains
+its original generic `packet-validation-failed` receipt and was not rewritten.
+After the receipt UI change, the filtered production Playwright spec
+`pnpm exec playwright test --config=playwright.config.ts
 e2e/playtesting-usability.spec.ts` passed **12/12**, still against the labeled
-synthetic Control API fixture. Still open: classify unverified UI-equivalence
-at the Runtime packet boundary with an actionable reason while keeping
-unverified trace data out of analyst packets and preserving the existing
-refusal.
+synthetic Control API fixture. The analyst refusal remains in place.
 
 The actual Console on port 3300 rendered the episode once and later returned
 `autodev_control_api_timeout`; a source-current dev server on port 3311 rendered
@@ -1518,10 +1547,10 @@ operator actions available, `approved: true` at revision 3 for build SHA
 `beb03c21ec2faa1e5bc2a5bd9cd232f1dd70f031`, configuration validated, and a
 bounded approval of one worker, up to 10 assignments, 2,500 steps per episode,
 120,000 ms wall time, and one critique. Local `RacingGame` `HEAD` is
-`db3c38cd955ea31ab7741ee14f37aca5a82418dd`. The workspace approval is still for
-the different `beb03c21...` build; although the generated ESM matches this HEAD,
-the dirty worktree is not an approved build identity. No image digest is exposed
-by the safe capabilities response. No run or analyst dispatch was made.
+`a1f3a95360e879d8562ab223bd448f6e1dc4ed50`; the worktree has uncommitted
+UI/effects/test edits. The Workspace approval is still for the different `beb03c21...`
+build, so the current checkout is not authorized. No image digest is exposed by
+the safe capabilities response. No run or analyst dispatch was made.
 
 A read-only canonical-workspace batch-page request first returned `unreachable`
 at the Console's unchanged 5,000 ms deadline. The next request, with a bounded
@@ -1540,10 +1569,26 @@ Task status is held in Runtime process memory rather than a durable task ledger.
 If Runtime restarts, a browser that knew the active task keeps it marked stale;
 already-persisted per-session reviews and batch syntheses remain available from
 Data. The browser fixture is
-synthetic and never substitutes for a target-game result. Exact RacingGame
-build/image approval and an operator-authorized bounded run are still required.
+synthetic and never substitutes for a target-game result. Approval matching
+the current RacingGame build/image and an operator-authorized bounded run are
+still required.
 No RacingGame episode, real provider/model call, or human study was performed
 for these implementation tests.
+
+**Later live UI and compatibility recheck (2026-10-15):** The source now
+requires Control API contract v4. A fresh read-only
+`node runtime/src/cli/verify-control-api.ts` against the active listener on
+4101 exits with a stale-contract startup refusal; the listener belongs to the
+shared `/Users/henrykirk/.codex/src/router/server.ts`, so it was not restarted.
+A headless Playwright read against the already-running Console at 3300 opened the
+real RacingGame session detail and asserted HTTP 200, episode identity, the
+`3 / 4`, `51 / 3`, and `0 / 2190` deterministic metrics, and the explicit
+“No analyst review” state; the trace also renders `observationVisibility:
+"unverified"`. A separate read-only overview probe found the one-assignment
+Run button enabled for approved build `beb03c21...`; it was not clicked. These
+prove the old managed Console can browse persisted metrics and exposes its old
+approved build, not that the current `a1f3a953...` checkout is authorized, that
+a fresh episode can start, or that v4 readiness/browser behavior is deployed.
 
 ### Declarative game onboarding: one config, no adapter (delivered)
 
@@ -1571,12 +1616,12 @@ Current state, from RacingGame's first integration:
   `.autodev/playtest.config.json` and referenced manifests resolve relative to
   the config file, with an independent boundary refusing any manifest that
   escapes that directory.
-- Approval runs `git status --porcelain=v1 --untracked-files=all
---ignored=matching` and rejects any output
-  (`runtime/src/playtesting/docker-sandbox.ts`), so a gitignored integration
-  directory failed with a message that did not name it. **Resolved** in commit
-  `476e6aa6`: the refusal names the offending paths and calls out `.autodev/`
-  explicitly.
+- Approval ran `git status --porcelain=v1 --untracked-files=all
+--ignored=matching` and rejected any output, so a game under active
+  development could never run its committed build. **Superseded** (2026-10-15):
+  the Runtime now runs a read-only snapshot of the checkout's latest commit, so
+  working-tree state is irrelevant; a commit that does not track `.autodev/` is
+  refused because its snapshot has no target configuration.
 
 Required work:
 
@@ -1717,4 +1762,123 @@ The earlier aggregate-grounded-analysis gap is partially closed for a Runtime-di
 - [x] Console displays the deterministic rows, source-session links, missing/coverage counts and unavailable reasons separately from cited analyst hypotheses. It labels this as selected-session descriptive arithmetic, not a matched-seed effect, confidence interval, or population estimate.
 - [x] Focused Core tests cover ratio-of-sums versus mean-of-ratios, exact cohort strata, non-episode independent units, legacy packets and selection/provenance validation. Runtime tests cover trusted aggregate handoff/persistence, analyst environment binding and synthesis submission; Data tests cover schema migration; Console tests cover numeric rendering and source links. Synthetic fixtures only; no RacingGame episode/provider call was run.
 - [ ] Still open: Data-indexed aggregation over complete assignment inventories and the matched-seed/cohort comparison builder. This slice only summarizes the exact selected review packets and cannot establish population denominators, comparison intervals, or promotion status.
-- [ ] Real RacingGame validation remains gated: the active Workspace approval is for build `beb03c21ec2faa1e5bc2a5bd9cd232f1dd70f031`, not local `HEAD` `4ae0f37fa7b552e201731ec470df37473133ef3a`; the checkout is dirty, and optional invariant/snapshot/replay/fork/frame methods remain unbound. Control API compatibility now passes, but the first cold Playtesting Data read exceeded the Console 5-second deadline. No game execution or analyst/model call was performed.
+- [x] Real RacingGame start/watch from the Console (source build, side port): see "Latest-commit execution" below. Optional invariant/snapshot/replay/fork/frame methods remain unbound, and analyst review remains withheld until RacingGame verifies UI equivalence.
+
+### Latest-commit execution and Console run watching (2026-10-15)
+
+The operator asked that AutoDev run the latest commit without a per-commit
+approval. A Workspaces approval now authorizes a **checkout**, not a commit.
+
+- [x] Core approval schema v2 drops `buildSha`, `gameBuild` and `playtestConfigHash`.
+      Data migrates a stored v1 record one way on read and rewrites it. The
+      Control API approval body refuses a pinned commit with 400.
+- [x] At every batch start, Runtime `preparePlaytestSandbox` resolves the checkout's
+      `HEAD` commit and checks exactly that commit out through a temporary Git index
+      into a Runtime-owned snapshot (`$CODEX_HOME/playtesting/snapshots/<workspace>/<sha>`).
+      It loads that commit's own config and manifests, and mounts only the
+      snapshot read-only. The resolved `WorkspacePlaytestBuild` (`buildSha`, `gameBuild` = SHA,
+      `configHash`) flows into the frozen manifest, batch, episodes, environment hash
+      and per-build episode budget. Uncommitted, untracked and ignored files
+      never run, and the operator's index and working tree are untouched.
+      Snapshots are reused per commit and pruned after two unused hours. The
+      post-run "checkout changed" check is removed because the snapshot is
+      immutable.
+- [x] Capabilities report the latest committed build and the admissible seeds
+      from that build's frozen benchmark. The Console run form offers only
+      those seeds; it previously invented `seed-N` values that a benchmark-gated
+      game always refused.
+- [x] Persisted episode identity is Runtime-owned (`<batchId>.<assignmentId>`).
+      RacingGame derives its episode handle from the seed, so a run on the new
+      commit had shadowed the old build's episode under the same id. The two
+      historical rows that share `racinggame-episode-fa44132b238e67958fb1-championship-run`
+      (batches `1c238c12` and `970874e5`) were not rewritten.
+- [x] The Console dashboard owns one live status reader. The Runtime lists only
+      nonterminal batches, so a watched batch that leaves that list is resolved
+      to its terminal status rather than dropped. The start card renders that
+      shared record, and a terminal transition refreshes the server-rendered
+      results. Before this fix the card stayed "Running" and the overview stayed
+      stale.
+- [x] Live evidence used a source Control API on 127.0.0.1:4191 and a source
+      Console on :3391 against real Data, Docker and the real RacingGame
+      checkout; the managed Router (4101) and Console (3300) were untouched.
+      Through the UI, the operator revoked approval revision 3 (pinned to a
+      detached `/private/tmp` worktree at `beb03c21`) and approved revision 5 for
+      `/Users/henrykirk/Desktop/RacingGame`. Without re-approval, capabilities
+      resolved the dirty checkout's `HEAD` `a1f3a95360e879d8562ab223bd448f6e1dc4ed50` and
+      validated it. A one-assignment batch, `batch-fedc555b-6af8-44c8-886f-6b85c818a6d6`
+      (seed `confirmation`), started from the run form. The start card and live
+      panel reached Completed without a manual refresh (about 36 s), and the
+      overview refreshed to the new episode `batch-fedc555b-….a-0001`: 2,202 steps,
+      game outcome win, wager hit `3/5`, bankroll delta `338/3` gold per race,
+      legal-action rejection `0/2202`, with an integrity-verified trace window.
+      An earlier batch on the same commit (`batch-970874e5`, seed `discovery`)
+      completed before the identity fix.
+- [x] Analyst review via the Console returns a typed receipt and no model
+      dispatch: "observation/UI equivalence is unverified". This is correct.
+- [x] RacingGame's **dirty source worktree** now has a game-owned conformance
+      fixture. Its target observation contract is `uiEquivalence: "verified"`
+      and its `conformanceFixtureHash` is generated from
+      `.autodev/playtest.conformance.json`. The new Playwright fixture compares
+      all observation fields against player-visible DOM/accessibility across
+      seven checkpoints: betting, selected bet, formation, settled cash-out,
+      card reward, and the following race's betting board. It passes 1/1. Unit binding tests pass 7/7.
+- [ ] The active Workspaces approval still resolves committed `HEAD`
+      `a1f3a953...`, whose snapshot remains `uiEquivalence: "unverified"`.
+      Changes in the dirty worktree are intentionally not executed. Once those
+      game changes are committed, revision 5's checkout approval automatically
+      resolves that new commit without re-approval; then verify a fresh real
+      episode/analyst eligibility. Managed Control API v4 rollout still needs a
+      safe window.
+- Cost: the first capability read after a new commit materializes the
+  snapshot (RacingGame: about 2.3 s for 423 MB, measured 2.9 s end to end);
+  later reads reuse it.
+
+### Final source-path verification (2026-10-15)
+
+- The start acknowledgement now carries the Runtime's exact `createdAt`; the dashboard seeds that acknowledgement into the shared active-run reader before its first poll. This closes the fast-batch race where the active list could omit a run that completed before the first poll. A regression test covers start-ack → first-list-already-terminal.
+- The synthetic browser fixture now models fast completion on an active-run read while preserving explicit `hold`/`hold-*` runs for cancellation/live-panel tests. Cancellation browser coverage asserts the 202 response and then the shared server-confirmed Cancelled state; the composer keeps running without manual refresh. The client-navigation test uses `performance.timeOrigin` to detect a full document replacement, not Playwright's same-document frame event.
+- Source Playwright `e2e/playtesting-usability.spec.ts`: **15/15** passed against the labeled synthetic fixture through a source Next dev server. Isolated readiness cases against a previously built production bundle passed **3/3**. A fresh full `playwright.config.ts` run again stopped at its unchanged 120-second Next build deadline before tests; production E2E is still open.
+- Full Console tests: **624/624**; full Runtime Playtesting tests: **271 total, 269 passed, 2 skipped, 0 failed**; Core tests touched by approval change **73/73**; Data approval tests **4/4**; repository-wide typecheck, changed-source ESLint and `git diff --check` pass.
+- Final real-game UI run through source Console :3391/source Control API :4191 used current approved HEAD `a1f3a95360e879d8562ab223bd448f6e1dc4ed50` and seed `regression`; the timestamped `202` ack was followed automatically by Completed. Batch `batch-b8781463-8fbb-487a-b9c1-9b4d7f08a5e6`: 2,062 steps, LOSS, wager-hit `1/4`, bankroll delta `-23/3` gold/race, legal-action rejection `0/2062`. Its session page rendered an integrity-verified trace and deterministic metrics; `observationVisibility` remains `unverified`. The selected-session analysis action returned the typed `observation-equivalence-unverified` receipt, started no analyst process and made no provider/model call.
+- Managed Runtime :4101 remains source-incompatible v3; managed Console :3300 was not changed. Source side services :3391/:4191 were retained loopback-only for continued UI inspection.
+
+
+### RacingGame UI-observation conformance (uncommitted source, 2026-10-15)
+
+The prior probe found the first concrete equivalence defect: the adapter seeded
+race one with the **race-three/four-team field**, while the actual UI and
+`create_canonical_run(seed)` start race one with the four-car, two-team roster.
+Thus offered tickets and running order could disagree before the first
+decision. The adapter now starts with the canonical race-one roster, and lets
+`initialize_next_race` advance the field at its real lifecycle boundary. A unit
+regression compares the adapter's initial observation against `create_canonical_run`
+for the exact normalized seed.
+
+The observation also included two fields not exposed to the player: the raw
+Runtime decision `step` and the internal `race_cycle_phase`. Those no longer
+go to the policy; Runtime owns decision-step provenance separately, while the
+UI conformance fixture checks only public phase and available controls. After a
+ticket is committed, the adapter now preserves the bettor's own committed
+ticket IDs in `selected_ticket_ids` instead of reporting the reset selection
+controller's empty state.
+
+`.autodev/playtest.conformance.json` is game-owned and hash-bound by
+`build-playtest-manifests.mjs`. `tests/e2e/playtest-observation-conformance.spec.ts`
+runs the actual browser against the same deterministic seed and checks the complete
+structured-field allowlist against visible DOM/accessibility at betting,
+selected-bet, formation, post-formation, cash-out, reward, and next-race betting
+checkpoints. To test a real nonempty reward rather than a sample, the fixture
+drives the adapter through a deterministic race and sends the equivalent
+canonical game transitions to the AppShell renderer. The exact observation
+field allowlist is compared to the fixture's field list. Current evidence:
+the fixture Playwright test **1/1**, RacingGame unit binding **7/7**, and
+`typecheck` pass; `playtest:game-manifests` and `autodev playtest check`
+validate the generated bundle/hash chain.
+
+This is **source state only**: RacingGame retains the user's in-progress UI
+work and these integration edits are uncommitted. AutoDev's snapshot rule
+correctly prevents running any of them under the current approval. The active
+approval v5 already authorizes the checkout root, so a future commit will be
+picked up automatically without a new approval. No post-conformance real
+RacingGame episode or model/analyst call has been made; the managed 4101/3300
+services remain untouched.

@@ -170,18 +170,14 @@ function digest(bytes: Uint8Array | string): string {
 
 function approval(
   root: string,
-  changes: Partial<WorkspacePlaytestApproval> = {},
-  configBytes = JSON.stringify(CONFIG) + "\n"
+  changes: Partial<WorkspacePlaytestApproval> = {}
 ): WorkspacePlaytestApproval {
   return {
-    schema: "autodev-workspace-playtest-approval-v1",
+    schema: "autodev-workspace-playtest-approval-v2",
     workspaceId: "owner/fixture",
     revision: 1,
     approvalId: "approval-fixture",
     checkoutRoot: root,
-    buildSha: "a".repeat(40),
-    gameBuild: "fixture-build-1",
-    playtestConfigHash: digest(configBytes),
     adapterImageDigest: `ghcr.io/owner/fixture@sha256:${"b".repeat(64)}`,
     workingDirectory: ".",
     adapterCommand: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND],
@@ -208,6 +204,11 @@ function approval(
     revocationReason: null,
     ...changes
   };
+}
+
+/** Load the approval's committed-build snapshot; fixtures stand in for the snapshot root. */
+function load(approved: WorkspacePlaytestApproval) {
+  return loadApprovedPlaytestDefinition(approved, approved.checkoutRoot);
 }
 
 const SAMPLE_FIXTURE_ROOT = fileURLToPath(
@@ -312,8 +313,8 @@ function rewriteBenchmark(
 test("approved config verifies exact raw-byte digest and bound settings without executing", () => {
   const fixture = setup();
   try {
-    const result = loadApprovedPlaytestDefinition(approval(fixture.root));
-    assert.equal(result.configHash, approval(fixture.root).playtestConfigHash);
+    const result = load(approval(fixture.root));
+    assert.equal(result.configHash, digest(JSON.stringify(CONFIG) + "\n"));
     assert.deepEqual(
       result.configuration.adapter.command,
       PLAYTESTS_GENERIC_ADAPTER_COMMAND
@@ -338,12 +339,8 @@ test("approved runtime refuses handwritten protocol commands even when exactly a
     );
     expectCategory(
       () =>
-        loadApprovedPlaytestDefinition(
-          approval(
-            fixture.root,
-            { adapterCommand: ["node", "adapter.mjs"] },
-            configBytes
-          )
+        load(
+          approval(fixture.root, { adapterCommand: ["node", "adapter.mjs"] })
         ),
       "command-mismatch"
     );
@@ -375,10 +372,7 @@ test("approved runtime verifies the observation contract against the binding sch
       integration_file(fixture.root, "playtest.binding.json"),
       JSON.stringify(changed) + "\n"
     );
-    expectCategory(
-      () => loadApprovedPlaytestDefinition(approval(fixture.root)),
-      "target-file-invalid"
-    );
+    expectCategory(() => load(approval(fixture.root)), "target-file-invalid");
   } finally {
     fixture.cleanup();
   }
@@ -389,7 +383,7 @@ test("approved runtime refuses an absent adapter binding before Docker setup", (
   try {
     unlinkSync(integration_file(fixture.root, "playtest.binding.json"));
     expectCategory(
-      () => loadApprovedPlaytestDefinition(approval(fixture.root)),
+      () => load(approval(fixture.root)),
       "target-file-unavailable"
     );
   } finally {
@@ -400,17 +394,13 @@ test("approved runtime refuses an absent adapter binding before Docker setup", (
 test("approved target bundle loads its rubric registry and content-hashed benchmark", () => {
   const fixture = setupSampleBenchmark();
   try {
-    const result = loadApprovedPlaytestDefinition(
-      approval(
-        fixture.root,
-        {
-          adapterCommand: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND],
-          allowedScenarios: ["tutorial"],
-          allowedPolicies: ["random"],
-          limits: { ...approval(fixture.root).limits, critiqueCount: 0 }
-        },
-        fixture.configBytes.toString("utf8")
-      )
+    const result = load(
+      approval(fixture.root, {
+        adapterCommand: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND],
+        allowedScenarios: ["tutorial"],
+        allowedPolicies: ["random"],
+        limits: { ...approval(fixture.root).limits, critiqueCount: 0 }
+      })
     );
     assert.equal(
       result.benchmark?.benchmarkId,
@@ -445,17 +435,13 @@ test("approved target bundle refuses a stale benchmark content hash", () => {
     );
     expectCategory(
       () =>
-        loadApprovedPlaytestDefinition(
-          approval(
-            fixture.root,
-            {
-              adapterCommand: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND],
-              allowedScenarios: ["tutorial"],
-              allowedPolicies: ["random"],
-              limits: { ...approval(fixture.root).limits, critiqueCount: 0 }
-            },
-            fixture.configBytes.toString("utf8")
-          )
+        load(
+          approval(fixture.root, {
+            adapterCommand: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND],
+            allowedScenarios: ["tutorial"],
+            allowedPolicies: ["random"],
+            limits: { ...approval(fixture.root).limits, critiqueCount: 0 }
+          })
         ),
       "target-file-invalid"
     );
@@ -470,17 +456,13 @@ test("approved target bundle rejects a well-hashed benchmark for another workspa
     rewriteBenchmark(fixture.root, { workspaceId: "other/workspace" });
     expectCategory(
       () =>
-        loadApprovedPlaytestDefinition(
-          approval(
-            fixture.root,
-            {
-              adapterCommand: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND],
-              allowedScenarios: ["tutorial"],
-              allowedPolicies: ["random"],
-              limits: { ...approval(fixture.root).limits, critiqueCount: 0 }
-            },
-            fixture.configBytes.toString("utf8")
-          )
+        load(
+          approval(fixture.root, {
+            adapterCommand: [...PLAYTESTS_GENERIC_ADAPTER_COMMAND],
+            allowedScenarios: ["tutorial"],
+            allowedPolicies: ["random"],
+            limits: { ...approval(fixture.root).limits, critiqueCount: 0 }
+          })
         ),
       "benchmark-mismatch"
     );
@@ -489,17 +471,15 @@ test("approved target bundle rejects a well-hashed benchmark for another workspa
   }
 });
 
-test("approved config rejects changed bytes before parsing or execution", () => {
+test("approved config derives its hash from each commit's own bytes", () => {
   const fixture = setup();
   try {
+    const nextBytes = JSON.stringify(CONFIG, null, 2) + "\n";
     writeFileSync(
       integration_file(fixture.root, "playtest.config.json"),
-      "{}\n"
+      nextBytes
     );
-    expectCategory(
-      () => loadApprovedPlaytestDefinition(approval(fixture.root)),
-      "config-hash-mismatch"
-    );
+    assert.equal(load(approval(fixture.root)).configHash, digest(nextBytes));
   } finally {
     fixture.cleanup();
   }
@@ -519,20 +499,9 @@ test("approved config refuses symlink files and symlink checkout roots", () => {
       outsideFile,
       integration_file(fixture.root, "playtest.config.json")
     );
-    expectCategory(
-      () =>
-        loadApprovedPlaytestDefinition(
-          approval(fixture.root, {
-            playtestConfigHash: digest(JSON.stringify(CONFIG) + "\n")
-          })
-        ),
-      "config-unavailable"
-    );
+    expectCategory(() => load(approval(fixture.root)), "config-unavailable");
     symlinkSync(fixture.root, rootLink, "dir");
-    expectCategory(
-      () => loadApprovedPlaytestDefinition(approval(rootLink)),
-      "checkout-unavailable"
-    );
+    expectCategory(() => load(approval(rootLink)), "checkout-unavailable");
   } finally {
     unlinkSync(rootLink);
     fixture.cleanup();
@@ -546,7 +515,7 @@ test("approved config rejects command, scenario, policy and budget drift", () =>
     const base = approval(fixture.root);
     expectCategory(
       () =>
-        loadApprovedPlaytestDefinition({
+        load({
           ...base,
           adapterCommand: ["node", "other.mjs"]
         }),
@@ -554,7 +523,7 @@ test("approved config rejects command, scenario, policy and budget drift", () =>
     );
     expectCategory(
       () =>
-        loadApprovedPlaytestDefinition({
+        load({
           ...base,
           allowedScenarios: ["missing"]
         }),
@@ -562,7 +531,7 @@ test("approved config rejects command, scenario, policy and budget drift", () =>
     );
     expectCategory(
       () =>
-        loadApprovedPlaytestDefinition({
+        load({
           ...base,
           allowedPolicies: ["missing"]
         }),
@@ -570,7 +539,7 @@ test("approved config rejects command, scenario, policy and budget drift", () =>
     );
     expectCategory(
       () =>
-        loadApprovedPlaytestDefinition({
+        load({
           ...base,
           limits: { ...base.limits, workerCount: 3 }
         }),
@@ -578,7 +547,7 @@ test("approved config rejects command, scenario, policy and budget drift", () =>
     );
     expectCategory(
       () =>
-        loadApprovedPlaytestDefinition({
+        load({
           ...base,
           limits: { ...base.limits, wallTimeMs: 5 * 60_000 + 1 }
         }),
@@ -594,13 +563,7 @@ test("approved config rejects command, scenario, policy and budget drift", () =>
         integration_file(fixture.root, "playtest.config.json"),
         overBudgetConfig
       );
-      return loadApprovedPlaytestDefinition(
-        approval(
-          fixture.root,
-          { playtestConfigHash: digest(overBudgetConfig) },
-          overBudgetConfig
-        )
-      );
+      return load(approval(fixture.root));
     }, "budget-mismatch");
   } finally {
     fixture.cleanup();
@@ -614,26 +577,12 @@ test("approved config fails closed on invalid UTF-8, malformed schema and revoke
       integration_file(fixture.root, "playtest.config.json"),
       Buffer.from([0xff, 0xfe])
     );
-    const changed = approval(fixture.root, {
-      playtestConfigHash: digest(Buffer.from([0xff, 0xfe]))
-    });
-    expectCategory(
-      () => loadApprovedPlaytestDefinition(changed),
-      "config-invalid"
-    );
+    expectCategory(() => load(approval(fixture.root)), "config-invalid");
     writeFileSync(
       integration_file(fixture.root, "playtest.config.json"),
       JSON.stringify({ ...CONFIG, extra: true }) + "\n"
     );
-    const invalid = approval(fixture.root, {
-      playtestConfigHash: digest(
-        JSON.stringify({ ...CONFIG, extra: true }) + "\n"
-      )
-    });
-    expectCategory(
-      () => loadApprovedPlaytestDefinition(invalid),
-      "config-invalid"
-    );
+    expectCategory(() => load(approval(fixture.root)), "config-invalid");
     writeFileSync(
       integration_file(fixture.root, "playtest.config.json"),
       JSON.stringify(CONFIG) + "\n"
@@ -642,10 +591,7 @@ test("approved config fails closed on invalid UTF-8, malformed schema and revoke
       integration_file(fixture.root, "playtest.observation.json"),
       "{}\n"
     );
-    expectCategory(
-      () => loadApprovedPlaytestDefinition(approval(fixture.root)),
-      "target-file-invalid"
-    );
+    expectCategory(() => load(approval(fixture.root)), "target-file-invalid");
     writeFileSync(
       integration_file(fixture.root, "playtest.observation.json"),
       OBSERVATION
@@ -661,7 +607,7 @@ test("approved config fails closed on invalid UTF-8, malformed schema and revoke
       integration_file(fixture.root, "playtest.observation.json")
     );
     expectCategory(
-      () => loadApprovedPlaytestDefinition(approval(fixture.root)),
+      () => load(approval(fixture.root)),
       "target-file-unavailable"
     );
     unlinkSync(integration_file(fixture.root, "playtest.observation.json"));
@@ -672,7 +618,7 @@ test("approved config fails closed on invalid UTF-8, malformed schema and revoke
     );
     rmSync(integration_file(fixture.root, "playtest.rubric.json"));
     expectCategory(
-      () => loadApprovedPlaytestDefinition(approval(fixture.root)),
+      () => load(approval(fixture.root)),
       "target-file-unavailable"
     );
     writeFileSync(
@@ -681,7 +627,7 @@ test("approved config fails closed on invalid UTF-8, malformed schema and revoke
     );
     expectCategory(
       () =>
-        loadApprovedPlaytestDefinition(
+        load(
           approval(fixture.root, {
             revokedAt: "2026-10-10T01:00:00.000Z",
             revokedBy: "fixture-operator",
@@ -706,15 +652,7 @@ test("approved config bounds bytes before parsing", () => {
       integration_file(fixture.root, "playtest.config.json")
     );
     assert.equal(info.size, 1024 * 1024 + 1);
-    expectCategory(
-      () =>
-        loadApprovedPlaytestDefinition(
-          approval(fixture.root, {
-            playtestConfigHash: digest(Buffer.alloc(info.size))
-          })
-        ),
-      "config-too-large"
-    );
+    expectCategory(() => load(approval(fixture.root)), "config-too-large");
   } finally {
     fixture.cleanup();
   }

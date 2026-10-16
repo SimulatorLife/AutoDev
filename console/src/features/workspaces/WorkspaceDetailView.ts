@@ -68,16 +68,10 @@ function IdentityPanel({
       { label: "Working directory" },
       approval.workingDirectory
     ),
-    React.createElement(DetailValue, { label: "Build SHA" }, approval.buildSha),
     React.createElement(
       DetailValue,
-      { label: "Game build" },
-      approval.gameBuild
-    ),
-    React.createElement(
-      DetailValue,
-      { label: "Playtest config hash" },
-      approval.playtestConfigHash
+      { label: "Build" },
+      "Latest commit of the checkout, resolved at each batch start"
     ),
     React.createElement(
       DetailValue,

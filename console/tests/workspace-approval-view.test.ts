@@ -35,14 +35,11 @@ function activeApproval(
   overrides: Partial<WorkspacePlaytestApproval> = {}
 ): WorkspacePlaytestApproval {
   return {
-    schema: "autodev-workspace-playtest-approval-v1",
+    schema: "autodev-workspace-playtest-approval-v2",
     workspaceId: WORKSPACE_ID,
     revision: 1,
     approvalId: "11111111-1111-1111-1111-111111111111",
     checkoutRoot: "/home/operator/games/fixture",
-    buildSha: "a".repeat(40),
-    gameBuild: "fixture-game-1.0.0",
-    playtestConfigHash: "e".repeat(64),
     adapterImageDigest: "fixture/adapter@sha256:" + "f".repeat(64),
     workingDirectory: "server",
     adapterCommand: ["node", "server.js"],
@@ -160,7 +157,10 @@ test("an active approval shows its exact identity, command, image and limits, an
   );
 
   assert.match(markup, /data-status="valid"/u);
-  assert.match(markup, /fixture-game-1\.0\.0/u);
+  assert.match(
+    markup,
+    /Latest commit of the checkout, resolved at each batch start/u
+  );
   assert.match(markup, /fixture\/adapter@sha256:/u);
   assert.match(markup, /node server\.js/u);
   assert.match(markup, /134217728/u);

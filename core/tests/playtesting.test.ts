@@ -2473,16 +2473,13 @@ test("assertPlaytestEvidenceLocator rejects an unknown kind and a negative step"
   );
 });
 
-test("workspace approval binds a local checkout, immutable image, command, budget, and operator", () => {
+test("workspace approval binds a local checkout (not a commit), immutable image, command, budget, and operator", () => {
   const approval = {
-    schema: "autodev-workspace-playtest-approval-v1",
+    schema: "autodev-workspace-playtest-approval-v2",
     workspaceId: "owner/game",
     revision: 1,
     approvalId: "approval-1",
     checkoutRoot: "/workspace/game",
-    buildSha: "a".repeat(40),
-    gameBuild: "release-1",
-    playtestConfigHash: "b".repeat(64),
     adapterImageDigest: `ghcr.io/owner/adapter@sha256:${"c".repeat(64)}`,
     workingDirectory: ".",
     adapterCommand: ["/usr/bin/node", "adapter.mjs"],
@@ -2509,6 +2506,15 @@ test("workspace approval binds a local checkout, immutable image, command, budge
     revocationReason: null
   };
   assert.doesNotThrow(() => assertWorkspacePlaytestApproval(approval));
+  // The approval authorizes the checkout; it never pins one commit.
+  assert.throws(
+    () =>
+      assertWorkspacePlaytestApproval({
+        ...approval,
+        buildSha: "a".repeat(40)
+      }),
+    /unknown field/u
+  );
   assert.throws(
     () =>
       assertWorkspacePlaytestApproval({

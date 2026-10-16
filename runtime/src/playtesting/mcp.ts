@@ -91,7 +91,8 @@ import {
   scorePlaytestDimensionAnchor,
   selectPlaytestBatchReviews,
   triagePlaytestFindings,
-  type WorkspacePlaytestApproval
+  type WorkspacePlaytestApproval,
+  type WorkspacePlaytestBuild
 } from "@simulatorlife/autodev-core";
 import {
   ConfigRepository,
@@ -112,7 +113,6 @@ import type {
   PlaytestAnalystProcessInput,
   PlaytestAnalystProcessResult
 } from "./analyst-process.ts";
-import { loadApprovedPlaytestDefinition } from "./approved-configuration.ts";
 import {
   type PlaytestArtifactStore,
   type PlaytestArtifactWindowReadResult,
@@ -340,6 +340,17 @@ export interface PlaytestRunCapabilities {
     readonly strategy: string;
     readonly maxStepsPerEpisode: number;
   }[];
+  /**
+   * Seeds the latest build's frozen benchmark admits, in inventory order.
+   * `null` when that build freezes no benchmark, so any bounded printable
+   * seed is admissible. A run request outside this list is refused.
+   */
+  readonly admissibleSeeds:
+    | readonly {
+        readonly seed: string;
+        readonly purpose: "discovery" | "confirmation" | "regression";
+      }[]
+    | null;
   readonly policyProfiles: readonly {
     readonly policyId: string;
     readonly version: string;
@@ -380,6 +391,7 @@ export interface PlaytestRunControl {
   ): Promise<{
     readonly batchId: string;
     readonly assignmentCount: number;
+    readonly createdAt: string;
     readonly status: "running";
   }>;
   listActiveRuns(
@@ -481,7 +493,7 @@ export interface PlaytestRunControlOptions {
     prepared: PreparedPlaytestSandbox,
     options?: PlaytestSandboxLaunchOptions
   ) => Promise<PlaytestSandboxHandle>;
-  /** Reads the exact target-owned config/observation/rubric bound to an approval. */
+  /** Resolves the approval's latest committed build and loads that commit's target files. */
   readonly prepareSandboxHandler?: (
     approval: WorkspacePlaytestApproval
   ) => PreparedPlaytestSandbox;
@@ -1282,15 +1294,15 @@ function currentRuntimeVersion(): string {
 const RUNTIME_VERSION = currentRuntimeVersion();
 
 function playtestEnvironmentHash(
-  approval: WorkspacePlaytestApproval,
+  prepared: PreparedPlaytestSandbox,
   runtimeVersion: string
 ): string {
   return createHash("sha256")
     .update(
       canonicalPlaytestJson({
-        buildSha: approval.buildSha,
-        configHash: approval.playtestConfigHash,
-        adapterImageDigest: approval.adapterImageDigest,
+        buildSha: prepared.build.buildSha,
+        configHash: prepared.build.configHash,
+        adapterImageDigest: prepared.imageDigest,
         runtimeVersion
       })
     )
@@ -1376,7 +1388,7 @@ function batchRecordFor(input: {
     workspaceId: approval.workspaceId,
     repository: approval.workspaceId,
     buildSha: manifest.buildSha,
-    gameBuild: input.capabilities?.engineBuild ?? approval.gameBuild,
+    gameBuild: input.capabilities?.engineBuild ?? prepared.build.gameBuild,
     configHash: manifest.configHash,
     rubricHash: prepared.rubricHash,
     actionSchemaHash: input.capabilities?.actionSchemaHash ?? null,
@@ -2062,14 +2074,13 @@ async function resolveBranchExecutionPlan(input: {
     (parent.replayStatus !== "trace-replayable" &&
       parent.replayStatus !== "verified") ||
     parent.identity.workspaceId !== workspaceId ||
-    parent.identity.buildSha.toLowerCase() !==
-      approval.buildSha.toLowerCase() ||
-    parent.identity.configHash !== approval.playtestConfigHash ||
-    parent.identity.gameBuild !== approval.gameBuild ||
+    parent.identity.buildSha.toLowerCase() !== prepared.build.buildSha ||
+    parent.identity.configHash !== prepared.build.configHash ||
+    parent.identity.gameBuild !== prepared.build.gameBuild ||
     request.branchStep >= parent.stepCount
   ) {
     throw new PlaytestMcpValidationError(
-      "The source episode is incomplete, non-replayable, outside the approved build/config, or has no decision at that step."
+      "The source episode is incomplete, non-replayable, outside the latest committed build/config, or has no decision at that step."
     );
   }
   const traceReference = artifacts.referenceForId(parent.trace.id);
@@ -2217,7 +2228,6 @@ function prepareApprovedBatch(input: {
     input;
   if (
     prepared.workspaceId !== workspaceId ||
-    prepared.checkoutSha !== approval.buildSha ||
     prepared.imageDigest !== approval.adapterImageDigest ||
     canonicalPlaytestJson(prepared.limits) !==
       canonicalPlaytestJson(approval.limits) ||
@@ -2311,8 +2321,8 @@ function prepareApprovedBatch(input: {
     schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
     batchId,
     workspaceId,
-    buildSha: approval.buildSha,
-    configHash: approval.playtestConfigHash,
+    buildSha: prepared.build.buildSha,
+    configHash: prepared.build.configHash,
     rubricHash: prepared.rubricHash,
     approvalRevision: approval.revision,
     createdAt: new Date().toISOString(),
@@ -2377,12 +2387,13 @@ async function reserveBatchBudget(input: {
   const persisted = await persistedAssignedEpisodes(
     repository,
     workspaceId,
-    approval.buildSha,
+    prepared.build.buildSha,
     assignmentLimit
   );
   const reservations = [...activeRuns.values()].filter(
     (run) =>
-      run.workspaceId === workspaceId && run.buildSha === approval.buildSha
+      run.workspaceId === workspaceId &&
+      run.buildSha === prepared.build.buildSha
   );
   const reservationsMissingFromData = reservations
     .filter((run) => !persisted.batchIds.has(run.batchId))
@@ -2469,6 +2480,7 @@ function unobservedAssignmentOutcomes(
 function assertEpisodeMatchesAssignment(input: {
   readonly episode: PlaytestEpisode;
   readonly approval: WorkspacePlaytestApproval;
+  readonly build: WorkspacePlaytestBuild;
   readonly batchId: string;
   readonly assignment: PlaytestBatchAssignment;
   readonly policy: PlaytestPolicy;
@@ -2529,8 +2541,8 @@ function assertEpisodeMatchesAssignment(input: {
     episode.assignmentId !== assignment.assignmentId ||
     identity.workspaceId !== approval.workspaceId ||
     identity.repository !== approval.workspaceId ||
-    identity.buildSha !== approval.buildSha ||
-    identity.configHash !== approval.playtestConfigHash ||
+    identity.buildSha !== input.build.buildSha ||
+    identity.configHash !== input.build.configHash ||
     identity.scenarioId !== assignment.scenarioId ||
     identity.seed !== assignment.seed ||
     identity.policyId !== policy.id ||
@@ -2568,14 +2580,12 @@ interface ExecuteBatchInput {
   readonly approval: WorkspacePlaytestApproval;
   readonly assignments: readonly PlaytestBatchAssignmentRequest[];
   readonly branchPlan: BranchExecutionPlan | null;
-  readonly prepared?: PreparedPlaytestSandbox | undefined;
+  /** The latest committed build, resolved and snapshotted once for this batch. */
+  readonly prepared: PreparedPlaytestSandbox;
   readonly artifacts: PlaytestArtifactStore;
   readonly repository: PlaytestingRepositoryOps;
   readonly approvalRepository: WorkspacePlaytestApprovalRepository;
   readonly readWorkspaceCatalog: () => WorkspaceCatalogRead;
-  readonly prepareSandbox: (
-    approval: WorkspacePlaytestApproval
-  ) => PreparedPlaytestSandbox;
   readonly launchSandbox: (
     prepared: PreparedPlaytestSandbox,
     options?: PlaytestSandboxLaunchOptions
@@ -2585,7 +2595,7 @@ interface ExecuteBatchInput {
   ) => Promise<PlaytestEpisodeRunResult>;
   readonly activeRuns: Map<string, ActivePlaytestRun>;
   readonly assignmentLocks: Map<string, Promise<void>>;
-  readonly onRegistered: (batchId: string) => void;
+  readonly onRegistered: (batchId: string, createdAt: string) => void;
 }
 
 interface RegisteredBatchContext extends ApprovedBatchContext {
@@ -2602,11 +2612,12 @@ function runAssignmentInApprovedSandbox(
 ): Promise<PlaytestEpisodeRunResult> {
   const runtimeVersion = RUNTIME_VERSION;
   const environmentHash = playtestEnvironmentHash(
-    input.approval,
+    context.prepared,
     runtimeVersion
   );
   return input.runEpisode({
     approval: input.approval,
+    build: context.prepared.build,
     sandbox,
     artifacts: input.artifacts,
     batchId: context.manifest.batchId,
@@ -2668,10 +2679,11 @@ async function persistAssignmentResult(input: {
   assertEpisodeMatchesAssignment({
     episode: result.episode,
     approval: execute.approval,
+    build: context.prepared.build,
     batchId: context.manifest.batchId,
     assignment,
     policy,
-    environmentHash: playtestEnvironmentHash(execute.approval, RUNTIME_VERSION),
+    environmentHash: playtestEnvironmentHash(context.prepared, RUNTIME_VERSION),
     observationSchemaHash: context.prepared.observationContract.schemaHash,
     capabilities: result.capabilities,
     runtimeVersion: RUNTIME_VERSION
@@ -2729,7 +2741,7 @@ async function registerApprovedBatch(
   input: ExecuteBatchInput
 ): Promise<RegisteredBatchContext> {
   const batchId = "batch-" + randomUUID();
-  const prepared = input.prepared ?? input.prepareSandbox(input.approval);
+  const prepared = input.prepared;
   const context = prepareApprovedBatch({
     workspaceId: input.workspaceId,
     approval: input.approval,
@@ -2772,7 +2784,7 @@ async function registerApprovedBatch(
   const activeRun: ActivePlaytestRun = {
     batchId,
     workspaceId: input.workspaceId,
-    buildSha: input.approval.buildSha,
+    buildSha: context.prepared.build.buildSha,
     ownerActor: input.session.actor,
     ownerTaskId: input.session.taskId,
     ownerRunId: input.session.runId,
@@ -2821,7 +2833,7 @@ async function registerApprovedBatch(
     })
   );
   input.activeRuns.set(batchId, activeRun);
-  input.onRegistered(batchId);
+  input.onRegistered(batchId, activeRun.createdAt);
   return registered;
 }
 
@@ -2899,7 +2911,7 @@ const PACKET_TRACE_MALFORMED_REASON = "trace-malformed" as const;
 const PACKET_OBSERVATION_EQUIVALENCE_UNVERIFIED_REASON =
   "observation-equivalence-unverified" as const;
 const OBSERVATION_EQUIVALENCE_UNVERIFIED_DETAIL =
-  "Player-visible analyst review is withheld because RacingGame " +
+  "Player-visible analyst review is withheld because the game's " +
   "observation/UI equivalence is unverified for this episode's trace; " +
   "the step is recorded without being projected into player-visible evidence.";
 const OMITTED_FRAME_REASONS = {
@@ -3396,7 +3408,7 @@ function prepareReviewPackets(input: {
 async function executeApprovedBatch(input: ExecuteBatchInput) {
   const context = await withAssignmentLock(
     input.assignmentLocks,
-    input.workspaceId + "\0" + input.approval.buildSha,
+    input.workspaceId + "\0" + input.prepared.build.buildSha,
     () => registerApprovedBatch(input)
   );
   const { activeRun } = context;
@@ -4358,16 +4370,26 @@ function activeRunApproval(
  * exactly what it declared — only failing to read it collapses to "disabled".
  */
 function configuredIssueReporting(
-  repository: WorkspacePlaytestApprovalRepository | undefined,
-  workspaceId: string
+  prepared: PreparedPlaytestSandbox | null
 ): "disabled" | "review" {
+  return prepared?.configuration.reporting.githubIssues ?? "disabled";
+}
+
+/**
+ * Resolve and load the active approval's latest committed build once per
+ * capability read. An unreadable or incompatible target yields null.
+ */
+function tryPrepareLatestBuild(
+  approval: WorkspacePlaytestApproval | null,
+  prepareSandbox: (
+    approval: WorkspacePlaytestApproval
+  ) => PreparedPlaytestSandbox
+): PreparedPlaytestSandbox | null {
+  if (!approval || approval.revokedAt !== null) return null;
   try {
-    const approval = repository?.read(workspaceId);
-    if (!approval || approval.revokedAt !== null) return "disabled";
-    return loadApprovedPlaytestDefinition(approval).configuration.reporting
-      .githubIssues;
+    return prepareSandbox(approval);
   } catch {
-    return "disabled";
+    return null;
   }
 }
 
@@ -4389,15 +4411,13 @@ function collectRunnableAssignments(input: {
   readonly approval: WorkspacePlaytestApproval | null;
   readonly workspaceId: string;
   readonly workspaceEnabled: boolean;
-  readonly prepareSandbox: (
-    approval: WorkspacePlaytestApproval
-  ) => PreparedPlaytestSandbox;
+  readonly prepared: PreparedPlaytestSandbox | null;
 }): {
   readonly configurationStatus: PlaytestRunCapabilities["configurationStatus"];
   readonly maxBatchAssignments: number;
   readonly assignments: readonly PlaytestRunnableAssignment[];
 } {
-  const { approval, workspaceId, workspaceEnabled, prepareSandbox } = input;
+  const { approval, workspaceId, workspaceEnabled, prepared } = input;
   if (!approval || approval.revokedAt !== null || !workspaceEnabled) {
     return {
       configurationStatus: "not-checked",
@@ -4408,7 +4428,11 @@ function collectRunnableAssignments(input: {
 
   const assignments: PlaytestRunnableAssignment[] = [];
   try {
-    const prepared = prepareSandbox(approval);
+    if (prepared === null) {
+      throw new PlaytestMcpValidationError(
+        "The latest committed build's target configuration is unavailable."
+      );
+    }
     assertBatchReviewBudget(prepared, approval);
     const maxBatchAssignments = Math.min(
       PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
@@ -4756,6 +4780,7 @@ export function createPlaytestRunControl(
           configurationStatus: "not-checked",
           maxBatchAssignments: 0,
           runnableAssignments: [],
+          admissibleSeeds: null,
           policyProfiles: [],
           limits: null,
           issueReporting: "disabled",
@@ -4784,11 +4809,15 @@ export function createPlaytestRunControl(
       const approval = approvalRepository.read(authorizedWorkspaceId);
       const activeApproval = approval !== null && approval.revokedAt === null;
       const approvedPolicies = approval?.allowedPolicies ?? [];
+      const latestBuild = tryPrepareLatestBuild(
+        approval,
+        prepareSandboxHandler
+      );
       const runnable = collectRunnableAssignments({
         approval,
         workspaceId: authorizedWorkspaceId,
         workspaceEnabled: workspace.enabled,
-        prepareSandbox: prepareSandboxHandler
+        prepared: latestBuild
       });
       const runnableAssignments = runnable.assignments;
       const runnablePolicies = [
@@ -4801,8 +4830,8 @@ export function createPlaytestRunControl(
         workspaceCatalog: catalog.status,
         approved: activeApproval,
         approvalRevision: approval?.revision ?? null,
-        buildSha: approval?.buildSha ?? null,
-        gameBuild: approval?.gameBuild ?? null,
+        buildSha: latestBuild?.build.buildSha ?? null,
+        gameBuild: latestBuild?.build.gameBuild ?? null,
         allowedScenarios: approval?.allowedScenarios ?? [],
         approvedPolicies,
         supportedPolicies: [...PLAYTESTS_BUILTIN_POLICY_IDS],
@@ -4813,13 +4842,17 @@ export function createPlaytestRunControl(
         configurationStatus: runnable.configurationStatus,
         maxBatchAssignments: runnable.maxBatchAssignments,
         runnableAssignments,
+        admissibleSeeds:
+          runnable.configurationStatus === "validated" && latestBuild?.benchmark
+            ? latestBuild.benchmark.seedInventory.map(({ seed, purpose }) => ({
+                seed,
+                purpose
+              }))
+            : null,
         policyProfiles: profiles,
         limits: approval?.limits ?? null,
         issueReporting: approval?.issueReporting ?? "disabled",
-        configuredIssueReporting: configuredIssueReporting(
-          approvalRepository,
-          authorizedWorkspaceId
-        ),
+        configuredIssueReporting: configuredIssueReporting(latestBuild),
         humanStudyAllowed: approval?.humanStudyAllowed ?? false,
         revokedAt: approval?.revokedAt ?? null,
         runPreflight: "required-at-start"
@@ -4837,9 +4870,10 @@ export function createPlaytestRunControl(
       const artifacts = artifactStoreForWorkspace(targetWorkspaceId);
       let assignments: readonly PlaytestBatchAssignmentRequest[];
       let branchPlan: BranchExecutionPlan | null = null;
-      let prepared: PreparedPlaytestSandbox | undefined;
+      // One latest-commit resolution per batch: every assignment, the frozen
+      // manifest and each sandbox run that exact snapshot.
+      const prepared = prepareSandboxHandler(approval);
       if ("parentEpisodeId" in parsed) {
-        prepared = prepareSandboxHandler(approval);
         const resolved = await resolveBranchExecutionPlan({
           request: parsed,
           workspaceId: targetWorkspaceId,
@@ -4854,10 +4888,16 @@ export function createPlaytestRunControl(
         assignments = parsed.assignments;
       }
 
-      let resolveStarted!: (batchId: string) => void;
+      let resolveStarted!: (registration: {
+        readonly batchId: string;
+        readonly createdAt: string;
+      }) => void;
       let rejectStarted!: (error: unknown) => void;
       let registeredBatchId: string | null = null;
-      const started = new Promise<string>((resolve, reject) => {
+      const started = new Promise<{
+        readonly batchId: string;
+        readonly createdAt: string;
+      }>((resolve, reject) => {
         resolveStarted = resolve;
         rejectStarted = reject;
       });
@@ -4867,19 +4907,18 @@ export function createPlaytestRunControl(
         approval,
         assignments,
         branchPlan,
-        ...(prepared === undefined ? {} : { prepared }),
+        prepared,
         artifacts,
         repository,
         approvalRepository: approvalRepository!,
         readWorkspaceCatalog,
-        prepareSandbox: prepareSandboxHandler,
         launchSandbox: launchSandboxHandler ?? launchPlaytestSandbox,
         runEpisode: runEpisodeHandler,
         activeRuns,
         assignmentLocks,
-        onRegistered(batchId) {
+        onRegistered(batchId, createdAt) {
           registeredBatchId = batchId;
-          resolveStarted(batchId);
+          resolveStarted({ batchId, createdAt });
         }
       });
       void execution.then(
@@ -4907,13 +4946,9 @@ export function createPlaytestRunControl(
           const active = activeRuns.get(registeredBatchId);
           const safeError = playtestMcpErrorDetails(error);
           if (safeError.code === "playtest_internal_error") {
+            // Keep a breadcrumb without serializing stacks that can contain
+            // checkout paths or untrusted adapter/Data error text.
             writeErrorLine("playtest-mcp: internal operation failure.");
-            writeErrorLine(
-              "DEBUG2: " +
-                (error instanceof Error
-                  ? (error.stack ?? error.message)
-                  : String(error))
-            );
           }
           finishRun(
             registeredBatchId,
@@ -4929,8 +4964,9 @@ export function createPlaytestRunControl(
           return undefined;
         }
       );
+      const registration = await started;
       return {
-        batchId: await started,
+        ...registration,
         assignmentCount:
           "assignments" in parsed ? parsed.assignments.length : 1,
         status: "running"
@@ -5948,7 +5984,8 @@ export function createPlaytestMcpServer(
     artifactStoreForWorkspace,
     playtestRepository,
     approvalRepository,
-    playtestRunControl
+    playtestRunControl,
+    prepareSandboxHandler = preparePlaytestSandbox
   } = options;
   const preparedAnalystPackets = new Map<string, PlaytestEvidencePacket>();
 
@@ -7292,10 +7329,10 @@ export function createPlaytestMcpServer(
         try {
           const approval = approvalRepository?.read(targetWorkspaceId);
           if (approval && approval.revokedAt === null) {
-            const definition = loadApprovedPlaytestDefinition(approval);
-            if (definition.benchmark) {
-              policyVersions = definition.benchmark.policyVersions;
-              policyVersionsBasis = definition.benchmarkHash;
+            const prepared = prepareSandboxHandler(approval);
+            if (prepared.benchmark) {
+              policyVersions = prepared.benchmark.policyVersions;
+              policyVersionsBasis = prepared.benchmarkHash;
             }
           }
         } catch {
@@ -7452,10 +7489,10 @@ export function createPlaytestMcpServer(
         try {
           const approval = approvalRepository?.read(targetWorkspaceId);
           if (approval && approval.revokedAt === null) {
-            const definition = loadApprovedPlaytestDefinition(approval);
-            if (definition.benchmark) {
-              benchmark = definition.benchmark;
-              benchmarkHash = definition.benchmarkHash;
+            const prepared = prepareSandboxHandler(approval);
+            if (prepared.benchmark) {
+              benchmark = prepared.benchmark;
+              benchmarkHash = prepared.benchmarkHash;
             }
           }
         } catch {
@@ -7560,13 +7597,9 @@ async function safely<T>(operation: () => Promise<T>) {
   } catch (error) {
     const safeError = playtestMcpErrorDetails(error);
     if (safeError.code === "playtest_internal_error") {
+      // Keep a breadcrumb without serializing stacks that can contain
+      // checkout paths or untrusted adapter/Data error text.
       writeErrorLine("playtest-mcp: internal operation failure.");
-      writeErrorLine(
-        "DEBUG: " +
-          (error instanceof Error
-            ? (error.stack ?? error.message)
-            : String(error))
-      );
     }
     return {
       isError: true,

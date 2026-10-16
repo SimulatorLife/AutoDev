@@ -70,6 +70,7 @@ test("Playtest Control API client forwards typed run operations and host-bound s
           maxStepsPerEpisode: 20
         }
       ],
+      admissibleSeeds: null,
       policyProfiles: [
         {
           policyId: "random",
@@ -100,6 +101,7 @@ test("Playtest Control API client forwards typed run operations and host-bound s
       workspaceId: WORKSPACE,
       batchId: "batch-1",
       assignmentCount: 1,
+      createdAt: "2026-10-10T00:00:00Z",
       status: "running"
     },
     {
@@ -176,6 +178,7 @@ test("Playtest Control API client forwards typed run operations and host-bound s
   assert.deepEqual(started, {
     batchId: "batch-1",
     assignmentCount: 1,
+    createdAt: "2026-10-10T00:00:00Z",
     status: "running"
   });
   const listed = await client.listActiveRuns(SESSION, WORKSPACE);
@@ -489,6 +492,7 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
           maxStepsPerEpisode: 20
         }
       ],
+      admissibleSeeds: null,
       policyProfiles: [
         {
           policyId: "random",
@@ -520,6 +524,7 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
         batchId: "batch-remote-1",
         assignmentCount:
           "assignments" in request ? request.assignments.length : 1,
+        createdAt: "2026-10-10T00:00:00.000Z",
         status: "running"
       };
     },
@@ -627,6 +632,7 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
     assert.deepEqual(run, {
       batchId: "batch-remote-1",
       assignmentCount: 1,
+      createdAt: "2026-10-10T00:00:00.000Z",
       status: "running"
     });
 
@@ -645,6 +651,7 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
     assert.deepEqual(JSON.parse(branchResponse.content[0].text), {
       batchId: "batch-remote-1",
       assignmentCount: 1,
+      createdAt: "2026-10-10T00:00:00.000Z",
       status: "running"
     });
     assert.deepEqual((delegated[1] as { request: unknown }).request, {

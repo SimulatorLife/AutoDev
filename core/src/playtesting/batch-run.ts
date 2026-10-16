@@ -174,6 +174,19 @@ export function assertPlaytestAssignmentsMatchBenchmark(
   }
 }
 
+/**
+ * Runtime-owned persisted episode identity: unique per frozen batch
+ * assignment. A game's own episode id is only its protocol handle -- games may
+ * derive it from the seed, so it repeats across builds and batches and must
+ * never key persisted evidence.
+ */
+export function playtestEpisodeRecordId(
+  batchId: string,
+  assignmentId: string
+): string {
+  return batchId + "." + assignmentId;
+}
+
 /** Canonical hash projection; excludes only contentHash. */
 export function playtestAssignmentManifestHashInput(
   manifest: Omit<PlaytestAssignmentManifest, "contentHash">

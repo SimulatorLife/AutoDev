@@ -1,5 +1,6 @@
 import {
   CONTROL_API_CONTRACT,
+  CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
   LOCAL_CONTROL_API_ACTOR
 } from "@simulatorlife/autodev-core";
 
@@ -227,6 +228,80 @@ async function verifyProviderModelDiscovery(
   }
 }
 
+async function verifyPlaytestingRoutes(
+  request: ControlApiProbe
+): Promise<void> {
+  const playtestingQuery = new URLSearchParams({
+    workspaceId: DEV_PROBE_WORKSPACE_ID
+  });
+  let playtesting: Awaited<ReturnType<typeof request>>;
+  try {
+    playtesting = await request(
+      `/control/playtesting/capabilities?${playtestingQuery.toString()}`
+    );
+  } catch {
+    throw unavailableError(
+      "the workspace-scoped Playtesting endpoint did not respond"
+    );
+  }
+  if (
+    playtesting.response.status === 401 ||
+    playtesting.response.status === 403
+  ) {
+    throw authorizationError();
+  }
+  const apiError =
+    isRecord(playtesting.body) && isRecord(playtesting.body.error)
+      ? playtesting.body.error
+      : null;
+  const code =
+    apiError && typeof apiError.code === "string" ? apiError.code : "";
+  const currentPlaytestingCapabilities =
+    isRecord(playtesting.body) &&
+    playtesting.body.schema === "autodev-control-playtesting-capabilities-v1" &&
+    playtesting.body.workspaceId === DEV_PROBE_WORKSPACE_ID;
+  const currentPlaytestingError =
+    code.startsWith("autodev_control_playtesting_") &&
+    code !== "autodev_control_playtesting_unknown_path";
+  if (!currentPlaytestingCapabilities && !currentPlaytestingError) {
+    throw startupError("the workspace-scoped Playtesting routes are missing");
+  }
+
+  let readiness: Awaited<ReturnType<typeof request>>;
+  try {
+    readiness = await request(
+      `/control/playtesting/readiness?${playtestingQuery.toString()}`
+    );
+  } catch {
+    throw unavailableError(
+      "the Playtesting readiness endpoint did not respond"
+    );
+  }
+  if (readiness.response.status === 401 || readiness.response.status === 403) {
+    throw authorizationError();
+  }
+  const readinessError =
+    isRecord(readiness.body) && isRecord(readiness.body.error)
+      ? readiness.body.error
+      : null;
+  const readinessCode =
+    readinessError && typeof readinessError.code === "string"
+      ? readinessError.code
+      : "";
+  const currentReadinessResponse =
+    isRecord(readiness.body) &&
+    readiness.body.schema === CONTROL_API_PLAYTESTING_READINESS_SCHEMA &&
+    readiness.body.workspaceId === DEV_PROBE_WORKSPACE_ID &&
+    (readiness.body.status === "initializing" ||
+      readiness.body.status === "ready");
+  const currentReadinessError =
+    readinessCode.startsWith("autodev_control_playtesting_") &&
+    readinessCode !== "autodev_control_playtesting_unknown_path";
+  if (!currentReadinessResponse && !currentReadinessError) {
+    throw startupError("the Playtesting readiness endpoint is missing");
+  }
+}
+
 /**
  * Verify the Runtime's compatibility generation before any Console process
  * serves pages. The manifest is cheap and catches stale installations whose
@@ -300,39 +375,5 @@ export async function verifyControlApiCompatibility(
   const providerIds = new Set(providerData.providers.map(({ id }) => id));
   await verifyProviderModelDiscovery(request, providerIds);
 
-  const playtestingQuery = new URLSearchParams({
-    workspaceId: DEV_PROBE_WORKSPACE_ID
-  });
-  let playtesting: Awaited<ReturnType<typeof request>>;
-  try {
-    playtesting = await request(
-      `/control/playtesting/capabilities?${playtestingQuery.toString()}`
-    );
-  } catch {
-    throw unavailableError(
-      "the workspace-scoped Playtesting endpoint did not respond"
-    );
-  }
-  if (
-    playtesting.response.status === 401 ||
-    playtesting.response.status === 403
-  ) {
-    throw authorizationError();
-  }
-  const apiError =
-    isRecord(playtesting.body) && isRecord(playtesting.body.error)
-      ? playtesting.body.error
-      : null;
-  const code =
-    apiError && typeof apiError.code === "string" ? apiError.code : "";
-  const currentPlaytestingCapabilities =
-    isRecord(playtesting.body) &&
-    playtesting.body.schema === "autodev-control-playtesting-capabilities-v1" &&
-    playtesting.body.workspaceId === DEV_PROBE_WORKSPACE_ID;
-  const currentPlaytestingError =
-    code.startsWith("autodev_control_playtesting_") &&
-    code !== "autodev_control_playtesting_unknown_path";
-  if (!currentPlaytestingCapabilities && !currentPlaytestingError) {
-    throw startupError("the workspace-scoped Playtesting routes are missing");
-  }
+  await verifyPlaytestingRoutes(request);
 }

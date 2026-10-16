@@ -9,6 +9,8 @@ import {
 import {
   buildPlaytestCoverageManifestDraft,
   buildPlaytestFindingIdentity,
+  CONTROL_API_CONTRACT,
+  CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
   playtestAssignmentManifestHashInput,
   type PlaytestComparison,
   playtestCoverageManifestHashInput,
@@ -587,6 +589,9 @@ let nextAnalystRunId = 1;
  * frame from a live one.
  */
 let syntheticRunsReadFails = false;
+let syntheticReadinessPendingPolls = 0;
+let syntheticReadinessPollCount = 0;
+let syntheticReadinessUnavailable = false;
 let syntheticAnalystRunsReadFails = false;
 let syntheticAnalystTaskHistoryMissing = false;
 const syntheticRunEpisodes = new Map<string, Record<string, unknown>>();
@@ -630,14 +635,11 @@ async function approveSyntheticWorkspace(
   const priorRevision =
     typeof body.expectedRevision === "number" ? body.expectedRevision : 0;
   workspaceApproval = {
-    schema: "autodev-workspace-playtest-approval-v1",
+    schema: "autodev-workspace-playtest-approval-v2",
     workspaceId: WORKSPACE_ID,
     revision: priorRevision + 1,
     approvalId: "synthetic-approval-1",
     checkoutRoot: body.checkoutRoot,
-    buildSha: body.buildSha,
-    gameBuild: body.gameBuild,
-    playtestConfigHash: body.playtestConfigHash,
     adapterImageDigest: body.adapterImageDigest,
     workingDirectory: body.workingDirectory,
     adapterCommand: body.adapterCommand,
@@ -1181,6 +1183,7 @@ async function handleSyntheticRunMutation(
         workspaceId: WORKSPACE_ID,
         batchId,
         assignmentCount: runRequest.assignments.length,
+        createdAt: FIXTURE_TIMESTAMP,
         status: "running"
       },
       202
@@ -1252,8 +1255,9 @@ function sendSyntheticCapabilities(response: ServerResponse): void {
     operatorActionsAvailable: true,
     approved,
     approvalRevision: approved ? workspaceApproval.revision : null,
-    buildSha: approved ? workspaceApproval.buildSha : null,
-    gameBuild: approved ? workspaceApproval.gameBuild : null,
+    // The synthetic checkout's latest committed build.
+    buildSha: approved ? BUILD_SHA : null,
+    gameBuild: approved ? BUILD_SHA : null,
     allowedScenarios: scenarios,
     approvedPolicies: policies,
     supportedPolicies: ["random"],
@@ -1267,6 +1271,7 @@ function sendSyntheticCapabilities(response: ServerResponse): void {
         ? Math.min(PLAYTESTS_MAX_BATCH_ASSIGNMENTS, Number(limits.episodeCount))
         : 0,
     runnableAssignments,
+    admissibleSeeds: null,
     policyProfiles: runnableAssignments.map((assignment) => ({
       policyId: assignment.policyId,
       version: assignment.policyVersion,
@@ -1284,7 +1289,10 @@ function sendSyntheticCapabilities(response: ServerResponse): void {
 function completeSyntheticRunIfReady(run: SyntheticRun): void {
   if (
     run.status === "running" &&
-    !run.assignments.some((assignment) => assignment.seed === "hold")
+    !run.assignments.some(
+      (assignment) =>
+        assignment.seed === "hold" || assignment.seed.startsWith("hold-")
+    )
   ) {
     run.status = "completed";
     for (const entry of run.episodes) {
@@ -1366,6 +1374,9 @@ function handleSyntheticRunRead(response: ServerResponse, url: URL): boolean {
     return true;
   }
   if (url.pathname === "/control/playtesting/runs") {
+    // Like the Runtime, a batch progresses regardless of which read observes
+    // it; the active list then omits it once it is terminal.
+    for (const run of syntheticRuns.values()) completeSyntheticRunIfReady(run);
     const runs = [...syntheticRuns.entries()]
       .filter(
         ([, run]) =>
@@ -1413,10 +1424,67 @@ function handleSyntheticRunRead(response: ServerResponse, url: URL): boolean {
     : false;
 }
 
+function respondSyntheticReadiness(
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (url.pathname !== "/control/playtesting/readiness") return false;
+  if (syntheticReadinessUnavailable) {
+    sendJson(
+      response,
+      {
+        error: {
+          code: "autodev_control_playtesting_source_unavailable",
+          message: "Synthetic Playtesting schema initialization failed."
+        }
+      },
+      503
+    );
+    return true;
+  }
+  const status =
+    syntheticReadinessPollCount++ < syntheticReadinessPendingPolls
+      ? "initializing"
+      : "ready";
+  sendJson(response, {
+    schema: CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
+    workspaceId: WORKSPACE_ID,
+    status
+  });
+  return true;
+}
+
+function respondSyntheticPlaytestingDataReadiness(
+  response: ServerResponse
+): boolean {
+  const code = syntheticReadinessUnavailable
+    ? "autodev_control_playtesting_source_unavailable"
+    : syntheticReadinessPollCount < syntheticReadinessPendingPolls
+      ? "autodev_control_playtesting_source_initializing"
+      : null;
+  if (code === null) return false;
+  sendJson(
+    response,
+    {
+      error: {
+        code,
+        message:
+          code === "autodev_control_playtesting_source_unavailable"
+            ? "Synthetic Playtesting schema initialization failed."
+            : "Synthetic Playtesting schema is initializing."
+      }
+    },
+    503
+  );
+  return true;
+}
+
 function handleSyntheticPlaytestingRead(
   response: ServerResponse,
   url: URL
 ): boolean {
+  if (respondSyntheticReadiness(response, url)) return true;
+  if (respondSyntheticPlaytestingDataReadiness(response)) return true;
   if (url.pathname === "/control/playtesting/batches") {
     sendJson(response, page("batches", [batch], 1));
     return true;
@@ -1517,6 +1585,76 @@ function handleSyntheticPlaytestingRead(
   return false;
 }
 
+function resetSyntheticFixture(
+  request: IncomingMessage,
+  response: ServerResponse
+): boolean {
+  if (request.url === undefined || !request.url.startsWith("/fixture/reset")) {
+    return false;
+  }
+  if (request.method !== "POST") {
+    response.writeHead(405).end();
+    return true;
+  }
+  workspaceApproval = null;
+  comparison = structuredClone(initialComparison);
+  syntheticRuns.clear();
+  syntheticRunEpisodes.clear();
+  syntheticRunReviews.clear();
+  syntheticAnalystRuns.clear();
+  nextRunId = 1;
+  nextAnalystRunId = 1;
+  syntheticRunsReadFails = false;
+  syntheticReadinessPendingPolls = 0;
+  syntheticReadinessPollCount = 0;
+  syntheticReadinessUnavailable = false;
+  syntheticAnalystRunsReadFails = false;
+  syntheticAnalystTaskHistoryMissing = false;
+  sendJson(response, { reset: true });
+  return true;
+}
+
+function handleSyntheticReadinessInitialization(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (url.pathname !== "/control/playtesting/initialize") return false;
+  if (
+    request.method !== "POST" ||
+    url.searchParams.get("workspaceId") !== WORKSPACE_ID
+  ) {
+    response.writeHead(400).end();
+    return true;
+  }
+  syntheticReadinessUnavailable = false;
+  syntheticReadinessPendingPolls = 0;
+  sendJson(response, {
+    schema: CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
+    workspaceId: WORKSPACE_ID,
+    status: "ready"
+  });
+  return true;
+}
+
+function configureReadinessFixture(
+  url: URL,
+  response: ServerResponse
+): boolean {
+  if (url.pathname !== "/fixture/readiness") return false;
+  syntheticReadinessUnavailable = url.searchParams.get("unavailable") === "on";
+  const polls = Number(url.searchParams.get("pendingPolls") ?? 0);
+  syntheticReadinessPendingPolls = Number.isSafeInteger(polls)
+    ? Math.max(0, Math.min(10, polls))
+    : 0;
+  syntheticReadinessPollCount = 0;
+  sendJson(response, {
+    syntheticReadinessPendingPolls,
+    syntheticReadinessUnavailable
+  });
+  return true;
+}
+
 const server = createServer(
   async (request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -1524,27 +1662,8 @@ const server = createServer(
       response.writeHead(200).end("ok");
       return;
     }
-    if (url.pathname === "/fixture/reset") {
-      if (request.method !== "POST") {
-        response.writeHead(405).end();
-        return;
-      }
-      workspaceApproval = null;
-      comparison = structuredClone(initialComparison);
-      syntheticRuns.clear();
-      syntheticRunEpisodes.clear();
-      syntheticRunReviews.clear();
-      syntheticAnalystRuns.clear();
-      nextRunId = 1;
-      nextAnalystRunId = 1;
-      syntheticRunsReadFails = false;
-      syntheticAnalystRunsReadFails = false;
-      syntheticAnalystTaskHistoryMissing = false;
-      sendJson(response, { reset: true });
-      return;
-    }
-    // Fixture control, so a browser test can make the active-runs read fail
-    // and observe the Console's unavailable state rather than inferring it.
+    if (resetSyntheticFixture(request, response)) return;
+    if (configureReadinessFixture(url, response)) return;
     if (url.pathname === "/fixture/runs-read-fail") {
       syntheticRunsReadFails = url.searchParams.get("mode") !== "off";
       sendJson(response, { syntheticRunsReadFails });
@@ -1568,6 +1687,7 @@ const server = createServer(
     }
     if (await handleSyntheticAnalysisMutation(request, response, url)) return;
     if (await handleSyntheticRunMutation(request, response, url)) return;
+    if (handleSyntheticReadinessInitialization(request, response, url)) return;
     if (request.method !== "GET") {
       response.writeHead(405).end();
       return;
@@ -1593,7 +1713,7 @@ const server = createServer(
     if (url.pathname === "/control/contracts") {
       sendJson(response, {
         schema: "autodev-control-api-contract-v1",
-        version: 3
+        version: CONTROL_API_CONTRACT.version
       });
       return;
     }

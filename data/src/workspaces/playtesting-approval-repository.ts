@@ -16,6 +16,7 @@ import path from "node:path";
 
 import {
   assertWorkspacePlaytestApproval,
+  WORKSPACE_PLAYTEST_APPROVAL_SCHEMA,
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
 
@@ -23,6 +24,38 @@ const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const OWNER_DIRECTORY_MODE = 0o700;
 const OWNER_FILE_MODE = 0o600;
 const TEMP_MARKER = ".tmp.";
+const APPROVAL_SCHEMA_V1 = "autodev-workspace-playtest-approval-v1";
+/** v1 pinned one commit; v2 authorizes the checkout's latest committed build. */
+const V1_PINNED_BUILD_FIELDS = [
+  "buildSha",
+  "gameBuild",
+  "playtestConfigHash"
+] as const;
+
+/**
+ * One-way migration of a stored v1 approval: the pinned commit, game build
+ * and config hash are dropped because v2 resolves them per batch. Everything
+ * the operator authorized (checkout, image, command, grants, limits) is kept.
+ */
+function migrateStoredApproval(value: unknown): {
+  readonly value: unknown;
+  readonly migrated: boolean;
+} {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    (value as { schema?: unknown }).schema !== APPROVAL_SCHEMA_V1
+  ) {
+    return { value, migrated: false };
+  }
+  const next: Record<string, unknown> = {
+    ...(value as Record<string, unknown>),
+    schema: WORKSPACE_PLAYTEST_APPROVAL_SCHEMA
+  };
+  for (const field of V1_PINNED_BUILD_FIELDS) delete next[field];
+  return { value: next, migrated: true };
+}
 
 export function defaultWorkspacePlaytestApprovalRoot(): string {
   const codexHome =
@@ -154,13 +187,17 @@ export class WorkspacePlaytestApprovalRepository {
       );
     }
     try {
-      const value = JSON.parse(readFileSync(canonical, "utf8")) as unknown;
+      const stored = migrateStoredApproval(
+        JSON.parse(readFileSync(canonical, "utf8")) as unknown
+      );
+      const value = stored.value;
       assertWorkspacePlaytestApproval(value);
       if (value.workspaceId !== workspaceId) {
         throw new TypeError(
           "Approval workspace identity does not match its store key."
         );
       }
+      if (stored.migrated) this.write(value);
       chmodSync(canonical, OWNER_FILE_MODE);
       return value;
     } catch (error) {
