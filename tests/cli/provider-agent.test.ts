@@ -16,7 +16,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { parse as parseToml } from "smol-toml";
 
 import {
   buildProviderPrompt,
@@ -25,6 +24,7 @@ import {
   readRoleExecutionSettings,
   runProviderAgent
 } from "@simulatorlife/autodev-runtime/cli/provider-agent";
+import { parse as parseToml } from "smol-toml";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -140,10 +140,19 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
         return 0;
       }
     };
-    assert.equal(
-      buildProviderPrompt("do the task", readRoleExecutionSettings(f.roleFile)),
-      "Provider-neutral role instructions:\nUse the typed path.\n\nBounded task:\ndo the task"
+    const prompt = buildProviderPrompt(
+      "do the task",
+      readRoleExecutionSettings(f.roleFile)
     );
+    assert.match(
+      prompt,
+      /Provider-neutral role instructions:\nUse the typed path\.\n/u
+    );
+    assert.match(prompt, /AutoDev Code Mode/u);
+    assert.match(prompt, /`exec` JavaScript tool/u);
+    assert.match(prompt, /tools\.mcp__<server>__<tool>/u);
+    assert.match(prompt, /Dotted names.*not direct top-level functions/u);
+    assert.match(prompt, /Bounded task:\ndo the task$/u);
     assert.equal(
       await runProviderAgent(
         [
@@ -232,10 +241,7 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
     assert.equal(calls[0]?.env.AUTODEV_MEMORY_TASK_TEXT, undefined);
     assert.match(calls[0]?.env.AUTODEV_MEMORY_TASK_ID ?? "", /^provider-task-/);
     assert.match(calls[0]?.env.AUTODEV_MEMORY_RUN_ID ?? "", /^provider-run-/);
-    assert.equal(
-      calls[0]?.args.at(-1),
-      "Provider-neutral role instructions:\nUse the typed path.\n\nBounded task:\ndo the task"
-    );
+    assert.equal(calls[0]?.args.at(-1), prompt);
   } finally {
     rmSync(f.root, { recursive: true, force: true });
   }
@@ -663,6 +669,7 @@ test("playtest analysis restricts Codex to packet tools and an isolated executio
       AUTODEV_OPENLIT_USAGE_TOKEN: "runtime-usage-secret",
       OPENAI_API_KEY: "runtime-provider-secret",
       CODEX_ROUTER_AUTH_TOKEN: "local-router-token",
+      CODEX_PROJECT_ROOT: repositoryRoot,
       AUTODEV_PLAYTEST_ANALYSIS_MODE: "1",
       AUTODEV_PLAYTEST_ANALYST_HOME: isolatedHome,
       AUTODEV_PLAYTEST_ANALYST_CODEX_HOME: isolatedCodexHome,
@@ -769,6 +776,11 @@ test("playtest analysis restricts Codex to packet tools and an isolated executio
     assert.equal(call.env.AUTODEV_PLAYTEST_CONTROL_API_ROLE, undefined);
     assert.equal(call.env.AUTODEV_CONTROL_API_BASE_URL, undefined);
     assert.equal(call.env.CODEX_ROUTER_AUTH_TOKEN, "local-router-token");
+    assert.equal(
+      call.env.CODEX_PROJECT_ROOT,
+      join(f.root, "workspace"),
+      "Code Mode workspace attribution must remain the private empty directory, not the caller's source/game project"
+    );
   } finally {
     rmSync(f.root, { recursive: true, force: true });
   }

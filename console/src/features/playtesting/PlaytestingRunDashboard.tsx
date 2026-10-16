@@ -12,7 +12,7 @@ import type {
   ControlApiPlaytestingRunStartedResponse
 } from "@simulatorlife/autodev-core";
 import { useRouter } from "next/navigation";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   cancellationAvailability,
@@ -36,6 +36,8 @@ export function PlaytestingRunDashboard({
   readonly showRunControls?: boolean;
 }): React.JSX.Element {
   const router = useRouter();
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [playDialogOpen, setPlayDialogOpen] = useState(false);
   const live = usePlaytestingActiveRuns({
     workspaceId: scope.workspaceId ?? null
   });
@@ -50,6 +52,7 @@ export function PlaytestingRunDashboard({
         error: null
       };
       setFocusedBatchId(started.batchId);
+      setPlayDialogOpen(false);
       live.trackRun({
         batchId: started.batchId,
         assignmentCount: started.assignmentCount,
@@ -75,27 +78,196 @@ export function PlaytestingRunDashboard({
   useEffect(() => {
     if (terminalBatches) router.refresh();
   }, [router, terminalBatches]);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (playDialogOpen && !dialog.open) dialog.showModal();
+    else if (!playDialogOpen && dialog.open) dialog.close();
+  }, [playDialogOpen]);
+
+  const activeCount = live.state.runs.filter(
+    (run) => !isTerminal(run.record)
+  ).length;
   return React.createElement(
     React.Fragment,
     null,
-    showRunControls && scope.view === "overview"
-      ? React.createElement(PlaytestingRunControls, {
-          setup,
-          onRunStarted
-        })
+    showRunControls
+      ? React.createElement(
+          "div",
+          { className: "flex flex-wrap items-center justify-end gap-3" },
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className:
+                "inline-flex min-h-11 items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-fg-inverse shadow-sm transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60",
+              onClick: () => setPlayDialogOpen(true),
+              disabled: scope.workspaceId === null,
+              "aria-label": "Start playtest",
+              title:
+                scope.workspaceId === null
+                  ? "Choose a workspace before starting a playtest"
+                  : undefined,
+              "data-playtesting-open-dialog": "true"
+            },
+            React.createElement(
+              "span",
+              { "aria-hidden": true, className: "text-lg leading-none" },
+              "▶"
+            ),
+            "Play"
+          ),
+          React.createElement(
+            "dialog",
+            {
+              ref: dialogRef,
+              className:
+                "m-auto max-h-[calc(100dvh-2rem)] w-[min(52rem,calc(100%-2rem))] overflow-y-auto rounded-xl border border-border bg-surface p-0 text-fg shadow-2xl backdrop:bg-black/70",
+              "aria-labelledby": "playtesting-new-dialog-title",
+              "data-testid": "playtesting-new-dialog",
+              onClose: () => setPlayDialogOpen(false)
+            },
+            React.createElement(
+              "div",
+              {
+                className:
+                  "flex items-start justify-between gap-4 border-b border-border px-5 py-4 sm:px-6"
+              },
+              React.createElement(
+                "div",
+                null,
+                React.createElement(
+                  "h2",
+                  {
+                    id: "playtesting-new-dialog-title",
+                    className: "text-lg font-semibold tracking-tight"
+                  },
+                  "New playtest"
+                ),
+                React.createElement(
+                  "p",
+                  { className: "mt-1 text-sm text-fg-muted" },
+                  "Choose a play mode, set a safe budget, and follow the resulting session."
+                )
+              ),
+              React.createElement(
+                "button",
+                {
+                  type: "button",
+                  className:
+                    "rounded-md border border-border px-3 py-2 text-sm hover:bg-surface-raised",
+                  onClick: () => setPlayDialogOpen(false),
+                  "aria-label": "Close new playtest dialog"
+                },
+                "Close"
+              )
+            ),
+            React.createElement(
+              "div",
+              {
+                className:
+                  "grid gap-3 border-b border-border px-5 py-4 sm:grid-cols-2 sm:px-6"
+              },
+              React.createElement(
+                "section",
+                {
+                  className:
+                    "rounded-lg border border-border bg-background/50 p-4 opacity-75",
+                  "aria-label": "Autonomous visual mode unavailable",
+                  "data-playtesting-mode": "autonomous-visual",
+                  "data-mode-status": "unavailable"
+                },
+                React.createElement(
+                  "p",
+                  { className: "font-semibold" },
+                  "Autonomous visual"
+                ),
+                React.createElement(
+                  "p",
+                  { className: "mt-1 text-xs font-medium text-fg-muted" },
+                  "Not available in this Runtime yet"
+                ),
+                React.createElement(
+                  "p",
+                  { className: "mt-3 text-sm text-fg-secondary" },
+                  "The visual browser driver and Smart-directed decision loop are not installed. This mode will not silently fall back to a headless policy."
+                )
+              ),
+              React.createElement(
+                "section",
+                {
+                  className:
+                    "rounded-lg border border-accent/60 bg-accent/5 p-4",
+                  "aria-label": "Adapter-accelerated mode",
+                  "data-playtesting-mode": "adapter-accelerated",
+                  "data-mode-status": "current"
+                },
+                React.createElement(
+                  "p",
+                  { className: "font-semibold" },
+                  "Adapter-accelerated"
+                ),
+                React.createElement(
+                  "p",
+                  { className: "mt-1 text-xs font-medium text-fg-muted" },
+                  "Current supported mode"
+                ),
+                React.createElement(
+                  "p",
+                  { className: "mt-3 text-sm text-fg-secondary" },
+                  "Runs the approved game adapter against the latest committed checkout. Results are structured and fast, but do not represent what a player sees."
+                )
+              )
+            ),
+            React.createElement(
+              "div",
+              { className: "p-5 sm:p-6" },
+              React.createElement(PlaytestingRunControls, {
+                setup,
+                onRunStarted
+              })
+            )
+          )
+        )
       : null,
-    scope.workspaceId
-      ? React.createElement(PlaytestingLiveRuns, {
-          workspaceId: scope.workspaceId,
-          scope,
-          initialFocusedBatchId: focusedBatchId,
-          wallTimeMs:
-            setup.kind === "available" ? setup.capabilities.limits?.wallTimeMs ?? null : null,
-          showEmptyState: showRunControls && scope.view === "overview",
-          allowCancel: canCancel,
-          cancelUnavailableReason,
-          live
-        })
+    scope.workspaceId && scope.view === "overview"
+      ? React.createElement(
+          "details",
+          {
+            className: "rounded-lg border border-border bg-surface/70",
+            open: live.state.runs.length > 0,
+            "data-testid": "playtesting-run-status-disclosure"
+          },
+          React.createElement(
+            "summary",
+            {
+              className:
+                "cursor-pointer list-none px-4 py-3 text-sm font-medium"
+            },
+            activeCount > 0
+              ? `${String(activeCount)} active ${activeCount === 1 ? "run" : "runs"} · view live status`
+              : live.state.runs.length > 0
+                ? "Most recent run status"
+                : "Live run status"
+          ),
+          React.createElement(
+            "div",
+            { className: "border-t border-border p-3" },
+            React.createElement(PlaytestingLiveRuns, {
+              workspaceId: scope.workspaceId,
+              scope,
+              initialFocusedBatchId: focusedBatchId,
+              wallTimeMs:
+                setup.kind === "available"
+                  ? (setup.capabilities.limits?.wallTimeMs ?? null)
+                  : null,
+              showEmptyState: true,
+              allowCancel: canCancel,
+              cancelUnavailableReason,
+              live
+            })
+          )
+        )
       : null
   );
 }

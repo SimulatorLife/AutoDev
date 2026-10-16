@@ -12,8 +12,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  statSync,
-  writeFileSync
+  statSync
 } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -572,7 +571,7 @@ function analystMcpEnvironmentVariables(roleFile: string): string[] {
 
 function analystSkillsConfigOverride(value: TomlValue): string {
   if (!Array.isArray(value)) {
-    throw new Error("The playtest analyst skills.config must be an array.");
+    throw new TypeError("The playtest analyst skills.config must be an array.");
   }
   const names = new Set<string>();
   const entries = value.map((item) => {
@@ -739,6 +738,10 @@ function analystCodexEnvironment(
     environment.AUTODEV_PLAYTEST_ANALYST_HOME?.trim() ||
     path.dirname(options.codexHome);
   result.CODEX_HOME = options.codexHome;
+  // Code-mode follow-up requests still need an explicit Router project root.
+  // This role's working directory is the private empty workspace, not the game
+  // checkout, so bind attribution to that same isolated directory.
+  result.CODEX_PROJECT_ROOT = options.workspace;
   result.AUTODEV_REPO_ROOT = options.repositoryRoot;
   result.AUTODEV_PLAYTEST_ANALYST_SOURCE_HOME =
     environment.AUTODEV_PLAYTEST_ANALYST_SOURCE_HOME?.trim() ||
@@ -865,7 +868,14 @@ export function buildProviderPrompt(
   prompt: string,
   settings: RoleExecutionSettings
 ): string {
-  return `Provider-neutral role instructions:\n${settings.developerInstructions}\n\nBounded task:\n${prompt}`;
+  return [
+    "Provider-neutral role instructions:",
+    settings.developerInstructions,
+    "Tool invocation:",
+    "This Runtime launches roles in AutoDev Code Mode. Call MCP operations only from the `exec` JavaScript tool, using the exact `tools.mcp__<server>__<tool>` names advertised in `ALL_TOOLS`. Dotted names in role instructions describe MCP operations; they are not direct top-level functions. Use only tools enabled for this role; do not invoke shell, filesystem, network, or unconfigured tools.",
+    "Bounded task:",
+    prompt
+  ].join("\n");
 }
 
 export function runCodex(

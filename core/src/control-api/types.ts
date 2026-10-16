@@ -67,6 +67,7 @@ import type {
   WorkspaceCatalogStatus,
   WorkspaceEntry
 } from "../workspaces/types.ts";
+import type { WorkspaceVisualPlaytestTargetApproval } from "../workspaces/visual-playtesting.ts";
 
 /** Typed response contracts exposed by the AutoDev Control API. */
 export interface ControlApiError {
@@ -1581,4 +1582,12 @@ export interface ControlApiWorkspacePlaytestApprovalResponse {
   readonly workspaceId: string;
   readonly workspaceEnabled: boolean;
   readonly approval: WorkspacePlaytestApproval | null;
+}
+
+/** Workspaces-owned list of approved visual targets; no Runtime readiness claim. */
+export interface ControlApiWorkspaceVisualPlaytestTargetsResponse {
+  readonly schema: "autodev-control-workspace-visual-playtest-targets-v1";
+  readonly workspaceId: string;
+  readonly workspaceEnabled: boolean;
+  readonly targets: readonly WorkspaceVisualPlaytestTargetApproval[];
 }

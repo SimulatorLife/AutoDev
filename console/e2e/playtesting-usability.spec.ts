@@ -28,6 +28,7 @@ const ACTIVE_APPROVAL_SELECTOR = '[data-workspace-approval-state="active"]';
 const LIVE_OR_IDLE_FRESHNESS_PATTERN = /live|idle/u;
 const LIVE_BATCH_URL_PATTERN = /liveBatch=batch-/u;
 const LAST_KNOWN_STATE_PATTERN = /not confirmed current state/iu;
+const FILTERS_SUMMARY_PATTERN = /^Filters/u;
 const SYNTHETIC_REVIEW_ID_PATTERN = /Review review-fixture-1 · rubric/u;
 const FIXTURE_IMAGE_DIGEST = "fixture/adapter@sha256:" + "c".repeat(64);
 const FIXTURE_WORKSPACE_ID = "fixture/game";
@@ -44,6 +45,15 @@ const TWO_SESSION_SELECTION_URL_PATTERN = /sessions=episode-17%2Cepisode-/u;
 const ANALYST_PANEL_NAME = "Multi-session analyst review";
 const START_ANALYST_REVIEW_LABEL = "Start analyst review";
 const ANALYST_RUN_TEST_ID = "playtesting-analysis-run";
+const PRESSED_ATTRIBUTE = "aria-pressed";
+const PRESSED_VALUE = "true";
+
+async function openNewPlaytest(page: Page): Promise<Locator> {
+  await page.locator('[data-playtesting-open-dialog="true"]').click();
+  const dialog = page.getByTestId("playtesting-new-dialog");
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
 
 test.beforeEach(async ({ request }) => {
   const response = await request.post(`${FIXTURE_BASE_URL}/fixture/reset`);
@@ -98,16 +108,31 @@ test("workspace overview distinguishes batches, episodes, findings, and comparis
     page.getByRole("navigation", { name: "Playtesting views" })
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "Run", exact: true })
+    page.getByRole("link", { name: "Overview", exact: true })
   ).toHaveAttribute("aria-current", "page");
   await expect(page.getByText("Latest result")).toBeVisible();
-  await expect(page.getByTestId("playtesting-run-blocked")).toBeInViewport();
-  await expect(page.getByTestId("playtesting-run-blocked")).toContainText(
+  const dialog = await openNewPlaytest(page);
+  await expect(
+    page.getByRole("dialog", { name: "New playtest" })
+  ).toBeVisible();
+  await expect(dialog).toHaveAttribute(
+    "aria-labelledby",
+    "playtesting-new-dialog-title"
+  );
+  await expect(
+    dialog.locator('[data-playtesting-mode="autonomous-visual"]')
+  ).toContainText("Not available in this Runtime yet");
+  await expect(
+    dialog.locator('[data-playtesting-mode="adapter-accelerated"]')
+  ).toContainText("Current supported mode");
+  await expect(dialog.getByTestId("playtesting-run-blocked")).toContainText(
     "Approval required"
   );
-  await expect(page.getByTestId("playtesting-build-context")).toContainText(
+  await expect(dialog.getByTestId("playtesting-build-context")).toContainText(
     "new commits do not need separate approval"
   );
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
   await page.getByText("Measurement coverage").click();
   await expect(
     page.locator('[data-coverage-cell="legal-action-rejection"]')
@@ -355,6 +380,37 @@ test("finding witness opens its exact replay step, then Back restores filtered l
   await expect(page.locator('[id^="finding-finding-"]')).toBeVisible();
 });
 
+test("session List/Grid preference is shareable and restored by Back", async ({
+  page
+}) => {
+  await page.goto("/playtesting?view=sessions&workspaceId=fixture%2Fgame");
+  const list = page.getByRole("button", { name: "List view" });
+  const grid = page.getByRole("button", { name: "Grid view" });
+  await expect(list).toHaveAttribute(PRESSED_ATTRIBUTE, PRESSED_VALUE);
+  await grid.click();
+  await expect(grid).toHaveAttribute(PRESSED_ATTRIBUTE, PRESSED_VALUE);
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("layout"))
+    .toBe("grid");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Grid view" })).toHaveAttribute(
+    PRESSED_ATTRIBUTE,
+    PRESSED_VALUE
+  );
+  await page.getByRole("button", { name: "List view" }).click();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.has("layout"))
+    .toBe(false);
+  await page.goBack();
+  await expect(page.getByRole("button", { name: "Grid view" })).toHaveAttribute(
+    PRESSED_ATTRIBUTE,
+    PRESSED_VALUE
+  );
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("layout"))
+    .toBe("grid");
+});
+
 test("mobile session list has no horizontal page overflow and tabs are keyboard navigable", async ({
   page
 }) => {
@@ -368,11 +424,14 @@ test("mobile session list has no horizontal page overflow and tabs are keyboard 
   expect(width.document).toBeLessThanOrEqual(width.viewport);
 
   const nav = page.getByRole("navigation", { name: "Playtesting views" });
-  const run = nav.getByRole("link", { name: "Run" });
+  const run = nav.getByRole("link", { name: "Overview" });
   await run.focus();
   await page.keyboard.press("Tab");
   await expect(nav.getByRole("link", { name: "Sessions" })).toBeFocused();
-  await page.getByText("Filters and page size").click();
+  await page
+    .locator("summary")
+    .filter({ hasText: FILTERS_SUMMARY_PATTERN })
+    .click();
   await expect(
     page.getByRole("form", { name: "Playtesting filters" })
   ).toBeVisible();
@@ -441,6 +500,7 @@ test("batch composer generates and submits the full bounded 1,000-assignment inv
   await expect(page.locator(ACTIVE_APPROVAL_SELECTOR)).toBeVisible();
 
   await page.goto(PLAYTESTING_OVERVIEW_URL);
+  await openNewPlaytest(page);
   const form = page.getByRole("form", {
     name: RUN_FORM_NAME
   });
@@ -525,6 +585,7 @@ test("approved run start, automatic status watching, and cancellation stay in th
   await expect(page.locator(ACTIVE_APPROVAL_SELECTOR)).toBeVisible();
 
   await page.goto(PLAYTESTING_OVERVIEW_URL);
+  await openNewPlaytest(page);
   const form = page.getByRole("form", {
     name: RUN_FORM_NAME
   });
@@ -541,11 +602,12 @@ test("approved run start, automatic status watching, and cancellation stay in th
     viewport: document.documentElement.clientWidth
   }));
   expect(mobileWidth.document).toBeLessThanOrEqual(mobileWidth.viewport);
+  await page.getByRole("button", { name: "Close new playtest dialog" }).click();
   const collapseSidebar = page.getByRole("button", {
     name: "Collapse sidebar"
   });
   if (await collapseSidebar.isVisible()) await collapseSidebar.click();
-
+  await openNewPlaytest(page);
   const documentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
   await form
     .getByRole("group", { name: "Session 1" })
@@ -637,6 +699,7 @@ test("approved run start, automatic status watching, and cancellation stay in th
     })
   ).toBeVisible();
 
+  await openNewPlaytest(page);
   await form
     .getByRole("group", { name: "Session 1" })
     .getByLabel("Seed")
@@ -697,6 +760,7 @@ test("operator can start, watch, and analyze a completed session from the same C
   await expect(page.locator(ACTIVE_APPROVAL_SELECTOR)).toBeVisible();
 
   await page.goto(PLAYTESTING_OVERVIEW_URL);
+  await openNewPlaytest(page);
   const runForm = page.getByRole("form", {
     name: RUN_FORM_NAME
   });
@@ -871,6 +935,16 @@ test("live batches appear without operator action, and an unreadable read is sta
   await expect(page.locator(ACTIVE_APPROVAL_SELECTOR)).toBeVisible();
 
   await page.goto("/playtesting?workspaceId=fixture/game");
+  const statusDisclosure = page.getByTestId(
+    "playtesting-run-status-disclosure"
+  );
+  if (
+    !(await statusDisclosure.evaluate(
+      (node) => (node as HTMLDetailsElement).open
+    ))
+  ) {
+    await statusDisclosure.locator("summary").click();
+  }
   const panel = page.getByRole("region", { name: RUN_STATUS_REGION_NAME });
   await expect(panel).toBeVisible();
   await expect(panel).toHaveAttribute(
@@ -878,6 +952,7 @@ test("live batches appear without operator action, and an unreadable read is sta
     LIVE_OR_IDLE_FRESHNESS_PATTERN
   );
 
+  await openNewPlaytest(page);
   const form = page.getByRole("form", {
     name: RUN_FORM_NAME
   });

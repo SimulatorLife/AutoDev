@@ -31,6 +31,46 @@ test("Playtesting view navigation preserves workspace and destination-compatible
   assert.equal(url.searchParams.has("cursor"), false);
 });
 
+test("session layout is shareable, defaults to List, and survives view navigation", () => {
+  const initial = parsePlaytestingScope({
+    view: "sessions",
+    workspaceId: WORKSPACE
+  });
+  assert.equal(initial.layout, "list");
+  assert.equal(
+    new URL(
+      playtestingListHref(initial),
+      "http://console.test"
+    ).searchParams.has("layout"),
+    false
+  );
+
+  const grid = parsePlaytestingScope({
+    view: "sessions",
+    workspaceId: WORKSPACE,
+    layout: "grid"
+  });
+  assert.equal(grid.layout, "grid");
+  assert.equal(grid.invalidQuery, false);
+  const gridUrl = new URL(playtestingListHref(grid), "http://console.test");
+  assert.equal(gridUrl.searchParams.get("layout"), "grid");
+
+  const nextView = new URL(
+    playtestingViewHref(grid, "findings"),
+    "http://console.test"
+  );
+  assert.equal(nextView.searchParams.get("layout"), "grid");
+  assert.equal(
+    parsePlaytestingScope({ view: "sessions", layout: "cards" }).invalidQuery,
+    true
+  );
+  assert.equal(
+    parsePlaytestingScope({ view: "sessions", layout: ["grid", "list"] })
+      .invalidQuery,
+    true
+  );
+});
+
 test("finding replay links preserve exact episode step and filtered cursor-page Back state", () => {
   const scope = parsePlaytestingScope({
     view: "findings",

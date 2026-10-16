@@ -21,10 +21,6 @@ import {
   resolveRuntimeSourceRoot
 } from "../shared/runtime-source-root.ts";
 
-// TEMP-DIAG
-import { openSync as diagOpenSync } from "node:fs";
-let diagFd: number | null = null;
-function require_diag_fd(): number { diagFd ??= diagOpenSync("/tmp/analyst-diag.jsonl", "a"); return diagFd; } // TEMP-DIAG
 const ANALYST_ROLE = "playtest-analyst" as const;
 const ANALYST_TIMEOUT_MS = 10 * 60 * 1000;
 const TERMINATION_GRACE_MS = 2000;
@@ -77,7 +73,10 @@ function playtestAnalystPrompt(input: PlaytestAnalystProcessInput): string {
     ...input.episodeIds.map((episodeId) => `- ${episodeId}`),
     "Runtime computed the following deterministic selected-session metric aggregation from the exact frozen packets. Treat these as descriptive ratio-of-sums only within the exact strata shown; do not recompute, average per-session percentages, infer a matched-seed effect, or make population claims. Independent units are null when the metric's declared unit cannot be deduplicated from these packets. Cite the source packets for every interpretation:",
     JSON.stringify(input.metricAggregation),
-    "For each episode, call playtest.prepareReview first, then submit one review using the exact packet ID, artifact ID, SHA-256, rubric hash, and workspace returned by that tool. Use only the bounded packet and its included sibling context; do not call playtest.prepareCrossSessionReview because Runtime already froze the exact selection for this dispatch. Submit reports independently per episode and cite only that episode's packet. If a packet is unavailable, leave it unreviewed; do not substitute raw or unselected evidence.",
+    "For each episode, call playtest.prepareReview first, then submit one review using the exact packetId, packetArtifactId, packetSha256, rubric hash, and workspace returned by that tool. Use only the bounded packet and its included sibling context; do not call playtest.prepareCrossSessionReview because Runtime already froze the exact selection for this dispatch. Submit reports independently per episode and cite only that episode's packet. If a packet is unavailable, leave it unreviewed; do not substitute raw or unselected evidence.",
+    "The strict playtest.submitReview input requires episodeId, packetId, packetArtifactId, packetSha256, chronologicalSummary, status (hypothesis or not observed only), non-empty top-level evidenceRefs, non-empty observations and interpretations (each exactly {text,evidenceRefs}), alternativeExplanations, reportCompleteness, experiments, and rubricHash. dimensionEvidence is optional and each item has only dimensionId, rationale, evidenceRefs, and optional counterexampleId. Runtime copies authoritativeMetrics and derives anchor categories, provenance, author, version, and timestamps; do not submit those fields.",
+    "reportCompleteness must contain exactly four keys, with no narrative-section keys or extra metadata: crossSessionContext, alternatives, experiments, and followUp. Cross-session context is {status:unavailable,reason:<packet-specific reason>} or {status:available,evidenceRefs:[{kind:episode,id:<packet-supplied sibling episode ID>}]}; the available evidenceRefs are whole-episode locators, not synthesis triples. For empty alternativeExplanations use alternatives={status:none-identified,reason:<evidence-grounded reason>}; for a non-empty array use exactly {status:provided}. For an empty experiments array use experiments={status:none-recommended,reason:<evidence-grounded reason>}; for a non-empty array use exactly {status:proposed}. Follow-up is exactly {status:proposed,text:<next investigation>} or {status:none,reason:<why none>}. Do not use historical not-recorded statuses in a new review.",
+    "Per-session experiment entries have exactly hypothesis, falsifier, metricId, controls (a non-empty string array), and budget; do not add citations there. Keep hypotheses in interpretations with evidenceRefs. Omit findings for this analyst hypothesis review; if a future request requires a finding, its separate strict identity uses mechanicKey, failureSignature, and scope, never a locator. Do not use a score field in dimensionEvidence; provide only supported dimension-specific rationale/citations.",
     "After the per-session reviews, when at least two packets were prepared, submit one batch-level cross-session synthesis with playtest.submitCrossSessionSynthesis. Cite every pattern, counterexample, confounder, and proposed experiment using {episodeId, packetId, locator} references from those exact packets. Keep all conclusions at hypothesis level; do not call patterns verified or corroborated. If fewer than two packets were available, do not submit a synthesis.",
     "Do not run, branch, modify source, change game state, or publish issues. Do not claim verification or corroboration; reviews remain hypotheses or not-observed."
   ].join("\n");
@@ -171,7 +170,7 @@ export function launchPlaytestAnalystProcess(
       {
         cwd: canonicalWorkspace,
         env: childEnvironment,
-        stdio: ["ignore", require_diag_fd(), require_diag_fd()], // TEMP-DIAG
+        stdio: "ignore",
         windowsHide: true
       }
     );

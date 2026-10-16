@@ -815,7 +815,10 @@ The dispatched role runs in a private empty directory and isolated Codex home
 (not the game checkout or the user's normal Codex profile), copies only the
 `playtest-analyst` role file, and uses only the `playtest-analysis` skill and
 that current read-only role, keeps the local-router credential, and removes
-unrelated API/MCP credentials. Only its trusted `playtest` MCP server is bound
+unrelated API/MCP credentials. Its `CODEX_PROJECT_ROOT` is explicitly pinned to
+the same private empty directory so Code Mode follow-up requests can resolve a
+project context without guessing or landing on the game checkout; the separate
+`AUTODEV_PLAYTEST_WORKSPACE_ID` continues to scope evidence access. Only its trusted `playtest` MCP server is bound
 to the source `CODEX_HOME`, because the workspace approval, evidence-packet
 artifacts and OpenLIT credential it must read live there; the isolated home
 receives no database secret.

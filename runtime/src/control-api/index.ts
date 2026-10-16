@@ -89,7 +89,10 @@ import {
   getDefaultRestrictedHumanResponseRepository,
   type RestrictedHumanResponseRepository
 } from "@simulatorlife/autodev-data/playtesting";
-import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
+import {
+  WorkspacePlaytestApprovalRepository,
+  type WorkspaceVisualPlaytestTargetRepository
+} from "@simulatorlife/autodev-data/workspaces";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
 import { getDefaultRouterLifecycle } from "@simulatorlife/autodev-runtime/router/lifecycle";
@@ -130,6 +133,7 @@ import {
 } from "./playtesting-human-studies.ts";
 import { handlePlaytestingRunControlRequest } from "./playtesting-run-control.ts";
 import { handleWorkspacePlaytestingApprovalRequest } from "./workspace-playtesting.ts";
+import { handleWorkspaceVisualPlaytestTargetRequest } from "./workspace-visual-playtesting.ts";
 
 export const CONTROL_API_BASE = "/control";
 export const CONTROL_API_PATHS = {
@@ -249,6 +253,7 @@ export interface ControlApiRequestOptions {
   /** Must be the same Runtime run-control instance exposed by the MCP facade. */
   readonly playtestingRunControl?: PlaytestRunControl;
   readonly workspacePlaytestApprovalRepository?: WorkspacePlaytestApprovalRepository;
+  readonly workspaceVisualPlaytestTargetRepository?: WorkspaceVisualPlaytestTargetRepository;
 }
 
 export interface ControlApiActor {
@@ -4396,6 +4401,40 @@ function workspacePlaytestingApprovalRoute(
   );
 }
 
+function workspaceVisualPlaytestTargetsRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  actor: ControlApiActor,
+  options: ControlApiRequestOptions
+): Promise<boolean> {
+  return handleWorkspaceVisualPlaytestTargetRequest(
+    request,
+    response,
+    pathname,
+    actor,
+    {
+      ...(options.repositoryRoot === undefined
+        ? {}
+        : { repositoryRoot: options.repositoryRoot }),
+      ...(options.workspaceVisualPlaytestTargetRepository === undefined
+        ? {}
+        : { repository: options.workspaceVisualPlaytestTargetRepository }),
+      audit: (event) =>
+        auditMutation({
+          actor: actor.actor,
+          actorVerified: true,
+          role: actor.role,
+          action: event.action,
+          resource: `/control/workspaces/${event.workspaceId}/playtesting-visual-targets${event.targetId === null ? "" : `/${event.targetId}`}`,
+          outcome: event.outcome,
+          changes: event.changes,
+          ...(event.reason ? { reason: event.reason } : {})
+        })
+    }
+  );
+}
+
 function playtestingHumanStudyRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -4602,13 +4641,20 @@ export async function handleControlApiRequest(
   const actor = actorForControlRequest(request, response, method, pathname);
   if (!actor) return true;
   if (
-    await workspacePlaytestingApprovalRoute(
+    (await workspaceVisualPlaytestTargetsRoute(
       request,
       response,
       pathname,
       actor,
       options
-    )
+    )) ||
+    (await workspacePlaytestingApprovalRoute(
+      request,
+      response,
+      pathname,
+      actor,
+      options
+    ))
   ) {
     return true;
   }

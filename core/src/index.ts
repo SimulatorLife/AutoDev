@@ -19,3 +19,4 @@ export * from "./usage/rules.ts";
 export * from "./usage/types.ts";
 export * from "./workspaces/playtesting.ts";
 export * from "./workspaces/types.ts";
+export * from "./workspaces/visual-playtesting.ts";

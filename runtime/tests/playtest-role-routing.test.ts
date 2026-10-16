@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { renderModelCatalog } from "../src/config/render-model-catalog.ts";
 import { PROMPT_ROLES, ROLES } from "../src/platform/install-materializer.ts";
 import { ROLE_NAMES, ROUTING_POLICY } from "../src/router/routing.ts";
 
@@ -56,6 +57,34 @@ test("router resolves playtest role names, aliases, and tier model assignments",
   const catalogIds = ROUTING_POLICY.catalogModelIds([]);
   assert.ok(catalogIds.includes("autodev/playtester"));
   assert.ok(catalogIds.includes("autodev/playtest-analyst"));
+});
+
+test("rendered Codex catalog includes every routed role alias with the code-mode contract", () => {
+  const catalogsDirectory = join(repoRoot, "config/catalogs");
+  const rendered = renderModelCatalog(
+    join(repoRoot, "config/model-routing.json"),
+    catalogsDirectory
+  );
+  const generatedPath = join(catalogsDirectory, "codex-model-catalog.json");
+  assert.equal(
+    readFileSync(generatedPath, "utf8"),
+    rendered,
+    "the checked-in Codex catalog must come from the canonical renderer"
+  );
+  const catalog = JSON.parse(rendered) as {
+    models: {
+      slug: string;
+      tool_mode: string;
+      multi_agent_version: string;
+    }[];
+  };
+  const entries = new Map(catalog.models.map((model) => [model.slug, model]));
+  for (const role of ROLE_NAMES) {
+    const alias = entries.get(`autodev/${role}`);
+    assert.ok(alias, `generated catalog must include autodev/${role}`);
+    assert.equal(alias.tool_mode, "code_mode_only", `autodev/${role}`);
+    assert.equal(alias.multi_agent_version, "v1", `autodev/${role}`);
+  }
 });
 
 test("execution contract defines read-only playtest roles with scoped tools", () => {

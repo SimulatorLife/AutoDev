@@ -36,7 +36,10 @@ import {
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
 import { PlaytestComparisonDecisionForm } from "./PlaytestComparisonDecisionForm.ts";
-import { executionStatusBadge, gameOutcomeBadge } from "./playtesting-episode-presentation.ts";
+import {
+  executionStatusBadge,
+  gameOutcomeBadge
+} from "./playtesting-episode-presentation.ts";
 import {
   PLAYTESTING_FILTER_KEYS,
   PLAYTESTING_PAGE_SIZES,
@@ -50,7 +53,7 @@ import {
 } from "./playtesting-url.ts";
 
 const VIEW_TABS = [
-  { id: "overview", label: "Run" },
+  { id: "overview", label: "Overview" },
   { id: "sessions", label: "Sessions" },
   { id: "findings", label: "Findings" },
   { id: "compare", label: "Compare" }
@@ -118,6 +121,8 @@ function preserveForFilterForm(
   const preserved: { name: string; value: string }[] = [];
   if (scope.view !== "overview")
     preserved.push({ name: "view", value: scope.view });
+  if (scope.workspaceId)
+    preserved.push({ name: "workspaceId", value: scope.workspaceId });
   for (const key of PLAYTESTING_FILTER_KEYS) {
     if (editable.includes(key)) continue;
     const value = scope.filters[key];
@@ -167,29 +172,11 @@ function selectFilter(
   });
 }
 
-function filterFields(
-  scope: PlaytestingScope,
-  workspaces: readonly WorkspaceEntry[]
-): {
+function filterFields(scope: PlaytestingScope): {
   readonly editable: readonly PlaytestingFilterKey[];
   readonly children: React.ReactNode[];
 } {
-  const children: React.ReactNode[] = [
-    React.createElement(SelectField, {
-      name: "workspaceId",
-      label: "Workspace",
-      defaultValue: scope.workspaceId ?? "",
-      options: [
-        { value: "", label: "Select workspace" },
-        ...workspaces.map((workspace) => ({
-          value: workspace.id,
-          label: workspace.id + (workspace.enabled ? "" : " · disabled")
-        }))
-      ],
-      className: "min-w-56",
-      key: "workspaceId"
-    })
-  ];
+  const children: React.ReactNode[] = [];
   const editable: PlaytestingFilterKey[] = [];
   if (scope.view === "sessions") {
     editable.push(
@@ -380,7 +367,8 @@ function overview(
                 "div",
                 {
                   key: `${cell.coverageMetricId}:${cell.phaseId ?? "whole-episode"}:${cell.scenarioFamily}:${cell.cohort}:${cell.policy}:${cell.modality}`,
-                  className: "flex flex-wrap items-start justify-between gap-3 rounded-md border border-border p-3",
+                  className:
+                    "flex flex-wrap items-start justify-between gap-3 rounded-md border border-border p-3",
                   "data-coverage-cell": cell.coverageMetricId
                 },
                 React.createElement(
@@ -435,7 +423,10 @@ function overview(
           { className: "min-w-0" },
           React.createElement(
             "h2",
-            { id: "playtesting-latest-run-heading", className: SECTION_HEADING_CLASS },
+            {
+              id: "playtesting-latest-run-heading",
+              className: SECTION_HEADING_CLASS
+            },
             "Latest result"
           ),
           latest
@@ -449,7 +440,8 @@ function overview(
                     status:
                       latest.status === "completed"
                         ? "valid"
-                        : latest.status === "running" || latest.status === "queued"
+                        : latest.status === "running" ||
+                            latest.status === "queued"
                           ? "pending"
                           : "unavailable",
                     label: latest.status
@@ -502,8 +494,11 @@ function overview(
                 view: "sessions",
                 batchId: latest.batchId
               }),
-              className: "mt-3 inline-flex text-sm font-medium text-accent hover:underline",
-              dataAttributes: { "data-playtesting-latest-batch-sessions": latest.batchId }
+              className:
+                "mt-3 inline-flex text-sm font-medium text-accent hover:underline",
+              dataAttributes: {
+                "data-playtesting-latest-batch-sessions": latest.batchId
+              }
             },
             "Open sessions from this run"
           )
@@ -511,13 +506,19 @@ function overview(
     ),
     React.createElement(
       "section",
-      { className: "flex flex-col gap-3", "aria-labelledby": "playtesting-recent-sessions-heading" },
+      {
+        className: "flex flex-col gap-3",
+        "aria-labelledby": "playtesting-recent-sessions-heading"
+      },
       React.createElement(
         "div",
         { className: "flex flex-wrap items-center justify-between gap-3" },
         React.createElement(
           "h2",
-          { id: "playtesting-recent-sessions-heading", className: SECTION_HEADING_CLASS },
+          {
+            id: "playtesting-recent-sessions-heading",
+            className: SECTION_HEADING_CLASS
+          },
           "Recent sessions"
         ),
         React.createElement(
@@ -536,13 +537,17 @@ function overview(
           })
         : React.createElement(
             "ul",
-            { className: "grid gap-2", "aria-label": "Recent playtest sessions" },
+            {
+              className: "grid gap-2",
+              "aria-label": "Recent playtest sessions"
+            },
             ...recentEpisodes.map((episode) =>
               React.createElement(
                 "li",
                 {
                   key: episode.episodeId,
-                  className: "flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-3"
+                  className:
+                    "flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-3"
                 },
                 React.createElement(
                   "div",
@@ -560,6 +565,14 @@ function overview(
                   ),
                   React.createElement(
                     "p",
+                    {
+                      className: `mt-1 break-all font-mono text-xs ${MUTED_META_CLASS}`,
+                      title: episode.episodeId
+                    },
+                    episode.episodeId
+                  ),
+                  React.createElement(
+                    "p",
                     { className: MUTED_META_CLASS },
                     `${episode.identity.policyId} · ${episode.policyCohort} · ${String(episode.stepCount)} steps · build ${episode.identity.buildSha.slice(0, 12)}`
                   )
@@ -567,11 +580,20 @@ function overview(
                 React.createElement(
                   NavigationLink,
                   {
-                    href: playtestingEpisodeHref(scope, episode.episodeId, null),
-                    className: "text-sm font-medium text-accent hover:underline",
-                    dataAttributes: { "data-playtest-episode-link": episode.episodeId }
+                    href: playtestingEpisodeHref(
+                      scope,
+                      episode.episodeId,
+                      null
+                    ),
+                    className:
+                      "text-sm font-medium text-accent hover:underline",
+                    dataAttributes: {
+                      "data-playtest-episode-link": episode.episodeId
+                    }
                   },
-                  "Inspect result"
+                  episode.status === "assigned" || episode.status === "started"
+                    ? "Watch"
+                    : "Open session"
                 )
               )
             )
@@ -1147,46 +1169,21 @@ function activeList(
 
 function workspaceControls(
   scope: PlaytestingScope,
-  workspaces: readonly WorkspaceEntry[],
-  workspacePicker: React.ReactNode,
   fields: ReturnType<typeof filterFields>
 ): React.ReactNode {
-  const selectedWorkspace = workspaces.find(
-    (workspace) => workspace.id === scope.workspaceId
-  );
-  if (scope.view === "overview") {
-    return React.createElement(
-      "div",
-      {
-        className:
-          "flex flex-wrap items-end justify-between gap-3 rounded-lg border border-border bg-surface p-4"
-      },
-      workspacePicker,
-      scope.workspaceId
-        ? React.createElement(
-            "p",
-            { className: MUTED_META_CLASS },
-            `${scope.workspaceId}${selectedWorkspace?.enabled === false ? " · disabled; history is read-only" : ""}`
-          )
-        : React.createElement(
-            "p",
-            { className: MUTED_META_CLASS },
-            "Choose the game workspace whose committed build you want to test."
-          )
-    );
-  }
+  if (scope.view === "overview") return null;
   return React.createElement(
     "details",
     { className: "rounded-lg border border-border bg-surface p-4" },
     React.createElement(
       "summary",
       { className: "cursor-pointer text-sm font-medium" },
-      "Filters and page size",
+      "Filters",
       scope.workspaceId
         ? React.createElement(
             "span",
             { className: `ml-2 ${MUTED_META_CLASS}` },
-            scope.workspaceId
+            `Workspace: ${scope.workspaceId}`
           )
         : null
     ),
@@ -1198,7 +1195,7 @@ function workspaceControls(
         action: "/playtesting",
         preserved: preserveForFilterForm(scope, fields.editable),
         summary: scope.workspaceId
-          ? `Workspace: ${scope.workspaceId}${selectedWorkspace?.enabled === false ? " · disabled; history is read-only" : ""}`
+          ? `Workspace: ${scope.workspaceId}`
           : "Choose a workspace to read playtest data.",
         children: React.createElement(React.Fragment, null, ...fields.children)
       })
@@ -1244,7 +1241,7 @@ export function PlaytestingView({
   workspacePicker,
   sessionsWorkspace
 }: PlaytestingViewProps): React.JSX.Element {
-  const fields = filterFields(scope, workspaces);
+  const fields = filterFields(scope);
   const selectedWorkspace = workspaces.find(
     (workspace) => workspace.id === scope.workspaceId
   );
@@ -1259,9 +1256,40 @@ export function PlaytestingView({
       }
     },
     React.createElement(
-      "p",
-      { className: MUTED_BODY_CLASS },
-      "Start a bounded playtest, follow its server-confirmed status, then inspect recorded sessions. Execution, game outcomes, replay integrity, and analyst hypotheses are distinct."
+      "section",
+      {
+        className:
+          "flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5",
+        "aria-label": "Playtesting controls"
+      },
+      React.createElement(
+        "div",
+        { className: "flex min-w-0 flex-col gap-1" },
+        React.createElement(
+          "p",
+          { className: "text-sm font-medium text-fg" },
+          "Explore, watch, and understand how your game plays."
+        ),
+        React.createElement(
+          "p",
+          { className: MUTED_META_CLASS },
+          selectedWorkspace?.enabled === false
+            ? `${scope.workspaceId} · workspace disabled; history is read-only`
+            : scope.workspaceId
+              ? `Workspace: ${scope.workspaceId}`
+              : "Choose a workspace to browse results or start a playtest."
+        )
+      ),
+      React.createElement(
+        "div",
+        { className: "flex min-w-0 flex-wrap items-start justify-end gap-3" },
+        workspacePicker,
+        React.createElement(
+          "div",
+          { className: "flex min-w-0 flex-col items-end gap-2" },
+          runDashboard
+        )
+      )
     ),
     React.createElement(TabNav, {
       navLabel: "Playtesting views",
@@ -1270,9 +1298,8 @@ export function PlaytestingView({
       activeTabId: scope.view,
       hrefFor: (view) => playtestingViewHref(scope, view as PlaytestingViewTab)
     }),
-    workspaceControls(scope, workspaces, workspacePicker, fields),
+    workspaceControls(scope, fields),
     invalidQueryNotice(scope),
-    scope.workspaceId ? runDashboard : null,
     viewContent(scope, overviewData, list, sessionsWorkspace, currentBuildSha)
   );
 }

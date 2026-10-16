@@ -109,6 +109,22 @@ test("analyst dispatch uses the existing provider-agent role with a read-only sc
     call.args.at(-1) ?? "",
     /ratio-of-sums-within-identical-stratum-v1/u
   );
+  assert.match(
+    call.args.at(-1) ?? "",
+    /strict playtest\.submitReview input requires episodeId, packetId, packetArtifactId, packetSha256, chronologicalSummary, status/u
+  );
+  assert.match(
+    call.args.at(-1) ?? "",
+    /reportCompleteness must contain exactly four keys/u
+  );
+  assert.match(
+    call.args.at(-1) ?? "",
+    /available evidenceRefs are whole-episode locators/u
+  );
+  assert.match(
+    call.args.at(-1) ?? "",
+    /Omit findings for this analyst hypothesis review/u
+  );
   assert.doesNotMatch(call.args.join(" "), /analyst-secret|runner-secret/u);
   assert.equal(spawnOptions.stdio, "ignore");
   assert.equal(childEnvironment.AUTODEV_PLAYTEST_ROLE, "playtest-analyst");

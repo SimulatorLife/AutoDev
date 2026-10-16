@@ -8,6 +8,10 @@ targets: []
 
 Execute a bounded, isolated gameplay session and hand off its evidence. This skill owns **running** play, not interpreting it.
 
+## AutoDev tool invocation
+
+Provider-agent roles run in AutoDev Code Mode. Use the `exec` JavaScript tool for MCP operations and call only the exact `tools.mcp__<server>__<tool>` names advertised in `ALL_TOOLS`. Names such as `playtest.prepareReview` and `playtest.run` are the typed MCP operation labels, not direct top-level provider functions. Use only the tools enabled for this role; do not use shell, filesystem, network, or another role's capabilities.
+
 ## Trigger
 
 Use this skill when the request is to **execute, play, run, or simulate** a target game or scenario (e.g. "play 10 episodes of RacingGame", "run a smoke playtest on this build", "simulate the aggressive cohort on seed 42").

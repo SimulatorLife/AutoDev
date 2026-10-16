@@ -11,10 +11,15 @@ import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
 import { FIELD_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
-import { executionStatusBadge, gameOutcomeBadge } from "./playtesting-episode-presentation.ts";
+import {
+  executionStatusBadge,
+  gameOutcomeBadge
+} from "./playtesting-episode-presentation.ts";
 import {
   parsePlaytestingScope,
   playtestingEpisodeHref,
+  type PlaytestingLayout,
+  playtestingListHref,
   playtestingPageHref,
   type PlaytestingScope
 } from "./playtesting-url.ts";
@@ -23,16 +28,22 @@ import { PlaytestingSelectionPanel } from "./PlaytestingSelectionPanel.ts";
 function selectionFromLocation(): {
   readonly ids: readonly string[];
   readonly rejected: boolean;
+  readonly layout: PlaytestingLayout;
 } {
   const params = new URLSearchParams(globalThis.location.search);
   const scope = parsePlaytestingScope({
     ...(params.has("view") ? { view: params.get("view") ?? "" } : {}),
+    ...(params.has("layout") ? { layout: params.get("layout") ?? "" } : {}),
     ...(params.has("workspaceId")
       ? { workspaceId: params.get("workspaceId") ?? "" }
       : {}),
     ...(params.has("sessions") ? { sessions: params.getAll("sessions") } : {})
   });
-  return { ids: scope.selectedEpisodeIds, rejected: scope.invalidSelection };
+  return {
+    ids: scope.selectedEpisodeIds,
+    rejected: scope.invalidSelection,
+    layout: scope.layout
+  };
 }
 
 export function PlaytestingSessionsWorkspace({
@@ -52,6 +63,7 @@ export function PlaytestingSessionsWorkspace({
   const [rejectedSelection, setRejectedSelection] = useState(
     scope.invalidSelection
   );
+  const [layout, setLayout] = useState<PlaytestingLayout>(scope.layout);
 
   const changeSelection = useCallback((nextIds: readonly string[]) => {
     setSelectedEpisodeIds(nextIds);
@@ -67,10 +79,27 @@ export function PlaytestingSessionsWorkspace({
       const next = selectionFromLocation();
       setSelectedEpisodeIds(next.ids);
       setRejectedSelection(next.rejected);
+      setLayout(next.layout);
     };
     globalThis.addEventListener("popstate", syncFromUrl);
     return () => globalThis.removeEventListener("popstate", syncFromUrl);
   }, []);
+
+  const changeLayout = useCallback(
+    (next: PlaytestingLayout) => {
+      setLayout(next);
+      globalThis.history.pushState(
+        null,
+        "",
+        playtestingListHref({
+          ...scope,
+          layout: next,
+          selectedEpisodeIds
+        })
+      );
+    },
+    [scope, selectedEpisodeIds]
+  );
 
   const toggle = useCallback(
     (episodeId: string) => {
@@ -113,13 +142,40 @@ export function PlaytestingSessionsWorkspace({
           )
         ),
         React.createElement(
-          "p",
-          {
-            className: "text-sm font-medium",
-            "aria-live": "polite",
-            "data-testid": "playtesting-selection-count"
-          },
-          `${selectedEpisodeIds.length} of ${String(PLAYTESTS_MAX_ANALYSIS_SESSIONS)} selected`
+          "div",
+          { className: "flex flex-wrap items-center justify-end gap-3" },
+          React.createElement(
+            "div",
+            {
+              className: "inline-flex rounded-lg border border-border p-1",
+              role: "group",
+              "aria-label": "Session layout"
+            },
+            ...(["list", "grid"] as const).map((option) =>
+              React.createElement(
+                "button",
+                {
+                  key: option,
+                  type: "button",
+                  className: `min-h-9 rounded-md px-3 text-sm ${layout === option ? "bg-surface-raised text-fg" : "text-fg-muted hover:text-fg"}`,
+                  "aria-label": `${option === "list" ? "List" : "Grid"} view`,
+                  "aria-pressed": layout === option,
+                  "data-playtesting-layout": option,
+                  onClick: () => changeLayout(option)
+                },
+                option === "list" ? "☷ List" : "▦ Grid"
+              )
+            )
+          ),
+          React.createElement(
+            "p",
+            {
+              className: "text-sm font-medium",
+              "aria-live": "polite",
+              "data-testid": "playtesting-selection-count"
+            },
+            `${selectedEpisodeIds.length} of ${String(PLAYTESTS_MAX_ANALYSIS_SESSIONS)} selected`
+          )
         )
       ),
       rows.length === 0
@@ -133,7 +189,7 @@ export function PlaytestingSessionsWorkspace({
         : React.createElement(
             "ul",
             {
-              className: "mt-4 flex flex-col gap-2",
+              className: `mt-4 grid gap-3 ${layout === "grid" ? "sm:grid-cols-2 xl:grid-cols-3" : "grid-cols-1"}`,
               "aria-label": "Playtest sessions"
             },
             ...rows.map((episode) => {
@@ -146,7 +202,9 @@ export function PlaytestingSessionsWorkspace({
                 {
                   key: episode.episodeId,
                   className:
-                    "flex min-w-0 flex-wrap items-center gap-3 rounded-lg border border-border p-3 sm:flex-nowrap",
+                    layout === "grid"
+                      ? "flex min-w-0 flex-col items-start gap-4 rounded-xl border border-border bg-surface p-4"
+                      : "flex min-w-0 flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-3 sm:flex-nowrap",
                   "data-session-row": episode.episodeId
                 },
                 React.createElement("input", {
@@ -174,10 +232,18 @@ export function PlaytestingSessionsWorkspace({
                   React.createElement(
                     "p",
                     {
-                      className: "mt-1 truncate font-mono text-xs text-fg-muted",
+                      className:
+                        "mt-2 break-all font-mono text-xs text-fg-muted",
                       title: episode.episodeId
                     },
                     episode.episodeId
+                  ),
+                  React.createElement(
+                    "p",
+                    { className: "mt-2 text-sm font-medium" },
+                    episode.outcome === "unknown"
+                      ? "No game outcome observed"
+                      : `Recorded game outcome: ${episode.outcome}`
                   ),
                   React.createElement(
                     "p",
@@ -198,7 +264,9 @@ export function PlaytestingSessionsWorkspace({
                       "data-playtest-episode-link": episode.episodeId
                     }
                   },
-                  "Inspect"
+                  episode.status === "assigned" || episode.status === "started"
+                    ? "Watch"
+                    : "Open session"
                 )
               );
             })

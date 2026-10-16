@@ -190,9 +190,23 @@ test("session rows own analyst selection and link directly to diagnosis", () => 
   assert.match(html, /data-playtesting-session-select="episode-17"/u);
   assert.match(html, /Include session episode-17 in analyst review/u);
   assert.match(html, /data-playtest-episode-link="episode-17"/u);
-  assert.match(html, /Inspect/u);
+  assert.match(html, /Open session/u);
   assert.doesNotMatch(html, /playtesting-selection-option/u);
   assert.match(html, /0 of 40 selected/u);
+  assert.match(html, /aria-label="List view" aria-pressed="true"/u);
+  assert.match(html, /aria-label="Grid view" aria-pressed="false"/u);
+
+  const gridHtml = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionsWorkspace, {
+      scope: scope({ view: "sessions", layout: "grid" }),
+      rows: [current],
+      total: 1,
+      nextCursor: null
+    })
+  );
+  assert.match(gridHtml, /sm:grid-cols-2 xl:grid-cols-3/u);
+  assert.match(gridHtml, /aria-label="Grid view" aria-pressed="true"/u);
+  assert.match(gridHtml, /Recorded game outcome: loss/u);
 });
 
 test("finding witness links open the exact cited step while execution and outcome remain distinct", () => {

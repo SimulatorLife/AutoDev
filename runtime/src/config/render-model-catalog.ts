@@ -66,7 +66,12 @@ const ROLE_DESCRIPTIONS: Record<string, string> = {
     "Provider-neutral AutoDev worker role routed by the local model router.",
   validator:
     "Provider-neutral AutoDev validator role routed by the local model router.",
-  smart: "Provider-neutral AutoDev smart role routed by the local model router."
+  smart:
+    "Provider-neutral AutoDev smart role routed by the local model router.",
+  playtester:
+    "Provider-neutral AutoDev playtester role routed by the local model router.",
+  "playtest-analyst":
+    "Provider-neutral AutoDev read-only playtest analyst routed by the local model router."
 };
 
 function formatDisplayName(slug: string): string {
@@ -208,7 +213,9 @@ const ROLE_ALIAS_NAMES = [
   "explorer",
   "worker",
   "validator",
-  "smart"
+  "smart",
+  "playtester",
+  "playtest-analyst"
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

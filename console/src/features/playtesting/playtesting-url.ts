@@ -11,6 +11,7 @@ export const PLAYTESTING_VIEWS = [
   "compare"
 ] as const;
 export type PlaytestingView = (typeof PLAYTESTING_VIEWS)[number];
+export type PlaytestingLayout = "list" | "grid";
 
 export const PLAYTESTING_FILTER_KEYS = [
   "buildSha",
@@ -71,12 +72,13 @@ const FILTER_KEY_ORDER = new Map<string, number>(
   PLAYTESTING_FILTER_KEYS.map((key, index) => [key, index] as const)
 );
 
-function orderedPresentFilterKeys(
-  source: object
-): PlaytestingFilterKey[] {
+function orderedPresentFilterKeys(source: object): PlaytestingFilterKey[] {
   return Object.keys(source)
     .filter((key): key is PlaytestingFilterKey => FILTER_KEY_SET.has(key))
-    .sort((left, right) => FILTER_KEY_ORDER.get(left)! - FILTER_KEY_ORDER.get(right)!);
+    .sort(
+      (left, right) =>
+        FILTER_KEY_ORDER.get(left)! - FILTER_KEY_ORDER.get(right)!
+    );
 }
 
 /** Query keys accepted by each server-filtered Data resource. */
@@ -106,6 +108,7 @@ export const PLAYTESTING_FILTERS_BY_RESOURCE = {
 
 export interface PlaytestingScope {
   readonly view: PlaytestingView;
+  readonly layout: PlaytestingLayout;
   readonly workspaceId: string | null;
   readonly filters: Readonly<Partial<Record<PlaytestingFilterKey, string>>>;
   readonly limit: number;
@@ -258,6 +261,7 @@ export function parsePlaytestingScope(
   input: Record<string, string | readonly string[] | undefined>
 ): PlaytestingScope {
   const rawView = singleValue(input.view);
+  const rawLayout = singleValue(input.layout);
   const rawWorkspace = singleValue(input.workspaceId);
   const rawLimit = singleValue(input.limit);
   const rawCursor = singleValue(input.cursor);
@@ -266,6 +270,9 @@ export function parsePlaytestingScope(
   const rawLiveBatch = singleValue(input.liveBatch);
   const rawSelection = singleValue(input.sessions);
   const view = isView(rawView) ? rawView : "overview";
+  const layout = rawLayout === "grid" ? "grid" : "list";
+  const layoutInvalid =
+    rawLayout !== undefined && rawLayout !== "list" && rawLayout !== "grid";
   const parsedFilters = normalizedFilters(input, view);
   const parsedLimit = parseLimit(rawLimit);
   const parsedStep = parseStep(rawStep);
@@ -295,6 +302,7 @@ export function parsePlaytestingScope(
 
   return {
     view,
+    layout,
     workspaceId,
     filters: parsedFilters.filters,
     limit: parsedLimit.limit,
@@ -306,6 +314,8 @@ export function parsePlaytestingScope(
     invalidSelection: selectionInvalid,
     invalidQuery:
       hasRepeatedValues(input.view) ||
+      hasRepeatedValues(input.layout) ||
+      layoutInvalid ||
       (rawView !== undefined && !isView(rawView)) ||
       hasRepeatedValues(input.workspaceId) ||
       hasRepeatedValues(input.limit) ||
@@ -333,6 +343,7 @@ function paramsForScope(
 ): URLSearchParams {
   const params = new URLSearchParams();
   if (scope.view !== "overview") params.set("view", scope.view);
+  if (scope.layout !== "list") params.set("layout", scope.layout);
   if (scope.workspaceId) params.set("workspaceId", scope.workspaceId);
   for (const key of orderedPresentFilterKeys(scope.filters)) {
     const value = scope.filters[key];

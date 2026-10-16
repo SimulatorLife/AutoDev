@@ -290,6 +290,12 @@ test("playtester prompt requires exact authorized workspace/build gate and expli
 test("playtest-analyst prompt requires smart tier isolation, workspace gate, and 10 report sections", () => {
   const prompt = readText("agents/prompts/roles/playtest-analyst.md");
 
+  // Tool calls must use the role's actual code-mode surface, not assume
+  // dotted MCP operation labels are top-level provider functions.
+  assert.match(prompt, /AutoDev Code Mode/u);
+  assert.match(prompt, /tools\.mcp__<server>__<tool>/u);
+  assert.match(prompt, /not direct top-level provider functions/u);
+
   // Smart model tier without smart permissions:
   assert.match(
     prompt,
@@ -334,6 +340,12 @@ test("playtest-analyst prompt requires smart tier isolation, workspace gate, and
     );
   }
 
+  assert.match(
+    prompt,
+    /current `submitReview` input accepts no model-authored numeric dimension score/u
+  );
+  assert.match(prompt, /P1.5 visual discovery reviews are hypothesis-only/u);
+
   // Negative trigger examples:
   assert.match(prompt, /Negative triggers/i);
   assert.match(prompt, /"play ten episodes of the target game"/);
@@ -377,6 +389,11 @@ test("game-playtesting skill enforces workspace gate, explicit report format, an
 test("playtest-analysis skill enforces workspace gate, negative triggers, and null-safe scoring", () => {
   const skillText = readText(".rulesync/skills/playtest-analysis/SKILL.md");
 
+  // Tool calls must use the runtime's code-mode MCP surface.
+  assert.match(skillText, /## AutoDev tool invocation/u);
+  assert.match(skillText, /tools\.mcp__<server>__<tool>/u);
+  assert.match(skillText, /not direct top-level provider functions/u);
+
   // Authorized workspace/build gate:
   assert.match(
     skillText,
@@ -402,6 +419,24 @@ test("playtest-analysis skill enforces workspace gate, negative triggers, and nu
     /Runtime-supplied selected-session metric aggregation/i
   );
   assert.match(skillText, /not a matched-seed effect/i);
+  assert.match(
+    skillText,
+    /Required top-level inputs are.*episodeId.*packetId.*packetArtifactId.*packetSha256/s
+  );
+  assert.match(
+    skillText,
+    /Each observation and interpretation is exactly.*text, evidenceRefs/s
+  );
+  assert.match(
+    skillText,
+    /P1.5 visual discovery reviews, do not score dimensions/u
+  );
+  assert.match(skillText, /not a model-authored numeric score/u);
+  assert.match(skillText, /reportCompleteness.*exactly.*four keys/s);
+  assert.match(skillText, /crossSessionContext.*whole-episode locators/s);
+  assert.match(skillText, /none-identified/);
+  assert.match(skillText, /none-recommended/);
+  assert.match(skillText, /findings.*identity\.mechanicKey/s);
 
   // References exist and are linked:
   assert.ok(
