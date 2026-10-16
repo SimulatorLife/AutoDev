@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -359,6 +361,85 @@ test("playtest-analyst runs through the provider-neutral role path", () => {
     );
     assert.equal(options.role, "playtest-analyst");
     assert.equal(readRoleExecutionSettings(roleFile).sandboxMode, "read-only");
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("playtest analyst materializes a trusted symlinked Codex model catalog", async () => {
+  const f = fixture();
+  try {
+    const sourceCodexHome = join(f.root, ".codex");
+    const sourceRole = join(sourceCodexHome, "agents", "playtest-analyst.toml");
+    const sourceCatalog = join(
+      repositoryRoot,
+      "config",
+      "catalogs",
+      "codex-model-catalog.json"
+    );
+    writeFileSync(
+      sourceRole,
+      [
+        'name = "playtest-analyst"',
+        'sandbox_mode = "read-only"',
+        "[mcp_servers.playtest]",
+        "enabled = true",
+        'enabled_tools = ["playtest.prepareReview", "playtest.submitReview"]',
+        'env_vars = ["AUTODEV_PLAYTEST_ROLE", "AUTODEV_PLAYTEST_ANALYSIS_ID"]'
+      ].join("\n") + "\n"
+    );
+    writeFileSync(join(sourceCodexHome, "config.toml"), "[model]\n");
+    symlinkSync(
+      sourceCatalog,
+      join(sourceCodexHome, "codex-model-catalog.json")
+    );
+    const isolatedHome = join(f.root, "analyst-home");
+    const isolatedCodexHome = join(isolatedHome, ".codex");
+    const environment: NodeJS.ProcessEnv = {
+      ...f.env,
+      AUTODEV_REPO_ROOT: repositoryRoot,
+      AUTODEV_PLAYTEST_ANALYSIS_MODE: "1",
+      AUTODEV_PLAYTEST_ANALYST_HOME: isolatedHome,
+      AUTODEV_PLAYTEST_ANALYST_CODEX_HOME: isolatedCodexHome,
+      AUTODEV_PLAYTEST_ANALYST_SOURCE_HOME: f.root,
+      AUTODEV_PLAYTEST_ANALYST_SOURCE_CODEX_HOME: sourceCodexHome
+    };
+    const args = [
+      "--role",
+      "playtest-analyst",
+      "--cwd",
+      join(f.root, "workspace"),
+      "--prompt",
+      "inspect a bounded packet"
+    ];
+    const dependencies: ProviderAgentDeps = {
+      ensureRouter: async () => undefined,
+      runCodex: (_binary, _args, childEnvironment) => {
+        const materialized = join(
+          childEnvironment.CODEX_HOME!,
+          "codex-model-catalog.json"
+        );
+        assert.equal(lstatSync(materialized).isFile(), true);
+        assert.equal(lstatSync(materialized).isSymbolicLink(), false);
+        assert.deepEqual(
+          readFileSync(materialized),
+          readFileSync(sourceCatalog)
+        );
+        return 0;
+      }
+    };
+    const result = await runProviderAgent(args, environment, dependencies);
+    assert.equal(result, 0);
+
+    const sourceCatalogLink = join(sourceCodexHome, "codex-model-catalog.json");
+    rmSync(sourceCatalogLink);
+    const untrustedCatalog = join(f.root, "untrusted-model-catalog.json");
+    writeFileSync(untrustedCatalog, "{}");
+    symlinkSync(untrustedCatalog, sourceCatalogLink);
+    await assert.rejects(
+      () => runProviderAgent(args, environment, dependencies),
+      /escapes trusted directories/u
+    );
   } finally {
     rmSync(f.root, { recursive: true, force: true });
   }

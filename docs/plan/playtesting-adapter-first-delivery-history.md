@@ -1912,10 +1912,17 @@ action-redundant events, anchors race-settled/run-ended evidence at the exact
 step, keeps local terminal context, and records every omitted range. Runtime
 uses Core's bounded 32,768-unit packet ceiling while retaining its 64-KiB
 artifact cap and the one-critique approval limit. Regressions cover 1,200
-routine decisions and a 1,985-step RacingGame-shaped mix. The remaining gate is
-to run the current Runtime build and use the UI to persist an eligible review
-for the completed b5450114f session; no analyst conclusion is claimed until
-that succeeds. The earlier truncated runs remain ineligible and unanalysed.
+routine decisions and a 1,985-step RacingGame-shaped mix. A follow-up UI review on the completed regression-seed batch prepared a
+packet but its analyst child exited 2 before making a router/provider request.
+The diagnosed source was the canonical codex-model-catalog.json symlink:
+provider-agent rejected all symlinks while materializing the isolated analyst
+home, even though this one points inside the trusted AutoDev checkout. The
+provider-agent now resolves that catalog only when its target stays inside the
+trusted source Codex home or repository root, then copies a regular file; a
+regression test covers both the allowed symlink and isolated destination. This
+new code still needs to be loaded by Runtime and exercised through the UI. No
+analyst review or model call is claimed yet. The earlier truncated runs remain
+ineligible and unanalysed.
 
 ### Playtesting Console UX redesign (2026-10-15)
 

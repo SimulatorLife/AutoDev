@@ -11,6 +11,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   writeFileSync
 } from "node:fs";
@@ -310,6 +311,48 @@ function copyRegularFileIfPresent(
   copyFileSync(source, destination);
 }
 
+function pathIsWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return (
+    relative === "" ||
+    (relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative))
+  );
+}
+
+/** Copy a managed model catalog through a symlink only when it stays trusted. */
+function copyAnalystModelCatalog(
+  sourceCodexHome: string,
+  destinationCodexHome: string,
+  trustedRepositoryRoot: string
+): void {
+  const source = path.join(sourceCodexHome, "codex-model-catalog.json");
+  if (!existsSync(source)) return;
+  const sourceStat = lstatSync(source);
+  let materializedSource = source;
+  if (sourceStat.isSymbolicLink()) {
+    materializedSource = realpathSync(source);
+    if (
+      !pathIsWithin(sourceCodexHome, materializedSource) &&
+      !pathIsWithin(trustedRepositoryRoot, materializedSource)
+    ) {
+      throw new Error(
+        "The source Codex model catalog link escapes trusted directories."
+      );
+    }
+  } else if (!sourceStat.isFile()) {
+    throw new Error("The source Codex model catalog is not a regular file.");
+  }
+  if (!statSync(materializedSource).isFile()) {
+    throw new Error("The source Codex model catalog is not a regular file.");
+  }
+  copyFileSync(
+    materializedSource,
+    path.join(destinationCodexHome, "codex-model-catalog.json")
+  );
+}
+
 function copyAnalystRole(homes: AnalystCodexHomes): void {
   const sourceAgents = path.join(homes.sourceCodexHome, "agents");
   const requiredRole = path.join(sourceAgents, "playtest-analyst.toml");
@@ -352,14 +395,16 @@ function copyOpenLitDatabaseCredential(
 
 function copyAnalystSkill(
   environment: NodeJS.ProcessEnv,
-  homes: AnalystCodexHomes
+  homes: AnalystCodexHomes,
+  trustedRepositoryRoot: string
 ): void {
-  const repository = resolveRuntimeSourceRoot(
-    import.meta.dirname,
-    environment.AUTODEV_REPO_ROOT
-  );
   const skillCandidates = [
-    path.join(repository, ".rulesync", "skills", "playtest-analysis"),
+    path.join(
+      trustedRepositoryRoot,
+      ".rulesync",
+      "skills",
+      "playtest-analysis"
+    ),
     path.join(homes.sourceCodexHome, "skills", "playtest-analysis")
   ];
   const skillSource = skillCandidates.find(
@@ -382,6 +427,10 @@ function copyAnalystSkill(
 function prepareAnalystCodexHome(
   environment: NodeJS.ProcessEnv
 ): NodeJS.ProcessEnv {
+  const trustedRepositoryRoot = resolveRuntimeSourceRoot(
+    import.meta.dirname,
+    environment.AUTODEV_REPO_ROOT
+  );
   const homes = resolveAnalystCodexHomes(environment);
   mkdirSync(path.join(homes.codexHome, "agents"), {
     recursive: true,
@@ -396,13 +445,13 @@ function prepareAnalystCodexHome(
     "The source Codex configuration",
     true
   );
-  copyRegularFileIfPresent(
-    path.join(homes.sourceCodexHome, "codex-model-catalog.json"),
-    path.join(homes.codexHome, "codex-model-catalog.json"),
-    "The source Codex model catalog"
+  copyAnalystModelCatalog(
+    homes.sourceCodexHome,
+    homes.codexHome,
+    trustedRepositoryRoot
   );
   copyOpenLitDatabaseCredential(environment, homes);
-  copyAnalystSkill(environment, homes);
+  copyAnalystSkill(environment, homes, trustedRepositoryRoot);
   return {
     ...environment,
     HOME: homes.home,
