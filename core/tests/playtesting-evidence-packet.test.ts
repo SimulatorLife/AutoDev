@@ -729,6 +729,101 @@ test("generic decision events are sampled so long completed episodes retain revi
   assert.doesNotThrow(() => assertPlaytestEvidencePacket(packet));
 });
 
+test("specific event anchors in a long episode fit the bounded analyst packet", () => {
+  const eventAt = new Map<number, string>([
+    [3, "race_started"],
+    ...[
+      4, 8, 10, 11, 12, 15, 18, 25, 70, 140, 210, 280, 350, 420, 490, 560, 630
+    ].map((step) => [step, "card_played"] as const),
+    [800, "race_settled"],
+    [1400, "reward_claimed"],
+    [1700, "race_started"]
+  ]);
+  const trace = Array.from({ length: 1985 }, (_, step) => {
+    const eventType =
+      step === 1984 ? "run_ended" : (eventAt.get(step) ?? "decision_applied");
+    return {
+      step,
+      phaseId: "race_and_energy",
+      revisionBefore: step,
+      revisionAfter: step + 1,
+      observationVisibility: "structured" as const,
+      visibleObservation: {
+        phaseId: "race_and_energy",
+        bankroll_gold: 50,
+        races_completed: step === 1984 ? 3 : 0,
+        selected_ticket_ids: ["ticket-a", "ticket-b"],
+        hand_card_ids: [4, 3, 8, 2],
+        running_order: ["car-1", "car-2", "car-3", "car-4", "car-5", "car-6"],
+        running_order_route_progress: [1180, 1082, 1082, 984, 592, 143.65],
+        running_order_pit_phase: [null, null, "pit_lane", null, null, null],
+        running_order_pit_route_progress: [
+          null,
+          null,
+          490.12,
+          null,
+          null,
+          null
+        ],
+        running_order_pit_service_remaining_seconds: [
+          null,
+          null,
+          10,
+          null,
+          null,
+          null
+        ],
+        running_order_pit_tire_service_duration_seconds: [
+          null,
+          null,
+          2.33,
+          null,
+          null,
+          null
+        ]
+      },
+      legalActionIds: ["advance-segment"],
+      selectedActionId: "advance-segment",
+      preActionPrediction: null,
+      authoritativeOutcome: null,
+      events: [
+        {
+          eventId: `event-${String(step)}`,
+          type: eventType,
+          phaseId: "race_and_energy",
+          revision: step + 1
+        }
+      ],
+      frameRefs: []
+    };
+  });
+  const packet = build({
+    episode: {
+      ...episode(),
+      stepCount: trace.length,
+      termination: { reason: "game-terminal", step: trace.length - 1 }
+    },
+    traceSteps: trace,
+    maxWindows: 32,
+    maxSelectedSteps: 256,
+    windowRadius: 2,
+    tokenBudget: 32_768,
+    maxPacketBytes: 64 * 1024
+  });
+  assert.ok(packet.selectedWindows.length <= 32);
+  assert.ok(
+    packet.selectedWindows.some((window) =>
+      window.selectionReasons.includes("terminal")
+    )
+  );
+  assert.ok(
+    packet.omittedWindows.some(
+      (window) => window.reason === "ordinary-sampling"
+    )
+  );
+  assert.doesNotThrow(() => assertPlaytestEvidencePacket(packet));
+});
+
 test("packet validator rejects omissions that do not partition the complete source trace", () => {
   const packet = build();
   assert.throws(

@@ -1906,16 +1906,16 @@ reported LOSS, complete evidence, and deterministic metrics: wager-hit-rate
 
 The first UI Analyze this session request was eligible but returned
 packet-unavailable: packet-budget-exceeded; no analyst process or provider/model
-call occurred. The source cause was in Core packet selection: all 1,985 generic
-decision_applied events were marked mandatory, so mandatory windows exceeded
-the 256-step/64-KB packet budget. Core now treats that generic event as ordinary
-sampleable context (the action/revision is already in each trace step), retains
-game-specific events and terminal evidence as mandatory, and records sampled
-omissions explicitly. A 1,200-step packet regression and Runtime/Console tests
-cover this contract. The remaining gate is to run the current Runtime build and
-use the UI to persist an eligible review for the completed b5450114f session;
-no analyst conclusion is claimed until that succeeds. The earlier truncated
-runs remain ineligible and unanalysed.
+call occurred. Core had marked all 1,985 generic decision_applied events
+mandatory, so their contextual windows exceeded the 32,768-unit token budget
+and 64-KiB packet-byte cap. Core now treats that generic event as ordinary
+sampleable context (the action/revision is already in each trace step), anchors
+specific game events at their exact step, retains terminal evidence with local
+context, and records every omitted range. Regressions cover 1,200 generic
+decisions and a 1,985-step event mix matching RacingGame. The remaining gate is
+to run the current Runtime build and use the UI to persist an eligible review
+for the completed b5450114f session; no analyst conclusion is claimed until
+that succeeds. The earlier truncated runs remain ineligible and unanalysed.
 
 ### Playtesting Console UX redesign (2026-10-15)
 

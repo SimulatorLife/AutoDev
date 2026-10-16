@@ -331,9 +331,7 @@ function rangeAround(
  * anchors because they carry evidence that cannot be reconstructed from the
  * step envelope.
  */
-function hasMandatoryEventEvidence(
-  entry: PlaytestEvidenceTraceStep
-): boolean {
+function hasMandatoryEventEvidence(entry: PlaytestEvidenceTraceStep): boolean {
   return entry.events.some(
     (event) => event.type !== GENERIC_DECISION_EVENT_TYPE
   );
@@ -344,8 +342,7 @@ function hasMandatoryEventEvidenceValue(value: unknown): boolean {
     isRecord(value) &&
     Array.isArray(value.events) &&
     value.events.some(
-      (event) =>
-        isRecord(event) && event.type !== GENERIC_DECISION_EVENT_TYPE
+      (event) => isRecord(event) && event.type !== GENERIC_DECISION_EVENT_TYPE
     )
   );
 }
@@ -362,13 +359,7 @@ function initiallySelectedRanges(
   const mandatoryAnchors = trace
     .filter(hasMandatoryEventEvidence)
     .map((entry) =>
-      rangeAround(
-        entry.step,
-        lastStep,
-        limits.radius,
-        "event-bearing-step",
-        true
-      )
+      rangeAround(entry.step, lastStep, 0, "event-bearing-step", true)
     );
   mandatoryAnchors.push(
     rangeAround(lastStep, lastStep, limits.radius, "terminal", true)
