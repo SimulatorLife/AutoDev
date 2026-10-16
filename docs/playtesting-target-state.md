@@ -2,22 +2,22 @@
 
 > **Ownership:** A focused design for AutoDev's reusable playtesting capability. [AutoDev Console Target State](autodev-console-target-state.md) remains authoritative for Console navigation, RuleSync configuration ownership, workspace architecture, evaluation semantics, OpenLIT integration, and UI requirements. Implementation PRs must update that canonical document when they alter those contracts.
 >
-> **Goal:** Run inexpensive AI gameplay sessions, **analyze what happened and why**, and turn reproducible defects or evidence-backed design hypotheses into actionable findings. The end-to-end pipeline is **play → record → objectively measure → LLM gameplay critique → aggregate → counterfactual verification → report**. Reuse tested upstream components first; build only missing game-quality analysis and AutoDev integration. Keep game rules and design goals in game-owned adapters/configuration.
+> **Goal:** Let a permission-bounded intelligent player **discover, play and explore the selected game** through its actual UI by default, using Jev-style models for decisions and optional engine adapters for fast authoritative simulation. Preserve first-person intent, predictions, screenshots and outcomes; **observe → decide → act → record → objectively measure → independently critique → corroborate/compare → improve**. Reuse tested upstream components, preserve game-owned rules/rubrics where available, and never make a per-game JSON workflow a prerequisite for visual discovery.
 
 > **Measurement authority:** [Playtesting measurement and improvement contract](playtesting-measurement-contract.md) specifies the metric registry, quality anchors, sampling, comparison decisions, approved experiments, human import, drift checks, cadence and fix-verification loop. Those definitions are canonical; sections below link to them rather than define competing rules. All examples are synthetic acceptance fixtures, not measured validation.
 
 ## 1. Outcomes and boundaries
 
-- Support high-volume, seeded **headless gameplay** and lower-volume **rendered/visual gameplay** through a common episode/evidence contract.
+- Support autonomous **rendered/visual gameplay without per-game adapter JSON**, optionally accelerated by high-volume seeded headless gameplay, plus optional scripted regression, through a common provenance-aware episode/evidence contract.
 - Exercise multiple player skill levels and strategies, including intentionally imperfect behavior; retain random and deterministic heuristic controls.
-- Use local decision models when beneficial, but **never require Jev** or a GPU to operate. Do not call a large LLM for every move.
+- Make real Jev-style decision inference a first-class intelligent-player path when compatible, with Smart planning/escalation and tracked non-Jev fallbacks; never require Jev or a GPU merely to install/run baselines. Do not call a large reasoning model for every move.
 - Assess legality, invariants, runtime stability, balance, progression, pacing, strategic agency, **player understanding and learnability**, and candidate user-experience/fun signals separately. Never equate model skill, confidence or a win with clarity or enjoyment.
 - **Actively test hypotheses**, not merely review recordings: probe what a limited-information tester expects before a decision, compare predictions with game-authoritative consequences, run matched cohorts, and investigate suspected friction with controlled follow-up experiments.
 - Reproduce failures before reporting them as bugs, compare matched scenarios against a baseline, and distinguish proven defects from design hypotheses.
 - Preserve exact game revision, scenario, seed/RNG state, policy/model version, input observations, action IDs, and environmental dependencies sufficient to replay or identify nondeterminism.
 - Surface categorized findings through existing AutoDev evaluation, workspace, telemetry, and GitHub capabilities; optionally create/update issues under explicit permission and evidence gates.
 
-**Non-goals:** General-purpose game engines; rewriting game rules inside AutoDev; treating a model-generated fun score as human enjoyment; granting playtesters authority to edit, merge, or deploy gameplay changes; inventing a new AutoDev control plane, second user-facing application, or competing orchestration policy.
+**Non-goals:** Building a universal game engine or claiming every native game is automatically controllable; rewriting game rules inside AutoDev; treating a model-generated fun score as human enjoyment; granting playtesters authority to edit, merge, or deploy gameplay changes; inventing a new AutoDev control plane, second user-facing application, or competing orchestration policy.
 
 ## 2. Reference-project reuse and implementation decision
 
@@ -79,15 +79,59 @@ Keep **human experience measurement** distinct from **AI policy competence** and
 ## 3. Architecture and ownership
 
 ```
-Existing AutoDev orchestrator
-  -> target-owned game adapter + decision policy (Jev/NanoJev/heuristic/PlayJev)
-  -> recorded structured state/action/event timeline + optional synchronized frames
-  -> deterministic per-turn/session evaluator (facts and anomaly flags)
-  -> bounded session evidence packet -> independent reasoning-LLM gameplay critic
-  -> matched-seed aggregate statistics + cross-session LLM synthesis
-  -> targeted replay / counterfactual alternatives / independent validation
-  -> evidence-backed Playtesting findings + valid linked evaluation assertions + permission-gated GitHub issues
+Existing AutoDev root (authorization, budgets, orchestration)
+  -> Smart playtest director (bounded read-only planner / explorer)
+  -> visual Playwright/native driver OR accelerated approved game adapter
+  -> Jev-style policy at decision points, Smart escalation when useful
+  -> synchronized intent/prediction/action/observation/media/engine evidence
+  -> deterministic evaluation + independent gameplay critic
+  -> measured cohorts, replication, approved experiments and comparisons
+  -> verified findings, owner decisions and permission-gated GitHub issues
 ```
+
+### Normative operating model: agent-directed play, not scenario-directed scripts
+
+**The default product is an autonomous player capable of opening an unfamiliar supported game, discovering controls, making meaningful decisions, and reporting evidence.** An engine adapter is an optional acceleration and verification mechanism, not a prerequisite for visual play. A game-authored JSON file may specify intentions, optional hints, invariants, benchmarks or exact regression paths; it must never be the only way to obtain the next playable action. A frozen scenario is an initial condition or test objective, **not** a prescribed sequence of moves. These rules supersede adapter-first language elsewhere in this document; existing adapter-v1 contracts remain mandatory **only when the accelerated mode is chosen**.
+
+**Three execution modes share one episode/evidence contract:**
+
+| Mode | Entry requirement | Decision/action path | Appropriate claims |
+| --- | --- | --- | --- |
+| **Autonomous visual (default discovery mode)** | Operator-approved game URL or launch target, bounded browser/desktop tool access, playable controls; **no .autodev files required** | Rendered screenshot + DOM/accessibility where available + recent action history -> Smart-directed policy/Jev -> allowed Playwright/keyboard/mouse/gamepad actions -> observe | Playability, actual exposed controls, visible feedback, rendering/timing and model-specific experience; no unobserved engine invariants |
+| **Adapter-accelerated (opt-in)** | Approved checkout with verified declarative bindings or generated code for game engine, visibility contract and legal actions | Actual game engine observations -> fast legal-choice policy/Jev -> game.step; sample native UI to validate representation | Authoritative outcomes, fast seeded cohorts, legal-action coverage, invariant/replay/fork analysis; visual conclusions require native UI evidence |
+| **Scripted regression (optional)** | Verified reproduction recipe or recorded successful action trace, same sandbox/permissions | Deterministic replay or explicit scripted controls and assertions | The narrow reproduction/guardrail being tested; not autonomous exploration or evidence of human enjoyment |
+
+Mode and data-source provenance must be recorded per episode and step. A mixed episode records each transition's source instead of silently claiming a visual action was a legal engine step. Run a low-volume visual discovery/verification path and high-volume headless path together when both are available, not as interchangeable evidence.
+
+**Control-plane versus gameplay-plane responsibilities:**
+
+1. The **existing root orchestrator** owns workspace authorization, scheduling, budgets, experiment approvals, GitHub publication and release gates. No second global scheduler or self-authorizing AI role.
+2. A bounded **Smart playtest director** (existing smart *model tier* under a new least-privilege playtester context, never the current full-access smart role) chooses an exploration objective, observes how a game starts, discovers controls, chooses a skill/strategy persona, supervises play, detects stuck/uncertain states and requests a legal mode/tool switch or investigation. It can invoke constrained gameplay, observe artifacts and ask the root for experiments; it cannot edit source, grant permissions, execute arbitrary commands or judge its own findings.
+3. The **gameplay driver** operates a real browser/app or the approved adapter. It normalizes player-visible observations, presents available control affordances or legal action IDs, validates the next proposed tool action, performs one bounded action/hold interval, waits for observable completion, and records results. The driver is an executor, not a strategy author or second scheduler.
+4. **Decision policies** choose actions: use an actual integrated Jev/NanoJev/PlayJev-compatible backend for normal tactical decisions when supported, with goal, persona, limited knowledge, current observation, recent history, and candidate controls. Escalate only ambiguous, strategically significant, stuck or high-risk choices to Smart reasoning or a small policy ensemble. Use different **independent policy instances/cohorts** for different players; do not average novice/expert votes into a synthetic single human. Random and first-legal remain explicit controls/fallbacks, not acceptable substitutes for the intelligent-player milestone.
+5. The **independent analyst** and validator review a frozen, provenance-backed subset of actual traces; they do not play or alter the game. Engine assertions and statistics establish facts, critics propose explanations, blind/independent checks test them, and qualified human evidence alone authorizes human-experience claims.
+
+**Autonomous visual loop:** Operator selects a game and a bounded intent (e.g. "play as an uninformed first-time player and explore"). Director launches the approved game, captures a baseline full-resolution frame and visible/a11y state, identifies usable UI/control affordances and a start condition, attempts a bounded input, checks if state changed, and iterates. At each meaningful decision: (a) snapshot exactly the player-visible context, including UI instructions/warnings and history, (b) formulate candidates and uncertainty, (c) ask the selected Jev-style policy for a legal/available action and, when supported, **a pre-action goal, predicted visible consequence and reason code**, (d) validate the action against the current DOM/control surface, execute only allowlisted Playwright/input commands, (e) capture after-state/screenshots, event/video intervals, elapsed native timing, browser/console errors and a mismatch/stuck signal, (f) update bounded player memory and choose continue, retry, replan, investigate or stop. Prediction and intent must be recorded *before* observing the outcome; a model rationale generated afterward is not pre-action evidence. All model/tool costs, provenance and latency belong to the episode. Repeated screenshots are sampled at meaningful transitions with mandatory baseline, action-boundary, anomaly and terminal captures, plus bounded short video clips for animation/timing claims. Audio claims require actual permitted audio capture; missing media must be explicit.
+
+**Visual control discovery:** Prefer real DOM and accessibility actions when available; use screenshot grounding and keyboard/mouse/gamepad input for canvas/WebGL/opaque UIs, with a coordinate reference frame, viewport/resolution, action duration, modifiers and input-dispatch acknowledgement. Distinguish "affordance inferred" from "game-authoritative legal". Input probes must be rate-bounded and reversible where possible; state-changing/deleting/monetary/external-network actions outside the approved game target are prohibited. Avoid hallucinated CSS selectors, hidden DOM/engine data, guessed future state and privileged source inspection for first-time-player cohorts. Recovery after three unproductive steps or an explicit stuck signal should inspect observations, consider an alternate input or goal, and stop with a typed reason when no progress is possible; do not loop indefinitely. The visual path supports browser games first; native/desktop/controller games require tested platform-specific tool adapters and must return unsupported where unavailable. Playwright is a *control/perception transport*, not an intelligent policy, and PlayJev runtime differences cannot stand in for native rendering fidelity.
+
+**Jev decision interface and policy governance:** Add one small typed `decide` boundary that receives (episode/step identity, mode, player-visible observation or bounded frame refs, goal/persona and epistemic restrictions, short memory, available controls or legal IDs, decision deadline/cost ceiling) and returns (candidate/action, policy/backend/model revision, optional predicted outcome/intent/reason code, confidence with calibration label, token/inference cost, bounded memory update and failure category). The exact upstream request/response mapping stays isolated in pinned Jev backend adapters; model-specific decision protocols and limits must not become the universal game adapter schema. Assert action validity before execution, version/freeze inference and cohort definitions, and record fallback as a separate arm/step so it cannot masquerade as Jev performance. Do not invoke a Smart model for every frame or mandate a fleet call for every move: fast Jev tactical decisions are the baseline; the director plans at sparse checkpoints; ensemble calls are **sampled**, disagreement-triggered or high-stakes, with explicit budget and model independence limits. JevHarness reflection/evolution may improve strategies on training episodes only; freeze a candidate before held-out evaluations, keep skill separate from persona, and never let policy optimization rewrite the evaluation rubric. A no-GPU/no-Jev install can still run visual baseline, deterministic controls and analysis, but must visibly report **intelligent policy unavailable**, not call it completed autonomous AI gameplay.
+
+**Discovery and optional promotion to acceleration:** Default onboarding asks for approved target, entry URL/launch instructions and input/resource permissions; directory search and probing stay within the selected game, not arbitrary web navigation. The agent may extract tentative mechanics, controls, phases and candidate edge cases from observed UI, but must label inferred facts as unverified. Once a usable visual episode exists, optionally propose (not silently invent) checked-in adapter binding, observation projection, legal-action enumeration, invariants, scenario/rubric and benchmark declarations. The game owner validates generated scaffolding and expected behavior before approval; any auto-generated binding remains game-owned. An adapter then accelerates the same real game under the existing isolated JSON-RPC-v1 contract. Require cross-mode checkpoints that compare the actual UI and structured observation for equivalent state/seed/build; never use structured precision unavailable to the represented visual player. If equivalence cannot be proven, label unverified, keep modalities distinct, and do not submit a critic packet that implies equivalent information.
+
+**Evidence and closed-loop investigation:** Record first-person intent, observed affordances, pre-action expected consequence, alternative candidates, chosen tool/action, native screenshots/short video, after-state, progress/feedback signal, interruptions/recovery and end-of-session notes, all synchronized to stable episode/step/revision and immutable artifact locators. Separate a player's subjective AI note ("I did not understand the warning") from a measured prediction error and from human-confirmed confusion. Do not confuse losing with a bug, agent incompetence with poor design, or model preference with fun. The independent analyst uses frozen normal *and* anomalous decision windows, proposes alternate explanations and falsifiable tests, requests corroboration on another policy/build and where possible a visually reproduced case, then the existing comparison/approval flow tests candidate fixes on unchanged judge/benchmarks. If the required direct UI or human evidence is missing, output a narrower hypothesis or `not observed`. Report both successes and failures of issue discovery so later comparisons cannot cherry-pick.
+
+**Example, without game-specific JSON:** Starting from a game URL, a first-time visual agent notices a "Start" affordance, opens the game, reads the visible instructions, chooses a move, predicts that a flashing red indicator means imminent failure, and later records whether the visible consequence matched its expectation. A different Jev policy may prioritize winning and record a different action. A headless adapter can subsequently test whether either behavior produces an invariant failure over 1,000 seeded games. The visual evidence answers **what the player saw and could infer**; the adapter supplies faster authoritative counts. Neither alone proves that humans found the game fun.
+
+### Acceptance and explicit non-claims for the new operating model
+
+- **Zero-config first-play:** On two independently authored browser games with materially different mechanics (one DOM-rich and one canvas-dominant), an approved visual-only playtester starts a session with URL/approved launch plus bounded permissions, **no .autodev game config or fixed click flow**, discovers start/controls, executes at least one meaningful decision, recovers from a deliberately changed UI label or reports an explicit typed blocker, and stores inspectable screenshots, input and decisions. No engine source or private state is accessible to the first-time policy. Non-browser engines are explicitly unsupported until a native driver is validated.
+- **Real policy integration:** A pinned Jev-style backend executes its actual inference path on a real selected game in end-to-end tests; a valid decision changes gameplay and is recorded with model revision, latency, fallbacks, persona, available alternatives and pre-action expectation if the backend provides one. A rejected/stale/invalid action is not executed. Test a Smart escalation on a stuck/ambiguous case and verify routine choices bypass the expensive model. Run separate novice-boundary/expert-strategy policies, without assuming they match human behavior.
+- **Observability:** A reviewer can synchronize before/action/after frames, DOM/a11y (if available), prediction, reason/missingness, video timing, authoritative engine metrics (only if available) and subsequent outcome; replay/pointer/media loss and missing audio remain explicit. Capture native pacing separately from simulation ticks and inference wait. Verify sensitive inputs/logs are redacted and artifact budgets enforced.
+- **Scale with honest modality:** Demonstrate adapter-assisted high-throughput sessions and visually observed spot checks against the same approved game. If exact equivalence or replay/RNG pairing is absent, comparisons are appropriately labeled non-comparable or observational. Visual and headless cohorts are stratified rather than pooled.
+- **Scientific/UX gates:** Compare the new agent-directed route against random/first-legal and scripted baselines on preregistered known-bug, weak-bot, confusing-but-correct-UI and altered-affordance fixtures. Measure coverage, confirmed-bug precision/recall, false-positive rate, stuck/recovery frequency, decisions/minute, inference cost, screenshot evidence completeness and qualified critic/human agreement where data exists. A model's assertion that a game was "fun" never counts as validated enjoyment. Verify one finding -> owner-approved experiment/fix -> frozen matched comparison -> next-cycle recurrence, or explicitly fail an open gate.
+- **Non-implementation declaration:** The present registered production policies are `random` and `first-legal`; the current Jev Playtest Lab reuse is observation hashing/loop detection, not Jev action selection. Current Playwright tests of the **AutoDev Console** do not demonstrate Playwright controlling a target game. These are target-state acceptance requirements, **not claims that the runtime already delivers them**.
+
 
 **Do not let the player evaluate itself.** A Jev-style model selects actions. Engine-owned evaluators measure outcomes and invariants. A stronger reasoning LLM separately critiques agency, tension, pacing, fairness, clarity and possible player friction; it proposes testable hypotheses. Independent replay and statistical checks establish which claims hold. The root makes the final issue/validation decision.
 
@@ -123,9 +167,9 @@ console/app/evaluations/page.ts           # existing route unchanged
 
 Never implement a separate backend, evaluator framework, LLM router or dashboard when the existing AutoDev module can own the behavior.
 
-## 4. Versioned game adapter contract
+## 4. Versioned game adapter contract (optional accelerated mode)
 
-AutoDev must not know what a card, car, enemy, lap, hand, inventory, or level means. A target-owned adapter provides a narrow process boundary (initially **stdio JSONL**; authenticated HTTP is optional for remote engines):
+**This section applies to the optional adapter-accelerated mode, not the default autonomous visual mode in §3.** AutoDev must not embed card/car/enemy mechanics in its generic orchestration. When a target supplies engine integration, its game-owned adapter provides a narrow process boundary (initially **stdio JSONL**; authenticated HTTP is optional for remote engines):
 
 | Operation                                                     | Contract                                                                                                                                                                              |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -192,7 +236,7 @@ Runtime sandbox preparation reads `.autodev/playtest.config.json`, `.autodev/pla
 
 ### Declarative game onboarding
 
-A game onboards to Playtesting by adding **one declarative config file** to its repo, not by contributing an adapter process. AutoDev ships a generic adapter runtime that binds to a game's engine from declarations: entry module and factory (reset), observation projection, legal-action space, step function, terminal predicate, and a named `rngVersion` for reproducible `reset(seed)` calls. Counterfactual RNG restoration is available only through implemented snapshot/replay/fork operations. The game owns no protocol implementation, no transport, and no hash maintenance.
+A game onboards to **adapter-accelerated Playtesting** by adding **one declarative config file** to its repo, not by contributing an adapter process. **Autonomous visual onboarding requires no such config**: the approved game URL/launch target, control permissions and budgets are sufficient to attempt discovery, and unsupported interactions yield explicit failures rather than silently requiring this adapter. AutoDev ships a generic adapter runtime that binds to a game's engine from declarations: entry module and factory (reset), observation projection, legal-action space, step function, terminal predicate, and a named `rngVersion` for reproducible `reset(seed)` calls. Counterfactual RNG restoration is available only through implemented snapshot/replay/fork operations. The game owns no protocol implementation, no transport, and no hash maintenance.
 
 This is a **tiered** guarantee, and the tier must be stated rather than assumed:
 
@@ -214,9 +258,9 @@ visibility fields.
 
 The config location is resolved as `.autodev/playtest.config.json` inside that snapshot, and its referenced manifests resolve relative to that file. A commit that does not track `.autodev/` (for example because it is gitignored) is refused because its snapshot has no target configuration.
 
-## 5. Target-owned configuration example
+## 5. Target-owned accelerated-mode configuration example
 
-A game can opt in with a checked-in `.autodev/playtest.config.json` using the Core-validated v1 schema below. Every path it declares resolves relative to the config file itself, so `.autodev/` is self-contained and relocatable. The example is synthetic and does not constitute an approved real-game configuration:
+A game can opt in to **accelerated engine playtesting** with a checked-in `.autodev/playtest.config.json` using the Core-validated v1 schema below; **this is not an example of a required visual-first onboarding file**. Every path it declares resolves relative to the config file itself, so `.autodev/` is self-contained and relocatable. The example is synthetic and does not constitute an approved real-game configuration:
 
 ```json
 {
@@ -268,15 +312,15 @@ AutoDev owns schema validation, worker/critic/probe budgets, inference routing, 
 
 For RacingGame, example scenarios are Heat-heavy decisions, qualifying vs. skipping, double DNF, pit strategy and team coordination. These are illustrative _game-owned_ definitions, not generic AutoDev concepts.
 
-## 6. Agent/policy population and training
+## 6. Agent/policy population and training (visual and accelerated)
 
 Keep **agent role**, **player policy**, and **inference backend** distinct:
 
-- **Playtester (AutoDev role):** Runs assigned gameplay sessions and records their results. A **separate, reasoning-capable `playtest-analyst`** reviews selected completed sessions and an independent `validator` checks consequential findings. Both specialized roles are read-only for source code and use bounded runner-generated artifacts; neither can fix issues, commit, push or open issues without a separately authorized reporting step.
+- **Playtester (AutoDev role):** Directs discovery, exploration and gameplay through approved visual controls or an optional engine adapter; runs assigned bounded sessions and records their results. A **separate, reasoning-capable `playtest-analyst`** reviews selected completed sessions and an independent `validator` checks consequential findings. Both specialized roles are read-only for source code and use bounded runner-generated artifacts; neither can fix issues, commit, push or open issues without a separately authorized reporting step.
 - **Policies (per episode):** Random/fuzz, simple beginner, conservative, aggressive, economy-oriented, team-focused, adaptive expert and deliberately fallible/stress policies. A persona can use heuristics, NanoJev, PlayJev or another backend. **Separate player skill/knowledge from strategic preference**: aggressive is an objective, while novice/learning/expert describes information, experience and competence.
 - **Inference:** Pluggable scored-choice interface taking observation, legal option IDs and goal. Record full probability/confidence information when available, selected action, fallback and latency. Never assume provider confidence is calibrated.
 - **Strategy author/refiner:** Use **authorized JevHarness pipeline/evolution and full-trajectory reflection** for optional strategy generation/refinement; freeze chosen versions and compare on held-out seeds. It cannot rewrite evaluation rules, look at privileged state, or cherry-pick the final test set.
-- **Visual policy:** Optional screenshot-based PlayJev/Playwright driver; run selected episodes against the actual rendered game to catch affordance, feedback, controls, browser errors and visual problems.
+- **Visual policy/driver:** Default gameplay entry for an unfamiliar supported browser game: screenshot + DOM/accessibility observation, bounded Playwright/keyboard/mouse controls, Jev-style decision policy and sparse Smart supervision. Optional PlayJev-native policy support requires proven compatibility; headless adapter sessions are complementary, not the visual default.
 
 ### Player cohorts for understanding, learning and design feedback
 
@@ -295,7 +339,7 @@ Do not simulate novices by merely instructing an expert model to “act dumb.”
 
 Use **jev-arcade's** random/heuristic baselines and confidence analysis, **the actual authorized JevHarness refinement/reflection/frozen evaluation code** and its train/test discipline, **PlayJev's** visual policy environment, and the explicit rule-grounding lesson from **jev-plays-balatro**. AutoDev adds the generic cohort and memory/visibility controls, not a second policy trainer. Do not assign a human-like label or report a human-proxy difficulty result unless policy competence has been checked and its limitations stated. For a fair novice-vs-expert comparison, control scenario distributions and record what each policy actually saw.
 
-Begin with random and deterministic heuristic baselines **before** adding local neural inference. Benchmark NanoJev on RTX 3090 separately; use CPU workers for cheap high-volume simulation and GPU inference only where it improves action quality or coverage. Visual model weights are optional downloads, not AutoDev installation requirements.
+Keep random and deterministic heuristics as measured **control arms**, but implement and validate real Jev decision inference as part of the intelligent-player minimum viable path rather than deferring it behind the rest of the reporting infrastructure. Benchmark NanoJev on RTX 3090 separately; use CPU workers for cheap high-volume simulation and GPU inference only where it improves action quality or coverage. Visual model weights are optional downloads, not AutoDev installation requirements.
 
 For sequential card games, separate long-horizon progression planning from short-horizon tactical decisions (Balatro-inspired). For other genres, the adapter and policy should determine whether such planning is meaningful.
 
