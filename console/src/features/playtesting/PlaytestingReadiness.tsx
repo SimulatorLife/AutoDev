@@ -1,7 +1,6 @@
 "use client";
 
 import { CONTROL_API_PLAYTESTING_READINESS_SCHEMA } from "@simulatorlife/autodev-core";
-import { useRouter } from "next/navigation";
 import React, { useEffect, useState } from "react";
 
 const READINESS_POLL_DELAYS_MS = [
@@ -51,7 +50,6 @@ function failureDetails(
 
 function pollReadiness(
   workspaceId: string,
-  router: ReturnType<typeof useRouter>,
   setUnavailable: (code: string, message: string) => void
 ): () => void {
   let cancelled = false;
@@ -87,7 +85,9 @@ function pollReadiness(
         return;
       }
       if (payload.data.status === "ready") {
-        if (!cancelled) router.refresh();
+        // The current tree is the server-rendered initialization fallback.
+        // Replace it with a fresh server read once Data confirms readiness.
+        if (!cancelled) globalThis.location.reload();
         return;
       }
     } catch {
@@ -126,7 +126,6 @@ export function PlaytestingReadiness({
   initialCode = "autodev_control_playtesting_source_initializing",
   initialMessage = "Playtesting Data is initializing. This page will load automatically when the Data schema is ready."
 }: PlaytestingReadinessProps): React.JSX.Element {
-  const router = useRouter();
   const [status, setStatus] = useState<ReadinessStatus>(initialStatus);
   const [code, setCode] = useState(initialCode);
   const [message, setMessage] = useState(initialMessage);
@@ -135,13 +134,13 @@ export function PlaytestingReadiness({
   useEffect(
     () =>
       status === "initializing"
-        ? pollReadiness(workspaceId, router, (nextCode, nextMessage) => {
+        ? pollReadiness(workspaceId, (nextCode, nextMessage) => {
             setCode(nextCode);
             setMessage(nextMessage);
             setStatus("unavailable");
           })
         : undefined,
-    [router, status, workspaceId]
+    [status, workspaceId]
   );
 
   const retry = async () => {
@@ -173,10 +172,10 @@ export function PlaytestingReadiness({
         return;
       }
       if (payload.data.status === "ready") {
-        setMessage("Playtesting Data is ready. Refreshing this page.");
-        // The initialization endpoint already confirmed readiness. Refresh the
-        // server-rendered view once; polling again would duplicate that read.
-        router.refresh();
+        setMessage("Playtesting Data is ready. Loading the workspace view.");
+        // A full same-URL reload replaces the initialization fallback with a
+        // new server-rendered read; router.refresh can retain that stale tree.
+        globalThis.location.reload();
         return;
       }
       setMessage(

@@ -145,6 +145,7 @@ function episode(
     policyCohort,
     strategy: "fixture",
     status: "completed",
+    termination: { reason: "game-terminal", step: 0 },
     outcome: "completed",
     outcomeMetrics: {},
     completionCounts: {

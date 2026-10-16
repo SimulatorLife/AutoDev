@@ -6,15 +6,11 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
-import {
-  DETAIL_PANEL_CLASS,
-  LIST_PANEL_CLASS
-} from "../../components/layout/Panel.ts";
+import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
-import { StatGrid } from "../../components/panels/DetailGrid.ts";
+import { DetailGrid } from "../../components/panels/DetailGrid.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -29,9 +25,9 @@ import {
   SECTION_LABEL_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
+  defaultEpisodeInspectionStep,
   executionStatusBadge,
-  gameOutcomeBadge
-} from "./playtesting-episode-presentation.ts";
+  gameOutcomeBadge} from "./playtesting-episode-presentation.ts";
 import {
   playtestingAnalyzeEpisodeHref,
   playtestingEpisodeHref,
@@ -165,10 +161,12 @@ function traceStepFacts(entry: PlaytestJsonValue): TraceStepFacts {
     lineKind: readRecorded([top], ["type", "kind", "recordType"]),
     // Game traces commonly record an ordered `events` array rather than one
     // nested event. Summarize only names and IDs that are actually present.
-    eventType: recordedValues(events, ["type", "name", "eventType"])
-      ?? readRecorded([top], ["eventType", "eventName", "eventKind"]),
-    eventId: recordedValues(events, ["eventId", "id"])
-      ?? readRecorded([top], ["eventId"]),
+    eventType:
+      recordedValues(events, ["type", "name", "eventType"]) ??
+      readRecorded([top], ["eventType", "eventName", "eventKind"]),
+    eventId:
+      recordedValues(events, ["eventId", "id"]) ??
+      readRecorded([top], ["eventId"]),
     actionId:
       readRecorded([action], ["actionId", "name", "id"]) ??
       readRecorded([top], ["selectedActionId", "actionId", "action"]),
@@ -384,18 +382,18 @@ function traceFact(
       className: "rounded border border-border px-3 py-2",
       "data-trace-fact": fact
     },
-    React.createElement("p", { className: SECTION_LABEL_CLASS }, label),
+    React.createElement("dt", { className: SECTION_LABEL_CLASS }, label),
     value === null
       ? React.createElement(
-          "p",
+          "dd",
           {
-            className: "mt-1 text-xs text-fg-muted",
+            className: `mt-1 ${MUTED_META_CLASS}`,
             "data-trace-fact-state": "unrecorded"
           },
           "Not recorded"
         )
       : React.createElement(
-          "p",
+          "dd",
           { className: `mt-1 break-words ${MONO_VALUE_CLASS}` },
           value
         )
@@ -406,9 +404,13 @@ function traceFact(
 function stepSummaryLine(facts: TraceStepFacts): string {
   const parts: string[] = [];
   if (facts.eventType !== null)
-    parts.push(`${facts.eventType.includes(", ") ? "Events" : "Event"} ${facts.eventType}`);
+    parts.push(
+      `${facts.eventType.includes(", ") ? "Events" : "Event"} ${facts.eventType}`
+    );
   if (facts.eventId !== null)
-    parts.push(`${facts.eventId.includes(", ") ? "event IDs" : "event"} ${facts.eventId}`);
+    parts.push(
+      `${facts.eventId.includes(", ") ? "event IDs" : "event"} ${facts.eventId}`
+    );
   if (facts.actionId !== null) parts.push(`Selected action ${facts.actionId}`);
   if (facts.phase !== null) parts.push(`Phase ${facts.phase}`);
   if (facts.tick !== null) parts.push(`Tick ${facts.tick}`);
@@ -418,27 +420,21 @@ function stepSummaryLine(facts: TraceStepFacts): string {
     : "No event, selected action or phase is recorded on this line. Open the recorded JSON to see every field it carries.";
 }
 
-/**
- * The full recorded line, collapsed by default and revealed by the analyst who
- * wants it. A step addressed directly in the URL opens its own disclosure,
- * because that is the step a citation sent someone to.
- */
+/** The raw line is always secondary to the readable step summary. */
 function recordedJsonDisclosure(
   step: number | null,
-  entry: PlaytestJsonValue,
-  selected: boolean
+  entry: PlaytestJsonValue
 ): React.JSX.Element {
   return React.createElement(
     "details",
     {
-      className: "rounded border border-border bg-surface-raised p-3",
-      open: selected,
+      className: "mt-2 rounded border border-border bg-surface-raised p-3",
       "data-playtest-json": "true"
     },
     React.createElement(
       "summary",
       { className: "cursor-pointer text-xs font-medium text-fg-muted" },
-      `Recorded JSON${selected ? " (selected step)" : ""}`
+      "Recorded JSON"
     ),
     React.createElement(
       "pre",
@@ -502,14 +498,15 @@ function episodeSteps(
           "li",
           {
             key: `${step ?? "unindexed"}:${index}`,
-            className: `${DETAIL_PANEL_CLASS} p-4 ${selected ? "border-accent" : ""}`,
+            className: `border-b border-border py-3 last:border-b-0 ${selected ? "rounded-md border border-accent bg-surface-raised px-3" : ""}`,
             ...(selected ? { "aria-current": "step" } : {}),
             "data-playtest-step": step === null ? "unindexed" : String(step)
           },
           React.createElement(
             "div",
             {
-              className: "mb-2 flex flex-wrap items-center justify-between gap-2"
+              className:
+                "mb-2 flex flex-wrap items-center justify-between gap-2"
             },
             React.createElement(
               "div",
@@ -533,31 +530,48 @@ function episodeSteps(
               : React.createElement(
                   NavigationLink,
                   {
-                    href: playtestingEpisodeHref(scope, episode.episodeId, step),
+                    href: playtestingEpisodeHref(
+                      scope,
+                      episode.episodeId,
+                      step
+                    ),
                     className: EVIDENCE_LINK_CLASS
                   },
                   selected ? "Selected step" : "Open this step"
                 )
           ),
           React.createElement(
-            "div",
+            "details",
             {
-              className:
-                "mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4"
+              className: "mt-2 rounded-md border border-border px-3 py-2",
+              open: selected,
+              "data-playtest-step-details":
+                step === null ? "unindexed" : String(step)
             },
-            traceFact("Event", "event", facts.eventType),
-            traceFact("Event id", "event-id", facts.eventId),
-            traceFact("Selected action", "action", facts.actionId),
-            traceFact("Phase", "phase", facts.phase),
-            facts.tick === null ? null : traceFact("Tick", "tick", facts.tick),
-            facts.severity === null
-              ? null
-              : traceFact("Severity", "severity", facts.severity),
-            facts.lineKind === null
-              ? null
-              : traceFact("Line type", "line-type", facts.lineKind)
-          ),
-          recordedJsonDisclosure(step, entry, selected)
+            React.createElement(
+              "summary",
+              { className: "cursor-pointer text-xs font-medium text-fg-muted" },
+              "Step details"
+            ),
+            React.createElement(
+              DetailGrid,
+              { columns: 4, className: "mt-2" },
+              traceFact("Event", "event", facts.eventType),
+              traceFact("Event id", "event-id", facts.eventId),
+              traceFact("Selected action", "action", facts.actionId),
+              traceFact("Phase", "phase", facts.phase),
+              facts.tick === null
+                ? null
+                : traceFact("Tick", "tick", facts.tick),
+              facts.severity === null
+                ? null
+                : traceFact("Severity", "severity", facts.severity),
+              facts.lineKind === null
+                ? null
+                : traceFact("Line type", "line-type", facts.lineKind)
+            ),
+            recordedJsonDisclosure(step, entry)
+          )
         );
       })
     )
@@ -857,6 +871,47 @@ function reviewPanel(
   );
 }
 
+function truncationExplanation(
+  episode: ControlApiPlaytestingEpisodeDetailResponse["record"],
+  scope: PlaytestingScope
+): React.ReactNode {
+  if (episode.status !== "budget-truncated") return null;
+  const loopStep =
+    episode.termination.reason === "loop-guard"
+      ? episode.termination.step
+      : null;
+  const explanation =
+    loopStep === null
+      ? episode.termination.reason === "step-limit"
+        ? `Runtime reached the episode step limit after ${episode.stepCount} executed decisions. No terminal game outcome was observed; no win or loss is inferred.`
+        : "No terminal game outcome was observed. Runtime marked this episode budget-truncated; no win or loss is inferred. Inspect the last recorded steps to diagnose the stop."
+      : `Runtime's loop guard stopped at step ${loopStep} after the same player-visible state and action repeated. That action was not executed. No terminal game outcome was observed; no win or loss is inferred.`;
+  return React.createElement(
+    "p",
+    {
+      className:
+        "rounded-md border border-warning/40 bg-surface-raised px-3 py-2 text-sm text-fg-muted",
+      role: "status",
+      "data-testid": "playtesting-truncation-explanation"
+    },
+    explanation,
+    loopStep === null ? null : " ",
+    loopStep === null
+      ? null
+      : React.createElement(
+          NavigationLink,
+          {
+            href: playtestingEpisodeHref(scope, episode.episodeId, loopStep),
+            className: "font-medium text-accent hover:underline",
+            dataAttributes: {
+              "data-playtesting-stop-step": String(loopStep)
+            }
+          },
+          `Inspect stop at step ${loopStep}`
+        )
+  );
+}
+
 function replayStatusBadge(
   status: ControlApiPlaytestingEpisodeDetailResponse["record"]["replayStatus"]
 ): React.JSX.Element {
@@ -884,32 +939,64 @@ function replayStatusBadge(
   });
 }
 
-/**
- * One recorded status dimension as a scannable tile: the badge an operator
- * reads first, and the exact recorded token beneath it so a reader can quote
- * the evidence rather than the label. Nothing here is derived -- a dimension
- * the episode did not record shows its own recorded token, which is the honest
- * answer for every one of them alike.
- */
+/** One recorded status dimension in the compact summary strip. */
 function statusTile(
   label: string,
   dimension: string,
-  badge: React.JSX.Element,
-  recorded: string
+  badge: React.JSX.Element
 ): React.JSX.Element {
   return React.createElement(
     "div",
     {
-      className:
-        "flex flex-col gap-2 rounded-lg border border-border bg-surface-raised px-4 py-3",
+      className: "flex min-w-0 flex-col items-start gap-1",
       "data-status-dimension": dimension
     },
     React.createElement("dt", { className: SECTION_LABEL_CLASS }, label),
+    React.createElement("dd", null, badge)
+  );
+}
+
+function recordedStatusValues(
+  episode: ControlApiPlaytestingEpisodeDetailResponse["record"]
+): React.JSX.Element {
+  const values = [
+    ["Game outcome token", episode.outcome],
+    ["Execution status token", episode.status],
+    ["Replay integrity token", episode.replayStatus],
+    ["Evidence completeness token", episode.completeness]
+  ] as const;
+  return React.createElement(
+    "details",
+    { className: "mt-2 text-xs", "data-recorded-session-status": "true" },
+    React.createElement(
+      "summary",
+      { className: "cursor-pointer text-fg-muted" },
+      "Recorded status values"
+    ),
+    React.createElement(
+      "dl",
+      { className: "mt-2 flex flex-wrap gap-x-5 gap-y-2" },
+      ...values.map(([label, value]) =>
+        React.createElement(
+          "div",
+          { key: label, className: "flex gap-2" },
+          React.createElement("dt", { className: MUTED_META_CLASS }, label),
+          React.createElement("dd", { className: MONO_VALUE_CLASS }, value)
+        )
+      )
+    )
+  );
+}
+
+function compactStat(label: string, value: string | number): React.JSX.Element {
+  return React.createElement(
+    "div",
+    { className: "min-w-0 px-3" },
+    React.createElement("dt", { className: SECTION_LABEL_CLASS }, label),
     React.createElement(
       "dd",
-      { className: "flex flex-col items-start gap-1" },
-      badge,
-      React.createElement("span", { className: MONO_VALUE_CLASS }, recorded)
+      { className: "mt-1 break-words text-base font-semibold" },
+      value
     )
   );
 }
@@ -947,6 +1034,11 @@ export function PlaytestingSessionView({
   windowUnavailable
 }: PlaytestingSessionViewProps): React.JSX.Element {
   const episode = detail.record;
+  const defaultStep = defaultEpisodeInspectionStep(episode);
+  const traceScope =
+    scope.step === null && defaultStep !== null
+      ? { ...scope, step: defaultStep }
+      : scope;
   return React.createElement(
     PageBody,
     {
@@ -974,7 +1066,9 @@ export function PlaytestingSessionView({
         {
           href: playtestingAnalyzeEpisodeHref(scope, episode.episodeId),
           className: "text-sm font-medium text-accent hover:underline",
-          dataAttributes: { "data-playtesting-analyze-session": episode.episodeId }
+          dataAttributes: {
+            "data-playtesting-analyze-session": episode.episodeId
+          }
         },
         "Analyze this session"
       )
@@ -996,35 +1090,31 @@ export function PlaytestingSessionView({
         `${episode.identity.repository} · build ${episode.identity.buildSha} · ${episode.identity.gameBuild}`
       ),
       React.createElement(
-        "dl",
+        DetailGrid,
         {
-          className:
-            "mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4",
-          "aria-label": "Independent session status dimensions"
+          columns: 4,
+          className: "mt-3 border-y border-border py-3",
+          label: "Independent session status dimensions"
         },
         statusTile(
           "Game outcome",
           "game-outcome",
-          gameOutcomeBadge(episode.outcome),
-          episode.outcome
+          gameOutcomeBadge(episode.outcome)
         ),
         statusTile(
           "Execution status",
           "execution-status",
-          executionStatusBadge(episode.status),
-          episode.status
+          executionStatusBadge(episode.status)
         ),
         statusTile(
           "Replay integrity",
           "replay-integrity",
-          replayStatusBadge(episode.replayStatus),
-          episode.replayStatus
+          replayStatusBadge(episode.replayStatus)
         ),
         statusTile(
           "Evidence completeness",
           "evidence-completeness",
-          completenessBadge(episode.completeness),
-          episode.completeness
+          completenessBadge(episode.completeness)
         )
       ),
       React.createElement(
@@ -1032,6 +1122,8 @@ export function PlaytestingSessionView({
         { className: MUTED_BODY_CLASS },
         "These four dimensions are recorded independently. A game outcome is not an execution status, and neither one implies evidence completeness."
       ),
+      recordedStatusValues(episode),
+      truncationExplanation(episode, scope),
       episode.missingReasons.length === 0
         ? null
         : React.createElement(
@@ -1041,33 +1133,31 @@ export function PlaytestingSessionView({
           )
     ),
     React.createElement(
-      StatGrid,
-      { columns: 4 },
-      React.createElement(StatCard, {
-        title: "Steps",
-        value: episode.stepCount
-      }),
-      React.createElement(StatCard, {
-        title: "Simulation wall time",
-        value:
-          episode.simulationWallMs === null
-            ? "Not observed"
-            : `${episode.simulationWallMs} ms`
-      }),
-      React.createElement(StatCard, {
-        title: "Policy inference",
-        value:
-          episode.policyInferenceMs === null
-            ? "Not observed"
-            : `${episode.policyInferenceMs} ms`
-      }),
-      React.createElement(StatCard, {
-        title: "Native duration",
-        value:
-          episode.nativeDurationMs === null
-            ? "Not observed"
-            : `${episode.nativeDurationMs} ms`
-      })
+      DetailGrid,
+      {
+        columns: 4,
+        className: "rounded-lg border border-border py-3",
+        label: "Recorded execution measurements"
+      },
+      compactStat("Steps", episode.stepCount),
+      compactStat(
+        "Simulation",
+        episode.simulationWallMs === null
+          ? "Not observed"
+          : `${episode.simulationWallMs} ms`
+      ),
+      compactStat(
+        "Policy inference",
+        episode.policyInferenceMs === null
+          ? "Not observed"
+          : `${episode.policyInferenceMs} ms`
+      ),
+      compactStat(
+        "Native duration",
+        episode.nativeDurationMs === null
+          ? "Not observed"
+          : `${episode.nativeDurationMs} ms`
+      )
     ),
     React.createElement(
       "section",
@@ -1083,7 +1173,7 @@ export function PlaytestingSessionView({
         ? React.createElement(
             "p",
             { className: MUTED_META_CLASS },
-            `Artifact ${episode.trace.id} · requested step ${scope.step ?? 0}`
+            `Artifact ${episode.trace.id} · requested step ${traceScope.step ?? 0}`
           )
         : null,
       window
@@ -1093,7 +1183,7 @@ export function PlaytestingSessionView({
             `Integrity verified · SHA-256 ${window.sha256} · ${window.sourceLineCount} source lines · ${window.omittedLineCount} not in this window`
           )
         : null,
-      episodeSteps(detail, scope, window, windowUnavailable)
+      episodeSteps(detail, traceScope, window, windowUnavailable)
     ),
     React.createElement(
       "section",

@@ -1826,7 +1826,7 @@ approval. A Workspaces approval now authorizes a **checkout**, not a commit.
 - Managed Runtime :4101 remains source-incompatible v3; managed Console :3300 was not changed. Source side services :3391/:4191 were retained loopback-only for continued UI inspection.
 
 
-### RacingGame UI-observation conformance (uncommitted source, 2026-10-15)
+### RacingGame UI-observation conformance (committed source, 2026-10-15)
 
 The prior probe found the first concrete equivalence defect: the adapter seeded
 race one with the **race-three/four-team field**, while the actual UI and
@@ -1858,13 +1858,46 @@ the fixture Playwright test **1/1**, RacingGame unit binding **7/7**, and
 `typecheck` pass; `playtest:game-manifests` and `autodev playtest check`
 validate the generated bundle/hash chain.
 
-This is **source state only**: RacingGame retains the user's in-progress UI
-work and these integration edits are uncommitted. AutoDev's snapshot rule
-correctly prevents running any of them under the current approval. The active
-approval v5 already authorizes the checkout root, so a future commit will be
-picked up automatically without a new approval. No post-conformance real
-RacingGame episode or model/analyst call has been made; the managed 4101/3300
-services remain untouched.
+**Current checkout and live evidence (2026-10-16):** RacingGame advanced to
+HEAD 271a2363c with a committed observation-contract fix. The contract remains
+uiEquivalence: verified; its bound conformance-fixture hash is
+461abeae9b0d719ad99d36c5750643ee1f01a86a612a723da97c95df646f6fe5 and its
+observation-schema hash is
+59ba278f7ae04f37fdd4af6acece78c60b16676de578245c44d3645119631855. The
+source Console resolved prior committed HEAD 80a315ae automatically under
+Workspaces approval revision 5; a page started from a newer commit requires no
+new approval. The unrelated visual/effects edits in RacingGame's worktree remain
+untouched and excluded from Runtime snapshots.
+
+The earlier discovery and confirmation runs on 80a315ae stopped at 11 and
+15 decisions because the adapter observed only main-circuit positions. A later
+Console run on bccc668e (batch
+batch-4b2dd672-c920-448d-a9c6-926295532cd1, seed discovery) progressed to
+1,200 executed decisions, then the loop guard stopped its unexecuted decision at
+step 1200; status was budget-truncated, no game outcome or deterministic
+metrics were recorded, and analyst dispatch was ineligible. The Data trace
+records steps 1198–1200 with the same observation hash
+5b0b499908d0cc4c and advance-segment as the sole legal action. Replaying the
+same seed/action stream against the game state showed why: circuit positions
+were fixed while active cars continued moving through the pit lane and service
+trajectory, which the adapter did not include in its observation. The guard was
+working correctly for the incomplete observation; it was not evidence that the
+game itself had stopped progressing.
+
+The committed 271a2363c change adds the pit trajectory phase, route position,
+service remaining time, and tire-service duration beside circuit progress. The
+player UI's semantic car nodes publish those same renderer inputs, and the
+browser conformance fixture compares the structured observation against them.
+A deterministic adapter regression replays discovery through steps 1198–1199:
+main-track progress remains identical while the pit-state projection changes.
+AutoDev's episode artifact is now schema v4 and persists the stop reason plus an
+exact loop-guard step; the full-page inspector explains that the stop action was
+not executed, opens that trace step by default, and keeps raw JSON collapsed.
+The remaining end-to-end gate is to run 271a2363c through the current Console
+and verify a completed game outcome plus eligible analyst review. Until that
+happens, no win/loss, metrics, packet, or analysis is claimed. The earlier
+bccc668e partial episode remains excluded from review, with no packet,
+analyst process, provider/model call, or issue publication.
 
 ### Playtesting Console UX redesign (2026-10-15)
 
@@ -1875,22 +1908,35 @@ The Console owns presentation and operator flow, not gameplay, execution truth, 
 Target flow:
 
 1. Make **Run** the default task view: a compact workspace picker and approved-checkout/latest-commit context, one clear primary action, a recommended single assignment, and optional batch tuning in a disclosure. Explain that checkout approval is reused and Runtime snapshots the latest committed HEAD at run start; no per-commit reapproval is implied. Clearly say uncommitted edits do not run.
-2. Show one server-authoritative run status surface, not local acknowledgement plus server status. It reports only observed assignment counts and honestly labels stale data. Keep run controls/watch affordances available while browsing Sessions/Findings/Compare and a session detail. Completed work remains discoverable as a latest result/recent session with a direct evidence link.
+2. Show one server-authoritative run status surface, not local acknowledgement plus server status. It reports only observed assignment counts and honestly labels stale data. Keep run controls/watch affordances available across Run/Sessions/Findings/Compare list routes. The full-page session inspector stays focused on outcome/evidence and links directly back to Sessions rather than mounting a second optional run-control client island. Completed work remains discoverable as a latest result/recent session with a direct evidence link.
 3. Put session outcome/status summary and deterministic metrics before a readable timeline. Keep exact trace JSON and unavailable media/evidence accessible but collapsed by default. Do not conflate execution disposition, game outcome, replay integrity, evaluator verdict, and analyst hypothesis.
 4. Make selecting sessions part of the session rows rather than a duplicate ID list; retain the URL-bound, explicit ≤40 selection, eligibility report, and bounded analyst dispatch. Evidence citations continue to open the exact session/step.
 5. Keep archive filters in archive views, clarify empty states, preserve all scope/pagination and accessibility behavior, and keep findings/compare evidence honesty.
 
 Implementation ownership: route/page server loading and workspace scope stay in `console/app/playtesting`; the typed run owner remains Runtime; the view hierarchy is in the existing Playtesting feature components; the sessions page continues to own bounded analysis selection. No new execution/scheduler/backend state is introduced. A backend/API change is justified only by an observed missing fact needed by the user journey.
 
-Acceptance evidence: rendered screenshots at desktop and 390px; focused render tests for default/collapsed evidence and blocked/running/completed states; browser journey for start → watch → completed result → inspect → analyst eligibility/result; one status card and no false progress/zeros; workspace/build context accurate and no commit-specific approval prompt; Console tests/typecheck/lint/build and full browser flow. Synthetic browser/API data proves UI mechanics only; the approved RacingGame episode/evidence and analyst gates remain separate and must not be represented by fixture data.
+Acceptance evidence: actual RacingGame screenshots at 1440×1000 and 390px (document width stayed 390px), focused render tests for default/collapsed evidence and blocked/running/completed states, and production browser journeys for start → watch → inspect → row selection → bounded analyst review, plus the recorded loop-guard stop step. Console tests pass 634/634, repository-wide typecheck and changed-surface ESLint pass, and the production browser suite passes 17/17. The suite covers collapsed trace detail, default focus on the loop-guard stop, and the explicit step link; browser data remains synthetic.
+
+The URL-address performance regression guard briefly exceeded its existing 2.5× per-iteration limit under the full parallel suite. The source path now canonicalizes and visits only filter keys actually present rather than rescanning the complete key registry on every navigation; the threshold was not changed. The focused perf test passed **10/10** repeated runs and in the final Console test suite. A cancellation browser failure also exposed two same-origin contract mismatches (the browser status proxy rejects `waitMs`, and the cancel form rejects a redundant `batchId`); the Console now sends only fields accepted by those routes. Cancellation is still confirmed against a fresh Runtime read.
+
+A readiness browser trace showed that Next's `router.refresh()` returned the updated session RSC payload but retained the old initialization fallback. After the readiness endpoint explicitly returns `ready`, the readiness surface now reloads the same URL so the server-rendered evidence replaces that fallback; this happens only during initialization, when there is no editable run form or analysis selection to discard. The readiness checks now assert the final rendered result/session state rather than the intermediate RSC transport event. The full-page session route deliberately does not mount the optional run dashboard: doing so kept the fallback active on direct-session readiness; active-run watching remains on the four list views, and the inspector links back to Sessions.
+
+The configured `browser-tester` role could not independently inspect rendered state in this session because its Playwright MCP tools were not exposed (`~/.codex/config.toml` marks that server disabled; no config changes were made). The root captured and inspected the actual UI with Playwright and the production E2E suite passed, but a separate role-based visual critique remains unavailable.
 
 Checklist:
 - [x] Capture actual RacingGame Console and session pages; map owning route/components and status APIs.
 - [x] Independent read-only UX/architecture review completed; its findings reconciled above.
-- [ ] Replace overview with focused run-first hierarchy and move history/filters out of the primary action path.
-- [ ] Consolidate live status and keep it available across Playtesting destinations.
-- [ ] Simplify analysis selection into session rows without weakening bounds/evidence gates.
-- [ ] Make the inspector outcome-first and raw-evidence progressive disclosure.
-- [ ] Update target UX/docs and add render + browser journey tests.
-- [ ] Validate screenshots, responsive/accessibility behavior, tests, typecheck, lint, build and production browser suite.
-- [ ] Review/integrate without staging or discarding concurrent worktree edits.
+- [x] Replace the overview with a focused Run-first hierarchy; keep archive filters and detailed measurement coverage out of the primary action path.
+- [x] Consolidate the run status surface, remove the duplicate start-ack card, and keep server-confirmed run watching available across Run/Sessions/Findings/Compare lists. Keep the session detail outcome-first with a direct return to Sessions.
+- [x] Put URL-bound bounded analysis selection on the session rows; preserve the 40-session ceiling, eligibility receipts, and analyst/data ownership.
+- [x] Make the inspector outcome-first, derive event/action/phase summaries from actual RacingGame trace fields, collapse raw JSON by default, and preserve exact-step citations.
+- [x] Update target UX docs and render/browser tests, including checkout-scoped approval and automatic latest-commit selection copy.
+- [x] Validate current source UI screenshots at desktop and 390px; Console tests (**634/634**), repository-wide typecheck, changed-surface ESLint and diff check; production browser suite (**17/17**) including bounded composer, start/watch/cancel, 1,000-assignment disclosure, session-row analysis, readiness, collapsed step details and loop-guard stop-step focus. Browser data was explicitly synthetic.
+- [x] Review/integrate without reverting RacingGame's dirty visual/effects edits or test-generated project configuration artifacts.
+- [x] Run through the reworked source Console on the latest approved checkout build `80a315ae20cebca9c8f6884d4fc26c3376865672` (the active checkout approval resolved the new commit automatically; no per-commit approval). The Playtester MCP child could not initialize because its trusted session context was missing, so no run used that route. The user-requested real Console path was used instead: one `discovery` assignment (`championship-run` / `random`, 2,500 steps, 120-second cap) was accepted as batch `batch-9ce99693-da93-49a6-bb5e-0f5b3e1d85e8`, then ended `truncated`; episode `…a-0001` has 11 steps, 169 ms simulation, 4 ms policy inference, no deterministic metrics, `outcome: unknown`, and an integrity-verified trace (`ee4cbd6b…`). A second bounded `confirmation` assignment (`batch-75be8f51-b1cc-4aef-aa48-6d246e2f024e`) also ended `truncated` after 15 steps (127 ms simulation, 2 ms policy inference, no terminal game outcome/metrics; trace `78c188f8…`). Runtime used the approved limits; neither run requested a critique.
+- [x] Use the Console's `Analyze this session` path on the first real partial episode. Runtime returned `excluded-ineligible-session` (“The session's batch is truncated, not completed”), with no packet, analyst process, or model call. This is an honest refusal; no analysis was fabricated.
+- [x] Diagnose the bccc668e trace at its owner: the repeated state was caused by pit-lane/service progress missing from the game-owned structured observation, not a Runtime or physics step-budget cap. Add pit route/service state, prove it against the player render state, and preserve the Runtime loop guard unchanged.
+- [x] Persist precise Runtime termination provenance in episode schema v4 and make the inspector open the unexecuted loop-guard step with an explicit explanation; previous v3 records migrate with termination marked unknown rather than a fabricated cause.
+- [ ] Run the latest committed RacingGame build 271a2363c through the Console; verify terminal game outcome, deterministic metrics, eligible analyst packet/review, and review evidence. The old bccc668e truncated episode remains ineligible and must stay unanalysed.
+- [x] Independent read-only code validation completed against the current diff; actionable findings were addressed: session detail no longer mounts an unavailable run setup, cancellation remains available when capabilities are unknown (known role restrictions are explained), human-visible status labels accompany state assertions, the 1,000-row disclosure is asserted closed before expansion, and readiness reload preserves route state.
+- [ ] A separate browser-tester role could not access its Playwright MCP tools in this session (the configured server is disabled). Root rendered/screenshotted the live page and ran the production browser suite; a role-based visual review remains unavailable unless the MCP is exposed.

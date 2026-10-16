@@ -178,6 +178,7 @@ function runRow(
   wallTimeMs: number | null,
   onFocusBatch: (batchId: string | null) => void,
   onCancel: ((batchId: string) => void) | null,
+  cancelUnavailableReason: string | null,
   busyBatchId: string | null
 ): React.JSX.Element {
   const terminal = isTerminal(run.record);
@@ -260,6 +261,13 @@ function runRow(
           `Cancellation: ${CANCELLATION_REASON_LABELS[run.record.cancellationReason]}.`
         )
       : null,
+    onCancel === null && !terminal && cancelUnavailableReason !== null
+      ? React.createElement(
+          "p",
+          { className: MUTED_META_CLASS, role: "status" },
+          `Cancellation unavailable: ${cancelUnavailableReason}`
+        )
+      : null,
     run.record.error
       ? React.createElement(
           "p",
@@ -290,6 +298,7 @@ export interface PlaytestingActiveRunsPanelProps {
   readonly showEmptyState?: boolean | undefined;
   readonly onFocusBatch: (batchId: string | null) => void;
   readonly onCancel: ((batchId: string) => void) | null;
+  readonly cancelUnavailableReason?: string | null | undefined;
   readonly busyBatchId: string | null;
 }
 
@@ -305,6 +314,7 @@ export function PlaytestingActiveRunsPanel({
   showEmptyState = true,
   onFocusBatch,
   onCancel,
+  cancelUnavailableReason = null,
   busyBatchId
 }: PlaytestingActiveRunsPanelProps): React.JSX.Element {
   const workspaceId = scope.workspaceId;
@@ -336,6 +346,7 @@ export function PlaytestingActiveRunsPanel({
                 wallTimeMs,
                 onFocusBatch,
                 onCancel,
+                cancelUnavailableReason,
                 busyBatchId
               )
             )

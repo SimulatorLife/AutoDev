@@ -35,6 +35,7 @@ import {
   PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA_V1,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA_V1,
+  PLAYTESTS_EPISODE_SCHEMA_V3,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
@@ -128,6 +129,10 @@ function episode(index: number, workspaceId = "workspace-a"): PlaytestEpisode {
     policyCohort: index % 4 ? "novice" : "expert",
     strategy: "baseline",
     status: index % 5 ? "completed" : "crashed",
+    termination:
+      index % 5
+        ? { reason: "game-terminal", step: null }
+        : { reason: "runtime-failure", step: null },
     outcome: index % 5 ? "win" : "dnf",
     outcomeMetrics: { score: index },
     completionCounts: counts(),
@@ -922,6 +927,21 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
   assert.equal(migratedEpisode.branchLineage, null);
   assert.equal(migratedEpisode.metrics[0]?.opportunityCount, null);
   assert.equal(migratedEpisode.metrics[0]?.coverage, 0.5);
+
+  const v3EpisodePayload = JSON.parse(
+    encodeEpisode(episode(3)).payload_json
+  ) as Record<string, unknown>;
+  v3EpisodePayload.schema = PLAYTESTS_EPISODE_SCHEMA_V3;
+  delete v3EpisodePayload.termination;
+  const migratedV3Episode = decodeEpisode({
+    ...encodeEpisode(episode(3)),
+    payload_json: JSON.stringify(v3EpisodePayload)
+  } as unknown as Record<string, unknown>);
+  assert.equal(migratedV3Episode.schema, PLAYTESTS_EPISODE_SCHEMA);
+  assert.deepEqual(migratedV3Episode.termination, {
+    reason: "unknown",
+    step: null
+  });
 
   const batchRow = encodeBatch(batch());
   const legacyBatchPayload = JSON.parse(batchRow.payload_json) as Record<

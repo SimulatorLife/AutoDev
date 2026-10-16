@@ -34,7 +34,7 @@ const workspace: WorkspaceEntry = {
 
 function episode(): PlaytestEpisode {
   return {
-    schema: "autodev-playtest-episode-v3",
+    schema: "autodev-playtest-episode-v4",
     episodeId: "episode-17",
     revision: 2,
     batchId: "batch-1",
@@ -66,6 +66,7 @@ function episode(): PlaytestEpisode {
     policyCohort: "novice",
     strategy: "weak-policy-fixture",
     status: "completed",
+    termination: { reason: "game-terminal", step: 2 },
     outcome: "loss",
     outcomeMetrics: {},
     completionCounts: {
@@ -161,7 +162,11 @@ test("Playtesting list view uses accessible links and explicit empty/unavailable
         total: 0,
         nextCursor: null
       },
-      sessionsWorkspace: React.createElement("p", null, "No sessions match these filters.")
+      sessionsWorkspace: React.createElement(
+        "p",
+        null,
+        "No sessions match these filters."
+      )
     })
   );
   assert.match(html, /aria-label="Playtesting views"/u);
@@ -445,10 +450,7 @@ test("inspector renders each recorded step as a summary of the fields that line 
     html,
     /Event choice-applied · event event-1 · Selected action advance · Phase tutorial · Tick 7 · Severity info/u
   );
-  assert.match(
-    html,
-    /Event legal-action-rejected · event event-2<\/p>/u
-  );
+  assert.match(html, /Event legal-action-rejected · event event-2<\/p>/u);
   assert.match(html, /data-trace-fact="action"/u);
   assert.match(html, /data-trace-fact="phase"/u);
   // The line type names the line, so it is reported as its own dimension
@@ -469,7 +471,65 @@ test("inspector renders each recorded step as a summary of the fields that line 
   );
 });
 
-test("raw trace JSON stays in a collapsed disclosure except for the addressed step", () => {
+test("a loop-guard stop explains the repeated decision and opens its stop step by default", () => {
+  const partialEpisode: PlaytestEpisode = {
+    ...episode(),
+    status: "budget-truncated",
+    termination: { reason: "loop-guard", step: 2 },
+    outcome: "unknown",
+    completeness: "partial",
+    missingReasons: ["budget-truncated"]
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail(partialEpisode),
+      scope: scope({ view: "sessions" }),
+      window: traceWindow()
+    })
+  );
+  const explanation =
+    /data-testid="playtesting-truncation-explanation"[^>]*>([^<]*)/u.exec(
+      html
+    )?.[1] ?? "";
+  assert.match(explanation, /No terminal game outcome was observed/u);
+  assert.match(explanation, /no win or loss is inferred/u);
+  assert.match(explanation, /loop guard stopped at step 2/u);
+  assert.match(explanation, /action was not executed/u);
+  assert.match(html, /data-playtesting-stop-step="2"/u);
+  assert.match(html, /href="[^"]*step=2"[^>]*>Inspect stop at step 2/u);
+  assert.match(
+    html,
+    /<details(?=[^>]*data-playtest-step-details="2")(?=[^>]*open="")[^>]*>/u
+  );
+  assert.match(html, /Game outcome<\/dt>[^]*?Not observed[^]*?unknown/u);
+  assert.doesNotMatch(explanation, /Game lost|Player lost/u);
+});
+
+test("a step-limit stop says how many decisions ran without inventing a game outcome", () => {
+  const partialEpisode: PlaytestEpisode = {
+    ...episode(),
+    status: "budget-truncated",
+    termination: { reason: "step-limit", step: null },
+    outcome: "unknown",
+    stepCount: 1200,
+    completeness: "partial",
+    missingReasons: ["budget-truncated"]
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail(partialEpisode),
+      scope: scope({ view: "sessions" }),
+      window: traceWindow()
+    })
+  );
+  assert.match(
+    html,
+    /Runtime reached the episode step limit after 1200 executed decisions/u
+  );
+  assert.doesNotMatch(html, /Inspect stop at step/u);
+});
+
+test("step details open only for the addressed step and raw trace JSON stays collapsed", () => {
   const html = renderToStaticMarkup(
     React.createElement(PlaytestingSessionView, {
       detail: detail(),
@@ -477,15 +537,23 @@ test("raw trace JSON stays in a collapsed disclosure except for the addressed st
       window: traceWindow()
     })
   );
-  const disclosures = html.match(/<details\b[^>]*>/gu) ?? [];
-  assert.equal(disclosures.length, 2);
-  assert.equal(disclosures.filter((tag) => /\sopen=""/u.test(tag)).length, 1);
+  const stepDetails =
+    html.match(/<details\b[^>]*data-playtest-step-details[^>]*>/gu) ?? [];
+  const rawJsonDetails =
+    html.match(/<details\b[^>]*data-playtest-json="true"[^>]*>/gu) ?? [];
+  assert.equal(stepDetails.length, 2);
+  assert.equal(stepDetails.filter((tag) => /\sopen=""/u.test(tag)).length, 1);
+  assert.equal(rawJsonDetails.length, 2);
+  assert.equal(
+    rawJsonDetails.filter((tag) => /\sopen=""/u.test(tag)).length,
+    0
+  );
   assert.match(html, /aria-label="Recorded data for step 1"/u);
   assert.match(html, /aria-label="Recorded data for step 2"/u);
   // The disclosure hides nothing: the recorded line itself is still rendered
- // verbatim behind the collapsed summary.
+  // verbatim behind the collapsed summary.
   assert.match(html, /&quot;eventId&quot;: &quot;event-2&quot;/u);
-  assert.match(html, /Recorded JSON \(selected step\)/u);
+  assert.match(html, /Recorded JSON/u);
 });
 
 test("RacingGame-shaped trace lines summarize recorded events and keep JSON closed by default", () => {
@@ -553,11 +621,11 @@ test("step navigation moves within the fetched window and preserves list state",
   assert.match(last, /data-playtest-step-next="disabled"/u);
   assert.match(last, /data-playtest-step-prev="1"/u);
   // Navigation never leaves the fetched window, so it cannot address a step
- // this page has no evidence for.
+  // this page has no evidence for.
   assert.doesNotMatch(last, /step=3/u);
 });
 
-test("session result dimensions stay scannable and each keeps its recorded token", () => {
+test("session status strip stays scannable and keeps exact tokens in a disclosure", () => {
   const html = renderToStaticMarkup(
     React.createElement(PlaytestingSessionView, {
       detail: detail(),
@@ -576,12 +644,18 @@ test("session result dimensions stay scannable and each keeps its recorded token
   assert.match(html, /aria-label="Independent session status dimensions"/u);
   assert.match(html, /data-playtesting-analyze-session="episode-17"/u);
   assert.match(html, /sessions=episode-17/u);
-  // The badge is the scan; the recorded token beneath it is the quotable
-  // evidence. Neither dimension borrows the other's wording.
-  assert.match(html, /Game outcome<\/dt>[^]*?LOSS[^]*?loss/u);
-  assert.match(html, /Execution status<\/dt>[^]*?Completed[^]*?completed/u);
+  // The first scan is human-readable; exact stored values remain available in
+  // one collapsed disclosure rather than being repeated beside every badge.
+  assert.match(html, /Game outcome<\/dt>[^]*?LOSS/u);
+  assert.match(html, /Execution status<\/dt>[^]*?Completed/u);
   assert.match(html, /Replay integrity<\/dt>[^]*?Trace replayable/u);
-  assert.match(html, /Evidence completeness<\/dt>[^]*?complete/u);
+  assert.match(html, /Evidence completeness<\/dt>[^]*?Complete/u);
+  assert.match(html, /data-recorded-session-status="true"/u);
+  assert.match(html, /Game outcome token<\/dt>[^]*?<dd[^>]*>loss<\/dd>/u);
+  assert.match(
+    html,
+    /Execution status token<\/dt>[^]*?<dd[^>]*>completed<\/dd>/u
+  );
 });
 
 test("Compare shows native human outcomes separately and never reconstructs suppressed cells", () => {

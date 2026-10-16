@@ -91,6 +91,18 @@ export function isTerminal(record: ControlApiPlaytestingRunRecord): boolean {
   return TERMINAL_RUN_STATES.has(record.status);
 }
 
+/** Only a positively observed role restriction hides the cancel action. */
+export function cancellationAvailability(
+  operatorActionsAvailable: boolean | null
+): { readonly allowed: boolean; readonly reason: string | null } {
+  return operatorActionsAvailable === false
+    ? {
+        allowed: false,
+        reason: "Only an authorized operator can cancel this run."
+      }
+    : { allowed: true, reason: null };
+}
+
 /**
  * Read one run-status envelope for exactly this workspace and batch. The
  * active-runs read lists only nonterminal batches, so a batch that finished

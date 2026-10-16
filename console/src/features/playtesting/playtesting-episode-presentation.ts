@@ -9,6 +9,8 @@ import {
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 
+const LOOP_GUARD_STOP_REASON = "loop-guard" as const;
+
 /** Execution disposition and the game's outcome remain separate dimensions. */
 export function executionStatusBadge(
   status: PlaytestEpisode["status"]
@@ -40,4 +42,69 @@ export function gameOutcomeBadge(
     label: value === "unknown" ? "Not observed" : value.toUpperCase(),
     title: "Game outcome is separate from playtest execution status."
   });
+}
+
+/** Prefer the decision that stopped an incomplete episode over its first step. */
+export function defaultEpisodeInspectionStep(
+  episode: Pick<PlaytestEpisode, "status" | "stepCount" | "termination">
+): number | null {
+  if (
+    episode.termination.reason === LOOP_GUARD_STOP_REASON &&
+    episode.termination.step !== null
+  ) {
+    return episode.termination.step;
+  }
+  return episode.status !== "completed" && episode.stepCount > 0
+    ? episode.stepCount - 1
+    : null;
+}
+
+/** The loop guard's unexecuted decision is recorded just beyond stepCount. */
+export function episodeTraceContainsStep(
+  episode: Pick<PlaytestEpisode, "stepCount" | "termination">,
+  step: number
+): boolean {
+  return (
+    Number.isSafeInteger(step) &&
+    step >= 0 &&
+    (step < episode.stepCount ||
+      (episode.termination.reason === LOOP_GUARD_STOP_REASON &&
+        episode.termination.step === step))
+  );
+}
+
+export type PlaytestingEpisodeTraceWindowPlan =
+  | { readonly kind: "none" }
+  | { readonly kind: "outside-range" }
+  | {
+      readonly kind: "window";
+      readonly artifactId: string;
+      readonly startStep: number;
+      readonly endStep: number;
+    };
+
+/** Include the loop-guard's unexecuted decision just beyond executed stepCount. */
+export function planEpisodeTraceWindow(
+  episode: Pick<PlaytestEpisode, "trace" | "stepCount" | "termination">,
+  requestedStep: number
+): PlaytestingEpisodeTraceWindowPlan {
+  if (episode.trace === null) return { kind: "none" };
+  if (episode.stepCount === 0 && episode.termination.reason !== LOOP_GUARD_STOP_REASON) {
+    return { kind: "none" };
+  }
+  if (!episodeTraceContainsStep(episode, requestedStep)) {
+    return { kind: "outside-range" };
+  }
+  const startStep = Math.max(0, requestedStep - 5);
+  const lastStep =
+    episode.termination.reason === LOOP_GUARD_STOP_REASON &&
+    episode.termination.step !== null
+      ? episode.termination.step
+      : episode.stepCount - 1;
+  return {
+    kind: "window",
+    artifactId: episode.trace.id,
+    startStep,
+    endStep: Math.max(startStep, Math.min(lastStep, requestedStep + 5))
+  };
 }

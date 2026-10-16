@@ -275,6 +275,7 @@ function episode(
     policyCohort: WEIGHTED_COHORT,
     strategy: "seam fixture",
     status: "completed",
+    termination: { reason: "game-terminal", step: 0 },
     outcome: "completed",
     outcomeMetrics: {},
     completionCounts: {

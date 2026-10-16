@@ -261,11 +261,12 @@ test("Playtesting page rejects a response for another workspace rather than rend
 test("Playtesting selected episode validates workspace binding and nullable review", async () => {
   let requested = "";
   const episode = {
-    schema: "autodev-playtest-episode-v3",
+    schema: "autodev-playtest-episode-v4",
     episodeId: "episode-1",
     revision: 1,
     batchId: "batch-1",
     identity: { workspaceId },
+    termination: { reason: "unknown", step: null },
     stepCount: 0,
     metrics: [],
     frames: []

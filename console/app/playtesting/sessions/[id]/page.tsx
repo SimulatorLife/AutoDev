@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import React from "react";
 
+import {
+  defaultEpisodeInspectionStep,
+  planEpisodeTraceWindow
+} from "../../../../src/features/playtesting/playtesting-episode-presentation.ts";
 import { parsePlaytestingScope } from "../../../../src/features/playtesting/playtesting-url.ts";
 import { PlaytestingReadiness } from "../../../../src/features/playtesting/PlaytestingReadiness.tsx";
-import type { PlaytestingRunSetup } from "../../../../src/features/playtesting/PlaytestingRunControls.tsx";
-import { PlaytestingRunDashboard } from "../../../../src/features/playtesting/PlaytestingRunDashboard.tsx";
 import { PlaytestingSessionView } from "../../../../src/features/playtesting/PlaytestingSessionView.ts";
 import {
   controlApiFailureCode,
@@ -18,7 +20,6 @@ import {
 } from "../../../_console.ts";
 import {
   fetchPlaytestingEpisode,
-  fetchPlaytestingRunCapabilities,
   fetchPlaytestingWindow,
   playtestingReadinessFailure
 } from "../../playtesting-server.ts";
@@ -66,10 +67,9 @@ export default async function PlaytestingSessionPage({
     );
   }
 
-  const [workspaces, result, capabilities] = await Promise.all([
+  const [workspaces, result] = await Promise.all([
     fetchWorkspaces(config),
-    fetchPlaytestingEpisode(scope.workspaceId, id, config),
-    fetchPlaytestingRunCapabilities(scope.workspaceId, config)
+    fetchPlaytestingEpisode(scope.workspaceId, id, config)
   ]);
   if (workspaces.kind !== "ok") {
     return React.createElement(
@@ -118,56 +118,38 @@ export default async function PlaytestingSessionPage({
   }
 
   const detail = result.data;
-  const requestedStep = scope.step ?? 0;
+  const requestedStep =
+    scope.step ?? defaultEpisodeInspectionStep(detail.record) ?? 0;
+  const traceWindowPlan = planEpisodeTraceWindow(detail.record, requestedStep);
   let window: Awaited<ReturnType<typeof fetchPlaytestingWindow>> | null = null;
   let windowUnavailable: string | undefined;
-  if (detail.record.trace !== null && detail.record.stepCount > 0) {
-    if (requestedStep >= detail.record.stepCount) {
-      windowUnavailable = `Step ${requestedStep} is outside this episode's recorded range.`;
-    } else {
-      const startStep = Math.max(0, requestedStep - 5);
-      const endStep = Math.min(detail.record.stepCount - 1, requestedStep + 5);
-      const windowResult = await fetchPlaytestingWindow(
-        {
-          workspaceId: scope.workspaceId,
-          episodeId: id,
-          artifactId: detail.record.trace.id,
-          startStep,
-          endStep
-        },
-        config
-      );
-      if (windowResult.kind === "ok") window = windowResult;
-      else
-        windowUnavailable = `${controlApiFailureCode(windowResult)}: ${windowResult.message}`;
-    }
+  if (traceWindowPlan.kind === "outside-range") {
+    windowUnavailable = `Step ${requestedStep} is outside this episode's recorded range.`;
+  }
+  if (traceWindowPlan.kind === "window") {
+    const windowResult = await fetchPlaytestingWindow(
+      {
+        workspaceId: scope.workspaceId,
+        episodeId: id,
+        artifactId: traceWindowPlan.artifactId,
+        startStep: traceWindowPlan.startStep,
+        endStep: traceWindowPlan.endStep
+      },
+      config
+    );
+    if (windowResult.kind === "ok") window = windowResult;
+    else
+      windowUnavailable = `${controlApiFailureCode(windowResult)}: ${windowResult.message}`;
   }
 
-  const runSetup: PlaytestingRunSetup =
-    capabilities.kind === "ok"
-      ? { kind: "available", capabilities: capabilities.data }
-      : {
-          kind: "unavailable",
-          code: controlApiFailureCode(capabilities),
-          message: capabilities.message
-        };
   return React.createElement(
     ConsolePageShell,
     { section },
-    React.createElement(
-      React.Fragment,
-      null,
-      React.createElement(PlaytestingRunDashboard, {
-        setup: runSetup,
-        scope,
-        showRunControls: false
-      }),
-      React.createElement(PlaytestingSessionView, {
-        detail,
-        scope,
-        window: window?.kind === "ok" ? window.data : null,
-        ...(windowUnavailable === undefined ? {} : { windowUnavailable })
-      })
-    )
+    React.createElement(PlaytestingSessionView, {
+      detail,
+      scope,
+      window: window?.kind === "ok" ? window.data : null,
+      ...(windowUnavailable === undefined ? {} : { windowUnavailable })
+    })
   );
 }

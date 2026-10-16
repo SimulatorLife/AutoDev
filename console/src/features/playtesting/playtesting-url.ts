@@ -66,6 +66,19 @@ const FILTERS_BY_VIEW: Readonly<
 };
 export type PlaytestingFilterKey = (typeof PLAYTESTING_FILTER_KEYS)[number];
 
+const FILTER_KEY_SET: ReadonlySet<string> = new Set(PLAYTESTING_FILTER_KEYS);
+const FILTER_KEY_ORDER = new Map<string, number>(
+  PLAYTESTING_FILTER_KEYS.map((key, index) => [key, index] as const)
+);
+
+function orderedPresentFilterKeys(
+  source: object
+): PlaytestingFilterKey[] {
+  return Object.keys(source)
+    .filter((key): key is PlaytestingFilterKey => FILTER_KEY_SET.has(key))
+    .sort((left, right) => FILTER_KEY_ORDER.get(left)! - FILTER_KEY_ORDER.get(right)!);
+}
+
 /** Query keys accepted by each server-filtered Data resource. */
 export const PLAYTESTING_FILTERS_BY_RESOURCE = {
   batches: ["buildSha", "status"],
@@ -190,7 +203,7 @@ function normalizedFilters(
   const filters: Partial<Record<PlaytestingFilterKey, string>> = {};
   const supported = FILTERS_BY_VIEW[view];
   let invalid = false;
-  for (const key of PLAYTESTING_FILTER_KEYS) {
+  for (const key of orderedPresentFilterKeys(input)) {
     const raw = input[key];
     const candidate = singleValue(raw);
     if (hasRepeatedValues(raw)) invalid = true;
@@ -321,7 +334,7 @@ function paramsForScope(
   const params = new URLSearchParams();
   if (scope.view !== "overview") params.set("view", scope.view);
   if (scope.workspaceId) params.set("workspaceId", scope.workspaceId);
-  for (const key of PLAYTESTING_FILTER_KEYS) {
+  for (const key of orderedPresentFilterKeys(scope.filters)) {
     const value = scope.filters[key];
     if (value) params.set(key, value);
   }
@@ -441,12 +454,10 @@ export function playtestingFilterHref(
   }
 ): string {
   const filters = { ...scope.filters };
-  for (const key of PLAYTESTING_FILTER_KEYS) {
-    if (key in updates) {
-      const value = updates[key];
-      if (value) filters[key] = value;
-      else delete filters[key];
-    }
+  for (const key of orderedPresentFilterKeys(updates)) {
+    const value = updates[key];
+    if (value) filters[key] = value;
+    else delete filters[key];
   }
   return playtestingListHref({
     ...scope,

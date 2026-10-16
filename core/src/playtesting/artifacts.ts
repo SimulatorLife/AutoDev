@@ -15,6 +15,7 @@ import {
   type PlaytestDimensionAnchor,
   type PlaytestDimensionRubric,
   type PlaytestEpisodeState,
+  type PlaytestEpisodeTerminationReason,
   type PlaytestEvidenceLocator,
   type PlaytestExperimentState,
   type PlaytestFinding,
@@ -101,6 +102,13 @@ export interface PlaytestEpisodeIdentity {
   readonly environmentHash: string;
 }
 
+/** Why Runtime stopped and, when recorded, the zero-based trace step. */
+export interface PlaytestEpisodeTermination {
+  readonly reason: PlaytestEpisodeTerminationReason;
+  /** Loop-guard stops point at their unexecuted decision; other stops may be null. */
+  readonly step: number | null;
+}
+
 /** One step-indexed decision record; full trace bytes live in bounded artifacts. */
 export interface PlaytestEpisodeStep {
   readonly step: number;
@@ -161,6 +169,7 @@ export interface PlaytestEpisode {
   readonly policyCohort: string;
   readonly strategy: string;
   readonly status: PlaytestEpisodeState;
+  readonly termination: PlaytestEpisodeTermination;
   readonly outcome: PlaytestGameOutcomeKind;
   readonly outcomeMetrics: Readonly<Record<string, number | null>>;
   readonly completionCounts: PlaytestCompletionCounts;

@@ -49,6 +49,8 @@ import {
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA_V1,
   PLAYTESTS_EPISODE_SCHEMA_V2,
+  PLAYTESTS_EPISODE_SCHEMA_V3,
+  PLAYTESTS_EPISODE_TERMINATION_REASONS,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
@@ -1294,76 +1296,125 @@ function migrateLegacyPacketReceipts(input: {
 }
 
 /** One-way migration: pre-change episodes carry no batch-local assignment id. */
-function migrateEpisodeArtifact(
-  artifact: Readonly<Record<string, unknown>>
-): PlaytestEpisode {
-  if (
-    artifact.schema !== PLAYTESTS_EPISODE_SCHEMA_V1 &&
-    artifact.schema !== PLAYTESTS_EPISODE_SCHEMA_V2 &&
-    artifact.schema !== PLAYTESTS_EPISODE_SCHEMA
-  ) {
-    throw new PlaytestSourceUnavailableError(
-      "ClickHouse returned an unsupported playtest episode schema"
-    );
-  }
-  if (artifact.schema === PLAYTESTS_EPISODE_SCHEMA_V1) {
-    return {
-      ...artifact,
-      schema: PLAYTESTS_EPISODE_SCHEMA,
-      assignmentId:
-        typeof artifact.assignmentId === "string"
-          ? artifact.assignmentId
-          : null,
-      branchLineage: null,
-      metrics: Array.isArray(artifact.metrics)
-        ? artifact.metrics.map((metric) =>
-            isRecord(metric)
-              ? { ...metric, phaseId: null, opportunityCount: null }
-              : metric
-          )
-        : []
-    } as unknown as PlaytestEpisode;
-  }
-  if (artifact.schema === PLAYTESTS_EPISODE_SCHEMA_V2) {
-    if (
-      typeof artifact.assignmentId !== "string" &&
-      artifact.assignmentId !== null
-    ) {
-      throw new PlaytestSourceUnavailableError(
-        "ClickHouse v2 episode is missing its batch assignment identity"
-      );
-    }
-    if (artifact.branchLineage === undefined) {
-      throw new PlaytestSourceUnavailableError(
-        "ClickHouse v2 episode is missing its branch-lineage field"
-      );
-    }
-    return {
-      ...artifact,
-      schema: PLAYTESTS_EPISODE_SCHEMA,
-      metrics: Array.isArray(artifact.metrics)
-        ? artifact.metrics.map((metric) =>
-            isRecord(metric) && metric.phaseId === undefined
-              ? { ...metric, phaseId: null }
-              : metric
-          )
-        : []
-    } as unknown as PlaytestEpisode;
-  }
+function assertEpisodeAssignmentIdentity(
+  artifact: Readonly<Record<string, unknown>>,
+  version: string
+): void {
   if (
     typeof artifact.assignmentId !== "string" &&
     artifact.assignmentId !== null
   ) {
     throw new PlaytestSourceUnavailableError(
-      "ClickHouse v2 episode is missing its batch assignment identity"
+      `ClickHouse ${version} episode is missing its batch assignment identity`
     );
   }
+}
+
+function assertEpisodeBranchLineage(
+  artifact: Readonly<Record<string, unknown>>,
+  version: string
+): void {
   if (artifact.branchLineage === undefined) {
     throw new PlaytestSourceUnavailableError(
-      "ClickHouse v2 episode is missing its branch-lineage field"
+      `ClickHouse ${version} episode is missing its branch-lineage field`
+    );
+  }
+}
+
+function migrateEpisodeV1(
+  artifact: Readonly<Record<string, unknown>>
+): PlaytestEpisode {
+  return {
+    ...artifact,
+    schema: PLAYTESTS_EPISODE_SCHEMA,
+    assignmentId:
+      typeof artifact.assignmentId === "string" ? artifact.assignmentId : null,
+    branchLineage: null,
+    termination: { reason: "unknown", step: null },
+    metrics: Array.isArray(artifact.metrics)
+      ? artifact.metrics.map((metric) =>
+          isRecord(metric)
+            ? { ...metric, phaseId: null, opportunityCount: null }
+            : metric
+        )
+      : []
+  } as unknown as PlaytestEpisode;
+}
+
+function migrateEpisodeV2(
+  artifact: Readonly<Record<string, unknown>>
+): PlaytestEpisode {
+  assertEpisodeAssignmentIdentity(artifact, "v2");
+  assertEpisodeBranchLineage(artifact, "v2");
+  return {
+    ...artifact,
+    schema: PLAYTESTS_EPISODE_SCHEMA,
+    termination: { reason: "unknown", step: null },
+    metrics: Array.isArray(artifact.metrics)
+      ? artifact.metrics.map((metric) =>
+          isRecord(metric) && metric.phaseId === undefined
+            ? { ...metric, phaseId: null }
+            : metric
+        )
+      : []
+  } as unknown as PlaytestEpisode;
+}
+
+function migrateEpisodeV3(
+  artifact: Readonly<Record<string, unknown>>
+): PlaytestEpisode {
+  assertEpisodeAssignmentIdentity(artifact, "v3");
+  assertEpisodeBranchLineage(artifact, "v3");
+  return {
+    ...artifact,
+    schema: PLAYTESTS_EPISODE_SCHEMA,
+    termination: { reason: "unknown", step: null }
+  } as unknown as PlaytestEpisode;
+}
+
+function validateEpisodeV4(
+  artifact: Readonly<Record<string, unknown>>
+): PlaytestEpisode {
+  assertEpisodeAssignmentIdentity(artifact, "v4");
+  assertEpisodeBranchLineage(artifact, "v4");
+  const termination = artifact.termination;
+  if (
+    !isRecord(termination) ||
+    !(PLAYTESTS_EPISODE_TERMINATION_REASONS as readonly unknown[]).includes(
+      termination.reason
+    ) ||
+    (termination.step !== null &&
+      (!Number.isSafeInteger(termination.step) || Number(termination.step) < 0))
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse v4 episode contains an invalid termination record"
     );
   }
   return artifact as unknown as PlaytestEpisode;
+}
+
+function migrateEpisodeArtifact(
+  artifact: Readonly<Record<string, unknown>>
+): PlaytestEpisode {
+  switch (artifact.schema) {
+    case PLAYTESTS_EPISODE_SCHEMA_V1: {
+      return migrateEpisodeV1(artifact);
+    }
+    case PLAYTESTS_EPISODE_SCHEMA_V2: {
+      return migrateEpisodeV2(artifact);
+    }
+    case PLAYTESTS_EPISODE_SCHEMA_V3: {
+      return migrateEpisodeV3(artifact);
+    }
+    case PLAYTESTS_EPISODE_SCHEMA: {
+      return validateEpisodeV4(artifact);
+    }
+    default: {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse returned an unsupported playtest episode schema"
+      );
+    }
+  }
 }
 
 export function decodeBatch(row: Record<string, unknown>): PlaytestBatch {

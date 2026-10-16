@@ -8,7 +8,7 @@
  * operator on the same batch rather than resetting them to a list.
  */
 import type { ControlApiPlaytestingRunRecord } from "@simulatorlife/autodev-core";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { isTerminal } from "./playtesting-active-runs.ts";
 import { responseMessage } from "./playtesting-run-messages.ts";
@@ -76,6 +76,8 @@ export interface PlaytestingLiveRunsProps {
   readonly initialFocusedBatchId: string | null;
   readonly wallTimeMs: number | null;
   readonly showEmptyState: boolean;
+  readonly allowCancel: boolean;
+  readonly cancelUnavailableReason: string | null;
   /** The dashboard's single status owner, shared with the run start card. */
   readonly live: ReturnType<typeof usePlaytestingActiveRuns>;
 }
@@ -86,6 +88,8 @@ export function PlaytestingLiveRuns({
   initialFocusedBatchId,
   wallTimeMs,
   showEmptyState,
+  allowCancel,
+  cancelUnavailableReason,
   live
 }: PlaytestingLiveRunsProps): React.JSX.Element {
   const { state, refresh, watching } = live;
@@ -97,6 +101,18 @@ export function PlaytestingLiveRuns({
   const [autoFocusApplied, setAutoFocusApplied] = useState(
     initialFocusedBatchId !== null
   );
+  const previousInitialFocus = useRef(initialFocusedBatchId);
+
+  useEffect(() => {
+    if (
+      initialFocusedBatchId !== null &&
+      initialFocusedBatchId !== previousInitialFocus.current
+    ) {
+      setFocusedBatchId(initialFocusedBatchId);
+      setAutoFocusApplied(true);
+    }
+    previousInitialFocus.current = initialFocusedBatchId;
+  }, [initialFocusedBatchId]);
 
   useEffect(() => {
     if (focusedBatchId !== null || autoFocusApplied) return;
@@ -182,7 +198,8 @@ export function PlaytestingLiveRuns({
       wallTimeMs,
       showEmptyState,
       onFocusBatch: focusBatch,
-      onCancel: cancel,
+      onCancel: allowCancel ? cancel : null,
+      cancelUnavailableReason,
       busyBatchId
     }),
     actionError

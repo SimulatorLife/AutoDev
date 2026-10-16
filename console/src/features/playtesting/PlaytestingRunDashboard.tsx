@@ -12,9 +12,12 @@ import type {
   ControlApiPlaytestingRunStartedResponse
 } from "@simulatorlife/autodev-core";
 import { useRouter } from "next/navigation";
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 
-import { isTerminal } from "./playtesting-active-runs.ts";
+import {
+  cancellationAvailability,
+  isTerminal
+} from "./playtesting-active-runs.ts";
 import type { PlaytestingScope } from "./playtesting-url.ts";
 import { PlaytestingLiveRuns } from "./PlaytestingLiveRuns.ts";
 import {
@@ -36,6 +39,7 @@ export function PlaytestingRunDashboard({
   const live = usePlaytestingActiveRuns({
     workspaceId: scope.workspaceId ?? null
   });
+  const [focusedBatchId, setFocusedBatchId] = useState(scope.liveBatchId);
   const onRunStarted = useCallback(
     (started: ControlApiPlaytestingRunStartedResponse) => {
       const record: ControlApiPlaytestingRunRecord = {
@@ -45,6 +49,7 @@ export function PlaytestingRunDashboard({
         result: null,
         error: null
       };
+      setFocusedBatchId(started.batchId);
       live.trackRun({
         batchId: started.batchId,
         assignmentCount: started.assignmentCount,
@@ -57,6 +62,12 @@ export function PlaytestingRunDashboard({
     },
     [live.trackRun]
   );
+  const operatorActionsAvailable =
+    setup.kind === "available"
+      ? setup.capabilities.operatorActionsAvailable
+      : null;
+  const { allowed: canCancel, reason: cancelUnavailableReason } =
+    cancellationAvailability(operatorActionsAvailable);
   const terminalBatches = live.state.runs
     .filter((run) => isTerminal(run.record))
     .map((run) => run.batchId)
@@ -77,10 +88,12 @@ export function PlaytestingRunDashboard({
       ? React.createElement(PlaytestingLiveRuns, {
           workspaceId: scope.workspaceId,
           scope,
-          initialFocusedBatchId: scope.liveBatchId,
+          initialFocusedBatchId: focusedBatchId,
           wallTimeMs:
             setup.kind === "available" ? setup.capabilities.limits?.wallTimeMs ?? null : null,
           showEmptyState: showRunControls && scope.view === "overview",
+          allowCancel: canCancel,
+          cancelUnavailableReason,
           live
         })
       : null

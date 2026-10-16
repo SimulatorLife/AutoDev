@@ -201,6 +201,7 @@ interface FixtureSandbox extends PlaytestSandboxHandle {
 function sandboxFixture(
   options: {
     readonly terminal?: boolean;
+    readonly singleLegalAction?: boolean;
     readonly noLegalActions?: boolean;
     readonly onStepRequest?: () => void;
     readonly episodeId?: string;
@@ -376,12 +377,14 @@ function sandboxFixture(
           revision,
           actions: options.noLegalActions
             ? []
-            : options.branchAlternativeNotLegal
+            : options.singleLegalAction
               ? [{ actionId: "advance", description: "Advance" }]
-              : [
-                  { actionId: "advance", description: "Advance" },
-                  { actionId: "wait", description: "Wait" }
-                ]
+              : options.branchAlternativeNotLegal
+                ? [{ actionId: "advance", description: "Advance" }]
+                : [
+                    { actionId: "advance", description: "Advance" },
+                    { actionId: "wait", description: "Wait" }
+                  ]
         });
         return;
       }
@@ -565,7 +568,7 @@ function branchExecution(
 ): NonNullable<Parameters<typeof runPlaytestEpisode>[0]["branch"]> {
   const advertised = capabilities(GAME_BUILD, true);
   const parentEpisode: PlaytestEpisode = {
-    schema: "autodev-playtest-episode-v3",
+    schema: "autodev-playtest-episode-v4",
     episodeId: "parent-episode-1",
     revision: 4,
     batchId: "parent-batch-1",
@@ -597,6 +600,7 @@ function branchExecution(
     policyCohort: "novice",
     strategy: "advance-first",
     status: "completed",
+    termination: { reason: "game-terminal", step: 3 },
     outcome: "loss",
     outcomeMetrics: {},
     completionCounts: {
@@ -1567,6 +1571,41 @@ test("episode runner records a hard step budget as truncated, never as a game lo
     assert.equal(result.episode?.outcome, "unknown");
     assert.deepEqual(result.episode?.missingReasons, ["budget-truncated"]);
     assert.equal(result.failure?.category, "budget-truncated");
+  } finally {
+    temporary.cleanup();
+  }
+});
+
+test("episode stores loop-guard reason and the unexecuted stopping step", async () => {
+  const temporary = store();
+  const sandbox = sandboxFixture({
+    terminal: false,
+    singleLegalAction: true
+  });
+  try {
+    const result = await runPlaytestEpisode(
+      runOptions(sandbox, temporary.artifacts)
+    );
+    assert.equal(result.failure?.category, "loop-guard");
+    assert.equal(result.loopDetectedAtStep, 2);
+    assert.equal(result.episode?.status, "budget-truncated");
+    assert.deepEqual(result.episode?.termination, {
+      reason: "loop-guard",
+      step: 2
+    });
+    assert.equal(result.episode?.stepCount, 2);
+    assert.equal(result.steps.at(-1)?.step, 2);
+    assert.ok(result.traceReference);
+    const traceLines = new TextDecoder()
+      .decode(temporary.artifacts.readWindow(result.traceReference!).bytes)
+      .trim()
+      .split("\n");
+    const stopEntry = JSON.parse(traceLines.at(-1)!) as {
+      readonly step: number;
+      readonly executed: boolean;
+    };
+    assert.equal(stopEntry.step, 2);
+    assert.equal(stopEntry.executed, false);
   } finally {
     temporary.cleanup();
   }

@@ -81,13 +81,28 @@ export const PLAYTESTS_HUMAN_STUDY_SCHEMA =
 export const PLAYTESTS_BATCH_SCHEMA = "autodev-playtest-batch-v3" as const;
 export const PLAYTESTS_BATCH_SCHEMA_V2 = "autodev-playtest-batch-v2" as const;
 export const PLAYTESTS_BATCH_SCHEMA_V1 = "autodev-playtest-batch-v1" as const;
-export const PLAYTESTS_EPISODE_SCHEMA = "autodev-playtest-episode-v3" as const;
+export const PLAYTESTS_EPISODE_SCHEMA = "autodev-playtest-episode-v4" as const;
+export const PLAYTESTS_EPISODE_SCHEMA_V3 =
+  "autodev-playtest-episode-v3" as const;
 export const PLAYTESTS_EPISODE_SCHEMA_V2 =
   "autodev-playtest-episode-v2" as const;
 export const PLAYTESTS_EPISODE_SCHEMA_V1 =
   "autodev-playtest-episode-v1" as const;
 export const PLAYTESTS_EXPERIMENT_SCHEMA =
   "autodev-playtest-experiment-v1" as const;
+
+/** Runtime-owned reason an episode stopped, separate from its execution state. */
+export const PLAYTESTS_EPISODE_TERMINATION_REASONS = [
+  "game-terminal",
+  "step-limit",
+  "loop-guard",
+  "cancelled",
+  "approval-revoked",
+  "runtime-failure",
+  "unknown"
+] as const;
+export type PlaytestEpisodeTerminationReason =
+  (typeof PLAYTESTS_EPISODE_TERMINATION_REASONS)[number];
 export const PLAYTEST_REVIEW_SECTION_NOT_RECORDED = "not-recorded" as const;
 export const PLAYTESTS_SESSION_REVIEW_SCHEMA =
   "autodev-playtest-session-review-v6" as const;

@@ -1102,7 +1102,7 @@ test("Playtesting invalid keyset cursors return 400, never an empty page", async
 test("selected episode returns its latest review and remains workspace-scoped", async () => {
   const episode = {
     episodeId: "episode-1",
-    schema: "autodev-playtest-episode-v3"
+    schema: "autodev-playtest-episode-v4"
   };
   const review = { reviewId: "review-1", status: "hypothesis" };
   let lookup: unknown;

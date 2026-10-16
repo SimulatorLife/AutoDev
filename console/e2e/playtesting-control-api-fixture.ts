@@ -76,7 +76,7 @@ const counts = {
 } as const;
 
 const episode = {
-  schema: "autodev-playtest-episode-v3",
+  schema: "autodev-playtest-episode-v4",
   episodeId: "episode-17",
   revision: 1,
   batchId: "batch-3",
@@ -108,6 +108,7 @@ const episode = {
   policyCohort: "novice",
   strategy: "weak-policy-fixture",
   status: "completed",
+  termination: { reason: "game-terminal", step: 1 },
   outcome: "loss",
   outcomeMetrics: { score: 10 },
   completionCounts: counts,
@@ -151,6 +152,27 @@ const episode = {
   completeness: "complete",
   missingReasons: []
 };
+
+const loopGuardEpisode = {
+  ...episode,
+  episodeId: "episode-loop-guard",
+  status: "budget-truncated",
+  termination: { reason: "loop-guard", step: 3 },
+  outcome: "unknown",
+  outcomeMetrics: {},
+  completionCounts: {
+    ...counts,
+    completed: 0,
+    budgetTruncated: 1,
+    eligible: 0
+  },
+  frames: [],
+  stepCount: 3,
+  metrics: [],
+  findingIds: [],
+  completeness: "partial",
+  missingReasons: ["budget-truncated"]
+} as const;
 
 const assignmentManifestBase = {
   schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
@@ -1445,10 +1467,9 @@ function respondSyntheticReadiness(
     );
     return true;
   }
+  const poll = syntheticReadinessPollCount++;
   const status =
-    syntheticReadinessPollCount++ < syntheticReadinessPendingPolls
-      ? "initializing"
-      : "ready";
+    poll < syntheticReadinessPendingPolls ? "initializing" : "ready";
   sendJson(response, {
     schema: CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
     workspaceId: WORKSPACE_ID,
@@ -1482,6 +1503,12 @@ function respondSyntheticPlaytestingDataReadiness(
   return true;
 }
 
+function syntheticEpisodeFor(episodeId: string) {
+  if (episodeId === episode.episodeId) return episode;
+  if (episodeId === loopGuardEpisode.episodeId) return loopGuardEpisode;
+  return syntheticRunEpisodes.get(episodeId);
+}
+
 function handleSyntheticPlaytestingRead(
   response: ServerResponse,
   url: URL
@@ -1508,10 +1535,7 @@ function handleSyntheticPlaytestingRead(
   const episodeMatch = url.pathname.match(PLAYTEST_EPISODE_DETAIL_ROUTE);
   if (episodeMatch) {
     const episodeId = decodeURIComponent(episodeMatch[1]!);
-    const record =
-      episodeId === episode.episodeId
-        ? episode
-        : syntheticRunEpisodes.get(episodeId);
+    const record = syntheticEpisodeFor(episodeId);
     if (!record) {
       sendJson(response, { error: "Not found" }, 404);
       return true;
@@ -1533,10 +1557,7 @@ function handleSyntheticPlaytestingRead(
   if (windowMatch) {
     const episodeId = decodeURIComponent(windowMatch[1]!);
     const artifactId = decodeURIComponent(windowMatch[2]!);
-    const record =
-      episodeId === episode.episodeId
-        ? episode
-        : syntheticRunEpisodes.get(episodeId);
+    const record = syntheticEpisodeFor(episodeId);
     if (!record || artifactId !== TRACE_ID) {
       response.writeHead(404).end();
       return true;
@@ -1563,6 +1584,14 @@ function handleSyntheticPlaytestingRead(
         {
           type: "event",
           event: { step: 2, eventId: "event-2", type: "legal-action-noop" }
+        },
+        {
+          step: 3,
+          selectedActionId: "advance-segment",
+          observationHash: "c".repeat(16),
+          visibleObservation: { phaseId: "race_and_energy" },
+          executed: false,
+          events: []
         }
       ].filter(
         (entry) =>

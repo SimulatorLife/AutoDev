@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   assignmentCounts,
   assignmentOutcomes,
+  cancellationAvailability,
   createPollLoop,
   departedRuns,
   freshnessForFailure,
@@ -159,6 +160,21 @@ test("a live read fails closed rather than showing a partial view", () => {
     ),
     null
   );
+});
+
+test("cancellation stays available when capability state is unknown and explains known role restrictions", () => {
+  assert.deepEqual(cancellationAvailability(null), {
+    allowed: true,
+    reason: null
+  });
+  assert.deepEqual(cancellationAvailability(true), {
+    allowed: true,
+    reason: null
+  });
+  assert.deepEqual(cancellationAvailability(false), {
+    allowed: false,
+    reason: "Only an authorized operator can cancel this run."
+  });
 });
 
 test("truncated is terminal and distinct from a real completed result", () => {
@@ -435,6 +451,26 @@ test("a terminal batch offers no cancel action and is marked terminal", () => {
   // and uses the Console's single spelling for that.
   assert.match(markup, /Not observed/);
   assert.doesNotMatch(markup, />Not reported</);
+});
+
+test("a known viewer restriction explains why cancellation is unavailable", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(PlaytestingActiveRunsPanel, {
+      scope: WORKSPACE_SCOPE,
+      runs: [run("batch-viewer", "running")],
+      freshness: "live",
+      lastFailure: null,
+      watching: true,
+      onRefresh: () => {},
+      focusedBatchId: "batch-viewer",
+      onFocusBatch: () => {},
+      onCancel: null,
+      cancelUnavailableReason: "Only an authorized operator can cancel this run.",
+      busyBatchId: null
+    })
+  );
+  assert.match(markup, /Cancellation unavailable: Only an authorized operator can cancel this run/u);
+  assert.doesNotMatch(markup, /Cancel batch/u);
 });
 
 test("the panel renders the owner's own counts rather than an absent reading", () => {

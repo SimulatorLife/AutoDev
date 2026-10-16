@@ -60,6 +60,8 @@ export const MAX_PLAYTEST_EPISODE_TRACE_STEPS = 4096;
 const MAX_EPISODE_WINDOW_STEPS = MAX_PLAYTEST_EPISODE_TRACE_STEPS;
 const MAX_TRACE_EVENT_COUNT = 100_000;
 const BUDGET_TRUNCATED = "budget-truncated" as const;
+const APPROVAL_REVOKED = "approval-revoked" as const;
+const LOOP_GUARD = "loop-guard" as const;
 const INFRASTRUCTURE_FAILED = "infrastructure-failed" as const;
 const EMPTY_COMPLETION_COUNTS = {
   assigned: 1,
@@ -122,10 +124,10 @@ export interface PlaytestEpisodeRunFailure {
     | "policy"
     | "sandbox"
     | "cancelled"
-    | "approval-revoked"
+    | typeof APPROVAL_REVOKED
     | "trace"
     | "no-legal-actions"
-    | "loop-guard"
+    | typeof LOOP_GUARD
     | typeof BUDGET_TRUNCATED
     | "evaluator";
   readonly code: number | null;
@@ -378,7 +380,7 @@ function statusForFailure(
   if (failure === null || failure.stage === "evidence") return "completed";
   if (
     failure.category === "cancelled" ||
-    failure.category === "approval-revoked"
+    failure.category === APPROVAL_REVOKED
   ) {
     return "cancelled";
   }
@@ -393,7 +395,7 @@ function statusForFailure(
     return "crashed";
   }
   if (
-    failure.category === "loop-guard" ||
+    failure.category === LOOP_GUARD ||
     failure.category === BUDGET_TRUNCATED
   ) {
     return BUDGET_TRUNCATED;
@@ -858,7 +860,7 @@ async function runOneStep(
   ) {
     context.failure = {
       stage: "execution",
-      category: "approval-revoked",
+      category: APPROVAL_REVOKED,
       code: null,
       disposition: "revoked"
     };
@@ -956,7 +958,7 @@ async function runOneStep(
     context.loopDetectedAtStep = step;
     context.failure = {
       stage: "execution",
-      category: "loop-guard",
+      category: LOOP_GUARD,
       code: null,
       disposition: "aborted"
     };
@@ -1193,6 +1195,31 @@ function buildBranchLineage(
   };
 }
 
+function episodeTermination(
+  context: EpisodeExecutionContext
+): PlaytestEpisode["termination"] {
+  if (context.outcome?.state === "terminal") {
+    const executed = context.drafts.filter((draft) => draft.executed);
+    return {
+      reason: "game-terminal",
+      step: executed.at(-1)?.step ?? null
+    };
+  }
+  if (context.failure?.category === LOOP_GUARD) {
+    return { reason: LOOP_GUARD, step: context.loopDetectedAtStep };
+  }
+  if (context.failure?.category === BUDGET_TRUNCATED) {
+    return { reason: "step-limit", step: null };
+  }
+  if (context.failure?.category === "cancelled") {
+    return { reason: "cancelled", step: null };
+  }
+  if (context.failure?.category === APPROVAL_REVOKED) {
+    return { reason: APPROVAL_REVOKED, step: null };
+  }
+  return { reason: "runtime-failure", step: null };
+}
+
 function assembleEpisode(
   context: EpisodeExecutionContext,
   trace: PlaytestArtifactReference | null,
@@ -1271,6 +1298,7 @@ function assembleEpisode(
     policyCohort: options.policy.cohort,
     strategy: options.policy.strategy,
     status,
+    termination: episodeTermination(context),
     outcome:
       context.outcome?.state === "terminal" ? classifiedOutcome : "unknown",
     outcomeMetrics:
@@ -1405,7 +1433,7 @@ export async function runPlaytestEpisode(
     context.failure = failureFor(error, options.signal);
     if (context.failure.category === "cancelled") {
       context.missingReasons.add("cancelled");
-    } else if (context.failure.category === "approval-revoked") {
+    } else if (context.failure.category === APPROVAL_REVOKED) {
       context.missingReasons.add("revoked");
     } else {
       context.missingReasons.add(INFRASTRUCTURE_FAILED);
@@ -1426,7 +1454,7 @@ export async function runPlaytestEpisode(
 
   const shouldCloseGracefully =
     context.failure === null ||
-    context.failure.category === "loop-guard" ||
+    context.failure.category === LOOP_GUARD ||
     context.failure.category === BUDGET_TRUNCATED;
   try {
     if (shouldCloseGracefully && !options.signal?.aborted) {

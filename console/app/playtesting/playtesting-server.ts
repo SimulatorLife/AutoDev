@@ -33,6 +33,7 @@ import {
   type PlaytestJsonValue,
   PLAYTESTS_BATCH_SCHEMA,
   PLAYTESTS_COMPARISON_SCHEMA,
+  PLAYTESTS_EPISODE_TERMINATION_REASONS,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
@@ -59,7 +60,7 @@ const RESOURCE_SCHEMAS: Readonly<
   Record<ControlApiPlaytestingResource, string>
 > = {
   batches: PLAYTESTS_BATCH_SCHEMA,
-  episodes: "autodev-playtest-episode-v3",
+  episodes: "autodev-playtest-episode-v4",
   findings: "",
   comparisons: PLAYTESTS_COMPARISON_SCHEMA,
   benchmarks: "",
@@ -228,13 +229,19 @@ function validEpisodeRecord(
   } catch {
     return false;
   }
+  const termination = episode.termination;
   return (
     episode.identity?.workspaceId === workspaceId &&
     isNonEmptyString(episode.episodeId) &&
     isNonEmptyString(episode.batchId) &&
     isCount(episode.revision) &&
     isCount(episode.stepCount) &&
-    Array.isArray(episode.frames)
+    Array.isArray(episode.frames) &&
+    isRecord(termination) &&
+    (PLAYTESTS_EPISODE_TERMINATION_REASONS as readonly unknown[]).includes(
+      termination.reason
+    ) &&
+    (termination.step === null || isCount(termination.step))
   );
 }
 

@@ -155,6 +155,7 @@ function episode(): PlaytestEpisode {
     policyCohort: "novice",
     strategy: "advance-first",
     status: "completed",
+    termination: { reason: "game-terminal", step: 11 },
     outcome: "win",
     outcomeMetrics: { score: 14 },
     completionCounts: {

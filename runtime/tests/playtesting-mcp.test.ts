@@ -360,7 +360,7 @@ function episodeForRun(
 ): PlaytestEpisode {
   const timestamp = new Date().toISOString();
   return {
-    schema: "autodev-playtest-episode-v3",
+    schema: "autodev-playtest-episode-v4",
     episodeId: "ep-cancel-fixture",
     revision: 1,
     batchId: options.batchId,
@@ -392,6 +392,10 @@ function episodeForRun(
     policyCohort: options.policy.cohort,
     strategy: options.policy.strategy,
     status,
+    termination:
+      status === "completed"
+        ? { reason: "game-terminal", step: null }
+        : { reason: "cancelled", step: null },
     outcome: status === "completed" ? "win" : "unknown",
     outcomeMetrics: {},
     completionCounts: {
@@ -1114,7 +1118,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
         return {
           capabilities: capabilitiesForRun(opts),
           episode: {
-            schema: "autodev-playtest-episode-v3",
+            schema: "autodev-playtest-episode-v4",
             episodeId:
               opts.seed === "seed-exact-1" ? "ep-run-1" : `ep-run-${opts.seed}`,
             revision: 1,
@@ -1149,6 +1153,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
             policyCohort: opts.policy.cohort,
             strategy: opts.policy.strategy,
             status: "completed",
+            termination: { reason: "game-terminal", step: 8 },
             outcome: "win",
             outcomeMetrics: {},
             completionCounts: {
@@ -1860,7 +1865,7 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
       runEpisodeHandler: async (opts) => ({
         capabilities: capabilitiesForRun(opts),
         episode: {
-          schema: "autodev-playtest-episode-v3",
+          schema: "autodev-playtest-episode-v4",
           episodeId: "ep-fail-1",
           revision: 1,
           batchId: opts.batchId,
@@ -1892,6 +1897,7 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
           policyCohort: opts.policy.cohort,
           strategy: opts.policy.strategy,
           status: "completed",
+          termination: { reason: "game-terminal", step: null },
           outcome: "win",
           outcomeMetrics: {},
           completionCounts: {
@@ -3996,7 +4002,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     const traceWrite = artifacts.writeWindow({ entries: traceSteps });
 
     const realEpisode: PlaytestEpisode = {
-      schema: "autodev-playtest-episode-v3",
+      schema: "autodev-playtest-episode-v4",
       episodeId: "ep-1",
       revision: 1,
       batchId: "batch-1",
@@ -4028,6 +4034,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       policyCohort: "random",
       strategy: "random",
       status: "completed",
+      termination: { reason: "game-terminal", step: 2 },
       outcome: "win",
       outcomeMetrics: {},
       completionCounts: {
@@ -5732,7 +5739,7 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
       metricEstimate: number | null
     ): PlaytestEpisode {
       return {
-        schema: "autodev-playtest-episode-v3",
+        schema: "autodev-playtest-episode-v4",
         episodeId,
         revision: 1,
         batchId: "batch-1",
@@ -5764,6 +5771,7 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
         policyCohort: "random",
         strategy: "random",
         status: "completed",
+        termination: { reason: "game-terminal", step: null },
         outcome: "win",
         outcomeMetrics: {},
         completionCounts: {
