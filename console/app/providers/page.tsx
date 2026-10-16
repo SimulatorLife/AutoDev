@@ -41,10 +41,11 @@ export default async function ProvidersPage({
     );
   }
   const query = (await searchParams) ?? {};
+  const tab = Array.isArray(query.tab) ? query.tab[0] : query.tab;
   const [providersResult, modelsResult, discoveryResult, runtimeResult] =
     await Promise.all([
       fetchProviders(config),
-      fetchModels(config),
+      tab === "models" ? fetchModels(config) : Promise.resolve(null),
       fetchProviderModelDiscovery(config),
       fetchRuntime(config)
     ]);
@@ -59,7 +60,6 @@ export default async function ProvidersPage({
       })
     );
   }
-  const tab = Array.isArray(query.tab) ? query.tab[0] : query.tab;
   return React.createElement(
     ConsolePageShell,
     {
@@ -74,9 +74,12 @@ export default async function ProvidersPage({
     React.createElement(ProvidersView, {
       providers: providersResult.data,
       models:
-        modelsResult.kind === "ok"
+        modelsResult?.kind === "ok"
           ? { status: "available", data: modelsResult.data }
-          : { status: "unavailable", message: modelsResult.message },
+          : {
+              status: "unavailable",
+              message: modelsResult?.message ?? "Model catalog was not queried."
+            },
       modelDiscovery:
         discoveryResult.kind === "ok"
           ? { status: "available", data: discoveryResult.data }

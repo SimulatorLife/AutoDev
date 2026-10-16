@@ -47,8 +47,11 @@ export default async function McpDetailPage({
     Record<string, string | string[] | undefined>
   >;
 }): Promise<React.JSX.Element> {
-  const { name } = await params;
-  const resolvedSearchParams = (await searchParams) ?? {};
+  const [{ name }, resolvedSearchParams] = await Promise.all([
+    params,
+    searchParams ??
+      Promise.resolve({} as Record<string, string | string[] | undefined>)
+  ]);
   const activeTab = firstSearchParam(resolvedSearchParams.tab);
   const { section, config } = readNodeContext("/mcps");
   if (!config) {
@@ -61,7 +64,7 @@ export default async function McpDetailPage({
 
   const [result, toolsResult] = await Promise.all([
     fetchMcps(config),
-    fetchTools(config)
+    activeTab === "tools" ? fetchTools(config) : Promise.resolve(null)
   ]);
   if (result.kind !== "ok") {
     return React.createElement(
@@ -86,7 +89,7 @@ export default async function McpDetailPage({
       server,
       sourceValidity: result.data.valid,
       configuredTools:
-        toolsResult.kind === "ok" && toolsResult.data.coverage === "partial"
+        toolsResult?.kind === "ok" && toolsResult.data.coverage === "partial"
           ? toolsResult.data.tools.filter((tool) => tool.server === server.name)
           : null,
       activeTab

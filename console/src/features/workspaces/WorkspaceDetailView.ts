@@ -4,7 +4,8 @@ import {
   assertWorkspacePlaytestApproval,
   type ControlApiWorkspacePlaytestApprovalResponse,
   type WorkspaceEntry,
-  type WorkspacePlaytestApproval
+  type WorkspacePlaytestApproval,
+  type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
@@ -33,6 +34,10 @@ import { WORKSPACE_PLAYTEST_LIMIT_FIELDS } from "./limits-fields.ts";
 import { WORKSPACES_PATH } from "./paths.ts";
 import { WorkspacePlaytestApprovalForm } from "./WorkspacePlaytestApprovalForm.ts";
 import { WorkspacePlaytestRevokeForm } from "./WorkspacePlaytestRevokeForm.ts";
+import {
+  WorkspaceVisualPlaytestTargetManager,
+  type WorkspaceVisualTargetUnavailable
+} from "./WorkspaceVisualPlaytestTargetManager.ts";
 
 export interface WorkspaceApprovalUnavailable {
   readonly code: string;
@@ -45,6 +50,10 @@ export interface WorkspaceDetailViewProps {
   readonly approval: WorkspacePlaytestApproval | null;
   /** Set instead of `approval` when the Control API read itself failed. */
   readonly approvalUnavailable?: WorkspaceApprovalUnavailable | undefined;
+  readonly visualTargets?:
+    readonly WorkspaceVisualPlaytestTargetApproval[] | null | undefined;
+  readonly visualTargetsUnavailable?:
+    WorkspaceVisualTargetUnavailable | undefined;
   readonly controlFailed?: boolean | undefined;
   readonly refusal?:
     React.ComponentProps<typeof ControlFailureNotice>["refusal"] | undefined;
@@ -246,6 +255,8 @@ export function WorkspaceDetailView({
   workspace,
   approval,
   approvalUnavailable,
+  visualTargets,
+  visualTargetsUnavailable,
   controlFailed,
   refusal
 }: WorkspaceDetailViewProps): React.JSX.Element {
@@ -516,6 +527,14 @@ export function WorkspaceDetailView({
         { className: "mt-3 flex flex-col gap-4" },
         approvalBody
       )
-    )
+    ),
+    React.createElement(WorkspaceVisualPlaytestTargetManager, {
+      workspaceId: workspace.id,
+      workspaceEnabled: currentWorkspaceEnabled,
+      initialTargets: visualTargets ?? [],
+      ...(visualTargetsUnavailable === undefined
+        ? {}
+        : { unavailable: visualTargetsUnavailable })
+    })
   );
 }

@@ -44,6 +44,20 @@ export function workspacePlaytestApprovalPath(
   return revoke ? `${base}/revoke` : base;
 }
 
+export function workspaceVisualPlaytestTargetsPath(
+  workspaceId: string
+): string {
+  const [owner, repository] = segmentsForWorkspaceId(workspaceId);
+  return `/api/workspaces/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/playtesting-visual-targets`;
+}
+
+export function workspaceVisualPlaytestTargetRevocationPath(
+  workspaceId: string,
+  targetId: string
+): string {
+  return `${workspaceVisualPlaytestTargetsPath(workspaceId)}/${encodeURIComponent(targetId)}/revoke`;
+}
+
 /** Only the canonical workspace detail page (or list) may be a return target. */
 export function isWorkspacesReturnPath(value: string | null): value is string {
   if (value === null) return false;

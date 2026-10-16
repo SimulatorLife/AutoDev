@@ -12,6 +12,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   formatEstimatedCost,
+  formatLatency,
   UsageView
 } from "../src/features/usage/UsageView.ts";
 
@@ -62,6 +63,16 @@ test("Usage cost formatting keeps catalog estimates explicit and unobserved dist
   assert.equal(formatEstimatedCost(0.0081), "$0.0081");
   assert.equal(formatEstimatedCost(541.080_125), "$541.08");
   assert.equal(formatEstimatedCost(null), "Not observed");
+});
+
+test("Usage latency formatting renders sub-millisecond durations in microseconds", () => {
+  assert.equal(formatLatency(null), "Not observed");
+  assert.equal(formatLatency(0), "0 ms");
+  assert.equal(formatLatency(0.004), "4 µs");
+  assert.equal(formatLatency(0.5), "500 µs");
+  assert.equal(formatLatency(12.34), "12.3 ms");
+  assert.equal(formatLatency(120.4), "120.4 ms");
+  assert.equal(formatLatency(1250), "1.3 s");
 });
 
 test("Usage active-session stats and detail use the shared section spacing", () => {

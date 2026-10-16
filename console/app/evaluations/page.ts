@@ -112,7 +112,12 @@ export default async function EvaluationsPage({
     );
   }
 
-  const result = await fetchEvaluations(config);
+  const [result, traceLookupResult] = await Promise.all([
+    fetchEvaluations(config),
+    spanIdValues !== undefined && !hasInvalidSpanSelection
+      ? loadOpenLITTrace(requestedSpanId!)
+      : Promise.resolve(null)
+  ]);
   if (result.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
@@ -153,13 +158,15 @@ export default async function EvaluationsPage({
   if (spanIdValues !== undefined) {
     traceLookup = hasInvalidSpanSelection
       ? { kind: "invalid-span-id" }
-      : evaluationTraceState(await loadOpenLITTrace(requestedSpanId!));
+      : evaluationTraceState(traceLookupResult!);
   }
 
   return React.createElement(
     ConsolePageShell,
     {
       section,
+      description:
+        "Retained evaluation results, metric breakdowns, and linked OpenTelemetry traces.",
       // The store's own size, not the narrowed window. The sidebar describes the
       // resource, so it was reading as though a filter emptied it: on
       // `?role=nobody` the badge said "Evaluations (0)" while the card above it

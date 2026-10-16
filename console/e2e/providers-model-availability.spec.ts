@@ -63,3 +63,67 @@ test("Providers distinguishes live, stale, unavailable, and unsupported models",
     "gpt-6-luna"
   );
 });
+
+test("Tools source/role filters and resource/tab links navigate in place without remounting the document", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/tools");
+
+  await expect(page.getByText("Showing 2 of 2 tool entries")).toBeVisible();
+  await expect(page.getByRole("link", { name: "read_file" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "lsp_goto_definition" })
+  ).toBeVisible();
+
+  await page.evaluate(() => {
+    (
+      window as Window & { __autodevNavigationMountToken?: string }
+    ).__autodevNavigationMountToken = "mounted-document-1";
+  });
+  const readMountToken = () =>
+    page.evaluate(
+      () =>
+        (window as Window & { __autodevNavigationMountToken?: string })
+          .__autodevNavigationMountToken
+    );
+
+  await page.locator('[data-source-filter="mcp"]').click();
+  await expect(page).toHaveURL(/\/tools\?source=mcp$/u);
+  await expect(page.getByText("Showing 1 of 2 tool entries")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "lsp_goto_definition" })
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "read_file" })).toHaveCount(0);
+  expect(await readMountToken()).toBe("mounted-document-1");
+
+  await page.locator('[data-role-filter="orchestrator"]').click();
+  await expect(page).toHaveURL(/\/tools\?source=mcp&role=orchestrator$/u);
+  await expect(page.getByText("Showing 0 of 2 tool entries")).toBeVisible();
+  await expect(
+    page.getByText("No tool entries match the active filters.")
+  ).toBeVisible();
+  expect(await readMountToken()).toBe("mounted-document-1");
+
+  await page.locator('[data-source-filter="all"]').click();
+  await expect(page).toHaveURL(/\/tools\?role=orchestrator$/u);
+  await expect(page.getByText("Showing 1 of 2 tool entries")).toBeVisible();
+  await expect(page.getByRole("link", { name: "read_file" })).toBeVisible();
+  expect(await readMountToken()).toBe("mounted-document-1");
+
+  await page
+    .getByRole("navigation", { name: "AutoDev Console Navigation" })
+    .getByRole("link", { name: /^Providers/u })
+    .click();
+  await expect(page).toHaveURL(/\/providers$/u);
+  await expect(page.locator('[data-tab-panel="providers"]')).toBeVisible();
+  expect(await readMountToken()).toBe("mounted-document-1");
+
+  await page
+    .getByRole("navigation", { name: "Providers views" })
+    .getByRole("link", { name: "Models" })
+    .click();
+  await expect(page).toHaveURL(/\/providers\?tab=models$/u);
+  await expect(page.locator('[data-tab-panel="models"]')).toBeVisible();
+  expect(await readMountToken()).toBe("mounted-document-1");
+});

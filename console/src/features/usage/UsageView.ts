@@ -118,6 +118,9 @@ export function formatCacheRate(value: number | null): string {
 
 export function formatLatency(value: number | null): string {
   if (value === null) return NOT_OBSERVED_LABEL;
+  if (value > 0 && value < 1) {
+    return `${Math.max(1, Math.round(value * 1000))} µs`;
+  }
   if (value >= 3_600_000)
     return `${DURATION_FORMATTER.format(value / 3_600_000)} h`;
   if (value >= 60_000)

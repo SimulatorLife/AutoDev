@@ -43,7 +43,12 @@ export default async function McpsPage(): Promise<React.JSX.Element> {
   const servers = result.data.servers;
   return React.createElement(
     ConsolePageShell,
-    { section, counts: result.data.valid ? { MCPs: servers.length } : {} },
+    {
+      section,
+      description:
+        "Canonical RuleSync MCP server declarations, role assignments, and target overrides.",
+      counts: result.data.valid ? { MCPs: servers.length } : {}
+    },
     React.createElement(McpsView, {
       servers,
       sourceValidity: result.data.valid,

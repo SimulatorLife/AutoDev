@@ -7,11 +7,15 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
-import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
+import {
+  LIST_PANEL_CLASS,
+  NESTED_PANEL_CLASS
+} from "../../components/layout/Panel.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { SourceValidationIssues } from "../../components/status/SourceValidationIssues.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import {
+  MONO_ID_CLASS,
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -84,7 +88,7 @@ export function HooksView({
         ? React.createElement(
             "p",
             {
-              className: `${LIST_PANEL_CLASS} text-sm text-fg-muted`,
+              className: `${LIST_PANEL_CLASS} ${MUTED_TEXT_CLASS}`,
               "data-hook-state":
                 sourceValidity === null
                   ? "not-observed"
@@ -103,8 +107,7 @@ export function HooksView({
               "div",
               {
                 key: h.event,
-                className:
-                  "bg-surface border border-border rounded-lg p-5 flex flex-col gap-3 shadow"
+                className: `${LIST_PANEL_CLASS} flex flex-col gap-3`
               },
               React.createElement(
                 "div",
@@ -112,13 +115,7 @@ export function HooksView({
                   className:
                     "flex items-center justify-between border-b border-border pb-2"
                 },
-                React.createElement(
-                  "span",
-                  {
-                    className: "font-mono font-semibold text-fg text-sm"
-                  },
-                  h.event
-                )
+                React.createElement("span", { className: MONO_ID_CLASS }, h.event)
               ),
               React.createElement(
                 "div",
@@ -128,8 +125,7 @@ export function HooksView({
                     "div",
                     {
                       key: index,
-                      className:
-                        "bg-background p-3 rounded border border-border flex flex-col gap-1 text-xs font-mono"
+                      className: `${NESTED_PANEL_CLASS} flex flex-col gap-1 font-mono text-xs`
                     },
                     React.createElement(
                       "div",

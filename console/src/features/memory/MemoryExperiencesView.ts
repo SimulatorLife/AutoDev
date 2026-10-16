@@ -19,6 +19,7 @@ import {
 } from "../../components/forms/SelectField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { Pagination } from "../../components/navigation/Pagination.ts";
 import { DetailDrawer } from "../../components/panels/DetailDrawer.ts";
 import { gridRowClass } from "../../components/panels/DetailGrid.ts";
@@ -119,11 +120,11 @@ export function MemoryExperiencesView({
       weight: 180,
       cell: (exp) =>
         React.createElement(
-          "a",
+          NavigationLink,
           {
             href: memoryDetailHref(listScope, "experienceId", exp.id),
             className: `font-mono text-xs font-semibold ${ACTION_LINK_CLASS}`,
-            "data-memory-experience-id": exp.id
+            dataAttributes: { "data-memory-experience-id": exp.id }
           },
           exp.id
         )

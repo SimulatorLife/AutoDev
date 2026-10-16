@@ -55,15 +55,15 @@ function promptHistoryState(
   };
 }
 
-async function promptVersionSelection(
+function promptVersionSelection(
   name: string,
   requestedRevision: string | readonly string[] | undefined,
   history: PromptHistoryState,
-  config: NonNullable<ReturnType<typeof readNodeContext>["config"]>
-): Promise<{
+  versionResult: Awaited<ReturnType<typeof fetchPromptVersion>> | null
+): {
   readonly selectedVersion?: ControlApiPromptVersionResponse;
   readonly error?: string;
-}> {
+} {
   if (requestedRevision === undefined) return {};
   if (
     typeof requestedRevision !== "string" ||
@@ -83,13 +83,12 @@ async function promptVersionSelection(
     };
   }
 
-  const result = await fetchPromptVersion(name, requestedRevision, config);
   if (
-    result.kind === "ok" &&
-    result.data.name === name &&
-    result.data.versionHash === requestedRevision
+    versionResult?.kind === "ok" &&
+    versionResult.data.name === name &&
+    versionResult.data.versionHash === requestedRevision
   ) {
-    return { selectedVersion: result.data };
+    return { selectedVersion: versionResult.data };
   }
   return {
     error:
@@ -165,17 +164,30 @@ export default async function PromptDetailPage({
   }
 
   const prompt = promptDocumentFromControlApi(result.data);
-  const history =
+  const requestedRevision = query.revision;
+  const shouldFetchVersion =
+    prompt.kind === "command" &&
+    typeof requestedRevision === "string" &&
+    GIT_REVISION_PATTERN.test(requestedRevision);
+  const [versionsResult, versionResult] = await Promise.all([
     prompt.kind === "command"
-      ? promptHistoryState(await fetchPromptVersions(prompt.name, config))
+      ? fetchPromptVersions(prompt.name, config)
+      : Promise.resolve(null),
+    shouldFetchVersion
+      ? fetchPromptVersion(prompt.name, requestedRevision, config)
+      : Promise.resolve(null)
+  ]);
+  const history =
+    prompt.kind === "command" && versionsResult !== null
+      ? promptHistoryState(versionsResult)
       : UNAVAILABLE_PROMPT_HISTORY;
   const selection =
     prompt.kind === "command"
-      ? await promptVersionSelection(
+      ? promptVersionSelection(
           prompt.name,
-          query.revision,
+          requestedRevision,
           history,
-          config
+          versionResult
         )
       : {};
   return React.createElement(

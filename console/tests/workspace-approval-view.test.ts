@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { WorkspacePlaytestApproval } from "@simulatorlife/autodev-core";
+import type {
+  WorkspacePlaytestApproval,
+  WorkspaceVisualPlaytestTargetApproval
+} from "@simulatorlife/autodev-core";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -90,6 +93,57 @@ test("approval status is read from the two facts that decide it, not inferred", 
   assert.equal(workspaceApprovalBadgeVariant("none"), "not-observed");
   assert.equal(workspaceApprovalBadgeVariant("unavailable"), "unavailable");
   assert.equal(workspaceApprovalBadgeLabel("active"), "Active");
+});
+
+test("visual target management is a separate origin and input approval surface", () => {
+  const visualTarget: WorkspaceVisualPlaytestTargetApproval = {
+    schema: "autodev-workspace-visual-playtest-target-v1",
+    workspaceId: WORKSPACE_ID,
+    targetId: "racinggame-browser",
+    revision: 1,
+    approvalId: "visual-approval-1",
+    name: "RacingGame local browser",
+    entryUrl: "http://localhost:5173/",
+    allowedOrigins: ["http://localhost:5173"],
+    inputCapabilities: ["keyboard", "pointer"],
+    controlTimingClass: "turn-based",
+    entryRequirements: "none",
+    sandboxProfile: "transient-browser-profile",
+    capturePolicy: "screenshots-only-redact-or-refuse",
+    limits: {
+      episodeCount: 1,
+      maxStepsPerEpisode: 80,
+      wallTimeMs: 120_000,
+      smartRequestsPerEpisode: 30,
+      smartTokensPerEpisode: 25_000,
+      screenshotCountPerEpisode: 160,
+      artifactBytesPerEpisode: 64 * 1024 * 1024
+    },
+    approvedAt: "2026-10-16T12:00:00.000Z",
+    approvedBy: "operator",
+    revokedAt: null,
+    revokedBy: null,
+    revocationReason: null
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(WorkspaceDetailView, {
+      workspace: {
+        id: WORKSPACE_ID,
+        baseBranch: "main",
+        enabled: true,
+        agentRoles: null
+      },
+      approval: null,
+      visualTargets: [visualTarget]
+    })
+  );
+  assert.match(markup, /data-section="workspace-visual-targets"/u);
+  assert.match(markup, /Autonomous visual targets/u);
+  assert.match(markup, /separate from the adapter checkout approval/u);
+  assert.match(markup, /http:\/\/localhost:5173\//u);
+  assert.match(markup, /keyboard, pointer · turn-based/u);
+  assert.match(markup, /Revoke target/u);
+  assert.match(markup, /never grants shell or repository access/iu);
 });
 
 test("a disabled workspace with no approval cannot approve, and the form is never rendered", () => {

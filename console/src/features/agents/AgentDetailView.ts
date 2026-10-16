@@ -2,7 +2,6 @@ import type {
   AgentDefinition,
   ControlApiAgentDetailResponse,
   ControlApiProvidersResponse,
-  ControlApiRoutingResponse,
   ControlApiRuntimeResponse
 } from "@simulatorlife/autodev-core";
 import React from "react";
@@ -19,8 +18,7 @@ import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.ts";
 import {
   DetailGrid,
-  DetailValue,
-  gridRowClass
+  DetailValue
 } from "../../components/panels/DetailGrid.ts";
 import {
   ControlFailureNotice,
@@ -32,7 +30,10 @@ import {
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import { chipList } from "../../components/tables/Chips.ts";
-import { SECTION_LABEL_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  MUTED_META_CLASS,
+  MUTED_TEXT_CLASS
+} from "../../components/ui/text-classes.ts";
 import { liveAgentCount } from "../live-agent-count.ts";
 import { AgentEnablementControl } from "./AgentEnablementControl.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
@@ -53,17 +54,20 @@ export interface AgentDetailViewProps {
    * the same question differently.
    */
   readonly reconciliation: ControlApiAgentDetailResponse["reconciliation"];
-  readonly routing?: ControlApiRoutingResponse | undefined;
   readonly providers?: ControlApiProvidersResponse | undefined;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
   readonly controlFailed?: boolean | undefined;
   readonly controlRefusal?: ControlFailureNoticeProps["refusal"];
 }
 
+function concurrencyLimit(limit: number | null | undefined): string {
+  if (limit === undefined) return NOT_OBSERVED_LABEL;
+  return limit === null ? "Unlimited" : String(limit);
+}
+
 export function AgentDetailView({
   agent,
   reconciliation,
-  routing,
   providers,
   runtime,
   controlFailed,
@@ -77,6 +81,7 @@ export function AgentDetailView({
     agent.valid === null ? "not-observed" : agent.valid ? "valid" : "invalid";
 
   const isOrchestrator = agent.kind === "orchestrator";
+  const concurrency = runtime?.concurrency;
 
   return React.createElement(
     PageBody,
@@ -130,13 +135,8 @@ export function AgentDetailView({
           agent.primaryModel
         ),
         React.createElement(
-          "div",
-          { className: "flex flex-col gap-2" },
-          React.createElement(
-            "dt",
-            { className: SECTION_LABEL_CLASS },
-            "Validation"
-          ),
+          DetailValue,
+          { label: "Validation", valueClassName: null },
           React.createElement(StatusBadge, { status: validation })
         )
       )
@@ -154,7 +154,7 @@ export function AgentDetailView({
       ),
       React.createElement(
         "p",
-        { className: "mb-3 text-xs text-fg-muted" },
+        { className: `mb-3 ${MUTED_META_CLASS}` },
         "Runtime owns whether this agent role is enabled. The refreshed value is authoritative after a change."
       ),
       React.createElement(AgentEnablementControl, {
@@ -179,8 +179,8 @@ export function AgentDetailView({
         "Runtime observation"
       ),
       React.createElement(
-        "div",
-        { className: gridRowClass(3, "gap-4") },
+        DetailGrid,
+        { columns: 3 },
         React.createElement(StatusValue, {
           label: "Readiness",
           status: readiness
@@ -192,17 +192,11 @@ export function AgentDetailView({
         React.createElement(
           "div",
           {
-            className: "flex flex-col gap-2",
             "data-live-agent-role": agent.role
           },
           React.createElement(
-            "dt",
-            { className: SECTION_LABEL_CLASS },
-            "Active instances"
-          ),
-          React.createElement(
-            "dd",
-            { className: "text-sm font-semibold tabular-nums text-fg" },
+            DetailValue,
+            { label: "Active instances" },
             liveAgentCount(runtime?.liveAgents, "byRole", agent.role)
           )
         )
@@ -258,7 +252,7 @@ export function AgentDetailView({
       ),
       React.createElement(
         "p",
-        { className: "mb-3 text-xs text-fg-muted" },
+        { className: `mb-3 ${MUTED_META_CLASS}` },
         isOrchestrator
           ? "Orchestrator-role enablement. Provider controls and routing live in Providers."
           : "Subagent-role enablement. Provider controls and routing live in Providers."
@@ -289,21 +283,17 @@ export function AgentDetailView({
         React.createElement(
           DetailValue,
           { label: "Session concurrency limit" },
-          // Unobserved is not zero. The fact directly above already renders
-          // "Not observed" for the same missing block, so a reader saw two
-          // adjacent routing facts where one said "not known" and the other
-          // said "none are running" -- and the second claim is the one an
-          // operator acts on. No observation is not an observation of zero.
-          routing?.concurrency?.effectivePerSessionLimit === undefined
-            ? NOT_OBSERVED_LABEL
-            : String(routing.concurrency.effectivePerSessionLimit)
+          // Unobserved is not zero, and null is Unlimited. The fact directly
+          // beside this renders "Not observed" for the same missing block, so
+          // a reader must never see "null" or a fabricated zero.
+          concurrencyLimit(concurrency?.effectivePerSessionLimit)
         ),
         React.createElement(
           DetailValue,
           { label: "Active subagent threads" },
-          routing?.concurrency?.activeSubagentThreads === undefined
+          concurrency?.activeSubagentThreads === undefined
             ? NOT_OBSERVED_LABEL
-            : String(routing.concurrency.activeSubagentThreads)
+            : String(concurrency.activeSubagentThreads)
         )
       )
     ),
@@ -311,7 +301,7 @@ export function AgentDetailView({
       ? React.createElement(
           "section",
           {
-            className: `${DETAIL_PANEL_CLASS} text-sm text-fg-muted`,
+            className: `${DETAIL_PANEL_CLASS} ${MUTED_TEXT_CLASS}`,
             "data-prompt-state": "unavailable"
           },
           "Role prompt content is unavailable."
@@ -383,9 +373,8 @@ function StatusValue({
     | "not-observed";
 }): React.JSX.Element {
   return React.createElement(
-    "div",
-    { className: "flex flex-col gap-2" },
-    React.createElement("span", { className: SECTION_LABEL_CLASS }, label),
+    DetailValue,
+    { label, valueClassName: null },
     React.createElement(StatusBadge, { status })
   );
 }

@@ -11,7 +11,6 @@ import {
   controlApiFailureCode,
   fetchAgentDetail,
   fetchProviders,
-  fetchRouting,
   fetchRuntime
 } from "../../../src/lib/server/control-api.ts";
 import { agentDetailFromControlApi } from "../../../src/lib/server/views.ts";
@@ -59,13 +58,14 @@ export default async function AgentDetailPage({
     );
   }
 
-  const [detailResult, routingResult, providersResult, runtimeResult] =
-    await Promise.all([
-      fetchAgentDetail(id, config),
-      fetchRouting(config),
-      fetchProviders(config),
-      fetchRuntime(config)
-    ]);
+  // `/control/runtime` already publishes the validated `concurrency` projection
+  // alongside `lifecycle` and `liveAgents`, so fetching `/control/routing` as
+  // well was a redundant round-trip that let the two disagree if one failed.
+  const [detailResult, providersResult, runtimeResult] = await Promise.all([
+    fetchAgentDetail(id, config),
+    fetchProviders(config),
+    fetchRuntime(config)
+  ]);
 
   if (detailResult.kind === "http-error" && detailResult.status === 404) {
     notFound();
@@ -82,7 +82,6 @@ export default async function AgentDetailPage({
     );
   }
 
-  const routing = routingResult.kind === "ok" ? routingResult.data : undefined;
   const providers =
     providersResult.kind === "ok" ? providersResult.data : undefined;
   const runtime = runtimeResult.kind === "ok" ? runtimeResult.data : undefined;
@@ -93,7 +92,6 @@ export default async function AgentDetailPage({
     React.createElement(AgentDetailView, {
       agent: agentDetailFromControlApi(detailResult.data),
       reconciliation: detailResult.data.reconciliation,
-      routing,
       providers,
       runtime,
       controlFailed: isControlFailure(query.control),

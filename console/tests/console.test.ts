@@ -20633,4 +20633,37 @@ test("a Runtime response with no concurrency limit is readable, and says so", as
     render(undefined),
     /Session Concurrency Limit[\s\S]*?Not observed/u
   );
+
+  const renderDetail = (effectivePerSessionLimit: number | null | undefined) =>
+    renderToStaticMarkup(
+      React.createElement(AgentDetailView, {
+        agent: CONFIGURED_AGENT,
+        reconciliation: AGENT_RECONCILIATION,
+        runtime: {
+          ...runtime,
+          concurrency: {
+            ...observedConcurrency,
+            ...(effectivePerSessionLimit === undefined
+              ? {}
+              : { effectivePerSessionLimit })
+          }
+        }
+      })
+    );
+  assert.match(
+    renderDetail(2),
+    /Session concurrency limit[\s\S]*?2/u
+  );
+  assert.match(
+    renderDetail(null),
+    /Session concurrency limit[\s\S]*?Unlimited/u
+  );
+  assert.doesNotMatch(
+    renderDetail(null),
+    /Session concurrency limit[\s\S]{0,120}?null/u
+  );
+  assert.match(
+    renderDetail(undefined),
+    /Session concurrency limit[\s\S]*?Not observed/u
+  );
 });

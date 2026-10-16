@@ -18,6 +18,7 @@ import {
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { FieldBox, gridRowClass } from "../../components/panels/DetailGrid.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
 import {
@@ -117,7 +118,7 @@ function EditSurfaceLink({
   // directly above it in the same box.
   const link = (href: string, text: string): React.JSX.Element =>
     React.createElement(
-      "a",
+      NavigationLink,
       { href, className: `font-mono ${ACTION_LINK_CLASS}` },
       text
     );
@@ -160,7 +161,7 @@ function usageSection(
   // the link is built once instead of being re-spelled per branch, where three
   // copies could drift and two of them would be wrong without anything saying so.
   const openUsage = React.createElement(
-    "a",
+    NavigationLink,
     {
       href: usageLink,
       className: `text-xs ${ACTION_LINK_CLASS}`

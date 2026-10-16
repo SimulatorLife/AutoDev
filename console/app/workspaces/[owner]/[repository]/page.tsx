@@ -11,7 +11,8 @@ import {
 import {
   controlApiFailureCode,
   fetchWorkspacePlaytestApproval,
-  fetchWorkspaces
+  fetchWorkspaces,
+  fetchWorkspaceVisualPlaytestTargets
 } from "../../../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
@@ -59,10 +60,12 @@ export default async function WorkspaceDetailPage({
   if (!isWorkspaceId(id)) notFound();
 
   const query = (await searchParams) ?? {};
-  const [workspacesResult, approvalResult] = await Promise.all([
-    fetchWorkspaces(config),
-    fetchWorkspacePlaytestApproval(id, config)
-  ]);
+  const [workspacesResult, approvalResult, visualTargetsResult] =
+    await Promise.all([
+      fetchWorkspaces(config),
+      fetchWorkspacePlaytestApproval(id, config),
+      fetchWorkspaceVisualPlaytestTargets(id, config)
+    ]);
 
   if (workspacesResult.kind !== "ok") {
     return React.createElement(
@@ -105,6 +108,17 @@ export default async function WorkspaceDetailPage({
           : {
               code: controlApiFailureCode(approvalResult),
               message: approvalResult.message
+            },
+      visualTargets:
+        visualTargetsResult.kind === "ok"
+          ? visualTargetsResult.data.targets
+          : null,
+      visualTargetsUnavailable:
+        visualTargetsResult.kind === "ok"
+          ? undefined
+          : {
+              code: controlApiFailureCode(visualTargetsResult),
+              message: visualTargetsResult.message
             },
       controlFailed: isControlFailure(query.control),
       refusal: readControlRefusal(query.refusal)

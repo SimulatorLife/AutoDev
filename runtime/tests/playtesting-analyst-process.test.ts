@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
-import type { ChildProcess, spawn, SpawnOptions } from "node:child_process";
+import {
+  type ChildProcess,
+  execFileSync,
+  type spawn,
+  type SpawnOptions
+} from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -97,7 +102,43 @@ test("analyst dispatch uses the existing provider-agent role with a read-only sc
   assert.equal(call.args[3], "--cwd");
   assert.equal(call.args[4], spawnOptions.cwd);
   assert.equal(typeof spawnOptions.cwd, "string");
-  assert.deepEqual(readdirSync(String(spawnOptions.cwd)), []);
+  const isolatedWorkspace = String(spawnOptions.cwd);
+  assert.deepEqual(readdirSync(isolatedWorkspace), [".git"]);
+  assert.equal(
+    execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: isolatedWorkspace,
+      encoding: "utf8"
+    }).trim(),
+    isolatedWorkspace
+  );
+  assert.equal(
+    execFileSync("git", ["status", "--porcelain"], {
+      cwd: isolatedWorkspace,
+      encoding: "utf8"
+    }).trim(),
+    "",
+    "the Code Mode root contains no tracked or untracked game content"
+  );
+  assert.equal(
+    execFileSync("git", ["remote"], {
+      cwd: isolatedWorkspace,
+      encoding: "utf8"
+    }).trim(),
+    "",
+    "the private Code Mode root must not identify a remote repository"
+  );
+  assert.equal(
+    execFileSync("git", ["ls-files"], {
+      cwd: isolatedWorkspace,
+      encoding: "utf8"
+    }).trim(),
+    "",
+    "the private Code Mode root must have no tracked source"
+  );
+  assert.equal(
+    statSync(path.join(isolatedWorkspace, ".git")).mode & 0o777,
+    0o700
+  );
   assert.equal(statSync(String(spawnOptions.cwd)).mode & 0o777, 0o700);
   assert.ok(call.args[0]?.endsWith("/runtime/src/cli/provider-agent.ts"));
   assert.match(call.args.at(-1) ?? "", /episode-1[\s\S]*episode-2/u);

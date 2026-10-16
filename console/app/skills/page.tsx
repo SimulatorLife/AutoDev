@@ -64,7 +64,12 @@ export default async function SkillsPage({
   const saveOutcome = skillSaveOutcome(query.save);
   return React.createElement(
     ConsolePageShell,
-    { section, counts: { Skills: skills.length } },
+    {
+      section,
+      description:
+        "Canonical RuleSync skill definitions, role assignments, and target projections.",
+      counts: { Skills: skills.length }
+    },
     React.createElement(SkillsView, {
       skills,
       eligibility,

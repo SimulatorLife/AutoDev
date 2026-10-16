@@ -67,14 +67,22 @@ const internalNavigationSources = [
   ["ProviderDetailView", "../src/features/providers/ProviderDetailView.ts"],
   ["ModelDetailView", "../src/features/providers/ModelDetailView.ts"],
   ["McpsView", "../src/features/mcps/McpsView.ts"],
+  ["PromptsView", "../src/features/prompts/PromptsView.ts"],
+  ["ToolDetailView", "../src/features/tools/ToolDetailView.ts"],
   ["WorkspacesView", "../src/features/workspaces/WorkspacesView.ts"],
   ["MemoryRecordsView", "../src/features/memory/MemoryRecordsView.ts"],
+  ["MemoryExperiencesView", "../src/features/memory/MemoryExperiencesView.ts"],
   ["EvaluationsView", "../src/features/evaluations/EvaluationsView.ts"],
   ["UsageView", "../src/features/usage/UsageView.ts"]
 ].map(([name, path]) => ({
   name: name!,
   source: readFileSync(new URL(path!, import.meta.url), "utf8")
 }));
+
+const promptDetailSource = readFileSync(
+  new URL("../src/features/prompts/PromptDetailView.ts", import.meta.url),
+  "utf8"
+);
 
 test("same-origin resource links route in place through NavigationLink", () => {
   for (const { name, source } of internalNavigationSources) {
@@ -89,6 +97,11 @@ test("same-origin resource links route in place through NavigationLink", () => {
       `${name} must not create a raw anchor for in-app routes`
     );
   }
+  assert.match(
+    promptDetailSource,
+    /NavigationLink/u,
+    "PromptDetailView must use NavigationLink for internal routes"
+  );
 });
 
 test("same-origin forms are intercepted from the persistent root layout", () => {

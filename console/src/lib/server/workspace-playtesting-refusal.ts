@@ -19,15 +19,23 @@ export function workspacePlaytestingRefusalFor(
   if (result.kind === "unreachable") return "unavailable";
   const code = "code" in result ? result.code : "";
   switch (code) {
-    case "autodev_workspace_playtesting_conflict": {
+    case "autodev_workspace_playtesting_conflict":
+    case "autodev_workspace_visual_target_revision_conflict": {
       return "conflicted";
     }
     case "autodev_workspace_playtesting_forbidden":
-    case "autodev_workspace_playtesting_disabled": {
+    case "autodev_workspace_playtesting_disabled":
+    case "autodev_workspace_visual_target_forbidden":
+    case "autodev_workspace_visual_target_disabled": {
       return "forbidden";
     }
     case "autodev_workspace_not_found": {
       return "not_found";
+    }
+    case "autodev_workspace_visual_target_invalid_body":
+    case "autodev_workspace_visual_target_invalid_query":
+    case "autodev_workspace_visual_target_invalid_revision": {
+      return "request_invalid";
     }
     case "autodev_workspace_playtesting_invalid_body":
     case "autodev_workspace_playtesting_invalid_approval":
@@ -36,6 +44,7 @@ export function workspacePlaytestingRefusalFor(
       return "request_invalid";
     }
     case "autodev_workspace_playtesting_store_unavailable":
+    case "autodev_workspace_visual_target_store_unavailable":
     case "autodev_workspace_catalog_unavailable": {
       return "unavailable";
     }

@@ -63,7 +63,12 @@ export default async function GithubPage(): Promise<React.JSX.Element> {
   const workflows = result.data.workflows;
   return React.createElement(
     ConsolePageShell,
-    { section, counts: { GitHub: workflows.length } },
+    {
+      section,
+      description:
+        "Repository workflow definitions, cron schedules, and observed GitHub Actions runs.",
+      counts: { GitHub: workflows.length }
+    },
     React.createElement(GithubView, {
       workflows,
       runtimeFactsAvailable: result.data.runtimeFactsAvailable,

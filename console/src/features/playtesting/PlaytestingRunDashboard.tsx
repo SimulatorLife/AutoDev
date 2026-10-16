@@ -14,6 +14,8 @@ import type {
 import { useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
+import { workspacePath } from "../workspaces/paths.ts";
 import {
   cancellationAvailability,
   isTerminal
@@ -191,7 +193,21 @@ export function PlaytestingRunDashboard({
                   "p",
                   { className: "mt-3 text-sm text-fg-secondary" },
                   "The visual browser driver and Smart-directed decision loop are not installed. This mode will not silently fall back to a headless policy."
-                )
+                ),
+                scope.workspaceId
+                  ? React.createElement(
+                      NavigationLink,
+                      {
+                        href: workspacePath(scope.workspaceId),
+                        className:
+                          "mt-3 inline-flex text-sm font-medium text-accent hover:underline",
+                        dataAttributes: {
+                          "data-playtesting-manage-visual-targets": "true"
+                        }
+                      },
+                      "Manage visual target permissions"
+                    )
+                  : null
               ),
               React.createElement(
                 "section",

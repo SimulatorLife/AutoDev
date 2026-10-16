@@ -152,7 +152,11 @@ export default async function UsagePage({
     }
     return React.createElement(
       ConsolePageShell,
-      { section },
+      {
+        section,
+        description:
+          "Active runtime sessions and OpenTelemetry request, token, cost, latency, and trace telemetry."
+      },
       React.createElement(UsageView, {
         selection,
         activeSessions: live.activeSessions
@@ -212,7 +216,11 @@ export default async function UsagePage({
 
   return React.createElement(
     ConsolePageShell,
-    { section },
+    {
+      section,
+      description:
+        "Active runtime sessions and OpenTelemetry request, token, cost, latency, and trace telemetry."
+    },
     React.createElement(UsageView, {
       metrics: result.data.metrics,
       filterOptions: result.data.filterOptions,

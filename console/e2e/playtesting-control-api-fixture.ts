@@ -1891,6 +1891,37 @@ const server = createServer(
       });
       return;
     }
+    if (url.pathname === "/control/tools") {
+      sendJson(response, {
+        schema: "autodev-control-tools-v2",
+        source: "synthetic-tools-fixture",
+        readOnly: true,
+        coverage: "complete",
+        validity: "valid",
+        totalTools: 2,
+        usageLink: "/usage",
+        tools: [
+          {
+            name: "read_file",
+            source: "native",
+            sourceAuthority: "codex-native",
+            exposedRoles: ["orchestrator", "worker"],
+            availability: "configured"
+          },
+          {
+            name: "lsp_goto_definition",
+            source: "mcp",
+            sourceAuthority: "rulesync-mcp",
+            server: "lsp",
+            description: "Jump to symbol definition.",
+            exposedRoles: ["worker"],
+            availability: "configured",
+            canonicalEditSurface: { section: "mcps", identifier: "lsp" }
+          }
+        ]
+      });
+      return;
+    }
     if (!url.pathname.startsWith("/control/playtesting/")) {
       response.writeHead(404).end();
       return;

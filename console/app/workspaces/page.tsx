@@ -96,7 +96,12 @@ export default async function WorkspacesPage(): Promise<React.JSX.Element> {
   );
   return React.createElement(
     ConsolePageShell,
-    { section, counts: { Workspaces: workspaces.length } },
+    {
+      section,
+      description:
+        "Configured repository workspaces, execution scope, and playtesting target approvals.",
+      counts: { Workspaces: workspaces.length }
+    },
     React.createElement(WorkspacesView, { workspaces, approvals })
   );
 }

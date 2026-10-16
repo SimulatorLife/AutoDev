@@ -21,6 +21,7 @@ import nodePath from "node:path";
 
 import {
   assertWorkspacePlaytestApproval,
+  assertWorkspaceVisualPlaytestTargetApproval,
   type ControlApiAgentDetailResponse,
   type ControlApiAgentEnablementPatchRequest,
   type ControlApiAgentEnablementPatchResponse,
@@ -63,7 +64,6 @@ import {
   type ControlApiProviderModelsResponse,
   type ControlApiProviderRolePatchResponse,
   type ControlApiProvidersResponse,
-  type ControlApiRoutingResponse,
   type ControlApiRuntimeResponse,
   type ControlApiSkillContentPatchRequest,
   type ControlApiSkillContentPatchResponse,
@@ -74,6 +74,7 @@ import {
   type ControlApiToolsResponse,
   type ControlApiWorkspacePlaytestApprovalResponse,
   type ControlApiWorkspacesResponse,
+  type ControlApiWorkspaceVisualPlaytestTargetsResponse,
   type ConvergenceStatus,
   isSandboxMode,
   LOCAL_CONTROL_API_ACTOR,
@@ -2133,18 +2134,6 @@ function isControlApiGithubResponse(
   );
 }
 
-function isControlApiRoutingResponse(
-  value: unknown
-): value is ControlApiRoutingResponse {
-  return (
-    isRecord(value) &&
-    value.schema === "autodev-control-routing-v1" &&
-    isRecord(value.runtime) &&
-    Array.isArray(value.routes) &&
-    isRecord(value.cooldowns)
-  );
-}
-
 export async function fetchMcps(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
@@ -3025,6 +3014,105 @@ export function postWorkspacePlaytestRevocation(
   );
 }
 
+function workspaceVisualPlaytestTargetsPath(workspaceId: string): string {
+  return `${CONTROL_API_PATHS.workspaces}/${encodeURIComponent(workspaceId)}/playtesting-visual-targets`;
+}
+
+function isWorkspaceVisualPlaytestTargetsResponse(
+  value: unknown,
+  workspaceId: string
+): value is ControlApiWorkspaceVisualPlaytestTargetsResponse {
+  if (
+    !isRecord(value) ||
+    value.schema !== "autodev-control-workspace-visual-playtest-targets-v1" ||
+    value.workspaceId !== workspaceId ||
+    typeof value.workspaceEnabled !== "boolean" ||
+    !Array.isArray(value.targets)
+  ) {
+    return false;
+  }
+  try {
+    for (const target of value.targets) {
+      assertWorkspaceVisualPlaytestTargetApproval(target);
+      if (target.workspaceId !== workspaceId) return false;
+    }
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+export async function fetchWorkspaceVisualPlaytestTargets(
+  workspaceId: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiWorkspaceVisualPlaytestTargetsResponse>> {
+  const result = await fetchControlApi<unknown>(
+    workspaceVisualPlaytestTargetsPath(workspaceId),
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  return isWorkspaceVisualPlaytestTargetsResponse(result.data, workspaceId)
+    ? { kind: "ok", data: result.data }
+    : {
+        kind: INVALID_RESPONSE_KIND,
+        code: "autodev_control_api_invalid_workspace_visual_targets",
+        message:
+          "AutoDev Control API returned an incompatible Workspace visual targets response."
+      };
+}
+
+async function postWorkspaceVisualTargetMutation(
+  workspaceId: string,
+  path: string,
+  payload: unknown,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiWorkspaceVisualPlaytestTargetsResponse>> {
+  const result = await postControlApi<unknown>(path, payload, config, options);
+  if (result.kind !== "ok") return result;
+  return isWorkspaceVisualPlaytestTargetsResponse(result.data, workspaceId)
+    ? { kind: "ok", data: result.data }
+    : {
+        kind: INVALID_RESPONSE_KIND,
+        code: "autodev_control_api_invalid_workspace_visual_targets",
+        message:
+          "AutoDev Control API returned an incompatible Workspace visual targets response."
+      };
+}
+
+export function postWorkspaceVisualPlaytestTarget(
+  workspaceId: string,
+  payload: unknown,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiWorkspaceVisualPlaytestTargetsResponse>> {
+  return postWorkspaceVisualTargetMutation(
+    workspaceId,
+    workspaceVisualPlaytestTargetsPath(workspaceId),
+    payload,
+    config,
+    options
+  );
+}
+
+export function postWorkspaceVisualPlaytestTargetRevocation(
+  workspaceId: string,
+  targetId: string,
+  payload: unknown,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiWorkspaceVisualPlaytestTargetsResponse>> {
+  return postWorkspaceVisualTargetMutation(
+    workspaceId,
+    `${workspaceVisualPlaytestTargetsPath(workspaceId)}/${encodeURIComponent(targetId)}/revoke`,
+    payload,
+    config,
+    options
+  );
+}
+
 export async function fetchGithubWorkflows(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
@@ -3041,21 +3129,6 @@ export async function fetchGithubWorkflows(
   return isControlApiGithubResponse(result.data)
     ? { kind: "ok", data: result.data }
     : invalidResponse("GitHub", "autodev-control-github-v1");
-}
-
-export async function fetchRouting(
-  config: ControlApiConfig,
-  options: FetchControlApiOptions = {}
-): Promise<ControlApiResult<ControlApiRoutingResponse>> {
-  const result = await fetchControlApi<unknown>(
-    CONTROL_API_PATHS.routing,
-    config,
-    options
-  );
-  if (result.kind !== "ok") return result;
-  return isControlApiRoutingResponse(result.data)
-    ? { kind: "ok", data: result.data }
-    : invalidResponse("Routing", "autodev-control-routing-v1");
 }
 
 export async function fetchRuntime(

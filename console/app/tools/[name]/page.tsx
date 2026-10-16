@@ -51,7 +51,10 @@ export default async function ToolDetailPage({
   readonly params: Promise<{ readonly name: string }>;
   readonly searchParams?: Promise<ToolDetailSearchParams>;
 }): Promise<React.JSX.Element> {
-  const { name: rawName } = await params;
+  const [{ name: rawName }, sp] = await Promise.all([
+    params,
+    searchParams ?? Promise.resolve({} as ToolDetailSearchParams)
+  ]);
   const decoded = decodeURIComponent(rawName);
   const { section, config } = readNodeContext("/tools");
   if (!config) {
@@ -62,7 +65,17 @@ export default async function ToolDetailPage({
     );
   }
 
-  const result = await fetchTools(config);
+  const [result, usageResult] = await Promise.all([
+    fetchTools(config),
+    loadOpenLITUsage({
+      range: "24H",
+      values: {},
+      customRange: {
+        startDate: first(sp.startDate),
+        endDate: first(sp.endDate)
+      }
+    })
+  ]);
   if (result.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
@@ -83,12 +96,6 @@ export default async function ToolDetailPage({
   );
   if (!tool) notFound();
 
-  const sp = (await searchParams) ?? {};
-  const usageResult = await loadOpenLITUsage({
-    range: "24H",
-    values: {},
-    customRange: { startDate: first(sp.startDate), endDate: first(sp.endDate) }
-  });
   const usage =
     usageResult.kind === "ok"
       ? filterToolCatalogUsage(usageResult.data, tool)

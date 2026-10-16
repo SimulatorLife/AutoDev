@@ -70,7 +70,12 @@ export default async function AgentsPage({
 
   return React.createElement(
     ConsolePageShell,
-    { section, counts: { Agents: agents.length } },
+    {
+      section,
+      description:
+        "Configured agent roles, runtime enablement, concurrency limits, and effective provider routing.",
+      counts: { Agents: agents.length }
+    },
     React.createElement(AgentsView, {
       agents,
       providers,

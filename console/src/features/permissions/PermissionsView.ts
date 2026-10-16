@@ -174,7 +174,7 @@ function RoleToolExposure({
   return React.createElement(
     "section",
     {
-      className: "mt-6 flex flex-col gap-3",
+      className: "flex flex-col gap-3",
       "data-testid": "role-tool-exposure"
     },
     React.createElement(

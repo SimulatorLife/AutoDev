@@ -46,6 +46,8 @@ export default async function PromptsPage(): Promise<React.JSX.Element> {
     ConsolePageShell,
     {
       section,
+      description:
+        "Canonical RuleSync command prompts, validation status, and target projections.",
       ...(result.data.valid === true
         ? { counts: { Prompts: commands.length } }
         : {})

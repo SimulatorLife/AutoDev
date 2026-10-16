@@ -1,5 +1,5 @@
 /** Launch the existing provider-neutral analyst role for a bounded evidence selection. */
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -84,11 +84,13 @@ function playtestAnalystPrompt(input: PlaytestAnalystProcessInput): string {
 
 /**
  * Start the existing `run-provider-agent` CLI in its read-only analyst role.
- * The agent runs in a private empty directory, not the game checkout, so
- * repository instructions/source cannot contaminate a packet-only review. Its
+ * The agent runs in a private, source-empty Git root, not the game checkout.
+ * Codex 0.154 omits its structured workspace metadata for a non-Git cwd, which
+ * makes the provider router refuse the request; the empty local Git metadata
+ * supplies that boundary without a remote, tracked file, or game commit. The
  * allowlisted tools use the workspace-bound Playtesting repository directly;
- * it receives no Control API credential or run-control client. Runtime's run
- * owner retains dispatch lifecycle/status.
+ * the child receives no Control API credential or run-control client. Runtime
+ * retains dispatch lifecycle/status.
  */
 export function launchPlaytestAnalystProcess(
   input: PlaytestAnalystProcessInput,
@@ -120,6 +122,30 @@ export function launchPlaytestAnalystProcess(
   chmodSync(isolatedCodexHome, 0o700);
   const canonicalIsolatedRoot = realpathSync(isolatedRoot);
   const canonicalWorkspace = realpathSync(isolatedWorkspace);
+  try {
+    const privateGitTemplate = path.join(isolatedRoot, "git-template");
+    mkdirSync(privateGitTemplate, { mode: 0o700 });
+    chmodSync(privateGitTemplate, 0o700);
+    const gitEnvironment: NodeJS.ProcessEnv = {
+      PATH: environment.PATH ?? process.env.PATH,
+      HOME: analystHome,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: path.join(analystHome, "empty-gitconfig"),
+      GIT_TEMPLATE_DIR: privateGitTemplate
+    };
+    execFileSync("git", ["init", "--quiet"], {
+      cwd: canonicalWorkspace,
+      env: gitEnvironment,
+      stdio: "ignore"
+    });
+    chmodSync(path.join(canonicalWorkspace, ".git"), 0o700);
+  } catch (error) {
+    removeIsolatedWorkspace(canonicalIsolatedRoot);
+    throw new Error(
+      "Playtest analyst private workspace could not be prepared for Code Mode.",
+      { cause: error }
+    );
+  }
   const childEnvironment: NodeJS.ProcessEnv = {
     ...environment,
     HOME: analystHome,

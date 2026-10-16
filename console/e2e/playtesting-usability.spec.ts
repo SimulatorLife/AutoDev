@@ -125,6 +125,9 @@ test("workspace overview distinguishes batches, episodes, findings, and comparis
   await expect(
     dialog.locator('[data-playtesting-mode="adapter-accelerated"]')
   ).toContainText("Current supported mode");
+  await expect(
+    dialog.getByRole("link", { name: "Manage visual target permissions" })
+  ).toHaveAttribute("href", WORKSPACE_DETAIL_URL_PATTERN);
   await expect(dialog.getByTestId("playtesting-run-blocked")).toContainText(
     "Approval required"
   );

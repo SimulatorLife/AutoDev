@@ -23,7 +23,12 @@ import {
   NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
-import { ENTITY_LINK_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  ACTION_LINK_CLASS,
+  ENTITY_LINK_CLASS,
+  MUTED_META_CLASS,
+  MUTED_TEXT_CLASS
+} from "../../components/ui/text-classes.ts";
 import { liveAgentCount } from "../live-agent-count.ts";
 import { ModelToggle } from "./ModelToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
@@ -112,7 +117,7 @@ export function ModelDetailView({
             ? null
             : React.createElement(
                 "p",
-                { className: "mt-1 text-sm text-fg-muted" },
+                { className: `mt-1 ${MUTED_TEXT_CLASS}` },
                 model.displayName
               )
         ),
@@ -120,7 +125,7 @@ export function ModelDetailView({
           NavigationLink,
           {
             href: `/usage?model=${encodeURIComponent(model.id)}`,
-            className: "text-xs text-accent underline underline-offset-2"
+            className: ACTION_LINK_CLASS
           },
           "View usage"
         )
@@ -161,7 +166,7 @@ export function ModelDetailView({
       ),
       React.createElement(
         "p",
-        { className: "mt-3 text-xs text-fg-muted" },
+        { className: `mt-3 ${MUTED_META_CLASS}` },
         "A disabled model is skipped for every tier listed below; requests that name it directly are rejected."
       )
     ),
@@ -191,7 +196,7 @@ export function ModelDetailView({
         React.createElement(
           DetailValue,
           { label: "Tiers" },
-          model.tiers.join(", ")
+          model.tiers.length === 0 ? "Not mapped" : model.tiers.join(", ")
         ),
         React.createElement(
           DetailValue,

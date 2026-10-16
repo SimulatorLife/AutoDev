@@ -12,6 +12,7 @@ import {
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { SourceValidationIssues } from "../../components/status/SourceValidationIssues.ts";
 import {
@@ -91,7 +92,7 @@ export function PromptsView({
       weight: 264,
       cell: (prompt) =>
         React.createElement(
-          "a",
+          NavigationLink,
           {
             href: `/prompts/${encodeURIComponent(prompt.name)}`,
             className: `block min-h-6 font-mono font-semibold text-fg ${ENTITY_LINK_CLASS}`,

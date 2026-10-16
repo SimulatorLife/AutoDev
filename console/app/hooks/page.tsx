@@ -44,7 +44,12 @@ export default async function HooksPage(): Promise<React.JSX.Element> {
   const hooks = hooksFromControlApi(result.data);
   return React.createElement(
     ConsolePageShell,
-    { section, counts: { Hooks: hooks.length } },
+    {
+      section,
+      description:
+        "Canonical RuleSync lifecycle hook declarations, matchers, and target projections.",
+      counts: { Hooks: hooks.length }
+    },
     React.createElement(HooksView, {
       hooks,
       sourceValidity: result.data.valid,

@@ -28,6 +28,7 @@ import {
   NESTED_PANEL_CLASS
 } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { gridRowClass } from "../../components/panels/DetailGrid.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
@@ -328,7 +329,7 @@ function renderPromptHistory(
       ),
       selectedVersion
         ? React.createElement(
-            "a",
+            NavigationLink,
             {
               href: promptUrl,
               className: `text-xs font-medium ${ACTION_LINK_CLASS}`
@@ -366,13 +367,15 @@ function renderPromptHistory(
                 "li",
                 { key: version.versionHash },
                 React.createElement(
-                  "a",
+                  NavigationLink,
                   {
                     href: `${promptUrl}?revision=${encodeURIComponent(version.versionHash)}`,
                     ...(selected ? { "aria-current": "page" as const } : {}),
                     className:
                       "flex flex-wrap items-center gap-2 rounded border border-border px-3 py-2 text-xs hover:bg-hover ",
-                    "data-prompt-version": version.versionHash
+                    dataAttributes: {
+                      "data-prompt-version": version.versionHash
+                    }
                   },
                   React.createElement(
                     "time",
@@ -402,7 +405,7 @@ function renderPromptHistory(
       ? React.createElement(
           "p",
           {
-            className: "mb-4 text-xs text-fg-muted",
+            className: `mb-4 ${MUTED_META_CLASS}`,
             "data-prompt-history-truncated": "true"
           },
           "Showing the newest 20 committed versions. Older history remains available in Git."
@@ -452,7 +455,7 @@ function renderPromptHistory(
               ),
           React.createElement(
             "details",
-            { className: "rounded border border-border bg-background p-3" },
+            { className: NESTED_PANEL_CLASS },
             React.createElement(
               "summary",
               {
@@ -519,7 +522,7 @@ export function PromptDetailView({
         React.createElement(EntityTitle, { mono: true }, prompt.name),
         React.createElement(
           "p",
-          { className: "mt-2 font-mono text-xs text-fg-muted" },
+          { className: `mt-2 ${MONO_META_CLASS}` },
           prompt.path
         )
       ),
@@ -572,7 +575,7 @@ export function PromptDetailView({
         ),
         isRole
           ? React.createElement(
-              "a",
+              NavigationLink,
               {
                 href: `/agents/${encodeURIComponent(prompt.name)}`,
                 className: `text-xs font-semibold ${ACTION_LINK_CLASS} block mb-1`
@@ -581,7 +584,7 @@ export function PromptDetailView({
             )
           : React.createElement(
               "span",
-              { className: "text-xs text-fg-muted block mb-1" },
+              { className: `block mb-1 ${MUTED_META_CLASS}` },
               "RuleSync command (all roles)"
             ),
         React.createElement(
@@ -612,7 +615,7 @@ export function PromptDetailView({
           // a fail, so the row takes `gap-3` and clears it at 28px.
           { className: "flex flex-col gap-3 text-xs" },
           React.createElement(
-            "a",
+            NavigationLink,
             {
               href: `/evaluations?prompt=${encodeURIComponent(prompt.name)}`,
               className: ACTION_LINK_CLASS
@@ -620,7 +623,7 @@ export function PromptDetailView({
             "Evaluations results →"
           ),
           React.createElement(
-            "a",
+            NavigationLink,
             {
               href: `/usage?role=${encodeURIComponent(prompt.name)}`,
               className: ACTION_LINK_CLASS
