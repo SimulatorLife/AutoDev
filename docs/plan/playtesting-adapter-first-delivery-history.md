@@ -829,14 +829,17 @@ incomplete. The goal is active and not complete.
 
 The existing packet type was metadata-only and had no builder. Core now defines
 strict projected per-step input records and a deterministic packet builder that
-selects every game-reported event-bearing step plus the terminal step, then
-adds evenly spaced ordinary context under fixed window/step/byte/token bounds.
-If mandatory evidence alone exceeds the budget, packet creation fails rather
-than trimming event or terminal evidence. Every unselected source range is
-recorded with a reason. The builder rejects unverified visibility, hidden trace
-fields, evaluator-provenance drift, cross-assignment identity, duplicate events,
-and missing frame hashes. Packet selection labels events as event-bearing,
-not as semantically verified taxonomy facts.
+selects game-specific event-bearing steps and the terminal step, then adds evenly
+spaced ordinary context under fixed window/step/byte/token bounds. Generic
+`decision_applied` events repeat the action/revision already present in their
+trace step; they remain eligible for ordinary sampling instead of making every
+step mandatory. If specific-event or terminal evidence alone exceeds the budget,
+packet creation fails rather than trimming it. Every unselected source range is
+recorded with a reason, and the full source trace remains available separately.
+The builder rejects unverified visibility, hidden trace fields, evaluator-
+provenance drift, cross-assignment identity, duplicate events, and missing frame
+hashes. Packet selection labels retained events as evidence anchors, not as
+semantically verified taxonomy facts.
 
 Core tests cover deterministic selection, ordinary omissions, exact trace
 partitioning, mandatory-evidence overflow, byte/token budget omissions,
@@ -1859,45 +1862,60 @@ the fixture Playwright test **1/1**, RacingGame unit binding **7/7**, and
 validate the generated bundle/hash chain.
 
 **Current checkout and live evidence (2026-10-16):** RacingGame advanced to
-HEAD 271a2363c with a committed observation-contract fix. The contract remains
-uiEquivalence: verified; its bound conformance-fixture hash is
-461abeae9b0d719ad99d36c5750643ee1f01a86a612a723da97c95df646f6fe5 and its
-observation-schema hash is
-59ba278f7ae04f37fdd4af6acece78c60b16676de578245c44d3645119631855. The
-source Console resolved prior committed HEAD 80a315ae automatically under
-Workspaces approval revision 5; a page started from a newer commit requires no
-new approval. The unrelated visual/effects edits in RacingGame's worktree remain
-untouched and excluded from Runtime snapshots.
+HEAD b5450114f with the scalar pit-state observation contract. The checked-in
+.autodev/playtest.observation.json declares uiEquivalence: verified, binds
+conformance fixture hash
+461abeae9b0d719ad99d36c5750643ee1f01a86a612a723da97c95df646f6fe5, and uses
+schema hash 59ba278f7ae04f37fdd4af6acece78c60b16676de578245c44d3645119631855.
+The source Console resolved each latest committed build automatically under
+Workspaces approval revision 5; no per-commit approval was requested. The
+unrelated visual/effects edits in RacingGame's worktree remain untouched and
+excluded from Runtime snapshots.
 
 The earlier discovery and confirmation runs on 80a315ae stopped at 11 and
 15 decisions because the adapter observed only main-circuit positions. A later
 Console run on bccc668e (batch
 batch-4b2dd672-c920-448d-a9c6-926295532cd1, seed discovery) progressed to
 1,200 executed decisions, then the loop guard stopped its unexecuted decision at
-step 1200; status was budget-truncated, no game outcome or deterministic
-metrics were recorded, and analyst dispatch was ineligible. The Data trace
-records steps 1198–1200 with the same observation hash
-5b0b499908d0cc4c and advance-segment as the sole legal action. Replaying the
-same seed/action stream against the game state showed why: circuit positions
-were fixed while active cars continued moving through the pit lane and service
-trajectory, which the adapter did not include in its observation. The guard was
-working correctly for the incomplete observation; it was not evidence that the
-game itself had stopped progressing.
+step 1200; status was budget-truncated and no game outcome or deterministic
+metrics were recorded. Its trace at steps 1198–1200 repeats observation hash
+5b0b499908d0cc4c with advance-segment as the sole legal action. Replaying the
+same seed/action stream against game state showed why: circuit positions were
+fixed while active cars continued moving through the pit lane and service
+trajectory, which the adapter did not include. The guard was correct for the
+incomplete observation; the game itself had not stopped progressing.
 
-The committed 271a2363c change adds the pit trajectory phase, route position,
-service remaining time, and tire-service duration beside circuit progress. The
-player UI's semantic car nodes publish those same renderer inputs, and the
-browser conformance fixture compares the structured observation against them.
-A deterministic adapter regression replays discovery through steps 1198–1199:
-main-track progress remains identical while the pit-state projection changes.
-AutoDev's episode artifact is now schema v4 and persists the stop reason plus an
-exact loop-guard step; the full-page inspector explains that the stop action was
-not executed, opens that trace step by default, and keeps raw JSON collapsed.
-The remaining end-to-end gate is to run 271a2363c through the current Console
-and verify a completed game outcome plus eligible analyst review. Until that
-happens, no win/loss, metrics, packet, or analysis is claimed. The earlier
-bccc668e partial episode remains excluded from review, with no packet,
-analyst process, provider/model call, or issue publication.
+The committed b5450114f contract adds pit-lane phase, route progress, service
+remaining time, and tire-service duration as aligned scalar arrays beside
+circuit progress. The scalar shape is intentional: Runtime's privacy projector
+admits allowlisted scalar arrays and nested paths, not an opaque object array.
+The player UI's semantic car nodes publish the same renderer/service inputs, and
+the browser conformance fixture compares the structured observation to those
+values. A deterministic adapter regression replays discovery through steps
+1198–1199: main-track progress stays identical while pit-lane state changes.
+The earlier intermediate object-array attempt on 7605d030 failed closed after
+four decisions with infrastructure-failed; Runtime rejected the unsupported
+object-valued allowlist field, and no game outcome was inferred.
+
+Through the reworked Console on b5450114, batch
+batch-c0951227-429f-4f8b-b6d5-5cc5ea21764c completed one discovery assignment
+in 1,985 decisions (28,294 ms simulation, 94 ms policy inference). The inspector
+reported LOSS, complete evidence, and deterministic metrics: wager-hit-rate
+1/5 (0.2), bankroll delta -5/3 gold per race, and legal-action rejection
+0/1985. This is an observed game loss, not an execution failure.
+
+The first UI Analyze this session request was eligible but returned
+packet-unavailable: packet-budget-exceeded; no analyst process or provider/model
+call occurred. The source cause was in Core packet selection: all 1,985 generic
+decision_applied events were marked mandatory, so mandatory windows exceeded
+the 256-step/64-KB packet budget. Core now treats that generic event as ordinary
+sampleable context (the action/revision is already in each trace step), retains
+game-specific events and terminal evidence as mandatory, and records sampled
+omissions explicitly. A 1,200-step packet regression and Runtime/Console tests
+cover this contract. The remaining gate is to run the current Runtime build and
+use the UI to persist an eligible review for the completed b5450114f session;
+no analyst conclusion is claimed until that succeeds. The earlier truncated
+runs remain ineligible and unanalysed.
 
 ### Playtesting Console UX redesign (2026-10-15)
 
@@ -1937,6 +1955,8 @@ Checklist:
 - [x] Use the Console's `Analyze this session` path on the first real partial episode. Runtime returned `excluded-ineligible-session` (“The session's batch is truncated, not completed”), with no packet, analyst process, or model call. This is an honest refusal; no analysis was fabricated.
 - [x] Diagnose the bccc668e trace at its owner: the repeated state was caused by pit-lane/service progress missing from the game-owned structured observation, not a Runtime or physics step-budget cap. Add pit route/service state, prove it against the player render state, and preserve the Runtime loop guard unchanged.
 - [x] Persist precise Runtime termination provenance in episode schema v4 and make the inspector open the unexecuted loop-guard step with an explicit explanation; previous v3 records migrate with termination marked unknown rather than a fabricated cause.
-- [ ] Run the latest committed RacingGame build 271a2363c through the Console; verify terminal game outcome, deterministic metrics, eligible analyst packet/review, and review evidence. The old bccc668e truncated episode remains ineligible and must stay unanalysed.
+- [x] Run the latest committed RacingGame build b5450114f through the Console and obtain a completed episode with a game outcome and deterministic metrics; the UI distinguishes this LOSS from a runner failure.
+- [x] Diagnose the eligible-session analysis refusal: generic per-step decision_applied events were all mandatory in Core and exceeded the bounded packet ceiling. Core now samples those generic duplicates, keeps game-specific/terminal evidence mandatory, and records omissions; the 1,200-step regression proves packet selection is bounded.
+- [ ] After the latest Core packet-selection change is deployed to the active Runtime process, analyze the completed b5450114f session through the UI and verify the persisted review, citations, and analyst result. No model call or analysis is claimed yet.
 - [x] Independent read-only code validation completed against the current diff; actionable findings were addressed: session detail no longer mounts an unavailable run setup, cancellation remains available when capabilities are unknown (known role restrictions are explained), human-visible status labels accompany state assertions, the 1,000-row disclosure is asserted closed before expansion, and readiness reload preserves route state.
 - [ ] A separate browser-tester role could not access its Playwright MCP tools in this session (the configured server is disabled). Root rendered/screenshotted the live page and ran the production browser suite; a role-based visual review remains unavailable unless the MCP is exposed.

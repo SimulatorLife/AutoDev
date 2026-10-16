@@ -43,6 +43,7 @@ export const MAX_PACKET_CROSS_SESSION_SESSIONS = 4;
 const MAX_PACKET_STEPS = 256;
 const MAX_PACKET_BYTES = 262_144;
 const MAX_PACKET_TOKENS = 32_768;
+const GENERIC_DECISION_EVENT_TYPE = "decision_applied";
 const MAX_STEP_EVENTS = 256;
 const TRACE_STEP_KEYS = new Set([
   "step",
@@ -324,6 +325,31 @@ function rangeAround(
   };
 }
 
+/**
+ * A generic decision event repeats the action/revision already carried by its
+ * trace step. Keep those lines sampleable; game-specific events remain packet
+ * anchors because they carry evidence that cannot be reconstructed from the
+ * step envelope.
+ */
+function hasMandatoryEventEvidence(
+  entry: PlaytestEvidenceTraceStep
+): boolean {
+  return entry.events.some(
+    (event) => event.type !== GENERIC_DECISION_EVENT_TYPE
+  );
+}
+
+function hasMandatoryEventEvidenceValue(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.events) &&
+    value.events.some(
+      (event) =>
+        isRecord(event) && event.type !== GENERIC_DECISION_EVENT_TYPE
+    )
+  );
+}
+
 function initiallySelectedRanges(
   trace: readonly PlaytestEvidenceTraceStep[],
   limits: {
@@ -334,7 +360,7 @@ function initiallySelectedRanges(
 ): SelectionRange[] {
   const lastStep = trace.at(-1)!.step;
   const mandatoryAnchors = trace
-    .filter((entry) => entry.events.length > 0)
+    .filter(hasMandatoryEventEvidence)
     .map((entry) =>
       rangeAround(
         entry.step,
@@ -363,7 +389,7 @@ function initiallySelectedRanges(
       covered.add(step);
   }
   const ordinary = trace.filter(
-    (entry) => entry.events.length === 0 && !covered.has(entry.step)
+    (entry) => !hasMandatoryEventEvidence(entry) && !covered.has(entry.step)
   );
   const remainingSlots = Math.max(0, limits.maxWindows - selected.length);
   const candidateCount = Math.min(ordinary.length, remainingSlots);
@@ -1149,10 +1175,7 @@ export function assertPlaytestEvidencePacket(
     }
     const reasons = window.selectionReasons as readonly unknown[];
     if (
-      window.steps.some(
-        (step) =>
-          isRecord(step) && Array.isArray(step.events) && step.events.length > 0
-      ) &&
+      window.steps.some(hasMandatoryEventEvidenceValue) &&
       !reasons.includes("event-bearing-step")
     ) {
       throw new TypeError(

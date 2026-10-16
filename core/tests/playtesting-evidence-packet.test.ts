@@ -684,6 +684,51 @@ test("packet byte/token cap may omit ordinary windows but never mandatory event 
   );
 });
 
+test("generic decision events are sampled so long completed episodes retain review packets", () => {
+  const trace = Array.from({ length: 1200 }, (_, step) => ({
+    step,
+    phaseId: "race_and_energy",
+    revisionBefore: step,
+    revisionAfter: step + 1,
+    observationVisibility: "structured" as const,
+    visibleObservation: { phaseId: "race_and_energy", progress: step },
+    legalActionIds: ["advance-segment"],
+    selectedActionId: "advance-segment",
+    preActionPrediction: null,
+    authoritativeOutcome: null,
+    events: [
+      {
+        eventId: `decision-${String(step)}`,
+        type: "decision_applied",
+        phaseId: "race_and_energy",
+        revision: step + 1
+      }
+    ],
+    frameRefs: []
+  }));
+  const packet = build({
+    episode: { ...episode(), stepCount: trace.length },
+    traceSteps: trace,
+    maxWindows: 32,
+    maxSelectedSteps: 256,
+    windowRadius: 2,
+    tokenBudget: 32_768,
+    maxPacketBytes: 64 * 1024
+  });
+  const selectedSteps = packet.selectedWindows.flatMap(
+    (window) => window.steps
+  );
+  assert.ok(packet.selectedWindows.length <= 32);
+  assert.ok(selectedSteps.length <= 256);
+  assert.ok(
+    selectedSteps.some((step) =>
+      step.events.some((event) => event.type === "decision_applied")
+    )
+  );
+  assert.ok(packet.omittedWindows.length > 0);
+  assert.doesNotThrow(() => assertPlaytestEvidencePacket(packet));
+});
+
 test("packet validator rejects omissions that do not partition the complete source trace", () => {
   const packet = build();
   assert.throws(
