@@ -42,8 +42,13 @@ const MAX_PACKET_WINDOWS = 32;
 export const MAX_PACKET_CROSS_SESSION_SESSIONS = 4;
 const MAX_PACKET_STEPS = 256;
 const MAX_PACKET_BYTES = 262_144;
-const MAX_PACKET_TOKENS = 32_768;
-const GENERIC_DECISION_EVENT_TYPE = "decision_applied";
+export const PLAYTESTS_EVIDENCE_PACKET_MAX_TOKENS = 32_768;
+const SAMPLEABLE_ACTION_EVENT_TYPES = new Set([
+  "decision_applied",
+  "card_played",
+  "race_started",
+  "reward_claimed"
+]);
 const MAX_STEP_EVENTS = 256;
 const TRACE_STEP_KEYS = new Set([
   "step",
@@ -326,14 +331,14 @@ function rangeAround(
 }
 
 /**
- * A generic decision event repeats the action/revision already carried by its
- * trace step. Keep those lines sampleable; game-specific events remain packet
- * anchors because they carry evidence that cannot be reconstructed from the
- * step envelope.
+ * Generic decision/card-play events and checked-in lifecycle transitions
+ * repeat actions/state changes already carried by trace steps. Keep those lines
+ * sampleable; outcome events and other game-specific events remain packet
+ * anchors because they carry evidence not represented by the action.
  */
 function hasMandatoryEventEvidence(entry: PlaytestEvidenceTraceStep): boolean {
   return entry.events.some(
-    (event) => event.type !== GENERIC_DECISION_EVENT_TYPE
+    (event) => !SAMPLEABLE_ACTION_EVENT_TYPES.has(event.type)
   );
 }
 
@@ -342,7 +347,9 @@ function hasMandatoryEventEvidenceValue(value: unknown): boolean {
     isRecord(value) &&
     Array.isArray(value.events) &&
     value.events.some(
-      (event) => isRecord(event) && event.type !== GENERIC_DECISION_EVENT_TYPE
+      (event) =>
+        isRecord(event) &&
+        !SAMPLEABLE_ACTION_EVENT_TYPES.has(String(event.type))
     )
   );
 }
@@ -868,7 +875,7 @@ function assertPlaytestEvidencePacketInputs(
     !SHA256_PATTERN.test(input.crossSessionInventoryHash) ||
     !Array.isArray(input.crossSessionCandidates) ||
     !Number.isFinite(Date.parse(input.generatedAt)) ||
-    !isCount(input.tokenBudget, MAX_PACKET_TOKENS) ||
+    !isCount(input.tokenBudget, PLAYTESTS_EVIDENCE_PACKET_MAX_TOKENS) ||
     input.tokenBudget === 0 ||
     !isCount(input.maxPacketBytes ?? MAX_PACKET_BYTES, MAX_PACKET_BYTES) ||
     (input.maxPacketBytes ?? MAX_PACKET_BYTES) === 0 ||
@@ -1121,7 +1128,7 @@ export function assertPlaytestEvidencePacket(
     (value.promptHash !== null &&
       !SHA256_PATTERN.test(String(value.promptHash))) ||
     !isText(value.measurementVersion) ||
-    !isCount(value.tokenBudget, MAX_PACKET_TOKENS) ||
+    !isCount(value.tokenBudget, PLAYTESTS_EVIDENCE_PACKET_MAX_TOKENS) ||
     value.tokenBudget === 0 ||
     !Number.isFinite(Date.parse(String(value.generatedAt)))
   ) {

@@ -1403,26 +1403,26 @@ real-game or model evidence exists.
 ### Playtesting first-read schema initialization latency (source path updated; rollout open)
 
 - [x] Runtime starts Data-owned `PlaytestRepository.ensureSchema()` as a
-  best-effort startup warmup and tracks `idle/initializing/ready/unavailable`
-  without exposing backend errors. Pending resource reads now return an explicit
-  `503 autodev_control_playtesting_source_initializing` with `Retry-After: 1`
-  instead of holding the Console request open for the DDL duration. The separate,
-  workspace-scoped `GET /control/playtesting/readiness` is nonblocking and
-  GET-only; only an operator can explicitly retry through
-  `POST /control/playtesting/initialize`; a failed state remains typed and
-  viewer/resource GETs do not silently reissue DDL. Unrelated Control API routes
-  remain available.
+      best-effort startup warmup and tracks `idle/initializing/ready/unavailable`
+      without exposing backend errors. Pending resource reads now return an explicit
+      `503 autodev_control_playtesting_source_initializing` with `Retry-After: 1`
+      instead of holding the Console request open for the DDL duration. The separate,
+      workspace-scoped `GET /control/playtesting/readiness` is nonblocking and
+      GET-only; only an operator can explicitly retry through
+      `POST /control/playtesting/initialize`; a failed state remains typed and
+      viewer/resource GETs do not silently reissue DDL. Unrelated Control API routes
+      remain available.
 - [x] Console preflights overview/list queries; a direct session detail uses its
-  single episode read and maps a fast `initializing`/`unavailable` response to
-  the same readiness panel, avoiding a redundant status round trip. An
-  initializing page polls the same-origin readiness
-  proxy with bounded backoff; ready triggers a server refresh, while an
-  unavailable response stops and offers an operator retry. The 5-second Control
-  API request deadline is unchanged. Console Playtesting server/route/selection
-  tests pass **22/22**, Control API compatibility tests **2/2**, Runtime
-  schema-warmup tests **3/3**, the Runtime Playtesting Control API suite **21/21**,
-  and the focused MCP equivalence refusal test **1/1**. Core, Runtime, and Console
-  typechecks and ESLint on changed source/tests pass.
+      single episode read and maps a fast `initializing`/`unavailable` response to
+      the same readiness panel, avoiding a redundant status round trip. An
+      initializing page polls the same-origin readiness
+      proxy with bounded backoff; ready triggers a server refresh, while an
+      unavailable response stops and offers an operator retry. The 5-second Control
+      API request deadline is unchanged. Console Playtesting server/route/selection
+      tests pass **22/22**, Control API compatibility tests **2/2**, Runtime
+      schema-warmup tests **3/3**, the Runtime Playtesting Control API suite **21/21**,
+      and the focused MCP equivalence refusal test **1/1**. Core, Runtime, and Console
+      typechecks and ESLint on changed source/tests pass.
 - [~] The production Playwright readiness-flow specs for overview, direct
   session links, and operator retry are checked in against the labeled synthetic
   fixture. Two production webServer builds exceeded the existing 120-second
@@ -1828,7 +1828,6 @@ approval. A Workspaces approval now authorizes a **checkout**, not a commit.
 - Final real-game UI run through source Console :3391/source Control API :4191 used current approved HEAD `a1f3a95360e879d8562ab223bd448f6e1dc4ed50` and seed `regression`; the timestamped `202` ack was followed automatically by Completed. Batch `batch-b8781463-8fbb-487a-b9c1-9b4d7f08a5e6`: 2,062 steps, LOSS, wager-hit `1/4`, bankroll delta `-23/3` gold/race, legal-action rejection `0/2062`. Its session page rendered an integrity-verified trace and deterministic metrics; `observationVisibility` remains `unverified`. The selected-session analysis action returned the typed `observation-equivalence-unverified` receipt, started no analyst process and made no provider/model call.
 - Managed Runtime :4101 remains source-incompatible v3; managed Console :3300 was not changed. Source side services :3391/:4191 were retained loopback-only for continued UI inspection.
 
-
 ### RacingGame UI-observation conformance (committed source, 2026-10-15)
 
 The prior probe found the first concrete equivalence defect: the adapter seeded
@@ -1906,13 +1905,14 @@ reported LOSS, complete evidence, and deterministic metrics: wager-hit-rate
 
 The first UI Analyze this session request was eligible but returned
 packet-unavailable: packet-budget-exceeded; no analyst process or provider/model
-call occurred. Core had marked all 1,985 generic decision_applied events
-mandatory, so their contextual windows exceeded the 32,768-unit token budget
-and 64-KiB packet-byte cap. Core now treats that generic event as ordinary
-sampleable context (the action/revision is already in each trace step), anchors
-specific game events at their exact step, retains terminal evidence with local
-context, and records every omitted range. Regressions cover 1,200 generic
-decisions and a 1,985-step event mix matching RacingGame. The remaining gate is
+call occurred. Core had marked all 1,985 decision_applied, card_played,
+race_started, and reward_claimed events mandatory. Their context windows
+exceeded Runtime's 16,384-unit review limit. Core now samples those
+action-redundant events, anchors race-settled/run-ended evidence at the exact
+step, keeps local terminal context, and records every omitted range. Runtime
+uses Core's bounded 32,768-unit packet ceiling while retaining its 64-KiB
+artifact cap and the one-critique approval limit. Regressions cover 1,200
+routine decisions and a 1,985-step RacingGame-shaped mix. The remaining gate is
 to run the current Runtime build and use the UI to persist an eligible review
 for the completed b5450114f session; no analyst conclusion is claimed until
 that succeeds. The earlier truncated runs remain ineligible and unanalysed.
@@ -1942,6 +1942,7 @@ A readiness browser trace showed that Next's `router.refresh()` returned the upd
 The configured `browser-tester` role could not independently inspect rendered state in this session because its Playwright MCP tools were not exposed (`~/.codex/config.toml` marks that server disabled; no config changes were made). The root captured and inspected the actual UI with Playwright and the production E2E suite passed, but a separate role-based visual critique remains unavailable.
 
 Checklist:
+
 - [x] Capture actual RacingGame Console and session pages; map owning route/components and status APIs.
 - [x] Independent read-only UX/architecture review completed; its findings reconciled above.
 - [x] Replace the overview with a focused Run-first hierarchy; keep archive filters and detailed measurement coverage out of the primary action path.

@@ -729,19 +729,23 @@ test("generic decision events are sampled so long completed episodes retain revi
   assert.doesNotThrow(() => assertPlaytestEvidencePacket(packet));
 });
 
-test("specific event anchors in a long episode fit the bounded analyst packet", () => {
-  const eventAt = new Map<number, string>([
-    [3, "race_started"],
+test("specific event anchors in a RacingGame-sized episode fit the runtime packet budget", () => {
+  const eventAt = new Map<number, readonly string[]>([
+    [3, ["race_started"]],
     ...[
-      4, 8, 10, 11, 12, 15, 18, 25, 70, 140, 210, 280, 350, 420, 490, 560, 630
-    ].map((step) => [step, "card_played"] as const),
-    [800, "race_settled"],
-    [1400, "reward_claimed"],
-    [1700, "race_started"]
+      4, 5, 6, 8, 782, 783, 784, 785, 954, 955, 1275, 1276, 1277, 1461, 1635,
+      1636, 1637
+    ].map((step) => [step, ["card_played"]] as const),
+    [610, ["race_settled"]],
+    [612, ["reward_claimed"]],
+    [619, ["race_started"]],
+    [1267, ["race_settled"]],
+    [1269, ["reward_claimed"]],
+    [1274, ["race_started"]],
+    [1984, ["race_settled", "run_ended"]]
   ]);
   const trace = Array.from({ length: 1985 }, (_, step) => {
-    const eventType =
-      step === 1984 ? "run_ended" : (eventAt.get(step) ?? "decision_applied");
+    const eventTypes = eventAt.get(step) ?? ["decision_applied"];
     return {
       step,
       phaseId: "race_and_energy",
@@ -752,9 +756,27 @@ test("specific event anchors in a long episode fit the bounded analyst packet", 
         phaseId: "race_and_energy",
         bankroll_gold: 50,
         races_completed: step === 1984 ? 3 : 0,
-        selected_ticket_ids: ["ticket-a", "ticket-b"],
+        offered_ticket_ids: [
+          "ticket_dnf_team_velocity",
+          "ticket_podium_team_aurora",
+          "ticket_bottom3_team_apex",
+          "ticket_winner_team_aurora"
+        ],
+        selected_ticket_ids: [
+          "ticket_winner_team_aurora",
+          "ticket_bottom3_team_apex"
+        ],
         hand_card_ids: [4, 3, 8, 2],
-        running_order: ["car-1", "car-2", "car-3", "car-4", "car-5", "car-6"],
+        dsr_enabled: true,
+        reward_template_ids: [],
+        running_order: [
+          "car_vel_1",
+          "car_apex_1",
+          "car_aurora_2",
+          "car_apex_2",
+          "car_vel_2",
+          "car_aurora_1"
+        ],
         running_order_route_progress: [1180, 1082, 1082, 984, 592, 143.65],
         running_order_pit_phase: [null, null, "pit_lane", null, null, null],
         running_order_pit_route_progress: [
@@ -786,14 +808,12 @@ test("specific event anchors in a long episode fit the bounded analyst packet", 
       selectedActionId: "advance-segment",
       preActionPrediction: null,
       authoritativeOutcome: null,
-      events: [
-        {
-          eventId: `event-${String(step)}`,
-          type: eventType,
-          phaseId: "race_and_energy",
-          revision: step + 1
-        }
-      ],
+      events: eventTypes.map((type, index) => ({
+        eventId: `event-${String(step)}-${String(index)}`,
+        type,
+        phaseId: "race_and_energy",
+        revision: step + 1
+      })),
       frameRefs: []
     };
   });
@@ -816,6 +836,10 @@ test("specific event anchors in a long episode fit the bounded analyst packet", 
       window.selectionReasons.includes("terminal")
     )
   );
+  const selectedEventTypes = packet.selectedWindows.flatMap((window) =>
+    window.steps.flatMap((step) => step.events.map((event) => event.type))
+  );
+  assert.ok(selectedEventTypes.includes("race_settled"));
   assert.ok(
     packet.omittedWindows.some(
       (window) => window.reason === "ordinary-sampling"
