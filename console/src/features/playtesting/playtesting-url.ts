@@ -392,16 +392,27 @@ export function playtestingPageHref(
   return withQuery(PLAYTESTING_ROUTE, params);
 }
 
+/** Sessions view with exactly this episode preselected for optional analysis. */
+export function playtestingAnalyzeEpisodeHref(
+  scope: PlaytestingScope,
+  episodeId: string
+): string {
+  return playtestingViewHref(
+    { ...scope, selectedEpisodeIds: [episodeId] },
+    "sessions"
+  );
+}
+
 /** Full-page episode route preserving the originating list and exact step. */
 export function playtestingEpisodeHref(
   scope: PlaytestingScope,
   episodeId: string,
-  step: number,
+  step: number | null = null,
   returnFindingId?: string
 ): string {
   const params = paramsForScope(
     { ...scope, step },
-    { includeCursor: true, includeStep: true }
+    { includeCursor: true, includeStep: step !== null }
   );
   if (returnFindingId && FINDING_ID_PATTERN.test(returnFindingId)) {
     params.set("returnFinding", returnFindingId);

@@ -1,6 +1,8 @@
+"use client";
+
 /** One source-backed rendering of execution and game outcomes per assignment. */
 import type { PlaytestRunAssignmentOutcome } from "@simulatorlife/autodev-core";
-import React from "react";
+import React, { useState } from "react";
 
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
@@ -24,6 +26,7 @@ export function PlaytestingAssignmentResults({
   scope,
   pending
 }: PlaytestingAssignmentResultsProps): React.JSX.Element {
+  const [showAll, setShowAll] = useState(false);
   const content =
     outcomes === null
       ? React.createElement(
@@ -45,7 +48,7 @@ export function PlaytestingAssignmentResults({
               className: "max-h-80 list-none space-y-2 overflow-y-auto p-0",
               "aria-label": "Per-assignment results"
             },
-            ...outcomes.map((outcome) =>
+            ...(showAll ? outcomes : outcomes.slice(0, 10)).map((outcome) =>
               React.createElement(
                 "li",
                 {
@@ -95,7 +98,7 @@ export function PlaytestingAssignmentResults({
                           href: playtestingEpisodeHref(
                             scope,
                             outcome.episodeId,
-                            0
+                            null
                           ),
                           dataAttributes: {
                             "data-testid": "playtesting-assignment-session-link"
@@ -104,7 +107,21 @@ export function PlaytestingAssignmentResults({
                         `Open session ${outcome.episodeId}`
                       )
               )
-            )
+            ),
+            outcomes.length > 10
+              ? React.createElement(
+                  "button",
+                  {
+                    type: "button",
+                    className: "text-sm font-medium text-accent hover:underline",
+                    onClick: () => setShowAll((current) => !current),
+                    "data-testid": "playtesting-assignment-outcomes-toggle"
+                  },
+                  showAll
+                    ? "Show first 10 results"
+                    : `Show all ${String(outcomes.length - 10)} more results`
+                )
+              : null
           );
   return React.createElement(
     "section",

@@ -2,13 +2,10 @@
 
 import type {
   ControlApiPlaytestingCapabilitiesResponse,
-  ControlApiPlaytestingRunRecord,
-  ControlApiPlaytestingRunStartedResponse,
-  PlaytestJsonValue
+  ControlApiPlaytestingRunStartedResponse
 } from "@simulatorlife/autodev-core";
 import React, { useRef, useState } from "react";
 
-import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import {
   LIST_PANEL_CLASS,
   NESTED_PANEL_CLASS
@@ -22,19 +19,12 @@ import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
-import { assignmentOutcomes } from "./playtesting-active-runs.ts";
-import {
-  CANCELLATION_REASON_LABELS,
-  responseMessage
-} from "./playtesting-run-messages.ts";
-import { batchStatusBadge } from "./playtesting-run-presentation.ts";
+import { responseMessage } from "./playtesting-run-messages.ts";
 import {
   initialPlaytestingSeed,
   isAdmissiblePlaytestingSeed,
   nextPlaytestingSeed
 } from "./playtesting-run-seeds.ts";
-import type { PlaytestingScope } from "./playtesting-url.ts";
-import { PlaytestingAssignmentResults } from "./PlaytestingAssignmentResults.ts";
 
 export type PlaytestingRunSetup =
   | {
@@ -56,15 +46,6 @@ interface RunSubmission {
     readonly seed: string;
     readonly maxSteps: number;
   }[];
-}
-
-function objectRecord(
-  value: PlaytestJsonValue | null
-): Readonly<Record<string, PlaytestJsonValue>> | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return null;
-  }
-  return value as Readonly<Record<string, PlaytestJsonValue>>;
 }
 
 interface RunAssignmentDraft {
@@ -162,6 +143,15 @@ function RunRequestForm({
     assignments.length <= 10 || showAllAssignments
       ? assignments
       : assignments.slice(0, 10);
+  const defaultAssignment = assignments[0]!;
+  const defaultPolicy = runnableAssignments.find(
+    (candidate) =>
+      candidate.scenarioId === defaultAssignment.scenarioId &&
+      candidate.policyId === defaultAssignment.policyId
+  )!;
+  const defaultSeedPurpose = admissibleSeeds?.find(
+    (entry) => entry.seed === defaultAssignment.seed
+  )?.purpose;
 
   function updateAssignment(
     id: number,
@@ -274,282 +264,322 @@ function RunRequestForm({
 
   return (
     <form
-      aria-label="Run an approved Playtesting batch"
-      className="grid gap-3"
+      aria-label="Start a playtest"
+      className="grid gap-4"
       onSubmit={submit}
     >
-      {admissibleSeeds === null ? (
-        <fieldset className={`${NESTED_PANEL_CLASS} grid gap-3 md:grid-cols-3`}>
-          <legend className="px-1 text-sm font-semibold">
-            Generate seed variations
-          </legend>
-          <label className="flex flex-col gap-1 text-xs text-fg-muted">
-            Seed prefix
-            <input
-              className={FIELD_CONTROL_CLASS}
-              disabled={pending}
-              maxLength={256}
-              value={seedPrefix}
-              onChange={(event) => setSeedPrefix(event.currentTarget.value)}
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-fg-muted">
-            Additional assignments
-            <input
-              className={FIELD_CONTROL_CLASS}
-              disabled={pending || remainingBatchCapacity < 1}
-              max={remainingBatchCapacity}
-              min={1}
-              type="number"
-              value={additionalAssignments}
-              onChange={(event) =>
-                setAdditionalAssignments(event.currentTarget.value)
-              }
-            />
-          </label>
-          <button
-            className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
-            disabled={pending || !canGenerateAssignments}
-            onClick={generateAssignments}
-            type="button"
-          >
-            Generate assignments
-          </button>
-          <p className={`${MUTED_META_CLASS} md:col-span-3`}>
-            Generated rows copy the first assignment&apos;s scenario, policy and
-            step budget, using distinct prefix-number seeds.
-          </p>
-        </fieldset>
-      ) : (
-        <p className={MUTED_META_CLASS}>
-          Seeds come from the latest build&apos;s frozen benchmark inventory:{" "}
-          {admissibleSeeds
-            .map((entry) => entry.seed + " (" + entry.purpose + ")")
-            .join(", ")}
-          . Each scenario/policy cell can use each seed once per batch.
-        </p>
-      )}
-      <ol aria-label="Batch assignments" className="grid gap-3">
-        {displayedAssignments.map((assignment, index) => {
-          const row = index + 1;
-          const optionsForScenario = runnableAssignments.filter(
-            (candidate) => candidate.scenarioId === assignment.scenarioId
-          );
-          const selected = runnableAssignments.find(
-            (candidate) =>
-              candidate.scenarioId === assignment.scenarioId &&
-              candidate.policyId === assignment.policyId
-          )!;
-          const duplicate = duplicateCells.has(
-            JSON.stringify([
-              assignment.scenarioId,
-              assignment.policyId,
-              assignment.seed.trim()
-            ])
-          );
-          return (
-            <li key={assignment.id}>
-              <fieldset
-                className={`${NESTED_PANEL_CLASS} grid gap-3 md:grid-cols-2`}
-              >
-                <legend className="px-1 text-sm font-semibold">
-                  Assignment {row}
-                </legend>
-                <label className="flex flex-col gap-1 text-xs text-fg-muted">
-                  Scenario {row}
-                  <select
-                    className={FIELD_CONTROL_CLASS}
-                    disabled={pending}
-                    name={`scenario-${row}`}
-                    value={assignment.scenarioId}
-                    onChange={(event) =>
-                      changeScenario(assignment.id, event.currentTarget.value)
-                    }
-                  >
-                    {Array.from(
-                      new Set(
-                        runnableAssignments.map((item) => item.scenarioId)
-                      ),
-                      (scenarioId) => (
-                        <option key={scenarioId} value={scenarioId}>
-                          {scenarioId}
-                        </option>
-                      )
-                    )}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-xs text-fg-muted">
-                  Policy / cohort {row}
-                  <select
-                    className={FIELD_CONTROL_CLASS}
-                    disabled={pending}
-                    name={`policy-${row}`}
-                    value={assignment.policyId}
-                    onChange={(event) =>
-                      changePolicy(assignment.id, event.currentTarget.value)
-                    }
-                  >
-                    {optionsForScenario.map((option) => (
-                      <option key={option.policyId} value={option.policyId}>
-                        {option.policyId +
-                          " · " +
-                          option.cohort +
-                          " · " +
-                          option.strategy}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <p className={`${MUTED_META_CLASS} md:col-span-2`}>
-                  Family {selected.scenarioFamily} · policy version{" "}
-                  {selected.policyVersion} · maximum{" "}
-                  {selected.maxStepsPerEpisode} steps for this approved cell.
-                </p>
-                <label className="flex flex-col gap-1 text-xs text-fg-muted">
-                  Seed {row}
-                  {admissibleSeeds === null ? (
-                    <input
-                      className={FIELD_CONTROL_CLASS}
-                      disabled={pending}
-                      maxLength={256}
-                      name={`seed-${row}`}
-                      required
-                      value={assignment.seed}
-                      onChange={(event) => {
-                        const seed = event.currentTarget.value;
-                        updateAssignment(assignment.id, (current) => ({
-                          ...current,
-                          seed
-                        }));
-                      }}
-                    />
-                  ) : (
-                    <select
-                      className={FIELD_CONTROL_CLASS}
-                      disabled={pending}
-                      name={`seed-${row}`}
-                      required
-                      value={assignment.seed}
-                      onChange={(event) => {
-                        const seed = event.currentTarget.value;
-                        updateAssignment(assignment.id, (current) => ({
-                          ...current,
-                          seed
-                        }));
-                      }}
-                    >
-                      {admissibleSeeds.map((entry) => (
-                        <option key={entry.seed} value={entry.seed}>
-                          {entry.seed + " · " + entry.purpose}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </label>
-                <label className="flex flex-col gap-1 text-xs text-fg-muted">
-                  Step budget {row}
-                  <input
-                    className={FIELD_CONTROL_CLASS}
-                    disabled={pending}
-                    max={selected.maxStepsPerEpisode}
-                    min={1}
-                    name={`maxSteps-${row}`}
-                    type="number"
-                    value={assignment.maxSteps}
-                    onChange={(event) => {
-                      const maxSteps = event.currentTarget.value;
-                      updateAssignment(assignment.id, (current) => ({
-                        ...current,
-                        maxSteps
-                      }));
-                    }}
-                  />
-                </label>
-                {duplicate ? (
-                  <p className="text-sm text-error" role="alert">
-                    Scenario, policy, and seed must identify a unique
-                    assignment.
-                  </p>
-                ) : null}
-                <button
-                  className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
-                  disabled={pending || assignments.length === 1}
-                  onClick={() =>
-                    setAssignments((current) =>
-                      current.filter((entry) => entry.id !== assignment.id)
-                    )
-                  }
-                  type="button"
-                >
-                  Remove assignment {row}
-                </button>
-              </fieldset>
-            </li>
-          );
-        })}
-      </ol>
-      {assignments.length > displayedAssignments.length ? (
-        <button
-          className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm"
-          onClick={() => setShowAllAssignments(true)}
-          type="button"
-        >
-          Show {assignments.length - displayedAssignments.length} more
-          assignments
-        </button>
-      ) : null}
-      {showAllAssignments && assignments.length > 10 ? (
-        <button
-          className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm"
-          onClick={() => setShowAllAssignments(false)}
-          type="button"
-        >
-          Collapse to first 10 assignments
-        </button>
-      ) : null}
-      <button
-        className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
-        disabled={
-          pending ||
-          assignments.length >= maxAssignments ||
-          addableSeed === null
-        }
-        onClick={addAssignment}
-        type="button"
+      <div
+        className="grid gap-3 rounded-lg border border-border bg-surface-raised p-4 sm:grid-cols-2"
+        aria-label="Suggested playtest configuration"
       >
-        Add assignment
-      </button>
-      <div>
-        <p className={MUTED_META_CLASS}>
-          Batch budget preview: {assignments.length} of {maxAssignments}{" "}
-          per-batch episode assignments · {capabilities.limits!.workerCount}{" "}
-          concurrent worker(s) · {capabilities.limits!.wallTimeMs} ms wall time
-          · at most {capabilities.limits!.critiqueCount} critiques.
-        </p>
-        <p className={MUTED_META_CLASS}>
-          Runtime also checks the remaining approved build budget before any
-          sandbox launches.
-        </p>
-        <p className={MUTED_META_CLASS}>
-          Critiques are not invoked by starting a batch; any later reviews
-          remain bounded by the frozen selection and approved critique cap.
-        </p>
-        <p className={MUTED_META_CLASS}>
-          Latest committed build {capabilities.buildSha} · the Runtime resolves
-          the checkout&apos;s latest commit again when the batch starts and runs
-          that exact snapshot; uncommitted edits are never run.
-        </p>
+        <div>
+          <p className={MUTED_META_CLASS}>Suggested scenario</p>
+          <p className="mt-1 font-medium">{defaultAssignment.scenarioId}</p>
+        </div>
+        <div>
+          <p className={MUTED_META_CLASS}>Policy / cohort</p>
+          <p className="mt-1 font-medium">
+            {defaultPolicy.policyId} · {defaultPolicy.cohort}
+          </p>
+        </div>
+        <div>
+          <p className={MUTED_META_CLASS}>Seed</p>
+          <p className="mt-1 font-medium">
+            {defaultAssignment.seed}
+            {defaultSeedPurpose ? ` · ${defaultSeedPurpose}` : ""}
+          </p>
+        </div>
+        <div>
+          <p className={MUTED_META_CLASS}>Step cap</p>
+          <p className="mt-1 font-medium">
+            {defaultAssignment.maxSteps} of {defaultPolicy.maxStepsPerEpisode}
+          </p>
+        </div>
       </div>
+      <p className={MUTED_META_CLASS}>
+        This starts one session. The build shown above was observed when this
+        page loaded; Runtime re-resolves the latest committed HEAD at start and
+        records the exact commit in the result.
+      </p>
       <button
-        className="min-h-11 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-fg-inverse disabled:cursor-not-allowed disabled:opacity-60"
+        className="min-h-12 w-full rounded-md bg-accent px-4 py-3 text-base font-semibold text-fg-inverse disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
         data-playtesting-run-submit="true"
         disabled={pending || !valid}
         type="submit"
       >
         {pending
-          ? "Submitting…"
-          : `Run ${assignments.length} approved assignment${assignments.length === 1 ? "" : "s"}`}
+          ? "Starting playtest…"
+          : assignments.length === 1
+            ? "Start playtest"
+            : `Start ${String(assignments.length)} playtests`}
       </button>
+      <details className="rounded-lg border border-border bg-surface p-4">
+        <summary className="cursor-pointer text-sm font-medium">
+          Customize run
+          <span className={`ml-2 ${MUTED_META_CLASS}`}>
+            Scenario, policy, seed, step cap, and batch size
+          </span>
+        </summary>
+        <div className="mt-4 grid gap-4">
+          {admissibleSeeds === null ? (
+            <fieldset className={`${NESTED_PANEL_CLASS} grid gap-3 md:grid-cols-3`}>
+              <legend className="px-1 text-sm font-semibold">
+                Generate seed variations
+              </legend>
+              <label className="flex flex-col gap-1 text-xs text-fg-muted">
+                Seed prefix
+                <input
+                  className={FIELD_CONTROL_CLASS}
+                  disabled={pending}
+                  maxLength={256}
+                  value={seedPrefix}
+                  onChange={(event) => setSeedPrefix(event.currentTarget.value)}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs text-fg-muted">
+                Additional assignments
+                <input
+                  className={FIELD_CONTROL_CLASS}
+                  disabled={pending || remainingBatchCapacity < 1}
+                  max={remainingBatchCapacity}
+                  min={1}
+                  type="number"
+                  value={additionalAssignments}
+                  onChange={(event) =>
+                    setAdditionalAssignments(event.currentTarget.value)
+                  }
+                />
+              </label>
+              <button
+                className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
+                disabled={pending || !canGenerateAssignments}
+                onClick={generateAssignments}
+                type="button"
+              >
+                Generate assignments
+              </button>
+              <p className={`${MUTED_META_CLASS} md:col-span-3`}>
+                Generated rows copy the first assignment&apos;s scenario, policy
+                and step cap, using distinct prefix-number seeds.
+              </p>
+            </fieldset>
+          ) : (
+            <p className={MUTED_META_CLASS}>
+              Available seeds: {admissibleSeeds
+                .map((entry) => `${entry.seed} (${entry.purpose})`)
+                .join(", ")}
+            </p>
+          )}
+          <ol aria-label="Batch assignments" className="grid gap-3">
+            {displayedAssignments.map((assignment, index) => {
+              const row = index + 1;
+              const optionsForScenario = runnableAssignments.filter(
+                (candidate) => candidate.scenarioId === assignment.scenarioId
+              );
+              const selected = runnableAssignments.find(
+                (candidate) =>
+                  candidate.scenarioId === assignment.scenarioId &&
+                  candidate.policyId === assignment.policyId
+              )!;
+              const duplicate = duplicateCells.has(
+                JSON.stringify([
+                  assignment.scenarioId,
+                  assignment.policyId,
+                  assignment.seed.trim()
+                ])
+              );
+              return (
+                <li key={assignment.id}>
+                  <fieldset
+                    className={`${NESTED_PANEL_CLASS} grid gap-3 md:grid-cols-2`}
+                  >
+                    <legend className="px-1 text-sm font-semibold">
+                      Session {row}
+                    </legend>
+                    <label className="flex flex-col gap-1 text-xs text-fg-muted">
+                      Scenario
+                      <select
+                        className={FIELD_CONTROL_CLASS}
+                        disabled={pending}
+                        name={`scenario-${row}`}
+                        value={assignment.scenarioId}
+                        onChange={(event) =>
+                          changeScenario(assignment.id, event.currentTarget.value)
+                        }
+                      >
+                        {Array.from(
+                          new Set(
+                            runnableAssignments.map((item) => item.scenarioId)
+                          ),
+                          (scenarioId) => (
+                            <option key={scenarioId} value={scenarioId}>
+                              {scenarioId}
+                            </option>
+                          )
+                        )}
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1 text-xs text-fg-muted">
+                      Policy and cohort
+                      <select
+                        className={FIELD_CONTROL_CLASS}
+                        disabled={pending}
+                        name={`policy-${row}`}
+                        value={assignment.policyId}
+                        onChange={(event) =>
+                          changePolicy(assignment.id, event.currentTarget.value)
+                        }
+                      >
+                        {optionsForScenario.map((option) => (
+                          <option key={option.policyId} value={option.policyId}>
+                            {option.policyId} · {option.cohort} · {option.strategy}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <p className={`${MUTED_META_CLASS} md:col-span-2`}>
+                      Family {selected.scenarioFamily} · policy version{" "}
+                      {selected.policyVersion} · maximum{" "}
+                      {selected.maxStepsPerEpisode} steps for this workspace.
+                    </p>
+                    <label className="flex flex-col gap-1 text-xs text-fg-muted">
+                      Seed
+                      {admissibleSeeds === null ? (
+                        <input
+                          className={FIELD_CONTROL_CLASS}
+                          disabled={pending}
+                          maxLength={256}
+                          name={`seed-${row}`}
+                          required
+                          value={assignment.seed}
+                          onChange={(event) => {
+                            const seed = event.currentTarget.value;
+                            updateAssignment(assignment.id, (current) => ({
+                              ...current,
+                              seed
+                            }));
+                          }}
+                        />
+                      ) : (
+                        <select
+                          className={FIELD_CONTROL_CLASS}
+                          disabled={pending}
+                          name={`seed-${row}`}
+                          required
+                          value={assignment.seed}
+                          onChange={(event) => {
+                            const seed = event.currentTarget.value;
+                            updateAssignment(assignment.id, (current) => ({
+                              ...current,
+                              seed
+                            }));
+                          }}
+                        >
+                          {admissibleSeeds.map((entry) => (
+                            <option key={entry.seed} value={entry.seed}>
+                              {entry.seed} · {entry.purpose}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </label>
+                    <label className="flex flex-col gap-1 text-xs text-fg-muted">
+                      Step cap
+                      <input
+                        className={FIELD_CONTROL_CLASS}
+                        disabled={pending}
+                        max={selected.maxStepsPerEpisode}
+                        min={1}
+                        name={`maxSteps-${row}`}
+                        type="number"
+                        value={assignment.maxSteps}
+                        onChange={(event) => {
+                          const maxSteps = event.currentTarget.value;
+                          updateAssignment(assignment.id, (current) => ({
+                            ...current,
+                            maxSteps
+                          }));
+                        }}
+                      />
+                    </label>
+                    {duplicate ? (
+                      <p className="text-sm text-error" role="alert">
+                        Scenario, policy, and seed must identify a unique
+                        session in this batch.
+                      </p>
+                    ) : null}
+                    <button
+                      className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
+                      disabled={pending || assignments.length === 1}
+                      onClick={() =>
+                        setAssignments((current) =>
+                          current.filter((entry) => entry.id !== assignment.id)
+                        )
+                      }
+                      type="button"
+                    >
+                      Remove session {row}
+                    </button>
+                  </fieldset>
+                </li>
+              );
+            })}
+          </ol>
+          {assignments.length > displayedAssignments.length ? (
+            <button
+              className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm"
+              onClick={() => setShowAllAssignments(true)}
+              type="button"
+            >
+              {`Show ${String(assignments.length - displayedAssignments.length)} more sessions`}
+            </button>
+          ) : null}
+          {showAllAssignments && assignments.length > 10 ? (
+            <button
+              className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm"
+              onClick={() => setShowAllAssignments(false)}
+              type="button"
+            >
+              Show the first 10 sessions
+            </button>
+          ) : null}
+          <button
+            className="min-h-10 justify-self-start rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
+            disabled={
+              pending ||
+              assignments.length >= maxAssignments ||
+              addableSeed === null
+            }
+            onClick={addAssignment}
+            type="button"
+          >
+            Add session
+          </button>
+          <details className="rounded-md border border-border p-3">
+            <summary className="cursor-pointer text-sm font-medium">
+              Batch, time, and analysis limits
+            </summary>
+            <div className="mt-3 grid gap-2">
+              <p className={MUTED_META_CLASS}>
+                {assignments.length} of {maxAssignments} sessions ·{" "}
+                {capabilities.limits!.workerCount} concurrent worker(s) ·{" "}
+                {String(capabilities.limits!.wallTimeMs / 1000)} seconds maximum ·{" "}
+                {capabilities.limits!.critiqueCount} later critiques maximum.
+              </p>
+              <p className={MUTED_META_CLASS}>
+                Runtime checks the remaining approved workspace budget before
+                launching a sandbox. Starting a playtest does not run an
+                analyst review.
+              </p>
+              <p className={MUTED_META_CLASS}>
+                The exact commit for each run is recorded in its results. New
+                commits in this approved checkout do not require another
+                approval; uncommitted edits are not run.
+              </p>
+            </div>
+          </details>
+        </div>
+      </details>
     </form>
   );
 }
@@ -625,80 +655,6 @@ function setupMessage(
   return null;
 }
 
-function RunStatusPanel({
-  run,
-  capabilities,
-  scope,
-  pending,
-  onRefresh,
-  onCancel
-}: {
-  readonly run: ControlApiPlaytestingRunRecord;
-  readonly capabilities: ControlApiPlaytestingCapabilitiesResponse;
-  readonly scope: PlaytestingScope;
-  readonly pending: boolean;
-  readonly onRefresh: () => void;
-  readonly onCancel: () => void;
-}): React.JSX.Element {
-  const result = objectRecord(run.result);
-  const counts = objectRecord(result?.counts ?? null);
-  return (
-    <section
-      aria-label="Server-confirmed run status"
-      className={NESTED_PANEL_CLASS}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <strong className="font-mono">{run.batchId}</strong>
-        {batchStatusBadge(run.status)}
-      </div>
-      {run.error ? (
-        <p className={MUTED_BODY_CLASS}>{run.error.message}</p>
-      ) : null}
-      {run.cancellationReason ? (
-        <p className={MUTED_META_CLASS}>
-          Cancellation: {CANCELLATION_REASON_LABELS[run.cancellationReason]}.
-        </p>
-      ) : null}
-      {counts && Number.isSafeInteger(counts.assigned) ? (
-        <p className={MUTED_META_CLASS}>
-          Progress: {String(counts.completed ?? 0)} completed ·{" "}
-          {String(counts.crashed ?? 0)} crashed ·{" "}
-          {String(counts.budgetTruncated ?? 0)} budget-truncated ·{" "}
-          {String(counts.infrastructureFailed ?? 0)} infrastructure failures ·{" "}
-          {String(counts.cancelled ?? 0)} cancelled of {String(counts.assigned)}{" "}
-          assigned.
-        </p>
-      ) : null}
-      <PlaytestingAssignmentResults
-        outcomes={assignmentOutcomes(run)}
-        scope={scope}
-        pending={run.result === null}
-      />
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          className="min-h-10 rounded-md border border-border px-3 py-2 text-sm disabled:opacity-60"
-          disabled={pending}
-          onClick={onRefresh}
-          type="button"
-        >
-          Refresh server status
-        </button>
-        {capabilities.operatorActionsAvailable &&
-        (run.status === "running" || run.status === "persisting") ? (
-          <button
-            className="min-h-10 rounded-md border border-warning/50 px-3 py-2 text-sm disabled:opacity-60"
-            disabled={pending}
-            onClick={onCancel}
-            type="button"
-          >
-            Request cancellation
-          </button>
-        ) : null}
-      </div>
-    </section>
-  );
-}
-
 function RunStatusMessage({
   notice,
   failure
@@ -707,17 +663,17 @@ function RunStatusMessage({
   readonly failure: string | null;
 }): React.JSX.Element | null {
   if (failure) {
-    return (
-      <p className="text-sm text-error" role="alert">
-        {failure}
-      </p>
+    return React.createElement(
+      "p",
+      { className: "text-sm text-error", role: "alert" },
+      failure
     );
   }
   if (notice) {
-    return (
-      <p className={MUTED_META_CLASS} role="status">
-        {notice}
-      </p>
+    return React.createElement(
+      "p",
+      { className: MUTED_META_CLASS, role: "status" },
+      notice
     );
   }
   return null;
@@ -725,28 +681,20 @@ function RunStatusMessage({
 
 export function PlaytestingRunControls({
   setup,
-  scope,
-  onRunStarted,
-  liveRecords,
-  onRefreshStatus
+  onRunStarted
 }: {
   readonly setup: PlaytestingRunSetup;
-  readonly scope: PlaytestingScope;
   readonly onRunStarted: (
     started: ControlApiPlaytestingRunStartedResponse
   ) => void;
-  /** Server-read records from the dashboard's single live status owner. */
-  readonly liveRecords: ReadonlyMap<string, ControlApiPlaytestingRunRecord>;
-  /** Asks that owner for an immediate server read. */
-  readonly onRefreshStatus: () => void;
 }): React.JSX.Element {
   const capabilities = setup.kind === "available" ? setup.capabilities : null;
   const [pending, setPending] = useState(false);
-  const [run, setRun] = useState<ControlApiPlaytestingRunRecord | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const noticeNode = RunStatusMessage({ notice, failure });
   const unavailable = setupMessage(setup, capabilities);
+  const buildSha = capabilities?.buildSha ?? null;
 
   async function startRun(request: RunSubmission): Promise<void> {
     if (!capabilities) return;
@@ -790,20 +738,9 @@ export function PlaytestingRunControls({
         setFailure("The Runtime did not confirm the run assignment.");
         return;
       }
-      setRun({
-        batchId: envelope.data.batchId,
-        status: envelope.data.status,
-        cancellationReason: null,
-        result: null,
-        error: null
-      });
       onRunStarted(envelope.data);
       setNotice(
-        "The Runtime confirmed an approved batch of " +
-          String(envelope.data.assignmentCount) +
-          (envelope.data.assignmentCount === 1
-            ? " assignment."
-            : " assignments.")
+        "Run accepted. Live status below is read from Runtime; the exact build SHA is recorded in the result."
       );
     } catch {
       setFailure(
@@ -814,94 +751,97 @@ export function PlaytestingRunControls({
     }
   }
 
-  async function cancelRun(): Promise<void> {
-    if (!run || !capabilities) return;
-    if (!globalThis.confirm("Request cancellation of " + run.batchId + "?"))
-      return;
-    setPending(true);
-    setFailure(null);
-    setNotice(null);
-    try {
-      const response = await fetch(
-        `/api/playtesting/runs/${encodeURIComponent(run.batchId)}/cancel`,
-        {
-          method: "POST",
-          headers: {
-            accept: "application/json",
-            "content-type": "application/x-www-form-urlencoded"
+  return React.createElement(
+    "section",
+    {
+      "aria-labelledby": "playtesting-run-controls-heading",
+      className: LIST_PANEL_CLASS,
+      "data-run-setup": setup.kind
+    },
+    React.createElement(
+      "div",
+      { className: "flex flex-wrap items-start justify-between gap-3" },
+      React.createElement(
+        "div",
+        null,
+        React.createElement(
+          "h2",
+          {
+            className: "text-base font-semibold tracking-tight",
+            id: "playtesting-run-controls-heading"
           },
-          body: new URLSearchParams({ workspaceId: capabilities.workspaceId })
-        }
-      );
-      const payload: unknown = await response.json();
-      if (!response.ok) {
-        setFailure(responseMessage(payload));
-        return;
-      }
-      setNotice(
-        "Cancellation was requested; refresh status to confirm its terminal disposition."
-      );
-      onRefreshStatus();
-    } catch {
-      setFailure(
-        "The cancellation request could not reach the Console server."
-      );
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <section
-      aria-labelledby="playtesting-run-controls-heading"
-      className={LIST_PANEL_CLASS}
-      data-run-setup={setup.kind}
-    >
-      <h2
-        className={SECTION_HEADING_CLASS}
-        id="playtesting-run-controls-heading"
-      >
-        Run an approved batch
-      </h2>
-      <p className={MUTED_BODY_CLASS}>
-        Batch requests contain an ordered list of typed scenario, policy, seed,
-        and step-budget assignments. Workspaces owns checkout approval; the
-        Runtime confirms assignment outcomes, status, and cancellation.
-      </p>
-      {unavailable ? (
-        <div className="flex flex-col gap-2">
-          <StatusBadge
-            status={
+          "Start a playtest"
+        ),
+        React.createElement(
+          "p",
+          { className: MUTED_BODY_CLASS },
+          "Start with the suggested single-session settings, or customize the run if you need a different test."
+        )
+      ),
+      capabilities?.approved
+        ? React.createElement(StatusBadge, {
+            status: "ready",
+            label: "Workspace approved"
+          })
+        : null
+    ),
+    capabilities
+      ? React.createElement(
+          "div",
+          {
+            className: "mt-4 flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface-raised px-3 py-2",
+            "data-testid": "playtesting-build-context"
+          },
+          React.createElement(
+            "span",
+            { className: MUTED_META_CLASS },
+            "Build observed at page load"
+          ),
+          buildSha
+            ? React.createElement(
+                "code",
+                {
+                  className: "font-mono text-sm",
+                  title: buildSha,
+                  "data-build-sha": buildSha
+                },
+                buildSha.slice(0, 12)
+              )
+            : React.createElement(
+                StatusBadge,
+                { status: "unavailable", label: "Not observed" }
+              ),
+          React.createElement(
+            "p",
+            { className: `min-w-0 flex-1 ${MUTED_META_CLASS}` },
+            "Approval is for this checkout. Runtime automatically uses its latest committed HEAD when the run starts; new commits do not need separate approval. Uncommitted edits are excluded."
+          )
+        )
+      : null,
+    unavailable
+      ? React.createElement(
+          "div",
+          { className: "mt-4 flex flex-col gap-2 rounded-md border border-warning/40 bg-surface-raised p-4", "data-testid": "playtesting-run-blocked" },
+          React.createElement(StatusBadge, {
+            status:
               unavailable.label === "Approval required" ||
               unavailable.label === "Operator required"
                 ? NOT_OBSERVED_STATUS
-                : "unavailable"
-            }
-            label={unavailable.label}
-          />
-          <p className={MUTED_BODY_CLASS}>{unavailable.message}</p>
-          {unavailable.code ? (
-            <p className={MUTED_META_CLASS}>{unavailable.code}</p>
-          ) : null}
-        </div>
-      ) : capabilities ? (
-        <RunRequestForm
-          capabilities={capabilities}
-          pending={pending}
-          onSubmit={(request) => void startRun(request)}
-        />
-      ) : null}
-      {run && capabilities ? (
-        <RunStatusPanel
-          run={liveRecords.get(run.batchId) ?? run}
-          capabilities={capabilities}
-          scope={scope}
-          pending={pending}
-          onRefresh={onRefreshStatus}
-          onCancel={() => void cancelRun()}
-        />
-      ) : null}
-      {noticeNode}
-    </section>
+                : "unavailable",
+            label: unavailable.label
+          }),
+          React.createElement("p", { className: MUTED_BODY_CLASS }, unavailable.message),
+          unavailable.code
+            ? React.createElement("code", { className: MUTED_META_CLASS }, unavailable.code)
+            : null
+        )
+      : capabilities
+        ? React.createElement(RunRequestForm, {
+            capabilities,
+            pending,
+            onSubmit: (request) => void startRun(request)
+          })
+        : null,
+    noticeNode
   );
 }

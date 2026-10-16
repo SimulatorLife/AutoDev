@@ -10,6 +10,7 @@
 import type { ControlApiPlaytestingRunRecord } from "@simulatorlife/autodev-core";
 import React, { useCallback, useEffect, useState } from "react";
 
+import { isTerminal } from "./playtesting-active-runs.ts";
 import { responseMessage } from "./playtesting-run-messages.ts";
 import type { PlaytestingScope } from "./playtesting-url.ts";
 import { PlaytestingActiveRunsPanel } from "./PlaytestingActiveRunsPanel.ts";
@@ -19,7 +20,9 @@ async function postCancel(
   workspaceId: string,
   batchId: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const body = new URLSearchParams({ workspaceId, batchId });
+  // The route ID already identifies the batch; its form contract accepts only
+  // workspaceId, so do not send a redundant, rejected body field.
+  const body = new URLSearchParams({ workspaceId });
   const response = await fetch(
     `/api/playtesting/runs/${encodeURIComponent(batchId)}/cancel`,
     {
@@ -45,10 +48,12 @@ async function confirmBatchStillRunning(
   batchId: string,
   expected: ControlApiPlaytestingRunRecord
 ): Promise<boolean> {
-  if (expected.status === "completed" || expected.status === "failed") {
+  if (isTerminal(expected)) {
     return false;
   }
-  const query = new URLSearchParams({ workspaceId, waitMs: "0" });
+  // The browser endpoint accepts workspaceId only; the server-side proxy
+  // supplies Runtime's waitMs=0 parameter itself.
+  const query = new URLSearchParams({ workspaceId });
   const response = await fetch(
     `/api/playtesting/runs/${encodeURIComponent(batchId)}?${query}`,
     { headers: { accept: "application/json" } }
@@ -69,6 +74,8 @@ export interface PlaytestingLiveRunsProps {
   readonly scope: PlaytestingScope;
   /** Focused batch, read from the URL so refresh and Back restore it. */
   readonly initialFocusedBatchId: string | null;
+  readonly wallTimeMs: number | null;
+  readonly showEmptyState: boolean;
   /** The dashboard's single status owner, shared with the run start card. */
   readonly live: ReturnType<typeof usePlaytestingActiveRuns>;
 }
@@ -77,6 +84,8 @@ export function PlaytestingLiveRuns({
   workspaceId,
   scope,
   initialFocusedBatchId,
+  wallTimeMs,
+  showEmptyState,
   live
 }: PlaytestingLiveRunsProps): React.JSX.Element {
   const { state, refresh, watching } = live;
@@ -85,12 +94,25 @@ export function PlaytestingLiveRuns({
   const [focusedBatchId, setFocusedBatchId] = useState<string | null>(
     initialFocusedBatchId
   );
+  const [autoFocusApplied, setAutoFocusApplied] = useState(
+    initialFocusedBatchId !== null
+  );
+
+  useEffect(() => {
+    if (focusedBatchId !== null || autoFocusApplied) return;
+    const active = state.runs.find((run) => !isTerminal(run.record));
+    if (active) {
+      setFocusedBatchId(active.batchId);
+      setAutoFocusApplied(true);
+    }
+  }, [autoFocusApplied, focusedBatchId, state.runs]);
 
   // The focused batch is address state. Writing it through the History API
   // (and reading it back on popstate) is what makes a refresh or Back return
   // the operator to the batch they were watching instead of a bare list.
   const focusBatch = useCallback((batchId: string | null) => {
     setFocusedBatchId(batchId);
+    setAutoFocusApplied(true);
     const url = new URL(globalThis.location.href);
     if (batchId === null) url.searchParams.delete("liveBatch");
     else url.searchParams.set("liveBatch", batchId);
@@ -102,6 +124,7 @@ export function PlaytestingLiveRuns({
       setFocusedBatchId(
         new URLSearchParams(globalThis.location.search).get("liveBatch")
       );
+      setAutoFocusApplied(true);
     };
     globalThis.addEventListener("popstate", onPopState);
     return () => globalThis.removeEventListener("popstate", onPopState);
@@ -113,6 +136,10 @@ export function PlaytestingLiveRuns({
       if (!known) return;
       setBusyBatchId(batchId);
       setActionError(null);
+      if (!globalThis.confirm(`Cancel playtest batch ${batchId}? The run cannot be resumed.`)) {
+        setBusyBatchId(null);
+        return;
+      }
       try {
         // Confirm against a fresh server read before mutating, so a batch that
         // finished between polls is not cancelled as if it were live.
@@ -152,6 +179,8 @@ export function PlaytestingLiveRuns({
       watching,
       onRefresh: refresh,
       focusedBatchId,
+      wallTimeMs,
+      showEmptyState,
       onFocusBatch: focusBatch,
       onCancel: cancel,
       busyBatchId

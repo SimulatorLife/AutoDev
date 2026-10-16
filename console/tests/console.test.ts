@@ -19723,16 +19723,24 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Polls the workspace-scoped active-runs read on an interval with backoff so live batch progress reflects the typed run owner without moving that read server-side."
     ],
     [
-      join("src", "features", "playtesting", "PlaytestingSelection.ts"),
-      "Keeps the analysis selection in shareable URL state so a link, a refresh and Back reproduce the same sessions; the selection itself is only ever the operator's own choice."
+      join("src", "features", "playtesting", "PlaytestingSessionsWorkspace.ts"),
+      "Keeps selection on the session rows and in the shareable URL while one page owns inspection, filtering, and optional analysis."
+    ],
+    [
+      join("src", "features", "playtesting", "PlaytestingWorkspacePicker.ts"),
+      "Changes workspace immediately while preserving the canonical Run route and clearing workspace-specific filters and selection."
     ],
     [
       join("src", "features", "playtesting", "PlaytestingSelectionPanel.ts"),
-      "Toggles session checkboxes and requests analysis in place; eligibility, the critique cap and the receipts it renders all come from the Runtime owner's answer."
+      "Starts an optional bounded review for the sessions selected in the row list; eligibility, the critique cap and receipts come from the Runtime owner."
     ],
     [
       join("src", "features", "playtesting", "PlaytestingActiveRunsPanel.ts"),
-      "Focuses a batch and requests cancellation from the live-runs shell; every status it renders was read from the typed run owner rather than tracked in the browser."
+      "Shows one concise progress summary and disclosed owner counts; every status is server-read and stale reads are labelled."
+    ],
+    [
+      join("src", "features", "playtesting", "PlaytestingAssignmentResults.ts"),
+      "Keeps per-assignment execution and game outcomes distinct and reveals large result sets progressively."
     ],
     [
       join("src", "features", "playtesting", "PlaytestingLiveRuns.ts"),
@@ -19740,7 +19748,7 @@ test("client behavior stays in explicitly approved interaction islands", () => {
     ],
     [
       join("src", "features", "playtesting", "PlaytestingRunControls.tsx"),
-      "Starts, refreshes, and cancels typed approved runs through same-origin routes while history and authorization stay server-owned."
+      "Starts one suggested typed run or customized batch; the shared run owner, not local form state, supplies status and cancellation."
     ],
     [
       join("src", "features", "playtesting", "PlaytestingRunDashboard.tsx"),

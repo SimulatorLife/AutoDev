@@ -531,6 +531,7 @@ type SyntheticRunAssignment = {
 };
 type SyntheticRun = {
   readonly workspaceId: string;
+  readonly createdAt: string;
   readonly assignmentCount: number;
   readonly assignments: readonly SyntheticRunAssignment[];
   readonly manifestHash: string;
@@ -1166,8 +1167,10 @@ async function handleSyntheticRunMutation(
       unreviewableAssignments: 0,
       selectedAt: FIXTURE_TIMESTAMP
     });
+    const createdAt = new Date().toISOString();
     syntheticRuns.set(batchId, {
       workspaceId: WORKSPACE_ID,
+      createdAt,
       assignments: runRequest.assignments,
       assignmentCount: runRequest.assignments.length,
       manifestHash,
@@ -1183,7 +1186,7 @@ async function handleSyntheticRunMutation(
         workspaceId: WORKSPACE_ID,
         batchId,
         assignmentCount: runRequest.assignments.length,
-        createdAt: FIXTURE_TIMESTAMP,
+        createdAt,
         status: "running"
       },
       202
@@ -1385,7 +1388,7 @@ function handleSyntheticRunRead(response: ServerResponse, url: URL): boolean {
       .map(([batchId, run]) => ({
         batchId,
         assignmentCount: run.assignmentCount,
-        createdAt: FIXTURE_TIMESTAMP,
+        createdAt: run.createdAt,
         // The same owner record the single-batch status route returns, so one
         // workspace read renders every live batch.
         status: {

@@ -33,7 +33,7 @@ function synthesisEvidenceLinks(
       "aria-label": prefix
     },
     ...references.map((reference, index) => {
-      const step = reference.locator.step ?? 0;
+      const step = reference.locator.step ?? null;
       return React.createElement(
         "li",
         {
@@ -146,7 +146,7 @@ function metricAggregationView(
                             href: playtestingEpisodeHref(
                               scope,
                               source.episodeId,
-                              0
+                              null
                             ),
                             dataAttributes: {
                               "data-aggregate-source": source.episodeId
@@ -224,7 +224,7 @@ function crossSessionSynthesisView(
             NavigationLink,
             {
               className: EVIDENCE_LINK_CLASS,
-              href: playtestingEpisodeHref(scope, contributor.episodeId, 0)
+              href: playtestingEpisodeHref(scope, contributor.episodeId, null)
             },
             `Open contributing session ${contributor.episodeId}`
           )
@@ -322,7 +322,7 @@ function analysisReceiptList(
                 NavigationLink,
                 {
                   className: EVIDENCE_LINK_CLASS,
-                  href: playtestingEpisodeHref(scope, receipt.episodeId, 0)
+                  href: playtestingEpisodeHref(scope, receipt.episodeId, null)
                 },
                 `Open session ${receipt.episodeId}`
               ),
@@ -424,7 +424,7 @@ export function PlaytestingAnalysisResults({
                   NavigationLink,
                   {
                     className: EVIDENCE_LINK_CLASS,
-                    href: playtestingEpisodeHref(scope, review.episodeId, 0)
+                    href: playtestingEpisodeHref(scope, review.episodeId, null)
                   },
                   `Open ${review.status} review for ${review.episodeId}`
                 )

@@ -19,6 +19,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { parsePlaytestingScope } from "../src/features/playtesting/playtesting-url.ts";
+import { PlaytestingSessionsWorkspace } from "../src/features/playtesting/PlaytestingSessionsWorkspace.ts";
 import { PlaytestingSessionView } from "../src/features/playtesting/PlaytestingSessionView.ts";
 import { PlaytestingView } from "../src/features/playtesting/PlaytestingView.ts";
 
@@ -159,15 +160,34 @@ test("Playtesting list view uses accessible links and explicit empty/unavailable
         rows: [],
         total: 0,
         nextCursor: null
-      }
+      },
+      sessionsWorkspace: React.createElement("p", null, "No sessions match these filters.")
     })
   );
   assert.match(html, /aria-label="Playtesting views"/u);
   assert.match(html, /aria-current="page"/u);
   assert.match(html, /disabled; history is read-only/u);
-  assert.match(html, /No playtest episodes are recorded/u);
+  assert.match(html, /No sessions match these filters/u);
   assert.match(html, /name="workspaceId"/u);
   assert.match(html, /name="limit"/u);
+});
+
+test("session rows own analyst selection and link directly to diagnosis", () => {
+  const current = episode();
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionsWorkspace, {
+      scope: scope({ view: "sessions" }),
+      rows: [current],
+      total: 1,
+      nextCursor: null
+    })
+  );
+  assert.match(html, /data-playtesting-session-select="episode-17"/u);
+  assert.match(html, /Include session episode-17 in analyst review/u);
+  assert.match(html, /data-playtest-episode-link="episode-17"/u);
+  assert.match(html, /Inspect/u);
+  assert.doesNotMatch(html, /playtesting-selection-option/u);
+  assert.match(html, /0 of 40 selected/u);
 });
 
 test("finding witness links open the exact cited step while execution and outcome remain distinct", () => {
@@ -423,7 +443,7 @@ test("inspector renders each recorded step as a summary of the fields that line 
   );
   assert.match(
     html,
-    /Event choice-applied · event event-1 · Action advance · Phase tutorial · Tick 7 · Severity info/u
+    /Event choice-applied · event event-1 · Selected action advance · Phase tutorial · Tick 7 · Severity info/u
   );
   assert.match(
     html,
@@ -436,7 +456,9 @@ test("inspector renders each recorded step as a summary of the fields that line 
   assert.match(html, /data-trace-fact="line-type"/u);
   // A dimension a line does not record stays unrecorded: step 2 records no
   // action or phase, and neither fact is carried over from step 1.
-  const stepTwo = html.split('data-playtest-step="2"')[1] ?? "";
+  const stepTwoMarker = 'data-playtest-step="2"';
+  const stepTwoIndex = html.indexOf(stepTwoMarker);
+  const stepTwo = stepTwoIndex === -1 ? "" : html.slice(stepTwoIndex);
   assert.match(
     stepTwo,
     /data-trace-fact="action"[^]*?data-trace-fact-state="unrecorded"/u
@@ -464,6 +486,45 @@ test("raw trace JSON stays in a collapsed disclosure except for the addressed st
  // verbatim behind the collapsed summary.
   assert.match(html, /&quot;eventId&quot;: &quot;event-2&quot;/u);
   assert.match(html, /Recorded JSON \(selected step\)/u);
+});
+
+test("RacingGame-shaped trace lines summarize recorded events and keep JSON closed by default", () => {
+  const racingWindow: ControlApiPlaytestingWindowResponse = {
+    ...traceWindow(),
+    startStep: 0,
+    endStep: 0,
+    entries: [
+      {
+        step: 0,
+        selectedActionId: "select-ticket:ticket_bottom3_team_apex",
+        visibleObservation: { phaseId: "read_and_bet" },
+        events: [
+          {
+            eventId: "evt-1",
+            type: "decision_applied",
+            phaseId: "read_and_bet"
+          }
+        ]
+      }
+    ]
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail(),
+      scope: scope({ view: "sessions" }),
+      window: racingWindow
+    })
+  );
+  assert.match(html, /Event decision_applied/u);
+  assert.match(html, /event evt-1/u);
+  assert.match(html, /Selected action select-ticket:ticket_bottom3_team_apex/u);
+  assert.match(html, /Phase read_and_bet/u);
+  assert.doesNotMatch(html, /No event, selected action or phase is recorded/u);
+  assert.doesNotMatch(html, /data-trace-fact="tick"/u);
+  assert.doesNotMatch(html, /data-trace-fact="severity"/u);
+  assert.doesNotMatch(html, /data-trace-fact="line-type"/u);
+  assert.match(html, /<details[^>]*data-playtest-json="true"/u);
+  assert.doesNotMatch(html, /<details[^>]*open=""[^>]*data-playtest-json/u);
 });
 
 test("step navigation moves within the fetched window and preserves list state", () => {
@@ -513,6 +574,8 @@ test("session result dimensions stay scannable and each keeps its recorded token
     assert.match(html, new RegExp(`data-status-dimension="${dimension}"`, "u"));
   }
   assert.match(html, /aria-label="Independent session status dimensions"/u);
+  assert.match(html, /data-playtesting-analyze-session="episode-17"/u);
+  assert.match(html, /sessions=episode-17/u);
   // The badge is the scan; the recorded token beneath it is the quotable
   // evidence. Neither dimension borrows the other's wording.
   assert.match(html, /Game outcome<\/dt>[^]*?LOSS[^]*?loss/u);

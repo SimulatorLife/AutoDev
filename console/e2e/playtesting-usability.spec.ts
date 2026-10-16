@@ -11,11 +11,11 @@ const FINDING_1_ANCHOR_PATTERN = /#finding-finding-[a-f\d]{64}$/u;
 const VIEW_COMPARE_PATTERN = /view=compare/u;
 const WORKSPACE_DETAIL_URL_PATTERN = /\/workspaces\/fixture\/game$/u;
 const BUDGET_PREVIEW_PATTERN =
-  /Batch budget preview: 1 of 10 per-batch episode assignments/u;
-const RUN_TWO_ASSIGNMENTS_LABEL = "Run 2 approved assignments";
+  /1 of 10 sessions · 1 concurrent worker\(s\) · 60 seconds maximum/u;
+const RUN_TWO_ASSIGNMENTS_LABEL = "Start 2 playtests";
 const REVOKE_FORM_NAME = "Revoke playtesting approval for fixture/game";
 const MAX_BUDGET_PREVIEW_PATTERN =
-  /Batch budget preview: 1 of 1000 per-batch episode assignments/u;
+  /1 of 1000 sessions · 1 concurrent worker\(s\) · 60 seconds maximum/u;
 const BROWSER_BATCH_ID_PATTERN = /^batch-browser-\d{3}$/u;
 const RUNNING_STATUS = "running";
 const ANALYSIS_STATUS_ATTRIBUTE = "data-analysis-status";
@@ -28,8 +28,12 @@ const SYNTHETIC_REVIEW_ID_PATTERN = /Review review-fixture-1 · rubric/u;
 const FIXTURE_IMAGE_DIGEST = "fixture/adapter@sha256:" + "c".repeat(64);
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const PLAYTESTING_OVERVIEW_URL = "/playtesting?workspaceId=fixture%2Fgame";
-const RUN_FORM_NAME = "Run an approved Playtesting batch";
-const RUN_STATUS_REGION_NAME = "Server-confirmed run status";
+const RUN_FORM_NAME = "Start a playtest";
+const RUN_STATUS_REGION_NAME = "Playtest run status";
+const CUSTOMIZE_RUN_LABEL = "Customize run";
+const ACTIVE_RUN_TEST_ID = "playtesting-active-run";
+const BATCH_ID_ATTRIBUTE = "data-batch-id";
+const TWO_SESSION_SELECTION_URL_PATTERN = /sessions=episode-17%2Cepisode-/u;
 const ANALYST_PANEL_NAME = "Multi-session analyst review";
 const START_ANALYST_REVIEW_LABEL = "Start analyst review";
 const ANALYST_RUN_TEST_ID = "playtesting-analysis-run";
@@ -88,14 +92,19 @@ test("workspace overview distinguishes batches, episodes, findings, and comparis
   await expect(
     page.getByRole("navigation", { name: "Playtesting views" })
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Overview" })).toHaveAttribute(
+  await expect(page.getByRole("link", { name: "Run", exact: true })).toHaveAttribute(
     "aria-current",
     "page"
   );
-  await expect(page.getByText("Latest batch")).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Metric coverage" })
-  ).toBeVisible();
+  await expect(page.getByText("Latest result")).toBeVisible();
+  await expect(page.getByTestId("playtesting-run-blocked")).toBeInViewport();
+  await expect(page.getByTestId("playtesting-run-blocked")).toContainText(
+    "Approval required"
+  );
+  await expect(page.getByTestId("playtesting-build-context")).toContainText(
+    "new commits do not need separate approval"
+  );
+  await page.getByText("Measurement coverage").click();
   await expect(
     page.locator('[data-coverage-cell="legal-action-rejection"]')
   ).toContainText("3/3 opportunities");
@@ -105,16 +114,11 @@ test("workspace overview distinguishes batches, episodes, findings, and comparis
   await expect(
     page.getByText("fixture/game · disabled", { exact: false })
   ).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Recent sessions" })).toBeVisible();
   await expect(
-    page.getByText("Batches", { exact: true }).first()
+    page.getByRole("link", { name: "Browse all sessions" })
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Episodes" })).toBeVisible();
-  await expect(
-    page.getByText("Findings", { exact: true }).first()
-  ).toBeVisible();
-  await expect(
-    page.getByText("Comparisons", { exact: true }).first()
-  ).toBeVisible();
+  await expect(page.getByText("Batches", { exact: true })).toHaveCount(0);
 });
 
 test("Playtesting overview waits for Data schema readiness before reading results", async ({
@@ -141,7 +145,7 @@ test("Playtesting overview waits for Data schema readiness before reading result
     })
   ).toBeVisible();
   await overviewRefresh;
-  await expect(page.getByText("Latest batch")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Latest result")).toBeVisible({ timeout: 10_000 });
   await expect(readinessPanel).toHaveCount(0);
 });
 
@@ -154,6 +158,22 @@ test("direct session links wait for Data schema readiness before loading evidenc
   );
   expect(configured.ok()).toBe(true);
 
+  const browserReadiness = page.waitForResponse(
+    async (response) => {
+      if (
+        response.request().method() !== "GET" ||
+        !response.url().includes("/api/playtesting/readiness")
+      ) {
+        return false;
+      }
+      const payload = (await response.json().catch(() => null)) as {
+        readonly kind?: unknown;
+        readonly data?: { readonly status?: unknown };
+      } | null;
+      return payload?.kind === "ok" && payload.data?.status === "ready";
+    },
+    { timeout: 20_000 }
+  );
   const sessionRefresh = page.waitForResponse(
     (response) =>
       response.request().method() === "GET" &&
@@ -171,8 +191,9 @@ test("direct session links wait for Data schema readiness before loading evidenc
       name: "Playtesting data is starting up"
     })
   ).toBeVisible();
+  await browserReadiness;
   await sessionRefresh;
-  await expect(page.getByText("Execution status")).toBeVisible({
+  await expect(page.getByText("Execution status", { exact: true })).toBeVisible({
     timeout: 10_000
   });
   await expect(readinessPanel).toHaveCount(0);
@@ -201,7 +222,7 @@ test("operator retries unavailable Playtesting schema initialization from the ov
   );
   await page.getByRole("button", { name: "Retry initialization" }).click();
   await overviewRefresh;
-  await expect(page.getByText("Latest batch")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Latest result")).toBeVisible({ timeout: 10_000 });
   await expect(
     page.getByRole("heading", { name: "Playtesting data is unavailable" })
   ).toHaveCount(0);
@@ -273,8 +294,8 @@ test("finding witness opens its exact replay step, then Back restores filtered l
   await expect(page).toHaveURL(VIEW_FINDINGS_PATTERN);
   await expect(page).toHaveURL(STEP_2_PATTERN);
   await expect(page).toHaveURL(RETURN_FINDING_1_PATTERN);
-  await expect(page.getByText("Execution status")).toBeVisible();
-  await expect(page.getByText("Game outcome")).toBeVisible();
+  await expect(page.getByText("Execution status", { exact: true })).toBeVisible();
+  await expect(page.getByText("Game outcome", { exact: true })).toBeVisible();
   await expect(page.getByText("LOSS", { exact: true })).toBeVisible();
   await expect(
     page.locator('pre[aria-label="Recorded data for step 2"]')
@@ -328,10 +349,11 @@ test("mobile session list has no horizontal page overflow and tabs are keyboard 
   expect(width.document).toBeLessThanOrEqual(width.viewport);
 
   const nav = page.getByRole("navigation", { name: "Playtesting views" });
-  const overview = nav.getByRole("link", { name: "Overview" });
-  await overview.focus();
+  const run = nav.getByRole("link", { name: "Run" });
+  await run.focus();
   await page.keyboard.press("Tab");
   await expect(nav.getByRole("link", { name: "Sessions" })).toBeFocused();
+  await page.getByText("Filters and page size").click();
   await expect(
     page.getByRole("form", { name: "Playtesting filters" })
   ).toBeVisible();
@@ -403,23 +425,25 @@ test("batch composer generates and submits the full bounded 1,000-assignment inv
   const form = page.getByRole("form", {
     name: RUN_FORM_NAME
   });
-  await expect(page.getByText(MAX_BUDGET_PREVIEW_PATTERN)).toBeVisible();
+  await form.getByText(CUSTOMIZE_RUN_LABEL).click();
+  await form.getByText("Batch, time, and analysis limits").click();
+  await expect(form.getByText(MAX_BUDGET_PREVIEW_PATTERN)).toBeVisible();
   await form.getByLabel("Additional assignments").fill("999");
   await form.getByRole("button", { name: "Generate assignments" }).click();
   await expect(
-    form.getByRole("group", { name: "Assignment 10" })
+    form.getByRole("group", { name: "Session 10" })
   ).toBeVisible();
-  await expect(form.getByRole("group", { name: "Assignment 11" })).toHaveCount(
+  await expect(form.getByRole("group", { name: "Session 11" })).toHaveCount(
     0
   );
   await expect(
-    form.getByRole("button", { name: "Show 990 more assignments" })
+    form.getByRole("button", { name: "Show 990 more sessions" })
   ).toBeVisible();
   await expect(
-    form.getByRole("button", { name: "Add assignment" })
+    form.getByRole("button", { name: "Add session" })
   ).toBeDisabled();
   const submit = form.getByRole("button", {
-    name: "Run 1000 approved assignments"
+    name: "Start 1000 playtests"
   });
   await expect(submit).toBeEnabled();
   await submit.click();
@@ -428,12 +452,25 @@ test("batch composer generates and submits the full bounded 1,000-assignment inv
     name: RUN_STATUS_REGION_NAME
   });
   await expect(runStatus).toBeVisible();
+  const completedRun = runStatus.getByTestId(ACTIVE_RUN_TEST_ID).first();
+  await expect(completedRun).toHaveAttribute("data-status", "completed");
+  await expect(completedRun).toContainText(
+    "1000 of 1000 assignments have a terminal result"
+  );
+  const assignmentDetails = completedRun.getByTestId(
+    "playtesting-assignment-outcomes-disclosure"
+  );
+  await expect(assignmentDetails).toContainText("Assignment outcomes (1000)");
+  await assignmentDetails.locator("summary").click();
   await expect(
-    page.getByText(
-      "The Runtime confirmed an approved batch of 1000 assignments.",
-      { exact: true }
-    )
-  ).toBeVisible();
+    assignmentDetails.getByTestId("playtesting-assignment-outcome")
+  ).toHaveCount(10);
+  await assignmentDetails
+    .getByRole("button", { name: "Show all 990 more results" })
+    .click();
+  await expect(
+    assignmentDetails.getByTestId("playtesting-assignment-outcome")
+  ).toHaveCount(1000);
 
   await page.goto("/workspaces/fixture/game");
   const revokeForm = page.getByRole("form", {
@@ -464,7 +501,12 @@ test("approved run start, automatic status watching, and cancellation stay in th
     name: RUN_FORM_NAME
   });
   await expect(form).toBeVisible();
-  await expect(page.getByText(BUDGET_PREVIEW_PATTERN)).toBeVisible();
+  await expect(
+    form.getByRole("button", { name: "Start playtest" })
+  ).toBeInViewport();
+  await form.getByText(CUSTOMIZE_RUN_LABEL).click();
+  await form.getByText("Batch, time, and analysis limits").click();
+  await expect(form.getByText(BUDGET_PREVIEW_PATTERN)).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   const mobileWidth = await page.evaluate(() => ({
     document: document.documentElement.scrollWidth,
@@ -477,37 +519,57 @@ test("approved run start, automatic status watching, and cancellation stay in th
   if (await collapseSidebar.isVisible()) await collapseSidebar.click();
 
   const documentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
-  await form.getByLabel("Seed 1").fill("hold");
+  await form.getByRole("group", { name: "Session 1" }).getByLabel("Seed").fill("hold-1");
   await form.getByLabel("Additional assignments").fill("1");
   await form.getByRole("button", { name: "Generate assignments" }).click();
-  await expect(form.getByLabel("Seed 2")).toHaveValue("seed-2");
-  await form.getByLabel("Seed 2").fill("hold");
   await expect(
-    form.getByRole("group", { name: "Assignment 1" }).getByRole("alert")
-  ).toHaveText("Scenario, policy, and seed must identify a unique assignment.");
+    form.getByRole("group", { name: "Session 2" }).getByLabel("Seed")
+  ).toHaveValue("seed-2");
+  await form.getByRole("group", { name: "Session 2" }).getByLabel("Seed").fill("hold-1");
+  await expect(
+    form.getByRole("group", { name: "Session 1" }).getByRole("alert")
+  ).toHaveText("Scenario, policy, and seed must identify a unique session in this batch.");
   await expect(
     form.getByRole("button", { name: RUN_TWO_ASSIGNMENTS_LABEL })
   ).toBeDisabled();
-  await form.getByLabel("Seed 2").fill("seed-2");
+  await form.getByRole("group", { name: "Session 2" }).getByLabel("Seed").fill("hold-2");
   await expect(
     form.getByRole("button", { name: RUN_TWO_ASSIGNMENTS_LABEL })
   ).toBeEnabled();
+  const startRequest = page.waitForRequest(
+    (candidate) =>
+      candidate.url().includes("/api/playtesting/runs") &&
+      candidate.method() === "POST"
+  );
   await form.getByRole("button", { name: RUN_TWO_ASSIGNMENTS_LABEL }).click();
+  const submitted = await startRequest;
+  const submittedAssignments = JSON.parse(
+    new URLSearchParams(submitted.postData() ?? "").get("assignments") ?? "null"
+  ) as readonly { readonly seed: string }[];
+  expect(submittedAssignments.map((assignment) => assignment.seed)).toEqual([
+    "hold-1",
+    "hold-2"
+  ]);
   const runStatus = page.getByRole("region", {
     name: RUN_STATUS_REGION_NAME
   });
   await expect(runStatus).toBeVisible();
-  const cancelledBatchId = await runStatus.locator("strong").textContent();
+  const firstRun = runStatus.getByTestId(ACTIVE_RUN_TEST_ID).first();
+  const cancelledBatchId = await firstRun.getAttribute(BATCH_ID_ATTRIBUTE);
   expect(cancelledBatchId).toMatch(BROWSER_BATCH_ID_PATTERN);
-  await expect(
-    page.getByText(
-      "The Runtime confirmed an approved batch of 2 assignments.",
-      {
-        exact: true
-      }
-    )
-  ).toBeVisible();
-  await expect(runStatus.getByText("Running", { exact: true })).toBeVisible();
+  await expect(firstRun).toContainText("Runtime accepted 2 assignments");
+  await expect(firstRun.getByText("Running", { exact: true })).toBeVisible();
+  const confirmedStatus = await page.evaluate(async (batchId) => {
+    const response = await fetch(
+      `/api/playtesting/runs/${encodeURIComponent(batchId)}?workspaceId=fixture%2Fgame`
+    );
+    const payload = (await response.json()) as {
+      readonly kind?: string;
+      readonly data?: { readonly run?: { readonly status?: string } };
+    };
+    return { httpStatus: response.status, runStatus: payload.data?.run?.status };
+  }, cancelledBatchId);
+  expect(confirmedStatus).toEqual({ httpStatus: 200, runStatus: "running" });
 
   page.once("dialog", (dialog) => void dialog.accept());
   const cancellation = page.waitForResponse(
@@ -515,32 +577,35 @@ test("approved run start, automatic status watching, and cancellation stay in th
       response.request().method() === "POST" &&
       CANCEL_RUN_ROUTE_PATTERN.test(response.url())
   );
-  await page.getByRole("button", { name: "Request cancellation" }).click();
+  await page.getByRole("button", { name: "Cancel batch" }).click();
   const cancellationResponse = await cancellation;
   expect(cancellationResponse.status()).toBe(202);
   // The shared status owner confirms the terminal state without a manual
   // refresh; the transient "requested" notice is not the confirmation.
-  await expect(runStatus.getByText("Cancelled", { exact: true })).toBeVisible();
+  await expect(firstRun.getByText("Cancelled", { exact: true })).toBeVisible();
   await expect(
-    page.getByText("Cancellation: Operator requested cancellation.", {
+    runStatus.getByText("Cancellation: Operator requested cancellation.", {
       exact: true
     })
   ).toBeVisible();
 
-  await form.getByLabel("Seed 1").fill("complete-1");
-  await form.getByLabel("Seed 2").fill("complete-2");
+  await form.getByLabel("Seed").first().fill("complete-1");
+  await form.getByLabel("Seed").last().fill("complete-2");
   await form.getByRole("button", { name: RUN_TWO_ASSIGNMENTS_LABEL }).click();
-  await expect(runStatus.locator("strong")).not.toHaveText(
-    cancelledBatchId ?? ""
-  );
-  const completedBatchId = await runStatus.locator("strong").textContent();
+  const completedRun = runStatus.getByTestId(ACTIVE_RUN_TEST_ID).first();
+  await expect(completedRun).not.toHaveAttribute(BATCH_ID_ATTRIBUTE, cancelledBatchId ?? "");
+  const completedBatchId = await completedRun.getAttribute(BATCH_ID_ATTRIBUTE);
   expect(completedBatchId).toMatch(BROWSER_BATCH_ID_PATTERN);
   await expect(
     page
       .getByRole("region", { name: RUN_STATUS_REGION_NAME })
       .getByText("Completed", { exact: true })
   ).toBeVisible();
-  const assignmentOutcomes = runStatus.getByRole("region", {
+  const assignmentDisclosure = completedRun.getByTestId(
+    "playtesting-assignment-outcomes-disclosure"
+  );
+  await assignmentDisclosure.locator("summary").click();
+  const assignmentOutcomes = assignmentDisclosure.getByRole("region", {
     name: "Assignment outcomes"
   });
   await expect(assignmentOutcomes).toContainText("Execution state: completed");
@@ -572,25 +637,40 @@ test("operator can start, watch, and analyze a completed session from the same C
   const runForm = page.getByRole("form", {
     name: RUN_FORM_NAME
   });
-  await runForm
-    .getByRole("button", { name: "Run 1 approved assignment" })
-    .click();
+  await runForm.getByRole("button", { name: "Start playtest" }).click();
   const runStatus = page.getByRole("region", {
     name: RUN_STATUS_REGION_NAME
   });
   await expect(runStatus).toBeVisible();
-  const batchId = await runStatus.locator("strong").textContent();
+  const runRow = runStatus.getByTestId(ACTIVE_RUN_TEST_ID).first();
+  const batchId = await runRow.getAttribute(BATCH_ID_ATTRIBUTE);
   expect(batchId).toMatch(BROWSER_BATCH_ID_PATTERN);
-  await expect(runStatus.getByText("Completed", { exact: true })).toBeVisible();
+  await expect(runRow).toHaveAttribute("data-status", "completed");
 
   const episodeId = `episode-${batchId}-a-0001`;
   const selectedEpisodeIds = ["episode-17", episodeId];
-  await expect(
-    runStatus.getByRole("link", { name: `Open session ${episodeId}` })
-  ).toBeVisible();
-  await page.goto(
-    `/playtesting?view=sessions&workspaceId=fixture%2Fgame&sessions=${encodeURIComponent(selectedEpisodeIds.join(","))}`
+  const assignmentDisclosure = runRow.getByTestId(
+    "playtesting-assignment-outcomes-disclosure"
   );
+  await assignmentDisclosure.locator("summary").click();
+  await expect(
+    assignmentDisclosure.getByRole("link", { name: `Open session ${episodeId}` })
+  ).toBeVisible();
+  await page.goto("/playtesting?view=sessions&workspaceId=fixture%2Fgame");
+  await page
+    .getByRole("checkbox", {
+      name: "Include session episode-17 in analyst review"
+    })
+    .check();
+  await page
+    .getByRole("checkbox", {
+      name: `Include session ${episodeId} in analyst review`
+    })
+    .check();
+  await expect(page.getByTestId("playtesting-selection-count")).toHaveText(
+    "2 of 40 selected"
+  );
+  await expect(page).toHaveURL(TWO_SESSION_SELECTION_URL_PATTERN);
   const analystPanel = page.getByRole("region", {
     name: ANALYST_PANEL_NAME
   });
@@ -700,6 +780,12 @@ test("operator can start, watch, and analyze a completed session from the same C
       )
     )
   ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Analyze this session" })
+  ).toHaveAttribute(
+    "href",
+    new RegExp(String.raw`view=sessions[^]*sessions=${episodeId}`, "u")
+  );
 });
 
 /**
@@ -717,7 +803,7 @@ test("live batches appear without operator action, and an unreadable read is sta
   await expect(page.locator(ACTIVE_APPROVAL_SELECTOR)).toBeVisible();
 
   await page.goto("/playtesting?workspaceId=fixture/game");
-  const panel = page.getByRole("region", { name: "Live batches" });
+  const panel = page.getByRole("region", { name: RUN_STATUS_REGION_NAME });
   await expect(panel).toBeVisible();
   await expect(panel).toHaveAttribute(
     "data-freshness",
@@ -728,34 +814,36 @@ test("live batches appear without operator action, and an unreadable read is sta
     name: RUN_FORM_NAME
   });
   await expect(form).toBeVisible();
+  await expect(
+    form.getByRole("button", { name: "Start playtest" })
+  ).toBeInViewport();
+  await form.getByText(CUSTOMIZE_RUN_LABEL).click();
   await form.getByLabel("Additional assignments").fill("1");
   await form.getByRole("button", { name: "Generate assignments" }).click();
-  await expect(form.getByLabel("Seed 2")).toBeVisible();
-  await form.getByLabel("Seed 1").fill("hold");
-  await form.getByLabel("Seed 2").fill("hold-2");
+  await expect(form.getByRole("group", { name: "Session 2" })).toBeVisible();
+  await form.getByRole("group", { name: "Session 1" }).getByLabel("Seed").fill("hold-1");
+  await form.getByRole("group", { name: "Session 2" }).getByLabel("Seed").fill("hold-2");
   await form.getByRole("button", { name: RUN_TWO_ASSIGNMENTS_LABEL }).click();
 
   // No Refresh click: the batch appears because the view polls the owner.
-  const batch = panel.getByTestId("playtesting-active-run").first();
+  const batch = panel.getByTestId(ACTIVE_RUN_TEST_ID).first();
   await expect(batch).toBeVisible();
   await expect(batch).toHaveAttribute("data-status", RUNNING_STATUS);
 
   // The focused batch is address state, so refresh restores it.
-  await batch.getByRole("button", { name: "Show progress" }).click();
   await expect(batch).toHaveAttribute("data-focused", "true");
+  await expect(batch.getByTestId("playtesting-run-progress")).toBeVisible();
 
-  // The tiles name the owner's own counts. A tile pointed at a field the
-  // Runtime does not produce renders "not observed" forever, which is what
-  // four of these did before the keys were bound to PlaytestCompletionCounts.
-  await expect(batch).toContainText("Assignments started");
-  await expect(batch).toContainText("Assignments completed");
+  // Active status exposes the owner-confirmed request and elapsed budget but
+  // does not invent a completion count the Runtime has not published yet.
+  await expect(batch).toContainText("Runtime accepted 2 assignments");
+  await expect(batch).toContainText("Elapsed");
   await expect(batch).not.toContainText("Assignments succeeded");
-  await expect(batch).not.toContainText("Assignments quota-blocked");
   await expect(page).toHaveURL(LIVE_BATCH_URL_PATTERN);
   await page.reload();
-  const reloaded = page.getByRole("region", { name: "Live batches" });
+  const reloaded = page.getByRole("region", { name: RUN_STATUS_REGION_NAME });
   await expect(
-    reloaded.getByTestId("playtesting-active-run").first()
+    reloaded.getByTestId(ACTIVE_RUN_TEST_ID).first()
   ).toHaveAttribute("data-focused", "true");
 
   // An unreadable read is an explicit state, and the last known frame is
@@ -765,7 +853,7 @@ test("live batches appear without operator action, and an unreadable read is sta
   );
   expect(response.ok()).toBe(true);
   try {
-    const degraded = page.getByRole("region", { name: "Live batches" });
+    const degraded = page.getByRole("region", { name: RUN_STATUS_REGION_NAME });
     await expect(degraded).toHaveAttribute("data-freshness", "unavailable", {
       timeout: 20_000
     });
