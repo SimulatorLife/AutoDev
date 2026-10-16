@@ -1882,3 +1882,32 @@ approval v5 already authorizes the checkout root, so a future commit will be
 picked up automatically without a new approval. No post-conformance real
 RacingGame episode or model/analyst call has been made; the managed 4101/3300
 services remain untouched.
+
+### Playtesting Console UX redesign (2026-10-15)
+
+The current rendered RacingGame page was inspected at 1440×1000 and the session inspector at 1440×920. The run form sat below historical counts, coverage, and an episode table; a finished batch read as "No batches are running"; the same just-started batch had two status cards; tab navigation unmounted the watcher; and the inspector showed raw step JSON by default. A read-only independent UX/ownership review confirmed these paths and additionally found duplicated analysis selection, generic empty states, and form-submit-only workspace switching.
+
+The Console owns presentation and operator flow, not gameplay, execution truth, result interpretation, or analysis claims. The rewrite keeps one typed Runtime status path and existing Data evidence, and must preserve their distinctions.
+
+Target flow:
+
+1. Make **Run** the default task view: a compact workspace picker and approved-checkout/latest-commit context, one clear primary action, a recommended single assignment, and optional batch tuning in a disclosure. Explain that checkout approval is reused and Runtime snapshots the latest committed HEAD at run start; no per-commit reapproval is implied. Clearly say uncommitted edits do not run.
+2. Show one server-authoritative run status surface, not local acknowledgement plus server status. It reports only observed assignment counts and honestly labels stale data. Keep run controls/watch affordances available while browsing Sessions/Findings/Compare and a session detail. Completed work remains discoverable as a latest result/recent session with a direct evidence link.
+3. Put session outcome/status summary and deterministic metrics before a readable timeline. Keep exact trace JSON and unavailable media/evidence accessible but collapsed by default. Do not conflate execution disposition, game outcome, replay integrity, evaluator verdict, and analyst hypothesis.
+4. Make selecting sessions part of the session rows rather than a duplicate ID list; retain the URL-bound, explicit ≤40 selection, eligibility report, and bounded analyst dispatch. Evidence citations continue to open the exact session/step.
+5. Keep archive filters in archive views, clarify empty states, preserve all scope/pagination and accessibility behavior, and keep findings/compare evidence honesty.
+
+Implementation ownership: route/page server loading and workspace scope stay in `console/app/playtesting`; the typed run owner remains Runtime; the view hierarchy is in the existing Playtesting feature components; the sessions page continues to own bounded analysis selection. No new execution/scheduler/backend state is introduced. A backend/API change is justified only by an observed missing fact needed by the user journey.
+
+Acceptance evidence: rendered screenshots at desktop and 390px; focused render tests for default/collapsed evidence and blocked/running/completed states; browser journey for start → watch → completed result → inspect → analyst eligibility/result; one status card and no false progress/zeros; workspace/build context accurate and no commit-specific approval prompt; Console tests/typecheck/lint/build and full browser flow. Synthetic browser/API data proves UI mechanics only; the approved RacingGame episode/evidence and analyst gates remain separate and must not be represented by fixture data.
+
+Checklist:
+- [x] Capture actual RacingGame Console and session pages; map owning route/components and status APIs.
+- [x] Independent read-only UX/architecture review completed; its findings reconciled above.
+- [ ] Replace overview with focused run-first hierarchy and move history/filters out of the primary action path.
+- [ ] Consolidate live status and keep it available across Playtesting destinations.
+- [ ] Simplify analysis selection into session rows without weakening bounds/evidence gates.
+- [ ] Make the inspector outcome-first and raw-evidence progressive disclosure.
+- [ ] Update target UX/docs and add render + browser journey tests.
+- [ ] Validate screenshots, responsive/accessibility behavior, tests, typecheck, lint, build and production browser suite.
+- [ ] Review/integrate without staging or discarding concurrent worktree edits.

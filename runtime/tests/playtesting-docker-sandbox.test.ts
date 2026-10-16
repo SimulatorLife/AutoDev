@@ -7,6 +7,7 @@ import {
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -456,6 +457,44 @@ test("sandbox snapshots the checkout's latest commit with its own config hash", 
     );
   } finally {
     fixture.cleanup();
+  }
+});
+
+test("snapshot owner directories are private and the mounted build stays readable to the sandbox user", () => {
+  const fixture = repository();
+  const snapshotRoot = realpathSync(
+    mkdtempSync(path.join(tmpdir(), "autodev-playtest-snapshot-permissions-"))
+  );
+  const snapshotLink = snapshotRoot + "-link";
+  try {
+    chmodSync(snapshotRoot, 0o755);
+    const prepared = preparePlaytestSandbox(approval(fixture.root), {
+      snapshotRoot
+    });
+    const workspaceDirectory = path.dirname(prepared.checkoutRoot);
+    assert.equal(lstatSync(snapshotRoot).mode & 0o777, 0o700);
+    assert.equal(lstatSync(workspaceDirectory).mode & 0o777, 0o700);
+    // The Docker sandbox runs as uid 65532 and mounts this directory read-only.
+    assert.equal(lstatSync(prepared.checkoutRoot).mode & 0o777, 0o755);
+    assert.ok(
+      readFileSync(
+        path.join(prepared.checkoutRoot, ".autodev", "playtest.config.json"),
+        "utf8"
+      ).length > 0
+    );
+
+    symlinkSync(snapshotRoot, snapshotLink, "dir");
+    assert.throws(
+      () =>
+        preparePlaytestSandbox(approval(fixture.root), {
+          snapshotRoot: snapshotLink
+        }),
+      /canonical real directories/u
+    );
+  } finally {
+    fixture.cleanup();
+    rmSync(snapshotLink, { recursive: true, force: true });
+    rmSync(snapshotRoot, { recursive: true, force: true });
   }
 });
 

@@ -115,6 +115,40 @@ function scope(
   return parsePlaytestingScope({ workspaceId: WORKSPACE, ...input });
 }
 
+/** A fetched window whose lines record different subsets of the same fields. */
+function traceWindow(): ControlApiPlaytestingWindowResponse {
+  return {
+    schema: "autodev-control-playtesting-window-v1",
+    workspaceId: WORKSPACE,
+    episodeId: "episode-17",
+    artifactId: "trace-window-1",
+    sha256: "b".repeat(64),
+    mediaType: "application/x-ndjson",
+    startStep: 0,
+    endStep: 2,
+    sourceLineCount: 2,
+    omittedLineCount: 0,
+    entries: [
+      {
+        type: "event",
+        event: {
+          step: 1,
+          eventId: "event-1",
+          type: "choice-applied",
+          tick: 7,
+          severity: "info"
+        },
+        action: { actionId: "advance" },
+        phase: { phaseId: "tutorial" }
+      },
+      {
+        type: "event",
+        event: { step: 2, eventId: "event-2", type: "legal-action-rejected" }
+      }
+    ]
+  };
+}
+
 test("Playtesting list view uses accessible links and explicit empty/unavailable distinctions", () => {
   const html = renderToStaticMarkup(
     React.createElement(PlaytestingView, {
@@ -377,6 +411,114 @@ test("recorded frame references render lazy same-origin authorized image routes"
   );
   assert.match(html, /Recorded game frame 1 at step 1/u);
   assert.match(html, /loading="lazy"/u);
+});
+
+test("inspector renders each recorded step as a summary of the fields that line records", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail(),
+      scope: scope({ view: "sessions", step: "1" }),
+      window: traceWindow()
+    })
+  );
+  assert.match(
+    html,
+    /Event choice-applied · event event-1 · Action advance · Phase tutorial · Tick 7 · Severity info/u
+  );
+  assert.match(
+    html,
+    /Event legal-action-rejected · event event-2<\/p>/u
+  );
+  assert.match(html, /data-trace-fact="action"/u);
+  assert.match(html, /data-trace-fact="phase"/u);
+  // The line type names the line, so it is reported as its own dimension
+  // rather than being read as the event's name.
+  assert.match(html, /data-trace-fact="line-type"/u);
+  // A dimension a line does not record stays unrecorded: step 2 records no
+  // action or phase, and neither fact is carried over from step 1.
+  const stepTwo = html.split('data-playtest-step="2"')[1] ?? "";
+  assert.match(
+    stepTwo,
+    /data-trace-fact="action"[^]*?data-trace-fact-state="unrecorded"/u
+  );
+  assert.match(
+    stepTwo,
+    /data-trace-fact="phase"[^]*?data-trace-fact-state="unrecorded"/u
+  );
+});
+
+test("raw trace JSON stays in a collapsed disclosure except for the addressed step", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail(),
+      scope: scope({ view: "sessions", step: "1" }),
+      window: traceWindow()
+    })
+  );
+  const disclosures = html.match(/<details\b[^>]*>/gu) ?? [];
+  assert.equal(disclosures.length, 2);
+  assert.equal(disclosures.filter((tag) => /\sopen=""/u.test(tag)).length, 1);
+  assert.match(html, /aria-label="Recorded data for step 1"/u);
+  assert.match(html, /aria-label="Recorded data for step 2"/u);
+  // The disclosure hides nothing: the recorded line itself is still rendered
+ // verbatim behind the collapsed summary.
+  assert.match(html, /&quot;eventId&quot;: &quot;event-2&quot;/u);
+  assert.match(html, /Recorded JSON \(selected step\)/u);
+});
+
+test("step navigation moves within the fetched window and preserves list state", () => {
+  const selected = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail(),
+      scope: scope({ view: "sessions", cursor: "page-2", step: "1" }),
+      window: traceWindow()
+    })
+  );
+  // Step 1 is the first indexed step this window holds, so there is nothing
+  // before it; the next step is a link that keeps workspace and cursor state.
+  assert.match(selected, /data-playtest-step-prev="disabled"/u);
+  assert.match(selected, /data-playtest-step-next="2"/u);
+  assert.match(
+    selected,
+    /href="\/playtesting\/sessions\/episode-17\?view=sessions&amp;workspaceId=owner%2Fgame&amp;cursor=page-2&amp;step=2"/u
+  );
+  const last = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail(),
+      scope: scope({ view: "sessions", step: "2" }),
+      window: traceWindow()
+    })
+  );
+  assert.match(last, /data-playtest-step-next="disabled"/u);
+  assert.match(last, /data-playtest-step-prev="1"/u);
+  // Navigation never leaves the fetched window, so it cannot address a step
+ // this page has no evidence for.
+  assert.doesNotMatch(last, /step=3/u);
+});
+
+test("session result dimensions stay scannable and each keeps its recorded token", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail(),
+      scope: scope({ view: "sessions", step: "1" }),
+      window: traceWindow()
+    })
+  );
+  for (const dimension of [
+    "game-outcome",
+    "execution-status",
+    "replay-integrity",
+    "evidence-completeness"
+  ]) {
+    assert.match(html, new RegExp(`data-status-dimension="${dimension}"`, "u"));
+  }
+  assert.match(html, /aria-label="Independent session status dimensions"/u);
+  // The badge is the scan; the recorded token beneath it is the quotable
+  // evidence. Neither dimension borrows the other's wording.
+  assert.match(html, /Game outcome<\/dt>[^]*?LOSS[^]*?loss/u);
+  assert.match(html, /Execution status<\/dt>[^]*?Completed[^]*?completed/u);
+  assert.match(html, /Replay integrity<\/dt>[^]*?Trace replayable/u);
+  assert.match(html, /Evidence completeness<\/dt>[^]*?complete/u);
 });
 
 test("Compare shows native human outcomes separately and never reconstructs suppressed cells", () => {

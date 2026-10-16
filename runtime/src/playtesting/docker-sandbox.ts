@@ -275,11 +275,37 @@ function resolveCommittedHead(root: string): string {
 }
 
 function ensureOwnerDirectory(directory: string): void {
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const info = lstatSync(directory);
-  if (!info.isDirectory() || info.isSymbolicLink()) {
+  const absolute = path.resolve(directory);
+  mkdirSync(absolute, { recursive: true, mode: 0o700 });
+  const info = lstatSync(absolute);
+  if (
+    !info.isDirectory() ||
+    info.isSymbolicLink() ||
+    realpathSync(absolute) !== absolute
+  ) {
     throw new PlaytestSandboxApprovalError(
-      "Playtest snapshot directories must be real directories."
+      "Playtest snapshot owner directories must be canonical real directories."
+    );
+  }
+  chmodSync(absolute, 0o700);
+}
+
+/** A mounted game snapshot must be a real descendant of the private owner directory. */
+function assertSnapshotDirectory(
+  snapshot: string,
+  privateWorkspaceDirectory: string
+): void {
+  const absolute = path.resolve(snapshot);
+  const info = lstatSync(absolute);
+  const canonical = realpathSync(absolute);
+  if (
+    !info.isDirectory() ||
+    info.isSymbolicLink() ||
+    canonical !== absolute ||
+    !isWithin(privateWorkspaceDirectory, canonical)
+  ) {
+    throw new PlaytestSandboxApprovalError(
+      "Committed build snapshot must be a real directory inside its private workspace snapshot root."
     );
   }
 }
@@ -353,7 +379,10 @@ function materializeCommitSnapshot(input: {
     const partial =
       destination + SNAPSHOT_PARTIAL_MARKER + randomUUID().slice(0, 8);
     try {
-      mkdirSync(partial, { mode: 0o700 });
+      // Docker runs the adapter as UID 65532; the mounted checkout root must
+      // remain traversable/readable by that unprivileged sandbox user. Its
+      // private workspace parent provides host-side access control.
+      mkdirSync(partial, { mode: 0o755 });
       checkoutCommit(input.sourceRoot, input.sha, partial);
       renameSync(partial, destination);
     } catch (error) {
@@ -367,6 +396,7 @@ function materializeCommitSnapshot(input: {
       }
     }
   }
+  assertSnapshotDirectory(destination, realpathSync(workspaceDirectory));
   touchSnapshot(destination, input.now);
   pruneStaleSnapshots(workspaceDirectory, input.sha, input.now);
   return destination;

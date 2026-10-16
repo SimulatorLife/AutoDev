@@ -86,8 +86,9 @@ function pollReadiness(
         }
         return;
       }
-      if (payload.data.status === "ready" && !cancelled) {
-        router.refresh();
+      if (payload.data.status === "ready") {
+        if (!cancelled) router.refresh();
+        return;
       }
     } catch {
       if (!cancelled) {
@@ -174,7 +175,6 @@ export function PlaytestingReadiness({
       if (payload.data.status === "ready") {
         setMessage("Playtesting Data is ready. Refreshing this page.");
         setStatus("initializing");
-        router.refresh();
         return;
       }
       setMessage(

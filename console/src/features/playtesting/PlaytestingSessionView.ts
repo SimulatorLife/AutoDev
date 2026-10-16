@@ -23,8 +23,10 @@ import {
 } from "../../components/status/StatusBadge.ts";
 import {
   MONO_ID_CLASS,
+  MONO_VALUE_CLASS,
   MUTED_BODY_CLASS,
-  MUTED_META_CLASS
+  MUTED_META_CLASS,
+  SECTION_LABEL_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
   playtestingEpisodeHref,
@@ -34,6 +36,9 @@ import {
 import { executionStatusBadge, gameOutcomeBadge } from "./PlaytestingView.ts";
 
 const EVIDENCE_LINK_CLASS = "text-xs text-accent hover:underline";
+
+/** A JSON object read off a recorded trace line. */
+type TraceRecord = Readonly<Record<string, unknown>>;
 
 export interface PlaytestingSessionViewProps {
   readonly detail: ControlApiPlaytestingEpisodeDetailResponse;
@@ -52,6 +57,112 @@ function heading(id: string, title: string): React.JSX.Element {
 
 function renderJson(value: PlaytestJsonValue): string {
   return JSON.stringify(value, null, 2);
+}
+
+/** Keys that name a nested object, used to read an identifier out of one. */
+const NAMED_SCALAR_KEYS = [
+  "actionId",
+  "eventId",
+  "phaseId",
+  "id",
+  "name",
+  "type"
+] as const;
+
+function asTraceRecord(value: unknown): TraceRecord | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as TraceRecord;
+}
+
+/**
+ * The recorded scalar behind one field, or null when the line does not record
+ * it. A nested object is read through its own identifier field, so an action
+ * object still yields its actionId. Anything richer than a scalar or a named
+ * object is left to the full JSON disclosure rather than summarized: a summary
+ * that guesses at structure would be an explanation the trace never made.
+ */
+function recordedScalar(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : null;
+  }
+  if (typeof value === "boolean") return String(value);
+  const record = asTraceRecord(value);
+  if (record === null) return null;
+  for (const key of NAMED_SCALAR_KEYS) {
+    const text = recordedScalar(record[key]);
+    if (text !== null) return text;
+  }
+  return null;
+}
+
+/** First recorded value for these keys, scanning the given records in order. */
+function readRecorded(
+  records: readonly (TraceRecord | null)[],
+  keys: readonly string[]
+): string | null {
+  for (const record of records) {
+    if (record === null) continue;
+    for (const key of keys) {
+      if (!(key in record)) continue;
+      const text = recordedScalar(record[key]);
+      if (text !== null) return text;
+    }
+  }
+  return null;
+}
+
+/**
+ * The scan dimensions of one trace line, each read only from fields the line
+ * actually records. Every dimension can legitimately be absent -- a line that
+ * records only an event id has no action -- so absence stays null all the way
+ * to the view, which reports it as unrecorded rather than filling it in.
+ */
+interface TraceStepFacts {
+  readonly step: number | null;
+  readonly lineKind: string | null;
+  readonly eventType: string | null;
+  readonly eventId: string | null;
+  readonly actionId: string | null;
+  readonly phase: string | null;
+  readonly tick: string | null;
+  readonly severity: string | null;
+}
+
+function traceStepFacts(entry: PlaytestJsonValue): TraceStepFacts {
+  const top = asTraceRecord(entry);
+  const event = asTraceRecord(top?.event);
+  const action = asTraceRecord(top?.action);
+  const phase = asTraceRecord(top?.phase);
+  return {
+    step: stepFor(entry),
+    lineKind: readRecorded([top], ["type", "kind", "recordType"]),
+    // A line's own type names the line, not the event, so the event's name is
+    // read only from a nested event object or an explicit event field.
+    eventType:
+      readRecorded([event], ["type", "name", "eventType"]) ??
+      readRecorded([top], ["eventType", "eventName", "eventKind"]),
+    eventId:
+      readRecorded([event], ["eventId", "id"]) ??
+      readRecorded([top], ["eventId"]),
+    actionId:
+      readRecorded([action], ["actionId", "name", "id"]) ??
+      readRecorded([top], ["actionId", "action"]),
+    phase:
+      readRecorded([phase], ["phaseId", "name", "id"]) ??
+      readRecorded([top], ["phaseId", "phase", "stage"]),
+    tick:
+      readRecorded([top], ["tick", "tickIndex", "logicalTick"]) ??
+      readRecorded([event], ["tick", "tickIndex"]),
+    severity:
+      readRecorded([top], ["severity", "level"]) ??
+      readRecorded([event], ["severity", "level"])
+  };
 }
 
 function stepFor(entry: PlaytestJsonValue): number | null {
@@ -163,6 +274,166 @@ function metricTable(
   );
 }
 
+/** The distinct step indexes the fetched window actually indexes. */
+function windowStepList(
+  window: ControlApiPlaytestingWindowResponse
+): readonly number[] {
+  const steps = new Set<number>();
+  for (const entry of window.entries) {
+    const step = stepFor(entry);
+    if (step !== null) steps.add(step);
+  }
+  return [...steps].sort((left, right) => left - right);
+}
+
+/**
+ * Previous/next navigation across the steps this window already fetched. It
+ * moves by link rather than by client state so the step stays address state --
+ * workspace, filters and the originating list cursor all survive the move, and
+ * a shared URL still reproduces the step an analyst was reading. Navigation
+ * never leaves the fetched window: a step outside it is not a step this page
+ * has evidence for.
+ */
+function stepNavigation(
+  scope: PlaytestingScope,
+  episodeId: string,
+  window: ControlApiPlaytestingWindowResponse
+): React.JSX.Element {
+  const steps = windowStepList(window);
+  const current = scope.step;
+  const previous =
+    current === null
+      ? null
+      : (steps.findLast((step) => step < current) ?? null);
+  const next =
+    current === null
+      ? (steps[0] ?? null)
+      : (steps.find((step) => step > current) ?? null);
+  const control = (
+    direction: "prev" | "next",
+    target: number | null,
+    label: string
+  ): React.JSX.Element =>
+    target === null
+      ? React.createElement(
+          "span",
+          {
+            className: "text-xs text-fg-muted opacity-60",
+            "aria-disabled": "true",
+            [`data-playtest-step-${direction}`]: "disabled"
+          },
+          label
+        )
+      : React.createElement(
+          NavigationLink,
+          {
+            href: playtestingEpisodeHref(scope, episodeId, target),
+            className: "text-xs text-accent hover:underline",
+            dataAttributes: {
+              [`data-playtest-step-${direction}`]: String(target)
+            }
+          },
+          `${label} · step ${target}`
+        );
+  return React.createElement(
+    "nav",
+    {
+      className:
+        "mb-3 flex flex-wrap items-center justify-between gap-2 rounded border border-border bg-surface-raised px-3 py-2",
+      "aria-label": "Trace step navigation"
+    },
+    control("prev", previous, "← Previous step"),
+    React.createElement(
+      "p",
+      { className: MUTED_META_CLASS },
+      `${current === null ? "No step selected" : `Step ${current}`} · this window covers recorded steps ${window.startStep}–${window.endStep} · ${steps.length} indexed step${steps.length === 1 ? "" : "s"}`
+    ),
+    control("next", next, "Next step →")
+  );
+}
+
+/** One scan dimension of a trace line, or an explicit unrecorded state. */
+function traceFact(
+  label: string,
+  fact: string,
+  value: string | null
+): React.JSX.Element {
+  return React.createElement(
+    "div",
+    {
+      className: "rounded border border-border px-3 py-2",
+      "data-trace-fact": fact
+    },
+    React.createElement("p", { className: SECTION_LABEL_CLASS }, label),
+    value === null
+      ? React.createElement(
+          "p",
+          {
+            className: "mt-1 text-xs text-fg-muted",
+            "data-trace-fact-state": "unrecorded"
+          },
+          "Not recorded"
+        )
+      : React.createElement(
+          "p",
+          { className: `mt-1 break-words ${MONO_VALUE_CLASS}` },
+          value
+        )
+  );
+}
+
+/** One-line human reading of a trace line, assembled from recorded fields. */
+function stepSummaryLine(facts: TraceStepFacts): string {
+  const parts: string[] = [];
+  if (facts.eventType !== null)
+    parts.push(`Event ${facts.eventType}`);
+  if (facts.eventId !== null) parts.push(`event ${facts.eventId}`);
+  if (facts.actionId !== null) parts.push(`Action ${facts.actionId}`);
+  if (facts.phase !== null) parts.push(`Phase ${facts.phase}`);
+  if (facts.tick !== null) parts.push(`Tick ${facts.tick}`);
+  if (facts.severity !== null) parts.push(`Severity ${facts.severity}`);
+  return parts.length > 0
+    ? parts.join(" · ")
+    : "This line records no event, action or phase field. Open the recorded JSON to see every field it does carry.";
+}
+
+/**
+ * The full recorded line, collapsed by default and revealed by the analyst who
+ * wants it. A step addressed directly in the URL opens its own disclosure,
+ * because that is the step a citation sent someone to.
+ */
+function recordedJsonDisclosure(
+  step: number | null,
+  entry: PlaytestJsonValue,
+  selected: boolean
+): React.JSX.Element {
+  return React.createElement(
+    "details",
+    {
+      className: "rounded border border-border bg-surface-raised p-3",
+      open: selected,
+      "data-playtest-json": "true"
+    },
+    React.createElement(
+      "summary",
+      { className: "cursor-pointer text-xs font-medium text-fg-muted" },
+      `Recorded JSON${selected ? " (selected step)" : ""}`
+    ),
+    React.createElement(
+      "pre",
+      {
+        className:
+          "mt-2 max-h-80 overflow-auto rounded bg-surface p-3 text-xs leading-5 text-fg",
+        "aria-label":
+          step === null
+            ? "Unindexed trace data"
+            : `Recorded data for step ${step}`
+      },
+      renderJson(entry)
+    )
+  );
+}
+
 function episodeSteps(
   detail: ControlApiPlaytestingEpisodeDetailResponse,
   scope: PlaytestingScope,
@@ -193,60 +464,78 @@ function episodeSteps(
     });
   }
   return React.createElement(
-    "ol",
-    {
-      className: "flex flex-col gap-3",
-      "aria-label": `Episode steps ${window.startStep} through ${window.endStep}`
-    },
-    ...window.entries.map((entry, index) => {
-      const step = stepFor(entry);
-      const selected = step !== null && scope.step === step;
-      return React.createElement(
-        "li",
-        {
-          key: `${step ?? "unindexed"}:${index}`,
-          className: `${DETAIL_PANEL_CLASS} p-4 ${selected ? "border-accent" : ""}`,
-          ...(selected ? { "aria-current": "step" } : {}),
-          "data-playtest-step": step === null ? "unindexed" : String(step)
-        },
-        React.createElement(
-          "div",
+    React.Fragment,
+    null,
+    stepNavigation(scope, episode.episodeId, window),
+    React.createElement(
+      "ol",
+      {
+        className: "flex flex-col gap-3",
+        "aria-label": `Episode steps ${window.startStep} through ${window.endStep}`
+      },
+      ...window.entries.map((entry, index) => {
+        const facts = traceStepFacts(entry);
+        const step = facts.step;
+        const selected = step !== null && scope.step === step;
+        return React.createElement(
+          "li",
           {
-            className: "mb-2 flex flex-wrap items-center justify-between gap-2"
+            key: `${step ?? "unindexed"}:${index}`,
+            className: `${DETAIL_PANEL_CLASS} p-4 ${selected ? "border-accent" : ""}`,
+            ...(selected ? { "aria-current": "step" } : {}),
+            "data-playtest-step": step === null ? "unindexed" : String(step)
           },
           React.createElement(
-            "h3",
-            { className: "text-sm font-semibold" },
-            step === null ? "Unindexed trace entry" : `Step ${step}`
-          ),
-          step === null
-            ? React.createElement(StatusBadge, {
-                status: NOT_OBSERVED_STATUS,
-                label: "Step not observed"
-              })
-            : React.createElement(
-                NavigationLink,
-                {
-                  href: playtestingEpisodeHref(scope, episode.episodeId, step),
-                  className: EVIDENCE_LINK_CLASS
-                },
-                selected ? "Selected step" : "Open this step"
+            "div",
+            {
+              className: "mb-2 flex flex-wrap items-center justify-between gap-2"
+            },
+            React.createElement(
+              "div",
+              null,
+              React.createElement(
+                "h3",
+                { className: "text-sm font-semibold" },
+                step === null ? "Unindexed trace entry" : `Step ${step}`
+              ),
+              React.createElement(
+                "p",
+                { className: "mt-1 text-sm text-fg" },
+                stepSummaryLine(facts)
               )
-        ),
-        React.createElement(
-          "pre",
-          {
-            className:
-              "max-h-80 overflow-auto rounded bg-surface-raised p-3 text-xs leading-5 text-fg",
-            "aria-label":
-              step === null
-                ? "Unindexed trace data"
-                : `Recorded data for step ${step}`
-          },
-          renderJson(entry)
-        )
-      );
-    })
+            ),
+            step === null
+              ? React.createElement(StatusBadge, {
+                  status: NOT_OBSERVED_STATUS,
+                  label: "Step not observed"
+                })
+              : React.createElement(
+                  NavigationLink,
+                  {
+                    href: playtestingEpisodeHref(scope, episode.episodeId, step),
+                    className: EVIDENCE_LINK_CLASS
+                  },
+                  selected ? "Selected step" : "Open this step"
+                )
+          ),
+          React.createElement(
+            "div",
+            {
+              className:
+                "mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4"
+            },
+            traceFact("Event", "event", facts.eventType),
+            traceFact("Event id", "event-id", facts.eventId),
+            traceFact("Action", "action", facts.actionId),
+            traceFact("Phase", "phase", facts.phase),
+            traceFact("Tick", "tick", facts.tick),
+            traceFact("Severity", "severity", facts.severity),
+            traceFact("Line type", "line-type", facts.lineKind)
+          ),
+          recordedJsonDisclosure(step, entry, selected)
+        );
+      })
+    )
   );
 }
 
@@ -570,6 +859,62 @@ function replayStatusBadge(
   });
 }
 
+/**
+ * One recorded status dimension as a scannable tile: the badge an operator
+ * reads first, and the exact recorded token beneath it so a reader can quote
+ * the evidence rather than the label. Nothing here is derived -- a dimension
+ * the episode did not record shows its own recorded token, which is the honest
+ * answer for every one of them alike.
+ */
+function statusTile(
+  label: string,
+  dimension: string,
+  badge: React.JSX.Element,
+  recorded: string
+): React.JSX.Element {
+  return React.createElement(
+    "div",
+    {
+      className:
+        "flex flex-col gap-2 rounded-lg border border-border bg-surface-raised px-4 py-3",
+      "data-status-dimension": dimension
+    },
+    React.createElement("dt", { className: SECTION_LABEL_CLASS }, label),
+    React.createElement(
+      "dd",
+      { className: "flex flex-col items-start gap-1" },
+      badge,
+      React.createElement("span", { className: MONO_VALUE_CLASS }, recorded)
+    )
+  );
+}
+
+/**
+ * The badge for the episode's own completeness token. The token is mapped, not
+ * interpreted: `partial` is a recorded gap and `unknown` is an unrecorded
+ * dimension, so neither borrows the other's tone.
+ */
+function completenessBadge(
+  completeness: ControlApiPlaytestingEpisodeDetailResponse["record"]["completeness"]
+): React.JSX.Element {
+  if (completeness === "complete") {
+    return React.createElement(StatusBadge, {
+      status: "valid",
+      label: "Complete"
+    });
+  }
+  if (completeness === "partial") {
+    return React.createElement(StatusBadge, {
+      status: "unavailable",
+      label: "Partial"
+    });
+  }
+  return React.createElement(StatusBadge, {
+    status: NOT_OBSERVED_STATUS,
+    label: NOT_OBSERVED_LABEL
+  });
+}
+
 export function PlaytestingSessionView({
   detail,
   scope,
@@ -615,52 +960,47 @@ export function PlaytestingSessionView({
       React.createElement(
         "dl",
         {
-          className: "grid gap-3 sm:grid-cols-3",
+          className:
+            "mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4",
           "aria-label": "Independent session status dimensions"
         },
-        React.createElement(
-          "div",
-          null,
-          React.createElement(
-            "dt",
-            { className: MUTED_META_CLASS },
-            "Execution status"
-          ),
-          React.createElement(
-            "dd",
-            { className: "mt-1" },
-            executionStatusBadge(episode.status)
-          )
+        statusTile(
+          "Game outcome",
+          "game-outcome",
+          gameOutcomeBadge(episode.outcome),
+          episode.outcome
         ),
-        React.createElement(
-          "div",
-          null,
-          React.createElement(
-            "dt",
-            { className: MUTED_META_CLASS },
-            "Game outcome"
-          ),
-          React.createElement(
-            "dd",
-            { className: "mt-1" },
-            gameOutcomeBadge(episode.outcome)
-          )
+        statusTile(
+          "Execution status",
+          "execution-status",
+          executionStatusBadge(episode.status),
+          episode.status
         ),
-        React.createElement(
-          "div",
-          null,
-          React.createElement(
-            "dt",
-            { className: MUTED_META_CLASS },
-            "Replay integrity"
-          ),
-          React.createElement(
-            "dd",
-            { className: "mt-1" },
-            replayStatusBadge(episode.replayStatus)
-          )
+        statusTile(
+          "Replay integrity",
+          "replay-integrity",
+          replayStatusBadge(episode.replayStatus),
+          episode.replayStatus
+        ),
+        statusTile(
+          "Evidence completeness",
+          "evidence-completeness",
+          completenessBadge(episode.completeness),
+          episode.completeness
         )
-      )
+      ),
+      React.createElement(
+        "p",
+        { className: MUTED_BODY_CLASS },
+        "These four dimensions are recorded independently. A game outcome is not an execution status, and neither one implies evidence completeness."
+      ),
+      episode.missingReasons.length === 0
+        ? null
+        : React.createElement(
+            "p",
+            { className: MUTED_META_CLASS },
+            `Recorded missing reasons: ${episode.missingReasons.join(", ")}`
+          )
     ),
     React.createElement(
       StatGrid,

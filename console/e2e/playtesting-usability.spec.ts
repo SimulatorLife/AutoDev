@@ -126,13 +126,21 @@ test("Playtesting overview waits for Data schema readiness before reading result
   );
   expect(configured.ok()).toBe(true);
 
-  await page.goto(PLAYTESTING_OVERVIEW_URL);
+  const overviewRefresh = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      response.url().includes("/playtesting?workspaceId=fixture%2Fgame") &&
+      response.url().includes("_rsc"),
+    { timeout: 20_000 }
+  );
+  await page.goto(PLAYTESTING_OVERVIEW_URL, { waitUntil: "networkidle" });
   const readinessPanel = page.locator('[data-status="initializing"]');
   await expect(
     readinessPanel.getByRole("heading", {
       name: "Playtesting data is starting up"
     })
   ).toBeVisible();
+  await overviewRefresh;
   await expect(page.getByText("Latest batch")).toBeVisible({ timeout: 10_000 });
   await expect(readinessPanel).toHaveCount(0);
 });
@@ -146,22 +154,6 @@ test("direct session links wait for Data schema readiness before loading evidenc
   );
   expect(configured.ok()).toBe(true);
 
-  const browserReadiness = page.waitForResponse(
-    async (response) => {
-      if (
-        response.request().method() !== "GET" ||
-        !response.url().includes("/api/playtesting/readiness")
-      ) {
-        return false;
-      }
-      const payload = (await response.json().catch(() => null)) as {
-        readonly kind?: unknown;
-        readonly data?: { readonly status?: unknown };
-      } | null;
-      return payload?.kind === "ok" && payload.data?.status === "ready";
-    },
-    { timeout: 20_000 }
-  );
   const sessionRefresh = page.waitForResponse(
     (response) =>
       response.request().method() === "GET" &&
@@ -179,7 +171,6 @@ test("direct session links wait for Data schema readiness before loading evidenc
       name: "Playtesting data is starting up"
     })
   ).toBeVisible();
-  await browserReadiness;
   await sessionRefresh;
   await expect(page.getByText("Execution status")).toBeVisible({
     timeout: 10_000
@@ -201,7 +192,15 @@ test("operator retries unavailable Playtesting schema initialization from the ov
   await expect(
     page.getByRole("heading", { name: "Playtesting data is unavailable" })
   ).toBeVisible();
+  const overviewRefresh = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      response.url().includes("/playtesting?workspaceId=fixture%2Fgame") &&
+      response.url().includes("_rsc"),
+    { timeout: 20_000 }
+  );
   await page.getByRole("button", { name: "Retry initialization" }).click();
+  await overviewRefresh;
   await expect(page.getByText("Latest batch")).toBeVisible({ timeout: 10_000 });
   await expect(
     page.getByRole("heading", { name: "Playtesting data is unavailable" })
@@ -677,6 +676,8 @@ test("operator can start, watch, and analyze a completed session from the same C
   });
   await expect(contributingSession).toBeVisible();
   await page.waitForLoadState("networkidle");
+  await contributingSession.hover();
+  await page.waitForTimeout(250);
   await contributingSession.click();
   await expect(page).toHaveURL(
     new RegExp(String.raw`/playtesting/sessions/${episodeId}\?`, "u")
