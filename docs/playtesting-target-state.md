@@ -642,16 +642,18 @@ The **normative, field-level UI/UX contract** is [Console Target State — Playt
 
 **One developer investigation:** choose game workspace → scan the summary and high-impact findings → select a finding → open the referenced full-page replay at its exact cited event → compare model perception/action/forecast against observed result and controlled alternatives → validate or request a bounded rerun → optionally link a reviewed GitHub issue → return to the same filtered finding list. All facts must cite the authoritative episode/frame. Avoid walls of redundant cards or multi-level tabs.
 
-**Example information architecture** (illustrative UI labels, not measured data):
+**Example information architecture** (illustrative UI labels, not measured data; the canonical route and query-parameter table is [Console Target State — Playtesting](autodev-console-target-state.md#playtesting)):
 
 ```text
 Observe        Usage | Evaluations | Playtesting | Memory
 Playtesting    Workspace [target game]  Build [SHA]  Time [range]
                Overview | Sessions | Findings | Compare
 
-/playtesting                         batch status, outcome metrics, top findings
+/playtesting                         Overview: Play CTA, recent sessions, confirmed outcomes
+/playtesting?view=sessions            active/history sessions, Pending runs, List/Grid
+/playtesting/runs/[batchId]           one batch's assignments and links to actual episodes
+/playtesting/sessions/[id]?step=<n>  Watch/Replay of one episode (id = episodeId)
 /playtesting?view=findings            ranked findings, evidence links
-/playtesting/sessions/[id]?step=<n>  full-page synchronized replay/decision evidence
 /playtesting?view=compare             matched cohorts/builds and human validity
 
 [Run outcomes] [Coverage] [Verified issues]    [Compared with baseline]
