@@ -15,13 +15,14 @@ import {
 import { PlaytestingReadiness } from "../../src/features/playtesting/PlaytestingReadiness.tsx";
 import type { PlaytestingRunSetup } from "../../src/features/playtesting/PlaytestingRunControls.tsx";
 import { PlaytestingRunDashboard } from "../../src/features/playtesting/PlaytestingRunDashboard.tsx";
-import { PlaytestingSelection } from "../../src/features/playtesting/PlaytestingSelection.ts";
+import { PlaytestingSessionsWorkspace } from "../../src/features/playtesting/PlaytestingSessionsWorkspace.ts";
 import {
   type PlaytestingHumanValidation,
   type PlaytestingListData,
   type PlaytestingOverviewData,
   PlaytestingView
 } from "../../src/features/playtesting/PlaytestingView.ts";
+import { PlaytestingWorkspacePicker } from "../../src/features/playtesting/PlaytestingWorkspacePicker.ts";
 import {
   type ControlApiConfig,
   controlApiFailureCode,
@@ -67,6 +68,7 @@ interface OverviewLoadSuccess {
 interface ListLoadSuccess {
   readonly kind: "list";
   readonly data: PlaytestingListData;
+  readonly runSetup: PlaytestingRunSetup;
 }
 
 interface ViewLoadFailure {
@@ -118,6 +120,18 @@ function firstFailure(
   const result = results.find((item) => item.kind !== "ok");
   if (result === undefined) return null;
   return { kind: "unavailable", result };
+}
+
+function runSetupFrom(
+  result: Awaited<ReturnType<typeof fetchPlaytestingRunCapabilities>>
+): PlaytestingRunSetup {
+  return result.kind === "ok"
+    ? { kind: "available", capabilities: result.data }
+    : {
+        kind: "unavailable",
+        code: controlApiFailureCode(result),
+        message: result.message
+      };
 }
 
 async function waitForPlaytestingReadiness(
@@ -185,14 +199,7 @@ async function loadOverview(
       comparisonCount: comparisons.data.page.total,
       latestEpisodes: episodes.data.page.rows
     },
-    runSetup:
-      capabilities.kind === "ok"
-        ? { kind: "available", capabilities: capabilities.data }
-        : {
-            kind: "unavailable",
-            code: controlApiFailureCode(capabilities),
-            message: capabilities.message
-          }
+    runSetup: runSetupFrom(capabilities)
   };
 }
 
@@ -272,14 +279,18 @@ async function loadList(
   const readiness = await waitForPlaytestingReadiness(scope, config);
   if (readiness !== null) return readiness;
   if (scope.view === "sessions") {
-    const result = await fetchPlaytestingPage(
-      "episodes",
-      pageRequest(scope, "episodes"),
-      config
-    );
+    const [result, capabilities] = await Promise.all([
+      fetchPlaytestingPage(
+        "episodes",
+        pageRequest(scope, "episodes"),
+        config
+      ),
+      fetchPlaytestingRunCapabilities(scope.workspaceId!, config)
+    ]);
     if (result.kind !== "ok") return { kind: "unavailable", result };
     return {
       kind: "list",
+      runSetup: runSetupFrom(capabilities),
       data: {
         resource: "episodes",
         rows: result.data.page.rows,
@@ -289,14 +300,18 @@ async function loadList(
     };
   }
   if (scope.view === "findings") {
-    const result = await fetchPlaytestingPage(
-      "findings",
-      pageRequest(scope, "findings"),
-      config
-    );
+    const [result, capabilities] = await Promise.all([
+      fetchPlaytestingPage(
+        "findings",
+        pageRequest(scope, "findings"),
+        config
+      ),
+      fetchPlaytestingRunCapabilities(scope.workspaceId!, config)
+    ]);
     if (result.kind !== "ok") return { kind: "unavailable", result };
     return {
       kind: "list",
+      runSetup: runSetupFrom(capabilities),
       data: {
         resource: "findings",
         rows: result.data.page.rows,
@@ -321,6 +336,7 @@ async function loadList(
   );
   return {
     kind: "list",
+    runSetup: runSetupFrom(capabilities),
     data: {
       resource: "comparisons",
       rows: result.data.page.rows,
@@ -357,40 +373,43 @@ function pageResult(
         })
       : resourceUnavailable(loaded.result);
   } else if (loaded.kind === "overview") {
-    content = React.createElement(
-      React.Fragment,
-      null,
-      React.createElement(PlaytestingView, {
+    content = React.createElement(PlaytestingView, {
+      scope,
+      workspaces,
+      overview: loaded.data,
+      currentBuildSha:
+        loaded.runSetup.kind === "available"
+          ? loaded.runSetup.capabilities.buildSha
+          : null,
+      workspacePicker: React.createElement(PlaytestingWorkspacePicker, {
         scope,
-        workspaces,
-        overview: loaded.data
+        workspaces
       }),
-      React.createElement(PlaytestingRunDashboard, {
+      runDashboard: React.createElement(PlaytestingRunDashboard, {
         scope,
         setup: loaded.runSetup
       })
-    );
+    });
   } else {
-    content = React.createElement(
-      React.Fragment,
-      null,
-      React.createElement(PlaytestingView, {
-        scope,
-        workspaces,
-        list: loaded.data
-      }),
-      // Multi-session analysis belongs to the sessions view, where the
-      // selectable persisted sessions are the rows on screen.
+    const sessionsWorkspace =
       scope.view === "sessions" && loaded.data.resource === "episodes"
-        ? React.createElement(PlaytestingSelection, {
+        ? React.createElement(PlaytestingSessionsWorkspace, {
             scope,
-            initialSelectedEpisodeIds: scope.selectedEpisodeIds,
-            selectableEpisodeIds: loaded.data.rows.map(
-              (row) => (row as { episodeId: string }).episodeId
-            )
+            rows: loaded.data.rows,
+            total: loaded.data.total,
+            nextCursor: loaded.data.nextCursor
           })
-        : null
-    );
+        : undefined;
+    content = React.createElement(PlaytestingView, {
+      scope,
+      workspaces,
+      list: loaded.data,
+      runDashboard: React.createElement(PlaytestingRunDashboard, {
+        scope,
+        setup: loaded.runSetup
+      }),
+      ...(sessionsWorkspace === undefined ? {} : { sessionsWorkspace })
+    });
   }
   return React.createElement(ConsolePageShell, { section }, content);
 }
@@ -435,7 +454,11 @@ export default async function PlaytestingPage({
       { section },
       React.createElement(PlaytestingView, {
         scope,
-        workspaces: workspaceResult.data.workspaces
+        workspaces: workspaceResult.data.workspaces,
+        workspacePicker: React.createElement(PlaytestingWorkspacePicker, {
+          scope,
+          workspaces: workspaceResult.data.workspaces
+        })
       })
     );
   }

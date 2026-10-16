@@ -29,11 +29,15 @@ import {
   SECTION_LABEL_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
+  executionStatusBadge,
+  gameOutcomeBadge
+} from "./playtesting-episode-presentation.ts";
+import {
+  playtestingAnalyzeEpisodeHref,
   playtestingEpisodeHref,
   playtestingInspectorBackHref,
   type PlaytestingScope
 } from "./playtesting-url.ts";
-import { executionStatusBadge, gameOutcomeBadge } from "./PlaytestingView.ts";
 
 const EVIDENCE_LINK_CLASS = "text-xs text-accent hover:underline";
 
@@ -134,34 +138,50 @@ interface TraceStepFacts {
   readonly severity: string | null;
 }
 
+function recordedValues(
+  records: readonly (TraceRecord | null)[],
+  keys: readonly string[]
+): string | null {
+  const values = records
+    .map((record) => readRecorded([record], keys))
+    .filter((value): value is string => value !== null);
+  const unique = [...new Set(values)];
+  return unique.length > 0 ? unique.join(", ") : null;
+}
+
 function traceStepFacts(entry: PlaytestJsonValue): TraceStepFacts {
   const top = asTraceRecord(entry);
-  const event = asTraceRecord(top?.event);
+  const nestedEvent = asTraceRecord(top?.event);
+  const events = Array.isArray(top?.events)
+    ? top.events.map(asTraceRecord)
+    : nestedEvent === null
+      ? []
+      : [nestedEvent];
   const action = asTraceRecord(top?.action);
   const phase = asTraceRecord(top?.phase);
+  const visibleObservation = asTraceRecord(top?.visibleObservation);
   return {
     step: stepFor(entry),
     lineKind: readRecorded([top], ["type", "kind", "recordType"]),
-    // A line's own type names the line, not the event, so the event's name is
-    // read only from a nested event object or an explicit event field.
-    eventType:
-      readRecorded([event], ["type", "name", "eventType"]) ??
-      readRecorded([top], ["eventType", "eventName", "eventKind"]),
-    eventId:
-      readRecorded([event], ["eventId", "id"]) ??
-      readRecorded([top], ["eventId"]),
+    // Game traces commonly record an ordered `events` array rather than one
+    // nested event. Summarize only names and IDs that are actually present.
+    eventType: recordedValues(events, ["type", "name", "eventType"])
+      ?? readRecorded([top], ["eventType", "eventName", "eventKind"]),
+    eventId: recordedValues(events, ["eventId", "id"])
+      ?? readRecorded([top], ["eventId"]),
     actionId:
       readRecorded([action], ["actionId", "name", "id"]) ??
-      readRecorded([top], ["actionId", "action"]),
+      readRecorded([top], ["selectedActionId", "actionId", "action"]),
     phase:
       readRecorded([phase], ["phaseId", "name", "id"]) ??
-      readRecorded([top], ["phaseId", "phase", "stage"]),
+      readRecorded([top], ["phaseId", "phase", "stage"]) ??
+      readRecorded([visibleObservation], ["phaseId"]),
     tick:
       readRecorded([top], ["tick", "tickIndex", "logicalTick"]) ??
-      readRecorded([event], ["tick", "tickIndex"]),
+      recordedValues(events, ["tick", "tickIndex"]),
     severity:
       readRecorded([top], ["severity", "level"]) ??
-      readRecorded([event], ["severity", "level"])
+      recordedValues(events, ["severity", "level"])
   };
 }
 
@@ -386,15 +406,16 @@ function traceFact(
 function stepSummaryLine(facts: TraceStepFacts): string {
   const parts: string[] = [];
   if (facts.eventType !== null)
-    parts.push(`Event ${facts.eventType}`);
-  if (facts.eventId !== null) parts.push(`event ${facts.eventId}`);
-  if (facts.actionId !== null) parts.push(`Action ${facts.actionId}`);
+    parts.push(`${facts.eventType.includes(", ") ? "Events" : "Event"} ${facts.eventType}`);
+  if (facts.eventId !== null)
+    parts.push(`${facts.eventId.includes(", ") ? "event IDs" : "event"} ${facts.eventId}`);
+  if (facts.actionId !== null) parts.push(`Selected action ${facts.actionId}`);
   if (facts.phase !== null) parts.push(`Phase ${facts.phase}`);
   if (facts.tick !== null) parts.push(`Tick ${facts.tick}`);
   if (facts.severity !== null) parts.push(`Severity ${facts.severity}`);
   return parts.length > 0
     ? parts.join(" · ")
-    : "This line records no event, action or phase field. Open the recorded JSON to see every field it does carry.";
+    : "No event, selected action or phase is recorded on this line. Open the recorded JSON to see every field it carries.";
 }
 
 /**
@@ -526,11 +547,15 @@ function episodeSteps(
             },
             traceFact("Event", "event", facts.eventType),
             traceFact("Event id", "event-id", facts.eventId),
-            traceFact("Action", "action", facts.actionId),
+            traceFact("Selected action", "action", facts.actionId),
             traceFact("Phase", "phase", facts.phase),
-            traceFact("Tick", "tick", facts.tick),
-            traceFact("Severity", "severity", facts.severity),
-            traceFact("Line type", "line-type", facts.lineKind)
+            facts.tick === null ? null : traceFact("Tick", "tick", facts.tick),
+            facts.severity === null
+              ? null
+              : traceFact("Severity", "severity", facts.severity),
+            facts.lineKind === null
+              ? null
+              : traceFact("Line type", "line-type", facts.lineKind)
           ),
           recordedJsonDisclosure(step, entry, selected)
         );
@@ -594,7 +619,7 @@ function reviewPanel(
             React.createElement(
               NavigationLink,
               {
-                href: playtestingEpisodeHref(scope, reference.id, 0),
+                href: playtestingEpisodeHref(scope, reference.id, null),
                 className: EVIDENCE_LINK_CLASS,
                 dataAttributes: {
                   "data-cross-session-episode": reference.id
@@ -712,7 +737,7 @@ function reviewPanel(
                               reference.kind === "episode"
                                 ? reference.id
                                 : detail.record.episodeId,
-                              reference.step ?? 0
+                              reference.step ?? null
                             ),
                             className: EVIDENCE_LINK_CLASS,
                             dataAttributes: {
@@ -800,7 +825,7 @@ function reviewPanel(
                             href: playtestingEpisodeHref(
                               scope,
                               detail.record.episodeId,
-                              reference.step ?? 0
+                              reference.step ?? null
                             ),
                             className: EVIDENCE_LINK_CLASS,
                             dataAttributes: {
@@ -933,13 +958,26 @@ export function PlaytestingSessionView({
       }
     },
     React.createElement(
-      NavigationLink,
-      {
-        href: playtestingInspectorBackHref(scope),
-        className: "text-sm text-accent hover:underline",
-        dataAttributes: { "data-playtesting-back": "true" }
-      },
-      scope.returnFindingId ? "← Back to findings" : "← Back to sessions"
+      "div",
+      { className: "flex flex-wrap items-center justify-between gap-3" },
+      React.createElement(
+        NavigationLink,
+        {
+          href: playtestingInspectorBackHref(scope),
+          className: "text-sm text-accent hover:underline",
+          dataAttributes: { "data-playtesting-back": "true" }
+        },
+        scope.returnFindingId ? "← Back to findings" : "← Back to sessions"
+      ),
+      React.createElement(
+        NavigationLink,
+        {
+          href: playtestingAnalyzeEpisodeHref(scope, episode.episodeId),
+          className: "text-sm font-medium text-accent hover:underline",
+          dataAttributes: { "data-playtesting-analyze-session": episode.episodeId }
+        },
+        "Analyze this session"
+      )
     ),
     React.createElement(
       "header",

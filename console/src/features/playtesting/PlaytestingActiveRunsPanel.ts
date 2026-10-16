@@ -11,15 +11,11 @@
  * Written with `React.createElement` in a `.ts` module so the render suite can
  * exercise it directly, matching the other Playtesting views.
  */
-import type {
-  PlaytestCompletionCounts,
-  PlaytestJsonValue
-} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
-import { DetailValue } from "../../components/panels/DetailGrid.ts";
+import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { FIELD_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
 import {
@@ -33,7 +29,10 @@ import {
   type PlaytestingActiveRun,
   type PlaytestingActiveRunsFreshness
 } from "./playtesting-active-runs.ts";
-import { runStateLabel } from "./playtesting-run-messages.ts";
+import {
+  CANCELLATION_REASON_LABELS,
+  runStateLabel
+} from "./playtesting-run-messages.ts";
 import { batchStatusBadge } from "./playtesting-run-presentation.ts";
 import type { PlaytestingScope } from "./playtesting-url.ts";
 import { PlaytestingAssignmentResults } from "./PlaytestingAssignmentResults.ts";
@@ -54,68 +53,120 @@ const FRESHNESS_NOTICE: Readonly<
  * Runtime never writes — the four this panel originally read did exactly that
  * and every one of them rendered "not observed" for the life of the feature.
  */
-function countLabel(
-  counts: Readonly<
-    Record<keyof PlaytestCompletionCounts, PlaytestJsonValue>
-  > | null,
-  key: keyof PlaytestCompletionCounts
-): number | null {
-  if (!counts) return null;
-  const value = counts[key];
-  return typeof value === "number" ? value : null;
+function formatElapsed(durationMs: number): string {
+  const totalSeconds = Math.floor(durationMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours > 0
+    ? `${String(hours)}h ${String(minutes).padStart(2, "0")}m`
+    : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
-function stat(label: string, value: number | null): React.JSX.Element {
-  return React.createElement(DetailValue, {
-    key: label,
-    label,
-    // Absent evidence is named as absent, never rendered as a zero the
-    // operator could read as a measurement, and never reworded.
-    children: value === null ? NOT_OBSERVED_LABEL : String(value)
-  });
-}
-
-/**
- * The independent meanings stay separate while a batch runs: assignment
- * outcomes versus gameplay outcomes, assignment state versus episode outcome,
- * and assignments that became infrastructure loss versus persisted episodes.
- * Values come from the owner's `PlaytestCompletionCounts`; the Console never
- * recomputes them, and the keys read here are that contract's own.
- */
 function runProgress(
   run: PlaytestingActiveRun,
-  scope: PlaytestingScope
+  scope: PlaytestingScope,
+  wallTimeMs: number | null
 ): React.JSX.Element {
+  const outcomes = assignmentOutcomes(run.record);
   const counts = assignmentCounts(run.record);
+  const createdAtMs = Date.parse(run.createdAt);
+  const elapsedMs = Number.isFinite(createdAtMs)
+    ? Math.max(0, Date.now() - createdAtMs)
+    : null;
+  const budgetRemainingMs =
+    elapsedMs === null || wallTimeMs === null
+      ? null
+      : Math.max(0, wallTimeMs - elapsedMs);
   return React.createElement(
     "div",
-    { className: "flex flex-col gap-3" },
+    { className: "flex flex-col gap-3", "data-testid": "playtesting-run-progress" },
+    React.createElement(
+      "p",
+      { className: MUTED_BODY_CLASS },
+      outcomes
+        ? `${String(outcomes.length)} of ${String(run.assignmentCount)} assignments have a terminal result.`
+        : `Runtime accepted ${String(run.assignmentCount)} ${run.assignmentCount === 1 ? "assignment" : "assignments"}. Individual results are recorded when execution finishes.`
+    ),
     React.createElement(
       "dl",
-      { className: "grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4" },
-      stat("Assignments started", countLabel(counts, "started")),
-      stat("Assignments completed", countLabel(counts, "completed")),
-      stat("Assignments crashed", countLabel(counts, "crashed")),
-      stat(
-        "Assignments infra-failed",
-        countLabel(counts, "infrastructureFailed")
+      { className: "grid gap-2 sm:grid-cols-2" },
+      React.createElement(
+        "div",
+        null,
+        React.createElement("dt", { className: MUTED_META_CLASS }, "Elapsed"),
+        React.createElement(
+          "dd",
+          { className: "mt-1 font-mono text-sm" },
+          elapsedMs === null ? NOT_OBSERVED_LABEL : formatElapsed(elapsedMs)
+        )
       ),
-      stat("Assignments cancelled", countLabel(counts, "cancelled")),
-      stat(
-        "Assignments budget-truncated",
-        countLabel(counts, "budgetTruncated")
-      ),
-      stat("Sessions reviewed", countLabel(counts, "reviewed")),
-      stat("Assignments in batch", run.assignmentCount),
-      // A count with no observation is left unnamed rather than shown as a zero,
-      // which is why these read the owner's keys verbatim.
-      stat("Sessions eligible", countLabel(counts, "eligible"))
+      React.createElement(
+        "div",
+        null,
+        React.createElement("dt", { className: MUTED_META_CLASS }, "Approved time budget remaining"),
+        React.createElement(
+          "dd",
+          { className: "mt-1 font-mono text-sm" },
+          budgetRemainingMs === null
+            ? NOT_OBSERVED_LABEL
+            : formatElapsed(budgetRemainingMs)
+        )
+      )
     ),
-    React.createElement(PlaytestingAssignmentResults, {
-      outcomes: assignmentOutcomes(run.record),
-      scope,
-      pending: run.record.result === null
-    })
+    counts
+      ? React.createElement(
+          "details",
+          null,
+          React.createElement(
+            "summary",
+            { className: "cursor-pointer text-sm font-medium" },
+            "Assignment counts"
+          ),
+          React.createElement(
+            DetailGrid,
+            { columns: 3, className: "mt-2" },
+            ...([
+              ["Assigned", "assigned"],
+              ["Started", "started"],
+              ["Completed", "completed"],
+              ["Crashed", "crashed"],
+              ["Infrastructure failures", "infrastructureFailed"],
+              ["Cancelled", "cancelled"],
+              ["Budget truncated", "budgetTruncated"],
+              ["Analyst reviews", "reviewed"],
+              ["Review eligible", "eligible"]
+            ] as const).map(([label, key]) => {
+              const value = counts[key];
+              return React.createElement(DetailValue, {
+                key,
+                label,
+                valueClassName: "text-sm text-fg break-words",
+                children:
+                  typeof value === "number"
+                    ? String(value)
+                    : NOT_OBSERVED_LABEL
+              });
+            })
+          )
+        )
+      : null,
+    outcomes
+      ? React.createElement(
+          "details",
+          { "data-testid": "playtesting-assignment-outcomes-disclosure" },
+          React.createElement(
+            "summary",
+            { className: "cursor-pointer text-sm font-medium" },
+            `Assignment outcomes (${String(outcomes.length)})`
+          ),
+          React.createElement(PlaytestingAssignmentResults, {
+            outcomes,
+            scope,
+            pending: run.record.result === null
+          })
+        )
+      : null
   );
 }
 
@@ -124,6 +175,7 @@ function runRow(
   scope: PlaytestingScope,
   freshness: PlaytestingActiveRunsFreshness,
   focusedBatchId: string | null,
+  wallTimeMs: number | null,
   onFocusBatch: (batchId: string | null) => void,
   onCancel: ((batchId: string) => void) | null,
   busyBatchId: string | null
@@ -201,6 +253,13 @@ function runRow(
         ...buttons
       )
     ),
+    run.record.cancellationReason
+      ? React.createElement(
+          "p",
+          { className: MUTED_META_CLASS },
+          `Cancellation: ${CANCELLATION_REASON_LABELS[run.record.cancellationReason]}.`
+        )
+      : null,
     run.record.error
       ? React.createElement(
           "p",
@@ -212,7 +271,7 @@ function runRow(
       ? React.createElement(
           "div",
           { className: "mt-3" },
-          runProgress(run, scope)
+          runProgress(run, scope, wallTimeMs)
         )
       : null
   );
@@ -227,6 +286,8 @@ export interface PlaytestingActiveRunsPanelProps {
   readonly onRefresh: () => void;
   /** Focused batch, shared through the URL so refresh and Back survive. */
   readonly focusedBatchId: string | null;
+  readonly wallTimeMs?: number | null | undefined;
+  readonly showEmptyState?: boolean | undefined;
   readonly onFocusBatch: (batchId: string | null) => void;
   readonly onCancel: ((batchId: string) => void) | null;
   readonly busyBatchId: string | null;
@@ -240,6 +301,8 @@ export function PlaytestingActiveRunsPanel({
   watching,
   onRefresh,
   focusedBatchId,
+  wallTimeMs = null,
+  showEmptyState = true,
   onFocusBatch,
   onCancel,
   busyBatchId
@@ -259,7 +322,7 @@ export function PlaytestingActiveRunsPanel({
         ? React.createElement(
             "p",
             { className: MUTED_BODY_CLASS },
-            "No batches are running in this workspace."
+            "No run is in progress. The latest saved result is shown below."
           )
         : React.createElement(
             "ul",
@@ -270,16 +333,20 @@ export function PlaytestingActiveRunsPanel({
                 scope,
                 freshness,
                 focusedBatchId,
+                wallTimeMs,
                 onFocusBatch,
                 onCancel,
                 busyBatchId
               )
             )
           );
+  if (runs.length === 0 && freshness !== "unavailable" && !showEmptyState) {
+    return React.createElement(React.Fragment, null);
+  }
   return React.createElement(
     "section",
     {
-      "aria-label": "Live batches",
+      "aria-label": "Playtest run status",
       className: LIST_PANEL_CLASS,
       "data-testid": "playtesting-active-runs",
       "data-freshness": freshness
@@ -292,7 +359,7 @@ export function PlaytestingActiveRunsPanel({
       React.createElement(
         "h2",
         { className: SECTION_HEADING_CLASS },
-        "Live batches"
+        "Run status"
       ),
       React.createElement(
         "button",
@@ -329,7 +396,7 @@ export function PlaytestingActiveRunsPanel({
         ? `Watching ${nonterminal.length} running ${nonterminal.length === 1 ? "batch" : "batches"}.`
         : freshness === "unavailable"
           ? "Live batch state is unavailable."
-          : "No batches are running."
+          : "No run is in progress. The latest saved result is shown below."
     )
   );
 }

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import React from "react";
@@ -502,9 +501,10 @@ test("the panel renders the owner's own counts rather than an absent reading", (
       busyBatchId: null
     })
   );
-  assert.match(markup, /Assignments completed/);
+  assert.match(markup, /Assignment counts/);
+  assert.match(markup, /<dt[^>]*>Completed<\/dt><dd[^>]*>2<\/dd>/u);
   assert.match(markup, />2</u);
-  assert.match(markup, /Assignments crashed/);
+  assert.match(markup, /<dt[^>]*>Crashed<\/dt><dd[^>]*>1<\/dd>/u);
   // An unobserved count stays named as unobserved rather than becoming a zero.
   assert.ok(
     !/Assignments succeeded|Assignments quota-blocked|Episodes persisted/u.test(
@@ -516,48 +516,32 @@ test("the panel renders the owner's own counts rather than an absent reading", (
   assert.match(markup, /Game outcome: Win/);
   assert.match(
     markup,
-    /href="\/playtesting\/sessions\/episode-001\?view=sessions&amp;workspaceId=fixture%2Fgame&amp;step=0"/u
+    /href="\/playtesting\/sessions\/episode-001\?view=sessions&amp;workspaceId=fixture%2Fgame"/u
   );
   assert.match(markup, /No persisted session\./);
   assert.match(markup, /data-execution-state="infrastructure-failed"/);
   assert.match(markup, /data-game-outcome="not-observed"/);
 });
 
-test("every count tile names a field the synthetic fixture actually emits", () => {
-  // The browser suite is the acceptance evidence for this panel, and it runs
-  // against the synthetic Control API fixture. A tile pointed at a field the
-  // fixture never emits would render "not observed" in the very run meant to
-  // prove the tiles work — so the two key sets are compared here, where it
-  // fails fast without a browser.
-  const fixture = readFileSync(
-    new URL("../e2e/playtesting-control-api-fixture.ts", import.meta.url),
-    "utf8"
+test("assignment count details use the Runtime result only when it is present", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(PlaytestingActiveRunsPanel, {
+      scope: WORKSPACE_SCOPE,
+      runs: [run("batch-no-result", "running")],
+      freshness: "live",
+      lastFailure: null,
+      watching: true,
+      onRefresh: () => {},
+      focusedBatchId: "batch-no-result",
+      onFocusBatch: () => {},
+      onCancel: null,
+      busyBatchId: null
+    })
   );
-  const panel = readFileSync(
-    new URL(
-      "../src/features/playtesting/PlaytestingActiveRunsPanel.ts",
-      import.meta.url
-    ),
-    "utf8"
-  );
-  const emitted = new Set(
-    Array.from(
-      (
-        fixture.match(/const runCounts = \{([\s\S]*?)\n {2}\};/u)?.[1] ?? ""
-      ).matchAll(/^\s*(\w+):/gmu),
-      (match) => match[1]!
-    )
-  );
-  const read = Array.from(
-    panel.matchAll(/countLabel\(counts, "(\w+)"\)/gu),
-    (match) => match[1]!
-  );
-  assert.ok(read.length > 0, "the panel must read at least one count");
-  assert.deepEqual(
-    read.filter((key) => !emitted.has(key)),
-    [],
-    "every tile must read a field the fixture emits"
-  );
+  assert.doesNotMatch(markup, /Assignment counts/u);
+  assert.match(markup, /Runtime accepted 1 assignment/u);
+  assert.match(markup, /Individual results are recorded when execution finishes/u);
+  assert.doesNotMatch(markup, /0 of 1 assignments have a terminal result/u);
 });
 
 /**

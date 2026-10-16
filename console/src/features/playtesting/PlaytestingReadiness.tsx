@@ -174,7 +174,9 @@ export function PlaytestingReadiness({
       }
       if (payload.data.status === "ready") {
         setMessage("Playtesting Data is ready. Refreshing this page.");
-        setStatus("initializing");
+        // The initialization endpoint already confirmed readiness. Refresh the
+        // server-rendered view once; polling again would duplicate that read.
+        router.refresh();
         return;
       }
       setMessage(

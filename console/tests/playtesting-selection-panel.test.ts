@@ -56,7 +56,6 @@ test("multi-session Console action starts the bounded read-only analyst role", (
   const markup = renderToStaticMarkup(
     React.createElement(PlaytestingSelectionPanel, {
       scope,
-      selectableEpisodeIds: ["episode-1"],
       selectedEpisodeIds: ["episode-1"],
       rejectedSelection: false,
       onSelectionChange: () => {}
@@ -65,8 +64,8 @@ test("multi-session Console action starts the bounded read-only analyst role", (
 
   assert.match(markup, /Multi-session analyst review/u);
   assert.match(markup, /Analyze selected sessions/u);
-  assert.match(markup, /read-only playtest-analyst/u);
-  assert.match(markup, /This action does not run gameplay\./u);
+  assert.match(markup, /Optional read-only review/u);
+  assert.match(markup, /This does not run gameplay/u);
   assert.match(markup, /Start analyst review/u);
 });
 
@@ -83,7 +82,6 @@ test("the full first-milestone critique ceiling remains selectable", () => {
   const markup = renderToStaticMarkup(
     React.createElement(PlaytestingSelectionPanel, {
       scope: selectionScope,
-      selectableEpisodeIds: selectedEpisodeIds,
       selectedEpisodeIds: selectionScope.selectedEpisodeIds,
       rejectedSelection: selectionScope.invalidSelection,
       onSelectionChange: () => {}
@@ -109,7 +107,6 @@ test("an oversized shareable selection is explicitly rejected without truncation
   const markup = renderToStaticMarkup(
     React.createElement(PlaytestingSelectionPanel, {
       scope: rejectedScope,
-      selectableEpisodeIds: ["episode-1"],
       selectedEpisodeIds: rejectedScope.selectedEpisodeIds,
       rejectedSelection: rejectedScope.invalidSelection,
       onSelectionChange: () => {}
@@ -177,12 +174,12 @@ test("persisted analyst review and unavailable receipts link to their full sessi
   assert.match(markup, /Open hypothesis review for episode-1/u);
   assert.match(
     markup,
-    /href="\/playtesting\/sessions\/episode-1\?view=sessions&amp;workspaceId=fixture%2Fgame&amp;step=0"/u
+    /href="\/playtesting\/sessions\/episode-1\?view=sessions&amp;workspaceId=fixture%2Fgame"/u
   );
   assert.match(markup, /Open session episode-2/u);
   assert.match(
     markup,
-    /href="\/playtesting\/sessions\/episode-2\?view=sessions&amp;workspaceId=fixture%2Fgame&amp;step=0"/u
+    /href="\/playtesting\/sessions\/episode-2\?view=sessions&amp;workspaceId=fixture%2Fgame"/u
   );
   assert.match(markup, /does not exist in the authorized workspace/u);
 });

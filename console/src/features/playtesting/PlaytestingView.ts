@@ -8,7 +8,6 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import { StatCard } from "../../components/cards/StatCard.ts";
 import { FilterBar } from "../../components/filters/FilterBar.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
@@ -18,7 +17,6 @@ import {
   NESTED_PANEL_CLASS
 } from "../../components/layout/Panel.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
-import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -38,10 +36,12 @@ import {
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
 import { PlaytestComparisonDecisionForm } from "./PlaytestComparisonDecisionForm.ts";
+import { executionStatusBadge, gameOutcomeBadge } from "./playtesting-episode-presentation.ts";
 import {
   PLAYTESTING_FILTER_KEYS,
   PLAYTESTING_PAGE_SIZES,
   playtestingEpisodeHref,
+  playtestingFilterHref,
   type PlaytestingFilterKey,
   playtestingPageHref,
   type PlaytestingScope,
@@ -50,7 +50,7 @@ import {
 } from "./playtesting-url.ts";
 
 const VIEW_TABS = [
-  { id: "overview", label: "Overview" },
+  { id: "overview", label: "Run" },
   { id: "sessions", label: "Sessions" },
   { id: "findings", label: "Findings" },
   { id: "compare", label: "Compare" }
@@ -104,7 +104,11 @@ export interface PlaytestingViewProps {
   readonly scope: PlaytestingScope;
   readonly workspaces: readonly WorkspaceEntry[];
   readonly overview?: PlaytestingOverviewData | undefined;
+  readonly currentBuildSha?: string | null | undefined;
   readonly list?: PlaytestingListData | undefined;
+  readonly runDashboard?: React.ReactNode | undefined;
+  readonly workspacePicker?: React.ReactNode | undefined;
+  readonly sessionsWorkspace?: React.ReactNode | undefined;
 }
 
 function preserveForFilterForm(
@@ -292,126 +296,6 @@ function sectionHeading(id: string, title: string): React.JSX.Element {
   );
 }
 
-export function executionStatusBadge(
-  status: PlaytestEpisode["status"]
-): React.JSX.Element {
-  const mapping = {
-    assigned: ["pending", "Assigned"],
-    started: ["pending", "Started"],
-    completed: ["valid", "Completed"],
-    crashed: ["invalid", "Crashed"],
-    "infrastructure-failed": ["unavailable", "Infrastructure failed"],
-    cancelled: ["unavailable", "Cancelled"],
-    "budget-truncated": ["unavailable", "Budget truncated"]
-  } as const;
-  const [variant, label] = mapping[status];
-  return React.createElement(StatusBadge, { status: variant, label });
-}
-
-export function gameOutcomeBadge(
-  value: PlaytestEpisode["outcome"]
-): React.JSX.Element {
-  const variant =
-    value === "win"
-      ? "valid"
-      : value === "unknown"
-        ? NOT_OBSERVED_STATUS
-        : "unavailable";
-  return React.createElement(StatusBadge, {
-    status: variant,
-    label: value === "unknown" ? "Not observed" : value.toUpperCase(),
-    title: "Game outcome is separate from playtest execution status."
-  });
-}
-
-function episodeColumns(
-  scope: PlaytestingScope
-): readonly ColumnDef<PlaytestEpisode>[] {
-  return [
-    {
-      id: "episode",
-      header: "Episode",
-      weight: 190,
-      align: "tokens",
-      cell: (episode) =>
-        React.createElement(
-          NavigationLink,
-          {
-            href: playtestingEpisodeHref(scope, episode.episodeId, 0),
-            className: "text-accent hover:underline font-mono break-all",
-            dataAttributes: { "data-playtest-episode-link": episode.episodeId }
-          },
-          episode.episodeId
-        )
-    },
-    {
-      id: "scenario",
-      header: "Scenario",
-      weight: 130,
-      cell: (episode) => episode.identity.scenarioId
-    },
-    {
-      id: "policy",
-      header: "Policy / cohort",
-      weight: 160,
-      align: "tokens",
-      cell: (episode) =>
-        `${episode.identity.policyId} · ${episode.policyCohort}`
-    },
-    {
-      id: "execution",
-      header: "Execution",
-      weight: 130,
-      cell: (episode) => executionStatusBadge(episode.status)
-    },
-    {
-      id: "outcome",
-      header: "Game outcome",
-      weight: 120,
-      cell: (episode) => gameOutcomeBadge(episode.outcome)
-    },
-    {
-      id: "steps",
-      header: "Steps",
-      weight: 70,
-      cell: (episode) => String(episode.stepCount)
-    }
-  ];
-}
-
-function episodesTable(
-  rows: readonly PlaytestEpisode[],
-  total: number,
-  scope: PlaytestingScope,
-  nextCursor: string | null
-): React.JSX.Element {
-  const message =
-    total === 0
-      ? "No playtest episodes are recorded for these filters."
-      : "This page has no rows; return to the first page or review the active filters.";
-  return React.createElement(
-    "section",
-    {
-      className: LIST_PANEL_CLASS,
-      "aria-labelledby": "playtesting-episodes-heading"
-    },
-    sectionHeading("playtesting-episodes-heading", "Episodes"),
-    React.createElement<DataTableProps<PlaytestEpisode>>(DataTable, {
-      data: rows,
-      columns: episodeColumns(scope),
-      keyExtractor: (episode) => episode.episodeId,
-      emptyMessage: message
-    }),
-    React.createElement(PageSummary, {
-      total,
-      visible: rows.length,
-      noun: "episodes",
-      nextCursor,
-      scope
-    })
-  );
-}
-
 function PageSummary({
   total,
   visible,
@@ -452,82 +336,68 @@ function PageSummary({
 
 function overview(
   data: PlaytestingOverviewData,
-  scope: PlaytestingScope
+  scope: PlaytestingScope,
+  currentBuildSha: string | null
 ): React.JSX.Element {
   const latest = data.batches[0];
+  const recentEpisodes = data.latestEpisodes.slice(0, 4);
   const coverage = latest?.coverageManifest ?? null;
-  const coveragePanel =
+  const coverageDetails =
     coverage === null
-      ? React.createElement(EmptyState, {
-          variant: "inline",
-          message: "Coverage manifest not recorded for this batch."
-        })
+      ? null
       : React.createElement(
-          "section",
+          "details",
           {
-            className: NESTED_PANEL_CLASS,
-            "aria-labelledby": "latest-coverage-heading",
+            className: `${LIST_PANEL_CLASS} group`,
             "data-coverage-manifest": coverage.contentHash
           },
-          sectionHeading("latest-coverage-heading", "Metric coverage"),
           React.createElement(
-            "p",
-            { className: MUTED_META_CLASS },
-            `${coverage.observedEpisodes} of ${coverage.assignedEpisodes} assignments have persisted episodes · ${coverage.cells.filter((cell) => cell.status === "covered").length} cells meet their declared thresholds · mode ${coverage.mode}`
+            "summary",
+            { className: "cursor-pointer text-sm font-semibold" },
+            "Measurement coverage",
+            React.createElement(
+              "span",
+              { className: `ml-2 ${MUTED_META_CLASS}` },
+              `${String(coverage.observedEpisodes)} of ${String(coverage.assignedEpisodes)} assignments recorded · ${String(coverage.cells.filter((cell) => cell.status === "covered").length)} metric cells meet their declared thresholds`
+            )
           ),
           React.createElement(
-            "ul",
-            {
-              className: "mt-3 grid gap-2",
-              "aria-label": "Metric coverage cells"
-            },
+            "div",
+            { className: "mt-4 flex flex-col gap-3" },
             ...coverage.cells.map((cell) => {
               const badge: { status: StatusBadgeVariant; label: string } =
                 cell.status === "covered"
-                  ? { status: "valid" as const, label: "Covered" }
+                  ? { status: "valid", label: "Covered" }
                   : cell.status === "not-assigned"
                     ? { status: NOT_OBSERVED_STATUS, label: "Not assigned" }
                     : cell.status === "unsupported" ||
                         cell.status === "unsupported-modality"
-                      ? { status: "unavailable" as const, label: "Unsupported" }
+                      ? { status: "unavailable", label: "Unsupported" }
                       : cell.status === "partial"
-                        ? { status: "unavailable" as const, label: "Partial" }
-                        : {
-                            status: "unavailable" as const,
-                            label: "Insufficient"
-                          };
+                        ? { status: "unavailable", label: "Partial" }
+                        : { status: "unavailable", label: "Insufficient" };
               return React.createElement(
-                "li",
+                "div",
                 {
                   key: `${cell.coverageMetricId}:${cell.phaseId ?? "whole-episode"}:${cell.scenarioFamily}:${cell.cohort}:${cell.policy}:${cell.modality}`,
-                  className:
-                    "flex flex-wrap items-start justify-between gap-3 rounded-md border border-border p-3",
+                  className: "flex flex-wrap items-start justify-between gap-3 rounded-md border border-border p-3",
                   "data-coverage-cell": cell.coverageMetricId
                 },
                 React.createElement(
                   "div",
-                  { className: "min-w-48 flex-1" },
+                  { className: "min-w-0 flex-1" },
                   React.createElement(
                     "p",
-                    { className: "font-medium text-fg" },
+                    { className: "font-medium" },
                     `${cell.coverageMetricId} · ${cell.phaseId ?? "whole episode"}`
                   ),
                   React.createElement(
                     "p",
                     { className: MUTED_META_CLASS },
-                    `${cell.scenarioFamily} · ${cell.cohort} · ${cell.policy} · ${cell.modality} · ${cell.observedOpportunities}/${cell.requiredOpportunities} opportunities · ${cell.observedIndependentUnits === null ? "not deduplicated" : String(cell.observedIndependentUnits)}/${cell.requiredIndependentUnits} independent ${cell.analysisUnit}`
+                    `${cell.scenarioFamily} · ${cell.cohort} · ${cell.policy} · ${cell.modality} · ${String(cell.observedOpportunities)}/${String(cell.requiredOpportunities)} opportunities · ${cell.observedIndependentUnits === null ? "independent-unit count not observed" : `${String(cell.observedIndependentUnits)}/${String(cell.requiredIndependentUnits)} independent ${cell.analysisUnit}`}`
                   ),
                   cell.unsupportedReason === null
-                    ? cell.missingAssignments +
-                        cell.unresolvedCohortAssignments +
-                        cell.missingMetricResults >
-                      0
-                      ? React.createElement(
-                          "p",
-                          { className: MUTED_META_CLASS },
-                          `Missing assignments ${cell.missingAssignments} · unresolved cohort ${cell.unresolvedCohortAssignments} · missing metric rows ${cell.missingMetricResults}`
-                        )
-                      : null
+                    ? null
                     : React.createElement(
                         "p",
                         { className: MUTED_META_CLASS },
@@ -546,77 +416,168 @@ function overview(
             })
           )
         );
+
   return React.createElement(
     React.Fragment,
     null,
     React.createElement(
-      StatGrid,
-      { columns: 4 },
-      React.createElement(StatCard, {
-        title: "Batches",
-        value: data.batchCount
-      }),
-      React.createElement(StatCard, {
-        title: "Episodes",
-        value: data.episodeCount
-      }),
-      React.createElement(StatCard, {
-        title: "Findings",
-        value: data.findingCount
-      }),
-      React.createElement(StatCard, {
-        title: "Comparisons",
-        value: data.comparisonCount
-      })
-    ),
-    latest
-      ? React.createElement(
-          "section",
+      "section",
+      {
+        className: LIST_PANEL_CLASS,
+        "aria-labelledby": "playtesting-latest-run-heading",
+        "data-testid": "playtesting-latest-run"
+      },
+      React.createElement(
+        "div",
+        { className: "flex flex-wrap items-start justify-between gap-3" },
+        React.createElement(
+          "div",
+          { className: "min-w-0" },
+          React.createElement(
+            "h2",
+            { id: "playtesting-latest-run-heading", className: SECTION_HEADING_CLASS },
+            "Latest result"
+          ),
+          latest
+            ? React.createElement(
+                React.Fragment,
+                null,
+                React.createElement(
+                  "div",
+                  { className: "flex flex-wrap items-center gap-2" },
+                  React.createElement(StatusBadge, {
+                    status:
+                      latest.status === "completed"
+                        ? "valid"
+                        : latest.status === "running" || latest.status === "queued"
+                          ? "pending"
+                          : "unavailable",
+                    label: latest.status
+                  }),
+                  React.createElement(
+                    "span",
+                    { className: "text-sm" },
+                    `${String(latest.counts.completed)} of ${String(latest.counts.assigned)} assignments completed`
+                  )
+                ),
+                React.createElement(
+                  "p",
+                  { className: MUTED_META_CLASS },
+                  `Build ${latest.buildSha.slice(0, 12)} · ${latest.measurementVersion} · ${latest.batchId}`
+                ),
+                currentBuildSha !== null && latest.buildSha !== currentBuildSha
+                  ? React.createElement(
+                      "p",
+                      { className: MUTED_META_CLASS },
+                      "This result is from an earlier commit than the build currently available to run. Its evidence remains tied to the SHA shown here."
+                    )
+                  : null,
+                React.createElement(
+                  "p",
+                  { className: MUTED_META_CLASS },
+                  "Execution records describe whether assignments ran; game outcomes are shown separately on each session."
+                )
+              )
+            : React.createElement(
+                "p",
+                { className: MUTED_BODY_CLASS },
+                "No playtest runs are recorded yet. Start with the recommended bounded assignment above."
+              )
+        ),
+        React.createElement(
+          NavigationLink,
           {
-            className: NESTED_PANEL_CLASS,
-            "aria-labelledby": "latest-batch-heading"
+            href: playtestingViewHref(scope, "sessions"),
+            className: "text-sm font-medium text-accent hover:underline",
+            dataAttributes: { "data-playtesting-browse-sessions": "true" }
           },
-          sectionHeading("latest-batch-heading", "Latest batch"),
-          React.createElement(
-            StatGrid,
-            { columns: 4 },
-            React.createElement(StatCard, {
-              title: "Execution",
-              value: latest.status
-            }),
-            React.createElement(StatCard, {
-              title: "Assigned",
-              value: latest.counts.assigned
-            }),
-            React.createElement(StatCard, {
-              title: "Completed",
-              value: latest.counts.completed
-            }),
-            React.createElement(StatCard, {
-              title: "Infrastructure failures",
-              value: latest.counts.infrastructureFailed
-            })
-          ),
-          React.createElement(
-            "p",
-            { className: MUTED_META_CLASS },
-            `Build ${latest.buildSha} · ${latest.measurementVersion}`
-          ),
-          coveragePanel
+          "Browse all sessions"
         )
-      : React.createElement(EmptyState, {
-          message: scope.workspaceId
-            ? "No playtest batch has been recorded for this workspace."
-            : "Select a workspace to read its playtest history."
-        }),
-    data.latestEpisodes.length > 0
-      ? episodesTable(data.latestEpisodes, data.episodeCount, scope, null)
-      : React.createElement(EmptyState, {
-          message:
-            data.episodeCount === 0
-              ? "No episodes are recorded yet."
-              : "Recent episode rows are not observed in this response."
-        })
+      ),
+      latest
+        ? React.createElement(
+            NavigationLink,
+            {
+              href: playtestingFilterHref(scope, {
+                view: "sessions",
+                batchId: latest.batchId
+              }),
+              className: "mt-3 inline-flex text-sm font-medium text-accent hover:underline",
+              dataAttributes: { "data-playtesting-latest-batch-sessions": latest.batchId }
+            },
+            "Open sessions from this run"
+          )
+        : null
+    ),
+    React.createElement(
+      "section",
+      { className: "flex flex-col gap-3", "aria-labelledby": "playtesting-recent-sessions-heading" },
+      React.createElement(
+        "div",
+        { className: "flex flex-wrap items-center justify-between gap-3" },
+        React.createElement(
+          "h2",
+          { id: "playtesting-recent-sessions-heading", className: SECTION_HEADING_CLASS },
+          "Recent sessions"
+        ),
+        React.createElement(
+          "p",
+          { className: MUTED_META_CLASS },
+          `${String(data.episodeCount)} recorded across ${String(data.batchCount)} batches`
+        )
+      ),
+      recentEpisodes.length === 0
+        ? React.createElement(EmptyState, {
+            variant: "inline",
+            message:
+              data.episodeCount === 0
+                ? "No sessions have been persisted yet. A run can still be active or may finish without a session; check the live run status above."
+                : "Recent sessions were not observed in this response. Browse the Sessions view to inspect the archive."
+          })
+        : React.createElement(
+            "ul",
+            { className: "grid gap-2", "aria-label": "Recent playtest sessions" },
+            ...recentEpisodes.map((episode) =>
+              React.createElement(
+                "li",
+                {
+                  key: episode.episodeId,
+                  className: "flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-3"
+                },
+                React.createElement(
+                  "div",
+                  { className: "min-w-0 flex-1" },
+                  React.createElement(
+                    "div",
+                    { className: "flex flex-wrap items-center gap-2" },
+                    React.createElement(
+                      "span",
+                      { className: "font-medium" },
+                      episode.identity.scenarioId
+                    ),
+                    executionStatusBadge(episode.status),
+                    gameOutcomeBadge(episode.outcome)
+                  ),
+                  React.createElement(
+                    "p",
+                    { className: MUTED_META_CLASS },
+                    `${episode.identity.policyId} · ${episode.policyCohort} · ${String(episode.stepCount)} steps · build ${episode.identity.buildSha.slice(0, 12)}`
+                  )
+                ),
+                React.createElement(
+                  NavigationLink,
+                  {
+                    href: playtestingEpisodeHref(scope, episode.episodeId, null),
+                    className: "text-sm font-medium text-accent hover:underline",
+                    dataAttributes: { "data-playtest-episode-link": episode.episodeId }
+                  },
+                  "Inspect result"
+                )
+              )
+            )
+          )
+    ),
+    coverageDetails
   );
 }
 
@@ -700,7 +661,7 @@ function findingsTable(
             href: playtestingEpisodeHref(
               scope,
               episode.id,
-              episode.step ?? 0,
+              episode.step ?? null,
               finding.findingId
             ),
             className: "text-accent hover:underline",
@@ -724,7 +685,7 @@ function findingsTable(
       keyExtractor: (finding) => `${finding.findingId}:${finding.version}`,
       emptyMessage:
         total === 0
-          ? "No findings match these filters."
+          ? "No findings are recorded for this workspace and filter set. A session win or loss is not itself a finding; findings require a separate evidence-based investigation."
           : "No findings appear on this page; check the active cursor and filters."
     }),
     React.createElement(PageSummary, {
@@ -1161,10 +1122,15 @@ function comparisonsTable(
 
 function activeList(
   data: PlaytestingListData,
-  scope: PlaytestingScope
+  scope: PlaytestingScope,
+  sessionsWorkspace: React.ReactNode
 ): React.JSX.Element {
   if (data.resource === "episodes") {
-    return episodesTable(data.rows, data.total, scope, data.nextCursor);
+    return sessionsWorkspace
+      ? React.createElement(React.Fragment, null, sessionsWorkspace)
+      : React.createElement(EmptyState, {
+          message: "The session workspace could not be loaded."
+        });
   }
   if (data.resource === "findings") {
     return findingsTable(data.rows, data.total, scope, data.nextCursor);
@@ -1179,11 +1145,104 @@ function activeList(
   );
 }
 
+function workspaceControls(
+  scope: PlaytestingScope,
+  workspaces: readonly WorkspaceEntry[],
+  workspacePicker: React.ReactNode,
+  fields: ReturnType<typeof filterFields>
+): React.ReactNode {
+  const selectedWorkspace = workspaces.find(
+    (workspace) => workspace.id === scope.workspaceId
+  );
+  if (scope.view === "overview") {
+    return React.createElement(
+      "div",
+      {
+        className:
+          "flex flex-wrap items-end justify-between gap-3 rounded-lg border border-border bg-surface p-4"
+      },
+      workspacePicker,
+      scope.workspaceId
+        ? React.createElement(
+            "p",
+            { className: MUTED_META_CLASS },
+            `${scope.workspaceId}${selectedWorkspace?.enabled === false ? " · disabled; history is read-only" : ""}`
+          )
+        : React.createElement(
+            "p",
+            { className: MUTED_META_CLASS },
+            "Choose the game workspace whose committed build you want to test."
+          )
+    );
+  }
+  return React.createElement(
+    "details",
+    { className: "rounded-lg border border-border bg-surface p-4" },
+    React.createElement(
+      "summary",
+      { className: "cursor-pointer text-sm font-medium" },
+      "Filters and page size",
+      scope.workspaceId
+        ? React.createElement(
+            "span",
+            { className: `ml-2 ${MUTED_META_CLASS}` },
+            scope.workspaceId
+          )
+        : null
+    ),
+    React.createElement(
+      "div",
+      { className: "mt-4" },
+      React.createElement(FilterBar, {
+        label: "Playtesting filters",
+        action: "/playtesting",
+        preserved: preserveForFilterForm(scope, fields.editable),
+        summary: scope.workspaceId
+          ? `Workspace: ${scope.workspaceId}${selectedWorkspace?.enabled === false ? " · disabled; history is read-only" : ""}`
+          : "Choose a workspace to read playtest data.",
+        children: React.createElement(React.Fragment, null, ...fields.children)
+      })
+    )
+  );
+}
+
+function invalidQueryNotice(scope: PlaytestingScope): React.ReactNode {
+  return scope.invalidQuery
+    ? React.createElement(
+        "p",
+        { className: "text-sm text-warning", role: "status" },
+        "Some URL parameters were duplicated or invalid; unsupported values were not applied."
+      )
+    : null;
+}
+
+function viewContent(
+  scope: PlaytestingScope,
+  overviewData: PlaytestingOverviewData | undefined,
+  list: PlaytestingListData | undefined,
+  sessionsWorkspace: React.ReactNode,
+  currentBuildSha: string | null
+): React.ReactNode {
+  if (scope.view === "overview" && overviewData) {
+    return overview(overviewData, scope, currentBuildSha);
+  }
+  if (list) return activeList(list, scope, sessionsWorkspace);
+  return React.createElement(EmptyState, {
+    message: scope.workspaceId
+      ? "The selected Playtesting view has no loaded result page."
+      : "Choose a workspace to start a run or read its playtest history."
+  });
+}
+
 export function PlaytestingView({
   scope,
   workspaces,
   overview: overviewData,
-  list
+  currentBuildSha = null,
+  list,
+  runDashboard,
+  workspacePicker,
+  sessionsWorkspace
 }: PlaytestingViewProps): React.JSX.Element {
   const fields = filterFields(scope, workspaces);
   const selectedWorkspace = workspaces.find(
@@ -1202,7 +1261,7 @@ export function PlaytestingView({
     React.createElement(
       "p",
       { className: MUTED_BODY_CLASS },
-      "Recorded game sessions and evidence. Execution state, game outcomes, evaluator verdicts, and human-reported experience are separate measurements."
+      "Start a bounded playtest, follow its server-confirmed status, then inspect recorded sessions. Execution, game outcomes, replay integrity, and analyst hypotheses are distinct."
     ),
     React.createElement(TabNav, {
       navLabel: "Playtesting views",
@@ -1211,30 +1270,9 @@ export function PlaytestingView({
       activeTabId: scope.view,
       hrefFor: (view) => playtestingViewHref(scope, view as PlaytestingViewTab)
     }),
-    React.createElement(FilterBar, {
-      label: "Playtesting filters",
-      action: "/playtesting",
-      preserved: preserveForFilterForm(scope, fields.editable),
-      summary: scope.workspaceId
-        ? `Workspace: ${scope.workspaceId}${selectedWorkspace?.enabled === false ? " · disabled; history is read-only" : ""}`
-        : "Choose a workspace to read playtest data.",
-      children: React.createElement(React.Fragment, null, ...fields.children)
-    }),
-    scope.invalidQuery
-      ? React.createElement(
-          "p",
-          { className: "text-sm text-warning", role: "status" },
-          "Some URL parameters were duplicated or invalid; unsupported values were not applied."
-        )
-      : null,
-    scope.view === "overview" && overviewData
-      ? overview(overviewData, scope)
-      : list
-        ? activeList(list, scope)
-        : React.createElement(EmptyState, {
-            message: scope.workspaceId
-              ? "The selected Playtesting view has no loaded result page."
-              : "Select a workspace to read playtest history."
-          })
+    workspaceControls(scope, workspaces, workspacePicker, fields),
+    invalidQueryNotice(scope),
+    scope.workspaceId ? runDashboard : null,
+    viewContent(scope, overviewData, list, sessionsWorkspace, currentBuildSha)
   );
 }

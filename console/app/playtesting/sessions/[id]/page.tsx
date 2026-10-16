@@ -3,6 +3,8 @@ import React from "react";
 
 import { parsePlaytestingScope } from "../../../../src/features/playtesting/playtesting-url.ts";
 import { PlaytestingReadiness } from "../../../../src/features/playtesting/PlaytestingReadiness.tsx";
+import type { PlaytestingRunSetup } from "../../../../src/features/playtesting/PlaytestingRunControls.tsx";
+import { PlaytestingRunDashboard } from "../../../../src/features/playtesting/PlaytestingRunDashboard.tsx";
 import { PlaytestingSessionView } from "../../../../src/features/playtesting/PlaytestingSessionView.ts";
 import {
   controlApiFailureCode,
@@ -16,6 +18,7 @@ import {
 } from "../../../_console.ts";
 import {
   fetchPlaytestingEpisode,
+  fetchPlaytestingRunCapabilities,
   fetchPlaytestingWindow,
   playtestingReadinessFailure
 } from "../../playtesting-server.ts";
@@ -63,9 +66,10 @@ export default async function PlaytestingSessionPage({
     );
   }
 
-  const [workspaces, result] = await Promise.all([
+  const [workspaces, result, capabilities] = await Promise.all([
     fetchWorkspaces(config),
-    fetchPlaytestingEpisode(scope.workspaceId, id, config)
+    fetchPlaytestingEpisode(scope.workspaceId, id, config),
+    fetchPlaytestingRunCapabilities(scope.workspaceId, config)
   ]);
   if (workspaces.kind !== "ok") {
     return React.createElement(
@@ -139,14 +143,31 @@ export default async function PlaytestingSessionPage({
     }
   }
 
+  const runSetup: PlaytestingRunSetup =
+    capabilities.kind === "ok"
+      ? { kind: "available", capabilities: capabilities.data }
+      : {
+          kind: "unavailable",
+          code: controlApiFailureCode(capabilities),
+          message: capabilities.message
+        };
   return React.createElement(
     ConsolePageShell,
     { section },
-    React.createElement(PlaytestingSessionView, {
-      detail,
-      scope,
-      window: window?.kind === "ok" ? window.data : null,
-      ...(windowUnavailable === undefined ? {} : { windowUnavailable })
-    })
+    React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(PlaytestingRunDashboard, {
+        setup: runSetup,
+        scope,
+        showRunControls: false
+      }),
+      React.createElement(PlaytestingSessionView, {
+        detail,
+        scope,
+        window: window?.kind === "ok" ? window.data : null,
+        ...(windowUnavailable === undefined ? {} : { windowUnavailable })
+      })
+    )
   );
 }

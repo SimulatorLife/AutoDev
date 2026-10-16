@@ -73,7 +73,6 @@ async function dispatchAnalystReview(
 
 export interface PlaytestingSelectionPanelProps {
   readonly scope: PlaytestingScope;
-  readonly selectableEpisodeIds: readonly string[];
   readonly selectedEpisodeIds: readonly string[];
   readonly rejectedSelection: boolean;
   readonly onSelectionChange: (episodeIds: readonly string[]) => void;
@@ -81,7 +80,6 @@ export interface PlaytestingSelectionPanelProps {
 
 export function PlaytestingSelectionPanel({
   scope,
-  selectableEpisodeIds,
   selectedEpisodeIds,
   rejectedSelection,
   onSelectionChange
@@ -207,16 +205,6 @@ export function PlaytestingSelectionPanel({
     };
   }, [workspaceId, watchGeneration]);
 
-  const toggle = useCallback(
-    (episodeId: string) => {
-      const next = selectedEpisodeIds.includes(episodeId)
-        ? selectedEpisodeIds.filter((id) => id !== episodeId)
-        : [...selectedEpisodeIds, episodeId];
-      onSelectionChange(next.slice(0, PLAYTESTS_MAX_ANALYSIS_SESSIONS));
-    },
-    [onSelectionChange, selectedEpisodeIds]
-  );
-
   const start = useCallback(async () => {
     if (!workspaceId || selectedEpisodeIds.length === 0) return;
     setPending(true);
@@ -227,11 +215,7 @@ export function PlaytestingSelectionPanel({
         selectedEpisodeIds
       );
       if (outcome.ok) {
-        setResultState({
-          workspaceId,
-          selectionKey,
-          data: outcome.data
-        });
+        setResultState({ workspaceId, selectionKey, data: outcome.data });
         const analysis = outcome.data.analysis;
         if (analysis !== null) {
           const currentRuns =
@@ -298,7 +282,7 @@ export function PlaytestingSelectionPanel({
     React.createElement(
       "p",
       { className: MUTED_BODY_CLASS },
-      `Select up to ${String(PLAYTESTS_MAX_ANALYSIS_SESSIONS)} persisted sessions. The selection is shareable through this page's URL. Runtime dispatches the read-only playtest-analyst over eligible frozen packets, enforces critique budgets, and reports every excluded session. This action does not run gameplay.`
+      `Optional read-only review of up to ${String(PLAYTESTS_MAX_ANALYSIS_SESSIONS)} selected sessions. Runtime checks eligibility, uses frozen evidence packets, enforces the approved critique budget, and reports excluded sessions. This does not run gameplay or turn hypotheses into verified findings.`
     ),
     rejectedSelection
       ? React.createElement(
@@ -311,33 +295,44 @@ export function PlaytestingSelectionPanel({
           `The shared session selection was rejected. Choose between 1 and ${String(PLAYTESTS_MAX_ANALYSIS_SESSIONS)} distinct sessions; nothing was truncated or started.`
         )
       : null,
-    React.createElement(
-      "ul",
-      { className: "flex flex-col gap-1" },
-      ...selectableEpisodeIds.map((episodeId) =>
-        React.createElement(
-          "li",
-          { key: episodeId },
+    selectedEpisodeIds.length > 0
+      ? React.createElement(
+          "div",
+          { className: "flex flex-wrap items-center gap-2" },
           React.createElement(
-            "label",
+            "ul",
             {
-              className: "flex items-center gap-2 text-sm",
-              "data-testid": "playtesting-selection-option",
-              "data-episode-id": episodeId
+              className: "flex min-w-0 flex-1 flex-wrap gap-2",
+              "aria-label": "Sessions selected for analyst review"
             },
-            React.createElement("input", {
-              type: "checkbox",
-              checked: selectedEpisodeIds.includes(episodeId),
-              disabled:
-                !selectedEpisodeIds.includes(episodeId) &&
-                selectedEpisodeIds.length >= PLAYTESTS_MAX_ANALYSIS_SESSIONS,
-              onChange: () => toggle(episodeId)
-            }),
-            React.createElement("span", null, episodeId)
+            ...selectedEpisodeIds.map((episodeId) =>
+              React.createElement(
+                "li",
+                {
+                  key: episodeId,
+                  className: "max-w-full truncate rounded border border-border px-2 py-1 font-mono text-xs",
+                  title: episodeId
+                },
+                episodeId
+              )
+            )
+          ),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              className: FIELD_CONTROL_CLASS,
+              disabled: pending,
+              onClick: () => onSelectionChange([])
+            },
+            "Clear selection"
           )
         )
-      )
-    ),
+      : React.createElement(
+          "p",
+          { className: MUTED_BODY_CLASS },
+          "Choose sessions above to prepare a review."
+        ),
     React.createElement(
       "button",
       {
