@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -15,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parse as parseToml } from "smol-toml";
 
 import {
   buildProviderPrompt,
@@ -302,14 +304,8 @@ test("provider agent disables direct Memory MCP access outside ordinary JIT", as
       );
       const args = calls[0] ?? [];
       assert.ok(
-        args.includes("mcp_servers.autodev_memory.enabled=false"),
-        mode.name
-      );
-      assert.ok(
         args.every(
-          (argument) =>
-            !argument.startsWith("mcp_servers.autodev_memory.command=") &&
-            !argument.startsWith("mcp_servers.autodev_memory.args=")
+          (argument) => !argument.startsWith("mcp_servers.autodev_memory.")
         ),
         mode.name
       );
@@ -547,13 +543,37 @@ test("playtest analyst process excludes every Control API credential", async () 
     assert.equal(childEnvironment?.AUTODEV_MEMORY_READ_GLOBAL, undefined);
     assert.equal(childEnvironment?.OPENLIT_DB_PASSWORD, undefined);
     assert.equal(
-      readFileSync(
-        join(f.root, "analyst-home", ".codex", "openlit-secrets.env"),
-        "utf8"
-      ),
-      "OPENLIT_DB_PASSWORD=database-secret\n"
+      existsSync(join(f.root, "analyst-home", ".codex", "openlit-secrets.env")),
+      false,
+      "the isolated Codex home never receives the OpenLIT database secret"
     );
-    assert.ok(childArgs.includes("mcp_servers.autodev_memory.enabled=false"));
+    const mcpEnvVars = childArgs.find((argument) =>
+      argument.startsWith("mcp_servers.playtest.env_vars=")
+    );
+    assert.ok(mcpEnvVars);
+    const parsedEnvVars = parseToml(mcpEnvVars) as {
+      mcp_servers: { playtest: { env_vars: string[] } };
+    };
+    assert.equal(
+      parsedEnvVars.mcp_servers.playtest.env_vars.includes("CODEX_HOME"),
+      false,
+      "the isolated CODEX_HOME must not pass through to the Playtesting MCP"
+    );
+    const mcpEnv = childArgs.find((argument) =>
+      argument.startsWith("mcp_servers.playtest.env=")
+    );
+    assert.ok(mcpEnv);
+    assert.deepEqual(parseToml(mcpEnv), {
+      mcp_servers: {
+        playtest: { env: { CODEX_HOME: join(f.root, ".codex") } }
+      }
+    });
+    assert.ok(
+      childArgs.every(
+        (argument) => !argument.startsWith("mcp_servers.autodev_memory.")
+      ),
+      "a disabled Memory MCP must not leave a transport-less server table"
+    );
   } finally {
     rmSync(f.root, { recursive: true, force: true });
   }
@@ -709,11 +729,18 @@ test("playtest analysis restricts Codex to packet tools and an isolated executio
     );
     assert.ok(call.args.includes("skills.include_instructions=false"));
     assert.ok(call.args.includes("skills.bundled.enabled=false"));
-    assert.ok(
-      call.args.includes(
-        'skills.config=[{"name":"playtest-analysis","enabled":true},{"name":"orchestration","enabled":false}]'
-      )
+    const skillsOverride = call.args.find((arg) =>
+      arg.startsWith("skills.config=")
     );
+    assert.ok(skillsOverride);
+    assert.deepEqual(parseToml(skillsOverride), {
+      skills: {
+        config: [
+          { name: "playtest-analysis", enabled: true },
+          { name: "orchestration", enabled: false }
+        ]
+      }
+    });
     assert.deepEqual(
       readdirSync(join(isolatedCodexHome, "agents")),
       ["playtest-analyst.toml"],

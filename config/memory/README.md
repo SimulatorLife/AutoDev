@@ -181,7 +181,8 @@ authority. Operator-only global and task-history grants are removed, and model
 tool arguments cannot change the workspace or identity. Incomplete or
 mismatched host scope disables the server rather than guessing.
 
-The provider runner explicitly disables this server for `retrieval-only`,
+The provider runner omits this server entirely (no partial
+`mcp_servers.autodev_memory` table, which Codex strict config rejects) for `retrieval-only`,
 `disabled`, `invalid`, or `unknown` memory modes, whenever
 `AUTODEV_MEMORY_ABLATION=1`, or whenever an experiment ID is configured. This
 keeps direct MCP calls from bypassing controlled router-injection arms. Strict

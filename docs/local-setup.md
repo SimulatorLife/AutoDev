@@ -815,7 +815,10 @@ The dispatched role runs in a private empty directory and isolated Codex home
 (not the game checkout or the user's normal Codex profile), copies only the
 `playtest-analyst` role file, and uses only the `playtest-analysis` skill and
 that current read-only role, keeps the local-router credential, and removes
-unrelated API/MCP credentials.
+unrelated API/MCP credentials. Only its trusted `playtest` MCP server is bound
+to the source `CODEX_HOME`, because the workspace approval, evidence-packet
+artifacts and OpenLIT credential it must read live there; the isolated home
+receives no database secret.
 It never receives a game-run capability or the general Control API token. Configure
 `AUTODEV_CONTROL_API_BASE_URL` in the MCP process as a loopback URL, and set
 `AUTODEV_CONTROL_API_LISTEN_HOST`/`AUTODEV_CONTROL_API_LISTEN_PORT` on Runtime

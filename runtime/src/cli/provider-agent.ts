@@ -49,7 +49,6 @@ const SUPPORTED_ROLES = [
 ] as const;
 const NUMERIC_COLLATOR = new Intl.Collator(undefined, { numeric: true });
 const LINE_BREAK = /\r?\n/u;
-const OPENLIT_DB_PASSWORD_LINE = /^OPENLIT_DB_PASSWORD=(.*)$/u;
 const TOML_BARE_KEY_PATTERN = /^[A-Za-z0-9_-]+$/u;
 export type ProviderAgentRole = (typeof SUPPORTED_ROLES)[number];
 
@@ -117,10 +116,10 @@ function configureMemoryMcp(
     databaseUrl;
 
   if (mode !== "jit" || cohortControlsMcp || !trustedWorkspace || !validScope) {
-    return {
-      args: ["-c", `${MEMORY_MCP_CONFIG_KEY}.enabled=false`],
-      environment
-    };
+    // The server exists only through the enable overrides below. Emitting a
+    // bare `enabled=false` would define a transport-less server table that
+    // Codex strict config rejects, so a disabled run simply omits it.
+    return { args: [], environment };
   }
 
   const taskId = `provider-task-${randomUUID()}`;
@@ -364,35 +363,6 @@ function copyAnalystRole(homes: AnalystCodexHomes): void {
   );
 }
 
-function copyOpenLitDatabaseCredential(
-  environment: NodeJS.ProcessEnv,
-  homes: AnalystCodexHomes
-): void {
-  let databasePassword = environment.OPENLIT_DB_PASSWORD?.trim() ?? "";
-  const secretFile = path.join(homes.sourceCodexHome, "openlit-secrets.env");
-  if (!databasePassword && existsSync(secretFile)) {
-    const fileStat = lstatSync(secretFile);
-    if (!fileStat.isFile() || fileStat.isSymbolicLink()) {
-      throw new Error("The source OpenLIT secret file is not a regular file.");
-    }
-    for (const line of readFileSync(secretFile, "utf8").split(LINE_BREAK)) {
-      const match = OPENLIT_DB_PASSWORD_LINE.exec(line.trim());
-      if (match?.[1]) {
-        databasePassword = match[1].trim();
-        break;
-      }
-    }
-  }
-  if (!databasePassword) return;
-  const isolatedSecretFile = path.join(homes.codexHome, "openlit-secrets.env");
-  writeFileSync(
-    isolatedSecretFile,
-    `OPENLIT_DB_PASSWORD=${databasePassword}\n`,
-    { mode: 0o600 }
-  );
-  chmodSync(isolatedSecretFile, 0o600);
-}
-
 function copyAnalystSkill(
   environment: NodeJS.ProcessEnv,
   homes: AnalystCodexHomes,
@@ -450,7 +420,6 @@ function prepareAnalystCodexHome(
     homes.codexHome,
     trustedRepositoryRoot
   );
-  copyOpenLitDatabaseCredential(environment, homes);
   copyAnalystSkill(environment, homes, trustedRepositoryRoot);
   return {
     ...environment,
@@ -601,6 +570,32 @@ function analystMcpEnvironmentVariables(roleFile: string): string[] {
   return variables;
 }
 
+function analystSkillsConfigOverride(value: TomlValue): string {
+  if (!Array.isArray(value)) {
+    throw new Error("The playtest analyst skills.config must be an array.");
+  }
+  const names = new Set<string>();
+  const entries = value.map((item) => {
+    const skill = tomlRecord(item);
+    const name = skill.name;
+    const enabled = skill.enabled;
+    if (
+      Object.keys(skill).some((key) => key !== "name" && key !== "enabled") ||
+      typeof name !== "string" ||
+      name.trim().length === 0 ||
+      typeof enabled !== "boolean" ||
+      names.has(name)
+    ) {
+      throw new Error(
+        "The playtest analyst skills.config must contain unique name/enabled entries."
+      );
+    }
+    names.add(name);
+    return `{name=${JSON.stringify(name)},enabled=${String(enabled)}}`;
+  });
+  return `skills.config=[${entries.join(",")}]`;
+}
+
 function analystCodexOverrides(
   roleFile: string,
   sourceCodexHome: string,
@@ -653,7 +648,16 @@ function analystCodexOverrides(
     `mcp_servers.playtest.args=${JSON.stringify([mcpEntry])}`,
     'mcp_servers.playtest.default_tools_approval_mode="approve"',
     `mcp_servers.playtest.enabled_tools=${JSON.stringify(enabledTools)}`,
-    `mcp_servers.playtest.env_vars=${JSON.stringify(analystMcpEnvironmentVariables(roleFile))}`
+    // Codex itself runs in the isolated home, but the trusted Playtesting MCP
+    // must read the Runtime's real approval, artifact and OpenLIT stores, which
+    // all root at the source CODEX_HOME. Bind it explicitly instead of letting
+    // the isolated (and possibly symlinked, e.g. macOS /tmp) home pass through.
+    `mcp_servers.playtest.env_vars=${JSON.stringify(
+      analystMcpEnvironmentVariables(roleFile).filter(
+        (name) => name !== "CODEX_HOME"
+      )
+    )}`,
+    `mcp_servers.playtest.env={CODEX_HOME=${JSON.stringify(sourceCodexHome)}}`
   );
   const rolePlugins = tomlRecord(role.plugins);
   if (Object.keys(rolePlugins).length > 0) {
@@ -677,8 +681,8 @@ function analystCodexOverrides(
   if (typeof bundledSkills.enabled === "boolean") {
     args.push(`skills.bundled.enabled=${bundledSkills.enabled}`);
   }
-  if (Array.isArray(roleSkills.config)) {
-    args.push(`skills.config=${JSON.stringify(roleSkills.config)}`);
+  if (roleSkills.config !== undefined) {
+    args.push(analystSkillsConfigOverride(roleSkills.config));
   }
   return args;
 }

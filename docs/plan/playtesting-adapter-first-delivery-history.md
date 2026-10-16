@@ -1,6 +1,6 @@
 # Playtesting adapter-first delivery history (archived)
 
-> **Archived evidence, not current requirements.** These dated audits, checkpoints and validation snapshots were moved verbatim from the [Playtesting implementation plan](playtesting-target-state-implementation.md) on 2026-10-15 when the visual-first target superseded the adapter-first delivery order. Checked boxes certify only that narrower adapter-first work; recommendations here (for example a default **Run** view or a universal 1,000-episode gate) are superseded wherever they differ from the [current P0–P5 plan](playtesting-target-state-implementation.md#ordered-delivery-plan--complete-these-gates-before-declaring-the-new-playtesting-target-done), the [Playtesting target state](../playtesting-target-state.md) or the [Console contract](../autodev-console-target-state.md#playtesting). Do not implement from this file; cite it only as provenance.
+> **Archived evidence, not current requirements.** These dated audits, checkpoints and validation snapshots were moved verbatim from the [Playtesting implementation plan](playtesting-target-state-implementation.md) on 2026-10-15, with later dated adapter-mode evidence appended chronologically, when the visual-first target superseded the adapter-first delivery order. Checked boxes certify only that narrower adapter-first work; recommendations here (for example a default **Run** view or a universal 1,000-episode gate) are superseded wherever they differ from the [current P0–P5 plan](playtesting-target-state-implementation.md#ordered-delivery-plan--complete-these-gates-before-declaring-the-new-playtesting-target-done), the [Playtesting target state](../playtesting-target-state.md) or the [Console contract](../autodev-console-target-state.md#playtesting). Do not implement from this file; cite it only as provenance.
 
 ## Delivery slices
 
@@ -1968,3 +1968,25 @@ Checklist:
 - [ ] After the latest Core packet-selection change is deployed to the active Runtime process, analyze the completed b5450114f session through the UI and verify the persisted review, citations, and analyst result. No model call or analysis is claimed yet.
 - [x] Independent read-only code validation completed against the current diff; actionable findings were addressed: session detail no longer mounts an unavailable run setup, cancellation remains available when capabilities are unknown (known role restrictions are explained), human-visible status labels accompany state assertions, the 1,000-row disclosure is asserted closed before expansion, and readiness reload preserves route state.
 - [ ] A separate browser-tester role could not access its Playwright MCP tools in this session (the configured server is disabled). Root rendered/screenshotted the live page and ran the production browser suite; a role-based visual review remains unavailable unless the MCP is exposed.
+
+### Analyst launch correction (2026-10-16)
+
+- Live Console verification on RacingGame found that analyst dispatch built the
+  `skills.config` Codex override as a JSON string. Codex expects TOML array
+  tables; strict config rejected the run before provider execution and the UI
+  correctly showed zero persisted reviews. Runtime now emits validated TOML
+  inline tables for the role's unique `{ name, enabled }` skill entries.
+- Regression coverage parses the exact generated override as TOML and checks
+  the resulting array/table types. A fresh Runtime/Console browser run is still
+  required to verify a persisted RacingGame review after this correction.
+- The same live check then failed on `invalid transport in
+  mcp_servers.autodev_memory`: the provider runner "disabled" the run-scoped
+  Memory MCP with a bare `enabled=false` override for a server that is only
+  ever defined by its enable path. Disabled runs now omit the server entirely;
+  this affected every non-JIT provider-agent run, not only the analyst.
+- With launch fixed, the analyst ran but saw no `playtest.*` tools: its MCP
+  inherited the isolated `CODEX_HOME` (under macOS's symlinked `/tmp`) and
+  exited with "Workspace approval root must not resolve through a symlink".
+  Even canonicalized, that empty home holds no approval or packet artifacts.
+  Runtime now binds the analyst MCP's `CODEX_HOME` to the source home and no
+  longer copies the OpenLIT secret into the isolated profile.

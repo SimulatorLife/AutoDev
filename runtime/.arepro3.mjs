@@ -1,0 +1,11 @@
+import { runProviderAgent } from "./src/cli/provider-agent.ts";
+import { spawnSync } from "node:child_process";
+import { readFileSync as rf } from "node:fs";
+import { aggregatePlaytestCrossSessionMetrics } from "@simulatorlife/autodev-core";
+const sha="a587644bd04180f3114625a8063d568cee540d847efc712da0f49de41fdf965a";const packet=JSON.parse(rf("/Users/henrykirk/.codex/playtesting/artifacts/SimulatorLife/RacingGame/blobs/"+sha.slice(0,2)+"/"+sha,"utf8"));
+const EP="batch-12cea7a0-d473-488e-9b8d-9d88f4370219.a-0001", AID="22222222-2222-4222-8222-222222222222";
+const AGG=aggregatePlaytestCrossSessionMetrics({workspaceId:"SimulatorLife/RacingGame",analysisId:AID,packets:[{episodeId:EP,batchId:"batch-12cea7a0-d473-488e-9b8d-9d88f4370219",packet}]});
+import { mkdtempSync, mkdirSync } from "node:fs"; import path from "node:path";
+const root=mkdtempSync("/tmp/arepro-"); const home=path.join(root,"home"), ch=path.join(home,".codex"), w=path.join(root,"w"); mkdirSync(ch,{recursive:true}); mkdirSync(w);
+const env={...process.env,HOME:home,CODEX_HOME:ch,AUTODEV_PLAYTEST_ANALYSIS_MODE:"1",AUTODEV_PLAYTEST_ANALYST_HOME:home,AUTODEV_PLAYTEST_ANALYST_CODEX_HOME:ch,AUTODEV_PLAYTEST_ANALYST_SOURCE_HOME:"/Users/henrykirk",AUTODEV_PLAYTEST_ANALYST_SOURCE_CODEX_HOME:"/Users/henrykirk/.codex",AUTODEV_REPO_ROOT:"/Users/henrykirk/AutoDev",AUTODEV_PLAYTEST_REPOSITORY_ROOT:"/Users/henrykirk/AutoDev",AUTODEV_PLAYTEST_WORKSPACE_ID:"SimulatorLife/RacingGame",AUTODEV_PLAYTEST_ROLE:"playtest-analyst",AUTODEV_PLAYTEST_ACTOR_ID:"autodev-local",AUTODEV_PLAYTEST_TASK_ID:"t1",AUTODEV_PLAYTEST_RUN_ID:"r1",AUTODEV_PLAYTEST_ANALYSIS_ID:AID,AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS:JSON.stringify([EP]),AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION:JSON.stringify(AGG),AUTODEV_MEMORY_MODE:"disabled"};
+await runProviderAgent(["--role","playtest-analyst","--cwd",w,"--prompt","Diagnostics: list the names of all tools available to you; do not call any."],env,{ensureRouter:async()=>{},runCodex:(b,args,e)=>{const r=spawnSync(b,args,{env:{...e,RUST_LOG:"warn,codex_rmcp_client=debug,codex_core::mcp_connection_manager=debug"},encoding:"utf8",timeout:120000});const out=(r.stdout+"\n----STDERR----\n"+r.stderr).split("\n").filter(l=>!l.includes("malformed agent role")&&/mcp|playtest|MCP|error|ERROR|WARN/i.test(l));console.log(out.join("\n").slice(0,6000));return r.status??1;}});

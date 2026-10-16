@@ -21,6 +21,10 @@ import {
   resolveRuntimeSourceRoot
 } from "../shared/runtime-source-root.ts";
 
+// TEMP-DIAG
+import { openSync as diagOpenSync } from "node:fs";
+let diagFd: number | null = null;
+function require_diag_fd(): number { diagFd ??= diagOpenSync("/tmp/analyst-diag.jsonl", "a"); return diagFd; } // TEMP-DIAG
 const ANALYST_ROLE = "playtest-analyst" as const;
 const ANALYST_TIMEOUT_MS = 10 * 60 * 1000;
 const TERMINATION_GRACE_MS = 2000;
@@ -167,7 +171,7 @@ export function launchPlaytestAnalystProcess(
       {
         cwd: canonicalWorkspace,
         env: childEnvironment,
-        stdio: "ignore",
+        stdio: ["ignore", require_diag_fd(), require_diag_fd()], // TEMP-DIAG
         windowsHide: true
       }
     );
