@@ -193,7 +193,8 @@ export class EvaluationRepository {
       "`evaluationData.evaluation`, `evaluationData.classification`, `evaluationData.explanation`, `evaluationData.verdict` " +
       "FROM openlit.openlit_evaluation ";
     const query = `${select}ORDER BY created_at DESC LIMIT ${safeLimit} FORMAT JSONEachRow`;
-    const countQuery = `${select}COUNT(*) AS total FORMAT JSONEachRow`;
+    const countQuery =
+      "SELECT COUNT(*) AS total FROM openlit.openlit_evaluation FORMAT JSONEachRow";
 
     try {
       const { endpoint } = resolveOpenLitClickHouseConnection(this.options);

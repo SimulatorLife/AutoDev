@@ -24,7 +24,9 @@ import {
   type DevCommandOptions,
   type DevCommandResult,
   ensureBackends,
+  ensureConsolePortAvailable,
   ensureConsoleSecrets,
+  ensureModelRouter,
   isPortListening,
   readDevControlApiConfig,
   readDevOpenLITUsageConfig,
@@ -200,12 +202,16 @@ test("dev Control API probe accepts the current provider, model-discovery, and P
       schema: CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
       workspaceId: "autodev-dev-probe/not-configured",
       status: "ready"
+    }),
+    Response.json({
+      schema: "autodev-control-evaluations-v1",
+      evaluations: []
     })
   ];
   const fetchImpl: typeof fetch = async (input, init) => {
     requests.push({ url: String(input), headers: new Headers(init?.headers) });
     const response = responses.shift();
-    assert.ok(response, "probe must make only the five expected GET requests");
+    assert.ok(response, "probe must make only the six expected GET requests");
     return response;
   };
 
@@ -214,7 +220,7 @@ test("dev Control API probe accepts the current provider, model-discovery, and P
     fetchImpl
   );
 
-  assert.equal(requests.length, 5);
+  assert.equal(requests.length, 6);
   assert.equal(
     requests[0]?.url,
     `http://127.0.0.1:4101${CONTROL_API_CONTRACT.path}`
@@ -225,6 +231,7 @@ test("dev Control API probe accepts the current provider, model-discovery, and P
     requests[3]?.url ?? "",
     /\/control\/playtesting\/capabilities\?/u
   );
+  assert.equal(requests[5]?.url, "http://127.0.0.1:4101/control/evaluations");
   assert.equal(
     requests[0]?.headers.get("authorization"),
     "Bearer never-log-this"
@@ -854,5 +861,134 @@ test("successful startup waits for ClickHouse and HTTP readiness", async () => {
       (cmd) =>
         cmd.command === "bash" && cmd.args.some((arg) => arg.includes("up.sh"))
     )
+  );
+});
+
+test("ensureModelRouter recognizes already-active router without restarting", async () => {
+  const commands: RecordedCommand[] = [];
+  const loggedMessages: string[] = [];
+  const ready = await ensureModelRouter({
+    repoRoot: "/mock/repo",
+    isPortListening: async (port) => port === 4100 || port === 4101,
+    runCommand: (command, args, options) => {
+      commands.push({ command, args, options });
+      return { status: 0 };
+    },
+    sleep: async () => {},
+    writeLine: (msg) => {
+      loggedMessages.push(msg);
+    },
+    platform: "darwin"
+  });
+
+  assert.equal(ready, true);
+  assert.equal(commands.length, 0, "Must not execute commands if already active");
+  assert.ok(
+    loggedMessages.some((msg) =>
+      msg.includes("AutoDev Model Router is active (ports 4100, 4101)")
+    )
+  );
+});
+
+test("ensureModelRouter materializes runtime and kickstarts launchd service when ports are closed", async () => {
+  const commands: RecordedCommand[] = [];
+  const loggedMessages: string[] = [];
+  let pollCount = 0;
+
+  const ready = await ensureModelRouter({
+    repoRoot: "/mock/repo",
+    isPortListening: async (port) => {
+      if (pollCount >= 2 && (port === 4100 || port === 4101)) {
+        return true;
+      }
+      return false;
+    },
+    runCommand: (command, args, options) => {
+      commands.push({ command, args, options });
+      // When launchctl print is called, return 0 (indicating loaded in launchd)
+      if (command === "launchctl" && args[0] === "print") {
+        return { status: 0 };
+      }
+      return { status: 0 };
+    },
+    sleep: async () => {
+      pollCount += 1;
+    },
+    writeLine: (msg) => {
+      loggedMessages.push(msg);
+    },
+    platform: "darwin"
+  });
+
+  assert.equal(ready, true);
+  assert.ok(commands.length >= 3, "Must materialize, check launchctl, and kickstart");
+  assert.equal(commands[0]?.command, "node");
+  assert.ok(commands[0]?.args.some((arg) => arg.includes("--materialize-only")));
+  assert.equal(commands[1]?.command, "launchctl");
+  assert.equal(commands[1]?.args[0], "print");
+  assert.equal(commands[2]?.command, "launchctl");
+  assert.equal(commands[2]?.args[0], "kickstart");
+  assert.ok(
+    loggedMessages.some((msg) =>
+      msg.includes("AutoDev Model Router is ready (ports 4100, 4101)")
+    )
+  );
+});
+
+test("ensureConsolePortAvailable does nothing when port is free", async () => {
+  const commands: RecordedCommand[] = [];
+  await ensureConsolePortAvailable(3300, {
+    isPortListening: async () => false,
+    runCommand: (command, args, options) => {
+      commands.push({ command, args, options });
+      return { status: 0 };
+    },
+    sleep: async () => {},
+    writeLine: () => {},
+    platform: "darwin",
+    repoRoot: "/mock/repo"
+  });
+
+  assert.equal(commands.length, 0);
+});
+
+test("ensureConsolePortAvailable stops conflicting launchd console service when occupied", async () => {
+  const commands: RecordedCommand[] = [];
+  const loggedMessages: string[] = [];
+  let listening = true;
+
+  await ensureConsolePortAvailable(3300, {
+    isPortListening: async () => listening,
+    runCommand: (command, args, options) => {
+      commands.push({ command, args, options });
+      if (command === "launchctl" && args[0] === "print") {
+        return { status: 0 };
+      }
+      if (command === "launchctl" && args[0] === "bootout") {
+        listening = false;
+        return { status: 0 };
+      }
+      return { status: 0 };
+    },
+    sleep: async () => {},
+    writeLine: (msg) => {
+      loggedMessages.push(msg);
+    },
+    platform: "darwin",
+    repoRoot: "/mock/repo"
+  });
+
+  assert.equal(commands.length, 2);
+  assert.equal(commands[0]?.command, "launchctl");
+  assert.equal(commands[0]?.args[0], "print");
+  assert.equal(commands[1]?.command, "launchctl");
+  assert.equal(commands[1]?.args[0], "bootout");
+  assert.ok(
+    loggedMessages.some((msg) =>
+      msg.includes("Stopping conflicting LaunchAgent com.codex.autodev-console")
+    )
+  );
+  assert.ok(
+    loggedMessages.some((msg) => msg.includes("Port 3300 is now available"))
   );
 });

@@ -67,6 +67,16 @@ const HOOK_EVENTS: ReadonlySet<string> = new Set([
   "preToolUse"
 ]);
 const SOURCE_UPDATE_QUEUES = new Map<string, Promise<void>>();
+const COMMAND_PARSED_CACHE = new Map<string, { content: string; command: RuleSyncCommand }>();
+const SKILL_ENTRY_CACHE = new Map<string, { text: string; entry: SkillEntry }>();
+const COMMAND_HISTORY_CACHE = new Map<string, { timestamp: number; history: RuleSyncCommandHistory }>();
+const COMMAND_HISTORY_CACHE_TTL_MS = 5000;
+
+export function clearRuleSyncCachesForTests(): void {
+  COMMAND_PARSED_CACHE.clear();
+  SKILL_ENTRY_CACHE.clear();
+  COMMAND_HISTORY_CACHE.clear();
+}
 
 async function withSourceUpdateLock<T>(
   sourcePath: string,
@@ -265,6 +275,10 @@ function readSkillEntry(skillsDir: string, entry: Dirent): SkillEntry {
   } catch (error) {
     return unreadable(error);
   }
+  const cachedSkill = SKILL_ENTRY_CACHE.get(skillLocation);
+  if (cachedSkill && cachedSkill.text === text) {
+    return cachedSkill.entry;
+  }
   const frontmatter = text.match(SKILL_FRONTMATTER_PATTERN);
   if (!frontmatter) {
     return {
@@ -288,7 +302,7 @@ function readSkillEntry(skillsDir: string, entry: Dirent): SkillEntry {
   if (problem !== null) {
     return { kind: "invalid", issue: [skillLocation, problem] };
   }
-  return {
+  const skillEntry: SkillEntry = {
     kind: "skill",
     skill: {
       name: entry.name,
@@ -296,6 +310,8 @@ function readSkillEntry(skillsDir: string, entry: Dirent): SkillEntry {
       path: skillLocation
     }
   };
+  SKILL_ENTRY_CACHE.set(skillLocation, { text, entry: skillEntry });
+  return skillEntry;
 }
 
 export interface RuleSyncCommandsState {
@@ -1139,6 +1155,20 @@ function parseRuleSyncCommand(name: string, content: string): RuleSyncCommand {
   };
 }
 
+function parseCachedRuleSyncCommand(
+  entryPath: string,
+  name: string,
+  content: string
+): RuleSyncCommand {
+  const cached = COMMAND_PARSED_CACHE.get(entryPath);
+  if (cached && cached.content === content) {
+    return cached.command;
+  }
+  const parsed = parseRuleSyncCommand(name, content);
+  COMMAND_PARSED_CACHE.set(entryPath, { content, command: parsed });
+  return parsed;
+}
+
 export class RuleSyncRepository {
   readonly repositoryRoot: string;
 
@@ -1205,8 +1235,9 @@ export class RuleSyncRepository {
       }
       const name = entry.name.replace(MD_EXTENSION_PATTERN, "");
       let content: string;
+      const entryPath = path.join(commandsDir, entry.name);
       try {
-        content = readFileSync(path.join(commandsDir, entry.name), "utf8");
+        content = readFileSync(entryPath, "utf8");
       } catch (error) {
         return {
           source: COMMANDS_SOURCE,
@@ -1223,7 +1254,7 @@ export class RuleSyncRepository {
         };
       }
       try {
-        commands.push(parseRuleSyncCommand(name, content));
+        commands.push(parseCachedRuleSyncCommand(entryPath, name, content));
       } catch (error) {
         // The parser already names the command, which is the one string an
         // operator can search for, so its message is carried through rather than
@@ -1248,8 +1279,36 @@ export class RuleSyncRepository {
     return { source: COMMANDS_SOURCE, valid: true, issues: [], commands };
   }
 
+  loadCommand(name: string): RuleSyncCommand | null {
+    if (!COMMAND_NAME_PATTERN.test(name)) return null;
+    const directory = resolveCanonicalRuleSyncDirectory(
+      this.repositoryRoot,
+      "commands"
+    );
+    if (directory.valid !== true || directory.path === null) {
+      return null;
+    }
+    const commandsDir = directory.path;
+    const entryPath = path.join(commandsDir, `${name}.md`);
+    try {
+      const stat = lstatSync(entryPath);
+      if (stat.isSymbolicLink() || !stat.isFile()) return null;
+      const content = readFileSync(entryPath, "utf8");
+      return parseCachedRuleSyncCommand(entryPath, name, content);
+    } catch {
+      return null;
+    }
+  }
+
   loadCommandHistory(name: string): RuleSyncCommandHistory | null {
     if (!COMMAND_NAME_PATTERN.test(name)) return null;
+    const cacheKey = `${this.repositoryRoot}:${name}`;
+    const cached = COMMAND_HISTORY_CACHE.get(cacheKey);
+    const now = Date.now();
+    if (cached && now - cached.timestamp < COMMAND_HISTORY_CACHE_TTL_MS) {
+      return cached.history;
+    }
+
     const state = this.loadCommands();
     if (
       state.valid !== true ||
@@ -1284,7 +1343,11 @@ export class RuleSyncRepository {
         8192
       );
     } catch {
-      return commandHistoryFallback(git);
+      const fallback = commandHistoryFallback(git);
+      if (fallback.status === "available") {
+        COMMAND_HISTORY_CACHE.set(cacheKey, { timestamp: now, history: fallback });
+      }
+      return fallback;
     }
 
     try {
@@ -1305,11 +1368,13 @@ export class RuleSyncRepository {
           }
           return { versionHash, updatedAt };
         });
-      return {
+      const result: RuleSyncCommandHistory = {
         status: "available",
         versions: entries.slice(0, COMMAND_HISTORY_LIMIT),
         hasMore: entries.length > COMMAND_HISTORY_LIMIT
       };
+      COMMAND_HISTORY_CACHE.set(cacheKey, { timestamp: now, history: result });
+      return result;
     } catch {
       return UNAVAILABLE_COMMAND_HISTORY;
     }
@@ -1496,7 +1561,13 @@ export class RuleSyncRepository {
           `Canonical command "${name}" changed during the update.`
         );
       }
-      return parseRuleSyncCommand(name, persistedContent);
+      const updatedCommand = parseRuleSyncCommand(name, persistedContent);
+      COMMAND_PARSED_CACHE.set(commandPath, {
+        content: persistedContent,
+        command: updatedCommand
+      });
+      COMMAND_HISTORY_CACHE.delete(`${this.repositoryRoot}:${name}`);
+      return updatedCommand;
     });
   }
 
@@ -1677,6 +1748,7 @@ export class RuleSyncRepository {
         "Skill destination escaped the repository root."
       );
     }
+    SKILL_ENTRY_CACHE.delete(canonicalPath);
     return {
       name,
       path: `.rulesync/skills/${name}/SKILL.md`,
@@ -1829,6 +1901,7 @@ export class RuleSyncRepository {
           `Canonical skill "${name}" changed during the update.`
         );
       }
+      SKILL_ENTRY_CACHE.delete(skillPath);
       return {
         name,
         path: `${SKILLS_SOURCE}/${name}/SKILL.md`,

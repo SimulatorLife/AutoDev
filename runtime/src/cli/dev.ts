@@ -417,20 +417,221 @@ export async function ensureBackends(
   return { telemetryActive: true, routerActive };
 }
 
+export interface DevRouterDependencies {
+  readonly repoRoot: string;
+  readonly isPortListening: (port: number) => Promise<boolean>;
+  readonly runCommand: (
+    command: string,
+    args: readonly string[],
+    options: DevCommandOptions
+  ) => DevCommandResult;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly writeLine: (msg: string) => void;
+  readonly platform: NodeJS.Platform;
+}
+
+export async function ensureModelRouter(
+  overrides: Partial<DevRouterDependencies> = {}
+): Promise<boolean> {
+  const deps: DevRouterDependencies = {
+    repoRoot,
+    isPortListening: (port) => isPortListening(port),
+    runCommand: runDevCommand,
+    sleep,
+    writeLine,
+    platform: process.platform,
+    ...overrides
+  };
+
+  const isListening =
+    (await deps.isPortListening(4100)) && (await deps.isPortListening(4101));
+  if (isListening) {
+    deps.writeLine("[dev] ✔ AutoDev Model Router is active (ports 4100, 4101).");
+    return true;
+  }
+
+  deps.writeLine(
+    "[dev] AutoDev Model Router is not listening; preparing runtime integration..."
+  );
+
+  const materializeScript = path.join(
+    deps.repoRoot,
+    "runtime",
+    "src",
+    "cli",
+    "install.ts"
+  );
+  deps.runCommand("node", [materializeScript, "--materialize-only"], {
+    cwd: deps.repoRoot,
+    stdio: "inherit"
+  });
+
+  if (deps.platform === "darwin") {
+    const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+    const printResult = deps.runCommand(
+      "launchctl",
+      ["print", `gui/${uid}/com.codex.model-router`],
+      { cwd: deps.repoRoot, stdio: "ignore" }
+    );
+    if (printResult.status === 0) {
+      deps.writeLine(
+        "[dev] Restarting com.codex.model-router via launchctl kickstart..."
+      );
+      deps.runCommand(
+        "launchctl",
+        ["kickstart", "-k", `gui/${uid}/com.codex.model-router`],
+        { cwd: deps.repoRoot, stdio: "ignore" }
+      );
+    } else {
+      deps.writeLine(
+        "[dev] Starting AutoDev Model Router via router-ensure..."
+      );
+      const ensureScript = path.join(
+        deps.repoRoot,
+        "runtime",
+        "src",
+        "platform",
+        "router-ensure.ts"
+      );
+      deps.runCommand("node", [ensureScript], {
+        cwd: deps.repoRoot,
+        stdio: "inherit"
+      });
+    }
+  } else {
+    deps.writeLine("[dev] Starting AutoDev Model Router via router-ensure...");
+    const ensureScript = path.join(
+      deps.repoRoot,
+      "runtime",
+      "src",
+      "platform",
+      "router-ensure.ts"
+    );
+    deps.runCommand("node", [ensureScript], {
+      cwd: deps.repoRoot,
+      stdio: "inherit"
+    });
+  }
+
+  const ready = await waitForProbe(
+    {
+      probe: async () => {
+        const [p4100, p4101] = await Promise.all([
+          deps.isPortListening(4100),
+          deps.isPortListening(4101)
+        ]);
+        return p4100 && p4101;
+      },
+      sleep: deps.sleep
+    },
+    15_000
+  );
+  if (ready) {
+    deps.writeLine(
+      "[dev] ✔ AutoDev Model Router is ready (ports 4100, 4101)."
+    );
+    return true;
+  }
+
+  deps.writeLine(
+    "[dev] ⚠️ AutoDev Model Router did not answer on ports 4100/4101 within 15 seconds."
+  );
+  return false;
+}
+
+export interface DevConsolePortDependencies {
+  readonly isPortListening: (port: number) => Promise<boolean>;
+  readonly runCommand: (
+    command: string,
+    args: readonly string[],
+    options: DevCommandOptions
+  ) => DevCommandResult;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly writeLine: (msg: string) => void;
+  readonly platform: NodeJS.Platform;
+  readonly repoRoot: string;
+}
+
+export async function ensureConsolePortAvailable(
+  port = 3300,
+  overrides: Partial<DevConsolePortDependencies> = {}
+): Promise<void> {
+  const deps: DevConsolePortDependencies = {
+    isPortListening: (p) => isPortListening(p),
+    runCommand: runDevCommand,
+    sleep,
+    writeLine,
+    platform: process.platform,
+    repoRoot,
+    ...overrides
+  };
+
+  const listening = await deps.isPortListening(port);
+  if (!listening) return;
+
+  if (deps.platform === "darwin") {
+    const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+    const printResult = deps.runCommand(
+      "launchctl",
+      ["print", `gui/${uid}/com.codex.autodev-console`],
+      { cwd: deps.repoRoot, stdio: "ignore" }
+    );
+    if (printResult.status === 0) {
+      deps.writeLine(
+        `[dev] Stopping conflicting LaunchAgent com.codex.autodev-console on port ${port}...`
+      );
+      deps.runCommand(
+        "launchctl",
+        ["bootout", `gui/${uid}/com.codex.autodev-console`],
+        { cwd: deps.repoRoot, stdio: "ignore" }
+      );
+      const cleared = await waitForProbe(
+        {
+          probe: async () => {
+            const isListening = await deps.isPortListening(port);
+            return !isListening;
+          },
+          sleep: deps.sleep
+        },
+        3000
+      );
+      if (cleared) {
+        deps.writeLine(`[dev] ✔ Port ${port} is now available.`);
+        return;
+      }
+    }
+  }
+
+  if (await deps.isPortListening(port)) {
+    deps.writeLine(
+      `[dev] ⚠️ Port ${port} is currently in use. If starting the dev server fails, stop the conflicting process or set AUTODEV_CONSOLE_PORT.`
+    );
+  }
+}
+
+function setProcessExitCode(code: number): void {
+  process.exitCode = code;
+}
+
 export async function startDev(): Promise<void> {
+  const consolePort = Number(process.env.AUTODEV_CONSOLE_PORT || "3300");
   try {
     ensureConsoleSecrets();
-    await verifyControlApiCompatibility(readDevControlApiConfig());
-    writeLine("[dev] ✔ AutoDev Control API matches the Console contracts.");
     await ensureBackends();
+    await ensureModelRouter();
+    await verifyControlApiCompatibility(readDevControlApiConfig(), undefined, {
+      timeoutMs: 15_000,
+      retryDelayMs: 250
+    });
+    writeLine("[dev] ✔ AutoDev Control API matches the Console contracts.");
+    await ensureConsolePortAvailable(consolePort);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     writeErrorLine(`[dev] Startup failed: ${message}`);
-    process.exitCode = 1;
+    setProcessExitCode(1);
     return;
   }
 
-  const consolePort = process.env.AUTODEV_CONSOLE_PORT || "3300";
   writeLine(
     `[dev] 🚀 Starting AutoDev Console dev server on http://localhost:${consolePort}...\n`
   );
@@ -439,13 +640,20 @@ export async function startDev(): Promise<void> {
   const extraArgs = process.argv.slice(2);
   const child = spawn(
     pnpmBin,
-    ["--filter", "@simulatorlife/autodev-console", "dev:next", ...extraArgs],
+    [
+      "--filter",
+      "@simulatorlife/autodev-console",
+      "dev:next",
+      "-H",
+      "127.0.0.1",
+      ...extraArgs
+    ],
     {
       cwd: repoRoot,
       stdio: "inherit",
       env: {
         ...process.env,
-        AUTODEV_CONSOLE_PORT: consolePort
+        AUTODEV_CONSOLE_PORT: String(consolePort)
       }
     }
   );

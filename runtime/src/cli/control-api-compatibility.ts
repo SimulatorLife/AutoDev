@@ -429,6 +429,36 @@ async function verifyControlApiCompatibilityOnce(
   await verifyProviderModelDiscovery(request, providerIds);
 
   await verifyPlaytestingRoutes(request);
+
+  await verifyEvaluationsRoute(request);
+}
+
+async function verifyEvaluationsRoute(request: ControlApiProbe): Promise<void> {
+  let evaluations: Awaited<ReturnType<typeof request>>;
+  try {
+    evaluations = await request("/control/evaluations");
+  } catch {
+    throw unavailableError("the Evaluations endpoint did not respond");
+  }
+  if (
+    evaluations.response.status === 401 ||
+    evaluations.response.status === 403
+  ) {
+    throw authorizationError();
+  }
+  if (evaluations.response.status >= 500) {
+    throw unavailableError(
+      `the Evaluations endpoint returned HTTP ${evaluations.response.status}`
+    );
+  }
+  if (
+    !evaluations.response.ok ||
+    !isRecord(evaluations.body) ||
+    evaluations.body.schema !== "autodev-control-evaluations-v1" ||
+    !Array.isArray(evaluations.body.evaluations)
+  ) {
+    throw startupError("the current Evaluations v1 response contract is missing");
+  }
 }
 
 async function verifyWithDeadline(

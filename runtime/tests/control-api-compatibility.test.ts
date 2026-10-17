@@ -46,6 +46,14 @@ function controlApiFixture(
       },
       { status: 404 }
     ),
+    "/control/evaluations": Response.json({
+      schema: "autodev-control-evaluations-v1",
+      source: "openlit_evaluation",
+      readOnly: true,
+      totalEvaluations: 0,
+      truncated: false,
+      evaluations: []
+    }),
     ...overrides
   };
   const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -68,7 +76,8 @@ test("Console compatibility requires and probes the typed Playtesting readiness 
     "/control/providers",
     "/control/provider-models",
     "/control/playtesting/capabilities",
-    "/control/playtesting/readiness"
+    "/control/playtesting/readiness",
+    "/control/evaluations"
   ]);
 });
 
@@ -117,8 +126,27 @@ test("startup wait retries transient Control API connection refusal until the ro
     "/control/providers",
     "/control/provider-models",
     "/control/playtesting/capabilities",
-    "/control/playtesting/readiness"
+    "/control/playtesting/readiness",
+    "/control/evaluations"
   ]);
+});
+
+test("an invalid or missing evaluations route refuses Console startup", async () => {
+  const fixture = controlApiFixture({
+    "/control/evaluations": Response.json(
+      {
+        error: {
+          code: "autodev_control_evaluations_unavailable",
+          message: "Evaluation history is unavailable from the telemetry store."
+        }
+      },
+      { status: 503 }
+    )
+  });
+  await assert.rejects(
+    verifyControlApiCompatibility(config, fixture.fetch),
+    /Evaluations endpoint returned HTTP 503/u
+  );
 });
 
 test("startup wait does not retry authorization or contract mismatch errors", async () => {

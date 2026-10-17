@@ -100,6 +100,9 @@ import {
   scorePlaytestDimensionAnchor,
   selectPlaytestBatchReviews,
   triagePlaytestFindings,
+  type PlaytestAssignmentManifestDraft,
+  type PlaytestJsonValue,
+  PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
   type PlaytestVisualAssignmentManifest,
   type PlaytestVisualBatch,
   type PlaytestVisualBatchAssignment,
@@ -1971,8 +1974,10 @@ async function recoverPersistedRunStatus(
         if (!episode) {
           return {
             assignmentId: assignment.assignmentId,
-            state: "failed",
+            state: "infrastructure-failed",
             episodeId: null,
+            started: false,
+            eligible: false,
             gameOutcome: null
           };
         }
@@ -1983,8 +1988,10 @@ async function recoverPersistedRunStatus(
               ? "completed"
               : episode.status === "crashed"
                 ? "crashed"
-                : "failed",
+                : "infrastructure-failed",
           episodeId: episode.episodeId,
+          started: true,
+          eligible: true,
           gameOutcome: episode.outcome
         };
       });
@@ -4036,10 +4043,7 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
     provenance: {
       workspaceId: input.workspaceId,
       buildSha: null,
-      generatedBy: "runtime-visual-runner",
-      sourceEnvironmentHash: createHash("sha256")
-        .update(input.target.entryUrl)
-        .digest("hex"),
+      generatedAt: input.createdAt,
       measurementVersion: PLAYTESTS_MEASUREMENT_VERSION
     },
     evaluationIds: [],
@@ -4102,6 +4106,8 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
           assignmentId: assignment.assignmentId,
           state: "cancelled",
           episodeId: null,
+          started: false,
+          eligible: false,
           gameOutcome: null
         });
         continue;
@@ -4180,7 +4186,7 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
                 warnings: obsResult.observation.visibleWarnings,
                 phase: obsResult.observation.phaseEvidence,
                 progress: obsResult.observation.progressEvidence
-              },
+              } as unknown as PlaytestJsonValue,
               legalActionIds: obsResult.observation.controls.map(
                 (c) => c.controlId
               ),
@@ -4226,7 +4232,7 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
               warnings: obsResult.observation.visibleWarnings,
               phase: obsResult.observation.phaseEvidence,
               progress: obsResult.observation.progressEvidence
-            },
+            } as unknown as PlaytestJsonValue,
             legalActionIds: obsResult.observation.controls.map(
               (c) => c.controlId
             ),
@@ -4328,8 +4334,8 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
           strategy: "smart-direct-visual",
           status: "completed",
           termination: {
-            kind: "completed",
-            reason: "objective-achieved"
+            reason: "game-terminal",
+            step: traceSteps.length
           },
           outcome: "unknown",
           outcomeMetrics: {},
@@ -4344,7 +4350,7 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
             reviewed: 0,
             eligible: 1
           },
-          replayStatus: "not-replayed",
+          replayStatus: "unavailable",
           trace: { id: traceArtifact.artifactId, kind: "episode" },
           frames: capturedFrames.map((f, i) => ({
             id: f.artifactId,
@@ -4372,14 +4378,18 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
           assignmentId: assignment.assignmentId,
           state: "completed",
           episodeId: episode.episodeId,
+          started: true,
+          eligible: true,
           gameOutcome: null
         });
       } catch (err) {
         if (driver) await driver.close().catch(() => {});
         activeRun.outcomes.set(assignment.assignmentId, {
           assignmentId: assignment.assignmentId,
-          state: "failed",
+          state: "infrastructure-failed",
           episodeId: null,
+          started: true,
+          eligible: false,
           gameOutcome: null
         });
       }

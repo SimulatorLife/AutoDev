@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { type IncomingMessage, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -188,6 +188,74 @@ interface ModelCatalogReasoningInfo {
   readonly supportedLevels: readonly string[];
 }
 
+interface CachedModelCatalog {
+  readonly mtimeMs: number;
+  readonly reasoningLevels: Map<string, ModelCatalogReasoningInfo>;
+  readonly displayNames: Map<string, string>;
+}
+const MODEL_CATALOG_CACHE = new Map<string, CachedModelCatalog>();
+
+function loadModelCatalogData(catalogPath: string): CachedModelCatalog {
+  const stat = statSync(catalogPath);
+  const cached = MODEL_CATALOG_CACHE.get(catalogPath);
+  if (cached && cached.mtimeMs === stat.mtimeMs) {
+    return cached;
+  }
+  const levels = new Map<string, ModelCatalogReasoningInfo>();
+  const names = new Map<string, string>();
+  try {
+    const parsed = JSON.parse(readFileSync(catalogPath, "utf8")) as {
+      models?: unknown;
+    };
+    if (Array.isArray(parsed.models)) {
+      for (const entry of parsed.models as unknown[]) {
+        if (
+          entry &&
+          typeof entry === "object" &&
+          typeof (entry as { slug?: unknown }).slug === "string"
+        ) {
+          const slug = (entry as { slug: string }).slug;
+          const defaultLevel =
+            typeof (entry as { default_reasoning_level?: unknown })
+              .default_reasoning_level === "string"
+              ? (entry as { default_reasoning_level: string })
+                  .default_reasoning_level
+              : null;
+          const supportedLevels: string[] = [];
+          const rawSupported = (entry as { supported_reasoning_levels?: unknown })
+            .supported_reasoning_levels;
+          if (Array.isArray(rawSupported)) {
+            for (const item of rawSupported) {
+              if (
+                item &&
+                typeof item === "object" &&
+                typeof (item as { effort?: unknown }).effort === "string"
+              ) {
+                supportedLevels.push((item as { effort: string }).effort);
+              }
+            }
+          }
+          levels.set(slug, { defaultLevel, supportedLevels });
+          if (
+            typeof (entry as { display_name?: unknown }).display_name === "string"
+          ) {
+            names.set(slug, (entry as { display_name: string }).display_name);
+          }
+        }
+      }
+    }
+  } catch {
+    // An unreadable catalog leaves reasoning levels and display names unobserved.
+  }
+  const result: CachedModelCatalog = {
+    mtimeMs: stat.mtimeMs,
+    reasoningLevels: levels,
+    displayNames: names
+  };
+  MODEL_CATALOG_CACHE.set(catalogPath, result);
+  return result;
+}
+
 function modelCatalogReasoningLevels(
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Map<string, ModelCatalogReasoningInfo> {
@@ -197,47 +265,12 @@ function modelCatalogReasoningLevels(
     "catalogs",
     "codex-model-catalog.json"
   );
-  const levels = new Map<string, ModelCatalogReasoningInfo>();
-  if (!existsSync(catalogPath)) return levels;
+  if (!existsSync(catalogPath)) return new Map();
   try {
-    const parsed = JSON.parse(readFileSync(catalogPath, "utf8")) as {
-      models?: unknown;
-    };
-    if (!Array.isArray(parsed.models)) return levels;
-    for (const entry of parsed.models as unknown[]) {
-      if (
-        entry &&
-        typeof entry === "object" &&
-        typeof (entry as { slug?: unknown }).slug === "string"
-      ) {
-        const slug = (entry as { slug: string }).slug;
-        const defaultLevel =
-          typeof (entry as { default_reasoning_level?: unknown })
-            .default_reasoning_level === "string"
-            ? (entry as { default_reasoning_level: string })
-                .default_reasoning_level
-            : null;
-        const supportedLevels: string[] = [];
-        const rawSupported = (entry as { supported_reasoning_levels?: unknown })
-          .supported_reasoning_levels;
-        if (Array.isArray(rawSupported)) {
-          for (const item of rawSupported) {
-            if (
-              item &&
-              typeof item === "object" &&
-              typeof (item as { effort?: unknown }).effort === "string"
-            ) {
-              supportedLevels.push((item as { effort: string }).effort);
-            }
-          }
-        }
-        levels.set(slug, { defaultLevel, supportedLevels });
-      }
-    }
+    return loadModelCatalogData(catalogPath).reasoningLevels;
   } catch {
-    // An unreadable catalog leaves reasoning levels unobserved.
+    return new Map();
   }
-  return levels;
 }
 
 /**
@@ -1187,10 +1220,22 @@ function workspacesView(repositoryRoot?: string): Record<string, unknown> {
 
 let githubActionsAdapterOverride: GithubActionsAdapter | null = null;
 
+interface CachedGithubSnapshot {
+  readonly timestamp: number;
+  readonly snapshot: GithubActionsRuntimeSnapshot;
+}
+const GITHUB_SNAPSHOT_CACHE = new Map<string, CachedGithubSnapshot>();
+const GITHUB_SNAPSHOT_CACHE_TTL_MS = 15_000;
+
+export function clearGithubSnapshotCacheForTests(): void {
+  GITHUB_SNAPSHOT_CACHE.clear();
+}
+
 export function setGithubActionsAdapterForTests(
   adapter: GithubActionsAdapter | null
 ): void {
   githubActionsAdapterOverride = adapter;
+  clearGithubSnapshotCacheForTests();
 }
 
 export interface GithubWorkflowsViewOptions {
@@ -1450,13 +1495,30 @@ export async function githubWorkflowsView(
     githubActionsAdapterOverride ??
     new GithubActionsAdapter();
 
+  const isTestOverride = Boolean(
+    options.actionsAdapter || githubActionsAdapterOverride
+  );
+  const cacheKey = `${binding.owner}/${binding.repo}:${binding.token ? "auth" : "anon"}`;
+  const now = Date.now();
+  const cached = isTestOverride
+    ? undefined
+    : GITHUB_SNAPSHOT_CACHE.get(cacheKey);
+
   try {
-    const snapshot = await adapter.fetchRuntimeSnapshot(
-      binding.owner,
-      binding.repo,
-      binding.token,
-      { limit: 30 }
-    );
+    let snapshot: GithubActionsRuntimeSnapshot;
+    if (cached && now - cached.timestamp < GITHUB_SNAPSHOT_CACHE_TTL_MS) {
+      snapshot = cached.snapshot;
+    } else {
+      snapshot = await adapter.fetchRuntimeSnapshot(
+        binding.owner,
+        binding.repo,
+        binding.token,
+        { limit: 30 }
+      );
+      if (!isTestOverride) {
+        GITHUB_SNAPSHOT_CACHE.set(cacheKey, { timestamp: now, snapshot });
+      }
+    }
     const projected = projectGithubWorkflows(catalog.workflows, snapshot);
 
     return {
@@ -1783,31 +1845,12 @@ function modelCatalogDisplayNames(repositoryRoot: string): Map<string, string> {
     "catalogs",
     "codex-model-catalog.json"
   );
-  const names = new Map<string, string>();
-  if (!existsSync(catalogPath)) return names;
+  if (!existsSync(catalogPath)) return new Map();
   try {
-    const parsed = JSON.parse(readFileSync(catalogPath, "utf8")) as {
-      models?: unknown;
-    };
-    if (!Array.isArray(parsed.models)) return names;
-    for (const entry of parsed.models as unknown[]) {
-      if (
-        entry &&
-        typeof entry === "object" &&
-        typeof (entry as { slug?: unknown }).slug === "string" &&
-        typeof (entry as { display_name?: unknown }).display_name === "string"
-      ) {
-        const { slug, display_name } = entry as {
-          slug: string;
-          display_name: string;
-        };
-        names.set(slug, display_name);
-      }
-    }
+    return loadModelCatalogData(catalogPath).displayNames;
   } catch {
-    // An unreadable catalog leaves display names unobserved.
+    return new Map();
   }
-  return names;
 }
 
 function modelsView(
@@ -2182,11 +2225,8 @@ function promptDetailView(
   name: string,
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> | null {
-  const commandState = new RuleSyncRepository(repositoryRoot).loadCommands();
-  const command =
-    commandState.valid === true
-      ? commandState.commands.find((entry) => entry.name === name)
-      : undefined;
+  const repo = new RuleSyncRepository(repositoryRoot);
+  const command = repo.loadCommand(name);
   if (command) {
     const reconciliation = promptReconciliationView({
       name,

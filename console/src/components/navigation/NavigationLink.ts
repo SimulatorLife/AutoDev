@@ -37,6 +37,33 @@ function toHrefString(href: React.ComponentProps<typeof Link>["href"]): string {
   return query ? `${pathname}?${query}` : pathname;
 }
 
+const RECENT_PREFETCHES = new Map<string, number>();
+const PREFETCH_COOLDOWN_MS = 15_000;
+
+export function shouldPrefetch(
+  destination: string,
+  now: number = Date.now()
+): boolean {
+  if (!destination) return false;
+  const last = RECENT_PREFETCHES.get(destination);
+  if (last !== undefined && now - last < PREFETCH_COOLDOWN_MS) {
+    return false;
+  }
+  RECENT_PREFETCHES.set(destination, now);
+  if (RECENT_PREFETCHES.size > 200) {
+    for (const [key, timestamp] of RECENT_PREFETCHES) {
+      if (now - timestamp >= PREFETCH_COOLDOWN_MS) {
+        RECENT_PREFETCHES.delete(key);
+      }
+    }
+  }
+  return true;
+}
+
+export function clearPrefetchCacheForTests(): void {
+  RECENT_PREFETCHES.clear();
+}
+
 /**
  * Keep dynamic prefetch user-intent-driven instead of starting every visible
  * resource request together when the dashboard opens. Keeping prefetch: false on
@@ -58,7 +85,7 @@ export function NavigationLink({
   const prefetch = React.useCallback((): void => {
     if (!router) return;
     const destination = toHrefString(href);
-    if (destination) {
+    if (destination && shouldPrefetch(destination)) {
       router.prefetch(destination);
     }
   }, [href, router]);

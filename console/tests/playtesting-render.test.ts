@@ -1047,9 +1047,11 @@ test("visualGameSpectatorStage renders live game screen, AI intentions, scrubber
     schema: "autodev-control-playtesting-window-v1",
     workspaceId: WORKSPACE,
     episodeId: visualEpisode.episodeId,
+    artifactId: "trace-window-visual",
+    sha256: "e".repeat(64),
+    mediaType: "application/x-ndjson",
     startStep: 0,
     endStep: 1,
-    sha256: "e".repeat(64),
     sourceLineCount: 2,
     omittedLineCount: 0,
     entries: [
@@ -1076,7 +1078,7 @@ test("visualGameSpectatorStage renders live game screen, AI intentions, scrubber
   const html = renderToStaticMarkup(
     React.createElement(PlaytestingSessionView, {
       detail: { ...detail(), record: visualEpisode },
-      scope: scope({ view: "sessions", step: 0 }),
+      scope: scope({ view: "sessions", step: "0" }),
       window
     })
   );

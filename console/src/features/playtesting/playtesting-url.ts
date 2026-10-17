@@ -67,18 +67,14 @@ const FILTERS_BY_VIEW: Readonly<
 };
 export type PlaytestingFilterKey = (typeof PLAYTESTING_FILTER_KEYS)[number];
 
-const FILTER_KEY_SET: ReadonlySet<string> = new Set(PLAYTESTING_FILTER_KEYS);
-const FILTER_KEY_ORDER = new Map<string, number>(
-  PLAYTESTING_FILTER_KEYS.map((key, index) => [key, index] as const)
-);
-
 function orderedPresentFilterKeys(source: object): PlaytestingFilterKey[] {
-  return Object.keys(source)
-    .filter((key): key is PlaytestingFilterKey => FILTER_KEY_SET.has(key))
-    .sort(
-      (left, right) =>
-        FILTER_KEY_ORDER.get(left)! - FILTER_KEY_ORDER.get(right)!
-    );
+  const result: PlaytestingFilterKey[] = [];
+  for (const key of PLAYTESTING_FILTER_KEYS) {
+    if (Object.hasOwn(source, key)) {
+      result.push(key);
+    }
+  }
+  return result;
 }
 
 /** Query keys accepted by each server-filtered Data resource. */
@@ -169,8 +165,8 @@ function parseSessionSelection(value: string | undefined): {
 }
 
 function hasControlCharacters(value: string): boolean {
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
     if (code <= 31 || code === 127) return true;
   }
   return false;
@@ -191,8 +187,10 @@ function hasRepeatedValues(
 
 function isView(value: string | undefined): value is PlaytestingView {
   return (
-    value !== undefined &&
-    (PLAYTESTING_VIEWS as readonly string[]).includes(value)
+    value === "overview" ||
+    value === "sessions" ||
+    value === "findings" ||
+    value === "compare"
   );
 }
 

@@ -208,9 +208,17 @@ test("EvaluationRepository.listEvaluations returns parsed rows with custom fetch
     // of everything the table holds. Answering both is what lets a caller tell a
     // bounded window from the whole history.
     if (/COUNT\(\*\)/u.test(query)) {
+      assert.match(
+        query,
+        /[?&]query=SELECT COUNT\(\*\) AS total FROM openlit\.openlit_evaluation FORMAT JSONEachRow/u,
+        "countQuery must be valid SQL and not duplicate the column selection"
+      );
       return Response.json({ total: "1" }, { status: 200 });
     }
-    assert.match(query, /FROM openlit\.openlit_evaluation/);
+    assert.match(
+      query,
+      /[?&]query=SELECT id, span_id, created_at, meta, scores, `evaluationData\.evaluation`, `evaluationData\.classification`, `evaluationData\.explanation`, `evaluationData\.verdict` FROM openlit\.openlit_evaluation ORDER BY created_at DESC LIMIT 50 FORMAT JSONEachRow/u
+    );
     return new Response(sampleRow, { status: 200 });
   };
 
