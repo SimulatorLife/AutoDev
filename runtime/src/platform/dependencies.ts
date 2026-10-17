@@ -12,6 +12,8 @@ import {
   writeLine
 } from "@simulatorlife/autodev-runtime/shared/output";
 
+import { resolveCommandOnPath } from "./runtime-files.ts";
+
 export interface DependencyOptions {
   readonly cocoindexPackage: string;
   readonly codegraphcontextPackage: string;
@@ -41,18 +43,7 @@ const DEFAULT_PYTHON_LANGUAGE_SERVER_PACKAGE = "python-lsp-server==1.15.0";
 
 function defaultDeps(): DependencyDeps {
   return {
-    commandPath: (command) => {
-      try {
-        return (
-          execFileSync("which", [command], {
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "ignore"]
-          }).trim() || null
-        );
-      } catch {
-        return null;
-      }
-    },
+    commandPath: (command) => resolveCommandOnPath(command),
     capture: (command, args) => {
       try {
         return execFileSync(command, [...args], {

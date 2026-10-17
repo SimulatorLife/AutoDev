@@ -17,6 +17,7 @@ import {
   type ControlApiPlaytestingHumanValidationResponse,
   type HumanPlaytestStudy,
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+  PLAYTESTS_EPISODE_SCHEMA,
   type PlaytestBenchmark,
   type PlaytestComparison,
   type PlaytestEpisode,
@@ -676,13 +677,29 @@ test("capabilities expose approved visual targets without claiming an uninstalle
     revokedBy: "operator-1",
     revocationReason: "Approval withdrawn."
   };
+  const continuousTarget: WorkspaceVisualPlaytestTargetApproval = {
+    ...target,
+    targetId: "continuous-game-local",
+    approvalId: "approval-visual-continuous",
+    name: "Continuous browser game",
+    controlTimingClass: "continuous"
+  };
+  const gatedTarget: WorkspaceVisualPlaytestTargetApproval = {
+    ...target,
+    targetId: "gated-game-local",
+    approvalId: "approval-visual-gated",
+    name: "Gated browser game",
+    entryRequirements: "consent-or-age-screen"
+  };
   const response = await callRunControl(
     "GET",
     `/control/playtesting/capabilities?workspaceId=${encodeURIComponent(WORKSPACE)}`,
     { actor: "viewer-1", role: "viewer" },
     {
       runControl,
-      visualTargetRepository: { list: () => [target, revokedTarget] }
+      visualTargetRepository: {
+        list: () => [target, continuousTarget, gatedTarget, revokedTarget]
+      }
     }
   );
   assert.equal(response.status, 200);
@@ -692,26 +709,98 @@ test("capabilities expose approved visual targets without claiming an uninstalle
     readonly "autonomous-visual": {
       readonly status: string;
       readonly targetStore: string;
-      readonly targets: readonly WorkspaceVisualPlaytestTargetApproval[];
+      readonly targets: readonly {
+        readonly target: WorkspaceVisualPlaytestTargetApproval;
+        readonly eligibility: string;
+        readonly reasons: readonly { readonly code: string }[];
+      }[];
       readonly reasons: readonly { readonly code: string }[];
     };
   };
   assert.equal(modes["adapter-accelerated"].status, "check-required");
   assert.equal(modes["autonomous-visual"].targetStore, "available");
-  assert.equal(modes["autonomous-visual"].status, "unavailable");
+  assert.equal(modes["autonomous-visual"].status, "check-required");
   assert.deepEqual(
-    modes["autonomous-visual"].targets.map((entry) => entry.targetId),
-    ["racing-game-local"]
+    modes["autonomous-visual"].targets.map((entry) => entry.target.targetId),
+    ["racing-game-local", "continuous-game-local", "gated-game-local"]
+  );
+  assert.deepEqual(
+    modes["autonomous-visual"].targets.map((entry) => entry.eligibility),
+    ["supported", "unsupported", "unsupported"]
+  );
+  assert.deepEqual(
+    modes["autonomous-visual"].targets[0]?.reasons,
+    [],
+    "an unsupported sibling target does not poison the supported target"
   );
   assert.ok(
-    modes["autonomous-visual"].reasons.some(
+    modes["autonomous-visual"].targets[1]?.reasons.some(
+      (reason) => reason.code === "visual-control-timing-unsupported"
+    )
+  );
+  assert.ok(
+    modes["autonomous-visual"].targets[2]?.reasons.some(
+      (reason) => reason.code === "visual-target-setup-required"
+    )
+  );
+  assert.ok(
+    !modes["autonomous-visual"].reasons.some(
+      (reason) =>
+        reason.code === "visual-control-timing-unsupported" ||
+        reason.code === "visual-target-setup-required"
+    ),
+    "target-local limitations are not reported as workspace-wide blockers"
+  );
+  assert.ok(
+    !modes["autonomous-visual"].reasons.some(
       (reason) => reason.code === "visual-driver-unavailable"
     )
   );
   assert.ok(
-    modes["autonomous-visual"].reasons.some(
+    !modes["autonomous-visual"].reasons.some(
       (reason) => reason.code === "smart-direct-policy-unavailable"
     )
+  );
+
+  const operatorResponse = await callRunControl(
+    "GET",
+    `/control/playtesting/capabilities?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    { actor: "operator-1", role: "operator" },
+    {
+      runControl,
+      visualTargetRepository: {
+        list: () => [target, continuousTarget, gatedTarget]
+      }
+    }
+  );
+  assert.equal(operatorResponse.status, 200);
+  const operatorModes = operatorResponse.body.modeReadiness as {
+    readonly "autonomous-visual": { readonly status: string; readonly reasons: readonly unknown[] };
+  };
+  assert.equal(operatorModes["autonomous-visual"].status, "ready");
+  assert.deepEqual(operatorModes["autonomous-visual"].reasons, []);
+
+  const noEligibleTarget = await callRunControl(
+    "GET",
+    `/control/playtesting/capabilities?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    { actor: "viewer-1", role: "viewer" },
+    {
+      runControl,
+      visualTargetRepository: {
+        list: () => [continuousTarget, gatedTarget]
+      }
+    }
+  );
+  const noEligibleReadiness = noEligibleTarget.body.modeReadiness as {
+    readonly "autonomous-visual": {
+      readonly reasons: readonly { readonly code: string }[];
+    };
+  };
+  assert.ok(
+    noEligibleReadiness["autonomous-visual"].reasons.some(
+      (reason) => reason.code === "visual-targets-unsupported"
+    ),
+    "the mode refuses when every approved target is locally unsupported"
   );
 
   const unreadable = await callRunControl(
@@ -810,7 +899,10 @@ test("Control API refuses unavailable visual and scripted modes without adapter 
       options,
       launchPayload
     );
-    assert.equal(response.status, 503);
+    assert.equal(
+      response.status,
+      launch.mode === "autonomous-visual" ? 409 : 503
+    );
     assert.equal(
       (response.body.error as { readonly code: string }).code,
       "autodev_control_playtesting_preflight_not_ready"
@@ -880,7 +972,7 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
   assert.equal(capabilities.status, 200);
   assert.equal(
     capabilities.body.schema,
-    "autodev-control-playtesting-capabilities-v2"
+    "autodev-control-playtesting-capabilities-v3"
   );
   assert.deepEqual(capabilities.body.runnablePolicies, ["random"]);
   const readiness = capabilities.body.modeReadiness as {
@@ -893,7 +985,7 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
     };
   };
   assert.equal(readiness["adapter-accelerated"].status, "check-required");
-  assert.equal(readiness["autonomous-visual"].status, "unavailable");
+  assert.equal(readiness["autonomous-visual"].status, "check-required");
   assert.ok(
     readiness["autonomous-visual"].reasons.some(
       (reason) => reason.code === "operator-required"
@@ -907,7 +999,7 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
     )
   );
   assert.ok(
-    readiness["autonomous-visual"].reasons.some(
+    !readiness["autonomous-visual"].reasons.some(
       (reason) => reason.code === "visual-driver-unavailable"
     )
   );
@@ -1597,7 +1689,7 @@ test("Playtesting invalid keyset cursors return 400, never an empty page", async
 test("selected episode returns its latest review and remains workspace-scoped", async () => {
   const episode = {
     episodeId: "episode-1",
-    schema: "autodev-playtest-episode-v5",
+    schema: PLAYTESTS_EPISODE_SCHEMA,
     executionProvenance: {
       mode: "adapter-accelerated",
       source: {

@@ -99,7 +99,7 @@ test("Playtest Control API client forwards typed run operations and host-bound s
   }> = [];
   const responses = [
     {
-      schema: "autodev-control-playtesting-capabilities-v2",
+      schema: "autodev-control-playtesting-capabilities-v3",
       workspaceId: WORKSPACE,
       capabilityRevision: "b".repeat(64),
       modeReadiness: {
@@ -111,12 +111,46 @@ test("Playtest Control API client forwards typed run operations and host-bound s
               code: "visual-driver-unavailable",
               label: "Visual driver unavailable",
               message:
-                "Runtime does not yet have the isolated browser gameplay driver.",
+                "The isolated browser driver is not yet connected to the Runtime session owner and persisted visual evidence flow.",
               severity: "unavailable"
             }
           ],
           targetStore: "available",
-          targets: []
+          targets: [
+            {
+              target: {
+                schema: "autodev-workspace-visual-playtest-target-v1",
+                workspaceId: WORKSPACE,
+                targetId: "local-game",
+                revision: 1,
+                approvalId: "visual-approval-1",
+                name: "Local browser game",
+                entryUrl: "http://localhost:5173/",
+                allowedOrigins: ["http://localhost:5173"],
+                inputCapabilities: ["keyboard", "pointer"],
+                controlTimingClass: "turn-based",
+                entryRequirements: "none",
+                sandboxProfile: "transient-browser-profile",
+                capturePolicy: "screenshots-only-redact-or-refuse",
+                limits: {
+                  episodeCount: 1,
+                  maxStepsPerEpisode: 20,
+                  wallTimeMs: 60_000,
+                  smartRequestsPerEpisode: 5,
+                  smartTokensPerEpisode: 5000,
+                  screenshotCountPerEpisode: 20,
+                  artifactBytesPerEpisode: 1_048_576
+                },
+                approvedAt: "2026-10-16T00:00:00.000Z",
+                approvedBy: "operator-1",
+                revokedAt: null,
+                revokedBy: null,
+                revocationReason: null
+              },
+              eligibility: "supported",
+              reasons: []
+            }
+          ]
         },
         "scripted-regression": {
           status: "unavailable",

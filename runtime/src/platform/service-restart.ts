@@ -19,6 +19,7 @@ import {
   resolveConsolePort
 } from "./console-ensure.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
+import { resolveCommandOnPath } from "./runtime-files.ts";
 import { sleep } from "./sleep.ts";
 
 export { LABEL_AUTODEV_CONSOLE } from "./console-ensure.ts";
@@ -213,14 +214,7 @@ function defaultDeps(options: ServiceRestartOptions): ServiceRestartDeps {
       }
     },
     logTail: readLogTail,
-    commandAvailable: (command) => {
-      try {
-        execFileSync("which", [command], { stdio: "ignore" });
-        return true;
-      } catch {
-        return false;
-      }
-    },
+    commandAvailable: (command) => resolveCommandOnPath(command) !== null,
     buildConsole: () =>
       buildConsole({ repositoryRoot: options.repositoryRoot }),
     probe: async (url, jsonBody) => {

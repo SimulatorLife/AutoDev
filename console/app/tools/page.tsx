@@ -42,8 +42,10 @@ export default async function ToolsPage({
     );
   }
 
-  const result = await fetchTools(config);
-  const resolvedSearch = (await searchParams) ?? {};
+  const [result, resolvedSearch] = await Promise.all([
+    fetchTools(config),
+    (searchParams ?? Promise.resolve({})) as Promise<ToolsSearchParams>
+  ]);
   const sourceFilter = first(resolvedSearch.source);
   const roleFilter = first(resolvedSearch.role);
   if (result.kind !== "ok") {

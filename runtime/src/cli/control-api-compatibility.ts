@@ -14,6 +14,21 @@ export interface ControlApiCompatibilityConfig {
   readonly serviceToken: string;
 }
 
+export interface ControlApiWaitOptions {
+  readonly timeoutMs?: number;
+  readonly retryDelayMs?: number;
+  readonly sleep?: (ms: number) => Promise<void>;
+}
+
+class ControlApiUnavailableError extends Error {
+  constructor(reason: string) {
+    super(
+      `The configured AutoDev Control API could not be reached (${reason}). Verify AUTODEV_CONTROL_API_BASE_URL and that the Model Router's private Control API listener is running. The Console was not started.`
+    );
+    this.name = "ControlApiUnavailableError";
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -70,7 +85,7 @@ function isPlaytestingCapabilitiesResponse(
 ): boolean {
   if (
     !isRecord(value) ||
-    value.schema !== "autodev-control-playtesting-capabilities-v2" ||
+    value.schema !== "autodev-control-playtesting-capabilities-v3" ||
     value.workspaceId !== workspaceId ||
     !isRecord(value.modeReadiness)
   ) {
@@ -97,7 +112,15 @@ function isPlaytestingCapabilitiesResponse(
     isRecord(visual) &&
     (visual.targetStore === "available" ||
       visual.targetStore === "unavailable") &&
-    Array.isArray(visual.targets)
+    Array.isArray(visual.targets) &&
+    visual.targets.every((entry) => {
+      if (!isRecord(entry) || !isRecord(entry.target)) return false;
+      return (
+        (entry.eligibility === "supported" ||
+          entry.eligibility === "unsupported") &&
+        Array.isArray(entry.reasons)
+      );
+    })
   );
 }
 
@@ -215,9 +238,7 @@ function startupError(reason: string): Error {
 }
 
 function unavailableError(reason: string): Error {
-  return new Error(
-    `The configured AutoDev Control API could not be reached (${reason}). Verify AUTODEV_CONTROL_API_BASE_URL and that the Model Router's private Control API listener is running. The Console was not started.`
-  );
+  return new ControlApiUnavailableError(reason);
 }
 
 function authorizationError(): Error {
@@ -339,14 +360,9 @@ async function verifyPlaytestingRoutes(
   }
 }
 
-/**
- * Verify the Runtime's compatibility generation before any Console process
- * serves pages. The manifest is cheap and catches stale installations whose
- * individual endpoint schemas happen to overlap the current Console.
- */
-export async function verifyControlApiCompatibility(
+async function verifyControlApiCompatibilityOnce(
   config: ControlApiCompatibilityConfig,
-  fetchImpl: typeof fetch = globalThis.fetch
+  fetchImpl: typeof fetch
 ): Promise<void> {
   const headers = {
     Authorization: `Bearer ${config.serviceToken}`,
@@ -413,4 +429,58 @@ export async function verifyControlApiCompatibility(
   await verifyProviderModelDiscovery(request, providerIds);
 
   await verifyPlaytestingRoutes(request);
+}
+
+async function verifyWithDeadline(
+  config: ControlApiCompatibilityConfig,
+  fetchImpl: typeof fetch,
+  deadline: number,
+  retryDelayMs: number,
+  sleepImpl: (ms: number) => Promise<void>
+): Promise<void> {
+  try {
+    await verifyControlApiCompatibilityOnce(config, fetchImpl);
+  } catch (error) {
+    if (
+      !(error instanceof ControlApiUnavailableError) ||
+      Date.now() >= deadline
+    ) {
+      throw error;
+    }
+    await sleepImpl(Math.min(retryDelayMs, Math.max(1, deadline - Date.now())));
+    await verifyWithDeadline(
+      config,
+      fetchImpl,
+      deadline,
+      retryDelayMs,
+      sleepImpl
+    );
+  }
+}
+
+/**
+ * Verify the Runtime's compatibility generation before any Console process
+ * serves pages. The manifest is cheap and catches stale installations whose
+ * individual endpoint schemas happen to overlap the current Console.
+ */
+export async function verifyControlApiCompatibility(
+  config: ControlApiCompatibilityConfig,
+  fetchImpl: typeof fetch = globalThis.fetch,
+  waitOptions: ControlApiWaitOptions = {}
+): Promise<void> {
+  const timeoutMs = Math.max(0, waitOptions.timeoutMs ?? 0);
+  const retryDelayMs = Math.max(1, waitOptions.retryDelayMs ?? 250);
+  const sleepImpl =
+    waitOptions.sleep ??
+    ((ms: number) =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, ms);
+      }));
+  await verifyWithDeadline(
+    config,
+    fetchImpl,
+    Date.now() + timeoutMs,
+    retryDelayMs,
+    sleepImpl
+  );
 }

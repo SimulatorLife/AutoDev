@@ -41,7 +41,8 @@
  * operation, not a malformed input.
  */
 import {
-  type PlaytestBatch,
+  assertPlaytestAdapterEpisode,
+  type PlaytestAdapterBatch,
   type PlaytestBenchmark,
   type PlaytestBuildCohortObservations,
   type PlaytestCohortObservation,
@@ -90,6 +91,7 @@ export function derivePlaytestCohortObservations(
   let skippedRows = 0;
 
   for (const episode of input.episodes) {
+    assertPlaytestAdapterEpisode(episode);
     for (const row of episode.metrics) {
       if (row.metricId !== input.metricId) {
         skippedRows += 1;
@@ -139,7 +141,7 @@ export const RUN_SET_BUILD_ID = "__runs__";
 
 /** One measured run: the batch that scoped it and the episodes it recorded. */
 export interface PlaytestCohortRunInput {
-  readonly batch: PlaytestBatch;
+  readonly batch: PlaytestAdapterBatch;
   readonly episodes: readonly PlaytestEpisode[];
 }
 

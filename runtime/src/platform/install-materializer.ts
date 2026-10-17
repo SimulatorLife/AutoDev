@@ -46,6 +46,8 @@ import {
   linkRuntimeSource,
   linkSkillSource,
   materializeRuntimeFile,
+  resolveCommandOnPath,
+  runRulesyncGenerate,
   runtimeTarget
 } from "./runtime-files.ts";
 import { removeStalePaths } from "./runtime-reconciliation.ts";
@@ -82,6 +84,8 @@ export const RUNTIME_MODULES = [
   "runtime/src/playtesting/policy-validity-run.ts",
   "runtime/src/playtesting/policies.ts",
   "runtime/src/playtesting/run-control-service.ts",
+  "runtime/src/playtesting/smart-direct-policy.ts",
+  "runtime/src/playtesting/visual-browser-driver.ts",
   "runtime/src/playtesting/visible-observation.ts",
   "runtime/src/playtesting/statistics/analysis.ts",
   "runtime/src/playtesting/statistics/environment.ts",
@@ -444,37 +448,7 @@ interface MaterializeOptions {
 }
 
 function commandAvailable(command: string): boolean {
-  try {
-    execFileSync("which", [command], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-function run(
-  command: string,
-  args: readonly string[],
-  cwd: string,
-  env: NodeJS.ProcessEnv = process.env
-): void {
-  const result = execFileSync(command, [...args], {
-    cwd,
-    env: { ...env },
-    stdio: "inherit"
-  });
-  void result;
-}
-function rulesync(
-  options: Pick<MaterializeOptions, "repositoryRoot">,
-  args: readonly string[],
-  env: NodeJS.ProcessEnv = process.env
-): void {
-  run(
-    path.join(options.repositoryRoot, "node_modules/.bin/rulesync"),
-    args,
-    options.repositoryRoot,
-    env
-  );
+  return resolveCommandOnPath(command) !== null;
 }
 
 /**
@@ -487,17 +461,18 @@ function rulesync(
 export function materializeRuleSyncSkillProjections(
   repositoryRoot: string
 ): void {
-  const options = { repositoryRoot };
-  const args = [
-    "generate",
-    "--config",
-    path.join(repositoryRoot, "rulesync.jsonc"),
-    "--features",
-    "skills",
-    "--silent"
-  ];
-  rulesync(options, args);
-  rulesync(options, [...args, "--check"]);
+  const configPath = path.join(repositoryRoot, "rulesync.jsonc");
+  runRulesyncGenerate(repositoryRoot, {
+    configPath,
+    features: ["skills"],
+    silent: true
+  });
+  runRulesyncGenerate(repositoryRoot, {
+    configPath,
+    features: ["skills"],
+    check: true,
+    silent: true
+  });
 }
 
 const LINE_SPLIT_PATTERN = /\r?\n/u;
@@ -732,10 +707,12 @@ function ensureGlobalRepomixConfig(options: MaterializeOptions): void {
   mkdirSync(configDir, { recursive: true });
   const configFile = path.join(configDir, "repomix.config.json");
 
+  let existingRaw = "";
   let parsed: Record<string, unknown> = {};
   if (exists(configFile)) {
     try {
-      parsed = JSON.parse(readFileSync(configFile, "utf8"));
+      existingRaw = readFileSync(configFile, "utf8");
+      parsed = JSON.parse(existingRaw);
     } catch {
       parsed = {};
     }
@@ -763,7 +740,128 @@ function ensureGlobalRepomixConfig(options: MaterializeOptions): void {
   }
   ignore.customPatterns = Array.from(existingPatterns);
   parsed.ignore = ignore;
-  writeFileSync(configFile, `${JSON.stringify(parsed, null, 2)}\n`);
+  const nextRaw = `${JSON.stringify(parsed, null, 2)}\n`;
+  if (nextRaw !== existingRaw) {
+    writeFileSync(configFile, nextRaw);
+  }
+}
+
+const CGC_GLOBAL_HELPERS_PATCH = `
+
+def find_global_cgcignore() -> Optional[Path]:
+    """Check for global .cgcignore in ~/.codegraphcontext/.cgcignore."""
+    global_path = Path.home() / ".codegraphcontext" / ".cgcignore"
+    if global_path.exists():
+        return global_path
+    return None
+
+
+def find_git_exclude(project_root: Path) -> Optional[Path]:
+    """Find .git/info/exclude in the repository."""
+    exclude_path = project_root / ".git" / "info" / "exclude"
+    if exclude_path.exists():
+        return exclude_path
+    return None
+
+
+def find_global_gitignore() -> Optional[Path]:
+    """Find global gitignore configured in git core.excludesFile."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "config", "--global", "--get", "core.excludesFile"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            p = Path(result.stdout.strip()).expanduser()
+            if p.exists():
+                return p
+    except Exception:
+        pass
+    default_global = Path.home() / ".gitignore_global"
+    if default_global.exists():
+        return default_global
+    return None
+`;
+
+function insertAfterDefaultIgnorePatterns(
+  content: string,
+  addition: string
+): string {
+  const idx = content.indexOf("DEFAULT_IGNORE_PATTERNS = [");
+  if (idx === -1) return content;
+  const insertPos = content.indexOf("\n", idx) + 1;
+  return `${content.slice(0, insertPos)}${addition}${content.slice(insertPos)}`;
+}
+
+function patchCodeGraphContextConstants(cgcDir: string): void {
+  const constantsFile = path.join(cgcDir, "tools", "indexing", "constants.py");
+  if (!exists(constantsFile)) return;
+  const original = readFileSync(constantsFile, "utf8");
+  let content = original;
+  if (!content.includes("repomix-output.*")) {
+    content = insertAfterDefaultIgnorePatterns(
+      content,
+      '\n    # Repomix outputs\n    "repomix-output.*",\n    ".repomix-output.*",\n    "repomix-output-*/",\n    ".repomix/",\n'
+    );
+  }
+  if (!content.includes("CGC_REPORT.md")) {
+    content = insertAfterDefaultIgnorePatterns(
+      content,
+      '\n    # CGC Report artifacts\n    "CGC_REPORT.md",\n    "CGC_REPORT*.md",\n    "cgc_report.md",\n    "cgc_report*.md",\n'
+    );
+  }
+  if (content !== original) writeFileSync(constantsFile, content, "utf8");
+}
+
+function patchCodeGraphContextIgnore(cgcDir: string): void {
+  const cgcignoreFile = path.join(cgcDir, "core", "cgcignore.py");
+  if (!exists(cgcignoreFile)) return;
+  const cgcCode = readFileSync(cgcignoreFile, "utf8");
+  if (cgcCode.includes("find_global_cgcignore")) return;
+  const buildPos = cgcCode.indexOf("def build_ignore_spec(");
+  if (buildPos === -1) return;
+  writeFileSync(
+    cgcignoreFile,
+    `${cgcCode.slice(0, buildPos)}${CGC_GLOBAL_HELPERS_PATCH}\n${cgcCode.slice(buildPos)}`,
+    "utf8"
+  );
+}
+
+function ensureCodeGraphContextPackagePatches(home: string): void {
+  const libDir = path.join(
+    home,
+    ".local",
+    "pipx",
+    "venvs",
+    "codegraphcontext",
+    "lib"
+  );
+  if (!exists(libDir)) return;
+  let entries: string[];
+  try {
+    entries = readdirSync(libDir);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.startsWith("python")) continue;
+    const cgcDir = path.join(
+      libDir,
+      entry,
+      "site-packages",
+      "codegraphcontext"
+    );
+    if (!exists(cgcDir)) continue;
+    try {
+      patchCodeGraphContextConstants(cgcDir);
+      patchCodeGraphContextIgnore(cgcDir);
+    } catch {
+      // Non-fatal if package patch cannot be applied
+    }
+  }
 }
 
 function ensureGlobalCodeGraphContext(options: MaterializeOptions): void {
@@ -791,17 +889,9 @@ function ensureGlobalCodeGraphContext(options: MaterializeOptions): void {
     updatedLines.push(`IGNORE_DIRS="${CGC_IGNORE_DIRS}"`);
   }
   const lastLine = updatedLines.at(-1);
-  writeFileSync(
-    envFile,
-    `${updatedLines.join("\n")}${lastLine === "" ? "" : "\n"}`
-  );
-
-  try {
-    execFileSync("cgc", ["config", "set", "IGNORE_DIRS", CGC_IGNORE_DIRS], {
-      stdio: "ignore"
-    });
-  } catch {
-    // Ignored if cgc CLI is not installed or returns error
+  const nextEnv = `${updatedLines.join("\n")}${lastLine === "" ? "" : "\n"}`;
+  if (nextEnv !== existingEnv) {
+    writeFileSync(envFile, nextEnv);
   }
 
   const cgcIgnore = path.join(cgcDir, ".cgcignore");
@@ -819,6 +909,8 @@ function ensureGlobalCodeGraphContext(options: MaterializeOptions): void {
       `${existingIgnore}${prefix}${header}${missing.join("\n")}\n`
     );
   }
+
+  ensureCodeGraphContextPackagePatches(options.home);
 }
 
 function roots(options: MaterializeOptions): string[] {
@@ -1080,20 +1172,16 @@ export function materializeCommands(
     path.join(options.repositoryRoot, ".autodev-commands-home-")
   );
   try {
-    rulesync(
-      options,
-      [
-        "generate",
-        "--global",
-        "--input-roots",
-        path.join(options.repositoryRoot, ".rulesync"),
-        "--targets",
-        "codexcli",
-        "--features",
-        "commands",
-        "--silent"
-      ],
-      { ...process.env, HOME: projectedHome }
+    runRulesyncGenerate(
+      options.repositoryRoot,
+      {
+        global: true,
+        inputRoots: [path.join(options.repositoryRoot, ".rulesync")],
+        targets: ["codexcli"],
+        features: ["commands"],
+        silent: true
+      },
+      projectedHome
     );
     const projectedDir = path.join(projectedHome, ".codex", "prompts");
     let projectedFiles: string[];
@@ -1198,20 +1286,19 @@ function renderGlobalMcpIfNeeded(options: MaterializeOptions): void {
     ] as const
   )
     .filter(([command]) => commandAvailable(command))
-    .map(([, targetName]) => targetName)
-    .join(",");
-  if (targets)
-    rulesync(options, [
-      "generate",
-      "--global",
-      "--input-roots",
-      path.join(options.repositoryRoot, ".rulesync"),
-      "--targets",
-      targets,
-      "--features",
-      "mcp",
-      "--silent"
-    ]);
+    .map(([, targetName]) => targetName);
+  if (targets.length > 0)
+    runRulesyncGenerate(
+      options.repositoryRoot,
+      {
+        global: true,
+        inputRoots: [path.join(options.repositoryRoot, ".rulesync")],
+        targets,
+        features: ["mcp"],
+        silent: true
+      },
+      options.home
+    );
 }
 
 function applyAntigravityIfInstalled(
@@ -1524,12 +1611,10 @@ export function materializeInstallation(options: MaterializeOptions): void {
     options.codexMcpSource,
     path.join(options.codexHome, "provider-runtime", "mcp-servers.json")
   );
-  rulesync(options, [
-    "generate",
-    "--config",
-    path.join(options.repositoryRoot, "rulesync.jsonc"),
-    "--silent"
-  ]);
+  runRulesyncGenerate(options.repositoryRoot, {
+    configPath: path.join(options.repositoryRoot, "rulesync.jsonc"),
+    silent: true
+  });
   const updatedPrompts = materializeCommands(options, prompts);
   // The Codex desktop app reads $CODEX_HOME/prompts once, when its window
   // loads, and never re-reads it: an install that changed a prompt while the
@@ -1539,10 +1624,10 @@ export function materializeInstallation(options: MaterializeOptions): void {
       `updated Codex prompts: ${updatedPrompts.join(", ")} -- restart the Codex app to load them (it reads prompts only when its window opens)`
     );
   ensureExclude(options);
-  ensureBootstrapScript(options);
   ensureGlobalGitExcludes(options);
   ensureGlobalRepomixConfig(options);
   ensureGlobalCodeGraphContext(options);
+  ensureBootstrapScript(options);
   composeAndLinkConfigs(options, source);
   ensureCodexAppMcpServerEnabled(options.codexHome);
   renderAndMaterializeContract(

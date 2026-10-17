@@ -117,17 +117,7 @@ fi
 
 line_covered() {
   local needle="$1" haystack="$2"
-  local IFS_saved="$IFS"
-  IFS=$'\n'
-  local line
-  for line in $haystack; do
-    if [[ "$line" == "$needle" ]]; then
-      IFS="$IFS_saved"
-      return 0
-    fi
-  done
-  IFS="$IFS_saved"
-  return 1
+  [[ $'\n'"$haystack"$'\n' == *$'\n'"$needle"$'\n'* ]]
 }
 
 is_tracked_in_git() {

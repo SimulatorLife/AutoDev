@@ -9,16 +9,22 @@ import {
   assertPlaytestComparisonOwnerDecision,
   assertPlaytestCoverageManifest,
   assertPlaytestCrossSessionSynthesis,
+  assertPlaytestEpisodeIdentityForMode,
+  assertPlaytestEpisodeModeFacts,
+  assertPlaytestExecutionProvenance,
   assertPlaytestExperiment,
   assertPlaytestNumericResults,
   assertPlaytestSessionReviewHasEvidence,
-  assertPlaytestExecutionProvenance,
   type HumanPlaytestStudy,
   isPlaytestEvidencePacketId,
   isPlaytestFindingId,
+  legacyPlaytestExecutionProvenance,
   migratePlaytestCrossSessionSynthesisV1,
   PLAYTEST_REVIEW_SECTION_NOT_RECORDED,
+  type PlaytestAdapterAssignmentManifest,
+  type PlaytestAdapterBatch,
   type PlaytestAssignmentManifest,
+  type PlaytestAssignmentManifestDraft,
   playtestAssignmentManifestHashInput,
   type PlaytestBatch,
   type PlaytestBenchmark,
@@ -39,10 +45,12 @@ import {
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V1,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V2,
+  PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V3,
   PLAYTESTS_BATCH_CANCELLATION_REASONS,
   PLAYTESTS_BATCH_SCHEMA,
   PLAYTESTS_BATCH_SCHEMA_V1,
   PLAYTESTS_BATCH_SCHEMA_V2,
+  PLAYTESTS_BATCH_SCHEMA_V3,
   PLAYTESTS_COMPARISON_SCHEMA,
   PLAYTESTS_COMPARISON_SCHEMA_V1,
   PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
@@ -52,6 +60,8 @@ import {
   PLAYTESTS_EPISODE_SCHEMA_V2,
   PLAYTESTS_EPISODE_SCHEMA_V3,
   PLAYTESTS_EPISODE_SCHEMA_V4,
+  PLAYTESTS_EPISODE_SCHEMA_V5,
+  PLAYTESTS_EPISODE_SCHEMA_V6,
   PLAYTESTS_EPISODE_TERMINATION_REASONS,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_EXPERIMENT_SCHEMA,
@@ -64,8 +74,9 @@ import {
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V3,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V4,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V5,
-  legacyPlaytestExecutionProvenance,
-  type PlaytestSessionReview
+  PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
+  type PlaytestSessionReview,
+  type PlaytestVisualBatch
 } from "@simulatorlife/autodev-core";
 
 import { PlaytestSourceUnavailableError } from "./errors.ts";
@@ -281,7 +292,7 @@ export function encodeBatch(artifact: PlaytestBatch): PlaytestIndexedBatchRow {
     workspace_id: requiredRef(artifact.workspaceId, "workspaceId"),
     batch_id: requiredRef(artifact.batchId, "batchId"),
     revision: artifact.revision,
-    build_sha: artifact.buildSha,
+    build_sha: artifact.buildSha ?? "",
     measurement_version: artifact.measurementVersion,
     status: artifact.status,
     ...numericCounts(artifact.counts),
@@ -295,6 +306,11 @@ export function encodeEpisode(
 ): PlaytestIndexedEpisodeRow {
   assertPlaytestNumericResults(artifact.metrics);
   assertPlaytestExecutionProvenance(artifact.executionProvenance);
+  assertPlaytestEpisodeModeFacts(artifact);
+  assertPlaytestEpisodeIdentityForMode(
+    artifact.identity,
+    artifact.executionProvenance
+  );
   if (artifact.branchLineage !== null) {
     assertPlaytestBranchLineage(artifact.branchLineage, artifact);
     if (
@@ -323,14 +339,16 @@ export function encodeEpisode(
     batch_id: requiredRef(artifact.batchId, "batchId"),
     episode_id: requiredRef(artifact.episodeId, "episodeId"),
     revision: artifact.revision,
-    scenario: artifact.identity.scenarioId,
+    scenario: artifact.identity.scenarioId ?? "",
     policy: artifact.identity.policyId,
     assignment_id: artifact.assignmentId,
-    cohort: artifact.policyCohort,
-    seed: artifact.identity.seed,
+    cohort: artifact.policyCohort ?? "",
+    seed: artifact.identity.seed ?? "",
     status: artifact.status,
     game_outcome: artifact.outcome,
-    build_sha: artifact.identity.buildSha,
+    // Empty index values represent explicit null source/build facts in the
+    // canonical payload; the JSON payload, not the index, is authoritative.
+    build_sha: artifact.identity.buildSha ?? "",
     assigned_at: toClickHouseDateTime(artifact.assignedAt),
     started_at: nullableDateTime(artifact.startedAt),
     completed_at: nullableDateTime(artifact.completedAt),
@@ -343,6 +361,9 @@ export function encodeEpisode(
   };
 }
 
+const PLAYTEST_ADAPTER_EXECUTION_MODE = "adapter-accelerated" as const;
+const PLAYTEST_VISUAL_EXECUTION_MODE = "autonomous-visual" as const;
+const VISUAL_ASSIGNMENT_INVENTORY_STATUS = "frozen-visual" as const;
 const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
 
 /**
@@ -856,8 +877,8 @@ function assertBatchUnobservedAssignments(
   }
 }
 
-function frozenBatchInventory(artifact: PlaytestBatch): {
-  readonly manifest: PlaytestAssignmentManifest;
+function frozenBatchInventory(artifact: PlaytestAdapterBatch): {
+  readonly manifest: PlaytestAdapterAssignmentManifest;
   readonly assignmentIds: ReadonlySet<string>;
 } | null {
   if (artifact.assignmentInventory.status === "unavailable") {
@@ -880,11 +901,17 @@ function frozenBatchInventory(artifact: PlaytestBatch): {
   }
   const manifest = artifact.assignmentInventory.manifest;
   assertPlaytestAssignmentManifest(manifest);
+  if (manifest.mode !== PLAYTEST_ADAPTER_EXECUTION_MODE) {
+    throw new TypeError(
+      "PlaytestBatch v4 cannot store a non-adapter assignment manifest."
+    );
+  }
+  const adapterManifest = manifest;
   const assignmentIds = new Set(
-    manifest.assignments.map((assignment) => assignment.assignmentId)
+    adapterManifest.assignments.map((assignment) => assignment.assignmentId)
   );
   assertBatchUnobservedAssignments(artifact, assignmentIds);
-  return { manifest, assignmentIds };
+  return { manifest: adapterManifest, assignmentIds };
 }
 
 function selectedReviewsForBatch(
@@ -927,7 +954,7 @@ function assertCompletePacketInventory(
 
 function assertBatchManifestIdentity(
   artifact: PlaytestBatch,
-  manifest: PlaytestAssignmentManifest,
+  manifest: PlaytestAdapterAssignmentManifest,
   assignmentIds: ReadonlySet<string>,
   selectedReviews: ReadonlyMap<string, string>,
   packetReceipts: readonly PlaytestReviewPacketReceipt[]
@@ -968,6 +995,71 @@ function assertBatchManifestIdentity(
   }
 }
 
+function assertVisualBatchInventory(artifact: PlaytestVisualBatch): void {
+  const inventory = artifact.assignmentInventory;
+  if (inventory.status !== VISUAL_ASSIGNMENT_INVENTORY_STATUS) {
+    throw new TypeError(
+      "Visual batches require a frozen visual assignment inventory."
+    );
+  }
+  assertPlaytestAssignmentManifest(inventory.manifest);
+  const manifest = inventory.manifest;
+  if (
+    manifest.mode !== PLAYTEST_VISUAL_EXECUTION_MODE ||
+    manifest.batchId !== artifact.batchId ||
+    manifest.workspaceId !== artifact.workspaceId ||
+    manifest.assignments.length !== artifact.budget.assignedEpisodes ||
+    artifact.repository !== null ||
+    artifact.buildSha !== null ||
+    artifact.gameBuild !== null ||
+    artifact.configHash !== null ||
+    artifact.rubricHash !== null ||
+    artifact.actionSchemaHash !== null ||
+    artifact.observationSchemaHash !== null ||
+    artifact.eventSchemaHash !== null ||
+    artifact.protocolVersion !== null ||
+    artifact.coverageManifest !== null ||
+    artifact.reviewSelection.status !== "unavailable" ||
+    artifact.reviewSelection.reason !== "visual-discovery-session-level" ||
+    artifact.reviewPackets.length > 0 ||
+    artifact.reviewReceipts.length > 0 ||
+    artifact.provenance.buildSha !== null ||
+    artifact.provenance.workspaceId !== artifact.workspaceId ||
+    artifact.provenance.measurementVersion !== artifact.measurementVersion ||
+    artifact.budget.critiqueBudget !== 0 ||
+    artifact.budget.actualCritiques !== 0 ||
+    artifact.policyIds.length !== 1 ||
+    artifact.policyIds[0] !== manifest.policyId ||
+    (manifest.cohortId === null
+      ? artifact.cohortIds.length > 0
+      : artifact.cohortIds.length !== 1 ||
+        artifact.cohortIds[0] !== manifest.cohortId) ||
+    artifact.scenarioIds.length > 0
+  ) {
+    throw new TypeError(
+      "Visual batch identity contains adapter facts or mismatched discovery state."
+    );
+  }
+  if (
+    artifact.budget.maxStepsPerEpisode > manifest.limits.maxStepsPerEpisode ||
+    artifact.budget.wallTimeMs > manifest.limits.wallTimeMs
+  ) {
+    throw new TypeError(
+      "Visual batch budget exceeds its frozen target limits."
+    );
+  }
+  const assignmentIds = new Set(
+    manifest.assignments.map((assignment) => assignment.assignmentId)
+  );
+  assertBatchUnobservedAssignments(artifact, assignmentIds);
+  const contentHash = createHash("sha256")
+    .update(playtestAssignmentManifestHashInput(manifest))
+    .digest("hex");
+  if (contentHash !== manifest.contentHash.toLowerCase()) {
+    throw new TypeError("Visual assignment manifest contentHash is invalid.");
+  }
+}
+
 function assertBatchAssignmentInventory(artifact: PlaytestBatch): void {
   if (artifact.schema !== PLAYTESTS_BATCH_SCHEMA) {
     throw new TypeError("Batch artifact has an unsupported schema.");
@@ -980,6 +1072,13 @@ function assertBatchAssignmentInventory(artifact: PlaytestBatch): void {
   }
   assertBatchLifecycle(artifact);
   assertBatchReviewCounts(artifact);
+  if (artifact.executionMode === PLAYTEST_VISUAL_EXECUTION_MODE) {
+    assertVisualBatchInventory(artifact);
+    return;
+  }
+  if (artifact.executionMode !== PLAYTEST_ADAPTER_EXECUTION_MODE) {
+    throw new TypeError("Batch execution mode is unsupported.");
+  }
   const inventory = frozenBatchInventory(artifact);
   if (inventory === null) return;
 
@@ -1007,6 +1106,9 @@ function assertBatchAssignmentInventory(artifact: PlaytestBatch): void {
 function assertBatchCoverageManifest(artifact: PlaytestBatch): void {
   const coverage = artifact.coverageManifest;
   if (coverage === null) return;
+  if (artifact.executionMode !== PLAYTEST_ADAPTER_EXECUTION_MODE) {
+    throw new TypeError("Visual batches cannot carry confirmatory coverage.");
+  }
   assertPlaytestCoverageManifest(coverage);
   if (
     artifact.assignmentInventory.status !== "frozen" ||
@@ -1044,7 +1146,18 @@ function migrateAssignmentManifest(
       assertPlaytestAssignmentManifest(value);
     } catch (error) {
       throw new PlaytestSourceUnavailableError(
-        "ClickHouse v3 assignment manifest is malformed",
+        "ClickHouse v4 assignment manifest is malformed",
+        error
+      );
+    }
+    return value as unknown as PlaytestAssignmentManifest;
+  }
+  if (value.schema === PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA) {
+    try {
+      assertPlaytestAssignmentManifest(value);
+    } catch (error) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse visual assignment manifest is malformed",
         error
       );
     }
@@ -1052,7 +1165,8 @@ function migrateAssignmentManifest(
   }
   if (
     value.schema !== PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V1 &&
-    value.schema !== PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V2
+    value.schema !== PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V2 &&
+    value.schema !== PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V3
   ) {
     throw new PlaytestSourceUnavailableError(
       "ClickHouse frozen assignment inventory has an unsupported schema"
@@ -1061,7 +1175,7 @@ function migrateAssignmentManifest(
   const originalHash = createHash("sha256")
     .update(
       playtestAssignmentManifestHashInput(
-        value as unknown as Omit<PlaytestAssignmentManifest, "contentHash">
+        value as unknown as PlaytestAssignmentManifestDraft
       )
     )
     .digest("hex");
@@ -1073,10 +1187,21 @@ function migrateAssignmentManifest(
       "ClickHouse legacy assignment manifest has an invalid content hash"
     );
   }
+  if (!Array.isArray(value.assignments)) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse legacy assignment manifest has malformed assignment inventory"
+    );
+  }
+  const predatesCohortCoverage =
+    value.schema === PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V1 ||
+    value.schema === PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V2;
   if (
-    !Array.isArray(value.assignments) ||
     value.assignments.some(
-      (assignment) => !isRecord(assignment) || assignment.cohort !== undefined
+      (assignment) =>
+        !isRecord(assignment) ||
+        (predatesCohortCoverage
+          ? assignment.cohort !== undefined
+          : !Object.hasOwn(assignment, "cohort"))
     )
   ) {
     throw new PlaytestSourceUnavailableError(
@@ -1086,15 +1211,18 @@ function migrateAssignmentManifest(
   const migrated = {
     ...value,
     schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
-    assignments: value.assignments.map((assignment) => ({
-      ...(assignment as Record<string, unknown>),
-      cohort: null
-    }))
+    mode: PLAYTEST_ADAPTER_EXECUTION_MODE,
+    assignments: predatesCohortCoverage
+      ? value.assignments.map((assignment) => ({
+          ...(assignment as Record<string, unknown>),
+          cohort: null
+        }))
+      : value.assignments
   };
   const contentHash = createHash("sha256")
     .update(
       playtestAssignmentManifestHashInput(
-        migrated as unknown as Omit<PlaytestAssignmentManifest, "contentHash">
+        migrated as unknown as PlaytestAssignmentManifestDraft
       )
     )
     .digest("hex");
@@ -1132,15 +1260,30 @@ function migrateAssignmentInventory(
     }
     return value as PlaytestBatch["assignmentInventory"];
   }
-  if (value.status !== "frozen" || !isRecord(value.manifest)) {
+  if (
+    (value.status !== "frozen" &&
+      value.status !== VISUAL_ASSIGNMENT_INVENTORY_STATUS) ||
+    !isRecord(value.manifest)
+  ) {
     throw new PlaytestSourceUnavailableError(
       "ClickHouse frozen assignment inventory has a malformed manifest"
     );
   }
-  return {
-    status: "frozen",
-    manifest: migrateAssignmentManifest(value.manifest)
-  };
+  const manifest = migrateAssignmentManifest(value.manifest);
+  if (value.status === VISUAL_ASSIGNMENT_INVENTORY_STATUS) {
+    if (manifest.mode !== PLAYTEST_VISUAL_EXECUTION_MODE) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse visual inventory has a non-visual manifest"
+      );
+    }
+    return { status: VISUAL_ASSIGNMENT_INVENTORY_STATUS, manifest };
+  }
+  if (manifest.mode !== PLAYTEST_ADAPTER_EXECUTION_MODE) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse adapter inventory has a visual assignment manifest"
+    );
+  }
+  return { status: "frozen", manifest };
 }
 
 /**
@@ -1153,6 +1296,7 @@ function migrateBatchArtifact(
   const schema = artifact.schema;
   if (
     schema !== PLAYTESTS_BATCH_SCHEMA &&
+    schema !== PLAYTESTS_BATCH_SCHEMA_V3 &&
     schema !== PLAYTESTS_BATCH_SCHEMA_V2 &&
     schema !== PLAYTESTS_BATCH_SCHEMA_V1
   ) {
@@ -1169,12 +1313,13 @@ function migrateBatchArtifact(
     );
   }
   if (
-    schema === PLAYTESTS_BATCH_SCHEMA &&
+    (schema === PLAYTESTS_BATCH_SCHEMA ||
+      schema === PLAYTESTS_BATCH_SCHEMA_V3) &&
     (artifact.reviewPackets === undefined ||
       !Array.isArray(artifact.reviewReceipts))
   ) {
     throw new PlaytestSourceUnavailableError(
-      "ClickHouse v3 batch is missing its packet or review receipt inventory"
+      "ClickHouse batch schema requires its packet and review receipt inventory"
     );
   }
   if (
@@ -1188,6 +1333,14 @@ function migrateBatchArtifact(
   const assignmentInventory = migrateAssignmentInventory(
     artifact.assignmentInventory
   );
+  if (
+    schema !== PLAYTESTS_BATCH_SCHEMA &&
+    assignmentInventory.status === VISUAL_ASSIGNMENT_INVENTORY_STATUS
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "Legacy ClickHouse batch schema cannot contain visual assignments"
+    );
+  }
   const reviewSelection =
     artifact.reviewSelection === undefined
       ? {
@@ -1196,7 +1349,7 @@ function migrateBatchArtifact(
         }
       : artifact.reviewSelection;
   const reviewReceipts = Array.isArray(artifact.reviewReceipts)
-    ? schema === PLAYTESTS_BATCH_SCHEMA
+    ? schema === PLAYTESTS_BATCH_SCHEMA || schema === PLAYTESTS_BATCH_SCHEMA_V3
       ? artifact.reviewReceipts
       : artifact.reviewReceipts.map((receipt) =>
           isRecord(receipt)
@@ -1209,7 +1362,9 @@ function migrateBatchArtifact(
         )
     : [];
   const reviewPackets =
-    schema === PLAYTESTS_BATCH_SCHEMA && Array.isArray(artifact.reviewPackets)
+    (schema === PLAYTESTS_BATCH_SCHEMA ||
+      schema === PLAYTESTS_BATCH_SCHEMA_V3) &&
+    Array.isArray(artifact.reviewPackets)
       ? artifact.reviewPackets
       : migrateLegacyPacketReceipts({
           batchId: artifact.batchId,
@@ -1219,7 +1374,11 @@ function migrateBatchArtifact(
         });
   const normalized: Record<string, unknown> = {
     ...artifact,
-    schema: PLAYTESTS_BATCH_SCHEMA
+    schema: PLAYTESTS_BATCH_SCHEMA,
+    executionMode:
+      schema === PLAYTESTS_BATCH_SCHEMA
+        ? artifact.executionMode
+        : PLAYTEST_ADAPTER_EXECUTION_MODE
   };
   delete normalized.samplingPlan;
   delete normalized.reviewedAssignmentIds;
@@ -1427,13 +1586,73 @@ function readLegacyEpisodeArtifact(
 export function migrateLegacyEpisodeForStorage(
   row: Record<string, unknown>
 ): PlaytestEpisode {
-  const legacy = readLegacyEpisodeArtifact(
-    decodePayload<Readonly<Record<string, unknown>>>(
-      row,
-      "episodeId",
-      "revision"
-    )
+  const artifact = decodePayload<Readonly<Record<string, unknown>>>(
+    row,
+    "episodeId",
+    "revision"
   );
+  if (
+    artifact.schema === PLAYTESTS_EPISODE_SCHEMA_V5 ||
+    artifact.schema === PLAYTESTS_EPISODE_SCHEMA_V6
+  ) {
+    assertEpisodeAssignmentIdentity(artifact, "v5");
+    assertEpisodeBranchLineage(artifact, "v5");
+    const termination = artifact.termination;
+    if (
+      !isRecord(termination) ||
+      !(PLAYTESTS_EPISODE_TERMINATION_REASONS as readonly unknown[]).includes(
+        termination.reason
+      ) ||
+      (termination.step !== null &&
+        (!Number.isSafeInteger(termination.step) ||
+          Number(termination.step) < 0))
+    ) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse legacy episode contains an invalid termination record"
+      );
+    }
+    const visualMode =
+      isRecord(artifact.executionProvenance) &&
+      artifact.executionProvenance.mode === "autonomous-visual";
+    const migrated = {
+      ...artifact,
+      schema: PLAYTESTS_EPISODE_SCHEMA,
+      scenarioFamily: visualMode ? null : artifact.scenarioFamily,
+      policyCohort: visualMode ? null : artifact.policyCohort
+    } as unknown as PlaytestEpisode;
+    try {
+      assertPlaytestExecutionProvenance(migrated.executionProvenance);
+      assertPlaytestEpisodeModeFacts(migrated);
+      assertPlaytestEpisodeIdentityForMode(
+        migrated.identity,
+        migrated.executionProvenance
+      );
+      assertPlaytestNumericResults(migrated.metrics);
+    } catch (error) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse legacy episode contains invalid execution identity or metrics",
+        error
+      );
+    }
+    assertIndexMatches(row, "workspace_id", migrated.identity.workspaceId);
+    assertIndexMatches(row, "batch_id", migrated.batchId);
+    assertIndexMatches(row, "episode_id", migrated.episodeId);
+    assertIndexMatches(row, "revision", migrated.revision);
+    assertIndexMatches(row, "scenario", migrated.identity.scenarioId ?? "");
+    assertIndexMatches(row, "seed", migrated.identity.seed ?? "");
+    assertIndexMatches(row, "build_sha", migrated.identity.buildSha ?? "");
+    assertIndexMatches(row, "policy", migrated.identity.policyId);
+    assertIndexMatches(
+      row,
+      "cohort",
+      typeof artifact.policyCohort === "string" ? artifact.policyCohort : ""
+    );
+    assertIndexMatches(row, "status", migrated.status);
+    assertIndexMatches(row, "game_outcome", migrated.outcome);
+    return migrated;
+  }
+
+  const legacy = readLegacyEpisodeArtifact(artifact);
   const migrated: PlaytestEpisode = {
     ...legacy,
     schema: PLAYTESTS_EPISODE_SCHEMA,
@@ -1442,12 +1661,20 @@ export function migrateLegacyEpisodeForStorage(
     executionProvenance: legacyPlaytestExecutionProvenance({
       identity: legacy.identity,
       branchLineage: legacy.branchLineage
-    })
+    }),
+    scenarioFamily:
+      typeof legacy.scenarioFamily === "string" ? legacy.scenarioFamily : null,
+    policyCohort:
+      typeof legacy.policyCohort === "string" ? legacy.policyCohort : null
   };
   assertIndexMatches(row, "workspace_id", migrated.identity.workspaceId);
   assertIndexMatches(row, "batch_id", migrated.batchId);
   assertIndexMatches(row, "episode_id", migrated.episodeId);
+  assertPlaytestEpisodeModeFacts(migrated);
   assertIndexMatches(row, "revision", legacy.revision);
+  assertIndexMatches(row, "scenario", migrated.identity.scenarioId ?? "");
+  assertIndexMatches(row, "seed", migrated.identity.seed ?? "");
+  assertIndexMatches(row, "build_sha", migrated.identity.buildSha ?? "");
   return migrated;
 }
 
@@ -1463,7 +1690,7 @@ export function decodeBatch(row: Record<string, unknown>): PlaytestBatch {
   assertIndexMatches(row, "revision", artifact.revision);
   assertBatchAssignmentInventory(artifact);
   assertIndexMatches(row, "status", artifact.status);
-  assertIndexMatches(row, "build_sha", artifact.buildSha);
+  assertIndexMatches(row, "build_sha", artifact.buildSha ?? "");
   return artifact;
 }
 
@@ -1478,16 +1705,23 @@ export function decodeEpisode(row: Record<string, unknown>): PlaytestEpisode {
   assertIndexMatches(row, "batch_id", artifact.batchId);
   assertIndexMatches(row, "episode_id", artifact.episodeId);
   assertIndexMatches(row, "revision", artifact.revision);
-  assertIndexMatches(row, "scenario", artifact.identity.scenarioId);
+  assertIndexMatches(row, "scenario", artifact.identity.scenarioId ?? "");
+  assertIndexMatches(row, "seed", artifact.identity.seed ?? "");
+  assertIndexMatches(row, "build_sha", artifact.identity.buildSha ?? "");
   assertIndexMatches(row, "policy", artifact.identity.policyId);
   if (row.assignment_id !== undefined && artifact.assignmentId !== null) {
     assertIndexMatches(row, "assignment_id", artifact.assignmentId);
   }
-  assertIndexMatches(row, "cohort", artifact.policyCohort);
+  assertIndexMatches(row, "cohort", artifact.policyCohort ?? "");
   assertIndexMatches(row, "status", artifact.status);
   assertIndexMatches(row, "game_outcome", artifact.outcome);
   try {
     assertPlaytestExecutionProvenance(artifact.executionProvenance);
+    assertPlaytestEpisodeModeFacts(artifact);
+    assertPlaytestEpisodeIdentityForMode(
+      artifact.identity,
+      artifact.executionProvenance
+    );
     assertPlaytestNumericResults(artifact.metrics);
   } catch (error) {
     throw new PlaytestSourceUnavailableError(

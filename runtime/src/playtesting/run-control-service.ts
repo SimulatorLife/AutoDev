@@ -1,7 +1,10 @@
 /** One Runtime-process Playtesting run owner shared by Control API routes. */
 import { ConfigRepository } from "@simulatorlife/autodev-data";
 import { PlaytestRepository } from "@simulatorlife/autodev-data/playtesting";
-import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
+import {
+  WorkspacePlaytestApprovalRepository,
+  WorkspaceVisualPlaytestTargetRepository
+} from "@simulatorlife/autodev-data/workspaces";
 
 import { launchPlaytestAnalystProcess } from "./analyst-process.ts";
 import { PlaytestArtifactStore } from "./artifact-store.ts";
@@ -18,6 +21,7 @@ export function getDefaultPlaytestRunControl(): PlaytestRunOwner {
   if (defaultRunControl !== null) return defaultRunControl;
   const configRepository = new ConfigRepository();
   const approvalRepository = new WorkspacePlaytestApprovalRepository();
+  const visualTargetRepository = new WorkspaceVisualPlaytestTargetRepository();
   const playtestRepository = new PlaytestRepository();
   const artifactStores = new Map<string, PlaytestArtifactStore>();
   defaultRunControl = createPlaytestRunControl({
@@ -30,6 +34,7 @@ export function getDefaultPlaytestRunControl(): PlaytestRunOwner {
       return store;
     },
     approvalRepository,
+    visualTargetRepository,
     playtestRepository,
     launchIntentRepository: playtestRepository,
     readWorkspaceCatalog: () => configRepository.readWorkspaceCatalog(),

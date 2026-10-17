@@ -32,10 +32,6 @@ export default async function SkillsPage({
     Record<string, string | readonly string[] | undefined>
   >;
 }): Promise<React.JSX.Element> {
-  const query = await (searchParams ??
-    Promise.resolve(
-      {} as Record<string, string | readonly string[] | undefined>
-    ));
   const { section, config } = readNodeContext("/skills");
   if (!config) {
     return React.createElement(
@@ -44,7 +40,13 @@ export default async function SkillsPage({
       controlApiCredentialUnavailable("skill configuration")
     );
   }
-  const result = await fetchSkills(config);
+  const [query, result] = await Promise.all([
+    searchParams ??
+      Promise.resolve(
+        {} as Record<string, string | readonly string[] | undefined>
+      ),
+    fetchSkills(config)
+  ]);
   if (result.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,

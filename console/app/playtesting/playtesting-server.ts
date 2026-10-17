@@ -35,9 +35,18 @@ import {
   type PlaytestJsonValue,
   type PlaytestLaunchRequest,
   PLAYTESTS_BATCH_SCHEMA,
+  PLAYTESTS_BATCH_SCHEMA_V1,
+  PLAYTESTS_BATCH_SCHEMA_V2,
+  PLAYTESTS_BATCH_SCHEMA_V3,
   PLAYTESTS_COMPARISON_SCHEMA,
   PLAYTESTS_EPISODE_TERMINATION_REASONS,
   PLAYTESTS_EPISODE_SCHEMA,
+  PLAYTESTS_EPISODE_SCHEMA_V1,
+  PLAYTESTS_EPISODE_SCHEMA_V2,
+  PLAYTESTS_EPISODE_SCHEMA_V3,
+  PLAYTESTS_EPISODE_SCHEMA_V4,
+  PLAYTESTS_EPISODE_SCHEMA_V5,
+  PLAYTESTS_EPISODE_SCHEMA_V6,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
@@ -184,11 +193,34 @@ function isJsonValue(value: unknown, depth = 0): value is PlaytestJsonValue {
   );
 }
 
+const VALID_BATCH_SCHEMAS = new Set<string>([
+  PLAYTESTS_BATCH_SCHEMA,
+  PLAYTESTS_BATCH_SCHEMA_V3,
+  PLAYTESTS_BATCH_SCHEMA_V2,
+  PLAYTESTS_BATCH_SCHEMA_V1
+]);
+
+const VALID_EPISODE_SCHEMAS = new Set<string>([
+  PLAYTESTS_EPISODE_SCHEMA,
+  PLAYTESTS_EPISODE_SCHEMA_V6,
+  PLAYTESTS_EPISODE_SCHEMA_V5,
+  PLAYTESTS_EPISODE_SCHEMA_V4,
+  PLAYTESTS_EPISODE_SCHEMA_V3,
+  PLAYTESTS_EPISODE_SCHEMA_V2,
+  PLAYTESTS_EPISODE_SCHEMA_V1
+]);
+
 function hasSchema(
   value: unknown,
   resource: ControlApiPlaytestingResource
 ): value is Record<string, unknown> {
   if (!isRecord(value)) return false;
+  if (resource === "batches") {
+    return typeof value.schema === "string" && VALID_BATCH_SCHEMAS.has(value.schema);
+  }
+  if (resource === "episodes") {
+    return typeof value.schema === "string" && VALID_EPISODE_SCHEMAS.has(value.schema);
+  }
   const expectedSchema = RESOURCE_SCHEMAS[resource];
   return expectedSchema === "" || value.schema === expectedSchema;
 }
@@ -560,7 +592,25 @@ function isVisualModeReadiness(value: unknown, workspaceId: string): boolean {
   }
   const targetIds = new Set<string>();
   try {
-    for (const target of value.targets) {
+    for (const targetReadiness of value.targets) {
+      if (
+        !isRecord(targetReadiness) ||
+        (targetReadiness.eligibility !== "supported" &&
+          targetReadiness.eligibility !== "unsupported") ||
+        !Array.isArray(targetReadiness.reasons) ||
+        !targetReadiness.reasons.every(
+          (reason) =>
+            isRecord(reason) &&
+            isNonEmptyString(reason.code) &&
+            isNonEmptyString(reason.label) &&
+            isNonEmptyString(reason.message) &&
+            (reason.severity === "check-required" ||
+              reason.severity === "unavailable")
+        )
+      ) {
+        return false;
+      }
+      const target = targetReadiness.target;
       assertWorkspaceVisualPlaytestTargetApproval(target);
       if (
         target.workspaceId !== workspaceId ||
@@ -583,7 +633,7 @@ function isPlaytestingCapabilitiesResponse(
 ): value is ControlApiPlaytestingCapabilitiesResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-playtesting-capabilities-v2" &&
+    value.schema === "autodev-control-playtesting-capabilities-v3" &&
     value.workspaceId === workspaceId &&
     typeof value.capabilityRevision === "string" &&
     CAPABILITY_REVISION_PATTERN.test(value.capabilityRevision) &&
@@ -684,7 +734,7 @@ export async function fetchPlaytestingRunCapabilities(
     ? { kind: "ok", data: result.data }
     : invalidResponse(
         "Playtesting capabilities",
-        "autodev-control-playtesting-capabilities-v2"
+        "autodev-control-playtesting-capabilities-v3"
       );
 }
 

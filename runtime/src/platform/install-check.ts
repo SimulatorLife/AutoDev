@@ -63,6 +63,8 @@ import {
   resolveLaunchAgentValues
 } from "./macos/launchagent.ts";
 import {
+  resolveCommandOnPath,
+  runRulesyncGenerate,
   runtimeFileMatches,
   runtimeLinkMatches,
   runtimeTarget,
@@ -115,12 +117,7 @@ function privateOpenlitSecretsReady(codexHome: string): boolean {
 }
 
 function commandAvailable(command: string): boolean {
-  try {
-    execFileSync("which", [command], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
+  return resolveCommandOnPath(command) !== null;
 }
 function sourceRoot(options: InstallCheckOptions): string {
   return path.resolve(
@@ -148,20 +145,31 @@ function check(
     failures.value = 1;
   }
 }
+
+const trackedFilesCache = new Map<string, ReadonlySet<string>>();
+
 function tracked(repositoryRoot: string, filePath: string): boolean {
-  try {
-    const files = execFileSync("git", ["-C", repositoryRoot, "ls-files"], {
-      encoding: "utf8"
-    });
-    const relative = filePath.startsWith(`${repositoryRoot}/`)
-      ? filePath.slice(repositoryRoot.length + 1)
-      : filePath;
-    return files
-      .split(LINE_SPLIT_PATTERN)
-      .some((file) => file === relative || file.startsWith(`${relative}/`));
-  } catch {
-    return false;
+  let files = trackedFilesCache.get(repositoryRoot);
+  if (files === undefined) {
+    try {
+      const output = execFileSync("git", ["-C", repositoryRoot, "ls-files"], {
+        encoding: "utf8"
+      });
+      files = new Set(output.split(LINE_SPLIT_PATTERN).filter(Boolean));
+      trackedFilesCache.set(repositoryRoot, files);
+    } catch {
+      return false;
+    }
   }
+  const relative = filePath.startsWith(`${repositoryRoot}/`)
+    ? filePath.slice(repositoryRoot.length + 1)
+    : filePath;
+  if (files.has(relative)) return true;
+  const prefix = `${relative}/`;
+  for (const file of files) {
+    if (file.startsWith(prefix)) return true;
+  }
+  return false;
 }
 function staleCheck(
   options: { repositoryRoot: string; home: string; codexHome: string },
@@ -261,32 +269,7 @@ function checkAuth(
       failures.value = 1;
       return;
     }
-    let stalePids: string[] = [];
-    try {
-      const pids = execFileSync("pgrep", ["-x", "codex"], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"]
-      })
-        .trim()
-        .split(WHITESPACE_SPLIT_PATTERN)
-        .filter(Boolean);
-      stalePids = pids.filter((pid) => {
-        try {
-          const command = execFileSync("ps", ["eww", "-o", "command=", pid], {
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "ignore"]
-          });
-          return !command
-            .split(" ")
-            .map((entry) => entry.trim())
-            .includes(`CODEX_ROUTER_AUTH_TOKEN=${token}`);
-        } catch {
-          return true;
-        }
-      });
-    } catch {
-      /* no running Codex process is an acceptable state */
-    }
+    const stalePids = findStaleCodexPids(token);
     if (stalePids.length > 0) {
       writeLine(
         `action required: running Codex process predates the current auth token and will 401 (pid${stalePids.length === 1 ? "" : "s"} ${stalePids.join(" ")}); quit and relaunch Codex`
@@ -296,6 +279,116 @@ function checkAuth(
     }
   }
   writeLine("ok router authentication is active");
+}
+
+export interface CodexProcessInspector {
+  readonly listCodexPids: () => readonly string[];
+  readonly readProcessCommandWithEnv: (pid: string) => string | null;
+  readonly readParentPid: (pid: string) => string | null;
+  readonly processExists?: (pid: string) => boolean;
+}
+
+const MAX_ANCESTOR_HOPS = 16;
+
+const defaultCodexProcessInspector: CodexProcessInspector = {
+  listCodexPids: () => {
+    try {
+      return execFileSync("pgrep", ["-x", "codex"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"]
+      })
+        .trim()
+        .split(WHITESPACE_SPLIT_PATTERN)
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  },
+  readProcessCommandWithEnv: (pid: string) => {
+    try {
+      return execFileSync("ps", ["eww", "-o", "command=", pid], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"]
+      });
+    } catch {
+      return null;
+    }
+  },
+  readParentPid: (pid: string) => {
+    try {
+      return (
+        execFileSync("ps", ["-o", "ppid=", "-p", pid], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"]
+        }).trim() || null
+      );
+    } catch {
+      return null;
+    }
+  },
+  processExists: (pid: string) => {
+    const numeric = Number.parseInt(pid);
+    if (!Number.isInteger(numeric) || numeric <= 0) return false;
+    try {
+      process.kill(numeric, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "EPERM";
+    }
+  }
+};
+
+function hasAuthenticatedAncestor(
+  pid: string,
+  authenticatedPids: ReadonlySet<string>,
+  inspector: CodexProcessInspector
+): boolean {
+  let current = pid;
+  for (let hop = 0; hop < MAX_ANCESTOR_HOPS; hop++) {
+    const parent = inspector.readParentPid(current);
+    if (!parent || parent === "0" || parent === "1" || parent === current) {
+      return false;
+    }
+    if (authenticatedPids.has(parent)) {
+      return true;
+    }
+    current = parent;
+  }
+  return false;
+}
+
+export function findStaleCodexPids(
+  token: string,
+  inspector: CodexProcessInspector = defaultCodexProcessInspector
+): string[] {
+  const pids = inspector.listCodexPids();
+  if (pids.length === 0) return [];
+  const expectedEnvEntry = `CODEX_ROUTER_AUTH_TOKEN=${token}`;
+  const authenticatedPids = new Set<string>();
+  const unauthenticatedPids: string[] = [];
+
+  for (const pid of pids) {
+    const command = inspector.readProcessCommandWithEnv(pid);
+    if (command === null) {
+      if (inspector.processExists?.(pid) !== false) {
+        unauthenticatedPids.push(pid);
+      }
+      continue;
+    }
+    const hasCurrentToken = command
+      .split(" ")
+      .map((entry) => entry.trim())
+      .includes(expectedEnvEntry);
+    if (hasCurrentToken) {
+      authenticatedPids.add(pid);
+    } else {
+      unauthenticatedPids.push(pid);
+    }
+  }
+
+  return unauthenticatedPids.filter(
+    (pid) => !hasAuthenticatedAncestor(pid, authenticatedPids, inspector)
+  );
 }
 
 interface RunInstallPaths {
@@ -451,34 +544,20 @@ function checkCommands(
   paths: RunInstallPaths,
   failures: { value: number }
 ): void {
-  const rulesyncBin = path.join(
-    paths.repositoryRoot,
-    "node_modules",
-    ".bin",
-    "rulesync"
-  );
   const rendered = mkdtempSync(path.join(tmpdir(), "autodev-check-prompts-"));
   try {
     const commands = loadCodexCommands(paths.repositoryRoot);
     const catalog = new Set(commands.map((command) => command.name));
-    execFileSync(
-      rulesyncBin,
-      [
-        "generate",
-        "--global",
-        "--input-roots",
-        path.join(paths.repositoryRoot, ".rulesync"),
-        "--targets",
-        "codexcli",
-        "--features",
-        "commands",
-        "--silent"
-      ],
+    runRulesyncGenerate(
+      paths.repositoryRoot,
       {
-        cwd: paths.repositoryRoot,
-        env: { ...process.env, HOME: rendered },
-        stdio: "ignore"
-      }
+        global: true,
+        inputRoots: [path.join(paths.repositoryRoot, ".rulesync")],
+        targets: ["codexcli"],
+        features: ["commands"],
+        silent: true
+      },
+      rendered
     );
     const projectedDir = path.join(rendered, ".codex", "prompts");
     const projectedFiles = projectedCommandFiles(
@@ -698,17 +777,11 @@ function checkRulesync(
   failures: { value: number }
 ): void {
   try {
-    execFileSync(
-      path.join(paths.repositoryRoot, "node_modules/.bin/rulesync"),
-      [
-        "generate",
-        "--config",
-        path.join(paths.repositoryRoot, "rulesync.jsonc"),
-        "--check",
-        "--silent"
-      ],
-      { cwd: paths.repositoryRoot, stdio: "ignore" }
-    );
+    runRulesyncGenerate(paths.repositoryRoot, {
+      configPath: path.join(paths.repositoryRoot, "rulesync.jsonc"),
+      check: true,
+      silent: true
+    });
     writeLine(
       `ok repository outputs generated by ${paths.repositoryRoot}/rulesync.jsonc`
     );
@@ -718,31 +791,29 @@ function checkRulesync(
     );
     failures.value = 1;
   }
-  const userTargets = [
-    ["claude", "claudecode"],
-    ["copilot", "copilotcli"],
-    ["agy", "antigravity-cli"] as const
-  ]
+  const userTargetList = (
+    [
+      ["claude", "claudecode"],
+      ["copilot", "copilotcli"],
+      ["agy", "antigravity-cli"]
+    ] as const
+  )
     .filter(([command]) => commandAvailable(command))
-    .map(([, target]) => target)
-    .join(",");
-  if (!userTargets) return;
+    .map(([, target]) => target);
+  if (userTargetList.length === 0) return;
+  const userTargets = userTargetList.join(",");
   try {
-    execFileSync(
-      path.join(paths.repositoryRoot, "node_modules/.bin/rulesync"),
-      [
-        "generate",
-        "--global",
-        "--input-roots",
-        path.join(paths.repositoryRoot, ".rulesync"),
-        "--targets",
-        userTargets,
-        "--features",
-        "mcp",
-        "--check",
-        "--silent"
-      ],
-      { cwd: paths.repositoryRoot, stdio: "ignore" }
+    runRulesyncGenerate(
+      paths.repositoryRoot,
+      {
+        global: true,
+        inputRoots: [path.join(paths.repositoryRoot, ".rulesync")],
+        targets: userTargetList,
+        features: ["mcp"],
+        check: true,
+        silent: true
+      },
+      paths.home
     );
     writeLine(
       `ok user-level MCP (${userTargets}) generated from ${paths.repositoryRoot}/.rulesync/mcp.jsonc`
@@ -1013,6 +1084,7 @@ function checkLaunchAgents(
 }
 
 export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
+  trackedFilesCache.clear();
   const paths = resolveRunInstallPaths(overrides);
   const failures = { value: 0 };
   const mode = readOtelIngressMode(

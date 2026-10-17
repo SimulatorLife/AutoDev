@@ -34,7 +34,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   buildPlaytestCoverageManifestDraft,
-  type PlaytestAssignmentManifest,
+  type PlaytestAdapterAssignmentManifest,
   playtestAssignmentManifestHashInput,
   type PlaytestBatch,
   type PlaytestBatchAssignment,
@@ -178,6 +178,7 @@ function batchFromApproved(
   const benchmark = definition.benchmark;
   return {
     schema: PLAYTESTS_BATCH_SCHEMA,
+    executionMode: "adapter-accelerated",
     batchId: BATCH_ID,
     revision: 1,
     workspaceId: WORKSPACE_ID,
@@ -236,9 +237,10 @@ function batchFromApproved(
 }
 
 /** A real content-hashed assignment manifest; a cast would hide a field rename. */
-function assignmentManifest(): PlaytestAssignmentManifest {
+function assignmentManifest(): PlaytestAdapterAssignmentManifest {
   const base = {
     schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
+    mode: "adapter-accelerated" as const,
     batchId: BATCH_ID,
     workspaceId: WORKSPACE_ID,
     buildSha: BUILD_SHA,

@@ -1,6 +1,11 @@
 import { OpenLITUsageClient } from "./openlit-usage-client.ts";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:3000";
+// Use a bounded historical date window so ClickHouse partition/primary-key
+// pruning validates every v4 widget, filter-option, and trace-list query
+// contract without scanning the full 24-hour live telemetry volume on every
+// Console service restart.
+const CONTRACT_PROBE_DATE = "2000-01-01";
 const serviceToken = process.env.AUTODEV_OPENLIT_USAGE_TOKEN?.trim();
 
 if (serviceToken) {
@@ -8,7 +13,14 @@ if (serviceToken) {
     baseUrl: process.env.AUTODEV_OPENLIT_USAGE_URL?.trim() || DEFAULT_BASE_URL,
     serviceToken
   });
-  const result = await client.query({ range: "24H", values: {} });
+  const result = await client.query({
+    range: "CUSTOM",
+    customRange: {
+      startDate: CONTRACT_PROBE_DATE,
+      endDate: CONTRACT_PROBE_DATE
+    },
+    values: {}
+  });
 
   switch (result.kind) {
     case "ok": {

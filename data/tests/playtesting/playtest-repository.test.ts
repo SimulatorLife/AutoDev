@@ -7,7 +7,8 @@ import {
   buildPlaytestCoverageManifestDraft,
   buildPlaytestFindingIdentity,
   type HumanPlaytestStudy,
-  type PlaytestAssignmentManifest,
+  type PlaytestAdapterBatch,
+  type PlaytestAssignmentManifestDraft,
   playtestAssignmentManifestHashInput,
   type PlaytestAssignmentOutcome,
   type PlaytestBatch,
@@ -25,11 +26,14 @@ import {
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V1,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V2,
+  PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V3,
   PLAYTESTS_BATCH_SCHEMA,
   PLAYTESTS_BATCH_SCHEMA_V1,
   PLAYTESTS_BATCH_SCHEMA_V2,
+  PLAYTESTS_BATCH_SCHEMA_V3,
   PLAYTESTS_COMPARISON_SCHEMA,
   PLAYTESTS_COMPARISON_SCHEMA_V1,
+  PLAYTESTS_COVERAGE_MANIFEST_SCHEMA,
   PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA,
   PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
   PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA_V1,
@@ -37,6 +41,8 @@ import {
   PLAYTESTS_EPISODE_SCHEMA_V1,
   PLAYTESTS_EPISODE_SCHEMA_V3,
   PLAYTESTS_EPISODE_SCHEMA_V4,
+  PLAYTESTS_EPISODE_SCHEMA_V5,
+  PLAYTESTS_EPISODE_SCHEMA_V6,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
@@ -49,7 +55,9 @@ import {
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V3,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V4,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V5,
+  PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
   type PlaytestSessionReview,
+  type PlaytestVisualBatch,
   selectPlaytestBatchReviews
 } from "@simulatorlife/autodev-core";
 
@@ -81,6 +89,13 @@ import {
   migrateLegacyEpisodeForStorage
 } from "../../src/playtesting/row-codec.ts";
 
+const BUILD_SHA_A = "a".repeat(40);
+const BUILD_SHA_B = "b".repeat(40);
+const CONFIG_HASH = "c".repeat(64);
+const OBSERVATION_SCHEMA_HASH = "d".repeat(64);
+const ACTION_SCHEMA_HASH = "e".repeat(64);
+const EVENT_SCHEMA_HASH = "f".repeat(64);
+
 function counts() {
   return {
     assigned: 1,
@@ -95,7 +110,10 @@ function counts() {
   } as const;
 }
 
-function episode(index: number, workspaceId = "workspace-a"): PlaytestEpisode {
+function episode(
+  index: number,
+  workspaceId = "workspace-a/game"
+): PlaytestEpisode {
   const timestamp = new Date(
     Date.UTC(2026, 9, 1, 0, 0, index % 60)
   ).toISOString();
@@ -125,10 +143,10 @@ function episode(index: number, workspaceId = "workspace-a"): PlaytestEpisode {
     identity: {
       workspaceId,
       repository: "synthetic/game",
-      buildSha: index % 2 ? "build-a" : "build-b",
+      buildSha: index % 2 ? BUILD_SHA_A : BUILD_SHA_B,
       gameBuild: "game-v1",
       scenarioId: index % 2 ? "tutorial" : "arena",
-      configHash: "config-hash",
+      configHash: CONFIG_HASH,
       seed: String(index),
       rngInitialStateHash: null,
       rngAlgorithm: "pcg32",
@@ -137,9 +155,9 @@ function episode(index: number, workspaceId = "workspace-a"): PlaytestEpisode {
       policyVersion: "1",
       modelId: null,
       modelRevision: null,
-      observationSchemaHash: "obs-v1",
-      actionSchemaHash: "act-v1",
-      eventSchemaHash: "event-v1",
+      observationSchemaHash: OBSERVATION_SCHEMA_HASH,
+      actionSchemaHash: ACTION_SCHEMA_HASH,
+      eventSchemaHash: EVENT_SCHEMA_HASH,
       protocolVersion: 1,
       runtimeVersion: "runtime-v1",
       environmentHash: "env-v1"
@@ -173,13 +191,14 @@ function episode(index: number, workspaceId = "workspace-a"): PlaytestEpisode {
   };
 }
 
-function batch(): PlaytestBatch {
+function batch(): PlaytestAdapterBatch {
   const assignmentManifest = {
     schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
+    mode: "adapter-accelerated",
     batchId: "batch-0",
-    workspaceId: "workspace-a",
-    buildSha: "build-a",
-    configHash: "config-hash",
+    workspaceId: "workspace-a/game",
+    buildSha: BUILD_SHA_A,
+    configHash: CONFIG_HASH,
     rubricHash: "rubric-v1",
     approvalRevision: 1,
     createdAt: "2026-10-01T00:00:00.000Z",
@@ -198,16 +217,17 @@ function batch(): PlaytestBatch {
   } as const;
   return {
     schema: PLAYTESTS_BATCH_SCHEMA,
+    executionMode: "adapter-accelerated",
     batchId: "batch-0",
     revision: 1,
-    workspaceId: "workspace-a",
+    workspaceId: "workspace-a/game",
     repository: "synthetic/game",
-    buildSha: "build-a",
+    buildSha: BUILD_SHA_A,
     gameBuild: "game-v1",
-    configHash: "config-hash",
+    configHash: CONFIG_HASH,
     rubricHash: "rubric-v1",
-    actionSchemaHash: "act-v1",
-    observationSchemaHash: "obs-v1",
+    actionSchemaHash: ACTION_SCHEMA_HASH,
+    observationSchemaHash: OBSERVATION_SCHEMA_HASH,
     eventSchemaHash: "events-v1",
     measurementVersion: "measurement-v1",
     protocolVersion: 1,
@@ -243,8 +263,8 @@ function batch(): PlaytestBatch {
     completedAt: "2026-10-01T00:00:01.000Z",
     createdAt: "2026-10-01T00:00:00.000Z",
     provenance: {
-      workspaceId: "workspace-a",
-      buildSha: "build-a",
+      workspaceId: "workspace-a/game",
+      buildSha: BUILD_SHA_A,
       measurementVersion: "measurement-v1",
       generatedAt: "2026-10-01T00:00:00.000Z"
     },
@@ -253,11 +273,109 @@ function batch(): PlaytestBatch {
   };
 }
 
-function batchWithCoverage(): PlaytestBatch {
+function visualBatch(cohortId: string | null = null): PlaytestVisualBatch {
+  const manifestDraft = {
+    schema: PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
+    mode: "autonomous-visual" as const,
+    batchId: "visual-batch-1",
+    workspaceId: "workspace-a/game",
+    targetId: "target-visual-1",
+    targetApprovalId: "approval-visual-1",
+    targetRevision: 2,
+    targetOrigin: "http://localhost:5173",
+    policyId: "smart-direct" as const,
+    policyVersion: "smart-direct-v1",
+    cohortId,
+    areasOfFocus: "Explore the tutorial without submitting purchases.",
+    limits: {
+      episodeCount: 1,
+      maxStepsPerEpisode: 40,
+      wallTimeMs: 60_000,
+      smartRequestsPerEpisode: 20,
+      smartTokensPerEpisode: 10_000,
+      screenshotCountPerEpisode: 40,
+      artifactBytesPerEpisode: 10_000_000
+    },
+    createdAt: "2026-10-17T12:00:00.000Z",
+    assignments: [{ assignmentId: "v-0001", ordinal: 0, maxSteps: 30 }]
+  } as const;
+  const manifest = {
+    ...manifestDraft,
+    contentHash: createHash("sha256")
+      .update(playtestAssignmentManifestHashInput(manifestDraft))
+      .digest("hex")
+  };
+  return {
+    schema: PLAYTESTS_BATCH_SCHEMA,
+    executionMode: "autonomous-visual",
+    batchId: manifest.batchId,
+    revision: 1,
+    workspaceId: manifest.workspaceId,
+    repository: null,
+    buildSha: null,
+    gameBuild: null,
+    configHash: null,
+    rubricHash: null,
+    actionSchemaHash: null,
+    observationSchemaHash: null,
+    eventSchemaHash: null,
+    measurementVersion: "playtesting-measurement-v2",
+    protocolVersion: null,
+    policyIds: ["smart-direct"],
+    cohortIds: cohortId === null ? [] : [cohortId],
+    scenarioIds: [],
+    assignmentInventory: { status: "frozen-visual", manifest },
+    coverageManifest: null,
+    unobservedAssignments: [],
+    reviewSelection: {
+      status: "unavailable",
+      reason: "visual-discovery-session-level"
+    },
+    reviewPackets: [],
+    reviewReceipts: [],
+    status: "completed",
+    cancellationReason: null,
+    failureReason: null,
+    counts: {
+      assigned: 1,
+      started: 1,
+      completed: 1,
+      crashed: 0,
+      infrastructureFailed: 0,
+      cancelled: 0,
+      budgetTruncated: 0,
+      reviewed: 0,
+      eligible: 0
+    },
+    budget: {
+      assignedEpisodes: 1,
+      maxStepsPerEpisode: 30,
+      wallTimeMs: 60_000,
+      critiqueBudget: 0,
+      actualCritiques: 0
+    },
+    startedAt: manifest.createdAt,
+    completedAt: manifest.createdAt,
+    createdAt: manifest.createdAt,
+    provenance: {
+      workspaceId: manifest.workspaceId,
+      buildSha: null,
+      measurementVersion: "playtesting-measurement-v2",
+      generatedAt: manifest.createdAt
+    },
+    evaluationIds: [],
+    spanIds: []
+  };
+}
+
+function batchWithCoverage(): PlaytestAdapterBatch {
   const original = batch();
-  if (original.assignmentInventory.status !== "frozen") {
+  if (
+    original.assignmentInventory.status !== "frozen" ||
+    original.assignmentInventory.manifest.mode !== "adapter-accelerated"
+  ) {
     throw new Error(
-      "The fixture batch must have a frozen assignment inventory."
+      "The fixture batch must have a frozen adapter assignment inventory."
     );
   }
   const buildSha = "a".repeat(40);
@@ -318,7 +436,7 @@ function batchWithCoverage(): PlaytestBatch {
 
 function finding(overrides: Partial<PlaytestFinding> = {}): PlaytestFinding {
   const identity = buildPlaytestFindingIdentity({
-    workspaceId: "workspace-a",
+    workspaceId: "workspace-a/game",
     mechanicKey: "collision-clip",
     failureSignature: {
       events: ["collision", "fall", "clip"],
@@ -353,7 +471,7 @@ function finding(overrides: Partial<PlaytestFinding> = {}): PlaytestFinding {
     evidenceRefs: [{ kind: "episode", id: "episode-1", step: 2 }],
     experimentIds: [],
     issueRefs: [],
-    lastVerifiedBuild: "build-a",
+    lastVerifiedBuild: BUILD_SHA_A,
     nextReviewAt: null,
     ...overrides
   } as PlaytestFinding;
@@ -381,8 +499,8 @@ function review(): PlaytestSessionReview {
     rubricHash: "rubric-v1",
     measurementVersion: "measurement-v1",
     provenance: {
-      workspaceId: "workspace-a",
-      buildSha: "build-a",
+      workspaceId: "workspace-a/game",
+      buildSha: BUILD_SHA_A,
       measurementVersion: "measurement-v1",
       generatedAt: "2026-10-01T00:00:00.000Z"
     },
@@ -425,7 +543,7 @@ function review(): PlaytestSessionReview {
 
 test("legacy review schemas migrate with explicit packet and claim-citation gaps", () => {
   const artifact = review();
-  const row = encodeReview("workspace-a", artifact);
+  const row = encodeReview("workspace-a/game", artifact);
   const legacy = JSON.parse(row.payload_json) as Record<string, unknown>;
   legacy.schema = PLAYTESTS_SESSION_REVIEW_SCHEMA_V1;
   legacy.observations = ["Synthetic observation"];
@@ -456,7 +574,7 @@ test("legacy review schemas migrate with explicit packet and claim-citation gaps
       }
     }
   };
-  const packetReviewRow = encodeReview("workspace-a", packetReview);
+  const packetReviewRow = encodeReview("workspace-a/game", packetReview);
   assert.deepEqual(
     decodeReview(packetReviewRow as unknown as Record<string, unknown>),
     packetReview
@@ -529,7 +647,7 @@ test("legacy review schemas migrate with explicit packet and claim-citation gaps
   }
   assert.throws(
     () =>
-      encodeReview("workspace-a", {
+      encodeReview("workspace-a/game", {
         ...packetReview,
         evidencePacket: {
           ...packetReview.evidencePacket!,
@@ -609,7 +727,7 @@ function crossSessionSynthesis(
 
 function comparison(
   index = 1,
-  workspaceId = "workspace-a"
+  workspaceId = "workspace-a/game"
 ): PlaytestComparison {
   return {
     schema: PLAYTESTS_COMPARISON_SCHEMA,
@@ -642,7 +760,7 @@ function comparison(
     humanPreference: { answer: "not-collected", interval: null },
     provenance: {
       workspaceId,
-      buildSha: "build-a",
+      buildSha: BUILD_SHA_A,
       measurementVersion: "measurement-v1",
       generatedAt: new Date(
         Date.UTC(2026, 9, 1, 0, 0, index % 60)
@@ -652,7 +770,10 @@ function comparison(
   };
 }
 
-function benchmark(index = 1, workspaceId = "workspace-a"): PlaytestBenchmark {
+function benchmark(
+  index = 1,
+  workspaceId = "workspace-a/game"
+): PlaytestBenchmark {
   const manifest: Omit<PlaytestBenchmark, "contentHash"> = {
     benchmarkId: `benchmark-${String(index).padStart(5, "0")}`,
     version: 1,
@@ -696,7 +817,7 @@ function benchmark(index = 1, workspaceId = "workspace-a"): PlaytestBenchmark {
 
 function experiment(
   index = 1,
-  workspaceId = "workspace-a"
+  workspaceId = "workspace-a/game"
 ): PlaytestExperiment {
   const discoveryInventory = [
     `experiment-${index}-discovery-1`,
@@ -767,7 +888,7 @@ function experiment(
 
 function humanStudy(
   index = 1,
-  workspaceId = "workspace-a"
+  workspaceId = "workspace-a/game"
 ): HumanPlaytestStudy {
   return {
     schema: PLAYTESTS_HUMAN_STUDY_SCHEMA,
@@ -802,7 +923,7 @@ function humanSummary(
   retainedParticipants = 5,
   revision = 1,
   isTombstone = false,
-  workspaceId = "workspace-a",
+  workspaceId = "workspace-a/game",
   benchmarkId = "benchmark-1"
 ): PlaytestHumanAggregateRecord {
   return {
@@ -810,7 +931,7 @@ function humanSummary(
     studyId,
     revision,
     benchmarkId,
-    buildSha: "build-a",
+    buildSha: BUILD_SHA_A,
     instrument: "miniPXI",
     measurementVersion: "measurement-v1",
     retainedParticipants,
@@ -918,6 +1039,8 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
   ) as Record<string, unknown>;
   legacyEpisodePayload.schema = PLAYTESTS_EPISODE_SCHEMA_V1;
   delete legacyEpisodePayload.branchLineage;
+  (legacyEpisodePayload.identity as Record<string, unknown>).protocolVersion =
+    null;
   legacyEpisodePayload.metrics = [
     {
       metricId: "legacy-rate",
@@ -931,7 +1054,7 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
       missingReasons: [],
       independentUnits: 2,
       provenance: {
-        workspaceId: "workspace-a",
+        workspaceId: "workspace-a/game",
         measurementVersion: "measurement-v1",
         generatedAt: new Date().toISOString()
       },
@@ -954,6 +1077,7 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
   ) as Record<string, unknown>;
   v3EpisodePayload.schema = PLAYTESTS_EPISODE_SCHEMA_V3;
   delete v3EpisodePayload.termination;
+  (v3EpisodePayload.identity as Record<string, unknown>).protocolVersion = null;
   const migratedV3Episode = migrateLegacyEpisodeForStorage({
     ...encodeEpisode(episode(3)),
     payload_json: JSON.stringify(v3EpisodePayload)
@@ -964,6 +1088,100 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
     reason: "unknown",
     step: null
   });
+  const v5EpisodeRow = encodeEpisode(episode(4));
+  const v5EpisodePayload = JSON.parse(v5EpisodeRow.payload_json) as Record<
+    string,
+    unknown
+  >;
+  v5EpisodePayload.schema = PLAYTESTS_EPISODE_SCHEMA_V5;
+  const migratedV5Episode = migrateLegacyEpisodeForStorage({
+    ...v5EpisodeRow,
+    payload_json: JSON.stringify(v5EpisodePayload)
+  } as unknown as Record<string, unknown>);
+  assert.equal(migratedV5Episode.schema, PLAYTESTS_EPISODE_SCHEMA);
+  assert.equal(migratedV5Episode.revision, episode(4).revision);
+  assert.equal(
+    migratedV5Episode.executionProvenance.mode,
+    "adapter-accelerated"
+  );
+  assert.equal(migratedV5Episode.identity.buildSha, BUILD_SHA_B);
+  const visualEpisodeV6: PlaytestEpisode = {
+    ...episode(5),
+    batchId: "visual-batch-1",
+    assignmentId: "visual-assignment-1",
+    executionProvenance: {
+      mode: "autonomous-visual",
+      source: {
+        kind: "URL-only",
+        repository: null,
+        revision: null,
+        revisionConfidence: "not-applicable",
+        checkoutState: "not-applicable",
+        artifactFingerprint: null,
+        targetId: "racing-target-1",
+        targetOrigin: "http://racing.local"
+      },
+      observationSource: "browser-ui",
+      actionSource: "browser-input",
+      derivedFrom: null
+    },
+    identity: {
+      ...episode(5).identity,
+      repository: null,
+      buildSha: null,
+      gameBuild: null,
+      scenarioId: null,
+      configHash: null,
+      seed: null,
+      rngInitialStateHash: null,
+      rngAlgorithm: null,
+      rngVersion: null,
+      policyId: "smart-direct",
+      policyVersion: "smart-direct-v1",
+      protocolVersion: null
+    },
+    scenarioFamily: null,
+    policyCohort: null,
+    strategy: "smart-direct"
+  };
+  const visualV5Row = encodeEpisode(visualEpisodeV6);
+  assert.equal(visualV5Row.scenario, "");
+  assert.equal(visualV5Row.cohort, "");
+  const visualV5Payload = JSON.parse(visualV5Row.payload_json) as Record<
+    string,
+    unknown
+  >;
+  visualV5Payload.schema = PLAYTESTS_EPISODE_SCHEMA_V5;
+  visualV5Payload.scenarioFamily = "visual-discovery";
+  visualV5Payload.policyCohort = "exploratory";
+  const migratedVisualV5 = migrateLegacyEpisodeForStorage({
+    ...visualV5Row,
+    cohort: "exploratory",
+    payload_json: JSON.stringify(visualV5Payload)
+  } as unknown as Record<string, unknown>);
+  assert.equal(migratedVisualV5.executionProvenance.mode, "autonomous-visual");
+  assert.equal(migratedVisualV5.identity.buildSha, null);
+  assert.equal(migratedVisualV5.identity.scenarioId, null);
+  assert.equal(migratedVisualV5.scenarioFamily, null);
+  assert.equal(migratedVisualV5.policyCohort, null);
+  assert.equal(migratedVisualV5.revision, visualEpisodeV6.revision);
+
+  const visualV6Row = encodeEpisode(visualEpisodeV6);
+  const visualV6Payload = JSON.parse(visualV6Row.payload_json) as Record<
+    string,
+    unknown
+  >;
+  visualV6Payload.schema = PLAYTESTS_EPISODE_SCHEMA_V6;
+  visualV6Payload.scenarioFamily = "visual-discovery";
+  visualV6Payload.policyCohort = "exploratory";
+  const migratedVisualV6 = migrateLegacyEpisodeForStorage({
+    ...visualV6Row,
+    cohort: "exploratory",
+    payload_json: JSON.stringify(visualV6Payload)
+  } as unknown as Record<string, unknown>);
+  assert.equal(migratedVisualV6.executionProvenance.mode, "autonomous-visual");
+  assert.equal(migratedVisualV6.scenarioFamily, null);
+  assert.equal(migratedVisualV6.policyCohort, null);
   assert.throws(
     () =>
       decodeEpisode({
@@ -979,8 +1197,9 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
     any
   >;
   const currentManifest = legacyBatchPayload.assignmentInventory.manifest;
+  const { mode: _currentMode, ...manifestBeforeMode } = currentManifest;
   const legacyManifest = {
-    ...currentManifest,
+    ...manifestBeforeMode,
     schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V1,
     assignments: currentManifest.assignments.map(
       ({ cohort: _cohort, ...assignment }: Record<string, unknown>) =>
@@ -991,10 +1210,7 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
   legacyManifest.contentHash = createHash("sha256")
     .update(
       playtestAssignmentManifestHashInput(
-        legacyManifest as unknown as Omit<
-          PlaytestAssignmentManifest,
-          "contentHash"
-        >
+        legacyManifest as unknown as PlaytestAssignmentManifestDraft
       )
     )
     .digest("hex");
@@ -1013,6 +1229,58 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
     );
   }
 
+  const legacyV3Manifest = {
+    ...manifestBeforeMode,
+    schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V3,
+    contentHash: ""
+  };
+  legacyV3Manifest.contentHash = createHash("sha256")
+    .update(
+      playtestAssignmentManifestHashInput(
+        legacyV3Manifest as unknown as PlaytestAssignmentManifestDraft
+      )
+    )
+    .digest("hex");
+  const legacyBatchV3Payload: Record<string, unknown> = {
+    ...legacyBatchPayload,
+    schema: PLAYTESTS_BATCH_SCHEMA_V3,
+    assignmentInventory: {
+      status: "frozen",
+      manifest: legacyV3Manifest
+    }
+  };
+  delete legacyBatchV3Payload.executionMode;
+  const migratedOuterV3 = decodeBatch({
+    ...batchRow,
+    payload_json: JSON.stringify(legacyBatchV3Payload)
+  });
+  assert.equal(migratedOuterV3.schema, PLAYTESTS_BATCH_SCHEMA);
+  assert.equal(migratedOuterV3.executionMode, "adapter-accelerated");
+  assert.equal(migratedOuterV3.assignmentInventory.status, "frozen");
+
+  const migratedV3 = decodeBatch({
+    ...batchRow,
+    payload_json: JSON.stringify({
+      ...legacyBatchPayload,
+      assignmentInventory: {
+        status: "frozen",
+        manifest: legacyV3Manifest
+      }
+    })
+  });
+  assert.equal(migratedV3.assignmentInventory.status, "frozen");
+  if (
+    migratedV3.assignmentInventory.status === "frozen" &&
+    migratedV3.assignmentInventory.manifest.mode === "adapter-accelerated"
+  ) {
+    assert.equal(
+      migratedV3.assignmentInventory.manifest.assignments[0]?.cohort,
+      "novice"
+    );
+  } else {
+    assert.fail("The v3 adapter manifest must migrate with its cohort intact.");
+  }
+
   const legacyV2Manifest = {
     ...legacyManifest,
     schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V2,
@@ -1021,10 +1289,7 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
   legacyV2Manifest.contentHash = createHash("sha256")
     .update(
       playtestAssignmentManifestHashInput(
-        legacyV2Manifest as unknown as Omit<
-          PlaytestAssignmentManifest,
-          "contentHash"
-        >
+        legacyV2Manifest as unknown as PlaytestAssignmentManifestDraft
       )
     )
     .digest("hex");
@@ -1039,11 +1304,16 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
     })
   });
   assert.equal(migratedV2.assignmentInventory.status, "frozen");
-  if (migratedV2.assignmentInventory.status === "frozen") {
+  if (
+    migratedV2.assignmentInventory.status === "frozen" &&
+    migratedV2.assignmentInventory.manifest.mode === "adapter-accelerated"
+  ) {
     assert.equal(
       migratedV2.assignmentInventory.manifest.assignments[0]?.cohort,
       null
     );
+  } else {
+    assert.fail("The legacy adapter manifest must remain adapter-accelerated.");
   }
 });
 
@@ -1450,7 +1720,7 @@ test("comparison codec rejects legacy finding aliases on write and read", () => 
 
 test("finding codec rejects workspace spoofing, fingerprint tampering, and legacy rows without stable identity", () => {
   const artifact = finding();
-  const row = encodeFinding("workspace-a", artifact);
+  const row = encodeFinding("workspace-a/game", artifact);
   const prevalenceUnknown = finding({
     affectedEpisodes: null,
     totalEligibleEpisodes: null,
@@ -1458,28 +1728,32 @@ test("finding codec rejects workspace spoofing, fingerprint tampering, and legac
     totalEligibleOpportunities: null
   });
   assert.deepEqual(
-    decodeFinding(encodeFinding("workspace-a", prevalenceUnknown)),
+    decodeFinding(encodeFinding("workspace-a/game", prevalenceUnknown)),
     prevalenceUnknown
   );
   assert.throws(
-    () => encodeFinding("workspace-b", artifact),
+    () => encodeFinding("workspace-b/game", artifact),
     /identity workspaceId must match/u
   );
   assert.throws(
     () =>
-      encodeFinding("workspace-a", {
+      encodeFinding("workspace-a/game", {
         ...artifact,
         fingerprint: "f".repeat(64)
       }),
     /does not match SHA-256/u
   );
   assert.throws(
-    () => encodeFinding("workspace-a", { ...artifact, affectedEpisodes: 11 }),
+    () =>
+      encodeFinding("workspace-a/game", { ...artifact, affectedEpisodes: 11 }),
     /cannot exceed eligible denominators/u
   );
   assert.throws(
     () =>
-      encodeFinding("workspace-a", { ...artifact, affectedOpportunities: -1 }),
+      encodeFinding("workspace-a/game", {
+        ...artifact,
+        affectedOpportunities: -1
+      }),
     /non-negative safe integers/u
   );
   assert.throws(
@@ -1573,12 +1847,12 @@ test("batch artifact state sees historical receipt refs and current status with 
     );
   };
   const repo = new PlaytestRepository({ fetchImpl });
-  const state = await repo.getBatchArtifactState("workspace-a", "batch-0");
+  const state = await repo.getBatchArtifactState("workspace-a/game", "batch-0");
   assert.equal(state.latestStatus, "failed");
   assert.deepEqual(state.packetArtifacts, [packetArtifact]);
   assert.equal(
     capturedUrls[0]?.searchParams.get("param_workspaceId"),
-    "workspace-a"
+    "workspace-a/game"
   );
   assert.equal(capturedUrls[0]?.searchParams.get("param_batchId"), "batch-0");
 
@@ -1586,7 +1860,7 @@ test("batch artifact state sees historical receipt refs and current status with 
     fetchImpl: async () => new Response("", { status: 200 })
   });
   assert.deepEqual(
-    await missing.getBatchArtifactState("workspace-a", "absent"),
+    await missing.getBatchArtifactState("workspace-a/game", "absent"),
     {
       latestStatus: null,
       packetArtifacts: []
@@ -1606,7 +1880,7 @@ test("batch artifact state refuses history beyond its bounded read limit", async
       })
   });
   await assert.rejects(
-    repo.getBatchArtifactState("workspace-a", "batch-0"),
+    repo.getBatchArtifactState("workspace-a/game", "batch-0"),
     /history exceeds the bounded packet-reconciliation limit/u
   );
 });
@@ -1805,11 +2079,17 @@ test("batch assignment manifest is durably round-tripped, hash-checked and old h
         ...encodeBatch(packetBatch),
         payload_json: JSON.stringify(missingV3Packets)
       } as unknown as Record<string, unknown>),
-    /v3 batch is missing its packet/u
+    /requires its packet and review receipt inventory/u
   );
 
   const inventory = artifact.assignmentInventory;
   assert.equal(inventory.status, "frozen");
+  if (
+    inventory.status !== "frozen" ||
+    inventory.manifest.mode !== "adapter-accelerated"
+  ) {
+    assert.fail("The fixture batch must use an adapter assignment manifest.");
+  }
   const tampered: PlaytestBatch = {
     ...artifact,
     assignmentInventory: {
@@ -1939,6 +2219,72 @@ test("batch assignment manifest is durably round-tripped, hash-checked and old h
   );
 });
 
+test("Data round-trips a visual batch with explicit null source identity", () => {
+  const artifact = visualBatch();
+  const encoded = encodeBatch(artifact);
+  assert.equal(encoded.build_sha, "");
+  const payload = JSON.parse(encoded.payload_json) as Record<string, unknown>;
+  assert.equal(payload.executionMode, "autonomous-visual");
+  assert.equal(payload.repository, null);
+  assert.equal(payload.buildSha, null);
+  assert.equal(payload.configHash, null);
+  assert.equal(payload.protocolVersion, null);
+  const decoded = decodeBatch(encoded as unknown as Record<string, unknown>);
+  assert.deepEqual(decoded, artifact);
+  assert.equal(decoded.executionMode, "autonomous-visual");
+  assert.equal(decoded.assignmentInventory.status, "frozen-visual");
+});
+
+test("Data preserves only a persona cohort explicitly frozen into a visual assignment manifest", () => {
+  const artifact = visualBatch("validated-first-time");
+  const decoded = decodeBatch(
+    encodeBatch(artifact) as unknown as Record<string, unknown>
+  );
+  assert.equal(decoded.executionMode, "autonomous-visual");
+  assert.deepEqual(decoded.cohortIds, ["validated-first-time"]);
+  if (decoded.assignmentInventory.status !== "frozen-visual") {
+    assert.fail("The visual batch must retain its mode-specific inventory.");
+  }
+  assert.equal(
+    decoded.assignmentInventory.manifest.cohortId,
+    "validated-first-time"
+  );
+});
+
+test("Data refuses adapter-derived coverage or metrics on a visual batch", () => {
+  const artifact = visualBatch();
+  assert.throws(
+    () =>
+      encodeBatch({
+        ...artifact,
+        buildSha: "a".repeat(40)
+      } as unknown as PlaytestBatch),
+    /Visual batch identity contains adapter facts/u
+  );
+  assert.throws(
+    () =>
+      encodeBatch({
+        ...artifact,
+        coverageManifest: {
+          schema: PLAYTESTS_COVERAGE_MANIFEST_SCHEMA,
+          workspaceId: artifact.workspaceId,
+          batchId: artifact.batchId,
+          buildSha: "a".repeat(40),
+          rubricHash: "b".repeat(64),
+          assignmentManifestHash:
+            artifact.assignmentInventory.manifest.contentHash,
+          mode: "browser",
+          generatedAt: artifact.createdAt,
+          assignedEpisodes: 1,
+          observedEpisodes: 1,
+          cells: [],
+          contentHash: "c".repeat(64)
+        }
+      } as unknown as PlaytestBatch),
+    /Visual batches cannot carry confirmatory coverage/u
+  );
+});
+
 test("Data verifies coverage-manifest hashes and its frozen batch identity", () => {
   const artifact = batchWithCoverage();
   const encoded = encodeBatch(artifact);
@@ -1973,6 +2319,7 @@ test("Data durably bounds and accepts a full 1,000-assignment partial batch", ()
   const template = batch();
   const manifestBase = {
     schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
+    mode: "adapter-accelerated",
     batchId: "batch-1000",
     workspaceId: template.workspaceId,
     buildSha: template.buildSha,
@@ -2156,7 +2503,7 @@ test("Core artifact round-trips preserve full canonical payloads and latest revi
   await repo.insertEpisode(firstEpisode);
   await repo.insertEpisode(latestEpisode);
   await repo.insertEpisode(latestEpisode);
-  await repo.insertFinding("workspace-a", findingArtifact);
+  await repo.insertFinding("workspace-a/game", findingArtifact);
   await repo.insertReview(reviewArtifact);
   await repo.insertComparison(comparisonArtifact);
   await repo.insertBenchmark(benchmarkArtifact);
@@ -2165,27 +2512,27 @@ test("Core artifact round-trips preserve full canonical payloads and latest revi
   await repo.insertHumanSummary(humanSummaryArtifact);
 
   assert.deepEqual(
-    await repo.getBatch("workspace-a", batchArtifact.batchId),
+    await repo.getBatch("workspace-a/game", batchArtifact.batchId),
     batchArtifact
   );
   assert.deepEqual(
-    await repo.getEpisode("workspace-a", firstEpisode.episodeId),
+    await repo.getEpisode("workspace-a/game", firstEpisode.episodeId),
     latestEpisode
   );
   assert.deepEqual(
-    await repo.getFinding("workspace-a", findingArtifact.findingId),
+    await repo.getFinding("workspace-a/game", findingArtifact.findingId),
     findingArtifact
   );
   assert.deepEqual(
     await repo.getLatestFindingByFingerprint(
-      "workspace-a",
+      "workspace-a/game",
       findingArtifact.fingerprint
     ),
     findingArtifact
   );
   assert.deepEqual(
     await repo.getLatestReview(
-      "workspace-a",
+      "workspace-a/game",
       reviewArtifact.episodeId,
       reviewArtifact.reviewId
     ),
@@ -2193,7 +2540,7 @@ test("Core artifact round-trips preserve full canonical payloads and latest revi
   );
   assert.deepEqual(
     await repo.getLatestReviewForEpisode(
-      "workspace-a",
+      "workspace-a/game",
       reviewArtifact.episodeId
     ),
     reviewArtifact
@@ -2210,28 +2557,34 @@ test("Core artifact round-trips preserve full canonical payloads and latest revi
 
   assert.deepEqual(
     await repo.getLatestComparison(
-      "workspace-a",
+      "workspace-a/game",
       comparisonArtifact.comparisonId
     ),
     comparisonArtifact
   );
   assert.deepEqual(
-    await repo.getLatestBenchmark("workspace-a", benchmarkArtifact.benchmarkId),
+    await repo.getLatestBenchmark(
+      "workspace-a/game",
+      benchmarkArtifact.benchmarkId
+    ),
     benchmarkArtifact
   );
   assert.deepEqual(
     await repo.getLatestExperiment(
-      "workspace-a",
+      "workspace-a/game",
       experimentArtifact.experimentId
     ),
     experimentArtifact
   );
   assert.deepEqual(
-    await repo.getLatestHumanStudy("workspace-a", humanStudyArtifact.studyId),
+    await repo.getLatestHumanStudy(
+      "workspace-a/game",
+      humanStudyArtifact.studyId
+    ),
     humanStudyArtifact
   );
   const summaryRes = await repo.getHumanValidationSummary(
-    "workspace-a",
+    "workspace-a/game",
     humanSummaryArtifact.studyId
   );
   assert.equal(summaryRes?.suppressionState, "unsuppressed");
@@ -2257,14 +2610,14 @@ test("Core artifact round-trips preserve full canonical payloads and latest revi
 test("human import resolves bounded episode links with parameterized workspace-scoped batches", async () => {
   const fake = makeClickHouseFetch();
   const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
-  const first = episode(101, "workspace-a");
+  const first = episode(101, "workspace-a/game");
   const latest = { ...first, revision: 2, outcome: "loss" as const };
-  const other = episode(102, "workspace-b");
+  const other = episode(102, "workspace-b/game");
   await repo.insertEpisode(first);
   await repo.insertEpisode(latest);
   await repo.insertEpisode(other);
 
-  const rows = await repo.getEpisodesByIds("workspace-a", [
+  const rows = await repo.getEpisodesByIds("workspace-a/game", [
     first.episodeId,
     other.episodeId,
     "missing-episode"
@@ -2278,13 +2631,13 @@ test("human import resolves bounded episode links with parameterized workspace-s
   const sql = query.searchParams.get("query") ?? "";
   assert.match(sql, /episode_id IN \(/u);
   assert.doesNotMatch(sql, new RegExp(first.episodeId, "u"));
-  assert.equal(query.searchParams.get("param_workspaceId"), "workspace-a");
+  assert.equal(query.searchParams.get("param_workspaceId"), "workspace-a/game");
   assert.equal(query.searchParams.get("param_episodeId0"), first.episodeId);
   assert.equal(query.searchParams.get("param_episodeId1"), other.episodeId);
 
   await assert.rejects(
     repo.getEpisodesByIds(
-      "workspace-a",
+      "workspace-a/game",
       Array.from({ length: 201 }, (_, i) => String(i))
     ),
     /at most 200 bounded IDs/u
@@ -2299,7 +2652,10 @@ test("filtered episode counts reflect the full 10k population and SQL binds valu
     fetchImpl: fake.fetchImpl
   });
   for (let index = 0; index < 10_000; index += 1) {
-    const item = episode(index, index % 5 ? "workspace-a" : "workspace-b");
+    const item = episode(
+      index,
+      index % 5 ? "workspace-a/game" : "workspace-b/game"
+    );
     const encoded = encodeEpisode(item);
     const rows = fake.tables.get("playtest_episodes") ?? [];
     rows.push(encoded as unknown as Record<string, unknown>);
@@ -2307,8 +2663,8 @@ test("filtered episode counts reflect the full 10k population and SQL binds valu
   }
   const page = await repo.listEpisodes(
     {
-      workspaceId: "workspace-a",
-      buildSha: "build-a",
+      workspaceId: "workspace-a/game",
+      buildSha: BUILD_SHA_A,
       cohort: "novice",
       status: "completed",
       gameOutcome: "win"
@@ -2317,8 +2673,8 @@ test("filtered episode counts reflect the full 10k population and SQL binds valu
   );
   const expected = (fake.tables.get("playtest_episodes") ?? []).filter(
     (row) =>
-      row.workspace_id === "workspace-a" &&
-      row.build_sha === "build-a" &&
+      row.workspace_id === "workspace-a/game" &&
+      row.build_sha === BUILD_SHA_A &&
       row.cohort === "novice" &&
       row.status === "completed" &&
       row.game_outcome === "win"
@@ -2326,8 +2682,8 @@ test("filtered episode counts reflect the full 10k population and SQL binds valu
   assert.equal(page.total, expected);
   assert.equal(
     await repo.countEpisodes({
-      workspaceId: "workspace-a",
-      buildSha: "build-a",
+      workspaceId: "workspace-a/game",
+      buildSha: BUILD_SHA_A,
       cohort: "novice",
       status: "completed",
       gameOutcome: "win"
@@ -2343,30 +2699,38 @@ test("filtered episode counts reflect the full 10k population and SQL binds valu
   assert.match(sql, /cohort = \{cohort:String\}/u);
   assert.match(sql, /game_outcome = \{gameOutcome:String\}/u);
   assert.ok(sql.indexOf("cohort =") < sql.indexOf("LIMIT"));
-  assert.equal(select.searchParams.get("param_workspaceId"), "workspace-a");
-  assert.equal(select.searchParams.get("param_buildSha"), "build-a");
+  assert.equal(
+    select.searchParams.get("param_workspaceId"),
+    "workspace-a/game"
+  );
+  assert.equal(select.searchParams.get("param_buildSha"), BUILD_SHA_A);
 });
 
 test("workspace scope and keyset cursors do not expose another workspace or repeat rows", async () => {
   const fake = makeClickHouseFetch();
   const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
   for (let index = 0; index < 30; index += 1) {
-    const item = episode(index, index < 20 ? "workspace-a" : "workspace-b");
+    const item = episode(
+      index,
+      index < 20 ? "workspace-a/game" : "workspace-b/game"
+    );
     const rows = fake.tables.get("playtest_episodes") ?? [];
     rows.push(encodeEpisode(item) as unknown as Record<string, unknown>);
     fake.tables.set("playtest_episodes", rows);
   }
   const first = await repo.listEpisodes(
-    { workspaceId: "workspace-a" },
+    { workspaceId: "workspace-a/game" },
     { limit: 8 }
   );
   const second = await repo.listEpisodes(
-    { workspaceId: "workspace-a" },
+    { workspaceId: "workspace-a/game" },
     { limit: 8, ...(first.nextCursor ? { cursor: first.nextCursor } : {}) }
   );
   assert.equal(first.total, 20);
   assert.ok(
-    second.rows.every((item) => item.identity.workspaceId === "workspace-a")
+    second.rows.every(
+      (item) => item.identity.workspaceId === "workspace-a/game"
+    )
   );
   assert.equal(
     new Set([...first.rows, ...second.rows].map((item) => item.episodeId)).size,
@@ -2374,7 +2738,7 @@ test("workspace scope and keyset cursors do not expose another workspace or repe
   );
   await assert.rejects(
     repo.listEpisodes(
-      { workspaceId: "workspace-a" },
+      { workspaceId: "workspace-a/game" },
       { cursor: "not-a-cursor" }
     ),
     PlaytestInvalidCursorError
@@ -2404,7 +2768,7 @@ test("missing artifacts are distinct from malformed, unavailable, and failed Cli
   const missing = new PlaytestRepository({
     fetchImpl: async () => new Response("", { status: 200 })
   });
-  assert.equal(await missing.getEpisode("workspace-a", "missing"), null);
+  assert.equal(await missing.getEpisode("workspace-a/game", "missing"), null);
   for (const fetchImpl of [
     (async () => new Response("not json", { status: 200 })) as typeof fetch,
     (async () =>
@@ -2421,7 +2785,7 @@ test("missing artifacts are distinct from malformed, unavailable, and failed Cli
   ]) {
     const repo = new PlaytestRepository({ fetchImpl });
     await assert.rejects(
-      repo.listEpisodes({ workspaceId: "workspace-a" }),
+      repo.listEpisodes({ workspaceId: "workspace-a/game" }),
       PlaytestSourceUnavailableError
     );
   }
@@ -2498,19 +2862,29 @@ test("schema warmup migrates old episodes once and marks only protocol-proven ad
   const oldRows = [10, 11].map((index) => {
     const row = encodeEpisode(episode(index));
     const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+    let buildShaIndex = row.build_sha;
     payload.schema = PLAYTESTS_EPISODE_SCHEMA_V4;
     delete payload.executionProvenance;
     if (index === 10) {
       const identity = payload.identity as Record<string, unknown>;
       identity.repository = "SimulatorLife/RacingGame";
       identity.buildSha = "a".repeat(40);
+      buildShaIndex = "a".repeat(40);
       identity.gameBuild = "racing-build-v1";
       identity.configHash = "b".repeat(64);
       identity.observationSchemaHash = "c".repeat(64);
       identity.actionSchemaHash = "d".repeat(64);
       identity.eventSchemaHash = "e".repeat(64);
+    } else {
+      // The row is adapter-shaped but does not contain its negotiated protocol
+      // fact, so the migration must not elevate it to proven adapter history.
+      (payload.identity as Record<string, unknown>).protocolVersion = null;
     }
-    return { ...row, payload_json: JSON.stringify(payload) };
+    return {
+      ...row,
+      build_sha: buildShaIndex,
+      payload_json: JSON.stringify(payload)
+    };
   });
   fake.tables.set(
     "playtest_episodes",
@@ -2521,7 +2895,7 @@ test("schema warmup migrates old episodes once and marks only protocol-proven ad
   await repository.ensureSchema();
 
   const provenAdapter = await repository.getEpisode(
-    "workspace-a",
+    "workspace-a/game",
     "episode-00010"
   );
   assert.ok(provenAdapter);
@@ -2541,7 +2915,10 @@ test("schema warmup migrates old episodes once and marks only protocol-proven ad
     "unknown"
   );
 
-  const uncertain = await repository.getEpisode("workspace-a", "episode-00011");
+  const uncertain = await repository.getEpisode(
+    "workspace-a/game",
+    "episode-00011"
+  );
   assert.ok(uncertain);
   assert.equal(uncertain.executionProvenance.mode, "legacy-unknown");
   assert.equal(uncertain.executionProvenance.source.kind, "unknown");
@@ -2610,25 +2987,30 @@ test("comparisons, benchmarks, and experiments support cursor pagination, full t
 
   // 1. Comparisons
   for (let index = 1; index <= 25; index += 1) {
-    const item = comparison(index, index <= 15 ? "workspace-a" : "workspace-b");
+    const item = comparison(
+      index,
+      index <= 15 ? "workspace-a/game" : "workspace-b/game"
+    );
     const rows = fake.tables.get("playtest_comparisons") ?? [];
     rows.push(encodeComparison(item) as unknown as Record<string, unknown>);
     fake.tables.set("playtest_comparisons", rows);
   }
 
   const compPage1 = await repo.listComparisons(
-    { workspaceId: "workspace-a" },
+    { workspaceId: "workspace-a/game" },
     { limit: 6 }
   );
   assert.equal(compPage1.total, 15);
   assert.equal(compPage1.rows.length, 6);
   assert.ok(compPage1.nextCursor);
   assert.ok(
-    compPage1.rows.every((row) => row.provenance.workspaceId === "workspace-a")
+    compPage1.rows.every(
+      (row) => row.provenance.workspaceId === "workspace-a/game"
+    )
   );
 
   const compPage2 = await repo.listComparisons(
-    { workspaceId: "workspace-a" },
+    { workspaceId: "workspace-a/game" },
     { limit: 6, cursor: compPage1.nextCursor! }
   );
   assert.equal(compPage2.total, 15);
@@ -2641,14 +3023,14 @@ test("comparisons, benchmarks, and experiments support cursor pagination, full t
   assert.equal(compIds.size, 12);
 
   const compFiltered = await repo.listComparisons({
-    workspaceId: "workspace-a",
+    workspaceId: "workspace-a/game",
     decision: "eligible-for-owner-promotion"
   });
   assert.equal(compFiltered.total, 7);
   assert.equal(compFiltered.rows.length, 7);
   assert.equal(
     await repo.countComparisons({
-      workspaceId: "workspace-a",
+      workspaceId: "workspace-a/game",
       decision: "eligible-for-owner-promotion"
     }),
     7
@@ -2656,23 +3038,28 @@ test("comparisons, benchmarks, and experiments support cursor pagination, full t
 
   // 2. Benchmarks
   for (let index = 1; index <= 25; index += 1) {
-    const item = benchmark(index, index <= 15 ? "workspace-a" : "workspace-b");
+    const item = benchmark(
+      index,
+      index <= 15 ? "workspace-a/game" : "workspace-b/game"
+    );
     const rows = fake.tables.get("playtest_benchmarks") ?? [];
     rows.push(encodeBenchmark(item) as unknown as Record<string, unknown>);
     fake.tables.set("playtest_benchmarks", rows);
   }
 
   const benchPage1 = await repo.listBenchmarks(
-    { workspaceId: "workspace-a" },
+    { workspaceId: "workspace-a/game" },
     { limit: 5 }
   );
   assert.equal(benchPage1.total, 15);
   assert.equal(benchPage1.rows.length, 5);
   assert.ok(benchPage1.nextCursor);
-  assert.ok(benchPage1.rows.every((row) => row.workspaceId === "workspace-a"));
+  assert.ok(
+    benchPage1.rows.every((row) => row.workspaceId === "workspace-a/game")
+  );
 
   const benchPage2 = await repo.listBenchmarks(
-    { workspaceId: "workspace-a" },
+    { workspaceId: "workspace-a/game" },
     { limit: 5, cursor: benchPage1.nextCursor! }
   );
   assert.equal(benchPage2.total, 15);
@@ -2684,13 +3071,13 @@ test("comparisons, benchmarks, and experiments support cursor pagination, full t
   assert.equal(benchIds.size, 10);
 
   const benchFiltered = await repo.listBenchmarks({
-    workspaceId: "workspace-a",
+    workspaceId: "workspace-a/game",
     referenceBuildSha: "a".repeat(40)
   });
   assert.equal(benchFiltered.total, 7);
   assert.equal(
     await repo.countBenchmarks({
-      workspaceId: "workspace-a",
+      workspaceId: "workspace-a/game",
       referenceBuildSha: "a".repeat(40)
     }),
     7
@@ -2698,23 +3085,28 @@ test("comparisons, benchmarks, and experiments support cursor pagination, full t
 
   // 3. Experiments
   for (let index = 1; index <= 25; index += 1) {
-    const item = experiment(index, index <= 15 ? "workspace-a" : "workspace-b");
+    const item = experiment(
+      index,
+      index <= 15 ? "workspace-a/game" : "workspace-b/game"
+    );
     const rows = fake.tables.get("playtest_experiments") ?? [];
     rows.push(encodeExperiment(item) as unknown as Record<string, unknown>);
     fake.tables.set("playtest_experiments", rows);
   }
 
   const expPage1 = await repo.listExperiments(
-    { workspaceId: "workspace-a" },
+    { workspaceId: "workspace-a/game" },
     { limit: 4 }
   );
   assert.equal(expPage1.total, 15);
   assert.equal(expPage1.rows.length, 4);
   assert.ok(expPage1.nextCursor);
-  assert.ok(expPage1.rows.every((row) => row.workspaceId === "workspace-a"));
+  assert.ok(
+    expPage1.rows.every((row) => row.workspaceId === "workspace-a/game")
+  );
 
   const expPage2 = await repo.listExperiments(
-    { workspaceId: "workspace-a" },
+    { workspaceId: "workspace-a/game" },
     { limit: 4, cursor: expPage1.nextCursor! }
   );
   assert.equal(expPage2.total, 15);
@@ -2726,13 +3118,13 @@ test("comparisons, benchmarks, and experiments support cursor pagination, full t
   assert.equal(expIds.size, 8);
 
   const expFiltered = await repo.listExperiments({
-    workspaceId: "workspace-a",
+    workspaceId: "workspace-a/game",
     state: "approved"
   });
   assert.equal(expFiltered.total, 7);
   assert.equal(
     await repo.countExperiments({
-      workspaceId: "workspace-a",
+      workspaceId: "workspace-a/game",
       state: "approved"
     }),
     7
@@ -2800,23 +3192,28 @@ test("human study metadata supports insertion, benchmark lookup, and filtered pa
   const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
 
   for (let index = 1; index <= 20; index += 1) {
-    const item = humanStudy(index, index <= 12 ? "workspace-a" : "workspace-b");
+    const item = humanStudy(
+      index,
+      index <= 12 ? "workspace-a/game" : "workspace-b/game"
+    );
     const rows = fake.tables.get("playtest_human_studies") ?? [];
     rows.push(encodeHumanStudy(item) as unknown as Record<string, unknown>);
     fake.tables.set("playtest_human_studies", rows);
   }
 
   const studyPage1 = await repo.listHumanStudies(
-    { workspaceId: "workspace-a" },
+    { workspaceId: "workspace-a/game" },
     { limit: 5 }
   );
   assert.equal(studyPage1.total, 12);
   assert.equal(studyPage1.rows.length, 5);
   assert.ok(studyPage1.nextCursor);
-  assert.ok(studyPage1.rows.every((row) => row.workspaceId === "workspace-a"));
+  assert.ok(
+    studyPage1.rows.every((row) => row.workspaceId === "workspace-a/game")
+  );
 
   const studyPage2 = await repo.listHumanStudies(
-    { workspaceId: "workspace-a" },
+    { workspaceId: "workspace-a/game" },
     { limit: 5, cursor: studyPage1.nextCursor! }
   );
   assert.equal(studyPage2.total, 12);
@@ -2828,31 +3225,31 @@ test("human study metadata supports insertion, benchmark lookup, and filtered pa
   assert.equal(studyIds.size, 10);
 
   const approvedPage = await repo.listHumanStudies({
-    workspaceId: "workspace-a",
+    workspaceId: "workspace-a/game",
     approved: true
   });
   assert.equal(approvedPage.total, 6);
   assert.equal(
     await repo.countHumanStudies({
-      workspaceId: "workspace-a",
+      workspaceId: "workspace-a/game",
       approved: true
     }),
     6
   );
 
   const latestStudy = await repo.getLatestHumanStudy(
-    "workspace-a",
+    "workspace-a/game",
     "study-00001"
   );
   assert.ok(latestStudy);
   assert.equal(latestStudy.studyId, "study-00001");
 
   const studyByBench = await repo.getLatestHumanStudyByBenchmark(
-    "workspace-a",
+    "workspace-a/game",
     "benchmark-1"
   );
   assert.ok(studyByBench);
-  assert.equal(studyByBench.workspaceId, "workspace-a");
+  assert.equal(studyByBench.workspaceId, "workspace-a/game");
 });
 
 test("human summary suppression enforces privacy for <5 retained participants vs unsuppressed for >=5", async () => {
@@ -2863,7 +3260,10 @@ test("human summary suppression enforces privacy for <5 retained participants vs
   const unsuppressedSummary = humanSummary("study-5", 5);
   await repo.insertHumanSummary(unsuppressedSummary);
 
-  const res5 = await repo.getHumanValidationSummary("workspace-a", "study-5");
+  const res5 = await repo.getHumanValidationSummary(
+    "workspace-a/game",
+    "study-5"
+  );
   assert.ok(res5);
   assert.equal(res5.suppressionState, "unsuppressed");
   if (res5.suppressionState === "unsuppressed") {
@@ -2889,12 +3289,15 @@ test("human summary suppression enforces privacy for <5 retained participants vs
     4,
     1,
     false,
-    "workspace-a",
+    "workspace-a/game",
     "benchmark-suppressed"
   );
   await repo.insertHumanSummary(suppressedSummary);
 
-  const res4 = await repo.getHumanValidationSummary("workspace-a", "study-4");
+  const res4 = await repo.getHumanValidationSummary(
+    "workspace-a/game",
+    "study-4"
+  );
   assert.ok(res4);
   assert.equal(res4.suppressionState, "suppressed");
   assert.equal(
@@ -2911,7 +3314,7 @@ test("human summary suppression enforces privacy for <5 retained participants vs
   // 3. Querying by benchmark also applies suppression
   const benchSummarySuppressed =
     await repo.getHumanValidationSummaryByBenchmark(
-      "workspace-a",
+      "workspace-a/game",
       "benchmark-suppressed"
     );
   assert.ok(benchSummarySuppressed);
@@ -2919,7 +3322,7 @@ test("human summary suppression enforces privacy for <5 retained participants vs
 
   const benchSummaryUnsuppressed =
     await repo.getHumanValidationSummaryByBenchmark(
-      "workspace-a",
+      "workspace-a/game",
       "benchmark-1"
     );
   assert.ok(benchSummaryUnsuppressed);
@@ -2934,7 +3337,7 @@ test("withdrawals and tombstone revisions remove prior summary from active reads
   await repo.insertHumanSummary(humanSummary("study-tombstone", 6, 1, false));
 
   const beforeWithdrawal = await repo.getHumanValidationSummary(
-    "workspace-a",
+    "workspace-a/game",
     "study-tombstone"
   );
   assert.ok(beforeWithdrawal);
@@ -2944,13 +3347,13 @@ test("withdrawals and tombstone revisions remove prior summary from active reads
   await repo.insertHumanSummary(humanSummary("study-tombstone", 0, 2, true));
 
   const afterWithdrawal = await repo.getHumanValidationSummary(
-    "workspace-a",
+    "workspace-a/game",
     "study-tombstone"
   );
   assert.equal(afterWithdrawal, null);
 
   assert.equal(
-    await repo.getLatestHumanSummary("workspace-a", "study-tombstone"),
+    await repo.getLatestHumanSummary("workspace-a/game", "study-tombstone"),
     null
   );
 });
@@ -3017,63 +3420,66 @@ test("unavailable and malformed ClickHouse failures never appear as empty collec
     const repo = new PlaytestRepository({ fetchImpl });
 
     await assert.rejects(
-      repo.listComparisons({ workspaceId: "workspace-a" }),
+      repo.listComparisons({ workspaceId: "workspace-a/game" }),
       PlaytestSourceUnavailableError
     );
     await assert.rejects(
-      repo.countComparisons({ workspaceId: "workspace-a" }),
+      repo.countComparisons({ workspaceId: "workspace-a/game" }),
       PlaytestSourceUnavailableError
     );
     await assert.rejects(
-      repo.getLatestComparison("workspace-a", "comp-1"),
-      PlaytestSourceUnavailableError
-    );
-
-    await assert.rejects(
-      repo.listBenchmarks({ workspaceId: "workspace-a" }),
-      PlaytestSourceUnavailableError
-    );
-    await assert.rejects(
-      repo.countBenchmarks({ workspaceId: "workspace-a" }),
-      PlaytestSourceUnavailableError
-    );
-    await assert.rejects(
-      repo.getLatestBenchmark("workspace-a", "bench-1"),
+      repo.getLatestComparison("workspace-a/game", "comp-1"),
       PlaytestSourceUnavailableError
     );
 
     await assert.rejects(
-      repo.listExperiments({ workspaceId: "workspace-a" }),
+      repo.listBenchmarks({ workspaceId: "workspace-a/game" }),
       PlaytestSourceUnavailableError
     );
     await assert.rejects(
-      repo.countExperiments({ workspaceId: "workspace-a" }),
+      repo.countBenchmarks({ workspaceId: "workspace-a/game" }),
       PlaytestSourceUnavailableError
     );
     await assert.rejects(
-      repo.getLatestExperiment("workspace-a", "exp-1"),
-      PlaytestSourceUnavailableError
-    );
-
-    await assert.rejects(
-      repo.listHumanStudies({ workspaceId: "workspace-a" }),
-      PlaytestSourceUnavailableError
-    );
-    await assert.rejects(
-      repo.countHumanStudies({ workspaceId: "workspace-a" }),
-      PlaytestSourceUnavailableError
-    );
-    await assert.rejects(
-      repo.getLatestHumanStudy("workspace-a", "study-1"),
+      repo.getLatestBenchmark("workspace-a/game", "bench-1"),
       PlaytestSourceUnavailableError
     );
 
     await assert.rejects(
-      repo.getHumanValidationSummary("workspace-a", "study-1"),
+      repo.listExperiments({ workspaceId: "workspace-a/game" }),
       PlaytestSourceUnavailableError
     );
     await assert.rejects(
-      repo.getHumanValidationSummaryByBenchmark("workspace-a", "benchmark-1"),
+      repo.countExperiments({ workspaceId: "workspace-a/game" }),
+      PlaytestSourceUnavailableError
+    );
+    await assert.rejects(
+      repo.getLatestExperiment("workspace-a/game", "exp-1"),
+      PlaytestSourceUnavailableError
+    );
+
+    await assert.rejects(
+      repo.listHumanStudies({ workspaceId: "workspace-a/game" }),
+      PlaytestSourceUnavailableError
+    );
+    await assert.rejects(
+      repo.countHumanStudies({ workspaceId: "workspace-a/game" }),
+      PlaytestSourceUnavailableError
+    );
+    await assert.rejects(
+      repo.getLatestHumanStudy("workspace-a/game", "study-1"),
+      PlaytestSourceUnavailableError
+    );
+
+    await assert.rejects(
+      repo.getHumanValidationSummary("workspace-a/game", "study-1"),
+      PlaytestSourceUnavailableError
+    );
+    await assert.rejects(
+      repo.getHumanValidationSummaryByBenchmark(
+        "workspace-a/game",
+        "benchmark-1"
+      ),
       PlaytestSourceUnavailableError
     );
   }

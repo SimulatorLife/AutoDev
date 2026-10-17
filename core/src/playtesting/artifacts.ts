@@ -1,13 +1,13 @@
+import type { PlaytestExecutionProvenance } from "./execution-provenance.ts";
 import type {
   GameRngCheckpoint,
   PlaytestArtifactReference,
   PlaytestCheckpointDigest,
   PlaytestJsonValue
 } from "./protocol-types.ts";
-import type { PlaytestExecutionProvenance } from "./execution-provenance.ts";
 import {
+  type PlaytestAdapterAssignmentManifest,
   type PlaytestAssignmentBranch,
-  type PlaytestAssignmentInventory,
   type PlaytestAssignmentOutcome,
   type PlaytestBatchReviewSelection,
   type PlaytestComparison,
@@ -40,7 +40,8 @@ import {
   PLAYTESTS_GAME_MODES,
   type PLAYTESTS_HUMAN_STUDY_SCHEMA,
   type PLAYTESTS_SESSION_REVIEW_SCHEMA,
-  type PlaytestVersionedRef
+  type PlaytestVersionedRef,
+  type PlaytestVisualAssignmentManifest
 } from "./types.ts";
 
 export const PLAYTESTS_GAME_OUTCOMES = [
@@ -82,12 +83,16 @@ export interface PlaytestObservationContract {
 /** Exact execution identity needed to replay or explicitly identify nondeterminism. */
 export interface PlaytestEpisodeIdentity {
   readonly workspaceId: string;
-  readonly repository: string;
-  readonly buildSha: string;
-  readonly gameBuild: string;
-  readonly scenarioId: string;
-  readonly configHash: string;
-  readonly seed: string;
+  /** Null for URL-only visual targets whose repository cannot be attested. */
+  readonly repository: string | null;
+  /** Null when the rendered build cannot be independently mapped to a revision. */
+  readonly buildSha: string | null;
+  readonly gameBuild: string | null;
+  /** Null when a visual exploration does not have an engine scenario ID. */
+  readonly scenarioId: string | null;
+  readonly configHash: string | null;
+  /** Null when the visual browser session has no reproducible game RNG seed. */
+  readonly seed: string | null;
   /** Hash of the adapter's initial RNG state; null means unobserved. */
   readonly rngInitialStateHash: string | null;
   readonly rngAlgorithm: string | null;
@@ -96,10 +101,11 @@ export interface PlaytestEpisodeIdentity {
   readonly policyVersion: string;
   readonly modelId: string | null;
   readonly modelRevision: string | null;
-  readonly observationSchemaHash: string;
-  readonly actionSchemaHash: string;
-  readonly eventSchemaHash: string;
-  readonly protocolVersion: 1;
+  readonly observationSchemaHash: string | null;
+  readonly actionSchemaHash: string | null;
+  readonly eventSchemaHash: string | null;
+  /** Null for visual sessions that did not negotiate the engine JSON-RPC protocol. */
+  readonly protocolVersion: 1 | null;
   readonly runtimeVersion: string;
   readonly environmentHash: string;
 }
@@ -169,8 +175,10 @@ export interface PlaytestEpisode {
   /** Frozen execution mode and source/build facts; no mode is inferred at display time. */
   readonly executionProvenance: PlaytestExecutionProvenance;
   readonly identity: PlaytestEpisodeIdentity;
-  readonly scenarioFamily: string;
-  readonly policyCohort: string;
+  /** Null for URL-only visual sessions with no asserted engine scenario family. */
+  readonly scenarioFamily: string | null;
+  /** Null when no validated player cohort was assigned to this episode. */
+  readonly policyCohort: string | null;
   readonly strategy: string;
   readonly status: PlaytestEpisodeState;
   readonly termination: PlaytestEpisodeTermination;
@@ -193,6 +201,15 @@ export interface PlaytestEpisode {
   readonly completeness: "complete" | "partial" | "unknown";
   readonly missingReasons: readonly PlaytestMissingReason[];
 }
+
+/** Adapter-only episode facts required by confirmatory metrics and replay. */
+export type PlaytestAdapterEpisode = PlaytestEpisode & {
+  readonly executionProvenance: PlaytestEpisode["executionProvenance"] & {
+    readonly mode: "adapter-accelerated";
+  };
+  readonly scenarioFamily: string;
+  readonly policyCohort: string;
+};
 
 /**
  * Assignment result returned by the live run owner. `state` is Runtime's
@@ -276,41 +293,21 @@ export interface PlaytestCoverageManifest {
   readonly contentHash: string;
 }
 
-/** Workspace-scoped batch; execution state and game outcome are separate. */
-export interface PlaytestBatch {
+/** Shared indexed/lifecycle fields for one execution-mode batch. */
+interface PlaytestBatchBase {
   readonly schema: typeof PLAYTESTS_BATCH_SCHEMA;
   readonly batchId: string;
   readonly revision: number;
   readonly workspaceId: string;
-  readonly repository: string;
-  readonly buildSha: string;
-  /** Adapter build when capabilities were observed; null for pre-negotiation failures. */
-  readonly gameBuild: string | null;
-  readonly configHash: string;
-  readonly rubricHash: string;
-  /** Negotiated schema hashes; null means the adapter failed before capabilities. */
-  readonly actionSchemaHash: string | null;
-  readonly observationSchemaHash: string | null;
-  readonly eventSchemaHash: string | null;
   readonly measurementVersion: string;
-  readonly protocolVersion: 1;
   readonly policyIds: readonly string[];
   readonly cohortIds: readonly string[];
   readonly scenarioIds: readonly string[];
-  readonly assignmentInventory: PlaytestAssignmentInventory;
-  /** Null for persisted history created before the coverage-manifest contract. */
-  readonly coverageManifest: PlaytestCoverageManifest | null;
-  /** Terminal no-episode outcomes; started sessions are stored as PlaytestEpisode rows. */
   readonly unobservedAssignments: readonly PlaytestAssignmentOutcome[] | null;
-  readonly reviewSelection: PlaytestBatchReviewSelection;
-  /** Durable pre-inference packet artifacts for selected complete sessions. */
   readonly reviewPackets: readonly PlaytestReviewPacketReceipt[];
-  /** Durable idempotency ledger; selection is not an actual critique. */
   readonly reviewReceipts: readonly PlaytestReviewReceipt[];
   readonly status: PlaytestBatchState;
-  /** Durable cancellation cause; null for other states or older history. */
   readonly cancellationReason: PlaytestBatchCancellationReason | null;
-  /** Durable owner-level failure cause that no episode row can express. */
   readonly failureReason: PlaytestBatchFailureReason | null;
   readonly counts: PlaytestCompletionCounts;
   readonly budget: {
@@ -323,10 +320,74 @@ export interface PlaytestBatch {
   readonly startedAt: string | null;
   readonly completedAt: string | null;
   readonly createdAt: string;
-  readonly provenance: PlaytestProvenance;
+  readonly provenance: Omit<PlaytestProvenance, "buildSha"> & {
+    readonly buildSha: string | null;
+  };
   readonly evaluationIds: readonly string[];
   readonly spanIds: readonly string[];
 }
+
+/** Workspace-scoped adapter batch; engine/build identity is mandatory. */
+export interface PlaytestAdapterBatch extends PlaytestBatchBase {
+  readonly executionMode: "adapter-accelerated";
+  readonly repository: string;
+  readonly buildSha: string;
+  readonly gameBuild: string | null;
+  readonly configHash: string;
+  readonly rubricHash: string;
+  readonly actionSchemaHash: string | null;
+  readonly observationSchemaHash: string | null;
+  readonly eventSchemaHash: string | null;
+  readonly protocolVersion: 1;
+  readonly assignmentInventory: PlaytestAdapterBatchAssignmentInventory;
+  /** Null only for legacy records or incomplete historical runs. */
+  readonly coverageManifest: PlaytestCoverageManifest | null;
+  readonly reviewSelection: PlaytestBatchReviewSelection;
+  readonly provenance: Omit<PlaytestProvenance, "buildSha"> & {
+    readonly buildSha: string;
+  };
+}
+
+/** Workspace-scoped rendered-UI batch; unavailable engine facts stay null. */
+export interface PlaytestVisualBatch extends PlaytestBatchBase {
+  readonly executionMode: "autonomous-visual";
+  readonly repository: null;
+  readonly buildSha: null;
+  readonly gameBuild: null;
+  readonly configHash: null;
+  readonly rubricHash: null;
+  readonly actionSchemaHash: null;
+  readonly observationSchemaHash: null;
+  readonly eventSchemaHash: null;
+  readonly protocolVersion: null;
+  readonly assignmentInventory: {
+    readonly status: "frozen-visual";
+    readonly manifest: PlaytestVisualAssignmentManifest;
+  };
+  readonly coverageManifest: null;
+  readonly reviewSelection: {
+    readonly status: "unavailable";
+    readonly reason: "visual-discovery-session-level";
+  };
+  readonly reviewPackets: readonly [];
+  readonly reviewReceipts: readonly [];
+  readonly provenance: Omit<PlaytestProvenance, "buildSha"> & {
+    readonly buildSha: null;
+  };
+}
+
+export type PlaytestAdapterBatchAssignmentInventory =
+  | {
+      readonly status: "frozen";
+      readonly manifest: PlaytestAdapterAssignmentManifest;
+    }
+  | {
+      readonly status: "unavailable";
+      readonly reason: "recorded-before-assignment-manifests";
+    };
+
+/** Exactly one measured execution mode per batch; no mixed source facts. */
+export type PlaytestBatch = PlaytestAdapterBatch | PlaytestVisualBatch;
 
 /** Immutable benchmark contract for a comparable build cohort. */
 export interface PlaytestBenchmark {

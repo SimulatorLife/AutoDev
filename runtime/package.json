@@ -115,6 +115,7 @@
     "@opentelemetry/semantic-conventions": "^1.43.0",
     "@simulatorlife/autodev-core": "workspace:*",
     "@simulatorlife/autodev-data": "workspace:*",
+    "playwright-core": "1.63.0-alpha-2026-08-31",
     "smol-toml": "^1.8.0",
     "zod": "^4.6.5"
   },

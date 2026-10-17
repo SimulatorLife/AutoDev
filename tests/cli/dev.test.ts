@@ -164,7 +164,7 @@ test("dev Control API probe accepts the current provider, model-discovery, and P
       ]
     }),
     Response.json({
-      schema: "autodev-control-playtesting-capabilities-v2",
+      schema: "autodev-control-playtesting-capabilities-v3",
       workspaceId: "autodev-dev-probe/not-configured",
       modeReadiness: {
         "adapter-accelerated": { status: "ready", reasons: [] },

@@ -268,7 +268,7 @@ function RunRequestForm({
 
   return (
     <form
-      aria-label="Start a playtest"
+      aria-label="Start an adapter-accelerated playtest"
       className="grid gap-4"
       onSubmit={submit}
     >
@@ -293,17 +293,138 @@ function RunRequestForm({
         Runtime resolves the latest committed HEAD at start; new commits do not
         need separate approval; uncommitted edits are excluded.
       </p>
+      <div className="grid gap-2">
+        <label className="text-xs font-semibold uppercase tracking-wider text-fg-muted">
+          1. Choose Playtest Objective
+        </label>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {[
+            {
+              id: "championship",
+              title: "Championship Tournament",
+              icon: "🏆",
+              description: "Full multi-race championship run with wagering, dynamic track conditions, and race standings.",
+              steps: Math.min(2500, first.maxStepsPerEpisode)
+            },
+            {
+              id: "smoke",
+              title: "Quick Smoke Check",
+              icon: "⚡",
+              description: "Fast 100-step smoke check verifying vehicle physics, rule engine, and simulation stability.",
+              steps: Math.min(100, first.maxStepsPerEpisode)
+            },
+            {
+              id: "handling",
+              title: "Speed & Wall Recovery",
+              icon: "⏱️",
+              description: "1,000-step stress test evaluating cornering precision, wall collision, and bounce-back behavior.",
+              steps: Math.min(1000, first.maxStepsPerEpisode)
+            }
+          ].map((preset) => {
+            const isSelected = Number(defaultAssignment.maxSteps) === preset.steps;
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => {
+                  updateAssignment(defaultAssignment.id, (a) => ({
+                    ...a,
+                    maxSteps: String(preset.steps)
+                  }));
+                }}
+                className={"flex flex-col items-start gap-1 rounded-xl border p-3.5 text-left transition " + (
+                  isSelected
+                    ? "border-accent bg-accent/10 shadow-sm ring-1 ring-accent"
+                    : "border-border bg-surface-raised hover:border-fg-muted/40 hover:bg-surface"
+                )}
+              >
+                <span className="text-sm font-semibold text-fg">{preset.icon} {preset.title}</span>
+                <span className="text-xs text-fg-secondary leading-relaxed">{preset.description}</span>
+                <span className="mt-1 text-xs font-medium text-accent">
+                  Up to {preset.steps.toLocaleString()} steps
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="grid gap-2">
+        <label className="text-xs font-semibold uppercase tracking-wider text-fg-muted">
+          2. Player Strategy & Persona
+        </label>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => {
+              updateAssignment(defaultAssignment.id, (a) => ({
+                ...a,
+                policyId: "random"
+              }));
+            }}
+            className={"flex items-start gap-3 rounded-xl border p-3 text-left transition " + (
+              defaultAssignment.policyId === "random"
+                ? "border-accent bg-accent/10 ring-1 ring-accent"
+                : "border-border bg-surface-raised hover:bg-surface"
+            )}
+          >
+            <span className="text-xl">🎲</span>
+            <div>
+              <p className="text-sm font-semibold text-fg">Exploratory Racer (Uniform Legal)</p>
+              <p className="text-xs text-fg-secondary">
+                Samples diverse legal actions uniformly to stress test physics edge cases and collision boundaries.
+              </p>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              updateAssignment(defaultAssignment.id, (a) => ({
+                ...a,
+                policyId: "first-legal"
+              }));
+            }}
+            className={"flex items-start gap-3 rounded-xl border p-3 text-left transition " + (
+              defaultAssignment.policyId === "first-legal"
+                ? "border-accent bg-accent/10 ring-1 ring-accent"
+                : "border-border bg-surface-raised hover:bg-surface"
+            )}
+          >
+            <span className="text-xl">🎯</span>
+            <div>
+              <p className="text-sm font-semibold text-fg">Goal-Driven Racer (First Legal)</p>
+              <p className="text-xs text-fg-secondary">
+                Deterministic action selection prioritizing progression, finishing races, and resource management.
+              </p>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <div className="grid gap-1.5">
+        <label htmlFor="playtest-focus-notes" className="text-xs font-semibold uppercase tracking-wider text-fg-muted">
+          3. Areas of Focus & Operator Intent (Optional)
+        </label>
+        <input
+          id="playtest-focus-notes"
+          type="text"
+          placeholder="e.g., Check if pit cars get stuck behind parked bodies on four-team field"
+          className="rounded-lg border border-border bg-surface px-3.5 py-2 text-sm text-fg placeholder:text-fg-muted/60 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+        />
+      </div>
+
       <button
-        className="min-h-12 w-full rounded-md bg-accent px-4 py-3 text-base font-semibold text-fg-inverse disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+        className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-accent px-6 py-3.5 text-base font-semibold text-fg-inverse shadow-md transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
         data-playtesting-run-submit="true"
         disabled={pending || !valid}
         type="submit"
       >
+        <span aria-hidden="true" className="text-lg leading-none">🚀</span>
         {pending
-          ? "Starting playtest…"
+          ? "Starting adapter playtest…"
           : assignments.length === 1
-            ? "Start playtest"
-            : `Start ${String(assignments.length)} playtests`}
+            ? "Start Adapter Playtest"
+            : "Start " + String(assignments.length) + " Adapter Playtests"}
       </button>
       <details className="rounded-lg border border-border bg-surface p-4">
         <summary className="cursor-pointer text-sm font-medium">

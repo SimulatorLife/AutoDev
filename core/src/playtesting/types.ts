@@ -15,6 +15,7 @@
  */
 
 import type { AgentRole } from "../agents/types.ts";
+import type { WorkspaceVisualPlaytestLimits } from "../workspaces/visual-playtesting.ts";
 import type { PlaytestFindingIdentity } from "./finding-identity.ts";
 import type {
   PlaytestArtifactReference,
@@ -49,9 +50,13 @@ export const PLAYTESTS_REGISTRY_SCHEMA =
 export const PLAYTESTS_REVIEW_SELECTION_SCHEMA =
   "autodev-playtest-review-selection-v1" as const;
 
-/** Identifier for the v3 frozen assignment manifest with coverage identity. */
+/** Mode-bound assignment manifests; v4 adds execution-mode identity. */
 export const PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA =
+  "autodev-playtest-assignment-manifest-v4" as const;
+export const PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V3 =
   "autodev-playtest-assignment-manifest-v3" as const;
+export const PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA =
+  "autodev-playtest-visual-assignment-manifest-v1" as const;
 export const PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V2 =
   "autodev-playtest-assignment-manifest-v2" as const;
 export const PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V1 =
@@ -80,10 +85,15 @@ export const PLAYTESTS_COMPARISON_SCHEMA_V1 =
 export const PLAYTESTS_HUMAN_STUDY_SCHEMA =
   "autodev-playtest-human-study-v1" as const;
 
-export const PLAYTESTS_BATCH_SCHEMA = "autodev-playtest-batch-v3" as const;
+export const PLAYTESTS_BATCH_SCHEMA = "autodev-playtest-batch-v4" as const;
+export const PLAYTESTS_BATCH_SCHEMA_V3 = "autodev-playtest-batch-v3" as const;
 export const PLAYTESTS_BATCH_SCHEMA_V2 = "autodev-playtest-batch-v2" as const;
 export const PLAYTESTS_BATCH_SCHEMA_V1 = "autodev-playtest-batch-v1" as const;
-export const PLAYTESTS_EPISODE_SCHEMA = "autodev-playtest-episode-v5" as const;
+export const PLAYTESTS_EPISODE_SCHEMA = "autodev-playtest-episode-v7" as const;
+export const PLAYTESTS_EPISODE_SCHEMA_V6 =
+  "autodev-playtest-episode-v6" as const;
+export const PLAYTESTS_EPISODE_SCHEMA_V5 =
+  "autodev-playtest-episode-v5" as const;
 export const PLAYTESTS_EPISODE_SCHEMA_V4 =
   "autodev-playtest-episode-v4" as const;
 export const PLAYTESTS_EPISODE_SCHEMA_V3 =
@@ -653,7 +663,10 @@ export type PlaytestBatchReviewSelection =
   | { readonly status: "pending" }
   | {
       readonly status: "unavailable";
-      readonly reason: "recorded-before-review-selection" | "batch-incomplete";
+      readonly reason:
+        | "recorded-before-review-selection"
+        | "batch-incomplete"
+        | "visual-discovery-session-level";
     };
 
 /** Verified source and exact intervention frozen into a branch assignment. */
@@ -684,9 +697,10 @@ export interface PlaytestBatchAssignment {
   readonly branch?: PlaytestAssignmentBranch;
 }
 
-/** Complete, content-hashed assignment inventory reserved before any launch. */
-export interface PlaytestAssignmentManifest {
+/** Complete, content-hashed adapter inventory reserved before any launch. */
+export interface PlaytestAdapterAssignmentManifest {
   readonly schema: typeof PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA;
+  readonly mode: "adapter-accelerated";
   readonly batchId: string;
   readonly workspaceId: string;
   readonly buildSha: string;
@@ -697,6 +711,45 @@ export interface PlaytestAssignmentManifest {
   readonly assignments: readonly PlaytestBatchAssignment[];
   readonly contentHash: string;
 }
+
+/** Visual assignments carry no fabricated scenario, seed, or repository facts. */
+export interface PlaytestVisualBatchAssignment {
+  readonly assignmentId: string;
+  /** Zero-based position in the immutable visual session batch. */
+  readonly ordinal: number;
+  readonly maxSteps: number;
+}
+
+/**
+ * Canonical launch inventory for autonomous visual sessions. The grant is
+ * bound by target approval identity/revision and origin only; the entry URL
+ * path, engine scenario and RNG seed are deliberately not copied into it.
+ */
+export interface PlaytestVisualAssignmentManifest {
+  readonly schema: typeof PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA;
+  readonly mode: "autonomous-visual";
+  readonly batchId: string;
+  readonly workspaceId: string;
+  readonly targetId: string;
+  readonly targetApprovalId: string;
+  readonly targetRevision: number;
+  readonly targetOrigin: string;
+  readonly policyId: "smart-direct";
+  readonly policyVersion: string;
+  /** Null until a validated player persona/cohort is explicitly assigned. */
+  readonly cohortId: string | null;
+  readonly areasOfFocus: string | null;
+  readonly limits: WorkspaceVisualPlaytestLimits;
+  readonly createdAt: string;
+  readonly assignments: readonly PlaytestVisualBatchAssignment[];
+  readonly contentHash: string;
+}
+
+export type PlaytestAssignmentManifest =
+  PlaytestAdapterAssignmentManifest | PlaytestVisualAssignmentManifest;
+export type PlaytestAssignmentManifestDraft =
+  | Omit<PlaytestAdapterAssignmentManifest, "contentHash">
+  | Omit<PlaytestVisualAssignmentManifest, "contentHash">;
 
 /** Durable critique slot; reservations survive review/batch write failures. */
 export interface PlaytestReviewReceipt {
@@ -742,11 +795,15 @@ export type PlaytestReviewPacketReceipt =
       readonly createdAt: string;
     };
 
-/** Frozen assignment inventory embedded in every durable batch revision. */
+/** Mode-specific frozen inventory embedded in a durable batch revision. */
 export type PlaytestAssignmentInventory =
   | {
       readonly status: "frozen";
-      readonly manifest: PlaytestAssignmentManifest;
+      readonly manifest: PlaytestAdapterAssignmentManifest;
+    }
+  | {
+      readonly status: "frozen-visual";
+      readonly manifest: PlaytestVisualAssignmentManifest;
     }
   | {
       readonly status: "unavailable";

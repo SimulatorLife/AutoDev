@@ -192,3 +192,168 @@ test("Next must emit a BUILD_ID before the staged artifact can replace productio
       "known-good\n"
     );
   }));
+
+test("Console build normalizes tsconfig.json, cleans dead staging dirs, and seeds incremental caches", () =>
+  withTempRepo((repositoryRoot) => {
+    const consoleRoot = createConsoleLayout(repositoryRoot);
+    const current = path.join(consoleRoot, ".next");
+    mkdirSync(path.join(current, "cache", "webpack"), { recursive: true });
+    mkdirSync(path.join(current, "cache", "swc"), { recursive: true });
+    writeFileSync(path.join(current, "BUILD_ID"), "old-build\n");
+    writeFileSync(
+      path.join(current, "cache", "webpack", "pack.gz"),
+      "webpack-cache\n"
+    );
+    writeFileSync(path.join(current, "cache", "swc", " plugin"), "swc-cache\n");
+    writeFileSync(
+      path.join(current, "cache", ".tsbuildinfo"),
+      "tsbuildinfo-cache\n"
+    );
+    writeFileSync(path.join(current, "cache", ".rscinfo"), "rscinfo-cache\n");
+
+    // Dead PID staging directory should be cleaned before build
+    const deadStaging = path.join(consoleRoot, ".next-staging-99999999");
+    mkdirSync(deadStaging, { recursive: true });
+    writeFileSync(path.join(deadStaging, "stale"), "stale\n");
+
+    const tsconfigPath = path.join(consoleRoot, "tsconfig.json");
+    writeFileSync(
+      tsconfigPath,
+      JSON.stringify(
+        {
+          include: [
+            "next-env.d.ts",
+            "**/*.ts",
+            ".next/types/**/*.ts",
+            ".next-staging-99999999/types/**/*.ts"
+          ]
+        },
+        null,
+        2
+      ) + "\n"
+    );
+
+    let observedPreBuildTsconfig = "";
+    let observedSeededWebpackCache = false;
+    let observedSeededTsbuildinfo = false;
+    let observedSeededRscinfo = false;
+
+    buildConsole(
+      { repositoryRoot, nodeBin: "/fixture/node" },
+      dependencies({
+        run: (_executable, _args, cwd, env) => {
+          observedPreBuildTsconfig = readFileSync(tsconfigPath, "utf8");
+          const staging = env.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? "";
+          const stagingRoot = path.join(cwd, staging);
+          observedSeededWebpackCache = existsSync(
+            path.join(stagingRoot, "cache", "webpack", "pack.gz")
+          );
+          observedSeededTsbuildinfo = existsSync(
+            path.join(stagingRoot, "cache", ".tsbuildinfo")
+          );
+          observedSeededRscinfo = existsSync(
+            path.join(stagingRoot, "cache", ".rscinfo")
+          );
+          mkdirSync(path.join(stagingRoot, "types"), { recursive: true });
+          writeFileSync(path.join(stagingRoot, "BUILD_ID"), "new-build\n");
+          // Simulate Next appending its staging types path into tsconfig.json
+          writeFileSync(
+            tsconfigPath,
+            JSON.stringify(
+              {
+                include: [
+                  "next-env.d.ts",
+                  "**/*.ts",
+                  ".next/types/**/*.ts",
+                  `${staging}/types/**/*.ts`
+                ]
+              },
+              null,
+              2
+            ) + "\n"
+          );
+        }
+      })
+    );
+
+    assert.equal(
+      existsSync(deadStaging),
+      false,
+      "stale staging directory from a dead PID must be removed"
+    );
+    assert.equal(
+      observedPreBuildTsconfig.includes(".next-staging-99999999"),
+      false,
+      "tsconfig.json must be cleaned of stale staging type paths before Next runs"
+    );
+    assert.equal(observedSeededWebpackCache, true);
+    assert.equal(observedSeededTsbuildinfo, true);
+    assert.equal(observedSeededRscinfo, true);
+    const finalTsconfig = JSON.parse(readFileSync(tsconfigPath, "utf8")) as {
+      include: string[];
+    };
+    assert.deepEqual(finalTsconfig.include, [
+      "next-env.d.ts",
+      "**/*.ts",
+      ".next/types/**/*.ts"
+    ]);
+    assert.equal(
+      existsSync(path.join(current, "cache", "webpack", "pack.gz")),
+      true
+    );
+  }));
+
+test("a failed Next build restores seeded caches and tsconfig.json to the serving artifact", () =>
+  withTempRepo((repositoryRoot) => {
+    const consoleRoot = createConsoleLayout(repositoryRoot);
+    const current = path.join(consoleRoot, ".next");
+    mkdirSync(path.join(current, "cache", "webpack"), { recursive: true });
+    writeFileSync(path.join(current, "BUILD_ID"), "known-good\n");
+    writeFileSync(
+      path.join(current, "cache", "webpack", "pack.gz"),
+      "webpack-cache\n"
+    );
+    writeFileSync(
+      path.join(current, "cache", ".tsbuildinfo"),
+      "tsbuildinfo-cache\n"
+    );
+    const tsconfigPath = path.join(consoleRoot, "tsconfig.json");
+    const originalTsconfig =
+      JSON.stringify(
+        {
+          include: ["next-env.d.ts", "**/*.ts", ".next/types/**/*.ts"]
+        },
+        null,
+        2
+      ) + "\n";
+    writeFileSync(tsconfigPath, originalTsconfig);
+
+    assert.throws(
+      () =>
+        buildConsole(
+          { repositoryRoot },
+          dependencies({
+            run: (_executable, _args, cwd, env) => {
+              const staging = env.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? "";
+              writeFileSync(
+                tsconfigPath,
+                JSON.stringify({ include: [`${staging}/types/**/*.ts`] })
+              );
+              mkdirSync(path.join(cwd, staging), { recursive: true });
+              throw new Error("synthetic build failure");
+            }
+          })
+        ),
+      /synthetic build failure/u
+    );
+
+    assert.equal(readFileSync(tsconfigPath, "utf8"), originalTsconfig);
+    assert.equal(
+      readFileSync(path.join(current, "cache", "webpack", "pack.gz"), "utf8"),
+      "webpack-cache\n"
+    );
+    assert.equal(
+      readFileSync(path.join(current, "cache", ".tsbuildinfo"), "utf8"),
+      "tsbuildinfo-cache\n"
+    );
+  }));

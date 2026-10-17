@@ -14,6 +14,7 @@ import {
   classifyPlaytestMetricComparison,
   type GameCaptureEvent,
   type GameMetricEvaluation,
+  type PlaytestAdapterEpisode,
   type PlaytestAssignmentBranch,
   type PlaytestCapabilityAdvertisement,
   type PlaytestCheckpointDigest,
@@ -25,6 +26,7 @@ import {
   type PlaytestKnownEvidenceIndex,
   type PlaytestObservationContract,
   PLAYTESTS_BATCH_SCHEMA,
+  PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_MEASUREMENT_VERSION,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   type PlaytestSessionReview,
@@ -568,7 +570,7 @@ function branchExecution(
 ): NonNullable<Parameters<typeof runPlaytestEpisode>[0]["branch"]> {
   const advertised = capabilities(GAME_BUILD, true);
   const parentEpisode: PlaytestEpisode = {
-    schema: "autodev-playtest-episode-v5",
+    schema: PLAYTESTS_EPISODE_SCHEMA,
     episodeId: "parent-episode-1",
     revision: 4,
     batchId: "parent-batch-1",
@@ -941,7 +943,10 @@ async function runSyntheticArm(input: {
   readonly metricId: string;
   readonly metricRegistry: ReturnType<typeof fixturePlaytestMetricRegistry>;
   readonly injectedLoss: boolean;
-}): Promise<{ readonly episode: PlaytestEpisode; readonly estimate: number }> {
+}): Promise<{
+  readonly episode: PlaytestAdapterEpisode;
+  readonly estimate: number;
+}> {
   const episodeId =
     input.arm.name + "-episode-" + String(input.index).padStart(4, "0");
   const result = await runPlaytestEpisode(
@@ -992,11 +997,11 @@ async function runSyntheticImprovementEpisodes(input: {
   readonly metricId: string;
   readonly metricRegistry: ReturnType<typeof fixturePlaytestMetricRegistry>;
 }): Promise<{
-  readonly episodes: PlaytestEpisode[];
+  readonly episodes: PlaytestAdapterEpisode[];
   readonly baselineOutcomes: number[];
   readonly candidateOutcomes: number[];
 }> {
-  const episodes: PlaytestEpisode[] = [];
+  const episodes: PlaytestAdapterEpisode[] = [];
   const baselineOutcomes: number[] = [];
   const candidateOutcomes: number[] = [];
   for (let index = 0; index < input.pairs; index += 1) {
@@ -1395,6 +1400,7 @@ test("synthetic 1,000-episode improvement cycle records evidence, finding, compa
     const batches = [baselineBatchId, candidateBatchId].map(
       (batchId, index) => ({
         schema: PLAYTESTS_BATCH_SCHEMA,
+        executionMode: "adapter-accelerated",
         batchId,
         revision: 1,
         workspaceId: WORKSPACE_ID,

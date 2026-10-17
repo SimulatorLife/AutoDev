@@ -89,3 +89,56 @@ test("an unknown Playtesting readiness path refuses Console startup", async () =
     /Playtesting readiness endpoint is missing/u
   );
 });
+
+test("startup wait retries transient Control API connection refusal until the router listens", async () => {
+  const fixture = controlApiFixture();
+  let attempts = 0;
+  const delays: number[] = [];
+  await verifyControlApiCompatibility(
+    config,
+    async (input, init) => {
+      attempts += 1;
+      if (attempts <= 2) {
+        throw new TypeError("fetch failed: ECONNREFUSED");
+      }
+      return fixture.fetch(input, init);
+    },
+    {
+      timeoutMs: 5000,
+      retryDelayMs: 50,
+      sleep: async (ms) => {
+        delays.push(ms);
+      }
+    }
+  );
+  assert.equal(delays.length, 2);
+  assert.deepEqual(fixture.paths, [
+    "/control/contracts",
+    "/control/providers",
+    "/control/provider-models",
+    "/control/playtesting/capabilities",
+    "/control/playtesting/readiness"
+  ]);
+});
+
+test("startup wait does not retry authorization or contract mismatch errors", async () => {
+  let calls = 0;
+  await assert.rejects(
+    verifyControlApiCompatibility(
+      config,
+      async () => {
+        calls += 1;
+        return Response.json({}, { status: 401 });
+      },
+      {
+        timeoutMs: 5000,
+        retryDelayMs: 10,
+        sleep: async () => {
+          throw new Error("sleep must not be called on 401");
+        }
+      }
+    ),
+    /rejected the Console service credential/u
+  );
+  assert.equal(calls, 1);
+});

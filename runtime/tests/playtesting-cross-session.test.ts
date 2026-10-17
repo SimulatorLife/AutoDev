@@ -35,6 +35,22 @@ function episode(
     batchId,
     assignmentId: `assignment-${episodeId}`,
     branchLineage: null,
+    executionProvenance: {
+      mode: "adapter-accelerated",
+      source: {
+        kind: "repo-checkout",
+        repository: WORKSPACE_ID,
+        revision: "a".repeat(40),
+        revisionConfidence: "verified",
+        checkoutState: "clean",
+        artifactFingerprint: null,
+        targetId: null,
+        targetOrigin: null
+      },
+      observationSource: "engine-adapter",
+      actionSource: "engine-policy",
+      derivedFrom: null
+    },
     identity: {
       workspaceId: WORKSPACE_ID,
       gameId: "fixture-game",
@@ -90,6 +106,7 @@ function batch(
     (selectionOverride as { reviewCap?: number } | undefined)?.reviewCap ?? 4;
   return {
     schema: "autodev-playtest-batch-v1",
+    executionMode: "adapter-accelerated",
     batchId,
     revision: 1,
     workspaceId: WORKSPACE_ID,

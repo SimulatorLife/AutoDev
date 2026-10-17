@@ -243,6 +243,9 @@ importers:
       '@simulatorlife/autodev-data':
         specifier: workspace:*
         version: link:../data
+      playwright-core:
+        specifier: 1.63.0-alpha-2026-08-31
+        version: 1.63.0-alpha-2026-08-31
       smol-toml:
         specifier: ^1.8.0
         version: 1.8.0

@@ -36,6 +36,7 @@ const WORKSPACE_ID = "fixture/game";
 const BUILD_SHA = "a".repeat(40);
 const MEASUREMENT_VERSION = "measurement-v1";
 const RUBRIC_HASH = "d".repeat(64);
+const ADAPTER_EXECUTION_MODE = "adapter-accelerated" as const;
 const FIXTURE_TIMESTAMP = "2026-10-10T00:00:00.000Z";
 const COMPARISON_DECISION_ROUTE =
   /^\/control\/playtesting\/comparisons\/([^/]+)\/decision$/u;
@@ -84,7 +85,7 @@ const episode = {
   assignmentId: "a-0017",
   branchLineage: null,
   executionProvenance: {
-    mode: "adapter-accelerated",
+    mode: ADAPTER_EXECUTION_MODE,
     source: {
       kind: "repo-checkout",
       repository: WORKSPACE_ID,
@@ -193,6 +194,7 @@ const loopGuardEpisode = {
 
 const assignmentManifestBase = {
   schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
+  mode: ADAPTER_EXECUTION_MODE,
   batchId: "batch-3",
   workspaceId: WORKSPACE_ID,
   buildSha: BUILD_SHA,
@@ -367,6 +369,7 @@ const reviewSelection = selectPlaytestBatchReviews({
 
 const batch = {
   schema: PLAYTESTS_BATCH_SCHEMA,
+  executionMode: ADAPTER_EXECUTION_MODE,
   batchId: "batch-3",
   revision: 1,
   workspaceId: WORKSPACE_ID,
@@ -795,7 +798,7 @@ function activeSyntheticRunRequest(value: Record<string, unknown> | null): {
   const policies = workspaceApproval.allowedPolicies;
   const operation =
     value.schema === "autodev-playtest-launch-v1" &&
-    value.mode === "adapter-accelerated" &&
+    value.mode === ADAPTER_EXECUTION_MODE &&
     typeof value.requestId === "string" &&
     REQUEST_ID_PATTERN.test(value.requestId) &&
     value.capabilityRevision === "e".repeat(64) &&
@@ -1397,7 +1400,7 @@ function syntheticModeReadiness(
   runnableAssignmentCount: number
 ) {
   return {
-    "adapter-accelerated":
+    ADAPTER_EXECUTION_MODE:
       approved && runnableAssignmentCount > 0
         ? { status: "ready", reasons: [] }
         : {
@@ -1426,7 +1429,7 @@ function syntheticModeReadiness(
           code: "visual-driver-unavailable",
           label: "Visual driver unavailable",
           message:
-            "Runtime does not yet have the isolated browser gameplay driver.",
+            "The isolated browser driver is not yet connected to the Runtime session owner and persisted visual evidence flow.",
           severity: "unavailable"
         },
         {
@@ -1518,7 +1521,7 @@ function sendSyntheticCapabilities(response: ServerResponse): void {
         ]
       : [];
   sendJson(response, {
-    schema: "autodev-control-playtesting-capabilities-v2",
+    schema: "autodev-control-playtesting-capabilities-v3",
     workspaceId: WORKSPACE_ID,
     capabilityRevision: "e".repeat(64),
     workspaceCatalog: "valid",

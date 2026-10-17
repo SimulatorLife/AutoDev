@@ -7,6 +7,7 @@
  * SHA-256 of {@link playtestAssignmentManifestHashInput}; Data re-verifies it.
  */
 
+import { assertWorkspaceVisualPlaytestLimits } from "../workspaces/visual-playtesting.ts";
 import type {
   PlaytestBatchState,
   PlaytestBenchmark,
@@ -21,6 +22,7 @@ import {
 } from "./sampling.ts";
 import {
   type PlaytestAssignmentManifest,
+  type PlaytestAssignmentManifestDraft,
   type PlaytestAssignmentOutcome,
   type PlaytestAssignmentTerminalState,
   type PlaytestBatchAssignment,
@@ -32,6 +34,7 @@ import {
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
   PLAYTESTS_REVIEW_SELECTION_SCHEMA,
   PLAYTESTS_REVIEW_STRATIFICATION,
+  PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
   type PlaytestSelectedReviewSession,
   type PlaytestSurveillanceSelection
 } from "./types.ts";
@@ -189,7 +192,7 @@ export function playtestEpisodeRecordId(
 
 /** Canonical hash projection; excludes only contentHash. */
 export function playtestAssignmentManifestHashInput(
-  manifest: Omit<PlaytestAssignmentManifest, "contentHash">
+  manifest: PlaytestAssignmentManifestDraft
 ): string {
   const hashable = { ...manifest } as Record<string, unknown>;
   delete hashable.contentHash;
@@ -203,9 +206,32 @@ export function assertPlaytestAssignmentManifest(
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError("Assignment manifest must be an object.");
   }
-  const manifest = value as Partial<PlaytestAssignmentManifest>;
+  const manifest = value as Record<string, unknown>;
+  if (manifest.mode === "adapter-accelerated") {
+    assertAdapterAssignmentManifest(manifest);
+  } else if (manifest.mode === "autonomous-visual") {
+    assertVisualAssignmentManifest(manifest);
+  } else {
+    throw new TypeError("Assignment manifest mode is unsupported.");
+  }
+  const manifestBytes = new TextEncoder().encode(
+    playtestAssignmentManifestHashInput(
+      manifest as unknown as PlaytestAssignmentManifestDraft
+    )
+  ).byteLength;
+  if (manifestBytes > PLAYTESTS_MAX_ASSIGNMENT_MANIFEST_BYTES) {
+    throw new RangeError(
+      "Playtest assignment manifest exceeds its durable storage bound."
+    );
+  }
+}
+
+function assertAdapterAssignmentManifest(
+  manifest: Record<string, unknown>
+): void {
   const keys = [
     "schema",
+    "mode",
     "batchId",
     "workspaceId",
     "buildSha",
@@ -232,21 +258,141 @@ export function assertPlaytestAssignmentManifest(
     typeof manifest.contentHash !== "string" ||
     !SHA256_PATTERN.test(manifest.contentHash)
   ) {
-    throw new TypeError("Assignment manifest is malformed.");
+    throw new TypeError("Adapter assignment manifest is malformed.");
   }
   assertPlaytestBatchAssignments(
     manifest.assignments as readonly PlaytestBatchAssignment[],
     true
   );
-  const manifestBytes = new TextEncoder().encode(
-    playtestAssignmentManifestHashInput(
-      manifest as Omit<PlaytestAssignmentManifest, "contentHash">
-    )
-  ).byteLength;
-  if (manifestBytes > PLAYTESTS_MAX_ASSIGNMENT_MANIFEST_BYTES) {
-    throw new RangeError(
-      "Playtest assignment manifest exceeds its durable storage bound."
+}
+
+function assertVisualAssignmentManifest(
+  manifest: Record<string, unknown>
+): void {
+  const keys = [
+    "schema",
+    "mode",
+    "batchId",
+    "workspaceId",
+    "targetId",
+    "targetApprovalId",
+    "targetRevision",
+    "targetOrigin",
+    "policyId",
+    "policyVersion",
+    "cohortId",
+    "areasOfFocus",
+    "limits",
+    "createdAt",
+    "assignments",
+    "contentHash"
+  ];
+  const origin =
+    typeof manifest.targetOrigin === "string"
+      ? approvedOrigin(manifest.targetOrigin)
+      : null;
+  if (
+    Object.keys(manifest).length !== keys.length ||
+    Object.keys(manifest).some((key) => !keys.includes(key)) ||
+    manifest.schema !== PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA ||
+    !isText(manifest.batchId, 128) ||
+    !isText(manifest.workspaceId) ||
+    !isText(manifest.targetId, 128) ||
+    !isText(manifest.targetApprovalId, 128) ||
+    !Number.isSafeInteger(manifest.targetRevision) ||
+    (manifest.targetRevision as number) < 1 ||
+    origin !== manifest.targetOrigin ||
+    manifest.policyId !== "smart-direct" ||
+    !isText(manifest.policyVersion) ||
+    (manifest.cohortId !== null && !isText(manifest.cohortId)) ||
+    (manifest.areasOfFocus !== null && !isText(manifest.areasOfFocus, 2000)) ||
+    typeof manifest.createdAt !== "string" ||
+    Number.isNaN(Date.parse(manifest.createdAt)) ||
+    typeof manifest.contentHash !== "string" ||
+    !SHA256_PATTERN.test(manifest.contentHash) ||
+    !Array.isArray(manifest.assignments) ||
+    manifest.assignments.length === 0 ||
+    manifest.assignments.length > PLAYTESTS_MAX_BATCH_ASSIGNMENTS
+  ) {
+    throw new TypeError("Visual assignment manifest is malformed.");
+  }
+  try {
+    assertWorkspaceVisualPlaytestLimits(manifest.limits);
+  } catch {
+    throw new TypeError("Visual assignment manifest limits are malformed.");
+  }
+  const limits = manifest.limits as {
+    readonly episodeCount: number;
+    readonly maxStepsPerEpisode: number;
+  };
+  if (manifest.assignments.length > limits.episodeCount) {
+    throw new TypeError(
+      "Visual assignment inventory exceeds its approved episode count."
     );
+  }
+  const ids = new Set<string>();
+  for (let index = 0; index < manifest.assignments.length; index += 1) {
+    const assignment = manifest.assignments[index];
+    if (
+      typeof assignment !== "object" ||
+      assignment === null ||
+      Array.isArray(assignment)
+    ) {
+      throw new TypeError("Visual batch assignment is malformed.");
+    }
+    const current = assignment as Record<string, unknown>;
+    const assignmentKeys = ["assignmentId", "ordinal", "maxSteps"];
+    if (
+      Object.keys(current).length !== assignmentKeys.length ||
+      Object.keys(current).some((key) => !assignmentKeys.includes(key)) ||
+      typeof current.assignmentId !== "string" ||
+      !PLAYTESTS_ASSIGNMENT_ID_PATTERN.test(current.assignmentId) ||
+      ids.has(current.assignmentId) ||
+      current.ordinal !== index ||
+      !Number.isSafeInteger(current.maxSteps) ||
+      (current.maxSteps as number) < 1 ||
+      (current.maxSteps as number) > limits.maxStepsPerEpisode
+    ) {
+      throw new TypeError("Visual batch assignment is malformed.");
+    }
+    ids.add(current.assignmentId);
+  }
+}
+
+function approvedOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    const octets = hostname.split(".");
+    const loopbackIpv4 =
+      octets.length === 4 &&
+      octets[0] === "127" &&
+      octets
+        .slice(1)
+        .every(
+          (octet) =>
+            octet.length > 0 &&
+            octet.length <= 3 &&
+            [...octet].every((digit) => digit >= "0" && digit <= "9") &&
+            Number(octet) <= 255
+        );
+    const loopback =
+      hostname === "localhost" || hostname === "[::1]" || loopbackIpv4;
+    if (
+      (url.protocol !== "https:" && url.protocol !== "http:") ||
+      (url.protocol === "http:" && !loopback) ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.pathname !== "/" ||
+      url.search !== "" ||
+      url.hash !== "" ||
+      url.origin !== value
+    ) {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
   }
 }
 

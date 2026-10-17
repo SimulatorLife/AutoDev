@@ -1,5 +1,6 @@
 /** MCP-side client for the single Runtime Control API run owner. */
 import {
+  assertWorkspaceVisualPlaytestTargetApproval,
   type ControlApiPlaytestingActiveRunsResponse,
   type ControlApiPlaytestingCapabilitiesResponse,
   type ControlApiPlaytestingComparisonDecisionResponse,
@@ -315,7 +316,7 @@ export function createPlaytestControlApiRunClient(
       const response =
         assertResponse<ControlApiPlaytestingCapabilitiesResponse>(
           await request("GET", CAPABILITIES_PATH + "?" + query, session),
-          "autodev-control-playtesting-capabilities-v2",
+          "autodev-control-playtesting-capabilities-v3",
           workspaceId
         );
       const modes = record(response.modeReadiness);
@@ -353,6 +354,32 @@ export function createPlaytestControlApiRunClient(
         throw new PlaytestMcpUnavailableError(
           "The Runtime Control API returned incomplete visual target readiness."
         );
+      }
+      const targetIds = new Set<string>();
+      for (const targetReadiness of visual.targets) {
+        const entry = record(targetReadiness);
+        const target = entry?.target;
+        try {
+          assertWorkspaceVisualPlaytestTargetApproval(target);
+        } catch {
+          throw new PlaytestMcpUnavailableError(
+            "The Runtime Control API returned malformed visual target readiness."
+          );
+        }
+        if (
+          !entry ||
+          target.workspaceId !== workspaceId ||
+          target.revokedAt !== null ||
+          targetIds.has(target.targetId) ||
+          (entry.eligibility !== "supported" &&
+            entry.eligibility !== "unsupported") ||
+          !Array.isArray(entry.reasons)
+        ) {
+          throw new PlaytestMcpUnavailableError(
+            "The Runtime Control API returned mismatched visual target readiness."
+          );
+        }
+        targetIds.add(target.targetId);
       }
       return response;
     },

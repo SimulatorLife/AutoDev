@@ -24,6 +24,7 @@ import {
   readOtelIngressMode,
   writeOtelIngressMode
 } from "./install-state.ts";
+import { runRulesyncGenerate } from "./runtime-files.ts";
 
 export interface InstallCommandOptions {
   readonly repositoryRoot?: string;
@@ -105,22 +106,13 @@ export function createCodexMcpSource(repositoryRoot: string): {
       throw new ConfigError(
         `missing-rulesync ${rulesync}; run pnpm install --frozen-lockfile`
       );
-    execFileSync(
-      rulesync,
-      [
-        "generate",
-        "--input-roots",
-        path.join(repositoryRoot, ".rulesync"),
-        "--targets",
-        "codexcli",
-        "--features",
-        "mcp",
-        "--output-roots",
-        root,
-        "--silent"
-      ],
-      { cwd: repositoryRoot, stdio: "inherit" }
-    );
+    runRulesyncGenerate(repositoryRoot, {
+      inputRoots: [path.join(repositoryRoot, ".rulesync")],
+      targets: ["codexcli"],
+      features: ["mcp"],
+      outputRoots: [root],
+      silent: true
+    });
     const source = path.join(root, ".codex", "config.toml");
     if (!existsSync(source))
       throw new ConfigError(

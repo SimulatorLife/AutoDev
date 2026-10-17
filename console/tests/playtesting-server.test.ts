@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+  PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS
 } from "@simulatorlife/autodev-core";
 
@@ -282,7 +283,7 @@ test("Playtesting page rejects a response for another workspace rather than rend
 test("Playtesting selected episode validates workspace binding and nullable review", async () => {
   let requested = "";
   const episode = {
-    schema: "autodev-playtest-episode-v5",
+    schema: PLAYTESTS_EPISODE_SCHEMA,
     episodeId: "episode-1",
     revision: 1,
     batchId: "batch-1",

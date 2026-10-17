@@ -1,8 +1,10 @@
 /** Deterministic selection and validation for bounded analyst evidence packets. */
 
 import {
+  type PlaytestAdapterEpisode,
   type PlaytestCoverageManifest,
   type PlaytestEpisode,
+  type PlaytestEpisodeIdentity,
   type PlaytestEvidenceCrossSessionContext,
   type PlaytestEvidenceCrossSessionEpisode,
   type PlaytestEvidenceMetricIntent,
@@ -20,7 +22,10 @@ import {
 } from "./artifacts.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
 import { assertPlaytestCoverageManifest } from "./coverage.ts";
-import { assertPlaytestExecutionProvenance } from "./execution-provenance.ts";
+import {
+  assertPlaytestAdapterEpisode,
+  assertPlaytestExecutionProvenance
+} from "./execution-provenance.ts";
 import { assertPlaytestNumericResults } from "./metric-evaluation.ts";
 import type { PlaytestMetricRegistry } from "./registry.ts";
 import { samplePlaytestSurveillance } from "./sampling.ts";
@@ -52,6 +57,46 @@ const SAMPLEABLE_ACTION_EVENT_TYPES = new Set([
   "reward_claimed"
 ]);
 const MAX_STEP_EVENTS = 256;
+type ConfirmatoryAdapterEpisode = PlaytestAdapterEpisode & {
+  readonly identity: PlaytestEpisodeIdentity & {
+    readonly repository: string;
+    readonly buildSha: string;
+    readonly gameBuild: string;
+    readonly scenarioId: string;
+    readonly configHash: string;
+    readonly seed: string;
+    readonly protocolVersion: 1;
+    readonly observationSchemaHash: string;
+    readonly actionSchemaHash: string;
+    readonly eventSchemaHash: string;
+  };
+};
+
+/** Confirmatory scored packets require complete adapter-owned game identity. */
+function assertConfirmatoryAdapterEpisode(
+  episode: PlaytestEpisode
+): asserts episode is ConfirmatoryAdapterEpisode {
+  assertPlaytestAdapterEpisode(episode);
+  const identity = episode.identity;
+  if (
+    typeof identity.repository !== "string" ||
+    typeof identity.buildSha !== "string" ||
+    typeof identity.gameBuild !== "string" ||
+    typeof identity.scenarioId !== "string" ||
+    typeof identity.configHash !== "string" ||
+    typeof identity.seed !== "string" ||
+    identity.protocolVersion !== 1 ||
+    typeof identity.observationSchemaHash !== "string" ||
+    typeof identity.actionSchemaHash !== "string" ||
+    typeof identity.eventSchemaHash !== "string" ||
+    episode.scenarioFamily.trim().length === 0 ||
+    episode.policyCohort.trim().length === 0
+  ) {
+    throw new TypeError(
+      "Confirmatory scored packets require complete adapter identity; visual sessions require a discovery packet."
+    );
+  }
+}
 const TRACE_STEP_KEYS = new Set([
   "step",
   "phaseId",
@@ -499,7 +544,7 @@ function metricIntentFor(
 
 function matchingCoverageCells(
   manifest: PlaytestCoverageManifest,
-  episode: PlaytestEpisode
+  episode: ConfirmatoryAdapterEpisode
 ) {
   return manifest.cells.filter(
     (cell) =>
@@ -561,6 +606,8 @@ function crossSessionEpisodeSummary(
 ): PlaytestEvidenceCrossSessionEpisode {
   const { target, rubricHash, measurementVersion, candidate } = input;
   const { episode, assignment } = candidate;
+  assertConfirmatoryAdapterEpisode(target);
+  assertConfirmatoryAdapterEpisode(episode);
   if (
     episode.schema !== PLAYTESTS_EPISODE_SCHEMA ||
     episode.status !== "completed" ||
@@ -738,6 +785,7 @@ function buildPacketValue(input: {
   const { data, crossSessionContext, windows, omitted, suppliedArtifacts } =
     input;
   const episode = data.episode;
+  assertConfirmatoryAdapterEpisode(episode);
   const phases = [
     ...new Set(
       data.traceSteps.flatMap((entry) =>
@@ -745,14 +793,7 @@ function buildPacketValue(input: {
       )
     )
   ];
-  const executionSummary =
-    episode.executionProvenance.mode === "adapter-accelerated"
-      ? "structured engine-adapter decisions"
-      : episode.executionProvenance.mode === "autonomous-visual"
-        ? "browser input actions with rendered UI observations"
-        : episode.executionProvenance.mode === "scripted-regression"
-          ? "scripted regression actions"
-          : "recorded decisions with unknown execution mode";
+  const executionSummary = "structured engine-adapter decisions";
   const chronologicalSummary =
     `${episode.executionProvenance.mode} recorded ${String(episode.stepCount)} ${executionSummary} ` +
     `on the ${data.coverageManifest.mode} observation channel; phases: ` +
@@ -879,6 +920,7 @@ function assertPlaytestEvidencePacketInputs(
   input: BuildPlaytestEvidencePacketInput
 ): void {
   const { episode, registry, coverageManifest } = input;
+  assertConfirmatoryAdapterEpisode(episode);
   if (
     !isPlaytestEvidencePacketId(input.packetId) ||
     !SHA256_PATTERN.test(input.rubricHash) ||
@@ -1073,6 +1115,80 @@ function assertOmittedPacketArtifacts(packet: PlaytestEvidencePacket): void {
   }
 }
 
+function validPacketIdentity(value: Record<string, unknown>): boolean {
+  return (
+    (value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA ||
+      value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V3 ||
+      value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2 ||
+      value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1) &&
+    isPlaytestEvidencePacketId(value.packetId) &&
+    isText(value.workspaceId) &&
+    isText(value.batchId) &&
+    isText(value.episodeId) &&
+    isCount(value.episodeRevision, Number.MAX_SAFE_INTEGER) &&
+    isText(value.assignmentId) &&
+    typeof value.buildSha === "string" &&
+    BUILD_SHA_PATTERN.test(value.buildSha) &&
+    isText(value.gameBuild) &&
+    isText(value.scenarioId) &&
+    isText(value.scenarioFamily) &&
+    isText(value.policyId) &&
+    isText(value.policyVersion) &&
+    isText(value.cohort)
+  );
+}
+
+function validPacketOutcomeAndMeasurement(
+  value: Record<string, unknown>
+): boolean {
+  return (
+    PLAYTESTS_GAME_OUTCOMES.includes(
+      value.outcome as PlaytestGameOutcomeKind
+    ) &&
+    isRecord(value.outcomeMetrics) &&
+    Object.values(value.outcomeMetrics).every(
+      (metric) =>
+        metric === null ||
+        (typeof metric === "number" && Number.isFinite(metric))
+    ) &&
+    PLAYTESTS_GAME_MODES.includes(value.observationMode as PlaytestGameMode) &&
+    isCount(value.sourceStepCount, 4096) &&
+    value.sourceStepCount !== 0 &&
+    typeof value.rubricHash === "string" &&
+    SHA256_PATTERN.test(value.rubricHash) &&
+    isText(value.rubricVersion) &&
+    isText(value.audience) &&
+    Array.isArray(value.metricIntent) &&
+    Array.isArray(value.dimensionRubrics) &&
+    Array.isArray(value.metrics) &&
+    Array.isArray(value.coverageCells) &&
+    typeof value.coverageManifestHash === "string" &&
+    SHA256_PATTERN.test(value.coverageManifestHash)
+  );
+}
+
+function validPacketReviewMetadata(value: Record<string, unknown>): boolean {
+  return (
+    isText(value.chronologicalSummary, 4096) &&
+    isText(value.traceArtifactId) &&
+    Array.isArray(value.selectedWindows) &&
+    Array.isArray(value.omittedWindows) &&
+    Array.isArray(value.omittedArtifacts) &&
+    Array.isArray(value.suppliedArtifacts) &&
+    value.visibleEvidenceOnly === true &&
+    value.criticRole === "playtest-analyst" &&
+    (value.modelId === null || isText(value.modelId)) &&
+    (value.modelRevision === null || isText(value.modelRevision)) &&
+    (value.promptHash === null ||
+      (typeof value.promptHash === "string" &&
+        SHA256_PATTERN.test(value.promptHash))) &&
+    isText(value.measurementVersion) &&
+    isCount(value.tokenBudget, PLAYTESTS_EVIDENCE_PACKET_MAX_TOKENS) &&
+    value.tokenBudget !== 0 &&
+    Number.isFinite(Date.parse(String(value.generatedAt)))
+  );
+}
+
 /** Validate packet fields before persistence or model exposure. */
 export function assertPlaytestEvidencePacket(
   value: unknown
@@ -1093,60 +1209,9 @@ export function assertPlaytestEvidencePacket(
     );
   }
   if (
-    (value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA &&
-      value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V3 &&
-      value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2 &&
-      value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1) ||
-    !isPlaytestEvidencePacketId(value.packetId) ||
-    !isText(value.workspaceId) ||
-    !isText(value.batchId) ||
-    !isText(value.episodeId) ||
-    !isCount(value.episodeRevision, Number.MAX_SAFE_INTEGER) ||
-    !isText(value.assignmentId) ||
-    typeof value.buildSha !== "string" ||
-    !BUILD_SHA_PATTERN.test(value.buildSha) ||
-    !isText(value.gameBuild) ||
-    !isText(value.scenarioId) ||
-    !isText(value.scenarioFamily) ||
-    !isText(value.policyId) ||
-    !isText(value.policyVersion) ||
-    !isText(value.cohort) ||
-    !PLAYTESTS_GAME_OUTCOMES.includes(
-      value.outcome as PlaytestGameOutcomeKind
-    ) ||
-    !isRecord(value.outcomeMetrics) ||
-    Object.values(value.outcomeMetrics).some(
-      (metric) =>
-        metric !== null &&
-        (typeof metric !== "number" || !Number.isFinite(metric))
-    ) ||
-    !PLAYTESTS_GAME_MODES.includes(value.observationMode as PlaytestGameMode) ||
-    !isCount(value.sourceStepCount, 4096) ||
-    value.sourceStepCount === 0 ||
-    !SHA256_PATTERN.test(String(value.rubricHash)) ||
-    !isText(value.rubricVersion) ||
-    !isText(value.audience) ||
-    !Array.isArray(value.metricIntent) ||
-    !Array.isArray(value.dimensionRubrics) ||
-    !Array.isArray(value.metrics) ||
-    !Array.isArray(value.coverageCells) ||
-    !SHA256_PATTERN.test(String(value.coverageManifestHash)) ||
-    !isText(value.chronologicalSummary, 4096) ||
-    !isText(value.traceArtifactId) ||
-    !Array.isArray(value.selectedWindows) ||
-    !Array.isArray(value.omittedWindows) ||
-    !Array.isArray(value.omittedArtifacts) ||
-    !Array.isArray(value.suppliedArtifacts) ||
-    value.visibleEvidenceOnly !== true ||
-    value.criticRole !== "playtest-analyst" ||
-    (value.modelId !== null && !isText(value.modelId)) ||
-    (value.modelRevision !== null && !isText(value.modelRevision)) ||
-    (value.promptHash !== null &&
-      !SHA256_PATTERN.test(String(value.promptHash))) ||
-    !isText(value.measurementVersion) ||
-    !isCount(value.tokenBudget, PLAYTESTS_EVIDENCE_PACKET_MAX_TOKENS) ||
-    value.tokenBudget === 0 ||
-    !Number.isFinite(Date.parse(String(value.generatedAt)))
+    !validPacketIdentity(value) ||
+    !validPacketOutcomeAndMeasurement(value) ||
+    !validPacketReviewMetadata(value)
   ) {
     throw new TypeError("Playtest evidence packet fields are invalid.");
   }

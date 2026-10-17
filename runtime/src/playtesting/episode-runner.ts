@@ -16,6 +16,7 @@ import {
   type GameSnapshotResult,
   type GameStepResult,
   normalizeGameMetricEvaluations,
+  type PlaytestAdapterEpisode,
   type PlaytestArtifactReference,
   type PlaytestAssignmentBranch,
   type PlaytestBranchLineage,
@@ -140,7 +141,7 @@ export interface PlaytestEpisodeRunResult {
   /** Last validated adapter capabilities, if negotiation completed before failure. */
   readonly capabilities: PlaytestCapabilityAdvertisement | null;
   /** Null when adapter negotiation/reset failed before the game assigned an episode ID. */
-  readonly episode: PlaytestEpisode | null;
+  readonly episode: PlaytestAdapterEpisode | null;
   readonly steps: readonly PlaytestEpisodeStep[];
   readonly traceReference: PlaytestArtifactReference | null;
   readonly sandboxResult: PlaytestSandboxResult | null;
@@ -715,24 +716,29 @@ async function initializeBranch(
       "The approved adapter does not advertise verified checkpoint, replay, and fork support."
     );
   }
+  const parentIdentity = branch.parentEpisode.identity;
   if (
     !SHA256_PATTERN.test(branch.manifest.parentTrace.sha256) ||
     branch.manifest.parentEpisodeId !== branch.parentEpisode.episodeId ||
     branch.manifest.parentEpisodeRevision !== branch.parentEpisode.revision ||
     branch.manifest.parentBatchId !== branch.parentEpisode.batchId ||
-    branch.parentEpisode.identity.workspaceId !==
-      options.approval.workspaceId ||
-    branch.parentEpisode.identity.buildSha.toLowerCase() !==
-      options.build.buildSha ||
-    branch.parentEpisode.identity.configHash !== options.build.configHash ||
-    branch.parentEpisode.identity.scenarioId !== options.scenarioId ||
-    branch.parentEpisode.identity.seed !== options.seed ||
-    branch.parentEpisode.identity.observationSchemaHash !==
+    branch.parentEpisode.executionProvenance.mode !== "adapter-accelerated" ||
+    parentIdentity.workspaceId !== options.approval.workspaceId ||
+    parentIdentity.buildSha === null ||
+    parentIdentity.configHash === null ||
+    parentIdentity.scenarioId === null ||
+    parentIdentity.seed === null ||
+    parentIdentity.observationSchemaHash === null ||
+    parentIdentity.actionSchemaHash === null ||
+    parentIdentity.eventSchemaHash === null ||
+    parentIdentity.buildSha.toLowerCase() !== options.build.buildSha ||
+    parentIdentity.configHash !== options.build.configHash ||
+    parentIdentity.scenarioId !== options.scenarioId ||
+    parentIdentity.seed !== options.seed ||
+    parentIdentity.observationSchemaHash !==
       capabilities.observationSchemaHash ||
-    branch.parentEpisode.identity.actionSchemaHash !==
-      capabilities.actionSchemaHash ||
-    branch.parentEpisode.identity.eventSchemaHash !==
-      capabilities.eventSchemaHash
+    parentIdentity.actionSchemaHash !== capabilities.actionSchemaHash ||
+    parentIdentity.eventSchemaHash !== capabilities.eventSchemaHash
   ) {
     throw new TypeError(
       "The frozen branch source does not match this approved run."
@@ -810,7 +816,6 @@ async function initializeBranch(
       "The forked state or RNG differs from its verified snapshot."
     );
   }
-  const parentIdentity = branch.parentEpisode.identity;
   if (!parentIdentity.rngAlgorithm || !parentIdentity.rngVersion) {
     throw new TypeError("The parent episode is missing its RNG identity.");
   }
@@ -1222,39 +1227,75 @@ function episodeTermination(
   return { reason: "runtime-failure", step: null };
 }
 
+function classifiedOutcomeFor(
+  context: EpisodeExecutionContext
+): PlaytestEpisode["outcome"] {
+  if (context.outcome?.state !== "terminal") return "unknown";
+  const classified =
+    context.options.classifyOutcome?.(context.outcome.outcome) ??
+    ((PLAYTESTS_GAME_OUTCOMES as readonly string[]).includes(
+      typeof context.outcome.outcome === "string" ? context.outcome.outcome : ""
+    )
+      ? (context.outcome.outcome as PlaytestEpisode["outcome"])
+      : "unknown");
+  if ((PLAYTESTS_GAME_OUTCOMES as readonly string[]).includes(classified)) {
+    return classified;
+  }
+  context.failure ??= {
+    stage: "evidence",
+    category: "evaluator",
+    code: null,
+    disposition: "invalid-outcome-classification"
+  };
+  context.missingReasons.add(INFRASTRUCTURE_FAILED);
+  return "unknown";
+}
+
+function adapterExecutionProvenance(
+  context: EpisodeExecutionContext,
+  branchLineage: PlaytestBranchLineage | null
+): PlaytestAdapterEpisode["executionProvenance"] {
+  const { options } = context;
+  const sourceRevisionVerified = COMMIT_PATTERN.test(options.build.buildSha);
+  const provenance = {
+    mode: "adapter-accelerated",
+    source: {
+      kind: "repo-checkout",
+      repository: options.repository,
+      revision: sourceRevisionVerified ? options.build.buildSha : null,
+      revisionConfidence: sourceRevisionVerified ? "verified" : "unknown",
+      checkoutState: sourceRevisionVerified ? "clean" : "unknown",
+      artifactFingerprint: null,
+      targetId: null,
+      targetOrigin: null
+    },
+    observationSource: "engine-adapter",
+    actionSource: "engine-policy",
+    derivedFrom:
+      branchLineage === null
+        ? null
+        : {
+            episodeId: branchLineage.parentEpisodeId,
+            stepId: branchLineage.branchStep,
+            stateDigest: branchLineage.forkStateHash
+          }
+  } as const;
+  assertPlaytestExecutionProvenance(provenance);
+  return provenance;
+}
+
 function assembleEpisode(
   context: EpisodeExecutionContext,
   trace: PlaytestArtifactReference | null,
   frameRefs: readonly PlaytestEvidenceLocator[]
-): PlaytestEpisode | null {
+): PlaytestAdapterEpisode | null {
   const { options } = context;
   if (context.reset === null || context.capabilities === null) return null;
+  const classifiedOutcome = classifiedOutcomeFor(context);
   const status = statusForFailure(context.failure);
   if (status === BUDGET_TRUNCATED) context.missingReasons.add(BUDGET_TRUNCATED);
   if (context.outcome === null && status !== "cancelled") {
     context.missingReasons.add("unobserved");
-  }
-  const classifiedOutcome =
-    context.outcome?.state === "terminal"
-      ? (options.classifyOutcome?.(context.outcome.outcome) ??
-        ((PLAYTESTS_GAME_OUTCOMES as readonly string[]).includes(
-          typeof context.outcome.outcome === "string"
-            ? context.outcome.outcome
-            : ""
-        )
-          ? (context.outcome.outcome as PlaytestEpisode["outcome"])
-          : "unknown"))
-      : "unknown";
-  if (
-    !(PLAYTESTS_GAME_OUTCOMES as readonly string[]).includes(classifiedOutcome)
-  ) {
-    context.failure ??= {
-      stage: "evidence",
-      category: "evaluator",
-      code: null,
-      disposition: "invalid-outcome-classification"
-    };
-    context.missingReasons.add(INFRASTRUCTURE_FAILED);
   }
   const generatedAt = new Date((options.now ?? Date.now)()).toISOString();
   const provenance: PlaytestProvenance = {
@@ -1289,31 +1330,10 @@ function assembleEpisode(
   const isComplete =
     status === "completed" && context.missingReasons.size === 0;
   const branchLineage = buildBranchLineage(context);
-  const sourceRevisionVerified = COMMIT_PATTERN.test(options.build.buildSha);
-  const executionProvenance = {
-    mode: "adapter-accelerated",
-    source: {
-      kind: "repo-checkout",
-      repository: options.repository,
-      revision: sourceRevisionVerified ? options.build.buildSha : null,
-      revisionConfidence: sourceRevisionVerified ? "verified" : "unknown",
-      checkoutState: sourceRevisionVerified ? "clean" : "unknown",
-      artifactFingerprint: null,
-      targetId: null,
-      targetOrigin: null
-    },
-    observationSource: "engine-adapter",
-    actionSource: "engine-policy",
-    derivedFrom:
-      branchLineage === null
-        ? null
-        : {
-            episodeId: branchLineage.parentEpisodeId,
-            stepId: branchLineage.branchStep,
-            stateDigest: branchLineage.forkStateHash
-          }
-  } as const;
-  assertPlaytestExecutionProvenance(executionProvenance);
+  const executionProvenance = adapterExecutionProvenance(
+    context,
+    branchLineage
+  );
   return {
     schema: PLAYTESTS_EPISODE_SCHEMA,
     episodeId: playtestEpisodeRecordId(options.batchId, options.assignmentId),

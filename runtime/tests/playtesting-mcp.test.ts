@@ -15,6 +15,7 @@ import {
   buildPlaytestFindingIdentity,
   canonicalPlaytestJson,
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+  type PlaytestAdapterBatch,
   playtestAssignmentManifestHashInput,
   type PlaytestAssignmentOutcome,
   type PlaytestBatch,
@@ -40,6 +41,7 @@ import {
   PLAYTESTS_COMPARISON_SCHEMA,
   PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA,
   PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
+  PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_MEASUREMENT_VERSION,
   type PlaytestSessionReview,
@@ -132,6 +134,26 @@ function branchLaunch(input: {
 
 const WORKSPACE_ID = "owner/game";
 
+type AdapterEpisodeForTest = PlaytestEpisode & {
+  readonly executionProvenance: PlaytestEpisode["executionProvenance"] & {
+    readonly mode: "adapter-accelerated";
+  };
+  readonly scenarioFamily: string;
+  readonly policyCohort: string;
+  readonly identity: PlaytestEpisode["identity"] & {
+    readonly repository: string;
+    readonly buildSha: string;
+    readonly gameBuild: string;
+    readonly scenarioId: string;
+    readonly configHash: string;
+    readonly seed: string;
+    readonly protocolVersion: 1;
+    readonly observationSchemaHash: string;
+    readonly actionSchemaHash: string;
+    readonly eventSchemaHash: string;
+  };
+};
+
 function adapterExecutionProvenance(repository: string, buildSha: string) {
   const revisionVerified = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu.test(buildSha);
   return {
@@ -214,10 +236,16 @@ type TestPlaytestMcpOptions = Omit<PlaytestMcpOptions, "playtestRunControl"> & {
   readonly playtestRunControl?: PlaytestRunControl | null;
 };
 
-type TestPlaytestMcpServerWithControl = PlaytestMcpServer & {
+type TestPlaytestMcpServerWithControl = Omit<
+  PlaytestMcpServer,
+  "playtestRunControl"
+> & {
   readonly playtestRunControl: PlaytestRunControl;
 };
-type TestPlaytestMcpServerWithoutControl = PlaytestMcpServer & {
+type TestPlaytestMcpServerWithoutControl = Omit<
+  PlaytestMcpServer,
+  "playtestRunControl"
+> & {
   readonly playtestRunControl: null;
 };
 
@@ -234,10 +262,10 @@ function createTestPlaytestMcpServer(
 ): TestPlaytestMcpServerWithoutControl;
 function createTestPlaytestMcpServer(
   options: TestPlaytestMcpOptions
-): PlaytestMcpServer;
+): TestPlaytestMcpServerWithControl | TestPlaytestMcpServerWithoutControl;
 function createTestPlaytestMcpServer(
   options: TestPlaytestMcpOptions
-): PlaytestMcpServer {
+): TestPlaytestMcpServerWithControl | TestPlaytestMcpServerWithoutControl {
   const configured = {
     ...options,
     launchIntentRepository:
@@ -247,7 +275,13 @@ function createTestPlaytestMcpServer(
     configured.playtestRunControl === undefined
       ? createPlaytestRunControl(configured)
       : configured.playtestRunControl;
-  return createPlaytestMcpServer({ ...configured, playtestRunControl });
+  const server = createPlaytestMcpServer({
+    ...configured,
+    playtestRunControl
+  });
+  return playtestRunControl === null
+    ? (server as TestPlaytestMcpServerWithoutControl)
+    : (server as TestPlaytestMcpServerWithControl);
 }
 
 /** The committed build the fixture sandbox resolves for every batch. */
@@ -440,10 +474,10 @@ function episodeForRun(
     | "environmentHash"
   >,
   status: "completed" | "cancelled" = "cancelled"
-): PlaytestEpisode {
+): AdapterEpisodeForTest {
   const timestamp = new Date().toISOString();
   return {
-    schema: "autodev-playtest-episode-v5",
+    schema: PLAYTESTS_EPISODE_SCHEMA,
     episodeId: "ep-cancel-fixture",
     revision: 1,
     batchId: options.batchId,
@@ -1209,7 +1243,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
         return {
           capabilities: capabilitiesForRun(opts),
           episode: {
-            schema: "autodev-playtest-episode-v5",
+            schema: PLAYTESTS_EPISODE_SCHEMA,
             episodeId:
               opts.seed === "seed-exact-1" ? "ep-run-1" : `ep-run-${opts.seed}`,
             revision: 1,
@@ -2098,7 +2132,7 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
       runEpisodeHandler: async (opts) => ({
         capabilities: capabilitiesForRun(opts),
         episode: {
-          schema: "autodev-playtest-episode-v5",
+          schema: PLAYTESTS_EPISODE_SCHEMA,
           episodeId: "ep-fail-1",
           revision: 1,
           batchId: opts.batchId,
@@ -3292,6 +3326,7 @@ test("run status restores interrupted batch progress from Data and durably close
   const createdAt = "2026-10-10T00:00:00.000Z";
   const manifestBase = {
     schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
+    mode: "adapter-accelerated",
     batchId: "batch-after-restart",
     workspaceId: WORKSPACE_ID,
     buildSha: FIXTURE_BUILD.buildSha,
@@ -3360,8 +3395,9 @@ test("run status restores interrupted batch progress from Data and durably close
     ),
     episodeId: "ep-recovered-before-restart"
   };
-  let storedBatch: PlaytestBatch = {
+  let storedBatch: PlaytestAdapterBatch = {
     schema: PLAYTESTS_BATCH_SCHEMA,
+    executionMode: "adapter-accelerated",
     batchId: manifest.batchId,
     revision: 1,
     workspaceId: WORKSPACE_ID,
@@ -3418,7 +3454,7 @@ test("run status restores interrupted batch progress from Data and durably close
     spanIds: []
   };
   const batchWrites: PlaytestBatch[] = [];
-  const initialRunningBatch = storedBatch;
+  const initialRunningBatch: PlaytestAdapterBatch = storedBatch;
   const repository: PlaytestingRepositoryOps = {
     getBatch: async (_workspaceId, batchId) =>
       batchId === storedBatch.batchId ? storedBatch : null,
@@ -3452,6 +3488,9 @@ test("run status restores interrupted batch progress from Data and durably close
     getLatestComparison: async () => null,
     insertComparison: async () => {},
     insertBatch: async (batch) => {
+      if (batch.executionMode !== "adapter-accelerated") {
+        assert.fail("This fixture repository only stores adapter runs.");
+      }
       storedBatch = batch;
       batchWrites.push(batch);
     },
@@ -3536,7 +3575,7 @@ test("run status restores interrupted batch progress from Data and durably close
 
     // A fresh process also reconciles orphaned running rows when the active
     // run list is read, rather than reporting an empty active set forever.
-    let listBatch = initialRunningBatch;
+    let listBatch: PlaytestAdapterBatch = initialRunningBatch;
     const listRepository: PlaytestingRepositoryOps = {
       ...repository,
       getBatch: async (_workspaceId, batchId) =>
@@ -3547,6 +3586,9 @@ test("run status restores interrupted batch progress from Data and durably close
         nextCursor: null
       }),
       insertBatch: async (batch) => {
+        if (batch.executionMode !== "adapter-accelerated") {
+          assert.fail("This fixture repository only stores adapter runs.");
+        }
         listBatch = batch;
         batchWrites.push(batch);
       }
@@ -4280,8 +4322,8 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     );
     const traceWrite = artifacts.writeWindow({ entries: traceSteps });
 
-    const realEpisode: PlaytestEpisode = {
-      schema: "autodev-playtest-episode-v5",
+    const realEpisode: AdapterEpisodeForTest = {
+      schema: PLAYTESTS_EPISODE_SCHEMA,
       episodeId: "ep-1",
       revision: 1,
       batchId: "batch-1",
@@ -4373,11 +4415,11 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       },
       notes: "Synthetic discovery signal for selection-boundary testing."
     });
-    const episodeOne: PlaytestEpisode = {
+    const episodeOne: AdapterEpisodeForTest = {
       ...realEpisode,
       metrics: [anomalyMetric(1)]
     };
-    const episodeTwo: PlaytestEpisode = {
+    const episodeTwo: AdapterEpisodeForTest = {
       ...realEpisode,
       episodeId: "ep-2",
       assignmentId: "a-0002",
@@ -4388,6 +4430,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
 
     const assignmentManifestBase = {
       schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
+      mode: "adapter-accelerated",
       batchId: "batch-1",
       workspaceId: WORKSPACE_ID,
       buildSha: realEpisode.identity.buildSha,
@@ -4611,8 +4654,9 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       ]
     });
     selectedEpisodeIds = [episodeOne.episodeId, "ep-does-not-exist"];
-    let storedBatch: PlaytestBatch = {
+    let storedBatch: PlaytestAdapterBatch = {
       schema: PLAYTESTS_BATCH_SCHEMA,
+      executionMode: "adapter-accelerated",
       batchId: "batch-1",
       revision: 1,
       workspaceId: WORKSPACE_ID,
@@ -4732,6 +4776,9 @@ test("playtest MCP server: submitReview validates evidence against the real stor
         ) {
           failReceiptWrite = false;
           throw new Error("Simulated batch receipt persistence failure.");
+        }
+        if (batch.executionMode !== "adapter-accelerated") {
+          assert.fail("This fixture repository only stores adapter batches.");
         }
         storedBatch = batch;
       },
@@ -6104,9 +6151,9 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
     function makeEpisode(
       episodeId: string,
       metricEstimate: number | null
-    ): PlaytestEpisode {
+    ): AdapterEpisodeForTest {
       return {
-        schema: "autodev-playtest-episode-v5",
+        schema: PLAYTESTS_EPISODE_SCHEMA,
         episodeId,
         revision: 1,
         batchId: "batch-1",

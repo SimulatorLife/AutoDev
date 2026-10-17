@@ -46,11 +46,16 @@ export default async function AgentsPage({
   // state. Routing is not fetched here any more: the page composes runtime
   // evidence, so reading a second copy of the same counters would only add a
   // way for the two to disagree.
-  const [agentsResult, providersResult, runtimeResult] = await Promise.all([
-    fetchAgents(config),
-    fetchProviders(config),
-    fetchRuntime(config)
-  ]);
+  const [agentsResult, providersResult, runtimeResult, queryRaw] =
+    await Promise.all([
+      fetchAgents(config),
+      fetchProviders(config),
+      fetchRuntime(config),
+      searchParams ??
+        Promise.resolve(
+          {} as Record<string, string | string[] | undefined>
+        )
+    ]);
   if (agentsResult.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
@@ -63,7 +68,7 @@ export default async function AgentsPage({
     );
   }
   const agents = agentsFromControlApi(agentsResult.data);
-  const query = (await searchParams) ?? {};
+  const query = queryRaw ?? {};
   const providers =
     providersResult.kind === "ok" ? providersResult.data : undefined;
   const runtime = runtimeResult.kind === "ok" ? runtimeResult.data : undefined;

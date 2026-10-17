@@ -16,6 +16,8 @@ import {
   LIST_PANEL_CLASS,
   NESTED_PANEL_CLASS
 } from "../../components/layout/Panel.ts";
+import { StatCard } from "../../components/cards/StatCard.ts";
+import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
 import {
@@ -37,6 +39,8 @@ import {
 } from "../../components/ui/text-classes.ts";
 import { PlaytestComparisonDecisionForm } from "./PlaytestComparisonDecisionForm.ts";
 import {
+  episodeBuildLabel,
+  episodeScenarioLabel,
   executionStatusBadge,
   gameOutcomeBadge
 } from "./playtesting-episode-presentation.ts";
@@ -327,6 +331,12 @@ function overview(
   currentBuildSha: string | null
 ): React.JSX.Element {
   const latest = data.batches[0];
+  const latestSourceLabel =
+    latest === undefined
+      ? null
+      : latest.executionMode === "autonomous-visual"
+        ? `Autonomous visual · ${latest.assignmentInventory.manifest.targetOrigin} · Commit not applicable · ${latest.measurementVersion} · ${latest.batchId}`
+        : `Build ${latest.buildSha.slice(0, 12)} · ${latest.measurementVersion} · ${latest.batchId}`;
   const recentEpisodes = data.latestEpisodes.slice(0, 4);
   const coverage = latest?.coverageManifest ?? null;
   const coverageDetails =
@@ -405,9 +415,35 @@ function overview(
           )
         );
 
+  const summaryMetrics = React.createElement(
+    StatGrid,
+    { columns: 4 },
+    React.createElement(StatCard, {
+      title: "Total Sessions",
+      value: data.episodeCount,
+      subtitle: "Across all test scenarios"
+    }),
+    React.createElement(StatCard, {
+      title: "Evaluation Batches",
+      value: data.batchCount,
+      subtitle: "Automated runs executed"
+    }),
+    React.createElement(StatCard, {
+      title: "AI Critic Findings",
+      value: data.findingCount,
+      subtitle: data.findingCount === 0 ? "No anomalies detected" : "Issues surfaced by critic"
+    }),
+    React.createElement(StatCard, {
+      title: "A/B Comparisons",
+      value: data.comparisonCount,
+      subtitle: "Regression checks recorded"
+    })
+  );
+
   return React.createElement(
     React.Fragment,
     null,
+    summaryMetrics,
     React.createElement(
       "section",
       {
@@ -449,15 +485,17 @@ function overview(
                   React.createElement(
                     "span",
                     { className: "text-sm" },
-                    `${String(latest.counts.completed)} of ${String(latest.counts.assigned)} assignments completed`
+                    `${String(latest.counts.completed)} of ${String(latest.counts.assigned)} ${latest.executionMode === "autonomous-visual" ? "sessions" : "assignments"} completed`
                   )
                 ),
                 React.createElement(
                   "p",
                   { className: MUTED_META_CLASS },
-                  `Build ${latest.buildSha.slice(0, 12)} · ${latest.measurementVersion} · ${latest.batchId}`
+                  latestSourceLabel
                 ),
-                currentBuildSha !== null && latest.buildSha !== currentBuildSha
+                latest.executionMode === "adapter-accelerated" &&
+                  currentBuildSha !== null &&
+                  latest.buildSha !== currentBuildSha
                   ? React.createElement(
                       "p",
                       { className: MUTED_META_CLASS },
@@ -558,7 +596,7 @@ function overview(
                     React.createElement(
                       "span",
                       { className: "font-medium" },
-                      episode.identity.scenarioId
+                      episodeScenarioLabel(episode)
                     ),
                     executionStatusBadge(episode.status),
                     gameOutcomeBadge(episode.outcome)
@@ -574,7 +612,7 @@ function overview(
                   React.createElement(
                     "p",
                     { className: MUTED_META_CLASS },
-                    `${episode.identity.policyId} · ${episode.policyCohort} · ${String(episode.stepCount)} steps · build ${episode.identity.buildSha.slice(0, 12)}`
+                    `${episode.identity.policyId} · ${episode.policyCohort ?? "No cohort assigned"} · ${String(episode.stepCount)} steps · ${episodeBuildLabel(episode)}`
                   )
                 ),
                 React.createElement(

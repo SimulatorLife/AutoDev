@@ -458,6 +458,14 @@ export default async function PlaytestingPage({
         workspacePicker: React.createElement(PlaytestingWorkspacePicker, {
           scope,
           workspaces: workspaceResult.data.workspaces
+        }),
+        runDashboard: React.createElement(PlaytestingRunDashboard, {
+          scope,
+          setup: {
+            kind: "unavailable",
+            code: "workspace-selection-required",
+            message: "Choose a workspace before reading playtest readiness."
+          }
         })
       })
     );

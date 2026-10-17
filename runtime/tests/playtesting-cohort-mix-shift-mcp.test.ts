@@ -142,6 +142,7 @@ function approval(checkout: {
 function batch(batchId: string, buildSha: string): PlaytestBatch {
   return {
     schema: PLAYTESTS_BATCH_SCHEMA,
+    executionMode: "adapter-accelerated",
     batchId,
     revision: 1,
     workspaceId: WORKSPACE_ID,
@@ -249,6 +250,22 @@ function episode(
     batchId,
     assignmentId: `assignment-${episodeId}`,
     branchLineage: null,
+    executionProvenance: {
+      mode: "adapter-accelerated",
+      source: {
+        kind: "repo-checkout",
+        repository: WORKSPACE_ID,
+        revision: buildSha,
+        revisionConfidence: "verified",
+        checkoutState: "clean",
+        artifactFingerprint: null,
+        targetId: null,
+        targetOrigin: null
+      },
+      observationSource: "engine-adapter",
+      actionSource: "engine-policy",
+      derivedFrom: null
+    },
     identity: {
       workspaceId: WORKSPACE_ID,
       repository: WORKSPACE_ID,

@@ -11,6 +11,8 @@ export * from "./loop-guard.ts";
 export * from "./mcp.ts";
 export * from "./policies.ts";
 export * from "./run-control-service.ts";
+export * from "./smart-direct-policy.ts";
 export * from "./statistics/index.ts";
 export * from "./stdio.ts";
 export * from "./visible-observation.ts";
+export * from "./visual-browser-driver.ts";

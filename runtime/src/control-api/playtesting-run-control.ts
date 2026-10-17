@@ -17,6 +17,7 @@ import {
   type ControlApiPlaytestingRunRequestLookupResponse,
   type ControlApiPlaytestingRunStartedResponse,
   type ControlApiPlaytestingRunStatusResponse,
+  type ControlApiPlaytestingVisualTargetReadiness,
   type PlaytestJsonValue,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
   PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS
@@ -1105,41 +1106,48 @@ function visualModeReadiness(input: {
       severity: CHECK_REQUIRED_STATUS
     });
   }
-  for (const target of input.targets) {
-    if (target.entryRequirements !== "none") {
-      addCapabilityReason(reasons, {
-        code: "visual-target-setup-required",
-        label: "Operator-assisted setup unsupported",
-        message: `Target ${target.name} requires ${target.entryRequirements}; this runtime only supports ungated entry.`,
-        severity: UNAVAILABLE_STATUS
-      });
-    }
-    if (target.controlTimingClass === "continuous") {
-      addCapabilityReason(reasons, {
-        code: "visual-control-timing-unsupported",
-        label: "Continuous control unsupported",
-        message: `Target ${target.name} requires continuous control, which is not supported by the visual turn-based driver.`,
-        severity: UNAVAILABLE_STATUS
-      });
-    }
+  const targets: ControlApiPlaytestingVisualTargetReadiness[] =
+    input.targets.map((target) => {
+      const targetReasons: ControlApiPlaytestingCapabilityReason[] = [];
+      if (target.entryRequirements !== "none") {
+        addCapabilityReason(targetReasons, {
+          code: "visual-target-setup-required",
+          label: "Operator-assisted setup unsupported",
+          message: `Target ${target.name} requires ${target.entryRequirements}; this runtime only supports ungated entry.`,
+          severity: UNAVAILABLE_STATUS
+        });
+      }
+      if (target.controlTimingClass === "continuous") {
+        addCapabilityReason(targetReasons, {
+          code: "visual-control-timing-unsupported",
+          label: "Continuous control unsupported",
+          message: `Target ${target.name} requires continuous control, which is not supported by the visual turn-based driver.`,
+          severity: UNAVAILABLE_STATUS
+        });
+      }
+      return {
+        target,
+        eligibility: targetReasons.length === 0 ? "supported" : "unsupported",
+        reasons: targetReasons
+      };
+    });
+  if (
+    input.targetStore === "available" &&
+    targets.length > 0 &&
+    targets.every((target) => target.eligibility !== "supported")
+  ) {
+    addCapabilityReason(reasons, {
+      code: "visual-targets-unsupported",
+      label: "No supported visual target",
+      message:
+        "Every approved visual target requires unsupported setup or continuous control.",
+      severity: UNAVAILABLE_STATUS
+    });
   }
-  addCapabilityReason(reasons, {
-    code: "visual-driver-unavailable",
-    label: "Visual driver unavailable",
-    message: "Runtime does not yet have the isolated browser gameplay driver.",
-    severity: UNAVAILABLE_STATUS
-  });
-  addCapabilityReason(reasons, {
-    code: "smart-direct-policy-unavailable",
-    label: "Smart-direct policy unavailable",
-    message:
-      "Runtime cannot yet make bounded Smart-direct gameplay decisions for visual sessions.",
-    severity: UNAVAILABLE_STATUS
-  });
   return {
     ...readinessFromReasons(reasons),
     targetStore: input.targetStore,
-    targets: input.targets
+    targets
   };
 }
 
@@ -1198,7 +1206,7 @@ async function capabilitiesForLaunchRequest(input: {
     ControlApiPlaytestingCapabilitiesResponse,
     "capabilityRevision"
   > = {
-    schema: "autodev-control-playtesting-capabilities-v2",
+    schema: "autodev-control-playtesting-capabilities-v3",
     ...runCapabilities,
     operatorActionsAvailable,
     modeReadiness: {

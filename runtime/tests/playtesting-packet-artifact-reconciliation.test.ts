@@ -83,6 +83,7 @@ function batchArtifact(input: {
   const generatedAt = "2026-10-12T00:00:00.000Z";
   const manifestDraft = {
     schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
+    mode: "adapter-accelerated",
     batchId: input.batchId,
     workspaceId: "owner/game",
     buildSha: "a".repeat(40),
@@ -139,6 +140,7 @@ function batchArtifact(input: {
   };
   return {
     schema: PLAYTESTS_BATCH_SCHEMA,
+    executionMode: "adapter-accelerated",
     batchId: input.batchId,
     revision: input.revision ?? 1,
     workspaceId: "owner/game",

@@ -19,6 +19,7 @@ import {
   linkRuntimeSource,
   linkSkillSource,
   materializeRuntimeFile,
+  resolveCommandOnPath,
   runtimeFileMatches,
   runtimeLinkMatches,
   runtimeTarget,
@@ -217,4 +218,48 @@ test("materialization replaces truly broken symlinks cleanly", () =>
     assert.equal(lstatSync(target).isSymbolicLink(), false);
     assert.equal(readFileSync(target, "utf8"), "materialized content\n");
     assert.equal(lstatSync(target).mode & 0o777, 0o644);
+  }));
+
+test("materialization is a no-op when target file content and mode already match", () =>
+  withTempDir((directory) => {
+    const source = join(directory, "source.ts");
+    const target = join(directory, "target.ts");
+    writeFileSync(source, "unchanged content\n");
+    materializeRuntimeFile(source, target, 0o644);
+    const firstStat = lstatSync(target);
+
+    materializeRuntimeFile(source, target, 0o644);
+    const secondStat = lstatSync(target);
+    assert.equal(
+      secondStat.ino,
+      firstStat.ino,
+      "matching content and mode must not rewrite the target inode"
+    );
+
+    // Changing the mode must trigger a replacement
+    materializeRuntimeFile(source, target, 0o755);
+    assert.equal(lstatSync(target).mode & 0o777, 0o755);
+  }));
+
+test("resolveCommandOnPath locates executable binaries without spawning a shell", () =>
+  withTempDir((directory) => {
+    const binA = join(directory, "bin-a");
+    const binB = join(directory, "bin-b");
+    mkdirSync(binA);
+    mkdirSync(binB);
+
+    const nonExec = join(binA, "my-tool");
+    const realExec = join(binB, "my-tool");
+    writeFileSync(nonExec, "#!/bin/sh\n", { mode: 0o644 });
+    writeFileSync(realExec, "#!/bin/sh\n", { mode: 0o755 });
+
+    const env = { PATH: `${binA}:${binB}` };
+    assert.equal(
+      resolveCommandOnPath("my-tool", env),
+      realExec,
+      "non-executable shadows in earlier PATH entries must be skipped"
+    );
+    assert.equal(resolveCommandOnPath("missing-tool", env), null);
+    assert.equal(resolveCommandOnPath(realExec, env), realExec);
+    assert.equal(resolveCommandOnPath(nonExec, env), null);
   }));

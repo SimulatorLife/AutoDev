@@ -7,13 +7,17 @@ import {
   type ControlApiPlaytestingEpisodeDetailResponse,
   type ControlApiPlaytestingHumanValidationResponse,
   type ControlApiPlaytestingWindowResponse,
+  playtestAssignmentManifestHashInput,
   type PlaytestComparison,
   type PlaytestEpisode,
   type PlaytestFinding,
   playtestFindingIdentityHashInput,
-  PLAYTESTS_SESSION_REVIEW_SCHEMA,
+  PLAYTESTS_BATCH_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA,
+  PLAYTESTS_SESSION_REVIEW_SCHEMA,
+  PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
   type PlaytestSessionReview,
+  type PlaytestVisualBatch,
   type WorkspaceEntry
 } from "@simulatorlife/autodev-core";
 import React from "react";
@@ -168,6 +172,127 @@ function traceWindow(): ControlApiPlaytestingWindowResponse {
   };
 }
 
+function visualBatch(): PlaytestVisualBatch {
+  const manifestDraft = {
+    schema: PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
+    mode: "autonomous-visual" as const,
+    batchId: "visual-batch-1",
+    workspaceId: WORKSPACE,
+    targetId: "racing-target",
+    targetApprovalId: "approval-1",
+    targetRevision: 2,
+    targetOrigin: "http://racing.local",
+    policyId: "smart-direct" as const,
+    policyVersion: "smart-direct-v1",
+    cohortId: null,
+    areasOfFocus: null,
+    limits: {
+      episodeCount: 1,
+      maxStepsPerEpisode: 40,
+      wallTimeMs: 60_000,
+      smartRequestsPerEpisode: 20,
+      smartTokensPerEpisode: 10_000,
+      screenshotCountPerEpisode: 40,
+      artifactBytesPerEpisode: 10_000_000
+    },
+    createdAt: "2026-10-17T12:00:00.000Z",
+    assignments: [{ assignmentId: "v-0001", ordinal: 0, maxSteps: 30 }]
+  } as const;
+  const manifest = {
+    ...manifestDraft,
+    contentHash: createHash("sha256")
+      .update(playtestAssignmentManifestHashInput(manifestDraft))
+      .digest("hex")
+  };
+  return {
+    schema: PLAYTESTS_BATCH_SCHEMA,
+    executionMode: "autonomous-visual",
+    batchId: manifest.batchId,
+    revision: 1,
+    workspaceId: WORKSPACE,
+    repository: null,
+    buildSha: null,
+    gameBuild: null,
+    configHash: null,
+    rubricHash: null,
+    actionSchemaHash: null,
+    observationSchemaHash: null,
+    eventSchemaHash: null,
+    measurementVersion: "playtesting-measurement-v2",
+    protocolVersion: null,
+    policyIds: ["smart-direct"],
+    cohortIds: [],
+    scenarioIds: [],
+    assignmentInventory: { status: "frozen-visual", manifest },
+    coverageManifest: null,
+    unobservedAssignments: [],
+    reviewSelection: {
+      status: "unavailable",
+      reason: "visual-discovery-session-level"
+    },
+    reviewPackets: [],
+    reviewReceipts: [],
+    status: "completed",
+    cancellationReason: null,
+    failureReason: null,
+    counts: {
+      assigned: 1,
+      started: 1,
+      completed: 1,
+      crashed: 0,
+      infrastructureFailed: 0,
+      cancelled: 0,
+      budgetTruncated: 0,
+      reviewed: 0,
+      eligible: 0
+    },
+    budget: {
+      assignedEpisodes: 1,
+      maxStepsPerEpisode: 30,
+      wallTimeMs: 60_000,
+      critiqueBudget: 0,
+      actualCritiques: 0
+    },
+    startedAt: manifest.createdAt,
+    completedAt: manifest.createdAt,
+    createdAt: manifest.createdAt,
+    provenance: {
+      workspaceId: WORKSPACE,
+      buildSha: null,
+      measurementVersion: "playtesting-measurement-v2",
+      generatedAt: manifest.createdAt
+    },
+    evaluationIds: [],
+    spanIds: []
+  };
+}
+
+test("overview renders visual batches without fabricating a source commit", () => {
+  const current = visualBatch();
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: scope({ view: "overview" }),
+      workspaces: [workspace],
+      currentBuildSha: BUILD_SHA,
+      overview: {
+        batches: [current],
+        batchCount: 1,
+        episodeCount: 1,
+        findingCount: 0,
+        comparisonCount: 0,
+        latestEpisodes: []
+      }
+    })
+  );
+  assert.match(
+    html,
+    /Autonomous visual · http:\/\/racing\.local · Commit not applicable/u
+  );
+  assert.match(html, /1 of 1 sessions completed/u);
+  assert.doesNotMatch(html, /Build aaaaaaaaaaaa/u);
+  assert.doesNotMatch(html, /earlier commit than the build currently/u);
+});
+
 test("Playtesting list view uses accessible links and explicit empty/unavailable distinctions", () => {
   const html = renderToStaticMarkup(
     React.createElement(PlaytestingView, {
@@ -228,6 +353,24 @@ test("session rows own analyst selection and link directly to diagnosis", () => 
 
   const visualEpisode: PlaytestEpisode = {
     ...current,
+    scenarioFamily: null,
+    policyCohort: null,
+    identity: {
+      ...current.identity,
+      repository: null,
+      buildSha: null,
+      gameBuild: null,
+      scenarioId: null,
+      configHash: null,
+      seed: null,
+      rngInitialStateHash: null,
+      rngAlgorithm: null,
+      rngVersion: null,
+      observationSchemaHash: "f".repeat(64),
+      actionSchemaHash: "e".repeat(64),
+      eventSchemaHash: "d".repeat(64),
+      protocolVersion: null
+    },
     executionProvenance: {
       mode: "autonomous-visual",
       source: {
@@ -255,7 +398,9 @@ test("session rows own analyst selection and link directly to diagnosis", () => 
   );
   assert.match(visualHtml, /Autonomous visual/u);
   assert.match(visualHtml, /Commit not applicable/u);
+  assert.match(visualHtml, /No cohort assigned/u);
   assert.match(visualHtml, /http:\/\/racing\.local/u);
+  assert.doesNotMatch(visualHtml, /Verified aaaaaaaaaaaa/u);
   assert.match(gridHtml, /Recorded game outcome: loss/u);
 });
 
@@ -870,4 +1015,82 @@ test("Compare labels an absent human study as not collected rather than zero", (
   assert.match(html, /Human validation/u);
   assert.match(html, /Not collected/u);
   assert.doesNotMatch(html, /ENJ: 0/u);
+});
+
+test("visualGameSpectatorStage renders live game screen, AI intentions, scrubber, and 1-click analyst button when visual frames exist", () => {
+  const visualEpisode: PlaytestEpisode = {
+    ...episode(),
+    executionProvenance: {
+      mode: "autonomous-visual",
+      source: {
+        kind: "URL-only",
+        repository: null,
+        revision: null,
+        revisionConfidence: "not-applicable",
+        checkoutState: "not-applicable",
+        artifactFingerprint: null,
+        targetId: "racing-game-local",
+        targetOrigin: "http://localhost:5173"
+      },
+      observationSource: "browser-ui",
+      actionSource: "browser-input",
+      derivedFrom: null
+    },
+    frames: [
+      { id: "frame-step-0", kind: "frame", step: 0, frameIndex: 0 },
+      { id: "frame-step-1", kind: "frame", step: 1, frameIndex: 1 }
+    ],
+    stepCount: 2
+  };
+
+  const window: ControlApiPlaytestingWindowResponse = {
+    schema: "autodev-control-playtesting-window-v1",
+    workspaceId: WORKSPACE,
+    episodeId: visualEpisode.episodeId,
+    startStep: 0,
+    endStep: 1,
+    sha256: "e".repeat(64),
+    sourceLineCount: 2,
+    omittedLineCount: 0,
+    entries: [
+      {
+        step: 0,
+        phase: "GreenFlag",
+        selectedActionId: "ArrowUp",
+        preActionPrediction: {
+          intention: "Accelerate down the straightaway and align for upcoming chicane",
+          predictedVisibleEffect: "Vehicle speed increases to 120 km/h, car stays in center lane",
+          reasonCode: "optimal_racing_line"
+        },
+        visibleObservation: {
+          controls: [{ controlId: "pedal", name: "Throttle" }],
+          warnings: [],
+          phase: "GreenFlag",
+          progress: "Lap 1"
+        },
+        frameRefs: [{ id: "frame-step-0", kind: "frame" }]
+      }
+    ]
+  };
+
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: { ...detail(), record: visualEpisode },
+      scope: scope({ view: "sessions", step: 0 }),
+      window
+    })
+  );
+
+  assert.match(html, /data-testid="visual-spectator-stage"/u);
+  assert.match(html, /Game Spectator Cockpit/u);
+  assert.match(html, /Autonomous Visual AI Player/u);
+  assert.match(html, /data-testid="spectator-game-screen"/u);
+  assert.match(html, /frame-step-0/u);
+  assert.match(html, /data-testid="spectator-step-scrubber"/u);
+  assert.match(html, /data-testid="ai-intention-callout"/u);
+  assert.match(html, /Accelerate down the straightaway and align for upcoming chicane/u);
+  assert.match(html, /Vehicle speed increases to 120 km\/h/u);
+  assert.match(html, /optimal_racing_line/u);
+  assert.match(html, /data-playtesting-spectator-analyze="episode-17"/u);
+  assert.match(html, /Analyze with Playtest Analyst/u);
 });

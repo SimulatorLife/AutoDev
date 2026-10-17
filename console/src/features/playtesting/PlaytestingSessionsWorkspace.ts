@@ -12,9 +12,10 @@ import { EmptyState } from "../../components/status/EmptyState.ts";
 import { FIELD_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 import {
-  executionStatusBadge,
+  episodeScenarioLabel,
   executionModeLabel,
   executionSourceSummary,
+  executionStatusBadge,
   gameOutcomeBadge
 } from "./playtesting-episode-presentation.ts";
 import {
@@ -226,7 +227,7 @@ export function PlaytestingSessionsWorkspace({
                     React.createElement(
                       "span",
                       { className: "font-medium" },
-                      episode.identity.scenarioId
+                      episodeScenarioLabel(episode)
                     ),
                     executionStatusBadge(episode.status),
                     gameOutcomeBadge(episode.outcome)
@@ -250,7 +251,7 @@ export function PlaytestingSessionsWorkspace({
                   React.createElement(
                     "p",
                     { className: MUTED_META_CLASS },
-                    `${executionModeLabel(episode.executionProvenance.mode)} · ${episode.identity.policyId} · ${episode.policyCohort} · ${String(episode.stepCount)} steps · ${executionSourceSummary(episode.executionProvenance)}`
+                    `${executionModeLabel(episode.executionProvenance.mode)} · ${episode.identity.policyId} · ${episode.policyCohort ?? "No cohort assigned"} · ${String(episode.stepCount)} steps · ${executionSourceSummary(episode.executionProvenance)}`
                   )
                 ),
                 React.createElement(

@@ -42,6 +42,27 @@ export function executionSourceSummary(
   return `${source.kind}${repository}${target} · ${revision}`;
 }
 
+/** Render an absent engine scenario honestly for URL-driven visual episodes. */
+export function episodeScenarioLabel(
+  episode: Pick<PlaytestEpisode, "identity" | "executionProvenance">
+): string {
+  if (episode.identity.scenarioId) return episode.identity.scenarioId;
+  return episode.executionProvenance.mode === "autonomous-visual"
+    ? "Visual exploration"
+    : "Scenario not recorded";
+}
+
+/** A URL's source checkout is not a build attestation for its rendered bytes. */
+export function episodeBuildLabel(
+  episode: Pick<PlaytestEpisode, "identity" | "executionProvenance">
+): string {
+  const { source } = episode.executionProvenance;
+  if (source.revisionConfidence === "verified" && source.revision !== null) {
+    return `Verified ${source.revision.slice(0, 12)}`;
+  }
+  return source.kind === "URL-only" ? "Commit not applicable" : "Build unknown";
+}
+
 /** Execution disposition and the game's outcome remain separate dimensions. */
 export function executionStatusBadge(
   status: PlaytestEpisode["status"]

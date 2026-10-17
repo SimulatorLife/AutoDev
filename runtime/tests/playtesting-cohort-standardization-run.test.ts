@@ -29,7 +29,7 @@ import test from "node:test";
 import {
   assertPlaytestBenchmark,
   assertPlaytestNumericResults,
-  type PlaytestBatch,
+  type PlaytestAdapterBatch,
   type PlaytestBenchmark,
   playtestBenchmarkHashInput,
   type PlaytestEpisode,
@@ -119,6 +119,22 @@ function episode(
     batchId: `batch-${buildSha}`,
     assignmentId: `assignment-${episodeId}`,
     branchLineage: null,
+    executionProvenance: {
+      mode: "adapter-accelerated",
+      source: {
+        kind: "repo-checkout",
+        repository: WORKSPACE_ID,
+        revision: buildSha,
+        revisionConfidence: "verified",
+        checkoutState: "clean",
+        artifactFingerprint: null,
+        targetId: null,
+        targetOrigin: null
+      },
+      observationSource: "engine-adapter",
+      actionSource: "engine-policy",
+      derivedFrom: null
+    },
     identity: {
       workspaceId: WORKSPACE_ID,
       repository: WORKSPACE_ID,
@@ -220,9 +236,13 @@ function benchmark(cohortWeights: Record<string, number>): PlaytestBenchmark {
   } as PlaytestBenchmark;
 }
 
-function batch(buildSha: string, cohortIds: readonly string[]): PlaytestBatch {
+function batch(
+  buildSha: string,
+  cohortIds: readonly string[]
+): PlaytestAdapterBatch {
   return {
     schema: PLAYTESTS_BATCH_SCHEMA,
+    executionMode: "adapter-accelerated",
     batchId: `batch-${buildSha}`,
     revision: 1,
     workspaceId: WORKSPACE_ID,
@@ -282,7 +302,7 @@ function batch(buildSha: string, cohortIds: readonly string[]): PlaytestBatch {
     },
     evaluationIds: [],
     spanIds: []
-  } as unknown as PlaytestBatch;
+  } as unknown as PlaytestAdapterBatch;
 }
 
 /** One measured build: its batch plus one episode per cohort it exercised. */

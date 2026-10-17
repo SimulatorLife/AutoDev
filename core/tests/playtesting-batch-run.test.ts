@@ -17,6 +17,7 @@ import {
   playtestReviewSelectionSeed,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
+  PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
   selectPlaytestBatchReviews
 } from "../src/playtesting/index.ts";
 
@@ -41,6 +42,7 @@ function manifest(
 ): PlaytestAssignmentManifest {
   const base = {
     schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
+    mode: "adapter-accelerated",
     batchId: "batch-fixture-1",
     workspaceId: "owner/game",
     buildSha: "a".repeat(40),
@@ -634,5 +636,75 @@ test("pre-execution policy x scenario cells give the surveillance strata lower b
       })
     ]),
     2
+  );
+});
+
+test("visual assignment manifests preserve URL-only identity without adapter fields", () => {
+  const limits = {
+    episodeCount: 2,
+    maxStepsPerEpisode: 40,
+    wallTimeMs: 60_000,
+    smartRequestsPerEpisode: 20,
+    smartTokensPerEpisode: 10_000,
+    screenshotCountPerEpisode: 40,
+    artifactBytesPerEpisode: 10_000_000
+  } as const;
+  const base = {
+    schema: PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
+    mode: "autonomous-visual" as const,
+    batchId: "visual-batch-1",
+    workspaceId: "owner/game",
+    targetId: "target-1",
+    targetApprovalId: "approval-1",
+    targetRevision: 2,
+    targetOrigin: "http://localhost:5173",
+    policyId: "smart-direct" as const,
+    policyVersion: "smart-direct-v1",
+    cohortId: null,
+    areasOfFocus: "Explore the tutorial; do not submit or purchase.",
+    limits,
+    createdAt: "2026-10-17T12:00:00.000Z",
+    assignments: [
+      { assignmentId: "v-0001", ordinal: 0, maxSteps: 30 },
+      { assignmentId: "v-0002", ordinal: 1, maxSteps: 40 }
+    ]
+  } as const;
+  const frozen = {
+    ...base,
+    contentHash: createHash("sha256")
+      .update(playtestAssignmentManifestHashInput(base))
+      .digest("hex")
+  };
+  assert.doesNotThrow(() => assertPlaytestAssignmentManifest(frozen));
+
+  assert.throws(
+    () =>
+      assertPlaytestAssignmentManifest({
+        ...frozen,
+        targetOrigin: "http://game.example"
+      }),
+    /malformed/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestAssignmentManifest({
+        ...frozen,
+        assignments: [
+          { assignmentId: "v-0001", ordinal: 0, maxSteps: 30, seed: "fake" },
+          { assignmentId: "v-0002", ordinal: 1, maxSteps: 40 }
+        ]
+      }),
+    /Visual batch assignment is malformed/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestAssignmentManifest({
+        ...frozen,
+        assignments: [
+          { assignmentId: "v-0001", ordinal: 1, maxSteps: 30 },
+          { assignmentId: "v-0002", ordinal: 0, maxSteps: 40 }
+        ]
+      }),
+    /Visual batch assignment is malformed/u
   );
 });

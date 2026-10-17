@@ -13,7 +13,7 @@ const VIEW_COMPARE_PATTERN = /view=compare/u;
 const WORKSPACE_DETAIL_URL_PATTERN = /\/workspaces\/fixture\/game$/u;
 const BUDGET_PREVIEW_PATTERN =
   /1 of 10 sessions · 1 concurrent worker\(s\) · 60 seconds maximum/u;
-const RUN_TWO_ASSIGNMENTS_LABEL = "Start 2 playtests";
+const RUN_TWO_ASSIGNMENTS_LABEL = "Start 2 adapter playtests";
 const REVOKE_FORM_NAME = "Revoke playtesting approval for fixture/game";
 const MAX_BUDGET_PREVIEW_PATTERN =
   /1 of 1000 sessions · 1 concurrent worker\(s\) · 60 seconds maximum/u;
@@ -39,8 +39,8 @@ const FIXTURE_WORKSPACE_ID = "fixture/game";
 const APPROVAL_FORM_NAME = `Approve playtesting for ${FIXTURE_WORKSPACE_ID}`;
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const PLAYTESTING_OVERVIEW_URL = "/playtesting?workspaceId=fixture%2Fgame";
-const RUN_FORM_NAME = "Start a playtest";
-const START_SINGLE_RUN_LABEL = "Start playtest";
+const RUN_FORM_NAME = "Start an adapter-accelerated playtest";
+const START_SINGLE_RUN_LABEL = "Start adapter playtest";
 const RUN_STATUS_REGION_NAME = "Playtest run status";
 const CUSTOMIZE_RUN_LABEL = "Customize run";
 const BATCH_TIME_ANALYSIS_LABEL = "Batch, time, and analysis limits";
@@ -64,6 +64,20 @@ async function openNewPlaytest(page: Page): Promise<Locator> {
 test.beforeEach(async ({ request }) => {
   const response = await request.post(`${FIXTURE_BASE_URL}/fixture/reset`);
   expect(response.ok()).toBe(true);
+});
+
+test("the persistent Play action remains visible until a workspace is selected", async ({
+  page
+}) => {
+  await page.goto("/playtesting");
+  const play = page.getByRole("button", { name: "Start playtest" });
+  await expect(play).toBeVisible();
+  await expect(play).toBeDisabled();
+  await expect(play).toHaveAttribute(
+    "title",
+    "Choose a workspace before starting a playtest"
+  );
+  await expect(page.getByRole("combobox", { name: "Workspace" })).toBeVisible();
 });
 
 async function fillSyntheticApprovalForm(page: Page): Promise<Locator> {
@@ -127,6 +141,12 @@ test("workspace overview distinguishes batches, episodes, findings, and comparis
   );
   await expect(dialog.locator(VISUAL_MODE_SELECTOR)).toContainText(
     "No visual target approved"
+  );
+  await expect(dialog).toContainText(
+    "Adapter runs are a separate, structured-data option—not a visual-mode fallback."
+  );
+  await expect(dialog.getByTestId("playtesting-adapter-launch")).toContainText(
+    "It does not observe the rendered UI or stand in for autonomous visual play."
   );
   const visualReadinessDetails = dialog
     .locator(VISUAL_MODE_SELECTOR)
@@ -552,7 +572,7 @@ test("batch composer generates and submits the full bounded 1,000-assignment inv
     form.getByRole("button", { name: "Add session" })
   ).toBeDisabled();
   const submit = form.getByRole("button", {
-    name: "Start 1000 playtests"
+    name: "Start 1000 adapter playtests"
   });
   await expect(submit).toBeEnabled();
   await submit.click();

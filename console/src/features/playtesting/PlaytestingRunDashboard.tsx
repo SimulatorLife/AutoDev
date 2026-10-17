@@ -7,9 +7,10 @@
  * submits a typed request; the run-status panel is the sole status surface.
  * A terminal transition refreshes the server-rendered evidence and recent result.
  */
-import type {
-  ControlApiPlaytestingRunRecord,
-  ControlApiPlaytestingRunStartedResponse
+import {
+  type ControlApiPlaytestingRunRecord,
+  type ControlApiPlaytestingRunStartedResponse,
+  PLAYTEST_LAUNCH_REQUEST_SCHEMA
 } from "@simulatorlife/autodev-core";
 import { useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -70,9 +71,7 @@ function visualModeReadinessCard(
       React.createElement(
         "summary",
         { className: "cursor-pointer text-xs text-fg-muted" },
-        readiness
-          ? "Readiness details (" + String(readiness.reasons.length) + ")"
-          : "Readiness details"
+        "Readiness and target details"
       ),
       React.createElement(
         "ul",
@@ -108,16 +107,25 @@ function visualModeReadinessCard(
               className: "mt-3 grid gap-1 text-xs text-fg-muted",
               "aria-label": "Approved visual targets"
             },
-            ...readiness.targets.map((target) =>
+            ...readiness.targets.map((targetReadiness) =>
               React.createElement(
                 "li",
-                { key: target.targetId },
-                target.name +
+                { key: targetReadiness.target.targetId },
+                targetReadiness.target.name +
                   " · " +
-                  target.controlTimingClass +
+                  targetReadiness.target.controlTimingClass +
                   " · " +
-                  target.entryRequirements +
-                  " entry"
+                  targetReadiness.target.entryRequirements +
+                  " entry · " +
+                  (targetReadiness.eligibility === "supported"
+                    ? "eligible target"
+                    : "unsupported target") +
+                  (targetReadiness.reasons.length > 0
+                    ? ": " +
+                      targetReadiness.reasons
+                        .map((reason) => reason.label)
+                        .join(", ")
+                    : "")
               )
             )
           )
@@ -172,6 +180,381 @@ function adapterModeReadinessCard(
   );
 }
 
+const VISUAL_FOCUS_PRESETS = [
+  {
+    id: "race",
+    icon: "🏁",
+    title: "Complete Race",
+    description:
+      "Focus on lap completion, speed control, collision avoidance, and reaching the finish line.",
+    prompt:
+      "Focus on lap completion, optimal speed control, staying on the track, and crossing the finish line."
+  },
+  {
+    id: "garage",
+    icon: "🏎️",
+    title: "Explore Menus & Garage",
+    description:
+      "Interact with options, vehicle selection, and audio toggles.",
+    prompt:
+      "Explore the game menus, vehicle selection, garage upgrades, and test UI button interactions."
+  },
+  {
+    id: "handling",
+    icon: "⏱️",
+    title: "Vehicle Handling Stress",
+    description:
+      "Test wall collision, bounce-back behavior, and recovery.",
+    prompt:
+      "Stress test high-speed cornering, collision recovery against walls and barriers, and steering responsiveness."
+  }
+] as const;
+
+function VisualPlaytestLaunchCockpit({
+  setup,
+  workspaceId,
+  onRunStarted
+}: {
+  readonly setup: PlaytestingRunSetup;
+  readonly workspaceId: string | null;
+  readonly onRunStarted: (
+    started: ControlApiPlaytestingRunStartedResponse
+  ) => void;
+}): React.JSX.Element {
+  const readiness =
+    setup.kind === "available"
+      ? setup.capabilities.modeReadiness["autonomous-visual"]
+      : null;
+  const supportedTargets =
+    readiness?.targets.filter((t) => t.eligibility === "supported") ?? [];
+  const primaryTarget = supportedTargets[0]?.target ?? null;
+
+  const [areasOfFocus, setAreasOfFocus] = useState<string>(
+    VISUAL_FOCUS_PRESETS[0].prompt
+  );
+  const [selectedSteps, setSelectedSteps] = useState<number>(80);
+  const [pending, setPending] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleLaunch = async () => {
+    if (!workspaceId || !primaryTarget || setup.kind !== "available") return;
+    setPending(true);
+    setError(null);
+    try {
+      const launchPayload = {
+        schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+        mode: "autonomous-visual" as const,
+        workspaceId,
+        requestId: globalThis.crypto.randomUUID(),
+        capabilityRevision: setup.capabilities.capabilityRevision,
+        targetId: primaryTarget.targetId,
+        policyId: "smart-direct" as const,
+        areasOfFocus: areasOfFocus.trim() || null,
+        limits: {
+          episodeCount: 1,
+          maxStepsPerEpisode: selectedSteps,
+          wallTimeMs: primaryTarget.limits?.wallTimeMs ?? 120_000,
+          smartRequestsPerEpisode:
+            primaryTarget.limits?.smartRequestsPerEpisode ?? 30,
+          smartTokensPerEpisode:
+            primaryTarget.limits?.smartTokensPerEpisode ?? 25_000,
+          screenshotCountPerEpisode: Math.max(
+            selectedSteps * 2,
+            primaryTarget.limits?.screenshotCountPerEpisode ?? 160
+          ),
+          artifactBytesPerEpisode:
+            primaryTarget.limits?.artifactBytesPerEpisode ?? 64 * 1024 * 1024
+        }
+      };
+      const form = new URLSearchParams({
+        launchRequest: JSON.stringify(launchPayload)
+      });
+      const response = await fetch("/api/playtesting/runs", {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        body: form
+      });
+      const payload: unknown = await response.json();
+      if (
+        !response.ok ||
+        typeof payload !== "object" ||
+        payload === null ||
+        (payload as any).kind !== "ok"
+      ) {
+        const msg =
+          typeof (payload as any)?.message === "string"
+            ? (payload as any).message
+            : "Failed to launch visual playtest";
+        setError(msg);
+        setPending(false);
+        return;
+      }
+      onRunStarted((payload as any).data);
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Connection failed to launch visual playtest"
+      );
+      setPending(false);
+    }
+  };
+
+  return React.createElement(
+    "section",
+    {
+      className:
+        "grid gap-5 rounded-lg border border-border bg-surface-raised p-4 sm:p-5",
+      "aria-labelledby": "visual-cockpit-heading",
+      "data-testid": "playtesting-visual-launch"
+    },
+    React.createElement(
+      "div",
+      null,
+      React.createElement(
+        "h3",
+        {
+          id: "visual-cockpit-heading",
+          className: "text-base font-semibold text-fg"
+        },
+        "Autonomous Visual AI Player"
+      ),
+      React.createElement(
+        "p",
+        { className: "mt-1 text-sm text-fg-muted" },
+        "Launches an intelligent AI player using vision and discrete keyboard/pointer controls to explore and play your live game."
+      )
+    ),
+    primaryTarget
+      ? React.createElement(
+          "div",
+          {
+            className:
+              "rounded-xl border border-accent/40 bg-surface p-4 shadow-sm",
+            "data-testid": "visual-target-card"
+          },
+          React.createElement(
+            "div",
+            {
+              className: "flex flex-wrap items-center justify-between gap-2"
+            },
+            React.createElement(
+              "div",
+              { className: "flex items-center gap-2" },
+              React.createElement("span", {
+                className:
+                  "flex h-2.5 w-2.5 rounded-full bg-accent ring-2 ring-accent/20"
+              }),
+              React.createElement(
+                "h4",
+                { className: "font-semibold text-fg" },
+                primaryTarget.name
+              )
+            ),
+            React.createElement(
+              "span",
+              {
+                className:
+                  "rounded-md bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent"
+              },
+              "Ready · Ungated"
+            )
+          ),
+          React.createElement(
+            "div",
+            {
+              className:
+                "mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-muted"
+            },
+            React.createElement(
+              "span",
+              null,
+              "🌐 ",
+              React.createElement(
+                "code",
+                { className: "font-mono text-fg font-medium" },
+                primaryTarget.entryUrl
+              )
+            ),
+            React.createElement(
+              "span",
+              null,
+              "🎮 Controls: ",
+              React.createElement(
+                "span",
+                { className: "font-medium text-fg" },
+                (
+                  primaryTarget.inputCapabilities ?? ["keyboard", "pointer"]
+                ).join(" + ")
+              )
+            ),
+            React.createElement(
+              "span",
+              null,
+              "⏱️ Timing: ",
+              React.createElement(
+                "span",
+                { className: "font-medium text-fg" },
+                primaryTarget.controlTimingClass
+              )
+            )
+          )
+        )
+      : React.createElement(
+          "div",
+          {
+            className: "rounded-xl border border-warning/40 bg-surface p-4"
+          },
+          React.createElement(
+            "p",
+            { className: "text-sm font-medium text-fg" },
+            "No approved visual playtest target available"
+          ),
+          React.createElement(
+            "p",
+            { className: "mt-1 text-xs text-fg-muted" },
+            "An approved local browser target (e.g. http://localhost:5173/) is required to run the Autonomous Visual AI Player."
+          ),
+          workspaceId
+            ? React.createElement(
+                NavigationLink,
+                {
+                  href: workspacePath(workspaceId),
+                  className:
+                    "mt-3 inline-flex text-xs font-semibold text-accent hover:underline"
+                },
+                "Configure visual target in Workspaces →"
+              )
+            : null
+        ),
+    React.createElement(
+      "div",
+      { className: "grid gap-2" },
+      React.createElement(
+        "label",
+        {
+          className:
+            "text-xs font-semibold uppercase tracking-wider text-fg-muted"
+        },
+        "1. Focus Presets"
+      ),
+      React.createElement(
+        "div",
+        { className: "grid gap-2 sm:grid-cols-3" },
+        ...VISUAL_FOCUS_PRESETS.map((preset) => {
+          const isSelected = areasOfFocus === preset.prompt;
+          return React.createElement(
+            "button",
+            {
+              key: preset.id,
+              type: "button",
+              onClick: () => setAreasOfFocus(preset.prompt),
+              className:
+                "flex flex-col items-start gap-1 rounded-xl border p-3.5 text-left transition " +
+                (isSelected
+                  ? "border-accent bg-accent/10 shadow-sm ring-1 ring-accent"
+                  : "border-border bg-surface hover:border-fg-muted/40 hover:bg-surface-raised")
+            },
+            React.createElement(
+              "span",
+              { className: "text-sm font-semibold text-fg" },
+              preset.icon + " " + preset.title
+            ),
+            React.createElement(
+              "span",
+              { className: "text-xs text-fg-secondary leading-relaxed" },
+              preset.description
+            )
+          );
+        })
+      )
+    ),
+    React.createElement(
+      "div",
+      { className: "grid gap-1.5" },
+      React.createElement(
+        "label",
+        {
+          htmlFor: "visual-focus-textarea",
+          className:
+            "text-xs font-semibold uppercase tracking-wider text-fg-muted"
+        },
+        "2. Areas of Focus & Objectives"
+      ),
+      React.createElement("textarea", {
+        id: "visual-focus-textarea",
+        rows: 2,
+        value: areasOfFocus,
+        onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) =>
+          setAreasOfFocus(e.target.value),
+        placeholder:
+          "e.g., Focus on vehicle cornering, recovery from wall hits, and finish line detection",
+        className:
+          "w-full rounded-lg border border-border bg-surface px-3.5 py-2 text-sm text-fg placeholder:text-fg-muted/60 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+      })
+    ),
+    React.createElement(
+      "div",
+      { className: "grid gap-1.5" },
+      React.createElement(
+        "label",
+        {
+          className:
+            "text-xs font-semibold uppercase tracking-wider text-fg-muted"
+        },
+        "3. Step Cap"
+      ),
+      React.createElement(
+        "div",
+        { className: "flex flex-wrap gap-2" },
+        ...[50, 80, 100, 150].map((step) =>
+          React.createElement(
+            "button",
+            {
+              key: step,
+              type: "button",
+              onClick: () => setSelectedSteps(step),
+              className:
+                "rounded-lg border px-4 py-2 text-xs font-medium transition " +
+                (selectedSteps === step
+                  ? "border-accent bg-accent text-fg-inverse shadow-sm"
+                  : "border-border bg-surface text-fg hover:bg-surface-raised")
+            },
+            String(step) + " steps"
+          )
+        )
+      )
+    ),
+    error
+      ? React.createElement(
+          "p",
+          { className: "text-xs font-medium text-error", role: "alert" },
+          error
+        )
+      : null,
+    React.createElement(
+      "button",
+      {
+        type: "button",
+        disabled: pending || !primaryTarget || !workspaceId,
+        onClick: () => void handleLaunch(),
+        className:
+          "inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-accent px-6 py-3.5 text-base font-semibold text-fg-inverse shadow-md transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60",
+        "data-playtesting-visual-submit": "true"
+      },
+      React.createElement(
+        "span",
+        { "aria-hidden": true, className: "text-lg leading-none" },
+        "🚀"
+      ),
+      pending ? "Starting visual playtest…" : "Launch Visual Playtest"
+    )
+  );
+}
+
 function PlaytestingModeReadinessCards({
   setup,
   workspaceId
@@ -206,6 +589,15 @@ export function PlaytestingRunDashboard({
     workspaceId: scope.workspaceId ?? null
   });
   const [focusedBatchId, setFocusedBatchId] = useState(scope.liveBatchId);
+  const visualReadiness =
+    setup.kind === "available"
+      ? setup.capabilities.modeReadiness["autonomous-visual"]
+      : null;
+  const visualReady = visualReadiness?.status === "ready";
+  const [selectedMode, setSelectedMode] = useState<
+    "autonomous-visual" | "adapter-accelerated"
+  >(visualReady ? "autonomous-visual" : "adapter-accelerated");
+
   const onRunStarted = useCallback(
     (started: ControlApiPlaytestingRunStartedResponse) => {
       const record: ControlApiPlaytestingRunRecord = {
@@ -311,7 +703,7 @@ export function PlaytestingRunDashboard({
                 React.createElement(
                   "p",
                   { className: "mt-1 text-sm text-fg-muted" },
-                  "Choose a play mode, set a safe budget, and follow the resulting session."
+                  "Review visual readiness first. Adapter runs are a separate, structured-data option—not a visual-mode fallback."
                 )
               ),
               React.createElement(
@@ -332,12 +724,91 @@ export function PlaytestingRunDashboard({
             }),
             React.createElement(
               "div",
+              {
+                className:
+                  "flex border-b border-border bg-surface-raised px-5 sm:px-6"
+              },
+              React.createElement(
+                "button",
+                {
+                  type: "button",
+                  className:
+                    "flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold transition " +
+                    (selectedMode === "autonomous-visual"
+                      ? "border-accent text-accent"
+                      : "border-transparent text-fg-muted hover:text-fg"),
+                  onClick: () => setSelectedMode("autonomous-visual"),
+                  "data-playtesting-tab": "autonomous-visual"
+                },
+                React.createElement("span", null, "🌐"),
+                React.createElement("span", null, "Autonomous Visual AI Player"),
+                visualReady
+                  ? React.createElement(
+                      "span",
+                      {
+                        className:
+                          "rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent"
+                      },
+                      "Ready"
+                    )
+                  : null
+              ),
+              React.createElement(
+                "button",
+                {
+                  type: "button",
+                  className:
+                    "flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold transition " +
+                    (selectedMode === "adapter-accelerated"
+                      ? "border-accent text-accent"
+                      : "border-transparent text-fg-muted hover:text-fg"),
+                  onClick: () => setSelectedMode("adapter-accelerated"),
+                  "data-playtesting-tab": "adapter-accelerated"
+                },
+                React.createElement("span", null, "⚡"),
+                React.createElement("span", null, "Adapter Simulation")
+              )
+            ),
+            React.createElement(
+              "div",
               { className: "p-5 sm:p-6" },
-              React.createElement(PlaytestingRunControls, {
-                setup,
-                workspaceId: scope.workspaceId,
-                onRunStarted
-              })
+              selectedMode === "autonomous-visual"
+                ? React.createElement(VisualPlaytestLaunchCockpit, {
+                    setup,
+                    workspaceId: scope.workspaceId,
+                    onRunStarted
+                  })
+                : React.createElement(
+                    "section",
+                    {
+                      className:
+                        "grid gap-3 rounded-lg border border-border bg-surface-raised p-4 sm:p-5",
+                      "aria-labelledby": "playtesting-adapter-launch-title",
+                      "data-testid": "playtesting-adapter-launch"
+                    },
+                    React.createElement(
+                      "div",
+                      null,
+                      React.createElement(
+                        "h3",
+                        {
+                          id: "playtesting-adapter-launch-title",
+                          className: "font-semibold"
+                        },
+                        "Adapter-accelerated run"
+                      ),
+                      React.createElement(
+                        "p",
+                        { className: "mt-1 text-sm text-fg-muted" },
+                        "Runs the game adapter and reports structured game state. It does not observe the rendered UI or stand in for autonomous visual play."
+                      )
+                    ),
+                    React.createElement(PlaytestingRunControls, {
+                      setup,
+                      workspaceId: scope.workspaceId,
+                      onRunStarted
+                    })
+                  )
             )
           )
         )

@@ -1,0 +1,1203 @@
+/** Restricted transient browser driver used by Runtime visual sessions. */
+import { createHash, randomUUID } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import path from "node:path";
+
+function resolveChromiumExecutablePath(
+  browserType: Pick<typeof chromium, "executablePath">
+): string | null {
+  try {
+    const candidate = browserType.executablePath();
+    if (existsSync(candidate)) return candidate;
+  } catch {
+    // Fall back to scanning standard host locations.
+  }
+  const cacheRoots = [
+    path.join(homedir(), "Library", "Caches", "ms-playwright"),
+    "/Users/henrykirk/Library/Caches/ms-playwright",
+    path.join(homedir(), ".cache", "ms-playwright")
+  ];
+  for (const root of cacheRoots) {
+    if (!existsSync(root)) continue;
+    try {
+      const entries = readdirSync(root)
+        .filter((entry) => entry.startsWith("chromium-"))
+        .sort()
+        .reverse();
+      for (const entry of entries) {
+        const candidates = [
+          path.join(
+            root,
+            entry,
+            "chrome-mac-arm64",
+            "Google Chrome for Testing.app",
+            "Contents",
+            "MacOS",
+            "Google Chrome for Testing"
+          ),
+          path.join(
+            root,
+            entry,
+            "chrome-mac",
+            "Google Chrome for Testing.app",
+            "Contents",
+            "MacOS",
+            "Google Chrome for Testing"
+          ),
+          path.join(root, entry, "chrome-linux", "chrome")
+        ];
+        for (const candidate of candidates) {
+          if (existsSync(candidate)) return candidate;
+        }
+      }
+    } catch {
+      // Ignore unreadable cache directory.
+    }
+  }
+  return null;
+}
+
+import {
+  admitPlaytestVisualAction,
+  assertPlaytestVisualObservation,
+  assertWorkspaceVisualPlaytestTargetApproval,
+  PLAYTEST_VISUAL_OBSERVATION_SCHEMA,
+  type PlaytestVisualAction,
+  type PlaytestVisualActionAdmissionReason,
+  type PlaytestVisualControl,
+  type PlaytestVisualObservation,
+  type PlaytestVisualViewport,
+  type WorkspaceVisualPlaytestTargetApproval
+} from "@simulatorlife/autodev-core";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Page
+} from "playwright-core";
+
+import {
+  PLAYESTS_ARTIFACT_MAX_WINDOW_STEPS,
+  PLAYTESTS_ARTIFACT_MAX_BYTES,
+  type PlaytestArtifactStore
+} from "./artifact-store.ts";
+
+const CONTROL_SELECTOR =
+  'button,a[href],input,textarea,select,[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[role="tab"],[role="menuitem"],[role="option"],[role="textbox"],[role="combobox"]';
+const MASK_SELECTOR =
+  'input,textarea,[contenteditable="true"],[data-sensitive="true"],[autocomplete^="cc-"]';
+const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu;
+const PAYMENT_CARD_PATTERN = /(?:\d[ -]*?){13,19}/gu;
+const SUPPORTED_INPUTS = ["keyboard", "pointer"] as const;
+const VISUAL_EVENT_SCHEMA = "autodev-playtest-visual-event-v1" as const;
+
+interface RawControl {
+  readonly index: number;
+  readonly role: PlaytestVisualControl["role"];
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly focused: boolean;
+  readonly inputKind: "none" | "text-entry" | "password";
+  /** Private-only destination origin for link admission; never model-visible. */
+  readonly navigationOrigin: string | null;
+  readonly bounds: {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  };
+}
+
+interface RawPageRead {
+  readonly controls: readonly RawControl[];
+  readonly passwordVisible: boolean;
+  readonly sensitiveTextVisible: boolean;
+  readonly truncatedControls: boolean;
+}
+
+export type PlaytestVisualObservationBlockReason =
+  | "auth-or-setup-required"
+  | "sensitive-visual-unredactable"
+  | "capture-budget-exhausted"
+  | "event-budget-exhausted"
+  | "wall-time-limit"
+  | "origin-escape";
+
+export type PlaytestVisualObservationResult =
+  | {
+      readonly status: "observed";
+      readonly observation: PlaytestVisualObservation;
+    }
+  | {
+      readonly status: "blocked";
+      readonly reason: PlaytestVisualObservationBlockReason;
+    };
+
+export type PlaytestVisualActionReceipt =
+  | {
+      readonly status: "dispatched";
+      readonly step: number;
+      readonly observationId: string;
+      readonly actionKind: PlaytestVisualAction["kind"];
+      readonly dispatchedAt: string;
+      readonly driverDurationMs: number;
+      /** Dispatch acknowledgement is not proof the game accepted the action. */
+      readonly gameAcknowledgement: "not-observed";
+    }
+  | {
+      readonly status: "refused";
+      readonly step: number;
+      readonly reason:
+        | PlaytestVisualActionAdmissionReason
+        | "action-budget-exhausted"
+        | "wall-time-limit"
+        | "driver-state-unavailable"
+        | "control-changed"
+        | "event-budget-exhausted";
+    };
+
+export interface PlaytestVisualBrowserDriverOptions {
+  readonly target: WorkspaceVisualPlaytestTargetApproval;
+  readonly episodeId: string;
+  readonly artifacts: PlaytestArtifactStore;
+  readonly viewport: PlaytestVisualViewport;
+  /** Workload-selected; no implicit or magic action timeout. */
+  readonly actionTimeoutMs: number;
+  readonly maxSteps: number;
+  readonly now?: () => number;
+  readonly id?: () => string;
+  readonly browserType?: Pick<typeof chromium, "launch" | "executablePath">;
+}
+
+export interface PlaytestVisualBrowserTelemetry {
+  readonly schema: "autodev-playtest-visual-telemetry-v1";
+  readonly version: 1;
+  readonly inputAttempts: number;
+  readonly inputValidated: number;
+  readonly inputDispatched: number;
+  readonly inputAcknowledged: 0;
+  readonly inputRejected: number;
+  readonly driverToolCalls: {
+    readonly observe: number;
+    readonly act: number;
+  };
+  readonly captureCount: number;
+  readonly capturedBytes: number;
+  readonly blockedRequestCount: number;
+  readonly coverage: "complete" | "partial";
+}
+
+export interface PlaytestVisualBrowserEvent {
+  readonly schema: typeof VISUAL_EVENT_SCHEMA;
+  readonly eventId: string;
+  readonly sequence: number;
+  readonly episodeId: string;
+  readonly type:
+    | "browser-started"
+    | "frame-captured"
+    | "input-dispatched"
+    | "input-refused"
+    | "cross-origin-blocked"
+    | "popup-blocked"
+    | "browser-closed";
+  readonly occurredAt: string;
+  readonly step: number | null;
+  readonly observationId: string | null;
+  readonly frameArtifactId: string | null;
+  readonly actionKind: PlaytestVisualAction["kind"] | null;
+  readonly refusalReason: string | null;
+  readonly blockedRequestCount: number;
+}
+
+type ActionRefusalReason =
+  | PlaytestVisualActionAdmissionReason
+  | "auth-or-setup-required"
+  | "sensitive-visual-unredactable"
+  | "action-budget-exhausted"
+  | "wall-time-limit"
+  | "driver-state-unavailable"
+  | "control-changed"
+  | "event-budget-exhausted";
+
+export class PlaytestVisualBrowserDriverError extends Error {
+  readonly code:
+    | "driver-unavailable"
+    | "target-not-runnable"
+    | "source-unavailable"
+    | "origin-escape"
+    | "browser-profile-cleanup-failed"
+    | "visual-step-budget-invalid";
+
+  constructor(code: PlaytestVisualBrowserDriverError["code"], message: string) {
+    super(message);
+    this.name = "PlaytestVisualBrowserDriverError";
+    this.code = code;
+  }
+}
+
+function safeOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function websocketOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol === "ws:") url.protocol = "http:";
+    else if (url.protocol === "wss:") url.protocol = "https:";
+    else return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function redactName(value: string): string {
+  return value
+    .replace(EMAIL_PATTERN, "[redacted]")
+    .replace(PAYMENT_CARD_PATTERN, "[redacted]")
+    .replace(/[\u0000-\u001f\u007f]/gu, " ")
+    .trim()
+    .slice(0, 256);
+}
+
+function sha256(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function pageReadInBrowser(): RawPageRead {
+  const selector =
+    'button,a[href],input,textarea,select,[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[role="tab"],[role="menuitem"],[role="option"],[role="textbox"],[role="combobox"]';
+  const allowedRoles = new Set([
+    "button",
+    "link",
+    "checkbox",
+    "radio",
+    "switch",
+    "tab",
+    "menuitem",
+    "option",
+    "textbox",
+    "combobox"
+  ]);
+  const visible = (element: Element): boolean => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      rect.left >= 0 &&
+      rect.top >= 0 &&
+      rect.right <= window.innerWidth &&
+      rect.bottom <= window.innerHeight &&
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      style.opacity !== "0"
+    );
+  };
+  const accessibleName = (element: Element): string => {
+    const aria = element.getAttribute("aria-label");
+    if (aria?.trim()) return aria.trim().slice(0, 512);
+    const labelledBy = element.getAttribute("aria-labelledby");
+    if (labelledBy) {
+      const text = labelledBy
+        .split(/\s+/u)
+        .map((id) => document.getElementById(id)?.textContent ?? "")
+        .join(" ")
+        .trim();
+      if (text) return text.slice(0, 512);
+    }
+    if ("labels" in element) {
+      const labels = Array.from((element as HTMLInputElement).labels ?? [])
+        .map((label) => label.textContent ?? "")
+        .join(" ")
+        .trim();
+      if (labels) return labels.slice(0, 512);
+    }
+    const title = element.getAttribute("title");
+    if (title?.trim()) return title.trim().slice(0, 512);
+    const tag = element.tagName.toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select") return "";
+    return (element.textContent ?? "").trim().slice(0, 512);
+  };
+  const roleFor = (element: Element): string | null => {
+    const explicit = element.getAttribute("role");
+    if (explicit) return explicit.split(/\s+/u)[0] ?? null;
+    const tag = element.tagName.toLowerCase();
+    if (tag === "button") return "button";
+    if (tag === "a" && element.hasAttribute("href")) return "link";
+    if (tag === "textarea") return "textbox";
+    if (tag === "select") return "combobox";
+    if (tag === "input") {
+      const type = (element.getAttribute("type") ?? "text").toLowerCase();
+      if (type === "checkbox") return "checkbox";
+      if (type === "radio") return "radio";
+      if (["button", "submit", "reset"].includes(type)) return "button";
+      if (type !== "hidden") return "textbox";
+    }
+    return null;
+  };
+  const inputKindFor = (element: Element): RawControl["inputKind"] => {
+    const tag = element.tagName.toLowerCase();
+    const type = (element.getAttribute("type") ?? "text").toLowerCase();
+    const autocomplete = element.getAttribute("autocomplete") ?? "";
+    if (
+      (tag === "input" && type === "password") ||
+      /(?:current|new)-password/iu.test(autocomplete)
+    ) {
+      return "password";
+    }
+    if (
+      tag === "textarea" ||
+      (tag === "input" &&
+        !["button", "submit", "reset", "checkbox", "radio", "hidden"].includes(
+          type
+        )) ||
+      element.getAttribute("contenteditable") === "true"
+    ) {
+      return "text-entry";
+    }
+    return "none";
+  };
+  const candidates = Array.from(document.querySelectorAll(selector));
+  const controls: RawControl[] = [];
+  let passwordVisible = false;
+  let visibleControlCount = 0;
+  for (const [index, element] of candidates.entries()) {
+    if (!visible(element)) continue;
+    visibleControlCount += 1;
+    if (controls.length >= 257) continue;
+    const role = roleFor(element);
+    if (!role || !allowedRoles.has(role)) continue;
+    const inputKind = inputKindFor(element);
+    if (inputKind === "password") passwordVisible = true;
+    const rect = element.getBoundingClientRect();
+    const disabled =
+      ("disabled" in element &&
+        Boolean((element as HTMLButtonElement).disabled)) ||
+      element.getAttribute("aria-disabled") === "true";
+    controls.push({
+      index,
+      role: role as RawControl["role"],
+      name: accessibleName(element),
+      enabled: !disabled,
+      focused: document.activeElement === element,
+      inputKind,
+      navigationOrigin:
+        role === "link"
+          ? (() => {
+              try {
+                const destination = new URL(
+                  (element as HTMLAnchorElement).href,
+                  document.baseURI
+                );
+                return destination.protocol === "http:" ||
+                  destination.protocol === "https:"
+                  ? destination.origin
+                  : null;
+              } catch {
+                return null;
+              }
+            })()
+          : null,
+      bounds: {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height
+      }
+    });
+  }
+  const visibleText = document.body?.innerText ?? "";
+  return {
+    controls: controls.slice(0, 256),
+    passwordVisible,
+    sensitiveTextVisible:
+      /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/iu.test(visibleText) ||
+      /(?:\d[ -]*?){13,19}/u.test(visibleText),
+    truncatedControls: visibleControlCount > 256
+  };
+}
+
+function controlId(control: RawControl, index: number): string {
+  const digest = createHash("sha256")
+    .update(
+      JSON.stringify([
+        index,
+        control.role,
+        redactName(control.name),
+        control.inputKind
+      ])
+    )
+    .digest("hex")
+    .slice(0, 16);
+  return `c-${index}-${digest}`;
+}
+
+function validViewport(viewport: PlaytestVisualViewport): boolean {
+  return (
+    Number.isSafeInteger(viewport.width) &&
+    viewport.width >= 320 &&
+    viewport.width <= 4096 &&
+    Number.isSafeInteger(viewport.height) &&
+    viewport.height >= 240 &&
+    viewport.height <= 4096 &&
+    viewport.width * viewport.height <= 4_194_304 &&
+    Number.isFinite(viewport.deviceScaleFactor) &&
+    viewport.deviceScaleFactor >= 0.5 &&
+    viewport.deviceScaleFactor <= 4
+  );
+}
+
+function inputKindForCurrentFocus(
+  value: unknown
+): "none" | "text-entry" | "password" {
+  if (value === "password" || value === "text-entry") return value;
+  return "none";
+}
+
+function keyForBrowser(key: string): string {
+  switch (key) {
+    case "KeyW":
+      return "w";
+    case "KeyA":
+      return "a";
+    case "KeyS":
+      return "s";
+    case "KeyD":
+      return "d";
+    default:
+      return key;
+  }
+}
+
+/** Chromium must not inherit Runtime/router/service credentials or user HOME. */
+function browserProcessEnvironment(profileRoot: string): NodeJS.ProcessEnv {
+  const systemPath =
+    process.platform === "win32"
+      ? "C:\\Windows\\System32;C:\\Windows"
+      : "/usr/bin:/bin:/usr/sbin:/sbin";
+  return {
+    PATH: systemPath,
+    HOME: path.join(profileRoot, "home"),
+    TMPDIR: path.join(profileRoot, "tmp"),
+    TEMP: path.join(profileRoot, "tmp"),
+    TMP: path.join(profileRoot, "tmp"),
+    LANG: "en_US.UTF-8",
+    ...(process.platform === "win32" && process.env.SystemRoot
+      ? { SystemRoot: process.env.SystemRoot }
+      : {})
+  };
+}
+
+export class PlaytestVisualBrowserDriver {
+  private readonly target: WorkspaceVisualPlaytestTargetApproval;
+  private readonly episodeId: string;
+  private readonly artifacts: PlaytestArtifactStore;
+  private readonly viewport: PlaytestVisualViewport;
+  private readonly actionTimeoutMs: number;
+  private readonly maxSteps: number;
+  private readonly now: () => number;
+  private readonly id: () => string;
+  private readonly browser: Browser;
+  private readonly context: BrowserContext;
+  private readonly page: Page;
+  private readonly browserProfileRoot: string;
+  private readonly startedAt: number;
+  private readonly events: PlaytestVisualBrowserEvent[] = [];
+  private lastObservation: PlaytestVisualObservation | null = null;
+  private controlIndexes = new Map<string, number>();
+  private controlNavigationOrigins = new Map<string, string | null>();
+  private inputAttempts = 0;
+  private inputValidated = 0;
+  private inputDispatched = 0;
+  private inputRejected = 0;
+  private captureCount = 0;
+  private capturedBytes = 0;
+  private blockedRequestCount = 0;
+  private observationCalls = 0;
+  private actionCalls = 0;
+  private closed = false;
+  private originEscape = false;
+  private entryLoaded = false;
+  private captureIncomplete = false;
+  private terminalBlock: PlaytestVisualObservationBlockReason | null = null;
+  private closeResult: {
+    readonly events:
+      ReturnType<PlaytestArtifactStore["writeWindow"]>["reference"] | null;
+    readonly eventMissingReason: "event-window-unavailable" | null;
+    readonly browserProfileCleanup: "removed" | "failed";
+  } | null = null;
+
+  private constructor(input: {
+    readonly options: PlaytestVisualBrowserDriverOptions;
+    readonly browser: Browser;
+    readonly context: BrowserContext;
+    readonly page: Page;
+    readonly browserProfileRoot: string;
+    readonly blockedRequestsBeforeReady: number;
+  }) {
+    this.target = input.options.target;
+    this.episodeId = input.options.episodeId;
+    this.artifacts = input.options.artifacts;
+    this.viewport = input.options.viewport;
+    this.actionTimeoutMs = input.options.actionTimeoutMs;
+    this.maxSteps = input.options.maxSteps;
+    this.now = input.options.now ?? Date.now;
+    this.id = input.options.id ?? randomUUID;
+    this.browser = input.browser;
+    this.context = input.context;
+    this.page = input.page;
+    this.browserProfileRoot = input.browserProfileRoot;
+    this.startedAt = this.now();
+    this.blockedRequestCount = input.blockedRequestsBeforeReady;
+    this.recordEvent({ type: "browser-started" });
+  }
+
+  static async open(
+    options: PlaytestVisualBrowserDriverOptions
+  ): Promise<PlaytestVisualBrowserDriver> {
+    assertWorkspaceVisualPlaytestTargetApproval(options.target);
+    if (
+      options.target.revokedAt !== null ||
+      options.target.entryRequirements !== "none" ||
+      options.target.controlTimingClass === "continuous"
+    ) {
+      throw new PlaytestVisualBrowserDriverError(
+        "target-not-runnable",
+        "The approved target is revoked, gated, or requires continuous control."
+      );
+    }
+    if (
+      options.artifacts.boundWorkspaceId() !== options.target.workspaceId ||
+      !options.episodeId.trim()
+    ) {
+      throw new TypeError(
+        "Visual driver workspace or episode identity mismatches."
+      );
+    }
+    if (!validViewport(options.viewport)) {
+      throw new TypeError(
+        "Visual driver viewport is outside its resource bound."
+      );
+    }
+    if (
+      !Number.isSafeInteger(options.actionTimeoutMs) ||
+      options.actionTimeoutMs < 1 ||
+      options.actionTimeoutMs > options.target.limits.wallTimeMs ||
+      !Number.isSafeInteger(options.maxSteps) ||
+      options.maxSteps < 1 ||
+      options.maxSteps > options.target.limits.maxStepsPerEpisode
+    ) {
+      throw new PlaytestVisualBrowserDriverError(
+        "visual-step-budget-invalid",
+        "Visual browser action limits are invalid."
+      );
+    }
+    if (
+      !options.target.inputCapabilities.some((capability) =>
+        SUPPORTED_INPUTS.includes(
+          capability as (typeof SUPPORTED_INPUTS)[number]
+        )
+      )
+    ) {
+      throw new PlaytestVisualBrowserDriverError(
+        "driver-unavailable",
+        "Runtime has no installed driver for the target's approved inputs."
+      );
+    }
+    const browserType = options.browserType ?? chromium;
+    const executable = resolveChromiumExecutablePath(browserType);
+    if (!executable) {
+      throw new PlaytestVisualBrowserDriverError(
+        "driver-unavailable",
+        "The isolated Chromium executable is not installed."
+      );
+    }
+
+    let browser: Browser | null = null;
+    let context: BrowserContext | null = null;
+    let driver: PlaytestVisualBrowserDriver | null = null;
+    let browserProfileRoot: string | null = null;
+    let earlyBlockedRequests = 0;
+    try {
+      browserProfileRoot = mkdtempSync(
+        path.join(tmpdir(), "autodev-visual-browser-")
+      );
+      chmodSync(browserProfileRoot, 0o700);
+      mkdirSync(path.join(browserProfileRoot, "home"), {
+        recursive: true,
+        mode: 0o700
+      });
+      mkdirSync(path.join(browserProfileRoot, "tmp"), {
+        recursive: true,
+        mode: 0o700
+      });
+      browser = await browserType.launch({
+        executablePath: executable,
+        headless: true,
+        env: browserProcessEnvironment(browserProfileRoot)
+      });
+      context = await browser.newContext({
+        viewport: {
+          width: options.viewport.width,
+          height: options.viewport.height
+        },
+        deviceScaleFactor: options.viewport.deviceScaleFactor,
+        acceptDownloads: false,
+        serviceWorkers: "block",
+        permissions: []
+      });
+      let page: Page | null = null;
+      await context.route("**/*", async (route) => {
+        const request = route.request();
+        const origin = safeOrigin(request.url());
+        if (origin && options.target.allowedOrigins.includes(origin)) {
+          await route.continue();
+          return;
+        }
+        if (driver) driver.noteBlockedRequest();
+        else earlyBlockedRequests += 1;
+        const mainFrameNavigation =
+          request.isNavigationRequest() &&
+          page !== null &&
+          request.frame() === page.mainFrame();
+        if (mainFrameNavigation) driver?.noteOriginEscape();
+        await route.abort("blockedbyclient");
+        if (mainFrameNavigation) driver?.closeForOriginEscape();
+      });
+      await context.routeWebSocket("**/*", (socket) => {
+        const origin = websocketOrigin(socket.url());
+        if (origin && options.target.allowedOrigins.includes(origin)) {
+          socket.connectToServer();
+          return;
+        }
+        if (driver) driver.noteBlockedRequest();
+        else earlyBlockedRequests += 1;
+        void socket.close({
+          code: 1008,
+          reason: "Target origin is not approved."
+        });
+      });
+      const mainPage = await context.newPage();
+      page = mainPage;
+      mainPage.setDefaultTimeout(options.actionTimeoutMs);
+      mainPage.setDefaultNavigationTimeout(options.actionTimeoutMs);
+      driver = new PlaytestVisualBrowserDriver({
+        options,
+        browser,
+        context,
+        page: mainPage,
+        browserProfileRoot,
+        blockedRequestsBeforeReady: earlyBlockedRequests
+      });
+      context.on("page", (popup) => {
+        if (popup === mainPage) return;
+        driver?.recordEvent({ type: "popup-blocked" });
+        void popup.close().catch(() => undefined);
+      });
+      mainPage.on("framenavigated", (frame) => {
+        if (!driver?.entryLoaded) return;
+        if (frame !== mainPage.mainFrame()) return;
+        const origin = safeOrigin(frame.url());
+        if (!origin || !options.target.allowedOrigins.includes(origin)) {
+          driver?.blockForOriginEscape();
+        }
+      });
+      await mainPage.goto(options.target.entryUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: options.actionTimeoutMs
+      });
+      const origin = safeOrigin(mainPage.url());
+      if (!origin || !options.target.allowedOrigins.includes(origin)) {
+        driver.blockForOriginEscape();
+        throw new PlaytestVisualBrowserDriverError(
+          "origin-escape",
+          "The game navigated outside its approved origin."
+        );
+      }
+      driver.entryLoaded = true;
+      return driver;
+    } catch (error) {
+      await context?.close().catch(() => undefined);
+      await browser?.close().catch(() => undefined);
+      if (browserProfileRoot !== null) {
+        try {
+          rmSync(browserProfileRoot, { recursive: true, force: true });
+        } catch {
+          throw new PlaytestVisualBrowserDriverError(
+            "browser-profile-cleanup-failed",
+            "Runtime could not remove the transient browser profile."
+          );
+        }
+      }
+      if (error instanceof PlaytestVisualBrowserDriverError) throw error;
+      if (driver?.originEscape) {
+        throw new PlaytestVisualBrowserDriverError(
+          "origin-escape",
+          "The game redirected outside its approved origin."
+        );
+      }
+      throw new PlaytestVisualBrowserDriverError(
+        "source-unavailable",
+        "Runtime could not open the approved visual game target."
+      );
+    }
+  }
+
+  private elapsedMs(): number {
+    return Math.max(0, this.now() - this.startedAt);
+  }
+
+  private noteBlockedRequest(): void {
+    this.blockedRequestCount += 1;
+  }
+
+  private blockForOriginEscape(): void {
+    this.noteOriginEscape();
+    this.closeForOriginEscape();
+  }
+
+  private noteOriginEscape(): void {
+    if (this.originEscape) return;
+    this.originEscape = true;
+    this.terminalBlock = "origin-escape";
+    this.recordEvent({
+      type: "cross-origin-blocked",
+      refusalReason: "origin-escape"
+    });
+  }
+
+  private closeForOriginEscape(): void {
+    void this.context.close().catch(() => undefined);
+  }
+
+  private currentOrigin(): string | null {
+    return safeOrigin(this.page.url());
+  }
+
+  private blockObservation(
+    reason: PlaytestVisualObservationBlockReason
+  ): PlaytestVisualObservationResult {
+    this.captureIncomplete = true;
+    this.terminalBlock = reason;
+    return { status: "blocked", reason };
+  }
+
+  private async readPage(): Promise<RawPageRead> {
+    return this.page.evaluate(pageReadInBrowser);
+  }
+
+  private async capturePng(): Promise<Uint8Array> {
+    const bytes = await this.page.screenshot({
+      type: "png",
+      mask: [this.page.locator(MASK_SELECTOR)],
+      maskColor: "#000000",
+      timeout: this.actionTimeoutMs
+    });
+    return new Uint8Array(bytes);
+  }
+
+  async observe(): Promise<PlaytestVisualObservationResult> {
+    this.observationCalls += 1;
+    if (this.terminalBlock) {
+      return { status: "blocked", reason: this.terminalBlock };
+    }
+    if (this.originEscape || this.closed) {
+      return this.blockObservation("origin-escape");
+    }
+    if (this.elapsedMs() >= this.target.limits.wallTimeMs) {
+      return this.blockObservation("wall-time-limit");
+    }
+    if (this.events.length >= PLAYESTS_ARTIFACT_MAX_WINDOW_STEPS - 1) {
+      return this.blockObservation("event-budget-exhausted");
+    }
+    if (this.captureCount >= this.target.limits.screenshotCountPerEpisode) {
+      return this.blockObservation("capture-budget-exhausted");
+    }
+    const origin = this.currentOrigin();
+    if (!origin || !this.target.allowedOrigins.includes(origin)) {
+      this.blockForOriginEscape();
+      return this.blockObservation("origin-escape");
+    }
+    let pageRead: RawPageRead;
+    let png: Uint8Array;
+    try {
+      pageRead = await this.readPage();
+      if (pageRead.passwordVisible) {
+        return this.blockObservation("auth-or-setup-required");
+      }
+      if (pageRead.sensitiveTextVisible) {
+        return this.blockObservation("sensitive-visual-unredactable");
+      }
+      png = await this.capturePng();
+    } catch {
+      return this.blockObservation("sensitive-visual-unredactable");
+    }
+    if (
+      png.byteLength > PLAYTESTS_ARTIFACT_MAX_BYTES ||
+      this.capturedBytes + png.byteLength >
+        this.target.limits.artifactBytesPerEpisode
+    ) {
+      return this.blockObservation("capture-budget-exhausted");
+    }
+    let frame: PlaytestVisualObservation["frame"];
+    try {
+      frame = this.artifacts.writeArtifact({
+        mediaType: "image/png",
+        bytes: png
+      }).reference;
+    } catch {
+      return this.blockObservation("capture-budget-exhausted");
+    }
+    this.captureCount += 1;
+    this.capturedBytes += png.byteLength;
+    const observationId = this.id();
+    this.controlIndexes.clear();
+    this.controlNavigationOrigins.clear();
+    const controls: PlaytestVisualControl[] = pageRead.controls.map(
+      (control) => {
+        const id = controlId(control, control.index);
+        this.controlIndexes.set(id, control.index);
+        this.controlNavigationOrigins.set(id, control.navigationOrigin);
+        return {
+          controlId: id,
+          role: control.role,
+          name:
+            redactName(control.name) ||
+            (control.inputKind === "none"
+              ? `${control.role} control`
+              : "Text entry field"),
+          enabled: control.enabled,
+          focused: control.focused,
+          inputKind: control.inputKind,
+          bounds: control.bounds
+        };
+      }
+    );
+    const visibleWarnings = [
+      ...(pageRead.truncatedControls
+        ? ["The visible control list was truncated at its evidence bound."]
+        : []),
+      ...(this.blockedRequestCount > 0
+        ? ["Some outbound requests were blocked by the approved-origin policy."]
+        : [])
+    ];
+    const observation: PlaytestVisualObservation = {
+      schema: PLAYTEST_VISUAL_OBSERVATION_SCHEMA,
+      observationId,
+      workspaceId: this.target.workspaceId,
+      targetId: this.target.targetId,
+      episodeId: this.episodeId,
+      origin,
+      capturedAt: new Date(this.now()).toISOString(),
+      viewport: this.viewport,
+      frame,
+      privacyState: pageRead.controls.some(
+        (control) => control.inputKind !== "none"
+      )
+        ? "redacted"
+        : "clear",
+      controls,
+      visibleWarnings,
+      phaseEvidence: null,
+      progressEvidence: null
+    };
+    try {
+      assertPlaytestVisualObservation(observation, this.target);
+    } catch {
+      this.artifacts.remove(frame);
+      this.captureCount -= 1;
+      this.capturedBytes -= png.byteLength;
+      return this.blockObservation("sensitive-visual-unredactable");
+    }
+    this.lastObservation = observation;
+    this.recordEvent({
+      type: "frame-captured",
+      step: this.inputDispatched,
+      observationId,
+      frameArtifactId: frame.artifactId
+    });
+    return { status: "observed", observation };
+  }
+
+  async act(
+    action: PlaytestVisualAction,
+    maxObservationAgeMs: number
+  ): Promise<PlaytestVisualActionReceipt> {
+    this.actionCalls += 1;
+    if (this.terminalBlock) {
+      return this.refuseAction(
+        action,
+        this.inputAttempts,
+        this.actionRefusalForBlock()
+      );
+    }
+    this.inputAttempts += 1;
+    const step = this.inputAttempts - 1;
+    if (this.events.length >= PLAYESTS_ARTIFACT_MAX_WINDOW_STEPS - 1) {
+      this.terminalBlock = "event-budget-exhausted";
+      this.captureIncomplete = true;
+      return this.refuseAction(action, step, "event-budget-exhausted");
+    }
+    if (this.inputAttempts > this.maxSteps) {
+      return this.refuseAction(action, step, "action-budget-exhausted");
+    }
+    if (this.elapsedMs() >= this.target.limits.wallTimeMs) {
+      return this.refuseAction(action, step, "wall-time-limit");
+    }
+    if (this.closed || this.originEscape || this.lastObservation === null) {
+      return this.refuseAction(action, step, "driver-state-unavailable");
+    }
+    const origin = this.currentOrigin();
+    if (!origin) {
+      return this.refuseAction(action, step, "origin-not-approved");
+    }
+    const admission = admitPlaytestVisualAction({
+      target: this.target,
+      observation: this.lastObservation,
+      action,
+      runtimeSupportedInputs: SUPPORTED_INPUTS,
+      currentOrigin: origin,
+      currentViewport: this.viewport,
+      nowMs: this.now(),
+      maxObservationAgeMs
+    });
+    if (!admission.admitted) {
+      return this.refuseAction(action, step, admission.reason);
+    }
+    this.inputValidated += 1;
+    const startedAt = this.now();
+    let latest: RawPageRead;
+    try {
+      latest = await this.readPage();
+    } catch {
+      this.terminalBlock = "sensitive-visual-unredactable";
+      this.captureIncomplete = true;
+      return this.refuseAction(action, step, "sensitive-visual-unredactable");
+    }
+    if (latest.passwordVisible) {
+      this.terminalBlock = "auth-or-setup-required";
+      this.captureIncomplete = true;
+      return this.refuseAction(action, step, "auth-or-setup-required");
+    }
+    if (latest.sensitiveTextVisible) {
+      this.terminalBlock = "sensitive-visual-unredactable";
+      this.captureIncomplete = true;
+      return this.refuseAction(action, step, "sensitive-visual-unredactable");
+    }
+    try {
+      switch (action.kind) {
+        case "activate-control": {
+          const index = this.controlIndexes.get(action.controlId);
+          if (index === undefined) {
+            return this.refuseAction(action, step, "control-changed");
+          }
+          const current = latest.controls.find(
+            (control) =>
+              control.index === index &&
+              controlId(control, control.index) === action.controlId
+          );
+          if (!current || !current.enabled || current.inputKind !== "none") {
+            return this.refuseAction(action, step, "control-changed");
+          }
+          const capturedDestination = this.controlNavigationOrigins.get(
+            action.controlId
+          );
+          if (
+            current.role === "link" &&
+            (current.navigationOrigin !== capturedDestination ||
+              !current.navigationOrigin ||
+              !this.target.allowedOrigins.includes(current.navigationOrigin))
+          ) {
+            this.blockForOriginEscape();
+            return this.refuseAction(action, step, "origin-not-approved");
+          }
+          await this.page
+            .locator(CONTROL_SELECTOR)
+            .nth(index)
+            .click({ timeout: this.actionTimeoutMs });
+          break;
+        }
+        case "pointer-click": {
+          const currentFrame = await this.capturePng();
+          if (sha256(currentFrame) !== this.lastObservation.frame.sha256) {
+            return this.refuseAction(action, step, "stale-observation");
+          }
+          await this.page.mouse.click(action.x, action.y);
+          break;
+        }
+        case "key-press": {
+          const focused = latest.controls.find((control) => control.focused);
+          if (inputKindForCurrentFocus(focused?.inputKind) !== "none") {
+            return this.refuseAction(action, step, "text-entry-not-supported");
+          }
+          await this.page.keyboard.press(keyForBrowser(action.key));
+          break;
+        }
+        case "gamepad-press":
+          return this.refuseAction(action, step, "input-unsupported");
+      }
+    } catch {
+      return this.refuseAction(
+        action,
+        step,
+        this.originEscape ? "origin-not-approved" : "control-changed"
+      );
+    }
+    this.inputDispatched += 1;
+    const receipt: PlaytestVisualActionReceipt = {
+      status: "dispatched",
+      step,
+      observationId: action.observationId,
+      actionKind: action.kind,
+      dispatchedAt: new Date(this.now()).toISOString(),
+      driverDurationMs: Math.max(0, this.now() - startedAt),
+      gameAcknowledgement: "not-observed"
+    };
+    this.recordEvent({
+      type: "input-dispatched",
+      step,
+      observationId: action.observationId,
+      frameArtifactId: this.lastObservation.frame.artifactId,
+      actionKind: action.kind
+    });
+    return receipt;
+  }
+
+  private refuseAction(
+    action: PlaytestVisualAction,
+    step: number,
+    reason: ActionRefusalReason
+  ): PlaytestVisualActionReceipt {
+    this.inputRejected += 1;
+    this.recordEvent({
+      type: "input-refused",
+      step,
+      observationId: action.observationId,
+      actionKind: action.kind,
+      refusalReason: reason
+    });
+    return { status: "refused", step, reason } as PlaytestVisualActionReceipt;
+  }
+
+  private actionRefusalForBlock(): ActionRefusalReason {
+    switch (this.terminalBlock) {
+      case "origin-escape":
+        return "origin-not-approved";
+      case "wall-time-limit":
+        return "wall-time-limit";
+      case "event-budget-exhausted":
+        return "event-budget-exhausted";
+      default:
+        return "driver-state-unavailable";
+    }
+  }
+
+  telemetry(): PlaytestVisualBrowserTelemetry {
+    return {
+      schema: "autodev-playtest-visual-telemetry-v1",
+      version: 1,
+      inputAttempts: this.inputAttempts,
+      inputValidated: this.inputValidated,
+      inputDispatched: this.inputDispatched,
+      inputAcknowledged: 0,
+      inputRejected: this.inputRejected,
+      driverToolCalls: {
+        observe: this.observationCalls,
+        act: this.actionCalls
+      },
+      captureCount: this.captureCount,
+      capturedBytes: this.capturedBytes,
+      blockedRequestCount: this.blockedRequestCount,
+      coverage:
+        this.originEscape || this.captureIncomplete ? "partial" : "complete"
+    };
+  }
+
+  eventsSnapshot(): readonly PlaytestVisualBrowserEvent[] {
+    return [...this.events];
+  }
+
+  async close(): Promise<{
+    readonly events:
+      ReturnType<PlaytestArtifactStore["writeWindow"]>["reference"] | null;
+    readonly eventMissingReason: "event-window-unavailable" | null;
+    readonly browserProfileCleanup: "removed" | "failed";
+  }> {
+    if (this.closeResult) return this.closeResult;
+    this.closed = true;
+    this.recordEvent({ type: "browser-closed" });
+    let events:
+      ReturnType<PlaytestArtifactStore["writeWindow"]>["reference"] | null =
+      null;
+    let eventMissingReason: "event-window-unavailable" | null = null;
+    let browserProfileCleanup: "removed" | "failed" = "removed";
+    try {
+      const encodedBytes = new TextEncoder().encode(
+        this.events.map((event) => JSON.stringify(event)).join("\n") + "\n"
+      ).byteLength;
+      if (
+        this.events.length > PLAYESTS_ARTIFACT_MAX_WINDOW_STEPS ||
+        this.capturedBytes + encodedBytes >
+          this.target.limits.artifactBytesPerEpisode
+      ) {
+        eventMissingReason = "event-window-unavailable";
+      } else {
+        events = this.artifacts.writeWindow({
+          mediaType: "application/x-ndjson",
+          entries: this.events
+        }).reference;
+      }
+    } catch {
+      eventMissingReason = "event-window-unavailable";
+    }
+    await this.context.close().catch(() => undefined);
+    await this.browser.close().catch(() => undefined);
+    try {
+      rmSync(this.browserProfileRoot, { recursive: true, force: true });
+    } catch {
+      browserProfileCleanup = "failed";
+    }
+    this.closeResult = { events, eventMissingReason, browserProfileCleanup };
+    return this.closeResult;
+  }
+
+  private recordEvent(input: {
+    readonly type: PlaytestVisualBrowserEvent["type"];
+    readonly step?: number;
+    readonly observationId?: string;
+    readonly frameArtifactId?: string;
+    readonly actionKind?: PlaytestVisualAction["kind"];
+    readonly refusalReason?: string;
+  }): void {
+    if (this.events.length >= PLAYESTS_ARTIFACT_MAX_WINDOW_STEPS) return;
+    this.events.push({
+      schema: VISUAL_EVENT_SCHEMA,
+      eventId: this.id(),
+      sequence: this.events.length,
+      episodeId: this.episodeId,
+      type: input.type,
+      occurredAt: new Date(this.now()).toISOString(),
+      step: input.step ?? null,
+      observationId: input.observationId ?? null,
+      frameArtifactId: input.frameArtifactId ?? null,
+      actionKind: input.actionKind ?? null,
+      refusalReason: input.refusalReason ?? null,
+      blockedRequestCount: this.blockedRequestCount
+    });
+  }
+}

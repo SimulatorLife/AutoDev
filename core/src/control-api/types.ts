@@ -1182,9 +1182,16 @@ export interface ControlApiPlaytestingModeReadiness {
   readonly reasons: readonly ControlApiPlaytestingCapabilityReason[];
 }
 
+/** Target-local entry/timing eligibility, separate from workspace driver readiness. */
+export interface ControlApiPlaytestingVisualTargetReadiness {
+  readonly target: WorkspaceVisualPlaytestTargetApproval;
+  readonly eligibility: "supported" | "unsupported";
+  readonly reasons: readonly ControlApiPlaytestingCapabilityReason[];
+}
+
 /** Safe run-form preview; raw command, checkout path, and image are omitted. */
 export interface ControlApiPlaytestingCapabilitiesResponse {
-  readonly schema: "autodev-control-playtesting-capabilities-v2";
+  readonly schema: "autodev-control-playtesting-capabilities-v3";
   readonly workspaceId: string;
   /** Content hash of all readiness facts used by this preflight. */
   readonly capabilityRevision: string;
@@ -1195,7 +1202,7 @@ export interface ControlApiPlaytestingCapabilitiesResponse {
     readonly "adapter-accelerated": ControlApiPlaytestingModeReadiness;
     readonly "autonomous-visual": ControlApiPlaytestingModeReadiness & {
       readonly targetStore: "available" | "unavailable";
-      readonly targets: readonly WorkspaceVisualPlaytestTargetApproval[];
+      readonly targets: readonly ControlApiPlaytestingVisualTargetReadiness[];
     };
     readonly "scripted-regression": ControlApiPlaytestingModeReadiness;
   };
