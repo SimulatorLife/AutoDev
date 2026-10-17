@@ -156,7 +156,8 @@ export const CONTROL_API_PATHS = {
   github: "/control/github",
   playtesting: "/control/playtesting",
   playtestingReadiness: "/control/playtesting/readiness",
-  playtestingInitialization: "/control/playtesting/initialize"
+  playtestingInitialization: "/control/playtesting/initialize",
+  concurrency: "/control/runtime/concurrency"
 } as const;
 
 const PLAYTESTING_CAPABILITIES_PATH = `${CONTROL_API_PATHS.playtesting}/capabilities`;
@@ -170,6 +171,74 @@ const PROVIDER_ROLE_PATH = new RegExp(
 const PROVIDER_LIMITS_PATH =
   /^\/control\/providers\/([a-zA-Z0-9._-]+)\/limits$/u;
 const PROVIDER_PATH = /^\/control\/providers\/([a-zA-Z0-9._-]+)$/u;
+const DEFAULT_REPO_ROOT = resolveRuntimeSourceRoot(
+  import.meta.dirname,
+  process.env.AUTODEV_REPO_ROOT
+);
+
+const MODEL_EFFORT_SUFFIX = /-(low|medium|high)$/;
+function modelEffort(model: unknown): string | null {
+  return typeof model === "string"
+    ? (MODEL_EFFORT_SUFFIX.exec(model)?.[1] ?? null)
+    : null;
+}
+
+interface ModelCatalogReasoningInfo {
+  readonly defaultLevel: string | null;
+  readonly supportedLevels: readonly string[];
+}
+
+function modelCatalogReasoningLevels(
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Map<string, ModelCatalogReasoningInfo> {
+  const catalogPath = path.join(
+    repositoryRoot,
+    "config",
+    "catalogs",
+    "codex-model-catalog.json"
+  );
+  const levels = new Map<string, ModelCatalogReasoningInfo>();
+  if (!existsSync(catalogPath)) return levels;
+  try {
+    const parsed = JSON.parse(readFileSync(catalogPath, "utf8")) as {
+      models?: unknown;
+    };
+    if (!Array.isArray(parsed.models)) return levels;
+    for (const entry of parsed.models as unknown[]) {
+      if (
+        entry &&
+        typeof entry === "object" &&
+        typeof (entry as { slug?: unknown }).slug === "string"
+      ) {
+        const slug = (entry as { slug: string }).slug;
+        const defaultLevel =
+          typeof (entry as { default_reasoning_level?: unknown })
+            .default_reasoning_level === "string"
+            ? (entry as { default_reasoning_level: string })
+                .default_reasoning_level
+            : null;
+        const supportedLevels: string[] = [];
+        const rawSupported = (entry as { supported_reasoning_levels?: unknown })
+          .supported_reasoning_levels;
+        if (Array.isArray(rawSupported)) {
+          for (const item of rawSupported) {
+            if (
+              item &&
+              typeof item === "object" &&
+              typeof (item as { effort?: unknown }).effort === "string"
+            ) {
+              supportedLevels.push((item as { effort: string }).effort);
+            }
+          }
+        }
+        levels.set(slug, { defaultLevel, supportedLevels });
+      }
+    }
+  } catch {
+    // An unreadable catalog leaves reasoning levels unobserved.
+  }
+  return levels;
+}
 
 /**
  * Whether a submitted agent limit is usable. `null` is Unlimited; any other
@@ -629,6 +698,7 @@ function providersView(now: number): Record<string, unknown> {
   const names = ROUTING_POLICY.providerIds();
   const reasoningEffort = ROUTING_POLICY.config.orchestrator.reasoningEffort;
   const health = providerHealthSource?.(now) ?? null;
+  const reasoningCatalog = modelCatalogReasoningLevels();
   const providers = names.map((provider) => {
     const route = ROUTES.find((entry) => entry.provider === provider) ?? null;
     const disabled = !ROUTING_POLICY.isProviderEnabled(provider);
@@ -660,17 +730,45 @@ function providersView(now: number): Record<string, unknown> {
       disabled,
       // Derived from PROVIDER_ROLES so a role added to Core cannot be missing
       // from this response.
-      roles: rolesForEveryProviderRole((role) => ({
-        // An unobserved assignment is reported as enabled rather than as
-        // a disabled role: a provider nobody has touched must keep routing,
-        // and "disabled" is a decision the operator makes.
-        priority: disabled ? "disabled" : (assignments[role]?.priority ?? 1),
-        model: assignments[role]?.model ?? null,
-        // A globally disabled provider's roles cannot be edited until it
-        // is enabled again, but their values are preserved.
-        mutable: !disabled,
-        convergence: providerRoleConvergence(provider, role)
-      })),
+      roles: rolesForEveryProviderRole((role) => {
+        const assignment = assignments[role];
+        const assignedModel = assignment?.model ?? null;
+        const configuredEffort =
+          assignment?.reasoningEffort ??
+          (role === "orchestrator"
+            ? (reasoningEffort?.[provider] ?? null)
+            : null);
+        const modelInfo = assignedModel
+          ? reasoningCatalog.get(assignedModel)
+          : undefined;
+        const supportedReasoningLevels = modelInfo?.supportedLevels ?? [];
+        const isAgyFixed =
+          provider === "antigravity" &&
+          Boolean(modelEffort(assignedModel ?? ""));
+        const effectiveReasoningEffort = isAgyFixed
+          ? modelEffort(assignedModel ?? "")
+          : (configuredEffort ?? modelInfo?.defaultLevel ?? null);
+        const reasoningEffortInForce =
+          !isAgyFixed ||
+          configuredEffort === null ||
+          configuredEffort === effectiveReasoningEffort;
+
+        return {
+          // An unobserved assignment is reported as enabled rather than as
+          // a disabled role: a provider nobody has touched must keep routing,
+          // and "disabled" is a decision the operator makes.
+          priority: disabled ? "disabled" : (assignment?.priority ?? 1),
+          model: assignedModel,
+          reasoningEffort: configuredEffort,
+          effectiveReasoningEffort,
+          reasoningEffortInForce,
+          supportedReasoningLevels,
+          // A globally disabled provider's roles cannot be edited until it
+          // is enabled again, but their values are preserved.
+          mutable: !disabled,
+          convergence: providerRoleConvergence(provider, role)
+        };
+      }),
       agentLimits,
       models: Object.entries(
         ROUTING_POLICY.config.providers[provider]?.models ?? {}
@@ -1073,11 +1171,6 @@ function runtimeView(now: number): Record<string, unknown> {
     liveAgents: liveAgentCountsSource?.(now) ?? null
   } satisfies ControlApiRuntimeResponse;
 }
-
-const DEFAULT_REPO_ROOT = resolveRuntimeSourceRoot(
-  import.meta.dirname,
-  process.env.AUTODEV_REPO_ROOT
-);
 
 function workspacesView(repositoryRoot?: string): Record<string, unknown> {
   const catalog = new ConfigRepository(repositoryRoot).readWorkspaceCatalog();
@@ -2490,6 +2583,21 @@ async function patchProviderRole(
   const body = parsed.body;
   const priority = body.priority;
   const model = body.model ?? null;
+  const rawEffort = body.reasoningEffort;
+  const reasoningEffort =
+    rawEffort === undefined || rawEffort === null || rawEffort === ""
+      ? null
+      : typeof rawEffort === "string"
+        ? rawEffort.trim()
+        : rawEffort;
+
+  const reasoningCatalog = modelCatalogReasoningLevels();
+  const assignedModel = typeof model === "string" ? model : null;
+  const modelInfo = assignedModel
+    ? reasoningCatalog.get(assignedModel)
+    : undefined;
+  const supportedReasoningLevels = modelInfo?.supportedLevels ?? [];
+
   const priorityIsValid =
     priority === 1 ||
     priority === 2 ||
@@ -2501,22 +2609,40 @@ async function patchProviderRole(
       (model === ROUTING_POLICY.assignmentFor(provider, role)?.model ||
         (ROUTING_POLICY.isModelAvailableForProvider(provider, model) &&
           providerHasCurrentModelDiscovery(provider, model))));
+  const reasoningEffortIsValid =
+    reasoningEffort === null ||
+    (typeof reasoningEffort === "string" &&
+      model !== null &&
+      supportedReasoningLevels.includes(reasoningEffort));
+
   if (
-    Object.keys(body).some((key) => key !== "priority" && key !== "model") ||
+    Object.keys(body).some(
+      (key) =>
+        key !== "priority" && key !== "model" && key !== "reasoningEffort"
+    ) ||
     !priorityIsValid ||
-    !modelIsValid
+    !modelIsValid ||
+    !reasoningEffortIsValid
   ) {
     audit("error", null, "invalid_body");
     sendControlError(
       response,
       400,
       "autodev_control_api_bad_body",
-      'Provider role body must carry a priority of 1, 2, 3 or "disabled", and a model that is null, unchanged from the current assignment, or currently observed as routeable for this provider.'
+      'Provider role body must carry a priority of 1, 2, 3 or "disabled", an optional reasoningEffort that matches one of the assigned model\'s supported reasoning levels, and a model that is null, unchanged from the current assignment, or currently observed as routeable for this provider.'
     );
     return;
   }
   if (!known) {
-    audit("error", { priority, model }, "unknown_provider");
+    audit(
+      "error",
+      {
+        priority,
+        model,
+        ...(body.reasoningEffort !== undefined ? { reasoningEffort } : {})
+      },
+      "unknown_provider"
+    );
     sendControlError(
       response,
       404,
@@ -2534,7 +2660,15 @@ async function patchProviderRole(
   // not honour. `isProviderEnabledForRole` is not the right test — it folds in
   // the per-role `disabled` priority, which this endpoint is what sets.
   if (ROUTING_POLICY.isProviderDisabled(provider)) {
-    audit("denied", { priority, model }, "provider_disabled");
+    audit(
+      "denied",
+      {
+        priority,
+        model,
+        ...(body.reasoningEffort !== undefined ? { reasoningEffort } : {})
+      },
+      "provider_disabled"
+    );
     sendControlError(
       response,
       409,
@@ -2544,11 +2678,30 @@ async function patchProviderRole(
     return;
   }
 
-  const next: ProviderRoleAssignment = { priority, model };
+  const isAgyFixed =
+    provider === "antigravity" && Boolean(modelEffort(assignedModel ?? ""));
+  const effectiveReasoningEffort = isAgyFixed
+    ? modelEffort(assignedModel ?? "")
+    : (reasoningEffort ?? modelInfo?.defaultLevel ?? null);
+  const reasoningEffortInForce =
+    !isAgyFixed ||
+    reasoningEffort === null ||
+    reasoningEffort === effectiveReasoningEffort;
+
+  const next: ProviderRoleAssignment = {
+    priority,
+    model,
+    reasoningEffort
+  };
   // An unobserved assignment is reported as null on the wire: JSON carries no
   // undefined, and "there was no assignment" must not be reported as an empty
   // object, which would read as a role whose model was cleared.
   const previous = ROUTING_POLICY.assignmentFor(provider, role) ?? null;
+  const auditChanges: Record<string, unknown> = {
+    priority,
+    model,
+    ...(body.reasoningEffort !== undefined ? { reasoningEffort } : {})
+  };
   try {
     ROUTING_POLICY.setProviderAssignment(provider, role, next);
     await persistRoutingPolicy();
@@ -2564,7 +2717,7 @@ async function patchProviderRole(
     } catch {
       // Preserve the original failure; the audit record captures it.
     }
-    audit("error", { priority, model, previous }, "persistence_failed");
+    audit("error", { ...auditChanges, previous }, "persistence_failed");
     sendControlError(
       response,
       500,
@@ -2577,7 +2730,9 @@ async function patchProviderRole(
   const observed = ROUTING_POLICY.assignmentFor(provider, role) ?? null;
   const desiredGeneration = `${role}:${priority}/${model ?? "none"}`;
   const observedGeneration =
-    observed?.priority === priority && observed?.model === model
+    observed?.priority === priority &&
+    observed?.model === model &&
+    (observed?.reasoningEffort ?? null) === reasoningEffort
       ? desiredGeneration
       : null;
   const appliedAt = new Date().toISOString();
@@ -2600,7 +2755,7 @@ async function patchProviderRole(
     history: historyForResource(resource),
     hasObservation: observedGeneration !== null
   });
-  audit("ok", { priority, model, previous }, undefined, auditReconciliation);
+  audit("ok", { ...auditChanges, previous }, undefined, auditReconciliation);
   sendJson(
     response,
     200,
@@ -2610,6 +2765,10 @@ async function patchProviderRole(
       role,
       priority,
       model,
+      reasoningEffort,
+      effectiveReasoningEffort,
+      reasoningEffortInForce,
+      supportedReasoningLevels,
       previous,
       actor: actor.actor,
       reconciliation
@@ -2906,6 +3065,148 @@ async function patchProviderLimits(
       actor: actor.actor,
       reconciliation: reconciliation.view
     } satisfies ControlApiProviderLimitsPatchResponse,
+    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+  );
+}
+
+/**
+ * `PATCH /control/runtime/concurrency` -- mutate orchestrator child-concurrency limit.
+ * Supports explicit Unlimited (`null`), integers 0-999, and resetToConfigFile: true.
+ * Revision checked and persisted across restart.
+ */
+async function patchConcurrencyLimit(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor
+): Promise<void> {
+  const resource = CONTROL_API_PATHS.concurrency;
+  const audit = (
+    outcome: "ok" | "denied" | "error",
+    changes: Record<string, unknown> | null,
+    reason?: string
+  ): void =>
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "patch_runtime_concurrency",
+      resource,
+      outcome,
+      changes,
+      ...(reason ? { reason } : {})
+    });
+
+  if (actor.role !== "operator") {
+    audit("denied", null, "viewer_cannot_mutate");
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_viewer_forbidden",
+      "Operator access is required to change orchestrator concurrency limits."
+    );
+    return;
+  }
+
+  const parsed = await readControlApiJsonObject(request);
+  if (!parsed.ok) {
+    audit("error", null, "invalid_body");
+    sendControlError(response, parsed.status, parsed.code, parsed.message);
+    return;
+  }
+  const body = parsed.body;
+  const manager = getDefaultConcurrencyManager();
+
+  let nextLimit: number | null | undefined;
+  if (body.resetToConfigFile === true) {
+    nextLimit = undefined;
+  } else if ("maxConcurrentThreadsPerSession" in body) {
+    const raw = body.maxConcurrentThreadsPerSession;
+    if (
+      raw === null ||
+      (typeof raw === "number" &&
+        Number.isInteger(raw) &&
+        raw >= 0 &&
+        raw <= 999)
+    ) {
+      nextLimit = raw as number | null;
+    } else {
+      audit("error", null, "invalid_limit");
+      sendControlError(
+        response,
+        400,
+        "autodev_control_api_bad_body",
+        "maxConcurrentThreadsPerSession must be null (Unlimited) or an integer between 0 and 999."
+      );
+      return;
+    }
+  } else {
+    audit("error", null, "missing_limit");
+    sendControlError(
+      response,
+      400,
+      "autodev_control_api_bad_body",
+      "Body must specify maxConcurrentThreadsPerSession or resetToConfigFile."
+    );
+    return;
+  }
+
+  const expectedRevision =
+    typeof body.revision === "number" && Number.isInteger(body.revision)
+      ? body.revision
+      : undefined;
+
+  const previousLimit = manager.effectivePerSessionLimit();
+  const mutationResult =
+    nextLimit === undefined
+      ? manager.clearStoredLimit(expectedRevision)
+      : manager.setMaxConcurrentThreadsPerSession(nextLimit, expectedRevision);
+
+  if (!mutationResult.ok) {
+    audit(
+      "error",
+      { expectedRevision, currentRevision: mutationResult.currentRevision },
+      "conflict"
+    );
+    sendControlError(
+      response,
+      409,
+      "autodev_control_api_conflict",
+      "Concurrency limit configuration was changed by another operator. Reload to see current state."
+    );
+    return;
+  }
+
+  try {
+    await persistRoutingPolicy();
+  } catch {
+    if (previousLimit === undefined) {
+      manager.clearStoredLimit();
+    } else {
+      manager.setMaxConcurrentThreadsPerSession(previousLimit);
+    }
+    audit("error", { nextLimit, previousLimit }, "persistence_failed");
+    sendControlError(
+      response,
+      500,
+      "autodev_control_api_persistence_failed",
+      "Concurrency limit change could not be persisted."
+    );
+    return;
+  }
+
+  const updatedStatus = manager.concurrencyStatus(Date.now());
+  audit("ok", {
+    limit: nextLimit,
+    previous: previousLimit,
+    revision: updatedStatus.revision
+  });
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-control-concurrency-v1",
+      concurrency: updatedStatus
+    },
     { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
   );
 }
@@ -4494,6 +4795,12 @@ function playtestingRunControlRoute(
         : { repositoryRoot: options.repositoryRoot }),
       runControl:
         options.playtestingRunControl ?? getDefaultPlaytestRunControl(),
+      ...(options.workspaceVisualPlaytestTargetRepository === undefined
+        ? {}
+        : {
+            visualTargetRepository:
+              options.workspaceVisualPlaytestTargetRepository
+          }),
       requireSessionHeader: actor.playtestingService === true,
       ...(actor.playtestingService
         ? {
@@ -4712,6 +5019,27 @@ export async function handleControlApiRequest(
       pathname,
       providerMatch
     );
+    return true;
+  }
+  if (pathname === CONTROL_API_PATHS.concurrency) {
+    if (method !== "PATCH") {
+      auditRejectedRequest(
+        request,
+        method,
+        pathname,
+        "method_not_allowed",
+        actor
+      );
+      response.setHeader("allow", "PATCH");
+      sendControlError(
+        response,
+        405,
+        "autodev_control_api_method_not_allowed",
+        "Orchestrator concurrency limits are mutated via PATCH only."
+      );
+      return true;
+    }
+    await patchConcurrencyLimit(request, response, actor);
     return true;
   }
   const providerLimitsMatch = pathname.match(PROVIDER_LIMITS_PATH);

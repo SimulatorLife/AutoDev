@@ -33,6 +33,7 @@ import {
   TabNav
 } from "../../components/tabs/Tabs.ts";
 import {
+  MONO_META_CLASS,
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -429,7 +430,7 @@ export function McpDetailView({
       ),
       React.createElement(
         "p",
-        { className: "mb-3 text-xs text-fg-muted" },
+        { className: `mb-3 ${MUTED_META_CLASS}` },
         "Partial projection of explicitly enumerated role MCP/plugin allowlist tools joined from the Tools capability catalog. Does not imply the remote server is connected or that these are its full live tool inventory."
       ),
       React.createElement(ConfiguredToolAllowlist, { configuredTools })
@@ -597,7 +598,7 @@ export function McpDetailView({
         React.createElement(EntityTitle, { mono: true }, server.name),
         React.createElement(
           "p",
-          { className: "mt-2 font-mono text-xs text-fg-muted" },
+          { className: `mt-2 ${MONO_META_CLASS}` },
           ".rulesync/mcp.jsonc"
         )
       ),

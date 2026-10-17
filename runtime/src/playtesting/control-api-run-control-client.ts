@@ -4,14 +4,17 @@ import {
   type ControlApiPlaytestingCapabilitiesResponse,
   type ControlApiPlaytestingComparisonDecisionResponse,
   type ControlApiPlaytestingRunCancellationResponse,
+  type ControlApiPlaytestingRunRequestLookupResponse,
   type ControlApiPlaytestingRunStartedResponse,
   type ControlApiPlaytestingRunStatusResponse,
+  isControlApiPlaytestingRunState,
   PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS
 } from "@simulatorlife/autodev-core";
 
 import { PlaytestSandboxApprovalError } from "./docker-sandbox.ts";
 import {
   PlaytestMcpAuthorizationError,
+  PlaytestMcpConflictError,
   type PlaytestMcpSession,
   PlaytestMcpUnavailableError,
   PlaytestMcpValidationError,
@@ -21,11 +24,15 @@ import {
 } from "./mcp.ts";
 
 const RUNS_PATH = "/control/playtesting/runs";
+const REQUEST_LOOKUP_PATH = RUNS_PATH + "/by-request";
 const CAPABILITIES_PATH = "/control/playtesting/capabilities";
 const COMPARISONS_PATH = "/control/playtesting/comparisons";
 const ANALYSES_PATH = "/control/playtesting/analyses";
 const SESSION_HEADER = "x-autodev-playtest-session";
 const ACTOR_PATTERN = /^[A-Za-z0-9@._:+-]{1,128}$/u;
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const CAPABILITY_REVISION_PATTERN = /^[a-f\d]{64}$/u;
+const ASSIGNMENT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const PLAYTEST_CONTROL_ROLES = new Set([
   "playtester",
   "validator",
@@ -106,6 +113,12 @@ function errorForResponse(status: number, value: unknown): Error {
     code.includes("operator_required")
   ) {
     return new PlaytestMcpAuthorizationError(message);
+  }
+  if (code.includes("capability_revision_changed")) {
+    return new PlaytestMcpValidationError(message);
+  }
+  if (code.includes("request_id_conflict")) {
+    return new PlaytestMcpConflictError(message);
   }
   if (status === 400 || status === 404 || code.includes("invalid_request")) {
     return new PlaytestMcpValidationError(message);
@@ -299,27 +312,74 @@ export function createPlaytestControlApiRunClient(
       workspaceId
     ): Promise<PlaytestRunCapabilities> {
       const query = new URLSearchParams({ workspaceId });
-      return assertResponse<ControlApiPlaytestingCapabilitiesResponse>(
-        await request("GET", CAPABILITIES_PATH + "?" + query, session),
-        "autodev-control-playtesting-capabilities-v1",
-        workspaceId
-      );
+      const response =
+        assertResponse<ControlApiPlaytestingCapabilitiesResponse>(
+          await request("GET", CAPABILITIES_PATH + "?" + query, session),
+          "autodev-control-playtesting-capabilities-v2",
+          workspaceId
+        );
+      const modes = record(response.modeReadiness);
+      const requiredModes = [
+        "adapter-accelerated",
+        "autonomous-visual",
+        "scripted-regression"
+      ] as const;
+      if (
+        typeof response.capabilityRevision !== "string" ||
+        !CAPABILITY_REVISION_PATTERN.test(response.capabilityRevision) ||
+        !modes ||
+        requiredModes.some((mode) => {
+          const readiness = record(modes[mode]);
+          return (
+            !readiness ||
+            (readiness.status !== "ready" &&
+              readiness.status !== "check-required" &&
+              readiness.status !== "unavailable") ||
+            !Array.isArray(readiness.reasons)
+          );
+        })
+      ) {
+        throw new PlaytestMcpUnavailableError(
+          "The Runtime Control API returned incomplete playtesting mode readiness."
+        );
+      }
+      const visual = record(modes["autonomous-visual"]);
+      if (
+        !visual ||
+        (visual.targetStore !== "available" &&
+          visual.targetStore !== "unavailable") ||
+        !Array.isArray(visual.targets)
+      ) {
+        throw new PlaytestMcpUnavailableError(
+          "The Runtime Control API returned incomplete visual target readiness."
+        );
+      }
+      return response;
     },
     async startRun(session, requestBody) {
-      const workspaceId = requestBody.workspaceId ?? session.workspaceId;
+      const workspaceId = requestBody.workspaceId;
       const response = assertResponse<ControlApiPlaytestingRunStartedResponse>(
-        await request("POST", RUNS_PATH, session, {
-          ...requestBody,
-          workspaceId
-        }),
-        "autodev-control-playtesting-run-started-v1",
+        await request("POST", RUNS_PATH, session, requestBody),
+        "autodev-control-playtesting-run-started-v2",
         workspaceId
       );
       if (
-        response.status !== "running" ||
+        ![
+          "running",
+          "persisting",
+          "completed",
+          "failed",
+          "cancelled",
+          "truncated"
+        ].includes(response.status) ||
         typeof response.batchId !== "string" ||
         !Number.isSafeInteger(response.assignmentCount) ||
         response.assignmentCount < 1 ||
+        !Array.isArray(response.assignmentIds) ||
+        response.assignmentIds.length !== response.assignmentCount ||
+        new Set(response.assignmentIds).size !==
+          response.assignmentIds.length ||
+        !response.assignmentIds.every((id) => ASSIGNMENT_ID_PATTERN.test(id)) ||
         typeof response.createdAt !== "string" ||
         !Number.isFinite(Date.parse(response.createdAt))
       ) {
@@ -330,9 +390,78 @@ export function createPlaytestControlApiRunClient(
       return {
         batchId: response.batchId,
         assignmentCount: response.assignmentCount,
+        assignmentIds: response.assignmentIds,
         createdAt: response.createdAt,
-        status: "running"
+        status: response.status
       };
+    },
+    async lookupRunByRequest(session, workspaceId, requestId) {
+      if (!REQUEST_ID_PATTERN.test(requestId)) {
+        throw new PlaytestMcpValidationError("requestId is invalid.");
+      }
+      const query = new URLSearchParams({ workspaceId, requestId });
+      const response =
+        assertResponse<ControlApiPlaytestingRunRequestLookupResponse>(
+          await request("GET", REQUEST_LOOKUP_PATH + "?" + query, session),
+          "autodev-control-playtesting-run-request-v1",
+          workspaceId
+        );
+      if (
+        response.requestId !== requestId ||
+        !["not-found", "expired", "pending", "accepted"].includes(
+          response.state
+        ) ||
+        !Array.isArray(response.assignmentIds) ||
+        response.assignmentIds.some(
+          (id) => typeof id !== "string" || !ASSIGNMENT_ID_PATTERN.test(id)
+        )
+      ) {
+        throw new PlaytestMcpUnavailableError(
+          "The Runtime Control API returned an invalid request-recovery receipt."
+        );
+      }
+      if (response.state === "accepted") {
+        if (
+          typeof response.batchId !== "string" ||
+          !Number.isSafeInteger(response.assignmentCount) ||
+          typeof response.assignmentCount !== "number" ||
+          response.assignmentCount < 1 ||
+          response.assignmentIds.length !== response.assignmentCount ||
+          !isControlApiPlaytestingRunState(response.status) ||
+          typeof response.createdAt !== "string" ||
+          !Number.isFinite(Date.parse(response.createdAt))
+        ) {
+          throw new PlaytestMcpUnavailableError(
+            "The Runtime Control API returned an incomplete accepted request receipt."
+          );
+        }
+      } else if (response.state === "pending") {
+        if (
+          typeof response.batchId !== "string" ||
+          !Number.isSafeInteger(response.assignmentCount) ||
+          typeof response.assignmentCount !== "number" ||
+          response.assignmentCount < 1 ||
+          response.assignmentIds.length > 0 ||
+          response.status !== null ||
+          typeof response.createdAt !== "string" ||
+          !Number.isFinite(Date.parse(response.createdAt))
+        ) {
+          throw new PlaytestMcpUnavailableError(
+            "The Runtime Control API returned an incomplete pending request receipt."
+          );
+        }
+      } else if (
+        response.batchId !== null ||
+        response.assignmentCount !== null ||
+        response.assignmentIds.length > 0 ||
+        response.createdAt !== null ||
+        response.status !== null
+      ) {
+        throw new PlaytestMcpUnavailableError(
+          "The Runtime Control API returned an inconsistent empty request receipt."
+        );
+      }
+      return response;
     },
     async listActiveRuns(session, workspaceId) {
       const query = new URLSearchParams({ workspaceId });

@@ -1,10 +1,11 @@
-/** Idempotent ClickHouse tables for Core-owned Playtesting artifacts. */
+/** Idempotent ClickHouse tables for Playtesting evidence and launch receipts. */
 
 import { runParameterizedClickHouseStatement } from "../clickhouse/clickhouse-client.ts";
 import { PlaytestSourceUnavailableError } from "./errors.ts";
 
 export const PLAYTEST_DATA_SCHEMA_VERSION = 1 as const;
 export const PLAYTEST_BATCHES_TABLE = "playtest_batches";
+export const PLAYTEST_LAUNCH_INTENTS_TABLE = "playtest_launch_intents";
 export const PLAYTEST_EPISODES_TABLE = "playtest_episodes";
 export const PLAYTEST_FINDINGS_TABLE = "playtest_findings";
 export const PLAYTEST_REVIEWS_TABLE = "playtest_reviews";
@@ -39,6 +40,21 @@ CREATE TABLE IF NOT EXISTS ${PLAYTEST_BATCHES_TABLE} (
   payload_json String
 ) ENGINE = MergeTree
 ORDER BY (workspace_id, batch_id, revision)
+`;
+
+const CREATE_PLAYTEST_LAUNCH_INTENTS = `
+CREATE TABLE IF NOT EXISTS ${PLAYTEST_LAUNCH_INTENTS_TABLE} (
+  workspace_id String,
+  actor_id String,
+  request_id String,
+  launch_intent_hash String,
+  batch_id String,
+  assignment_count UInt32,
+  created_at DateTime64(3, 'UTC'),
+  expires_at DateTime64(3, 'UTC')
+) ENGINE = MergeTree
+ORDER BY (workspace_id, actor_id, request_id, created_at)
+TTL toDate(created_at) + INTERVAL 90 DAY DELETE
 `;
 
 const CREATE_PLAYTEST_EPISODES = `
@@ -214,6 +230,7 @@ ORDER BY (workspace_id, study_id, revision)
 
 export const PLAYTEST_SCHEMA_STATEMENTS: readonly string[] = [
   CREATE_PLAYTEST_BATCHES,
+  CREATE_PLAYTEST_LAUNCH_INTENTS,
   CREATE_PLAYTEST_EPISODES,
   CREATE_PLAYTEST_FINDINGS,
   CREATE_PLAYTEST_REVIEWS,
@@ -247,6 +264,13 @@ export const PLAYTEST_FINDING_SCHEMA_MIGRATIONS: readonly string[] = [
 /** Idempotent follow-up migrations for batch assignment pairing. */
 export const PLAYTEST_ASSIGNMENT_SCHEMA_MIGRATIONS: readonly string[] = [
   ALTER_PLAYTEST_EPISODES_ADD_ASSIGNMENT
+];
+
+/** Keep immutable launch-request timestamps independent of server timezone. */
+export const PLAYTEST_LAUNCH_INTENT_SCHEMA_MIGRATIONS: readonly string[] = [
+  `ALTER TABLE ${PLAYTEST_LAUNCH_INTENTS_TABLE} ` +
+    `MODIFY COLUMN created_at DateTime64(3, 'UTC'), ` +
+    `MODIFY COLUMN expires_at DateTime64(3, 'UTC')`
 ];
 
 /** Idempotent DDL initialization; errors fail closed as typed unavailability. */
@@ -287,6 +311,25 @@ export async function ensurePlaytestSchema(
       } catch (error) {
         throw new PlaytestSourceUnavailableError(
           "failed to apply Playtesting assignment schema migration",
+          error
+        );
+      }
+    })
+  );
+  await Promise.all(
+    PLAYTEST_LAUNCH_INTENT_SCHEMA_MIGRATIONS.map(async (statement) => {
+      try {
+        await runParameterizedClickHouseStatement(
+          endpoint,
+          statement,
+          {},
+          {
+            ...(fetchImpl ? { fetchImpl } : {})
+          }
+        );
+      } catch (error) {
+        throw new PlaytestSourceUnavailableError(
+          "failed to apply Playtesting launch-intent schema migration",
           error
         );
       }

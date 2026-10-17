@@ -24,9 +24,171 @@ import type { PlaytestingScope } from "./playtesting-url.ts";
 import { PlaytestingLiveRuns } from "./PlaytestingLiveRuns.ts";
 import {
   PlaytestingRunControls,
-  type PlaytestingRunSetup
+  type PlaytestingRunSetup,
+  playtestingRunSetupBlocker
 } from "./PlaytestingRunControls.tsx";
 import { usePlaytestingActiveRuns } from "./use-playtesting-active-runs.ts";
+
+function adapterReadinessStatus(
+  setup: PlaytestingRunSetup
+): "ready" | "check-required" | "unavailable" {
+  return setup.kind === "available"
+    ? setup.capabilities.modeReadiness["adapter-accelerated"].status
+    : "unavailable";
+}
+
+function visualModeReadinessCard(
+  setup: PlaytestingRunSetup,
+  workspaceId: string | null
+): React.JSX.Element {
+  const readiness =
+    setup.kind === "available"
+      ? setup.capabilities.modeReadiness["autonomous-visual"]
+      : null;
+  return React.createElement(
+    "section",
+    {
+      className:
+        "rounded-lg border border-border bg-background/50 p-4 opacity-75",
+      "aria-label": "Autonomous visual mode readiness",
+      "data-playtesting-mode": "autonomous-visual",
+      "data-mode-status": readiness?.status ?? "unavailable"
+    },
+    React.createElement(
+      "p",
+      { className: "font-semibold" },
+      "Autonomous visual"
+    ),
+    React.createElement(
+      "p",
+      { className: "mt-1 text-xs font-medium text-fg-muted" },
+      readiness?.reasons[0]?.label ?? "Visual readiness unavailable"
+    ),
+    React.createElement(
+      "details",
+      { className: "mt-2", "data-testid": "visual-readiness-details" },
+      React.createElement(
+        "summary",
+        { className: "cursor-pointer text-xs text-fg-muted" },
+        readiness
+          ? "Readiness details (" + String(readiness.reasons.length) + ")"
+          : "Readiness details"
+      ),
+      React.createElement(
+        "ul",
+        {
+          className: "mt-2 grid gap-2 text-xs text-fg-secondary",
+          "aria-label": "Autonomous visual readiness reasons"
+        },
+        ...(readiness?.reasons ?? []).map((reason) =>
+          React.createElement(
+            "li",
+            { key: reason.code },
+            React.createElement(
+              "span",
+              { className: "font-medium" },
+              reason.label
+            ),
+            ": ",
+            reason.message
+          )
+        ),
+        readiness === null
+          ? React.createElement(
+              "li",
+              null,
+              "Runtime could not read visual mode readiness. This mode will not silently fall back to a headless policy."
+            )
+          : null
+      ),
+      readiness && readiness.targets.length > 0
+        ? React.createElement(
+            "ul",
+            {
+              className: "mt-3 grid gap-1 text-xs text-fg-muted",
+              "aria-label": "Approved visual targets"
+            },
+            ...readiness.targets.map((target) =>
+              React.createElement(
+                "li",
+                { key: target.targetId },
+                target.name +
+                  " · " +
+                  target.controlTimingClass +
+                  " · " +
+                  target.entryRequirements +
+                  " entry"
+              )
+            )
+          )
+        : null
+    ),
+    workspaceId
+      ? React.createElement(
+          NavigationLink,
+          {
+            href: workspacePath(workspaceId),
+            className:
+              "mt-3 inline-flex text-sm font-medium text-accent hover:underline",
+            dataAttributes: {
+              "data-playtesting-manage-visual-targets": "true"
+            }
+          },
+          "Manage visual target permissions"
+        )
+      : null
+  );
+}
+
+function adapterModeReadinessCard(
+  setup: PlaytestingRunSetup
+): React.JSX.Element {
+  const blocker = playtestingRunSetupBlocker(setup);
+  return React.createElement(
+    "section",
+    {
+      className: blocker
+        ? "rounded-lg border border-border bg-background/50 p-4"
+        : "rounded-lg border border-accent/60 bg-accent/5 p-4",
+      "aria-label": "Adapter-accelerated mode",
+      "data-playtesting-mode": "adapter-accelerated",
+      "data-mode-status": adapterReadinessStatus(setup)
+    },
+    React.createElement(
+      "p",
+      { className: "font-semibold" },
+      "Adapter-accelerated"
+    ),
+    React.createElement(
+      "p",
+      { className: "mt-1 text-xs font-medium text-fg-muted" },
+      blocker?.label ?? "Ready to run"
+    ),
+    React.createElement(
+      "p",
+      { className: "mt-3 text-sm text-fg-secondary" },
+      "Runs the approved game adapter against the latest committed checkout. Results are structured and fast, but do not represent what a player sees."
+    )
+  );
+}
+
+function PlaytestingModeReadinessCards({
+  setup,
+  workspaceId
+}: {
+  readonly setup: PlaytestingRunSetup;
+  readonly workspaceId: string | null;
+}): React.JSX.Element {
+  return React.createElement(
+    "div",
+    {
+      className:
+        "grid gap-3 border-b border-border px-5 py-4 sm:grid-cols-2 sm:px-6"
+    },
+    visualModeReadinessCard(setup, workspaceId),
+    adapterModeReadinessCard(setup)
+  );
+}
 
 export function PlaytestingRunDashboard({
   setup,
@@ -164,82 +326,16 @@ export function PlaytestingRunDashboard({
                 "Close"
               )
             ),
-            React.createElement(
-              "div",
-              {
-                className:
-                  "grid gap-3 border-b border-border px-5 py-4 sm:grid-cols-2 sm:px-6"
-              },
-              React.createElement(
-                "section",
-                {
-                  className:
-                    "rounded-lg border border-border bg-background/50 p-4 opacity-75",
-                  "aria-label": "Autonomous visual mode unavailable",
-                  "data-playtesting-mode": "autonomous-visual",
-                  "data-mode-status": "unavailable"
-                },
-                React.createElement(
-                  "p",
-                  { className: "font-semibold" },
-                  "Autonomous visual"
-                ),
-                React.createElement(
-                  "p",
-                  { className: "mt-1 text-xs font-medium text-fg-muted" },
-                  "Not available in this Runtime yet"
-                ),
-                React.createElement(
-                  "p",
-                  { className: "mt-3 text-sm text-fg-secondary" },
-                  "The visual browser driver and Smart-directed decision loop are not installed. This mode will not silently fall back to a headless policy."
-                ),
-                scope.workspaceId
-                  ? React.createElement(
-                      NavigationLink,
-                      {
-                        href: workspacePath(scope.workspaceId),
-                        className:
-                          "mt-3 inline-flex text-sm font-medium text-accent hover:underline",
-                        dataAttributes: {
-                          "data-playtesting-manage-visual-targets": "true"
-                        }
-                      },
-                      "Manage visual target permissions"
-                    )
-                  : null
-              ),
-              React.createElement(
-                "section",
-                {
-                  className:
-                    "rounded-lg border border-accent/60 bg-accent/5 p-4",
-                  "aria-label": "Adapter-accelerated mode",
-                  "data-playtesting-mode": "adapter-accelerated",
-                  "data-mode-status": "current"
-                },
-                React.createElement(
-                  "p",
-                  { className: "font-semibold" },
-                  "Adapter-accelerated"
-                ),
-                React.createElement(
-                  "p",
-                  { className: "mt-1 text-xs font-medium text-fg-muted" },
-                  "Current supported mode"
-                ),
-                React.createElement(
-                  "p",
-                  { className: "mt-3 text-sm text-fg-secondary" },
-                  "Runs the approved game adapter against the latest committed checkout. Results are structured and fast, but do not represent what a player sees."
-                )
-              )
-            ),
+            React.createElement(PlaytestingModeReadinessCards, {
+              setup,
+              workspaceId: scope.workspaceId
+            }),
             React.createElement(
               "div",
               { className: "p-5 sm:p-6" },
               React.createElement(PlaytestingRunControls, {
                 setup,
+                workspaceId: scope.workspaceId,
                 onRunStarted
               })
             )

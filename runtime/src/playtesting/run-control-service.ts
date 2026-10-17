@@ -31,6 +31,7 @@ export function getDefaultPlaytestRunControl(): PlaytestRunOwner {
     },
     approvalRepository,
     playtestRepository,
+    launchIntentRepository: playtestRepository,
     readWorkspaceCatalog: () => configRepository.readWorkspaceCatalog(),
     launchAnalystProcess: launchPlaytestAnalystProcess
   });

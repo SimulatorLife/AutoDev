@@ -7,14 +7,17 @@ import {
 } from "@simulatorlife/autodev-core";
 import React, { useEffect, useState } from "react";
 
+import { Button } from "../../components/forms/Button.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import {
   DETAIL_PANEL_CLASS,
   NESTED_PANEL_CLASS
 } from "../../components/layout/Panel.ts";
+import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { FIELD_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
 import {
+  MONO_META_CLASS,
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
@@ -39,7 +42,6 @@ const DEFAULT_LIMITS = {
   screenshotCountPerEpisode: 160,
   artifactBytesPerEpisode: 64 * 1024 * 1024
 } as const;
-const TARGET_DETAIL_TEXT_CLASS = "mt-1 text-sm";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -109,7 +111,7 @@ function textField(
   return React.createElement(
     "label",
     {
-      className: `flex min-w-0 flex-col gap-1 text-xs text-fg-muted ${options.className ?? ""}`,
+      className: `flex min-w-0 flex-col gap-1 ${MUTED_META_CLASS} ${options.className ?? ""}`,
       key: name
     },
     label,
@@ -154,12 +156,12 @@ function targetCard(
         React.createElement("p", { className: "font-medium" }, target.name),
         React.createElement(
           "p",
-          { className: "mt-1 break-all font-mono text-xs text-fg-muted" },
+          { className: `mt-1 break-all ${MONO_META_CLASS}` },
           target.targetId
         ),
         React.createElement(
           "p",
-          { className: "mt-2 break-all text-sm text-fg-secondary" },
+          { className: `mt-2 break-all ${MUTED_BODY_CLASS}` },
           target.entryUrl
         )
       ),
@@ -169,69 +171,39 @@ function targetCard(
       })
     ),
     React.createElement(
-      "dl",
-      { className: "mt-3 grid gap-x-4 gap-y-2 sm:grid-cols-2" },
+      DetailGrid,
+      { columns: 2, className: "mt-3" },
       React.createElement(
-        "div",
-        null,
-        React.createElement(
-          "dt",
-          { className: MUTED_META_CLASS },
-          "Allowed origins"
-        ),
-        React.createElement(
-          "dd",
-          { className: "mt-1 break-all text-sm" },
-          target.allowedOrigins.join(", ")
-        )
+        DetailValue,
+        {
+          label: "Allowed origins",
+          valueClassName: `${MUTED_BODY_CLASS} break-all`
+        },
+        target.allowedOrigins.join(", ")
       ),
       React.createElement(
-        "div",
-        null,
-        React.createElement(
-          "dt",
-          { className: MUTED_META_CLASS },
-          "Inputs / timing"
-        ),
-        React.createElement(
-          "dd",
-          { className: TARGET_DETAIL_TEXT_CLASS },
-          `${target.inputCapabilities.join(", ")} · ${target.controlTimingClass}`
-        )
+        DetailValue,
+        { label: "Inputs / timing", valueClassName: MUTED_BODY_CLASS },
+        `${target.inputCapabilities.join(", ")} · ${target.controlTimingClass}`
       ),
       React.createElement(
-        "div",
-        null,
-        React.createElement(
-          "dt",
-          { className: MUTED_META_CLASS },
-          "Entry requirement"
-        ),
-        React.createElement(
-          "dd",
-          { className: TARGET_DETAIL_TEXT_CLASS },
-          target.entryRequirements
-        )
+        DetailValue,
+        { label: "Entry requirement", valueClassName: MUTED_BODY_CLASS },
+        target.entryRequirements
       ),
       React.createElement(
-        "div",
-        null,
-        React.createElement("dt", { className: MUTED_META_CLASS }, "Budget"),
-        React.createElement(
-          "dd",
-          { className: TARGET_DETAIL_TEXT_CLASS },
-          `${target.limits.episodeCount} episode · ${target.limits.maxStepsPerEpisode} steps · ${Math.round(target.limits.wallTimeMs / 1000)}s · ${target.limits.screenshotCountPerEpisode} frames`
-        )
+        DetailValue,
+        { label: "Budget", valueClassName: MUTED_BODY_CLASS },
+        `${target.limits.episodeCount} episode · ${target.limits.maxStepsPerEpisode} steps · ${Math.round(target.limits.wallTimeMs / 1000)}s · ${target.limits.screenshotCountPerEpisode} frames`
       ),
       React.createElement(
-        "div",
-        { className: "sm:col-span-2" },
-        React.createElement("dt", { className: MUTED_META_CLASS }, "Approved"),
-        React.createElement(
-          "dd",
-          { className: TARGET_DETAIL_TEXT_CLASS },
-          `${target.approvedAt} by ${target.approvedBy}`
-        )
+        DetailValue,
+        {
+          label: "Approved",
+          valueClassName: MUTED_BODY_CLASS,
+          rowClassName: "sm:col-span-2"
+        },
+        `${target.approvedAt} by ${target.approvedBy}`
       ),
       active
         ? React.createElement(
@@ -245,7 +217,9 @@ function targetCard(
               },
               React.createElement(
                 "summary",
-                { className: "cursor-pointer text-sm font-medium text-error" },
+                {
+                  className: `cursor-pointer ${MUTED_BODY_CLASS} font-medium text-error`
+                },
                 "Revoke target"
               ),
               React.createElement(
@@ -262,8 +236,7 @@ function targetCard(
                 React.createElement(
                   "label",
                   {
-                    className:
-                      "flex min-w-64 flex-1 flex-col gap-1 text-xs text-fg-muted"
+                    className: `flex min-w-64 flex-1 flex-col gap-1 ${MUTED_META_CLASS}`
                   },
                   "Reason",
                   React.createElement("input", {
@@ -275,10 +248,10 @@ function targetCard(
                   })
                 ),
                 React.createElement(
-                  "button",
+                  Button,
                   {
                     type: "submit",
-                    className: `${FIELD_CONTROL_CLASS} border-error/60 text-error`,
+                    variant: "destructive",
                     disabled: pendingTargetId !== null
                   },
                   pendingTargetId === target.targetId
@@ -521,7 +494,9 @@ export function WorkspaceVisualPlaytestTargetManager({
       },
       React.createElement(
         "summary",
-        { className: "cursor-pointer px-4 py-3 text-sm font-medium" },
+        {
+          className: `cursor-pointer px-4 py-3 ${MUTED_BODY_CLASS} font-medium`
+        },
         "Add a visual target"
       ),
       React.createElement(
@@ -558,7 +533,7 @@ export function WorkspaceVisualPlaytestTargetManager({
           { className: "grid gap-3 md:grid-cols-2" },
           React.createElement(
             "label",
-            { className: "flex flex-col gap-1 text-xs text-fg-muted" },
+            { className: `flex flex-col gap-1 ${MUTED_META_CLASS}` },
             "Target name",
             React.createElement("input", {
               className: FIELD_CONTROL_CLASS,
@@ -600,7 +575,7 @@ export function WorkspaceVisualPlaytestTargetManager({
             { className: "flex flex-col gap-2" },
             React.createElement(
               "legend",
-              { className: "text-xs text-fg-muted" },
+              { className: MUTED_META_CLASS },
               "Allowed inputs"
             ),
             ...(
@@ -614,7 +589,7 @@ export function WorkspaceVisualPlaytestTargetManager({
                 "label",
                 {
                   key: value,
-                  className: "flex min-h-8 items-center gap-2 text-sm"
+                  className: `flex min-h-8 items-center gap-2 ${MUTED_BODY_CLASS}`
                 },
                 React.createElement("input", {
                   type: "checkbox",
@@ -628,7 +603,7 @@ export function WorkspaceVisualPlaytestTargetManager({
           ),
           React.createElement(
             "label",
-            { className: "flex flex-col gap-1 text-xs text-fg-muted" },
+            { className: `flex flex-col gap-1 ${MUTED_META_CLASS}` },
             "Control timing",
             React.createElement(
               "select",
@@ -645,7 +620,7 @@ export function WorkspaceVisualPlaytestTargetManager({
           ),
           React.createElement(
             "label",
-            { className: "flex flex-col gap-1 text-xs text-fg-muted" },
+            { className: `flex flex-col gap-1 ${MUTED_META_CLASS}` },
             "Entry requirement",
             React.createElement(
               "select",
@@ -672,7 +647,9 @@ export function WorkspaceVisualPlaytestTargetManager({
           { className: "rounded-lg border border-border p-3" },
           React.createElement(
             "summary",
-            { className: "cursor-pointer text-sm font-medium" },
+            {
+              className: `cursor-pointer ${MUTED_BODY_CLASS} font-medium`
+            },
             "Per-episode budgets"
           ),
           React.createElement(
@@ -742,14 +719,14 @@ export function WorkspaceVisualPlaytestTargetManager({
         failure
           ? React.createElement(
               "p",
-              { className: "text-sm text-error", role: "alert" },
+              { className: `${MUTED_BODY_CLASS} text-error`, role: "alert" },
               failure
             )
           : null,
         announcement
           ? React.createElement(
               "p",
-              { className: "text-sm text-success", role: "status" },
+              { className: `${MUTED_BODY_CLASS} text-success`, role: "status" },
               announcement
             )
           : null,
@@ -768,17 +745,17 @@ export function WorkspaceVisualPlaytestTargetManager({
               "This workspace is disabled. Target approvals are read-only until it is re-enabled."
             ),
         React.createElement(
-          "button",
+          Button,
           {
-            className:
-              "min-h-11 justify-self-start rounded-md bg-accent px-4 py-2 text-sm font-semibold text-fg-inverse disabled:cursor-not-allowed disabled:opacity-60",
+            className: "min-h-11 justify-self-start",
             disabled:
               pending ||
               targets === null ||
               !workspaceEnabled ||
               !canApproveTarget ||
               targetId === "visual-target",
-            type: "submit"
+            type: "submit",
+            variant: "primary"
           },
           pending ? "Approving visual target…" : "Approve visual target"
         )

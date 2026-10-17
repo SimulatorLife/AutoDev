@@ -568,12 +568,28 @@ function branchExecution(
 ): NonNullable<Parameters<typeof runPlaytestEpisode>[0]["branch"]> {
   const advertised = capabilities(GAME_BUILD, true);
   const parentEpisode: PlaytestEpisode = {
-    schema: "autodev-playtest-episode-v4",
+    schema: "autodev-playtest-episode-v5",
     episodeId: "parent-episode-1",
     revision: 4,
     batchId: "parent-batch-1",
     assignmentId: "a-0001",
     branchLineage: null,
+    executionProvenance: {
+      mode: "adapter-accelerated",
+      source: {
+        kind: "repo-checkout",
+        repository: WORKSPACE_ID,
+        revision: build().buildSha,
+        revisionConfidence: "verified",
+        checkoutState: "clean",
+        artifactFingerprint: null,
+        targetId: null,
+        targetOrigin: null
+      },
+      observationSource: "engine-adapter",
+      actionSource: "engine-policy",
+      derivedFrom: null
+    },
     identity: {
       workspaceId: WORKSPACE_ID,
       repository: WORKSPACE_ID,
@@ -760,6 +776,30 @@ test("episode runner executes one approved episode, filters hidden observation/e
     assert.equal(result.episode.identity.workspaceId, WORKSPACE_ID);
     assert.equal(result.episode.identity.seed, "seed-1");
     assert.equal(result.episode.identity.rngInitialStateHash, "e".repeat(64));
+    assert.equal(
+      result.episode.executionProvenance.mode,
+      "adapter-accelerated"
+    );
+    assert.equal(
+      result.episode.executionProvenance.source.kind,
+      "repo-checkout"
+    );
+    assert.equal(
+      result.episode.executionProvenance.source.revision,
+      build().buildSha
+    );
+    assert.equal(
+      result.episode.executionProvenance.source.revisionConfidence,
+      "verified"
+    );
+    assert.equal(
+      result.episode.executionProvenance.observationSource,
+      "engine-adapter"
+    );
+    assert.equal(
+      result.episode.executionProvenance.actionSource,
+      "engine-policy"
+    );
     assert.deepEqual(policyObservation, { room: "hall" });
     assert.deepEqual(
       result.episode.metrics.map((metric) => metric.metricId),

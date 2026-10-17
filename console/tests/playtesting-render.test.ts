@@ -12,6 +12,7 @@ import {
   type PlaytestFinding,
   playtestFindingIdentityHashInput,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
+  PLAYTESTS_EPISODE_SCHEMA,
   type PlaytestSessionReview,
   type WorkspaceEntry
 } from "@simulatorlife/autodev-core";
@@ -34,12 +35,28 @@ const workspace: WorkspaceEntry = {
 
 function episode(): PlaytestEpisode {
   return {
-    schema: "autodev-playtest-episode-v4",
+    schema: PLAYTESTS_EPISODE_SCHEMA,
     episodeId: "episode-17",
     revision: 2,
     batchId: "batch-1",
     assignmentId: "a-0017",
     branchLineage: null,
+    executionProvenance: {
+      mode: "adapter-accelerated",
+      source: {
+        kind: "repo-checkout",
+        repository: WORKSPACE,
+        revision: BUILD_SHA,
+        revisionConfidence: "verified",
+        checkoutState: "clean",
+        artifactFingerprint: null,
+        targetId: null,
+        targetOrigin: null
+      },
+      observationSource: "engine-adapter",
+      actionSource: "engine-policy",
+      derivedFrom: null
+    },
     identity: {
       workspaceId: WORKSPACE,
       repository: WORKSPACE,
@@ -191,6 +208,8 @@ test("session rows own analyst selection and link directly to diagnosis", () => 
   assert.match(html, /Include session episode-17 in analyst review/u);
   assert.match(html, /data-playtest-episode-link="episode-17"/u);
   assert.match(html, /Open session/u);
+  assert.match(html, /Adapter-accelerated/u);
+  assert.match(html, /Verified aaaaaaaaaaaa/u);
   assert.doesNotMatch(html, /playtesting-selection-option/u);
   assert.match(html, /0 of 40 selected/u);
   assert.match(html, /aria-label="List view" aria-pressed="true"/u);
@@ -206,6 +225,37 @@ test("session rows own analyst selection and link directly to diagnosis", () => 
   );
   assert.match(gridHtml, /sm:grid-cols-2 xl:grid-cols-3/u);
   assert.match(gridHtml, /aria-label="Grid view" aria-pressed="true"/u);
+
+  const visualEpisode: PlaytestEpisode = {
+    ...current,
+    executionProvenance: {
+      mode: "autonomous-visual",
+      source: {
+        kind: "URL-only",
+        repository: null,
+        revision: null,
+        revisionConfidence: "not-applicable",
+        checkoutState: "not-applicable",
+        artifactFingerprint: null,
+        targetId: "racing-target",
+        targetOrigin: "http://racing.local"
+      },
+      observationSource: "browser-ui",
+      actionSource: "browser-input",
+      derivedFrom: null
+    }
+  };
+  const visualHtml = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionsWorkspace, {
+      scope: scope({ view: "sessions" }),
+      rows: [visualEpisode],
+      total: 1,
+      nextCursor: null
+    })
+  );
+  assert.match(visualHtml, /Autonomous visual/u);
+  assert.match(visualHtml, /Commit not applicable/u);
+  assert.match(visualHtml, /http:\/\/racing\.local/u);
   assert.match(gridHtml, /Recorded game outcome: loss/u);
 });
 
@@ -298,6 +348,8 @@ test("inspector renders only recorded structured evidence and labels missing fra
   );
   assert.match(html, /Execution status/u);
   assert.match(html, /Game outcome/u);
+  assert.match(html, /Adapter-accelerated/u);
+  assert.match(html, /Verified aaaaaaaaaaaa/u);
   assert.match(html, /Completed/u);
   assert.match(html, /LOSS/u);
   assert.match(html, /No frame was recorded/u);

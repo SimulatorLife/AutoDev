@@ -16,12 +16,15 @@ import {
   assertPlaytestEvidenceLocatorsWithinPacket,
   assertPlaytestEvidencePacket,
   assertPlaytestFindingEvidenceStatusConsistent,
+  assertPlaytestReviewNarrativeGroundedInPacket,
+  assertPlaytestReviewNarrativeMinimums,
   assertPlaytestSessionReviewHasEvidence,
   buildPlaytestCoverageManifestDraft,
   buildPlaytestEvidencePacket,
   buildPlaytestFindingIdentity,
   buildPlaytestIssueDrafts,
   canonicalPlaytestJson,
+  type PlaytestAdapterBranchOperation,
   type PlaytestArtifactReference,
   type PlaytestAssignmentBranch,
   type PlaytestAssignmentManifest,
@@ -61,6 +64,8 @@ import {
   type PlaytestIssueDraft,
   playtestIssueReportingRefusal,
   type PlaytestKnownEvidenceIndex,
+  type PlaytestLaunchAssignment,
+  type PlaytestLaunchRequest,
   type PlaytestOwnerDisposition,
   type PlaytestReviewCandidate,
   type PlaytestReviewCompleteness,
@@ -101,6 +106,7 @@ import {
 } from "@simulatorlife/autodev-data";
 import {
   PlaytestInvalidCursorError,
+  type PlaytestLaunchIntent,
   PlaytestSourceUnavailableError
 } from "@simulatorlife/autodev-data/playtesting";
 import type { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
@@ -137,6 +143,10 @@ import {
   runPlaytestEpisode
 } from "./episode-runner.ts";
 import {
+  playtestBranchLaunchRequestSchema,
+  playtestLaunchRequestSchema
+} from "./launch-request-schema.ts";
+import {
   createBuiltinPlaytestPolicy,
   type PlaytestPolicy,
   PLAYTESTS_BUILTIN_POLICY_IDS
@@ -154,6 +164,29 @@ export class PlaytestMcpValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "PlaytestMcpValidationError";
+  }
+}
+
+export class PlaytestMcpConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PlaytestMcpConflictError";
+  }
+}
+
+class PlaytestReviewNarrativeValidationError extends Error {
+  constructor() {
+    super(
+      "Review narrative fields must contain at least three words and sixteen characters. Add packet-specific detail or an evidence-based reason for unavailable sections; compact experiment controls are allowed."
+    );
+    this.name = "PlaytestReviewNarrativeValidationError";
+  }
+}
+
+class PlaytestReviewGroundingValidationError extends Error {
+  constructor(detail: string) {
+    super(`Review narrative is not grounded in the selected packet: ${detail}`);
+    this.name = "PlaytestReviewGroundingValidationError";
   }
 }
 
@@ -214,34 +247,6 @@ export interface PlaytestRunCancellationResult {
   readonly cancellationRequested: boolean;
 }
 
-/** One bounded batch assignment; pairs to an episode by assignmentId, not seed. */
-export interface PlaytestBatchAssignmentRequest {
-  readonly scenario: string;
-  readonly policy: string;
-  readonly seed: string;
-  readonly goal?: string | undefined;
-  readonly maxSteps?: number | undefined;
-}
-
-/** One approved branch is frozen and executed as a one-assignment batch. */
-export interface PlaytestBranchRunRequest {
-  readonly workspaceId?: string | undefined;
-  readonly parentEpisodeId: string;
-  readonly branchStep: number;
-  readonly alternativeActionId: string;
-  readonly policy?: string | undefined;
-  /** Maximum continuation steps; replay-prefix steps count against the approval. */
-  readonly maxSteps?: number | undefined;
-}
-
-/** An ordered batch run or one explicit checkpoint-backed branch request. */
-export type PlaytestRunRequest =
-  | {
-      readonly workspaceId?: string | undefined;
-      readonly assignments: readonly PlaytestBatchAssignmentRequest[];
-    }
-  | PlaytestBranchRunRequest;
-
 export interface PlaytestRunStatus {
   readonly batchId: string;
   readonly status:
@@ -259,6 +264,33 @@ export interface PlaytestRunStatus {
     readonly retryable: boolean;
     readonly message: string;
   } | null;
+}
+
+export interface PlaytestLaunchIntentRepository {
+  getLaunchIntent(
+    workspaceId: string,
+    actorId: string,
+    requestId: string
+  ): Promise<PlaytestLaunchIntent | null>;
+  insertLaunchIntent(intent: PlaytestLaunchIntent): Promise<void>;
+}
+
+export interface PlaytestRunStartReceipt {
+  readonly batchId: string;
+  readonly assignmentCount: number;
+  readonly assignmentIds: readonly string[];
+  readonly createdAt: string;
+  readonly status: PlaytestRunStatus["status"];
+}
+
+export interface PlaytestRunRequestLookup {
+  readonly requestId: string;
+  readonly state: "not-found" | "expired" | "pending" | "accepted";
+  readonly batchId: string | null;
+  readonly assignmentCount: number | null;
+  readonly assignmentIds: readonly string[];
+  readonly createdAt: string | null;
+  readonly status: PlaytestRunStatus["status"] | null;
 }
 
 export interface PlaytestAnalystReviewReceipt {
@@ -319,6 +351,8 @@ export interface PlaytestAnalystProcessLauncher {
  */
 export interface PlaytestRunCapabilities {
   readonly workspaceId: string;
+  /** Revision returned by authenticated Control API preflight when present. */
+  readonly capabilityRevision?: string | undefined;
   readonly workspaceEnabled: boolean;
   readonly workspaceCatalog: WorkspaceCatalogRead["status"];
   readonly approved: boolean;
@@ -388,13 +422,13 @@ export interface PlaytestRunControl {
   ): PlaytestRunCapabilities | Promise<PlaytestRunCapabilities>;
   startRun(
     session: PlaytestMcpSession,
-    request: PlaytestRunRequest
-  ): Promise<{
-    readonly batchId: string;
-    readonly assignmentCount: number;
-    readonly createdAt: string;
-    readonly status: "running";
-  }>;
+    request: PlaytestLaunchRequest
+  ): Promise<PlaytestRunStartReceipt>;
+  lookupRunByRequest(
+    session: PlaytestRunControlActor,
+    workspaceId: string,
+    requestId: string
+  ): Promise<PlaytestRunRequestLookup>;
   listActiveRuns(
     session: PlaytestRunControlActor,
     workspaceId: string
@@ -486,6 +520,8 @@ export interface PlaytestRunControlOptions {
     workspaceId: string
   ) => PlaytestArtifactStore;
   readonly playtestRepository?: PlaytestingRepositoryOps | undefined;
+  /** Durable Data owner; required at launch, omitted only for read-only test owners. */
+  readonly launchIntentRepository?: PlaytestLaunchIntentRepository | undefined;
   readonly approvalRepository?: WorkspacePlaytestApprovalRepository | undefined;
   readonly runEpisodeHandler?: (
     options: PlaytestEpisodeRunOptions
@@ -666,6 +702,7 @@ interface ActivePlaytestRun {
   readonly ownerTaskId: string | undefined;
   readonly ownerRunId: string | undefined;
   readonly assignmentCount: number;
+  readonly assignmentIds: readonly string[];
   readonly reservedWorkers: number;
   readonly manifestHash: string;
   readonly createdAt: string;
@@ -867,31 +904,6 @@ const reviewExperimentSchema = z.strictObject({
   metricId: z.string().min(1).max(256),
   controls: z.array(z.string().min(1).max(1000)).min(1).max(32),
   budget: z.string().min(1).max(1000)
-});
-
-const playtestBatchAssignmentSchema = z.strictObject({
-  scenario: z.string().min(1).max(256),
-  policy: z.string().min(1).max(256),
-  seed: z.string().min(1).max(256),
-  goal: z.string().max(1000).optional(),
-  maxSteps: z.number().int().min(1).max(100_000).optional()
-});
-
-const playtestRunRequestSchema = z.strictObject({
-  workspaceId: z.string().min(1).max(256).optional(),
-  assignments: z
-    .array(playtestBatchAssignmentSchema)
-    .min(1)
-    .max(PLAYTESTS_MAX_BATCH_ASSIGNMENTS)
-});
-
-const playtestBranchRunRequestSchema = z.strictObject({
-  workspaceId: z.string().min(1).max(256).optional(),
-  parentEpisodeId: z.string().min(1).max(256),
-  branchStep: z.number().int().min(0).max(99_999),
-  alternativeActionId: z.string().min(1).max(256),
-  policy: z.string().min(1).max(256).optional(),
-  maxSteps: z.number().int().min(1).max(100_000).optional()
 });
 
 /**
@@ -2008,6 +2020,60 @@ function activeRunStatus(run: ActivePlaytestRun): PlaytestRunStatus {
   };
 }
 
+const LAUNCH_INTENT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const LAUNCH_INTENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+
+function launchIntentHash(request: PlaytestLaunchRequest): string {
+  const { requestId: _requestId, ...immutablePayload } = request;
+  return createHash("sha256")
+    .update(canonicalPlaytestJson(immutablePayload))
+    .digest("hex");
+}
+
+function batchAssignmentIds(batch: PlaytestBatch): readonly string[] {
+  return batch.assignmentInventory.status === "frozen"
+    ? batch.assignmentInventory.manifest.assignments.map(
+        (assignment) => assignment.assignmentId
+      )
+    : [];
+}
+
+function startReceiptForActiveRun(
+  run: ActivePlaytestRun
+): PlaytestRunStartReceipt {
+  return {
+    batchId: run.batchId,
+    assignmentCount: run.assignmentCount,
+    assignmentIds: run.assignmentIds,
+    createdAt: run.createdAt,
+    status: run.phase
+  };
+}
+
+async function startReceiptForPersistedBatch(input: {
+  readonly repository: PlaytestingRepositoryOps;
+  readonly workspaceId: string;
+  readonly batch: PlaytestBatch;
+  readonly activeRun: ActivePlaytestRun | undefined;
+  readonly locks: Map<string, Promise<void>>;
+}): Promise<PlaytestRunStartReceipt> {
+  const status = input.activeRun
+    ? activeRunStatus(input.activeRun)
+    : await readStoredRunStatus(
+        input.repository,
+        input.workspaceId,
+        input.batch.batchId,
+        input.locks
+      );
+  return {
+    batchId: input.batch.batchId,
+    assignmentCount: input.batch.budget.assignedEpisodes,
+    assignmentIds: batchAssignmentIds(input.batch),
+    createdAt: input.batch.createdAt,
+    status: status.status
+  };
+}
+
 function scenarioFamilyFor(
   prepared: PreparedPlaytestSandbox,
   scenario: string
@@ -2042,14 +2108,14 @@ function assertBatchReviewBudget(
 }
 
 async function resolveBranchExecutionPlan(input: {
-  readonly request: PlaytestBranchRunRequest;
+  readonly request: PlaytestAdapterBranchOperation;
   readonly workspaceId: string;
   readonly approval: WorkspacePlaytestApproval;
   readonly prepared: PreparedPlaytestSandbox;
   readonly repository: PlaytestingRepositoryOps;
   readonly artifacts: PlaytestArtifactStore;
 }): Promise<{
-  readonly assignments: readonly PlaytestBatchAssignmentRequest[];
+  readonly assignments: readonly PlaytestLaunchAssignment[];
   readonly branchPlan: BranchExecutionPlan;
 }> {
   const { request, workspaceId, approval, prepared, repository, artifacts } =
@@ -2221,9 +2287,10 @@ function prepareApprovedBatch(input: {
   readonly workspaceId: string;
   readonly approval: WorkspacePlaytestApproval;
   readonly prepared: PreparedPlaytestSandbox;
-  readonly assignments: readonly PlaytestBatchAssignmentRequest[];
+  readonly assignments: readonly PlaytestLaunchAssignment[];
   readonly branchPlan: BranchExecutionPlan | null;
   readonly batchId: string;
+  readonly createdAt?: string;
 }): ApprovedBatchContext {
   const { workspaceId, approval, prepared, assignments, branchPlan, batchId } =
     input;
@@ -2326,7 +2393,7 @@ function prepareApprovedBatch(input: {
     configHash: prepared.build.configHash,
     rubricHash: prepared.rubricHash,
     approvalRevision: approval.revision,
-    createdAt: new Date().toISOString(),
+    createdAt: input.createdAt ?? new Date().toISOString(),
     assignments: resolved
   } as const;
   const manifest: PlaytestAssignmentManifest = {
@@ -2579,7 +2646,9 @@ interface ExecuteBatchInput {
   readonly session: PlaytestMcpSession;
   readonly workspaceId: string;
   readonly approval: WorkspacePlaytestApproval;
-  readonly assignments: readonly PlaytestBatchAssignmentRequest[];
+  readonly requestedBatchId: string;
+  readonly createdAt: string;
+  readonly assignments: readonly PlaytestLaunchAssignment[];
   readonly branchPlan: BranchExecutionPlan | null;
   /** The latest committed build, resolved and snapshotted once for this batch. */
   readonly prepared: PreparedPlaytestSandbox;
@@ -2596,7 +2665,11 @@ interface ExecuteBatchInput {
   ) => Promise<PlaytestEpisodeRunResult>;
   readonly activeRuns: Map<string, ActivePlaytestRun>;
   readonly assignmentLocks: Map<string, Promise<void>>;
-  readonly onRegistered: (batchId: string, createdAt: string) => void;
+  readonly onRegistered: (
+    batchId: string,
+    createdAt: string,
+    assignmentIds: readonly string[]
+  ) => void;
 }
 
 interface RegisteredBatchContext extends ApprovedBatchContext {
@@ -2741,7 +2814,7 @@ async function persistAssignmentResult(input: {
 async function registerApprovedBatch(
   input: ExecuteBatchInput
 ): Promise<RegisteredBatchContext> {
-  const batchId = "batch-" + randomUUID();
+  const batchId = input.requestedBatchId;
   const prepared = input.prepared;
   const context = prepareApprovedBatch({
     workspaceId: input.workspaceId,
@@ -2749,7 +2822,8 @@ async function registerApprovedBatch(
     prepared,
     assignments: input.assignments,
     branchPlan: input.branchPlan,
-    batchId
+    batchId,
+    createdAt: input.createdAt
   });
   const workerLimit = Math.min(
     input.approval.limits.workerCount,
@@ -2790,6 +2864,9 @@ async function registerApprovedBatch(
     ownerTaskId: input.session.taskId,
     ownerRunId: input.session.runId,
     assignmentCount: context.assignments.length,
+    assignmentIds: context.assignments.map(
+      (assignment) => assignment.assignmentId
+    ),
     reservedWorkers,
     manifestHash: context.manifest.contentHash,
     createdAt,
@@ -2834,7 +2911,11 @@ async function registerApprovedBatch(
     })
   );
   input.activeRuns.set(batchId, activeRun);
-  input.onRegistered(batchId, activeRun.createdAt);
+  input.onRegistered(
+    batchId,
+    activeRun.createdAt,
+    context.assignments.map((assignment) => assignment.assignmentId)
+  );
   return registered;
 }
 
@@ -3255,6 +3336,7 @@ function prepareReviewPacketReceipt(input: {
     assignmentId,
     episodeId,
     episodeRevision: episode?.revision ?? null,
+    executionProvenance: episode?.executionProvenance ?? null,
     traceArtifactId: episode?.trace?.id ?? null,
     rubricHash: context.prepared.rubricHash,
     selectionHash: context.manifest.contentHash,
@@ -4314,14 +4396,12 @@ function knownEvidenceLocatorExists(
   }
 }
 
-function parsePlaytestRunRequest(
-  request: PlaytestRunRequest
-): PlaytestRunRequest {
-  const branch = playtestBranchRunRequestSchema.safeParse(request);
-  if (branch.success) return branch.data;
-  const batch = playtestRunRequestSchema.safeParse(request);
-  if (batch.success) return batch.data;
-  throw new PlaytestMcpValidationError("The playtest run request is invalid.");
+function parsePlaytestLaunchRequest(request: unknown): PlaytestLaunchRequest {
+  const parsed = playtestLaunchRequestSchema.safeParse(request);
+  if (parsed.success) return parsed.data;
+  throw new PlaytestMcpValidationError(
+    "The versioned PlaytestLaunchRequest is invalid."
+  );
 }
 
 function authorizeRunnerWorkspace(
@@ -4403,6 +4483,103 @@ function requiredRunRepository(
     );
   }
   return repository;
+}
+
+function requiredLaunchIntentRepository(
+  repository: PlaytestLaunchIntentRepository | undefined
+): PlaytestLaunchIntentRepository {
+  if (!repository) {
+    throw new PlaytestMcpUnavailableError(
+      "Durable launch-intent storage is unavailable; no playtest was started."
+    );
+  }
+  return repository;
+}
+
+async function reserveLaunchIntent(input: {
+  readonly repository: PlaytestLaunchIntentRepository;
+  readonly workspaceId: string;
+  readonly actorId: string;
+  readonly request: PlaytestLaunchRequest;
+  readonly assignmentCount: number;
+}): Promise<PlaytestLaunchIntent> {
+  if (!LAUNCH_INTENT_REQUEST_ID_PATTERN.test(input.request.requestId)) {
+    throw new PlaytestMcpValidationError(
+      "requestId must be a client-generated 1-128 character launch key."
+    );
+  }
+  const expectedHash = launchIntentHash(input.request);
+  const resolveExisting = (intent: PlaytestLaunchIntent | null) => {
+    if (!intent) return null;
+    if (
+      intent.workspaceId !== input.workspaceId ||
+      intent.actorId !== input.actorId ||
+      intent.requestId !== input.request.requestId
+    ) {
+      throw new PlaytestMcpUnavailableError(
+        "Launch-intent storage returned a mismatched identity."
+      );
+    }
+    if (intent.expiresAt !== "" && Date.parse(intent.expiresAt) <= Date.now()) {
+      throw new PlaytestMcpConflictError(
+        "This requestId has expired. Check its recovery receipt before starting a new attempt."
+      );
+    }
+    if (intent.launchIntentHash !== expectedHash) {
+      throw new PlaytestMcpConflictError(
+        "This requestId is already bound to a different immutable launch payload. Recover that request or choose a new requestId after reviewing the result."
+      );
+    }
+    return intent;
+  };
+  const prior = resolveExisting(
+    await input.repository.getLaunchIntent(
+      input.workspaceId,
+      input.actorId,
+      input.request.requestId
+    )
+  );
+  if (prior) return prior;
+
+  const createdAt = new Date().toISOString();
+  const intent: PlaytestLaunchIntent = {
+    workspaceId: input.workspaceId,
+    actorId: input.actorId,
+    requestId: input.request.requestId,
+    launchIntentHash: expectedHash,
+    batchId: "batch-" + randomUUID(),
+    assignmentCount: input.assignmentCount,
+    createdAt,
+    expiresAt: new Date(
+      Date.parse(createdAt) + LAUNCH_INTENT_RETENTION_MS
+    ).toISOString()
+  };
+  try {
+    await input.repository.insertLaunchIntent(intent);
+    return intent;
+  } catch {
+    // A transport failure may occur after ClickHouse committed the row. Read
+    // back the same identity; never launch from an ambiguous insert ack.
+    let persisted: PlaytestLaunchIntent | null;
+    try {
+      persisted = await input.repository.getLaunchIntent(
+        input.workspaceId,
+        input.actorId,
+        input.request.requestId
+      );
+    } catch {
+      throw new PlaytestMcpUnavailableError(
+        "Launch receipt persistence is ambiguous; recover this request before retrying."
+      );
+    }
+    const resolved = resolveExisting(persisted);
+    if (!resolved) {
+      throw new PlaytestMcpUnavailableError(
+        "Runtime could not durably reserve the launch request; no game process was started."
+      );
+    }
+    return resolved;
+  }
 }
 
 type PlaytestRunnableAssignment =
@@ -4859,118 +5036,311 @@ export function createPlaytestRunControl(
         runPreflight: "required-at-start"
       };
     },
-    async startRun(session, request) {
-      const parsed = parsePlaytestRunRequest(request);
+    startRun(session, request) {
+      const parsed = parsePlaytestLaunchRequest(request);
       const targetWorkspaceId = authorizeRunnerWorkspace(
         session,
         parsed.workspaceId,
         readWorkspaceCatalog
       );
-      const approval = activeRunApproval(approvalRepository, targetWorkspaceId);
+      if (parsed.mode !== "adapter-accelerated") {
+        throw new PlaytestMcpUnavailableError(
+          parsed.mode === "autonomous-visual"
+            ? "Autonomous visual launch is unavailable until its approved browser driver and smart-direct policy are installed."
+            : "Scripted regression launch is unavailable until its approved replay recipe runner is installed."
+        );
+      }
       const repository = requiredRunRepository(playtestRepository);
-      const artifacts = artifactStoreForWorkspace(targetWorkspaceId);
-      let assignments: readonly PlaytestBatchAssignmentRequest[];
-      let branchPlan: BranchExecutionPlan | null = null;
-      // One latest-commit resolution per batch: every assignment, the frozen
-      // manifest and each sandbox run that exact snapshot.
-      const prepared = prepareSandboxHandler(approval);
-      if ("parentEpisodeId" in parsed) {
-        const resolved = await resolveBranchExecutionPlan({
+      const intentRepository = requiredLaunchIntentRepository(
+        options.launchIntentRepository
+      );
+      const assignmentCount =
+        parsed.operation.kind === "batch"
+          ? parsed.operation.assignments.length
+          : 1;
+      const lockKey =
+        "launch-intent\0" +
+        targetWorkspaceId +
+        "\0" +
+        session.actor +
+        "\0" +
+        parsed.requestId;
+
+      return withAssignmentLock(assignmentLocks, lockKey, async () => {
+        const expectedHash = launchIntentHash(parsed);
+        const priorIntent = await intentRepository.getLaunchIntent(
+          targetWorkspaceId,
+          session.actor,
+          parsed.requestId
+        );
+        if (priorIntent) {
+          if (
+            priorIntent.workspaceId !== targetWorkspaceId ||
+            priorIntent.actorId !== session.actor ||
+            priorIntent.requestId !== parsed.requestId
+          ) {
+            throw new PlaytestMcpUnavailableError(
+              "Launch-intent storage returned a mismatched identity."
+            );
+          }
+          if (
+            priorIntent.expiresAt !== "" &&
+            Date.parse(priorIntent.expiresAt) <= Date.now()
+          ) {
+            throw new PlaytestMcpConflictError(
+              "This requestId has expired. Check its recovery receipt before starting a new attempt."
+            );
+          }
+          if (priorIntent.launchIntentHash !== expectedHash) {
+            throw new PlaytestMcpConflictError(
+              "This requestId is already bound to a different immutable launch payload. Recover that request or choose a new requestId after reviewing the result."
+            );
+          }
+          const livePriorRun = activeRuns.get(priorIntent.batchId);
+          if (livePriorRun) return startReceiptForActiveRun(livePriorRun);
+          const priorBatch = await repository.getBatch(
+            targetWorkspaceId,
+            priorIntent.batchId
+          );
+          if (priorBatch) {
+            if (
+              priorBatch.budget.assignedEpisodes !== priorIntent.assignmentCount
+            ) {
+              throw new PlaytestMcpUnavailableError(
+                "The persisted launch receipt does not match its frozen batch."
+              );
+            }
+            return startReceiptForPersistedBatch({
+              repository,
+              workspaceId: targetWorkspaceId,
+              batch: priorBatch,
+              activeRun: activeRuns.get(priorBatch.batchId),
+              locks: assignmentLocks
+            });
+          }
+        }
+
+        const approval = activeRunApproval(
+          approvalRepository,
+          targetWorkspaceId
+        );
+        const artifacts = artifactStoreForWorkspace(targetWorkspaceId);
+        // One latest-commit resolution per batch: every assignment, the frozen
+        // manifest and each sandbox run that exact snapshot.
+        const prepared = prepareSandboxHandler(approval);
+        let assignments: readonly PlaytestLaunchAssignment[];
+        let branchPlan: BranchExecutionPlan | null = null;
+        if (parsed.operation.kind === "branch") {
+          const resolved = await resolveBranchExecutionPlan({
+            request: parsed.operation,
+            workspaceId: targetWorkspaceId,
+            approval,
+            prepared,
+            repository,
+            artifacts
+          });
+          assignments = resolved.assignments;
+          branchPlan = resolved.branchPlan;
+        } else {
+          assignments = parsed.operation.assignments;
+        }
+
+        const intent = await reserveLaunchIntent({
+          repository: intentRepository,
+          workspaceId: targetWorkspaceId,
+          actorId: session.actor,
           request: parsed,
+          assignmentCount
+        });
+        const alreadyPersisted = await repository.getBatch(
+          targetWorkspaceId,
+          intent.batchId
+        );
+        if (alreadyPersisted) {
+          return startReceiptForPersistedBatch({
+            repository,
+            workspaceId: targetWorkspaceId,
+            batch: alreadyPersisted,
+            activeRun: activeRuns.get(alreadyPersisted.batchId),
+            locks: assignmentLocks
+          });
+        }
+
+        let resolveStarted!: (registration: {
+          readonly batchId: string;
+          readonly createdAt: string;
+          readonly assignmentIds: readonly string[];
+        }) => void;
+        let rejectStarted!: (error: unknown) => void;
+        let registeredBatchId: string | null = null;
+        const started = new Promise<{
+          readonly batchId: string;
+          readonly createdAt: string;
+          readonly assignmentIds: readonly string[];
+        }>((resolve, reject) => {
+          resolveStarted = resolve;
+          rejectStarted = reject;
+        });
+        const execution = executeApprovedBatch({
+          session,
           workspaceId: targetWorkspaceId,
           approval,
+          requestedBatchId: intent.batchId,
+          createdAt: intent.createdAt,
+          assignments,
+          branchPlan,
           prepared,
+          artifacts,
           repository,
-          artifacts
+          approvalRepository: approvalRepository!,
+          readWorkspaceCatalog,
+          launchSandbox: launchSandboxHandler ?? launchPlaytestSandbox,
+          runEpisode: runEpisodeHandler,
+          activeRuns,
+          assignmentLocks,
+          onRegistered(batchId, createdAt, assignmentIds) {
+            registeredBatchId = batchId;
+            resolveStarted({ batchId, createdAt, assignmentIds });
+          }
         });
-        assignments = resolved.assignments;
-        branchPlan = resolved.branchPlan;
-      } else {
-        assignments = parsed.assignments;
-      }
-
-      let resolveStarted!: (registration: {
-        readonly batchId: string;
-        readonly createdAt: string;
-      }) => void;
-      let rejectStarted!: (error: unknown) => void;
-      let registeredBatchId: string | null = null;
-      const started = new Promise<{
-        readonly batchId: string;
-        readonly createdAt: string;
-      }>((resolve, reject) => {
-        resolveStarted = resolve;
-        rejectStarted = reject;
-      });
-      const execution = executeApprovedBatch({
-        session,
-        workspaceId: targetWorkspaceId,
-        approval,
-        assignments,
-        branchPlan,
-        prepared,
-        artifacts,
-        repository,
-        approvalRepository: approvalRepository!,
-        readWorkspaceCatalog,
-        launchSandbox: launchSandboxHandler ?? launchPlaytestSandbox,
-        runEpisode: runEpisodeHandler,
-        activeRuns,
-        assignmentLocks,
-        onRegistered(batchId, createdAt) {
-          registeredBatchId = batchId;
-          resolveStarted({ batchId, createdAt });
-        }
-      });
-      void execution.then(
-        (result) => {
-          const cancellationReason =
-            result.cancellation as RunCancellationReason | null;
-          finishRun(
-            result.batchId,
-            {
-              batchId: result.batchId,
-              status: cancellationReason === null ? result.status : "cancelled",
-              cancellationReason,
-              result,
-              error: null
-            },
-            targetWorkspaceId
-          );
-          return undefined;
-        },
-        (error: unknown) => {
-          if (registeredBatchId === null) {
-            rejectStarted(error);
+        void execution.then(
+          (result) => {
+            const cancellationReason =
+              result.cancellation as RunCancellationReason | null;
+            finishRun(
+              result.batchId,
+              {
+                batchId: result.batchId,
+                status:
+                  cancellationReason === null ? result.status : "cancelled",
+                cancellationReason,
+                result,
+                error: null
+              },
+              targetWorkspaceId
+            );
+            return undefined;
+          },
+          (error: unknown) => {
+            if (registeredBatchId === null) {
+              rejectStarted(error);
+              return undefined;
+            }
+            const active = activeRuns.get(registeredBatchId);
+            const safeError = playtestMcpErrorDetails(error);
+            if (safeError.code === "playtest_internal_error") {
+              writeErrorLine("playtest-mcp: internal operation failure.");
+            }
+            finishRun(
+              registeredBatchId,
+              {
+                batchId: registeredBatchId,
+                status: active?.reason ? "cancelled" : "failed",
+                cancellationReason: active?.reason ?? null,
+                result: active ? activeRunProgress(active) : null,
+                error: safeError
+              },
+              targetWorkspaceId
+            );
             return undefined;
           }
-          const active = activeRuns.get(registeredBatchId);
-          const safeError = playtestMcpErrorDetails(error);
-          if (safeError.code === "playtest_internal_error") {
-            // Keep a breadcrumb without serializing stacks that can contain
-            // checkout paths or untrusted adapter/Data error text.
-            writeErrorLine("playtest-mcp: internal operation failure.");
-          }
-          finishRun(
-            registeredBatchId,
-            {
-              batchId: registeredBatchId,
-              status: active?.reason ? "cancelled" : "failed",
-              cancellationReason: active?.reason ?? null,
-              result: active ? activeRunProgress(active) : null,
-              error: safeError
-            },
-            targetWorkspaceId
-          );
-          return undefined;
-        }
+        );
+        const registration = await started;
+        const active = activeRuns.get(registration.batchId);
+        const completed = completedRuns.get(registration.batchId);
+        return {
+          ...registration,
+          assignmentCount,
+          status: active
+            ? active.phase
+            : (completed?.status.status ?? "running")
+        };
+      });
+    },
+    async lookupRunByRequest(session, workspaceId, requestId) {
+      assertRunStatusReader(session);
+      const authorizedWorkspaceId = authorizeExistingRunWorkspace(
+        session,
+        workspaceId,
+        readWorkspaceCatalog
       );
-      const registration = await started;
+      if (!LAUNCH_INTENT_REQUEST_ID_PATTERN.test(requestId)) {
+        throw new PlaytestMcpValidationError("requestId is invalid.");
+      }
+      const intent = await requiredLaunchIntentRepository(
+        options.launchIntentRepository
+      ).getLaunchIntent(authorizedWorkspaceId, session.actor, requestId);
+      if (!intent) {
+        return {
+          requestId,
+          state: "not-found",
+          batchId: null,
+          assignmentCount: null,
+          assignmentIds: [],
+          createdAt: null,
+          status: null
+        };
+      }
+      if (
+        intent.workspaceId !== authorizedWorkspaceId ||
+        intent.actorId !== session.actor ||
+        intent.requestId !== requestId
+      ) {
+        throw new PlaytestMcpUnavailableError(
+          "Launch-intent storage returned a mismatched identity."
+        );
+      }
+      if (Date.parse(intent.expiresAt) <= Date.now()) {
+        return {
+          requestId,
+          state: "expired",
+          batchId: null,
+          assignmentCount: null,
+          assignmentIds: [],
+          createdAt: null,
+          status: null
+        };
+      }
+      const repository = requiredRunRepository(playtestRepository);
+      const activeRun = activeRuns.get(intent.batchId);
+      if (activeRun) {
+        return {
+          requestId,
+          state: "accepted",
+          ...startReceiptForActiveRun(activeRun)
+        };
+      }
+      const batch = await repository.getBatch(
+        authorizedWorkspaceId,
+        intent.batchId
+      );
+      if (!batch) {
+        return {
+          requestId,
+          state: "pending",
+          batchId: intent.batchId,
+          assignmentCount: intent.assignmentCount,
+          assignmentIds: [],
+          createdAt: intent.createdAt,
+          status: null
+        };
+      }
+      if (batch.budget.assignedEpisodes !== intent.assignmentCount) {
+        throw new PlaytestMcpUnavailableError(
+          "The persisted launch receipt does not match its frozen batch."
+        );
+      }
+      const receipt = await startReceiptForPersistedBatch({
+        repository,
+        workspaceId: authorizedWorkspaceId,
+        batch,
+        activeRun: activeRuns.get(batch.batchId),
+        locks: assignmentLocks
+      });
       return {
-        ...registration,
-        assignmentCount:
-          "assignments" in parsed ? parsed.assignments.length : 1,
-        status: "running"
+        requestId,
+        state: "accepted",
+        ...receipt
       };
     },
     async listActiveRuns(session, workspaceId) {
@@ -6016,15 +6386,17 @@ export function createPlaytestMcpServer(
     "playtest.run",
     {
       description:
-        "Execute one approved ordered batch of assignments in isolated sandboxes with game adapter negotiation, verified artifact recording and a frozen per-batch critique selection. A one-episode request is a one-element assignments array.",
-      inputSchema: playtestRunRequestSchema
+        "Start one versioned PlaytestLaunchRequest with a capabilityRevision from playtest.capabilities and a unique client requestId that remains stable across uncertain retries. mode=adapter-accelerated with operation.kind=batch runs an ordered approved assignment set; mode=autonomous-visual requires a Workspaces-approved target and policyId=smart-direct; mode=scripted-regression requires an approved replay recipe. Runtime refuses unavailable modes and never substitutes another mode.",
+      inputSchema: z.strictObject({
+        launchRequest: playtestLaunchRequestSchema
+      })
     },
-    (request) =>
+    ({ launchRequest }) =>
       safely(async () => {
         const session = await sessionProvider.current();
         return requirePlaytestRunControl(playtestRunControl).startRun(
           session,
-          request
+          launchRequest
         );
       })
   );
@@ -6047,6 +6419,28 @@ export function createPlaytestMcpServer(
             playtestRunControl
           ).listActiveRuns(session, targetWorkspaceId)
         };
+      })
+  );
+
+  mcp.registerTool(
+    "playtest.lookupRequest",
+    {
+      description:
+        "Recover a launch with its original requestId after an uncertain POST; lookup is scoped to the trusted actor and workspace and never starts a new run.",
+      inputSchema: z.strictObject({
+        workspaceId: z.string().min(1).max(256).optional(),
+        requestId: z.string().regex(LAUNCH_INTENT_REQUEST_ID_PATTERN)
+      })
+    },
+    ({ workspaceId, requestId }) =>
+      safely(async () => {
+        const session = await sessionProvider.current();
+        const targetWorkspaceId = authorizeWorkspace(workspaceId, session);
+        return requirePlaytestRunControl(playtestRunControl).lookupRunByRequest(
+          session,
+          targetWorkspaceId,
+          requestId
+        );
       })
   );
 
@@ -6883,6 +7277,40 @@ export function createPlaytestMcpServer(
               );
             }
 
+            try {
+              assertPlaytestReviewNarrativeMinimums({
+                reviewId: "review-precheck",
+                chronologicalSummary: args.chronologicalSummary,
+                observations,
+                interpretations,
+                alternativeExplanations,
+                experiments,
+                reportCompleteness,
+                anchors
+              });
+            } catch {
+              throw new PlaytestReviewNarrativeValidationError();
+            }
+            try {
+              assertPlaytestReviewNarrativeGroundedInPacket(
+                {
+                  chronologicalSummary: args.chronologicalSummary,
+                  observations,
+                  interpretations,
+                  alternativeExplanations,
+                  experiments,
+                  reportCompleteness
+                },
+                packet.packet
+              );
+            } catch (error) {
+              throw new PlaytestReviewGroundingValidationError(
+                error instanceof Error
+                  ? error.message
+                  : "include a packet-specific fact with its citation."
+              );
+            }
+
             // §11 missed-known-issue / duplicate-flood gate. Collapse any
             // findings in THIS review that resolve to the same stable
             // identity fingerprint (so one review can never persist two
@@ -7553,34 +7981,18 @@ export function createPlaytestMcpServer(
     "playtest.branch",
     {
       description:
-        "Create a separately budgeted, same-stream counterfactual assignment. Runtime requires a complete source episode, verified full-state/RNG checkpoint, an alternate legal action, and exact approved build/config provenance.",
+        "Accept `{launchRequest}` using the same Core PlaytestLaunchRequest schema as playtest.run, including its current capabilityRevision and unique client requestId, with mode=adapter-accelerated and operation.kind=branch. Runtime requires a complete source episode, verified full-state/RNG checkpoint, an alternate legal action, and exact approved build/config provenance.",
       inputSchema: z.strictObject({
-        workspaceId: z.string().min(1).max(256).optional(),
-        parentEpisodeId: z.string().min(1).max(256),
-        branchStep: z.number().int().min(0).max(99_999),
-        alternativeActionId: z.string().min(1).max(256),
-        policy: z.string().min(1).max(256).optional(),
-        maxSteps: z.number().int().min(1).max(100_000).optional()
+        launchRequest: playtestBranchLaunchRequestSchema
       })
     },
-    ({
-      workspaceId,
-      parentEpisodeId,
-      branchStep,
-      alternativeActionId,
-      policy,
-      maxSteps
-    }) =>
+    ({ launchRequest }) =>
       safely(async () => {
         const session = await sessionProvider.current();
-        return requirePlaytestRunControl(playtestRunControl).startRun(session, {
-          workspaceId,
-          parentEpisodeId,
-          branchStep,
-          alternativeActionId,
-          ...(policy === undefined ? {} : { policy }),
-          ...(maxSteps === undefined ? {} : { maxSteps })
-        });
+        return requirePlaytestRunControl(playtestRunControl).startRun(
+          session,
+          launchRequest
+        );
       })
   );
 
@@ -7639,6 +8051,30 @@ function playtestMcpErrorDetails(error: unknown): {
       category: "authorization",
       retryable: false,
       message: "The playtesting request is not authorized."
+    };
+  }
+  if (error instanceof PlaytestMcpConflictError) {
+    return {
+      code: "playtest_request_id_conflict",
+      category: "conflict",
+      retryable: false,
+      message: error.message
+    };
+  }
+  if (error instanceof PlaytestReviewNarrativeValidationError) {
+    return {
+      code: "playtest_review_narrative_too_terse",
+      category: "validation",
+      retryable: false,
+      message: error.message
+    };
+  }
+  if (error instanceof PlaytestReviewGroundingValidationError) {
+    return {
+      code: "playtest_review_narrative_not_grounded",
+      category: "validation",
+      retryable: false,
+      message: error.message
     };
   }
   if (error instanceof PlaytestMcpValidationError) {

@@ -64,6 +64,12 @@ function parseModel(raw: string | null): string | null {
   return raw !== null && raw.length > 0 ? raw : null;
 }
 
+function parseReasoningEffort(raw: string | null): string | null {
+  if (raw === null) return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 && trimmed !== "default" ? trimmed : null;
+}
+
 export async function POST(
   request: NextRequest,
   context: { params: Promise<{ provider: string; role: string }> }
@@ -84,11 +90,17 @@ export async function POST(
   if (!isProvidersReturnPath(returnTo)) return failed();
   const priority = parsePriority(form.get("priority"));
   const model = parseModel(form.get("model"));
+  const hasEffort = form.has("reasoningEffort");
+  const reasoningEffort = hasEffort
+    ? parseReasoningEffort(form.get("reasoningEffort"))
+    : undefined;
+  const validFieldCount =
+    (form.size === 5 && !hasEffort) || (form.size === 6 && hasEffort);
   if (
     priority === null ||
     form.get("provider") !== provider ||
     form.get("role") !== role ||
-    form.size !== 5
+    !validFieldCount
   ) {
     return failed(returnTo);
   }
@@ -99,7 +111,11 @@ export async function POST(
   const result = await patchProviderRole(
     provider,
     role,
-    { priority, model },
+    {
+      priority,
+      model,
+      ...(reasoningEffort !== undefined ? { reasoningEffort } : {})
+    },
     config
   );
   return result.kind === "ok" ? redirectTo(returnTo) : failed(returnTo);

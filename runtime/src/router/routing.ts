@@ -82,6 +82,7 @@ export interface CatalogModel {
 
 export interface Candidate extends ProviderRoute {
   model: string;
+  reasoningEffort?: string | null;
 }
 
 export interface OrchestratorCandidate extends Candidate {
@@ -191,9 +192,13 @@ function readRoleAssignment(value: unknown): ProviderRoleAssignment | null {
     priority !== "disabled"
   )
     return null;
+  const reasoningEffort = nonEmptyString(value.reasoningEffort)
+    ? value.reasoningEffort.trim()
+    : null;
   return {
     priority,
-    model: nonEmptyString(value.model) ? value.model.trim() : null
+    model: nonEmptyString(value.model) ? value.model.trim() : null,
+    ...(reasoningEffort ? { reasoningEffort } : {})
   };
 }
 
@@ -576,7 +581,8 @@ export class RoutingPolicy {
     // the previous choice rather than forcing the operator to re-pick it.
     existing[role] = {
       priority: assignment.priority,
-      model: assignment.model
+      model: assignment.model,
+      ...(assignment.reasoningEffort ? { reasoningEffort: assignment.reasoningEffort } : {})
     };
     this.roleAssignments.set(key, existing);
   }
@@ -1058,7 +1064,14 @@ export class RoutingPolicy {
         this.configuredModel(provider, tier);
       if (!model || !this.isModelEnabled(model)) return [];
       const route = this.routeForModel(model);
-      return route ? [{ ...route, model }] : [];
+      if (!route) return [];
+      const assignment = this.assignmentFor(provider, role);
+      const configuredEffort =
+        assignment?.reasoningEffort ??
+        (role === "orchestrator"
+          ? (this.config.orchestrator.reasoningEffort?.[provider] ?? null)
+          : null);
+      return [{ ...route, model, reasoningEffort: configuredEffort }];
     });
   }
 
@@ -1082,14 +1095,13 @@ export class RoutingPolicy {
     random = Math.random,
     preferred: string | null = null
   ): OrchestratorCandidate[] {
-    const effort = this.config.orchestrator.reasoningEffort ?? {};
     const candidates = this.tierCandidates(
       this.config.orchestrator.tier,
       random,
       "orchestrator"
     ).map((candidate) => ({
       ...candidate,
-      reasoningEffort: effort[candidate.provider] ?? null
+      reasoningEffort: candidate.reasoningEffort ?? null
     }));
     return this.preferProvider(candidates, preferred, "orchestrator");
   }

@@ -2,33 +2,39 @@ import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
+  canonicalPlaytestJson,
   CONTROL_API_PLAYTESTING_RUN_STATES,
   type ControlApiPlaytestingActiveRunsResponse,
   type ControlApiPlaytestingAnalysesResponse,
   type ControlApiPlaytestingCancellationReason,
   type ControlApiPlaytestingCapabilitiesResponse,
+  type ControlApiPlaytestingCapabilityReason,
   type ControlApiPlaytestingComparisonDecisionRequest,
   type ControlApiPlaytestingComparisonDecisionResponse,
+  type ControlApiPlaytestingModeReadiness,
   type ControlApiPlaytestingRunCancellationResponse,
   type ControlApiPlaytestingRunRecord,
+  type ControlApiPlaytestingRunRequestLookupResponse,
   type ControlApiPlaytestingRunStartedResponse,
   type ControlApiPlaytestingRunStatusResponse,
   type PlaytestJsonValue,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
-  PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS
 } from "@simulatorlife/autodev-core";
 import { ConfigRepository } from "@simulatorlife/autodev-data";
 import { PlaytestSourceUnavailableError } from "@simulatorlife/autodev-data/playtesting";
+import { WorkspaceVisualPlaytestTargetRepository } from "@simulatorlife/autodev-data/workspaces";
 import { z } from "zod/v4";
 
 import {
   PlaytestSandboxApprovalError,
   PlaytestSandboxUnavailableError
 } from "../playtesting/docker-sandbox.ts";
+import { playtestLaunchRequestSchema } from "../playtesting/launch-request-schema.ts";
 import {
   type PlaytestAnalystReviewDispatch,
   PlaytestMcpAuthorizationError,
+  PlaytestMcpConflictError,
   type PlaytestMcpSession,
   PlaytestMcpUnavailableError,
   PlaytestMcpValidationError,
@@ -39,6 +45,7 @@ import { writeErrorLine } from "../shared/output.ts";
 import { readControlApiJsonObject } from "./body.ts";
 
 const RUNS_PATH = "/control/playtesting/runs";
+const REQUEST_LOOKUP_PATH = RUNS_PATH + "/by-request";
 const ANALYSES_PATH = "/control/playtesting/analyses";
 
 /**
@@ -81,6 +88,7 @@ const COMPARISON_DECISION_ROUTE =
   /^\/control\/playtesting\/comparisons\/([^/]+)\/decision$/u;
 const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
 const BATCH_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const RUN_STATES = new Set<string>(CONTROL_API_PLAYTESTING_RUN_STATES);
 const CANCELLATION_REASONS = new Set<ControlApiPlaytestingCancellationReason>([
   "cancelled",
@@ -98,33 +106,6 @@ const comparisonDecisionRequestSchema = z.strictObject({
   disposition: z.enum(["promote", "hold"]),
   reason: z.string().min(1).max(4000)
 });
-const batchAssignmentSchema = z.strictObject({
-  scenario: z.string().min(1).max(256),
-  policy: z.string().min(1).max(256),
-  seed: z.string().min(1).max(256),
-  goal: z.string().max(1000).optional(),
-  maxSteps: z.number().int().min(1).max(100_000).optional()
-});
-/** The one batch request shape; a one-episode Console submit is a 1-element array. */
-const batchRunRequestSchema = z.strictObject({
-  workspaceId: z.string().regex(WORKSPACE_ID_PATTERN),
-  assignments: z
-    .array(batchAssignmentSchema)
-    .min(1)
-    .max(PLAYTESTS_MAX_BATCH_ASSIGNMENTS)
-});
-const branchRunRequestSchema = z.strictObject({
-  workspaceId: z.string().regex(WORKSPACE_ID_PATTERN),
-  parentEpisodeId: z.string().min(1).max(256),
-  branchStep: z.number().int().min(0).max(99_999),
-  alternativeActionId: z.string().min(1).max(256),
-  policy: z.string().min(1).max(256).optional(),
-  maxSteps: z.number().int().min(1).max(100_000).optional()
-});
-const runRequestSchema = z.union([
-  batchRunRequestSchema,
-  branchRunRequestSchema
-]);
 const PROCESS_SESSION_HEADER = "x-autodev-playtest-session";
 const BASE64URL_HEADER_PATTERN = /^[A-Za-z0-9_-]+$/u;
 const processSessionSchema = z.strictObject({
@@ -155,6 +136,10 @@ export interface PlaytestingRunControlActor {
 
 export interface PlaytestingRunControlApiOptions {
   readonly repositoryRoot?: string;
+  readonly visualTargetRepository?: Pick<
+    WorkspaceVisualPlaytestTargetRepository,
+    "list"
+  >;
   readonly readWorkspaceCatalog?: () => ReturnType<
     ConfigRepository["readWorkspaceCatalog"]
   >;
@@ -703,6 +688,26 @@ function recordAudit(
   });
 }
 
+function sendStartedRunReceipt(
+  response: ServerResponse,
+  options: PlaytestingRunControlApiOptions,
+  actor: PlaytestingRunControlActor,
+  workspaceId: string,
+  started: Awaited<ReturnType<PlaytestRunControl["startRun"]>>
+): void {
+  const body: ControlApiPlaytestingRunStartedResponse = {
+    schema: "autodev-control-playtesting-run-started-v2",
+    workspaceId,
+    ...started
+  };
+  recordAudit(options, actor, "start_playtest_run", workspaceId, "ok", {
+    batchId: started.batchId,
+    assignmentCount: started.assignmentCount,
+    createdAt: started.createdAt
+  });
+  sendJson(response, 202, body, { "cache-control": "no-store" });
+}
+
 async function startRun(
   request: IncomingMessage,
   response: ServerResponse,
@@ -724,7 +729,7 @@ async function startRun(
     sendError(response, parsedBody.status, parsedBody.code, parsedBody.message);
     return;
   }
-  const parsed = runRequestSchema.safeParse(parsedBody.body);
+  const parsed = playtestLaunchRequestSchema.safeParse(parsedBody.body);
   if (!parsed.success) {
     sendError(
       response,
@@ -734,7 +739,7 @@ async function startRun(
     );
     return;
   }
-  const { workspaceId, ...runRequest } = parsed.data;
+  const workspaceId = parsed.data.workspaceId;
   const unavailable = workspaceError(workspaceId, options);
   if (unavailable) {
     sendError(
@@ -755,21 +760,72 @@ async function startRun(
   );
   if (!session) return;
   try {
-    const started = await runControl.startRun(session, {
+    const priorRequest = await runControl.lookupRunByRequest(
+      session,
       workspaceId,
-      ...runRequest
-    });
-    const body: ControlApiPlaytestingRunStartedResponse = {
-      schema: "autodev-control-playtesting-run-started-v1",
+      parsed.data.requestId
+    );
+    if (priorRequest.state === "accepted" || priorRequest.state === "expired") {
+      const priorReceipt = await runControl.startRun(session, parsed.data);
+      sendStartedRunReceipt(
+        response,
+        options,
+        actor,
+        workspaceId,
+        priorReceipt
+      );
+      return;
+    }
+    const preflight = await capabilitiesForLaunchRequest({
+      session,
+      actor,
       workspaceId,
-      ...started
-    };
-    recordAudit(options, actor, "start_playtest_run", workspaceId, "ok", {
-      batchId: started.batchId,
-      assignmentCount: started.assignmentCount,
-      createdAt: started.createdAt
+      options,
+      runControl
     });
-    sendJson(response, 202, body, { "cache-control": "no-store" });
+    if (parsed.data.capabilityRevision !== preflight.capabilityRevision) {
+      recordAudit(
+        options,
+        actor,
+        "start_playtest_run",
+        workspaceId,
+        "denied",
+        { mode: parsed.data.mode },
+        "capability-revision-changed"
+      );
+      sendError(
+        response,
+        409,
+        "autodev_control_playtesting_capability_revision_changed",
+        "Playtesting readiness changed after preflight. Refresh capabilities and review the updated run options before starting."
+      );
+      return;
+    }
+    const modeReadiness = preflight.modeReadiness[parsed.data.mode];
+    if (modeReadiness.status !== "ready") {
+      const firstReason = modeReadiness.reasons[0];
+      const message = modeReadiness.reasons
+        .map((reason) => reason.message)
+        .join(" ");
+      recordAudit(
+        options,
+        actor,
+        "start_playtest_run",
+        workspaceId,
+        "denied",
+        { mode: parsed.data.mode, readiness: modeReadiness.status },
+        firstReason?.code ?? "mode-not-ready"
+      );
+      sendError(
+        response,
+        modeReadiness.status === "unavailable" ? 503 : 409,
+        "autodev_control_playtesting_preflight_not_ready",
+        message
+      );
+      return;
+    }
+    const started = await runControl.startRun(session, parsed.data);
+    sendStartedRunReceipt(response, options, actor, workspaceId, started);
   } catch (error) {
     recordRunError(
       response,
@@ -897,6 +953,279 @@ async function decideComparison(
   }
 }
 
+type CapabilityReasonSeverity = "check-required" | "unavailable";
+const CHECK_REQUIRED_STATUS = "check-required" as const;
+const UNAVAILABLE_STATUS = "unavailable" as const;
+const READY_STATUS = "ready" as const;
+const OPERATOR_REQUIRED_REASON: ControlApiPlaytestingCapabilityReason = {
+  code: "operator-required",
+  label: "Operator required",
+  message: "An authorized operator can start or cancel playtest runs.",
+  severity: CHECK_REQUIRED_STATUS
+};
+type VisualTargetApproval = ReturnType<
+  WorkspaceVisualPlaytestTargetRepository["list"]
+>[number];
+
+function readinessFromReasons(
+  reasons: readonly ControlApiPlaytestingCapabilityReason[]
+): ControlApiPlaytestingModeReadiness {
+  const status = reasons.some(
+    (reason) => reason.severity === UNAVAILABLE_STATUS
+  )
+    ? UNAVAILABLE_STATUS
+    : reasons.length > 0
+      ? CHECK_REQUIRED_STATUS
+      : READY_STATUS;
+  return { status, reasons };
+}
+
+function addCapabilityReason(
+  reasons: ControlApiPlaytestingCapabilityReason[],
+  input: {
+    readonly code: string;
+    readonly label: string;
+    readonly message: string;
+    readonly severity: CapabilityReasonSeverity;
+  }
+): void {
+  if (!reasons.some((reason) => reason.code === input.code)) {
+    reasons.push(input);
+  }
+}
+
+function adapterModeReadiness(
+  capabilities: Awaited<ReturnType<PlaytestRunControl["getCapabilities"]>>,
+  operatorActionsAvailable: boolean
+): ControlApiPlaytestingModeReadiness {
+  const reasons: ControlApiPlaytestingCapabilityReason[] = [];
+  if (!operatorActionsAvailable) {
+    addCapabilityReason(reasons, OPERATOR_REQUIRED_REASON);
+  }
+  if (capabilities.workspaceCatalog !== "valid") {
+    addCapabilityReason(reasons, {
+      code: "workspace-catalog-unavailable",
+      label: "Workspace catalog unavailable",
+      message: "Runtime could not verify the canonical workspace catalog.",
+      severity: UNAVAILABLE_STATUS
+    });
+  }
+  if (!capabilities.workspaceEnabled) {
+    addCapabilityReason(reasons, {
+      code: "workspace-disabled",
+      label: "Workspace disabled",
+      message: "Enable this workspace before starting an adapter run.",
+      severity: UNAVAILABLE_STATUS
+    });
+  }
+  if (!capabilities.approved) {
+    addCapabilityReason(reasons, {
+      code: "adapter-approval-required",
+      label: "Approval required",
+      message:
+        "Workspaces must approve the checkout and adapter before an adapter run can start.",
+      severity: CHECK_REQUIRED_STATUS
+    });
+  }
+  if (capabilities.limits === null) {
+    addCapabilityReason(reasons, {
+      code: "adapter-budget-unavailable",
+      label: "Budget unavailable",
+      message: "The active adapter approval has no readable resource budget.",
+      severity: UNAVAILABLE_STATUS
+    });
+  }
+  if (capabilities.maxBatchAssignments < 1) {
+    addCapabilityReason(reasons, {
+      code: "adapter-batch-budget-unavailable",
+      label: "Batch budget unavailable",
+      message: "The approved target budget does not permit a batch assignment.",
+      severity: UNAVAILABLE_STATUS
+    });
+  }
+  if (capabilities.configurationStatus !== "validated") {
+    addCapabilityReason(reasons, {
+      code: "adapter-preflight-required",
+      label:
+        capabilities.configurationStatus === "invalid"
+          ? "Target configuration invalid"
+          : "Preflight required",
+      message:
+        "The latest committed target configuration must pass Runtime preflight before it can run.",
+      severity:
+        capabilities.configurationStatus === "invalid"
+          ? UNAVAILABLE_STATUS
+          : CHECK_REQUIRED_STATUS
+    });
+  }
+  if (capabilities.runnableAssignments.length === 0) {
+    addCapabilityReason(reasons, {
+      code: "adapter-policy-unavailable",
+      label: "No runnable policy",
+      message:
+        "No approved policy is currently supported by Runtime; no baseline is substituted silently.",
+      severity: UNAVAILABLE_STATUS
+    });
+  }
+  return readinessFromReasons(reasons);
+}
+
+function visualModeReadiness(input: {
+  readonly workspaceEnabled: boolean;
+  readonly operatorActionsAvailable: boolean;
+  readonly targetStore: "available" | "unavailable";
+  readonly targets: readonly VisualTargetApproval[];
+}): ControlApiPlaytestingCapabilitiesResponse["modeReadiness"]["autonomous-visual"] {
+  const reasons: ControlApiPlaytestingCapabilityReason[] = [];
+  if (!input.workspaceEnabled) {
+    addCapabilityReason(reasons, {
+      code: "workspace-disabled",
+      label: "Workspace disabled",
+      message: "Enable this workspace before starting a visual playtest.",
+      severity: UNAVAILABLE_STATUS
+    });
+  }
+  if (!input.operatorActionsAvailable) {
+    addCapabilityReason(reasons, OPERATOR_REQUIRED_REASON);
+  }
+  if (input.targetStore === "unavailable") {
+    addCapabilityReason(reasons, {
+      code: "visual-target-store-unavailable",
+      label: "Visual target approvals unavailable",
+      message:
+        "Runtime could not read the approved visual targets for this workspace.",
+      severity: UNAVAILABLE_STATUS
+    });
+  } else if (input.targets.length === 0) {
+    addCapabilityReason(reasons, {
+      code: "visual-target-required",
+      label: "No visual target approved",
+      message:
+        "Approve an already-running browser game URL in Workspaces before visual play can be considered.",
+      severity: CHECK_REQUIRED_STATUS
+    });
+  }
+  for (const target of input.targets) {
+    if (target.entryRequirements !== "none") {
+      addCapabilityReason(reasons, {
+        code: "visual-target-setup-required",
+        label: "Operator-assisted setup unsupported",
+        message: `Target ${target.name} requires ${target.entryRequirements}; this runtime only supports ungated entry.`,
+        severity: UNAVAILABLE_STATUS
+      });
+    }
+    if (target.controlTimingClass === "continuous") {
+      addCapabilityReason(reasons, {
+        code: "visual-control-timing-unsupported",
+        label: "Continuous control unsupported",
+        message: `Target ${target.name} requires continuous control, which is not supported by the visual turn-based driver.`,
+        severity: UNAVAILABLE_STATUS
+      });
+    }
+  }
+  addCapabilityReason(reasons, {
+    code: "visual-driver-unavailable",
+    label: "Visual driver unavailable",
+    message: "Runtime does not yet have the isolated browser gameplay driver.",
+    severity: UNAVAILABLE_STATUS
+  });
+  addCapabilityReason(reasons, {
+    code: "smart-direct-policy-unavailable",
+    label: "Smart-direct policy unavailable",
+    message:
+      "Runtime cannot yet make bounded Smart-direct gameplay decisions for visual sessions.",
+    severity: UNAVAILABLE_STATUS
+  });
+  return {
+    ...readinessFromReasons(reasons),
+    targetStore: input.targetStore,
+    targets: input.targets
+  };
+}
+
+function scriptedModeReadiness(
+  operatorActionsAvailable: boolean
+): ControlApiPlaytestingModeReadiness {
+  const reasons: ControlApiPlaytestingCapabilityReason[] = [];
+  if (!operatorActionsAvailable) {
+    addCapabilityReason(reasons, OPERATOR_REQUIRED_REASON);
+  }
+  addCapabilityReason(reasons, {
+    code: "scripted-regression-unavailable",
+    label: "Scripted regression unavailable",
+    message:
+      "Runtime does not yet have the approved scripted-regression launch path.",
+    severity: UNAVAILABLE_STATUS
+  });
+  return readinessFromReasons(reasons);
+}
+
+function visualTargetsForWorkspace(
+  workspaceId: string,
+  options: PlaytestingRunControlApiOptions
+): {
+  readonly targetStore: "available" | "unavailable";
+  readonly targets: readonly VisualTargetApproval[];
+} {
+  try {
+    const repository =
+      options.visualTargetRepository ??
+      new WorkspaceVisualPlaytestTargetRepository();
+    return {
+      targetStore: "available",
+      targets: repository
+        .list(workspaceId)
+        .filter((target) => target.revokedAt === null)
+    };
+  } catch {
+    return { targetStore: "unavailable", targets: [] };
+  }
+}
+
+async function capabilitiesForLaunchRequest(input: {
+  readonly session: PlaytestMcpSession;
+  readonly actor: PlaytestingRunControlActor;
+  readonly workspaceId: string;
+  readonly options: PlaytestingRunControlApiOptions;
+  readonly runControl: PlaytestRunControl;
+}): Promise<ControlApiPlaytestingCapabilitiesResponse> {
+  const [runCapabilities, visualTargets] = await Promise.all([
+    input.runControl.getCapabilities(input.session, input.workspaceId),
+    visualTargetsForWorkspace(input.workspaceId, input.options)
+  ]);
+  const operatorActionsAvailable = input.actor.role === "operator";
+  const capabilities: Omit<
+    ControlApiPlaytestingCapabilitiesResponse,
+    "capabilityRevision"
+  > = {
+    schema: "autodev-control-playtesting-capabilities-v2",
+    ...runCapabilities,
+    operatorActionsAvailable,
+    modeReadiness: {
+      "adapter-accelerated": adapterModeReadiness(
+        runCapabilities,
+        operatorActionsAvailable
+      ),
+      "autonomous-visual": visualModeReadiness({
+        workspaceEnabled: runCapabilities.workspaceEnabled,
+        operatorActionsAvailable,
+        ...visualTargets
+      }),
+      "scripted-regression": scriptedModeReadiness(operatorActionsAvailable)
+    }
+  };
+  const capabilityRevision = createHash("sha256")
+    .update(
+      canonicalPlaytestJson({
+        actor: input.actor.actor,
+        role: input.actor.role,
+        capabilities
+      })
+    )
+    .digest("hex");
+  return { ...capabilities, capabilityRevision };
+}
+
 async function getCapabilities(
   request: IncomingMessage,
   response: ServerResponse,
@@ -923,15 +1252,13 @@ async function getCapabilities(
   );
   if (!session) return;
   try {
-    const capabilities = await runControl.getCapabilities(
+    const body = await capabilitiesForLaunchRequest({
       session,
-      query.workspaceId
-    );
-    const body: ControlApiPlaytestingCapabilitiesResponse = {
-      schema: "autodev-control-playtesting-capabilities-v1",
-      ...capabilities,
-      operatorActionsAvailable: actor.role === "operator"
-    };
+      actor,
+      workspaceId: query.workspaceId,
+      options,
+      runControl
+    });
     sendJson(response, 200, body, { "cache-control": "no-store" });
   } catch (error) {
     recordRunError(
@@ -986,6 +1313,65 @@ async function listRuns(
         createdAt: run.createdAt,
         status: statusRecord(run.status)
       }))
+    };
+    sendJson(response, 200, body, { "cache-control": "no-store" });
+  } catch (error) {
+    recordRunError(
+      response,
+      error,
+      options,
+      actor,
+      undefined,
+      query.workspaceId
+    );
+  }
+}
+
+async function lookupRunByRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  actor: PlaytestingRunControlActor,
+  options: PlaytestingRunControlApiOptions,
+  runControl: PlaytestRunControl
+): Promise<void> {
+  const query = workspaceQuery(
+    request,
+    pathname,
+    ["workspaceId", "requestId"],
+    options,
+    response
+  );
+  if (!query) return;
+  const requestId = query.params.get("requestId") ?? "";
+  if (!REQUEST_ID_PATTERN.test(requestId)) {
+    sendError(
+      response,
+      400,
+      "autodev_control_playtesting_invalid_request",
+      "A valid requestId is required to recover an uncertain launch."
+    );
+    return;
+  }
+  const session = sessionFor(
+    request,
+    actor,
+    query.workspaceId,
+    response,
+    options.requireSessionHeader ?? false,
+    options.trustedSessionRole
+  );
+  if (!session) return;
+  try {
+    const lookup = await runControl.lookupRunByRequest(
+      session,
+      query.workspaceId,
+      requestId
+    );
+    const body: ControlApiPlaytestingRunRequestLookupResponse = {
+      schema: "autodev-control-playtesting-run-request-v1",
+      workspaceId: query.workspaceId,
+      ...lookup
     };
     sendJson(response, 200, body, { "cache-control": "no-store" });
   } catch (error) {
@@ -1177,6 +1563,22 @@ function recordRunError(
       "autodev_control_playtesting_forbidden",
       error.message
     );
+  } else if (error instanceof PlaytestMcpConflictError) {
+    recordAudit(
+      options,
+      actor,
+      action,
+      workspaceId,
+      "denied",
+      null,
+      "idempotency-conflict"
+    );
+    sendError(
+      response,
+      409,
+      "autodev_control_playtesting_request_id_conflict",
+      error.message
+    );
   } else if (error instanceof PlaytestMcpValidationError) {
     recordAudit(
       options,
@@ -1280,6 +1682,7 @@ function recordRunError(
 type RunControlRoute =
   | { readonly kind: "capabilities" }
   | { readonly kind: "collection" }
+  | { readonly kind: "request-lookup" }
   | { readonly kind: "analyses" }
   | { readonly kind: "status"; readonly batchId: string }
   | { readonly kind: "cancel"; readonly batchId: string }
@@ -1287,6 +1690,7 @@ type RunControlRoute =
 
 function runControlRoute(pathname: string): RunControlRoute | null {
   if (pathname === CAPABILITIES_PATH) return { kind: "capabilities" };
+  if (pathname === REQUEST_LOOKUP_PATH) return { kind: "request-lookup" };
   if (pathname === RUNS_PATH) return { kind: "collection" };
   if (pathname === ANALYSES_PATH) return { kind: "analyses" };
   const batchId = pathId(pathname, RUN_ROUTE);
@@ -1297,6 +1701,121 @@ function runControlRoute(pathname: string): RunControlRoute | null {
   return comparisonId === null
     ? null
     : { kind: "comparison-decision", comparisonId };
+}
+
+async function dispatchRunControlRoute(input: {
+  readonly route: RunControlRoute;
+  readonly request: IncomingMessage;
+  readonly response: ServerResponse;
+  readonly pathname: string;
+  readonly actor: PlaytestingRunControlActor;
+  readonly options: PlaytestingRunControlApiOptions;
+  readonly runControl: PlaytestRunControl &
+    Partial<PlaytestAnalystReviewDispatch>;
+}): Promise<void> {
+  const { route, request, response, pathname, actor, options, runControl } =
+    input;
+  const method = request.method ?? "GET";
+  switch (route.kind) {
+    case "request-lookup": {
+      if (method === "GET") {
+        await lookupRunByRequest(
+          request,
+          response,
+          pathname,
+          actor,
+          options,
+          runControl
+        );
+      } else {
+        sendMethodNotAllowed(response, "GET");
+      }
+      return;
+    }
+    case "capabilities": {
+      if (method === "GET") {
+        await getCapabilities(
+          request,
+          response,
+          pathname,
+          actor,
+          options,
+          runControl
+        );
+      } else {
+        sendMethodNotAllowed(response, "GET");
+      }
+      return;
+    }
+    case "collection": {
+      if (method === "POST") {
+        await startRun(request, response, actor, options, runControl);
+      } else if (method === "GET") {
+        await listRuns(request, response, pathname, actor, options, runControl);
+      } else {
+        sendMethodNotAllowed(response, "GET, POST");
+      }
+      return;
+    }
+    case "analyses": {
+      await handleAnalystReviewMethod(
+        method,
+        request,
+        response,
+        pathname,
+        actor,
+        options,
+        runControl
+      );
+      return;
+    }
+    case "status": {
+      if (method === "GET") {
+        await readRunStatus(
+          request,
+          response,
+          pathname,
+          route.batchId,
+          actor,
+          options,
+          runControl
+        );
+      } else {
+        sendMethodNotAllowed(response, "GET");
+      }
+      return;
+    }
+    case "cancel": {
+      if (method === "POST") {
+        await cancelRun(
+          request,
+          response,
+          pathname,
+          route.batchId,
+          actor,
+          options,
+          runControl
+        );
+      } else {
+        sendMethodNotAllowed(response, "POST");
+      }
+      return;
+    }
+    case "comparison-decision": {
+      if (method === "POST") {
+        await decideComparison(
+          request,
+          response,
+          route.comparisonId,
+          actor,
+          options,
+          runControl
+        );
+      } else {
+        sendMethodNotAllowed(response, "POST");
+      }
+    }
+  }
 }
 
 /** Typed Control API entry points delegate to the exact MCP run-control owner. */
@@ -1319,92 +1838,14 @@ export async function handlePlaytestingRunControlRequest(
     );
     return true;
   }
-  const method = request.method ?? "GET";
-  switch (route.kind) {
-    case "capabilities": {
-      if (method === "GET") {
-        await getCapabilities(
-          request,
-          response,
-          pathname,
-          actor,
-          options,
-          runControl
-        );
-      } else {
-        sendMethodNotAllowed(response, "GET");
-      }
-      break;
-    }
-    case "collection": {
-      if (method === "POST") {
-        await startRun(request, response, actor, options, runControl);
-      } else if (method === "GET") {
-        await listRuns(request, response, pathname, actor, options, runControl);
-      } else {
-        sendMethodNotAllowed(response, "GET, POST");
-      }
-      break;
-    }
-    case "analyses": {
-      await handleAnalystReviewMethod(
-        method,
-        request,
-        response,
-        pathname,
-        actor,
-        options,
-        runControl
-      );
-      break;
-    }
-    case "status": {
-      if (method === "GET") {
-        await readRunStatus(
-          request,
-          response,
-          pathname,
-          route.batchId,
-          actor,
-          options,
-          runControl
-        );
-      } else {
-        sendMethodNotAllowed(response, "GET");
-      }
-      break;
-    }
-    case "cancel": {
-      if (method === "POST") {
-        await cancelRun(
-          request,
-          response,
-          pathname,
-          route.batchId,
-          actor,
-          options,
-          runControl
-        );
-      } else {
-        sendMethodNotAllowed(response, "POST");
-      }
-      break;
-    }
-    case "comparison-decision": {
-      if (method === "POST") {
-        await decideComparison(
-          request,
-          response,
-          route.comparisonId,
-          actor,
-          options,
-          runControl
-        );
-      } else {
-        sendMethodNotAllowed(response, "POST");
-      }
-      break;
-    }
-  }
+  await dispatchRunControlRoute({
+    route,
+    request,
+    response,
+    pathname,
+    actor,
+    options,
+    runControl
+  });
   return true;
 }

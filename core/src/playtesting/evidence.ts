@@ -10,7 +10,10 @@
  * real, relevant data.
  */
 
-import type { PlaytestSessionReview } from "./artifacts.ts";
+import type {
+  PlaytestEvidencePacket,
+  PlaytestSessionReview
+} from "./artifacts.ts";
 import { assertPlaytestEvidenceLocator } from "./protocol.ts";
 import {
   PLAYTEST_REVIEW_SECTION_NOT_RECORDED,
@@ -37,6 +40,11 @@ export interface PlaytestKnownEvidenceIndex {
   /** frame locator id -> the episode it actually belongs to. */
   readonly frameEpisodeOf: ReadonlyMap<string, string>;
 }
+
+/** Minimum prose needed for a new analyst report to be interpretable. */
+export const PLAYTEST_REVIEW_MIN_NARRATIVE_CHARACTERS = 16;
+export const PLAYTEST_REVIEW_MIN_NARRATIVE_WORDS = 3;
+const NARRATIVE_WORD_SEPARATOR = /\s+/u;
 
 /** One claim this evidence check is being asked to support/contradict. */
 export interface PlaytestClaim {
@@ -262,6 +270,379 @@ function requireReviewText(
 ): asserts value is string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new TypeError(`${label} must be non-empty text.`);
+  }
+}
+
+function requireSubstantiveReviewText(value: unknown, label: string): void {
+  if (typeof value !== "string") {
+    throw new TypeError(`${label} must be explanatory text.`);
+  }
+  const text = value.trim();
+  const words = text
+    .split(NARRATIVE_WORD_SEPARATOR)
+    .filter((word) => word.length > 0);
+  if (
+    text.length < PLAYTEST_REVIEW_MIN_NARRATIVE_CHARACTERS ||
+    words.length < PLAYTEST_REVIEW_MIN_NARRATIVE_WORDS
+  ) {
+    throw new TypeError(
+      `${label} is too terse to explain the evidence; use at least ${String(PLAYTEST_REVIEW_MIN_NARRATIVE_WORDS)} words and ${String(PLAYTEST_REVIEW_MIN_NARRATIVE_CHARACTERS)} characters.`
+    );
+  }
+}
+
+const REVIEW_GROUNDING_STOP_WORDS = new Set([
+  "about",
+  "after",
+  "also",
+  "and",
+  "because",
+  "before",
+  "claim",
+  "data",
+  "evidence",
+  "episode",
+  "game",
+  "information",
+  "interpretation",
+  "observation",
+  "observed",
+  "packet",
+  "player",
+  "policy",
+  "result",
+  "run",
+  "session",
+  "step",
+  "summary",
+  "test",
+  "the",
+  "this",
+  "that",
+  "there",
+  "through",
+  "with",
+  "without",
+  "words"
+]);
+
+function groundingWords(value: string): Set<string> {
+  return new Set(
+    value
+      .normalize("NFKD")
+      .toLowerCase()
+      .replaceAll(/[\u0300-\u036f]/gu, "")
+      .split(/[^a-z\d]+/u)
+      .filter(
+        (word) => word.length >= 3 && !REVIEW_GROUNDING_STOP_WORDS.has(word)
+      )
+  );
+}
+
+function addGroundingWords(target: Set<string>, value: unknown): void {
+  if (typeof value !== "string" && typeof value !== "number") return;
+  if (
+    typeof value === "string" &&
+    /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu.test(value)
+  ) {
+    return;
+  }
+  for (const word of groundingWords(String(value))) target.add(word);
+}
+
+function addVisibleJsonWords(target: Set<string>, value: unknown): void {
+  if (value === null || typeof value === "boolean") return;
+  if (typeof value === "string" || typeof value === "number") {
+    addGroundingWords(target, value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) addVisibleJsonWords(target, item);
+    return;
+  }
+  if (typeof value === "object") {
+    for (const [key, item] of Object.entries(value)) {
+      addGroundingWords(target, key);
+      addVisibleJsonWords(target, item);
+    }
+  }
+}
+
+function stepGroundingWords(
+  target: Set<string>,
+  step: PlaytestEvidencePacket["selectedWindows"][number]["steps"][number]
+): void {
+  addGroundingWords(target, step.phaseId);
+  addGroundingWords(target, step.selectedActionId);
+  for (const actionId of step.legalActionIds)
+    addGroundingWords(target, actionId);
+  addVisibleJsonWords(target, step.visibleObservation);
+  for (const event of step.events) {
+    addGroundingWords(target, event.type);
+    addGroundingWords(target, event.phaseId);
+  }
+}
+
+function packetGroundingWords(packet: PlaytestEvidencePacket): Set<string> {
+  const words = new Set<string>();
+  for (const value of [
+    packet.scenarioId,
+    packet.scenarioFamily,
+    packet.policyId,
+    packet.policyVersion,
+    packet.cohort,
+    packet.outcome,
+    packet.gameBuild,
+    packet.sourceStepCount,
+    packet.chronologicalSummary
+  ]) {
+    addGroundingWords(words, value);
+  }
+  addGroundingWords(words, packet.observationMode);
+  addGroundingWords(words, packet.traceArtifactId);
+  for (const omitted of packet.omittedArtifacts) {
+    addGroundingWords(words, omitted.kind);
+    addGroundingWords(words, omitted.step);
+    addGroundingWords(words, omitted.reason);
+  }
+  for (const omitted of packet.omittedWindows) {
+    addGroundingWords(words, omitted.startStep);
+    addGroundingWords(words, omitted.endStep);
+    addGroundingWords(words, omitted.reason);
+  }
+  if ("executionProvenance" in packet) {
+    addGroundingWords(words, packet.executionProvenance.mode);
+    addGroundingWords(words, packet.executionProvenance.source.kind);
+  }
+  for (const metric of packet.metrics) {
+    addGroundingWords(words, metric.metricId);
+    addGroundingWords(words, metric.phaseId);
+  }
+  for (const cell of packet.coverageCells) {
+    addGroundingWords(words, cell.coverageMetricId);
+    addGroundingWords(words, cell.phaseId);
+  }
+  for (const intent of packet.metricIntent) {
+    addGroundingWords(words, intent.metricId);
+    addGroundingWords(words, intent.mechanicKey);
+  }
+  for (const window of packet.selectedWindows) {
+    for (const step of window.steps) stepGroundingWords(words, step);
+  }
+  if (
+    "crossSessionContext" in packet &&
+    packet.crossSessionContext.status === "included"
+  ) {
+    for (const episode of packet.crossSessionContext.sessions) {
+      addGroundingWords(words, episode.scenarioId);
+      addGroundingWords(words, episode.scenarioFamily);
+      addGroundingWords(words, episode.policyId);
+      addGroundingWords(words, episode.cohort);
+      addGroundingWords(words, episode.outcome);
+      for (const metric of episode.metrics) {
+        addGroundingWords(words, metric.metricId);
+      }
+    }
+  }
+  return words;
+}
+
+function groundingWordsForLocators(
+  packet: PlaytestEvidencePacket,
+  locators: readonly PlaytestEvidenceLocator[]
+): Set<string> {
+  const words = new Set<string>();
+  for (const locator of locators) {
+    if (locator.kind === "episode" && locator.id === packet.episodeId) {
+      for (const word of packetGroundingWords(packet)) words.add(word);
+      continue;
+    }
+    for (const window of packet.selectedWindows) {
+      for (const step of window.steps) {
+        if (
+          locator.kind === "event" &&
+          step.events.some((event) => event.eventId === locator.id)
+        ) {
+          stepGroundingWords(words, step);
+        } else if (
+          locator.kind === "frame" &&
+          step.frameRefs.some((frame) => frame.id === locator.id)
+        ) {
+          stepGroundingWords(words, step);
+        }
+      }
+    }
+  }
+  return words;
+}
+
+function requirePacketGroundedText(
+  value: string,
+  anchors: ReadonlySet<string>,
+  label: string
+): void {
+  const words = groundingWords(value);
+  if (![...words].some((word) => anchors.has(word))) {
+    throw new TypeError(
+      `${label} must name a packet-specific phase, action, outcome, metric, or visible value; a citation alone is not an evidence-grounded explanation.`
+    );
+  }
+}
+
+/**
+ * Reject length-valid boilerplate that cites a real locator but says nothing
+ * about the cited packet. This is a structural grounding check, not a truth,
+ * quality, or human-experience score.
+ */
+export function assertPlaytestReviewNarrativeGroundedInPacket(
+  review: Pick<
+    PlaytestSessionReview,
+    | "chronologicalSummary"
+    | "observations"
+    | "interpretations"
+    | "alternativeExplanations"
+    | "experiments"
+    | "reportCompleteness"
+  >,
+  packet: PlaytestEvidencePacket
+): void {
+  const packetWords = packetGroundingWords(packet);
+  requirePacketGroundedText(
+    review.chronologicalSummary,
+    packetWords,
+    "Chronological summary"
+  );
+  for (const [kind, claims] of [
+    ["Observation", review.observations],
+    ["Interpretation", review.interpretations]
+  ] as const) {
+    for (const [index, claim] of claims.entries()) {
+      requirePacketGroundedText(
+        claim.text,
+        groundingWordsForLocators(packet, claim.evidenceRefs),
+        `${kind} ${String(index + 1)}`
+      );
+    }
+  }
+  for (const [index, alternative] of review.alternativeExplanations.entries()) {
+    requirePacketGroundedText(
+      alternative,
+      packetWords,
+      `Alternative explanation ${String(index + 1)}`
+    );
+  }
+  for (const [index, experiment] of review.experiments.entries()) {
+    const anchors = new Set(packetWords);
+    addGroundingWords(anchors, experiment.metricId);
+    requirePacketGroundedText(
+      experiment.hypothesis,
+      anchors,
+      `Experiment ${String(index + 1)} hypothesis`
+    );
+    requirePacketGroundedText(
+      experiment.falsifier,
+      anchors,
+      `Experiment ${String(index + 1)} falsifier`
+    );
+  }
+  const sections = review.reportCompleteness;
+  if (sections.alternatives.status === "none-identified") {
+    requirePacketGroundedText(
+      sections.alternatives.reason,
+      packetWords,
+      "No-alternative explanation"
+    );
+  }
+  if (sections.experiments.status === "none-recommended") {
+    requirePacketGroundedText(
+      sections.experiments.reason,
+      packetWords,
+      "No-experiment reason"
+    );
+  }
+  if (sections.followUp.status === "proposed") {
+    requirePacketGroundedText(sections.followUp.text, packetWords, "Follow-up");
+  }
+}
+
+/**
+ * Reject label-only/placeholder narratives on new analyst submissions while
+ * leaving historical persisted reviews readable. This is a structural floor,
+ * not a quality score or an authorization to promote a hypothesis.
+ */
+export function assertPlaytestReviewNarrativeMinimums(
+  review: Pick<
+    PlaytestSessionReview,
+    | "reviewId"
+    | "chronologicalSummary"
+    | "observations"
+    | "interpretations"
+    | "alternativeExplanations"
+    | "experiments"
+    | "reportCompleteness"
+    | "anchors"
+  >
+): void {
+  const prefix = `Review "${review.reviewId}"`;
+  requireSubstantiveReviewText(
+    review.chronologicalSummary,
+    `${prefix} chronological summary`
+  );
+  for (const [kind, claims] of [
+    ["observation", review.observations],
+    ["interpretation", review.interpretations]
+  ] as const) {
+    for (const [index, claim] of claims.entries()) {
+      requireSubstantiveReviewText(
+        claim.text,
+        `${prefix} ${kind} claim ${String(index + 1)}`
+      );
+    }
+  }
+  for (const [index, alternative] of review.alternativeExplanations.entries()) {
+    requireSubstantiveReviewText(
+      alternative,
+      `${prefix} alternative explanation ${String(index + 1)}`
+    );
+  }
+  for (const [index, experiment] of review.experiments.entries()) {
+    const label = `${prefix} experiment ${String(index + 1)}`;
+    requireSubstantiveReviewText(experiment.hypothesis, `${label} hypothesis`);
+    requireSubstantiveReviewText(experiment.falsifier, `${label} falsifier`);
+    requireSubstantiveReviewText(experiment.budget, `${label} budget`);
+  }
+  for (const [index, anchor] of review.anchors.entries()) {
+    requireSubstantiveReviewText(
+      anchor.rationale,
+      `${prefix} dimension rationale ${String(index + 1)}`
+    );
+  }
+  const sections = review.reportCompleteness;
+  if (sections.crossSessionContext.status === "unavailable") {
+    requireSubstantiveReviewText(
+      sections.crossSessionContext.reason,
+      `${prefix} cross-session context reason`
+    );
+  }
+  if (sections.alternatives.status === "none-identified") {
+    requireSubstantiveReviewText(
+      sections.alternatives.reason,
+      `${prefix} no-alternative explanation`
+    );
+  }
+  if (sections.experiments.status === "none-recommended") {
+    requireSubstantiveReviewText(
+      sections.experiments.reason,
+      `${prefix} no-experiment reason`
+    );
+  }
+  if (sections.followUp.status === "proposed") {
+    requireSubstantiveReviewText(sections.followUp.text, `${prefix} follow-up`);
+  } else {
+    requireSubstantiveReviewText(
+      sections.followUp.reason,
+      `${prefix} no-follow-up reason`
+    );
   }
 }
 

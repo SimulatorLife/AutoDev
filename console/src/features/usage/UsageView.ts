@@ -334,7 +334,7 @@ function renderScopeMeta(
     "details",
     {
       className:
-        "flex min-w-0 flex-wrap items-center gap-2 text-xs text-fg-muted",
+        `flex min-w-0 flex-wrap items-center gap-2 ${MUTED_META_CLASS}`,
       open: selection.range === "CUSTOM"
     },
     React.createElement(

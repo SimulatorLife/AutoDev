@@ -1,5 +1,6 @@
 import type {
   PlaytestEpisode,
+  PlaytestExecutionProvenance,
   PlaytestGameOutcomeKind
 } from "@simulatorlife/autodev-core";
 import React from "react";
@@ -10,6 +11,36 @@ import {
 } from "../../components/status/StatusBadge.ts";
 
 const LOOP_GUARD_STOP_REASON = "loop-guard" as const;
+
+export function executionModeLabel(
+  mode: PlaytestExecutionProvenance["mode"]
+): string {
+  switch (mode) {
+    case "autonomous-visual":
+      return "Autonomous visual";
+    case "adapter-accelerated":
+      return "Adapter-accelerated";
+    case "scripted-regression":
+      return "Scripted regression";
+    case "legacy-unknown":
+      return "Legacy mode unknown";
+  }
+}
+
+export function executionSourceSummary(
+  provenance: PlaytestExecutionProvenance
+): string {
+  const { source } = provenance;
+  const revision =
+    source.revisionConfidence === "verified" && source.revision !== null
+      ? `Verified ${source.revision.slice(0, 12)}`
+      : source.kind === "URL-only"
+        ? "Commit not applicable"
+        : "Build unknown";
+  const repository = source.repository ? ` · ${source.repository}` : "";
+  const target = source.targetOrigin ? ` · ${source.targetOrigin}` : "";
+  return `${source.kind}${repository}${target} · ${revision}`;
+}
 
 /** Execution disposition and the game's outcome remain separate dimensions. */
 export function executionStatusBadge(
@@ -89,7 +120,10 @@ export function planEpisodeTraceWindow(
   requestedStep: number
 ): PlaytestingEpisodeTraceWindowPlan {
   if (episode.trace === null) return { kind: "none" };
-  if (episode.stepCount === 0 && episode.termination.reason !== LOOP_GUARD_STOP_REASON) {
+  if (
+    episode.stepCount === 0 &&
+    episode.termination.reason !== LOOP_GUARD_STOP_REASON
+  ) {
     return { kind: "none" };
   }
   if (!episodeTraceContainsStep(episode, requestedStep)) {

@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { PLAYTESTS_MAX_BATCH_ASSIGNMENTS } from "@simulatorlife/autodev-core";
+import {
+  PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+  PLAYTESTS_MAX_BATCH_ASSIGNMENTS
+} from "@simulatorlife/autodev-core";
 import { NextRequest } from "next/server.js";
 
+import { GET as GET_REQUEST } from "../app/api/playtesting/runs/by-request/route.ts";
 import { GET, POST } from "../app/api/playtesting/runs/route.ts";
 
 const WORKSPACE_ID = "owner/game";
@@ -11,8 +15,14 @@ const API_PATH = "http://console.test/api/playtesting/runs";
 
 function request(assignments: readonly unknown[]): NextRequest {
   const body = new URLSearchParams({
-    workspaceId: WORKSPACE_ID,
-    assignments: JSON.stringify(assignments)
+    launchRequest: JSON.stringify({
+      schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+      mode: "adapter-accelerated",
+      workspaceId: WORKSPACE_ID,
+      requestId: "console-route-request-1",
+      capabilityRevision: "a".repeat(64),
+      operation: { kind: "batch", assignments }
+    })
   });
   return new NextRequest(API_PATH, {
     method: "POST",
@@ -36,10 +46,14 @@ test("same-origin route forwards the canonical 1,000-assignment batch without tr
     forwarded = JSON.parse(String(init?.body));
     return Response.json(
       {
-        schema: "autodev-control-playtesting-run-started-v1",
+        schema: "autodev-control-playtesting-run-started-v2",
         workspaceId: WORKSPACE_ID,
         batchId: "batch-route-1000",
         assignmentCount: PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
+        assignmentIds: Array.from(
+          { length: PLAYTESTS_MAX_BATCH_ASSIGNMENTS },
+          (_, index) => `a-${String(index + 1).padStart(4, "0")}`
+        ),
         status: "running"
       },
       { status: 202 }
@@ -57,8 +71,13 @@ test("same-origin route forwards the canonical 1,000-assignment batch without tr
     );
     const response = await POST(request(assignments));
     assert.equal(response.status, 202);
+    const launch = forwarded as {
+      readonly operation: {
+        readonly assignments: readonly unknown[];
+      };
+    };
     assert.equal(
-      (forwarded as { assignments: readonly unknown[] }).assignments.length,
+      launch.operation.assignments.length,
       PLAYTESTS_MAX_BATCH_ASSIGNMENTS
     );
   } finally {
@@ -194,6 +213,75 @@ test("active-runs GET refuses a response whose live status is not its own batch"
       )
     );
     assert.equal(response.status, 502);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined) {
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    } else {
+      process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
+    }
+  }
+});
+
+test("request recovery reads the actor/workspace-scoped immutable receipt without starting another run", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "r".repeat(64);
+  let requested = "";
+  globalThis.fetch = (async (input) => {
+    requested = String(input);
+    return Response.json(
+      {
+        schema: "autodev-control-playtesting-run-request-v1",
+        workspaceId: WORKSPACE_ID,
+        requestId: "console-recovery-1",
+        state: "accepted",
+        batchId: "batch-route-recovered",
+        assignmentCount: 1,
+        assignmentIds: ["a-0001"],
+        createdAt: "2026-10-16T12:00:00.000Z",
+        status: "completed"
+      },
+      { status: 200 }
+    );
+  }) as typeof fetch;
+  try {
+    const response = await GET_REQUEST(
+      new NextRequest(
+        `${API_PATH}/by-request?workspaceId=${encodeURIComponent(WORKSPACE_ID)}&requestId=console-recovery-1`
+      )
+    );
+    assert.equal(response.status, 200);
+    assert.match(requested, /\/control\/playtesting\/runs\/by-request\?/u);
+    assert.match(requested, /param_requestId|requestId=console-recovery-1/u);
+    const body = (await response.json()) as {
+      readonly kind: string;
+      readonly data: {
+        readonly state: string;
+        readonly batchId: string;
+        readonly assignmentIds: readonly string[];
+        readonly status: string;
+      };
+    };
+    assert.equal(body.kind, "ok");
+    assert.equal(body.data.state, "accepted");
+    assert.equal(body.data.batchId, "batch-route-recovered");
+    assert.deepEqual(body.data.assignmentIds, ["a-0001"]);
+    assert.equal(body.data.status, "completed");
+    assert.equal(response.headers.get("cache-control"), "no-store");
+
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return Response.json({});
+    }) as typeof fetch;
+    const invalid = await GET_REQUEST(
+      new NextRequest(
+        `${API_PATH}/by-request?workspaceId=${encodeURIComponent(WORKSPACE_ID)}&requestId=bad%20id`
+      )
+    );
+    assert.equal(invalid.status, 400);
+    assert.equal(calls, 0);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousToken === undefined) {

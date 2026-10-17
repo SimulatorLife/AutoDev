@@ -1,3 +1,4 @@
+export * from "./launch-request.ts";
 /**
  * Barrel for the Core-owned playtesting contract.
  *
@@ -28,6 +29,7 @@ export * from "./diagnostic-corpus.ts";
 export * from "./evaluators.ts";
 export * from "./evidence.ts";
 export * from "./evidence-packet.ts";
+export * from "./execution-provenance.ts";
 export * from "./experiment.ts";
 export * from "./finding-identity.ts";
 export * from "./human-preference.ts";

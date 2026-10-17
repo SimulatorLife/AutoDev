@@ -14,6 +14,7 @@ import {
   buildPlaytestEvidencePacket,
   buildPlaytestFindingIdentity,
   canonicalPlaytestJson,
+  PLAYTEST_LAUNCH_REQUEST_SCHEMA,
   playtestAssignmentManifestHashInput,
   type PlaytestAssignmentOutcome,
   type PlaytestBatch,
@@ -31,6 +32,7 @@ import {
   type PlaytestEvidenceTraceStep,
   type PlaytestFinding,
   playtestFindingIdentityHashInput,
+  type PlaytestLaunchRequest,
   playtestReviewOutcomeKey,
   type PlaytestRunAssignmentOutcome,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
@@ -45,7 +47,10 @@ import {
   type WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
 import type { WorkspaceCatalogRead } from "@simulatorlife/autodev-data";
-import { PlaytestSourceUnavailableError } from "@simulatorlife/autodev-data/playtesting";
+import {
+  type PlaytestLaunchIntent,
+  PlaytestSourceUnavailableError
+} from "@simulatorlife/autodev-data/playtesting";
 import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
 
 import type {
@@ -74,9 +79,82 @@ import {
   playtestStdioConfiguration
 } from "../src/playtesting/mcp-main.ts";
 import { createSeededRandomPlaytestPolicy } from "../src/playtesting/policies.ts";
+import { inMemoryPlaytestLaunchIntentRepository } from "./support/playtesting-launch-intents.ts";
 import { fixturePlaytestMetricRegistry } from "./support/playtesting-metric-registry.ts";
 
+let launchRequestCounter = 0;
+
+function nextLaunchRequestId(): string {
+  launchRequestCounter += 1;
+  return `test-request-${String(launchRequestCounter)}`;
+}
+
+function batchLaunch(input: {
+  readonly workspaceId?: string;
+  readonly requestId?: string;
+  readonly assignments: readonly {
+    readonly scenario: string;
+    readonly policy: string;
+    readonly seed: string;
+    readonly goal?: string;
+    readonly maxSteps?: number;
+  }[];
+}): PlaytestLaunchRequest {
+  return {
+    schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+    mode: "adapter-accelerated",
+    workspaceId: input.workspaceId ?? WORKSPACE_ID,
+    requestId: input.requestId ?? nextLaunchRequestId(),
+    capabilityRevision: "d".repeat(64),
+    operation: { kind: "batch", assignments: input.assignments }
+  };
+}
+
+function branchLaunch(input: {
+  readonly workspaceId?: string;
+  readonly requestId?: string;
+  readonly parentEpisodeId: string;
+  readonly branchStep: number;
+  readonly alternativeActionId: string;
+  readonly policy?: string;
+  readonly maxSteps?: number;
+}): PlaytestLaunchRequest {
+  const { workspaceId, requestId, ...operation } = input;
+  return {
+    schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+    mode: "adapter-accelerated",
+    workspaceId: workspaceId ?? WORKSPACE_ID,
+    requestId: requestId ?? nextLaunchRequestId(),
+    capabilityRevision: "d".repeat(64),
+    operation: { kind: "branch", ...operation }
+  };
+}
+
 const WORKSPACE_ID = "owner/game";
+
+function adapterExecutionProvenance(repository: string, buildSha: string) {
+  const revisionVerified = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu.test(buildSha);
+  return {
+    mode: "adapter-accelerated" as const,
+    source: {
+      kind: "repo-checkout" as const,
+      repository,
+      revision: revisionVerified ? buildSha : null,
+      revisionConfidence: revisionVerified
+        ? ("verified" as const)
+        : ("unknown" as const),
+      checkoutState: revisionVerified
+        ? ("clean" as const)
+        : ("unknown" as const),
+      artifactFingerprint: null,
+      targetId: null,
+      targetOrigin: null
+    },
+    observationSource: "engine-adapter" as const,
+    actionSource: "engine-policy" as const,
+    derivedFrom: null
+  };
+}
 
 function analystMetricAggregation(
   episodeIds: readonly string[],
@@ -120,7 +198,7 @@ function singleAssignmentRequest(
   seed = "seed-1",
   maxSteps?: number
 ) {
-  return {
+  return batchLaunch({
     assignments: [
       {
         scenario,
@@ -129,7 +207,7 @@ function singleAssignmentRequest(
         ...(maxSteps === undefined ? {} : { maxSteps })
       }
     ]
-  };
+  });
 }
 
 type TestPlaytestMcpOptions = Omit<PlaytestMcpOptions, "playtestRunControl"> & {
@@ -160,11 +238,16 @@ function createTestPlaytestMcpServer(
 function createTestPlaytestMcpServer(
   options: TestPlaytestMcpOptions
 ): PlaytestMcpServer {
+  const configured = {
+    ...options,
+    launchIntentRepository:
+      options.launchIntentRepository ?? inMemoryPlaytestLaunchIntentRepository()
+  };
   const playtestRunControl =
-    options.playtestRunControl === undefined
-      ? createPlaytestRunControl(options)
-      : options.playtestRunControl;
-  return createPlaytestMcpServer({ ...options, playtestRunControl });
+    configured.playtestRunControl === undefined
+      ? createPlaytestRunControl(configured)
+      : configured.playtestRunControl;
+  return createPlaytestMcpServer({ ...configured, playtestRunControl });
 }
 
 /** The committed build the fixture sandbox resolves for every batch. */
@@ -360,12 +443,16 @@ function episodeForRun(
 ): PlaytestEpisode {
   const timestamp = new Date().toISOString();
   return {
-    schema: "autodev-playtest-episode-v4",
+    schema: "autodev-playtest-episode-v5",
     episodeId: "ep-cancel-fixture",
     revision: 1,
     batchId: options.batchId,
     assignmentId: options.assignmentId,
     branchLineage: null,
+    executionProvenance: adapterExecutionProvenance(
+      options.repository,
+      options.build.buildSha
+    ),
     identity: {
       workspaceId: options.repository,
       repository: options.repository,
@@ -930,7 +1017,9 @@ test("playtest MCP server: playtest.run rejects an unenabled canonical workspace
 
     const result = await (server as any)._registeredTools[
       "playtest.run"
-    ].handler(singleAssignmentRequest("tutorial", "random", "seed-1"));
+    ].handler({
+      launchRequest: singleAssignmentRequest("tutorial", "random", "seed-1")
+    });
     assert.equal(parsedMcpError(result).code, "playtest_forbidden");
   } finally {
     rmSync(tmpRoot, { recursive: true, force: true });
@@ -972,6 +1061,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       finish?: (result: PlaytestAnalystProcessResult) => void;
     } = {};
     const latestReviews = new Map<string, PlaytestSessionReview>();
+    const launchIntentRepository = inMemoryPlaytestLaunchIntentRepository();
 
     const mockRepo: PlaytestingRepositoryOps = {
       getBatch: async (_workspaceId, batchId) =>
@@ -1037,6 +1127,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       artifactStoreForWorkspace: () => artifacts,
       approvalRepository: approvalRepo,
       playtestRepository: mockRepo,
+      launchIntentRepository,
       readWorkspaceCatalog: enabledWorkspaceCatalog(),
       launchAnalystProcess: (input) => {
         analystDispatch.input = input;
@@ -1118,13 +1209,17 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
         return {
           capabilities: capabilitiesForRun(opts),
           episode: {
-            schema: "autodev-playtest-episode-v4",
+            schema: "autodev-playtest-episode-v5",
             episodeId:
               opts.seed === "seed-exact-1" ? "ep-run-1" : `ep-run-${opts.seed}`,
             revision: 1,
             batchId: opts.batchId,
             assignmentId: opts.assignmentId,
             branchLineage: null,
+            executionProvenance: adapterExecutionProvenance(
+              opts.repository,
+              opts.build.buildSha
+            ),
             identity: {
               workspaceId: opts.repository,
               repository: opts.repository,
@@ -1239,7 +1334,9 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     // 1. playtest-analyst is blocked from running episodes
     const analystRun = await (server as any)._registeredTools[
       "playtest.run"
-    ].handler(singleAssignmentRequest("tutorial", "random", "seed-1"));
+    ].handler({
+      launchRequest: singleAssignmentRequest("tutorial", "random", "seed-1")
+    });
     assert.equal(parsedMcpError(analystRun).code, "playtest_forbidden");
 
     // Switch to playtester role
@@ -1248,7 +1345,9 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     // 2. Fails when unapproved
     const unapprovedRun = await (server as any)._registeredTools[
       "playtest.run"
-    ].handler(singleAssignmentRequest("tutorial", "random", "seed-1"));
+    ].handler({
+      launchRequest: singleAssignmentRequest("tutorial", "random", "seed-1")
+    });
     assert.equal(
       parsedMcpError(unapprovedRun).code,
       "playtest_approval_required"
@@ -1267,9 +1366,13 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     // 3. Fails when scenario is unapproved
     const badScenarioRun = await (server as any)._registeredTools[
       "playtest.run"
-    ].handler(
-      singleAssignmentRequest("unapproved-scenario", "random", "seed-1")
-    );
+    ].handler({
+      launchRequest: singleAssignmentRequest(
+        "unapproved-scenario",
+        "random",
+        "seed-1"
+      )
+    });
     assert.equal(
       parsedMcpError(badScenarioRun).code,
       "playtest_invalid_request"
@@ -1279,7 +1382,13 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     // fabricated through a generic hash-based heuristic.
     const unsupportedPolicyRun = await (server as any)._registeredTools[
       "playtest.run"
-    ].handler(singleAssignmentRequest("tutorial", "heuristic-v1", "seed-1"));
+    ].handler({
+      launchRequest: singleAssignmentRequest(
+        "tutorial",
+        "heuristic-v1",
+        "seed-1"
+      )
+    });
     assert.equal(
       parsedMcpError(unsupportedPolicyRun).code,
       "playtest_invalid_request"
@@ -1287,7 +1396,9 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
 
     const overBudgetRun = await (server as any)._registeredTools[
       "playtest.run"
-    ].handler(singleAssignmentRequest("tutorial", "random", "seed-1", 51));
+    ].handler({
+      launchRequest: singleAssignmentRequest("tutorial", "random", "seed-1", 51)
+    });
     assert.equal(
       parsedMcpError(overBudgetRun).code,
       "playtest_invalid_request"
@@ -1298,17 +1409,18 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     const callerChosenBatch = await (server as any)._registeredTools[
       "playtest.run"
     ].handler({
-      ...singleAssignmentRequest("tutorial", "random", "seed-exact-1"),
-      batchId: "model-chosen-batch"
+      launchRequest: {
+        ...singleAssignmentRequest("tutorial", "random", "seed-exact-1"),
+        batchId: "model-chosen-batch"
+      }
     });
     assert.equal(
       parsedMcpError(callerChosenBatch).code,
       "playtest_invalid_request"
     );
 
-    const successRun = await (server as any)._registeredTools[
-      "playtest.run"
-    ].handler({
+    const successfulLaunchRequest = batchLaunch({
+      requestId: "run-retry-acceptance-1",
       assignments: [
         {
           scenario: "tutorial",
@@ -1324,10 +1436,83 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
         }
       ]
     });
+    const [successRun, concurrentRetry] = await Promise.all([
+      (server as any)._registeredTools["playtest.run"].handler({
+        launchRequest: successfulLaunchRequest
+      }),
+      (server as any)._registeredTools["playtest.run"].handler({
+        launchRequest: successfulLaunchRequest
+      })
+    ]);
     assert.equal(successRun.isError, undefined);
+    assert.equal(concurrentRetry.isError, undefined);
     const runResult = JSON.parse(successRun.content[0].text);
+    const concurrentReceipt = JSON.parse(concurrentRetry.content[0].text);
     assert.equal(runResult.status, "running");
     assert.ok(runResult.batchId.startsWith("batch-"));
+    assert.deepEqual(runResult.assignmentIds, ["a-0001", "a-0002"]);
+    assert.equal(concurrentReceipt.batchId, runResult.batchId);
+    assert.deepEqual(concurrentReceipt.assignmentIds, runResult.assignmentIds);
+    const retriedRun = await (server as any)._registeredTools[
+      "playtest.run"
+    ].handler({ launchRequest: successfulLaunchRequest });
+    assert.equal(retriedRun.isError, undefined, retriedRun.content[0].text);
+    assert.equal(
+      JSON.parse(retriedRun.content[0].text).batchId,
+      runResult.batchId,
+      "same requestId and payload replay the original receipt without another batch"
+    );
+    const conflictingRetry = await (server as any)._registeredTools[
+      "playtest.run"
+    ].handler({
+      launchRequest: {
+        ...successfulLaunchRequest,
+        operation: {
+          kind: "batch",
+          assignments: [
+            { scenario: "tutorial", policy: "random", seed: "changed-payload" }
+          ]
+        }
+      }
+    });
+    assert.equal(
+      parsedMcpError(conflictingRetry).code,
+      "playtest_request_id_conflict"
+    );
+    const requestRecovery = await (server as any)._registeredTools[
+      "playtest.lookupRequest"
+    ].handler({ requestId: successfulLaunchRequest.requestId });
+    const recoveredReceipt = JSON.parse(requestRecovery.content[0].text);
+    assert.equal(recoveredReceipt.state, "accepted");
+    assert.equal(recoveredReceipt.batchId, runResult.batchId);
+    assert.deepEqual(recoveredReceipt.assignmentIds, ["a-0001", "a-0002"]);
+    const otherActorLookup = await server.playtestRunControl.lookupRunByRequest(
+      {
+        workspaceId: WORKSPACE_ID,
+        role: "playtester",
+        actor: "different-actor"
+      },
+      WORKSPACE_ID,
+      successfulLaunchRequest.requestId
+    );
+    assert.equal(otherActorLookup.state, "not-found");
+    const expiredIntent: PlaytestLaunchIntent = {
+      workspaceId: WORKSPACE_ID,
+      actorId: "actor-1",
+      requestId: "expired-request-1",
+      launchIntentHash: "f".repeat(64),
+      batchId: "batch-expired-request",
+      assignmentCount: 1,
+      createdAt: "2020-01-01T00:00:00.000Z",
+      expiresAt: "2020-02-01T00:00:00.000Z"
+    };
+    await launchIntentRepository.insertLaunchIntent(expiredIntent);
+    const expiredLookup = await server.playtestRunControl.lookupRunByRequest(
+      { workspaceId: WORKSPACE_ID, role: "playtester", actor: "actor-1" },
+      WORKSPACE_ID,
+      expiredIntent.requestId
+    );
+    assert.equal(expiredLookup.state, "expired");
     const completedRunResult = await (server as any)._registeredTools[
       "playtest.wait"
     ].handler({ batchId: runResult.batchId, waitMs: 5000 });
@@ -1347,6 +1532,38 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       ["win", "win"],
       "the owner reports each game's classified outcome separately from execution status"
     );
+    let duplicateLaunches = 0;
+    const restartedServer = createTestPlaytestMcpServer({
+      sessionProvider: {
+        current: () => ({
+          workspaceId: WORKSPACE_ID,
+          role: "playtester",
+          actor: "actor-1"
+        })
+      },
+      artifactStoreForWorkspace: () => artifacts,
+      approvalRepository: approvalRepo,
+      playtestRepository: mockRepo,
+      launchIntentRepository,
+      readWorkspaceCatalog: enabledWorkspaceCatalog(),
+      prepareSandboxHandler: fixturePreparedSandbox,
+      runEpisodeHandler: async () => {
+        duplicateLaunches += 1;
+        throw new Error("an accepted request must not launch again");
+      }
+    });
+    const recoveredRetry = await restartedServer.playtestRunControl.startRun(
+      {
+        workspaceId: WORKSPACE_ID,
+        role: "playtester",
+        actor: "actor-1"
+      },
+      successfulLaunchRequest
+    );
+    assert.equal(recoveredRetry.batchId, runResult.batchId);
+    assert.equal(recoveredRetry.status, "completed");
+    assert.deepEqual(recoveredRetry.assignmentIds, ["a-0001", "a-0002"]);
+    assert.equal(duplicateLaunches, 0);
     const unrecognizedViewer = {
       workspaceId: WORKSPACE_ID,
       role: "viewer",
@@ -1594,9 +1811,13 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     mismatchNegotiatedSchemaHash = true;
     const mismatchedRun = await (server as any)._registeredTools[
       "playtest.run"
-    ].handler(
-      singleAssignmentRequest("tutorial", "random", "seed-mismatched-schema")
-    );
+    ].handler({
+      launchRequest: singleAssignmentRequest(
+        "tutorial",
+        "random",
+        "seed-mismatched-schema"
+      )
+    });
     const mismatchedStarted = JSON.parse(mismatchedRun.content[0].text);
     const mismatchedFinished = await (server as any)._registeredTools[
       "playtest.wait"
@@ -1613,9 +1834,13 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     malformedTraceEventStep = true;
     const malformedTraceRun = await (server as any)._registeredTools[
       "playtest.run"
-    ].handler(
-      singleAssignmentRequest("tutorial", "random", "seed-malformed-trace")
-    );
+    ].handler({
+      launchRequest: singleAssignmentRequest(
+        "tutorial",
+        "random",
+        "seed-malformed-trace"
+      )
+    });
     const malformedTraceStarted = JSON.parse(malformedTraceRun.content[0].text);
     const malformedTraceFinished = await (server as any)._registeredTools[
       "playtest.wait"
@@ -1645,9 +1870,13 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     malformedFrameStep = true;
     const malformedFrameRun = await (server as any)._registeredTools[
       "playtest.run"
-    ].handler(
-      singleAssignmentRequest("tutorial", "random", "seed-malformed-frame")
-    );
+    ].handler({
+      launchRequest: singleAssignmentRequest(
+        "tutorial",
+        "random",
+        "seed-malformed-frame"
+      )
+    });
     const malformedFrameStarted = JSON.parse(malformedFrameRun.content[0].text);
     const malformedFrameFinished = await (server as any)._registeredTools[
       "playtest.wait"
@@ -1673,13 +1902,13 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     const analystDispatchSnapshotBeforeUnverified = analystDispatch.input;
     const unverifiedObservationRun = await (server as any)._registeredTools[
       "playtest.run"
-    ].handler(
-      singleAssignmentRequest(
+    ].handler({
+      launchRequest: singleAssignmentRequest(
         "tutorial",
         "random",
         "seed-unverified-observation"
       )
-    );
+    });
     const unverifiedObservationStarted = JSON.parse(
       unverifiedObservationRun.content[0].text
     );
@@ -1763,9 +1992,13 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
 
     const exhaustedBudgetRun = await (server as any)._registeredTools[
       "playtest.run"
-    ].handler(
-      singleAssignmentRequest("tutorial", "random", "seed-after-budget")
-    );
+    ].handler({
+      launchRequest: singleAssignmentRequest(
+        "tutorial",
+        "random",
+        "seed-after-budget"
+      )
+    });
     assert.equal(
       parsedMcpError(exhaustedBudgetRun).code,
       "playtest_invalid_request"
@@ -1865,12 +2098,16 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
       runEpisodeHandler: async (opts) => ({
         capabilities: capabilitiesForRun(opts),
         episode: {
-          schema: "autodev-playtest-episode-v4",
+          schema: "autodev-playtest-episode-v5",
           episodeId: "ep-fail-1",
           revision: 1,
           batchId: opts.batchId,
           assignmentId: opts.assignmentId,
           branchLineage: null,
+          executionProvenance: adapterExecutionProvenance(
+            opts.repository,
+            opts.build.buildSha
+          ),
           identity: {
             workspaceId: opts.repository,
             repository: opts.repository,
@@ -1967,7 +2204,9 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
 
     const result = await (server as any)._registeredTools[
       "playtest.run"
-    ].handler(singleAssignmentRequest("tutorial", "random", "seed-1"));
+    ].handler({
+      launchRequest: singleAssignmentRequest("tutorial", "random", "seed-1")
+    });
     const started = JSON.parse(result.content[0].text);
     assert.equal(started.status, "running");
     const finished = await (server as any)._registeredTools[
@@ -2006,7 +2245,9 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
     failTerminalBatchInsert = true;
     const secondStart = await (server as any)._registeredTools[
       "playtest.run"
-    ].handler(singleAssignmentRequest("tutorial", "random", "seed-2"));
+    ].handler({
+      launchRequest: singleAssignmentRequest("tutorial", "random", "seed-2")
+    });
     const secondStarted = JSON.parse(secondStart.content[0].text);
     const secondWait = await (server as any)._registeredTools[
       "playtest.wait"
@@ -2033,7 +2274,9 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
     commitTerminalThenThrow = true;
     const thirdStart = await (server as any)._registeredTools[
       "playtest.run"
-    ].handler(singleAssignmentRequest("tutorial", "random", "seed-3"));
+    ].handler({
+      launchRequest: singleAssignmentRequest("tutorial", "random", "seed-3")
+    });
     const thirdStarted = JSON.parse(thirdStart.content[0].text);
     const thirdWait = await (server as any)._registeredTools[
       "playtest.wait"
@@ -2147,7 +2390,13 @@ test("playtest MCP: Docker preflight and adapter reset failures are never comple
 
       const startedResult = await (server as any)._registeredTools[
         "playtest.run"
-      ].handler(singleAssignmentRequest("tutorial", "random", "failure-seed"));
+      ].handler({
+        launchRequest: singleAssignmentRequest(
+          "tutorial",
+          "random",
+          "failure-seed"
+        )
+      });
       const started = JSON.parse(startedResult.content[0].text);
       assert.equal(started.status, "running");
       const finishedResult = await (server as any)._registeredTools[
@@ -2395,16 +2644,22 @@ test("playtest MCP serializes concurrent assignment reservations before checking
       actor: "assignment-race"
     };
     const attempts = await Promise.allSettled([
-      server.playtestRunControl.startRun(session, {
-        assignments: [
-          { scenario: "tutorial", policy: "random", seed: "race-1" }
-        ]
-      }),
-      server.playtestRunControl.startRun(session, {
-        assignments: [
-          { scenario: "tutorial", policy: "random", seed: "race-2" }
-        ]
-      })
+      server.playtestRunControl.startRun(
+        session,
+        batchLaunch({
+          assignments: [
+            { scenario: "tutorial", policy: "random", seed: "race-1" }
+          ]
+        })
+      ),
+      server.playtestRunControl.startRun(
+        session,
+        batchLaunch({
+          assignments: [
+            { scenario: "tutorial", policy: "random", seed: "race-2" }
+          ]
+        })
+      )
     ]);
     assert.equal(
       attempts.filter((result) => result.status === "fulfilled").length,
@@ -2562,12 +2817,15 @@ test("playtest batch remains cancellable while a completed assignment persists a
       role: "playtester",
       actor: "partial-batch-owner"
     };
-    const started = await server.playtestRunControl.startRun(session, {
-      assignments: [
-        { scenario: "tutorial", policy: "random", seed: "partial-1" },
-        { scenario: "tutorial", policy: "random", seed: "partial-2" }
-      ]
-    });
+    const started = await server.playtestRunControl.startRun(
+      session,
+      batchLaunch({
+        assignments: [
+          { scenario: "tutorial", policy: "random", seed: "partial-1" },
+          { scenario: "tutorial", policy: "random", seed: "partial-2" }
+        ]
+      })
+    );
     await Promise.all([secondStarted, firstPersisted]);
     let active = await server.playtestRunControl.waitForRun(
       session,
@@ -2754,12 +3012,15 @@ test("review sampling selects complete sessions only and preserves truncated ass
       role: "playtester",
       actor: "complete-session-sampler"
     };
-    const started = await server.playtestRunControl.startRun(session, {
-      assignments: [
-        { scenario: "tutorial", policy: "random", seed: "complete-seed" },
-        { scenario: "tutorial", policy: "random", seed: "truncated-seed" }
-      ]
-    });
+    const started = await server.playtestRunControl.startRun(
+      session,
+      batchLaunch({
+        assignments: [
+          { scenario: "tutorial", policy: "random", seed: "complete-seed" },
+          { scenario: "tutorial", policy: "random", seed: "truncated-seed" }
+        ]
+      })
+    );
     const finished = await server.playtestRunControl.waitForRun(
       session,
       WORKSPACE_ID,
@@ -2916,11 +3177,11 @@ test("playtest MCP: per-run cancellation and approval/workspace revocation abort
         }
       });
 
-      const runRequest = {
+      const runRequest = batchLaunch({
         assignments: [
           { scenario: "tutorial", policy: "random", seed: "cancel-seed" }
         ]
-      };
+      });
       const runPromise =
         trigger === "disable"
           ? server.playtestRunControl.startRun(
@@ -2933,9 +3194,9 @@ test("playtest MCP: per-run cancellation and approval/workspace revocation abort
               },
               runRequest
             )
-          : (server as any)._registeredTools["playtest.run"].handler(
-              runRequest
-            );
+          : (server as any)._registeredTools["playtest.run"].handler({
+              launchRequest: runRequest
+            });
       const startedResponse = await runPromise;
       const started =
         "content" in startedResponse
@@ -2960,9 +3221,13 @@ test("playtest MCP: per-run cancellation and approval/workspace revocation abort
 
       const overWorkerBudget = await (server as any)._registeredTools[
         "playtest.run"
-      ].handler(
-        singleAssignmentRequest("tutorial", "random", "concurrent-seed")
-      );
+      ].handler({
+        launchRequest: singleAssignmentRequest(
+          "tutorial",
+          "random",
+          "concurrent-seed"
+        )
+      });
       assert.equal(
         parsedMcpError(overWorkerBudget).code,
         "playtest_invalid_request"
@@ -3419,10 +3684,12 @@ test("playtest MCP: batch-only contract rejects unapproved cells and over-budget
     const unapprovedCell = await (server as any)._registeredTools[
       "playtest.run"
     ].handler({
-      assignments: [
-        { scenario: "tutorial", policy: "random", seed: "cell-1" },
-        { scenario: "missing-scenario", policy: "random", seed: "cell-2" }
-      ]
+      launchRequest: batchLaunch({
+        assignments: [
+          { scenario: "tutorial", policy: "random", seed: "cell-1" },
+          { scenario: "missing-scenario", policy: "random", seed: "cell-2" }
+        ]
+      })
     });
     assert.equal(
       parsedMcpError(unapprovedCell).code,
@@ -3435,10 +3702,12 @@ test("playtest MCP: batch-only contract rejects unapproved cells and over-budget
     const overBudget = await (server as any)._registeredTools[
       "playtest.run"
     ].handler({
-      assignments: [
-        { scenario: "tutorial", policy: "random", seed: "cell-1" },
-        { scenario: "tutorial", policy: "random", seed: "cell-2" }
-      ]
+      launchRequest: batchLaunch({
+        assignments: [
+          { scenario: "tutorial", policy: "random", seed: "cell-1" },
+          { scenario: "tutorial", policy: "random", seed: "cell-2" }
+        ]
+      })
     });
     assert.equal(parsedMcpError(overBudget).code, "playtest_invalid_request");
     assert.equal(launchAttempts, 0);
@@ -3449,14 +3718,16 @@ test("playtest MCP: batch-only contract rejects unapproved cells and over-budget
     const overStepCell = await (server as any)._registeredTools[
       "playtest.run"
     ].handler({
-      assignments: [
-        {
-          scenario: "tutorial",
-          policy: "random",
-          seed: "big-step",
-          maxSteps: 1_000_000
-        }
-      ]
+      launchRequest: batchLaunch({
+        assignments: [
+          {
+            scenario: "tutorial",
+            policy: "random",
+            seed: "big-step",
+            maxSteps: 1_000_000
+          }
+        ]
+      })
     });
     assert.equal(parsedMcpError(overStepCell).code, "playtest_invalid_request");
     assert.equal(launchAttempts, 0);
@@ -3720,18 +3991,22 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
       policy: "random",
       maxSteps: 2
     };
-    const denied = await branchTool(request);
+    const denied = await branchTool({ launchRequest: branchLaunch(request) });
     assert.equal(parsedMcpError(denied).code, "playtest_forbidden");
 
     currentRole = "playtester";
     const wrongBuild = await branchTool({
-      ...request,
-      parentEpisodeId: wrongBuildSource.episodeId
+      launchRequest: branchLaunch({
+        ...request,
+        parentEpisodeId: wrongBuildSource.episodeId
+      })
     });
     assert.equal(parsedMcpError(wrongBuild).code, "playtest_invalid_request");
     const unavailableAction = await branchTool({
-      ...request,
-      alternativeActionId: "not-advertised"
+      launchRequest: branchLaunch({
+        ...request,
+        alternativeActionId: "not-advertised"
+      })
     });
     assert.equal(
       parsedMcpError(unavailableAction).code,
@@ -3739,7 +4014,7 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
     );
     assert.equal(insertedBatches.length, 0);
 
-    const started = await branchTool(request);
+    const started = await branchTool({ launchRequest: branchLaunch(request) });
     assert.equal(started.isError, undefined);
     const batchId = JSON.parse(started.content[0].text).batchId as string;
     const terminal = await (server as any)._registeredTools[
@@ -3788,7 +4063,9 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
       assert.equal(assignment.branch?.branchStep, 3);
     }
 
-    const overBudget = await branchTool({ ...request, maxSteps: 48 });
+    const overBudget = await branchTool({
+      launchRequest: branchLaunch({ ...request, maxSteps: 48 })
+    });
     assert.equal(parsedMcpError(overBudget).code, "playtest_invalid_request");
     assert.equal(insertedBatches.length, 2);
 
@@ -3799,7 +4076,7 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
         role: "playtester",
         actor: "branch-operator"
       },
-      request
+      branchLaunch(request)
     );
     const cancelBatchId = cancelStart.batchId;
     const immediate = await (server as any)._registeredTools[
@@ -3836,7 +4113,9 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
     );
 
     stallNextBranch = true;
-    const revokeStart = await branchTool(request);
+    const revokeStart = await branchTool({
+      launchRequest: branchLaunch(request)
+    });
     const revokeBatchId = JSON.parse(revokeStart.content[0].text)
       .batchId as string;
     const revokeActive = await waitForActiveRun(server);
@@ -4002,12 +4281,16 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     const traceWrite = artifacts.writeWindow({ entries: traceSteps });
 
     const realEpisode: PlaytestEpisode = {
-      schema: "autodev-playtest-episode-v4",
+      schema: "autodev-playtest-episode-v5",
       episodeId: "ep-1",
       revision: 1,
       batchId: "batch-1",
       assignmentId: "a-0001",
       branchLineage: null,
+      executionProvenance: adapterExecutionProvenance(
+        WORKSPACE_ID,
+        "a".repeat(40)
+      ),
       identity: {
         workspaceId: WORKSPACE_ID,
         repository: WORKSPACE_ID,
@@ -4741,7 +5024,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
         ...packetArgs,
         observations: [
           {
-            text: "Synthetic observation",
+            text: "In the tutorial, jump emitted a collision in fixture-phase while wait was legal.",
             evidenceRefs: [
               {
                 kind: "episode",
@@ -4752,7 +5035,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
         ],
         interpretations: [
           {
-            text: "Synthetic interpretation",
+            text: "The collision after jump may reflect an agency issue while wait remained available.",
             evidenceRefs: [
               {
                 kind: "episode",
@@ -4775,7 +5058,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
               : {
                   status: "none-identified",
                   reason:
-                    "No distinct alternative is present in this test report."
+                    "The tutorial packet records one collision and no second policy arm."
                 },
           experiments:
             Array.isArray(input.experiments) && input.experiments.length > 0
@@ -4783,11 +5066,11 @@ test("playtest MCP server: submitReview validates evidence against the real stor
               : {
                   status: "none-recommended",
                   reason:
-                    "No additional experiment is required by this test case."
+                    "The tutorial packet records one collision and no second policy arm to compare."
                 },
           followUp: {
             status: "proposed",
-            text: "Review the evidence and run only an approved follow-up."
+            text: "Compare jump with wait in the tutorial before recommending a policy change."
           }
         },
         ...input
@@ -4861,7 +5144,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     const partialFindingReview = await submitReview({
       episodeId: episodeOne.episodeId,
       chronologicalSummary:
-        "One candidate conflicts with a source-owned prior status.",
+        "One tutorial collision finding conflicts with a source-owned prior status.",
       status: "hypothesis",
       evidenceRefs: [
         { kind: "episode", id: episodeOne.episodeId },
@@ -4872,17 +5155,20 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       dimensionEvidence: [
         {
           dimensionId: "collision-agency",
-          rationale: "The legal wait action is a plausible safe alternative.",
+          rationale:
+            "A wait action was visible as a legal alternative when the collision event was recorded.",
           evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
         }
       ],
       alternativeExplanations: [
-        "The random policy may have chosen an avoidable collision."
+        "The random policy may have selected an avoidable jump collision."
       ],
       experiments: [
         {
-          hypothesis: "The collision is avoidable with a wait action.",
-          falsifier: "A same-seed wait still collides at the same step.",
+          hypothesis:
+            "The collision is avoidable by choosing wait rather than jump in the tutorial.",
+          falsifier:
+            "A same-seed wait still triggers collision in fixture-phase.",
           metricId: "anomaly",
           controls: ["same build", "same seed"],
           budget: "one additional synthetic episode"
@@ -4897,7 +5183,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
         experiments: { status: "proposed" },
         followUp: {
           status: "proposed",
-          text: "Run a root-approved matched-seed follow-up."
+          text: "Compare same-seed wait with jump in the tutorial before attributing the collision to the game."
         }
       },
       findings: [
@@ -4910,8 +5196,9 @@ test("playtest MCP server: submitReview validates evidence against the real stor
             }
           },
           evidenceStatus: "hypothesis",
-          title: "Conflicts with a not-observed record",
-          description: "This finding must fail before any peer is written.",
+          title: "Jump collision conflicts with prior status",
+          description:
+            "This jump collision finding conflicts with a prior not-observed record.",
           evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
         },
         {
@@ -4923,8 +5210,9 @@ test("playtest MCP server: submitReview validates evidence against the real stor
             }
           },
           evidenceStatus: "hypothesis",
-          title: "Valid peer finding",
-          description: "This finding must not persist on partial failure.",
+          title: "Additional collision finding",
+          description:
+            "This second collision citation must not persist on partial failure.",
           evidenceRefs: [{ kind: "event", id: "evt-real-2" }]
         }
       ]
@@ -4982,7 +5270,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     const retryableFindings = {
       episodeId: episodeOne.episodeId,
       chronologicalSummary:
-        "A review retry must reconcile finding writes already persisted.",
+        "The tutorial collision review retry must reconcile finding writes already persisted.",
       status: "hypothesis",
       evidenceRefs: [
         { kind: "episode", id: episodeOne.episodeId },
@@ -4997,8 +5285,9 @@ test("playtest MCP server: submitReview validates evidence against the real stor
             failureSignature: { witness: "retry-first" }
           },
           evidenceStatus: "hypothesis",
-          title: "Retry first finding",
-          description: "This finding persists before its peer fails.",
+          title: "Retry first jump collision finding",
+          description:
+            "This jump collision finding persists before its peer fails.",
           evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
         },
         {
@@ -5007,19 +5296,20 @@ test("playtest MCP server: submitReview validates evidence against the real stor
             failureSignature: { witness: "retry-second" }
           },
           evidenceStatus: "hypothesis",
-          title: "Retry second finding",
-          description: "This finding fails once, then succeeds on retry.",
+          title: "Retry second collision finding",
+          description:
+            "This second collision finding fails once, then succeeds on retry.",
           evidenceRefs: [{ kind: "event", id: "evt-real-2" }]
         }
       ]
     };
-    failFindingTitle = "Retry second finding";
+    failFindingTitle = "Retry second collision finding";
     peerFindingPersisted = false;
     const partialWrite = await submitReview(retryableFindings);
     assert.equal(parsedMcpError(partialWrite).code, "playtest_internal_error");
     assert.deepEqual(
       insertedFindings.map((finding) => [finding.title, finding.version]),
-      [["Retry first finding", 1]]
+      [["Retry first jump collision finding", 1]]
     );
     assert.equal(insertedReviews.length, 0);
     const recoveredWrite = await submitReview(retryableFindings);
@@ -5027,8 +5317,8 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     assert.deepEqual(
       insertedFindings.map((finding) => [finding.title, finding.version]),
       [
-        ["Retry first finding", 1],
-        ["Retry second finding", 1]
+        ["Retry first jump collision finding", 1],
+        ["Retry second collision finding", 1]
       ]
     );
     assert.equal(insertedReviews.length, 1);
@@ -5249,7 +5539,8 @@ test("playtest MCP server: submitReview validates evidence against the real stor
 
     const unobservedAction = await submitReview({
       episodeId: "ep-1",
-      chronologicalSummary: "Action is not in the stored trace.",
+      chronologicalSummary:
+        "The tutorial collision trace does not contain the teleport action.",
       status: "hypothesis",
       evidenceRefs: [{ kind: "episode", id: "ep-1" }],
       rubricHash: "f".repeat(64),
@@ -5349,7 +5640,8 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     // 5. Successful review submission citing the episode's real event.
     const validReviewInput = {
       episodeId: "ep-1",
-      chronologicalSummary: "Player completed level 1 with normal pacing.",
+      chronologicalSummary:
+        "The random policy completed the tutorial with a win after 3 decisions.",
       status: "hypothesis",
       evidenceRefs: [
         { kind: "episode", id: "ep-1" },
@@ -5358,30 +5650,33 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       rubricHash: "f".repeat(64),
       observations: [
         {
-          text: "The trace records a collision after jump.",
+          text: "The jump action emitted a collision at step 0 in fixture-phase.",
           evidenceRefs: [{ kind: "event", id: "evt-real-1", step: 0 }]
         }
       ],
       interpretations: [
         {
-          text: "A failed policy choice is an alternative explanation.",
+          text: "A random jump choice may explain the collision despite wait being available.",
           evidenceRefs: [{ kind: "event", id: "evt-real-1", step: 0 }]
         }
       ],
       dimensionEvidence: [
         {
           dimensionId: "collision-agency",
-          rationale: "The legal wait action is a plausible safe alternative.",
+          rationale:
+            "A wait action was visible as a legal alternative when the collision event was recorded.",
           evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
         }
       ],
       alternativeExplanations: [
-        "The random policy may have chosen an avoidable collision."
+        "The random policy may have selected an avoidable jump collision."
       ],
       experiments: [
         {
-          hypothesis: "The collision is avoidable with a wait action.",
-          falsifier: "A same-seed wait still collides at the same step.",
+          hypothesis:
+            "The collision is avoidable by choosing wait rather than jump in the tutorial.",
+          falsifier:
+            "A same-seed wait still triggers collision in fixture-phase.",
           metricId: "anomaly",
           controls: ["same build", "same seed"],
           budget: "one additional synthetic episode"
@@ -5396,7 +5691,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
         experiments: { status: "proposed" },
         followUp: {
           status: "proposed",
-          text: "Run a root-approved matched-seed follow-up."
+          text: "Compare same-seed wait with jump in the tutorial before attributing the collision to the game."
         }
       },
       findings: [
@@ -5406,8 +5701,8 @@ test("playtest MCP server: submitReview validates evidence against the real stor
             failureSignature: { action: "jump", witness: "collision-on-jump" }
           },
           evidenceStatus: "hypothesis",
-          title: "Minor pacing lull",
-          description: "Lull in corridor",
+          title: "Jump collision",
+          description: "The jump action emitted a collision in fixture-phase.",
           evidenceRefs: [{ kind: "event", id: "evt-real-1" }]
         },
         {
@@ -5416,8 +5711,9 @@ test("playtest MCP server: submitReview validates evidence against the real stor
             failureSignature: { action: "jump", witness: "collision-on-jump" }
           },
           evidenceStatus: "hypothesis",
-          title: "Duplicate title must not overwrite the first finding",
-          description: "Duplicate report.",
+          title: "Duplicate jump collision title",
+          description:
+            "This second collision citation tests duplicate identity merging.",
           evidenceRefs: [{ kind: "event", id: "evt-real-2" }]
         }
       ]
@@ -5458,6 +5754,71 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       "playtest.submitReview"
     ].inputSchema.safeParseAsync({ ...packetArgs, ...validReviewInput });
     assert.equal(validReviewSchemaResult.success, true);
+
+    const contentFreeReview = await submitReview({
+      ...validReviewInput,
+      chronologicalSummary: "probe"
+    });
+    const contentFreeError = parsedMcpError(contentFreeReview);
+    assert.equal(contentFreeError.code, "playtest_review_narrative_too_terse");
+    assert.match(
+      String(contentFreeError.message),
+      /three words and sixteen characters/u
+    );
+    assert.equal(insertedReviews.length, 0);
+    assert.equal(insertedFindings.length, 0);
+    assert.equal(storedBatch.reviewReceipts.length, 0);
+    assert.equal(storedBatch.budget.actualCritiques, 0);
+
+    const ungroundedReview = await submitReview({
+      ...validReviewInput,
+      chronologicalSummary:
+        "Test minimal chronological summary with enough words.",
+      observations: [
+        {
+          text: "This is a test observation with enough words.",
+          evidenceRefs: [{ kind: "episode", id: "ep-1" }]
+        }
+      ],
+      interpretations: [
+        {
+          text: "This is a test interpretation with enough words.",
+          evidenceRefs: [{ kind: "episode", id: "ep-1" }]
+        }
+      ],
+      alternativeExplanations: [],
+      experiments: [],
+      findings: [],
+      dimensionEvidence: [],
+      reportCompleteness: {
+        crossSessionContext: {
+          status: "unavailable",
+          reason: "No other complete persisted episode exists in this batch."
+        },
+        alternatives: {
+          status: "none-identified",
+          reason: "No alternative explanations were identified for this test."
+        },
+        experiments: {
+          status: "none-recommended",
+          reason: "No experiments were recommended for this minimal test."
+        },
+        followUp: {
+          status: "none",
+          reason: "No follow-up was proposed for this minimal validation test."
+        }
+      }
+    });
+    const ungroundedError = parsedMcpError(ungroundedReview);
+    assert.equal(
+      ungroundedError.code,
+      "playtest_review_narrative_not_grounded"
+    );
+    assert.equal(insertedReviews.length, 0);
+    assert.equal(insertedFindings.length, 0);
+    assert.equal(storedBatch.reviewReceipts.length, 0);
+    assert.equal(storedBatch.budget.actualCritiques, 0);
+
     failReceiptWrite = true;
     const missingReceipt = await submitReview(validReviewInput);
     assert.equal(
@@ -5494,12 +5855,14 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       "unsupported-modality"
     );
     assert.deepEqual(parsedReview.alternativeExplanations, [
-      "The random policy may have chosen an avoidable collision."
+      "The random policy may have selected an avoidable jump collision."
     ]);
     assert.deepEqual(parsedReview.experiments, [
       {
-        hypothesis: "The collision is avoidable with a wait action.",
-        falsifier: "A same-seed wait still collides at the same step.",
+        hypothesis:
+          "The collision is avoidable by choosing wait rather than jump in the tutorial.",
+        falsifier:
+          "A same-seed wait still triggers collision in fixture-phase.",
         metricId: "anomaly",
         controls: ["same build", "same seed"],
         budget: "one additional synthetic episode"
@@ -5525,7 +5888,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       parsedReview.findings[0].identity.failureSignature.events,
       ["collision"]
     );
-    assert.equal(parsedReview.findings[0].title, "Minor pacing lull");
+    assert.equal(parsedReview.findings[0].title, "Jump collision");
     assert.equal(parsedReview.findings[0].affectedEpisodes, null);
     assert.equal(parsedReview.findings[0].totalEligibleEpisodes, null);
     assert.equal(parsedReview.findings[0].affectedOpportunities, null);
@@ -5579,7 +5942,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     assert.equal(repeatedReview.isError, undefined);
     assert.equal(insertedFindings.length, 2);
     assert.equal(insertedFindings[1]?.version, 2);
-    assert.equal(insertedFindings[1]?.title, "Minor pacing lull");
+    assert.equal(insertedFindings[1]?.title, "Jump collision");
     assert.equal(insertedFindings[1]?.severity, "informational");
     assert.equal(insertedFindings[1]?.status, "open");
     assert.equal(insertedFindings[1]?.affectedEpisodes, null);
@@ -5592,7 +5955,8 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     const submitRepeatedWitness = (eventId: string) =>
       submitReview({
         episodeId: "ep-1",
-        chronologicalSummary: "Concurrent repeated witness.",
+        chronologicalSummary:
+          "Concurrent tutorial collision witness during jump play.",
         status: "hypothesis",
         evidenceRefs: [{ kind: "episode", id: "ep-1" }],
         rubricHash: "f".repeat(64),
@@ -5630,7 +5994,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     assert.equal(storedBatch.reviewReceipts.length, 4);
     const capFillReview = await submitReview({
       episodeId: episodeOne.episodeId,
-      chronologicalSummary: "Fifth distinct critique for the selected session.",
+      chronologicalSummary: "Fifth critique of the tutorial collision episode.",
       status: "hypothesis",
       evidenceRefs: [{ kind: "episode", id: episodeOne.episodeId }],
       rubricHash: "f".repeat(64)
@@ -5640,7 +6004,8 @@ test("playtest MCP server: submitReview validates evidence against the real stor
 
     const reservedReviewInput = {
       episodeId: episodeOne.episodeId,
-      chronologicalSummary: "A receipt failure reserves this critique slot.",
+      chronologicalSummary:
+        "A receipt failure reserves the tutorial collision review slot.",
       status: "hypothesis",
       evidenceRefs: [{ kind: "episode", id: episodeOne.episodeId }],
       rubricHash: "f".repeat(64)
@@ -5657,7 +6022,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     for (let index = 1; index <= 3; index += 1) {
       const pressureReview = await submitReview({
         episodeId: episodeOne.episodeId,
-        chronologicalSummary: `Post-reservation pressure ${index}.`,
+        chronologicalSummary: `Post-reservation pressure ${index} reviews the tutorial collision evidence.`,
         status: "hypothesis",
         evidenceRefs: [{ kind: "episode", id: episodeOne.episodeId }],
         rubricHash: "f".repeat(64)
@@ -5673,7 +6038,8 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     );
     const blockedByReservation = await submitReview({
       episodeId: episodeOne.episodeId,
-      chronologicalSummary: "This review cannot take the reserved ninth slot.",
+      chronologicalSummary:
+        "The tutorial collision review cannot take the reserved ninth slot.",
       status: "hypothesis",
       evidenceRefs: [{ kind: "episode", id: episodeOne.episodeId }],
       rubricHash: "f".repeat(64)
@@ -5693,7 +6059,8 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     );
     const exhaustedReview = await submitReview({
       episodeId: episodeOne.episodeId,
-      chronologicalSummary: "This review exceeds the frozen cap.",
+      chronologicalSummary:
+        "This tutorial collision review exceeds the frozen critique cap.",
       status: "hypothesis",
       evidenceRefs: [{ kind: "episode", id: episodeOne.episodeId }],
       rubricHash: "f".repeat(64)
@@ -5739,12 +6106,16 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
       metricEstimate: number | null
     ): PlaytestEpisode {
       return {
-        schema: "autodev-playtest-episode-v4",
+        schema: "autodev-playtest-episode-v5",
         episodeId,
         revision: 1,
         batchId: "batch-1",
         assignmentId: "a-0001",
         branchLineage: null,
+        executionProvenance: adapterExecutionProvenance(
+          WORKSPACE_ID,
+          "a".repeat(40)
+        ),
         identity: {
           workspaceId: WORKSPACE_ID,
           repository: WORKSPACE_ID,

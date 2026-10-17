@@ -111,6 +111,7 @@ test("execution contract defines read-only playtest roles with scoped tools", ()
   assert.deepEqual(playtester.mcpTools?.playtest, [
     "playtest.capabilities",
     "playtest.run",
+    "playtest.lookupRequest",
     "playtest.wait",
     "playtest.activeRuns",
     "playtest.cancel",

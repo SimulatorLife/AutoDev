@@ -18,6 +18,7 @@ const REVOKE_FORM_NAME = "Revoke playtesting approval for fixture/game";
 const MAX_BUDGET_PREVIEW_PATTERN =
   /1 of 1000 sessions · 1 concurrent worker\(s\) · 60 seconds maximum/u;
 const BROWSER_BATCH_ID_PATTERN = /^batch-browser-\d{3}$/u;
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const RUNNING_STATUS = "running";
 const COMPLETED_STATUS = "completed";
 const CANCELLED_STATUS = "cancelled";
@@ -26,6 +27,9 @@ const ANALYSIS_STATUS_ATTRIBUTE = "data-analysis-status";
 const CANCEL_RUN_ROUTE_PATTERN = /\/api\/playtesting\/runs\/[^/]+\/cancel$/u;
 const ACTIVE_APPROVAL_SELECTOR = '[data-workspace-approval-state="active"]';
 const LIVE_OR_IDLE_FRESHNESS_PATTERN = /live|idle/u;
+const VISUAL_DRIVER_UNAVAILABLE_LABEL = "Visual driver unavailable";
+const VISUAL_MODE_SELECTOR = '[data-playtesting-mode="autonomous-visual"]';
+const ADAPTER_MODE_SELECTOR = '[data-playtesting-mode="adapter-accelerated"]';
 const LIVE_BATCH_URL_PATTERN = /liveBatch=batch-/u;
 const LAST_KNOWN_STATE_PATTERN = /not confirmed current state/iu;
 const FILTERS_SUMMARY_PATTERN = /^Filters/u;
@@ -36,8 +40,10 @@ const APPROVAL_FORM_NAME = `Approve playtesting for ${FIXTURE_WORKSPACE_ID}`;
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const PLAYTESTING_OVERVIEW_URL = "/playtesting?workspaceId=fixture%2Fgame";
 const RUN_FORM_NAME = "Start a playtest";
+const START_SINGLE_RUN_LABEL = "Start playtest";
 const RUN_STATUS_REGION_NAME = "Playtest run status";
 const CUSTOMIZE_RUN_LABEL = "Customize run";
+const BATCH_TIME_ANALYSIS_LABEL = "Batch, time, and analysis limits";
 const ACTIVE_RUN_TEST_ID = "playtesting-active-run";
 const ASSIGNMENT_OUTCOME_TEST_ID = "playtesting-assignment-outcome";
 const BATCH_ID_ATTRIBUTE = "data-batch-id";
@@ -119,21 +125,33 @@ test("workspace overview distinguishes batches, episodes, findings, and comparis
     "aria-labelledby",
     "playtesting-new-dialog-title"
   );
-  await expect(
-    dialog.locator('[data-playtesting-mode="autonomous-visual"]')
-  ).toContainText("Not available in this Runtime yet");
-  await expect(
-    dialog.locator('[data-playtesting-mode="adapter-accelerated"]')
-  ).toContainText("Current supported mode");
+  await expect(dialog.locator(VISUAL_MODE_SELECTOR)).toContainText(
+    "No visual target approved"
+  );
+  const visualReadinessDetails = dialog
+    .locator(VISUAL_MODE_SELECTOR)
+    .getByTestId("visual-readiness-details");
+  await visualReadinessDetails.locator("summary").click();
+  await expect(dialog.locator(VISUAL_MODE_SELECTOR)).toContainText(
+    VISUAL_DRIVER_UNAVAILABLE_LABEL
+  );
+  await expect(dialog.locator(ADAPTER_MODE_SELECTOR)).toHaveAttribute(
+    "data-mode-status",
+    "check-required"
+  );
+  await expect(dialog.locator(ADAPTER_MODE_SELECTOR)).toContainText(
+    "Approval required"
+  );
   await expect(
     dialog.getByRole("link", { name: "Manage visual target permissions" })
   ).toHaveAttribute("href", WORKSPACE_DETAIL_URL_PATTERN);
   await expect(dialog.getByTestId("playtesting-run-blocked")).toContainText(
     "Approval required"
   );
-  await expect(dialog.getByTestId("playtesting-build-context")).toContainText(
-    "new commits do not need separate approval"
+  await expect(dialog.getByRole("form", { name: RUN_FORM_NAME })).toHaveCount(
+    0
   );
+  await expect(dialog.getByTestId("playtesting-build-context")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await page.getByText("Measurement coverage").click();
@@ -387,6 +405,9 @@ test("session List/Grid preference is shareable and restored by Back", async ({
   page
 }) => {
   await page.goto("/playtesting?view=sessions&workspaceId=fixture%2Fgame");
+  const firstSession = page.locator('[data-session-row="episode-17"]');
+  await expect(firstSession).toContainText("Adapter-accelerated");
+  await expect(firstSession).toContainText("Verified aaaaaaaaaaaa");
   const list = page.getByRole("button", { name: "List view" });
   const grid = page.getByRole("button", { name: "Grid view" });
   await expect(list).toHaveAttribute(PRESSED_ATTRIBUTE, PRESSED_VALUE);
@@ -503,12 +524,22 @@ test("batch composer generates and submits the full bounded 1,000-assignment inv
   await expect(page.locator(ACTIVE_APPROVAL_SELECTOR)).toBeVisible();
 
   await page.goto(PLAYTESTING_OVERVIEW_URL);
-  await openNewPlaytest(page);
+  const dialog = await openNewPlaytest(page);
+  await expect(dialog.getByTestId("playtesting-build-context")).toContainText(
+    "new commits do not need separate approval"
+  );
+  await expect(dialog.locator(ADAPTER_MODE_SELECTOR)).toHaveAttribute(
+    "data-mode-status",
+    "ready"
+  );
+  await expect(dialog.locator(ADAPTER_MODE_SELECTOR)).toContainText(
+    "Ready to run"
+  );
   const form = page.getByRole("form", {
     name: RUN_FORM_NAME
   });
   await form.getByText(CUSTOMIZE_RUN_LABEL).click();
-  await form.getByText("Batch, time, and analysis limits").click();
+  await form.getByText(BATCH_TIME_ANALYSIS_LABEL).click();
   await expect(form.getByText(MAX_BUDGET_PREVIEW_PATTERN)).toBeVisible();
   await form.getByLabel("Additional assignments").fill("999");
   await form.getByRole("button", { name: "Generate assignments" }).click();
@@ -594,10 +625,10 @@ test("approved run start, automatic status watching, and cancellation stay in th
   });
   await expect(form).toBeVisible();
   await expect(
-    form.getByRole("button", { name: "Start playtest" })
+    form.getByRole("button", { name: START_SINGLE_RUN_LABEL })
   ).toBeInViewport();
   await form.getByText(CUSTOMIZE_RUN_LABEL).click();
-  await form.getByText("Batch, time, and analysis limits").click();
+  await form.getByText(BATCH_TIME_ANALYSIS_LABEL).click();
   await expect(form.getByText(BUDGET_PREVIEW_PATTERN)).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   const mobileWidth = await page.evaluate(() => ({
@@ -605,6 +636,14 @@ test("approved run start, automatic status watching, and cancellation stay in th
     viewport: document.documentElement.clientWidth
   }));
   expect(mobileWidth.document).toBeLessThanOrEqual(mobileWidth.viewport);
+  await page.getByRole("button", { name: "Close new playtest dialog" }).click();
+  await page.goto(PLAYTESTING_OVERVIEW_URL);
+  await openNewPlaytest(page);
+  await expect(
+    form.getByRole("button", { name: START_SINGLE_RUN_LABEL })
+  ).toBeInViewport();
+  await form.getByText(CUSTOMIZE_RUN_LABEL).click();
+  await form.getByText(BATCH_TIME_ANALYSIS_LABEL).click();
   await page.getByRole("button", { name: "Close new playtest dialog" }).click();
   const collapseSidebar = page.getByRole("button", {
     name: "Collapse sidebar"
@@ -647,9 +686,19 @@ test("approved run start, automatic status watching, and cancellation stay in th
   );
   await form.getByRole("button", { name: RUN_TWO_ASSIGNMENTS_LABEL }).click();
   const submitted = await startRequest;
-  const submittedAssignments = JSON.parse(
-    new URLSearchParams(submitted.postData() ?? "").get("assignments") ?? "null"
-  ) as readonly { readonly seed: string }[];
+  const submittedLaunch = JSON.parse(
+    new URLSearchParams(submitted.postData() ?? "").get("launchRequest") ??
+      "null"
+  ) as {
+    readonly mode: string;
+    readonly capabilityRevision: string;
+    readonly operation: {
+      readonly assignments: readonly { readonly seed: string }[];
+    };
+  };
+  expect(submittedLaunch.mode).toBe("adapter-accelerated");
+  expect(submittedLaunch.capabilityRevision).toBe("e".repeat(64));
+  const submittedAssignments = submittedLaunch.operation.assignments;
   expect(submittedAssignments.map((assignment) => assignment.seed)).toEqual([
     "hold-1",
     "hold-2"
@@ -754,6 +803,67 @@ test("approved run start, automatic status watching, and cancellation stay in th
   );
 });
 
+test("a lost start acknowledgement recovers the same requestId without creating a duplicate batch", async ({
+  page,
+  request
+}) => {
+  const approvalForm = await fillSyntheticApprovalForm(page);
+  await approvalForm.getByRole("button", { name: "Approve" }).click();
+  await expect(page.locator(ACTIVE_APPROVAL_SELECTOR)).toBeVisible();
+  const failAcknowledgement = await request.post(
+    `${FIXTURE_BASE_URL}/fixture/run-ack-failure?mode=once`
+  );
+  expect(failAcknowledgement.ok()).toBe(true);
+
+  await page.goto(PLAYTESTING_OVERVIEW_URL);
+  const dialog = await openNewPlaytest(page);
+  await dialog.getByRole("button", { name: START_SINGLE_RUN_LABEL }).click();
+  const pending = page.getByRole("region", {
+    name: "Pending playtest request"
+  });
+  await expect(pending).toBeVisible();
+  const requestId = await pending.getAttribute("data-request-id");
+  expect(requestId).toMatch(REQUEST_ID_PATTERN);
+  const recoveryTab = await page.context().newPage();
+  await recoveryTab.goto(PLAYTESTING_OVERVIEW_URL);
+  await openNewPlaytest(recoveryTab);
+  let restoredPending = recoveryTab.getByRole("region", {
+    name: "Pending playtest request"
+  });
+  await expect(restoredPending).toHaveAttribute("data-request-id", requestId!);
+  await recoveryTab.reload();
+  await openNewPlaytest(recoveryTab);
+  restoredPending = recoveryTab.getByRole("region", {
+    name: "Pending playtest request"
+  });
+  await expect(restoredPending).toHaveAttribute("data-request-id", requestId!);
+  const firstCountResponse = await request.get(
+    `${FIXTURE_BASE_URL}/fixture/run-count`
+  );
+  expect(await firstCountResponse.json()).toEqual({ count: 1 });
+
+  await restoredPending
+    .getByRole("button", { name: "Check request status" })
+    .click();
+  const runStatus = recoveryTab.getByRole("region", {
+    name: RUN_STATUS_REGION_NAME
+  });
+  await expect(runStatus).toBeVisible();
+  const recoveredRun = runStatus.getByTestId(ACTIVE_RUN_TEST_ID).first();
+  await expect(recoveredRun).toHaveAttribute(
+    BATCH_ID_ATTRIBUTE,
+    BROWSER_BATCH_ID_PATTERN
+  );
+  await expect(recoveredRun).toHaveAttribute(
+    RUN_STATUS_ATTRIBUTE,
+    COMPLETED_STATUS
+  );
+  const finalCountResponse = await request.get(
+    `${FIXTURE_BASE_URL}/fixture/run-count`
+  );
+  expect(await finalCountResponse.json()).toEqual({ count: 1 });
+});
+
 test("operator can start, watch, and analyze a completed session from the same Console flow", async ({
   page,
   request
@@ -767,7 +877,7 @@ test("operator can start, watch, and analyze a completed session from the same C
   const runForm = page.getByRole("form", {
     name: RUN_FORM_NAME
   });
-  await runForm.getByRole("button", { name: "Start playtest" }).click();
+  await runForm.getByRole("button", { name: START_SINGLE_RUN_LABEL }).click();
   const runStatus = page.getByRole("region", {
     name: RUN_STATUS_REGION_NAME
   });
@@ -961,7 +1071,7 @@ test("live batches appear without operator action, and an unreadable read is sta
   });
   await expect(form).toBeVisible();
   await expect(
-    form.getByRole("button", { name: "Start playtest" })
+    form.getByRole("button", { name: START_SINGLE_RUN_LABEL })
   ).toBeInViewport();
   await form.getByText(CUSTOMIZE_RUN_LABEL).click();
   await form.getByLabel("Additional assignments").fill("1");

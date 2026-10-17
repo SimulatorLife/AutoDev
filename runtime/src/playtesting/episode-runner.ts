@@ -2,6 +2,7 @@
 import { performance } from "node:perf_hooks";
 
 import {
+  assertPlaytestExecutionProvenance,
   assertWorkspacePlaytestApproval,
   canonicalPlaytestJson,
   type GameCaptureEvent,
@@ -55,6 +56,7 @@ import type { PlaytestPolicy, PlaytestPolicyDecision } from "./policies.ts";
 import { projectPlaytestVisibleObservation } from "./visible-observation.ts";
 
 const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
+const COMMIT_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const ASSIGNMENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u;
 export const MAX_PLAYTEST_EPISODE_TRACE_STEPS = 4096;
 const MAX_EPISODE_WINDOW_STEPS = MAX_PLAYTEST_EPISODE_TRACE_STEPS;
@@ -1286,13 +1288,40 @@ function assembleEpisode(
   const metrics = evaluateMetrics(context, provenance);
   const isComplete =
     status === "completed" && context.missingReasons.size === 0;
+  const branchLineage = buildBranchLineage(context);
+  const sourceRevisionVerified = COMMIT_PATTERN.test(options.build.buildSha);
+  const executionProvenance = {
+    mode: "adapter-accelerated",
+    source: {
+      kind: "repo-checkout",
+      repository: options.repository,
+      revision: sourceRevisionVerified ? options.build.buildSha : null,
+      revisionConfidence: sourceRevisionVerified ? "verified" : "unknown",
+      checkoutState: sourceRevisionVerified ? "clean" : "unknown",
+      artifactFingerprint: null,
+      targetId: null,
+      targetOrigin: null
+    },
+    observationSource: "engine-adapter",
+    actionSource: "engine-policy",
+    derivedFrom:
+      branchLineage === null
+        ? null
+        : {
+            episodeId: branchLineage.parentEpisodeId,
+            stepId: branchLineage.branchStep,
+            stateDigest: branchLineage.forkStateHash
+          }
+  } as const;
+  assertPlaytestExecutionProvenance(executionProvenance);
   return {
     schema: PLAYTESTS_EPISODE_SCHEMA,
     episodeId: playtestEpisodeRecordId(options.batchId, options.assignmentId),
     revision: 1,
     batchId: options.batchId,
     assignmentId: options.assignmentId,
-    branchLineage: buildBranchLineage(context),
+    branchLineage,
+    executionProvenance,
     identity,
     scenarioFamily: options.scenarioFamily,
     policyCohort: options.policy.cohort,

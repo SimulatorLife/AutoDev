@@ -3,8 +3,8 @@
  *
  * Reuses resolveOpenLitClickHouseConnection and Data's existing
  * runParameterizedClickHouseStatement transport. Persists workspace-scoped
- * batches, episode summary/version rows, findings, reviews, cross-session
- * syntheses and comparisons
+ * launch intents, batches, episode summary/version rows, findings, reviews,
+ * cross-session syntheses and comparisons
  * per docs/playtesting-target-state.md Section 9. Large JSONL/frames never
  * land here; episode rows retain only bounded content-hash manifests/opaque
  * refs into Runtime-owned artifact storage.
@@ -16,17 +16,18 @@
  * a zero count.
  */
 
-import type {
-  HumanPlaytestStudy,
-  PlaytestArtifactReference,
-  PlaytestBatch,
-  PlaytestBenchmark,
-  PlaytestComparison,
-  PlaytestCrossSessionSynthesis,
-  PlaytestEpisode,
-  PlaytestExperiment,
-  PlaytestFinding,
-  PlaytestSessionReview
+import {
+  PLAYTESTS_EPISODE_SCHEMA,
+  type HumanPlaytestStudy,
+  type PlaytestArtifactReference,
+  type PlaytestBatch,
+  type PlaytestBenchmark,
+  type PlaytestComparison,
+  type PlaytestCrossSessionSynthesis,
+  type PlaytestEpisode,
+  type PlaytestExperiment,
+  type PlaytestFinding,
+  type PlaytestSessionReview
 } from "@simulatorlife/autodev-core";
 
 import {
@@ -72,7 +73,9 @@ import {
   encodeHumanStudy,
   encodeHumanSummary,
   encodeReview,
-  isRecord
+  isRecord,
+  migrateLegacyEpisodeForStorage,
+  toClickHouseDateTime
 } from "./row-codec.ts";
 import {
   ensurePlaytestSchema,
@@ -85,6 +88,7 @@ import {
   PLAYTEST_FINDINGS_TABLE,
   PLAYTEST_HUMAN_STUDIES_TABLE,
   PLAYTEST_HUMAN_SUMMARIES_TABLE,
+  PLAYTEST_LAUNCH_INTENTS_TABLE,
   PLAYTEST_REVIEWS_TABLE
 } from "./schema.ts";
 import type {
@@ -98,6 +102,7 @@ import type {
   PlaytestHumanAggregateRecord,
   PlaytestHumanStudyFilter,
   PlaytestHumanValidationSummary,
+  PlaytestLaunchIntent,
   PlaytestPage
 } from "./types.ts";
 
@@ -105,9 +110,15 @@ import type {
 const MAX_PLAYTEST_PAGE_SIZE = 500;
 const DEFAULT_PLAYTEST_PAGE_SIZE = 50;
 const MAX_BATCH_ARTIFACT_HISTORY_ROWS = 128;
+const EPISODE_SCHEMA_MIGRATION_BATCH_SIZE = 100;
+const CURRENT_EPISODE_SCHEMA_PRIORITY = `(JSONExtractString(payload_json, 'schema') = '${PLAYTESTS_EPISODE_SCHEMA}') DESC`;
 const LINE_BREAK_PATTERN = /\r?\n/u;
 const COUNT_PATTERN = /^\d+$/u;
 const SHA256_HEX_PATTERN = /^[a-f\d]{64}$/iu;
+const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
+const ACTOR_ID_PATTERN = /^[A-Za-z0-9@._:+-]{1,256}$/u;
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const BATCH_ID_PATTERN = /^batch-[A-Za-z0-9._:-]{1,128}$/u;
 const SMALL_CELL_SUPPRESSION_THRESHOLD = 5;
 const WORKSPACE_ID_PREDICATE = "workspace_id = {workspaceId:String}";
 
@@ -171,9 +182,66 @@ function parseTotalCount(text: string): number {
   return numericTotal;
 }
 
+function assertPlaytestLaunchIntent(intent: PlaytestLaunchIntent): void {
+  if (
+    !WORKSPACE_ID_PATTERN.test(intent.workspaceId) ||
+    !ACTOR_ID_PATTERN.test(intent.actorId) ||
+    !REQUEST_ID_PATTERN.test(intent.requestId) ||
+    !SHA256_HEX_PATTERN.test(intent.launchIntentHash) ||
+    !BATCH_ID_PATTERN.test(intent.batchId) ||
+    !Number.isSafeInteger(intent.assignmentCount) ||
+    intent.assignmentCount < 1 ||
+    intent.assignmentCount > 1000 ||
+    !Number.isFinite(Date.parse(intent.createdAt)) ||
+    !Number.isFinite(Date.parse(intent.expiresAt)) ||
+    Date.parse(intent.expiresAt) <= Date.parse(intent.createdAt)
+  ) {
+    throw new TypeError("Playtest launch intent identity is invalid.");
+  }
+}
+
+function clickHouseDateTimeAsIso(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const isoValue = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+  const date = new Date(isoValue);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+function decodeLaunchIntent(
+  row: Readonly<Record<string, unknown>>
+): PlaytestLaunchIntent {
+  const rawCount = row.assignment_count;
+  const assignmentCount =
+    typeof rawCount === "number"
+      ? rawCount
+      : typeof rawCount === "string" && COUNT_PATTERN.test(rawCount)
+        ? Number(rawCount)
+        : Number.NaN;
+  const intent: PlaytestLaunchIntent = {
+    workspaceId: typeof row.workspace_id === "string" ? row.workspace_id : "",
+    actorId: typeof row.actor_id === "string" ? row.actor_id : "",
+    requestId: typeof row.request_id === "string" ? row.request_id : "",
+    launchIntentHash:
+      typeof row.launch_intent_hash === "string" ? row.launch_intent_hash : "",
+    batchId: typeof row.batch_id === "string" ? row.batch_id : "",
+    assignmentCount,
+    createdAt: clickHouseDateTimeAsIso(row.created_at),
+    expiresAt: clickHouseDateTimeAsIso(row.expires_at)
+  };
+  try {
+    assertPlaytestLaunchIntent(intent);
+  } catch (error) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse returned an invalid launch-intent record.",
+      error
+    );
+  }
+  return intent;
+}
+
 /**
- * Typed ClickHouse repository for Playtesting batches, episodes, findings,
- * reviews and comparisons. One owner of the Playtesting schema and every
+ * Typed ClickHouse repository for Playtesting launch receipts, batches,
+ * episodes, findings, reviews and comparisons. One owner of the Playtesting schema and every
  * query/pagination/count path against it.
  */
 export class PlaytestRepository {
@@ -189,6 +257,40 @@ export class PlaytestRepository {
   async ensureSchema(): Promise<void> {
     const { endpoint } = resolveOpenLitClickHouseConnection(this.options);
     await ensurePlaytestSchema(endpoint, this.fetchImpl);
+    await this.migrateLegacyEpisodeSchemas();
+  }
+
+  /**
+   * Promote historical episode rows before Runtime exposes reads. This appends
+   * a verified current-schema revision; serving decoders never infer mode or
+   * translate a legacy artifact on demand.
+   */
+  private async migrateLegacyEpisodeSchemas(): Promise<void> {
+    for (;;) {
+      const rows = parseNdjsonLines(
+        await this.execute(
+          `SELECT * FROM (
+            SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id ORDER BY revision DESC, ${CURRENT_EPISODE_SCHEMA_PRIORITY}, cityHash64(payload_json) DESC, payload_json DESC) AS rn
+            FROM ${PLAYTEST_EPISODES_TABLE}
+          ) WHERE rn = 1 AND JSONExtractString(payload_json, 'schema') != {currentSchema:String}
+          ORDER BY workspace_id, episode_id
+          LIMIT {limit:UInt32} FORMAT JSONEachRow`,
+          {
+            currentSchema: PLAYTESTS_EPISODE_SCHEMA,
+            limit: EPISODE_SCHEMA_MIGRATION_BATCH_SIZE
+          }
+        )
+      );
+      if (rows.length === 0) return;
+      const migratedRows = rows.map((row) =>
+        encodeEpisode(migrateLegacyEpisodeForStorage(row))
+      );
+      await this.execute(
+        `INSERT INTO ${PLAYTEST_EPISODES_TABLE} FORMAT JSONEachRow`,
+        {},
+        migratedRows.map((row) => JSON.stringify(row)).join("\n") + "\n"
+      );
+    }
   }
 
   private resolveEndpoint(): string {
@@ -242,6 +344,71 @@ export class PlaytestRepository {
     );
     const rows = parseNdjsonLines(text);
     return rows.length > 0 ? decodeBatch(rows[0]!) : null;
+  }
+
+  async insertLaunchIntent(intent: PlaytestLaunchIntent): Promise<void> {
+    assertPlaytestLaunchIntent(intent);
+    const row = {
+      workspace_id: intent.workspaceId,
+      actor_id: intent.actorId,
+      request_id: intent.requestId,
+      launch_intent_hash: intent.launchIntentHash,
+      batch_id: intent.batchId,
+      assignment_count: intent.assignmentCount,
+      created_at: toClickHouseDateTime(intent.createdAt),
+      expires_at: toClickHouseDateTime(intent.expiresAt)
+    };
+    await this.execute(
+      `INSERT INTO ${PLAYTEST_LAUNCH_INTENTS_TABLE} FORMAT JSONEachRow`,
+      {},
+      JSON.stringify(row) + "\n"
+    );
+  }
+
+  async getLaunchIntent(
+    workspaceId: string,
+    actorId: string,
+    requestId: string
+  ): Promise<PlaytestLaunchIntent | null> {
+    const rows = parseNdjsonLines(
+      await this.execute(
+        `SELECT * FROM ${PLAYTEST_LAUNCH_INTENTS_TABLE} ` +
+          `WHERE workspace_id = {workspaceId:String} ` +
+          `AND actor_id = {actorId:String} AND request_id = {requestId:String} ` +
+          `ORDER BY created_at ASC LIMIT 3 FORMAT JSONEachRow`,
+        { workspaceId, actorId, requestId }
+      )
+    );
+    if (rows.length === 0) return null;
+    const intents = rows.map(decodeLaunchIntent);
+    if (
+      intents.some(
+        (intent) =>
+          intent.workspaceId !== workspaceId ||
+          intent.actorId !== actorId ||
+          intent.requestId !== requestId
+      )
+    ) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse returned a launch-intent row outside its requested identity."
+      );
+    }
+    const first = intents[0]!;
+    if (
+      intents.some(
+        (intent) =>
+          intent.launchIntentHash !== first.launchIntentHash ||
+          intent.batchId !== first.batchId ||
+          intent.assignmentCount !== first.assignmentCount ||
+          intent.createdAt !== first.createdAt ||
+          intent.expiresAt !== first.expiresAt
+      )
+    ) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse contains conflicting launch-intent records for one request identity."
+      );
+    }
+    return first;
   }
 
   /**
@@ -390,7 +557,7 @@ export class PlaytestRepository {
   ): Promise<PlaytestEpisode | null> {
     const text = await this.execute(
       `SELECT * FROM (
-        SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id ORDER BY revision DESC, cityHash64(payload_json) DESC, payload_json DESC) AS rn
+        SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id ORDER BY revision DESC, ${CURRENT_EPISODE_SCHEMA_PRIORITY}, cityHash64(payload_json) DESC, payload_json DESC) AS rn
         FROM ${PLAYTEST_EPISODES_TABLE}
         WHERE workspace_id = {workspaceId:String} AND episode_id = {episodeId:String}
       ) WHERE rn = 1
@@ -425,7 +592,7 @@ export class PlaytestRepository {
     });
     const text = await this.execute(
       `SELECT * FROM (
-        SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id ORDER BY revision DESC, cityHash64(payload_json) DESC, payload_json DESC) AS rn
+        SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id ORDER BY revision DESC, ${CURRENT_EPISODE_SCHEMA_PRIORITY}, cityHash64(payload_json) DESC, payload_json DESC) AS rn
         FROM ${PLAYTEST_EPISODES_TABLE}
         WHERE workspace_id = {workspaceId:String} AND episode_id IN (${placeholders.join(",")})
       ) WHERE rn = 1
@@ -457,21 +624,26 @@ export class PlaytestRepository {
 
     const selectQuery =
       `SELECT workspace_id, batch_id, episode_id, revision, scenario, policy, assignment_id, cohort, status, game_outcome, assigned_at, created_at, payload_json FROM (` +
-      `SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id ORDER BY revision DESC, cityHash64(payload_json) DESC, payload_json DESC) AS rn ` +
+      `SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id ORDER BY revision DESC, ${CURRENT_EPISODE_SCHEMA_PRIORITY}, cityHash64(payload_json) DESC, payload_json DESC) AS rn ` +
       `FROM ${PLAYTEST_EPISODES_TABLE} WHERE ${innerWhere}) ` +
       `WHERE ${joinWhereClauses(outerWhere)} ORDER BY assigned_at DESC, episode_id DESC ` +
       `LIMIT {limit:UInt32} FORMAT JSONEachRow`;
 
     const countQuery =
       `SELECT count() AS total FROM (` +
-      `SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id ORDER BY revision DESC, cityHash64(payload_json) DESC, payload_json DESC) AS rn ` +
+      `SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id ORDER BY revision DESC, ${CURRENT_EPISODE_SCHEMA_PRIORITY}, cityHash64(payload_json) DESC, payload_json DESC) AS rn ` +
       `FROM ${PLAYTEST_EPISODES_TABLE} WHERE ${innerWhere}) WHERE rn = 1 AND ` +
       `${restClauses.length > 0 ? restClauses.join(" AND ") : "1 = 1"} ` +
       `FORMAT JSONEachRow`;
 
     const [rowsText, countText] = await Promise.all([
-      this.execute(selectQuery, { ...outerWhere.params, limit }),
-      this.execute(countQuery, filterClause.params)
+      this.execute(selectQuery, {
+        ...outerWhere.params,
+        limit
+      }),
+      this.execute(countQuery, {
+        ...filterClause.params
+      })
     ]);
 
     const rows = parseNdjsonLines(rowsText).map(decodeEpisode);
@@ -489,12 +661,16 @@ export class PlaytestRepository {
   async countEpisodes(filter: PlaytestEpisodeFilter): Promise<number> {
     const where = buildEpisodeWhereClause(filter);
     const countQuery = `SELECT count() AS total FROM (
-        SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id ORDER BY revision DESC, cityHash64(payload_json) DESC, payload_json DESC) AS rn
+        SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id ORDER BY revision DESC, ${CURRENT_EPISODE_SCHEMA_PRIORITY}, cityHash64(payload_json) DESC, payload_json DESC) AS rn
         FROM ${PLAYTEST_EPISODES_TABLE}
         WHERE workspace_id = {workspaceId:String}
       ) WHERE rn = 1 AND ${where.clauses.slice(1).join(" AND ") || "1 = 1"}
       FORMAT JSONEachRow`;
-    return parseTotalCount(await this.execute(countQuery, where.params));
+    return parseTotalCount(
+      await this.execute(countQuery, {
+        ...where.params
+      })
+    );
   }
 
   // ---- Findings ------------------------------------------------------------

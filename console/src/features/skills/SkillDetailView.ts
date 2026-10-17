@@ -13,7 +13,10 @@ import {
 } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
-import { MONO_META_CLASS } from "../../components/ui/text-classes.ts";
+import {
+  MONO_META_CLASS,
+  MUTED_META_CLASS
+} from "../../components/ui/text-classes.ts";
 
 export type SkillContentSaveOutcome =
   "conflict" | "validation" | "apply-failed" | "failed";
@@ -126,7 +129,7 @@ export function SkillDetailView({
           { className: "flex flex-wrap items-center justify-between gap-3" },
           React.createElement(
             "p",
-            { className: "max-w-2xl text-xs text-fg-muted" },
+            { className: `max-w-2xl ${MUTED_META_CLASS}` },
             "Save & Apply validates the existing skill source, writes it only if this revision is current, then regenerates and checks the configured RuleSync skill projections. Role assignments remain a separate setting."
           ),
           React.createElement(

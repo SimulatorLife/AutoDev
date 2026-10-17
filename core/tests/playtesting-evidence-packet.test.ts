@@ -8,6 +8,8 @@ import {
   assertPlaytestCrossSessionMetricAggregation,
   assertPlaytestEvidenceLocatorsWithinPacket,
   assertPlaytestEvidencePacket,
+  assertPlaytestReviewNarrativeGroundedInPacket,
+  assertPlaytestReviewNarrativeMinimums,
   buildPlaytestCoverageManifestDraft,
   buildPlaytestEvidencePacket,
   defaultPlaytestRegistryDefaults,
@@ -24,7 +26,8 @@ import {
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1,
-  PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2
+  PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2,
+  PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V3
 } from "../src/playtesting/index.ts";
 
 const WORKSPACE_ID = "owner/evidence-fixture";
@@ -129,6 +132,22 @@ function episode(): PlaytestEpisode {
     batchId: BATCH_ID,
     assignmentId: "assignment-1",
     branchLineage: null,
+    executionProvenance: {
+      mode: "adapter-accelerated",
+      source: {
+        kind: "repo-checkout",
+        repository: WORKSPACE_ID,
+        revision: BUILD_SHA,
+        revisionConfidence: "verified",
+        checkoutState: "clean",
+        artifactFingerprint: null,
+        targetId: null,
+        targetOrigin: null
+      },
+      observationSource: "engine-adapter",
+      actionSource: "engine-policy",
+      derivedFrom: null
+    },
     identity: {
       workspaceId: WORKSPACE_ID,
       repository: WORKSPACE_ID,
@@ -300,6 +319,10 @@ function hashCrossSessionInventory(
 test("evidence packet always carries terminal and event-bearing steps plus deterministic ordinary context", () => {
   const packet = build();
   assert.equal(packet.schema, PLAYTESTS_EVIDENCE_PACKET_SCHEMA);
+  assert.deepEqual(packet.executionProvenance, episode().executionProvenance);
+  assert.match(packet.chronologicalSummary, /adapter-accelerated/u);
+  assert.match(packet.chronologicalSummary, /headless observation channel/u);
+  assert.doesNotMatch(packet.chronologicalSummary, /player-visible decisions/u);
   assert.deepEqual(
     packet.selectedWindows.map((window) => [window.startStep, window.endStep]),
     [
@@ -477,6 +500,7 @@ test("cross-session aggregates never sum non-episode independent-unit counts", (
 
 test("historical packets are not pooled when frozen aggregation semantics are absent", () => {
   const first = build();
+  const { executionProvenance: _executionProvenance, ...legacyFields } = first;
   const oldIntent = first.metricIntent.map(
     ({
       analysisUnit: _unit,
@@ -486,7 +510,7 @@ test("historical packets are not pooled when frozen aggregation semantics are ab
     }) => intent
   );
   const historical = {
-    ...first,
+    ...legacyFields,
     schema: PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2,
     packetId: "packet-2",
     episodeId: "episode-2",
@@ -569,9 +593,13 @@ test("cross-session packets include a deterministic bounded sibling sample and s
   );
 });
 
-test("packet validator preserves v1/v2 history and rejects malformed v3 context", () => {
+test("packet validator preserves v1-v3 history and rejects malformed cross-session context", () => {
   const packet = build();
-  const { crossSessionContext: _crossSessionContext, ...legacyFields } = packet;
+  const {
+    crossSessionContext: _crossSessionContext,
+    executionProvenance: _executionProvenance,
+    ...legacyFields
+  } = packet;
   const legacyIntent = packet.metricIntent.map(
     ({
       analysisUnit: _analysisUnit,
@@ -588,9 +616,18 @@ test("packet validator preserves v1/v2 history and rejects malformed v3 context"
   assert.doesNotThrow(() => assertPlaytestEvidencePacket(legacyPacket));
   assert.doesNotThrow(() =>
     assertPlaytestEvidencePacket({
-      ...packet,
+      ...legacyFields,
       schema: PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2,
+      crossSessionContext: packet.crossSessionContext,
       metricIntent: legacyIntent
+    })
+  );
+  assert.doesNotThrow(() =>
+    assertPlaytestEvidencePacket({
+      ...legacyFields,
+      schema: PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V3,
+      crossSessionContext: packet.crossSessionContext,
+      metricIntent: packet.metricIntent
     })
   );
   assert.throws(
@@ -605,6 +642,108 @@ test("packet validator preserves v1/v2 history and rejects malformed v3 context"
         }
       }),
     /unavailable cross-session context is malformed/u
+  );
+});
+
+test("review narratives must ground their words in cited packet facts, not merely meet a length floor", () => {
+  const packet = build();
+  const reference = { kind: "episode", id: packet.episodeId } as const;
+  const eventReference = {
+    kind: "event",
+    id: "event-5",
+    step: 5
+  } as const;
+  const placeholder = {
+    reviewId: "review-generic-text",
+    chronologicalSummary:
+      "Test minimal chronological summary with enough words.",
+    observations: [
+      {
+        text: "This is a test observation with enough words.",
+        evidenceRefs: [reference]
+      }
+    ],
+    interpretations: [
+      {
+        text: "This is a test interpretation with enough words.",
+        evidenceRefs: [reference]
+      }
+    ],
+    alternativeExplanations: [],
+    experiments: [],
+    reportCompleteness: {
+      crossSessionContext: {
+        status: "unavailable" as const,
+        reason: "This packet contains one session and no sibling context."
+      },
+      alternatives: {
+        status: "none-identified" as const,
+        reason: "No alternative explanations were identified for this test."
+      },
+      experiments: {
+        status: "none-recommended" as const,
+        reason: "No experiments are recommended for this minimal test."
+      },
+      followUp: {
+        status: "none" as const,
+        reason: "No follow-up is proposed for this test."
+      }
+    },
+    anchors: [],
+    findings: []
+  };
+  assert.doesNotThrow(() => assertPlaytestReviewNarrativeMinimums(placeholder));
+  assert.throws(
+    () => assertPlaytestReviewNarrativeGroundedInPacket(placeholder, packet),
+    /packet-specific/u
+  );
+
+  const grounded = {
+    ...placeholder,
+    chronologicalSummary:
+      "The heuristic completed 12 tutorial steps and won the episode.",
+    observations: [
+      {
+        text: "At step 5 in race, advance emitted source-reported-event while visible fuel was 7.",
+        evidenceRefs: [eventReference]
+      }
+    ],
+    interpretations: [
+      {
+        text: "In race, the advance decision may work because visible fuel was 7.",
+        evidenceRefs: [eventReference]
+      }
+    ],
+    alternativeExplanations: [
+      "The heuristic may win this tutorial because it advances when fuel is high."
+    ],
+    experiments: [
+      {
+        hypothesis:
+          "In tutorial, wait rather than advance should change decision-rate.",
+        falsifier:
+          "If advance still outperforms wait on this same race step, the hypothesis is weakened.",
+        metricId: "decision-rate",
+        controls: ["same build", "same seed"],
+        budget: "One follow-up episode on the tutorial build."
+      }
+    ],
+    reportCompleteness: {
+      ...placeholder.reportCompleteness,
+      crossSessionContext: {
+        status: "unavailable" as const,
+        reason: "This packet contains one session and no sibling context."
+      },
+      alternatives: { status: "provided" as const },
+      experiments: { status: "proposed" as const },
+      followUp: {
+        status: "proposed" as const,
+        text: "Compare wait and advance on the tutorial race step before changing the policy."
+      }
+    }
+  };
+  assert.doesNotThrow(() =>
+    assertPlaytestReviewNarrativeGroundedInPacket(grounded, packet)
   );
 });
 

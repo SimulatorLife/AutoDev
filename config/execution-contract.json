@@ -180,6 +180,7 @@
         "playtest": [
           "playtest.capabilities",
           "playtest.run",
+          "playtest.lookupRequest",
           "playtest.wait",
           "playtest.activeRuns",
           "playtest.cancel",

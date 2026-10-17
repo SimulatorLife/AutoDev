@@ -37,7 +37,9 @@ import {
   ACTION_LINK_CLASS,
   MONO_META_CLASS,
   MUTED_BODY_CLASS,
-  MUTED_META_CLASS
+  MUTED_META_CLASS,
+  MUTED_TEXT_CLASS,
+  SECTION_LABEL_CLASS
 } from "../../components/ui/text-classes.ts";
 
 export type PromptSaveOutcome =
@@ -134,7 +136,7 @@ function renderPromptSource(prompt: PromptDocument): React.ReactNode {
         { className: "flex flex-wrap items-center justify-between gap-3" },
         React.createElement(
           "p",
-          { className: "max-w-2xl text-xs text-fg-muted" },
+          { className: `max-w-2xl ${MUTED_META_CLASS}` },
           "Saving validates the canonical RuleSync command, regenerates and applies the Codex prompt projection, and may require restarting Codex to load changed prompt files."
         ),
         React.createElement(
@@ -223,7 +225,7 @@ const PROMPT_MARKDOWN_COMPONENTS: Components = {
       "blockquote",
       {
         className:
-          "mb-3 border-l-2 border-border-strong pl-4 text-sm text-fg-muted"
+          `mb-3 border-l-2 border-border-strong pl-4 ${MUTED_BODY_CLASS}`
       },
       children
     ),
@@ -270,7 +272,7 @@ function renderPromptPreview(prompt: PromptDocument): React.ReactNode {
       "summary",
       {
         className:
-          "cursor-pointer text-xs font-semibold uppercase tracking-wider text-fg-muted"
+          `cursor-pointer font-semibold ${SECTION_LABEL_CLASS}`
       },
       "Preview rendered Markdown"
     ),
@@ -286,7 +288,7 @@ function renderPromptPreview(prompt: PromptDocument): React.ReactNode {
       : React.createElement(
           "p",
           {
-            className: "mt-4 text-sm text-fg-muted",
+            className: `mt-4 ${MUTED_BODY_CLASS}`,
             "data-prompt-preview-body": "empty"
           },
           "The canonical Markdown body is empty."
@@ -387,7 +389,7 @@ function renderPromptHistory(
                   ),
                   React.createElement(
                     "span",
-                    { className: "font-mono text-fg-muted" },
+                    { className: `font-mono ${MUTED_TEXT_CLASS}` },
                     version.versionHash.slice(0, 12)
                   ),
                   selected
@@ -675,7 +677,7 @@ export function PromptDetailView({
         React.createElement(
           "span",
           {
-            className: "truncate font-mono text-xs text-fg-muted",
+            className: `truncate ${MONO_META_CLASS}`,
             // The path is what an operator copies to open the file, so an
             // ellipsized version of it is the one truncation that costs real
             // work rather than a glance.

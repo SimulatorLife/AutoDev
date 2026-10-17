@@ -26,6 +26,8 @@ import {
   type ControlApiAgentEnablementPatchRequest,
   type ControlApiAgentEnablementPatchResponse,
   type ControlApiAgentsResponse,
+  type ControlApiConcurrencyPatchRequest,
+  type ControlApiConcurrencyPatchResponse,
   type ControlApiConcurrencyStatus,
   type ControlApiError,
   type ControlApiEvaluationsResponse,
@@ -593,6 +595,7 @@ export const CONTROL_API_PATHS = {
   workspaces: "/control/workspaces",
   routing: "/control/routing",
   runtime: "/control/runtime",
+  concurrency: "/control/runtime/concurrency",
   evaluations: "/control/evaluations",
   github: "/control/github",
   playtesting: "/control/playtesting",
@@ -840,15 +843,35 @@ function isReconciliationBundle(value: unknown): boolean {
  * priority and an enabled state, and `model` may only be null or a string.
  */
 function isProviderRoleAssignment(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const effortOk =
+    value.reasoningEffort === undefined ||
+    value.reasoningEffort === null ||
+    typeof value.reasoningEffort === "string";
+  const effectiveEffortOk =
+    value.effectiveReasoningEffort === undefined ||
+    value.effectiveReasoningEffort === null ||
+    typeof value.effectiveReasoningEffort === "string";
+  const inForceOk =
+    value.reasoningEffortInForce === undefined ||
+    typeof value.reasoningEffortInForce === "boolean";
+  const supportedOk =
+    value.supportedReasoningLevels === undefined ||
+    (Array.isArray(value.supportedReasoningLevels) &&
+      value.supportedReasoningLevels.every((lvl) => typeof lvl === "string"));
+
   return (
-    isRecord(value) &&
     (value.priority === 1 ||
       value.priority === 2 ||
       value.priority === 3 ||
       value.priority === "disabled") &&
     (value.model === null || typeof value.model === "string") &&
     typeof value.mutable === "boolean" &&
-    isReconciliationStatus(value.convergence)
+    isReconciliationStatus(value.convergence) &&
+    effortOk &&
+    effectiveEffortOk &&
+    inForceOk &&
+    supportedOk
   );
 }
 
@@ -996,14 +1019,24 @@ function providerRoleControlPath(provider: string, role: ProviderRole): string {
 export function patchProviderRole(
   provider: string,
   role: ProviderRole,
-  assignment: { priority: ProviderRolePriority; model: string | null },
+  assignment: {
+    priority: ProviderRolePriority;
+    model: string | null;
+    reasoningEffort?: string | null;
+  },
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiProviderRolePatchResponse>> {
   return mutateControlApi<ControlApiProviderRolePatchResponse>(
     "PATCH",
     providerRoleControlPath(provider, role),
-    { priority: assignment.priority, model: assignment.model },
+    {
+      priority: assignment.priority,
+      model: assignment.model,
+      ...(assignment.reasoningEffort !== undefined
+        ? { reasoningEffort: assignment.reasoningEffort }
+        : {})
+    },
     config,
     options
   );
@@ -2236,6 +2269,12 @@ function isConcurrencyStatus(
   if (!isRecord(value)) return false;
   return (
     (value.scope === undefined || typeof value.scope === "string") &&
+    (value.configSource === undefined || typeof value.configSource === "string") &&
+    (value.configFileExists === undefined || typeof value.configFileExists === "boolean") &&
+    (value.revision === undefined ||
+      (typeof value.revision === "number" &&
+        Number.isInteger(value.revision) &&
+        value.revision >= 1)) &&
     isOptionalNullableNumber(value.maxConcurrentThreadsPerSession) &&
     isOptionalNullableNumber(value.effectivePerSessionLimit) &&
     isOptionalNumber(value.activeSubagentThreads) &&
@@ -2250,6 +2289,41 @@ function isConcurrencyStatus(
       value.lastDenial === null ||
       isRecord(value.lastDenial))
   );
+}
+
+function isControlApiConcurrencyPatchResponse(
+  value: unknown
+): value is ControlApiConcurrencyPatchResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-concurrency-v1" &&
+    isConcurrencyStatus(value.concurrency)
+  );
+}
+
+/** Server-only typed mutation for orchestrator concurrency limit. */
+export async function patchConcurrencyLimit(
+  request: ControlApiConcurrencyPatchRequest,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiConcurrencyPatchResponse>> {
+  const result = await mutateControlApi<unknown>(
+    "PATCH",
+    CONTROL_API_PATHS.concurrency,
+    request,
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  if (isControlApiConcurrencyPatchResponse(result.data)) {
+    return { kind: "ok", data: result.data };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_concurrency_response",
+    message:
+      "AutoDev Control API returned an incompatible concurrency response; the Console requires the v1 concurrency contract."
+  };
 }
 
 function isCountMap(value: unknown): value is Readonly<Record<string, number>> {

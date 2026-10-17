@@ -360,7 +360,7 @@ function RoutingPanel({
       ? null
       : React.createElement(
           "p",
-          { className: "mt-3 text-xs text-fg-muted" },
+          { className: `mt-3 ${MUTED_META_CLASS}` },
           "Orchestrator reasoning effort: ",
           React.createElement(
             "span",

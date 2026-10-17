@@ -38,6 +38,7 @@ import {
 import { liveAgentCount } from "../live-agent-count.ts";
 import { AgentEnablementControl } from "./AgentEnablementControl.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
+import { ConcurrencyLimitControl } from "./ConcurrencyLimitControl.ts";
 import { AGENTS_PATH } from "./paths.ts";
 
 export interface AgentsViewProps {
@@ -103,14 +104,14 @@ export function AgentsView({
             React.createElement("span", null, agent.role),
             React.createElement(
               "span",
-              { className: "ml-2 text-xs text-fg-muted capitalize" },
+              { className: `ml-2 capitalize ${MUTED_META_CLASS}` },
               `(${agent.kind})`
             )
           ),
           React.createElement(
             "span",
             {
-              className: "text-xs text-fg-muted tabular-nums",
+              className: `${MUTED_META_CLASS} tabular-nums`,
               "data-live-agent-role": agent.role
             },
             `Active instances: ${liveAgentCount(runtime?.liveAgents, "byRole", agent.role)}`
@@ -333,8 +334,15 @@ export function AgentsView({
             ),
             React.createElement(
               DetailValue,
-              { label: "Session Concurrency Limit" },
-              concurrencyLimit(runtime.concurrency.effectivePerSessionLimit)
+              {
+                label: "Session Concurrency Limit",
+                rowClassName: "sm:col-span-2",
+                valueClassName: null
+              },
+              React.createElement(ConcurrencyLimitControl, {
+                concurrency: runtime.concurrency,
+                returnTo: AGENTS_PATH
+              })
             ),
             React.createElement(
               DetailValue,

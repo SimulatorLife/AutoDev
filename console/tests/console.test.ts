@@ -13322,7 +13322,7 @@ test("a Disabled role's rendered form still submits the five fields its route re
   }
   assert.deepEqual(
     [...submitted].sort(),
-    ["model", "priority", "provider", "returnTo", "role"],
+    ["model", "priority", "provider", "reasoningEffort", "returnTo", "role"],
     "the Disabled role's form must submit every field the route demands"
   );
 
@@ -13423,7 +13423,7 @@ test("a Disabled role preserves its exact assignment while provider discovery is
   }
   assert.deepEqual(
     [...submitted].sort(),
-    ["model", "priority", "provider", "returnTo", "role"],
+    ["model", "priority", "provider", "reasoningEffort", "returnTo", "role"],
     "the role must still submit every field the route demands"
   );
 });
@@ -19715,6 +19715,15 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Provides revision-bound revocation fields and submits through the in-place workspace mutation handler."
     ],
     [
+      join(
+        "src",
+        "features",
+        "workspaces",
+        "WorkspaceVisualPlaytestTargetManager.ts"
+      ),
+      "Keeps visual-target approval and revocation in one accessible workspace-owned interaction island, then renders only Runtime-confirmed state."
+    ],
+    [
       join("src", "features", "playtesting", "PlaytestingReadiness.tsx"),
       "Polls Data-owned schema readiness, and offers an operator-only retry, while every page read remains server-owned."
     ],
@@ -20650,10 +20659,7 @@ test("a Runtime response with no concurrency limit is readable, and says so", as
         }
       })
     );
-  assert.match(
-    renderDetail(2),
-    /Session concurrency limit[\s\S]*?2/u
-  );
+  assert.match(renderDetail(2), /Session concurrency limit[\s\S]*?2/u);
   assert.match(
     renderDetail(null),
     /Session concurrency limit[\s\S]*?Unlimited/u

@@ -175,6 +175,10 @@ export interface ControlApiProviderHealth {
 export interface ControlApiProviderRoleAssignment {
   readonly priority: ProviderRolePriority;
   readonly model: string | null;
+  readonly reasoningEffort?: string | null;
+  readonly effectiveReasoningEffort?: string | null;
+  readonly reasoningEffortInForce?: boolean;
+  readonly supportedReasoningLevels?: readonly string[];
   readonly mutable: boolean;
   /** Convergence for this single role; `not-observed` until a write occurs. */
   readonly convergence: ReconciliationStatus;
@@ -296,6 +300,10 @@ export interface ControlApiProviderRolePatchResponse {
   readonly role: ProviderRole;
   readonly priority: ProviderRolePriority;
   readonly model: string | null;
+  readonly reasoningEffort?: string | null;
+  readonly effectiveReasoningEffort?: string | null;
+  readonly reasoningEffortInForce?: boolean;
+  readonly supportedReasoningLevels?: readonly string[];
   /**
    * The assignment replaced, or null when the role had never been configured.
    *
@@ -677,6 +685,8 @@ export interface ControlApiGithubResponse {
 
 export interface ControlApiConcurrencyStatus {
   readonly scope?: string;
+  readonly configSource?: string;
+  readonly configFileExists?: boolean;
   /**
    * `null` means no per-session limit is configured, which is the default.
    *
@@ -699,6 +709,18 @@ export interface ControlApiConcurrencyStatus {
     readonly reason?: string;
     readonly timestamp?: string;
   } | null;
+  readonly revision?: number;
+}
+
+export interface ControlApiConcurrencyPatchRequest {
+  readonly maxConcurrentThreadsPerSession?: number | null;
+  readonly resetToConfigFile?: boolean;
+  readonly revision?: number;
+}
+
+export interface ControlApiConcurrencyPatchResponse {
+  readonly schema: "autodev-control-concurrency-v1";
+  readonly concurrency: ControlApiConcurrencyStatus;
 }
 
 export interface ControlApiRoutingResponse {
@@ -1145,13 +1167,38 @@ export interface ControlApiPlaytestingRunRecord {
   } | null;
 }
 
+export type ControlApiPlaytestingCapabilityStatus =
+  "ready" | "check-required" | "unavailable";
+
+export interface ControlApiPlaytestingCapabilityReason {
+  readonly code: string;
+  readonly label: string;
+  readonly message: string;
+  readonly severity: "check-required" | "unavailable";
+}
+
+export interface ControlApiPlaytestingModeReadiness {
+  readonly status: ControlApiPlaytestingCapabilityStatus;
+  readonly reasons: readonly ControlApiPlaytestingCapabilityReason[];
+}
+
 /** Safe run-form preview; raw command, checkout path, and image are omitted. */
 export interface ControlApiPlaytestingCapabilitiesResponse {
-  readonly schema: "autodev-control-playtesting-capabilities-v1";
+  readonly schema: "autodev-control-playtesting-capabilities-v2";
   readonly workspaceId: string;
+  /** Content hash of all readiness facts used by this preflight. */
+  readonly capabilityRevision: string;
   readonly workspaceCatalog: "valid" | "invalid" | "unavailable";
   readonly workspaceEnabled: boolean;
   readonly operatorActionsAvailable: boolean;
+  readonly modeReadiness: {
+    readonly "adapter-accelerated": ControlApiPlaytestingModeReadiness;
+    readonly "autonomous-visual": ControlApiPlaytestingModeReadiness & {
+      readonly targetStore: "available" | "unavailable";
+      readonly targets: readonly WorkspaceVisualPlaytestTargetApproval[];
+    };
+    readonly "scripted-regression": ControlApiPlaytestingModeReadiness;
+  };
   readonly approved: boolean;
   readonly approvalRevision: number | null;
   /** The approved checkout's latest committed build at read time; null when unresolvable. */
@@ -1221,32 +1268,30 @@ export interface ControlApiPlaytestingActiveRunsResponse {
   }[];
 }
 
-/** One typed approved batch assignment; never carries a command or path. */
-export interface ControlApiPlaytestingBatchAssignment {
-  readonly scenario: string;
-  readonly policy: string;
-  readonly seed: string;
-  readonly goal?: string;
-  readonly maxSteps?: number;
-}
-
-/**
- * The single ordered, bounded batch request. There is no single-run alias.
- */
-export interface ControlApiPlaytestingRunRequest {
-  readonly workspaceId: string;
-  readonly assignments: readonly ControlApiPlaytestingBatchAssignment[];
-}
-
-/** Typed batch acknowledgement; completion is read from the run route. */
+/** Stable launch receipt; status may reflect an idempotent replay. */
 export interface ControlApiPlaytestingRunStartedResponse {
-  readonly schema: "autodev-control-playtesting-run-started-v1";
+  readonly schema: "autodev-control-playtesting-run-started-v2";
   readonly workspaceId: string;
   readonly batchId: string;
   readonly assignmentCount: number;
+  /** Frozen manifest IDs; an assignment has no episode until gameplay starts. */
+  readonly assignmentIds: readonly string[];
   /** The exact Runtime-registered timestamp, shared with active-run reads. */
   readonly createdAt: string;
-  readonly status: "running";
+  readonly status: ControlApiPlaytestingRunState;
+}
+
+/** Workspace/actor-scoped recovery lookup for an uncertain client launch. */
+export interface ControlApiPlaytestingRunRequestLookupResponse {
+  readonly schema: "autodev-control-playtesting-run-request-v1";
+  readonly workspaceId: string;
+  readonly requestId: string;
+  readonly state: "not-found" | "expired" | "pending" | "accepted";
+  readonly batchId: string | null;
+  readonly assignmentCount: number | null;
+  readonly assignmentIds: readonly string[];
+  readonly createdAt: string | null;
+  readonly status: ControlApiPlaytestingRunState | null;
 }
 
 /** Typed status response; a null result while active means still running. */

@@ -162,14 +162,14 @@ function providerColumns(
     {
       id: "roles",
       header: "Roles",
-      // The label alone does not say what the two controls per role mean, and a
-      // `Disabled` priority that dims its model selector is not self-evident
+      // The label alone does not say what the controls per role mean, and a
+      // `Disabled` priority that dims its selectors is not self-evident
       // from the row. The contract asks for a help affordance on this header.
       headerHelp:
-        "Each fixed role takes a priority (P1, P2, P3 or Disabled) and a model. Changing either selection submits the complete role assignment immediately; refreshed values are Runtime-confirmed. Disabled dims its model selector but keeps the chosen model.",
-      // The label and two selects use a 416px aligned grid; the table cell adds
-      // 32px of shared inset. The 448px budget keeps fields aligned.
-      weight: 448,
+        "Each fixed role takes a priority (P1, P2, P3 or Disabled), a model, and optional reasoning effort. Changing any selection submits the complete role assignment immediately; refreshed values are Runtime-confirmed. Disabled dims selectors but keeps chosen values.",
+      // The label and three selects use a 496px aligned grid; the table cell adds
+      // 32px of shared inset. The 528px budget keeps fields aligned.
+      weight: 528,
       align: "tokens",
       cell: (provider) =>
         React.createElement(ProviderRoleControls, {
@@ -312,7 +312,7 @@ function RoutingPriorityPanel({
       ),
       React.createElement(
         "p",
-        { className: "mt-1 text-xs text-fg-muted" },
+        { className: `mt-1 ${MUTED_META_CLASS}` },
         "Ordered fallback groups per capability tier from the routing configuration. Providers in one group share load; later groups serve only when earlier ones cannot."
       )
     ),
@@ -561,7 +561,7 @@ function ModelsTab({
       ),
       React.createElement(
         "p",
-        { className: "mb-3 text-xs text-fg-muted" },
+        { className: `mb-3 ${MUTED_META_CLASS}` },
         models.status === "available"
           ? `Provider-reported availability is shown separately from routing assignments (${models.data.source}). A disabled model is skipped for every tier it serves.`
           : "Provider-reported model availability is shown separately from Runtime routing state."

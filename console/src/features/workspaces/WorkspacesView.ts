@@ -23,7 +23,8 @@ import { PathText } from "../../components/tables/PathText.ts";
 import {
   ENTITY_LINK_CLASS,
   MONO_ID_CLASS,
-  MONO_VALUE_CLASS
+  MONO_VALUE_CLASS,
+  MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
   workspaceApprovalBadgeLabel,
@@ -107,7 +108,7 @@ export function WorkspacesView({
       cell: (ws) =>
         React.createElement(Tag, {
           className:
-            "border-border-strong bg-surface-raised font-mono text-fg-muted",
+            `border-border-strong bg-surface-raised font-mono ${MUTED_TEXT_CLASS}`,
           children: ws.baseBranch
         })
     },

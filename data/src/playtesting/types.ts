@@ -28,6 +28,19 @@ export interface PlaytestBatchArtifactState {
   readonly packetArtifacts: readonly PlaytestArtifactReference[];
 }
 
+/** Durable identity for a client launch attempt, separate from game evidence. */
+export interface PlaytestLaunchIntent {
+  readonly workspaceId: string;
+  readonly actorId: string;
+  readonly requestId: string;
+  readonly launchIntentHash: string;
+  readonly batchId: string;
+  readonly assignmentCount: number;
+  readonly createdAt: string;
+  /** Retry identity expires before ClickHouse retention removes the receipt. */
+  readonly expiresAt: string;
+}
+
 export interface PlaytestEpisodeFilter {
   readonly workspaceId: string;
   readonly batchId?: string;

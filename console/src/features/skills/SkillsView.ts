@@ -29,7 +29,8 @@ import {
 import { PathText } from "../../components/tables/PathText.ts";
 import {
   ACTION_LINK_CLASS,
-  MONO_META_CLASS
+  MONO_META_CLASS,
+  MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
   assignmentUnavailableReason,
@@ -155,7 +156,7 @@ export function SkillsView({
           React.createElement(
             "p",
             {
-              className: "mt-0.5 line-clamp-2 text-xs text-fg-muted",
+              className: `mt-0.5 line-clamp-2 ${MUTED_META_CLASS}`,
               title: skill.description
             },
             skill.description

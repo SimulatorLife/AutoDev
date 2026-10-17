@@ -260,7 +260,8 @@
             "processFallbackEnforcement",
             "denials",
             "denialsByReason",
-            "lastDenial"
+            "lastDenial",
+            "revision"
           ]
         },
         {

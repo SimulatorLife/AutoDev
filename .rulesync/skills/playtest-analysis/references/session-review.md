@@ -19,7 +19,7 @@ Every submitted PlaytestSessionReview includes:
 9. Evidence-status decision -- verified / corroborated / hypothesis / not observed, per claim.
 10. Suggested follow-up -- next investigation, not a fix.
 
-A review without evidence locators is invalid, not a successful empty report.
+A review without evidence locators is invalid, not a successful empty report. New submissions also reject placeholder/label-only narrative: the summary, each observation and interpretation, every supplied alternative, experiment hypothesis/falsifier/budget, and each `reportCompleteness` explanation must contain at least three words and sixteen characters. Compact experiment control labels remain valid. State packet-specific missingness in complete prose; this structural minimum is not a quality score and does not establish that the reasoning is correct.
 
 ## What submission actually records
 

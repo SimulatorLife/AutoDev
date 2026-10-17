@@ -44,6 +44,7 @@ default_tools_approval_mode = "approve"
 enabled_tools = [
   "playtest.capabilities",
   "playtest.run",
+  "playtest.lookupRequest",
   "playtest.wait",
   "playtest.activeRuns",
   "playtest.cancel",

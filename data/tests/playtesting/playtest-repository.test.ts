@@ -36,6 +36,7 @@ import {
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA_V1,
   PLAYTESTS_EPISODE_SCHEMA_V3,
+  PLAYTESTS_EPISODE_SCHEMA_V4,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
@@ -55,6 +56,7 @@ import {
 import {
   type PlaytestHumanAggregateRecord,
   PlaytestInvalidCursorError,
+  type PlaytestLaunchIntent,
   PlaytestRepository,
   PlaytestSourceUnavailableError
 } from "../../src/playtesting/index.ts";
@@ -75,7 +77,8 @@ import {
   encodeFinding,
   encodeHumanStudy,
   encodeHumanSummary,
-  encodeReview
+  encodeReview,
+  migrateLegacyEpisodeForStorage
 } from "../../src/playtesting/row-codec.ts";
 
 function counts() {
@@ -103,6 +106,22 @@ function episode(index: number, workspaceId = "workspace-a"): PlaytestEpisode {
     batchId: `batch-${Math.floor(index / 20)}`,
     assignmentId: `a-${String(index).padStart(5, "0")}`,
     branchLineage: null,
+    executionProvenance: {
+      mode: "adapter-accelerated",
+      source: {
+        kind: "repo-checkout",
+        repository: "synthetic/game",
+        revision: null,
+        revisionConfidence: "unknown",
+        checkoutState: "unknown",
+        artifactFingerprint: null,
+        targetId: null,
+        targetOrigin: null
+      },
+      observationSource: "engine-adapter",
+      actionSource: "engine-policy",
+      derivedFrom: null
+    },
     identity: {
       workspaceId,
       repository: "synthetic/game",
@@ -919,12 +938,14 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
       notes: "Old result did not store the total opportunity count."
     }
   ];
-  const migratedEpisode = decodeEpisode({
+  const migratedEpisode = migrateLegacyEpisodeForStorage({
     ...legacyEpisodeRow,
     payload_json: JSON.stringify(legacyEpisodePayload)
   } as unknown as Record<string, unknown>);
   assert.equal(migratedEpisode.schema, PLAYTESTS_EPISODE_SCHEMA);
+  assert.equal(migratedEpisode.revision, 1);
   assert.equal(migratedEpisode.branchLineage, null);
+  assert.equal(migratedEpisode.executionProvenance.mode, "legacy-unknown");
   assert.equal(migratedEpisode.metrics[0]?.opportunityCount, null);
   assert.equal(migratedEpisode.metrics[0]?.coverage, 0.5);
 
@@ -933,15 +954,24 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
   ) as Record<string, unknown>;
   v3EpisodePayload.schema = PLAYTESTS_EPISODE_SCHEMA_V3;
   delete v3EpisodePayload.termination;
-  const migratedV3Episode = decodeEpisode({
+  const migratedV3Episode = migrateLegacyEpisodeForStorage({
     ...encodeEpisode(episode(3)),
     payload_json: JSON.stringify(v3EpisodePayload)
   } as unknown as Record<string, unknown>);
   assert.equal(migratedV3Episode.schema, PLAYTESTS_EPISODE_SCHEMA);
+  assert.equal(migratedV3Episode.executionProvenance.mode, "legacy-unknown");
   assert.deepEqual(migratedV3Episode.termination, {
     reason: "unknown",
     step: null
   });
+  assert.throws(
+    () =>
+      decodeEpisode({
+        ...legacyEpisodeRow,
+        payload_json: JSON.stringify(legacyEpisodePayload)
+      } as unknown as Record<string, unknown>),
+    /unsupported schema version/u
+  );
 
   const batchRow = encodeBatch(batch());
   const legacyBatchPayload = JSON.parse(batchRow.payload_json) as Record<
@@ -1126,7 +1156,9 @@ const SYNTHETIC_ID_COLUMNS = {
   comparisonId: "comparison_id",
   benchmarkId: "benchmark_id",
   experimentId: "experiment_id",
-  studyId: "study_id"
+  studyId: "study_id",
+  actorId: "actor_id",
+  requestId: "request_id"
 } as const;
 const SYNTHETIC_FILTER_COLUMNS: readonly (readonly [string, string])[] = [
   ["buildSha", "build_sha"],
@@ -1149,6 +1181,9 @@ const SYNTHETIC_COLLATOR = new Intl.Collator("en");
 
 function tableKeyColumn(table: string): string {
   switch (table) {
+    case "playtest_launch_intents": {
+      return "request_id";
+    }
     case "playtest_batches": {
       return "batch_id";
     }
@@ -1220,6 +1255,7 @@ function latestSyntheticRows(
   table: string,
   rows: Record<string, unknown>[]
 ): Record<string, unknown>[] {
+  if (table === "playtest_launch_intents") return rows;
   const keyColumn = tableKeyColumn(table);
   const versionColumn =
     table === "playtest_batches" ||
@@ -1231,9 +1267,23 @@ function latestSyntheticRows(
   for (const row of rows) {
     const key = String(row[keyColumn]);
     const current = latest.get(key);
+    const rowRevision = Number(row[versionColumn]);
+    const currentRevision = Number(current?.[versionColumn]);
+    const rowIsCurrentEpisodeSchema =
+      table === "playtest_episodes" &&
+      (JSON.parse(String(row.payload_json)) as { schema?: unknown }).schema ===
+        PLAYTESTS_EPISODE_SCHEMA;
+    const currentIsCurrentEpisodeSchema =
+      table === "playtest_episodes" &&
+      current !== undefined &&
+      (JSON.parse(String(current.payload_json)) as { schema?: unknown })
+        .schema === PLAYTESTS_EPISODE_SCHEMA;
     if (
       !current ||
-      Number(row[versionColumn]) > Number(current[versionColumn])
+      rowRevision > currentRevision ||
+      (rowRevision === currentRevision &&
+        rowIsCurrentEpisodeSchema &&
+        !currentIsCurrentEpisodeSchema)
     ) {
       latest.set(key, row);
     }
@@ -1283,10 +1333,23 @@ function makeClickHouseFetch() {
     if (query.includes("CREATE TABLE IF NOT EXISTS"))
       return new Response("", { status: 200 });
 
-    const rows = latestSyntheticRows(
+    let rows = latestSyntheticRows(
       table,
       filterSyntheticRows(url, [...(tables.get(table) ?? [])])
     );
+    if (
+      query.includes(
+        "JSONExtractString(payload_json, 'schema') != {currentSchema:String}"
+      )
+    ) {
+      const currentSchema = url.searchParams.get("param_currentSchema");
+      rows = rows.filter((row) => {
+        const payload = JSON.parse(String(row.payload_json)) as {
+          readonly schema?: unknown;
+        };
+        return payload.schema !== currentSchema;
+      });
+    }
 
     const count = query.includes("count() AS total");
     if (count)
@@ -2377,7 +2440,7 @@ test("idempotent schema stores complete canonical payloads but no human-response
   assert.equal(
     queries.filter((query) => query.includes("CREATE TABLE IF NOT EXISTS"))
       .length,
-    20
+    22
   );
   assert.equal(
     queries.filter((query) =>
@@ -2392,10 +2455,30 @@ test("idempotent schema stores complete canonical payloads but no human-response
     ).length,
     8
   );
+  assert.equal(
+    queries.filter(
+      (query) =>
+        query.includes("playtest_launch_intents") &&
+        query.includes("DateTime64(3, 'UTC')")
+    ).length,
+    4
+  );
+  const createStatements = queries.filter((query) =>
+    query.includes("CREATE TABLE IF NOT EXISTS")
+  );
   assert.ok(
-    queries
-      .filter((query) => query.includes("CREATE TABLE IF NOT EXISTS"))
+    createStatements
+      .filter((query) => !query.includes("playtest_launch_intents"))
       .every((query) => query.includes("payload_json"))
+  );
+  assert.ok(
+    createStatements.some(
+      (query) =>
+        query.includes("playtest_launch_intents") &&
+        query.includes("actor_id String") &&
+        query.includes("launch_intent_hash String") &&
+        query.includes("TTL toDate(created_at) + INTERVAL 90 DAY DELETE")
+    )
   );
   assert.ok(queries.some((query) => query.includes("trace_hash_manifest")));
   assert.ok(queries.some((query) => query.includes("playtest_human_studies")));
@@ -2407,6 +2490,117 @@ test("idempotent schema stores complete canonical payloads but no human-response
       (query) =>
         !/human_experience|participant_id|raw_trace|frame_bytes/u.test(query)
     )
+  );
+});
+
+test("schema warmup migrates old episodes once and marks only protocol-proven adapter history", async () => {
+  const fake = makeClickHouseFetch();
+  const oldRows = [10, 11].map((index) => {
+    const row = encodeEpisode(episode(index));
+    const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+    payload.schema = PLAYTESTS_EPISODE_SCHEMA_V4;
+    delete payload.executionProvenance;
+    if (index === 10) {
+      const identity = payload.identity as Record<string, unknown>;
+      identity.repository = "SimulatorLife/RacingGame";
+      identity.buildSha = "a".repeat(40);
+      identity.gameBuild = "racing-build-v1";
+      identity.configHash = "b".repeat(64);
+      identity.observationSchemaHash = "c".repeat(64);
+      identity.actionSchemaHash = "d".repeat(64);
+      identity.eventSchemaHash = "e".repeat(64);
+    }
+    return { ...row, payload_json: JSON.stringify(payload) };
+  });
+  fake.tables.set(
+    "playtest_episodes",
+    oldRows as unknown as Record<string, unknown>[]
+  );
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+
+  await repository.ensureSchema();
+
+  const provenAdapter = await repository.getEpisode(
+    "workspace-a",
+    "episode-00010"
+  );
+  assert.ok(provenAdapter);
+  assert.equal(provenAdapter.revision, 1);
+  assert.equal(provenAdapter.executionProvenance.mode, "adapter-accelerated");
+  assert.equal(provenAdapter.executionProvenance.source.kind, "repo-checkout");
+  assert.equal(
+    provenAdapter.executionProvenance.source.revision,
+    "a".repeat(40)
+  );
+  assert.equal(
+    provenAdapter.executionProvenance.source.revisionConfidence,
+    "verified"
+  );
+  assert.equal(
+    provenAdapter.executionProvenance.source.checkoutState,
+    "unknown"
+  );
+
+  const uncertain = await repository.getEpisode("workspace-a", "episode-00011");
+  assert.ok(uncertain);
+  assert.equal(uncertain.executionProvenance.mode, "legacy-unknown");
+  assert.equal(uncertain.executionProvenance.source.kind, "unknown");
+  assert.equal(uncertain.executionProvenance.observationSource, "unknown");
+  assert.equal(uncertain.executionProvenance.actionSource, "unknown");
+  assert.equal(fake.tables.get("playtest_episodes")?.length, 4);
+
+  await repository.ensureSchema();
+  assert.equal(fake.tables.get("playtest_episodes")?.length, 4);
+});
+
+test("Data persists actor/workspace-scoped launch receipts and detects conflicting request keys", async () => {
+  const fake = makeClickHouseFetch();
+  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const intent: PlaytestLaunchIntent = {
+    workspaceId: "workspace-a/game",
+    actorId: "operator-a",
+    requestId: "request-1",
+    launchIntentHash: "a".repeat(64),
+    batchId: "batch-request-1",
+    assignmentCount: 2,
+    createdAt: "2026-10-16T12:00:00.000Z",
+    expiresAt: "2026-11-15T12:00:00.000Z"
+  };
+  await repo.insertLaunchIntent(intent);
+  const persisted = fake.tables.get("playtest_launch_intents")?.[0];
+  assert.equal(persisted?.created_at, "2026-10-16 12:00:00.000");
+  assert.equal(persisted?.expires_at, "2026-11-15 12:00:00.000");
+  assert.deepEqual(
+    await repo.getLaunchIntent("workspace-a/game", "operator-a", "request-1"),
+    intent
+  );
+  const reopened = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  assert.deepEqual(
+    await reopened.getLaunchIntent(
+      "workspace-a/game",
+      "operator-a",
+      "request-1"
+    ),
+    intent,
+    "the receipt remains recoverable from a new Data repository instance"
+  );
+  assert.equal(
+    await repo.getLaunchIntent("workspace-a/game", "operator-b", "request-1"),
+    null
+  );
+  assert.equal(
+    await repo.getLaunchIntent("workspace-b/game", "operator-a", "request-1"),
+    null
+  );
+
+  await repo.insertLaunchIntent({
+    ...intent,
+    launchIntentHash: "b".repeat(64),
+    batchId: "batch-conflicting-request"
+  });
+  await assert.rejects(
+    repo.getLaunchIntent("workspace-a/game", "operator-a", "request-1"),
+    /conflicting launch-intent records/u
   );
 });
 

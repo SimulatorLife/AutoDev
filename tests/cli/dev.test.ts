@@ -15,6 +15,7 @@ import test from "node:test";
 
 import {
   CONTROL_API_CONTRACT,
+  CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
   LOCAL_CONTROL_API_ACTOR
 } from "@simulatorlife/autodev-core";
 import { verifyControlApiCompatibility } from "@simulatorlife/autodev-runtime/cli/control-api-compatibility";
@@ -163,14 +164,48 @@ test("dev Control API probe accepts the current provider, model-discovery, and P
       ]
     }),
     Response.json({
-      schema: "autodev-control-playtesting-capabilities-v1",
-      workspaceId: "autodev-dev-probe/not-configured"
+      schema: "autodev-control-playtesting-capabilities-v2",
+      workspaceId: "autodev-dev-probe/not-configured",
+      modeReadiness: {
+        "adapter-accelerated": { status: "ready", reasons: [] },
+        "autonomous-visual": {
+          status: "unavailable",
+          reasons: [
+            {
+              code: "visual-driver-unavailable",
+              label: "Visual driver unavailable",
+              message:
+                "Runtime does not yet have the isolated browser gameplay driver.",
+              severity: "unavailable"
+            }
+          ],
+          targetStore: "available",
+          targets: []
+        },
+        "scripted-regression": {
+          status: "unavailable",
+          reasons: [
+            {
+              code: "scripted-regression-unavailable",
+              label: "Scripted regression unavailable",
+              message:
+                "Runtime does not yet have the approved scripted-regression launch path.",
+              severity: "unavailable"
+            }
+          ]
+        }
+      }
+    }),
+    Response.json({
+      schema: CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
+      workspaceId: "autodev-dev-probe/not-configured",
+      status: "ready"
     })
   ];
   const fetchImpl: typeof fetch = async (input, init) => {
     requests.push({ url: String(input), headers: new Headers(init?.headers) });
     const response = responses.shift();
-    assert.ok(response, "probe must make only the four expected GET requests");
+    assert.ok(response, "probe must make only the five expected GET requests");
     return response;
   };
 
@@ -179,7 +214,7 @@ test("dev Control API probe accepts the current provider, model-discovery, and P
     fetchImpl
   );
 
-  assert.equal(requests.length, 4);
+  assert.equal(requests.length, 5);
   assert.equal(
     requests[0]?.url,
     `http://127.0.0.1:4101${CONTROL_API_CONTRACT.path}`
@@ -223,8 +258,37 @@ test("dev Control API probe rejects a Runtime without the current contract hands
       });
     }
     return Response.json({
-      schema: "autodev-control-playtesting-capabilities-v1",
-      workspaceId: "autodev-dev-probe/not-configured"
+      schema: "autodev-control-playtesting-capabilities-v2",
+      workspaceId: "autodev-dev-probe/not-configured",
+      modeReadiness: {
+        "adapter-accelerated": { status: "ready", reasons: [] },
+        "autonomous-visual": {
+          status: "unavailable",
+          reasons: [
+            {
+              code: "visual-driver-unavailable",
+              label: "Visual driver unavailable",
+              message:
+                "Runtime does not yet have the isolated browser gameplay driver.",
+              severity: "unavailable"
+            }
+          ],
+          targetStore: "available",
+          targets: []
+        },
+        "scripted-regression": {
+          status: "unavailable",
+          reasons: [
+            {
+              code: "scripted-regression-unavailable",
+              label: "Scripted regression unavailable",
+              message:
+                "Runtime does not yet have the approved scripted-regression launch path.",
+              severity: "unavailable"
+            }
+          ]
+        }
+      }
     });
   };
 
@@ -254,7 +318,10 @@ test("dev Control API probe names a missing contract endpoint without exposing c
     ),
     (error: Error) => {
       assert.match(error.message, /contract endpoint returned HTTP 404/u);
-      assert.match(error.message, /version 3/u);
+      assert.match(
+        error.message,
+        new RegExp(`version ${String(CONTROL_API_CONTRACT.version)}`, "u")
+      );
       assert.match(error.message, /pnpm run install:codex/u);
       assert.doesNotMatch(error.message, /probe-token/u);
       return true;

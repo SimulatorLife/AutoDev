@@ -20,6 +20,7 @@ import {
   assertPlaytestJsonRpcSuccess,
   assertPlaytestObservationContract,
   assertPlaytestReviewCompleteness,
+  assertPlaytestReviewNarrativeMinimums,
   assertPlaytestSessionReviewHasEvidence,
   assessPlaytestMetricCompatibility,
   assessPlaytestPairing,
@@ -1796,6 +1797,85 @@ test("assertPlaytestSessionReviewHasEvidence requires citations on each claim", 
         findings: []
       }),
     /observation claim 1.*no evidence locators/u
+  );
+});
+
+test("new playtest reviews reject placeholder narratives without claiming review quality", () => {
+  const review = {
+    reviewId: "review-narrative-floor",
+    chronologicalSummary:
+      "The player advanced through two race turns before losing.",
+    observations: [
+      {
+        text: "The trace records a collision immediately after the jump action.",
+        evidenceRefs: []
+      }
+    ],
+    interpretations: [
+      {
+        text: "The available wait action may have offered a safer alternative.",
+        evidenceRefs: []
+      }
+    ],
+    anchors: [],
+    alternativeExplanations: [
+      "The random policy may have selected a poor but legal action."
+    ],
+    experiments: [
+      {
+        hypothesis: "A wait action avoids this collision on the same seed.",
+        falsifier: "The same collision occurs after waiting on the same seed.",
+        metricId: "collision-rate",
+        budget: "One additional episode on the same build and seed.",
+        controls: ["same build", "same seed"]
+      }
+    ],
+    reportCompleteness: {
+      crossSessionContext: {
+        status: "unavailable" as const,
+        reason: "The frozen packet contains no sibling episode summaries."
+      },
+      alternatives: { status: "provided" as const },
+      experiments: { status: "proposed" as const },
+      followUp: {
+        status: "proposed" as const,
+        text: "Compare a same-seed wait action before attributing the loss to the game."
+      }
+    }
+  };
+
+  assert.doesNotThrow(() => assertPlaytestReviewNarrativeMinimums(review));
+  assert.throws(
+    () =>
+      assertPlaytestReviewNarrativeMinimums({
+        ...review,
+        chronologicalSummary: "probe"
+      }),
+    /chronological summary is too terse/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestReviewNarrativeMinimums({
+        ...review,
+        observations: [{ text: "Observed", evidenceRefs: [] }]
+      }),
+    /observation claim 1 is too terse/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestReviewNarrativeMinimums({
+        ...review,
+        experiments: [
+          {
+            hypothesis: "Try waiting.",
+            falsifier: "The collision still happens after the wait.",
+            metricId: "collision-rate",
+            budget: "One episode using the same scenario and seed.",
+            controls: ["same build", "same seed"]
+          }
+        ]
+      }),
+    /experiment 1 hypothesis is too terse/u
   );
 });
 

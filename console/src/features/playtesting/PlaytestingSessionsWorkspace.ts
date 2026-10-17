@@ -13,6 +13,8 @@ import { FIELD_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 import {
   executionStatusBadge,
+  executionModeLabel,
+  executionSourceSummary,
   gameOutcomeBadge
 } from "./playtesting-episode-presentation.ts";
 import {
@@ -248,7 +250,7 @@ export function PlaytestingSessionsWorkspace({
                   React.createElement(
                     "p",
                     { className: MUTED_META_CLASS },
-                    `${episode.identity.policyId} · ${episode.policyCohort} · ${String(episode.stepCount)} steps · build ${episode.identity.buildSha.slice(0, 12)}`
+                    `${executionModeLabel(episode.executionProvenance.mode)} · ${episode.identity.policyId} · ${episode.policyCohort} · ${String(episode.stepCount)} steps · ${executionSourceSummary(episode.executionProvenance)}`
                   )
                 ),
                 React.createElement(

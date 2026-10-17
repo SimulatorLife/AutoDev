@@ -1,7 +1,9 @@
 /** Server-only authenticated Playtesting reads for the Console resource. */
 import {
   assertPlaytestCoverageManifest,
+  assertPlaytestExecutionProvenance,
   assertPlaytestNumericResults,
+  assertWorkspaceVisualPlaytestTargetApproval,
   CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
   type ControlApiPlaytestingActiveRunsResponse,
   type ControlApiPlaytestingAnalysesResponse,
@@ -18,7 +20,7 @@ import {
   type ControlApiPlaytestingResource,
   type ControlApiPlaytestingRunCancellationResponse,
   type ControlApiPlaytestingRunRecord,
-  type ControlApiPlaytestingRunRequest,
+  type ControlApiPlaytestingRunRequestLookupResponse,
   type ControlApiPlaytestingRunStartedResponse,
   type ControlApiPlaytestingRunStatusResponse,
   type ControlApiPlaytestingWindowResponse,
@@ -31,9 +33,11 @@ import {
   type PlaytestExperiment,
   type PlaytestFinding,
   type PlaytestJsonValue,
+  type PlaytestLaunchRequest,
   PLAYTESTS_BATCH_SCHEMA,
   PLAYTESTS_COMPARISON_SCHEMA,
   PLAYTESTS_EPISODE_TERMINATION_REASONS,
+  PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
@@ -60,7 +64,7 @@ const RESOURCE_SCHEMAS: Readonly<
   Record<ControlApiPlaytestingResource, string>
 > = {
   batches: PLAYTESTS_BATCH_SCHEMA,
-  episodes: "autodev-playtest-episode-v4",
+  episodes: PLAYTESTS_EPISODE_SCHEMA,
   findings: "",
   comparisons: PLAYTESTS_COMPARISON_SCHEMA,
   benchmarks: "",
@@ -68,6 +72,9 @@ const RESOURCE_SCHEMAS: Readonly<
   "human-studies": "autodev-playtest-human-study-v1"
 };
 const SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
+const CAPABILITY_REVISION_PATTERN = /^[a-f\d]{64}$/u;
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const ASSIGNMENT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const ENTITY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const PLAYTESTING_READINESS_LABEL = "Playtesting readiness";
@@ -225,6 +232,7 @@ function validEpisodeRecord(
 ): boolean {
   const episode = value as unknown as PlaytestEpisode;
   try {
+    assertPlaytestExecutionProvenance(episode.executionProvenance);
     assertPlaytestNumericResults(episode.metrics);
   } catch {
     return false;
@@ -506,19 +514,91 @@ export async function fetchPlaytestingWindow(
       );
 }
 
+function isPlaytestingModeReadiness(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    (value.status !== "ready" &&
+      value.status !== "check-required" &&
+      value.status !== "unavailable") ||
+    !Array.isArray(value.reasons)
+  ) {
+    return false;
+  }
+  const reasons = value.reasons;
+  if (
+    !reasons.every(
+      (reason) =>
+        isRecord(reason) &&
+        isNonEmptyString(reason.code) &&
+        isNonEmptyString(reason.label) &&
+        isNonEmptyString(reason.message) &&
+        (reason.severity === "check-required" ||
+          reason.severity === "unavailable")
+    )
+  ) {
+    return false;
+  }
+  const expectedStatus = reasons.some(
+    (reason) => isRecord(reason) && reason.severity === "unavailable"
+  )
+    ? "unavailable"
+    : reasons.length > 0
+      ? "check-required"
+      : "ready";
+  return value.status === expectedStatus;
+}
+
+function isVisualModeReadiness(value: unknown, workspaceId: string): boolean {
+  if (
+    !isPlaytestingModeReadiness(value) ||
+    !isRecord(value) ||
+    (value.targetStore !== "available" &&
+      value.targetStore !== "unavailable") ||
+    !Array.isArray(value.targets)
+  ) {
+    return false;
+  }
+  const targetIds = new Set<string>();
+  try {
+    for (const target of value.targets) {
+      assertWorkspaceVisualPlaytestTargetApproval(target);
+      if (
+        target.workspaceId !== workspaceId ||
+        target.revokedAt !== null ||
+        targetIds.has(target.targetId)
+      ) {
+        return false;
+      }
+      targetIds.add(target.targetId);
+    }
+  } catch {
+    return false;
+  }
+  return value.targetStore !== "unavailable" || value.targets.length === 0;
+}
+
 function isPlaytestingCapabilitiesResponse(
   value: unknown,
   workspaceId: string
 ): value is ControlApiPlaytestingCapabilitiesResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-playtesting-capabilities-v1" &&
+    value.schema === "autodev-control-playtesting-capabilities-v2" &&
     value.workspaceId === workspaceId &&
+    typeof value.capabilityRevision === "string" &&
+    CAPABILITY_REVISION_PATTERN.test(value.capabilityRevision) &&
     ["valid", "invalid", "unavailable"].includes(
       String(value.workspaceCatalog)
     ) &&
     typeof value.workspaceEnabled === "boolean" &&
     typeof value.operatorActionsAvailable === "boolean" &&
+    isRecord(value.modeReadiness) &&
+    isPlaytestingModeReadiness(value.modeReadiness["adapter-accelerated"]) &&
+    isVisualModeReadiness(
+      value.modeReadiness["autonomous-visual"],
+      workspaceId
+    ) &&
+    isPlaytestingModeReadiness(value.modeReadiness["scripted-regression"]) &&
     typeof value.approved === "boolean" &&
     (value.approvalRevision === null || isCount(value.approvalRevision)) &&
     (value.buildSha === null ||
@@ -604,7 +684,7 @@ export async function fetchPlaytestingRunCapabilities(
     ? { kind: "ok", data: result.data }
     : invalidResponse(
         "Playtesting capabilities",
-        "autodev-control-playtesting-capabilities-v1"
+        "autodev-control-playtesting-capabilities-v2"
       );
 }
 
@@ -616,14 +696,65 @@ function isRunStartedResponse(
 ): value is ControlApiPlaytestingRunStartedResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-playtesting-run-started-v1" &&
+    value.schema === "autodev-control-playtesting-run-started-v2" &&
     value.workspaceId === workspaceId &&
     isNonEmptyString(value.batchId) &&
     RUN_ID_PATTERN.test(value.batchId) &&
     isCount(value.assignmentCount) &&
     value.assignmentCount > 0 &&
-    value.status === "running"
+    Array.isArray(value.assignmentIds) &&
+    value.assignmentIds.length === value.assignmentCount &&
+    new Set(value.assignmentIds).size === value.assignmentIds.length &&
+    value.assignmentIds.every(
+      (id) => typeof id === "string" && ASSIGNMENT_ID_PATTERN.test(id)
+    ) &&
+    isControlApiPlaytestingRunState(value.status)
   );
+}
+
+function isRunRequestLookupResponse(
+  value: unknown,
+  workspaceId: string,
+  requestId: string
+): value is ControlApiPlaytestingRunRequestLookupResponse {
+  if (
+    !isRecord(value) ||
+    value.schema !== "autodev-control-playtesting-run-request-v1" ||
+    value.workspaceId !== workspaceId ||
+    value.requestId !== requestId ||
+    !["not-found", "expired", "pending", "accepted"].includes(
+      String(value.state)
+    ) ||
+    !Array.isArray(value.assignmentIds) ||
+    value.assignmentIds.some(
+      (id) => !isNonEmptyString(id) || !RUN_ID_PATTERN.test(id)
+    )
+  ) {
+    return false;
+  }
+  if (value.state === "not-found" || value.state === "expired") {
+    return (
+      value.batchId === null &&
+      value.assignmentCount === null &&
+      value.assignmentIds.length === 0 &&
+      value.createdAt === null &&
+      value.status === null
+    );
+  }
+  if (
+    !isNonEmptyString(value.batchId) ||
+    !RUN_ID_PATTERN.test(value.batchId) ||
+    !isCount(value.assignmentCount) ||
+    value.assignmentCount < 1 ||
+    !isNonEmptyString(value.createdAt) ||
+    !Number.isFinite(Date.parse(value.createdAt))
+  ) {
+    return false;
+  }
+  return value.state === "pending"
+    ? value.assignmentIds.length === 0 && value.status === null
+    : value.assignmentIds.length === value.assignmentCount &&
+        isControlApiPlaytestingRunState(value.status);
 }
 
 /**
@@ -910,14 +1041,18 @@ export async function requestPlaytestingAnalysis(
 }
 
 export async function startPlaytestingRun(
-  request: ControlApiPlaytestingRunRequest,
+  request: PlaytestLaunchRequest,
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiPlaytestingRunStartedResponse>> {
   if (
     !WORKSPACE_ID_PATTERN.test(request.workspaceId) ||
-    request.assignments.length === 0 ||
-    request.assignments.length > PLAYTESTS_MAX_BATCH_ASSIGNMENTS
+    !REQUEST_ID_PATTERN.test(request.requestId) ||
+    !CAPABILITY_REVISION_PATTERN.test(request.capabilityRevision) ||
+    (request.mode === "adapter-accelerated" &&
+      request.operation.kind === "batch" &&
+      (request.operation.assignments.length === 0 ||
+        request.operation.assignments.length > PLAYTESTS_MAX_BATCH_ASSIGNMENTS))
   ) {
     return invalidResponse(
       "Playtesting batch",
@@ -937,7 +1072,34 @@ export async function startPlaytestingRun(
     ? { kind: "ok", data: result.data }
     : invalidResponse(
         "Playtesting run",
-        "autodev-control-playtesting-run-started-v1"
+        "autodev-control-playtesting-run-started-v2"
+      );
+}
+
+export async function fetchPlaytestingRunRequest(
+  workspaceId: string,
+  requestId: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiPlaytestingRunRequestLookupResponse>> {
+  if (
+    !WORKSPACE_ID_PATTERN.test(workspaceId) ||
+    !REQUEST_ID_PATTERN.test(requestId)
+  ) {
+    return invalidResponse(
+      "Playtesting request recovery",
+      "a canonical workspaceId and valid requestId"
+    );
+  }
+  const query = new URLSearchParams({ workspaceId, requestId });
+  const path = `${CONTROL_API_PATHS.playtesting}/runs/by-request?${query}`;
+  const result = await fetchControlApi<unknown>(path, config, options);
+  if (result.kind !== "ok") return result;
+  return isRunRequestLookupResponse(result.data, workspaceId, requestId)
+    ? { kind: "ok", data: result.data }
+    : invalidResponse(
+        "Playtesting request recovery",
+        "autodev-control-playtesting-run-request-v1"
       );
 }
 

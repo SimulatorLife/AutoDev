@@ -131,7 +131,7 @@ export function HooksView({
                       "div",
                       {
                         className:
-                          "flex items-center justify-between text-fg-muted"
+                          `flex items-center justify-between ${MUTED_TEXT_CLASS}`
                       },
                       React.createElement(
                         "span",

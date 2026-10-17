@@ -37,6 +37,7 @@ import {
 import { liveAgentCount } from "../live-agent-count.ts";
 import { AgentEnablementControl } from "./AgentEnablementControl.ts";
 import { AgentProviderSummary } from "./AgentProviderSummary.ts";
+import { ConcurrencyLimitControl } from "./ConcurrencyLimitControl.ts";
 import { agentPath } from "./paths.ts";
 
 export interface AgentDetailViewProps {
@@ -282,11 +283,14 @@ export function AgentDetailView({
         ),
         React.createElement(
           DetailValue,
-          { label: "Session concurrency limit" },
-          // Unobserved is not zero, and null is Unlimited. The fact directly
-          // beside this renders "Not observed" for the same missing block, so
-          // a reader must never see "null" or a fabricated zero.
-          concurrencyLimit(concurrency?.effectivePerSessionLimit)
+          {
+            label: "Session concurrency limit",
+            valueClassName: null
+          },
+          React.createElement(ConcurrencyLimitControl, {
+            concurrency,
+            returnTo: `/agents/${encodeURIComponent(agent.id)}`
+          })
         ),
         React.createElement(
           DetailValue,

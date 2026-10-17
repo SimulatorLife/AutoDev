@@ -1,7 +1,8 @@
 /** Server-only, typed Playtesting batch request; Runtime owns approval and execution. */
 import {
-  type ControlApiPlaytestingBatchAssignment,
-  type ControlApiPlaytestingRunRequest,
+  PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+  type PlaytestLaunchAssignment,
+  type PlaytestLaunchRequest,
   PLAYTESTS_MAX_ASSIGNMENT_MANIFEST_BYTES,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS
 } from "@simulatorlife/autodev-core";
@@ -25,9 +26,11 @@ export const runtime = "nodejs";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_ASSIGNMENTS = PLAYTESTS_MAX_BATCH_ASSIGNMENTS;
-const MAX_ASSIGNMENTS_JSON_BYTES = PLAYTESTS_MAX_ASSIGNMENT_MANIFEST_BYTES;
+const MAX_LAUNCH_JSON_BYTES = PLAYTESTS_MAX_ASSIGNMENT_MANIFEST_BYTES;
 const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
-const ALLOWED_FIELDS = new Set(["workspaceId", "assignments"]);
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const CAPABILITY_REVISION_PATTERN = /^[a-f\d]{64}$/u;
+const ALLOWED_FIELDS = new Set(["launchRequest"]);
 
 function sendError(
   status: number,
@@ -106,9 +109,7 @@ function boundedText(value: unknown, maximum: number): string | null {
   return value;
 }
 
-function parseAssignment(
-  value: unknown
-): ControlApiPlaytestingBatchAssignment | null {
+function parseAssignment(value: unknown): PlaytestLaunchAssignment | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return null;
   }
@@ -138,30 +139,93 @@ function parseAssignment(
   };
 }
 
-function parseAssignments(
-  raw: string
-): ControlApiPlaytestingBatchAssignment[] | null {
-  if (Buffer.byteLength(raw, "utf8") > MAX_ASSIGNMENTS_JSON_BYTES) return null;
+function parseAssignments(value: unknown): PlaytestLaunchAssignment[] | null {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > MAX_ASSIGNMENTS
+  ) {
+    return null;
+  }
+  const assignments: PlaytestLaunchAssignment[] = [];
+  for (const entry of value) {
+    const assignment = parseAssignment(entry);
+    if (assignment === null) return null;
+    assignments.push(assignment);
+  }
+  return assignments;
+}
+
+/**
+ * Bound and shape-check the versioned launch request. Runtime's
+ * PlaytestRunControl owner remains the authoritative validator for every
+ * mode, approval, budget and capability; the Console never substitutes a
+ * different mode when Runtime refuses one.
+ */
+function parseLaunchRequest(raw: string): PlaytestLaunchRequest | null {
+  if (Buffer.byteLength(raw, "utf8") > MAX_LAUNCH_JSON_BYTES) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
     return null;
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return null;
+  }
+  const record = parsed as Record<string, unknown>;
   if (
-    !Array.isArray(parsed) ||
-    parsed.length === 0 ||
-    parsed.length > MAX_ASSIGNMENTS
+    record.schema !== PLAYTEST_LAUNCH_REQUEST_SCHEMA ||
+    typeof record.workspaceId !== "string" ||
+    !WORKSPACE_ID_PATTERN.test(record.workspaceId) ||
+    typeof record.requestId !== "string" ||
+    !REQUEST_ID_PATTERN.test(record.requestId) ||
+    typeof record.capabilityRevision !== "string" ||
+    !CAPABILITY_REVISION_PATTERN.test(record.capabilityRevision)
   ) {
     return null;
   }
-  const assignments: ControlApiPlaytestingBatchAssignment[] = [];
-  for (const entry of parsed) {
-    const assignment = parseAssignment(entry);
-    if (assignment === null) return null;
-    assignments.push(assignment);
+  if (record.mode !== "adapter-accelerated") {
+    return record.mode === "autonomous-visual" ||
+      record.mode === "scripted-regression"
+      ? (record as unknown as PlaytestLaunchRequest)
+      : null;
   }
-  return assignments;
+  const operation = record.operation;
+  if (
+    typeof operation !== "object" ||
+    operation === null ||
+    Array.isArray(operation) ||
+    (operation as Record<string, unknown>).kind !== "batch" ||
+    Object.keys(operation).some(
+      (key) => key !== "kind" && key !== "assignments"
+    ) ||
+    Object.keys(record).some(
+      (key) =>
+        ![
+          "schema",
+          "mode",
+          "workspaceId",
+          "requestId",
+          "capabilityRevision",
+          "operation"
+        ].includes(key)
+    )
+  ) {
+    return null;
+  }
+  const assignments = parseAssignments(
+    (operation as Record<string, unknown>).assignments
+  );
+  if (assignments === null) return null;
+  return {
+    schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+    mode: "adapter-accelerated",
+    workspaceId: record.workspaceId,
+    requestId: record.requestId,
+    capabilityRevision: record.capabilityRevision,
+    operation: { kind: "batch", assignments }
+  };
 }
 
 function failureStatus(
@@ -192,20 +256,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       "The typed playtest batch form is invalid."
     );
   }
-  const workspaceValues = form.getAll("workspaceId");
-  const assignmentValues = form.getAll("assignments");
-  const workspaceId = workspaceValues[0]?.trim() ?? "";
-  const assignments =
-    workspaceValues.length === 1 && assignmentValues.length === 1
-      ? parseAssignments(assignmentValues[0]!)
-      : null;
-  if (!assignments || !WORKSPACE_ID_PATTERN.test(workspaceId)) {
+  const launchValues = form.getAll("launchRequest");
+  const launchRequest =
+    launchValues.length === 1 ? parseLaunchRequest(launchValues[0]!) : null;
+  if (!launchRequest) {
     return sendError(
       400,
       "autodev_console_playtesting_invalid_request",
-      "A canonical workspaceId and 1-" +
+      "A versioned PlaytestLaunchRequest with a canonical workspaceId and 1-" +
         String(MAX_ASSIGNMENTS) +
-        " typed assignments are required."
+        " typed adapter assignments is required."
     );
   }
   const config = readControlApiConfig();
@@ -216,11 +276,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       "The server-side Control API credential is not configured."
     );
   }
-  const requestBody: ControlApiPlaytestingRunRequest = {
-    workspaceId,
-    assignments
-  };
-  const result = await startPlaytestingRun(requestBody, config);
+  const result = await startPlaytestingRun(launchRequest, config);
   if (result.kind !== "ok") {
     return sendError(
       failureStatus(result),

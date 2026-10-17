@@ -38,6 +38,7 @@ import {
   type RouterPersistence,
   setDefaultPersistenceManager
 } from "@simulatorlife/autodev-runtime/router/persistence";
+import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import { ROUTING_POLICY } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   getDefaultExecutionContract,
@@ -636,6 +637,98 @@ test("operator PATCH validates fields, persists provider state, and audits the a
   }
 });
 
+test("operator role PATCH configures and validates reasoning effort, respecting model catalogs and Antigravity fixed suffixes", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  setDefaultPersistenceManager({
+    async persistNow() {
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  const previousClaude = ROUTING_POLICY.assignmentFor("claude", "subagent") ?? null;
+  const previousAgy = ROUTING_POLICY.assignmentFor("antigravity", "subagent") ?? null;
+  try {
+    configure();
+    ROUTING_POLICY.setProviderAssignment("claude", "subagent", {
+      priority: 1,
+      model: "sonnet"
+    });
+    ROUTING_POLICY.setProviderAssignment("antigravity", "subagent", {
+      priority: 1,
+      model: "gemini-3.8-flash-high"
+    });
+    const claudePath = CONTROL_API_PATHS.providers + "/claude/roles/subagent";
+
+    // 1. Invalid reasoning effort for model (sonnet only supports low, medium, high)
+    const invalidEffort = await call("PATCH", claudePath, {
+      actor: "operator-a",
+      body: { priority: 1, model: "sonnet", reasoningEffort: "extreme" }
+    });
+    assert.equal(invalidEffort.response.statusCode, 400);
+    assert.equal(invalidEffort.body.error.code, "autodev_control_api_bad_body");
+
+    // 2. Effort specified with null model is invalid
+    const nullModelEffort = await call("PATCH", claudePath, {
+      actor: "operator-a",
+      body: { priority: 1, model: null, reasoningEffort: "high" }
+    });
+    assert.equal(nullModelEffort.response.statusCode, 400);
+
+    // 3. Valid reasoning effort on Claude subagent (sonnet)
+    const validPatch = await call("PATCH", claudePath, {
+      actor: "operator-a",
+      body: { priority: 1, model: "sonnet", reasoningEffort: "high" }
+    });
+    assert.equal(validPatch.response.statusCode, 200);
+    assert.equal(validPatch.body.reasoningEffort, "high");
+    assert.equal(validPatch.body.effectiveReasoningEffort, "high");
+    assert.equal(validPatch.body.reasoningEffortInForce, true);
+    assert.deepEqual(validPatch.body.supportedReasoningLevels, [
+      "low",
+      "medium",
+      "high"
+    ]);
+    assert.equal(
+      ROUTING_POLICY.assignmentFor("claude", "subagent")?.reasoningEffort,
+      "high"
+    );
+
+    // 4. Clearing reasoning effort with null
+    const clearPatch = await call("PATCH", claudePath, {
+      actor: "operator-a",
+      body: { priority: 1, model: "sonnet", reasoningEffort: null }
+    });
+    assert.equal(clearPatch.response.statusCode, 200);
+    assert.equal(clearPatch.body.reasoningEffort, null);
+    assert.equal(clearPatch.body.effectiveReasoningEffort, "medium");
+    assert.equal(clearPatch.body.reasoningEffortInForce, true);
+    assert.equal(
+      ROUTING_POLICY.assignmentFor("claude", "subagent")?.reasoningEffort,
+      undefined
+    );
+
+    // 5. Antigravity provider with fixed model slug (gemini-3.8-flash-high)
+    const agyPath = CONTROL_API_PATHS.providers + "/antigravity/roles/subagent";
+    const agyPatch = await call("PATCH", agyPath, {
+      actor: "operator-a",
+      body: { priority: 1, model: "gemini-3.8-flash-high", reasoningEffort: "low" }
+    });
+    assert.equal(agyPatch.response.statusCode, 200);
+    assert.equal(agyPatch.body.reasoningEffort, "low");
+    assert.equal(agyPatch.body.effectiveReasoningEffort, "high");
+    assert.equal(agyPatch.body.reasoningEffortInForce, false);
+  } finally {
+    if (previousClaude)
+      ROUTING_POLICY.setProviderAssignment("claude", "subagent", previousClaude);
+    else ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
+    if (previousAgy)
+      ROUTING_POLICY.setProviderAssignment("antigravity", "subagent", previousAgy);
+    else ROUTING_POLICY.clearProviderAssignment("antigravity", "subagent");
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
 test("failed persistence rolls back the in-memory provider policy", async () => {
   const saved = saveEnv();
   const originalPersistence = getDefaultPersistenceManager();
@@ -988,6 +1081,10 @@ test("providers v2 reports routes, credential presence, tier models, priorities,
         ? 1
         : ("disabled" as const),
       model: null,
+      reasoningEffort: "medium",
+      effectiveReasoningEffort: "medium",
+      reasoningEffortInForce: true,
+      supportedReasoningLevels: [],
       mutable: true,
       // The GET surface reports desired/observed generations but has no
       // runtime observation for this resource, so convergence stays
@@ -3233,3 +3330,89 @@ test("Control API /control/github handles API failure without leaking token", as
     restoreEnv(saved);
   }
 });
+
+test("Control API /control/runtime/concurrency mutates orchestrator concurrency limit with revision checking and persistence", async () => {
+  const saved = saveEnv();
+  try {
+    configure();
+    const manager = getDefaultConcurrencyManager();
+    const initialStatus = manager.concurrencyStatus();
+
+    // 1. Viewer is forbidden
+    const viewerAttempt = await call("PATCH", CONTROL_API_PATHS.concurrency, {
+      actor: "viewer-a",
+      body: { maxConcurrentThreadsPerSession: 8 }
+    });
+    assert.equal(viewerAttempt.response.statusCode, 403);
+    assert.equal(
+      viewerAttempt.body.error.code,
+      "autodev_control_api_viewer_forbidden"
+    );
+
+    // 2. Invalid body is rejected
+    const invalidAttempt = await call("PATCH", CONTROL_API_PATHS.concurrency, {
+      actor: "operator-a",
+      body: { maxConcurrentThreadsPerSession: -5 }
+    });
+    assert.equal(invalidAttempt.response.statusCode, 400);
+
+    // 3. Operator mutates limit to 8
+    const patched = await call("PATCH", CONTROL_API_PATHS.concurrency, {
+      actor: "operator-a",
+      body: {
+        maxConcurrentThreadsPerSession: 8,
+        revision: initialStatus.revision
+      }
+    });
+    assert.equal(patched.response.statusCode, 200);
+    assert.equal(patched.body.schema, "autodev-control-concurrency-v1");
+    assert.equal(patched.body.concurrency.effectivePerSessionLimit, 8);
+    assert.equal(patched.body.concurrency.configSource, "stored_override");
+    assert.equal(patched.body.concurrency.revision, initialStatus.revision + 1);
+
+    // 4. Stale revision is rejected with 409 Conflict
+    const staleAttempt = await call("PATCH", CONTROL_API_PATHS.concurrency, {
+      actor: "operator-a",
+      body: {
+        maxConcurrentThreadsPerSession: 12,
+        revision: initialStatus.revision
+      }
+    });
+    assert.equal(staleAttempt.response.statusCode, 409);
+    assert.equal(
+      staleAttempt.body.error.code,
+      "autodev_control_api_conflict"
+    );
+
+    // 5. Operator mutates limit to null (Unlimited)
+    const unlimited = await call("PATCH", CONTROL_API_PATHS.concurrency, {
+      actor: "operator-a",
+      body: {
+        maxConcurrentThreadsPerSession: null,
+        revision: patched.body.concurrency.revision
+      }
+    });
+    assert.equal(unlimited.response.statusCode, 200);
+    assert.equal(unlimited.body.concurrency.effectivePerSessionLimit, null);
+    assert.equal(unlimited.body.concurrency.configSource, "stored_override");
+
+    // 6. Operator resets to config file
+    const reset = await call("PATCH", CONTROL_API_PATHS.concurrency, {
+      actor: "operator-a",
+      body: {
+        resetToConfigFile: true,
+        revision: unlimited.body.concurrency.revision
+      }
+    });
+    assert.equal(reset.response.statusCode, 200);
+    assert.notEqual(reset.body.concurrency.configSource, "stored_override");
+    assert.equal(
+      reset.body.concurrency.effectivePerSessionLimit,
+      initialStatus.maxConcurrentThreadsPerSession
+    );
+  } finally {
+    getDefaultConcurrencyManager().clearStoredLimit();
+    restoreEnv(saved);
+  }
+});
+

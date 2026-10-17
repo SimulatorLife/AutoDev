@@ -6,6 +6,11 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 
+import {
+  PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+  type PlaytestLaunchRequest
+} from "@simulatorlife/autodev-core";
+
 import { handleControlApiRequest } from "../src/control-api/index.ts";
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
 import {
@@ -15,11 +20,62 @@ import {
 import {
   createPlaytestMcpServer,
   PlaytestMcpAuthorizationError,
+  PlaytestMcpConflictError,
   type PlaytestMcpSession,
   PlaytestMcpUnavailableError,
   type PlaytestRunControl
 } from "../src/playtesting/mcp.ts";
 import { responseRecorder } from "./support/control-api-harness.ts";
+
+let launchRequestCounter = 0;
+
+function nextLaunchRequestId(): string {
+  launchRequestCounter += 1;
+  return `client-test-request-${String(launchRequestCounter)}`;
+}
+
+function batchLaunch(input: {
+  readonly workspaceId?: string;
+  readonly requestId?: string;
+  readonly capabilityRevision?: string;
+  readonly assignments: readonly {
+    readonly scenario: string;
+    readonly policy: string;
+    readonly seed: string;
+    readonly goal?: string;
+    readonly maxSteps?: number;
+  }[];
+}): PlaytestLaunchRequest {
+  return {
+    schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+    mode: "adapter-accelerated",
+    workspaceId: input.workspaceId ?? WORKSPACE,
+    requestId: input.requestId ?? nextLaunchRequestId(),
+    capabilityRevision: input.capabilityRevision ?? "b".repeat(64),
+    operation: { kind: "batch", assignments: input.assignments }
+  };
+}
+
+function branchLaunch(input: {
+  readonly workspaceId?: string;
+  readonly requestId?: string;
+  readonly capabilityRevision?: string;
+  readonly parentEpisodeId: string;
+  readonly branchStep: number;
+  readonly alternativeActionId: string;
+  readonly policy?: string;
+  readonly maxSteps?: number;
+}): PlaytestLaunchRequest {
+  const { workspaceId, requestId, capabilityRevision, ...operation } = input;
+  return {
+    schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+    mode: "adapter-accelerated",
+    workspaceId: workspaceId ?? WORKSPACE,
+    requestId: requestId ?? nextLaunchRequestId(),
+    capabilityRevision: capabilityRevision ?? "b".repeat(64),
+    operation: { kind: "branch", ...operation }
+  };
+}
 
 const WORKSPACE = "fixture/game";
 const SESSION: PlaytestMcpSession = {
@@ -43,8 +99,38 @@ test("Playtest Control API client forwards typed run operations and host-bound s
   }> = [];
   const responses = [
     {
-      schema: "autodev-control-playtesting-capabilities-v1",
+      schema: "autodev-control-playtesting-capabilities-v2",
       workspaceId: WORKSPACE,
+      capabilityRevision: "b".repeat(64),
+      modeReadiness: {
+        "adapter-accelerated": { status: "ready", reasons: [] },
+        "autonomous-visual": {
+          status: "unavailable",
+          reasons: [
+            {
+              code: "visual-driver-unavailable",
+              label: "Visual driver unavailable",
+              message:
+                "Runtime does not yet have the isolated browser gameplay driver.",
+              severity: "unavailable"
+            }
+          ],
+          targetStore: "available",
+          targets: []
+        },
+        "scripted-regression": {
+          status: "unavailable",
+          reasons: [
+            {
+              code: "scripted-regression-unavailable",
+              label: "Scripted regression unavailable",
+              message:
+                "Runtime does not yet have the approved scripted-regression launch path.",
+              severity: "unavailable"
+            }
+          ]
+        }
+      },
       workspaceCatalog: "valid",
       workspaceEnabled: true,
       operatorActionsAvailable: true,
@@ -97,10 +183,22 @@ test("Playtest Control API client forwards typed run operations and host-bound s
       runPreflight: "required-at-start"
     },
     {
-      schema: "autodev-control-playtesting-run-started-v1",
+      schema: "autodev-control-playtesting-run-started-v2",
       workspaceId: WORKSPACE,
       batchId: "batch-1",
       assignmentCount: 1,
+      assignmentIds: ["a-0001"],
+      createdAt: "2026-10-10T00:00:00Z",
+      status: "running"
+    },
+    {
+      schema: "autodev-control-playtesting-run-request-v1",
+      workspaceId: WORKSPACE,
+      requestId: "client-request-1",
+      state: "accepted",
+      batchId: "batch-1",
+      assignmentCount: 1,
+      assignmentIds: ["a-0001"],
       createdAt: "2026-10-10T00:00:00Z",
       status: "running"
     },
@@ -172,15 +270,26 @@ test("Playtest Control API client forwards typed run operations and host-bound s
 
   const capabilities = await client.getCapabilities(SESSION, WORKSPACE);
   assert.equal(capabilities.runnablePolicies[0], "random");
-  const started = await client.startRun(SESSION, {
+  const launch = batchLaunch({
+    requestId: "client-request-1",
     assignments: [{ scenario: "tutorial", policy: "random", seed: "seed-1" }]
   });
+  const started = await client.startRun(SESSION, launch);
   assert.deepEqual(started, {
     batchId: "batch-1",
     assignmentCount: 1,
+    assignmentIds: ["a-0001"],
     createdAt: "2026-10-10T00:00:00Z",
     status: "running"
   });
+  const recovered = await client.lookupRunByRequest(
+    SESSION,
+    WORKSPACE,
+    launch.requestId
+  );
+  assert.equal(recovered.state, "accepted");
+  assert.equal(recovered.batchId, "batch-1");
+  assert.deepEqual(recovered.assignmentIds, ["a-0001"]);
   const listed = await client.listActiveRuns(SESSION, WORKSPACE);
   assert.equal(listed.length, 1);
   const status = await client.waitForRun(SESSION, WORKSPACE, "batch-1", 100);
@@ -191,16 +300,13 @@ test("Playtest Control API client forwards typed run operations and host-bound s
     cancellationRequested: false
   });
 
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 6);
   assert.match(
     calls[0]!.url,
     /\/control\/playtesting\/capabilities\?workspaceId=fixture%2Fgame/u
   );
   assert.equal(calls[1]!.method, "POST");
-  assert.deepEqual(JSON.parse(calls[1]!.body!), {
-    assignments: [{ scenario: "tutorial", policy: "random", seed: "seed-1" }],
-    workspaceId: WORKSPACE
-  });
+  assert.deepEqual(JSON.parse(calls[1]!.body!), launch);
   for (const call of calls) {
     assert.equal(
       call.headers.get("authorization"),
@@ -218,13 +324,17 @@ test("Playtest Control API client forwards typed run operations and host-bound s
   }
   assert.match(
     calls[2]!.url,
-    /\/control\/playtesting\/runs\?workspaceId=fixture%2Fgame/u
+    /\/control\/playtesting\/runs\/by-request\?workspaceId=fixture%2Fgame&requestId=client-request-1/u
   );
   assert.match(
     calls[3]!.url,
+    /\/control\/playtesting\/runs\?workspaceId=fixture%2Fgame/u
+  );
+  assert.match(
+    calls[4]!.url,
     /batch-1\?workspaceId=fixture%2Fgame&waitMs=100/u
   );
-  assert.match(calls[4]!.url, /batch-1\/cancel\?workspaceId=fixture%2Fgame/u);
+  assert.match(calls[5]!.url, /batch-1\/cancel\?workspaceId=fixture%2Fgame/u);
 });
 
 test("MCP packet preparation accepts only the packet-preparation response variant", async () => {
@@ -366,6 +476,37 @@ test("Playtest Control API client converts typed authorization errors without le
   await assert.rejects(
     client.waitForRun(SESSION, WORKSPACE, "batch-1", 0),
     PlaytestMcpAuthorizationError
+  );
+});
+
+test("Playtest Control API client preserves requestId conflicts as non-retryable conflicts", async () => {
+  const client = createPlaytestControlApiRunClient({
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "token",
+    actor: "playtest-runtime",
+    sessionRole: "playtester",
+    fetcher: async () =>
+      jsonResponse(
+        {
+          error: {
+            code: "autodev_control_playtesting_request_id_conflict",
+            message: "This requestId is already bound to another payload."
+          }
+        },
+        409
+      )
+  });
+  await assert.rejects(
+    client.startRun(
+      SESSION,
+      batchLaunch({
+        requestId: "conflicting-request-1",
+        assignments: [
+          { scenario: "tutorial", policy: "random", seed: "seed-1" }
+        ]
+      })
+    ),
+    PlaytestMcpConflictError
   );
 });
 
@@ -523,9 +664,24 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
       return {
         batchId: "batch-remote-1",
         assignmentCount:
-          "assignments" in request ? request.assignments.length : 1,
+          request.mode === "adapter-accelerated" &&
+          request.operation.kind === "batch"
+            ? request.operation.assignments.length
+            : 1,
+        assignmentIds: ["a-0001"],
         createdAt: "2026-10-10T00:00:00.000Z",
         status: "running"
+      };
+    },
+    async lookupRunByRequest(_receivedSession, _workspaceId, requestId) {
+      return {
+        requestId,
+        state: "not-found",
+        batchId: null,
+        assignmentCount: null,
+        assignmentIds: [],
+        createdAt: null,
+        status: null
       };
     },
     listActiveRuns(receivedSession, workspaceId) {
@@ -623,25 +779,40 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
     });
     const tool = (name: string) => (mcp as any)._registeredTools[name].handler;
 
+    const capabilitiesResponse = await tool("playtest.capabilities")({
+      workspaceId: WORKSPACE
+    });
+    const capabilityRevision = JSON.parse(capabilitiesResponse.content[0].text)
+      .capabilityRevision as string;
+
     const runResponse = await tool("playtest.run")({
-      assignments: [
-        { scenario: "tutorial", policy: "random", seed: "remote-seed" }
-      ]
+      launchRequest: batchLaunch({
+        capabilityRevision,
+        assignments: [
+          { scenario: "tutorial", policy: "random", seed: "remote-seed" }
+        ]
+      })
     });
     const run = JSON.parse(runResponse.content[0].text);
     assert.deepEqual(run, {
       batchId: "batch-remote-1",
       assignmentCount: 1,
+      assignmentIds: ["a-0001"],
       createdAt: "2026-10-10T00:00:00.000Z",
       status: "running"
     });
 
-    const branchResponse = await tool("playtest.branch")({
+    const branchRequest = branchLaunch({
+      requestId: "remote-branch-request-1",
+      capabilityRevision,
       parentEpisodeId: "episode-parent",
       branchStep: 4,
       alternativeActionId: "cool-down",
       policy: "random",
       maxSteps: 8
+    });
+    const branchResponse = await tool("playtest.branch")({
+      launchRequest: branchRequest
     });
     assert.equal(
       branchResponse.isError,
@@ -651,17 +822,14 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
     assert.deepEqual(JSON.parse(branchResponse.content[0].text), {
       batchId: "batch-remote-1",
       assignmentCount: 1,
+      assignmentIds: ["a-0001"],
       createdAt: "2026-10-10T00:00:00.000Z",
       status: "running"
     });
-    assert.deepEqual((delegated[1] as { request: unknown }).request, {
-      workspaceId: WORKSPACE,
-      parentEpisodeId: "episode-parent",
-      branchStep: 4,
-      alternativeActionId: "cool-down",
-      policy: "random",
-      maxSteps: 8
-    });
+    assert.deepEqual(
+      (delegated[1] as { request: unknown }).request,
+      branchRequest
+    );
 
     const activeResponse = await tool("playtest.activeRuns")({});
     assert.equal(

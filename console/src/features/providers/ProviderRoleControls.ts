@@ -123,6 +123,8 @@ function modelDiscoveryDisabledReason(
   return null;
 }
 
+const MODEL_EFFORT_SUFFIX = /-(low|medium|high)$/;
+
 /**
  * The model dropdown for one role.
  *
@@ -156,7 +158,7 @@ function RoleModelSelect({
     // The width matches the model track in RoleRow's aligned grid. The shared
     // table preserves this budget at narrow viewports and scrolls rather than
     // letting the select push its row out of alignment.
-    className: "min-w-0 w-52",
+    className: "min-w-0 w-48",
     testId: `role-model-${provider}-${role}`,
     dataAttributes: {
       "data-role-model": role,
@@ -168,6 +170,74 @@ function RoleModelSelect({
       { value: "", label: "Not set" },
       ...models.map(({ id, label }) => ({ value: id, label }))
     ]
+  });
+}
+
+function RoleEffortSelect({
+  provider,
+  role,
+  assignment,
+  disabledReason
+}: {
+  readonly provider: string;
+  readonly role: ProviderRole;
+  readonly assignment: ControlApiProviderRoleAssignment;
+  readonly disabledReason: string | undefined;
+}): React.JSX.Element {
+  const supportedLevels = assignment.supportedReasoningLevels ?? [];
+  const hasLevels = supportedLevels.length > 0;
+  const isAgyFixed =
+    provider === "antigravity" &&
+    assignment.model !== null &&
+    Boolean(MODEL_EFFORT_SUFFIX.exec(assignment.model));
+
+  if (!hasLevels && !isAgyFixed) {
+    return React.createElement(
+      "span",
+      {
+        className: "min-w-0 w-28 text-center text-xs " + MUTED_META_CLASS,
+        "data-role-effort-placeholder": `${provider}-${role}`
+      },
+      "—"
+    );
+  }
+
+  if (isAgyFixed) {
+    return React.createElement(
+      "span",
+      {
+        className:
+          "min-w-0 w-28 truncate rounded border border-border bg-surface-muted/30 px-2 py-1 text-center font-mono text-xs text-fg-secondary",
+        title: `Fixed by model slug (${assignment.effectiveReasoningEffort ?? "model"})`,
+        "data-role-effort-fixed": `${provider}-${role}`
+      },
+      assignment.effectiveReasoningEffort ?? "Fixed"
+    );
+  }
+
+  const roleDisabled = assignment.priority === "disabled";
+  const options = [
+    { value: "", label: "Default" },
+    ...supportedLevels.map((lvl) => ({
+      value: lvl,
+      label: lvl.charAt(0).toUpperCase() + lvl.slice(1)
+    }))
+  ];
+
+  return React.createElement(AutoSubmitSelectField, {
+    id: `select-effort-${provider}-${role}`,
+    name: "reasoningEffort",
+    label: `${ROLE_LABELS[role]} reasoning effort`,
+    hideLabel: true,
+    className: "min-w-0 w-28",
+    testId: `role-effort-${provider}-${role}`,
+    dataAttributes: {
+      "data-role-effort": role,
+      "data-dimmed": roleDisabled ? "true" : "false"
+    },
+    defaultValue: assignment.reasoningEffort ?? "",
+    ...(disabledReason === undefined ? {} : { disabled: true, disabledReason }),
+    options
   });
 }
 
@@ -198,6 +268,21 @@ function RoleRow({
     (roleDisabled
       ? "This role is set to Disabled. Choose a priority to change its model."
       : (modelDiscoveryDisabledReason(discovery, provider) ?? undefined));
+  const effortReason =
+    blockedReason ??
+    (roleDisabled
+      ? "This role is set to Disabled. Choose a priority to change its reasoning effort."
+      : undefined);
+
+  const supportedLevels = assignment.supportedReasoningLevels ?? [];
+  const hasLevels = supportedLevels.length > 0;
+  const isAgyFixed =
+    provider === "antigravity" &&
+    assignment.model !== null &&
+    Boolean(MODEL_EFFORT_SUFFIX.exec(assignment.model));
+  const effortSubmitsViaSelect =
+    hasLevels && !isAgyFixed && effortReason === undefined;
+
   const modelOptions = [...models];
   if (
     assignment.model !== null &&
@@ -214,7 +299,8 @@ function RoleRow({
     {
       action: `/api/providers/${encodeURIComponent(provider)}/roles/${encodeURIComponent(role)}`,
       method: "POST",
-      className: "grid min-w-0 grid-cols-[6rem_6rem_13rem] items-center gap-2",
+      className:
+        "grid min-w-0 grid-cols-[5.5rem_5rem_12rem_7rem] items-center gap-2",
       "data-role-form": `${provider}-${role}`
     },
     React.createElement("input", {
@@ -250,7 +336,7 @@ function RoleRow({
       name: "priority",
       label: `${ROLE_LABELS[role]} priority`,
       hideLabel: true,
-      className: "min-w-0 w-24",
+      className: "min-w-0 w-20",
       testId: `role-priority-${provider}-${role}`,
       tone: roleDisabled ? "warning" : undefined,
       dataAttributes: { "data-role-priority": role },
@@ -272,20 +358,14 @@ function RoleRow({
       models: modelOptions,
       disabledReason: modelReason
     }),
-    // A natively `disabled` control is not submitted by the browser, and the
-    // role route requires exactly the five fields `provider`, `role`,
-    // `priority`, `model` and `returnTo`. Without this, re-enabling a Disabled
-    // role posted four fields, the route refused it, and the operator could
-    // never turn the role back on: the one action the control existed to allow.
-    // The hidden field carries the preserved model across that submission, and
-    // there is no duplicate name to disambiguate because the disabled `<select>`
-    // contributes nothing. This is the same shape the Agent Limits steppers use
-    // for their current state.
-    //
-    // A model unavailable in the latest provider snapshot remains visible and
-    // is carried unchanged. Runtime permits preserving that exact assignment
-    // while rejecting any new model choice that is not currently observed and
-    // routeable; a temporary discovery outage must not erase operator intent.
+    React.createElement(RoleEffortSelect, {
+      provider,
+      role,
+      assignment,
+      disabledReason: effortReason
+    }),
+    // A natively `disabled` control is not submitted by the browser.
+    // The hidden fields carry preserved model and effort values across submissions.
     ...(modelReason === undefined
       ? []
       : [
@@ -294,6 +374,16 @@ function RoleRow({
             type: "hidden",
             name: "model",
             value: assignment.model ?? ""
+          })
+        ]),
+    ...(effortSubmitsViaSelect
+      ? []
+      : [
+          React.createElement("input", {
+            key: "preserved-effort",
+            type: "hidden",
+            name: "reasoningEffort",
+            value: assignment.reasoningEffort ?? ""
           })
         ])
   );

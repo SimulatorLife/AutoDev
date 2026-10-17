@@ -43,6 +43,7 @@ export interface ConcurrencyStatus {
   denials: number;
   denialsByReason: Record<string, number>;
   lastDenial: ConcurrencyDenialRecord | null;
+  revision: number;
 }
 
 export interface ConcurrencyManagerOptions {
@@ -223,6 +224,8 @@ export class ConcurrencyManager {
     | undefined;
   private readonly openSubagentSlots = new Map<string, string[]>();
   private subagentSlotSequence = 0;
+  private storedLimit: number | null | undefined = undefined;
+  public revision = 1;
   public readonly telemetry: ConcurrencyTelemetry = {
     denials: 0,
     denialsByReason: {},
@@ -246,7 +249,37 @@ export class ConcurrencyManager {
   }
 
   effectivePerSessionLimit(): number | null {
+    if (this.storedLimit !== undefined) {
+      return this.storedLimit;
+    }
     return this.config.maxConcurrentThreadsPerSession;
+  }
+
+  setMaxConcurrentThreadsPerSession(
+    limit: number | null,
+    expectedRevision?: number
+  ):
+    | { ok: true; revision: number }
+    | { ok: false; conflict: true; currentRevision: number } {
+    if (expectedRevision !== undefined && expectedRevision !== this.revision) {
+      return { ok: false, conflict: true, currentRevision: this.revision };
+    }
+    this.storedLimit = limit;
+    this.revision += 1;
+    return { ok: true, revision: this.revision };
+  }
+
+  clearStoredLimit(
+    expectedRevision?: number
+  ):
+    | { ok: true; revision: number }
+    | { ok: false; conflict: true; currentRevision: number } {
+    if (expectedRevision !== undefined && expectedRevision !== this.revision) {
+      return { ok: false, conflict: true, currentRevision: this.revision };
+    }
+    this.storedLimit = undefined;
+    this.revision += 1;
+    return { ok: true, revision: this.revision };
   }
 
   activeSubagentThreads(at?: number): number {
@@ -362,16 +395,44 @@ export class ConcurrencyManager {
     }
   }
 
+  persistenceSnapshot(): Record<string, unknown> {
+    return {
+      ...this.telemetry,
+      storedLimit: this.storedLimit,
+      revision: this.revision
+    };
+  }
+
+  restorePersistence(saved?: Record<string, unknown> | null): void {
+    if (!saved || typeof saved !== "object") return;
+    this.restoreTelemetry(saved);
+    if ("storedLimit" in saved) {
+      const val = saved.storedLimit;
+      if (
+        val === null ||
+        (typeof val === "number" && Number.isInteger(val) && val >= 0)
+      ) {
+        this.storedLimit = val as number | null;
+      } else if (val === undefined) {
+        this.storedLimit = undefined;
+      }
+    }
+    if (typeof saved.revision === "number" && Number.isInteger(saved.revision)) {
+      this.revision = saved.revision;
+    }
+  }
+
   concurrencyStatus(at = Date.now()): ConcurrencyStatus {
     const processFallbackActiveThreads = this.agentActivity.countLive(
       { kind: SUBAGENT_SLOT_KIND, tag: PROCESS_FALLBACK_SESSION_KEY },
       at
     );
+    const isStored = this.storedLimit !== undefined;
     return {
       scope: "router-admitted-child-requests",
-      configSource: this.configSource,
+      configSource: isStored ? "stored_override" : this.configSource,
       configFileExists: existsSync(this.config.file),
-      maxConcurrentThreadsPerSession: this.effectivePerSessionLimit(),
+      maxConcurrentThreadsPerSession: this.config.maxConcurrentThreadsPerSession,
       effectivePerSessionLimit: this.effectivePerSessionLimit(),
       activeSubagentThreads: this.agentActivity.countLive(
         { kind: SUBAGENT_SLOT_KIND },
@@ -385,7 +446,8 @@ export class ConcurrencyManager {
       processFallbackEnforcement: processFallbackActiveThreads > 0,
       denials: this.telemetry.denials,
       denialsByReason: { ...this.telemetry.denialsByReason },
-      lastDenial: this.telemetry.lastDenial
+      lastDenial: this.telemetry.lastDenial,
+      revision: this.revision
     };
   }
 }

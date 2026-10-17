@@ -519,7 +519,7 @@ function restorePersistedSection(args: {
     return;
   }
   if (section === "concurrency" && value && typeof value === "object") {
-    concurrencyManager.restoreTelemetry(value);
+    concurrencyManager.restorePersistence(value as Record<string, unknown>);
     return;
   }
   if (section === "spawnFailures" && value && typeof value === "object") {
@@ -634,7 +634,7 @@ const routerPersistence = new RouterPersistence({
     providerTelemetry: Object.fromEntries(providerTelemetry),
     providerModelDiscovery: providerModelDiscoveryPersistenceSnapshot(),
     usage: usagePersistenceSnapshot(),
-    concurrency: concurrencyManager.telemetry,
+    concurrency: concurrencyManager.persistenceSnapshot(),
     subagents: subagentRegistry.subagentTelemetry,
     spawnFailures: subagentRegistry.spawnFailureTelemetry,
     providerCooldowns: COOLDOWNS.persistedHardEntries(),

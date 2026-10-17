@@ -31,6 +31,7 @@ import {
 } from "@simulatorlife/autodev-core";
 
 const PORT = Number(process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? 4311);
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const WORKSPACE_ID = "fixture/game";
 const BUILD_SHA = "a".repeat(40);
 const MEASUREMENT_VERSION = "measurement-v1";
@@ -76,12 +77,28 @@ const counts = {
 } as const;
 
 const episode = {
-  schema: "autodev-playtest-episode-v4",
+  schema: "autodev-playtest-episode-v5",
   episodeId: "episode-17",
   revision: 1,
   batchId: "batch-3",
   assignmentId: "a-0017",
   branchLineage: null,
+  executionProvenance: {
+    mode: "adapter-accelerated",
+    source: {
+      kind: "repo-checkout",
+      repository: WORKSPACE_ID,
+      revision: BUILD_SHA,
+      revisionConfidence: "verified",
+      checkoutState: "clean",
+      artifactFingerprint: null,
+      targetId: null,
+      targetOrigin: null
+    },
+    observationSource: "engine-adapter",
+    actionSource: "engine-policy",
+    derivedFrom: null
+  },
   identity: {
     workspaceId: WORKSPACE_ID,
     repository: WORKSPACE_ID,
@@ -566,6 +583,17 @@ type SyntheticRun = {
   cancellationRequested: boolean;
 };
 const syntheticRuns = new Map<string, SyntheticRun>();
+const syntheticLaunchIntents = new Map<
+  string,
+  {
+    readonly launchIntentHash: string;
+    readonly batchId: string;
+    readonly assignmentCount: number;
+    readonly assignmentIds: readonly string[];
+    readonly createdAt: string;
+  }
+>();
+let failNextRunAcknowledgement = false;
 type SyntheticAnalystRun = {
   readonly run: {
     readonly analysisId: string;
@@ -750,6 +778,7 @@ const PLAYTEST_EPISODE_WINDOW_ROUTE =
   /^\/control\/playtesting\/episodes\/([^/]+)\/windows\/([^/]+)$/u;
 
 function activeSyntheticRunRequest(value: Record<string, unknown> | null): {
+  readonly requestId: string;
   readonly assignments: readonly {
     readonly assignmentId: string;
     readonly scenario: string;
@@ -764,7 +793,19 @@ function activeSyntheticRunRequest(value: Record<string, unknown> | null): {
     Record<string, unknown> | undefined;
   const scenarios = workspaceApproval.allowedScenarios;
   const policies = workspaceApproval.allowedPolicies;
-  const rawAssignments = value.assignments;
+  const operation =
+    value.schema === "autodev-playtest-launch-v1" &&
+    value.mode === "adapter-accelerated" &&
+    typeof value.requestId === "string" &&
+    REQUEST_ID_PATTERN.test(value.requestId) &&
+    value.capabilityRevision === "e".repeat(64) &&
+    typeof value.operation === "object" &&
+    value.operation !== null &&
+    !Array.isArray(value.operation)
+      ? (value.operation as Record<string, unknown>)
+      : null;
+  const rawAssignments =
+    operation?.kind === "batch" ? operation.assignments : undefined;
   if (
     value.workspaceId !== WORKSPACE_ID ||
     !Array.isArray(rawAssignments) ||
@@ -818,7 +859,16 @@ function activeSyntheticRunRequest(value: Record<string, unknown> | null): {
       maxSteps: assignment.maxSteps
     });
   }
-  return { assignments };
+  return { requestId: value.requestId as string, assignments };
+}
+
+function syntheticLaunchIntentKey(actorId: string, requestId: string): string {
+  return JSON.stringify([WORKSPACE_ID, actorId, requestId]);
+}
+
+function actorIdFromRequest(request: IncomingMessage): string {
+  const value = request.headers["x-autodev-actor"];
+  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
 }
 
 async function handleSyntheticAnalysisMutation(
@@ -1087,7 +1137,7 @@ async function handleSyntheticAnalysisMutation(
   return true;
 }
 
-async function handleSyntheticRunMutation(
+async function handleSyntheticComparisonMutation(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL
@@ -1127,95 +1177,177 @@ async function handleSyntheticRunMutation(
     });
     return true;
   }
+  return false;
+}
+
+async function handleSyntheticLaunchMutation(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): Promise<boolean> {
   if (
-    url.pathname === "/control/playtesting/runs" &&
-    request.method === "POST"
+    url.pathname !== "/control/playtesting/runs" ||
+    request.method !== "POST"
   ) {
-    const runRequest = activeSyntheticRunRequest(await readJsonBody(request));
-    if (!runRequest) {
-      response.writeHead(400).end();
+    return false;
+  }
+
+  const launch = await readJsonBody(request);
+  const runRequest = activeSyntheticRunRequest(launch);
+  if (!runRequest) {
+    response.writeHead(400).end();
+    return true;
+  }
+  const launchIntentHash = createHash("sha256")
+    .update(JSON.stringify(launch))
+    .digest("hex");
+  const actorId = actorIdFromRequest(request);
+  const requestKey = syntheticLaunchIntentKey(actorId, runRequest.requestId);
+  const priorIntent = syntheticLaunchIntents.get(requestKey);
+  if (priorIntent) {
+    if (priorIntent.launchIntentHash !== launchIntentHash) {
+      sendJson(
+        response,
+        {
+          error: {
+            code: "autodev_control_playtesting_request_id_conflict",
+            message: "This requestId is already bound to another payload."
+          }
+        },
+        409
+      );
       return true;
     }
-    const batchId = `batch-browser-${String(nextRunId++).padStart(3, "0")}`;
-    const manifestBase = {
-      ...assignmentManifestBase,
-      batchId,
-      assignments: runRequest.assignments.map((assignment) => ({
-        assignmentId: assignment.assignmentId,
-        scenarioId: assignment.scenario,
-        scenarioFamily: assignment.scenario,
-        policyId: assignment.policy,
-        policyVersion: "hmac-sha256-v1",
-        seed: assignment.seed,
-        maxSteps: assignment.maxSteps
-      }))
-    };
-    const manifestHash = createHash("sha256")
-      .update(playtestAssignmentManifestHashInput(manifestBase))
-      .digest("hex");
-    const episodes = runRequest.assignments.map((assignment) => {
-      const episodeId = `episode-${batchId}-${assignment.assignmentId}`;
-      const record = {
-        ...episode,
-        episodeId,
-        batchId,
-        assignmentId: assignment.assignmentId,
-        branchLineage: null,
-        identity: {
-          ...episode.identity,
-          scenarioId: assignment.scenario,
-          seed: assignment.seed
-        },
-        scenarioFamily: assignment.scenario,
-        stepCount: Math.min(episode.stepCount, assignment.maxSteps)
-      } as Record<string, unknown>;
-      return { episodeId, record };
-    });
-    const selectedReview = selectPlaytestBatchReviews({
-      inventoryHash: manifestHash,
-      maxReviewedSessions: 1,
-      critiqueBudget: 1,
-      surveillanceSessions: 1,
-      discoverySessions: 0,
-      discoverySignal: null,
-      candidates: runRequest.assignments.map((assignment, index) => ({
-        assignmentId: assignment.assignmentId,
-        episodeId: episodes[index]!.episodeId,
-        policyId: assignment.policy,
-        scenarioId: assignment.scenario,
-        outcomeKey: playtestReviewOutcomeKey("completed", episode.outcome),
-        metrics: episode.metrics
-      })),
-      unreviewableAssignments: 0,
-      selectedAt: FIXTURE_TIMESTAMP
-    });
-    const createdAt = new Date().toISOString();
-    syntheticRuns.set(batchId, {
-      workspaceId: WORKSPACE_ID,
-      createdAt,
-      assignments: runRequest.assignments,
-      assignmentCount: runRequest.assignments.length,
-      manifestHash,
-      reviewSelection: selectedReview,
-      episodes,
-      status: "running",
-      cancellationRequested: false
-    });
+    const priorRun = syntheticRuns.get(priorIntent.batchId);
+    if (priorRun) completeSyntheticRunIfReady(priorRun);
     sendJson(
       response,
       {
-        schema: "autodev-control-playtesting-run-started-v1",
+        schema: "autodev-control-playtesting-run-started-v2",
         workspaceId: WORKSPACE_ID,
-        batchId,
-        assignmentCount: runRequest.assignments.length,
-        createdAt,
-        status: "running"
+        batchId: priorIntent.batchId,
+        assignmentCount: priorIntent.assignmentCount,
+        assignmentIds: priorIntent.assignmentIds,
+        createdAt: priorIntent.createdAt,
+        status: priorRun?.status ?? "running"
       },
       202
     );
     return true;
   }
+  const batchId = `batch-browser-${String(nextRunId++).padStart(3, "0")}`;
+  const manifestBase = {
+    ...assignmentManifestBase,
+    batchId,
+    assignments: runRequest.assignments.map((assignment) => ({
+      assignmentId: assignment.assignmentId,
+      scenarioId: assignment.scenario,
+      scenarioFamily: assignment.scenario,
+      policyId: assignment.policy,
+      policyVersion: "hmac-sha256-v1",
+      seed: assignment.seed,
+      maxSteps: assignment.maxSteps
+    }))
+  };
+  const manifestHash = createHash("sha256")
+    .update(playtestAssignmentManifestHashInput(manifestBase))
+    .digest("hex");
+  const episodes = runRequest.assignments.map((assignment) => {
+    const episodeId = `episode-${batchId}-${assignment.assignmentId}`;
+    const record = {
+      ...episode,
+      episodeId,
+      batchId,
+      assignmentId: assignment.assignmentId,
+      branchLineage: null,
+      identity: {
+        ...episode.identity,
+        scenarioId: assignment.scenario,
+        seed: assignment.seed
+      },
+      scenarioFamily: assignment.scenario,
+      stepCount: Math.min(episode.stepCount, assignment.maxSteps)
+    } as Record<string, unknown>;
+    return { episodeId, record };
+  });
+  const selectedReview = selectPlaytestBatchReviews({
+    inventoryHash: manifestHash,
+    maxReviewedSessions: 1,
+    critiqueBudget: 1,
+    surveillanceSessions: 1,
+    discoverySessions: 0,
+    discoverySignal: null,
+    candidates: runRequest.assignments.map((assignment, index) => ({
+      assignmentId: assignment.assignmentId,
+      episodeId: episodes[index]!.episodeId,
+      policyId: assignment.policy,
+      scenarioId: assignment.scenario,
+      outcomeKey: playtestReviewOutcomeKey("completed", episode.outcome),
+      metrics: episode.metrics
+    })),
+    unreviewableAssignments: 0,
+    selectedAt: FIXTURE_TIMESTAMP
+  });
+  const createdAt = new Date().toISOString();
+  syntheticRuns.set(batchId, {
+    workspaceId: WORKSPACE_ID,
+    createdAt,
+    assignments: runRequest.assignments,
+    assignmentCount: runRequest.assignments.length,
+    manifestHash,
+    reviewSelection: selectedReview,
+    episodes,
+    status: "running",
+    cancellationRequested: false
+  });
+  const intent = {
+    launchIntentHash,
+    batchId,
+    assignmentCount: runRequest.assignments.length,
+    assignmentIds: runRequest.assignments.map(
+      (assignment) => assignment.assignmentId
+    ),
+    createdAt
+  };
+  syntheticLaunchIntents.set(requestKey, intent);
+  if (failNextRunAcknowledgement) {
+    failNextRunAcknowledgement = false;
+    sendJson(
+      response,
+      {
+        error: {
+          code: "synthetic_ack_lost",
+          message:
+            "The fixture persisted the launch but lost its acknowledgement."
+        }
+      },
+      503
+    );
+    return true;
+  }
+  sendJson(
+    response,
+    {
+      schema: "autodev-control-playtesting-run-started-v2",
+      workspaceId: WORKSPACE_ID,
+      batchId,
+      assignmentCount: runRequest.assignments.length,
+      assignmentIds: runRequest.assignments.map(
+        (assignment) => assignment.assignmentId
+      ),
+      createdAt,
+      status: "running"
+    },
+    202
+  );
+  return true;
+}
 
+async function handleSyntheticCancellationMutation(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): Promise<boolean> {
   const match = url.pathname.match(CANCEL_RUN_ROUTE);
   if (!match || request.method !== "POST") return false;
   const batchId = decodeURIComponent(match[1]!);
@@ -1246,6 +1378,119 @@ async function handleSyntheticRunMutation(
   return true;
 }
 
+async function handleSyntheticRunMutation(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): Promise<boolean> {
+  if (await handleSyntheticComparisonMutation(request, response, url)) {
+    return true;
+  }
+  if (await handleSyntheticLaunchMutation(request, response, url)) {
+    return true;
+  }
+  return handleSyntheticCancellationMutation(request, response, url);
+}
+
+function syntheticModeReadiness(
+  approved: boolean,
+  runnableAssignmentCount: number
+) {
+  return {
+    "adapter-accelerated":
+      approved && runnableAssignmentCount > 0
+        ? { status: "ready", reasons: [] }
+        : {
+            status: "check-required",
+            reasons: [
+              {
+                code: "adapter-approval-required",
+                label: "Approval required",
+                message:
+                  "Workspaces must approve the adapter checkout before it can run.",
+                severity: "check-required"
+              }
+            ]
+          },
+    "autonomous-visual": {
+      status: "unavailable",
+      reasons: [
+        {
+          code: "visual-target-required",
+          label: "No visual target approved",
+          message:
+            "Approve an already-running browser game URL in Workspaces before visual play can be considered.",
+          severity: "check-required"
+        },
+        {
+          code: "visual-driver-unavailable",
+          label: "Visual driver unavailable",
+          message:
+            "Runtime does not yet have the isolated browser gameplay driver.",
+          severity: "unavailable"
+        },
+        {
+          code: "smart-direct-policy-unavailable",
+          label: "Smart-direct policy unavailable",
+          message:
+            "Runtime cannot yet make bounded Smart-direct gameplay decisions for visual sessions.",
+          severity: "unavailable"
+        }
+      ],
+      targetStore: "available",
+      targets: []
+    },
+    "scripted-regression": {
+      status: "unavailable",
+      reasons: [
+        {
+          code: "scripted-regression-unavailable",
+          label: "Scripted regression unavailable",
+          message:
+            "Runtime does not yet have the approved scripted-regression launch path.",
+          severity: "unavailable"
+        }
+      ]
+    }
+  } as const;
+}
+
+function handleSyntheticReadFailureConfiguration(
+  url: URL,
+  response: ServerResponse
+): boolean {
+  switch (url.pathname) {
+    case "/fixture/runs-read-fail": {
+      syntheticRunsReadFails = url.searchParams.get("mode") !== "off";
+      sendJson(response, { syntheticRunsReadFails });
+      return true;
+    }
+    case "/fixture/run-ack-failure": {
+      failNextRunAcknowledgement = url.searchParams.get("mode") === "once";
+      sendJson(response, { failNextRunAcknowledgement });
+      return true;
+    }
+    case "/fixture/run-count": {
+      sendJson(response, { count: syntheticRuns.size });
+      return true;
+    }
+    case "/fixture/analyses-read-fail": {
+      syntheticAnalystRunsReadFails = url.searchParams.get("mode") !== "off";
+      sendJson(response, { syntheticAnalystRunsReadFails });
+      return true;
+    }
+    case "/fixture/analyst-history": {
+      syntheticAnalystTaskHistoryMissing =
+        url.searchParams.get("mode") === "missing";
+      sendJson(response, { syntheticAnalystTaskHistoryMissing });
+      return true;
+    }
+    default: {
+      return false;
+    }
+  }
+}
+
 function sendSyntheticCapabilities(response: ServerResponse): void {
   const limits = workspaceApproval?.limits as
     Record<string, unknown> | undefined;
@@ -1273,11 +1518,13 @@ function sendSyntheticCapabilities(response: ServerResponse): void {
         ]
       : [];
   sendJson(response, {
-    schema: "autodev-control-playtesting-capabilities-v1",
+    schema: "autodev-control-playtesting-capabilities-v2",
     workspaceId: WORKSPACE_ID,
+    capabilityRevision: "e".repeat(64),
     workspaceCatalog: "valid",
     workspaceEnabled: true,
     operatorActionsAvailable: true,
+    modeReadiness: syntheticModeReadiness(approved, runnableAssignments.length),
     approved,
     approvalRevision: approved ? workspaceApproval.revision : null,
     // The synthetic checkout's latest committed build.
@@ -1393,9 +1640,47 @@ function sendSyntheticRunStatus(
   return true;
 }
 
-function handleSyntheticRunRead(response: ServerResponse, url: URL): boolean {
+function handleSyntheticRunRead(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): boolean {
   if (url.pathname === "/control/playtesting/capabilities") {
     sendSyntheticCapabilities(response);
+    return true;
+  }
+  if (url.pathname === "/control/playtesting/runs/by-request") {
+    const requestId = url.searchParams.get("requestId") ?? "";
+    const intent = syntheticLaunchIntents.get(
+      syntheticLaunchIntentKey(actorIdFromRequest(request), requestId)
+    );
+    if (!intent) {
+      sendJson(response, {
+        schema: "autodev-control-playtesting-run-request-v1",
+        workspaceId: WORKSPACE_ID,
+        requestId,
+        state: "not-found",
+        batchId: null,
+        assignmentCount: null,
+        assignmentIds: [],
+        createdAt: null,
+        status: null
+      });
+      return true;
+    }
+    const run = syntheticRuns.get(intent.batchId);
+    if (run) completeSyntheticRunIfReady(run);
+    sendJson(response, {
+      schema: "autodev-control-playtesting-run-request-v1",
+      workspaceId: WORKSPACE_ID,
+      requestId,
+      state: run ? "accepted" : "pending",
+      batchId: intent.batchId,
+      assignmentCount: intent.assignmentCount,
+      assignmentIds: run ? intent.assignmentIds : [],
+      createdAt: intent.createdAt,
+      status: run ? run.status : null
+    });
     return true;
   }
   if (url.pathname === "/control/playtesting/runs") {
@@ -1631,12 +1916,14 @@ function resetSyntheticFixture(
   workspaceApproval = null;
   comparison = structuredClone(initialComparison);
   syntheticRuns.clear();
+  syntheticLaunchIntents.clear();
   syntheticRunEpisodes.clear();
   syntheticRunReviews.clear();
   syntheticAnalystRuns.clear();
   nextRunId = 1;
   nextAnalystRunId = 1;
   syntheticRunsReadFails = false;
+  failNextRunAcknowledgement = false;
   syntheticReadinessPendingPolls = 0;
   syntheticReadinessPollCount = 0;
   syntheticReadinessUnavailable = false;
@@ -1696,22 +1983,7 @@ const server = createServer(
     }
     if (resetSyntheticFixture(request, response)) return;
     if (configureReadinessFixture(url, response)) return;
-    if (url.pathname === "/fixture/runs-read-fail") {
-      syntheticRunsReadFails = url.searchParams.get("mode") !== "off";
-      sendJson(response, { syntheticRunsReadFails });
-      return;
-    }
-    if (url.pathname === "/fixture/analyses-read-fail") {
-      syntheticAnalystRunsReadFails = url.searchParams.get("mode") !== "off";
-      sendJson(response, { syntheticAnalystRunsReadFails });
-      return;
-    }
-    if (url.pathname === "/fixture/analyst-history") {
-      syntheticAnalystTaskHistoryMissing =
-        url.searchParams.get("mode") === "missing";
-      sendJson(response, { syntheticAnalystTaskHistoryMissing });
-      return;
-    }
+    if (handleSyntheticReadFailureConfiguration(url, response)) return;
     if (
       await handleSyntheticWorkspaceApproval(request, response, url.pathname)
     ) {
@@ -1930,7 +2202,7 @@ const server = createServer(
       response.writeHead(404).end();
       return;
     }
-    if (handleSyntheticRunRead(response, url)) return;
+    if (handleSyntheticRunRead(request, response, url)) return;
     if (handleSyntheticPlaytestingRead(response, url)) return;
     response.writeHead(404).end();
   }

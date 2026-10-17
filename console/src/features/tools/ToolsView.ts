@@ -34,7 +34,8 @@ import {
   ACTION_LINK_CLASS,
   ENTITY_LINK_CLASS,
   MONO_ID_LINK_CLASS,
-  MUTED_META_CLASS
+  MUTED_META_CLASS,
+  MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
   ACCENT_TONE_CLASS,
@@ -485,7 +486,7 @@ export function ToolsView({
               className: `px-3 py-1 rounded text-xs font-medium capitalize transition-colors ${
                 requestedSource === src || (src === "all" && !requestedSource)
                   ? "bg-surface-raised text-accent"
-                  : "text-fg-muted hover:text-fg"
+                  : `${MUTED_TEXT_CLASS} hover:text-fg`
               }`
             },
             src
@@ -501,7 +502,7 @@ export function ToolsView({
             },
             React.createElement(
               "span",
-              { className: "text-xs text-fg-muted px-2" },
+              { className: `px-2 ${MUTED_META_CLASS}` },
               "Role:"
             ),
             React.createElement(
@@ -511,7 +512,7 @@ export function ToolsView({
                 dataAttributes: { "data-role-filter": "all" },
                 className: `px-3 py-1 rounded text-xs font-medium transition-colors ${
                   requestedRole
-                    ? "text-fg-muted hover:text-fg"
+                    ? `${MUTED_TEXT_CLASS} hover:text-fg`
                     : "bg-surface-raised text-accent"
                 }`
               },
@@ -527,7 +528,7 @@ export function ToolsView({
                   className: `px-3 py-1 rounded text-xs font-medium transition-colors ${
                     requestedRole === role
                       ? "bg-surface-raised text-accent"
-                      : "text-fg-muted hover:text-fg"
+                      : `${MUTED_TEXT_CLASS} hover:text-fg`
                   }`
                 },
                 role
@@ -544,7 +545,7 @@ export function ToolsView({
     ),
     React.createElement(
       "div",
-      { className: "flex items-center justify-between text-xs text-fg-muted" },
+      { className: `flex items-center justify-between ${MUTED_META_CLASS}` },
       React.createElement(
         "span",
         null,

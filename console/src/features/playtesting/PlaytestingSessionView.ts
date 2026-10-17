@@ -26,8 +26,11 @@ import {
 } from "../../components/ui/text-classes.ts";
 import {
   defaultEpisodeInspectionStep,
+  executionModeLabel,
+  executionSourceSummary,
   executionStatusBadge,
-  gameOutcomeBadge} from "./playtesting-episode-presentation.ts";
+  gameOutcomeBadge
+} from "./playtesting-episode-presentation.ts";
 import {
   playtestingAnalyzeEpisodeHref,
   playtestingEpisodeHref,
@@ -1087,7 +1090,7 @@ export function PlaytestingSessionView({
       React.createElement(
         "p",
         { className: MUTED_BODY_CLASS },
-        `${episode.identity.repository} · build ${episode.identity.buildSha} · ${episode.identity.gameBuild}`
+        `${executionModeLabel(episode.executionProvenance.mode)} · ${executionSourceSummary(episode.executionProvenance)}${episode.executionProvenance.mode === "adapter-accelerated" ? ` · engine ${episode.identity.gameBuild}` : ""}`
       ),
       React.createElement(
         DetailGrid,

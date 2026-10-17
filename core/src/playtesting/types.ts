@@ -62,6 +62,8 @@ export const PLAYTESTS_COVERAGE_MANIFEST_SCHEMA =
   "autodev-playtest-coverage-manifest-v1" as const;
 /** Bounded, evidence-linked analyst input artifact. */
 export const PLAYTESTS_EVIDENCE_PACKET_SCHEMA =
+  "autodev-playtest-evidence-packet-v4" as const;
+export const PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V3 =
   "autodev-playtest-evidence-packet-v3" as const;
 export const PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2 =
   "autodev-playtest-evidence-packet-v2" as const;
@@ -81,7 +83,9 @@ export const PLAYTESTS_HUMAN_STUDY_SCHEMA =
 export const PLAYTESTS_BATCH_SCHEMA = "autodev-playtest-batch-v3" as const;
 export const PLAYTESTS_BATCH_SCHEMA_V2 = "autodev-playtest-batch-v2" as const;
 export const PLAYTESTS_BATCH_SCHEMA_V1 = "autodev-playtest-batch-v1" as const;
-export const PLAYTESTS_EPISODE_SCHEMA = "autodev-playtest-episode-v4" as const;
+export const PLAYTESTS_EPISODE_SCHEMA = "autodev-playtest-episode-v5" as const;
+export const PLAYTESTS_EPISODE_SCHEMA_V4 =
+  "autodev-playtest-episode-v4" as const;
 export const PLAYTESTS_EPISODE_SCHEMA_V3 =
   "autodev-playtest-episode-v3" as const;
 export const PLAYTESTS_EPISODE_SCHEMA_V2 =

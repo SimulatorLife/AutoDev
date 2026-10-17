@@ -64,6 +64,43 @@ function isControlApiProvidersResponse(value: unknown): value is {
   return true;
 }
 
+function isPlaytestingCapabilitiesResponse(
+  value: unknown,
+  workspaceId: string
+): boolean {
+  if (
+    !isRecord(value) ||
+    value.schema !== "autodev-control-playtesting-capabilities-v2" ||
+    value.workspaceId !== workspaceId ||
+    !isRecord(value.modeReadiness)
+  ) {
+    return false;
+  }
+  for (const mode of [
+    "adapter-accelerated",
+    "autonomous-visual",
+    "scripted-regression"
+  ] as const) {
+    const readiness = value.modeReadiness[mode];
+    if (
+      !isRecord(readiness) ||
+      (readiness.status !== "ready" &&
+        readiness.status !== "check-required" &&
+        readiness.status !== "unavailable") ||
+      !Array.isArray(readiness.reasons)
+    ) {
+      return false;
+    }
+  }
+  const visual = value.modeReadiness["autonomous-visual"];
+  return (
+    isRecord(visual) &&
+    (visual.targetStore === "available" ||
+      visual.targetStore === "unavailable") &&
+    Array.isArray(visual.targets)
+  );
+}
+
 function isCanonicalTimestamp(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -256,10 +293,10 @@ async function verifyPlaytestingRoutes(
       : null;
   const code =
     apiError && typeof apiError.code === "string" ? apiError.code : "";
-  const currentPlaytestingCapabilities =
-    isRecord(playtesting.body) &&
-    playtesting.body.schema === "autodev-control-playtesting-capabilities-v1" &&
-    playtesting.body.workspaceId === DEV_PROBE_WORKSPACE_ID;
+  const currentPlaytestingCapabilities = isPlaytestingCapabilitiesResponse(
+    playtesting.body,
+    DEV_PROBE_WORKSPACE_ID
+  );
   const currentPlaytestingError =
     code.startsWith("autodev_control_playtesting_") &&
     code !== "autodev_control_playtesting_unknown_path";

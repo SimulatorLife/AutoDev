@@ -37,8 +37,8 @@ test("view tabs use Next links while retaining URL-addressable tab state", () =>
 });
 
 test("dynamic route prefetch is limited to pointer, touch, or keyboard intent", () => {
-  assert.match(navigationLinkSource, /useState\(false\)/u);
-  assert.match(navigationLinkSource, /prefetch: prefetchOnIntent/u);
+  assert.match(navigationLinkSource, /prefetch:\s*false/u);
+  assert.match(navigationLinkSource, /router\.prefetch\(destination\)/u);
   assert.match(
     navigationLinkSource,
     /\.\.\.navigationIntentHandlers\(prefetch\)/u

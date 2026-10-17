@@ -12,6 +12,7 @@ import {
   assertPlaytestExperiment,
   assertPlaytestNumericResults,
   assertPlaytestSessionReviewHasEvidence,
+  assertPlaytestExecutionProvenance,
   type HumanPlaytestStudy,
   isPlaytestEvidencePacketId,
   isPlaytestFindingId,
@@ -50,6 +51,7 @@ import {
   PLAYTESTS_EPISODE_SCHEMA_V1,
   PLAYTESTS_EPISODE_SCHEMA_V2,
   PLAYTESTS_EPISODE_SCHEMA_V3,
+  PLAYTESTS_EPISODE_SCHEMA_V4,
   PLAYTESTS_EPISODE_TERMINATION_REASONS,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_EXPERIMENT_SCHEMA,
@@ -62,6 +64,7 @@ import {
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V3,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V4,
   PLAYTESTS_SESSION_REVIEW_SCHEMA_V5,
+  legacyPlaytestExecutionProvenance,
   type PlaytestSessionReview
 } from "@simulatorlife/autodev-core";
 
@@ -234,7 +237,7 @@ function requiredRef(value: string, field: string): string {
   return value;
 }
 
-function toClickHouseDateTime(iso: string): string {
+export function toClickHouseDateTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime()))
     throw new TypeError("Invalid ISO timestamp");
@@ -291,6 +294,7 @@ export function encodeEpisode(
   artifact: PlaytestEpisode
 ): PlaytestIndexedEpisodeRow {
   assertPlaytestNumericResults(artifact.metrics);
+  assertPlaytestExecutionProvenance(artifact.executionProvenance);
   if (artifact.branchLineage !== null) {
     assertPlaytestBranchLineage(artifact.branchLineage, artifact);
     if (
@@ -1321,12 +1325,14 @@ function assertEpisodeBranchLineage(
   }
 }
 
+type LegacyPlaytestEpisode = Omit<PlaytestEpisode, "executionProvenance">;
+
 function migrateEpisodeV1(
   artifact: Readonly<Record<string, unknown>>
-): PlaytestEpisode {
+): LegacyPlaytestEpisode {
   return {
     ...artifact,
-    schema: PLAYTESTS_EPISODE_SCHEMA,
+    schema: PLAYTESTS_EPISODE_SCHEMA_V4,
     assignmentId:
       typeof artifact.assignmentId === "string" ? artifact.assignmentId : null,
     branchLineage: null,
@@ -1338,17 +1344,17 @@ function migrateEpisodeV1(
             : metric
         )
       : []
-  } as unknown as PlaytestEpisode;
+  } as unknown as LegacyPlaytestEpisode;
 }
 
 function migrateEpisodeV2(
   artifact: Readonly<Record<string, unknown>>
-): PlaytestEpisode {
+): LegacyPlaytestEpisode {
   assertEpisodeAssignmentIdentity(artifact, "v2");
   assertEpisodeBranchLineage(artifact, "v2");
   return {
     ...artifact,
-    schema: PLAYTESTS_EPISODE_SCHEMA,
+    schema: PLAYTESTS_EPISODE_SCHEMA_V4,
     termination: { reason: "unknown", step: null },
     metrics: Array.isArray(artifact.metrics)
       ? artifact.metrics.map((metric) =>
@@ -1357,24 +1363,24 @@ function migrateEpisodeV2(
             : metric
         )
       : []
-  } as unknown as PlaytestEpisode;
+  } as unknown as LegacyPlaytestEpisode;
 }
 
 function migrateEpisodeV3(
   artifact: Readonly<Record<string, unknown>>
-): PlaytestEpisode {
+): LegacyPlaytestEpisode {
   assertEpisodeAssignmentIdentity(artifact, "v3");
   assertEpisodeBranchLineage(artifact, "v3");
   return {
     ...artifact,
-    schema: PLAYTESTS_EPISODE_SCHEMA,
+    schema: PLAYTESTS_EPISODE_SCHEMA_V4,
     termination: { reason: "unknown", step: null }
-  } as unknown as PlaytestEpisode;
+  } as unknown as LegacyPlaytestEpisode;
 }
 
 function validateEpisodeV4(
   artifact: Readonly<Record<string, unknown>>
-): PlaytestEpisode {
+): LegacyPlaytestEpisode {
   assertEpisodeAssignmentIdentity(artifact, "v4");
   assertEpisodeBranchLineage(artifact, "v4");
   const termination = artifact.termination;
@@ -1390,12 +1396,12 @@ function validateEpisodeV4(
       "ClickHouse v4 episode contains an invalid termination record"
     );
   }
-  return artifact as unknown as PlaytestEpisode;
+  return artifact as unknown as LegacyPlaytestEpisode;
 }
 
-function migrateEpisodeArtifact(
+function readLegacyEpisodeArtifact(
   artifact: Readonly<Record<string, unknown>>
-): PlaytestEpisode {
+): LegacyPlaytestEpisode {
   switch (artifact.schema) {
     case PLAYTESTS_EPISODE_SCHEMA_V1: {
       return migrateEpisodeV1(artifact);
@@ -1406,7 +1412,7 @@ function migrateEpisodeArtifact(
     case PLAYTESTS_EPISODE_SCHEMA_V3: {
       return migrateEpisodeV3(artifact);
     }
-    case PLAYTESTS_EPISODE_SCHEMA: {
+    case PLAYTESTS_EPISODE_SCHEMA_V4: {
       return validateEpisodeV4(artifact);
     }
     default: {
@@ -1415,6 +1421,34 @@ function migrateEpisodeArtifact(
       );
     }
   }
+}
+
+/** One-time persisted-row migration; normal reads accept only the current schema. */
+export function migrateLegacyEpisodeForStorage(
+  row: Record<string, unknown>
+): PlaytestEpisode {
+  const legacy = readLegacyEpisodeArtifact(
+    decodePayload<Readonly<Record<string, unknown>>>(
+      row,
+      "episodeId",
+      "revision"
+    )
+  );
+  const migrated: PlaytestEpisode = {
+    ...legacy,
+    schema: PLAYTESTS_EPISODE_SCHEMA,
+    // Schema promotion is not a new gameplay revision. Retaining the episode
+    // revision keeps already-persisted packet/review bindings exact.
+    executionProvenance: legacyPlaytestExecutionProvenance({
+      identity: legacy.identity,
+      branchLineage: legacy.branchLineage
+    })
+  };
+  assertIndexMatches(row, "workspace_id", migrated.identity.workspaceId);
+  assertIndexMatches(row, "batch_id", migrated.batchId);
+  assertIndexMatches(row, "episode_id", migrated.episodeId);
+  assertIndexMatches(row, "revision", legacy.revision);
+  return migrated;
 }
 
 export function decodeBatch(row: Record<string, unknown>): PlaytestBatch {
@@ -1434,12 +1468,11 @@ export function decodeBatch(row: Record<string, unknown>): PlaytestBatch {
 }
 
 export function decodeEpisode(row: Record<string, unknown>): PlaytestEpisode {
-  const artifact = migrateEpisodeArtifact(
-    decodePayload<Readonly<Record<string, unknown>>>(
-      row,
-      "episodeId",
-      "revision"
-    )
+  const artifact = decodePayload<PlaytestEpisode>(
+    row,
+    "episodeId",
+    "revision",
+    PLAYTESTS_EPISODE_SCHEMA
   );
   assertIndexMatches(row, "workspace_id", artifact.identity.workspaceId);
   assertIndexMatches(row, "batch_id", artifact.batchId);
@@ -1454,6 +1487,7 @@ export function decodeEpisode(row: Record<string, unknown>): PlaytestEpisode {
   assertIndexMatches(row, "status", artifact.status);
   assertIndexMatches(row, "game_outcome", artifact.outcome);
   try {
+    assertPlaytestExecutionProvenance(artifact.executionProvenance);
     assertPlaytestNumericResults(artifact.metrics);
   } catch (error) {
     throw new PlaytestSourceUnavailableError(

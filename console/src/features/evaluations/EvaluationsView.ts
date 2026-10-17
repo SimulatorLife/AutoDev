@@ -45,6 +45,7 @@ import {
   MONO_META_CLASS,
   MONO_VALUE_CLASS,
   MUTED_META_CLASS,
+  MUTED_TEXT_CLASS,
   SECTION_LABEL_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
@@ -614,7 +615,7 @@ function spanLink(
           "span",
           {
             className:
-              "text-micro font-medium uppercase tracking-wider text-fg-muted"
+              `text-micro font-medium uppercase tracking-wider ${MUTED_TEXT_CLASS}`
           },
           "Selected"
         )
@@ -1401,7 +1402,7 @@ function renderPager(
             ...sharedProps,
             ...stepAttributes,
             className:
-              "rounded border border-border px-3 py-1 text-xs text-fg-muted opacity-50",
+              `rounded border border-border px-3 py-1 opacity-50 ${MUTED_META_CLASS}`,
             "aria-disabled": "true"
           },
           label

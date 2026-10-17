@@ -1,0 +1,111 @@
+/**
+ * Server-only Console orchestrator concurrency limit mutation route.
+ *
+ * Receives the bounded form submission from the concurrency stepper, Unlimited
+ * control, or reset button, validates its same-origin browser context, and
+ * forwards a typed PATCH to Runtime using the server-side Control API credential.
+ *
+ * Only POST is exported. The response redirects back to the Agents page or
+ * Agent detail page the control was rendered on; any error or conflict attaches
+ * a refusal/failure query parameter.
+ */
+
+import { type NextRequest, NextResponse } from "next/server.js";
+
+import { AGENTS_PATH, isAgentsReturnPath } from "../../../../src/features/agents/paths.ts";
+import {
+  withControlFailure,
+  withControlRefusal
+} from "../../../../src/lib/control-failure.ts";
+import {
+  patchConcurrencyLimit,
+  readControlApiConfig
+} from "../../../../src/lib/server/control-api.ts";
+import {
+  isSameOriginMutation,
+  readStrictUrlEncodedFormBody
+} from "../../../../src/lib/server/form-mutation.ts";
+
+const CONCURRENCY_LIMIT_PATTERN = /^\d{1,3}$/u;
+const REVISION_PATTERN = /^[1-9]\d{0,15}$/u;
+const MAX_FORM_BODY_BYTES = 4096;
+const MAX_CONCURRENCY_LIMIT = 999;
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+function redirectTo(location: string): NextResponse {
+  return new NextResponse(null, { status: 303, headers: { location } });
+}
+
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  const failed = (returnTo: string = AGENTS_PATH): NextResponse =>
+    redirectTo(withControlFailure(returnTo));
+
+  if (!isSameOriginMutation(request)) return failed();
+
+  const form = await readStrictUrlEncodedFormBody(request, MAX_FORM_BODY_BYTES);
+  if (!form) return failed();
+
+  const returnTo = form.get("returnTo");
+  if (!isAgentsReturnPath(returnTo)) return failed();
+
+  const rawRevision = form.get("revision");
+  let revision: number | undefined;
+  if (rawRevision !== null && rawRevision !== "") {
+    if (!REVISION_PATTERN.test(rawRevision)) return failed(returnTo);
+    revision = Number(rawRevision);
+  }
+
+  let requestPayload: {
+    readonly maxConcurrentThreadsPerSession?: number | null;
+    readonly resetToConfigFile?: boolean;
+    readonly revision?: number;
+  };
+
+  const resetToConfigFile = form.get("resetToConfigFile");
+  const setUnlimited = form.get("setUnlimited");
+  const setLimit = form.get("setLimit") ?? form.get("limit");
+
+  if (resetToConfigFile === "true") {
+    requestPayload = {
+      resetToConfigFile: true,
+      ...(revision !== undefined ? { revision } : {})
+    };
+  } else if (setUnlimited === "true" || setLimit === "unlimited") {
+    requestPayload = {
+      maxConcurrentThreadsPerSession: null,
+      ...(revision !== undefined ? { revision } : {})
+    };
+  } else if (setLimit !== null && CONCURRENCY_LIMIT_PATTERN.test(setLimit)) {
+    const limitNum = Number(setLimit);
+    if (limitNum < 0 || limitNum > MAX_CONCURRENCY_LIMIT) {
+      return failed(returnTo);
+    }
+    requestPayload = {
+      maxConcurrentThreadsPerSession: limitNum,
+      ...(revision !== undefined ? { revision } : {})
+    };
+  } else {
+    return failed(returnTo);
+  }
+
+  const config = readControlApiConfig();
+  if (!config) return failed(returnTo);
+
+  const result = await patchConcurrencyLimit(requestPayload, config);
+  if (result.kind === "ok") {
+    return redirectTo(returnTo);
+  }
+
+  if (result.kind === "http-error") {
+    if (result.status === 409) {
+      return redirectTo(withControlRefusal(returnTo, "conflicted"));
+    }
+    if (result.status === 403) {
+      return redirectTo(withControlRefusal(returnTo, "forbidden"));
+    }
+  }
+
+  return failed(returnTo);
+}

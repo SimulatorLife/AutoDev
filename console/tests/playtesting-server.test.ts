@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { PLAYTESTS_MAX_BATCH_ASSIGNMENTS } from "@simulatorlife/autodev-core";
+import {
+  PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+  PLAYTESTS_MAX_BATCH_ASSIGNMENTS
+} from "@simulatorlife/autodev-core";
 
 import {
   fetchPlaytestingEpisode,
@@ -28,10 +31,14 @@ test("run client forwards the canonical maximum batch and rejects a larger inven
     calls += 1;
     body = JSON.parse(String(init?.body));
     return response({
-      schema: "autodev-control-playtesting-run-started-v1",
+      schema: "autodev-control-playtesting-run-started-v2",
       workspaceId,
       batchId: "batch-1000",
       assignmentCount: PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
+      assignmentIds: Array.from(
+        { length: PLAYTESTS_MAX_BATCH_ASSIGNMENTS },
+        (_, index) => `a-${String(index + 1).padStart(4, "0")}`
+      ),
       status: "running"
     });
   };
@@ -44,26 +51,40 @@ test("run client forwards the canonical maximum batch and rejects a larger inven
       maxSteps: 20
     })
   );
-  const started = await startPlaytestingRun(
-    { workspaceId, assignments },
-    config,
-    { fetchImpl }
-  );
+  const launch = (batch: typeof assignments) => ({
+    schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+    mode: "adapter-accelerated" as const,
+    workspaceId,
+    requestId: "console-server-request-1",
+    capabilityRevision: "f".repeat(64),
+    operation: { kind: "batch" as const, assignments: batch }
+  });
+  const started = await startPlaytestingRun(launch(assignments), config, {
+    fetchImpl
+  });
   assert.equal(started.kind, "ok");
   assert.equal(
-    (body as { assignments: readonly unknown[] }).assignments.length,
+    (body as { operation: { assignments: readonly unknown[] } }).operation
+      .assignments.length,
     PLAYTESTS_MAX_BATCH_ASSIGNMENTS
   );
 
   const oversized = await startPlaytestingRun(
-    {
-      workspaceId,
-      assignments: [...assignments, { ...assignments[0]!, seed: "extra" }]
-    },
+    launch([...assignments, { ...assignments[0]!, seed: "extra" }]),
     config,
     { fetchImpl }
   );
   assert.equal(oversized.kind, "invalid-response");
+
+  const invalidRevision = await startPlaytestingRun(
+    {
+      ...launch(assignments.slice(0, 1)),
+      capabilityRevision: "stale"
+    },
+    config,
+    { fetchImpl }
+  );
+  assert.equal(invalidRevision.kind, "invalid-response");
   assert.equal(calls, 1);
 });
 
@@ -261,10 +282,26 @@ test("Playtesting page rejects a response for another workspace rather than rend
 test("Playtesting selected episode validates workspace binding and nullable review", async () => {
   let requested = "";
   const episode = {
-    schema: "autodev-playtest-episode-v4",
+    schema: "autodev-playtest-episode-v5",
     episodeId: "episode-1",
     revision: 1,
     batchId: "batch-1",
+    executionProvenance: {
+      mode: "adapter-accelerated",
+      source: {
+        kind: "repo-checkout",
+        repository: workspaceId,
+        revision: "a".repeat(40),
+        revisionConfidence: "verified",
+        checkoutState: "clean",
+        artifactFingerprint: null,
+        targetId: null,
+        targetOrigin: null
+      },
+      observationSource: "engine-adapter",
+      actionSource: "engine-policy",
+      derivedFrom: null
+    },
     identity: { workspaceId },
     termination: { reason: "unknown", step: null },
     stepCount: 0,

@@ -9,7 +9,7 @@ import {
   type PlaytestEvidenceMetricIntentV2,
   type PlaytestEvidenceOmittedArtifact,
   type PlaytestEvidencePacket,
-  type PlaytestEvidencePacketV3,
+  type PlaytestEvidencePacketV4,
   type PlaytestEvidenceSelectionReason,
   type PlaytestEvidenceTraceEvent,
   type PlaytestEvidenceTraceStep,
@@ -20,6 +20,7 @@ import {
 } from "./artifacts.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
 import { assertPlaytestCoverageManifest } from "./coverage.ts";
+import { assertPlaytestExecutionProvenance } from "./execution-provenance.ts";
 import { assertPlaytestNumericResults } from "./metric-evaluation.ts";
 import type { PlaytestMetricRegistry } from "./registry.ts";
 import { samplePlaytestSurveillance } from "./sampling.ts";
@@ -31,6 +32,7 @@ import {
   PLAYTESTS_EVIDENCE_PACKET_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1,
   PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2,
+  PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V3,
   PLAYTESTS_GAME_MODES,
   PLAYTESTS_MISSING_REASONS
 } from "./types.ts";
@@ -115,6 +117,7 @@ const PACKET_KEYS = new Set([
 const PACKET_V1_KEYS = new Set(
   [...PACKET_KEYS].filter((key) => key !== "crossSessionContext")
 );
+const PACKET_V4_KEYS = new Set([...PACKET_KEYS, "executionProvenance"]);
 const METRIC_INTENT_V2_KEYS = new Set([
   "metricId",
   "version",
@@ -731,7 +734,7 @@ function buildPacketValue(input: {
   readonly windows: readonly PlaytestEvidenceWindow[];
   readonly omitted: readonly PlaytestOmittedEvidenceWindow[];
   readonly suppliedArtifacts: PlaytestEvidencePacket["suppliedArtifacts"];
-}): PlaytestEvidencePacketV3 {
+}): PlaytestEvidencePacketV4 {
   const { data, crossSessionContext, windows, omitted, suppliedArtifacts } =
     input;
   const episode = data.episode;
@@ -742,8 +745,17 @@ function buildPacketValue(input: {
       )
     )
   ];
+  const executionSummary =
+    episode.executionProvenance.mode === "adapter-accelerated"
+      ? "structured engine-adapter decisions"
+      : episode.executionProvenance.mode === "autonomous-visual"
+        ? "browser input actions with rendered UI observations"
+        : episode.executionProvenance.mode === "scripted-regression"
+          ? "scripted regression actions"
+          : "recorded decisions with unknown execution mode";
   const chronologicalSummary =
-    `Completed ${String(episode.stepCount)} player-visible decisions; phases: ` +
+    `${episode.executionProvenance.mode} recorded ${String(episode.stepCount)} ${executionSummary} ` +
+    `on the ${data.coverageManifest.mode} observation channel; phases: ` +
     (phases.length === 0 ? "not observed" : phases.join(", ")) +
     `; outcome: ${episode.outcome}.`;
   return {
@@ -764,6 +776,7 @@ function buildPacketValue(input: {
     outcome: episode.outcome,
     outcomeMetrics: episode.outcomeMetrics,
     observationMode: data.coverageManifest.mode,
+    executionProvenance: episode.executionProvenance,
     sourceStepCount: episode.stepCount,
     rubricHash: data.rubricHash,
     rubricVersion: data.registry.registryVersion,
@@ -794,7 +807,7 @@ function buildPacketValue(input: {
 /** Freeze the exact selected evidence body before an analyst is called. */
 export function buildPlaytestEvidencePacket(
   input: BuildPlaytestEvidencePacketInput
-): PlaytestEvidencePacketV3 {
+): PlaytestEvidencePacketV4 {
   assertPlaytestEvidencePacketInputs(input);
   const maxWindows = input.maxWindows ?? 16;
   const maxSelectedSteps = input.maxSelectedSteps ?? 128;
@@ -1067,7 +1080,9 @@ export function assertPlaytestEvidencePacket(
   const packetKeys =
     isRecord(value) && value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1
       ? PACKET_V1_KEYS
-      : PACKET_KEYS;
+      : isRecord(value) && value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA
+        ? PACKET_V4_KEYS
+        : PACKET_KEYS;
   if (
     !isRecord(value) ||
     Object.keys(value).length !== packetKeys.size ||
@@ -1079,6 +1094,7 @@ export function assertPlaytestEvidencePacket(
   }
   if (
     (value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA &&
+      value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V3 &&
       value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2 &&
       value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1) ||
     !isPlaytestEvidencePacketId(value.packetId) ||
@@ -1136,8 +1152,12 @@ export function assertPlaytestEvidencePacket(
   }
   assertPacketMetricIntent(
     value.metricIntent,
-    value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA
+    value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA ||
+      value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V3
   );
+  if (value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA) {
+    assertPlaytestExecutionProvenance(value.executionProvenance);
+  }
   if (value.schema !== PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1) {
     assertCrossSessionContext(value.crossSessionContext, value);
   }

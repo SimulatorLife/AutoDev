@@ -4,6 +4,7 @@ import type {
   PlaytestCheckpointDigest,
   PlaytestJsonValue
 } from "./protocol-types.ts";
+import type { PlaytestExecutionProvenance } from "./execution-provenance.ts";
 import {
   type PlaytestAssignmentBranch,
   type PlaytestAssignmentInventory,
@@ -34,6 +35,7 @@ import {
   type PLAYTESTS_EVIDENCE_PACKET_SCHEMA,
   type PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1,
   type PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2,
+  type PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V3,
   type PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_GAME_MODES,
   type PLAYTESTS_HUMAN_STUDY_SCHEMA,
@@ -164,6 +166,8 @@ export interface PlaytestEpisode {
    */
   readonly assignmentId: string | null;
   readonly branchLineage: PlaytestBranchLineage | null;
+  /** Frozen execution mode and source/build facts; no mode is inferred at display time. */
+  readonly executionProvenance: PlaytestExecutionProvenance;
   readonly identity: PlaytestEpisodeIdentity;
   readonly scenarioFamily: string;
   readonly policyCohort: string;
@@ -601,16 +605,25 @@ export interface PlaytestEvidencePacketV2 extends PlaytestEvidencePacketFields {
 
 /** New packets freeze aggregation semantics alongside each metric intent. */
 export interface PlaytestEvidencePacketV3 extends PlaytestEvidencePacketFields {
-  readonly schema: typeof PLAYTESTS_EVIDENCE_PACKET_SCHEMA;
+  readonly schema: typeof PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V3;
   readonly metricIntent: readonly PlaytestEvidenceMetricIntent[];
   readonly crossSessionContext: PlaytestEvidenceCrossSessionContext;
 }
 
-/** Readable packet history; new builders create only schema v3 packets. */
+/** Current packets preserve the episode's exact execution/source provenance. */
+export interface PlaytestEvidencePacketV4 extends PlaytestEvidencePacketFields {
+  readonly schema: typeof PLAYTESTS_EVIDENCE_PACKET_SCHEMA;
+  readonly metricIntent: readonly PlaytestEvidenceMetricIntent[];
+  readonly crossSessionContext: PlaytestEvidenceCrossSessionContext;
+  readonly executionProvenance: PlaytestExecutionProvenance;
+}
+
+/** Readable packet history; new builders create only schema v4 packets. */
 export type PlaytestEvidencePacket =
   | PlaytestEvidencePacketV1
   | PlaytestEvidencePacketV2
-  | PlaytestEvidencePacketV3;
+  | PlaytestEvidencePacketV3
+  | PlaytestEvidencePacketV4;
 
 /** JSON media type used by Runtime's content-addressed packet artifact store. */
 export const PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE =

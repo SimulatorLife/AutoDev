@@ -37,6 +37,7 @@ export interface RouteDefinition {
 export interface ProviderRoleAssignment {
   readonly priority: ProviderRolePriority;
   readonly model: string | null;
+  readonly reasoningEffort?: string | null;
 }
 
 /**
