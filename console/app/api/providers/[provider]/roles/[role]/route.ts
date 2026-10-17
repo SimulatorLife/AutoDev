@@ -114,7 +114,7 @@ export async function POST(
     {
       priority,
       model,
-      ...(reasoningEffort !== undefined ? { reasoningEffort } : {})
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort })
     },
     config
   );

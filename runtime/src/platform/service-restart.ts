@@ -81,7 +81,7 @@ export interface ServiceRestartDeps {
   readonly kill: (pid: number, signal: KillSignal) => void;
 }
 
-const DEFAULT_ATTEMPTS = 80;
+const DEFAULT_ATTEMPTS = 180;
 const DEFAULT_DELAY_MS = 250;
 // An unmanaged process gets the same graceful budget launchd gives the router
 // (ExitTimeOut 45s) before it is killed outright.

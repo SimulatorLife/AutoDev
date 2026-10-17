@@ -61,11 +61,6 @@ export interface AgentDetailViewProps {
   readonly controlRefusal?: ControlFailureNoticeProps["refusal"];
 }
 
-function concurrencyLimit(limit: number | null | undefined): string {
-  if (limit === undefined) return NOT_OBSERVED_LABEL;
-  return limit === null ? "Unlimited" : String(limit);
-}
-
 export function AgentDetailView({
   agent,
   reconciliation,

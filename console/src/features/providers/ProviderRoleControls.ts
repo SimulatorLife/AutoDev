@@ -8,6 +8,7 @@ import React from "react";
 
 import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectField.ts";
 import { Icon, type IconName } from "../../components/icons/Icon.ts";
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 import {
   providerModelAvailability,
@@ -189,7 +190,7 @@ function RoleEffortSelect({
   const isAgyFixed =
     provider === "antigravity" &&
     assignment.model !== null &&
-    Boolean(MODEL_EFFORT_SUFFIX.exec(assignment.model));
+    MODEL_EFFORT_SUFFIX.test(assignment.model);
 
   if (!hasLevels && !isAgyFixed) {
     return React.createElement(
@@ -198,7 +199,7 @@ function RoleEffortSelect({
         className: "min-w-0 w-28 text-center text-xs " + MUTED_META_CLASS,
         "data-role-effort-placeholder": `${provider}-${role}`
       },
-      "—"
+      NOT_OBSERVED_LABEL
     );
   }
 
@@ -279,7 +280,7 @@ function RoleRow({
   const isAgyFixed =
     provider === "antigravity" &&
     assignment.model !== null &&
-    Boolean(MODEL_EFFORT_SUFFIX.exec(assignment.model));
+    MODEL_EFFORT_SUFFIX.test(assignment.model);
   const effortSubmitsViaSelect =
     hasLevels && !isAgyFixed && effortReason === undefined;
 

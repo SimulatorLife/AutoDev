@@ -13169,7 +13169,7 @@ test("ProvidersView renders configuration columns and live provider counts", () 
   const roleForms = forms.filter((form) => form.includes("data-role-form="));
   assert.equal(roleForms.length, PROVIDERS_FIXTURE.providers.length * 4);
   for (const roleForm of roleForms) {
-    assert.match(roleForm, /grid-cols-\[6rem_6rem_13rem\]/u);
+    assert.match(roleForm, /grid-cols-\[5\.5rem_5rem_12rem_7rem\]/u);
     assert.doesNotMatch(roleForm, /flex-wrap/u);
   }
   assert.doesNotMatch(markup, /data-apply-role|>Apply<\/button>/u);
@@ -19771,6 +19771,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
         "PlaytestComparisonDecisionForm.ts"
       ),
       "Records version-checked promote/hold decisions through a same-origin route with an explicit immutable-decision confirmation."
+    ],
+    [
+      join("app", "error.ts"),
+      "Next.js route-level error boundary rendering the shared dark-mode error view with in-place retry."
     ]
   ]);
   const approvedServerHandlerModules = new Map<string, string>();

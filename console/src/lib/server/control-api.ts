@@ -1033,9 +1033,9 @@ export function patchProviderRole(
     {
       priority: assignment.priority,
       model: assignment.model,
-      ...(assignment.reasoningEffort !== undefined
-        ? { reasoningEffort: assignment.reasoningEffort }
-        : {})
+      ...(assignment.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: assignment.reasoningEffort })
     },
     config,
     options

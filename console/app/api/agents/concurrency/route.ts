@@ -38,6 +38,45 @@ function redirectTo(location: string): NextResponse {
   return new NextResponse(null, { status: 303, headers: { location } });
 }
 
+function parseRevision(
+  raw: string | null
+): { readonly valid: true; readonly revision?: number } | { readonly valid: false } {
+  if (raw === null || raw === "") {
+    return { valid: true };
+  }
+  if (!REVISION_PATTERN.test(raw)) {
+    return { valid: false };
+  }
+  return { valid: true, revision: Number(raw) };
+}
+
+interface ConcurrencyMutationPayload {
+  readonly maxConcurrentThreadsPerSession?: number | null;
+  readonly resetToConfigFile?: boolean;
+  readonly revision?: number;
+}
+
+function resolvePayload(
+  form: URLSearchParams,
+  revision: number | undefined
+): ConcurrencyMutationPayload | null {
+  const revisionEntry = revision === undefined ? {} : { revision };
+  if (form.get("resetToConfigFile") === "true") {
+    return { resetToConfigFile: true, ...revisionEntry };
+  }
+  const setLimit = form.get("setLimit") ?? form.get("limit");
+  if (form.get("setUnlimited") === "true" || setLimit === "unlimited") {
+    return { maxConcurrentThreadsPerSession: null, ...revisionEntry };
+  }
+  if (setLimit !== null && CONCURRENCY_LIMIT_PATTERN.test(setLimit)) {
+    const limitNum = Number(setLimit);
+    if (limitNum >= 0 && limitNum <= MAX_CONCURRENCY_LIMIT) {
+      return { maxConcurrentThreadsPerSession: limitNum, ...revisionEntry };
+    }
+  }
+  return null;
+}
+
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const failed = (returnTo: string = AGENTS_PATH): NextResponse =>
     redirectTo(withControlFailure(returnTo));
@@ -50,45 +89,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const returnTo = form.get("returnTo");
   if (!isAgentsReturnPath(returnTo)) return failed();
 
-  const rawRevision = form.get("revision");
-  let revision: number | undefined;
-  if (rawRevision !== null && rawRevision !== "") {
-    if (!REVISION_PATTERN.test(rawRevision)) return failed(returnTo);
-    revision = Number(rawRevision);
-  }
+  const parsedRevision = parseRevision(form.get("revision"));
+  if (!parsedRevision.valid) return failed(returnTo);
+  const revision = parsedRevision.revision;
 
-  let requestPayload: {
-    readonly maxConcurrentThreadsPerSession?: number | null;
-    readonly resetToConfigFile?: boolean;
-    readonly revision?: number;
-  };
-
-  const resetToConfigFile = form.get("resetToConfigFile");
-  const setUnlimited = form.get("setUnlimited");
-  const setLimit = form.get("setLimit") ?? form.get("limit");
-
-  if (resetToConfigFile === "true") {
-    requestPayload = {
-      resetToConfigFile: true,
-      ...(revision !== undefined ? { revision } : {})
-    };
-  } else if (setUnlimited === "true" || setLimit === "unlimited") {
-    requestPayload = {
-      maxConcurrentThreadsPerSession: null,
-      ...(revision !== undefined ? { revision } : {})
-    };
-  } else if (setLimit !== null && CONCURRENCY_LIMIT_PATTERN.test(setLimit)) {
-    const limitNum = Number(setLimit);
-    if (limitNum < 0 || limitNum > MAX_CONCURRENCY_LIMIT) {
-      return failed(returnTo);
-    }
-    requestPayload = {
-      maxConcurrentThreadsPerSession: limitNum,
-      ...(revision !== undefined ? { revision } : {})
-    };
-  } else {
-    return failed(returnTo);
-  }
+  const requestPayload = resolvePayload(form, revision);
+  if (!requestPayload) return failed(returnTo);
 
   const config = readControlApiConfig();
   if (!config) return failed(returnTo);

@@ -1,18 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type {
-  ControlApiProviderRecord,
-  ProviderRole
-} from "@simulatorlife/autodev-core";
+import type { ControlApiProviderRecord } from "@simulatorlife/autodev-core";
 import { NextRequest } from "next/server.js";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { POST } from "../app/api/providers/[provider]/roles/[role]/route.ts";
 import { AutoSubmitSelectField } from "../src/components/forms/AutoSubmitSelectField.ts";
-import { ProviderRoleControls } from "../src/features/providers/ProviderRoleControls.ts";
+import { NOT_OBSERVED_LABEL } from "../src/components/status/StatusBadge.ts";
 import type { ProviderModelDiscoveryState } from "../src/features/providers/provider-model-discovery.ts";
+import { ProviderRoleControls } from "../src/features/providers/ProviderRoleControls.ts";
 
 const mockDiscovery: ProviderModelDiscoveryState = {
   status: "available",
@@ -248,7 +246,7 @@ test("ProviderRoleControls renders placeholder when model does not support reaso
 
   // default role has model=null, supportedReasoningLevels=[]
   assert.match(markup, /data-role-effort-placeholder="claude-default"/);
-  assert.match(markup, />—<\/span>/);
+  assert.ok(markup.includes(`>${NOT_OBSERVED_LABEL}</span>`));
 });
 
 test("ProviderRoleControls renders fixed indicator for Antigravity model slug suffix", () => {

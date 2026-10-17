@@ -2,10 +2,18 @@ import { expect, type Page, test } from "@playwright/test";
 
 const UNSUPPORTED_MODEL_ID = "claude-preview-unroutable";
 const STALE_AVAILABILITY_TITLE = /availability is stale/u;
+const MOUNTED_DOCUMENT_TOKEN = "mounted-document-1";
+const TOOLS_SOURCE_MCP_URL = /\/tools\?source=mcp$/u;
+const TOOLS_SOURCE_MCP_ROLE_ORCHESTRATOR_URL =
+  /\/tools\?source=mcp&role=orchestrator$/u;
+const TOOLS_ROLE_ORCHESTRATOR_URL = /\/tools\?role=orchestrator$/u;
+const PROVIDERS_NAV_LINK_PATTERN = /^Providers/u;
+const PROVIDERS_URL = /\/providers$/u;
+const PROVIDERS_MODELS_URL = /\/providers\?tab=models$/u;
 
 function documentFitsViewport(page: Page): Promise<boolean> {
   return page.evaluate(
-    () => document.documentElement.scrollWidth <= window.innerWidth
+    () => document.documentElement.scrollWidth <= globalThis.innerWidth
   );
 }
 
@@ -76,54 +84,59 @@ test("Tools source/role filters and resource/tab links navigate in place without
     page.getByRole("link", { name: "lsp_goto_definition" })
   ).toBeVisible();
 
-  await page.evaluate(() => {
+  await page.evaluate((token) => {
     (
-      window as Window & { __autodevNavigationMountToken?: string }
-    ).__autodevNavigationMountToken = "mounted-document-1";
-  });
-  const readMountToken = () =>
+      globalThis as typeof globalThis & {
+        __autodevNavigationMountToken?: string;
+      }
+    ).__autodevNavigationMountToken = token;
+  }, MOUNTED_DOCUMENT_TOKEN);
+  const readMountToken = (): Promise<string | undefined> =>
     page.evaluate(
       () =>
-        (window as Window & { __autodevNavigationMountToken?: string })
-          .__autodevNavigationMountToken
+        (
+          globalThis as typeof globalThis & {
+            __autodevNavigationMountToken?: string;
+          }
+        ).__autodevNavigationMountToken
     );
 
   await page.locator('[data-source-filter="mcp"]').click();
-  await expect(page).toHaveURL(/\/tools\?source=mcp$/u);
+  await expect(page).toHaveURL(TOOLS_SOURCE_MCP_URL);
   await expect(page.getByText("Showing 1 of 2 tool entries")).toBeVisible();
   await expect(
     page.getByRole("link", { name: "lsp_goto_definition" })
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "read_file" })).toHaveCount(0);
-  expect(await readMountToken()).toBe("mounted-document-1");
+  expect(await readMountToken()).toBe(MOUNTED_DOCUMENT_TOKEN);
 
   await page.locator('[data-role-filter="orchestrator"]').click();
-  await expect(page).toHaveURL(/\/tools\?source=mcp&role=orchestrator$/u);
+  await expect(page).toHaveURL(TOOLS_SOURCE_MCP_ROLE_ORCHESTRATOR_URL);
   await expect(page.getByText("Showing 0 of 2 tool entries")).toBeVisible();
   await expect(
     page.getByText("No tool entries match the active filters.")
   ).toBeVisible();
-  expect(await readMountToken()).toBe("mounted-document-1");
+  expect(await readMountToken()).toBe(MOUNTED_DOCUMENT_TOKEN);
 
   await page.locator('[data-source-filter="all"]').click();
-  await expect(page).toHaveURL(/\/tools\?role=orchestrator$/u);
+  await expect(page).toHaveURL(TOOLS_ROLE_ORCHESTRATOR_URL);
   await expect(page.getByText("Showing 1 of 2 tool entries")).toBeVisible();
   await expect(page.getByRole("link", { name: "read_file" })).toBeVisible();
-  expect(await readMountToken()).toBe("mounted-document-1");
+  expect(await readMountToken()).toBe(MOUNTED_DOCUMENT_TOKEN);
 
   await page
     .getByRole("navigation", { name: "AutoDev Console Navigation" })
-    .getByRole("link", { name: /^Providers/u })
+    .getByRole("link", { name: PROVIDERS_NAV_LINK_PATTERN })
     .click();
-  await expect(page).toHaveURL(/\/providers$/u);
+  await expect(page).toHaveURL(PROVIDERS_URL);
   await expect(page.locator('[data-tab-panel="providers"]')).toBeVisible();
-  expect(await readMountToken()).toBe("mounted-document-1");
+  expect(await readMountToken()).toBe(MOUNTED_DOCUMENT_TOKEN);
 
   await page
     .getByRole("navigation", { name: "Providers views" })
     .getByRole("link", { name: "Models" })
     .click();
-  await expect(page).toHaveURL(/\/providers\?tab=models$/u);
+  await expect(page).toHaveURL(PROVIDERS_MODELS_URL);
   await expect(page.locator('[data-tab-panel="models"]')).toBeVisible();
-  expect(await readMountToken()).toBe("mounted-document-1");
+  expect(await readMountToken()).toBe(MOUNTED_DOCUMENT_TOKEN);
 });

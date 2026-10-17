@@ -222,12 +222,12 @@ test("POST /api/agents/concurrency handles conflict (409) with refusal=conflicte
   const originalFetch = globalThis.fetch;
 
   globalThis.fetch = async () => {
-    return new Response(
-      JSON.stringify({
+    return Response.json(
+      {
         code: "autodev_control_api_conflict",
         message: "Revision conflict"
-      }),
-      { status: 409, headers: { "content-type": "application/json" } }
+      },
+      { status: 409 }
     );
   };
 

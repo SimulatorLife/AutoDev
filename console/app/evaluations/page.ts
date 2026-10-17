@@ -78,6 +78,40 @@ export const metadata: Metadata = {
   title: "Evaluations"
 };
 
+function renderEvaluationsFailure(
+  section: ReturnType<typeof readNodeContext>["section"],
+  result: Exclude<Awaited<ReturnType<typeof fetchEvaluations>>, { kind: "ok" }>
+): React.JSX.Element {
+  const isTimeout = result.kind === "unreachable" && result.timedOut === true;
+  return React.createElement(
+    ConsolePageShell,
+    { section },
+    React.createElement(ResourceUnavailable, {
+      title: isTimeout
+        ? "Evaluations timed out"
+        : "Evaluations could not be loaded",
+      code: controlApiFailureCode(result),
+      message: result.message,
+      ...(isTimeout
+        ? {
+            hint: "The Control API accepted the read and did not answer before the Console gave up. Check whether the evaluations query is slow against the telemetry store."
+          }
+        : {})
+    })
+  );
+}
+
+function resolveTraceLookup(
+  spanIdValues: string | readonly string[] | undefined,
+  hasInvalidSpanSelection: boolean,
+  traceLookupResult: Awaited<ReturnType<typeof loadOpenLITTrace>> | null
+): EvaluationTraceLookup | null {
+  if (spanIdValues === undefined) return null;
+  return hasInvalidSpanSelection
+    ? { kind: "invalid-span-id" }
+    : evaluationTraceState(traceLookupResult!);
+}
+
 export default async function EvaluationsPage({
   searchParams
 }: EvaluationsPageProps): Promise<React.JSX.Element> {
@@ -85,11 +119,6 @@ export default async function EvaluationsPage({
   const filters = parseEvaluationsFilters(params);
   const tab = resolveEvaluationsTab(params.tab);
   const page = resolveEvaluationsPage(params[EVALUATIONS_PAGE_PARAM]);
-  // A repeated key is not a choice, so neither selection resolves to the first
-  // of several. `?result=a&result=b` used to open `a` while the URL described
-  // two runs, and the filter bar's own rule already refused to do that to a
-  // filter -- the page and the module it depends on were answering the same
-  // question two different ways.
   const selectedResult = singleValue(params[EVALUATION_RESULT_PARAM]);
 
   const spanIdValues = params[EVALUATION_SPAN_PARAM];
@@ -102,12 +131,6 @@ export default async function EvaluationsPage({
     return React.createElement(
       ConsolePageShell,
       { section },
-      // Results, not definitions. Every sibling page names what its own page
-      // reads, and this one named a surface that does not exist: the Runtime
-      // exposes a single `GET /control/evaluations` returning retained results,
-      // with no definitions read behind it. An operator who set the token and
-      // then went looking for evaluation definitions was looking for a thing
-      // the credential was never going to produce.
       controlApiCredentialUnavailable("evaluation results")
     );
   }
@@ -119,47 +142,18 @@ export default async function EvaluationsPage({
       : Promise.resolve(null)
   ]);
   if (result.kind !== "ok") {
-    return React.createElement(
-      ConsolePageShell,
-      { section },
-      React.createElement(ResourceUnavailable, {
-        title:
-          result.kind === "unreachable" && result.timedOut === true
-            ? "Evaluations timed out"
-            : "Evaluations could not be loaded",
-        code: controlApiFailureCode(result),
-        message: result.message,
-        // The shared default tells an operator to configure the server-side
-        // integration and restart, which is the right advice for a Control API
-        // that is not there and the wrong one for a Control API that is there and
-        // not answering in time -- measured against a fixture that accepts the
-        // read and never replies, this page was told to reconfigure a credential
-        // that was working. A timeout is a slow query or an overloaded store, and
-        // that is what the operator is pointed at instead.
-        ...(result.kind === "unreachable" && result.timedOut === true
-          ? {
-              hint: "The Control API accepted the read and did not answer before the Console gave up. Check whether the evaluations query is slow against the telemetry store."
-            }
-          : {})
-      })
-    );
+    return renderEvaluationsFailure(section, result);
   }
 
   const available = result.data.evaluations;
   const placed = filterEvaluations(available, filters);
   const evaluations = placed.results;
-  // The read is capped, so a window older than everything it returned was never
-  // read. Only this page knows both halves of that fact -- what it asked for and
-  // what it got back -- so it answers the question here rather than leaving the
-  // view to render an unread window as an empty history.
   const unread = unreadWindow(available, filters, result.data.truncated);
-
-  let traceLookup: EvaluationTraceLookup | null = null;
-  if (spanIdValues !== undefined) {
-    traceLookup = hasInvalidSpanSelection
-      ? { kind: "invalid-span-id" }
-      : evaluationTraceState(traceLookupResult!);
-  }
+  const traceLookup = resolveTraceLookup(
+    spanIdValues,
+    hasInvalidSpanSelection,
+    traceLookupResult
+  );
 
   return React.createElement(
     ConsolePageShell,

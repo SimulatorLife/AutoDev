@@ -5,8 +5,15 @@ import { usePathname } from "next/navigation.js";
 import React from "react";
 
 import { canonicalSectionFromPath } from "../../lib/routes.ts";
+import {
+  PRIMARY_BUTTON_CLASS,
+  SECONDARY_BUTTON_CLASS
+} from "../forms/Button.ts";
 import { AppNav } from "../navigation/AppNav.ts";
-import { MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
+import { NavigationLink } from "../navigation/NavigationLink.ts";
+import { MUTED_META_CLASS, MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
+import { PageBody } from "./PageBody.ts";
+import { DETAIL_PANEL_CLASS, DETAIL_PANEL_SHAPE } from "./Panel.ts";
 import { SkipLink } from "./SkipLink.ts";
 
 export interface AppShellProps {
@@ -186,3 +193,188 @@ export function ConsoleLoadingPage({
     )
   );
 }
+
+/**
+ * Route-level 404 boundary rendered when a route does not exist.
+ */
+export function ConsoleNotFoundShell(): React.JSX.Element {
+  const pathname = usePathname();
+  const activeSection =
+    canonicalSectionFromPath(pathname ?? "") ?? "Workspaces";
+  return React.createElement(ConsoleNotFoundPage, { activeSection });
+}
+
+export function ConsoleNotFoundPage({
+  activeSection
+}: {
+  readonly activeSection: CanonicalNavSection;
+}): React.JSX.Element {
+  return React.createElement(
+    AppShell,
+    {
+      activeSection,
+      description: "The requested Console route or resource does not exist."
+    },
+    React.createElement(
+      PageBody,
+      { feature: "not-found" },
+      React.createElement(
+        "div",
+        {
+          className: `${DETAIL_PANEL_CLASS} flex flex-col items-center justify-center py-16 text-center`,
+          "data-testid": "not-found-page"
+        },
+        React.createElement(
+          "span",
+          {
+            className:
+              "mb-2 font-mono text-4xl font-bold tracking-tight text-fg-muted"
+          },
+          "404"
+        ),
+        React.createElement(
+          "h2",
+          { className: "text-lg font-semibold text-fg" },
+          "Page not found"
+        ),
+        React.createElement(
+          "p",
+          { className: `mt-2 max-w-md text-sm ${MUTED_TEXT_CLASS}` },
+          "The address you followed does not map to any active AutoDev Console view or resource."
+        ),
+        React.createElement(
+          "div",
+          { className: "mt-6 flex flex-wrap items-center justify-center gap-3" },
+          React.createElement(
+            NavigationLink,
+            {
+              href: "/agents",
+              className: PRIMARY_BUTTON_CLASS
+            },
+            "Return to Agents"
+          ),
+          React.createElement(
+            NavigationLink,
+            {
+              href: "/providers",
+              className: SECONDARY_BUTTON_CLASS
+            },
+            "Providers"
+          ),
+          React.createElement(
+            NavigationLink,
+            {
+              href: "/workspaces",
+              className: SECONDARY_BUTTON_CLASS
+            },
+            "Workspaces"
+          )
+        )
+      )
+    )
+  );
+}
+
+export interface ConsoleErrorPageProps {
+  readonly error: Error & { readonly digest?: string };
+  readonly reset: () => void;
+  readonly activeSection?: CanonicalNavSection | undefined;
+}
+
+/**
+ * Route-level error boundary rendered when an uncaught render error occurs.
+ */
+export function ConsoleErrorShell(props: {
+  readonly error: Error & { readonly digest?: string };
+  readonly reset: () => void;
+}): React.JSX.Element {
+  const pathname = usePathname();
+  const activeSection = canonicalSectionFromPath(pathname ?? "") ?? "Agents";
+  return React.createElement(ConsoleErrorPage, { ...props, activeSection });
+}
+
+export function ConsoleErrorPage({
+  error,
+  reset,
+  activeSection = "Agents"
+}: ConsoleErrorPageProps): React.JSX.Element {
+  return React.createElement(
+    AppShell,
+    {
+      activeSection,
+      description:
+        "An unexpected error occurred while rendering this Console view."
+    },
+    React.createElement(
+      PageBody,
+      { feature: "error-boundary" },
+      React.createElement(
+        "div",
+        {
+          role: "alert",
+          className: `${DETAIL_PANEL_SHAPE} flex flex-col gap-4 border-error/60 bg-error/10`,
+          "data-testid": "console-error-boundary"
+        },
+        React.createElement(
+          "div",
+          {
+            className:
+              "flex flex-wrap items-center justify-between gap-x-3 gap-y-1"
+          },
+          React.createElement(
+            "h2",
+            {
+              className: "text-base font-semibold text-error tracking-tight"
+            },
+            "Console render failure"
+          ),
+          error.digest === undefined
+            ? null
+            : React.createElement(
+                "span",
+                {
+                  className:
+                    "rounded border border-error/60 bg-error/15 px-2 py-0.5 font-mono text-xs text-error"
+                },
+                `digest: ${error.digest}`
+              )
+        ),
+        React.createElement(
+          "p",
+          { className: "text-sm text-fg-secondary leading-relaxed" },
+          error.message ||
+            "An unexpected error occurred while rendering this page."
+        ),
+        React.createElement(
+          "p",
+          { className: MUTED_META_CLASS },
+          "Verify that the AutoDev services are running and check browser/server logs."
+        ),
+        React.createElement(
+          "div",
+          { className: "mt-2 flex flex-wrap items-center gap-3" },
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              onClick: () => {
+                reset();
+              },
+              className: PRIMARY_BUTTON_CLASS
+            },
+            "Try again"
+          ),
+          React.createElement(
+            NavigationLink,
+            {
+              href: "/agents",
+              className: SECONDARY_BUTTON_CLASS
+            },
+            "Return to Agents"
+          )
+        )
+      )
+    )
+  );
+}
+

@@ -385,15 +385,3 @@ function observed(value: number | undefined): string {
   return value === undefined ? NOT_OBSERVED_LABEL : String(value);
 }
 
-/**
- * A concurrency limit, which has three states rather than two.
- *
- * `undefined` is "not observed" -- the Runtime did not report a limit.
- * `null` is "unlimited", which is the default and an observed fact about this
- * deployment, not an absence of one. Reading it as `Not observed` told an
- * operator running without any limit that the Console could not find out.
- */
-function concurrencyLimit(value: number | null | undefined): string {
-  if (value === undefined) return NOT_OBSERVED_LABEL;
-  return value === null ? "Unlimited" : String(value);
-}

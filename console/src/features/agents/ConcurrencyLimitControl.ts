@@ -77,13 +77,13 @@ export function ConcurrencyLimitControl({
       name: "returnTo",
       value: returnTo
     }),
-    concurrency.revision !== undefined
-      ? React.createElement("input", {
+    concurrency.revision === undefined
+      ? null
+      : React.createElement("input", {
           type: "hidden",
           name: "revision",
           value: String(concurrency.revision)
-        })
-      : null,
+        }),
     React.createElement(
       "div",
       { className: "flex flex-wrap items-center gap-2" },
@@ -212,8 +212,9 @@ export function ConcurrencyLimitControl({
               ? "From config file"
               : "Default configuration"
           ),
-      concurrency.revision !== undefined
-        ? React.createElement(
+      concurrency.revision === undefined
+        ? null
+        : React.createElement(
             "span",
             {
               className: `${MUTED_TEXT_CLASS} tabular-nums`,
@@ -221,7 +222,6 @@ export function ConcurrencyLimitControl({
             },
             `• rev ${concurrency.revision}`
           )
-        : null
     )
   );
 }

@@ -34,9 +34,13 @@
   },
   "include": [
     ".next-dev/types/**/*.ts",
+    ".next-staging-22350/types/**/*.ts",
+    ".next-staging-32652/types/**/*.ts",
     ".next-staging-37166/types/**/*.ts",
     ".next-staging-42753/types/**/*.ts",
+    ".next-staging-42936/types/**/*.ts",
     ".next-staging-52935/types/**/*.ts",
+    ".next-staging-5348/types/**/*.ts",
     ".next-staging-68153/types/**/*.ts",
     ".next-staging-84027/types/**/*.ts",
     ".next-staging-codex-prod/types/**/*.ts",
@@ -102,6 +106,7 @@
     ".next-staging-e2e-9366-63532/types/**/*.ts",
     ".next-staging-e2e-93692-63244/types/**/*.ts",
     ".next-staging-e2e-94110-63583/types/**/*.ts",
+    ".next-staging-e2e-94292-63720/types/**/*.ts",
     ".next-staging-e2e-9716-63748/types/**/*.ts",
     ".next-staging-playtesting-v5/types/**/*.ts",
     ".next-staging-playtesting-v6/types/**/*.ts",
@@ -114,7 +119,7 @@
     "src/**/*.tsx",
     "tests/**/*.ts",
     "tests/**/*.tsx",
-    ".next-staging-e2e-94292-63720/types/**/*.ts"
+    ".next-staging-61827/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
