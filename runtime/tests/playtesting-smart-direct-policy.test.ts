@@ -123,7 +123,20 @@ function actDecision(action?: unknown) {
     prediction: "The race screen will replace the title screen.",
     reasonCode: "begin-play",
     action: selectedAction,
-    stopReason: null
+    stopReason: null,
+    focusReport: null
+  };
+}
+
+function stopDecision(focusReport: Record<string, unknown>) {
+  return {
+    decision: "stop",
+    intention: "The setup menu is visible.",
+    prediction: "No further visible state change is expected.",
+    reasonCode: "focus-observed",
+    action: null,
+    stopReason: "objective-achieved",
+    focusReport
   };
 }
 
@@ -185,6 +198,7 @@ test("Smart-direct sends only the redacted observation to the local Smart route 
 
   assert.equal(decision.status, "act");
   if (decision.status !== "act") return;
+  assert.equal(decision.focusReport, null);
   assert.deepEqual(decision.action, {
     schema: "autodev-playtest-visual-action-v1",
     workspaceId: WORKSPACE_ID,
@@ -223,6 +237,117 @@ test("Smart-direct sends only the redacted observation to the local Smart route 
   assert.equal(policy.usage().tokensUsed, 340);
   assert.equal(policy.usage().tokenUsageComplete, true);
   assert.ok((policy.usage().lastLatencyMs ?? -1) >= 0);
+});
+
+test("Smart-direct stop returns a bounded self-report in the existing request and cites visible steps", async () => {
+  const focusReport = {
+    objective: "Inspect the setup menu.",
+    inScope: ["Visible setup controls"],
+    forbiddenScope: ["Starting a race"],
+    stopCriteria: ["Stop when the setup menu is visible."],
+    outcome: "achieved",
+    summary: "The setup menu is visible; I did not start a race.",
+    evidenceSteps: [0]
+  };
+  let requestCount = 0;
+  const policy = createPolicy({
+    fetchImpl: async (_input, init) => {
+      requestCount += 1;
+      const body = JSON.parse(String(init?.body)) as {
+        readonly max_output_tokens: number;
+        readonly instructions: string;
+        readonly input: readonly {
+          readonly content: readonly { readonly text?: string }[];
+        }[];
+      };
+      const visibleState = JSON.parse(
+        String(body.input[0]?.content[0]?.text)
+      ) as { readonly currentStep: number };
+      assert.equal(body.max_output_tokens, 512);
+      assert.equal(visibleState.currentStep, 0);
+      assert.match(
+        body.instructions,
+        /self-reported assessment, never a verified game outcome/u
+      );
+      return response(stopDecision(focusReport));
+    }
+  });
+
+  const decision = await policy.decide({
+    target: target(),
+    observation: observation(),
+    frameBytes: FRAME_BYTES,
+    areasOfFocus: "Inspect the setup menu and stop before starting a race.",
+    history: [],
+    deadlineMonotonicMs: performance.now() + 5000
+  });
+
+  assert.equal(decision.status, "stop");
+  if (decision.status !== "stop") return;
+  assert.deepEqual(decision.focusReport, focusReport);
+  assert.equal(policy.usage().requestsAttempted, 1);
+  assert.equal(requestCount, 1);
+});
+
+test("Smart-direct no-focus stop remains unattempted and cites only the current observation", async () => {
+  const policy = createPolicy({
+    fetchImpl: async () =>
+      response(
+        stopDecision({
+          objective: null,
+          inScope: [],
+          forbiddenScope: [],
+          stopCriteria: [],
+          outcome: "unattempted",
+          summary: "No operator focus was requested.",
+          evidenceSteps: [0]
+        })
+      )
+  });
+  const decision = await policy.decide({
+    target: target(),
+    observation: observation(),
+    frameBytes: FRAME_BYTES,
+    areasOfFocus: null,
+    history: [],
+    deadlineMonotonicMs: performance.now() + 5000
+  });
+  assert.equal(decision.status, "stop");
+  if (decision.status !== "stop") return;
+  assert.equal(decision.focusReport.outcome, "unattempted");
+  assert.deepEqual(decision.focusReport.evidenceSteps, [0]);
+});
+
+test("Smart-direct rejects a focus report that cites a step outside the visible history", async () => {
+  const policy = createPolicy({
+    fetchImpl: async () =>
+      response(
+        stopDecision({
+          objective: "Inspect the setup menu.",
+          inScope: [],
+          forbiddenScope: [],
+          stopCriteria: [],
+          outcome: "achieved",
+          summary: "The menu is visible.",
+          evidenceSteps: [4]
+        })
+      )
+  });
+
+  await assert.rejects(
+    policy.decide({
+      target: target(),
+      observation: observation(),
+      frameBytes: FRAME_BYTES,
+      areasOfFocus: "Inspect the setup menu.",
+      history: [],
+      deadlineMonotonicMs: performance.now() + 5000
+    }),
+    (error: unknown) =>
+      error instanceof SmartDirectPolicyError &&
+      error.code === "response-invalid"
+  );
+  assert.equal(policy.usage().requestsAttempted, 1);
 });
 
 test("Smart-direct rejects ungrounded and sensitive controls; ActionAdmission rejects stale coordinates", async () => {

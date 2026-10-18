@@ -428,6 +428,7 @@ export interface DevRouterDependencies {
   readonly sleep: (ms: number) => Promise<void>;
   readonly writeLine: (msg: string) => void;
   readonly platform: NodeJS.Platform;
+  readonly forceRestart?: boolean;
 }
 
 export async function ensureModelRouter(
@@ -443,16 +444,22 @@ export async function ensureModelRouter(
     ...overrides
   };
 
-  const isListening =
-    (await deps.isPortListening(4100)) && (await deps.isPortListening(4101));
-  if (isListening) {
-    deps.writeLine("[dev] ✔ AutoDev Model Router is active (ports 4100, 4101).");
-    return true;
-  }
+  if (deps.forceRestart) {
+    deps.writeLine(
+      "[dev] Reconciling AutoDev Model Router integration and restarting..."
+    );
+  } else {
+    const isListening =
+      (await deps.isPortListening(4100)) && (await deps.isPortListening(4101));
+    if (isListening) {
+      deps.writeLine("[dev] ✔ AutoDev Model Router is active (ports 4100, 4101).");
+      return true;
+    }
 
-  deps.writeLine(
-    "[dev] AutoDev Model Router is not listening; preparing runtime integration..."
-  );
+    deps.writeLine(
+      "[dev] AutoDev Model Router is not listening; preparing runtime integration..."
+    );
+  }
 
   const materializeScript = path.join(
     deps.repoRoot,
@@ -619,10 +626,34 @@ export async function startDev(): Promise<void> {
     ensureConsoleSecrets();
     await ensureBackends();
     await ensureModelRouter();
-    await verifyControlApiCompatibility(readDevControlApiConfig(), undefined, {
-      timeoutMs: 15_000,
-      retryDelayMs: 250
-    });
+    try {
+      await verifyControlApiCompatibility(readDevControlApiConfig(), undefined, {
+        timeoutMs: 15_000,
+        retryDelayMs: 250
+      });
+    } catch (probeError) {
+      const probeMsg =
+        probeError instanceof Error ? probeError.message : String(probeError);
+      if (
+        probeMsg.includes("is not compatible with this Console checkout") ||
+        probeMsg.includes("Control API contract revision is missing or stale")
+      ) {
+        writeLine(
+          "[dev] Incompatible Control API contract detected; refreshing runtime integration and restarting router..."
+        );
+        await ensureModelRouter({ forceRestart: true });
+        await verifyControlApiCompatibility(
+          readDevControlApiConfig(),
+          undefined,
+          {
+            timeoutMs: 15_000,
+            retryDelayMs: 250
+          }
+        );
+      } else {
+        throw probeError;
+      }
+    }
     writeLine("[dev] ✔ AutoDev Control API matches the Console contracts.");
     await ensureConsolePortAvailable(consolePort);
   } catch (error) {

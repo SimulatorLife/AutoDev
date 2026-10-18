@@ -14,9 +14,9 @@ import {
   type PlaytestFinding,
   playtestFindingIdentityHashInput,
   PLAYTESTS_BATCH_SCHEMA,
-  PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
+  PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
   type PlaytestSessionReview,
@@ -48,6 +48,11 @@ function episode(): PlaytestEpisode {
     batchId: "batch-1",
     assignmentId: "a-0017",
     branchLineage: null,
+    playerDebrief: {
+      schema: "autodev-playtest-player-debrief-v1",
+      status: "absent",
+      reason: "legacy-no-report"
+    },
     executionProvenance: {
       mode: "adapter-accelerated",
       source: {
@@ -126,13 +131,14 @@ function detail(
   record = episode()
 ): ControlApiPlaytestingEpisodeDetailResponse {
   return {
-    schema: "autodev-control-playtesting-detail-v2",
+    schema: "autodev-control-playtesting-detail-v4",
     workspaceId: WORKSPACE,
     resource: "episode",
     readOnly: true,
     record,
     latestReview: null,
-    latestDiscoveryReview: null
+    latestDiscoveryReview: null,
+    visualAssignment: null
   };
 }
 
@@ -506,6 +512,7 @@ test("inspector renders only recorded structured evidence and labels missing fra
   assert.match(html, /Back to sessions/u);
   assert.match(html, /cursor=page-2/u);
   assert.doesNotMatch(html, /<video|<img/u);
+  assert.doesNotMatch(html, /data-testid="visual-player-debrief"/u);
 });
 
 test("inspector renders each review claim with its exact citations and legacy missing-citation state", () => {
@@ -1221,6 +1228,9 @@ test("session detail renders persisted visual discovery hypotheses with packet-l
     batchId: "batch-discovery-1",
     assignmentId: "vis-assign-1",
     status: "completed" as const,
+    termination: { reason: "unknown" as const, step: 0 },
+    outcome: "unknown" as const,
+    outcomeMetrics: {},
     executionProvenance: {
       mode: "autonomous-visual" as const,
       source: {
@@ -1301,14 +1311,28 @@ test("session detail renders persisted visual discovery hypotheses with packet-l
   const html = renderToStaticMarkup(
     React.createElement(PlaytestingSessionView, {
       detail: {
-        ...detail(),
-        record: visual,
-        latestDiscoveryReview: discoveryReview
+        ...detail(visual),
+        latestDiscoveryReview: discoveryReview,
+        visualAssignment: {
+          targetId: "racing-game-local",
+          targetApprovalId: "approval-racinggame-1",
+          targetRevision: 1,
+          targetOrigin: "http://127.0.0.1:5173",
+          areasOfFocus: "Explore the race setup screen."
+        }
       },
       scope: scope({ view: "sessions" }),
       window: null
     })
   );
+  assert.match(html, /Player debrief/u);
+  assert.match(html, /data-testid="visual-player-debrief"/u);
+  assert.match(html, /Explore the race setup screen/u);
+  assert.match(html, /No player debrief was persisted/u);
+  assert.doesNotMatch(html, /Explore the setup menu\./u);
+  assert.match(html, /approval-racinggame-1/u);
+  assert.match(html, /Not independently verified/u);
+  assert.match(html, /step=0/u);
   assert.match(html, /Visual Discovery Review/u);
   assert.match(html, /race setup menu showed a selectable stage/u);
   assert.match(
@@ -1318,6 +1342,112 @@ test("session detail renders persisted visual discovery hypotheses with packet-l
   assert.match(html, /data-discovery-evidence="frame"/u);
   assert.doesNotMatch(html, /Verified bug/u);
   assert.doesNotMatch(html, /fun score/u);
+});
+
+test("player debrief renders persisted self-report and exact stored frame/trace references, not raw trace text", () => {
+  const visual: PlaytestEpisode = {
+    ...episode(),
+    executionProvenance: {
+      mode: "autonomous-visual",
+      source: {
+        kind: "URL-only",
+        repository: null,
+        revision: null,
+        revisionConfidence: "not-applicable",
+        checkoutState: "not-applicable",
+        artifactFingerprint: null,
+        targetId: "target",
+        targetOrigin: "http://localhost"
+      },
+      observationSource: "browser-ui",
+      actionSource: "browser-input",
+      derivedFrom: null
+    },
+    frames: [{ id: "debrief-frame", kind: "frame", step: 1, frameIndex: 4 }],
+    playerDebrief: {
+      schema: "autodev-playtest-player-debrief-v1",
+      status: "complete",
+      source: {
+        authorRole: "player",
+        policyId: "smart-direct",
+        policyVersion: "1",
+        modelId: "synthetic-model",
+        modelVersion: null
+      },
+      focusInterpretation: {
+        schema: "autodev-playtest-focus-interpretation-v1",
+        requestedFocus: "Inspect the visible setup menu.",
+        objective: "Inspect setup",
+        inScope: ["visible setup"],
+        forbiddenScope: [],
+        stopCriteria: [],
+        outcome: "achieved",
+        assessmentSource: "smart-direct-self-report",
+        evidence: [
+          { kind: "frame", id: "debrief-frame", step: 1, frameIndex: 4 }
+        ]
+      },
+      summary: "Synthetic persisted report: I inspected the setup menu."
+    }
+  };
+  const window: ControlApiPlaytestingWindowResponse = {
+    ...traceWindow(),
+    entries: [
+      {
+        step: 1,
+        preActionPrediction: {
+          intention: "RAW TRACE MUST NOT BECOME REPORT",
+          predictedVisibleEffect: "TRACE PREDICTION MUST NOT BECOME REPORT"
+        }
+      }
+    ]
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail(visual),
+      scope: scope({ view: "sessions" }),
+      window
+    })
+  );
+  const start = html.indexOf('data-testid="visual-player-debrief"');
+  const end = html.indexOf('data-testid="visual-spectator-stage"', start);
+  const panel = html.slice(start, end);
+  assert.match(
+    panel,
+    /Synthetic persisted report: I inspected the setup menu/u
+  );
+  assert.match(panel, /Interpreted objective/u);
+  assert.match(panel, /Inspect setup/u);
+  assert.match(panel, /In scope/u);
+  assert.match(panel, /visible setup/u);
+  assert.match(panel, /Report source/u);
+  assert.match(panel, /synthetic-model/u);
+  assert.match(panel, /Player self-reported outcome/u);
+  assert.match(panel, /not a verified game outcome/u);
+  assert.match(panel, /debrief-frame/u);
+  assert.match(panel, /step=1/u);
+  assert.doesNotMatch(panel, /RAW TRACE MUST NOT BECOME REPORT/u);
+  assert.doesNotMatch(panel, /TRACE PREDICTION MUST NOT BECOME REPORT/u);
+});
+
+test("adapter episode renders its persisted not-applicable debrief state", () => {
+  const record: PlaytestEpisode = {
+    ...episode(),
+    playerDebrief: {
+      schema: "autodev-playtest-player-debrief-v1",
+      status: "not-applicable",
+      reason: "non-reflective-policy"
+    }
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail(record),
+      scope: scope({ view: "sessions" }),
+      window: null
+    })
+  );
+  assert.match(html, /data-player-debrief-status="not-applicable"/u);
+  assert.match(html, /not applicable to this non-reflective policy/u);
 });
 
 test("visual spectator surfaces the Follow live jump link when the operator navigates away from the latest step", () => {

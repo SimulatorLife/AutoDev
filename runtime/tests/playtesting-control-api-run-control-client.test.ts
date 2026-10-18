@@ -217,33 +217,36 @@ test("Playtest Control API client forwards typed run operations and host-bound s
       runPreflight: "required-at-start"
     },
     {
-      schema: "autodev-control-playtesting-run-started-v2",
+      schema: "autodev-control-playtesting-run-started-v3",
       workspaceId: WORKSPACE,
       batchId: "batch-1",
       assignmentCount: 1,
       assignmentIds: ["a-0001"],
+      sessions: [{ assignmentId: "a-0001", episodeId: "batch-1.a-0001" }],
       createdAt: "2026-10-10T00:00:00Z",
       status: "running"
     },
     {
-      schema: "autodev-control-playtesting-run-request-v1",
+      schema: "autodev-control-playtesting-run-request-v2",
       workspaceId: WORKSPACE,
       requestId: "client-request-1",
       state: "accepted",
       batchId: "batch-1",
       assignmentCount: 1,
       assignmentIds: ["a-0001"],
+      sessions: [{ assignmentId: "a-0001", episodeId: "batch-1.a-0001" }],
       createdAt: "2026-10-10T00:00:00Z",
       status: "running"
     },
     {
-      schema: "autodev-control-playtesting-runs-v1",
+      schema: "autodev-control-playtesting-runs-v2",
       workspaceId: WORKSPACE,
       runs: [
         {
           batchId: "batch-1",
           assignmentCount: 1,
           createdAt: "2026-10-10T00:00:00Z",
+          sessions: [{ assignmentId: "a-0001", episodeId: "batch-1.a-0001" }],
           status: {
             batchId: "batch-1",
             status: "running",
@@ -313,6 +316,7 @@ test("Playtest Control API client forwards typed run operations and host-bound s
     batchId: "batch-1",
     assignmentCount: 1,
     assignmentIds: ["a-0001"],
+    sessions: [{ assignmentId: "a-0001", episodeId: "batch-1.a-0001" }],
     createdAt: "2026-10-10T00:00:00Z",
     status: "running"
   });
@@ -324,8 +328,14 @@ test("Playtest Control API client forwards typed run operations and host-bound s
   assert.equal(recovered.state, "accepted");
   assert.equal(recovered.batchId, "batch-1");
   assert.deepEqual(recovered.assignmentIds, ["a-0001"]);
+  assert.deepEqual(recovered.sessions, [
+    { assignmentId: "a-0001", episodeId: "batch-1.a-0001" }
+  ]);
   const listed = await client.listActiveRuns(SESSION, WORKSPACE);
   assert.equal(listed.length, 1);
+  assert.deepEqual(listed[0]?.sessions, [
+    { assignmentId: "a-0001", episodeId: "batch-1.a-0001" }
+  ]);
   const status = await client.waitForRun(SESSION, WORKSPACE, "batch-1", 100);
   assert.equal(status.status, "completed");
   const cancellation = await client.cancelRun(SESSION, WORKSPACE, "batch-1");
@@ -369,6 +379,107 @@ test("Playtest Control API client forwards typed run operations and host-bound s
     /batch-1\?workspaceId=fixture%2Fgame&waitMs=100/u
   );
   assert.match(calls[5]!.url, /batch-1\/cancel\?workspaceId=fixture%2Fgame/u);
+});
+
+test("Playtest Control API rejects incomplete or duplicated session references", async () => {
+  const client = createPlaytestControlApiRunClient({
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "private-service-token",
+    actor: "playtest-runtime",
+    sessionRole: "playtester",
+    fetcher: async () =>
+      jsonResponse({
+        schema: "autodev-control-playtesting-run-started-v3",
+        workspaceId: WORKSPACE,
+        batchId: "batch-invalid",
+        assignmentCount: 2,
+        assignmentIds: ["a-0001", "a-0002"],
+        sessions: [
+          { assignmentId: "a-0001", episodeId: "batch-invalid.a-0001" },
+          { assignmentId: "a-0002", episodeId: "batch-invalid.a-0001" }
+        ],
+        createdAt: "2026-10-10T00:00:00.000Z",
+        status: "running"
+      })
+  });
+  await assert.rejects(
+    client.startRun(
+      SESSION,
+      batchLaunch({
+        requestId: "duplicate-session-references",
+        assignments: [
+          { scenario: "tutorial", policy: "random", seed: "seed-1" },
+          { scenario: "tutorial", policy: "random", seed: "seed-2" }
+        ]
+      })
+    ),
+    PlaytestMcpUnavailableError
+  );
+});
+
+test("Playtest Control API requires the canonical episode ID for the requested launch mode", async () => {
+  const client = createPlaytestControlApiRunClient({
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "private-service-token",
+    actor: "playtest-runtime",
+    sessionRole: "playtester",
+    fetcher: async () =>
+      jsonResponse({
+        schema: "autodev-control-playtesting-run-started-v3",
+        workspaceId: WORKSPACE,
+        batchId: "batch-invalid",
+        assignmentCount: 1,
+        assignmentIds: ["a-0001"],
+        sessions: [{ assignmentId: "a-0001", episodeId: "episode-unrelated" }],
+        createdAt: "2026-10-10T00:00:00.000Z",
+        status: "running"
+      })
+  });
+  await assert.rejects(
+    client.startRun(
+      SESSION,
+      batchLaunch({
+        requestId: "unrelated-session-reference",
+        assignments: [
+          { scenario: "tutorial", policy: "random", seed: "seed-1" }
+        ]
+      })
+    ),
+    PlaytestMcpUnavailableError
+  );
+});
+
+test("Playtest Control API rejects malformed active-session rows without throwing", async () => {
+  const client = createPlaytestControlApiRunClient({
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "private-service-token",
+    actor: "playtest-runtime",
+    sessionRole: "playtester",
+    fetcher: async () =>
+      jsonResponse({
+        schema: "autodev-control-playtesting-runs-v2",
+        workspaceId: WORKSPACE,
+        runs: [
+          {
+            batchId: "batch-invalid",
+            assignmentCount: 1,
+            createdAt: "2026-10-10T00:00:00.000Z",
+            sessions: [null],
+            status: {
+              batchId: "batch-invalid",
+              status: "running",
+              cancellationReason: null,
+              result: null,
+              error: null
+            }
+          }
+        ]
+      })
+  });
+  await assert.rejects(
+    async () => client.listActiveRuns(SESSION, WORKSPACE),
+    PlaytestMcpUnavailableError
+  );
 });
 
 test("MCP packet preparation accepts only the packet-preparation response variant", async () => {
@@ -703,6 +814,9 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
             ? request.operation.assignments.length
             : 1,
         assignmentIds: ["a-0001"],
+        sessions: [
+          { assignmentId: "a-0001", episodeId: "batch-remote-1.a-0001" }
+        ],
         createdAt: "2026-10-10T00:00:00.000Z",
         status: "running"
       };
@@ -714,6 +828,7 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
         batchId: null,
         assignmentCount: null,
         assignmentIds: [],
+        sessions: [],
         createdAt: null,
         status: null
       };
@@ -729,6 +844,9 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
           batchId: "batch-remote-1",
           assignmentCount: 1,
           createdAt: "2026-10-10T00:00:00.000Z",
+          sessions: [
+            { assignmentId: "a-0001", episodeId: "batch-remote-1.a-0001" }
+          ],
           status: {
             batchId: "batch-remote-1",
             status: "running",
@@ -832,6 +950,9 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
       batchId: "batch-remote-1",
       assignmentCount: 1,
       assignmentIds: ["a-0001"],
+      sessions: [
+        { assignmentId: "a-0001", episodeId: "batch-remote-1.a-0001" }
+      ],
       createdAt: "2026-10-10T00:00:00.000Z",
       status: "running"
     });
@@ -857,6 +978,9 @@ test("Playtesting MCP delegates run lifecycle through the authenticated shared C
       batchId: "batch-remote-1",
       assignmentCount: 1,
       assignmentIds: ["a-0001"],
+      sessions: [
+        { assignmentId: "a-0001", episodeId: "batch-remote-1.a-0001" }
+      ],
       createdAt: "2026-10-10T00:00:00.000Z",
       status: "running"
     });

@@ -190,6 +190,16 @@ export function playtestEpisodeRecordId(
   return batchId + "." + assignmentId;
 }
 
+/** Stable visual episode ID shared by Runtime execution and live Watch links. */
+export function playtestVisualEpisodeRecordId(
+  batchId: string,
+  assignmentId: string
+): string {
+  return (
+    "ep-" + batchId.replace(/^batch-/u, "").slice(0, 16) + "-" + assignmentId
+  );
+}
+
 /** Canonical hash projection; excludes only contentHash. */
 export function playtestAssignmentManifestHashInput(
   manifest: PlaytestAssignmentManifestDraft

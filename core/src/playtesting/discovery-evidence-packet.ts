@@ -25,51 +25,62 @@ import {
   type PlaytestEvidenceWindow,
   type PlaytestGameOutcomeKind,
   type PlaytestOmittedEvidenceWindow,
-  type PlaytestVisualEpisode,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
-  PLAYTESTS_GAME_OUTCOMES
+  PLAYTESTS_GAME_OUTCOMES,
+  type PlaytestVisualEpisode
 } from "./artifacts.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
-import { sha256Hex } from "./sha256.ts";
 import {
-  type EvidenceWindowLimits,
-  type PlaytestEvidencePacketArtifactView,
-  type PlaytestEvidencePacketLocatorView,
-  type PlaytestEvidencePacketOmittedArtifactView,
   assertOmittedPacketArtifacts,
   assertPacketArtifactProvenance,
   assertPlaytestEvidenceLocatorsWithinPacket,
   assertTraceStep,
   assertUniqueSelectedEventIds,
-  assertUniqueTraceEventIds,
   buildBoundedEvidenceWindows,
   EVIDENCE_SHA256_PATTERN,
+  type EvidenceWindowLimits,
   isCount,
   isPlaytestEvidencePacketId,
   isRecord,
   isText,
   packetContentBytes,
+  type PlaytestEvidencePacketArtifactView,
+  type PlaytestEvidencePacketLocatorView,
+  type PlaytestEvidencePacketOmittedArtifactView,
   resolveEvidenceWindowLimits,
   suppliedArtifactsFor
 } from "./evidence-trace-selection.ts";
 import { assertPlaytestVisualEpisode } from "./execution-provenance.ts";
+import {
+  assertPlaytestPlayerDebrief,
+  type PlaytestPlayerDebriefV1
+} from "./player-debrief.ts";
 import { assertPlaytestEvidenceLocator } from "./protocol.ts";
+import { sha256Hex } from "./sha256.ts";
 import {
   type PlaytestEvidenceLocator,
   type PlaytestMissingReason,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2,
   PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EPISODE_STATES,
   PLAYTESTS_EPISODE_TERMINATION_REASONS,
   PLAYTESTS_GAME_MODES,
   PLAYTESTS_MISSING_REASONS,
-  PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA
+  PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
+  type PlaytestVisualAssignmentManifest
 } from "./types.ts";
-import type { PlaytestVisualAssignmentManifest } from "./types.ts";
 
 export const PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MAX_TOKENS = 32_768;
 const MAX_SUMMARY_TEXT = 4096;
+/**
+ * Upper bound (in UTF-16 code units) for the operator-requested focus
+ * context copied from the frozen visual assignment manifest. Mirrors the
+ * manifest's own validation in batch-run.ts and Smart-direct's contract,
+ * so a packet can never widen the focus budget the launch request allowed.
+ */
+export const PLAYTESTS_DISCOVERY_AREAS_OF_FOCUS_MAX_LENGTH = 2000;
 
 export const PLAYTESTS_DISCOVERY_HYPOTHESIS_STATUSES = [
   "hypothesis",
@@ -166,7 +177,7 @@ export interface PlaytestDiscoveryEvidenceSessionContext {
   };
 }
 
-export interface PlaytestDiscoveryEvidencePacket {
+export interface PlaytestDiscoveryEvidencePacketV1 {
   readonly schema: typeof PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA;
   readonly packetId: string;
   readonly packetHash: string;
@@ -176,6 +187,14 @@ export interface PlaytestDiscoveryEvidencePacket {
   readonly episodeId: string;
   readonly episodeRevision: number;
   readonly assignmentId: string;
+  /**
+   * Operator-requested focus context copied verbatim from the frozen
+   * autonomous-visual assignment manifest. This is author intent for what
+   * the autonomous player should look at; it is NOT evidence that any
+   * visual objective, hypothesis, or finding was actually achieved. The
+   * packet never derives scored/confirmatory claims from it.
+   */
+  readonly areasOfFocus: string | null;
   readonly target: {
     readonly targetId: string;
     readonly targetApprovalId: string;
@@ -219,6 +238,25 @@ export interface PlaytestDiscoveryEvidencePacket {
   readonly tokenBudget: number;
   readonly generatedAt: string;
 }
+
+/** Historical v1 packets predate the operator-focus context field. */
+export type PlaytestDiscoveryEvidencePacketV1Historical = Omit<
+  PlaytestDiscoveryEvidencePacketV1,
+  "areasOfFocus"
+>;
+
+export interface PlaytestDiscoveryEvidencePacketV2 extends Omit<
+  PlaytestDiscoveryEvidencePacketV1,
+  "schema"
+> {
+  readonly schema: typeof PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2;
+  readonly playerSelfReport: PlaytestPlayerDebriefV1;
+}
+
+export type PlaytestDiscoveryEvidencePacket =
+  | PlaytestDiscoveryEvidencePacketV1Historical
+  | PlaytestDiscoveryEvidencePacketV1
+  | PlaytestDiscoveryEvidencePacketV2;
 
 export interface PlaytestDiscoveryHypothesis {
   readonly hypothesisId: string;
@@ -464,7 +502,7 @@ function buildDiscoveryPacketValue(input: {
   readonly omitted: readonly PlaytestOmittedEvidenceWindow[];
   readonly suppliedArtifacts: readonly PlaytestEvidenceSuppliedArtifact[];
   readonly traceArtifactId: string;
-}): PlaytestDiscoveryEvidencePacket {
+}): PlaytestDiscoveryEvidencePacketV2 {
   const { data, packetHash, windows, omitted, suppliedArtifacts } = input;
   const manifest = data.visualBatch.assignmentManifest;
   const assignment = manifest.assignments[0];
@@ -475,7 +513,7 @@ function buildDiscoveryPacketValue(input: {
   }
   assertPlaytestVisualEpisode(data.episode);
   return {
-    schema: PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA,
+    schema: PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2,
     packetId: data.packetId,
     packetHash,
     analysisKind: "discovery",
@@ -484,6 +522,8 @@ function buildDiscoveryPacketValue(input: {
     episodeId: data.episode.episodeId,
     episodeRevision: data.episode.revision,
     assignmentId: assignment.assignmentId,
+    playerSelfReport: data.episode.playerDebrief,
+    areasOfFocus: manifest.areasOfFocus,
     target: {
       targetId: manifest.targetId,
       targetApprovalId: manifest.targetApprovalId,
@@ -575,7 +615,7 @@ function assertDiscoveryEpisodeIdentity(episode: PlaytestEpisode): void {
 
 export function buildPlaytestDiscoveryEvidencePacket(
   input: BuildPlaytestDiscoveryEvidencePacketInput
-): PlaytestDiscoveryEvidencePacket {
+): PlaytestDiscoveryEvidencePacketV2 {
   const limits = resolveDiscoveryWindowLimits(input);
   assertDiscoveryEpisodeIdentity(input.episode);
   assertVisualBatchContract({
@@ -713,7 +753,7 @@ export function buildPlaytestDiscoveryEvidencePacket(
   const finalPacket = {
     ...provisional,
     packetHash: provisionalHash
-  } as PlaytestDiscoveryEvidencePacket;
+  } as PlaytestDiscoveryEvidencePacketV2;
   const finalBytes = packetContentBytes(finalPacket);
   if (
     finalBytes > Math.min(input.tokenBudget, 262_144) ||
@@ -732,7 +772,7 @@ export function discoveryEvidencePacketContentBytes(
   return discoveryPacketContentBytes(packet);
 }
 
-const DISCOVERY_PACKET_KEYS = new Set([
+const DISCOVERY_PACKET_V1_KEYS = new Set([
   "schema",
   "packetId",
   "packetHash",
@@ -742,6 +782,7 @@ const DISCOVERY_PACKET_KEYS = new Set([
   "episodeId",
   "episodeRevision",
   "assignmentId",
+  "areasOfFocus",
   "target",
   "policy",
   "model",
@@ -769,14 +810,31 @@ const DISCOVERY_PACKET_KEYS = new Set([
   "generatedAt"
 ]);
 
+const DISCOVERY_PACKET_V1_HISTORICAL_KEYS = new Set(
+  [...DISCOVERY_PACKET_V1_KEYS].filter((key) => key !== "areasOfFocus")
+);
+const DISCOVERY_PACKET_V2_KEYS = new Set([
+  ...DISCOVERY_PACKET_V1_KEYS,
+  "playerSelfReport"
+]);
+
 export function assertPlaytestDiscoveryEvidencePacket(
   value: unknown
 ): asserts value is PlaytestDiscoveryEvidencePacket {
+  const isV2 =
+    isRecord(value) &&
+    value.schema === PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2;
+  const hasAreasOfFocus = isRecord(value) && "areasOfFocus" in value;
+  const packetKeys = isV2
+    ? DISCOVERY_PACKET_V2_KEYS
+    : hasAreasOfFocus
+      ? DISCOVERY_PACKET_V1_KEYS
+      : DISCOVERY_PACKET_V1_HISTORICAL_KEYS;
   if (
     !isRecord(value) ||
-    value.schema !== PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA ||
-    Object.keys(value).length !== DISCOVERY_PACKET_KEYS.size ||
-    Object.keys(value).some((key) => !DISCOVERY_PACKET_KEYS.has(key))
+    (value.schema !== PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA && !isV2) ||
+    Object.keys(value).length !== packetKeys.size ||
+    Object.keys(value).some((key) => !packetKeys.has(key))
   ) {
     throw new TypeError(
       "Discovery evidence packet has unknown or missing fields."
@@ -837,10 +895,27 @@ export function assertPlaytestDiscoveryEvidencePacket(
       "Discovery evidence packet identity or budget is invalid."
     );
   }
+  if (isV2) {
+    assertPlaytestPlayerDebrief(value.playerSelfReport);
+    assertPlayerSelfReportFrameReferences(
+      value.playerSelfReport as PlaytestPlayerDebriefV1,
+      value.frames as PlaytestDiscoveryEvidenceFrame[],
+      value.omittedFrames as PlaytestDiscoveryEvidencePacketV1["omittedFrames"]
+    );
+  }
   assertTarget(value.target);
   assertPolicy(value.policy);
   assertModel(value.model);
   assertSessionContext(value.sessionContext, value.batchId);
+  if (
+    "areasOfFocus" in value &&
+    value.areasOfFocus !== null &&
+    !isText(value.areasOfFocus, PLAYTESTS_DISCOVERY_AREAS_OF_FOCUS_MAX_LENGTH)
+  ) {
+    throw new TypeError(
+      "Discovery evidence packet areasOfFocus is outside its bounded focus contract."
+    );
+  }
   if (
     !Array.isArray(value.stepEvidence) ||
     !Array.isArray(value.frames) ||
@@ -967,6 +1042,35 @@ export function assertPlaytestDiscoveryEvidencePacket(
     throw new RangeError(
       "Discovery evidence packet exceeds its window/token budget."
     );
+  }
+}
+
+function assertPlayerSelfReportFrameReferences(
+  report: PlaytestPlayerDebriefV1,
+  frames: readonly PlaytestDiscoveryEvidenceFrame[],
+  omittedFrames: readonly { readonly frameId: string; readonly step: number }[]
+): void {
+  const refs =
+    report.status === "complete"
+      ? report.focusInterpretation.evidence
+      : report.status === "partial"
+        ? [report.checkpoint.evidence]
+        : [];
+  for (const ref of refs) {
+    const included = frames.some(
+      (frame) =>
+        frame.frameId === ref.id &&
+        frame.step === ref.step &&
+        frame.frameIndex === ref.frameIndex
+    );
+    const omitted = omittedFrames.some(
+      (frame) => frame.frameId === ref.id && frame.step === ref.step
+    );
+    if (!included && !omitted) {
+      throw new TypeError(
+        "Player self-report frame reference does not resolve to packet frame evidence or omission receipt."
+      );
+    }
   }
 }
 
@@ -1276,19 +1380,37 @@ function assertHypotheses(
   }
 }
 
-function isExperiment(value: unknown): value is {
-  readonly hypothesis: string;
-  readonly falsifier: string;
-  readonly controls: readonly string[];
-  readonly budget: string;
-} {
+function isExperiment(
+  value: unknown
+): value is PlaytestDiscoveryReviewExperiment {
   return (
     isRecord(value) &&
+    Object.keys(value).length === 5 &&
+    Object.keys(value).every((key) =>
+      [
+        "hypothesis",
+        "falsifier",
+        "controls",
+        "budget",
+        "evidenceRefs"
+      ].includes(key)
+    ) &&
     isText(value.hypothesis, MAX_SUMMARY_TEXT) &&
     isText(value.falsifier, MAX_SUMMARY_TEXT) &&
     Array.isArray(value.controls) &&
+    value.controls.length > 0 &&
     value.controls.every((control) => isText(control)) &&
-    isText(value.budget, MAX_SUMMARY_TEXT)
+    isText(value.budget, MAX_SUMMARY_TEXT) &&
+    Array.isArray(value.evidenceRefs) &&
+    value.evidenceRefs.length > 0 &&
+    value.evidenceRefs.every((reference) => {
+      try {
+        assertPlaytestEvidenceLocator(reference);
+        return true;
+      } catch {
+        return false;
+      }
+    })
   );
 }
 
@@ -1310,13 +1432,7 @@ export function assertPlaytestDiscoveryReviewGroundedInPacket(
   }
   assertHypotheses(draft.observations);
   assertHypotheses(draft.interpretations);
-  for (const text of draft.alternativeExplanations) {
-    if (!isText(text, MAX_SUMMARY_TEXT)) {
-      throw new TypeError(
-        "Discovery review alternative explanations contain malformed text."
-      );
-    }
-  }
+  assertHypotheses(draft.alternativeExplanations);
   for (const experiment of draft.experiments) {
     if (!isExperiment(experiment)) {
       throw new TypeError("Discovery review experiment is malformed.");
@@ -1325,7 +1441,11 @@ export function assertPlaytestDiscoveryReviewGroundedInPacket(
   assertPlaytestEvidenceLocatorsWithinPacket(
     [
       ...draft.observations.flatMap((hypothesis) => hypothesis.evidenceRefs),
-      ...draft.interpretations.flatMap((hypothesis) => hypothesis.evidenceRefs)
+      ...draft.interpretations.flatMap((hypothesis) => hypothesis.evidenceRefs),
+      ...draft.alternativeExplanations.flatMap(
+        (hypothesis) => hypothesis.evidenceRefs
+      ),
+      ...draft.experiments.flatMap((experiment) => experiment.evidenceRefs)
     ],
     packet as unknown as PlaytestEvidencePacketLocatorView
   );
@@ -1368,20 +1488,9 @@ export function assertPlaytestDiscoveryReviewDraft(
   }
   assertHypotheses(value.observations);
   assertHypotheses(value.interpretations);
-  if (
-    !Array.isArray(value.alternativeExplanations) ||
-    !Array.isArray(value.experiments)
-  ) {
-    throw new TypeError(
-      "Discovery review draft alternative explanations and experiments must be arrays."
-    );
-  }
-  for (const text of value.alternativeExplanations) {
-    if (!isText(text, MAX_SUMMARY_TEXT)) {
-      throw new TypeError(
-        "Discovery review draft alternative explanations contain malformed text."
-      );
-    }
+  assertHypotheses(value.alternativeExplanations);
+  if (!Array.isArray(value.experiments)) {
+    throw new TypeError("Discovery review draft experiments must be an array.");
   }
   for (const experiment of value.experiments) {
     if (!isExperiment(experiment)) {

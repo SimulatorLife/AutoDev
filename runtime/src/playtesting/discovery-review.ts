@@ -5,7 +5,7 @@ import {
   buildPlaytestDiscoveryEvidencePacket,
   canonicalPlaytestJson,
   type PlaytestDiscoveryEvidenceFrame,
-  type PlaytestDiscoveryEvidencePacket,
+  type PlaytestDiscoveryEvidencePacketV2,
   type PlaytestDiscoveryOmissionReason,
   type PlaytestDiscoveryStepEvidence,
   type PlaytestArtifactReference,
@@ -22,7 +22,7 @@ import {
 } from "./artifact-store.ts";
 
 export interface PreparedPlaytestDiscoveryPacket {
-  readonly packet: PlaytestDiscoveryEvidencePacket;
+  readonly packet: PlaytestDiscoveryEvidencePacketV2;
   readonly artifact: PlaytestArtifactReference;
 }
 

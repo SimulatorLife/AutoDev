@@ -1,7 +1,10 @@
 "use client";
 
 /** One source-backed rendering of execution and game outcomes per assignment. */
-import type { PlaytestRunAssignmentOutcome } from "@simulatorlife/autodev-core";
+import type {
+  PlaytestRunAssignmentOutcome,
+  PlaytestSessionReference
+} from "@simulatorlife/autodev-core";
 import React, { useState } from "react";
 
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
@@ -17,14 +20,18 @@ import {
 
 export interface PlaytestingAssignmentResultsProps {
   readonly outcomes: readonly PlaytestRunAssignmentOutcome[] | null;
+  readonly sessions: readonly PlaytestSessionReference[];
   readonly scope: PlaytestingScope;
   readonly pending: boolean;
+  readonly live: boolean;
 }
 
 export function PlaytestingAssignmentResults({
   outcomes,
+  sessions,
   scope,
-  pending
+  pending,
+  live
 }: PlaytestingAssignmentResultsProps): React.JSX.Element {
   const [showAll, setShowAll] = useState(false);
   const content =
@@ -113,7 +120,8 @@ export function PlaytestingAssignmentResults({
                   "button",
                   {
                     type: "button",
-                    className: "text-sm font-medium text-accent hover:underline",
+                    className:
+                      "text-sm font-medium text-accent hover:underline",
                     onClick: () => setShowAll((current) => !current),
                     "data-testid": "playtesting-assignment-outcomes-toggle"
                   },
@@ -123,15 +131,83 @@ export function PlaytestingAssignmentResults({
                 )
               : null
           );
+  const outcomeAssignments = new Set(
+    outcomes?.map((outcome) => outcome.assignmentId) ?? []
+  );
+  const pendingSessions = sessions.filter(
+    (session) => !outcomeAssignments.has(session.assignmentId)
+  );
+  const liveSessions =
+    live && pendingSessions.length > 0
+      ? React.createElement(
+          "section",
+          {
+            className: "space-y-2",
+            "aria-label": "Live playtest sessions",
+            "data-testid": "playtesting-live-session-links"
+          },
+          React.createElement(
+            "h3",
+            { className: "font-semibold" },
+            "Watch sessions"
+          ),
+          React.createElement(
+            "ul",
+            { className: "space-y-2" },
+            ...pendingSessions.map((session) =>
+              React.createElement(
+                "li",
+                {
+                  key: session.assignmentId,
+                  className:
+                    "flex flex-wrap items-center justify-between gap-2",
+                  "data-assignment-id": session.assignmentId
+                },
+                React.createElement(
+                  "span",
+                  { className: MUTED_META_CLASS },
+                  `Assignment ${session.assignmentId}`
+                ),
+                scope.workspaceId === null
+                  ? React.createElement(
+                      "span",
+                      { className: MUTED_META_CLASS },
+                      `Session ${session.episodeId}`
+                    )
+                  : React.createElement(
+                      NavigationLink,
+                      {
+                        className: "text-sm text-accent hover:underline",
+                        href: playtestingEpisodeHref(
+                          scope,
+                          session.episodeId,
+                          null
+                        ),
+                        dataAttributes: {
+                          "data-testid": "playtesting-live-session-link"
+                        }
+                      },
+                      "Watch session"
+                    )
+              )
+            )
+          )
+        )
+      : null;
   return React.createElement(
-    "section",
-    { className: "space-y-2", "aria-label": "Assignment outcomes" },
+    React.Fragment,
+    null,
+    liveSessions,
     React.createElement(
-      "h3",
-      { className: "font-semibold" },
-      "Assignment outcomes"
-    ),
-    content
+      "section",
+      { className: "space-y-2", "aria-label": "Assignment outcomes" },
+      React.createElement(
+        "h3",
+        { className: "font-semibold" },
+        "Assignment outcomes"
+      ),
+      content
+    )
   );
 }
 

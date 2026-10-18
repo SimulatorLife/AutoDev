@@ -3,11 +3,12 @@
 import type { ControlApiPlaytestingAnalysisDispatchResponse } from "@simulatorlife/autodev-core";
 import React, { useState } from "react";
 
-import { dispatchAnalystReview } from "./PlaytestingSelectionPanel.ts";
+import { Button } from "../../components/forms/Button.ts";
 import {
   playtestingAnalyzeEpisodeHref,
   type PlaytestingScope
 } from "./playtesting-url.ts";
+import { dispatchAnalystReview } from "./PlaytestingSelectionPanel.ts";
 
 export function PlaytestingSpectatorAnalystButton({
   workspaceId,
@@ -35,9 +36,9 @@ export function PlaytestingSpectatorAnalystButton({
       } else {
         setError(outcome.message);
       }
-    } catch (err: unknown) {
+    } catch (error_: unknown) {
       setError(
-        err instanceof Error ? err.message : "Failed to dispatch analysis"
+        error_ instanceof Error ? error_.message : "Failed to dispatch analysis"
       );
     } finally {
       setPending(false);
@@ -60,13 +61,14 @@ export function PlaytestingSpectatorAnalystButton({
       "data-testid": "spectator-analyst-dispatch-form"
     },
     React.createElement(
-      "button",
+      Button,
       {
         type: "submit",
+        variant: "primary",
+        size: "compact",
         disabled: pending || !workspaceId,
-        className:
-          "inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-fg-inverse shadow-sm hover:brightness-110 transition disabled:opacity-60",
-        "data-playtesting-spectator-analyze": episodeId
+        className: "inline-flex items-center gap-1.5 rounded-lg shadow-sm",
+        dataAttributes: { "data-playtesting-spectator-analyze": episodeId }
       },
       React.createElement("span", { "aria-hidden": true }, "🔍"),
       pending

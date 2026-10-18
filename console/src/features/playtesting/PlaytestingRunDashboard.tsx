@@ -15,7 +15,12 @@ import {
 import { useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
+import { Button } from "../../components/forms/Button.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
+import {
+  MUTED_META_CLASS,
+  MUTED_TEXT_CLASS
+} from "../../components/ui/text-classes.ts";
 import { workspacePath } from "../workspaces/paths.ts";
 import {
   cancellationAvailability,
@@ -26,7 +31,9 @@ import { PlaytestingLiveRuns } from "./PlaytestingLiveRuns.ts";
 import {
   PlaytestingRunControls,
   type PlaytestingRunSetup,
-  playtestingRunSetupBlocker
+  playtestingRunSetupBlocker,
+  type PlaytestLaunchRequestDraft,
+  usePlaytestingLaunchRecovery
 } from "./PlaytestingRunControls.tsx";
 import { usePlaytestingActiveRuns } from "./use-playtesting-active-runs.ts";
 
@@ -50,7 +57,8 @@ function visualModeReadinessCard(
     "section",
     {
       className:
-        "rounded-lg border border-border bg-background/50 p-4 opacity-75",
+        "rounded-lg border border-border bg-background/50 p-4" +
+        (readiness?.status === "ready" ? "" : " opacity-75"),
       "aria-label": "Autonomous visual mode readiness",
       "data-playtesting-mode": "autonomous-visual",
       "data-mode-status": readiness?.status ?? "unavailable"
@@ -63,14 +71,17 @@ function visualModeReadinessCard(
     React.createElement(
       "p",
       { className: "mt-1 text-xs font-medium text-fg-muted" },
-      readiness?.reasons[0]?.label ?? "Visual readiness unavailable"
+      readiness?.reasons[0]?.label ??
+        (readiness?.status === "ready"
+          ? "Ready to run"
+          : "Visual readiness unavailable")
     ),
     React.createElement(
       "details",
       { className: "mt-2", "data-testid": "visual-readiness-details" },
       React.createElement(
         "summary",
-        { className: "cursor-pointer text-xs text-fg-muted" },
+        { className: `cursor-pointer ${MUTED_META_CLASS}` },
         "Readiness and target details"
       ),
       React.createElement(
@@ -112,6 +123,12 @@ function visualModeReadinessCard(
                 "li",
                 { key: targetReadiness.target.targetId },
                 targetReadiness.target.name +
+                  " · " +
+                  targetReadiness.target.targetId +
+                  " · revision " +
+                  String(targetReadiness.target.revision) +
+                  " · approval " +
+                  targetReadiness.target.approvalId +
                   " · " +
                   targetReadiness.target.controlTimingClass +
                   " · " +
@@ -182,29 +199,31 @@ function adapterModeReadinessCard(
 
 const VISUAL_FOCUS_PRESETS = [
   {
-    id: "race",
-    icon: "🏁",
-    title: "Complete Race",
+    id: "explore",
+    icon: "🔎",
+    title: "Explore the Game",
     description:
-      "Focus on lap completion, speed control, collision avoidance, and reaching the finish line.",
+      "Identify visible actions and how the current screen responds.",
     prompt:
-      "Focus on lap completion, optimal speed control, staying on the track, and crossing the finish line."
+      "Explore the game's visible controls and identify how a player can progress. Report only state changes observed on screen; do not assume hidden goals."
   },
   {
-    id: "garage",
-    icon: "🏎️",
-    title: "Explore Menus & Garage",
-    description: "Interact with options, vehicle selection, and audio toggles.",
+    id: "loop",
+    icon: "🔁",
+    title: "Follow One Play Loop",
+    description:
+      "Use visible actions to progress through one bounded, normal interaction loop.",
     prompt:
-      "Explore the game menus, vehicle selection, garage upgrades, and test UI button interactions."
+      "Follow the visible player interaction loop for one bounded cycle. Use only on-screen affordances and stop when the game shows a terminal result or a clear next-step boundary."
   },
   {
-    id: "handling",
-    icon: "⏱️",
-    title: "Vehicle Handling Stress",
-    description: "Test wall collision, bounce-back behavior, and recovery.",
+    id: "recovery",
+    icon: "🧭",
+    title: "Check a Recovery Path",
+    description:
+      "Observe how one unclear or blocked action is communicated and whether a safe path forward exists.",
     prompt:
-      "Stress test high-speed cornering, collision recovery against walls and barriers, and steering responsiveness."
+      "Explore one safe recovery path from an unclear or blocked screen. Record the visible reason and outcome without claiming a game result that was not shown."
   }
 ] as const;
 
@@ -219,6 +238,11 @@ function VisualPlaytestLaunchCockpit({
     started: ControlApiPlaytestingRunStartedResponse
   ) => void;
 }): React.JSX.Element {
+  const launchRecovery = usePlaytestingLaunchRecovery({
+    setup,
+    workspaceId,
+    onRunStarted
+  });
   const readiness =
     setup.kind === "available"
       ? setup.capabilities.modeReadiness["autonomous-visual"]
@@ -260,17 +284,24 @@ function VisualPlaytestLaunchCockpit({
   );
   const [selectedEpisodes, setSelectedEpisodes] = useState<number>(1);
   const [selectedSteps, setSelectedSteps] = useState<number>(approvedMaxSteps);
-  const [pending, setPending] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
 
   const effectiveEpisodes = Math.min(selectedEpisodes, approvedMaxEpisodes);
   const effectiveSteps = Math.min(selectedSteps, approvedMaxSteps);
+  const focusLabel =
+    VISUAL_FOCUS_PRESETS.find((preset) => preset.prompt === areasOfFocus)
+      ?.title ?? (areasOfFocus.trim().length > 0 ? "Custom focus" : "No focus");
 
   const canSubmit = Boolean(
-    !pending && workspaceId && primaryTarget && isReady
+    !launchRecovery.pending &&
+    launchRecovery.recoveryReady &&
+    !launchRecovery.pendingLaunch &&
+    areasOfFocus.trim().length <= 2000 &&
+    workspaceId &&
+    primaryTarget &&
+    isReady
   );
 
-  const handleLaunch = async () => {
+  const handleLaunch = (): void => {
     if (
       !canSubmit ||
       !workspaceId ||
@@ -278,77 +309,39 @@ function VisualPlaytestLaunchCockpit({
       setup.kind !== "available"
     )
       return;
-    setPending(true);
-    setError(null);
-    try {
-      const launchPayload = {
-        schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
-        mode: "autonomous-visual" as const,
-        workspaceId,
-        requestId: globalThis.crypto.randomUUID(),
-        capabilityRevision: setup.capabilities.capabilityRevision,
-        targetId: primaryTarget.targetId,
-        policyId: "smart-direct" as const,
-        areasOfFocus: areasOfFocus.trim() || null,
-        limits: {
-          episodeCount: Math.min(
-            effectiveEpisodes,
-            primaryTarget.limits.episodeCount
-          ),
-          maxStepsPerEpisode: Math.min(
-            effectiveSteps,
-            primaryTarget.limits.maxStepsPerEpisode
-          ),
-          wallTimeMs: primaryTarget.limits.wallTimeMs,
-          smartRequestsPerEpisode: primaryTarget.limits.smartRequestsPerEpisode,
-          smartTokensPerEpisode: primaryTarget.limits.smartTokensPerEpisode,
-          screenshotCountPerEpisode:
-            primaryTarget.limits.screenshotCountPerEpisode,
-          artifactBytesPerEpisode: primaryTarget.limits.artifactBytesPerEpisode
-        }
-      };
-      const form = new URLSearchParams({
-        launchRequest: JSON.stringify(launchPayload)
-      });
-      const response = await fetch("/api/playtesting/runs", {
-        method: "POST",
-        headers: {
-          accept: "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        body: form
-      });
-      const payload: unknown = await response.json();
-      if (
-        !response.ok ||
-        typeof payload !== "object" ||
-        payload === null ||
-        (payload as any).kind !== "ok"
-      ) {
-        const msg =
-          typeof (payload as any)?.message === "string"
-            ? (payload as any).message
-            : "Failed to launch visual playtest";
-        setError(msg);
-        setPending(false);
-        return;
+    const launchPayload: PlaytestLaunchRequestDraft = {
+      schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+      mode: "autonomous-visual",
+      workspaceId,
+      capabilityRevision: setup.capabilities.capabilityRevision,
+      targetId: primaryTarget.targetId,
+      policyId: "smart-direct",
+      areasOfFocus: areasOfFocus.trim() || null,
+      limits: {
+        episodeCount: Math.min(
+          effectiveEpisodes,
+          primaryTarget.limits.episodeCount
+        ),
+        maxStepsPerEpisode: Math.min(
+          effectiveSteps,
+          primaryTarget.limits.maxStepsPerEpisode
+        ),
+        wallTimeMs: primaryTarget.limits.wallTimeMs,
+        smartRequestsPerEpisode: primaryTarget.limits.smartRequestsPerEpisode,
+        smartTokensPerEpisode: primaryTarget.limits.smartTokensPerEpisode,
+        screenshotCountPerEpisode:
+          primaryTarget.limits.screenshotCountPerEpisode,
+        artifactBytesPerEpisode: primaryTarget.limits.artifactBytesPerEpisode
       }
-      onRunStarted((payload as any).data);
-    } catch (err: unknown) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Connection failed to launch visual playtest"
-      );
-      setPending(false);
-    }
+    };
+    void launchRecovery.startLaunch(launchPayload);
   };
 
   return React.createElement(
     "section",
     {
       className:
-        "grid gap-5 rounded-lg border border-border bg-surface-raised p-4 sm:p-5",
+        "grid gap-4 rounded-lg border border-border bg-surface-raised p-4 sm:p-5",
       "aria-labelledby": "visual-cockpit-heading",
       "data-testid": "playtesting-visual-launch"
     },
@@ -366,8 +359,49 @@ function VisualPlaytestLaunchCockpit({
       React.createElement(
         "p",
         { className: "mt-1 text-sm text-fg-muted" },
-        "Launches an intelligent AI player using vision and discrete keyboard/pointer controls to explore and play your live game."
+        "Smart-directed exploration of your approved browser game with vision and keyboard/pointer input."
       )
+    ),
+    React.createElement(
+      "p",
+      {
+        className: "text-xs font-medium text-fg-muted",
+        "data-testid": "visual-launch-summary"
+      },
+      primaryTarget
+        ? primaryTarget.name +
+            " · " +
+            String(effectiveEpisodes) +
+            (effectiveEpisodes === 1 ? " episode" : " episodes") +
+            " · " +
+            String(effectiveSteps) +
+            " steps · Focus: " +
+            focusLabel
+        : "No approved visual target is available; configure one in Workspaces before starting."
+    ),
+    React.createElement(
+      Button,
+      {
+        type: "button",
+        variant: "primary",
+        disabled: !canSubmit,
+        onClick: handleLaunch,
+        className:
+          "inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-6 py-3.5 text-base font-semibold shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+        dataAttributes: { "data-playtesting-visual-submit": "true" }
+      },
+      React.createElement(
+        "span",
+        { "aria-hidden": true, className: "text-lg leading-none" },
+        "🚀"
+      ),
+      launchRecovery.pending
+        ? "Starting visual playtest…"
+        : primaryTarget === null
+          ? "No Target Selected"
+          : isReady
+            ? "Launch Visual Playtest"
+            : "Visual Readiness Not Ready"
     ),
     supportedTargets.length > 1
       ? React.createElement(
@@ -387,6 +421,7 @@ function VisualPlaytestLaunchCockpit({
             {
               id: "visual-target-select",
               value: primaryTarget?.targetId ?? "",
+              disabled: launchRecovery.pendingLaunch !== null,
               onChange: (e: React.ChangeEvent<HTMLSelectElement>) =>
                 setSelectedTargetId(e.target.value),
               className:
@@ -400,7 +435,13 @@ function VisualPlaytestLaunchCockpit({
                   key: entry.target.targetId,
                   value: entry.target.targetId
                 },
-                entry.target.name + " (" + entry.target.entryUrl + ")"
+                entry.target.name +
+                  " (" +
+                  entry.target.entryUrl +
+                  ") · " +
+                  entry.target.targetId +
+                  " rev " +
+                  String(entry.target.revision)
               )
             )
           )
@@ -427,9 +468,21 @@ function VisualPlaytestLaunchCockpit({
                   "flex h-2.5 w-2.5 rounded-full bg-accent ring-2 ring-accent/20"
               }),
               React.createElement(
-                "h4",
-                { className: "font-semibold text-fg" },
-                primaryTarget.name
+                "div",
+                null,
+                React.createElement(
+                  "h4",
+                  { className: "font-semibold text-fg" },
+                  primaryTarget.name
+                ),
+                React.createElement(
+                  "p",
+                  {
+                    className: `text-xs ${MUTED_TEXT_CLASS}`,
+                    "data-testid": "visual-target-identity"
+                  },
+                  `${primaryTarget.targetId} · revision ${String(primaryTarget.revision)} · approval ${primaryTarget.approvalId}`
+                )
               )
             ),
             React.createElement(
@@ -477,6 +530,79 @@ function VisualPlaytestLaunchCockpit({
                 "span",
                 { className: "font-medium text-fg" },
                 primaryTarget.controlTimingClass
+              )
+            ),
+            React.createElement(
+              "span",
+              { "data-testid": "visual-target-build-identity" },
+              "Build identity: Unknown (URL-only target)"
+            )
+          ),
+          React.createElement(
+            "details",
+            {
+              className: "mt-3",
+              "data-testid": "visual-approved-budget-details"
+            },
+            React.createElement(
+              "summary",
+              { className: "cursor-pointer text-xs font-medium text-fg-muted" },
+              "Other approved per-episode limits"
+            ),
+            React.createElement(
+              "dl",
+              { className: "mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2" },
+              ...(
+                [
+                  [
+                    "Wall time",
+                    `${primaryTarget.limits.wallTimeMs.toLocaleString("en-US")} ms`
+                  ],
+                  [
+                    "Smart requests",
+                    primaryTarget.limits.smartRequestsPerEpisode.toLocaleString(
+                      "en-US"
+                    )
+                  ],
+                  [
+                    "Smart tokens",
+                    primaryTarget.limits.smartTokensPerEpisode.toLocaleString(
+                      "en-US"
+                    )
+                  ],
+                  [
+                    "Screenshots",
+                    primaryTarget.limits.screenshotCountPerEpisode.toLocaleString(
+                      "en-US"
+                    )
+                  ],
+                  [
+                    "Artifact storage",
+                    Number.isInteger(
+                      primaryTarget.limits.artifactBytesPerEpisode / 1_048_576
+                    )
+                      ? `${(primaryTarget.limits.artifactBytesPerEpisode / 1_048_576).toLocaleString("en-US")} MiB`
+                      : `${primaryTarget.limits.artifactBytesPerEpisode.toLocaleString("en-US")} bytes`
+                  ]
+                ] as const
+              ).map(([label, value]) =>
+                React.createElement(
+                  "div",
+                  {
+                    key: label,
+                    className: "flex items-baseline justify-between gap-3"
+                  },
+                  React.createElement(
+                    "dt",
+                    { className: MUTED_TEXT_CLASS },
+                    label
+                  ),
+                  React.createElement(
+                    "dd",
+                    { className: "font-medium text-fg" },
+                    value
+                  )
+                )
               )
             )
           )
@@ -530,6 +656,7 @@ function VisualPlaytestLaunchCockpit({
               key: preset.id,
               type: "button",
               onClick: () => setAreasOfFocus(preset.prompt),
+              disabled: launchRecovery.pendingLaunch !== null,
               className:
                 "flex flex-col items-start gap-1 rounded-xl border p-3.5 text-left transition " +
                 (isSelected
@@ -568,6 +695,8 @@ function VisualPlaytestLaunchCockpit({
         value: areasOfFocus,
         onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) =>
           setAreasOfFocus(e.target.value),
+        maxLength: 2000,
+        disabled: launchRecovery.pendingLaunch !== null,
         placeholder:
           "e.g., Focus on vehicle cornering, recovery from wall hits, and finish line detection",
         className:
@@ -598,6 +727,7 @@ function VisualPlaytestLaunchCockpit({
               key: count,
               type: "button",
               onClick: () => setSelectedEpisodes(count),
+              disabled: launchRecovery.pendingLaunch !== null,
               className:
                 "rounded-lg border px-4 py-2 text-xs font-medium transition " +
                 (effectiveEpisodes === count
@@ -633,6 +763,7 @@ function VisualPlaytestLaunchCockpit({
               key: step,
               type: "button",
               onClick: () => setSelectedSteps(step),
+              disabled: launchRecovery.pendingLaunch !== null,
               className:
                 "rounded-lg border px-4 py-2 text-xs font-medium transition " +
                 (effectiveSteps === step
@@ -644,36 +775,8 @@ function VisualPlaytestLaunchCockpit({
         )
       )
     ),
-    error
-      ? React.createElement(
-          "p",
-          { className: "text-xs font-medium text-error", role: "alert" },
-          error
-        )
-      : null,
-    React.createElement(
-      "button",
-      {
-        type: "button",
-        disabled: !canSubmit,
-        onClick: () => void handleLaunch(),
-        className:
-          "inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-accent px-6 py-3.5 text-base font-semibold text-fg-inverse shadow-md transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60",
-        "data-playtesting-visual-submit": "true"
-      },
-      React.createElement(
-        "span",
-        { "aria-hidden": true, className: "text-lg leading-none" },
-        "🚀"
-      ),
-      pending
-        ? "Starting visual playtest…"
-        : !primaryTarget
-          ? "No Target Selected"
-          : !isReady
-            ? "Visual Readiness Not Ready"
-            : "Launch Visual Playtest"
-    )
+    launchRecovery.recoveryPanel,
+    launchRecovery.statusMessage
   );
 }
 
@@ -735,6 +838,7 @@ export function PlaytestingRunDashboard({
         batchId: started.batchId,
         assignmentCount: started.assignmentCount,
         createdAt: started.createdAt,
+        sessions: started.sessions,
         record
       });
       const url = new URL(globalThis.location.href);

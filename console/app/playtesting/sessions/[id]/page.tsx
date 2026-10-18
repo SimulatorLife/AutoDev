@@ -117,6 +117,7 @@ export default async function PlaytestingSessionPage({
             batchId: run.batchId,
             assignmentCount: run.assignmentCount,
             createdAt: run.createdAt,
+            sessions: run.sessions,
             record: run.status
           },
           id

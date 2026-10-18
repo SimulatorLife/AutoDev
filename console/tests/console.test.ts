@@ -19825,6 +19825,19 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Connects confirmed run starts to the live status reader without making client state authoritative."
     ],
     [
+      join("src", "features", "playtesting", "PlaytestingSessionLiveWatch.ts"),
+      "Refreshes the selected session's workspace-scoped live trace window while keeping persisted episode data server-owned."
+    ],
+    [
+      join(
+        "src",
+        "features",
+        "playtesting",
+        "PlaytestingSpectatorAnalystButton.ts"
+      ),
+      "Dispatches read-only analysis for the selected persisted session and renders the Runtime-confirmed packet receipt."
+    ],
+    [
       join(
         "src",
         "features",
@@ -19884,6 +19897,34 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       ...approvedServerHandlerModules.values()
     ].every((reason) => reason.trim().length > 0),
     "every client island and server handler exception needs a rationale"
+  );
+});
+
+test("player debrief is sourced from the persisted episode report, never trace or assignment prose", () => {
+  const view = readFileSync(
+    join(
+      import.meta.dirname,
+      "../src/features/playtesting/PlaytestingSessionView.ts"
+    ),
+    "utf8"
+  );
+  const start = view.indexOf("function playerDebriefPanel(");
+  const end = view.indexOf("export function PlaytestingSessionView(", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const panel = view.slice(start, end);
+  assert.match(panel, /const report = episode\.playerDebrief/u);
+  const reportStart = view.indexOf("function completePlayerReportContent(");
+  const reportEnd = view.indexOf(
+    "function partialPlayerReportContent(",
+    reportStart
+  );
+  assert.notEqual(reportStart, -1);
+  assert.notEqual(reportEnd, -1);
+  const reportRenderer = view.slice(reportStart, reportEnd);
+  assert.doesNotMatch(
+    reportRenderer,
+    /traceStepFacts|window\.entries|visualAssignment\.areasOfFocus/u
   );
 });
 

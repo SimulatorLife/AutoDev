@@ -699,7 +699,7 @@ function sendStartedRunReceipt(
   started: Awaited<ReturnType<PlaytestRunControl["startRun"]>>
 ): void {
   const body: ControlApiPlaytestingRunStartedResponse = {
-    schema: "autodev-control-playtesting-run-started-v2",
+    schema: "autodev-control-playtesting-run-started-v3",
     workspaceId,
     ...started
   };
@@ -1240,8 +1240,7 @@ async function capabilitiesForLaunchRequest(input: {
         workspaceEnabled: runCapabilities.workspaceEnabled,
         operatorActionsAvailable,
         visualDriverAvailable: isPlaytestVisualBrowserDriverAvailable(),
-        smartDirectPolicyAvailable:
-          await isSmartDirectVisualPolicyAvailable(),
+        smartDirectPolicyAvailable: await isSmartDirectVisualPolicyAvailable(),
         ...visualTargets
       }),
       "scripted-regression": scriptedModeReadiness(operatorActionsAvailable)
@@ -1336,7 +1335,7 @@ async function listRuns(
       query.workspaceId
     );
     const body: ControlApiPlaytestingActiveRunsResponse = {
-      schema: "autodev-control-playtesting-runs-v1",
+      schema: "autodev-control-playtesting-runs-v2",
       workspaceId: query.workspaceId,
       // The owner already read each live run; project that same record rather
       // than re-reading it, so the list cannot disagree with the status route.
@@ -1344,6 +1343,7 @@ async function listRuns(
         batchId: run.batchId,
         assignmentCount: run.assignmentCount,
         createdAt: run.createdAt,
+        sessions: run.sessions,
         status: statusRecord(run.status)
       }))
     };
@@ -1402,7 +1402,7 @@ async function lookupRunByRequest(
       requestId
     );
     const body: ControlApiPlaytestingRunRequestLookupResponse = {
-      schema: "autodev-control-playtesting-run-request-v1",
+      schema: "autodev-control-playtesting-run-request-v2",
       workspaceId: query.workspaceId,
       ...lookup
     };
@@ -1567,6 +1567,50 @@ async function cancelRun(
   }
 }
 
+const INTERNAL_ERROR_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
+const INTERNAL_ERROR_CODE_PATTERN = /^[A-Za-z0-9_:-]{1,64}$/u;
+
+/**
+ * Keep internal failure logs useful without serializing exception messages,
+ * which can contain Data/backend text or user-controlled values. Stack frames
+ * are bounded and omit the message line.
+ */
+export function formatControlApiInternalErrorDiagnostic(
+  error: unknown
+): string {
+  const name =
+    error instanceof Error && INTERNAL_ERROR_NAME_PATTERN.test(error.name)
+      ? error.name
+      : "UnknownError";
+  const rawCode =
+    typeof error === "object" && error !== null && "code" in error
+      ? (error as { readonly code?: unknown }).code
+      : null;
+  const code =
+    typeof rawCode === "string" && INTERNAL_ERROR_CODE_PATTERN.test(rawCode)
+      ? rawCode
+      : null;
+  const frames =
+    error instanceof Error && typeof error.stack === "string"
+      ? error.stack
+          .split("\n")
+          .slice(1)
+          .filter((line) => /^\s*at\s/u.test(line))
+          .slice(0, 3)
+          .map((line) =>
+            line
+              .trim()
+              .replace(/[\r\n?][^\s)]*/gu, "")
+              .slice(0, 192)
+          )
+      : [];
+  return [
+    `type=${name}`,
+    ...(code === null ? [] : [`code=${code}`]),
+    ...(frames.length === 0 ? [] : [`frames=${frames.join(" | ")}`])
+  ].join(" ");
+}
+
 function recordRunError(
   response: ServerResponse,
   error: unknown,
@@ -1693,7 +1737,10 @@ function recordRunError(
       error.message
     );
   } else {
-    writeErrorLine("control-playtesting-run: internal operation failure.");
+    writeErrorLine(
+      "control-playtesting-run: internal operation failure " +
+        formatControlApiInternalErrorDiagnostic(error)
+    );
     recordAudit(
       options,
       actor,

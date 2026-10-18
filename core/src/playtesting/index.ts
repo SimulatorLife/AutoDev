@@ -44,6 +44,7 @@ export * from "./native-timing.ts";
 export * from "./observability.ts";
 export * from "./operation-validation.ts";
 export * from "./policy-validity.ts";
+export * from "./player-debrief.ts";
 export * from "./protocol.ts";
 export * from "./protocol-types.ts";
 export * from "./registry.ts";

@@ -592,6 +592,11 @@ function branchExecution(
       actionSource: "engine-policy",
       derivedFrom: null
     },
+    playerDebrief: {
+      schema: "autodev-playtest-player-debrief-v1",
+      status: "not-applicable",
+      reason: "non-reflective-policy"
+    },
     identity: {
       workspaceId: WORKSPACE_ID,
       repository: WORKSPACE_ID,

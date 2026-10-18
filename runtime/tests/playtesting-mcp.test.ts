@@ -492,6 +492,11 @@ function episodeForRun(
       options.repository,
       options.build.buildSha
     ),
+    playerDebrief: {
+      schema: "autodev-playtest-player-debrief-v1",
+      status: "not-applicable",
+      reason: "non-reflective-policy"
+    },
     identity: {
       workspaceId: options.repository,
       repository: options.repository,
@@ -1276,6 +1281,11 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
               opts.repository,
               opts.build.buildSha
             ),
+            playerDebrief: {
+              schema: "autodev-playtest-player-debrief-v1",
+              status: "not-applicable",
+              reason: "non-reflective-policy"
+            },
             identity: {
               workspaceId: opts.repository,
               repository: opts.repository,
@@ -1507,8 +1517,16 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     assert.equal(runResult.status, "running");
     assert.ok(runResult.batchId.startsWith("batch-"));
     assert.deepEqual(runResult.assignmentIds, ["a-0001", "a-0002"]);
+    assert.deepEqual(
+      runResult.sessions,
+      runResult.assignmentIds.map((assignmentId: string) => ({
+        assignmentId,
+        episodeId: `${runResult.batchId}.${assignmentId}`
+      }))
+    );
     assert.equal(concurrentReceipt.batchId, runResult.batchId);
     assert.deepEqual(concurrentReceipt.assignmentIds, runResult.assignmentIds);
+    assert.deepEqual(concurrentReceipt.sessions, runResult.sessions);
     const retriedRun = await (server as any)._registeredTools[
       "playtest.run"
     ].handler({ launchRequest: successfulLaunchRequest });
@@ -1542,6 +1560,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     assert.equal(recoveredReceipt.state, "accepted");
     assert.equal(recoveredReceipt.batchId, runResult.batchId);
     assert.deepEqual(recoveredReceipt.assignmentIds, ["a-0001", "a-0002"]);
+    assert.deepEqual(recoveredReceipt.sessions, runResult.sessions);
     const otherActorLookup = await server.playtestRunControl.lookupRunByRequest(
       {
         workspaceId: WORKSPACE_ID,
@@ -2166,6 +2185,11 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
             opts.repository,
             opts.build.buildSha
           ),
+          playerDebrief: {
+            schema: "autodev-playtest-player-debrief-v1",
+            status: "not-applicable",
+            reason: "non-reflective-policy"
+          },
           identity: {
             workspaceId: opts.repository,
             repository: opts.repository,
@@ -4373,6 +4397,11 @@ test("playtest MCP server: submitReview validates evidence against the real stor
         WORKSPACE_ID,
         "a".repeat(40)
       ),
+      playerDebrief: {
+        schema: "autodev-playtest-player-debrief-v1",
+        status: "not-applicable",
+        reason: "non-reflective-policy"
+      },
       identity: {
         workspaceId: WORKSPACE_ID,
         repository: WORKSPACE_ID,
@@ -6205,6 +6234,11 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
           WORKSPACE_ID,
           "a".repeat(40)
         ),
+        playerDebrief: {
+          schema: "autodev-playtest-player-debrief-v1",
+          status: "not-applicable",
+          reason: "non-reflective-policy"
+        },
         identity: {
           workspaceId: WORKSPACE_ID,
           repository: WORKSPACE_ID,

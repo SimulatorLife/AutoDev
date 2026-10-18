@@ -1,12 +1,14 @@
 "use client";
 
 import {
+  assertWorkspaceVisualPlaytestLimits,
   type ControlApiPlaytestingCapabilitiesResponse,
   type ControlApiPlaytestingRunRequestLookupResponse,
   type ControlApiPlaytestingRunStartedResponse,
   isControlApiPlaytestingRunState,
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
-  type PlaytestLaunchRequest
+  type PlaytestLaunchRequest,
+  type PlaytestSessionReference
 } from "@simulatorlife/autodev-core";
 import { useRouter } from "next/navigation";
 import React, { useEffect, useRef, useState } from "react";
@@ -272,6 +274,21 @@ function RunRequestForm({
       className="grid gap-4"
       onSubmit={submit}
     >
+      <button
+        className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-accent px-6 py-3.5 text-base font-semibold text-fg-inverse shadow-md transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
+        data-playtesting-run-submit="true"
+        disabled={pending || !valid}
+        type="submit"
+      >
+        <span aria-hidden="true" className="text-lg leading-none">
+          🚀
+        </span>
+        {pending
+          ? "Starting adapter playtest…"
+          : assignments.length === 1
+            ? "Start Adapter Playtest"
+            : "Start " + String(assignments.length) + " Adapter Playtests"}
+      </button>
       <div
         className="grid gap-1 rounded-lg border border-border bg-surface-raised px-4 py-3"
         aria-label="Suggested playtest configuration"
@@ -303,25 +320,29 @@ function RunRequestForm({
               id: "championship",
               title: "Championship Tournament",
               icon: "🏆",
-              description: "Full multi-race championship run with wagering, dynamic track conditions, and race standings.",
+              description:
+                "Full multi-race championship run with wagering, dynamic track conditions, and race standings.",
               steps: Math.min(2500, first.maxStepsPerEpisode)
             },
             {
               id: "smoke",
               title: "Quick Smoke Check",
               icon: "⚡",
-              description: "Fast 100-step smoke check verifying vehicle physics, rule engine, and simulation stability.",
+              description:
+                "Fast 100-step smoke check verifying vehicle physics, rule engine, and simulation stability.",
               steps: Math.min(100, first.maxStepsPerEpisode)
             },
             {
               id: "handling",
               title: "Speed & Wall Recovery",
               icon: "⏱️",
-              description: "1,000-step stress test evaluating cornering precision, wall collision, and bounce-back behavior.",
+              description:
+                "1,000-step stress test evaluating cornering precision, wall collision, and bounce-back behavior.",
               steps: Math.min(1000, first.maxStepsPerEpisode)
             }
           ].map((preset) => {
-            const isSelected = Number(defaultAssignment.maxSteps) === preset.steps;
+            const isSelected =
+              Number(defaultAssignment.maxSteps) === preset.steps;
             return (
               <button
                 key={preset.id}
@@ -332,14 +353,19 @@ function RunRequestForm({
                     maxSteps: String(preset.steps)
                   }));
                 }}
-                className={"flex flex-col items-start gap-1 rounded-xl border p-3.5 text-left transition " + (
-                  isSelected
+                className={
+                  "flex flex-col items-start gap-1 rounded-xl border p-3.5 text-left transition " +
+                  (isSelected
                     ? "border-accent bg-accent/10 shadow-sm ring-1 ring-accent"
-                    : "border-border bg-surface-raised hover:border-fg-muted/40 hover:bg-surface"
-                )}
+                    : "border-border bg-surface-raised hover:border-fg-muted/40 hover:bg-surface")
+                }
               >
-                <span className="text-sm font-semibold text-fg">{preset.icon} {preset.title}</span>
-                <span className="text-xs text-fg-secondary leading-relaxed">{preset.description}</span>
+                <span className="text-sm font-semibold text-fg">
+                  {preset.icon} {preset.title}
+                </span>
+                <span className="text-xs text-fg-secondary leading-relaxed">
+                  {preset.description}
+                </span>
                 <span className="mt-1 text-xs font-medium text-accent">
                   Up to {preset.steps.toLocaleString()} steps
                 </span>
@@ -362,17 +388,21 @@ function RunRequestForm({
                 policyId: "random"
               }));
             }}
-            className={"flex items-start gap-3 rounded-xl border p-3 text-left transition " + (
-              defaultAssignment.policyId === "random"
+            className={
+              "flex items-start gap-3 rounded-xl border p-3 text-left transition " +
+              (defaultAssignment.policyId === "random"
                 ? "border-accent bg-accent/10 ring-1 ring-accent"
-                : "border-border bg-surface-raised hover:bg-surface"
-            )}
+                : "border-border bg-surface-raised hover:bg-surface")
+            }
           >
             <span className="text-xl">🎲</span>
             <div>
-              <p className="text-sm font-semibold text-fg">Exploratory Racer (Uniform Legal)</p>
+              <p className="text-sm font-semibold text-fg">
+                Exploratory Racer (Uniform Legal)
+              </p>
               <p className="text-xs text-fg-secondary">
-                Samples diverse legal actions uniformly to stress test physics edge cases and collision boundaries.
+                Samples diverse legal actions uniformly to stress test physics
+                edge cases and collision boundaries.
               </p>
             </div>
           </button>
@@ -384,17 +414,21 @@ function RunRequestForm({
                 policyId: "first-legal"
               }));
             }}
-            className={"flex items-start gap-3 rounded-xl border p-3 text-left transition " + (
-              defaultAssignment.policyId === "first-legal"
+            className={
+              "flex items-start gap-3 rounded-xl border p-3 text-left transition " +
+              (defaultAssignment.policyId === "first-legal"
                 ? "border-accent bg-accent/10 ring-1 ring-accent"
-                : "border-border bg-surface-raised hover:bg-surface"
-            )}
+                : "border-border bg-surface-raised hover:bg-surface")
+            }
           >
             <span className="text-xl">🎯</span>
             <div>
-              <p className="text-sm font-semibold text-fg">Goal-Driven Racer (First Legal)</p>
+              <p className="text-sm font-semibold text-fg">
+                Goal-Driven Racer (First Legal)
+              </p>
               <p className="text-xs text-fg-secondary">
-                Deterministic action selection prioritizing progression, finishing races, and resource management.
+                Deterministic action selection prioritizing progression,
+                finishing races, and resource management.
               </p>
             </div>
           </button>
@@ -402,7 +436,10 @@ function RunRequestForm({
       </div>
 
       <div className="grid gap-1.5">
-        <label htmlFor="playtest-focus-notes" className="text-xs font-semibold uppercase tracking-wider text-fg-muted">
+        <label
+          htmlFor="playtest-focus-notes"
+          className="text-xs font-semibold uppercase tracking-wider text-fg-muted"
+        >
           3. Areas of Focus & Operator Intent (Optional)
         </label>
         <input
@@ -413,19 +450,6 @@ function RunRequestForm({
         />
       </div>
 
-      <button
-        className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-accent px-6 py-3.5 text-base font-semibold text-fg-inverse shadow-md transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
-        data-playtesting-run-submit="true"
-        disabled={pending || !valid}
-        type="submit"
-      >
-        <span aria-hidden="true" className="text-lg leading-none">🚀</span>
-        {pending
-          ? "Starting adapter playtest…"
-          : assignments.length === 1
-            ? "Start Adapter Playtest"
-            : "Start " + String(assignments.length) + " Adapter Playtests"}
-      </button>
       <details className="rounded-lg border border-border bg-surface p-4">
         <summary className="cursor-pointer text-sm font-medium">
           Customize run
@@ -756,20 +780,74 @@ const LAST_ACCEPTED_LAUNCH_STORAGE_PREFIX =
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const CAPABILITY_REVISION_PATTERN = /^[a-f\d]{64}$/u;
 const ASSIGNMENT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const EPISODE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 const BATCH_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const TARGET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 type AdapterPlaytestLaunchRequest = Extract<
   PlaytestLaunchRequest,
   { readonly mode: "adapter-accelerated" }
 >;
+type AdapterPlaytestLaunchRequestDraft = Omit<
+  AdapterPlaytestLaunchRequest,
+  "requestId"
+>;
+type AutonomousVisualPlaytestLaunchRequest = Extract<
+  PlaytestLaunchRequest,
+  { readonly mode: "autonomous-visual" }
+>;
+type RecoverablePlaytestLaunchRequest =
+  AdapterPlaytestLaunchRequest | AutonomousVisualPlaytestLaunchRequest;
+export type PlaytestLaunchRequestDraft =
+  | AdapterPlaytestLaunchRequestDraft
+  | Omit<AutonomousVisualPlaytestLaunchRequest, "requestId">;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isSessionReferenceList(
+  value: unknown,
+  expectedCount: number,
+  assignmentIds?: readonly string[]
+): value is readonly PlaytestSessionReference[] {
+  if (!Array.isArray(value) || value.length !== expectedCount) return false;
+  const expectedAssignments =
+    assignmentIds === undefined ? null : new Set(assignmentIds);
+  if (
+    assignmentIds !== undefined &&
+    expectedAssignments?.size !== assignmentIds.length
+  ) {
+    return false;
+  }
+  const seenAssignments = new Set<string>();
+  const seenEpisodes = new Set<string>();
+  for (const entry of value) {
+    if (
+      !isRecord(entry) ||
+      typeof entry.assignmentId !== "string" ||
+      !ASSIGNMENT_ID_PATTERN.test(entry.assignmentId) ||
+      typeof entry.episodeId !== "string" ||
+      !EPISODE_ID_PATTERN.test(entry.episodeId) ||
+      seenAssignments.has(entry.assignmentId) ||
+      seenEpisodes.has(entry.episodeId) ||
+      (expectedAssignments !== null &&
+        !expectedAssignments.has(entry.assignmentId))
+    ) {
+      return false;
+    }
+    seenAssignments.add(entry.assignmentId);
+    seenEpisodes.add(entry.episodeId);
+  }
+  return (
+    expectedAssignments === null ||
+    seenAssignments.size === expectedAssignments.size
+  );
+}
+
 function restorePendingLaunch(
   serialized: string,
   workspaceId: string
-): AdapterPlaytestLaunchRequest | null {
+): RecoverablePlaytestLaunchRequest | null {
   let value: unknown;
   try {
     value = JSON.parse(serialized);
@@ -779,28 +857,63 @@ function restorePendingLaunch(
   if (
     !isRecord(value) ||
     value.schema !== PLAYTEST_LAUNCH_REQUEST_SCHEMA ||
-    value.mode !== "adapter-accelerated" ||
     value.workspaceId !== workspaceId ||
     typeof value.requestId !== "string" ||
     !REQUEST_ID_PATTERN.test(value.requestId) ||
     typeof value.capabilityRevision !== "string" ||
-    !CAPABILITY_REVISION_PATTERN.test(value.capabilityRevision) ||
-    !isRecord(value.operation) ||
-    value.operation.kind !== "batch" ||
-    !Array.isArray(value.operation.assignments) ||
-    value.operation.assignments.length === 0 ||
-    !value.operation.assignments.every(
-      (assignment) =>
-        isRecord(assignment) &&
-        typeof assignment.scenario === "string" &&
-        typeof assignment.policy === "string" &&
-        typeof assignment.seed === "string" &&
-        Number.isSafeInteger(assignment.maxSteps)
-    )
+    !CAPABILITY_REVISION_PATTERN.test(value.capabilityRevision)
   ) {
     return null;
   }
-  return value as unknown as AdapterPlaytestLaunchRequest;
+  if (value.mode === "adapter-accelerated") {
+    if (
+      !isRecord(value.operation) ||
+      value.operation.kind !== "batch" ||
+      !Array.isArray(value.operation.assignments) ||
+      value.operation.assignments.length === 0 ||
+      !value.operation.assignments.every(
+        (assignment) =>
+          isRecord(assignment) &&
+          typeof assignment.scenario === "string" &&
+          typeof assignment.policy === "string" &&
+          typeof assignment.seed === "string" &&
+          Number.isSafeInteger(assignment.maxSteps)
+      )
+    ) {
+      return null;
+    }
+    return value as unknown as AdapterPlaytestLaunchRequest;
+  }
+  if (value.mode !== "autonomous-visual") return null;
+  const allowedKeys = new Set([
+    "schema",
+    "mode",
+    "workspaceId",
+    "requestId",
+    "capabilityRevision",
+    "targetId",
+    "policyId",
+    "areasOfFocus",
+    "limits"
+  ]);
+  if (
+    Object.keys(value).length !== allowedKeys.size ||
+    Object.keys(value).some((key) => !allowedKeys.has(key)) ||
+    typeof value.targetId !== "string" ||
+    !TARGET_ID_PATTERN.test(value.targetId) ||
+    value.policyId !== "smart-direct" ||
+    (value.areasOfFocus !== null &&
+      (typeof value.areasOfFocus !== "string" ||
+        value.areasOfFocus.length > 2000))
+  ) {
+    return null;
+  }
+  try {
+    assertWorkspaceVisualPlaytestLimits(value.limits);
+  } catch {
+    return null;
+  }
+  return value as unknown as AutonomousVisualPlaytestLaunchRequest;
 }
 
 function isRunRequestLookup(
@@ -810,40 +923,57 @@ function isRunRequestLookup(
 ): value is ControlApiPlaytestingRunRequestLookupResponse {
   if (
     !isRecord(value) ||
-    value.schema !== "autodev-control-playtesting-run-request-v1" ||
+    value.schema !== "autodev-control-playtesting-run-request-v2" ||
     value.workspaceId !== workspaceId ||
     value.requestId !== requestId ||
     !["not-found", "expired", "pending", "accepted"].includes(
       String(value.state)
+    ) ||
+    !Array.isArray(value.assignmentIds) ||
+    value.assignmentIds.some(
+      (id) => typeof id !== "string" || !ASSIGNMENT_ID_PATTERN.test(id)
     )
   ) {
     return false;
   }
+  const sessions = value.sessions;
   if (value.state === "not-found" || value.state === "expired") {
     return (
+      isSessionReferenceList(sessions, 0) &&
       value.batchId === null &&
       value.assignmentCount === null &&
-      Array.isArray(value.assignmentIds) &&
       value.assignmentIds.length === 0 &&
       value.createdAt === null &&
       value.status === null
     );
   }
+  if (
+    typeof value.batchId !== "string" ||
+    !BATCH_ID_PATTERN.test(value.batchId) ||
+    !Number.isSafeInteger(value.assignmentCount) ||
+    typeof value.assignmentCount !== "number" ||
+    value.assignmentCount < 1 ||
+    typeof value.createdAt !== "string" ||
+    !Number.isFinite(Date.parse(value.createdAt))
+  ) {
+    return false;
+  }
+  if (value.state === "pending") {
+    return (
+      value.assignmentIds.length === 0 &&
+      isSessionReferenceList(sessions, 0) &&
+      value.status === null
+    );
+  }
   return (
-    typeof value.batchId === "string" &&
-    Number.isSafeInteger(value.assignmentCount) &&
-    typeof value.assignmentCount === "number" &&
-    value.assignmentCount > 0 &&
-    Array.isArray(value.assignmentIds) &&
-    value.assignmentIds.every(
-      (id) => typeof id === "string" && ASSIGNMENT_ID_PATTERN.test(id)
+    value.assignmentIds.length === value.assignmentCount &&
+    new Set(value.assignmentIds).size === value.assignmentIds.length &&
+    isSessionReferenceList(
+      sessions,
+      value.assignmentCount,
+      value.assignmentIds as string[]
     ) &&
-    typeof value.createdAt === "string" &&
-    Number.isFinite(Date.parse(value.createdAt)) &&
-    (value.state === "pending"
-      ? value.assignmentIds.length === 0 && value.status === null
-      : value.assignmentIds.length === value.assignmentCount &&
-        isControlApiPlaytestingRunState(value.status))
+    isControlApiPlaytestingRunState(value.status)
   );
 }
 
@@ -851,28 +981,35 @@ function isStartedResponse(
   value: unknown,
   workspaceId: string
 ): value is ControlApiPlaytestingRunStartedResponse {
-  return (
-    isRecord(value) &&
-    value.schema === "autodev-control-playtesting-run-started-v2" &&
-    value.workspaceId === workspaceId &&
-    typeof value.batchId === "string" &&
-    BATCH_ID_PATTERN.test(value.batchId) &&
-    typeof value.assignmentCount === "number" &&
-    Number.isSafeInteger(value.assignmentCount) &&
-    value.assignmentCount > 0 &&
-    Array.isArray(value.assignmentIds) &&
-    value.assignmentIds.length === value.assignmentCount &&
-    new Set(value.assignmentIds).size === value.assignmentIds.length &&
-    value.assignmentIds.every(
+  if (
+    !isRecord(value) ||
+    value.schema !== "autodev-control-playtesting-run-started-v3" ||
+    value.workspaceId !== workspaceId ||
+    typeof value.batchId !== "string" ||
+    !BATCH_ID_PATTERN.test(value.batchId) ||
+    typeof value.assignmentCount !== "number" ||
+    !Number.isSafeInteger(value.assignmentCount) ||
+    value.assignmentCount < 1 ||
+    !Array.isArray(value.assignmentIds) ||
+    value.assignmentIds.length !== value.assignmentCount ||
+    new Set(value.assignmentIds).size !== value.assignmentIds.length ||
+    !value.assignmentIds.every(
       (id) => typeof id === "string" && ASSIGNMENT_ID_PATTERN.test(id)
-    ) &&
-    typeof value.createdAt === "string" &&
-    Number.isFinite(Date.parse(value.createdAt)) &&
-    isControlApiPlaytestingRunState(value.status)
+    ) ||
+    typeof value.createdAt !== "string" ||
+    !Number.isFinite(Date.parse(value.createdAt)) ||
+    !isControlApiPlaytestingRunState(value.status)
+  ) {
+    return false;
+  }
+  return isSessionReferenceList(
+    value.sessions,
+    value.assignmentCount,
+    value.assignmentIds as string[]
   );
 }
 
-function payloadFingerprint(request: AdapterPlaytestLaunchRequest): string {
+function payloadFingerprint(request: RecoverablePlaytestLaunchRequest): string {
   const { requestId: _requestId, ...payload } = request;
   return JSON.stringify(payload);
 }
@@ -896,7 +1033,7 @@ function requestForConcurrentTab(
   workspaceId: string,
   expectedFingerprint: string,
   clickStartedAt: number
-): AdapterPlaytestLaunchRequest | null {
+): RecoverablePlaytestLaunchRequest | null {
   let value: unknown;
   try {
     value = JSON.parse(serialized);
@@ -961,7 +1098,7 @@ type LaunchPostResult =
   | { readonly kind: "unreachable" };
 
 async function postRunLaunch(
-  launchRequest: AdapterPlaytestLaunchRequest
+  launchRequest: RecoverablePlaytestLaunchRequest
 ): Promise<LaunchPostResult> {
   try {
     const form = new URLSearchParams({
@@ -1000,12 +1137,12 @@ async function postRunLaunch(
 async function submitPlaytestLaunch(input: {
   readonly capabilities: ControlApiPlaytestingCapabilitiesResponse | null;
   readonly storageKey: string | null;
-  readonly launchRequest: AdapterPlaytestLaunchRequest;
+  readonly launchRequest: RecoverablePlaytestLaunchRequest;
   readonly setPending: (pending: boolean) => void;
   readonly setNotice: (notice: string | null) => void;
   readonly setFailure: (failure: string | null) => void;
   readonly setPendingLaunch: (
-    launch: AdapterPlaytestLaunchRequest | null
+    launch: RecoverablePlaytestLaunchRequest | null
   ) => void;
   readonly requestIdRef: { current: string | null };
   readonly clearPendingLaunch: () => void;
@@ -1094,32 +1231,32 @@ async function submitPlaytestLaunch(input: {
 async function beginPlaytestLaunch(input: {
   readonly capabilities: ControlApiPlaytestingCapabilitiesResponse | null;
   readonly storageKey: string | null;
-  readonly request: RunSubmission;
-  readonly pendingLaunch: AdapterPlaytestLaunchRequest | null;
+  readonly launchPayload: PlaytestLaunchRequestDraft;
+  readonly pendingLaunch: RecoverablePlaytestLaunchRequest | null;
   readonly requestIdRef: { current: string | null };
   readonly setPendingLaunch: (
-    launch: AdapterPlaytestLaunchRequest | null
+    launch: RecoverablePlaytestLaunchRequest | null
   ) => void;
   readonly setFailure: (failure: string | null) => void;
   readonly setNotice: (notice: string | null) => void;
   readonly withLaunchLock: <Result>(
     operation: () => Promise<Result>
   ) => Promise<Result>;
-  readonly submit: (launch: AdapterPlaytestLaunchRequest) => Promise<void>;
+  readonly submit: (launch: RecoverablePlaytestLaunchRequest) => Promise<void>;
 }): Promise<void> {
   const { capabilities } = input;
   if (!capabilities || input.pendingLaunch) return;
+  if (
+    input.launchPayload.workspaceId !== capabilities.workspaceId ||
+    input.launchPayload.capabilityRevision !== capabilities.capabilityRevision
+  ) {
+    input.setFailure(
+      "Playtesting readiness changed before launch. Review the refreshed options before starting again."
+    );
+    return;
+  }
   const clickStartedAt = Date.now();
-  const launchPayload = {
-    schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
-    mode: "adapter-accelerated" as const,
-    workspaceId: input.request.workspaceId,
-    capabilityRevision: capabilities.capabilityRevision,
-    operation: {
-      kind: "batch" as const,
-      assignments: input.request.assignments
-    }
-  };
+  const launchPayload = input.launchPayload;
   const fingerprint = JSON.stringify(launchPayload);
   await input.withLaunchLock(async () => {
     if (input.storageKey) {
@@ -1172,16 +1309,16 @@ async function beginPlaytestLaunch(input: {
         // The durable Data idempotency record guards every accepted request.
       }
     }
-    const launchRequest: AdapterPlaytestLaunchRequest = {
+    const launchRequest: RecoverablePlaytestLaunchRequest = {
       ...launchPayload,
       requestId: (input.requestIdRef.current ??= globalThis.crypto.randomUUID())
-    };
+    } as RecoverablePlaytestLaunchRequest;
     await input.submit(launchRequest);
   });
 }
 
 async function recoverPlaytestLaunch(input: {
-  readonly pendingLaunch: AdapterPlaytestLaunchRequest | null;
+  readonly pendingLaunch: RecoverablePlaytestLaunchRequest | null;
   readonly workspaceId: string | null;
   readonly setPending: (pending: boolean) => void;
   readonly setFailure: (failure: string | null) => void;
@@ -1214,11 +1351,12 @@ async function recoverPlaytestLaunch(input: {
   input.setRequestLookup(found);
   if (found.state === "accepted") {
     const receipt: ControlApiPlaytestingRunStartedResponse = {
-      schema: "autodev-control-playtesting-run-started-v2",
+      schema: "autodev-control-playtesting-run-started-v3",
       workspaceId,
       batchId: found.batchId!,
       assignmentCount: found.assignmentCount!,
       assignmentIds: found.assignmentIds,
+      sessions: found.sessions,
       createdAt: found.createdAt!,
       status: found.status!
     };
@@ -1242,7 +1380,7 @@ async function recoverPlaytestLaunch(input: {
 }
 
 function pendingRunPanel(input: {
-  readonly launch: AdapterPlaytestLaunchRequest | null;
+  readonly launch: RecoverablePlaytestLaunchRequest | null;
   readonly lookup: ControlApiPlaytestingRunRequestLookupResponse | null;
   readonly pending: boolean;
   readonly workspaceId: string | null;
@@ -1252,6 +1390,20 @@ function pendingRunPanel(input: {
 }): React.JSX.Element | null {
   const { launch, lookup, pending } = input;
   if (!launch) return null;
+  const assignmentCount =
+    launch.mode === "adapter-accelerated"
+      ? launch.operation.kind === "batch"
+        ? launch.operation.assignments.length
+        : 1
+      : launch.limits.episodeCount;
+  const countLabel =
+    launch.mode === "autonomous-visual"
+      ? assignmentCount === 1
+        ? "episode"
+        : "episodes"
+      : assignmentCount === 1
+        ? "assignment"
+        : "assignments";
   const lookupPending = lookup?.state === "pending";
   const canDiscard =
     lookup?.state === "not-found" || lookup?.state === "expired";
@@ -1278,7 +1430,7 @@ function pendingRunPanel(input: {
     React.createElement(
       "p",
       { className: MUTED_BODY_CLASS },
-      `${launch.operation.kind === "batch" ? launch.operation.assignments.length : 1} assignment(s) · request ${launch.requestId}`
+      `${String(assignmentCount)} ${countLabel} · request ${launch.requestId}`
     ),
     lookupPending
       ? React.createElement(
@@ -1335,6 +1487,189 @@ function pendingRunPanel(input: {
   );
 }
 
+export function usePlaytestingLaunchRecovery({
+  setup,
+  workspaceId: requestedWorkspaceId,
+  onRunStarted
+}: {
+  readonly setup: PlaytestingRunSetup;
+  readonly workspaceId: string | null;
+  readonly onRunStarted: (
+    started: ControlApiPlaytestingRunStartedResponse
+  ) => void;
+}): {
+  readonly pending: boolean;
+  readonly recoveryReady: boolean;
+  readonly pendingLaunch: RecoverablePlaytestLaunchRequest | null;
+  readonly recoveryPanel: React.JSX.Element | null;
+  readonly statusMessage: React.JSX.Element | null;
+  readonly startLaunch: (payload: PlaytestLaunchRequestDraft) => Promise<void>;
+} {
+  const router = useRouter();
+  const capabilities = setup.kind === "available" ? setup.capabilities : null;
+  const workspaceId = capabilities?.workspaceId ?? requestedWorkspaceId;
+  const storageKey = workspaceId
+    ? PENDING_LAUNCH_STORAGE_PREFIX + encodeURIComponent(workspaceId)
+    : null;
+  const [pending, setPending] = useState(false);
+  const [recoveryReady, setRecoveryReady] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [pendingLaunch, setPendingLaunch] =
+    useState<RecoverablePlaytestLaunchRequest | null>(null);
+  const [requestLookup, setRequestLookup] =
+    useState<ControlApiPlaytestingRunRequestLookupResponse | null>(null);
+  const launchRequestId = useRef<string | null>(null);
+
+  function clearPendingLaunch(): void {
+    if (storageKey) {
+      try {
+        globalThis.localStorage.removeItem(storageKey);
+      } catch {
+        // Browser storage can be unavailable; Runtime remains the authority.
+      }
+    }
+    launchRequestId.current = null;
+    setPendingLaunch(null);
+    setRequestLookup(null);
+  }
+
+  useEffect(() => {
+    if (!workspaceId || !storageKey) {
+      setRecoveryReady(true);
+      return () => {};
+    }
+    setRecoveryReady(false);
+    setPendingLaunch(null);
+    setRequestLookup(null);
+    launchRequestId.current = null;
+    const restore = (serialized: string | null): void => {
+      if (!serialized) return;
+      const restored = restorePendingLaunch(serialized, workspaceId);
+      if (!restored) {
+        try {
+          globalThis.localStorage.removeItem(storageKey);
+        } catch {
+          // Ignore corrupt, inaccessible local recovery data.
+        }
+        return;
+      }
+      launchRequestId.current = restored.requestId;
+      setPendingLaunch(restored);
+      setNotice(
+        "A prior start request has no confirmed receipt. Recover it before starting or editing another run."
+      );
+    };
+    try {
+      restore(globalThis.localStorage.getItem(storageKey));
+    } catch {
+      setNotice(
+        "A previous request could not be restored. Check active runs before submitting another launch."
+      );
+    }
+    setRecoveryReady(true);
+    const onStorage = (event: StorageEvent): void => {
+      if (event.key !== storageKey) return;
+      if (event.newValue === null) {
+        setPendingLaunch(null);
+        setRequestLookup(null);
+        launchRequestId.current = null;
+        setNotice("Another tab confirmed or cleared this launch request.");
+        router.refresh();
+        return;
+      }
+      restore(event.newValue);
+    };
+    globalThis.addEventListener("storage", onStorage);
+    return () => globalThis.removeEventListener("storage", onStorage);
+  }, [workspaceId, storageKey, router]);
+
+  const submitLaunch = (launchRequest: RecoverablePlaytestLaunchRequest) =>
+    submitPlaytestLaunch({
+      capabilities,
+      storageKey,
+      launchRequest,
+      setPending,
+      setNotice,
+      setFailure,
+      setPendingLaunch,
+      requestIdRef: launchRequestId,
+      clearPendingLaunch,
+      onRunStarted,
+      refresh: () => router.refresh()
+    });
+
+  const withLaunchLock = <Result,>(operation: () => Promise<Result>) =>
+    withPlaytestLaunchLock(workspaceId, operation);
+
+  const startLaunch = (launchPayload: PlaytestLaunchRequestDraft) => {
+    if (!recoveryReady || pendingLaunch) return Promise.resolve();
+    return beginPlaytestLaunch({
+      capabilities,
+      storageKey,
+      launchPayload,
+      pendingLaunch,
+      requestIdRef: launchRequestId,
+      setPendingLaunch,
+      setFailure,
+      setNotice,
+      withLaunchLock,
+      submit: submitLaunch
+    });
+  };
+
+  const recoverLaunch = () =>
+    withLaunchLock(() =>
+      recoverPlaytestLaunch({
+        pendingLaunch,
+        workspaceId,
+        setPending,
+        setFailure,
+        setNotice,
+        setRequestLookup,
+        clearPendingLaunch,
+        onRunStarted
+      })
+    );
+
+  function discardUnacceptedRequest(): void {
+    if (
+      requestLookup?.state !== "not-found" &&
+      requestLookup?.state !== "expired"
+    ) {
+      return;
+    }
+    clearPendingLaunch();
+    setNotice(
+      "The unresolved request was cleared. Review the form before starting a new attempt."
+    );
+    setFailure(null);
+  }
+
+  const recoveryPanel = pendingRunPanel({
+    launch: pendingLaunch,
+    lookup: requestLookup,
+    pending,
+    workspaceId,
+    onRetry: () => {
+      if (pendingLaunch) {
+        void withLaunchLock(() => submitLaunch(pendingLaunch));
+      }
+    },
+    onRecover: () => void recoverLaunch(),
+    onDiscard: discardUnacceptedRequest
+  });
+
+  return {
+    pending,
+    recoveryReady,
+    pendingLaunch,
+    recoveryPanel,
+    statusMessage: RunStatusMessage({ notice, failure }),
+    startLaunch
+  };
+}
+
 function blockedRunPanel(
   unavailable: ReturnType<typeof playtestingRunSetupBlocker>
 ): React.JSX.Element | null {
@@ -1380,155 +1715,31 @@ export function PlaytestingRunControls({
     started: ControlApiPlaytestingRunStartedResponse
   ) => void;
 }): React.JSX.Element {
-  const router = useRouter();
   const capabilities = setup.kind === "available" ? setup.capabilities : null;
-  const workspaceId = capabilities?.workspaceId ?? requestedWorkspaceId;
-  const storageKey = workspaceId
-    ? PENDING_LAUNCH_STORAGE_PREFIX + encodeURIComponent(workspaceId)
-    : null;
-  const [pending, setPending] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
-  const [pendingLaunch, setPendingLaunch] =
-    useState<AdapterPlaytestLaunchRequest | null>(null);
-  const [requestLookup, setRequestLookup] =
-    useState<ControlApiPlaytestingRunRequestLookupResponse | null>(null);
-  const launchRequestId = useRef<string | null>(null);
-  const noticeNode = RunStatusMessage({ notice, failure });
+  const launchRecovery = usePlaytestingLaunchRecovery({
+    setup,
+    workspaceId: requestedWorkspaceId,
+    onRunStarted
+  });
   const unavailable = playtestingRunSetupBlocker(setup);
   const adapterRunReady =
     capabilities?.modeReadiness["adapter-accelerated"].status === "ready" &&
     capabilities.runnableAssignments.length > 0;
 
-  function clearPendingLaunch(): void {
-    if (storageKey) {
-      try {
-        globalThis.localStorage.removeItem(storageKey);
-      } catch {
-        // Browser storage can be unavailable; Runtime remains the authority.
+  const startRun = (request: RunSubmission): void => {
+    if (!capabilities) return;
+    const launchPayload: AdapterPlaytestLaunchRequestDraft = {
+      schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+      mode: "adapter-accelerated",
+      workspaceId: request.workspaceId,
+      capabilityRevision: capabilities.capabilityRevision,
+      operation: {
+        kind: "batch",
+        assignments: request.assignments
       }
-    }
-    launchRequestId.current = null;
-    setPendingLaunch(null);
-    setRequestLookup(null);
-  }
-
-  useEffect(() => {
-    if (!workspaceId || !storageKey) return () => {};
-    if (pendingLaunch && pendingLaunch.workspaceId !== workspaceId) {
-      setPendingLaunch(null);
-      setRequestLookup(null);
-      launchRequestId.current = null;
-      return () => {};
-    }
-    const restore = (serialized: string | null): void => {
-      if (!serialized) return;
-      const restored = restorePendingLaunch(serialized, workspaceId);
-      if (!restored) {
-        try {
-          globalThis.localStorage.removeItem(storageKey);
-        } catch {
-          // Ignore corrupt, inaccessible local recovery data.
-        }
-        return;
-      }
-      launchRequestId.current = restored.requestId;
-      setPendingLaunch(restored);
-      setNotice(
-        "A prior start request has no confirmed receipt. Recover it before starting or editing another run."
-      );
     };
-    try {
-      if (!pendingLaunch) restore(globalThis.localStorage.getItem(storageKey));
-    } catch {
-      setNotice(
-        "A previous request could not be restored. Check active runs before submitting another launch."
-      );
-    }
-    const onStorage = (event: StorageEvent): void => {
-      if (event.key !== storageKey) return;
-      if (event.newValue === null) {
-        setPendingLaunch(null);
-        setRequestLookup(null);
-        launchRequestId.current = null;
-        setNotice("Another tab confirmed or cleared this launch request.");
-        router.refresh();
-        return;
-      }
-      restore(event.newValue);
-    };
-    globalThis.addEventListener("storage", onStorage);
-    return () => globalThis.removeEventListener("storage", onStorage);
-  }, [workspaceId, storageKey, pendingLaunch, router]);
-
-  const submitLaunch = (launchRequest: AdapterPlaytestLaunchRequest) =>
-    submitPlaytestLaunch({
-      capabilities,
-      storageKey,
-      launchRequest,
-      setPending,
-      setNotice,
-      setFailure,
-      setPendingLaunch,
-      requestIdRef: launchRequestId,
-      clearPendingLaunch,
-      onRunStarted,
-      refresh: () => router.refresh()
-    });
-
-  const startRun = (request: RunSubmission) =>
-    beginPlaytestLaunch({
-      capabilities,
-      storageKey,
-      request,
-      pendingLaunch,
-      requestIdRef: launchRequestId,
-      setPendingLaunch,
-      setFailure,
-      setNotice,
-      withLaunchLock: (operation) =>
-        withPlaytestLaunchLock(workspaceId, operation),
-      submit: submitLaunch
-    });
-
-  const recoverLaunch = () =>
-    withPlaytestLaunchLock(workspaceId, () =>
-      recoverPlaytestLaunch({
-        pendingLaunch,
-        workspaceId,
-        setPending,
-        setFailure,
-        setNotice,
-        setRequestLookup,
-        clearPendingLaunch,
-        onRunStarted
-      })
-    );
-
-  function discardUnacceptedRequest(): void {
-    if (
-      requestLookup?.state !== "not-found" &&
-      requestLookup?.state !== "expired"
-    ) {
-      return;
-    }
-    clearPendingLaunch();
-    setNotice(
-      "The unresolved request was cleared. Review the form before starting a new attempt."
-    );
-    setFailure(null);
-  }
-
-  const recoveryPanel = pendingRunPanel({
-    launch: pendingLaunch,
-    lookup: requestLookup,
-    pending,
-    workspaceId,
-    onRetry: () =>
-      withPlaytestLaunchLock(workspaceId, () => submitLaunch(pendingLaunch!)),
-    onRecover: () => void recoverLaunch(),
-    onDiscard: discardUnacceptedRequest
-  });
+    void launchRecovery.startLaunch(launchPayload);
+  };
 
   return React.createElement(
     "section",
@@ -1537,14 +1748,17 @@ export function PlaytestingRunControls({
       "data-run-setup": setup.kind
     },
     blockedRunPanel(unavailable),
-    capabilities && adapterRunReady && !pendingLaunch
+    capabilities &&
+      adapterRunReady &&
+      launchRecovery.recoveryReady &&
+      !launchRecovery.pendingLaunch
       ? React.createElement(RunRequestForm, {
           capabilities,
-          pending,
-          onSubmit: (request) => void startRun(request)
+          pending: launchRecovery.pending,
+          onSubmit: startRun
         })
       : null,
-    recoveryPanel,
-    noticeNode
+    launchRecovery.recoveryPanel,
+    launchRecovery.statusMessage
   );
 }

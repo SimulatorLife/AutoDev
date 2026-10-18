@@ -5,6 +5,7 @@ import type {
   PlaytestCheckpointDigest,
   PlaytestJsonValue
 } from "./protocol-types.ts";
+import type { PlaytestPlayerDebriefV1 } from "./player-debrief.ts";
 import {
   type PlaytestAdapterAssignmentManifest,
   type PlaytestAssignmentBranch,
@@ -175,6 +176,8 @@ export interface PlaytestEpisode {
   readonly branchLineage: PlaytestBranchLineage | null;
   /** Frozen execution mode and source/build facts; no mode is inferred at display time. */
   readonly executionProvenance: PlaytestExecutionProvenance;
+  /** Explicit player-authored report state, or absent for migrated history. */
+  readonly playerDebrief: PlaytestPlayerDebriefV1;
   readonly identity: PlaytestEpisodeIdentity;
   /** Null for URL-only visual sessions with no asserted engine scenario family. */
   readonly scenarioFamily: string | null;
@@ -311,6 +314,7 @@ interface PlaytestBatchBase {
   readonly policyIds: readonly string[];
   readonly cohortIds: readonly string[];
   readonly scenarioIds: readonly string[];
+  /** Null only when assignment inventory is unavailable/legacy; frozen batches use [] when none are terminally unobserved. */
   readonly unobservedAssignments: readonly PlaytestAssignmentOutcome[] | null;
   readonly reviewPackets: readonly PlaytestReviewPacketReceipt[];
   readonly reviewReceipts: readonly PlaytestReviewReceipt[];
@@ -775,12 +779,18 @@ export interface PlaytestDiscoverySessionReview {
     readonly text: string;
     readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
   }[];
-  readonly alternativeExplanations: readonly string[];
+  readonly alternativeExplanations: readonly {
+    readonly hypothesisId: string;
+    readonly status: "hypothesis" | "not-observed";
+    readonly text: string;
+    readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
+  }[];
   readonly experiments: readonly {
     readonly hypothesis: string;
     readonly falsifier: string;
     readonly controls: readonly string[];
     readonly budget: string;
+    readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
   }[];
   readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
   readonly createdAt: string;

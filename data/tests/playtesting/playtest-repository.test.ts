@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   assertPlaytestAssignmentManifest,
+  assertPlaytestCoverageManifest,
   buildPlaytestCoverageManifestDraft,
   buildPlaytestFindingIdentity,
   type HumanPlaytestStudy,
@@ -17,8 +18,8 @@ import {
   type PlaytestComparison,
   playtestCoverageManifestHashInput,
   type PlaytestCrossSessionSynthesis,
-  type PlaytestEpisode,
   type PlaytestDiscoverySessionReview,
+  type PlaytestEpisode,
   type PlaytestExperiment,
   playtestExperimentHashInput,
   type PlaytestFinding,
@@ -38,14 +39,17 @@ import {
   PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA,
   PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
   PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA_V1,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
+  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA_V1,
+  PLAYTESTS_EPISODE_SCHEMA_V2,
   PLAYTESTS_EPISODE_SCHEMA_V3,
   PLAYTESTS_EPISODE_SCHEMA_V4,
   PLAYTESTS_EPISODE_SCHEMA_V5,
   PLAYTESTS_EPISODE_SCHEMA_V6,
-  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
-  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
+  PLAYTESTS_EPISODE_SCHEMA_V7,
+  PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
@@ -75,22 +79,22 @@ import {
   decodeBatch,
   decodeComparison,
   decodeCrossSessionSynthesis,
+  decodeDiscoveryReview,
   decodeEpisode,
   decodeExperiment,
   decodeFinding,
   decodeReview,
-  decodeDiscoveryReview,
   encodeBatch,
   encodeBenchmark,
   encodeComparison,
   encodeCrossSessionSynthesis,
+  encodeDiscoveryReview,
   encodeEpisode,
   encodeExperiment,
   encodeFinding,
   encodeHumanStudy,
   encodeHumanSummary,
   encodeReview,
-  encodeDiscoveryReview,
   migrateLegacyEpisodeForStorage
 } from "../../src/playtesting/row-codec.ts";
 
@@ -166,6 +170,11 @@ function episode(
       protocolVersion: 1,
       runtimeVersion: "runtime-v1",
       environmentHash: "env-v1"
+    },
+    playerDebrief: {
+      schema: PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
+      status: "absent",
+      reason: "legacy-no-report"
     },
     scenarioFamily: "synthetic",
     policyCohort: index % 4 ? "novice" : "expert",
@@ -585,8 +594,23 @@ function discoveryReview(): PlaytestDiscoverySessionReview {
         evidenceRefs: [{ kind: "episode", id: "ep-visual-1" }]
       }
     ],
-    alternativeExplanations: [],
-    experiments: [],
+    alternativeExplanations: [
+      {
+        hypothesisId: "alternative-1",
+        status: "hypothesis",
+        text: "The stage label may refer to preview selection only.",
+        evidenceRefs: [{ kind: "episode", id: "ep-visual-1" }]
+      }
+    ],
+    experiments: [
+      {
+        hypothesis: "Check whether selecting the stage begins a race.",
+        falsifier: "The same control leaves the setup screen unchanged.",
+        controls: ["Stage 1"],
+        budget: "One visual decision.",
+        evidenceRefs: [{ kind: "episode", id: "ep-visual-1" }]
+      }
+    ],
     evidenceRefs: [{ kind: "episode", id: "ep-visual-1" }],
     createdAt: "2026-10-17T12:00:00.000Z",
     status: "hypothesis"
@@ -1184,6 +1208,31 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
   assert.equal(migratedEpisode.executionProvenance.mode, "legacy-unknown");
   assert.equal(migratedEpisode.metrics[0]?.opportunityCount, null);
   assert.equal(migratedEpisode.metrics[0]?.coverage, 0.5);
+  assert.deepEqual(migratedEpisode.playerDebrief, {
+    schema: PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
+    status: "absent",
+    reason: "legacy-no-report"
+  });
+
+  const v2EpisodeRow = encodeEpisode(episode(12));
+  const v2EpisodePayload = JSON.parse(v2EpisodeRow.payload_json) as Record<
+    string,
+    unknown
+  >;
+  v2EpisodePayload.schema = PLAYTESTS_EPISODE_SCHEMA_V2;
+  delete v2EpisodePayload.executionProvenance;
+  delete v2EpisodePayload.playerDebrief;
+  const migratedV2Episode = migrateLegacyEpisodeForStorage({
+    ...v2EpisodeRow,
+    payload_json: JSON.stringify(v2EpisodePayload)
+  } as unknown as Record<string, unknown>);
+  assert.equal(migratedV2Episode.schema, PLAYTESTS_EPISODE_SCHEMA);
+  assert.equal(migratedV2Episode.revision, episode(12).revision);
+  assert.deepEqual(migratedV2Episode.playerDebrief, {
+    schema: PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
+    status: "absent",
+    reason: "legacy-no-report"
+  });
 
   const v3EpisodePayload = JSON.parse(
     encodeEpisode(episode(3)).payload_json
@@ -1201,6 +1250,12 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
     reason: "unknown",
     step: null
   });
+  assert.deepEqual(migratedV3Episode.playerDebrief, {
+    schema: PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
+    status: "absent",
+    reason: "legacy-no-report"
+  });
+  assert.equal(migratedV3Episode.revision, episode(3).revision);
   const v5EpisodeRow = encodeEpisode(episode(4));
   const v5EpisodePayload = JSON.parse(v5EpisodeRow.payload_json) as Record<
     string,
@@ -1218,6 +1273,35 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
     "adapter-accelerated"
   );
   assert.equal(migratedV5Episode.identity.buildSha, BUILD_SHA_B);
+  assert.deepEqual(migratedV5Episode.playerDebrief, {
+    schema: PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
+    status: "absent",
+    reason: "legacy-no-report"
+  });
+
+  const v7EpisodeRow = encodeEpisode(episode(6));
+  const v7EpisodePayload = JSON.parse(v7EpisodeRow.payload_json) as Record<
+    string,
+    unknown
+  >;
+  v7EpisodePayload.schema = PLAYTESTS_EPISODE_SCHEMA_V7;
+  delete v7EpisodePayload.playerDebrief;
+  const migratedV7Episode = migrateLegacyEpisodeForStorage({
+    ...v7EpisodeRow,
+    payload_json: JSON.stringify(v7EpisodePayload)
+  } as unknown as Record<string, unknown>);
+  assert.equal(migratedV7Episode.schema, PLAYTESTS_EPISODE_SCHEMA);
+  assert.equal(migratedV7Episode.revision, episode(6).revision);
+  assert.equal(
+    migratedV7Episode.executionProvenance.mode,
+    "adapter-accelerated"
+  );
+  assert.deepEqual(migratedV7Episode.playerDebrief, {
+    schema: PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
+    status: "absent",
+    reason: "legacy-no-report"
+  });
+
   const visualEpisodeV6: PlaytestEpisode = {
     ...episode(5),
     batchId: "visual-batch-1",
@@ -1278,6 +1362,11 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
   assert.equal(migratedVisualV5.scenarioFamily, null);
   assert.equal(migratedVisualV5.policyCohort, null);
   assert.equal(migratedVisualV5.revision, visualEpisodeV6.revision);
+  assert.deepEqual(migratedVisualV5.playerDebrief, {
+    schema: PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
+    status: "absent",
+    reason: "legacy-no-report"
+  });
 
   const visualV6Row = encodeEpisode(visualEpisodeV6);
   const visualV6Payload = JSON.parse(visualV6Row.payload_json) as Record<
@@ -1295,6 +1384,36 @@ test("Data round-trips only verified branch lineage and migrates episode/manifes
   assert.equal(migratedVisualV6.executionProvenance.mode, "autonomous-visual");
   assert.equal(migratedVisualV6.scenarioFamily, null);
   assert.equal(migratedVisualV6.policyCohort, null);
+  assert.deepEqual(migratedVisualV6.playerDebrief, {
+    schema: PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
+    status: "absent",
+    reason: "legacy-no-report"
+  });
+  assert.equal(migratedVisualV6.revision, visualEpisodeV6.revision);
+
+  const visualV7Row = encodeEpisode(visualEpisodeV6);
+  const visualV7Payload = JSON.parse(visualV7Row.payload_json) as Record<
+    string,
+    unknown
+  >;
+  visualV7Payload.schema = PLAYTESTS_EPISODE_SCHEMA_V7;
+  visualV7Payload.scenarioFamily = "visual-discovery";
+  visualV7Payload.policyCohort = "exploratory";
+  delete visualV7Payload.playerDebrief;
+  const migratedVisualV7 = migrateLegacyEpisodeForStorage({
+    ...visualV7Row,
+    cohort: "exploratory",
+    payload_json: JSON.stringify(visualV7Payload)
+  } as unknown as Record<string, unknown>);
+  assert.equal(migratedVisualV7.executionProvenance.mode, "autonomous-visual");
+  assert.equal(migratedVisualV7.scenarioFamily, null);
+  assert.equal(migratedVisualV7.policyCohort, null);
+  assert.deepEqual(migratedVisualV7.playerDebrief, {
+    schema: PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
+    status: "absent",
+    reason: "legacy-no-report"
+  });
+  assert.equal(migratedVisualV7.revision, visualEpisodeV6.revision);
   assert.throws(
     () =>
       decodeEpisode({
@@ -2374,6 +2493,26 @@ test("Data round-trips a visual batch with explicit null source identity", () =>
   assert.equal(decoded.assignmentInventory.status, "frozen-visual");
 });
 
+test("Data accepts a running visual batch with explicit empty unobserved outcomes", () => {
+  const completed = visualBatch();
+  const running: PlaytestVisualBatch = {
+    ...completed,
+    status: "running",
+    counts: {
+      ...completed.counts,
+      started: 0,
+      completed: 0
+    },
+    completedAt: null,
+    unobservedAssignments: []
+  };
+  assert.doesNotThrow(() => encodeBatch(running));
+  assert.throws(
+    () => encodeBatch({ ...running, unobservedAssignments: null }),
+    /Batch no-episode outcomes must be unique terminal assignments/u
+  );
+});
+
 test("Data round-trips an in-flight visual episode revision with a durable frame reference", async () => {
   const base = episode(700);
   const visualEpisode: PlaytestEpisode = {
@@ -2436,7 +2575,12 @@ test("Data round-trips an in-flight visual episode revision with a durable frame
     replayStatus: "unavailable",
     trace: null,
     frames: [
-      { id: "frame-captured-before-decision", kind: "frame", step: 0, frameIndex: 0 }
+      {
+        id: "frame-captured-before-decision",
+        kind: "frame",
+        step: 0,
+        frameIndex: 0
+      }
     ],
     stepCount: 0,
     metrics: [],
@@ -2515,6 +2659,100 @@ test("Data verifies coverage-manifest hashes and its frozen batch identity", () 
   const decoded = decodeBatch(encoded as unknown as Record<string, unknown>);
   assert.deepEqual(decoded.coverageManifest, artifact.coverageManifest);
   assert.equal(decoded.coverageManifest?.cells[0]?.status, "partial");
+
+  const legacyPayload = JSON.parse(encoded.payload_json) as Record<string, any>;
+  const currentManifest = legacyPayload.assignmentInventory.manifest;
+  const {
+    mode: _mode,
+    contentHash: _manifestHash,
+    ...manifestWithoutMode
+  } = currentManifest;
+  const legacyManifestDraft = {
+    ...manifestWithoutMode,
+    schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V3
+  };
+  const legacyManifest = {
+    ...legacyManifestDraft,
+    contentHash: createHash("sha256")
+      .update(
+        playtestAssignmentManifestHashInput(
+          legacyManifestDraft as unknown as PlaytestAssignmentManifestDraft
+        )
+      )
+      .digest("hex")
+  };
+  const { contentHash: _coverageHash, ...coverageWithoutHash } =
+    legacyPayload.coverageManifest;
+  const legacyCoverageDraft = {
+    ...coverageWithoutHash,
+    assignmentManifestHash: legacyManifest.contentHash
+  };
+  legacyPayload.schema = PLAYTESTS_BATCH_SCHEMA_V3;
+  legacyPayload.assignmentInventory.manifest = legacyManifest;
+  legacyPayload.coverageManifest = {
+    ...legacyCoverageDraft,
+    contentHash: createHash("sha256")
+      .update(
+        playtestCoverageManifestHashInput(
+          legacyCoverageDraft as Parameters<
+            typeof playtestCoverageManifestHashInput
+          >[0]
+        )
+      )
+      .digest("hex")
+  };
+  delete legacyPayload.executionMode;
+  const migratedLegacy = decodeBatch({
+    ...encoded,
+    payload_json: JSON.stringify(legacyPayload)
+  } as unknown as Record<string, unknown>);
+  assert.equal(migratedLegacy.schema, PLAYTESTS_BATCH_SCHEMA);
+  assert.equal(
+    migratedLegacy.coverageManifest?.assignmentManifestHash,
+    migratedLegacy.assignmentInventory.status === "frozen"
+      ? migratedLegacy.assignmentInventory.manifest.contentHash
+      : null
+  );
+  assert.doesNotThrow(() =>
+    assertPlaytestCoverageManifest(migratedLegacy.coverageManifest)
+  );
+  assert.deepEqual(
+    migratedLegacy.coverageManifest?.cells,
+    artifact.coverageManifest?.cells
+  );
+
+  const invalidLegacyHashPayload = structuredClone(legacyPayload);
+  invalidLegacyHashPayload.coverageManifest.contentHash = "f".repeat(64);
+  assert.throws(
+    () =>
+      decodeBatch({
+        ...encoded,
+        payload_json: JSON.stringify(invalidLegacyHashPayload)
+      } as unknown as Record<string, unknown>),
+    /content hash is invalid before assignment migration/u
+  );
+
+  const invalidLegacyPayload = structuredClone(legacyPayload);
+  invalidLegacyPayload.coverageManifest.assignmentManifestHash = "e".repeat(64);
+  const { contentHash: _invalidCoverageHash, ...invalidCoverageDraft } =
+    invalidLegacyPayload.coverageManifest;
+  invalidLegacyPayload.coverageManifest.contentHash = createHash("sha256")
+    .update(
+      playtestCoverageManifestHashInput(
+        invalidCoverageDraft as Parameters<
+          typeof playtestCoverageManifestHashInput
+        >[0]
+      )
+    )
+    .digest("hex");
+  assert.throws(
+    () =>
+      decodeBatch({
+        ...encoded,
+        payload_json: JSON.stringify(invalidLegacyPayload)
+      } as unknown as Record<string, unknown>),
+    /does not match its original batch and assignment identity/u
+  );
   assert.throws(
     () =>
       encodeBatch({
@@ -2904,6 +3142,12 @@ test("filtered episode counts reflect the full 10k population and SQL binds valu
       row.game_outcome === "win"
   ).length;
   assert.equal(page.total, expected);
+  const episodeSelect = fake.calls
+    .map((url) => url.searchParams.get("query") ?? "")
+    .find((query) =>
+      query.startsWith("SELECT workspace_id, batch_id, episode_id")
+    );
+  assert.ok(episodeSelect?.includes("scenario, seed, build_sha, policy"));
   assert.equal(
     await repo.countEpisodes({
       workspaceId: "workspace-a/game",

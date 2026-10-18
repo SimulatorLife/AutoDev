@@ -46,7 +46,7 @@ test("same-origin route forwards the canonical 1,000-assignment batch without tr
     forwarded = JSON.parse(String(init?.body));
     return Response.json(
       {
-        schema: "autodev-control-playtesting-run-started-v2",
+        schema: "autodev-control-playtesting-run-started-v3",
         workspaceId: WORKSPACE_ID,
         batchId: "batch-route-1000",
         assignmentCount: PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
@@ -54,6 +54,17 @@ test("same-origin route forwards the canonical 1,000-assignment batch without tr
           { length: PLAYTESTS_MAX_BATCH_ASSIGNMENTS },
           (_, index) => `a-${String(index + 1).padStart(4, "0")}`
         ),
+        sessions: Array.from(
+          { length: PLAYTESTS_MAX_BATCH_ASSIGNMENTS },
+          (_, index) => {
+            const assignmentId = `a-${String(index + 1).padStart(4, "0")}`;
+            return {
+              assignmentId,
+              episodeId: `batch-route-1000.${assignmentId}`
+            };
+          }
+        ),
+        createdAt: "2026-10-12T00:00:00.000Z",
         status: "running"
       },
       { status: 202 }
@@ -124,13 +135,18 @@ test("active-runs GET reads the typed owner and rejects a non-canonical workspac
     requested = String(input);
     return Response.json(
       {
-        schema: "autodev-control-playtesting-runs-v1",
+        schema: "autodev-control-playtesting-runs-v2",
         workspaceId: WORKSPACE_ID,
         runs: [
           {
             batchId: "batch-live-1",
             assignmentCount: 3,
             createdAt: "2026-10-12T00:00:00.000Z",
+            sessions: [
+              { assignmentId: "a-0001", episodeId: "batch-live-1.a-0001" },
+              { assignmentId: "a-0002", episodeId: "batch-live-1.a-0002" },
+              { assignmentId: "a-0003", episodeId: "batch-live-1.a-0003" }
+            ],
             status: {
               batchId: "batch-live-1",
               status: "running",
@@ -187,15 +203,63 @@ test("active-runs GET refuses a response whose live status is not its own batch"
   globalThis.fetch = (async () =>
     Response.json(
       {
-        schema: "autodev-control-playtesting-runs-v1",
+        schema: "autodev-control-playtesting-runs-v2",
         workspaceId: WORKSPACE_ID,
         runs: [
           {
             batchId: "batch-a",
             assignmentCount: 1,
             createdAt: "2026-10-12T00:00:00.000Z",
+            sessions: [{ assignmentId: "a-0001", episodeId: "batch-a.a-0001" }],
             status: {
               batchId: "batch-b",
+              status: "running",
+              cancellationReason: null,
+              result: null,
+              error: null
+            }
+          }
+        ]
+      },
+      { status: 200 }
+    )) as typeof fetch;
+  try {
+    const response = await GET(
+      new NextRequest(
+        `${API_PATH}?workspaceId=${encodeURIComponent(WORKSPACE_ID)}`
+      )
+    );
+    assert.equal(response.status, 502);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined) {
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    } else {
+      process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
+    }
+  }
+});
+
+test("active-runs GET refuses duplicate assignment-to-session references", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "r".repeat(64);
+  globalThis.fetch = (async () =>
+    Response.json(
+      {
+        schema: "autodev-control-playtesting-runs-v2",
+        workspaceId: WORKSPACE_ID,
+        runs: [
+          {
+            batchId: "batch-a",
+            assignmentCount: 2,
+            createdAt: "2026-10-12T00:00:00.000Z",
+            sessions: [
+              { assignmentId: "a-0001", episodeId: "batch-a.a-0001" },
+              { assignmentId: "a-0001", episodeId: "batch-a.a-0002" }
+            ],
+            status: {
+              batchId: "batch-a",
               status: "running",
               cancellationReason: null,
               result: null,
@@ -232,13 +296,16 @@ test("request recovery reads the actor/workspace-scoped immutable receipt withou
     requested = String(input);
     return Response.json(
       {
-        schema: "autodev-control-playtesting-run-request-v1",
+        schema: "autodev-control-playtesting-run-request-v2",
         workspaceId: WORKSPACE_ID,
         requestId: "console-recovery-1",
         state: "accepted",
         batchId: "batch-route-recovered",
         assignmentCount: 1,
         assignmentIds: ["a-0001"],
+        sessions: [
+          { assignmentId: "a-0001", episodeId: "batch-route-recovered.a-0001" }
+        ],
         createdAt: "2026-10-16T12:00:00.000Z",
         status: "completed"
       },
@@ -260,6 +327,10 @@ test("request recovery reads the actor/workspace-scoped immutable receipt withou
         readonly state: string;
         readonly batchId: string;
         readonly assignmentIds: readonly string[];
+        readonly sessions: readonly {
+          readonly assignmentId: string;
+          readonly episodeId: string;
+        }[];
         readonly status: string;
       };
     };
@@ -267,6 +338,9 @@ test("request recovery reads the actor/workspace-scoped immutable receipt withou
     assert.equal(body.data.state, "accepted");
     assert.equal(body.data.batchId, "batch-route-recovered");
     assert.deepEqual(body.data.assignmentIds, ["a-0001"]);
+    assert.deepEqual(body.data.sessions, [
+      { assignmentId: "a-0001", episodeId: "batch-route-recovered.a-0001" }
+    ]);
     assert.equal(body.data.status, "completed");
     assert.equal(response.headers.get("cache-control"), "no-store");
 
@@ -328,11 +402,15 @@ test("autonomous-visual launch accepts strictly valid payload and forwards to Ru
     forwarded = JSON.parse(String(init?.body));
     return Response.json(
       {
-        schema: "autodev-control-playtesting-run-started-v2",
+        schema: "autodev-control-playtesting-run-started-v3",
         workspaceId: WORKSPACE_ID,
         batchId: "batch-visual-1",
         assignmentCount: 1,
         assignmentIds: ["vis-0001"],
+        sessions: [
+          { assignmentId: "vis-0001", episodeId: "ep-visual-1-vis-0001" }
+        ],
+        createdAt: "2026-10-12T00:00:00.000Z",
         status: "running"
       },
       { status: 202 }

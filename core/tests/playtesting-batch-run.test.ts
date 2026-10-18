@@ -9,6 +9,8 @@ import {
   type PlaytestAssignmentManifest,
   playtestAssignmentManifestHashInput,
   playtestAssignmentStrataLowerBound,
+  playtestEpisodeRecordId,
+  playtestVisualEpisodeRecordId,
   type PlaytestBatchAssignment,
   playtestBatchCountsFromAssignments,
   playtestBatchTerminalState,
@@ -706,5 +708,19 @@ test("visual assignment manifests preserve URL-only identity without adapter fie
         ]
       }),
     /Visual batch assignment is malformed/u
+  );
+});
+
+test("session reference ids are deterministic for adapter and visual assignments", () => {
+  assert.equal(
+    playtestEpisodeRecordId("batch-0123456789abcdef-run", "a-0001"),
+    "batch-0123456789abcdef-run.a-0001"
+  );
+  assert.equal(
+    playtestVisualEpisodeRecordId(
+      "batch-0123456789abcdef-run",
+      "vis-assign-0001"
+    ),
+    "ep-0123456789abcdef-vis-assign-0001"
   );
 });

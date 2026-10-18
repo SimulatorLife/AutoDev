@@ -44,7 +44,8 @@ import type {
 import type {
   PlaytestComparison,
   PlaytestFinding,
-  PlaytestNumericInterval
+  PlaytestNumericInterval,
+  PlaytestSessionReference
 } from "../playtesting/types.ts";
 import type {
   OperationHistoryEntry,
@@ -1262,12 +1263,14 @@ export interface ControlApiPlaytestingCapabilitiesResponse {
 
 /** Typed active-run response; Data remains the authoritative batch history. */
 export interface ControlApiPlaytestingActiveRunsResponse {
-  readonly schema: "autodev-control-playtesting-runs-v1";
+  readonly schema: "autodev-control-playtesting-runs-v2";
   readonly workspaceId: string;
   readonly runs: readonly {
     readonly batchId: string;
     readonly assignmentCount: number;
     readonly createdAt: string;
+    /** Frozen assignment-to-session links for in-progress Watch navigation. */
+    readonly sessions: readonly PlaytestSessionReference[];
     /**
      * The same owner-read record the single-batch status route returns, so one
      * list renders every nonterminal batch without a request per batch.
@@ -1278,12 +1281,14 @@ export interface ControlApiPlaytestingActiveRunsResponse {
 
 /** Stable launch receipt; status may reflect an idempotent replay. */
 export interface ControlApiPlaytestingRunStartedResponse {
-  readonly schema: "autodev-control-playtesting-run-started-v2";
+  readonly schema: "autodev-control-playtesting-run-started-v3";
   readonly workspaceId: string;
   readonly batchId: string;
   readonly assignmentCount: number;
-  /** Frozen manifest IDs; an assignment has no episode until gameplay starts. */
+  /** Frozen manifest IDs; a session reference is an identity, not an outcome. */
   readonly assignmentIds: readonly string[];
+  /** Exact deterministic session IDs for these frozen assignments. */
+  readonly sessions: readonly PlaytestSessionReference[];
   /** The exact Runtime-registered timestamp, shared with active-run reads. */
   readonly createdAt: string;
   readonly status: ControlApiPlaytestingRunState;
@@ -1291,13 +1296,14 @@ export interface ControlApiPlaytestingRunStartedResponse {
 
 /** Workspace/actor-scoped recovery lookup for an uncertain client launch. */
 export interface ControlApiPlaytestingRunRequestLookupResponse {
-  readonly schema: "autodev-control-playtesting-run-request-v1";
+  readonly schema: "autodev-control-playtesting-run-request-v2";
   readonly workspaceId: string;
   readonly requestId: string;
   readonly state: "not-found" | "expired" | "pending" | "accepted";
   readonly batchId: string | null;
   readonly assignmentCount: number | null;
   readonly assignmentIds: readonly string[];
+  readonly sessions: readonly PlaytestSessionReference[];
   readonly createdAt: string | null;
   readonly status: ControlApiPlaytestingRunState | null;
 }
@@ -1313,6 +1319,7 @@ export interface ControlApiPlaytestingRunStatusResponse {
 export interface ControlApiPlaytestingAnalystRun {
   readonly analysisId: string;
   readonly workspaceId: string;
+  readonly analysisKind?: "confirmatory" | "discovery";
   readonly status: "running" | "completed" | "partial" | "failed";
   readonly createdAt: string;
   readonly finishedAt: string | null;
@@ -1594,14 +1601,33 @@ export interface ControlApiPlaytestingPageResponse<T> {
 }
 
 /** Workspace-bound selected episode and its newest append-only analyst review. */
+/**
+ * Workspace/batch/assignment-bound visual target state for one episode,
+ * copied verbatim from the exact frozen visual batch assignment manifest.
+ *
+ * Null for every adapter-accelerated episode, which has no visual target.
+ * An autonomous-visual episode either carries this validated record or the
+ * detail read fails closed: there is no "unavailable" placeholder value,
+ * because a client cannot act on an attested batch of one that might be
+ * wrong.
+ */
+export interface ControlApiPlaytestingVisualAssignment {
+  readonly targetId: string;
+  readonly targetApprovalId: string;
+  readonly targetRevision: number;
+  readonly targetOrigin: string;
+  readonly areasOfFocus: string | null;
+}
+
 export interface ControlApiPlaytestingEpisodeDetailResponse {
-  readonly schema: "autodev-control-playtesting-detail-v2";
+  readonly schema: "autodev-control-playtesting-detail-v4";
   readonly workspaceId: string;
   readonly resource: "episode";
   readonly readOnly: true;
   readonly record: PlaytestEpisode;
   readonly latestReview: PlaytestSessionReview | null;
   readonly latestDiscoveryReview: PlaytestDiscoverySessionReview | null;
+  readonly visualAssignment: ControlApiPlaytestingVisualAssignment | null;
 }
 
 /** Integrity-checked, workspace-bound bounded JSONL evidence window. */

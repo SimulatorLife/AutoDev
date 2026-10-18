@@ -32,12 +32,28 @@ enabled = false
 [mcp_servers.codex_app]
 enabled = false
 
+[features]
+shell_tool = false
+multi_agent = false
+multi_agent_v2 = false
+hooks = false
+memories = false
+
 [tools]
 web_search = false
 
+[shell_environment_policy]
+inherit = "none"
+
+[plugins."codex-app-tools@openai-bundled"]
+enabled = false
+
 # Runtime-hosted playtesting MCP server. This role gets approved run/status,
 # cancellation, and result-read commands; evidence review/compare/findings write
-# operations remain restricted to playtest-analyst and root.
+# operations remain restricted to playtest-analyst and root. The environment
+# allowlist forwards only the trusted session identity and the dedicated
+# runner Control API credential (never the general Control API token,
+# provider API keys, or analyst-only review/write tools).
 [mcp_servers.playtest]
 enabled = true
 default_tools_approval_mode = "approve"
@@ -51,6 +67,25 @@ enabled_tools = [
   "playtest.listEpisodes",
   "playtest.readEpisode",
   "playtest.readWindow",
+]
+env_vars = [
+  "AUTODEV_PLAYTEST_WORKSPACE_ID",
+  "AUTODEV_PLAYTEST_ROLE",
+  "AUTODEV_PLAYTEST_ACTOR_ID",
+  "AUTODEV_PLAYTEST_TASK_ID",
+  "AUTODEV_PLAYTEST_RUN_ID",
+  "AUTODEV_PLAYTEST_REPOSITORY_ROOT",
+  "AUTODEV_REPO_ROOT",
+  "CODEX_HOME",
+  "CLICKHOUSE_URL",
+  "OPENLIT_DB_USER",
+  "OPENLIT_DB_NAME",
+  "AUTODEV_CONTROL_API_BASE_URL",
+  "AUTODEV_CONTROL_API_LISTEN_HOST",
+  "AUTODEV_CONTROL_API_LISTEN_PORT",
+  "AUTODEV_PLAYTEST_CONTROL_API_TOKEN",
+  "AUTODEV_PLAYTEST_CONTROL_API_ACTOR",
+  "AUTODEV_PLAYTEST_CONTROL_API_ROLE",
 ]
 
 [skills]
@@ -94,4 +129,3 @@ enabled = false
 [[skills.config]]
 name = "game-playtesting"
 enabled = true
-

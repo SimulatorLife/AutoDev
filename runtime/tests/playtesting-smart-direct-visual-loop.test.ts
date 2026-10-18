@@ -113,7 +113,8 @@ test("a Smart-direct response drives one admitted action through the isolated vi
               kind: "activate-control",
               controlId: startControl?.controlId
             },
-            stopReason: null
+            stopReason: null,
+            focusReport: null
           })
         });
       }

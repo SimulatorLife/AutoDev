@@ -24,6 +24,7 @@ import {
   type ControlApiPlaytestingRunRequestLookupResponse,
   type ControlApiPlaytestingRunStartedResponse,
   type ControlApiPlaytestingRunStatusResponse,
+  type ControlApiPlaytestingVisualAssignment,
   type ControlApiPlaytestingWindowResponse,
   type HumanPlaytestStudy,
   isControlApiPlaytestingRunState,
@@ -35,12 +36,12 @@ import {
   type PlaytestFinding,
   type PlaytestJsonValue,
   type PlaytestLaunchRequest,
+  type PlaytestSessionReference,
   PLAYTESTS_BATCH_SCHEMA,
   PLAYTESTS_BATCH_SCHEMA_V1,
   PLAYTESTS_BATCH_SCHEMA_V2,
   PLAYTESTS_BATCH_SCHEMA_V3,
   PLAYTESTS_COMPARISON_SCHEMA,
-  PLAYTESTS_EPISODE_TERMINATION_REASONS,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA_V1,
   PLAYTESTS_EPISODE_SCHEMA_V2,
@@ -48,6 +49,7 @@ import {
   PLAYTESTS_EPISODE_SCHEMA_V4,
   PLAYTESTS_EPISODE_SCHEMA_V5,
   PLAYTESTS_EPISODE_SCHEMA_V6,
+  PLAYTESTS_EPISODE_TERMINATION_REASONS,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
@@ -85,6 +87,7 @@ const SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const CAPABILITY_REVISION_PATTERN = /^[a-f\d]{64}$/u;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const ASSIGNMENT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const EPISODE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const ENTITY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const PLAYTESTING_READINESS_LABEL = "Playtesting readiness";
@@ -428,23 +431,59 @@ function isDiscoveryReview(
   }
 }
 
+const VISUAL_ASSIGNMENT_KEYS = new Set([
+  "areasOfFocus",
+  "targetApprovalId",
+  "targetId",
+  "targetOrigin",
+  "targetRevision"
+]);
+
+function isVisualAssignment(
+  value: unknown,
+  episode: PlaytestEpisode
+): value is ControlApiPlaytestingVisualAssignment {
+  const source = episode.executionProvenance.source;
+  return (
+    episode.executionProvenance.mode === "autonomous-visual" &&
+    isRecord(value) &&
+    Object.keys(value).length === VISUAL_ASSIGNMENT_KEYS.size &&
+    Object.keys(value).every((key) => VISUAL_ASSIGNMENT_KEYS.has(key)) &&
+    value.targetId === source.targetId &&
+    value.targetOrigin === source.targetOrigin &&
+    isNonEmptyString(value.targetApprovalId) &&
+    isCount(value.targetRevision) &&
+    value.targetRevision > 0 &&
+    (value.areasOfFocus === null ||
+      (typeof value.areasOfFocus === "string" &&
+        value.areasOfFocus.length > 0 &&
+        value.areasOfFocus.length <= 2000))
+  );
+}
+
 function isEpisodeDetailResponse(
   value: unknown,
   workspaceId: string,
   episodeId: string
 ): value is ControlApiPlaytestingEpisodeDetailResponse {
-  return (
-    isRecord(value) &&
-    value.schema === "autodev-control-playtesting-detail-v2" &&
-    value.workspaceId === workspaceId &&
-    value.resource === "episode" &&
-    value.readOnly === true &&
-    validPlaytestRecord(value.record, "episodes", workspaceId) &&
-    value.record.episodeId === episodeId &&
-    (value.latestReview === null || isReview(value.latestReview, episodeId)) &&
-    (value.latestDiscoveryReview === null ||
-      isDiscoveryReview(value.latestDiscoveryReview, workspaceId, episodeId))
-  );
+  if (
+    !isRecord(value) ||
+    value.schema !== "autodev-control-playtesting-detail-v4" ||
+    value.workspaceId !== workspaceId ||
+    value.resource !== "episode" ||
+    value.readOnly !== true ||
+    !validPlaytestRecord(value.record, "episodes", workspaceId) ||
+    value.record.episodeId !== episodeId ||
+    (value.latestReview !== null && !isReview(value.latestReview, episodeId)) ||
+    (value.latestDiscoveryReview !== null &&
+      !isDiscoveryReview(value.latestDiscoveryReview, workspaceId, episodeId))
+  ) {
+    return false;
+  }
+  const episode = value.record;
+  return episode.executionProvenance.mode === "autonomous-visual"
+    ? isVisualAssignment(value.visualAssignment, episode)
+    : value.visualAssignment === null;
 }
 
 function invalidResponse<T>(
@@ -513,7 +552,7 @@ export async function fetchPlaytestingEpisode(
     ? { kind: "ok", data: result.data }
     : invalidResponse(
         "Playtesting episode",
-        "autodev-control-playtesting-detail-v2"
+        "autodev-control-playtesting-detail-v4"
       );
 }
 
@@ -761,26 +800,77 @@ export async function fetchPlaytestingRunCapabilities(
 
 const RUN_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 
+function isSessionReferenceList(
+  value: unknown,
+  expectedCount: number,
+  assignmentIds?: readonly string[]
+): value is readonly PlaytestSessionReference[] {
+  if (!Array.isArray(value) || value.length !== expectedCount) return false;
+  const expectedAssignments =
+    assignmentIds === undefined ? null : new Set(assignmentIds);
+  if (
+    assignmentIds !== undefined &&
+    expectedAssignments?.size !== assignmentIds.length
+  ) {
+    return false;
+  }
+  const seenAssignments = new Set<string>();
+  const seenEpisodes = new Set<string>();
+  for (const entry of value) {
+    if (
+      !isRecord(entry) ||
+      !isNonEmptyString(entry.assignmentId) ||
+      !ASSIGNMENT_ID_PATTERN.test(entry.assignmentId) ||
+      !isNonEmptyString(entry.episodeId) ||
+      !EPISODE_ID_PATTERN.test(entry.episodeId) ||
+      seenAssignments.has(entry.assignmentId) ||
+      seenEpisodes.has(entry.episodeId) ||
+      (expectedAssignments !== null &&
+        !expectedAssignments.has(entry.assignmentId))
+    ) {
+      return false;
+    }
+    seenAssignments.add(entry.assignmentId);
+    seenEpisodes.add(entry.episodeId);
+  }
+  return (
+    expectedAssignments === null ||
+    seenAssignments.size === expectedAssignments.size
+  );
+}
+
 function isRunStartedResponse(
   value: unknown,
   workspaceId: string
 ): value is ControlApiPlaytestingRunStartedResponse {
-  return (
-    isRecord(value) &&
-    value.schema === "autodev-control-playtesting-run-started-v2" &&
-    value.workspaceId === workspaceId &&
-    isNonEmptyString(value.batchId) &&
-    RUN_ID_PATTERN.test(value.batchId) &&
-    isCount(value.assignmentCount) &&
-    value.assignmentCount > 0 &&
-    Array.isArray(value.assignmentIds) &&
-    value.assignmentIds.length === value.assignmentCount &&
-    new Set(value.assignmentIds).size === value.assignmentIds.length &&
-    value.assignmentIds.every(
+  if (
+    !isRecord(value) ||
+    value.schema !== "autodev-control-playtesting-run-started-v3" ||
+    value.workspaceId !== workspaceId ||
+    !isNonEmptyString(value.batchId) ||
+    !RUN_ID_PATTERN.test(value.batchId) ||
+    !isCount(value.assignmentCount) ||
+    value.assignmentCount < 1 ||
+    !Array.isArray(value.assignmentIds) ||
+    value.assignmentIds.length !== value.assignmentCount ||
+    new Set(value.assignmentIds).size !== value.assignmentIds.length ||
+    !value.assignmentIds.every(
       (id) => typeof id === "string" && ASSIGNMENT_ID_PATTERN.test(id)
-    ) &&
-    isControlApiPlaytestingRunState(value.status)
+    ) ||
+    !isRunStartedTimestamp(value.createdAt) ||
+    !isControlApiPlaytestingRunState(value.status)
+  ) {
+    return false;
+  }
+  return isSessionReferenceList(
+    value.sessions,
+    value.assignmentCount,
+    value.assignmentIds as string[]
   );
+}
+
+function isRunStartedTimestamp(value: unknown): value is string {
+  return isNonEmptyString(value) && Number.isFinite(Date.parse(value));
 }
 
 function isRunRequestLookupResponse(
@@ -790,7 +880,7 @@ function isRunRequestLookupResponse(
 ): value is ControlApiPlaytestingRunRequestLookupResponse {
   if (
     !isRecord(value) ||
-    value.schema !== "autodev-control-playtesting-run-request-v1" ||
+    value.schema !== "autodev-control-playtesting-run-request-v2" ||
     value.workspaceId !== workspaceId ||
     value.requestId !== requestId ||
     !["not-found", "expired", "pending", "accepted"].includes(
@@ -798,13 +888,15 @@ function isRunRequestLookupResponse(
     ) ||
     !Array.isArray(value.assignmentIds) ||
     value.assignmentIds.some(
-      (id) => !isNonEmptyString(id) || !RUN_ID_PATTERN.test(id)
+      (id) => !isNonEmptyString(id) || !ASSIGNMENT_ID_PATTERN.test(id)
     )
   ) {
     return false;
   }
+  const sessions = value.sessions;
   if (value.state === "not-found" || value.state === "expired") {
     return (
+      isSessionReferenceList(sessions, 0) &&
       value.batchId === null &&
       value.assignmentCount === null &&
       value.assignmentIds.length === 0 &&
@@ -817,21 +909,29 @@ function isRunRequestLookupResponse(
     !RUN_ID_PATTERN.test(value.batchId) ||
     !isCount(value.assignmentCount) ||
     value.assignmentCount < 1 ||
-    !isNonEmptyString(value.createdAt) ||
-    !Number.isFinite(Date.parse(value.createdAt))
+    !isRunStartedTimestamp(value.createdAt)
   ) {
     return false;
   }
-  return value.state === "pending"
-    ? value.assignmentIds.length === 0 && value.status === null
-    : value.assignmentIds.length === value.assignmentCount &&
-        isControlApiPlaytestingRunState(value.status);
+  if (value.state === "pending") {
+    return (
+      value.assignmentIds.length === 0 &&
+      isSessionReferenceList(sessions, 0) &&
+      value.status === null
+    );
+  }
+  return (
+    value.assignmentIds.length === value.assignmentCount &&
+    new Set(value.assignmentIds).size === value.assignmentIds.length &&
+    isSessionReferenceList(
+      sessions,
+      value.assignmentCount,
+      value.assignmentIds as string[]
+    ) &&
+    isControlApiPlaytestingRunState(value.status)
+  );
 }
 
-/**
- * The run record is shared by the single-batch status route and the
- * workspace-scoped active-run list, so one predicate validates both.
- */
 function isRunRecord(value: unknown): value is ControlApiPlaytestingRunRecord {
   if (
     !isRecord(value) ||
@@ -888,7 +988,7 @@ export async function fetchPlaytestingActiveRuns(
   const data = result.data;
   if (
     !isRecord(data) ||
-    data.schema !== "autodev-control-playtesting-runs-v1" ||
+    data.schema !== "autodev-control-playtesting-runs-v2" ||
     data.workspaceId !== workspaceId ||
     !Array.isArray(data.runs) ||
     // One malformed live entry fails the whole read rather than leaving the
@@ -899,15 +999,16 @@ export async function fetchPlaytestingActiveRuns(
         isNonEmptyString(run.batchId) &&
         RUN_ID_PATTERN.test(run.batchId) &&
         isCount(run.assignmentCount) &&
-        run.assignmentCount >= 0 &&
+        run.assignmentCount > 0 &&
         isNonEmptyString(run.createdAt) &&
+        isSessionReferenceList(run.sessions, run.assignmentCount) &&
         isRunRecord(run.status) &&
         run.status.batchId === run.batchId
     )
   ) {
     return invalidResponse(
       "Playtesting active runs",
-      "autodev-control-playtesting-runs-v1"
+      "autodev-control-playtesting-runs-v2"
     );
   }
   return {
@@ -928,6 +1029,9 @@ function isPlaytestingAnalystRun(
   if (
     !isNonEmptyString(value.analysisId) ||
     !isNonEmptyString(value.workspaceId) ||
+    (value.analysisKind !== undefined &&
+      value.analysisKind !== "confirmatory" &&
+      value.analysisKind !== "discovery") ||
     !["running", "completed", "partial", "failed"].includes(
       String(value.status)
     ) ||
@@ -1143,7 +1247,7 @@ export async function startPlaytestingRun(
     ? { kind: "ok", data: result.data }
     : invalidResponse(
         "Playtesting run",
-        "autodev-control-playtesting-run-started-v2"
+        "autodev-control-playtesting-run-started-v3"
       );
 }
 
@@ -1170,7 +1274,7 @@ export async function fetchPlaytestingRunRequest(
     ? { kind: "ok", data: result.data }
     : invalidResponse(
         "Playtesting request recovery",
-        "autodev-control-playtesting-run-request-v1"
+        "autodev-control-playtesting-run-request-v2"
       );
 }
 

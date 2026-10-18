@@ -10,6 +10,7 @@ import {
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
   type PlaytestBatch,
   type PlaytestEpisode,
+  type PlaytestVisualBatch,
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
 import type { WorkspaceCatalogRead } from "@simulatorlife/autodev-data";
@@ -17,8 +18,7 @@ import type { WorkspaceCatalogRead } from "@simulatorlife/autodev-data";
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
 import {
   createPlaytestRunControl,
-  type PlaytestingRepositoryOps,
-  type PlaytestRunControl
+  type PlaytestingRepositoryOps
 } from "../src/playtesting/mcp.ts";
 import { handlePlaytestingControlApiRequest } from "../src/control-api/playtesting.ts";
 import { inMemoryPlaytestLaunchIntentRepository } from "./support/playtesting-launch-intents.ts";
@@ -68,12 +68,12 @@ function approvedTarget(
     capturePolicy: "screenshots-only-redact-or-refuse",
     limits: {
       episodeCount: 1,
-      maxStepsPerEpisode: 1,
-      wallTimeMs: 30_000,
-      smartRequestsPerEpisode: 1,
-      smartTokensPerEpisode: 2000,
-      screenshotCountPerEpisode: 2,
-      artifactBytesPerEpisode: 2 * 1024 * 1024
+      maxStepsPerEpisode: 4,
+      wallTimeMs: 60_000,
+      smartRequestsPerEpisode: 4,
+      smartTokensPerEpisode: 4000,
+      screenshotCountPerEpisode: 5,
+      artifactBytesPerEpisode: 4 * 1024 * 1024
     },
     approvedAt: "2026-10-17T12:00:00.000Z",
     approvedBy: "operator-1",
@@ -106,7 +106,7 @@ async function closeServer(
 }
 
 test(
-  "visual run persists a media-readable frame before Smart-direct responds",
+  "visual reports persist checkpoints and cold-owner recovery preserves partial or unavailable state",
   { timeout: 60_000 },
   async () => {
     const gameServer = createServer((_request, response) => {
@@ -118,9 +118,18 @@ test(
     const gamePort = await listen(gameServer);
 
     const routerResponses: ServerResponse[] = [];
+    const routerBodies: Record<string, unknown>[] = [];
     let releasePolicy: (() => void) | null = null;
     const policyRequested = new Promise<void>((resolve) => {
       releasePolicy = resolve;
+    });
+    let releaseSecondPolicy: (() => void) | null = null;
+    const secondPolicyRequested = new Promise<void>((resolve) => {
+      releaseSecondPolicy = resolve;
+    });
+    let releaseThirdPolicy: (() => void) | null = null;
+    const thirdPolicyRequested = new Promise<void>((resolve) => {
+      releaseThirdPolicy = resolve;
     });
     const routerServer = createServer((request, response) => {
       const chunks: Buffer[] = [];
@@ -131,8 +140,16 @@ test(
           request.headers.authorization,
           "Bearer fixture-router-token"
         );
+        routerBodies.push(
+          JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<
+            string,
+            unknown
+          >
+        );
         routerResponses.push(response);
-        releasePolicy?.();
+        if (routerResponses.length === 1) releasePolicy?.();
+        if (routerResponses.length === 2) releaseSecondPolicy?.();
+        if (routerResponses.length === 3) releaseThirdPolicy?.();
       });
     });
     const routerPort = await listen(routerServer);
@@ -154,6 +171,11 @@ test(
       getBatch: async (_workspaceId: string, batchId: string) =>
         batchRows.get(batchId) ?? null,
       insertBatch: async (batch: PlaytestBatch) => {
+        assert.deepEqual(
+          batch.unobservedAssignments,
+          [],
+          "A newly frozen visual inventory persists an explicit empty no-episode outcome list."
+        );
         batchRows.set(batch.batchId, batch);
       },
       getEpisode: async (_workspaceId: string, episodeId: string) =>
@@ -193,6 +215,9 @@ test(
       taskId: "task-1",
       runId: "run-1"
     };
+    let restartedRunControl: ReturnType<
+      typeof createPlaytestRunControl
+    > | null = null;
     try {
       const started = await runControl.startRun(session, {
         schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
@@ -203,7 +228,15 @@ test(
         targetId: target.targetId,
         policyId: "smart-direct",
         areasOfFocus: "Inspect the race setup screen.",
-        limits: target.limits
+        limits: {
+          ...target.limits,
+          maxStepsPerEpisode: 2,
+          wallTimeMs: 30_000,
+          smartRequestsPerEpisode: 2,
+          smartTokensPerEpisode: 500,
+          screenshotCountPerEpisode: 3,
+          artifactBytesPerEpisode: 2 * 1024 * 1024
+        }
       });
       assert.equal(started.assignmentCount, 1);
       assert.equal(started.status, "running");
@@ -270,22 +303,114 @@ test(
       assert.equal(response.headers["content-type"], "image/png");
       assert.equal(response.headers["content-length"], frameReference.bytes);
 
-      const heldRouterResponse = routerResponses[0];
+      const firstRouterResponse = routerResponses[0];
       assert.ok(
-        heldRouterResponse,
-        "the fake router should receive the decision request"
+        firstRouterResponse,
+        "the fake router should receive the first decision request"
       );
-      heldRouterResponse.writeHead(200, { "content-type": "application/json" });
-      heldRouterResponse.end(
+      const firstRequest = routerBodies[0];
+      assert.ok(firstRequest);
+      assert.equal(
+        firstRequest.max_output_tokens,
+        500,
+        "Smart-direct must use the request's reduced token budget, not the larger target ceiling."
+      );
+      const firstInput = firstRequest.input as readonly {
+        readonly content: readonly { readonly text?: string }[];
+      }[];
+      const firstVisibleState = JSON.parse(
+        String(firstInput[0]?.content[0]?.text)
+      ) as {
+        readonly controls: readonly { readonly controlId: string }[];
+      };
+      const startControlId = firstVisibleState.controls[0]?.controlId;
+      assert.ok(startControlId);
+      firstRouterResponse.writeHead(200, {
+        "content-type": "application/json"
+      });
+      firstRouterResponse.end(
+        JSON.stringify({
+          model: "fixture-smart-model",
+          output_text: JSON.stringify({
+            decision: "act",
+            intention: "Open the visible race setup control.",
+            prediction: "The race screen may replace the setup screen.",
+            reasonCode: "inspect-setup",
+            action: { kind: "activate-control", controlId: startControlId },
+            stopReason: null,
+            focusReport: null
+          }),
+          usage: {
+            input_tokens: 100,
+            output_tokens: 20,
+            total_tokens: 120
+          }
+        })
+      );
+
+      await Promise.race([
+        secondPolicyRequested,
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error("The second Smart-direct decision was not called.")
+              ),
+            20_000
+          )
+        )
+      ]);
+      assert.equal(
+        routerBodies[1]?.max_output_tokens,
+        380,
+        "Smart-direct must subtract the first response usage from the reduced per-episode token budget."
+      );
+      let checkpointEpisode: PlaytestEpisode | null = null;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        checkpointEpisode = episodeRows.get(episodeId) ?? null;
+        if (checkpointEpisode?.playerDebrief.status === "partial") break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.equal(checkpointEpisode?.playerDebrief.status, "partial");
+      if (checkpointEpisode?.playerDebrief.status !== "partial") return;
+      assert.equal(
+        checkpointEpisode.playerDebrief.checkpoint.intention,
+        "Open the visible race setup control."
+      );
+      assert.deepEqual(checkpointEpisode.playerDebrief.checkpoint.evidence, {
+        kind: "frame",
+        id: frameReference.artifactId,
+        step: 0,
+        frameIndex: 0
+      });
+
+      const secondRouterResponse = routerResponses[1];
+      assert.ok(
+        secondRouterResponse,
+        "the fake router should receive the stop decision"
+      );
+      secondRouterResponse.writeHead(200, {
+        "content-type": "application/json"
+      });
+      secondRouterResponse.end(
         JSON.stringify({
           model: "fixture-smart-model",
           output_text: JSON.stringify({
             decision: "stop",
-            intention: "Stop after inspecting the visible race setup.",
-            prediction: "The race setup menu will remain visible.",
+            intention: "The setup remains visible, so stop safely.",
+            prediction: "The setup menu will remain visible.",
             reasonCode: "objective-achieved",
             action: null,
-            stopReason: "objective-achieved"
+            stopReason: "objective-achieved",
+            focusReport: {
+              objective: "Inspect the race setup screen.",
+              inScope: ["Visible setup menu"],
+              forbiddenScope: ["Starting the race"],
+              stopCriteria: ["Stop with setup menu visible."],
+              outcome: "achieved",
+              summary: "The setup menu is visible; I stopped before racing.",
+              evidenceSteps: [0, 1]
+            }
           }),
           usage: {
             input_tokens: 100,
@@ -301,8 +426,47 @@ test(
         30_000
       );
       assert.equal(finalStatus.status, "completed");
+      assert.equal(
+        routerResponses.length,
+        2,
+        "the report reuses the terminal decision instead of adding a model request"
+      );
       const completedEpisode = episodeRows.get(episodeId);
       assert.ok(completedEpisode?.trace);
+      assert.equal(completedEpisode.playerDebrief.status, "complete");
+      assert.equal(
+        completedEpisode.outcome,
+        "unknown",
+        "a player-reported focus outcome never becomes a verified game outcome"
+      );
+      if (completedEpisode.playerDebrief.status !== "complete") return;
+      assert.equal(
+        completedEpisode.playerDebrief.focusInterpretation.outcome,
+        "achieved"
+      );
+      assert.equal(
+        completedEpisode.playerDebrief.focusInterpretation.requestedFocus,
+        "Inspect the race setup screen."
+      );
+      const secondFrame = completedEpisode.frames[1];
+      assert.ok(secondFrame);
+      assert.deepEqual(
+        completedEpisode.playerDebrief.focusInterpretation.evidence,
+        [
+          {
+            kind: "frame",
+            id: frameReference.artifactId,
+            step: 0,
+            frameIndex: 0
+          },
+          {
+            kind: "frame",
+            id: secondFrame.id,
+            step: 1,
+            frameIndex: 1
+          }
+        ]
+      );
       assert.equal(completedEpisode?.trace.kind, "replay-segment");
       const tracePath =
         "/control/playtesting/episodes/" +
@@ -316,7 +480,7 @@ test(
           tracePath +
             "?workspaceId=" +
             encodeURIComponent(WORKSPACE) +
-            "&startStep=0&endStep=0"
+            "&startStep=0&endStep=1"
         ),
         traceResponse as unknown as ServerResponse,
         tracePath,
@@ -332,6 +496,7 @@ test(
       assert.equal(traceResponse.statusCode, 200);
       const windowBody = responseBody(traceResponse);
       assert.ok(Array.isArray(windowBody?.entries));
+      assert.equal(windowBody.entries.length, 2);
       const traceEntry = windowBody.entries[0] as Record<string, unknown>;
       assert.equal(
         typeof (traceEntry.visibleObservation as Record<string, unknown>)
@@ -340,29 +505,266 @@ test(
       );
       assert.equal(
         (traceEntry.authoritativeOutcome as Record<string, unknown>).actionKind,
-        undefined,
-        "the policy stopped without dispatching an action"
+        "activate-control",
+        "the first admitted decision is recorded as an action"
       );
+      const stopEntry = windowBody.entries[1] as Record<string, unknown>;
+      assert.equal(
+        (stopEntry.authoritativeOutcome as Record<string, unknown>).stopReason,
+        "objective-achieved"
+      );
+
+      const interruptedRun = await runControl.startRun(session, {
+        schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+        mode: "autonomous-visual",
+        workspaceId: WORKSPACE,
+        requestId: "visual-live-watch-router-failure",
+        capabilityRevision: "a".repeat(64),
+        targetId: target.targetId,
+        policyId: "smart-direct",
+        areasOfFocus: "Inspect the race setup screen.",
+        limits: target.limits
+      });
+      await Promise.race([
+        thirdPolicyRequested,
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error("The failure-injection Smart request was not called.")
+              ),
+            20_000
+          )
+        )
+      ]);
+      const failedPolicyResponse = routerResponses[2];
+      assert.ok(failedPolicyResponse);
+      failedPolicyResponse.writeHead(503, {
+        "content-type": "application/json"
+      });
+      failedPolicyResponse.end(
+        JSON.stringify({ error: "fixture router unavailable" })
+      );
+
+      const failedRunStatus = await runControl.waitForRun(
+        session,
+        WORKSPACE,
+        interruptedRun.batchId,
+        30_000
+      );
+      assert.equal(failedRunStatus.status, "failed");
+      const failedEpisodeId =
+        "ep-" +
+        interruptedRun.batchId.replace(/^batch-/u, "").slice(0, 16) +
+        "-vis-assign-" +
+        interruptedRun.batchId.replace(/^batch-/u, "").slice(0, 12) +
+        "-0";
+      const failedEpisode = episodeRows.get(failedEpisodeId);
+      assert.ok(failedEpisode);
+      assert.equal(failedEpisode.status, "infrastructure-failed");
+      assert.deepEqual(failedEpisode.playerDebrief, {
+        schema: "autodev-playtest-player-debrief-v1",
+        status: "unavailable",
+        reason: "interrupted-before-checkpoint"
+      });
+      assert.equal(failedEpisode.outcome, "unknown");
+
+      const completedBatch = batchRows.get(started.batchId);
+      assert.ok(completedBatch?.executionMode === "autonomous-visual");
+      const checkpointSnapshot: PlaytestEpisode = {
+        ...checkpointEpisode,
+        revision: completedEpisode.revision + 1,
+        status: "started",
+        termination: { reason: "unknown", step: null },
+        completionCounts: {
+          assigned: 1,
+          started: 1,
+          completed: 0,
+          crashed: 0,
+          infrastructureFailed: 0,
+          cancelled: 0,
+          budgetTruncated: 0,
+          reviewed: 0,
+          eligible: 0
+        },
+        completedAt: null,
+        completeness: "partial",
+        missingReasons: []
+      };
+      const runningCheckpointBatch: PlaytestVisualBatch = {
+        ...completedBatch,
+        revision: completedBatch.revision + 1,
+        status: "running",
+        cancellationReason: null,
+        failureReason: null,
+        counts: {
+          assigned: 1,
+          started: 1,
+          completed: 0,
+          crashed: 0,
+          infrastructureFailed: 0,
+          cancelled: 0,
+          budgetTruncated: 0,
+          reviewed: 0,
+          eligible: 0
+        },
+        completedAt: null
+      };
+      batchRows.set(started.batchId, runningCheckpointBatch);
+      episodeRows.set(episodeId, checkpointSnapshot);
+
+      const recoveryRepository: PlaytestingRepositoryOps = {
+        ...repository,
+        listBatches: async (filter) => {
+          const rows = [...batchRows.values()].filter(
+            (batch) =>
+              batch.workspaceId === filter.workspaceId &&
+              (filter.status === undefined || batch.status === filter.status)
+          );
+          return { rows, total: rows.length, nextCursor: null };
+        },
+        listEpisodes: async (filter) => {
+          const rows = [...episodeRows.values()].filter(
+            (episode) =>
+              episode.identity.workspaceId === filter.workspaceId &&
+              (filter.batchId === undefined ||
+                episode.batchId === filter.batchId)
+          );
+          return { rows, total: rows.length, nextCursor: null };
+        }
+      };
+      restartedRunControl = createPlaytestRunControl({
+        artifactStoreForWorkspace: () => artifacts,
+        playtestRepository: recoveryRepository,
+        launchIntentRepository: inMemoryPlaytestLaunchIntentRepository(),
+        visualTargetRepository: {
+          read: (_workspaceId: string, targetId: string) =>
+            targetId === target.targetId ? target : null,
+          list: () => [target]
+        } as unknown as NonNullable<
+          Parameters<
+            typeof createPlaytestRunControl
+          >[0]["visualTargetRepository"]
+        >,
+        readWorkspaceCatalog: workspaceCatalog
+      });
+      assert.deepEqual(
+        await restartedRunControl.listActiveRuns(session, WORKSPACE),
+        []
+      );
+      const recoveredCheckpointEpisode = episodeRows.get(episodeId);
+      const recoveredCheckpointBatch = batchRows.get(started.batchId);
+      assert.equal(recoveredCheckpointEpisode?.status, "infrastructure-failed");
+      assert.equal(recoveredCheckpointEpisode?.playerDebrief.status, "partial");
+      if (recoveredCheckpointEpisode?.playerDebrief.status !== "partial") {
+        return;
+      }
+      assert.equal(
+        recoveredCheckpointEpisode.playerDebrief.reason,
+        "episode-interrupted"
+      );
+      assert.equal(
+        recoveredCheckpointEpisode.revision,
+        checkpointSnapshot.revision + 1
+      );
+      assert.equal(recoveredCheckpointBatch?.status, "failed");
+      assert.equal(
+        recoveredCheckpointBatch?.failureReason,
+        "nonterminal-batch-recovered"
+      );
+
+      const noCheckpointSnapshot: PlaytestEpisode = {
+        ...failedEpisode,
+        revision: failedEpisode.revision + 1,
+        status: "started",
+        termination: { reason: "unknown", step: null },
+        trace: null,
+        stepCount: 0,
+        completionCounts: {
+          assigned: 1,
+          started: 1,
+          completed: 0,
+          crashed: 0,
+          infrastructureFailed: 0,
+          cancelled: 0,
+          budgetTruncated: 0,
+          reviewed: 0,
+          eligible: 0
+        },
+        completedAt: null,
+        completeness: "unknown",
+        missingReasons: [],
+        playerDebrief: {
+          schema: "autodev-playtest-player-debrief-v1",
+          status: "pending",
+          reason: "episode-in-progress"
+        }
+      };
+      const failedBatch = batchRows.get(interruptedRun.batchId);
+      assert.ok(failedBatch?.executionMode === "autonomous-visual");
+      const runningWithoutCheckpoint: PlaytestVisualBatch = {
+        ...failedBatch,
+        revision: failedBatch.revision + 1,
+        status: "running",
+        cancellationReason: null,
+        failureReason: null,
+        counts: {
+          assigned: 1,
+          started: 1,
+          completed: 0,
+          crashed: 0,
+          infrastructureFailed: 0,
+          cancelled: 0,
+          budgetTruncated: 0,
+          reviewed: 0,
+          eligible: 0
+        },
+        completedAt: null
+      };
+      batchRows.set(interruptedRun.batchId, runningWithoutCheckpoint);
+      episodeRows.set(failedEpisodeId, noCheckpointSnapshot);
+      assert.deepEqual(
+        await restartedRunControl.listActiveRuns(session, WORKSPACE),
+        []
+      );
+      const unavailableEpisode = episodeRows.get(failedEpisodeId);
+      assert.equal(unavailableEpisode?.status, "infrastructure-failed");
+      assert.deepEqual(unavailableEpisode?.playerDebrief, {
+        schema: "autodev-playtest-player-debrief-v1",
+        status: "unavailable",
+        reason: "interrupted-before-checkpoint"
+      });
+      assert.equal(batchRows.get(interruptedRun.batchId)?.status, "failed");
     } finally {
-      const heldRouterResponse = routerResponses[0];
-      if (heldRouterResponse && !heldRouterResponse.writableEnded) {
-        heldRouterResponse.writeHead(200, {
-          "content-type": "application/json"
-        });
-        heldRouterResponse.end(
-          JSON.stringify({
-            model: "fixture-smart-model",
-            output_text: JSON.stringify({
-              decision: "stop",
-              intention: "Stop after inspecting the visible race setup.",
-              prediction: "The race setup menu will remain visible.",
-              reasonCode: "objective-achieved",
-              action: null,
-              stopReason: "objective-achieved"
-            }),
-            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
-          })
-        );
+      for (const heldRouterResponse of routerResponses) {
+        if (!heldRouterResponse.writableEnded) {
+          heldRouterResponse.writeHead(200, {
+            "content-type": "application/json"
+          });
+          heldRouterResponse.end(
+            JSON.stringify({
+              model: "fixture-smart-model",
+              output_text: JSON.stringify({
+                decision: "stop",
+                intention: "Stop because the fixture is cleaning up.",
+                prediction: "No further action is expected.",
+                reasonCode: "fixture-cleanup",
+                action: null,
+                stopReason: "cannot-proceed",
+                focusReport: {
+                  objective: null,
+                  inScope: [],
+                  forbiddenScope: [],
+                  stopCriteria: [],
+                  outcome: "unknown",
+                  summary: "The fixture ended without an objective assessment.",
+                  evidenceSteps: []
+                }
+              }),
+              usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
+            })
+          );
+        }
       }
       if (previousPort === undefined)
         delete process.env.CODEX_MODEL_ROUTER_PORT;
@@ -371,6 +773,7 @@ test(
         delete process.env.CODEX_ROUTER_AUTH_TOKEN;
       else process.env.CODEX_ROUTER_AUTH_TOKEN = previousToken;
       await runControl.shutdown();
+      await restartedRunControl?.shutdown();
       await closeServer(gameServer);
       await closeServer(routerServer);
       rmSync(tempRoot, { recursive: true, force: true });

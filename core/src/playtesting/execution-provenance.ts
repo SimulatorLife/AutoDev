@@ -9,6 +9,7 @@ import {
   PLAYTEST_EXECUTION_MODES,
   type PlaytestExecutionMode
 } from "./launch-request.ts";
+import { assertPlaytestPlayerDebriefForEpisode } from "./player-debrief.ts";
 
 export const PLAYTEST_EPISODE_EXECUTION_MODES = [
   ...PLAYTEST_EXECUTION_MODES,
@@ -406,11 +407,22 @@ function assertVisualIdentity(
 
 /** Validate mode-specific scenario-family/cohort facts outside EpisodeIdentity. */
 export function assertPlaytestEpisodeModeFacts(input: {
-  readonly executionProvenance: PlaytestExecutionProvenance;
+  readonly executionProvenance: PlaytestEpisode["executionProvenance"];
+  readonly identity: Pick<PlaytestEpisodeIdentity, "policyId">;
+  readonly status: PlaytestEpisode["status"];
   readonly scenarioFamily: string | null;
   readonly policyCohort: string | null;
+  readonly playerDebrief: PlaytestEpisode["playerDebrief"];
+  readonly frames: PlaytestEpisode["frames"];
 }): void {
   assertPlaytestExecutionProvenance(input.executionProvenance);
+  assertPlaytestPlayerDebriefForEpisode({
+    executionMode: input.executionProvenance.mode,
+    policyId: input.identity.policyId,
+    episodeStatus: input.status,
+    playerDebrief: input.playerDebrief,
+    frames: input.frames
+  });
   for (const [field, value] of [
     ["scenarioFamily", input.scenarioFamily],
     ["policyCohort", input.policyCohort]

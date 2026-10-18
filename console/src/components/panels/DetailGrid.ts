@@ -142,6 +142,7 @@ export function DetailGrid({
 export interface DetailValueProps {
   readonly label: string;
   readonly children?: React.ReactNode;
+  readonly dataAttributes?: Readonly<Record<string, string>> | undefined;
   /**
    * Replaces the value's treatment outright rather than adding to it. The
    * default is monospace because almost every value here is an identifier.
@@ -173,6 +174,7 @@ export interface DetailValueProps {
 export function DetailValue({
   label,
   children,
+  dataAttributes,
   valueClassName,
   rowClassName
 }: DetailValueProps): React.JSX.Element {
@@ -181,7 +183,8 @@ export function DetailValue({
   return React.createElement(
     "div",
     {
-      className: `flex min-w-0 flex-col gap-1${rowClassName === undefined ? "" : ` ${rowClassName}`}`
+      className: `flex min-w-0 flex-col gap-1${rowClassName === undefined ? "" : ` ${rowClassName}`}`,
+      ...dataAttributes
     },
     React.createElement("dt", { className: SECTION_LABEL_CLASS }, label),
     React.createElement(

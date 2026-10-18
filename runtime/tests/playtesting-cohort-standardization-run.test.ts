@@ -119,6 +119,11 @@ function episode(
     batchId: `batch-${buildSha}`,
     assignmentId: `assignment-${episodeId}`,
     branchLineage: null,
+    playerDebrief: {
+      schema: "autodev-playtest-player-debrief-v1",
+      status: "not-applicable",
+      reason: "non-reflective-policy"
+    },
     executionProvenance: {
       mode: "adapter-accelerated",
       source: {

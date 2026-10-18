@@ -17,13 +17,14 @@ import {
   type ControlApiPlaytestingHumanValidationResponse,
   type HumanPlaytestStudy,
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
-  PLAYTESTS_EPISODE_SCHEMA,
   type PlaytestBenchmark,
   type PlaytestComparison,
   type PlaytestEpisode,
+  type PlaytestLaunchRequest,
+  playtestVisualEpisodeRecordId,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
-  type PlaytestLaunchRequest,
+  PLAYTESTS_EPISODE_SCHEMA,
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
 import {
@@ -43,16 +44,11 @@ import {
 } from "../src/control-api/playtesting.ts";
 import type { PlaytestingHumanStudyRepository } from "../src/control-api/playtesting-human-studies.ts";
 import {
+  formatControlApiInternalErrorDiagnostic,
   handlePlaytestingRunControlRequest,
   type PlaytestingRunControlApiOptions
 } from "../src/control-api/playtesting-run-control.ts";
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
-import {
-  isSmartDirectVisualPolicyAvailable,
-  isSmartDirectVisualPolicyConfigured,
-  resetSmartDirectVisualPolicyAvailabilityCache
-} from "../src/playtesting/smart-direct-policy.ts";
-import { isPlaytestVisualBrowserDriverAvailable } from "../src/playtesting/visual-browser-driver.ts";
 import { PlaytestSandboxUnavailableError } from "../src/playtesting/docker-sandbox.ts";
 import {
   type PlaytestAnalystReviewDispatch,
@@ -62,7 +58,28 @@ import {
   type PlaytestRunCapabilities,
   type PlaytestRunControl
 } from "../src/playtesting/mcp.ts";
+import {
+  isSmartDirectVisualPolicyAvailable,
+  isSmartDirectVisualPolicyConfigured,
+  resetSmartDirectVisualPolicyAvailabilityCache
+} from "../src/playtesting/smart-direct-policy.ts";
+import { isPlaytestVisualBrowserDriverAvailable } from "../src/playtesting/visual-browser-driver.ts";
 import { responseRecorder } from "./support/control-api-harness.ts";
+
+test("internal Control API diagnostics retain safe location metadata without exception messages", () => {
+  const error = new Error("Bearer do-not-log user-provided text");
+  Object.assign(error, { code: "ERR_SAFE_DIAGNOSTIC" });
+  error.stack =
+    "Error: Bearer do-not-log user-provided text\n" +
+    "    at encodeBatch (/repo/data/src/playtesting/row-codec.ts:296:18)\n" +
+    "    at execute (/repo/data/src/playtesting/playtest-repository.ts:311:9)\n" +
+    "    at startRun (/repo/runtime/src/playtesting/mcp.ts:4800:11)";
+  const diagnostic = formatControlApiInternalErrorDiagnostic(error);
+  assert.match(diagnostic, /type=Error/u);
+  assert.match(diagnostic, /code=ERR_SAFE_DIAGNOSTIC/u);
+  assert.match(diagnostic, /row-codec\.ts:296:18/u);
+  assert.doesNotMatch(diagnostic, /Bearer|do-not-log|user-provided/u);
+});
 
 let launchRequestCounter = 0;
 
@@ -151,7 +168,9 @@ function readRepository(
     listExperiments: empty,
     listHumanStudies: empty,
     getEpisode: async () => null,
+    getBatch: async () => null,
     getLatestReviewForEpisode: async () => null,
+    getLatestDiscoveryReviewForEpisode: async () => null,
     ...overrides
   } as unknown as PlaytestingReadRepository;
 }
@@ -239,6 +258,10 @@ function runControlFixture(
       readonly batchId: string;
       readonly assignmentCount: number;
       readonly assignmentIds: readonly string[];
+      readonly sessions: readonly {
+        readonly assignmentId: string;
+        readonly episodeId: string;
+      }[];
       readonly createdAt: string;
       readonly status: "running";
     }
@@ -321,6 +344,10 @@ function runControlFixture(
           { length: assignmentCount },
           (_, index) => `a-${String(index + 1).padStart(4, "0")}`
         ),
+        sessions: Array.from({ length: assignmentCount }, (_, index) => ({
+          assignmentId: `a-${String(index + 1).padStart(4, "0")}`,
+          episodeId: `batch-run-1.a-${String(index + 1).padStart(4, "0")}`
+        })),
         createdAt: "2026-10-15T00:00:00.000Z",
         status: "running" as const
       };
@@ -336,6 +363,7 @@ function runControlFixture(
         batchId: receipt?.batchId ?? null,
         assignmentCount: receipt?.assignmentCount ?? null,
         assignmentIds: receipt?.assignmentIds ?? [],
+        sessions: receipt?.sessions ?? [],
         createdAt: receipt?.createdAt ?? null,
         status: receipt?.status ?? null
       };
@@ -407,6 +435,9 @@ function runControlFixture(
           batchId: "batch-run-1",
           assignmentCount: 1,
           createdAt: "2026-10-10T00:00:00.000Z",
+          sessions: [
+            { assignmentId: "a-0001", episodeId: "batch-run-1.a-0001" }
+          ],
           status: {
             batchId: "batch-run-1",
             status: "running",
@@ -1065,11 +1096,12 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
   );
   assert.equal(started.status, 202);
   assert.deepEqual(started.body, {
-    schema: "autodev-control-playtesting-run-started-v2",
+    schema: "autodev-control-playtesting-run-started-v3",
     workspaceId: WORKSPACE,
     batchId: "batch-run-1",
     assignmentCount: 1,
     assignmentIds: ["a-0001"],
+    sessions: [{ assignmentId: "a-0001", episodeId: "batch-run-1.a-0001" }],
     createdAt: "2026-10-15T00:00:00.000Z",
     status: "running"
   });
@@ -1081,13 +1113,14 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
   );
   assert.equal(lookup.status, 200);
   assert.deepEqual(lookup.body, {
-    schema: "autodev-control-playtesting-run-request-v1",
+    schema: "autodev-control-playtesting-run-request-v2",
     workspaceId: WORKSPACE,
     requestId,
     state: "accepted",
     batchId: "batch-run-1",
     assignmentCount: 1,
     assignmentIds: ["a-0001"],
+    sessions: [{ assignmentId: "a-0001", episodeId: "batch-run-1.a-0001" }],
     createdAt: "2026-10-15T00:00:00.000Z",
     status: "running"
   });
@@ -1126,16 +1159,23 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
     options
   );
   assert.equal(active.status, 200);
-  assert.equal(active.body.schema, "autodev-control-playtesting-runs-v1");
+  assert.equal(active.body.schema, "autodev-control-playtesting-runs-v2");
   assert.equal((active.body.runs as unknown[]).length, 1);
   // One workspace-scoped read must carry each batch's live owner record, so a
   // Console watching many batches needs no second status authority or a
   // request per batch.
   const [listed] = active.body.runs as readonly {
+    readonly sessions: readonly {
+      readonly assignmentId: string;
+      readonly episodeId: string;
+    }[];
     readonly status: { readonly batchId: string; readonly status: string };
   }[];
   assert.equal(listed?.status.batchId, "batch-run-1");
   assert.equal(listed?.status.status, "running");
+  assert.deepEqual(listed?.sessions, [
+    { assignmentId: "a-0001", episodeId: "batch-run-1.a-0001" }
+  ]);
   const listedCall = calls.find(
     (entry) => (entry as { operation?: string }).operation === "list"
   ) as { operation: string; session: { role: string } } | undefined;
@@ -1795,10 +1835,218 @@ test("selected episode returns its latest review and remains workspace-scoped", 
   );
   assert.equal(response.status, 200);
   assert.deepEqual(lookup, { workspaceId: WORKSPACE, episodeId: "episode-1" });
-  assert.equal(response.body.schema, "autodev-control-playtesting-detail-v2");
+  assert.equal(response.body.schema, "autodev-control-playtesting-detail-v4");
   assert.deepEqual(response.body.record, episode);
   assert.deepEqual(response.body.latestReview, review);
   assert.deepEqual(response.body.latestDiscoveryReview, discoveryReview);
+  assert.equal(response.body.visualAssignment, null);
+});
+
+const VISUAL_EPISODE_ID = playtestVisualEpisodeRecordId(
+  "batch-visual-1",
+  "assignment-1"
+);
+
+function visualEpisodeFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    episodeId: VISUAL_EPISODE_ID,
+    schema: PLAYTESTS_EPISODE_SCHEMA,
+    batchId: "batch-visual-1",
+    assignmentId: "assignment-1",
+    executionProvenance: {
+      mode: "autonomous-visual",
+      source: {
+        kind: "URL-only",
+        repository: null,
+        revision: null,
+        revisionConfidence: "not-applicable",
+        checkoutState: "not-applicable",
+        artifactFingerprint: null,
+        targetId: "target-1",
+        targetOrigin: "https://visual.example.test"
+      },
+      observationSource: "browser-ui",
+      actionSource: "browser-input",
+      derivedFrom: null
+    },
+    ...overrides
+  };
+}
+
+function visualBatchFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    executionMode: "autonomous-visual",
+    workspaceId: WORKSPACE,
+    batchId: "batch-visual-1",
+    assignmentInventory: {
+      status: "frozen-visual",
+      manifest: {
+        mode: "autonomous-visual",
+        batchId: "batch-visual-1",
+        workspaceId: WORKSPACE,
+        targetId: "target-1",
+        targetApprovalId: "approval-1",
+        targetRevision: 3,
+        targetOrigin: "https://visual.example.test",
+        policyId: "smart-direct",
+        policyVersion: "1",
+        cohortId: null,
+        areasOfFocus: "exploration",
+        assignments: [
+          { assignmentId: "assignment-1", ordinal: 0, maxSteps: 50 }
+        ]
+      }
+    },
+    ...overrides
+  };
+}
+
+test("adapter-accelerated episode detail returns a null visualAssignment", async () => {
+  const episode = {
+    episodeId: "episode-adapter-1",
+    schema: PLAYTESTS_EPISODE_SCHEMA,
+    batchId: "batch-adapter-1",
+    assignmentId: "assignment-adapter-1",
+    executionProvenance: {
+      mode: "adapter-accelerated",
+      source: {
+        kind: "repo-checkout",
+        repository: WORKSPACE,
+        revision: "a".repeat(40),
+        revisionConfidence: "verified",
+        checkoutState: "clean",
+        artifactFingerprint: null,
+        targetId: null,
+        targetOrigin: null
+      },
+      observationSource: "engine-adapter",
+      actionSource: "engine-policy",
+      derivedFrom: null
+    }
+  };
+  let getBatchCalls = 0;
+  const repository = readRepository({
+    getEpisode: async () => episode as never,
+    getBatch: async () => {
+      getBatchCalls += 1;
+      return null;
+    }
+  });
+  const response = await call(
+    "GET",
+    `/control/playtesting/episodes/episode-adapter-1?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    { repository }
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.body.schema, "autodev-control-playtesting-detail-v4");
+  assert.equal(response.body.visualAssignment, null);
+  assert.equal(getBatchCalls, 0);
+});
+
+test("autonomous-visual episode detail copies its exact frozen assignment manifest", async () => {
+  const episode = visualEpisodeFixture();
+  const batch = visualBatchFixture();
+  let lookup: unknown;
+  const repository = readRepository({
+    getEpisode: async () => episode as never,
+    getBatch: async (workspaceId, batchId) => {
+      lookup = { workspaceId, batchId };
+      return batch as never;
+    }
+  });
+  const response = await call(
+    "GET",
+    `/control/playtesting/episodes/${VISUAL_EPISODE_ID}?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    { repository }
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(lookup, {
+    workspaceId: WORKSPACE,
+    batchId: "batch-visual-1"
+  });
+  assert.equal(response.body.schema, "autodev-control-playtesting-detail-v4");
+  assert.deepEqual(response.body.visualAssignment, {
+    targetId: "target-1",
+    targetApprovalId: "approval-1",
+    targetRevision: 3,
+    targetOrigin: "https://visual.example.test",
+    areasOfFocus: "exploration"
+  });
+});
+
+test("autonomous-visual episode detail rejects a noncanonical episode-to-assignment identity", async () => {
+  const episode = visualEpisodeFixture({ episodeId: "episode-visual-1" });
+  const repository = readRepository({
+    getEpisode: async () => episode as never,
+    getBatch: async () => visualBatchFixture() as never
+  });
+  const response = await call(
+    "GET",
+    `/control/playtesting/episodes/episode-visual-1?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    { repository }
+  );
+  assert.equal(response.status, 500);
+  assert.equal(
+    (response.body.error as { code: string }).code,
+    "autodev_control_playtesting_visual_assignment_mismatch"
+  );
+});
+
+test("autonomous-visual episode detail fails closed when its batch cannot be read", async () => {
+  const episode = visualEpisodeFixture();
+  const repository = readRepository({
+    getEpisode: async () => episode as never,
+    getBatch: async () => null
+  });
+  const response = await call(
+    "GET",
+    `/control/playtesting/episodes/${VISUAL_EPISODE_ID}?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    { repository }
+  );
+  assert.equal(response.status, 503);
+  assert.equal(
+    (response.body.error as { code: string }).code,
+    "autodev_control_playtesting_visual_assignment_unavailable"
+  );
+});
+
+test("autonomous-visual episode detail fails closed on a mismatched assignment manifest", async () => {
+  const episode = visualEpisodeFixture();
+  const mismatchedBatch = visualBatchFixture({
+    assignmentInventory: {
+      status: "frozen-visual",
+      manifest: {
+        mode: "autonomous-visual",
+        batchId: "batch-visual-1",
+        workspaceId: WORKSPACE,
+        targetId: "target-1",
+        targetApprovalId: "approval-1",
+        targetRevision: 3,
+        targetOrigin: "https://visual.example.test",
+        policyId: "smart-direct",
+        policyVersion: "1",
+        cohortId: null,
+        areasOfFocus: "exploration",
+        assignments: [
+          { assignmentId: "a-different-assignment", ordinal: 0, maxSteps: 50 }
+        ]
+      }
+    }
+  });
+  const repository = readRepository({
+    getEpisode: async () => episode as never,
+    getBatch: async () => mismatchedBatch as never
+  });
+  const response = await call(
+    "GET",
+    `/control/playtesting/episodes/${VISUAL_EPISODE_ID}?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    { repository }
+  );
+  assert.equal(response.status, 500);
+  assert.equal(
+    (response.body.error as { code: string }).code,
+    "autodev_control_playtesting_visual_assignment_mismatch"
+  );
 });
 
 test("Playtesting API is GET-only and reports a missing episode as not found", async () => {
@@ -1962,7 +2210,7 @@ test("Control API authenticates and routes workspace-scoped Playtesting reads", 
     assert.equal(operatorRun.statusCode, 202);
     assert.equal(
       (JSON.parse(operatorRun.body ?? "{}") as { schema?: string }).schema,
-      "autodev-control-playtesting-run-started-v2"
+      "autodev-control-playtesting-run-started-v3"
     );
 
     const unauthorized = responseRecorder();

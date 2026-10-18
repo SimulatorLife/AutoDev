@@ -44,24 +44,48 @@ test("visual episodes require missing scenario-family facts to remain null", () 
   assert.doesNotThrow(() =>
     assertPlaytestEpisodeModeFacts({
       executionProvenance: visualProvenance,
+      identity: { policyId: "smart-direct" },
+      status: "completed",
       scenarioFamily: null,
-      policyCohort: null
+      policyCohort: null,
+      playerDebrief: {
+        schema: "autodev-playtest-player-debrief-v1",
+        status: "absent",
+        reason: "legacy-no-report"
+      },
+      frames: []
     })
   );
   assert.throws(
     () =>
       assertPlaytestEpisodeModeFacts({
         executionProvenance: visualProvenance,
+        identity: { policyId: "smart-direct" },
+        status: "completed",
         scenarioFamily: "visual-exploration",
-        policyCohort: null
+        policyCohort: null,
+        playerDebrief: {
+          schema: "autodev-playtest-player-debrief-v1",
+          status: "absent",
+          reason: "legacy-no-report"
+        },
+        frames: []
       }),
     /cannot claim an unobserved engine scenario family/u
   );
   assert.doesNotThrow(() =>
     assertPlaytestEpisodeModeFacts({
       executionProvenance: visualProvenance,
+      identity: { policyId: "smart-direct" },
+      status: "completed",
       scenarioFamily: null,
-      policyCohort: "validated-first-time"
+      policyCohort: "validated-first-time",
+      playerDebrief: {
+        schema: "autodev-playtest-player-debrief-v1",
+        status: "absent",
+        reason: "legacy-no-report"
+      },
+      frames: []
     })
   );
 });
@@ -70,16 +94,32 @@ test("adapter episodes still require scenario family and a validated cohort", ()
   assert.doesNotThrow(() =>
     assertPlaytestEpisodeModeFacts({
       executionProvenance: adapterProvenance,
+      identity: { policyId: "random" },
+      status: "completed",
       scenarioFamily: "tutorial",
-      policyCohort: "exploratory"
+      policyCohort: "exploratory",
+      playerDebrief: {
+        schema: "autodev-playtest-player-debrief-v1",
+        status: "not-applicable",
+        reason: "non-reflective-policy"
+      },
+      frames: []
     })
   );
   assert.throws(
     () =>
       assertPlaytestEpisodeModeFacts({
         executionProvenance: adapterProvenance,
+        identity: { policyId: "random" },
+        status: "completed",
         scenarioFamily: null,
-        policyCohort: "exploratory"
+        policyCohort: "exploratory",
+        playerDebrief: {
+          schema: "autodev-playtest-player-debrief-v1",
+          status: "not-applicable",
+          reason: "non-reflective-policy"
+        },
+        frames: []
       }),
     /require their declared scenario family and player cohort/u
   );

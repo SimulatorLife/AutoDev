@@ -34,7 +34,7 @@ test("run client forwards the canonical maximum batch and rejects a larger inven
     calls += 1;
     body = JSON.parse(String(init?.body));
     return response({
-      schema: "autodev-control-playtesting-run-started-v2",
+      schema: "autodev-control-playtesting-run-started-v3",
       workspaceId,
       batchId: "batch-1000",
       assignmentCount: PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
@@ -42,6 +42,14 @@ test("run client forwards the canonical maximum batch and rejects a larger inven
         { length: PLAYTESTS_MAX_BATCH_ASSIGNMENTS },
         (_, index) => `a-${String(index + 1).padStart(4, "0")}`
       ),
+      sessions: Array.from(
+        { length: PLAYTESTS_MAX_BATCH_ASSIGNMENTS },
+        (_, index) => {
+          const assignmentId = `a-${String(index + 1).padStart(4, "0")}`;
+          return { assignmentId, episodeId: `${"batch-1000"}.${assignmentId}` };
+        }
+      ),
+      createdAt: "2026-10-16T12:00:00.000Z",
       status: "running"
     });
   };
@@ -93,6 +101,36 @@ test("run client forwards the canonical maximum batch and rejects a larger inven
 
 function response(payload: unknown, status = 200): Response {
   return Response.json(payload, { status });
+}
+
+function adapterEpisodeRecord() {
+  return {
+    schema: PLAYTESTS_EPISODE_SCHEMA,
+    episodeId: "episode-1",
+    revision: 1,
+    batchId: "batch-1",
+    executionProvenance: {
+      mode: "adapter-accelerated",
+      source: {
+        kind: "repo-checkout",
+        repository: workspaceId,
+        revision: "a".repeat(40),
+        revisionConfidence: "verified",
+        checkoutState: "clean",
+        artifactFingerprint: null,
+        targetId: null,
+        targetOrigin: null
+      },
+      observationSource: "engine-adapter",
+      actionSource: "engine-policy",
+      derivedFrom: null
+    },
+    identity: { workspaceId },
+    termination: { reason: "unknown", step: null },
+    stepCount: 0,
+    metrics: [],
+    frames: []
+  };
 }
 
 test("Playtesting readiness validates workspace and reports schema startup without waiting for Data", async () => {
@@ -284,33 +322,7 @@ test("Playtesting page rejects a response for another workspace rather than rend
 
 test("Playtesting selected episode validates workspace binding and nullable review", async () => {
   let requested = "";
-  const episode = {
-    schema: PLAYTESTS_EPISODE_SCHEMA,
-    episodeId: "episode-1",
-    revision: 1,
-    batchId: "batch-1",
-    executionProvenance: {
-      mode: "adapter-accelerated",
-      source: {
-        kind: "repo-checkout",
-        repository: workspaceId,
-        revision: "a".repeat(40),
-        revisionConfidence: "verified",
-        checkoutState: "clean",
-        artifactFingerprint: null,
-        targetId: null,
-        targetOrigin: null
-      },
-      observationSource: "engine-adapter",
-      actionSource: "engine-policy",
-      derivedFrom: null
-    },
-    identity: { workspaceId },
-    termination: { reason: "unknown", step: null },
-    stepCount: 0,
-    metrics: [],
-    frames: []
-  };
+  const episode = adapterEpisodeRecord();
   const discoveryReview = {
     schema: PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
     analysisKind: "discovery",
@@ -356,13 +368,14 @@ test("Playtesting selected episode validates workspace binding and nullable revi
       fetchImpl: (async (input) => {
         requested = String(input);
         return response({
-          schema: "autodev-control-playtesting-detail-v2",
+          schema: "autodev-control-playtesting-detail-v4",
           workspaceId,
           resource: "episode",
           readOnly: true,
           record: episode,
           latestReview: null,
-          latestDiscoveryReview: discoveryReview
+          latestDiscoveryReview: discoveryReview,
+          visualAssignment: null
         });
       }) as typeof fetch
     }
@@ -372,6 +385,56 @@ test("Playtesting selected episode validates workspace binding and nullable revi
     assert.deepEqual(result.data.latestDiscoveryReview, discoveryReview);
   }
   assert.match(requested, /\/control\/playtesting\/episodes\/episode-1\?/u);
+});
+
+test("episode details reject stale schemas and adapter rows with visual assignments", async () => {
+  const stale = await fetchPlaytestingEpisode(
+    workspaceId,
+    "episode-1",
+    config,
+    {
+      fetchImpl: (async () =>
+        response({
+          schema: "autodev-control-playtesting-detail-v2",
+          workspaceId,
+          resource: "episode",
+          readOnly: true,
+          record: adapterEpisodeRecord(),
+          latestReview: null,
+          latestDiscoveryReview: null
+        })) as typeof fetch
+    }
+  );
+  assert.equal(stale.kind, "invalid-response");
+  if (stale.kind === "invalid-response") {
+    assert.match(stale.message, /detail-v4/u);
+  }
+
+  const adapterWithVisualAssignment = await fetchPlaytestingEpisode(
+    workspaceId,
+    "episode-1",
+    config,
+    {
+      fetchImpl: (async () =>
+        response({
+          schema: "autodev-control-playtesting-detail-v4",
+          workspaceId,
+          resource: "episode",
+          readOnly: true,
+          record: adapterEpisodeRecord(),
+          latestReview: null,
+          latestDiscoveryReview: null,
+          visualAssignment: {
+            targetId: "racing-game-local",
+            targetApprovalId: "approval-1",
+            targetRevision: 1,
+            targetOrigin: "http://127.0.0.1:5173",
+            areasOfFocus: null
+          }
+        })) as typeof fetch
+    }
+  );
+  assert.equal(adapterWithVisualAssignment.kind, "invalid-response");
 });
 
 test("Playtesting window fetch validates the exact episode, artifact, and step range", async () => {

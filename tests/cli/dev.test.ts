@@ -935,6 +935,43 @@ test("ensureModelRouter materializes runtime and kickstarts launchd service when
   );
 });
 
+test("ensureModelRouter restarts router when forceRestart is true even if ports are listening", async () => {
+  const commands: RecordedCommand[] = [];
+  const loggedMessages: string[] = [];
+
+  const ready = await ensureModelRouter({
+    repoRoot: "/mock/repo",
+    forceRestart: true,
+    isPortListening: async (port) => port === 4100 || port === 4101,
+    runCommand: (command, args, options) => {
+      commands.push({ command, args, options });
+      if (command === "launchctl" && args[0] === "print") {
+        return { status: 0 };
+      }
+      return { status: 0 };
+    },
+    sleep: async () => {},
+    writeLine: (msg) => {
+      loggedMessages.push(msg);
+    },
+    platform: "darwin"
+  });
+
+  assert.equal(ready, true);
+  assert.ok(commands.length >= 3, "Must materialize and kickstart despite ports listening");
+  assert.equal(commands[0]?.command, "node");
+  assert.ok(commands[0]?.args.some((arg) => arg.includes("--materialize-only")));
+  assert.equal(commands[1]?.command, "launchctl");
+  assert.equal(commands[1]?.args[0], "print");
+  assert.equal(commands[2]?.command, "launchctl");
+  assert.equal(commands[2]?.args[0], "kickstart");
+  assert.ok(
+    loggedMessages.some((msg) =>
+      msg.includes("Reconciling AutoDev Model Router integration and restarting...")
+    )
+  );
+});
+
 test("ensureConsolePortAvailable does nothing when port is free", async () => {
   const commands: RecordedCommand[] = [];
   await ensureConsolePortAvailable(3300, {

@@ -70,6 +70,9 @@ function runProgress(
 ): React.JSX.Element {
   const outcomes = assignmentOutcomes(run.record);
   const counts = assignmentCounts(run.record);
+  const sessionScope = isTerminal(run.record)
+    ? scope
+    : { ...scope, liveBatchId: run.batchId };
   const createdAtMs = Date.parse(run.createdAt);
   const elapsedMs = Number.isFinite(createdAtMs)
     ? Math.max(0, Date.now() - createdAtMs)
@@ -80,7 +83,10 @@ function runProgress(
       : Math.max(0, wallTimeMs - elapsedMs);
   return React.createElement(
     "div",
-    { className: "flex flex-col gap-3", "data-testid": "playtesting-run-progress" },
+    {
+      className: "flex flex-col gap-3",
+      "data-testid": "playtesting-run-progress"
+    },
     React.createElement(
       "p",
       { className: MUTED_BODY_CLASS },
@@ -104,7 +110,11 @@ function runProgress(
       React.createElement(
         "div",
         null,
-        React.createElement("dt", { className: MUTED_META_CLASS }, "Approved time budget remaining"),
+        React.createElement(
+          "dt",
+          { className: MUTED_META_CLASS },
+          "Approved time budget remaining"
+        ),
         React.createElement(
           "dd",
           { className: "mt-1 font-mono text-sm" },
@@ -126,44 +136,51 @@ function runProgress(
           React.createElement(
             DetailGrid,
             { columns: 3, className: "mt-2" },
-            ...([
-              ["Assigned", "assigned"],
-              ["Started", "started"],
-              ["Completed", "completed"],
-              ["Crashed", "crashed"],
-              ["Infrastructure failures", "infrastructureFailed"],
-              ["Cancelled", "cancelled"],
-              ["Budget truncated", "budgetTruncated"],
-              ["Analyst reviews", "reviewed"],
-              ["Review eligible", "eligible"]
-            ] as const).map(([label, key]) => {
+            ...(
+              [
+                ["Assigned", "assigned"],
+                ["Started", "started"],
+                ["Completed", "completed"],
+                ["Crashed", "crashed"],
+                ["Infrastructure failures", "infrastructureFailed"],
+                ["Cancelled", "cancelled"],
+                ["Budget truncated", "budgetTruncated"],
+                ["Analyst reviews", "reviewed"],
+                ["Review eligible", "eligible"]
+              ] as const
+            ).map(([label, key]) => {
               const value = counts[key];
               return React.createElement(DetailValue, {
                 key,
                 label,
                 valueClassName: "text-sm text-fg break-words",
                 children:
-                  typeof value === "number"
-                    ? String(value)
-                    : NOT_OBSERVED_LABEL
+                  typeof value === "number" ? String(value) : NOT_OBSERVED_LABEL
               });
             })
           )
         )
       : null,
-    outcomes
+    outcomes !== null || !isTerminal(run.record)
       ? React.createElement(
           "details",
-          { "data-testid": "playtesting-assignment-outcomes-disclosure" },
+          {
+            open: !isTerminal(run.record),
+            "data-testid": "playtesting-assignment-outcomes-disclosure"
+          },
           React.createElement(
             "summary",
             { className: "cursor-pointer text-sm font-medium" },
-            `Assignment outcomes (${String(outcomes.length)})`
+            outcomes === null
+              ? `Watch sessions (${String(run.sessions.length)})`
+              : `Assignment outcomes (${String(outcomes.length)})`
           ),
           React.createElement(PlaytestingAssignmentResults, {
             outcomes,
-            scope,
-            pending: run.record.result === null
+            sessions: run.sessions,
+            scope: sessionScope,
+            pending: run.record.result === null,
+            live: !isTerminal(run.record)
           })
         )
       : null

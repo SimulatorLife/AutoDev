@@ -1,21 +1,20 @@
 import type {
   ControlApiPlaytestingEpisodeDetailResponse,
-  PlaytestSessionReview,
   ControlApiPlaytestingWindowResponse,
-  PlaytestEpisode,
   PlaytestDiscoverySessionReview,
+  PlaytestEpisode,
   PlaytestJsonValue,
-  PlaytestReviewClaim
+  PlaytestPlayerEvidenceReference,
+  PlaytestReviewClaim,
+  PlaytestSessionReview
 } from "@simulatorlife/autodev-core";
 import React from "react";
-import { PlaytestingSessionLiveWatch } from "./PlaytestingSessionLiveWatch.ts";
-import { PlaytestingSpectatorAnalystButton } from "./PlaytestingSpectatorAnalystButton.ts";
 
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
-import { DetailGrid } from "../../components/panels/DetailGrid.ts";
+import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -43,6 +42,8 @@ import {
   playtestingInspectorBackHref,
   type PlaytestingScope
 } from "./playtesting-url.ts";
+import { PlaytestingSessionLiveWatch } from "./PlaytestingSessionLiveWatch.ts";
+import { PlaytestingSpectatorAnalystButton } from "./PlaytestingSpectatorAnalystButton.ts";
 
 const EVIDENCE_LINK_CLASS = "text-xs text-accent hover:underline";
 
@@ -639,7 +640,9 @@ function reviewPanel(
   if (review === null) {
     return React.createElement(EmptyState, {
       message:
-        "No analyst review is recorded. This is not a negative review or a score of zero."
+        detail.latestDiscoveryReview === null
+          ? "No analyst review is recorded. This is not a negative review or a score of zero."
+          : "An unscored visual discovery review is shown separately. No confirmatory/scored review is recorded."
     });
   }
   const completenessSection = (
@@ -1090,13 +1093,11 @@ function visualGameSpectatorStage(
     episode.status === "assigned" || episode.status === "started";
   const totalSteps = episode.stepCount;
   const lastFrame =
-    episode.frames.length > 0
-      ? episode.frames[episode.frames.length - 1]
-      : undefined;
+    episode.frames.length > 0 ? episode.frames.at(-1) : undefined;
   const latestStep =
-    lastFrame !== undefined
-      ? (lastFrame.step ?? lastFrame.frameIndex ?? Math.max(totalSteps - 1, 0))
-      : Math.max(totalSteps - 1, 0);
+    lastFrame === undefined
+      ? Math.max(totalSteps - 1, 0)
+      : (lastFrame.step ?? lastFrame.frameIndex ?? Math.max(totalSteps - 1, 0));
   const isFollowingLive =
     traceScope.step === null || traceScope.step === latestStep;
   const currentStep = traceScope.step ?? latestStep;
@@ -1125,7 +1126,7 @@ function visualGameSpectatorStage(
       ? windowSteps
       : Array.from({ length: Math.max(totalSteps, 1) }, (_, i) => i);
   const firstStep = availableSteps[0] ?? 0;
-  const lastStep = availableSteps[availableSteps.length - 1] ?? 0;
+  const lastStep = availableSteps.at(-1) ?? 0;
   const prevStep = availableSteps.findLast((s) => s < currentStep) ?? null;
   const nextStep = availableSteps.find((s) => s > currentStep) ?? null;
   const progressPct =
@@ -1638,12 +1639,12 @@ function visualGameSpectatorStage(
         React.createElement(
           "p",
           { className: "mt-1 text-xs font-medium text-fg" },
-          episode.simulationWallMs !== null
-            ? String(episode.simulationWallMs) +
+          episode.simulationWallMs === null
+            ? NOT_OBSERVED_LABEL
+            : String(episode.simulationWallMs) +
                 " ms (" +
                 String(episode.logicalTicks ?? totalSteps) +
                 " ticks)"
-            : NOT_OBSERVED_LABEL
         )
       )
     )
@@ -1654,7 +1655,13 @@ function aiGameplayCriticScorecard(
   episode: PlaytestEpisode,
   review: PlaytestSessionReview | null,
   scope: PlaytestingScope
-): React.JSX.Element {
+): React.JSX.Element | null {
+  if (
+    episode.executionProvenance.mode === "autonomous-visual" &&
+    review === null
+  ) {
+    return null;
+  }
   const claims = review
     ? [
         ...review.observations.map((claim) => ({
@@ -1718,7 +1725,7 @@ function aiGameplayCriticScorecard(
                 "p",
                 {
                   className:
-                    "text-[11px] font-semibold uppercase tracking-wide text-fg-muted"
+                    "text-meta font-semibold uppercase tracking-wide text-fg-muted"
                 },
                 kind
               ),
@@ -1807,6 +1814,10 @@ function discoveryAnalystReview(
     ...review.interpretations.map((claim) => ({
       section: "Interpretation",
       claim
+    })),
+    ...review.alternativeExplanations.map((claim) => ({
+      section: "Alternative explanation",
+      claim
     }))
   ];
   return React.createElement(
@@ -1867,7 +1878,7 @@ function discoveryAnalystReview(
                 "p",
                 {
                   className:
-                    "text-[11px] font-semibold uppercase tracking-wide text-fg-muted"
+                    "text-meta font-semibold uppercase tracking-wide text-fg-muted"
                 },
                 section + " · " + claim.status
               ),
@@ -1912,31 +1923,6 @@ function discoveryAnalystReview(
           { className: MUTED_META_CLASS },
           "No observation or interpretation claims were persisted."
         ),
-    review.alternativeExplanations.length > 0
-      ? React.createElement(
-          "details",
-          { className: "rounded-lg border border-border p-3" },
-          React.createElement(
-            "summary",
-            { className: "cursor-pointer text-xs font-semibold text-fg" },
-            "Alternative explanations"
-          ),
-          React.createElement(
-            "ul",
-            {
-              className:
-                "mt-2 list-disc space-y-1 pl-5 text-xs text-fg-secondary"
-            },
-            ...review.alternativeExplanations.map((text, index) =>
-              React.createElement(
-                "li",
-                { key: "alternative:" + String(index) },
-                text
-              )
-            )
-          )
-        )
-      : null,
     review.experiments.length > 0
       ? React.createElement(
           "details",
@@ -1955,13 +1941,332 @@ function discoveryAnalystReview(
             ...review.experiments.map((experiment, index) =>
               React.createElement(
                 "li",
-                { key: "experiment:" + String(index) },
-                experiment.hypothesis + " · Falsifier: " + experiment.falsifier
+                { key: "experiment:" + String(index), className: "space-y-1" },
+                React.createElement(
+                  "p",
+                  null,
+                  experiment.hypothesis +
+                    " · Falsifier: " +
+                    experiment.falsifier
+                ),
+                React.createElement(
+                  "div",
+                  { className: "flex flex-wrap gap-x-3 gap-y-1" },
+                  ...experiment.evidenceRefs.map((ref, refIndex) =>
+                    React.createElement(
+                      NavigationLink,
+                      {
+                        key: ref.kind + ":" + ref.id + ":" + String(refIndex),
+                        href: playtestingEpisodeHref(
+                          scope,
+                          review.episodeId,
+                          typeof ref.step === "number" ? ref.step : null
+                        ),
+                        className: EVIDENCE_LINK_CLASS
+                      },
+                      ref.kind +
+                        (typeof ref.step === "number"
+                          ? " · step " + String(ref.step)
+                          : " · " + ref.id)
+                    )
+                  )
+                )
               )
             )
           )
         )
       : null
+  );
+}
+
+function visualDebriefFact(
+  label: string,
+  value: React.ReactNode
+): React.JSX.Element {
+  return React.createElement(DetailValue, {
+    label,
+    valueClassName: "mt-1 break-words text-sm text-fg-secondary",
+    dataAttributes: { "data-debrief-fact": label },
+    children: value
+  });
+}
+
+function playerDebriefEvidenceLink(
+  episode: PlaytestEpisode,
+  workspaceId: string,
+  scope: PlaytestingScope,
+  reference: PlaytestPlayerEvidenceReference
+): React.JSX.Element {
+  const frame = episode.frames.find(
+    (item) =>
+      item.kind === "frame" &&
+      item.id === reference.id &&
+      item.step === reference.step &&
+      item.frameIndex === reference.frameIndex
+  );
+  if (!frame) {
+    return React.createElement(
+      "span",
+      { key: reference.id },
+      `Unresolved stored frame ${reference.id} · step ${reference.step}`
+    );
+  }
+  const mediaHref = `/api/playtesting/episodes/${encodeURIComponent(episode.episodeId)}/media/${encodeURIComponent(frame.id)}?workspaceId=${encodeURIComponent(workspaceId)}`;
+  return React.createElement(
+    "span",
+    { key: reference.id, className: "flex flex-wrap gap-2" },
+    React.createElement(
+      NavigationLink,
+      { href: mediaHref, className: EVIDENCE_LINK_CLASS },
+      `Open frame ${reference.frameIndex + 1}`
+    ),
+    React.createElement(
+      NavigationLink,
+      {
+        href: playtestingEpisodeHref(scope, episode.episodeId, reference.step),
+        className: EVIDENCE_LINK_CLASS
+      },
+      `Open trace step ${reference.step}`
+    )
+  );
+}
+
+function joinPlayerReportItems(
+  values: readonly string[],
+  emptyMessage: string
+): string {
+  return values.length === 0 ? emptyMessage : values.join(" · ");
+}
+
+function completePlayerReportContent(
+  episode: PlaytestEpisode,
+  workspaceId: string,
+  scope: PlaytestingScope,
+  report: Extract<
+    PlaytestEpisode["playerDebrief"],
+    { readonly status: "complete" }
+  >
+): React.JSX.Element {
+  const focus = report.focusInterpretation;
+  return React.createElement(
+    React.Fragment,
+    null,
+    visualDebriefFact("Player-authored summary", report.summary),
+    visualDebriefFact(
+      "Focus supplied to player",
+      focus.requestedFocus ?? "No operator focus was requested."
+    ),
+    visualDebriefFact(
+      "Interpreted objective",
+      focus.objective ?? "No objective interpretation was authored."
+    ),
+    visualDebriefFact(
+      "In scope",
+      joinPlayerReportItems(focus.inScope, "No in-scope items were authored.")
+    ),
+    visualDebriefFact(
+      "Forbidden scope",
+      joinPlayerReportItems(
+        focus.forbiddenScope,
+        "No forbidden scope was authored."
+      )
+    ),
+    visualDebriefFact(
+      "Stop criteria",
+      joinPlayerReportItems(
+        focus.stopCriteria,
+        "No stop criteria were authored."
+      )
+    ),
+    visualDebriefFact("Player self-reported outcome", focus.outcome),
+    visualDebriefFact(
+      "Report source",
+      `${report.source.modelId} · ${report.source.policyId} policy v${report.source.policyVersion} · model version ${report.source.modelVersion ?? "not reported"}`
+    ),
+    visualDebriefFact(
+      "Assessment status",
+      "Smart-direct self-report; not a verified game outcome."
+    ),
+    visualDebriefFact(
+      "Player-reported evidence",
+      focus.evidence.map((reference) =>
+        playerDebriefEvidenceLink(episode, workspaceId, scope, reference)
+      )
+    )
+  );
+}
+
+function partialPlayerReportContent(
+  episode: PlaytestEpisode,
+  workspaceId: string,
+  scope: PlaytestingScope,
+  report: Extract<
+    PlaytestEpisode["playerDebrief"],
+    { readonly status: "partial" }
+  >
+): React.JSX.Element {
+  return React.createElement(
+    React.Fragment,
+    null,
+    visualDebriefFact("Partial player report", report.reason),
+    visualDebriefFact("Player-authored intention", report.checkpoint.intention),
+    visualDebriefFact(
+      "Player-authored predicted visible effect",
+      report.checkpoint.predictedVisibleEffect
+    ),
+    visualDebriefFact(
+      "Report source",
+      `${report.source.modelId} · ${report.source.policyId} policy v${report.source.policyVersion} · model version ${report.source.modelVersion ?? "not reported"}`
+    ),
+    visualDebriefFact(
+      "Assessment status",
+      "Player checkpoint; predicted effect is not a verified game outcome."
+    ),
+    visualDebriefFact(
+      "Checkpoint evidence",
+      playerDebriefEvidenceLink(
+        episode,
+        workspaceId,
+        scope,
+        report.checkpoint.evidence
+      )
+    )
+  );
+}
+
+function playerDebriefStatusMessage(
+  report: PlaytestEpisode["playerDebrief"]
+): React.JSX.Element {
+  let message: string;
+  switch (report.status) {
+    case "absent": {
+      message = "No player debrief was persisted for this episode.";
+      break;
+    }
+    case "pending": {
+      message = "Player debrief is pending while the episode is in progress.";
+      break;
+    }
+    case "not-applicable": {
+      message =
+        "Player debrief is not applicable to this non-reflective policy.";
+      break;
+    }
+    case "unavailable": {
+      message = `Player debrief is unavailable: ${report.reason}.`;
+      break;
+    }
+    case "partial":
+    case "complete": {
+      message = "";
+      break;
+    }
+  }
+  return React.createElement("p", { className: MUTED_BODY_CLASS }, message);
+}
+
+function playerDebriefContent(
+  episode: PlaytestEpisode,
+  workspaceId: string,
+  scope: PlaytestingScope
+): React.JSX.Element {
+  const report = episode.playerDebrief;
+  if (report.status === "complete") {
+    return completePlayerReportContent(episode, workspaceId, scope, report);
+  }
+  if (report.status === "partial") {
+    return partialPlayerReportContent(episode, workspaceId, scope, report);
+  }
+  return playerDebriefStatusMessage(report);
+}
+
+function visualSessionContextFacts(
+  episode: PlaytestEpisode,
+  visualAssignment: ControlApiPlaytestingEpisodeDetailResponse["visualAssignment"]
+): readonly React.ReactNode[] {
+  const visualSource = episode.executionProvenance.source;
+  const browserBuildIdentity =
+    visualSource.kind === "URL-only" &&
+    visualSource.artifactFingerprint === null &&
+    episode.identity.buildSha === null
+      ? "Unknown. No verified browser-build fingerprint is bound to this URL-only target."
+      : (visualSource.artifactFingerprint ??
+        episode.identity.buildSha ??
+        "Unknown.");
+  return [
+    visualDebriefFact(
+      "Recorded assignment focus",
+      visualAssignment === null
+        ? "Visual assignment context is unavailable."
+        : (visualAssignment.areasOfFocus ?? "No operator focus was requested.")
+    ),
+    visualDebriefFact(
+      "Frozen target",
+      visualAssignment === null
+        ? "Visual assignment context is unavailable."
+        : `${visualAssignment.targetId} · approval ${visualAssignment.targetApprovalId} · revision ${String(visualAssignment.targetRevision)} · ${visualAssignment.targetOrigin}`
+    ),
+    visualDebriefFact("Browser build identity", browserBuildIdentity),
+    visualDebriefFact(
+      "Recorded session",
+      `${String(episode.stepCount)} steps · ${episode.status} · termination ${episode.termination.reason}${episode.termination.step === null ? "" : ` at step ${String(episode.termination.step)}`}`
+    ),
+    visualDebriefFact(
+      "Game outcome",
+      "Not independently verified. This visual-only session has no game-owned terminal outcome."
+    )
+  ];
+}
+
+function playerDebriefPanel(
+  episode: PlaytestEpisode,
+  visualAssignment: ControlApiPlaytestingEpisodeDetailResponse["visualAssignment"],
+  workspaceId: string,
+  scope: PlaytestingScope
+): React.JSX.Element | null {
+  const report = episode.playerDebrief;
+  const isVisual = episode.executionProvenance.mode === "autonomous-visual";
+  if (
+    !isVisual &&
+    report.status !== "not-applicable" &&
+    report.status !== "absent"
+  )
+    return null;
+  const contextFacts = isVisual
+    ? visualSessionContextFacts(episode, visualAssignment)
+    : [];
+  const authorFact =
+    report.status === "complete" || report.status === "partial"
+      ? visualDebriefFact("Report author", report.source.authorRole)
+      : null;
+  return React.createElement(
+    "section",
+    {
+      className: LIST_PANEL_CLASS,
+      "aria-labelledby": "player-debrief-heading",
+      "data-testid": isVisual ? "visual-player-debrief" : "player-debrief"
+    },
+    heading("player-debrief-heading", "Player debrief"),
+    React.createElement(
+      "p",
+      { className: MUTED_BODY_CLASS },
+      "Player-authored self-report is separate from verified game outcomes and analyst hypotheses. Target/build identity below is recorded context, not report content."
+    ),
+    React.createElement(
+      "dl",
+      { className: "mt-3 grid gap-3 sm:grid-cols-2" },
+      ...contextFacts
+    ),
+    React.createElement(
+      "div",
+      {
+        className: "mt-3 space-y-2",
+        "data-player-debrief-status": report.status
+      },
+      visualDebriefFact("Report status", report.status),
+      authorFact,
+      playerDebriefContent(episode, workspaceId, scope)
+    )
   );
 }
 
@@ -2096,6 +2401,12 @@ export function PlaytestingSessionView({
           ? "Not observed"
           : `${episode.nativeDurationMs} ms`
       )
+    ),
+    playerDebriefPanel(
+      episode,
+      detail.visualAssignment,
+      detail.workspaceId,
+      traceScope
     ),
     visualGameSpectatorStage(episode, traceScope, window, detail.workspaceId),
     aiGameplayCriticScorecard(episode, detail.latestReview, scope),

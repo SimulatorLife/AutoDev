@@ -9,6 +9,9 @@ import {
   type PlaytestCompletionCounts,
   type PlaytestJsonValue,
   type PlaytestRunAssignmentOutcome,
+  type PlaytestSessionReference,
+  playtestEpisodeRecordId,
+  playtestVisualEpisodeRecordId,
   PLAYTESTS_EPISODE_STATES,
   PLAYTESTS_GAME_OUTCOMES
 } from "@simulatorlife/autodev-core";
@@ -37,11 +40,61 @@ export interface PlaytestingActiveRun {
   readonly batchId: string;
   readonly assignmentCount: number;
   readonly createdAt: string;
+  readonly sessions: readonly PlaytestSessionReference[];
   readonly record: ControlApiPlaytestingRunRecord;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCount(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function parseSessionReferences(
+  value: unknown,
+  batchId: string,
+  assignmentCount: number
+): readonly PlaytestSessionReference[] | null {
+  if (!Array.isArray(value) || value.length !== assignmentCount) return null;
+  const assignments = new Set<string>();
+  const episodes = new Set<string>();
+  const sessions: PlaytestSessionReference[] = [];
+  for (const candidate of value) {
+    if (
+      !isRecord(candidate) ||
+      typeof candidate.assignmentId !== "string" ||
+      candidate.assignmentId.length === 0 ||
+      typeof candidate.episodeId !== "string" ||
+      candidate.episodeId.length === 0 ||
+      assignments.has(candidate.assignmentId) ||
+      episodes.has(candidate.episodeId)
+    ) {
+      return null;
+    }
+    const adapterEpisodeId = playtestEpisodeRecordId(
+      batchId,
+      candidate.assignmentId
+    );
+    const visualEpisodeId = playtestVisualEpisodeRecordId(
+      batchId,
+      candidate.assignmentId
+    );
+    if (
+      candidate.episodeId !== adapterEpisodeId &&
+      candidate.episodeId !== visualEpisodeId
+    ) {
+      return null;
+    }
+    assignments.add(candidate.assignmentId);
+    episodes.add(candidate.episodeId);
+    sessions.push({
+      assignmentId: candidate.assignmentId,
+      episodeId: candidate.episodeId
+    });
+  }
+  return sessions;
 }
 
 /**
@@ -58,7 +111,7 @@ export function readActiveRuns(
   }
   const { schema, workspaceId: echoed, runs } = value.data;
   if (
-    schema !== "autodev-control-playtesting-runs-v1" ||
+    schema !== "autodev-control-playtesting-runs-v2" ||
     echoed !== workspaceId ||
     !Array.isArray(runs)
   ) {
@@ -71,16 +124,25 @@ export function readActiveRuns(
       typeof entry.batchId !== "string" ||
       entry.batchId.length === 0 ||
       typeof entry.createdAt !== "string" ||
+      !isCount(entry.assignmentCount) ||
+      entry.assignmentCount < 1 ||
       !isRecord(entry.status) ||
       entry.status.batchId !== entry.batchId ||
       typeof entry.status.status !== "string"
     ) {
       return null;
     }
+    const sessions = parseSessionReferences(
+      entry.sessions,
+      entry.batchId,
+      entry.assignmentCount
+    );
+    if (sessions === null) return null;
     parsed.push({
       batchId: entry.batchId,
-      assignmentCount: Number(entry.assignmentCount ?? 0),
+      assignmentCount: entry.assignmentCount,
       createdAt: entry.createdAt,
+      sessions,
       record: entry.status as unknown as ControlApiPlaytestingRunRecord
     });
   }
@@ -103,12 +165,7 @@ export function activeRunOwnsEpisode(
   episodeId: string
 ): boolean {
   if (isTerminal(run.record)) return false;
-  if (
-    episodeId.startsWith(run.batchId + ".") ||
-    episodeId.startsWith(
-      "ep-" + run.batchId.replace(/^batch-/u, "").slice(0, 16) + "-"
-    )
-  ) {
+  if (run.sessions.some((session) => session.episodeId === episodeId)) {
     return true;
   }
   const result = run.record.result;

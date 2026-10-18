@@ -306,6 +306,16 @@ test("discovery analyst dispatch has no metric aggregation and receives a hypoth
   const childEnvironment = call.options.env ?? {};
   assert.match(prompt, /analysisKind=discovery/u);
   assert.match(prompt, /playtest.submitDiscoveryReview/u);
+  assert.match(prompt, /areasOfFocus as the operator's requested focus/u);
+  assert.match(
+    prompt,
+    /not evidence that an objective was attempted or achieved/u
+  );
+  assert.match(prompt, /playerSelfReport.*testimony.*hypothesis prompt only/u);
+  assert.match(
+    prompt,
+    /every analyst claim must cite the packet's own visible step\/frame evidence/u
+  );
   assert.match(prompt, /unscored discovery only/u);
   assert.doesNotMatch(prompt, /ratio-of-sums/u);
   assert.equal(childEnvironment.AUTODEV_PLAYTEST_ANALYSIS_KIND, "discovery");

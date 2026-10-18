@@ -1342,6 +1342,11 @@ function assembleEpisode(
     assignmentId: options.assignmentId,
     branchLineage,
     executionProvenance,
+    playerDebrief: {
+      schema: "autodev-playtest-player-debrief-v1",
+      status: "not-applicable",
+      reason: "non-reflective-policy"
+    },
     identity,
     scenarioFamily: options.scenarioFamily,
     policyCohort: options.policy.cohort,

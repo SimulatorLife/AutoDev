@@ -1,6 +1,8 @@
 /** MCP-side client for the single Runtime Control API run owner. */
 import {
   assertWorkspaceVisualPlaytestTargetApproval,
+  playtestEpisodeRecordId,
+  playtestVisualEpisodeRecordId,
   type ControlApiPlaytestingActiveRunsResponse,
   type ControlApiPlaytestingCapabilitiesResponse,
   type ControlApiPlaytestingComparisonDecisionResponse,
@@ -9,6 +11,7 @@ import {
   type ControlApiPlaytestingRunStartedResponse,
   type ControlApiPlaytestingRunStatusResponse,
   isControlApiPlaytestingRunState,
+  type PlaytestSessionReference,
   PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS
 } from "@simulatorlife/autodev-core";
 
@@ -34,6 +37,7 @@ const ACTOR_PATTERN = /^[A-Za-z0-9@._:+-]{1,128}$/u;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const CAPABILITY_REVISION_PATTERN = /^[a-f\d]{64}$/u;
 const ASSIGNMENT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const EPISODE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 const PLAYTEST_CONTROL_ROLES = new Set([
   "playtester",
   "validator",
@@ -56,6 +60,69 @@ function record(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+/**
+ * A session list is a 1:1 cover of its assignmentIds with distinct,
+ * well-formed episode IDs, so a Console can link every assignment to exactly
+ * one deterministic session without guessing or deduplicating.
+ */
+function parseSessionReferences(
+  sessions: unknown
+): readonly PlaytestSessionReference[] | null {
+  if (!Array.isArray(sessions)) return null;
+  const seenAssignments = new Set<string>();
+  const seenEpisodes = new Set<string>();
+  const parsed: PlaytestSessionReference[] = [];
+  for (const entry of sessions) {
+    const value = record(entry);
+    if (
+      !value ||
+      typeof value.assignmentId !== "string" ||
+      !ASSIGNMENT_ID_PATTERN.test(value.assignmentId) ||
+      typeof value.episodeId !== "string" ||
+      !EPISODE_ID_PATTERN.test(value.episodeId) ||
+      seenAssignments.has(value.assignmentId) ||
+      seenEpisodes.has(value.episodeId)
+    ) {
+      return null;
+    }
+    seenAssignments.add(value.assignmentId);
+    seenEpisodes.add(value.episodeId);
+    parsed.push({
+      assignmentId: value.assignmentId,
+      episodeId: value.episodeId
+    });
+  }
+  return parsed;
+}
+
+function validSessionReferences(
+  sessions: unknown,
+  assignmentIds: readonly string[]
+): sessions is readonly PlaytestSessionReference[] {
+  const parsed = parseSessionReferences(sessions);
+  if (!parsed || parsed.length !== assignmentIds.length) return false;
+  const expected = new Set(assignmentIds);
+  return (
+    expected.size === assignmentIds.length &&
+    parsed.every((entry) => expected.has(entry.assignmentId))
+  );
+}
+
+function sessionReferencesMatchLaunch(
+  sessions: readonly PlaytestSessionReference[],
+  mode: "adapter-accelerated" | "autonomous-visual" | "scripted-regression",
+  batchId: string
+): boolean {
+  if (mode === "scripted-regression") return false;
+  return sessions.every(
+    ({ assignmentId, episodeId }) =>
+      episodeId ===
+      (mode === "autonomous-visual"
+        ? playtestVisualEpisodeRecordId(batchId, assignmentId)
+        : playtestEpisodeRecordId(batchId, assignmentId))
+  );
 }
 
 function loopbackBaseUrl(value: string): string {
@@ -387,7 +454,7 @@ export function createPlaytestControlApiRunClient(
       const workspaceId = requestBody.workspaceId;
       const response = assertResponse<ControlApiPlaytestingRunStartedResponse>(
         await request("POST", RUNS_PATH, session, requestBody),
-        "autodev-control-playtesting-run-started-v2",
+        "autodev-control-playtesting-run-started-v3",
         workspaceId
       );
       if (
@@ -407,6 +474,12 @@ export function createPlaytestControlApiRunClient(
         new Set(response.assignmentIds).size !==
           response.assignmentIds.length ||
         !response.assignmentIds.every((id) => ASSIGNMENT_ID_PATTERN.test(id)) ||
+        !validSessionReferences(response.sessions, response.assignmentIds) ||
+        !sessionReferencesMatchLaunch(
+          response.sessions,
+          requestBody.mode,
+          response.batchId
+        ) ||
         typeof response.createdAt !== "string" ||
         !Number.isFinite(Date.parse(response.createdAt))
       ) {
@@ -418,6 +491,7 @@ export function createPlaytestControlApiRunClient(
         batchId: response.batchId,
         assignmentCount: response.assignmentCount,
         assignmentIds: response.assignmentIds,
+        sessions: response.sessions,
         createdAt: response.createdAt,
         status: response.status
       };
@@ -430,7 +504,7 @@ export function createPlaytestControlApiRunClient(
       const response =
         assertResponse<ControlApiPlaytestingRunRequestLookupResponse>(
           await request("GET", REQUEST_LOOKUP_PATH + "?" + query, session),
-          "autodev-control-playtesting-run-request-v1",
+          "autodev-control-playtesting-run-request-v2",
           workspaceId
         );
       if (
@@ -441,7 +515,8 @@ export function createPlaytestControlApiRunClient(
         !Array.isArray(response.assignmentIds) ||
         response.assignmentIds.some(
           (id) => typeof id !== "string" || !ASSIGNMENT_ID_PATTERN.test(id)
-        )
+        ) ||
+        !validSessionReferences(response.sessions, response.assignmentIds)
       ) {
         throw new PlaytestMcpUnavailableError(
           "The Runtime Control API returned an invalid request-recovery receipt."
@@ -494,7 +569,7 @@ export function createPlaytestControlApiRunClient(
       const query = new URLSearchParams({ workspaceId });
       const response = assertResponse<ControlApiPlaytestingActiveRunsResponse>(
         await request("GET", RUNS_PATH + "?" + query.toString(), session),
-        "autodev-control-playtesting-runs-v1",
+        "autodev-control-playtesting-runs-v2",
         workspaceId
       );
       if (
@@ -508,8 +583,11 @@ export function createPlaytestControlApiRunClient(
             run.batchId.length > 0 &&
             typeof run.assignmentCount === "number" &&
             Number.isSafeInteger(run.assignmentCount) &&
-            run.assignmentCount >= 0 &&
+            run.assignmentCount > 0 &&
             typeof run.createdAt === "string" &&
+            Array.isArray(run.sessions) &&
+            run.sessions.length === run.assignmentCount &&
+            parseSessionReferences(run.sessions) !== null &&
             record(run.status) !== null &&
             typeof run.status.status === "string"
         )

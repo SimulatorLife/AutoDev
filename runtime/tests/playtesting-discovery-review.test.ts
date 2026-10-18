@@ -7,34 +7,33 @@ import test from "node:test";
 
 import {
   assertPlaytestDiscoverySessionReview,
+  canonicalPlaytestJson,
   type PlaytestArtifactReference,
-  type PlaytestDiscoveryEvidencePacket,
+  playtestAssignmentManifestHashInput,
+  type PlaytestDiscoveryEvidencePacketV2,
   type PlaytestDiscoverySessionReview,
-  PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+  type PlaytestEpisode,
   PLAYTESTS_BATCH_SCHEMA,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
-  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_MEASUREMENT_VERSION,
   PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
-  playtestAssignmentManifestHashInput,
-  type PlaytestEpisode,
   type PlaytestVisualBatch
 } from "@simulatorlife/autodev-core";
 import type { WorkspaceCatalogRead } from "@simulatorlife/autodev-data";
 
-import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
-import {
-  createPlaytestMcpServer,
-  createPlaytestRunControl,
-  type PlaytestingRepositoryOps,
-  type PlaytestRunOwner
-} from "../src/playtesting/mcp.ts";
 import type {
   PlaytestAnalystProcess,
   PlaytestAnalystProcessInput,
   PlaytestAnalystProcessResult
 } from "../src/playtesting/analyst-process.ts";
+import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
+import { preparePlaytestDiscoveryEvidencePacket } from "../src/playtesting/discovery-review.ts";
+import {
+  createPlaytestMcpServer,
+  createPlaytestRunControl,
+  type PlaytestingRepositoryOps
+} from "../src/playtesting/mcp.ts";
 
 const WORKSPACE = "SimulatorLife/RacingGame";
 const BATCH_ID = "batch-0123456789abcdef-rest";
@@ -171,6 +170,11 @@ function visualEpisode(traceId: string, frameId: string): PlaytestEpisode {
       observationSource: "browser-ui",
       actionSource: "browser-input",
       derivedFrom: null
+    },
+    playerDebrief: {
+      schema: "autodev-playtest-player-debrief-v1",
+      status: "unavailable",
+      reason: "player-report-not-authored"
     },
     identity: {
       workspaceId: WORKSPACE,
@@ -415,7 +419,7 @@ test("visual discovery dispatch prepares one packet and stores only hypothesis r
     ].handler({ episodeId: episode.episodeId });
     const prepared = mcpResult(prepare) as {
       readonly analysisKind: string;
-      readonly packet: PlaytestDiscoveryEvidencePacket;
+      readonly packet: PlaytestDiscoveryEvidencePacketV2;
       readonly packetArtifact: PlaytestArtifactReference;
     };
     assert.equal(prepared.analysisKind, "discovery");
@@ -425,6 +429,20 @@ test("visual discovery dispatch prepares one packet and stores only hypothesis r
       dispatchedPacket.artifact.sha256
     );
     assert.equal(prepared.packet.frames[0]?.frameId, frameRef.artifactId);
+    assert.equal(
+      prepared.packet.areasOfFocus,
+      "Inspect race setup choices.",
+      "Runtime-prepared discovery packet must propagate the manifest's operator focus."
+    );
+    assert.ok(
+      "playerSelfReport" in prepared.packet,
+      "Runtime must bind the persisted episode report into the v2 discovery packet."
+    );
+    assert.deepEqual(
+      prepared.packet.playerSelfReport,
+      episode.playerDebrief,
+      "Runtime must preserve the exact Data-read self-report without reconstructing it from trace data."
+    );
 
     const submission = {
       episodeId: episode.episodeId,
@@ -556,6 +574,131 @@ test("visual discovery dispatch prepares one packet and stores only hypothesis r
     assert.equal(status.runs[0]?.reviews[0]?.reviewId, review.reviewId);
   } finally {
     await runControl.shutdown();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runtime-prepared discovery packet keeps a null operator focus null and binds it to the content hash", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "playtest-discovery-review-"));
+  try {
+    const artifacts = new PlaytestArtifactStore({
+      rootDirectory: root,
+      workspaceId: WORKSPACE
+    });
+    const frameRef = artifacts.writeArtifact({
+      artifactId: "frame-racing-null",
+      mediaType: "image/png",
+      bytes: PNG
+    }).reference;
+    const trace = artifacts.writeWindow({
+      artifactId: "trace-racing-null",
+      entries: [
+        {
+          step: 0,
+          phaseId: "race-setup",
+          revisionBefore: 0,
+          revisionAfter: 1,
+          observationVisibility: "visual-only",
+          visibleObservation: {
+            capturedAt: NOW,
+            viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+            privacyState: "clear",
+            controls: [],
+            warnings: [],
+            phase: "race-setup",
+            progress: null
+          },
+          legalActionIds: [],
+          selectedActionId: null,
+          preActionPrediction: null,
+          authoritativeOutcome: null,
+          events: [],
+          frameRefs: [
+            {
+              kind: "frame",
+              id: frameRef.artifactId,
+              step: 0,
+              frameIndex: 0
+            }
+          ]
+        }
+      ]
+    }).reference;
+    const frozenManifest = manifest();
+    const nullFocusDraft = {
+      schema:
+        PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA as typeof frozenManifest.schema,
+      mode: "autonomous-visual" as const,
+      batchId: frozenManifest.batchId,
+      workspaceId: frozenManifest.workspaceId,
+      targetId: frozenManifest.targetId,
+      targetApprovalId: frozenManifest.targetApprovalId,
+      targetRevision: frozenManifest.targetRevision,
+      targetOrigin: frozenManifest.targetOrigin,
+      policyId: frozenManifest.policyId,
+      policyVersion: frozenManifest.policyVersion,
+      cohortId: frozenManifest.cohortId,
+      areasOfFocus: null,
+      limits: frozenManifest.limits,
+      createdAt: frozenManifest.createdAt,
+      assignments: frozenManifest.assignments
+    };
+    const nullFocusManifest = {
+      ...nullFocusDraft,
+      contentHash: createHash("sha256")
+        .update(playtestAssignmentManifestHashInput(nullFocusDraft))
+        .digest("hex")
+    };
+    const batch: PlaytestVisualBatch = {
+      ...visualBatch(),
+      assignmentInventory: {
+        status: "frozen-visual",
+        manifest: nullFocusManifest
+      }
+    };
+    const episode = visualEpisode(trace.artifactId, frameRef.artifactId);
+    const prepared = preparePlaytestDiscoveryEvidencePacket({
+      workspaceId: WORKSPACE,
+      episode,
+      batch,
+      artifacts
+    });
+    assert.equal(
+      prepared.packet.areasOfFocus,
+      null,
+      "Runtime-prepared discovery packet must keep a null operator focus as null."
+    );
+    const hashInput = createHash("sha256")
+      .update(
+        canonicalPlaytestJson({
+          ...prepared.packet,
+          packetHash: "0".repeat(64)
+        })
+      )
+      .digest("hex");
+    assert.equal(
+      prepared.packet.packetHash,
+      hashInput,
+      "Runtime-prepared packet hash must remain reproducible from the packet value, including areasOfFocus."
+    );
+    const tamperedNull: PlaytestDiscoveryEvidencePacketV2 = {
+      ...prepared.packet,
+      areasOfFocus: "Inspect race setup choices."
+    };
+    const tamperedHash = createHash("sha256")
+      .update(
+        canonicalPlaytestJson({
+          ...tamperedNull,
+          packetHash: "0".repeat(64)
+        })
+      )
+      .digest("hex");
+    assert.notEqual(
+      tamperedHash,
+      prepared.packet.packetHash,
+      "Tampering areasOfFocus on a Runtime-prepared packet must change its content hash."
+    );
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });

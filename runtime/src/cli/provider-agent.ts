@@ -44,7 +44,8 @@ const SUPPORTED_ROLES = [
   "worker",
   "validator",
   "smart",
-  "playtest-analyst"
+  "playtest-analyst",
+  "playtester"
 ] as const;
 const NUMERIC_COLLATOR = new Intl.Collator(undefined, { numeric: true });
 const LINE_BREAK = /\r?\n/u;
@@ -569,9 +570,9 @@ function analystMcpEnvironmentVariables(roleFile: string): string[] {
   return variables;
 }
 
-function analystSkillsConfigOverride(value: TomlValue): string {
+function roleSkillsConfigOverride(value: TomlValue, roleName: string): string {
   if (!Array.isArray(value)) {
-    throw new TypeError("The playtest analyst skills.config must be an array.");
+    throw new TypeError(`The ${roleName} skills.config must be an array.`);
   }
   const names = new Set<string>();
   const entries = value.map((item) => {
@@ -586,7 +587,7 @@ function analystSkillsConfigOverride(value: TomlValue): string {
       names.has(name)
     ) {
       throw new Error(
-        "The playtest analyst skills.config must contain unique name/enabled entries."
+        `The ${roleName} skills.config must contain unique name/enabled entries.`
       );
     }
     names.add(name);
@@ -681,7 +682,7 @@ function analystCodexOverrides(
     args.push(`skills.bundled.enabled=${bundledSkills.enabled}`);
   }
   if (roleSkills.config !== undefined) {
-    args.push(analystSkillsConfigOverride(roleSkills.config));
+    args.push(roleSkillsConfigOverride(roleSkills.config, "playtest analyst"));
   }
   return args;
 }
@@ -751,6 +752,48 @@ function analystCodexEnvironment(
   return result;
 }
 
+function bindPlaytesterMcpContext(
+  environment: NodeJS.ProcessEnv,
+  options: ProviderAgentOptions
+): NodeJS.ProcessEnv {
+  const existingRole = environment.AUTODEV_PLAYTEST_ROLE?.trim();
+  const existingControlRole =
+    environment.AUTODEV_PLAYTEST_CONTROL_API_ROLE?.trim();
+  if (
+    (existingRole && existingRole !== "playtester") ||
+    (existingControlRole && existingControlRole !== "playtester")
+  ) {
+    throw new Error("Playtester MCP context is bound to another role.");
+  }
+  const required = [
+    "AUTODEV_PLAYTEST_WORKSPACE_ID",
+    "AUTODEV_PLAYTEST_ACTOR_ID",
+    "AUTODEV_PLAYTEST_TASK_ID",
+    "AUTODEV_PLAYTEST_RUN_ID",
+    "AUTODEV_PLAYTEST_CONTROL_API_TOKEN",
+    "AUTODEV_PLAYTEST_CONTROL_API_ACTOR"
+  ] as const;
+  const missing = required.filter((name) => !environment[name]?.trim());
+  if (
+    missing.length > 0 ||
+    (!environment.AUTODEV_CONTROL_API_BASE_URL?.trim() &&
+      !environment.AUTODEV_CONTROL_API_LISTEN_HOST?.trim())
+  ) {
+    throw new Error(
+      "Playtester dispatch requires trusted workspace/session context and the dedicated Control API runner credential."
+    );
+  }
+  return {
+    ...environment,
+    AUTODEV_PLAYTEST_ROLE: "playtester",
+    AUTODEV_PLAYTEST_CONTROL_API_ROLE: "playtester",
+    CODEX_HOME: options.codexHome,
+    AUTODEV_REPO_ROOT: options.repositoryRoot,
+    AUTODEV_PLAYTEST_REPOSITORY_ROOT:
+      environment.AUTODEV_PLAYTEST_REPOSITORY_ROOT?.trim() || options.workspace
+  };
+}
+
 function providerCodexEnvironment(
   options: ProviderAgentOptions,
   executionEnvironment: NodeJS.ProcessEnv,
@@ -769,12 +812,167 @@ function providerCodexEnvironment(
   // MCPs receive only their distinct role-scoped token.
   delete providerEnvironment.AUTODEV_CONTROL_API_TOKEN;
   delete providerEnvironment.AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN;
+  if (options.role === "playtester") {
+    const environment = bindPlaytesterMcpContext(providerEnvironment, options);
+    for (const key of Object.keys(environment)) {
+      if (key.startsWith("AUTODEV_MEMORY_")) delete environment[key];
+    }
+    return { args: [], environment };
+  }
   if (options.role === "playtest-analyst") {
     for (const key of Object.keys(providerEnvironment)) {
       if (key.startsWith("AUTODEV_MEMORY_")) delete providerEnvironment[key];
     }
   }
   return configureMemoryMcp(options, providerEnvironment);
+}
+
+const PLAYTESTER_ENABLED_TOOLS = [
+  "playtest.capabilities",
+  "playtest.run",
+  "playtest.lookupRequest",
+  "playtest.wait",
+  "playtest.activeRuns",
+  "playtest.cancel",
+  "playtest.listEpisodes",
+  "playtest.readEpisode",
+  "playtest.readWindow"
+] as const;
+
+const PLAYTESTER_MCP_ENVIRONMENT_VARIABLES = [
+  "AUTODEV_PLAYTEST_WORKSPACE_ID",
+  "AUTODEV_PLAYTEST_ROLE",
+  "AUTODEV_PLAYTEST_ACTOR_ID",
+  "AUTODEV_PLAYTEST_TASK_ID",
+  "AUTODEV_PLAYTEST_RUN_ID",
+  "AUTODEV_PLAYTEST_REPOSITORY_ROOT",
+  "AUTODEV_REPO_ROOT",
+  "CODEX_HOME",
+  "CLICKHOUSE_URL",
+  "OPENLIT_DB_USER",
+  "OPENLIT_DB_NAME",
+  "AUTODEV_CONTROL_API_BASE_URL",
+  "AUTODEV_CONTROL_API_LISTEN_HOST",
+  "AUTODEV_CONTROL_API_LISTEN_PORT",
+  "AUTODEV_PLAYTEST_CONTROL_API_TOKEN",
+  "AUTODEV_PLAYTEST_CONTROL_API_ACTOR",
+  "AUTODEV_PLAYTEST_CONTROL_API_ROLE"
+] as const;
+
+/**
+ * The bounded playtester role gets the local, trusted Playtesting MCP
+ * transport only. This mirrors the analyst's defense-in-depth re-assertion:
+ * the role file (playtester.toml) already declares the exact bounded runner
+ * tool set, read-only sandbox, disabled shell, and the trusted
+ * session/credential environment allowlist, but Codex's own strict-config
+ * command-line overrides win regardless of file drift, and every other
+ * configured MCP server is explicitly disabled rather than assumed off.
+ * Playtest MCP enablement never happens globally; it is only ever injected
+ * for this one role's own Codex invocation.
+ */
+function playtesterCodexOverrides(
+  options: ProviderAgentOptions
+): readonly string[] {
+  const role = parseTomlFile(options.roleFile, "playtester role");
+  const roleMcpServers = tomlRecord(role.mcp_servers);
+  const playtestServer = tomlRecord(roleMcpServers.playtest);
+  const enabledTools = stringArray(playtestServer.enabled_tools);
+  const expectedTools = new Set<string>(PLAYTESTER_ENABLED_TOOLS);
+  const features = tomlRecord(role.features);
+  const tools = tomlRecord(role.tools);
+  const shellEnvironmentPolicy = tomlRecord(role.shell_environment_policy);
+  const rolePlugins = tomlRecord(role.plugins);
+  if (
+    role.name !== "playtester" ||
+    playtestServer.enabled !== true ||
+    role.sandbox_mode !== "read-only" ||
+    features.shell_tool !== false ||
+    features.multi_agent !== false ||
+    features.multi_agent_v2 !== false ||
+    features.hooks !== false ||
+    features.memories !== false ||
+    tools.web_search !== false ||
+    shellEnvironmentPolicy.inherit !== "none" ||
+    Object.values(tomlRecord(role.plugins)).some(
+      (plugin) => tomlRecord(plugin).enabled !== false
+    ) ||
+    enabledTools.length !== expectedTools.size ||
+    new Set(enabledTools).size !== enabledTools.length ||
+    !enabledTools.every((tool) => expectedTools.has(tool))
+  ) {
+    throw new Error(
+      "The playtester role must be read-only, shell-disabled, and allowlist only the exact approved runner Playtesting tools."
+    );
+  }
+  const envVars = stringArray(playtestServer.env_vars);
+  const expectedEnvVars = new Set<string>(PLAYTESTER_MCP_ENVIRONMENT_VARIABLES);
+  if (
+    envVars.length !== expectedEnvVars.size ||
+    new Set(envVars).size !== envVars.length ||
+    !envVars.every((name) => expectedEnvVars.has(name))
+  ) {
+    throw new Error(
+      "The playtester role must declare the exact trusted Playtesting MCP environment allowlist."
+    );
+  }
+  const baseConfig = parseTomlFile(
+    path.join(options.codexHome, "config.toml"),
+    "base Codex configuration",
+    false
+  );
+  const configuredServers = new Set([
+    ...Object.keys(tomlRecord(baseConfig.mcp_servers)),
+    ...Object.keys(roleMcpServers)
+  ]);
+  configuredServers.delete("playtest");
+  const configKey = (name: string): string =>
+    TOML_BARE_KEY_PATTERN.test(name) ? name : JSON.stringify(name);
+  const mcpEntry = resolveRuntimeSourcePath(
+    options.repositoryRoot,
+    "playtesting/mcp-main.ts"
+  );
+  const args = [
+    "features.shell_tool=false",
+    "features.multi_agent=false",
+    "features.multi_agent_v2=false",
+    "features.hooks=false",
+    "features.memories=false",
+    'web_search="disabled"',
+    'shell_environment_policy.inherit="none"'
+  ];
+  for (const name of configuredServers) {
+    args.push(`mcp_servers.${configKey(name)}.enabled=false`);
+  }
+  args.push(
+    "mcp_servers.playtest.enabled=true",
+    `mcp_servers.playtest.command=${JSON.stringify(process.execPath)}`,
+    `mcp_servers.playtest.args=${JSON.stringify([mcpEntry])}`,
+    'mcp_servers.playtest.default_tools_approval_mode="approve"',
+    `mcp_servers.playtest.enabled_tools=${JSON.stringify(PLAYTESTER_ENABLED_TOOLS)}`,
+    `mcp_servers.playtest.env_vars=${JSON.stringify(PLAYTESTER_MCP_ENVIRONMENT_VARIABLES)}`
+  );
+  const configuredPlugins = new Set([
+    ...Object.keys(tomlRecord(baseConfig.plugins)),
+    ...Object.keys(rolePlugins)
+  ]);
+  for (const name of [...configuredPlugins].sort()) {
+    const rolePlugin = tomlRecord(rolePlugins[name]);
+    args.push(
+      `plugins.${configKey(name)}.enabled=${rolePlugin?.enabled === true}`
+    );
+  }
+  const roleSkills = tomlRecord(role.skills);
+  if (typeof roleSkills.include_instructions === "boolean") {
+    args.push(`skills.include_instructions=${roleSkills.include_instructions}`);
+  }
+  const bundledSkills = tomlRecord(roleSkills.bundled);
+  if (typeof bundledSkills.enabled === "boolean") {
+    args.push(`skills.bundled.enabled=${bundledSkills.enabled}`);
+  }
+  if (roleSkills.config !== undefined) {
+    args.push(roleSkillsConfigOverride(roleSkills.config, "playtester"));
+  }
+  return args;
 }
 
 function providerCodexArguments(
@@ -809,6 +1007,14 @@ function providerCodexArguments(
         sourceCodexHome,
         options.repositoryRoot
       ).flatMap((override) => ["-c", override])
+    );
+  }
+  if (options.role === "playtester") {
+    args.push(
+      ...playtesterCodexOverrides(options).flatMap((override) => [
+        "-c",
+        override
+      ])
     );
   }
   args.push(

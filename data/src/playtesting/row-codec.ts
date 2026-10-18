@@ -9,10 +9,10 @@ import {
   assertPlaytestComparisonOwnerDecision,
   assertPlaytestCoverageManifest,
   assertPlaytestCrossSessionSynthesis,
+  assertPlaytestDiscoverySessionReview,
   assertPlaytestEpisodeIdentityForMode,
   assertPlaytestEpisodeModeFacts,
   assertPlaytestExecutionProvenance,
-  assertPlaytestDiscoverySessionReview,
   assertPlaytestExperiment,
   assertPlaytestNumericResults,
   assertPlaytestSessionReviewHasEvidence,
@@ -32,10 +32,11 @@ import {
   playtestBenchmarkHashInput,
   type PlaytestComparison,
   type PlaytestComparisonV1,
+  type PlaytestCoverageManifest,
   playtestCoverageManifestHashInput,
   type PlaytestCrossSessionSynthesis,
-  type PlaytestEpisode,
   type PlaytestDiscoverySessionReview,
+  type PlaytestEpisode,
   type PlaytestEvidencePacketReference,
   type PlaytestExperiment,
   playtestExperimentHashInput,
@@ -57,6 +58,8 @@ import {
   PLAYTESTS_COMPARISON_SCHEMA_V1,
   PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
   PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA_V1,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
+  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA_V1,
   PLAYTESTS_EPISODE_SCHEMA_V2,
@@ -64,9 +67,9 @@ import {
   PLAYTESTS_EPISODE_SCHEMA_V4,
   PLAYTESTS_EPISODE_SCHEMA_V5,
   PLAYTESTS_EPISODE_SCHEMA_V6,
+  PLAYTESTS_EPISODE_SCHEMA_V7,
   PLAYTESTS_EPISODE_TERMINATION_REASONS,
-  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
-  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
+  PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
@@ -1390,6 +1393,114 @@ function migrateAssignmentInventory(
 }
 
 /**
+ * Assignment-manifest promotions change the manifest hash even when the
+ * recorded assignments remain identical. Preserve an attached coverage plan
+ * by verifying its legacy binding first, then rebinding and rehashing it to
+ * the canonical manifest. Never repair a coverage record that was already
+ * inconsistent with the batch it claims to describe.
+ */
+function migrateBatchCoverageManifest(
+  artifact: Readonly<Record<string, unknown>>,
+  assignmentInventory: PlaytestBatch["assignmentInventory"]
+): PlaytestBatch["coverageManifest"] {
+  const coverage = artifact.coverageManifest;
+  if (coverage === null) return null;
+  if (!isRecord(coverage)) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse batch has a malformed coverage manifest."
+    );
+  }
+  try {
+    assertPlaytestCoverageManifest(coverage);
+  } catch (error) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse batch coverage manifest is invalid before assignment migration.",
+      error
+    );
+  }
+  const { contentHash: originalContentHash, ...originalDraft } = coverage;
+  const expectedOriginalHash = createHash("sha256")
+    .update(
+      playtestCoverageManifestHashInput(
+        originalDraft as unknown as Omit<
+          PlaytestCoverageManifest,
+          "contentHash"
+        >
+      )
+    )
+    .digest("hex");
+  if (
+    typeof originalContentHash !== "string" ||
+    expectedOriginalHash !== originalContentHash.toLowerCase()
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse legacy coverage manifest content hash is invalid before assignment migration."
+    );
+  }
+
+  const originalInventory = artifact.assignmentInventory;
+  if (
+    !isRecord(originalInventory) ||
+    originalInventory.status !== "frozen" ||
+    !isRecord(originalInventory.manifest) ||
+    assignmentInventory.status !== "frozen"
+  ) {
+    return coverage as unknown as PlaytestBatch["coverageManifest"];
+  }
+
+  const originalManifest = originalInventory.manifest;
+  const migratedManifest = assignmentInventory.manifest;
+  if (
+    typeof originalManifest.contentHash !== "string" ||
+    originalManifest.contentHash.toLowerCase() === migratedManifest.contentHash
+  ) {
+    return coverage as unknown as PlaytestBatch["coverageManifest"];
+  }
+
+  const budget = artifact.budget;
+  if (
+    !isRecord(budget) ||
+    coverage.workspaceId !== artifact.workspaceId ||
+    coverage.batchId !== artifact.batchId ||
+    coverage.buildSha !== artifact.buildSha ||
+    coverage.rubricHash !== artifact.rubricHash ||
+    typeof coverage.assignmentManifestHash !== "string" ||
+    coverage.assignmentManifestHash.toLowerCase() !==
+      originalManifest.contentHash.toLowerCase() ||
+    coverage.assignedEpisodes !== budget.assignedEpisodes
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse legacy coverage manifest does not match its original batch and assignment identity."
+    );
+  }
+
+  const migratedDraft = {
+    ...originalDraft,
+    assignmentManifestHash: migratedManifest.contentHash
+  };
+  const contentHash = createHash("sha256")
+    .update(
+      playtestCoverageManifestHashInput(
+        migratedDraft as unknown as Omit<
+          PlaytestCoverageManifest,
+          "contentHash"
+        >
+      )
+    )
+    .digest("hex");
+  const migratedCoverage = { ...migratedDraft, contentHash };
+  try {
+    assertPlaytestCoverageManifest(migratedCoverage);
+  } catch (error) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse migrated coverage manifest is invalid.",
+      error
+    );
+  }
+  return migratedCoverage as PlaytestCoverageManifest;
+}
+
+/**
  * One-way migration for batch, assignment and coverage fields. Missing legacy
  * evidence stays unavailable; malformed frozen state never becomes history.
  */
@@ -1492,7 +1603,7 @@ function migrateBatchArtifact(
     coverageManifest:
       schema === PLAYTESTS_BATCH_SCHEMA_V1
         ? null
-        : (artifact.coverageManifest as PlaytestBatch["coverageManifest"]),
+        : migrateBatchCoverageManifest(artifact, assignmentInventory),
     reviewPackets,
     unobservedAssignments:
       artifact.unobservedAssignments === undefined
@@ -1587,7 +1698,10 @@ function assertEpisodeBranchLineage(
   }
 }
 
-type LegacyPlaytestEpisode = Omit<PlaytestEpisode, "executionProvenance">;
+type LegacyPlaytestEpisode = Omit<
+  PlaytestEpisode,
+  "executionProvenance" | "playerDebrief"
+>;
 
 function migrateEpisodeV1(
   artifact: Readonly<Record<string, unknown>>
@@ -1696,7 +1810,8 @@ export function migrateLegacyEpisodeForStorage(
   );
   if (
     artifact.schema === PLAYTESTS_EPISODE_SCHEMA_V5 ||
-    artifact.schema === PLAYTESTS_EPISODE_SCHEMA_V6
+    artifact.schema === PLAYTESTS_EPISODE_SCHEMA_V6 ||
+    artifact.schema === PLAYTESTS_EPISODE_SCHEMA_V7
   ) {
     assertEpisodeAssignmentIdentity(artifact, "v5");
     assertEpisodeBranchLineage(artifact, "v5");
@@ -1720,6 +1835,13 @@ export function migrateLegacyEpisodeForStorage(
     const migrated = {
       ...artifact,
       schema: PLAYTESTS_EPISODE_SCHEMA,
+      // v1-v7 rows predate the player-authored debrief field; preserve that
+      // historical absence explicitly rather than inventing a report.
+      playerDebrief: {
+        schema: PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
+        status: "absent",
+        reason: "legacy-no-report"
+      },
       scenarioFamily: visualMode ? null : artifact.scenarioFamily,
       policyCohort: visualMode ? null : artifact.policyCohort
     } as unknown as PlaytestEpisode;
@@ -1765,6 +1887,13 @@ export function migrateLegacyEpisodeForStorage(
       identity: legacy.identity,
       branchLineage: legacy.branchLineage
     }),
+    // v1-v4 rows predate the player-authored debrief field; preserve that
+    // historical absence explicitly rather than inventing a report.
+    playerDebrief: {
+      schema: PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
+      status: "absent",
+      reason: "legacy-no-report"
+    },
     scenarioFamily:
       typeof legacy.scenarioFamily === "string" ? legacy.scenarioFamily : null,
     policyCohort:

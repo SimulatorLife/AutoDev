@@ -7,9 +7,13 @@ import {
   type ControlApiPlaytestingEpisodeDetailResponse,
   type ControlApiPlaytestingPageResponse,
   type ControlApiPlaytestingResource,
+  type ControlApiPlaytestingVisualAssignment,
   type ControlApiPlaytestingWindowResponse,
+  type PlaytestBatch,
+  type PlaytestEpisode,
   type PlaytestFinding,
   type PlaytestJsonValue,
+  playtestVisualEpisodeRecordId,
   PLAYTESTS_BATCH_STATES,
   PLAYTESTS_DECISION_STATUSES,
   PLAYTESTS_EPISODE_STATES,
@@ -143,6 +147,7 @@ export type PlaytestingReadRepository = Pick<
   | "listExperiments"
   | "listHumanStudies"
   | "getEpisode"
+  | "getBatch"
   | "getLatestReviewForEpisode"
   | "getLatestDiscoveryReviewForEpisode"
 >;
@@ -724,6 +729,71 @@ function parseQuery(
   }
 }
 
+/**
+ * Fail-closed when an autonomous-visual episode's manifest cannot be read or
+ * does not bind to the requested workspace, batch, assignment, execution
+ * mode, and recorded target provenance. There is no placeholder value for
+ * these faults: a Console cannot act on a visual target that might be wrong.
+ */
+export class PlaytestVisualAssignmentUnavailableError extends Error {}
+
+/** The episode's visual batch exists but fails the exact-binding check. */
+export class PlaytestVisualAssignmentMismatchError extends Error {}
+
+function resolveVisualAssignment(
+  batch: PlaytestBatch | null,
+  episode: PlaytestEpisode,
+  workspaceId: string
+): ControlApiPlaytestingVisualAssignment {
+  if (batch === null) {
+    throw new PlaytestVisualAssignmentUnavailableError(
+      "The episode's visual assignment manifest batch could not be read."
+    );
+  }
+  if (
+    batch.executionMode !== "autonomous-visual" ||
+    batch.workspaceId !== workspaceId ||
+    batch.batchId !== episode.batchId
+  ) {
+    throw new PlaytestVisualAssignmentMismatchError(
+      "The episode's visual batch does not match the requested workspace, " +
+        "batch, or execution mode."
+    );
+  }
+  const manifest = batch.assignmentInventory.manifest;
+  const assignmentId = episode.assignmentId;
+  const assignment =
+    assignmentId === null
+      ? undefined
+      : manifest.assignments.find(
+          (entry) => entry.assignmentId === assignmentId
+        );
+  const provenance = episode.executionProvenance;
+  if (
+    assignmentId === null ||
+    assignment === undefined ||
+    episode.episodeId !==
+      playtestVisualEpisodeRecordId(episode.batchId, assignmentId) ||
+    manifest.workspaceId !== workspaceId ||
+    manifest.batchId !== episode.batchId ||
+    provenance.mode !== "autonomous-visual" ||
+    provenance.source.targetId !== manifest.targetId ||
+    provenance.source.targetOrigin !== manifest.targetOrigin
+  ) {
+    throw new PlaytestVisualAssignmentMismatchError(
+      "The episode's visual assignment manifest does not match its " +
+        "recorded identity."
+    );
+  }
+  return {
+    targetId: manifest.targetId,
+    targetApprovalId: manifest.targetApprovalId,
+    targetRevision: manifest.targetRevision,
+    targetOrigin: manifest.targetOrigin,
+    areasOfFocus: manifest.areasOfFocus
+  };
+}
+
 async function readEpisodeDetail(
   repository: PlaytestingReadRepository,
   workspaceId: string,
@@ -731,18 +801,26 @@ async function readEpisodeDetail(
 ): Promise<ControlApiPlaytestingEpisodeDetailResponse | null> {
   const record = await repository.getEpisode(workspaceId, episodeId);
   if (record === null) return null;
-  const [latestReview, latestDiscoveryReview] = await Promise.all([
+  const isVisual = record.executionProvenance.mode === "autonomous-visual";
+  const [latestReview, latestDiscoveryReview, batch] = await Promise.all([
     repository.getLatestReviewForEpisode(workspaceId, episodeId),
-    repository.getLatestDiscoveryReviewForEpisode(workspaceId, episodeId)
+    repository.getLatestDiscoveryReviewForEpisode(workspaceId, episodeId),
+    isVisual
+      ? repository.getBatch(workspaceId, record.batchId)
+      : Promise.resolve(null)
   ]);
+  const visualAssignment = isVisual
+    ? resolveVisualAssignment(batch, record, workspaceId)
+    : null;
   return {
-    schema: "autodev-control-playtesting-detail-v2",
+    schema: "autodev-control-playtesting-detail-v4",
     workspaceId,
     resource: "episode",
     readOnly: true,
     record,
     latestReview,
-    latestDiscoveryReview
+    latestDiscoveryReview,
+    visualAssignment
   };
 }
 
@@ -1005,6 +1083,24 @@ function respondDataFailure(response: ServerResponse, error: unknown): boolean {
       413,
       "autodev_control_playtesting_window_too_large",
       "Request a narrower episode window."
+    );
+    return true;
+  }
+  if (error instanceof PlaytestVisualAssignmentUnavailableError) {
+    sendPlaytestingError(
+      response,
+      503,
+      "autodev_control_playtesting_visual_assignment_unavailable",
+      error.message
+    );
+    return true;
+  }
+  if (error instanceof PlaytestVisualAssignmentMismatchError) {
+    sendPlaytestingError(
+      response,
+      500,
+      "autodev_control_playtesting_visual_assignment_mismatch",
+      error.message
     );
     return true;
   }

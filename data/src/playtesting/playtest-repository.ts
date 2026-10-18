@@ -627,7 +627,7 @@ export class PlaytestRepository {
     );
 
     const selectQuery =
-      `SELECT workspace_id, batch_id, episode_id, revision, scenario, policy, assignment_id, cohort, status, game_outcome, assigned_at, created_at, payload_json FROM (` +
+      `SELECT workspace_id, batch_id, episode_id, revision, scenario, seed, build_sha, policy, assignment_id, cohort, status, game_outcome, assigned_at, created_at, payload_json FROM (` +
       `SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id ORDER BY revision DESC, ${CURRENT_EPISODE_SCHEMA_PRIORITY}, cityHash64(payload_json) DESC, payload_json DESC) AS rn ` +
       `FROM ${PLAYTEST_EPISODES_TABLE} WHERE ${innerWhere}) ` +
       `WHERE ${joinWhereClauses(outerWhere)} ORDER BY assigned_at DESC, episode_id DESC ` +

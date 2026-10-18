@@ -86,6 +86,19 @@ export const PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1 =
  */
 export const PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA =
   "autodev-playtest-discovery-evidence-packet-v1" as const;
+/**
+ * v2 of the discovery evidence packet. v2 is the only version a Core
+ * builder may emit: it persists the episode's exact `PlayerDebriefV1`
+ * as `playerSelfReport` context, so an analyst can read what the
+ * autonomous player reported without mistaking the player-authored
+ * self-report for analyst evidence. The field is reference data, never
+ * an evidence citation; analyst citations remain bound to the packet's
+ * step evidence, frame locators and supplied artifacts. v1 packets
+ * remain valid and readable for historical artifacts and are never
+ * silently upgraded.
+ */
+export const PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2 =
+  "autodev-playtest-discovery-evidence-packet-v2" as const;
 
 /** Identifier for the v2 comparison contract with attributable owner decisions. */
 export const PLAYTESTS_COMPARISON_SCHEMA =
@@ -101,7 +114,9 @@ export const PLAYTESTS_BATCH_SCHEMA = "autodev-playtest-batch-v4" as const;
 export const PLAYTESTS_BATCH_SCHEMA_V3 = "autodev-playtest-batch-v3" as const;
 export const PLAYTESTS_BATCH_SCHEMA_V2 = "autodev-playtest-batch-v2" as const;
 export const PLAYTESTS_BATCH_SCHEMA_V1 = "autodev-playtest-batch-v1" as const;
-export const PLAYTESTS_EPISODE_SCHEMA = "autodev-playtest-episode-v7" as const;
+export const PLAYTESTS_EPISODE_SCHEMA = "autodev-playtest-episode-v8" as const;
+export const PLAYTESTS_EPISODE_SCHEMA_V7 =
+  "autodev-playtest-episode-v7" as const;
 export const PLAYTESTS_EPISODE_SCHEMA_V6 =
   "autodev-playtest-episode-v6" as const;
 export const PLAYTESTS_EPISODE_SCHEMA_V5 =
@@ -696,6 +711,12 @@ export interface PlaytestAssignmentBranch {
   readonly alternativeActionId: string;
   readonly rngPolicy: "same-stream";
   readonly rngPolicyVersion: string;
+}
+
+/** Frozen assignment-to-episode identity used by live Watch links. */
+export interface PlaytestSessionReference {
+  readonly assignmentId: string;
+  readonly episodeId: string;
 }
 
 /** One frozen batch-local run assignment; the episode links back by ID. */

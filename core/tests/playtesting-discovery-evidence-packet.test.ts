@@ -4,18 +4,23 @@ import test from "node:test";
 
 import {
   assertPlaytestDiscoveryEvidencePacket,
+  assertPlaytestEvidenceLocatorsWithinPacket,
   assertPlaytestDiscoveryReviewDraft,
   assertPlaytestDiscoveryReviewGroundedInPacket,
   assertPlaytestDiscoverySessionReview,
   buildPlaytestDiscoveryEvidencePacket,
   playtestAssignmentManifestHashInput,
+  type PlaytestDiscoveryEvidencePacket,
+  type PlaytestDiscoveryEvidencePacketV2,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2,
+  playtestDiscoveryEvidencePacketHashInput,
+  type PlaytestEpisode,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_MEASUREMENT_VERSION,
   PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
-  type PlaytestDiscoveryEvidencePacket,
-  type PlaytestEpisode,
   type PlaytestVisualAssignmentManifest
 } from "../src/playtesting/index.ts";
 
@@ -80,6 +85,11 @@ function visualEpisode(manifest = visualManifest()): PlaytestEpisode {
       observationSource: "browser-ui",
       actionSource: "browser-input",
       derivedFrom: null
+    },
+    playerDebrief: {
+      schema: "autodev-playtest-player-debrief-v1",
+      status: "unavailable",
+      reason: "player-report-not-authored"
     },
     identity: {
       workspaceId: manifest.workspaceId,
@@ -207,7 +217,7 @@ function buildPacket(
   overrides: Partial<
     Parameters<typeof buildPlaytestDiscoveryEvidencePacket>[0]
   > = {}
-): PlaytestDiscoveryEvidencePacket {
+): PlaytestDiscoveryEvidencePacketV2 {
   const manifest = visualManifest();
   const episode = visualEpisode(manifest);
   const frames = [
@@ -242,6 +252,173 @@ function buildPacket(
     ...overrides
   });
 }
+
+test("discovery packet v2 persists exact self-report and keeps v1 artifacts readable", () => {
+  const packet = buildPacket();
+  assert.equal(packet.schema, PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2);
+  assert.deepEqual(packet.playerSelfReport, visualEpisode().playerDebrief);
+  const { playerSelfReport: _selfReport, ...historical } = packet;
+  const v1 = {
+    ...historical,
+    schema: PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA
+  };
+  assert.doesNotThrow(() => assertPlaytestDiscoveryEvidencePacket(v1));
+  const { areasOfFocus: _focus, ...immutableV1 } = historical;
+  assert.doesNotThrow(() =>
+    assertPlaytestDiscoveryEvidencePacket({
+      ...immutableV1,
+      schema: PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA
+    })
+  );
+  assert.throws(
+    () =>
+      assertPlaytestDiscoveryEvidencePacket({
+        ...v1,
+        playerSelfReport: packet.playerSelfReport
+      }),
+    /unknown or missing fields/u
+  );
+});
+
+test("v2 hash covers playerSelfReport and validates report states and frame receipts", () => {
+  const packet = buildPacket();
+  const hash = (value: PlaytestDiscoveryEvidencePacketV2) =>
+    createHash("sha256")
+      .update(playtestDiscoveryEvidencePacketHashInput(value))
+      .digest("hex");
+  assert.equal(hash(packet), packet.packetHash);
+  assert.notEqual(
+    hash({
+      ...packet,
+      playerSelfReport: {
+        schema: "autodev-playtest-player-debrief-v1",
+        status: "absent",
+        reason: "legacy-no-report"
+      }
+    }),
+    packet.packetHash
+  );
+
+  const reports = [
+    {
+      schema: "autodev-playtest-player-debrief-v1",
+      status: "absent",
+      reason: "legacy-no-report"
+    },
+    {
+      schema: "autodev-playtest-player-debrief-v1",
+      status: "pending",
+      reason: "episode-in-progress"
+    },
+    {
+      schema: "autodev-playtest-player-debrief-v1",
+      status: "unavailable",
+      reason: "player-report-not-authored"
+    },
+    {
+      schema: "autodev-playtest-player-debrief-v1",
+      status: "not-applicable",
+      reason: "non-reflective-policy"
+    },
+    {
+      schema: "autodev-playtest-player-debrief-v1",
+      status: "partial",
+      reason: "checkpoint-only",
+      source: {
+        authorRole: "player",
+        policyId: "smart-direct",
+        policyVersion: "1",
+        modelId: "autodev/smart",
+        modelVersion: null
+      },
+      checkpoint: {
+        schema: "autodev-playtest-player-checkpoint-v1",
+        intention: "Inspect stage",
+        predictedVisibleEffect: "Stage remains visible",
+        evidence: {
+          kind: "frame",
+          id: "frame-visual-0",
+          step: 0,
+          frameIndex: 0
+        }
+      }
+    },
+    {
+      schema: "autodev-playtest-player-debrief-v1",
+      status: "complete",
+      source: {
+        authorRole: "player",
+        policyId: "smart-direct",
+        policyVersion: "1",
+        modelId: "autodev/smart",
+        modelVersion: null
+      },
+      focusInterpretation: {
+        schema: "autodev-playtest-focus-interpretation-v1",
+        requestedFocus: null,
+        objective: null,
+        inScope: [],
+        forbiddenScope: [],
+        stopCriteria: [],
+        outcome: "unattempted",
+        assessmentSource: "smart-direct-self-report",
+        evidence: [
+          { kind: "frame", id: "frame-visual-0", step: 0, frameIndex: 0 }
+        ]
+      },
+      summary: "I inspected the stages."
+    }
+  ];
+  for (const report of reports)
+    assert.doesNotThrow(() =>
+      assertPlaytestDiscoveryEvidencePacket({
+        ...packet,
+        playerSelfReport: report
+      })
+    );
+  const invalidRef = {
+    ...reports[4]!,
+    checkpoint: {
+      ...(reports[4] as { checkpoint: object }).checkpoint,
+      evidence: { kind: "frame", id: "unknown", step: 9, frameIndex: 0 }
+    }
+  };
+  assert.throws(
+    () =>
+      assertPlaytestDiscoveryEvidencePacket({
+        ...packet,
+        playerSelfReport: invalidRef
+      }),
+    /does not resolve/u
+  );
+
+  const omittedReport = {
+    ...reports[4]!,
+    checkpoint: {
+      ...(reports[4] as { checkpoint: object }).checkpoint,
+      evidence: { kind: "frame", id: "receipt-frame", step: 1, frameIndex: 0 }
+    }
+  };
+  const omittedPacket = {
+    ...packet,
+    playerSelfReport: omittedReport,
+    omittedFrames: [
+      ...packet.omittedFrames,
+      { frameId: "receipt-frame", step: 1, reason: "missing" as const }
+    ]
+  };
+  assert.doesNotThrow(() =>
+    assertPlaytestDiscoveryEvidencePacket(omittedPacket)
+  );
+  assert.throws(
+    () =>
+      assertPlaytestEvidenceLocatorsWithinPacket(
+        [{ kind: "frame", id: "receipt-frame", step: 1, frameIndex: 0 }],
+        omittedPacket
+      ),
+    /frame locator is absent/u
+  );
+});
 
 test("visual discovery packet is content-addressed, hypothesis-only, and contains visible evidence", () => {
   const packet = buildPacket();
@@ -382,8 +559,25 @@ test("discovery packet rejects mismatched frame hash and invalid packet citation
         ]
       }
     ],
-    alternativeExplanations: [],
-    experiments: [],
+    alternativeExplanations: [
+      {
+        hypothesisId: "alt-1",
+        status: "hypothesis" as const,
+        text: "The stage label may refer only to preview selection.",
+        evidenceRefs: [{ kind: "episode" as const, id: EPISODE_ID }]
+      }
+    ],
+    experiments: [
+      {
+        hypothesis: "Check whether the selected stage starts a race.",
+        falsifier: "The same control leaves the setup screen unchanged.",
+        controls: ["Stage 1"],
+        budget: "One visual decision.",
+        evidenceRefs: [
+          { kind: "replay-segment" as const, id: "trace-visual-1" }
+        ]
+      }
+    ],
     authorRole: "playtest-analyst" as const
   };
   assertPlaytestDiscoveryReviewDraft(draft);
@@ -407,6 +601,22 @@ test("discovery packet rejects mismatched frame hash and invalid packet citation
         packet
       ),
     /frame locator is absent from the selected evidence packet/u
+  );
+  assert.throws(
+    () =>
+      assertPlaytestDiscoveryReviewGroundedInPacket(
+        {
+          ...draft,
+          alternativeExplanations: [
+            {
+              ...draft.alternativeExplanations[0]!,
+              evidenceRefs: [{ kind: "episode", id: "not-in-packet" }]
+            }
+          ]
+        },
+        packet
+      ),
+    /episode locator points outside/u
   );
   assert.throws(
     () =>
@@ -464,5 +674,132 @@ test("persisted discovery review schema refuses metric and rubric claims", () =>
         rubricHash: "invented-rubric"
       }),
     /unknown or missing fields/u
+  );
+});
+
+function nullFocusManifest(): PlaytestVisualAssignmentManifest {
+  const draft = {
+    schema: PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
+    mode: "autonomous-visual" as const,
+    batchId: BATCH_ID,
+    workspaceId: WORKSPACE,
+    targetId: "racing-game-local",
+    targetApprovalId: "approval-racinggame-1",
+    targetRevision: 1,
+    targetOrigin: "http://127.0.0.1:5173",
+    policyId: "smart-direct" as const,
+    policyVersion: "1",
+    cohortId: null,
+    areasOfFocus: null,
+    limits: {
+      episodeCount: 1,
+      maxStepsPerEpisode: 2,
+      wallTimeMs: 60_000,
+      smartRequestsPerEpisode: 4,
+      smartTokensPerEpisode: 1000,
+      screenshotCountPerEpisode: 4,
+      artifactBytesPerEpisode: 1024 * 1024
+    },
+    createdAt: "2026-10-17T12:00:00.000Z",
+    assignments: [{ assignmentId: "vis-assign-1", ordinal: 0, maxSteps: 2 }]
+  };
+  return {
+    ...draft,
+    contentHash: createHash("sha256")
+      .update(playtestAssignmentManifestHashInput(draft))
+      .digest("hex")
+  };
+}
+
+test("discovery packet propagates operator-requested focus from the frozen manifest and refuses to treat it as evidence", () => {
+  const packet = buildPacket();
+  assert.equal(
+    packet.areasOfFocus,
+    "Explore the race setup screen.",
+    "Discovery packet must copy areasOfFocus verbatim from the frozen manifest."
+  );
+  assert.equal(
+    packet.areasOfFocus !== null,
+    true,
+    "areasOfFocus must remain a non-null operator prompt when the manifest declares one."
+  );
+  assert.equal(
+    "rubricHash" in packet,
+    false,
+    "areasOfFocus must not be reinterpreted as scored/confirmatory evidence."
+  );
+});
+
+test("discovery packet keeps areasOfFocus as null when the frozen manifest declares null", () => {
+  const manifest = nullFocusManifest();
+  const packet = buildPacket({
+    visualBatch: {
+      batchId: manifest.batchId,
+      workspaceId: manifest.workspaceId,
+      assignmentManifest: manifest
+    }
+  });
+  assertPlaytestDiscoveryEvidencePacket(packet);
+  assert.equal(
+    packet.areasOfFocus,
+    null,
+    "A null operator focus must travel as null, not as an empty string."
+  );
+});
+
+test("discovery packet content-hash identity covers areasOfFocus so tamper changes the hash", () => {
+  const packet = buildPacket();
+  const originalFocus = packet.areasOfFocus;
+  const hashInput = (value: PlaytestDiscoveryEvidencePacket) =>
+    createHash("sha256")
+      .update(playtestDiscoveryEvidencePacketHashInput(value))
+      .digest("hex");
+  assert.equal(
+    packet.packetHash,
+    hashInput(packet),
+    "Recorded packetHash must match the canonical hash of the packet value."
+  );
+  const tamperedFocus: PlaytestDiscoveryEvidencePacket = {
+    ...packet,
+    areasOfFocus: "Switch to a different operator focus."
+  };
+  const tamperedNull: PlaytestDiscoveryEvidencePacket = {
+    ...packet,
+    areasOfFocus: null
+  };
+  assert.notEqual(
+    hashInput(packet),
+    hashInput(tamperedFocus),
+    "Changing areasOfFocus must invalidate the content hash."
+  );
+  assert.notEqual(
+    hashInput(packet),
+    hashInput(tamperedNull),
+    "Nulling areasOfFocus must invalidate the content hash."
+  );
+  assert.equal(
+    originalFocus,
+    "Explore the race setup screen.",
+    "Tampering comparison must not mutate the source packet."
+  );
+});
+
+test("discovery packet rejects an areasOfFocus outside the bounded focus contract", () => {
+  const packet = buildPacket();
+  const oversized: PlaytestDiscoveryEvidencePacket = {
+    ...packet,
+    areasOfFocus: "x".repeat(2001)
+  };
+  assert.throws(
+    () => assertPlaytestDiscoveryEvidencePacket(oversized),
+    /areasOfFocus is outside its bounded focus contract/u
+  );
+  const blank: PlaytestDiscoveryEvidencePacket = {
+    ...packet,
+    areasOfFocus: ""
+  };
+  assert.throws(
+    () => assertPlaytestDiscoveryEvidencePacket(blank),
+    /areasOfFocus is outside its bounded focus contract/u
   );
 });

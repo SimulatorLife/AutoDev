@@ -52,12 +52,13 @@ function envelope(runs: readonly PlaytestingActiveRun[]): unknown {
   return {
     kind: "ok",
     data: {
-      schema: "autodev-control-playtesting-runs-v1",
+      schema: "autodev-control-playtesting-runs-v2",
       workspaceId: WORKSPACE,
       runs: runs.map((entry) => ({
         batchId: entry.batchId,
         assignmentCount: entry.assignmentCount,
         createdAt: entry.createdAt,
+        sessions: entry.sessions,
         status: entry.record
       }))
     }
@@ -69,20 +70,29 @@ function run(batchId: string, status: string): PlaytestingActiveRun {
     batchId,
     assignmentCount: 1,
     createdAt: "2026-10-12T00:00:00.000Z",
+    sessions: [{ assignmentId: "a-1", episodeId: batchId + ".a-1" }],
     record: record(status, batchId)
   };
 }
 
-test("a missing session is pending only for its active batch", () => {
+test("activeRunOwnsEpisode checks exact frozen session references, never a derived ID", () => {
   const adapterRun = run("batch-abc", "running");
-  const visualRun = run("batch-1234567890123456-rest", "persisting");
+  const visualRun: PlaytestingActiveRun = {
+    batchId: "batch-vis-1",
+    assignmentCount: 1,
+    createdAt: "2026-10-12T00:00:00.000Z",
+    sessions: [
+      { assignmentId: "vis-assign-1", episodeId: "ep-vis-1-vis-assign-1" }
+    ],
+    record: record("persisting", "batch-vis-1")
+  };
   const terminalRun = run("batch-finished", "completed");
 
   assert.equal(activeRunOwnsEpisode(adapterRun, "batch-abc.a-1"), true);
-  assert.equal(
-    activeRunOwnsEpisode(visualRun, "ep-1234567890123456-vis-assign-1"),
-    true
-  );
+  assert.equal(activeRunOwnsEpisode(visualRun, "ep-vis-1-vis-assign-1"), true);
+  // An episode ID that merely shares the batch prefix but is not in the
+  // frozen session list must not be treated as owned by heuristic matching.
+  assert.equal(activeRunOwnsEpisode(visualRun, "ep-vis-1-other-assign"), false);
   assert.equal(activeRunOwnsEpisode(adapterRun, "another-batch.a-1"), false);
   assert.equal(activeRunOwnsEpisode(terminalRun, "batch-finished.a-1"), false);
   assert.equal(
@@ -150,6 +160,28 @@ test("a live read fails closed rather than showing a partial view", () => {
       "status missing its own batch id",
       envelope([
         { ...run("batch-1", "running"), record: record("running", "other") }
+      ])
+    ],
+    [
+      "duplicate assignment session references",
+      envelope([
+        {
+          ...run("batch-1", "running"),
+          assignmentCount: 2,
+          sessions: [
+            { assignmentId: "a-1", episodeId: "batch-1.a-1" },
+            { assignmentId: "a-1", episodeId: "batch-1.a-2" }
+          ]
+        }
+      ])
+    ],
+    [
+      "episode identity not derived from the frozen assignment",
+      envelope([
+        {
+          ...run("batch-1", "running"),
+          sessions: [{ assignmentId: "a-1", episodeId: "unrelated-session" }]
+        }
       ])
     ],
     [
@@ -351,6 +383,8 @@ test("an explicit unknown game result is not confused with an unobserved outcome
     React.createElement(PlaytestingAssignmentResults, {
       scope: WORKSPACE_SCOPE,
       pending: false,
+      live: false,
+      sessions: [],
       outcomes: [
         {
           assignmentId: "assignment-unknown",
@@ -397,11 +431,42 @@ test("an unreadable response reports the server's message or an honest default",
     "The Console could not validate the server response."
   );
 });
+test("a live assignment exposes its exact Watch link before an outcome is recorded", () => {
+  const live = run("batch-live-link", "running");
+  const markup = renderToStaticMarkup(
+    React.createElement(PlaytestingActiveRunsPanel, {
+      scope: WORKSPACE_SCOPE,
+      runs: [live],
+      freshness: "live",
+      lastFailure: null,
+      watching: true,
+      onRefresh: () => {},
+      focusedBatchId: live.batchId,
+      onFocusBatch: () => {},
+      onCancel: null,
+      busyBatchId: null
+    })
+  );
+  assert.match(markup, /data-testid="playtesting-live-session-links"/u);
+  assert.match(markup, /data-assignment-id="a-1"/u);
+  assert.match(markup, /Watch session/u);
+  assert.match(
+    markup,
+    /href="\/playtesting\/sessions\/batch-live-link\.a-1\?[^"]*workspaceId=acme%2Fgame/u
+  );
+  assert.match(markup, /Watch sessions \(1\)/u);
+  assert.doesNotMatch(markup, /data-game-outcome=/u);
+});
+
 test("the panel never presents an unread read as current", () => {
   const liveRun = {
     batchId: "batch-live-1",
     assignmentCount: 4,
     createdAt: "2026-10-12T00:00:00.000Z",
+    sessions: Array.from({ length: 4 }, (_, index) => ({
+      assignmentId: `a-${String(index + 1).padStart(4, "0")}`,
+      episodeId: `batch-live-1.a-${String(index + 1).padStart(4, "0")}`
+    })),
     record: record("running", "batch-live-1")
   };
   const live = renderToStaticMarkup(
@@ -462,6 +527,7 @@ test("a terminal batch offers no cancel action and is marked terminal", () => {
           batchId: "batch-done",
           assignmentCount: 1,
           createdAt: "2026-10-12T00:00:00.000Z",
+          sessions: [{ assignmentId: "a-1", episodeId: "batch-done.a-1" }],
           record: record("completed", "batch-done")
         }
       ],
@@ -523,6 +589,10 @@ test("the panel renders the owner's own counts rather than an absent reading", (
           batchId: "batch-1",
           assignmentCount: 4,
           createdAt: "2026-10-13T12:00:00.000Z",
+          sessions: Array.from({ length: 4 }, (_, index) => ({
+            assignmentId: `assignment-${String(index + 1).padStart(3, "0")}`,
+            episodeId: `batch-1.assignment-${String(index + 1).padStart(3, "0")}`
+          })),
           record: {
             ...record("running"),
             result: {
@@ -586,7 +656,7 @@ test("the panel renders the owner's own counts rather than an absent reading", (
   assert.match(markup, /Game outcome: Win/);
   assert.match(
     markup,
-    /href="\/playtesting\/sessions\/episode-001\?view=sessions&amp;workspaceId=fixture%2Fgame"/u
+    /href="\/playtesting\/sessions\/episode-001\?view=sessions&amp;workspaceId=fixture%2Fgame&amp;liveBatch=batch-1"/u
   );
   assert.match(markup, /No persisted session\./);
   assert.match(markup, /data-execution-state="infrastructure-failed"/);
@@ -755,6 +825,7 @@ function tracked(batchId: string, status: string): PlaytestingActiveRun {
     batchId,
     assignmentCount: 1,
     createdAt: "2026-10-15T00:00:00.000Z",
+    sessions: [{ assignmentId: "a-1", episodeId: `${batchId}.a-1` }],
     record: record(status, batchId)
   };
 }
