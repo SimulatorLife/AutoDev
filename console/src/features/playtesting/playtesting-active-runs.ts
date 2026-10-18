@@ -91,6 +91,33 @@ export function isTerminal(record: ControlApiPlaytestingRunRecord): boolean {
   return TERMINAL_RUN_STATES.has(record.status);
 }
 
+/**
+ * A missing episode is pending only when its ID belongs to a currently active
+ * batch. Both execution modes derive their episode IDs deterministically from
+ * that owner ID; completed outcomes are also checked for persisted/recovered
+ * runs. An unrelated active batch must never turn an arbitrary missing URL
+ * into a perpetual "initializing" state.
+ */
+export function activeRunOwnsEpisode(
+  run: PlaytestingActiveRun,
+  episodeId: string
+): boolean {
+  if (isTerminal(run.record)) return false;
+  if (
+    episodeId.startsWith(run.batchId + ".") ||
+    episodeId.startsWith(
+      "ep-" + run.batchId.replace(/^batch-/u, "").slice(0, 16) + "-"
+    )
+  ) {
+    return true;
+  }
+  const result = run.record.result;
+  if (!isRecord(result) || !Array.isArray(result.outcomes)) return false;
+  return result.outcomes.some(
+    (entry) => isRecord(entry) && entry.episodeId === episodeId
+  );
+}
+
 /** Only a positively observed role restriction hides the cancel action. */
 export function cancellationAvailability(
   operatorActionsAvailable: boolean | null

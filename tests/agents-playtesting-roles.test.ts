@@ -97,6 +97,7 @@ test("playtester.toml is sandboxed read-only, leaf-only, and run/read-scoped", (
       "playtest.cancel",
       "playtest.capabilities",
       "playtest.listEpisodes",
+      "playtest.lookupRequest",
       "playtest.readEpisode",
       "playtest.readWindow",
       "playtest.run",

@@ -1829,7 +1829,7 @@ function handleSyntheticPlaytestingRead(
       return true;
     }
     sendJson(response, {
-      schema: "autodev-control-playtesting-detail-v1",
+      schema: "autodev-control-playtesting-detail-v2",
       workspaceId: WORKSPACE_ID,
       resource: "episode",
       readOnly: true,
@@ -1837,7 +1837,8 @@ function handleSyntheticPlaytestingRead(
       latestReview:
         episodeId === episode.episodeId
           ? latestReview
-          : (syntheticRunReviews.get(episodeId) ?? null)
+          : (syntheticRunReviews.get(episodeId) ?? null),
+      latestDiscoveryReview: null
     });
     return true;
   }

@@ -1,6 +1,8 @@
 /** Server-only, typed Playtesting batch request; Runtime owns approval and execution. */
 import {
+  assertWorkspaceVisualPlaytestLimits,
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+  type WorkspaceVisualPlaytestLimits,
   type PlaytestLaunchAssignment,
   type PlaytestLaunchRequest,
   PLAYTESTS_MAX_ASSIGNMENT_MANIFEST_BYTES,
@@ -30,6 +32,63 @@ const MAX_LAUNCH_JSON_BYTES = PLAYTESTS_MAX_ASSIGNMENT_MANIFEST_BYTES;
 const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const CAPABILITY_REVISION_PATTERN = /^[a-f\d]{64}$/u;
+const TARGET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const ALLOWED_VISUAL_RECORD_KEYS = new Set([
+  "schema",
+  "mode",
+  "workspaceId",
+  "requestId",
+  "capabilityRevision",
+  "targetId",
+  "policyId",
+  "areasOfFocus",
+  "limits"
+]);
+function parseVisualLimits(
+  limits: unknown
+): WorkspaceVisualPlaytestLimits | null {
+  try {
+    assertWorkspaceVisualPlaytestLimits(limits);
+    return limits;
+  } catch {
+    return null;
+  }
+}
+
+function parseVisualLaunchRequest(
+  record: Record<string, unknown>
+): PlaytestLaunchRequest | null {
+  if (
+    Object.keys(record).length !== 9 ||
+    Object.keys(record).some((key) => !ALLOWED_VISUAL_RECORD_KEYS.has(key)) ||
+    typeof record.targetId !== "string" ||
+    !TARGET_ID_PATTERN.test(record.targetId) ||
+    record.policyId !== "smart-direct"
+  ) {
+    return null;
+  }
+  if (
+    record.areasOfFocus !== null &&
+    (typeof record.areasOfFocus !== "string" ||
+      record.areasOfFocus.length > 2000 ||
+      hasControlCharacters(record.areasOfFocus))
+  ) {
+    return null;
+  }
+  const limits = parseVisualLimits(record.limits);
+  if (limits === null) return null;
+  return {
+    schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+    mode: "autonomous-visual",
+    workspaceId: record.workspaceId as string,
+    requestId: record.requestId as string,
+    capabilityRevision: record.capabilityRevision as string,
+    targetId: record.targetId,
+    policyId: "smart-direct",
+    areasOfFocus: record.areasOfFocus,
+    limits
+  };
+}
 const ALLOWED_FIELDS = new Set(["launchRequest"]);
 
 function sendError(
@@ -185,11 +244,14 @@ function parseLaunchRequest(raw: string): PlaytestLaunchRequest | null {
   ) {
     return null;
   }
+  if (record.mode === "autonomous-visual") {
+    return parseVisualLaunchRequest(record);
+  }
+  if (record.mode === "scripted-regression") {
+    return record as unknown as PlaytestLaunchRequest;
+  }
   if (record.mode !== "adapter-accelerated") {
-    return record.mode === "autonomous-visual" ||
-      record.mode === "scripted-regression"
-      ? (record as unknown as PlaytestLaunchRequest)
-      : null;
+    return null;
   }
   const operation = record.operation;
   if (

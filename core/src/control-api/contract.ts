@@ -9,7 +9,7 @@
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 5
+  version: 6
 } as const;
 
 export type ControlApiContractResponse = {

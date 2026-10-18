@@ -38,7 +38,8 @@ export interface PlaytestAnalystProcessInput {
   readonly workspaceId: string;
   readonly actor: string;
   readonly episodeIds: readonly string[];
-  readonly metricAggregation: PlaytestCrossSessionMetricAggregation;
+  readonly analysisKind: "confirmatory" | "discovery";
+  readonly metricAggregation: PlaytestCrossSessionMetricAggregation | null;
 }
 
 export interface PlaytestAnalystProcessResult {
@@ -59,6 +60,31 @@ export interface PlaytestAnalystProcessOptions {
 }
 
 function playtestAnalystPrompt(input: PlaytestAnalystProcessInput): string {
+  if (input.analysisKind === "discovery") {
+    if (input.metricAggregation !== null) {
+      throw new TypeError(
+        "Visual discovery analysis must not carry a metric aggregation."
+      );
+    }
+    return [
+      "Review only the already-recorded autonomous visual discovery evidence selected by the Console. This task never runs or branches gameplay.",
+      `Trusted workspace: ${input.workspaceId}`,
+      `Analysis run: ${input.analysisId}`,
+      "Review exactly these persisted episode IDs, and no others:",
+      ...input.episodeIds.map((episodeId) => `- ${episodeId}`),
+      "For each episode, call playtest.prepareReview first. It must return analysisKind=discovery and one bounded packet artifact. Read only that packet. Do not read raw traces, source code, hidden state, other episodes, or additional artifacts.",
+      "For each prepared packet, call playtest.submitDiscoveryReview with the exact episodeId, packetId, packetArtifactId and packetSha256. Include non-empty observation and interpretation claims with exact packet evidenceRefs. Each claim status must be hypothesis or not-observed.",
+      "Report what the player-visible frame/control/phase actually shows separately from your interpretation. Preserve missing frames, partial status, action receipts and unobserved consequences. Use packet facts explicitly in summary and claims; never use placeholders or generic prose.",
+      "This is unscored discovery only: no rubric, metrics, coverage, scores, dimensions, verified bugs, fun claims, human claims, or issue findings. Do not call playtest.submitReview, playtest.submitCrossSessionSynthesis, playtest.branch, or any game-running tool. Do not infer game-terminal outcomes from a step cap.",
+      "If packet preparation fails, stop and report the returned typed refusal; do not substitute a raw trace or fabricate evidence.",
+      "Do not write source, run/branch gameplay, or publish issues."
+    ].join("\n");
+  }
+  if (input.metricAggregation === null) {
+    throw new TypeError(
+      "Confirmatory analyst analysis requires its exact frozen metric aggregation."
+    );
+  }
   assertPlaytestCrossSessionMetricAggregation(
     input.metricAggregation,
     input.workspaceId,
@@ -166,14 +192,22 @@ export function launchPlaytestAnalystProcess(
     AUTODEV_PLAYTEST_RUN_ID: runId,
     AUTODEV_PLAYTEST_ANALYSIS_ID: input.analysisId,
     AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS: JSON.stringify(input.episodeIds),
-    AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION: JSON.stringify(
-      input.metricAggregation
-    ),
+    AUTODEV_PLAYTEST_ANALYSIS_KIND: input.analysisKind,
+    ...(input.metricAggregation === null
+      ? {}
+      : {
+          AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION: JSON.stringify(
+            input.metricAggregation
+          )
+        }),
     AUTODEV_PLAYTEST_REPOSITORY_ROOT: repositoryRoot,
     AUTODEV_MEMORY_MODE: "disabled"
   };
   // This process reads/writes through its role- and workspace-bound MCP data
   // tools. It receives no general or Playtesting Control API credential.
+  if (input.analysisKind === "discovery") {
+    delete childEnvironment.AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION;
+  }
   delete childEnvironment.AUTODEV_CONTROL_API_TOKEN;
   delete childEnvironment.AUTODEV_PLAYTEST_CONTROL_API_TOKEN;
   delete childEnvironment.AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN;

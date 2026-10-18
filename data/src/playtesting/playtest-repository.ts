@@ -25,6 +25,8 @@ import {
   type PlaytestComparison,
   type PlaytestCrossSessionSynthesis,
   type PlaytestEpisode,
+  type PlaytestDiscoverySessionReview,
+  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   type PlaytestExperiment,
   type PlaytestFinding,
   type PlaytestSessionReview
@@ -63,6 +65,7 @@ import {
   decodeHumanStudy,
   decodeHumanSummary,
   decodeReview,
+  decodeDiscoveryReview,
   encodeBatch,
   encodeBenchmark,
   encodeComparison,
@@ -73,6 +76,7 @@ import {
   encodeHumanStudy,
   encodeHumanSummary,
   encodeReview,
+  encodeDiscoveryReview,
   isRecord,
   migrateLegacyEpisodeForStorage,
   toClickHouseDateTime
@@ -813,6 +817,17 @@ export class PlaytestRepository {
     );
   }
 
+  async insertDiscoveryReview(
+    record: PlaytestDiscoverySessionReview
+  ): Promise<void> {
+    const row = encodeDiscoveryReview(record.workspaceId, record);
+    await this.execute(
+      `INSERT INTO ${PLAYTEST_REVIEWS_TABLE} FORMAT JSONEachRow`,
+      {},
+      JSON.stringify(row) + "\n"
+    );
+  }
+
   async getLatestReview(
     workspaceId: string,
     episodeId: string,
@@ -823,15 +838,22 @@ export class PlaytestRepository {
         SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id, review_id ORDER BY version DESC, cityHash64(payload_json) DESC, payload_json DESC) AS rn
         FROM ${PLAYTEST_REVIEWS_TABLE}
         WHERE workspace_id = {workspaceId:String} AND episode_id = {episodeId:String} AND review_id = {reviewId:String}
+          AND JSONExtractString(payload_json, 'schema') != {discoverySchema:String}
       ) WHERE rn = 1
       FORMAT JSONEachRow`,
-      { workspaceId, episodeId, reviewId }
+      {
+        workspaceId,
+        episodeId,
+        reviewId,
+        discoverySchema: PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA
+      }
     );
     const rows = parseNdjsonLines(text);
     return rows.length > 0 ? decodeReview(rows[0]!) : null;
   }
 
-  /** Latest immutable review revision for one episode, if one exists. */
+  /** Latest immutable confirmatory review for one episode, if one exists. */
+
   async getLatestReviewForEpisode(
     workspaceId: string,
     episodeId: string
@@ -841,12 +863,40 @@ export class PlaytestRepository {
         SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id, review_id ORDER BY version DESC, cityHash64(payload_json) DESC, payload_json DESC) AS rn
         FROM ${PLAYTEST_REVIEWS_TABLE}
         WHERE workspace_id = {workspaceId:String} AND episode_id = {episodeId:String}
+          AND JSONExtractString(payload_json, 'schema') != {discoverySchema:String}
       ) WHERE rn = 1 ORDER BY created_at DESC, review_id DESC LIMIT 1
       FORMAT JSONEachRow`,
-      { workspaceId, episodeId }
+      {
+        workspaceId,
+        episodeId,
+        discoverySchema: PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA
+      }
     );
     const rows = parseNdjsonLines(text);
     return rows.length > 0 ? decodeReview(rows[0]!) : null;
+  }
+
+  /** Latest immutable discovery review for one episode, if one exists. */
+  async getLatestDiscoveryReviewForEpisode(
+    workspaceId: string,
+    episodeId: string
+  ): Promise<PlaytestDiscoverySessionReview | null> {
+    const text = await this.execute(
+      `SELECT * FROM (
+        SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id, review_id ORDER BY version DESC, cityHash64(payload_json) DESC, payload_json DESC) AS rn
+        FROM ${PLAYTEST_REVIEWS_TABLE}
+        WHERE workspace_id = {workspaceId:String} AND episode_id = {episodeId:String}
+          AND JSONExtractString(payload_json, 'schema') = {discoverySchema:String}
+      ) WHERE rn = 1 ORDER BY created_at DESC, review_id DESC LIMIT 1
+      FORMAT JSONEachRow`,
+      {
+        workspaceId,
+        episodeId,
+        discoverySchema: PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA
+      }
+    );
+    const rows = parseNdjsonLines(text);
+    return rows.length > 0 ? decodeDiscoveryReview(rows[0]!) : null;
   }
 
   // ---- Cross-session synthesis --------------------------------------------

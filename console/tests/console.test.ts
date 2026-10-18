@@ -216,6 +216,7 @@ import {
   fetchAgentDetail,
   fetchAgents,
   fetchControlApi,
+  fetchControlApiBinary,
   fetchEvaluations,
   fetchGithubWorkflows,
   fetchHooks,
@@ -3947,6 +3948,66 @@ test("fetchControlApi extracts code and message from Control API error envelope"
       result.message,
       "Control API requires the AutoDev server-side service credential."
     );
+  }
+});
+
+test("fetchControlApi transparently retries transient connection errors like ECONNREFUSED", async () => {
+  let callCount = 0;
+  const fetchImpl: typeof fetch = async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      const err = new TypeError("fetch failed");
+      Object.assign(err, { cause: { code: "ECONNREFUSED" } });
+      throw err;
+    }
+    return Response.json({
+      schema: "autodev-control-skills-v2",
+      source: "rulesync",
+      skills: []
+    });
+  };
+  const result = await fetchControlApi<{ schema: string; skills: unknown[] }>(
+    "/control/skills",
+    {
+      baseUrl: "http://127.0.0.1:4101",
+      serviceToken: "test"
+    },
+    { fetchImpl, retryDelayMs: 10 }
+  );
+  assert.equal(callCount, 2);
+  assert.equal(result.kind, "ok");
+  if (result.kind === "ok") {
+    assert.equal(result.data.schema, "autodev-control-skills-v2");
+  }
+});
+
+test("fetchControlApiBinary transparently retries transient connection errors like ECONNREFUSED", async () => {
+  let callCount = 0;
+  const fetchImpl: typeof fetch = async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      const err = new TypeError("fetch failed");
+      Object.assign(err, { cause: { code: "ECONNREFUSED" } });
+      throw err;
+    }
+    return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+      status: 200,
+      headers: { "Content-Type": "image/png" }
+    });
+  };
+  const result = await fetchControlApiBinary(
+    "/control/playtesting/episodes/ep-1/media/step-0.png?workspaceId=simulatorlife/autodev",
+    {
+      baseUrl: "http://127.0.0.1:4101",
+      serviceToken: "test"
+    },
+    { fetchImpl, retryDelayMs: 10 }
+  );
+  assert.equal(callCount, 2);
+  assert.equal(result.kind, "ok");
+  if (result.kind === "ok") {
+    assert.equal(result.data.mediaType, "image/png");
+    assert.equal(result.data.bytes.byteLength, 4);
   }
 });
 

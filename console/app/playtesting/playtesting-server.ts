@@ -1,6 +1,7 @@
 /** Server-only authenticated Playtesting reads for the Console resource. */
 import {
   assertPlaytestCoverageManifest,
+  assertPlaytestDiscoverySessionReview,
   assertPlaytestExecutionProvenance,
   assertPlaytestNumericResults,
   assertWorkspaceVisualPlaytestTargetApproval,
@@ -216,10 +217,15 @@ function hasSchema(
 ): value is Record<string, unknown> {
   if (!isRecord(value)) return false;
   if (resource === "batches") {
-    return typeof value.schema === "string" && VALID_BATCH_SCHEMAS.has(value.schema);
+    return (
+      typeof value.schema === "string" && VALID_BATCH_SCHEMAS.has(value.schema)
+    );
   }
   if (resource === "episodes") {
-    return typeof value.schema === "string" && VALID_EPISODE_SCHEMAS.has(value.schema);
+    return (
+      typeof value.schema === "string" &&
+      VALID_EPISODE_SCHEMAS.has(value.schema)
+    );
   }
   const expectedSchema = RESOURCE_SCHEMAS[resource];
   return expectedSchema === "" || value.schema === expectedSchema;
@@ -409,6 +415,19 @@ function isReview(
   );
 }
 
+function isDiscoveryReview(
+  value: unknown,
+  workspaceId: string,
+  episodeId: string
+): boolean {
+  try {
+    assertPlaytestDiscoverySessionReview(value);
+    return value.workspaceId === workspaceId && value.episodeId === episodeId;
+  } catch {
+    return false;
+  }
+}
+
 function isEpisodeDetailResponse(
   value: unknown,
   workspaceId: string,
@@ -416,13 +435,15 @@ function isEpisodeDetailResponse(
 ): value is ControlApiPlaytestingEpisodeDetailResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-playtesting-detail-v1" &&
+    value.schema === "autodev-control-playtesting-detail-v2" &&
     value.workspaceId === workspaceId &&
     value.resource === "episode" &&
     value.readOnly === true &&
     validPlaytestRecord(value.record, "episodes", workspaceId) &&
     value.record.episodeId === episodeId &&
-    (value.latestReview === null || isReview(value.latestReview, episodeId))
+    (value.latestReview === null || isReview(value.latestReview, episodeId)) &&
+    (value.latestDiscoveryReview === null ||
+      isDiscoveryReview(value.latestDiscoveryReview, workspaceId, episodeId))
   );
 }
 
@@ -492,7 +513,7 @@ export async function fetchPlaytestingEpisode(
     ? { kind: "ok", data: result.data }
     : invalidResponse(
         "Playtesting episode",
-        "autodev-control-playtesting-detail-v1"
+        "autodev-control-playtesting-detail-v2"
       );
 }
 

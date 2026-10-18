@@ -2,7 +2,8 @@ import type {
   PlaytestAdapterEpisode,
   PlaytestBranchLineage,
   PlaytestEpisode,
-  PlaytestEpisodeIdentity
+  PlaytestEpisodeIdentity,
+  PlaytestVisualEpisode
 } from "./artifacts.ts";
 import {
   PLAYTEST_EXECUTION_MODES,
@@ -444,6 +445,19 @@ export function assertPlaytestAdapterEpisode(
   if (episode.executionProvenance.mode !== ADAPTER_MODE) {
     throw new TypeError(
       "This operation requires an adapter-accelerated episode."
+    );
+  }
+}
+
+/** Narrow an episode to facts the discovery evidence contract requires. */
+export function assertPlaytestVisualEpisode(
+  episode: PlaytestEpisode
+): asserts episode is PlaytestVisualEpisode {
+  assertPlaytestEpisodeModeFacts(episode);
+  if (episode.executionProvenance.mode !== VISUAL_MODE) {
+    throw new TypeError(
+      "This operation requires an autonomous-visual episode; confirmatory " +
+        "adapter episodes require a scored evidence packet instead."
     );
   }
 }

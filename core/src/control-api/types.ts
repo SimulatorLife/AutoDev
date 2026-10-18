@@ -28,6 +28,7 @@ import type {
   PlaytestBenchmark,
   PlaytestCrossSessionSynthesis,
   PlaytestEpisode,
+  PlaytestDiscoverySessionReview,
   PlaytestEvidencePacket,
   PlaytestExperiment,
   PlaytestSessionReview
@@ -1594,12 +1595,13 @@ export interface ControlApiPlaytestingPageResponse<T> {
 
 /** Workspace-bound selected episode and its newest append-only analyst review. */
 export interface ControlApiPlaytestingEpisodeDetailResponse {
-  readonly schema: "autodev-control-playtesting-detail-v1";
+  readonly schema: "autodev-control-playtesting-detail-v2";
   readonly workspaceId: string;
   readonly resource: "episode";
   readonly readOnly: true;
   readonly record: PlaytestEpisode;
   readonly latestReview: PlaytestSessionReview | null;
+  readonly latestDiscoveryReview: PlaytestDiscoverySessionReview | null;
 }
 
 /** Integrity-checked, workspace-bound bounded JSONL evidence window. */

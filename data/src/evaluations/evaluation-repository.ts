@@ -218,15 +218,39 @@ export class EvaluationRepository {
   }
 
   private async query(endpoint: string, query: string): Promise<string> {
-    const response = await this.fetchImpl(
-      `${endpoint}&query=${encodeURIComponent(query)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }
+    const maxRetries = 2;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await this.fetchImpl(
+          `${endpoint}&query=${encodeURIComponent(query)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" }
+          }
+        );
+        if (!response.ok) throw new EvaluationSourceUnavailableError();
+        return await response.text();
+      } catch (error) {
+        if (error instanceof EvaluationSourceUnavailableError) throw error;
+        const cause = (error as { readonly cause?: unknown } | null | undefined)
+          ?.cause;
+        const code = (cause as { readonly code?: unknown } | null | undefined)
+          ?.code;
+        const isRetryable =
+          typeof code === "string" &&
+          (code === "ECONNRESET" ||
+            code === "ECONNREFUSED" ||
+            code === "ETIMEDOUT");
+        if (attempt < maxRetries && isRetryable) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, 100 * (attempt + 1))
+          );
+          continue;
+        }
+        throw new EvaluationSourceUnavailableError();
       }
-    );
-    if (!response.ok) throw new EvaluationSourceUnavailableError();
-    return response.text();
+    }
+    throw new EvaluationSourceUnavailableError();
   }
 
   parseEvaluationRows(text: string): readonly EvaluationResult[] {

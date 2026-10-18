@@ -75,6 +75,18 @@ export const PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2 =
 export const PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1 =
   "autodev-playtest-evidence-packet-v1" as const;
 
+/**
+ * Bounded, read-only analyst input artifact for autonomous-visual discovery
+ * sessions. Carries only player-visible observations, actual input
+ * receipts, pre-action predictions, missingness/quality and frame
+ * locators -- never rubric scores, metrics, coverage cells or
+ * engine-invariant claims. A discovery packet is refused by every
+ * scored/confirmatory review path and a confirmatory packet is refused by
+ * the discovery review path.
+ */
+export const PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA =
+  "autodev-playtest-discovery-evidence-packet-v1" as const;
+
 /** Identifier for the v2 comparison contract with attributable owner decisions. */
 export const PLAYTESTS_COMPARISON_SCHEMA =
   "autodev-playtest-comparison-v2" as const;
@@ -130,6 +142,9 @@ export const PLAYTESTS_SESSION_REVIEW_SCHEMA_V2 =
   "autodev-playtest-session-review-v2" as const;
 export const PLAYTESTS_SESSION_REVIEW_SCHEMA_V1 =
   "autodev-playtest-session-review-v1" as const;
+/** Unscored, packet-grounded analyst output for autonomous visual discovery. */
+export const PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA =
+  "autodev-playtest-discovery-session-review-v1" as const;
 export const PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA =
   "autodev-playtest-cross-session-synthesis-v2" as const;
 export const PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA_V1 =

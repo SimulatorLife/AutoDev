@@ -9,11 +9,14 @@ import {
   type ControlApiPlaytestingWindowResponse,
   playtestAssignmentManifestHashInput,
   type PlaytestComparison,
+  type PlaytestDiscoverySessionReview,
   type PlaytestEpisode,
   type PlaytestFinding,
   playtestFindingIdentityHashInput,
   PLAYTESTS_BATCH_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
+  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
   type PlaytestSessionReview,
@@ -123,12 +126,13 @@ function detail(
   record = episode()
 ): ControlApiPlaytestingEpisodeDetailResponse {
   return {
-    schema: "autodev-control-playtesting-detail-v1",
+    schema: "autodev-control-playtesting-detail-v2",
     workspaceId: WORKSPACE,
     resource: "episode",
     readOnly: true,
     record,
-    latestReview: null
+    latestReview: null,
+    latestDiscoveryReview: null
   };
 }
 
@@ -1060,8 +1064,10 @@ test("visualGameSpectatorStage renders live game screen, AI intentions, scrubber
         phase: "GreenFlag",
         selectedActionId: "ArrowUp",
         preActionPrediction: {
-          intention: "Accelerate down the straightaway and align for upcoming chicane",
-          predictedVisibleEffect: "Vehicle speed increases to 120 km/h, car stays in center lane",
+          intention:
+            "Accelerate down the straightaway and align for upcoming chicane",
+          predictedVisibleEffect:
+            "Vehicle speed increases to 120 km/h, car stays in center lane",
           reasonCode: "optimal_racing_line"
         },
         visibleObservation: {
@@ -1090,9 +1096,263 @@ test("visualGameSpectatorStage renders live game screen, AI intentions, scrubber
   assert.match(html, /frame-step-0/u);
   assert.match(html, /data-testid="spectator-step-scrubber"/u);
   assert.match(html, /data-testid="ai-intention-callout"/u);
-  assert.match(html, /Accelerate down the straightaway and align for upcoming chicane/u);
+  assert.match(
+    html,
+    /Accelerate down the straightaway and align for upcoming chicane/u
+  );
   assert.match(html, /Vehicle speed increases to 120 km\/h/u);
   assert.match(html, /optimal_racing_line/u);
   assert.match(html, /data-playtesting-spectator-analyze="episode-17"/u);
   assert.match(html, /Analyze with Playtest Analyst/u);
+});
+
+test("visual spectator derives the latest step from frames, follows live, and shows Persisted Analyst Hypotheses only", () => {
+  const visualEpisode: PlaytestEpisode = {
+    ...episode(),
+    status: "started",
+    executionProvenance: {
+      mode: "autonomous-visual",
+      source: {
+        kind: "URL-only",
+        repository: null,
+        revision: null,
+        revisionConfidence: "not-applicable",
+        checkoutState: "not-applicable",
+        artifactFingerprint: null,
+        targetId: "racing-game-local",
+        targetOrigin: "http://localhost:5173"
+      },
+      observationSource: "browser-ui",
+      actionSource: "browser-input",
+      derivedFrom: null
+    },
+    frames: [
+      { id: "frame-step-0", kind: "frame", step: 0, frameIndex: 0 },
+      { id: "frame-step-1", kind: "frame", step: 1, frameIndex: 1 },
+      { id: "frame-step-2", kind: "frame", step: 2, frameIndex: 2 }
+    ],
+    stepCount: 3
+  };
+  const baseDetail = detail();
+  const detailWithReview: typeof baseDetail = {
+    ...baseDetail,
+    record: visualEpisode,
+    latestReview: {
+      schema: "autodev-playtest-session-review-v6",
+      reviewId: "rev-1",
+      version: 1,
+      episodeId: visualEpisode.episodeId,
+      supersedes: null,
+      evidencePacket: null,
+      authorRole: "playtest-analyst",
+      authorId: "analyst",
+      rubricHash: "a".repeat(64),
+      measurementVersion: "v1",
+      provenance: {
+        workspaceId: WORKSPACE,
+        measurementVersion: "v1",
+        generatedAt: "2026-10-17T00:00:00.000Z"
+      },
+      chronologicalSummary: "Summary only",
+      authoritativeMetrics: [],
+      observations: [
+        {
+          text: "The visible prediction banner named the next betting phase.",
+          evidenceRefs: [{ kind: "frame", id: "frame-step-0", step: 0 }]
+        }
+      ],
+      interpretations: [
+        {
+          text: "The prediction may help the player prepare a wager.",
+          evidenceRefs: [{ kind: "frame", id: "frame-step-1", step: 1 }]
+        }
+      ],
+      anchors: [],
+      alternativeExplanations: [],
+      reportCompleteness: {
+        crossSessionContext: {
+          status: "not-recorded",
+          reason: "no cross-session packet provided"
+        },
+        alternatives: {
+          status: "not-recorded",
+          reason: "no alternatives in this fixture"
+        },
+        experiments: { status: "proposed" },
+        followUp: { status: "proposed", text: "follow" }
+      },
+      experiments: [
+        {
+          hypothesis: "Slow chicane exit reduces lap time",
+          falsifier: "Time trial exit 5x slower than baseline",
+          metricId: "lap-time-ms",
+          controls: ["lap-time-ms", "track-position"],
+          budget: "10s extra wall-time"
+        }
+      ],
+      status: "hypothesis",
+      findings: [],
+      evidenceRefs: [],
+      createdAt: "2026-10-17T00:00:00.000Z",
+      notes: "no notes"
+    }
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detailWithReview,
+      scope: scope({ view: "sessions" }),
+      window: null
+    })
+  );
+  assert.match(html, /Following live/u);
+  assert.match(html, /data-testid="follow-live-active"/u);
+  assert.match(html, /Persisted Analyst Hypotheses/u);
+  assert.match(html, /Slow chicane exit reduces lap time/u);
+  assert.match(html, /data-testid="analyst-hypotheses-list"/u);
+  assert.match(html, /data-testid="session-live-watch"/u);
+  assert.doesNotMatch(html, /Executive Debrief/u);
+  assert.doesNotMatch(html, /9.0 \/ 10/u);
+});
+
+test("session detail renders persisted visual discovery hypotheses with packet-linked evidence", () => {
+  const visual = {
+    ...episode(),
+    episodeId: "ep-discovery-1",
+    batchId: "batch-discovery-1",
+    assignmentId: "vis-assign-1",
+    status: "completed" as const,
+    executionProvenance: {
+      mode: "autonomous-visual" as const,
+      source: {
+        kind: "URL-only" as const,
+        repository: null,
+        revision: null,
+        revisionConfidence: "not-applicable" as const,
+        checkoutState: "not-applicable" as const,
+        artifactFingerprint: null,
+        targetId: "racing-game-local",
+        targetOrigin: "http://127.0.0.1:5173"
+      },
+      observationSource: "browser-ui" as const,
+      actionSource: "browser-input" as const,
+      derivedFrom: null
+    },
+    frames: [
+      {
+        id: "discovery-frame-0",
+        kind: "frame" as const,
+        step: 0,
+        frameIndex: 0
+      }
+    ],
+    stepCount: 1
+  } satisfies PlaytestEpisode;
+  const discoveryReview: PlaytestDiscoverySessionReview = {
+    schema: PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
+    analysisKind: "discovery",
+    reviewId: "discovery-review-1",
+    version: 1,
+    workspaceId: WORKSPACE,
+    batchId: visual.batchId,
+    episodeId: visual.episodeId,
+    supersedes: null,
+    evidencePacket: {
+      packetId: "discovery-packet-1",
+      artifact: {
+        artifactId: "discovery-packet-1",
+        sha256: "a".repeat(64),
+        bytes: 512,
+        mediaType: PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE
+      }
+    },
+    authorRole: "playtest-analyst",
+    authorId: "analyst-1",
+    measurementVersion: "playtesting-measurement-v2",
+    chronologicalSummary:
+      "One menu choice was visible, but its effect was not observed.",
+    observations: [
+      {
+        hypothesisId: "observation-1",
+        status: "hypothesis",
+        text: "The race setup menu showed a selectable stage.",
+        evidenceRefs: [
+          { kind: "frame", id: "discovery-frame-0", step: 0, frameIndex: 0 }
+        ]
+      }
+    ],
+    interpretations: [
+      {
+        hypothesisId: "interpretation-1",
+        status: "not-observed",
+        text: "The packet does not show whether selecting the stage starts a race.",
+        evidenceRefs: [
+          { kind: "frame", id: "discovery-frame-0", step: 0, frameIndex: 0 }
+        ]
+      }
+    ],
+    alternativeExplanations: [],
+    experiments: [],
+    evidenceRefs: [
+      { kind: "frame", id: "discovery-frame-0", step: 0, frameIndex: 0 }
+    ],
+    createdAt: "2026-10-17T12:00:00.000Z",
+    status: "hypothesis"
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: {
+        ...detail(),
+        record: visual,
+        latestDiscoveryReview: discoveryReview
+      },
+      scope: scope({ view: "sessions" }),
+      window: null
+    })
+  );
+  assert.match(html, /Visual Discovery Review/u);
+  assert.match(html, /race setup menu showed a selectable stage/u);
+  assert.match(
+    html,
+    /The packet does not show whether selecting the stage starts a race/u
+  );
+  assert.match(html, /data-discovery-evidence="frame"/u);
+  assert.doesNotMatch(html, /Verified bug/u);
+  assert.doesNotMatch(html, /fun score/u);
+});
+
+test("visual spectator surfaces the Follow live jump link when the operator navigates away from the latest step", () => {
+  const visualEpisode: PlaytestEpisode = {
+    ...episode(),
+    status: "completed",
+    executionProvenance: {
+      mode: "autonomous-visual",
+      source: {
+        kind: "URL-only",
+        repository: null,
+        revision: null,
+        revisionConfidence: "not-applicable",
+        checkoutState: "not-applicable",
+        artifactFingerprint: null,
+        targetId: "racing-game-local",
+        targetOrigin: "http://localhost:5173"
+      },
+      observationSource: "browser-ui",
+      actionSource: "browser-input",
+      derivedFrom: null
+    },
+    frames: [
+      { id: "frame-step-0", kind: "frame", step: 0, frameIndex: 0 },
+      { id: "frame-step-1", kind: "frame", step: 1, frameIndex: 1 }
+    ],
+    stepCount: 2
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: { ...detail(), record: visualEpisode, latestReview: null },
+      scope: scope({ view: "sessions", step: "0" }),
+      window: null
+    })
+  );
+  assert.match(html, /data-testid="jump-to-live"/u);
+  assert.doesNotMatch(html, /Following live/u);
 });

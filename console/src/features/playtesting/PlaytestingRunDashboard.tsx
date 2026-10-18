@@ -194,8 +194,7 @@ const VISUAL_FOCUS_PRESETS = [
     id: "garage",
     icon: "🏎️",
     title: "Explore Menus & Garage",
-    description:
-      "Interact with options, vehicle selection, and audio toggles.",
+    description: "Interact with options, vehicle selection, and audio toggles.",
     prompt:
       "Explore the game menus, vehicle selection, garage upgrades, and test UI button interactions."
   },
@@ -203,8 +202,7 @@ const VISUAL_FOCUS_PRESETS = [
     id: "handling",
     icon: "⏱️",
     title: "Vehicle Handling Stress",
-    description:
-      "Test wall collision, bounce-back behavior, and recovery.",
+    description: "Test wall collision, bounce-back behavior, and recovery.",
     prompt:
       "Stress test high-speed cornering, collision recovery against walls and barriers, and steering responsiveness."
   }
@@ -225,19 +223,61 @@ function VisualPlaytestLaunchCockpit({
     setup.kind === "available"
       ? setup.capabilities.modeReadiness["autonomous-visual"]
       : null;
+  const isReady = readiness?.status === "ready";
   const supportedTargets =
     readiness?.targets.filter((t) => t.eligibility === "supported") ?? [];
-  const primaryTarget = supportedTargets[0]?.target ?? null;
+
+  const [selectedTargetId, setSelectedTargetId] = useState<string>(
+    supportedTargets[0]?.target.targetId ?? ""
+  );
+  const primaryTarget =
+    supportedTargets.find((t) => t.target.targetId === selectedTargetId)
+      ?.target ??
+    supportedTargets[0]?.target ??
+    null;
+
+  const approvedMaxEpisodes = primaryTarget?.limits.episodeCount ?? 1;
+  const approvedMaxSteps = primaryTarget?.limits.maxStepsPerEpisode ?? 50;
+
+  const episodeOptions = Array.from(
+    new Set(
+      [1, 2, 5, 10]
+        .filter((e) => e <= approvedMaxEpisodes)
+        .concat(approvedMaxEpisodes)
+    )
+  ).sort((a, b) => a - b);
+
+  const stepOptions = Array.from(
+    new Set(
+      [10, 25, 50, 80, 100, 150]
+        .filter((s) => s <= approvedMaxSteps)
+        .concat(approvedMaxSteps)
+    )
+  ).sort((a, b) => a - b);
 
   const [areasOfFocus, setAreasOfFocus] = useState<string>(
     VISUAL_FOCUS_PRESETS[0].prompt
   );
-  const [selectedSteps, setSelectedSteps] = useState<number>(80);
+  const [selectedEpisodes, setSelectedEpisodes] = useState<number>(1);
+  const [selectedSteps, setSelectedSteps] = useState<number>(approvedMaxSteps);
   const [pending, setPending] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  const effectiveEpisodes = Math.min(selectedEpisodes, approvedMaxEpisodes);
+  const effectiveSteps = Math.min(selectedSteps, approvedMaxSteps);
+
+  const canSubmit = Boolean(
+    !pending && workspaceId && primaryTarget && isReady
+  );
+
   const handleLaunch = async () => {
-    if (!workspaceId || !primaryTarget || setup.kind !== "available") return;
+    if (
+      !canSubmit ||
+      !workspaceId ||
+      !primaryTarget ||
+      setup.kind !== "available"
+    )
+      return;
     setPending(true);
     setError(null);
     try {
@@ -251,19 +291,20 @@ function VisualPlaytestLaunchCockpit({
         policyId: "smart-direct" as const,
         areasOfFocus: areasOfFocus.trim() || null,
         limits: {
-          episodeCount: 1,
-          maxStepsPerEpisode: selectedSteps,
-          wallTimeMs: primaryTarget.limits?.wallTimeMs ?? 120_000,
-          smartRequestsPerEpisode:
-            primaryTarget.limits?.smartRequestsPerEpisode ?? 30,
-          smartTokensPerEpisode:
-            primaryTarget.limits?.smartTokensPerEpisode ?? 25_000,
-          screenshotCountPerEpisode: Math.max(
-            selectedSteps * 2,
-            primaryTarget.limits?.screenshotCountPerEpisode ?? 160
+          episodeCount: Math.min(
+            effectiveEpisodes,
+            primaryTarget.limits.episodeCount
           ),
-          artifactBytesPerEpisode:
-            primaryTarget.limits?.artifactBytesPerEpisode ?? 64 * 1024 * 1024
+          maxStepsPerEpisode: Math.min(
+            effectiveSteps,
+            primaryTarget.limits.maxStepsPerEpisode
+          ),
+          wallTimeMs: primaryTarget.limits.wallTimeMs,
+          smartRequestsPerEpisode: primaryTarget.limits.smartRequestsPerEpisode,
+          smartTokensPerEpisode: primaryTarget.limits.smartTokensPerEpisode,
+          screenshotCountPerEpisode:
+            primaryTarget.limits.screenshotCountPerEpisode,
+          artifactBytesPerEpisode: primaryTarget.limits.artifactBytesPerEpisode
         }
       };
       const form = new URLSearchParams({
@@ -328,12 +369,49 @@ function VisualPlaytestLaunchCockpit({
         "Launches an intelligent AI player using vision and discrete keyboard/pointer controls to explore and play your live game."
       )
     ),
+    supportedTargets.length > 1
+      ? React.createElement(
+          "div",
+          { className: "grid gap-1.5" },
+          React.createElement(
+            "label",
+            {
+              htmlFor: "visual-target-select",
+              className:
+                "text-xs font-semibold uppercase tracking-wider text-fg-muted"
+            },
+            "Target Selector"
+          ),
+          React.createElement(
+            "select",
+            {
+              id: "visual-target-select",
+              value: primaryTarget?.targetId ?? "",
+              onChange: (e: React.ChangeEvent<HTMLSelectElement>) =>
+                setSelectedTargetId(e.target.value),
+              className:
+                "w-full rounded-lg border border-border bg-surface px-3.5 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent",
+              "data-testid": "visual-target-select"
+            },
+            ...supportedTargets.map((entry) =>
+              React.createElement(
+                "option",
+                {
+                  key: entry.target.targetId,
+                  value: entry.target.targetId
+                },
+                entry.target.name + " (" + entry.target.entryUrl + ")"
+              )
+            )
+          )
+        )
+      : null,
     primaryTarget
       ? React.createElement(
           "div",
           {
             className:
-              "rounded-xl border border-accent/40 bg-surface p-4 shadow-sm",
+              "rounded-xl border border-accent bg-surface p-4 shadow-sm",
             "data-testid": "visual-target-card"
           },
           React.createElement(
@@ -505,12 +583,50 @@ function VisualPlaytestLaunchCockpit({
           className:
             "text-xs font-semibold uppercase tracking-wider text-fg-muted"
         },
-        "3. Step Cap"
+        "3. Episode Count (max " + String(approvedMaxEpisodes) + ")"
       ),
       React.createElement(
         "div",
-        { className: "flex flex-wrap gap-2" },
-        ...[50, 80, 100, 150].map((step) =>
+        {
+          className: "flex flex-wrap gap-2",
+          "data-testid": "visual-episode-options"
+        },
+        ...episodeOptions.map((count) =>
+          React.createElement(
+            "button",
+            {
+              key: count,
+              type: "button",
+              onClick: () => setSelectedEpisodes(count),
+              className:
+                "rounded-lg border px-4 py-2 text-xs font-medium transition " +
+                (effectiveEpisodes === count
+                  ? "border-accent bg-accent text-fg-inverse shadow-sm"
+                  : "border-border bg-surface text-fg hover:bg-surface-raised")
+            },
+            String(count) + (count === 1 ? " episode" : " episodes")
+          )
+        )
+      )
+    ),
+    React.createElement(
+      "div",
+      { className: "grid gap-1.5" },
+      React.createElement(
+        "label",
+        {
+          className:
+            "text-xs font-semibold uppercase tracking-wider text-fg-muted"
+        },
+        "4. Step Cap (max " + String(approvedMaxSteps) + ")"
+      ),
+      React.createElement(
+        "div",
+        {
+          className: "flex flex-wrap gap-2",
+          "data-testid": "visual-step-options"
+        },
+        ...stepOptions.map((step) =>
           React.createElement(
             "button",
             {
@@ -519,7 +635,7 @@ function VisualPlaytestLaunchCockpit({
               onClick: () => setSelectedSteps(step),
               className:
                 "rounded-lg border px-4 py-2 text-xs font-medium transition " +
-                (selectedSteps === step
+                (effectiveSteps === step
                   ? "border-accent bg-accent text-fg-inverse shadow-sm"
                   : "border-border bg-surface text-fg hover:bg-surface-raised")
             },
@@ -539,7 +655,7 @@ function VisualPlaytestLaunchCockpit({
       "button",
       {
         type: "button",
-        disabled: pending || !primaryTarget || !workspaceId,
+        disabled: !canSubmit,
         onClick: () => void handleLaunch(),
         className:
           "inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-accent px-6 py-3.5 text-base font-semibold text-fg-inverse shadow-md transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60",
@@ -550,7 +666,13 @@ function VisualPlaytestLaunchCockpit({
         { "aria-hidden": true, className: "text-lg leading-none" },
         "🚀"
       ),
-      pending ? "Starting visual playtest…" : "Launch Visual Playtest"
+      pending
+        ? "Starting visual playtest…"
+        : !primaryTarget
+          ? "No Target Selected"
+          : !isReady
+            ? "Visual Readiness Not Ready"
+            : "Launch Visual Playtest"
     )
   );
 }
@@ -741,7 +863,11 @@ export function PlaytestingRunDashboard({
                   "data-playtesting-tab": "autonomous-visual"
                 },
                 React.createElement("span", null, "🌐"),
-                React.createElement("span", null, "Autonomous Visual AI Player"),
+                React.createElement(
+                  "span",
+                  null,
+                  "Autonomous Visual AI Player"
+                ),
                 visualReady
                   ? React.createElement(
                       "span",

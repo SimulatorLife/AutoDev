@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
+  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS
 } from "@simulatorlife/autodev-core";
@@ -309,6 +311,43 @@ test("Playtesting selected episode validates workspace binding and nullable revi
     metrics: [],
     frames: []
   };
+  const discoveryReview = {
+    schema: PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
+    analysisKind: "discovery",
+    reviewId: "discovery-review-1",
+    version: 1,
+    workspaceId,
+    batchId: "batch-1",
+    episodeId: "episode-1",
+    supersedes: null,
+    evidencePacket: {
+      packetId: "packet-discovery-1",
+      artifact: {
+        artifactId: "packet-discovery-1",
+        sha256: "b".repeat(64),
+        bytes: 512,
+        mediaType: PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE
+      }
+    },
+    authorRole: "playtest-analyst",
+    authorId: "analyst-1",
+    measurementVersion: "playtesting-measurement-v2",
+    chronologicalSummary: "A visible control was observed.",
+    observations: [
+      {
+        hypothesisId: "obs-1",
+        status: "hypothesis",
+        text: "A visible control was available.",
+        evidenceRefs: [{ kind: "episode", id: "episode-1" }]
+      }
+    ],
+    interpretations: [],
+    alternativeExplanations: [],
+    experiments: [],
+    evidenceRefs: [{ kind: "episode", id: "episode-1" }],
+    createdAt: "2026-10-17T12:00:00.000Z",
+    status: "hypothesis"
+  };
   const result = await fetchPlaytestingEpisode(
     workspaceId,
     "episode-1",
@@ -317,17 +356,21 @@ test("Playtesting selected episode validates workspace binding and nullable revi
       fetchImpl: (async (input) => {
         requested = String(input);
         return response({
-          schema: "autodev-control-playtesting-detail-v1",
+          schema: "autodev-control-playtesting-detail-v2",
           workspaceId,
           resource: "episode",
           readOnly: true,
           record: episode,
-          latestReview: null
+          latestReview: null,
+          latestDiscoveryReview: discoveryReview
         });
       }) as typeof fetch
     }
   );
   assert.equal(result.kind, "ok");
+  if (result.kind === "ok") {
+    assert.deepEqual(result.data.latestDiscoveryReview, discoveryReview);
+  }
   assert.match(requested, /\/control\/playtesting\/episodes\/episode-1\?/u);
 });
 

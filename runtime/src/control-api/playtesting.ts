@@ -144,6 +144,7 @@ export type PlaytestingReadRepository = Pick<
   | "listHumanStudies"
   | "getEpisode"
   | "getLatestReviewForEpisode"
+  | "getLatestDiscoveryReviewForEpisode"
 >;
 
 export interface PlaytestingControlApiOptions {
@@ -730,17 +731,18 @@ async function readEpisodeDetail(
 ): Promise<ControlApiPlaytestingEpisodeDetailResponse | null> {
   const record = await repository.getEpisode(workspaceId, episodeId);
   if (record === null) return null;
-  const latestReview = await repository.getLatestReviewForEpisode(
-    workspaceId,
-    episodeId
-  );
+  const [latestReview, latestDiscoveryReview] = await Promise.all([
+    repository.getLatestReviewForEpisode(workspaceId, episodeId),
+    repository.getLatestDiscoveryReviewForEpisode(workspaceId, episodeId)
+  ]);
   return {
-    schema: "autodev-control-playtesting-detail-v1",
+    schema: "autodev-control-playtesting-detail-v2",
     workspaceId,
     resource: "episode",
     readOnly: true,
     record,
-    latestReview
+    latestReview,
+    latestDiscoveryReview
   };
 }
 

@@ -45,6 +45,9 @@ if [[ -n "${CODEX_ROUTER_AUTH_TOKEN:-}" && "${AUTODEV_SKIP_LAUNCHCTL:-0}" != "1"
 fi
 
 
+export AUTODEV_CONTROL_API_LISTEN_HOST="${AUTODEV_CONTROL_API_LISTEN_HOST:-0.0.0.0}"
+export AUTODEV_CONTROL_API_LISTEN_PORT="${AUTODEV_CONTROL_API_LISTEN_PORT:-4101}"
+
 # The OpenLIT ingress mode is committed only after config materialization and
 # before service restart. Publish the same endpoint/key to the router and the
 # GUI launchd domain so both Codex's exporters and router-owned spans use the
@@ -55,8 +58,6 @@ if [[ -f "$mode_file" ]]; then
   otel_mode="$(tr -d '\r\n ' < "$mode_file")"
 fi
 if [[ "$otel_mode" == "openlit" ]]; then
-  export AUTODEV_CONTROL_API_LISTEN_HOST="${AUTODEV_CONTROL_API_LISTEN_HOST:-0.0.0.0}"
-  export AUTODEV_CONTROL_API_LISTEN_PORT="${AUTODEV_CONTROL_API_LISTEN_PORT:-4101}"
   otlp_api_key="${OPENLIT_OTLP_API_KEY:-}"
   if [[ ${#otlp_api_key} -lt 32 ]]; then
     echo "run-codex-model-router: OpenLIT ingress needs the CODEX_HOME OTLP key" >&2

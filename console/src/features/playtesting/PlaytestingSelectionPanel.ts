@@ -24,7 +24,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function dispatchAnalystReview(
+export async function dispatchAnalystReview(
   workspaceId: string,
   episodeIds: readonly string[]
 ): Promise<
@@ -310,7 +310,8 @@ export function PlaytestingSelectionPanel({
                 "li",
                 {
                   key: episodeId,
-                  className: "max-w-full truncate rounded border border-border px-2 py-1 font-mono text-xs",
+                  className:
+                    "max-w-full truncate rounded border border-border px-2 py-1 font-mono text-xs",
                   title: episodeId
                 },
                 episodeId

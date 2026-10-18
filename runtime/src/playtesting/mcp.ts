@@ -54,8 +54,12 @@ import {
   playtestCrossSessionInventoryHashInput,
   type PlaytestCrossSessionMetricAggregation,
   type PlaytestCrossSessionSynthesis,
+  type PlaytestDiscoveryEvidencePacket,
+  type PlaytestDiscoverySessionReview,
+  type PlaytestDiscoveryReviewDraft,
   type PlaytestDimensionAnchor,
   type PlaytestEpisode,
+  type PlaytestEpisodeState,
   type PlaytestEvidenceLocator,
   type PlaytestEvidenceOmittedArtifact,
   type PlaytestEvidencePacket,
@@ -69,6 +73,7 @@ import {
   type PlaytestKnownEvidenceIndex,
   type PlaytestLaunchAssignment,
   type PlaytestLaunchRequest,
+  type PlaytestMissingReason,
   type PlaytestOwnerDisposition,
   type PlaytestReviewCandidate,
   type PlaytestReviewCompleteness,
@@ -84,6 +89,9 @@ import {
   PLAYTESTS_EPISODE_STATES,
   PLAYTESTS_EVIDENCE_PACKET_MAX_TOKENS,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MAX_TOKENS,
+  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_FINDING_STATUSES,
   PLAYTESTS_GAME_OUTCOMES,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
@@ -96,6 +104,10 @@ import {
   PLAYTESTS_SEVERITIES,
   PLAYTESTS_VERIFICATION_STAGES,
   type PlaytestSessionReview,
+  assertPlaytestDiscoveryEvidencePacket,
+  assertPlaytestDiscoveryReviewDraft,
+  assertPlaytestDiscoveryReviewGroundedInPacket,
+  assertPlaytestDiscoverySessionReview,
   recordPlaytestOwnerDecision,
   scorePlaytestDimensionAnchor,
   selectPlaytestBatchReviews,
@@ -112,6 +124,7 @@ import {
   type PlaytestVisualObservation,
   type WorkspacePlaytestApproval,
   type WorkspacePlaytestBuild,
+  type WorkspaceVisualPlaytestLimits,
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
 import {
@@ -169,8 +182,16 @@ import {
   PLAYTESTS_BUILTIN_POLICY_IDS
 } from "./policies.ts";
 import { derivePlaytestPolicyValidity } from "./policy-validity-run.ts";
-import { SmartDirectVisualPolicy } from "./smart-direct-policy.ts";
-import { PlaytestVisualBrowserDriver } from "./visual-browser-driver.ts";
+import { preparePlaytestDiscoveryEvidencePacket } from "./discovery-review.ts";
+import {
+  SmartDirectPolicyError,
+  SmartDirectVisualPolicy
+} from "./smart-direct-policy.ts";
+import {
+  PlaytestVisualBrowserDriver,
+  PlaytestVisualBrowserDriverError,
+  type PlaytestVisualObservationBlockReason
+} from "./visual-browser-driver.ts";
 
 export class PlaytestMcpAuthorizationError extends Error {
   constructor(message: string) {
@@ -232,6 +253,7 @@ export interface PlaytestMcpSession extends PlaytestRunControlActor {
   /** Runtime-bound packet selection for a dispatched analyst task. */
   readonly selectedEpisodeIds?: readonly string[];
   /** Runtime-computed immutable metric context for this exact analyst task. */
+  readonly analysisKind?: "confirmatory" | "discovery";
   readonly metricAggregation?: PlaytestCrossSessionMetricAggregation;
 }
 
@@ -321,6 +343,7 @@ export interface PlaytestAnalystReviewReceipt {
 export interface PlaytestAnalystReviewRun {
   readonly analysisId: string;
   readonly workspaceId: string;
+  readonly analysisKind?: "confirmatory" | "discovery";
   readonly status: "running" | "completed" | "partial" | "failed";
   readonly createdAt: string;
   readonly finishedAt: string | null;
@@ -512,6 +535,11 @@ export interface PlaytestingRepositoryOps extends PlaytestingReadRepository {
     episodeId: string,
     reviewId: string
   ): Promise<PlaytestSessionReview | null>;
+  getLatestDiscoveryReviewForEpisode(
+    workspaceId: string,
+    episodeId: string
+  ): Promise<PlaytestDiscoverySessionReview | null>;
+  insertDiscoveryReview(review: PlaytestDiscoverySessionReview): Promise<void>;
   insertCrossSessionSynthesis(
     synthesis: PlaytestCrossSessionSynthesis
   ): Promise<void>;
@@ -542,7 +570,8 @@ export interface PlaytestRunControlOptions {
   /** Durable Data owner; required at launch, omitted only for read-only test owners. */
   readonly launchIntentRepository?: PlaytestLaunchIntentRepository | undefined;
   readonly approvalRepository?: WorkspacePlaytestApprovalRepository | undefined;
-  readonly visualTargetRepository?: WorkspaceVisualPlaytestTargetRepository | undefined;
+  readonly visualTargetRepository?:
+    WorkspaceVisualPlaytestTargetRepository | undefined;
   readonly runEpisodeHandler?: (
     options: PlaytestEpisodeRunOptions
   ) => Promise<PlaytestEpisodeRunResult>;
@@ -643,6 +672,19 @@ async function readPersistedAnalystReviews(
 ): Promise<readonly PlaytestAnalystReviewReceipt[]> {
   const reviews = await Promise.all(
     run.packets.map(async (packet) => {
+      if (run.analysisKind === "discovery") {
+        const review = await repository.getLatestDiscoveryReviewForEpisode(
+          run.workspaceId,
+          packet.episodeId
+        );
+        return review?.evidencePacket.packetId === packet.packetId
+          ? {
+              episodeId: packet.episodeId,
+              reviewId: review.reviewId,
+              status: review.status
+            }
+          : null;
+      }
       const review = await repository.getLatestReviewForEpisode(
         run.workspaceId,
         packet.episodeId
@@ -669,7 +711,8 @@ function analystReviewRunStatus(input: {
   readonly synthesisId: string | null;
   readonly synthesisReadFailed: boolean;
 }): PlaytestAnalystReviewRun["status"] {
-  const synthesisRequired = input.run.packets.length >= 2;
+  const synthesisRequired =
+    input.run.analysisKind !== "discovery" && input.run.packets.length >= 2;
   if (
     !input.reviewReadFailed &&
     !input.synthesisReadFailed &&
@@ -3938,6 +3981,40 @@ async function executeApprovedBatch(input: ExecuteBatchInput) {
   }
 }
 
+/**
+ * Refuse (never clamp) a visual launch that requests any limit above the
+ * approved target's own ceiling. Admission must fail closed: a caller that
+ * wants a smaller run can just ask for one, but nothing here silently
+ * substitutes the approved limit for a larger requested one.
+ */
+export function assertVisualLaunchLimitsWithinApprovedTarget(
+  requested: WorkspaceVisualPlaytestLimits,
+  approved: WorkspaceVisualPlaytestLimits
+): void {
+  const fields: readonly (keyof WorkspaceVisualPlaytestLimits)[] = [
+    "episodeCount",
+    "maxStepsPerEpisode",
+    "wallTimeMs",
+    "smartRequestsPerEpisode",
+    "smartTokensPerEpisode",
+    "screenshotCountPerEpisode",
+    "artifactBytesPerEpisode"
+  ];
+  for (const field of fields) {
+    if (requested[field] > approved[field]) {
+      throw new PlaytestMcpValidationError(
+        'Requested limit "' +
+          field +
+          '" (' +
+          String(requested[field]) +
+          ") exceeds the approved target's limit (" +
+          String(approved[field]) +
+          ")."
+      );
+    }
+  }
+}
+
 interface ExecuteVisualBatchInput {
   readonly session: PlaytestMcpSession;
   readonly workspaceId: string;
@@ -3959,6 +4036,143 @@ interface ExecuteVisualBatchInput {
     createdAt: string,
     assignmentIds: readonly string[]
   ) => void;
+}
+
+/** Visual-session loop exit signal; mapped to a Core termination/status pair. */
+type VisualEpisodeExit =
+  | { readonly kind: "cancelled"; readonly step: number | null }
+  | { readonly kind: "step-limit"; readonly step: number | null }
+  | { readonly kind: "loop-guard"; readonly step: number | null }
+  | { readonly kind: "policy-stop"; readonly step: number | null }
+  | {
+      readonly kind: "driver-blocked";
+      readonly reason: PlaytestVisualObservationBlockReason;
+      readonly step: number | null;
+    }
+  | {
+      readonly kind: "action-refused";
+      readonly reason: string;
+      readonly step: number | null;
+    }
+  | {
+      readonly kind: "infrastructure-failure";
+      readonly code: string;
+      readonly step: number | null;
+    };
+
+/** Driver-observed budgets that exhaust like a step cap, not a safety stop. */
+const VISUAL_BUDGET_BLOCK_REASONS =
+  new Set<PlaytestVisualObservationBlockReason>([
+    "capture-budget-exhausted",
+    "event-budget-exhausted",
+    "wall-time-limit"
+  ]);
+
+/**
+ * Map an actual visual-session exit to the Core-owned termination reason and
+ * execution state. Every branch names a value from
+ * PLAYTESTS_EPISODE_TERMINATION_REASONS; nothing here fabricates a
+ * game-verified outcome the driver never observed, so \"game-terminal\" is
+ * never produced by a URL-only visual session.
+ */
+function visualEpisodeDisposition(exit: VisualEpisodeExit): {
+  readonly status: PlaytestAssignmentTerminalState;
+  readonly termination: PlaytestEpisode["termination"];
+  readonly missingReason: PlaytestMissingReason | null;
+} {
+  switch (exit.kind) {
+    case "cancelled":
+      return {
+        status: "cancelled",
+        termination: { reason: "cancelled", step: exit.step },
+        missingReason: "cancelled"
+      };
+    case "step-limit":
+      return {
+        status: "budget-truncated",
+        termination: { reason: "step-limit", step: exit.step },
+        missingReason: "budget-truncated"
+      };
+    case "loop-guard":
+      return {
+        status: "budget-truncated",
+        termination: { reason: "loop-guard", step: exit.step },
+        missingReason: "budget-truncated"
+      };
+    case "infrastructure-failure":
+      return {
+        status: "infrastructure-failed",
+        termination: { reason: "runtime-failure", step: exit.step },
+        missingReason: "infrastructure-failed"
+      };
+    case "driver-blocked":
+      return VISUAL_BUDGET_BLOCK_REASONS.has(exit.reason)
+        ? {
+            status: "budget-truncated",
+            termination: { reason: "step-limit", step: exit.step },
+            missingReason: "budget-truncated"
+          }
+        : {
+            status: "crashed",
+            termination: { reason: "unknown", step: exit.step },
+            missingReason: "unobserved"
+          };
+    case "action-refused":
+      return {
+        status: "crashed",
+        termination: { reason: "unknown", step: exit.step },
+        missingReason: "unobserved"
+      };
+    case "policy-stop":
+      return {
+        status: "completed",
+        termination: { reason: "unknown", step: exit.step },
+        missingReason: null
+      };
+  }
+}
+
+/** Typed, non-secret failure tag; never includes a raw error message. */
+function visualRuntimeFailureCode(err: unknown): string {
+  if (err instanceof SmartDirectPolicyError) {
+    return "smart-direct:" + err.code;
+  }
+  if (err instanceof PlaytestVisualBrowserDriverError) {
+    return "visual-driver:" + err.code;
+  }
+  if (err instanceof Error) return "error:" + err.constructor.name;
+  return "unknown-runtime-failure";
+}
+
+/** Nine-field completion counters for exactly one visual-session episode. */
+function visualCompletionCounts(
+  status: PlaytestEpisodeState,
+  started: boolean
+): PlaytestCompletionCounts {
+  return {
+    assigned: 1,
+    started: started ? 1 : 0,
+    completed: status === "completed" ? 1 : 0,
+    crashed: status === "crashed" ? 1 : 0,
+    infrastructureFailed: status === "infrastructure-failed" ? 1 : 0,
+    cancelled: status === "cancelled" ? 1 : 0,
+    budgetTruncated: status === "budget-truncated" ? 1 : 0,
+    reviewed: 0,
+    // Visual URL-only exploration never asserts a verified game-terminal
+    // outcome (Core's visual identity contract forbids claiming an
+    // unobserved scenario/outcome), so no visual episode is ever eligible
+    // for the adapter-only cross-session review path.
+    eligible: 0
+  };
+}
+
+function visualEpisodeIdForAssignment(
+  batchId: string,
+  assignmentId: string
+): string {
+  return (
+    "ep-" + batchId.replace(/^batch-/u, "").slice(0, 16) + "-" + assignmentId
+  );
 }
 
 async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
@@ -4098,7 +4312,6 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
   input.activeRuns.set(batchId, activeRun);
   input.onRegistered(batchId, input.createdAt, activeRun.assignmentIds);
 
-  const episodes: PlaytestEpisode[] = [];
   try {
     for (const assignment of assignments) {
       if (activeRun.reason !== null) {
@@ -4112,12 +4325,130 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
         });
         continue;
       }
-      const episodeId =
-        "ep-" +
-        batchId.replace(/^batch-/u, "").slice(0, 16) +
-        "-" +
-        assignment.assignmentId;
-      let driver: PlaytestVisualBrowserDriver | null = null;
+      const episodeId = visualEpisodeIdForAssignment(
+        batchId,
+        assignment.assignmentId
+      );
+
+      const executionProvenance: PlaytestEpisode["executionProvenance"] = {
+        mode: "autonomous-visual",
+        source: {
+          kind: "URL-only",
+          repository: null,
+          revision: null,
+          revisionConfidence: "not-applicable",
+          checkoutState: "not-applicable",
+          artifactFingerprint: null,
+          targetId: input.target.targetId,
+          targetOrigin
+        },
+        observationSource: "browser-ui",
+        actionSource: "browser-input",
+        derivedFrom: null
+      };
+      const identity: PlaytestEpisode["identity"] = {
+        workspaceId: input.workspaceId,
+        repository: null,
+        buildSha: null,
+        gameBuild: null,
+        scenarioId: null,
+        configHash: null,
+        seed: null,
+        protocolVersion: null,
+        policyId: "smart-direct",
+        policyVersion: "1",
+        modelId: "autodev/smart",
+        modelRevision: null,
+        observationSchemaHash: createHash("sha256")
+          .update(PLAYTEST_VISUAL_OBSERVATION_SCHEMA)
+          .digest("hex"),
+        actionSchemaHash: createHash("sha256")
+          .update(PLAYTEST_VISUAL_ACTION_SCHEMA)
+          .digest("hex"),
+        eventSchemaHash: createHash("sha256")
+          .update("autodev-playtest-visual-event-v1")
+          .digest("hex"),
+        runtimeVersion: RUNTIME_VERSION,
+        environmentHash: createHash("sha256")
+          .update(input.target.entryUrl)
+          .digest("hex"),
+        rngAlgorithm: null,
+        rngVersion: null,
+        rngInitialStateHash: null
+      };
+
+      let revision = 1;
+      const capturedFrames: PlaytestArtifactReference[] = [];
+      let stepCount = 0;
+      let startedAtIso: string | null = null;
+
+      const persistRevision = async (overrides: {
+        readonly status: PlaytestEpisodeState;
+        readonly termination: PlaytestEpisode["termination"];
+        readonly completionCounts: PlaytestCompletionCounts;
+        readonly trace: PlaytestEvidenceLocator | null;
+        readonly completedAt: string | null;
+        readonly completeness: "complete" | "partial" | "unknown";
+        readonly missingReasons: readonly PlaytestMissingReason[];
+        readonly policyInferenceMs: number;
+        readonly simulationWallMs: number | null;
+      }): Promise<PlaytestEpisode> => {
+        const episode: PlaytestEpisode = {
+          schema: PLAYTESTS_EPISODE_SCHEMA,
+          episodeId,
+          revision,
+          batchId,
+          assignmentId: assignment.assignmentId,
+          branchLineage: null,
+          executionProvenance,
+          identity,
+          scenarioFamily: null,
+          policyCohort: null,
+          strategy: "smart-direct-visual",
+          status: overrides.status,
+          termination: overrides.termination,
+          outcome: "unknown",
+          outcomeMetrics: {},
+          completionCounts: overrides.completionCounts,
+          replayStatus: "unavailable",
+          trace: overrides.trace,
+          frames: capturedFrames.map((frame, index) => ({
+            id: frame.artifactId,
+            kind: "frame",
+            step: index,
+            frameIndex: index
+          })),
+          stepCount,
+          metrics: [],
+          findingIds: [],
+          assignedAt: input.createdAt,
+          startedAt: startedAtIso,
+          completedAt: overrides.completedAt,
+          simulationWallMs: overrides.simulationWallMs,
+          logicalTicks: null,
+          policyInferenceMs: overrides.policyInferenceMs,
+          nativeDurationMs: null,
+          completeness: overrides.completeness,
+          missingReasons: overrides.missingReasons
+        };
+        revision += 1;
+        await input.repository.insertEpisode(episode);
+        return episode;
+      };
+
+      await persistRevision({
+        status: "assigned",
+        termination: { reason: "unknown", step: null },
+        completionCounts: visualCompletionCounts("assigned", false),
+        trace: null,
+        completedAt: null,
+        completeness: "unknown",
+        missingReasons: [],
+        policyInferenceMs: 0,
+        simulationWallMs: null
+      });
+
+      let driver: PlaytestVisualBrowserDriver;
       try {
         driver = await PlaytestVisualBrowserDriver.open({
           target: input.target,
@@ -4127,272 +4458,314 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
           actionTimeoutMs: Math.min(10_000, input.target.limits.wallTimeMs),
           maxSteps: assignment.maxSteps
         });
+      } catch (err) {
+        const failedEpisode = await persistRevision({
+          status: "infrastructure-failed",
+          termination: { reason: "runtime-failure", step: null },
+          completionCounts: visualCompletionCounts(
+            "infrastructure-failed",
+            false
+          ),
+          trace: null,
+          completedAt: new Date().toISOString(),
+          completeness: "unknown",
+          missingReasons: ["infrastructure-failed"],
+          policyInferenceMs: 0,
+          simulationWallMs: null
+        });
+        activeRun.outcomes.set(assignment.assignmentId, {
+          assignmentId: assignment.assignmentId,
+          state: "infrastructure-failed",
+          episodeId: failedEpisode.episodeId,
+          started: false,
+          eligible: false,
+          gameOutcome: null
+        });
+        continue;
+      }
 
-        const policy = new SmartDirectVisualPolicy(input.target);
-        const history: { step: number; action: string; observation: string }[] =
-          [];
-        const traceSteps: PlaytestEvidenceTraceStep[] = [];
-        const capturedFrames: PlaytestArtifactReference[] = [];
-        const episodeStartedAt = new Date().toISOString();
+      const episodeStartedAt = new Date().toISOString();
+      startedAtIso = episodeStartedAt;
+      await persistRevision({
+        status: "started",
+        termination: { reason: "unknown", step: null },
+        completionCounts: visualCompletionCounts("started", true),
+        trace: null,
+        completedAt: null,
+        completeness: "unknown",
+        missingReasons: [],
+        policyInferenceMs: 0,
+        simulationWallMs: 0
+      });
 
-        for (let step = 0; step < assignment.maxSteps; step += 1) {
-          if (activeRun.controller.signal.aborted) break;
-          const obsResult = await driver.observe();
-          if (obsResult.status !== "observed") break;
+      const policy = new SmartDirectVisualPolicy(input.target);
+      const history: { step: number; action: string; observation: string }[] =
+        [];
+      const traceSteps: PlaytestEvidenceTraceStep[] = [];
+      let exit: VisualEpisodeExit = { kind: "step-limit", step: null };
 
-          capturedFrames.push(obsResult.observation.frame);
-          const frameBytes = input.artifacts.readArtifact(
-            obsResult.observation.frame
-          ).bytes;
-          let decision;
-          try {
-            decision = await policy.decide({
-              target: input.target,
-              observation: obsResult.observation,
-              frameBytes,
-              areasOfFocus: input.request.areasOfFocus ?? null,
-              history,
-              deadlineMonotonicMs: performance.now() + 15_000
-            });
-          } catch {
-            decision = {
-              status: "stop" as const,
-              stopReason: "unexpected-state",
-              intention: "Policy decision halted.",
-              predictedVisibleEffect: "Session finished.",
-              reasonCode: "halt",
-              modelId: "autodev/smart",
-              inputTokens: 0,
-              outputTokens: 0,
-              totalTokens: 0,
-              latencyMs: 0
-            };
-          }
+      for (let step = 0; step < assignment.maxSteps; step += 1) {
+        if (activeRun.controller.signal.aborted) {
+          exit = { kind: "cancelled", step };
+          break;
+        }
+        let obsResult;
+        try {
+          obsResult = await driver.observe();
+        } catch (err) {
+          exit = {
+            kind: "infrastructure-failure",
+            code: visualRuntimeFailureCode(err),
+            step
+          };
+          break;
+        }
+        if (obsResult.status !== "observed") {
+          exit = { kind: "driver-blocked", reason: obsResult.reason, step };
+          break;
+        }
 
-          if (decision.status === "stop") {
-            traceSteps.push({
-              step,
-              phaseId: obsResult.observation.phaseEvidence,
-              revisionBefore: step,
-              revisionAfter: step,
-              observationVisibility: "visual-only",
-              visibleObservation: {
-                controls: obsResult.observation.controls.map((c) => ({
-                  controlId: c.controlId,
-                  name: c.name,
-                  role: c.role,
-                  bounds: c.bounds
-                })),
-                warnings: obsResult.observation.visibleWarnings,
-                phase: obsResult.observation.phaseEvidence,
-                progress: obsResult.observation.progressEvidence
-              } as unknown as PlaytestJsonValue,
-              legalActionIds: obsResult.observation.controls.map(
-                (c) => c.controlId
-              ),
-              selectedActionId: null,
-              preActionPrediction: {
-                intention: decision.intention,
-                predictedVisibleEffect: decision.predictedVisibleEffect,
-                reasonCode: decision.reasonCode
-              },
-              authoritativeOutcome: {
-                stopReason: decision.stopReason
-              },
-              events: [],
-              frameRefs: [
-                { id: obsResult.observation.frame.artifactId, kind: "frame" }
-              ]
-            });
-            break;
-          }
-
-          const receipt = await driver.act(decision.action, 10_000);
-          history.push({
-            step,
-            action: JSON.stringify(decision.action),
-            observation: JSON.stringify({
-              phase: obsResult.observation.phaseEvidence,
-              controls: obsResult.observation.controls.map((c) => c.name)
-            })
+        capturedFrames.push(obsResult.observation.frame);
+        await persistRevision({
+          status: "started",
+          termination: { reason: "unknown", step: null },
+          completionCounts: visualCompletionCounts("started", true),
+          trace: null,
+          completedAt: null,
+          completeness: "unknown",
+          missingReasons: [],
+          policyInferenceMs: 0,
+          simulationWallMs: 0
+        });
+        const frameBytes = input.artifacts.readArtifact(
+          obsResult.observation.frame
+        ).bytes;
+        let decision;
+        try {
+          decision = await policy.decide({
+            target: input.target,
+            observation: obsResult.observation,
+            frameBytes,
+            areasOfFocus: input.request.areasOfFocus ?? null,
+            history,
+            deadlineMonotonicMs: performance.now() + 15_000
           });
+        } catch (err) {
+          const code = visualRuntimeFailureCode(err);
           traceSteps.push({
             step,
             phaseId: obsResult.observation.phaseEvidence,
             revisionBefore: step,
-            revisionAfter: step + 1,
+            revisionAfter: step,
             observationVisibility: "visual-only",
             visibleObservation: {
+              capturedAt: obsResult.observation.capturedAt,
+              viewport: obsResult.observation.viewport,
+              privacyState: obsResult.observation.privacyState,
               controls: obsResult.observation.controls.map((c) => ({
                 controlId: c.controlId,
                 name: c.name,
                 role: c.role,
-                bounds: c.bounds
+                bounds: c.bounds,
+                enabled: c.enabled
               })),
               warnings: obsResult.observation.visibleWarnings,
               phase: obsResult.observation.phaseEvidence,
               progress: obsResult.observation.progressEvidence
             } as unknown as PlaytestJsonValue,
-            legalActionIds: obsResult.observation.controls.map(
-              (c) => c.controlId
-            ),
-            selectedActionId:
-              decision.action.kind === "activate-control"
-                ? decision.action.controlId
-                : decision.action.kind,
-            preActionPrediction: {
-              intention: decision.intention,
-              predictedVisibleEffect: decision.predictedVisibleEffect,
-              reasonCode: decision.reasonCode
-            },
+            legalActionIds: obsResult.observation.controls
+              .filter((control) => control.enabled)
+              .map((control) => control.controlId),
+            selectedActionId: null,
+            preActionPrediction: null,
             authoritativeOutcome: {
-              status: receipt.status,
-              dispatchedAt:
-                receipt.status === "dispatched" ? receipt.dispatchedAt : null,
-              refusalReason:
-                receipt.status === "refused" ? receipt.reason : null
+              runtimeFailureCode: code
             },
             events: [],
             frameRefs: [
               { id: obsResult.observation.frame.artifactId, kind: "frame" }
             ]
           });
-          if (receipt.status !== "dispatched") break;
+          exit = { kind: "infrastructure-failure", code, step };
+          break;
         }
 
-        await driver.close();
-
-        const traceText =
-          traceSteps.map((s) => JSON.stringify(s)).join("\n") + "\n";
-        const traceArtifact = input.artifacts.writeArtifact({
-          artifactId: "trace-" + episodeId,
-          mediaType: "application/x-ndjson",
-          bytes: new TextEncoder().encode(traceText),
-          pendingCommitId: batchId
-        }).reference;
-        input.artifacts.markArtifactCommitted(traceArtifact, batchId);
-        for (const frame of capturedFrames) {
-          input.artifacts.markArtifactCommitted(frame, batchId);
-        }
-
-        const completedAt = new Date().toISOString();
-        const episode: PlaytestEpisode = {
-          schema: PLAYTESTS_EPISODE_SCHEMA,
-          episodeId,
-          revision: 1,
-          batchId,
-          assignmentId: assignment.assignmentId,
-          branchLineage: null,
-          executionProvenance: {
-            mode: "autonomous-visual",
-            source: {
-              kind: "URL-only",
-              repository: null,
-              revision: null,
-              revisionConfidence: "not-applicable",
-              checkoutState: "not-applicable",
-              artifactFingerprint: null,
-              targetId: input.target.targetId,
-              targetOrigin
+        if (decision.status === "stop") {
+          traceSteps.push({
+            step,
+            phaseId: obsResult.observation.phaseEvidence,
+            revisionBefore: step,
+            revisionAfter: step,
+            observationVisibility: "visual-only",
+            visibleObservation: {
+              capturedAt: obsResult.observation.capturedAt,
+              viewport: obsResult.observation.viewport,
+              privacyState: obsResult.observation.privacyState,
+              controls: obsResult.observation.controls.map((c) => ({
+                controlId: c.controlId,
+                name: c.name,
+                role: c.role,
+                bounds: c.bounds,
+                enabled: c.enabled
+              })),
+              warnings: obsResult.observation.visibleWarnings,
+              phase: obsResult.observation.phaseEvidence,
+              progress: obsResult.observation.progressEvidence
+            } as unknown as PlaytestJsonValue,
+            legalActionIds: obsResult.observation.controls
+              .filter((control) => control.enabled)
+              .map((control) => control.controlId),
+            selectedActionId: null,
+            preActionPrediction: {
+              intention: decision.intention,
+              predictedVisibleEffect: decision.predictedVisibleEffect,
+              reasonCode: decision.reasonCode
             },
-            observationSource: "browser-ui",
-            actionSource: "browser-input",
-            derivedFrom: null
-          },
-          identity: {
-            workspaceId: input.workspaceId,
-            repository: null,
-            buildSha: null,
-            gameBuild: null,
-            scenarioId: null,
-            configHash: null,
-            seed: null,
-            protocolVersion: null,
-            policyId: "smart-direct",
-            policyVersion: "1",
-            modelId: "autodev/smart",
-            modelRevision: null,
-            observationSchemaHash: createHash("sha256")
-              .update(PLAYTEST_VISUAL_OBSERVATION_SCHEMA)
-              .digest("hex"),
-            actionSchemaHash: createHash("sha256")
-              .update(PLAYTEST_VISUAL_ACTION_SCHEMA)
-              .digest("hex"),
-            eventSchemaHash: createHash("sha256")
-              .update("autodev-playtest-visual-event-v1")
-              .digest("hex"),
-            runtimeVersion: RUNTIME_VERSION,
-            environmentHash: createHash("sha256")
-              .update(input.target.entryUrl)
-              .digest("hex"),
-            rngAlgorithm: null,
-            rngVersion: null,
-            rngInitialStateHash: null
-          },
-          scenarioFamily: null,
-          policyCohort: null,
-          strategy: "smart-direct-visual",
-          status: "completed",
-          termination: {
-            reason: "game-terminal",
-            step: traceSteps.length
-          },
-          outcome: "unknown",
-          outcomeMetrics: {},
-          completionCounts: {
-            assigned: 1,
-            started: 1,
-            completed: 1,
-            crashed: 0,
-            infrastructureFailed: 0,
-            cancelled: 0,
-            budgetTruncated: 0,
-            reviewed: 0,
-            eligible: 1
-          },
-          replayStatus: "unavailable",
-          trace: { id: traceArtifact.artifactId, kind: "episode" },
-          frames: capturedFrames.map((f, i) => ({
-            id: f.artifactId,
-            kind: "frame",
-            step: i,
-            frameIndex: i
-          })),
-          stepCount: traceSteps.length,
-          metrics: [],
-          findingIds: [],
-          assignedAt: input.createdAt,
-          startedAt: episodeStartedAt,
-          completedAt,
-          simulationWallMs: Date.now() - Date.parse(episodeStartedAt),
-          logicalTicks: null,
-          policyInferenceMs: policy.usage().lastLatencyMs ?? 0,
-          nativeDurationMs: null,
-          completeness: "complete",
-          missingReasons: []
-        };
+            authoritativeOutcome: {
+              stopReason: decision.stopReason
+            },
+            events: [],
+            frameRefs: [
+              { id: obsResult.observation.frame.artifactId, kind: "frame" }
+            ]
+          });
+          exit =
+            decision.stopReason === "stuck"
+              ? { kind: "loop-guard", step }
+              : { kind: "policy-stop", step };
+          break;
+        }
 
-        await input.repository.insertEpisode(episode);
-        episodes.push(episode);
-        activeRun.outcomes.set(assignment.assignmentId, {
-          assignmentId: assignment.assignmentId,
-          state: "completed",
-          episodeId: episode.episodeId,
-          started: true,
-          eligible: true,
-          gameOutcome: null
+        const receipt = await driver.act(decision.action, 10_000);
+        history.push({
+          step,
+          action: JSON.stringify(decision.action),
+          observation: JSON.stringify({
+            phase: obsResult.observation.phaseEvidence,
+            controls: obsResult.observation.controls.map((c) => c.name)
+          })
         });
-      } catch (err) {
-        if (driver) await driver.close().catch(() => {});
-        activeRun.outcomes.set(assignment.assignmentId, {
-          assignmentId: assignment.assignmentId,
-          state: "infrastructure-failed",
-          episodeId: null,
-          started: true,
-          eligible: false,
-          gameOutcome: null
+        traceSteps.push({
+          step,
+          phaseId: obsResult.observation.phaseEvidence,
+          revisionBefore: step,
+          revisionAfter: step + 1,
+          observationVisibility: "visual-only",
+          visibleObservation: {
+            capturedAt: obsResult.observation.capturedAt,
+            viewport: obsResult.observation.viewport,
+            privacyState: obsResult.observation.privacyState,
+            controls: obsResult.observation.controls.map((c) => ({
+              controlId: c.controlId,
+              name: c.name,
+              role: c.role,
+              bounds: c.bounds,
+              enabled: c.enabled
+            })),
+            warnings: obsResult.observation.visibleWarnings,
+            phase: obsResult.observation.phaseEvidence,
+            progress: obsResult.observation.progressEvidence
+          } as unknown as PlaytestJsonValue,
+          legalActionIds: obsResult.observation.controls
+            .filter((control) => control.enabled)
+            .map((control) => control.controlId),
+          selectedActionId:
+            decision.action.kind === "activate-control"
+              ? decision.action.controlId
+              : null,
+          preActionPrediction: {
+            intention: decision.intention,
+            predictedVisibleEffect: decision.predictedVisibleEffect,
+            reasonCode: decision.reasonCode
+          },
+          authoritativeOutcome: {
+            status: receipt.status,
+            actionKind: decision.action.kind,
+            observationId: decision.action.observationId,
+            actionDetail:
+              decision.action.kind === "activate-control"
+                ? { controlId: decision.action.controlId }
+                : decision.action.kind === "pointer-click"
+                  ? {
+                      frameArtifactId: decision.action.frameArtifactId,
+                      x: decision.action.x,
+                      y: decision.action.y
+                    }
+                  : decision.action.kind === "key-press"
+                    ? { key: decision.action.key }
+                    : { button: decision.action.button },
+            dispatchedAt:
+              receipt.status === "dispatched" ? receipt.dispatchedAt : null,
+            receiptAt: new Date().toISOString(),
+            refusalReason: receipt.status === "refused" ? receipt.reason : null
+          },
+          events: [],
+          frameRefs: [
+            { id: obsResult.observation.frame.artifactId, kind: "frame" }
+          ]
+        });
+        if (receipt.status !== "dispatched") {
+          exit = { kind: "action-refused", reason: receipt.reason, step };
+          break;
+        }
+
+        stepCount = traceSteps.length;
+        const progressArtifact = input.artifacts.writeWindow({
+          artifactId: "trace-" + episodeId + "-r" + String(revision),
+          entries: traceSteps
+        }).reference;
+        await persistRevision({
+          status: "started",
+          termination: { reason: "unknown", step: null },
+          completionCounts: visualCompletionCounts("started", true),
+          trace: { id: progressArtifact.artifactId, kind: "replay-segment" },
+          completedAt: null,
+          completeness: "unknown",
+          missingReasons: [],
+          policyInferenceMs: policy.usage().lastLatencyMs ?? 0,
+          simulationWallMs: Date.now() - Date.parse(episodeStartedAt)
         });
       }
+
+      stepCount = traceSteps.length;
+      await driver.close().catch(() => {});
+
+      const traceArtifact = input.artifacts.writeWindow({
+        artifactId: "trace-" + episodeId,
+        entries: traceSteps
+      }).reference;
+
+      const disposition = visualEpisodeDisposition(exit);
+      const completeness: "complete" | "partial" | "unknown" =
+        disposition.status === "completed"
+          ? "complete"
+          : stepCount > 0
+            ? "partial"
+            : "unknown";
+      const missingReasons: readonly PlaytestMissingReason[] =
+        disposition.missingReason === null ? [] : [disposition.missingReason];
+      const completedAt = new Date().toISOString();
+      const finalEpisode = await persistRevision({
+        status: disposition.status,
+        termination: disposition.termination,
+        completionCounts: visualCompletionCounts(disposition.status, true),
+        trace: { id: traceArtifact.artifactId, kind: "replay-segment" },
+        completedAt,
+        completeness,
+        missingReasons,
+        policyInferenceMs: policy.usage().lastLatencyMs ?? 0,
+        simulationWallMs: Date.now() - Date.parse(episodeStartedAt)
+      });
+      activeRun.outcomes.set(assignment.assignmentId, {
+        assignmentId: assignment.assignmentId,
+        state: disposition.status,
+        episodeId: finalEpisode.episodeId,
+        started: true,
+        // Visual URL-only exploration never asserts a verified game-terminal
+        // outcome, so no visual episode is eligible for adapter-only review.
+        eligible: false,
+        gameOutcome: null
+      });
     }
 
     markRunPersisting(activeRun);
@@ -4404,11 +4777,12 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
     const finalBatch: PlaytestVisualBatch = {
       ...initialBatch,
       revision: 2,
-      status: activeRun.reason
-        ? "cancelled"
-        : episodes.length > 0
-          ? "completed"
-          : "failed",
+      status: playtestBatchTerminalState({
+        assignmentCount: assignments.length,
+        outcomes: [...activeRun.outcomes.values()],
+        cancelled: activeRun.reason !== null,
+        aborted: false
+      }),
       completedAt: new Date().toISOString(),
       counts: finalCounts
     };
@@ -5401,13 +5775,15 @@ export function createPlaytestRunControl(
     } catch {
       reviewReadFailed = true;
     }
-    try {
-      synthesis = await repository.getCrossSessionSynthesisForAnalysis(
-        current.workspaceId,
-        current.analysisId
-      );
-    } catch {
-      synthesisReadFailed = true;
+    if (current.analysisKind !== "discovery") {
+      try {
+        synthesis = await repository.getCrossSessionSynthesisForAnalysis(
+          current.workspaceId,
+          current.analysisId
+        );
+      } catch {
+        synthesisReadFailed = true;
+      }
     }
     const status = analystReviewRunStatus({
       run: current,
@@ -5778,6 +6154,10 @@ export function createPlaytestRunControl(
               "The requested visual target is not approved or has been revoked."
             );
           }
+          assertVisualLaunchLimitsWithinApprovedTarget(
+            parsed.limits,
+            target.limits
+          );
           const artifacts = artifactStoreForWorkspace(targetWorkspaceId);
           const intent = await reserveLaunchIntent({
             repository: intentRepository,
@@ -6311,6 +6691,238 @@ export function createPlaytestRunControl(
               "Runtime analyst capacity is full; wait for a current review to finish."
             );
           }
+
+          const visualRepository = requiredRunRepository(playtestRepository);
+          const firstEpisode = await visualRepository.getEpisode(
+            authorizedWorkspaceId,
+            uniqueEpisodeIds[0]!
+          );
+          const firstBatch =
+            firstEpisode === null
+              ? null
+              : await visualRepository.getBatch(
+                  authorizedWorkspaceId,
+                  firstEpisode.batchId
+                );
+          if (firstBatch?.executionMode === "autonomous-visual") {
+            if (uniqueEpisodeIds.length !== 1) {
+              throw new PlaytestMcpValidationError(
+                "Visual discovery reviews are dispatched one episode at a time and cannot be mixed with adapter confirmatory reviews."
+              );
+            }
+            if (
+              firstBatch.assignmentInventory.status !== "frozen-visual" ||
+              firstBatch.status === "running" ||
+              firstBatch.status === "queued"
+            ) {
+              throw new PlaytestMcpUnavailableError(
+                "Visual discovery review requires a terminal run and its frozen visual assignment manifest."
+              );
+            }
+            const episode = firstEpisode!;
+            if (episode.stepCount < 1 || episode.trace === null) {
+              return {
+                run: null,
+                packets: [],
+                receipts: [
+                  {
+                    episodeId: episode.episodeId,
+                    batchId: firstBatch.batchId,
+                    reason: "packet-unavailable",
+                    detail:
+                      "The visual session has no persisted trace steps to review."
+                  }
+                ],
+                budget: []
+              };
+            }
+            const activeDiscoveryReservations = [...analystReviewRuns.values()]
+              .filter(
+                (run) =>
+                  run.workspaceId === authorizedWorkspaceId &&
+                  run.analysisKind === "discovery" &&
+                  run.status === "running"
+              )
+              .flatMap((run) =>
+                run.packets
+                  .filter((packet) => packet.batchId === firstBatch.batchId)
+                  .map((packet) => packet.episodeId)
+              );
+            const assignmentLimit =
+              firstBatch.assignmentInventory.manifest.assignments.length;
+            const assignmentEpisodeIds =
+              firstBatch.assignmentInventory.manifest.assignments.map(
+                (assignment) =>
+                  visualEpisodeIdForAssignment(
+                    firstBatch.batchId,
+                    assignment.assignmentId
+                  )
+              );
+            const priorDiscoveryReviews = await mapConcurrentOrdered(
+              assignmentEpisodeIds,
+              4,
+              (episodeId) =>
+                visualRepository.getLatestDiscoveryReviewForEpisode(
+                  authorizedWorkspaceId,
+                  episodeId
+                )
+            );
+            const actualCritiques = priorDiscoveryReviews.filter(
+              (review) => review !== null
+            ).length;
+            const reserved = activeDiscoveryReservations.length;
+            const remaining = Math.max(
+              0,
+              assignmentLimit - actualCritiques - reserved
+            );
+            const budget: PlaytestCrossSessionBudget = {
+              batchId: firstBatch.batchId,
+              reviewCap: assignmentLimit,
+              actualCritiques,
+              reserved,
+              requested: 1,
+              remaining
+            };
+            if (activeDiscoveryReservations.includes(episode.episodeId)) {
+              return {
+                run: null,
+                packets: [],
+                receipts: [
+                  {
+                    episodeId: episode.episodeId,
+                    batchId: firstBatch.batchId,
+                    reason: "review-already-running",
+                    detail:
+                      "A discovery review for this visual episode is already running."
+                  }
+                ],
+                budget: [budget]
+              };
+            }
+            const currentAssignmentIndex =
+              firstBatch.assignmentInventory.manifest.assignments.findIndex(
+                (assignment) => assignment.assignmentId === episode.assignmentId
+              );
+            const existingReview =
+              currentAssignmentIndex < 0
+                ? null
+                : priorDiscoveryReviews[currentAssignmentIndex] ?? null;
+            if (existingReview !== null) {
+              return {
+                run: null,
+                packets: [],
+                receipts: [
+                  {
+                    episodeId: episode.episodeId,
+                    batchId: firstBatch.batchId,
+                    reason: "review-already-submitted",
+                    detail:
+                      "This visual discovery episode already has a persisted analyst review."
+                  }
+                ],
+                budget: [budget]
+              };
+            }
+            if (remaining < 1) {
+              return {
+                run: null,
+                packets: [],
+                receipts: [
+                  {
+                    episodeId: episode.episodeId,
+                    batchId: firstBatch.batchId,
+                    reason: "critique-budget-exhausted",
+                    detail:
+                      "The visual batch's one-review-per-frozen-assignment discovery cap is exhausted."
+                  }
+                ],
+                budget: [budget]
+              };
+            }
+            const preparedPacket = await readPreparedReviewPacket({
+              workspaceId: authorizedWorkspaceId,
+              episode,
+              repository: visualRepository,
+              artifacts: artifactStoreForWorkspace(authorizedWorkspaceId)
+            });
+            if (preparedPacket.analysisKind !== "discovery") {
+              throw new PlaytestMcpUnavailableError(
+                "Visual discovery packet preparation returned a confirmatory packet."
+              );
+            }
+            const packet: PlaytestCrossSessionPacket = {
+              episodeId: episode.episodeId,
+              batchId: firstBatch.batchId,
+              packet: preparedPacket.packet,
+              artifact: preparedPacket.artifact
+            };
+            const analysisId = randomUUID();
+            const createdAt = new Date().toISOString();
+            const record: PlaytestAnalystReviewRun = {
+              analysisId,
+              workspaceId: authorizedWorkspaceId,
+              analysisKind: "discovery",
+              status: "running",
+              createdAt,
+              finishedAt: null,
+              requestedEpisodeIds: uniqueEpisodeIds,
+              packets: [
+                {
+                  episodeId: episode.episodeId,
+                  batchId: firstBatch.batchId,
+                  packetId: preparedPacket.packet.packetId
+                }
+              ],
+              receipts: [],
+              budget: [
+                {
+                  ...budget,
+                  reserved: budget.reserved + 1,
+                  remaining: Math.max(0, budget.remaining - 1)
+                }
+              ],
+              reviews: [],
+              synthesisId: null,
+              error: null
+            };
+            let process: PlaytestAnalystProcess;
+            try {
+              process = launchAnalystProcess({
+                analysisId,
+                workspaceId: authorizedWorkspaceId,
+                actor: session.actor,
+                episodeIds: uniqueEpisodeIds,
+                analysisKind: "discovery",
+                metricAggregation: null
+              });
+            } catch (error) {
+              throw new PlaytestMcpUnavailableError(
+                error instanceof Error
+                  ? error.message
+                  : "The discovery analyst process could not be started."
+              );
+            }
+            analystReviewRuns.set(analysisId, record);
+            activeAnalystRuns.set(analysisId, { process });
+            void process.completion.then(
+              (result) => finalizeAnalystRun(analysisId, result),
+              () =>
+                finalizeAnalystRun(analysisId, {
+                  exitCode: null,
+                  signal: null,
+                  timedOut: false,
+                  launchFailed: true
+                })
+            );
+            pruneAnalystReviewHistory();
+            return {
+              run: record,
+              packets: [packet],
+              receipts: [],
+              budget: record.budget
+            };
+          }
+
           const prepared = await prepareCrossSessionReview({
             workspaceId: authorizedWorkspaceId,
             episodeIds: uniqueEpisodeIds,
@@ -6445,14 +7057,27 @@ export function createPlaytestRunControl(
 
           const analysisId = randomUUID();
           const createdAt = new Date().toISOString();
+          const confirmatoryPackets = packets.filter(
+            (
+              packet
+            ): packet is PlaytestCrossSessionPacket & {
+              readonly packet: PlaytestEvidencePacket;
+            } => "rubricHash" in packet.packet
+          );
+          if (confirmatoryPackets.length !== packets.length) {
+            throw new PlaytestMcpValidationError(
+              "Confirmatory analysis cannot aggregate visual discovery packets."
+            );
+          }
           const metricAggregation = aggregatePlaytestCrossSessionMetrics({
             workspaceId: authorizedWorkspaceId,
             analysisId,
-            packets
+            packets: confirmatoryPackets
           });
           const record: PlaytestAnalystReviewRun = {
             analysisId,
             workspaceId: authorizedWorkspaceId,
+            analysisKind: "confirmatory",
             status: "running",
             createdAt,
             finishedAt: null,
@@ -6484,6 +7109,7 @@ export function createPlaytestRunControl(
               workspaceId: authorizedWorkspaceId,
               actor: session.actor,
               episodeIds: packets.map((packet) => packet.episodeId),
+              analysisKind: "confirmatory",
               metricAggregation
             });
           } catch (error) {
@@ -6605,7 +7231,7 @@ export interface PlaytestCrossSessionReceipt {
 export interface PlaytestCrossSessionPacket {
   readonly episodeId: string;
   readonly batchId: string;
-  readonly packet: PlaytestEvidencePacket;
+  readonly packet: PlaytestEvidencePacket | PlaytestDiscoveryEvidencePacket;
   readonly artifact: PlaytestArtifactReference;
 }
 
@@ -6690,10 +7316,18 @@ async function readPreparedReviewPacket(input: {
   readonly episode: PlaytestEpisode;
   readonly repository: PlaytestingRepositoryOps;
   readonly artifacts: PlaytestArtifactStore;
-}): Promise<{
-  readonly packet: PlaytestEvidencePacket;
-  readonly artifact: PlaytestArtifactReference;
-}> {
+}): Promise<
+  | {
+      readonly analysisKind: "confirmatory";
+      readonly packet: PlaytestEvidencePacket;
+      readonly artifact: PlaytestArtifactReference;
+    }
+  | {
+      readonly analysisKind: "discovery";
+      readonly packet: PlaytestDiscoveryEvidencePacket;
+      readonly artifact: PlaytestArtifactReference;
+    }
+> {
   const { workspaceId, episode, repository, artifacts } = input;
   if (!episode.assignmentId) {
     throw new PlaytestMcpValidationError(
@@ -6701,8 +7335,33 @@ async function readPreparedReviewPacket(input: {
     );
   }
   const batch = await repository.getBatch(workspaceId, episode.batchId);
+  if (!batch) {
+    throw new PlaytestMcpUnavailableError(
+      "The episode's batch is unavailable in the authorized workspace."
+    );
+  }
+  if (batch.executionMode === "autonomous-visual") {
+    try {
+      const prepared = preparePlaytestDiscoveryEvidencePacket({
+        workspaceId,
+        episode,
+        batch,
+        artifacts
+      });
+      return {
+        analysisKind: "discovery",
+        packet: prepared.packet,
+        artifact: prepared.artifact
+      };
+    } catch (error) {
+      throw new PlaytestMcpUnavailableError(
+        error instanceof Error
+          ? "The visual discovery packet is unavailable: " + error.message
+          : "The visual discovery packet is unavailable."
+      );
+    }
+  }
   if (
-    !batch ||
     batch.executionMode !== PLAYTEST_ADAPTER_MODE ||
     batch.assignmentInventory.status !== "frozen" ||
     batch.reviewSelection.status !== "selected" ||
@@ -6800,7 +7459,7 @@ async function readPreparedReviewPacket(input: {
       "The evidence packet does not match its selected episode, batch, rubric and source trace."
     );
   }
-  return { packet: typed, artifact: reference };
+  return { analysisKind: "confirmatory", packet: typed, artifact: reference };
 }
 
 /**
@@ -7004,6 +7663,18 @@ async function prepareCrossSessionReview(input: {
           repository,
           artifacts
         });
+        if (prepared.analysisKind !== "confirmatory") {
+          return {
+            kind: "receipt" as const,
+            receipt: {
+              episodeId,
+              batchId: batch.batchId,
+              reason: "excluded-ineligible-session" as const,
+              detail:
+                "Visual discovery packets cannot enter adapter confirmatory cross-session analysis."
+            }
+          };
+        }
         return {
           kind: "packet" as const,
           packet: {
@@ -7693,10 +8364,11 @@ export function createPlaytestMcpServer(
           targetWorkspaceId,
           episodeId
         );
-        if (cacheKey !== null) {
+        if (cacheKey !== null && packet.analysisKind === "confirmatory") {
           preparedAnalystPackets.set(cacheKey, packet.packet);
         }
         return {
+          analysisKind: packet.analysisKind,
           packet: packet.packet,
           packetArtifact: packet.artifact
         };
@@ -7738,6 +8410,239 @@ export function createPlaytestMcpServer(
           receipts: result.receipts,
           budget: result.budget
         };
+      })
+  );
+
+  // Discovery reviews are a separate unscored write contract; the confirmatory
+  // submitReview DTO stays adapter/rubric-bound.
+  mcp.registerTool(
+    "playtest.submitDiscoveryReview",
+    {
+      description:
+        "Persist one unscored, evidence-cited hypothesis review for an autonomous visual discovery packet. This tool cannot score a session, assert a verified bug, or produce a finding.",
+      inputSchema: z.strictObject({
+        workspaceId: z.string().min(1).max(256).optional(),
+        episodeId: z.string().min(1).max(256),
+        packetId: z.string().min(1).max(128),
+        packetArtifactId: z.string().min(1).max(128),
+        packetSha256: z.string().regex(SHA256_PATTERN),
+        chronologicalSummary: z.string().min(1).max(4096),
+        observations: z
+          .array(
+            z.strictObject({
+              hypothesisId: z.string().min(1).max(256),
+              status: z.enum(["hypothesis", "not-observed"]),
+              text: z.string().min(1).max(4096),
+              evidenceRefs: z.array(evidenceLocatorSchema).min(1).max(64)
+            })
+          )
+          .min(1)
+          .max(64),
+        interpretations: z
+          .array(
+            z.strictObject({
+              hypothesisId: z.string().min(1).max(256),
+              status: z.enum(["hypothesis", "not-observed"]),
+              text: z.string().min(1).max(4096),
+              evidenceRefs: z.array(evidenceLocatorSchema).min(1).max(64)
+            })
+          )
+          .min(1)
+          .max(64),
+        alternativeExplanations: z.array(z.string().min(1).max(4096)).max(32),
+        experiments: z
+          .array(
+            z.strictObject({
+              hypothesis: z.string().min(1).max(4096),
+              falsifier: z.string().min(1).max(4096),
+              controls: z.array(z.string().min(1).max(1024)).min(1).max(16),
+              budget: z.string().min(1).max(1024)
+            })
+          )
+          .max(32)
+      })
+    },
+    (args) =>
+      safely(async () => {
+        const session = await sessionProvider.current();
+        if (!isReviewerRole(session.role)) {
+          throw new PlaytestMcpAuthorizationError(
+            "playtest.submitDiscoveryReview requires the read-only playtest analyst role."
+          );
+        }
+        if (session.analysisKind !== "discovery") {
+          throw new PlaytestMcpAuthorizationError(
+            "Discovery reviews may only be submitted from a Runtime-bound discovery analysis."
+          );
+        }
+        assertAnalystEpisodeSelected(
+          session,
+          args.episodeId,
+          "playtest.submitDiscoveryReview"
+        );
+        const workspaceId = authorizeWorkspace(args.workspaceId, session);
+        if (!playtestRepository?.insertDiscoveryReview) {
+          throw new PlaytestMcpUnavailableError(
+            "Playtest Data storage does not support discovery review persistence."
+          );
+        }
+        const episode = await playtestRepository.getEpisode(
+          workspaceId,
+          args.episodeId
+        );
+        if (!episode) {
+          throw new PlaytestMcpValidationError(
+            "The requested visual discovery episode does not exist in the authorized workspace."
+          );
+        }
+        const prepared = await readPreparedReviewPacket({
+          workspaceId,
+          episode,
+          repository: playtestRepository,
+          artifacts: artifactStoreForWorkspace(workspaceId)
+        });
+        if (prepared.analysisKind !== "discovery") {
+          throw new PlaytestMcpAuthorizationError(
+            "The requested episode has a confirmatory packet, not a discovery packet."
+          );
+        }
+        if (
+          prepared.packet.packetId !== args.packetId ||
+          prepared.artifact.artifactId !== args.packetArtifactId ||
+          prepared.artifact.sha256.toLowerCase() !==
+            args.packetSha256.toLowerCase()
+        ) {
+          throw new PlaytestMcpValidationError(
+            "The submitted discovery review does not match the exact persisted packet artifact."
+          );
+        }
+        const observations: PlaytestDiscoveryReviewDraft["observations"] =
+          args.observations.map((claim) => ({
+            hypothesisId: claim.hypothesisId,
+            status: claim.status,
+            text: claim.text,
+            evidenceRefs: normalizeEvidenceRefs(claim.evidenceRefs)
+          }));
+        const interpretations: PlaytestDiscoveryReviewDraft["interpretations"] =
+          args.interpretations.map((claim) => ({
+            hypothesisId: claim.hypothesisId,
+            status: claim.status,
+            text: claim.text,
+            evidenceRefs: normalizeEvidenceRefs(claim.evidenceRefs)
+          }));
+        const draftCore: PlaytestDiscoveryReviewDraft = {
+          reviewId: "discovery-pending",
+          packetId: prepared.packet.packetId,
+          chronologicalSummary: args.chronologicalSummary,
+          observations,
+          interpretations,
+          alternativeExplanations: args.alternativeExplanations,
+          experiments: args.experiments,
+          authorRole: "playtest-analyst"
+        };
+        try {
+          assertPlaytestDiscoveryReviewDraft(draftCore);
+          assertPlaytestDiscoveryReviewGroundedInPacket(
+            draftCore,
+            prepared.packet
+          );
+        } catch (error) {
+          throw new PlaytestMcpValidationError(
+            error instanceof Error
+              ? "The discovery review is not grounded in its exact packet: " +
+                  error.message
+              : "The discovery review is not grounded in its exact packet."
+          );
+        }
+        const allClaims = [...observations, ...interpretations];
+        const allWords = [
+          args.chronologicalSummary,
+          ...allClaims.map((claim) => claim.text),
+          ...args.alternativeExplanations,
+          ...args.experiments.flatMap((experiment) => [
+            experiment.hypothesis,
+            experiment.falsifier
+          ])
+        ];
+        if (
+          allWords.some(
+            (text) => text.trim().split(/\s+/u).filter(Boolean).length < 5
+          )
+        ) {
+          throw new PlaytestReviewNarrativeValidationError();
+        }
+        const evidenceRefs = [
+          ...new Map(
+            allClaims
+              .flatMap((claim) => claim.evidenceRefs)
+              .map((reference) => [JSON.stringify(reference), reference])
+          ).values()
+        ] as PlaytestEvidenceLocator[];
+        const status = allClaims.some((claim) => claim.status === "hypothesis")
+          ? "hypothesis"
+          : "not observed";
+        const reviewId =
+          "discovery-review-" +
+          createHash("sha256")
+            .update(
+              canonicalPlaytestJson({
+                workspaceId,
+                episodeId: episode.episodeId,
+                packetId: prepared.packet.packetId,
+                packetSha256: prepared.artifact.sha256,
+                chronologicalSummary: args.chronologicalSummary,
+                observations,
+                interpretations,
+                alternativeExplanations: args.alternativeExplanations,
+                experiments: args.experiments
+              })
+            )
+            .digest("hex");
+        const existing =
+          await playtestRepository.getLatestDiscoveryReviewForEpisode(
+            workspaceId,
+            episode.episodeId
+          );
+        if (existing) {
+          if (
+            existing.reviewId === reviewId &&
+            existing.evidencePacket.packetId === prepared.packet.packetId &&
+            existing.evidencePacket.artifact.sha256 === prepared.artifact.sha256
+          ) {
+            return existing;
+          }
+          throw new PlaytestMcpConflictError(
+            "This visual discovery episode already has a persisted analyst review."
+          );
+        }
+        const record: PlaytestDiscoverySessionReview = {
+          schema: PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
+          analysisKind: "discovery",
+          reviewId,
+          version: 1,
+          workspaceId,
+          batchId: episode.batchId,
+          episodeId: episode.episodeId,
+          supersedes: null,
+          evidencePacket: {
+            packetId: prepared.packet.packetId,
+            artifact: prepared.artifact
+          },
+          authorRole: "playtest-analyst",
+          authorId: session.actor,
+          measurementVersion: prepared.packet.measurementVersion,
+          chronologicalSummary: args.chronologicalSummary,
+          observations,
+          interpretations,
+          alternativeExplanations: args.alternativeExplanations,
+          experiments: args.experiments,
+          evidenceRefs,
+          createdAt: new Date().toISOString(),
+          status
+        };
+        assertPlaytestDiscoverySessionReview(record);
+        await playtestRepository.insertDiscoveryReview(record);
+        return record;
       })
   );
 
@@ -7865,6 +8770,11 @@ export function createPlaytestMcpServer(
           repository: playtestRepository,
           artifacts: artifactStoreForWorkspace(targetWorkspaceId)
         });
+        if (packet.analysisKind !== "confirmatory") {
+          throw new PlaytestMcpValidationError(
+            "Autonomous visual episodes require playtest.submitDiscoveryReview; scored confirmatory review is unavailable."
+          );
+        }
         if (
           packet.packet.packetId !== args.packetId ||
           packet.artifact.artifactId !== args.packetArtifactId ||

@@ -94,6 +94,7 @@ test("playtester role enforces read-only sandbox and approved run/read tool subs
       "playtest.cancel",
       "playtest.capabilities",
       "playtest.listEpisodes",
+      "playtest.lookupRequest",
       "playtest.readEpisode",
       "playtest.readWindow",
       "playtest.run",

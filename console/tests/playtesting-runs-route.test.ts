@@ -291,3 +291,150 @@ test("request recovery reads the actor/workspace-scoped immutable receipt withou
     }
   }
 });
+
+function visualRequest(launchPayload: unknown): NextRequest {
+  const body = new URLSearchParams({
+    launchRequest: JSON.stringify(launchPayload)
+  });
+  return new NextRequest(API_PATH, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      origin: "http://console.test",
+      host: "console.test",
+      "sec-fetch-site": "same-origin",
+      "content-type": "application/x-www-form-urlencoded"
+    },
+    body
+  });
+}
+
+const VALID_VISUAL_LIMITS = {
+  episodeCount: 1,
+  maxStepsPerEpisode: 50,
+  wallTimeMs: 120_000,
+  smartRequestsPerEpisode: 30,
+  smartTokensPerEpisode: 20_000,
+  screenshotCountPerEpisode: 50,
+  artifactBytesPerEpisode: 33_554_432
+};
+
+test("autonomous-visual launch accepts strictly valid payload and forwards to Runtime", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  process.env.AUTODEV_CONTROL_API_TOKEN = "r".repeat(64);
+  let forwarded: unknown = null;
+  globalThis.fetch = (async (_input, init) => {
+    forwarded = JSON.parse(String(init?.body));
+    return Response.json(
+      {
+        schema: "autodev-control-playtesting-run-started-v2",
+        workspaceId: WORKSPACE_ID,
+        batchId: "batch-visual-1",
+        assignmentCount: 1,
+        assignmentIds: ["vis-0001"],
+        status: "running"
+      },
+      { status: 202 }
+    );
+  }) as typeof fetch;
+  try {
+    const validPayload = {
+      schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+      mode: "autonomous-visual",
+      workspaceId: WORKSPACE_ID,
+      requestId: "visual-req-1",
+      capabilityRevision: "b".repeat(64),
+      targetId: "racing-game-local",
+      policyId: "smart-direct",
+      areasOfFocus: "Test steering and finish line",
+      limits: VALID_VISUAL_LIMITS
+    };
+    const response = await POST(visualRequest(validPayload));
+    assert.equal(response.status, 202);
+    assert.deepEqual(forwarded, validPayload);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined) {
+      delete process.env.AUTODEV_CONTROL_API_TOKEN;
+    } else {
+      process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
+    }
+  }
+});
+
+test("autonomous-visual launch strictly rejects invalid payloads before contacting Runtime", async () => {
+  const previousFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return Response.json({});
+  }) as typeof fetch;
+  try {
+    const base = {
+      schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+      mode: "autonomous-visual",
+      workspaceId: WORKSPACE_ID,
+      requestId: "visual-req-invalid",
+      capabilityRevision: "c".repeat(64),
+      targetId: "racing-game-local",
+      policyId: "smart-direct",
+      areasOfFocus: null,
+      limits: VALID_VISUAL_LIMITS
+    };
+
+    // 1. Extra key on root
+    const extraKey = await POST(
+      visualRequest({ ...base, unexpectedKey: true })
+    );
+    assert.equal(extraKey.status, 400);
+
+    // 2. Invalid targetId
+    const badTarget = await POST(
+      visualRequest({ ...base, targetId: "invalid/target" })
+    );
+    assert.equal(badTarget.status, 400);
+
+    // 3. Invalid policyId
+    const badPolicy = await POST(
+      visualRequest({ ...base, policyId: "heuristic-random" })
+    );
+    assert.equal(badPolicy.status, 400);
+
+    // 4. areasOfFocus too long (>2000 chars)
+    const longFocus = await POST(
+      visualRequest({ ...base, areasOfFocus: "x".repeat(2001) })
+    );
+    assert.equal(longFocus.status, 400);
+
+    // 5. limits with missing key
+    const missingLimit = { ...VALID_VISUAL_LIMITS };
+    delete (missingLimit as any).artifactBytesPerEpisode;
+    const resMissing = await POST(
+      visualRequest({ ...base, limits: missingLimit })
+    );
+    assert.equal(resMissing.status, 400);
+
+    // 6. limits out of bounds (maxStepsPerEpisode > 10,000)
+    const outOfBounds = await POST(
+      visualRequest({
+        ...base,
+        limits: { ...VALID_VISUAL_LIMITS, maxStepsPerEpisode: 10_001 }
+      })
+    );
+    assert.equal(outOfBounds.status, 400);
+
+    // 7. limits with floating point
+    const floatLimit = await POST(
+      visualRequest({
+        ...base,
+        limits: { ...VALID_VISUAL_LIMITS, episodeCount: 1.5 }
+      })
+    );
+    assert.equal(floatLimit.status, 400);
+
+    assert.equal(calls, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});

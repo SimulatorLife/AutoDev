@@ -26,6 +26,7 @@ import {
   type PlaytestProvenance,
   type PlaytestReviewClaim,
   type PlaytestReviewCompleteness,
+  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   type PlaytestReviewPacketReceipt,
   type PlaytestReviewReceipt,
   type PLAYTESTS_BATCH_SCHEMA,
@@ -209,6 +210,13 @@ export type PlaytestAdapterEpisode = PlaytestEpisode & {
   };
   readonly scenarioFamily: string;
   readonly policyCohort: string;
+};
+
+/** Visual-only episode facts required by the discovery evidence contract. */
+export type PlaytestVisualEpisode = PlaytestEpisode & {
+  readonly executionProvenance: PlaytestEpisode["executionProvenance"] & {
+    readonly mode: "autonomous-visual";
+  };
 };
 
 /**
@@ -689,6 +697,9 @@ export type PlaytestEvidencePacket =
 /** JSON media type used by Runtime's content-addressed packet artifact store. */
 export const PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE =
   "application/vnd.autodev.playtest-evidence-packet+json" as const;
+/** JSON media type for the separately typed, unscored discovery packet. */
+export const PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE =
+  "application/vnd.autodev.playtest-discovery-evidence-packet+json" as const;
 
 /** Versioned analyst review; facts, interpretations and human outcomes stay separate. */
 export interface PlaytestSessionReview {
@@ -729,6 +740,51 @@ export interface PlaytestSessionReview {
 export interface PlaytestEvidencePacketReference {
   readonly packetId: string;
   readonly artifact: PlaytestArtifactReference;
+}
+
+/** Workspace-owned discovery packet artifact; never a confirmatory packet. */
+export interface PlaytestDiscoveryEvidencePacketReference {
+  readonly packetId: string;
+  readonly artifact: PlaytestArtifactReference;
+}
+
+/** Persisted hypothesis-only analyst output for one visual discovery episode. */
+export interface PlaytestDiscoverySessionReview {
+  readonly schema: typeof PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA;
+  readonly analysisKind: "discovery";
+  readonly reviewId: string;
+  readonly version: number;
+  readonly workspaceId: string;
+  readonly batchId: string;
+  readonly episodeId: string;
+  readonly supersedes: string | null;
+  readonly evidencePacket: PlaytestDiscoveryEvidencePacketReference;
+  readonly authorRole: "playtest-analyst";
+  readonly authorId: string;
+  readonly measurementVersion: string;
+  readonly chronologicalSummary: string;
+  readonly observations: readonly {
+    readonly hypothesisId: string;
+    readonly status: "hypothesis" | "not-observed";
+    readonly text: string;
+    readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
+  }[];
+  readonly interpretations: readonly {
+    readonly hypothesisId: string;
+    readonly status: "hypothesis" | "not-observed";
+    readonly text: string;
+    readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
+  }[];
+  readonly alternativeExplanations: readonly string[];
+  readonly experiments: readonly {
+    readonly hypothesis: string;
+    readonly falsifier: string;
+    readonly controls: readonly string[];
+    readonly budget: string;
+  }[];
+  readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
+  readonly createdAt: string;
+  readonly status: "hypothesis" | "not observed";
 }
 
 /** Evidence citation tied to the exact session packet used in a batch synthesis. */

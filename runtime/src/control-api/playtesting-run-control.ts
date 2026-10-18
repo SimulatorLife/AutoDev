@@ -32,6 +32,8 @@ import {
   PlaytestSandboxUnavailableError
 } from "../playtesting/docker-sandbox.ts";
 import { playtestLaunchRequestSchema } from "../playtesting/launch-request-schema.ts";
+import { isSmartDirectVisualPolicyAvailable } from "../playtesting/smart-direct-policy.ts";
+import { isPlaytestVisualBrowserDriverAvailable } from "../playtesting/visual-browser-driver.ts";
 import {
   type PlaytestAnalystReviewDispatch,
   PlaytestMcpAuthorizationError,
@@ -1076,8 +1078,28 @@ function visualModeReadiness(input: {
   readonly operatorActionsAvailable: boolean;
   readonly targetStore: "available" | "unavailable";
   readonly targets: readonly VisualTargetApproval[];
+  readonly visualDriverAvailable: boolean;
+  readonly smartDirectPolicyAvailable: boolean;
 }): ControlApiPlaytestingCapabilitiesResponse["modeReadiness"]["autonomous-visual"] {
   const reasons: ControlApiPlaytestingCapabilityReason[] = [];
+  if (!input.visualDriverAvailable) {
+    addCapabilityReason(reasons, {
+      code: "visual-driver-unavailable",
+      label: "Visual browser driver unavailable",
+      message:
+        "Runtime could not resolve a Playwright Chromium executable for the visual browser driver.",
+      severity: UNAVAILABLE_STATUS
+    });
+  }
+  if (!input.smartDirectPolicyAvailable) {
+    addCapabilityReason(reasons, {
+      code: "smart-direct-policy-unavailable",
+      label: "Smart-direct route unavailable",
+      message:
+        "The authenticated local AutoDev model router Smart-direct requires is not reachable.",
+      severity: UNAVAILABLE_STATUS
+    });
+  }
   if (!input.workspaceEnabled) {
     addCapabilityReason(reasons, {
       code: "workspace-disabled",
@@ -1217,6 +1239,9 @@ async function capabilitiesForLaunchRequest(input: {
       "autonomous-visual": visualModeReadiness({
         workspaceEnabled: runCapabilities.workspaceEnabled,
         operatorActionsAvailable,
+        visualDriverAvailable: isPlaytestVisualBrowserDriverAvailable(),
+        smartDirectPolicyAvailable:
+          await isSmartDirectVisualPolicyAvailable(),
         ...visualTargets
       }),
       "scripted-regression": scriptedModeReadiness(operatorActionsAvailable)

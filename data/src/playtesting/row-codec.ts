@@ -12,6 +12,7 @@ import {
   assertPlaytestEpisodeIdentityForMode,
   assertPlaytestEpisodeModeFacts,
   assertPlaytestExecutionProvenance,
+  assertPlaytestDiscoverySessionReview,
   assertPlaytestExperiment,
   assertPlaytestNumericResults,
   assertPlaytestSessionReviewHasEvidence,
@@ -34,6 +35,7 @@ import {
   playtestCoverageManifestHashInput,
   type PlaytestCrossSessionSynthesis,
   type PlaytestEpisode,
+  type PlaytestDiscoverySessionReview,
   type PlaytestEvidencePacketReference,
   type PlaytestExperiment,
   playtestExperimentHashInput,
@@ -63,6 +65,8 @@ import {
   PLAYTESTS_EPISODE_SCHEMA_V5,
   PLAYTESTS_EPISODE_SCHEMA_V6,
   PLAYTESTS_EPISODE_TERMINATION_REASONS,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
+  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
@@ -503,6 +507,105 @@ function assertEvidencePacketReference(
         (reference.revision as number) < 0))
   ) {
     throw new TypeError("Review evidence packet artifact metadata is invalid.");
+  }
+}
+
+function assertDiscoveryEvidencePacketReference(
+  value: unknown
+): asserts value is PlaytestDiscoverySessionReview["evidencePacket"] {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 2 ||
+    Object.keys(value).some((key) => !["packetId", "artifact"].includes(key)) ||
+    !isPlaytestEvidencePacketId(value.packetId) ||
+    !isRecord(value.artifact)
+  ) {
+    throw new TypeError("Discovery evidence packet reference is malformed.");
+  }
+  const reference = value.artifact;
+  if (
+    Object.keys(reference).length !== 4 ||
+    Object.keys(reference).some(
+      (key) => !["artifactId", "sha256", "bytes", "mediaType"].includes(key)
+    ) ||
+    typeof reference.artifactId !== "string" ||
+    reference.artifactId.trim().length === 0 ||
+    reference.artifactId.length > MAX_ARTIFACT_REF_LENGTH ||
+    typeof reference.sha256 !== "string" ||
+    !SHA256_PATTERN.test(reference.sha256) ||
+    !Number.isSafeInteger(reference.bytes) ||
+    (reference.bytes as number) < 1 ||
+    (reference.bytes as number) > MAX_PLAYTEST_PAYLOAD_BYTES ||
+    reference.mediaType !== PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE
+  ) {
+    throw new TypeError(
+      "Discovery evidence packet artifact metadata is invalid."
+    );
+  }
+}
+
+export function encodeDiscoveryReview(
+  workspaceId: string,
+  artifact: PlaytestDiscoverySessionReview
+): PlaytestIndexedReviewRow {
+  assertPlaytestDiscoverySessionReview(artifact);
+  if (artifact.workspaceId !== workspaceId) {
+    throw new TypeError(
+      "Discovery review workspace identity does not match its storage scope."
+    );
+  }
+  assertDiscoveryEvidencePacketReference(artifact.evidencePacket);
+  return {
+    workspace_id: requiredRef(workspaceId, "workspaceId"),
+    episode_id: requiredRef(artifact.episodeId, "episodeId"),
+    review_id: requiredRef(artifact.reviewId, "reviewId"),
+    version: artifact.version,
+    author_role: artifact.authorRole,
+    // The required ClickHouse string index is deliberately empty: discovery
+    // reviews have no rubric. Canonical payloads never store a fake rubric.
+    rubric_hash: "",
+    measurement_version: artifact.measurementVersion,
+    created_at: toClickHouseDateTime(artifact.createdAt),
+    payload_json: payloadJson(artifact)
+  };
+}
+
+export function decodeDiscoveryReview(
+  row: Record<string, unknown>
+): PlaytestDiscoverySessionReview {
+  const raw = decodePayload<Readonly<Record<string, unknown>>>(
+    row,
+    "reviewId",
+    "version"
+  );
+  if (raw.schema !== PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse returned an unsupported discovery review schema"
+    );
+  }
+  try {
+    assertDiscoveryEvidencePacketReference(raw.evidencePacket);
+    const artifact = raw as unknown as PlaytestDiscoverySessionReview;
+    assertPlaytestDiscoverySessionReview(artifact);
+    assertIndexMatches(row, "workspace_id", artifact.workspaceId);
+    assertIndexMatches(row, "episode_id", artifact.episodeId);
+    assertIndexMatches(row, "review_id", artifact.reviewId);
+    assertIndexMatches(row, "version", artifact.version);
+    if (
+      row.author_role !== artifact.authorRole ||
+      row.rubric_hash !== "" ||
+      row.measurement_version !== artifact.measurementVersion
+    ) {
+      throw new TypeError(
+        "Discovery review indexed metadata contradicts its canonical payload."
+      );
+    }
+    return artifact;
+  } catch (error) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse discovery review has a malformed packet reference, claim citation or index",
+      error
+    );
   }
 }
 

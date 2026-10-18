@@ -245,14 +245,38 @@ export async function runParameterizedClickHouseStatement(
   for (const [name, value] of Object.entries(params)) {
     url.searchParams.set(`param_${name}`, clickHouseParamLiteral(value));
   }
-  const res = await fetchImpl(url.toString(), {
-    method: "POST",
-    ...(options.body === undefined
-      ? {}
-      : { headers: { "Content-Type": "application/json" }, body: options.body })
-  });
-  if (!res.ok) {
-    throw new ClickHouseStatementError(res.status, await res.text());
+  const maxRetries = 2;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetchImpl(url.toString(), {
+        method: "POST",
+        ...(options.body === undefined
+          ? {}
+          : { headers: { "Content-Type": "application/json" }, body: options.body })
+      });
+      if (!res.ok) {
+        throw new ClickHouseStatementError(res.status, await res.text());
+      }
+      return await res.text();
+    } catch (error) {
+      if (error instanceof ClickHouseStatementError) throw error;
+      const cause = (error as { readonly cause?: unknown } | null | undefined)
+        ?.cause;
+      const code = (cause as { readonly code?: unknown } | null | undefined)
+        ?.code;
+      const isRetryable =
+        typeof code === "string" &&
+        (code === "ECONNRESET" ||
+          code === "ECONNREFUSED" ||
+          code === "ETIMEDOUT");
+      if (attempt < maxRetries && isRetryable) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 100 * (attempt + 1))
+        );
+        continue;
+      }
+      throw error;
+    }
   }
-  return res.text();
+  throw new Error("ClickHouse request retries exhausted");
 }

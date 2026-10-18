@@ -94,45 +94,59 @@ async function closeMemoryHostSafely(): Promise<void> {
 }
 
 export function createControlApiServer(): Server {
-  return createServer((request: IncomingMessage, response: ServerResponse) => {
-    let pathname: string;
-    try {
-      pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-    } catch {
-      response.writeHead(400, { "cache-control": "no-store" });
-      response.end();
-      return;
-    }
-    if (!pathname.startsWith("/control/")) {
-      response.writeHead(404, { "cache-control": "no-store" });
-      response.end();
-      return;
-    }
-    void (async () => {
+  const server = createServer(
+    (request: IncomingMessage, response: ServerResponse) => {
+      let pathname: string;
       try {
-        const handled = await handleControlApiRequest(
-          request,
-          response,
-          pathname
-        );
-        if (handled) return;
+        pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+      } catch {
+        response.writeHead(400, { "cache-control": "no-store" });
+        response.end();
+        return;
+      }
+      if (!pathname.startsWith("/control/")) {
         response.writeHead(404, { "cache-control": "no-store" });
         response.end();
-      } catch {
-        if (response.headersSent) {
-          response.destroy();
-          return;
-        }
-        response.writeHead(500, { "cache-control": "no-store" });
-        response.end();
+        return;
       }
-    })();
-  });
+      void (async () => {
+        try {
+          const handled = await handleControlApiRequest(
+            request,
+            response,
+            pathname
+          );
+          if (handled) return;
+          response.writeHead(404, { "cache-control": "no-store" });
+          response.end();
+        } catch {
+          if (response.headersSent) {
+            response.destroy();
+            return;
+          }
+          response.writeHead(500, { "cache-control": "no-store" });
+          response.end();
+        }
+      })();
+    }
+  );
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
+  return server;
 }
 
-function configuredControlApiListener(): { host: string; port: number } | null {
-  const host = process.env.AUTODEV_CONTROL_API_LISTEN_HOST?.trim();
-  if (!host) return null;
+function configuredControlApiListener(routerPort: number): { host: string; port: number } | null {
+  if (
+    process.env.AUTODEV_CONTROL_API_DISABLED === "1" ||
+    process.env.AUTODEV_CONTROL_API_LISTEN_HOST === "none"
+  ) {
+    return null;
+  }
+  // Only bind the default port 4101 when running on standard router port 4100 or when explicitly configured
+  if (routerPort !== 4100 && !process.env.AUTODEV_CONTROL_API_LISTEN_HOST) {
+    return null;
+  }
+  const host = process.env.AUTODEV_CONTROL_API_LISTEN_HOST?.trim() || "0.0.0.0";
   const rawPort = process.env.AUTODEV_CONTROL_API_LISTEN_PORT?.trim();
   const port = rawPort ? Number(rawPort) : 4101;
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
@@ -239,7 +253,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
         }
         void refreshCodexState();
         modelDiscovery?.start();
-        const controlListener = configuredControlApiListener();
+        const controlListener = configuredControlApiListener(port);
         if (controlListener) {
           controlServer = createControlApiServer();
           controlServer.once("error", (error) => {

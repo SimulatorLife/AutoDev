@@ -18,6 +18,7 @@ import {
   playtestCoverageManifestHashInput,
   type PlaytestCrossSessionSynthesis,
   type PlaytestEpisode,
+  type PlaytestDiscoverySessionReview,
   type PlaytestExperiment,
   playtestExperimentHashInput,
   type PlaytestFinding,
@@ -43,6 +44,8 @@ import {
   PLAYTESTS_EPISODE_SCHEMA_V4,
   PLAYTESTS_EPISODE_SCHEMA_V5,
   PLAYTESTS_EPISODE_SCHEMA_V6,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
+  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
@@ -76,6 +79,7 @@ import {
   decodeExperiment,
   decodeFinding,
   decodeReview,
+  decodeDiscoveryReview,
   encodeBatch,
   encodeBenchmark,
   encodeComparison,
@@ -86,6 +90,7 @@ import {
   encodeHumanStudy,
   encodeHumanSummary,
   encodeReview,
+  encodeDiscoveryReview,
   migrateLegacyEpisodeForStorage
 } from "../../src/playtesting/row-codec.ts";
 
@@ -540,6 +545,114 @@ function review(): PlaytestSessionReview {
     notes: "Synthetic note"
   };
 }
+
+function discoveryReview(): PlaytestDiscoverySessionReview {
+  return {
+    schema: PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
+    analysisKind: "discovery",
+    reviewId: "discovery-review-1",
+    version: 1,
+    workspaceId: "workspace-a/game",
+    batchId: "batch-visual-1",
+    episodeId: "ep-visual-1",
+    supersedes: null,
+    evidencePacket: {
+      packetId: "discovery-packet-1",
+      artifact: {
+        artifactId: "discovery-packet-artifact-1",
+        sha256: "2".repeat(64),
+        bytes: 512,
+        mediaType: PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE
+      }
+    },
+    authorRole: "playtest-analyst",
+    authorId: "analyst-1",
+    measurementVersion: "playtesting-measurement-v2",
+    chronologicalSummary: "The setup screen exposed two visible stage choices.",
+    observations: [
+      {
+        hypothesisId: "observation-1",
+        status: "hypothesis",
+        text: "Two stage choices were visible.",
+        evidenceRefs: [{ kind: "episode", id: "ep-visual-1" }]
+      }
+    ],
+    interpretations: [
+      {
+        hypothesisId: "interpretation-1",
+        status: "not-observed",
+        text: "The selected stage's effect was not observed.",
+        evidenceRefs: [{ kind: "episode", id: "ep-visual-1" }]
+      }
+    ],
+    alternativeExplanations: [],
+    experiments: [],
+    evidenceRefs: [{ kind: "episode", id: "ep-visual-1" }],
+    createdAt: "2026-10-17T12:00:00.000Z",
+    status: "hypothesis"
+  };
+}
+
+test("discovery review codec persists an unscored strict record", () => {
+  const artifact = discoveryReview();
+  const row = encodeDiscoveryReview("workspace-a/game", artifact);
+  assert.equal(row.rubric_hash, "");
+  assert.equal(row.measurement_version, "playtesting-measurement-v2");
+  assert.deepEqual(
+    decodeDiscoveryReview(row as unknown as Record<string, unknown>),
+    artifact
+  );
+  assert.throws(
+    () =>
+      encodeDiscoveryReview("workspace-a/game", {
+        ...artifact,
+        rubricHash: "invented"
+      } as unknown as PlaytestDiscoverySessionReview),
+    /unknown or missing fields/u
+  );
+  assert.throws(
+    () => decodeReview(row as unknown as Record<string, unknown>),
+    /unsupported playtest review schema/u
+  );
+});
+
+test("discovery and confirmatory reviews have separate latest-read paths", async () => {
+  const fake = makeClickHouseFetch();
+  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const confirmatory = {
+    ...review(),
+    episodeId: "ep-visual-1",
+    observations: [
+      {
+        text: "Confirmatory observation",
+        evidenceRefs: [{ kind: "episode" as const, id: "ep-visual-1" }]
+      }
+    ],
+    interpretations: [
+      {
+        text: "Confirmatory interpretation",
+        evidenceRefs: [{ kind: "episode" as const, id: "ep-visual-1" }]
+      }
+    ],
+    evidenceRefs: [{ kind: "episode" as const, id: "ep-visual-1" }]
+  };
+  const discovery = discoveryReview();
+
+  await repo.insertReview(confirmatory);
+  await repo.insertDiscoveryReview(discovery);
+
+  assert.deepEqual(
+    await repo.getLatestReviewForEpisode("workspace-a/game", "ep-visual-1"),
+    confirmatory
+  );
+  assert.deepEqual(
+    await repo.getLatestDiscoveryReviewForEpisode(
+      "workspace-a/game",
+      "ep-visual-1"
+    ),
+    discovery
+  );
+});
 
 test("legacy review schemas migrate with explicit packet and claim-citation gaps", () => {
   const artifact = review();
@@ -1620,6 +1733,32 @@ function makeClickHouseFetch() {
         return payload.schema !== currentSchema;
       });
     }
+    if (
+      query.includes(
+        "JSONExtractString(payload_json, 'schema') != {discoverySchema:String}"
+      )
+    ) {
+      const discoverySchema = url.searchParams.get("param_discoverySchema");
+      rows = rows.filter((row) => {
+        const payload = JSON.parse(String(row.payload_json)) as {
+          readonly schema?: unknown;
+        };
+        return payload.schema !== discoverySchema;
+      });
+    }
+    if (
+      query.includes(
+        "JSONExtractString(payload_json, 'schema') = {discoverySchema:String}"
+      )
+    ) {
+      const discoverySchema = url.searchParams.get("param_discoverySchema");
+      rows = rows.filter((row) => {
+        const payload = JSON.parse(String(row.payload_json)) as {
+          readonly schema?: unknown;
+        };
+        return payload.schema === discoverySchema;
+      });
+    }
 
     const count = query.includes("count() AS total");
     if (count)
@@ -2233,6 +2372,91 @@ test("Data round-trips a visual batch with explicit null source identity", () =>
   assert.deepEqual(decoded, artifact);
   assert.equal(decoded.executionMode, "autonomous-visual");
   assert.equal(decoded.assignmentInventory.status, "frozen-visual");
+});
+
+test("Data round-trips an in-flight visual episode revision with a durable frame reference", async () => {
+  const base = episode(700);
+  const visualEpisode: PlaytestEpisode = {
+    ...base,
+    episodeId: "ep-visual-in-flight",
+    batchId: "visual-batch-1",
+    assignmentId: "v-0001",
+    revision: 2,
+    executionProvenance: {
+      mode: "autonomous-visual",
+      source: {
+        kind: "URL-only",
+        repository: null,
+        revision: null,
+        revisionConfidence: "not-applicable",
+        checkoutState: "not-applicable",
+        artifactFingerprint: null,
+        targetId: "target-visual-1",
+        targetOrigin: "http://localhost:5173"
+      },
+      observationSource: "browser-ui",
+      actionSource: "browser-input",
+      derivedFrom: null
+    },
+    identity: {
+      ...base.identity,
+      repository: null,
+      buildSha: null,
+      gameBuild: null,
+      scenarioId: null,
+      configHash: null,
+      seed: null,
+      rngAlgorithm: null,
+      rngVersion: null,
+      rngInitialStateHash: null,
+      policyId: "smart-direct",
+      policyVersion: "1",
+      modelId: "autodev/smart",
+      modelRevision: null,
+      protocolVersion: null
+    },
+    scenarioFamily: null,
+    policyCohort: null,
+    strategy: "smart-direct-visual",
+    status: "started",
+    termination: { reason: "unknown", step: null },
+    outcome: "unknown",
+    outcomeMetrics: {},
+    completionCounts: {
+      assigned: 1,
+      started: 1,
+      completed: 0,
+      crashed: 0,
+      infrastructureFailed: 0,
+      cancelled: 0,
+      budgetTruncated: 0,
+      reviewed: 0,
+      eligible: 0
+    },
+    replayStatus: "unavailable",
+    trace: null,
+    frames: [
+      { id: "frame-captured-before-decision", kind: "frame", step: 0, frameIndex: 0 }
+    ],
+    stepCount: 0,
+    metrics: [],
+    assignedAt: "2026-10-17T12:00:00.000Z",
+    startedAt: "2026-10-17T12:00:01.000Z",
+    completedAt: null,
+    simulationWallMs: 0,
+    logicalTicks: null,
+    policyInferenceMs: 0,
+    nativeDurationMs: null,
+    completeness: "unknown",
+    missingReasons: []
+  };
+  const fake = makeClickHouseFetch();
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  await repository.insertEpisode(visualEpisode);
+  assert.deepEqual(
+    await repository.getEpisode("workspace-a/game", visualEpisode.episodeId),
+    visualEpisode
+  );
 });
 
 test("Data preserves only a persona cohort explicitly frozen into a visual assignment manifest", () => {

@@ -5,6 +5,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
+  activeRunOwnsEpisode,
   assignmentCounts,
   assignmentOutcomes,
   cancellationAvailability,
@@ -71,6 +72,35 @@ function run(batchId: string, status: string): PlaytestingActiveRun {
     record: record(status, batchId)
   };
 }
+
+test("a missing session is pending only for its active batch", () => {
+  const adapterRun = run("batch-abc", "running");
+  const visualRun = run("batch-1234567890123456-rest", "persisting");
+  const terminalRun = run("batch-finished", "completed");
+
+  assert.equal(activeRunOwnsEpisode(adapterRun, "batch-abc.a-1"), true);
+  assert.equal(
+    activeRunOwnsEpisode(visualRun, "ep-1234567890123456-vis-assign-1"),
+    true
+  );
+  assert.equal(activeRunOwnsEpisode(adapterRun, "another-batch.a-1"), false);
+  assert.equal(activeRunOwnsEpisode(terminalRun, "batch-finished.a-1"), false);
+  assert.equal(
+    activeRunOwnsEpisode(
+      {
+        ...adapterRun,
+        record: {
+          ...adapterRun.record,
+          result: {
+            outcomes: [{ assignmentId: "a-1", episodeId: "recovered-episode" }]
+          }
+        }
+      },
+      "recovered-episode"
+    ),
+    true
+  );
+});
 
 test("a well-formed workspace-scoped response parses into owner-read runs", () => {
   const parsed = readActiveRuns(
@@ -465,11 +495,15 @@ test("a known viewer restriction explains why cancellation is unavailable", () =
       focusedBatchId: "batch-viewer",
       onFocusBatch: () => {},
       onCancel: null,
-      cancelUnavailableReason: "Only an authorized operator can cancel this run.",
+      cancelUnavailableReason:
+        "Only an authorized operator can cancel this run.",
       busyBatchId: null
     })
   );
-  assert.match(markup, /Cancellation unavailable: Only an authorized operator can cancel this run/u);
+  assert.match(
+    markup,
+    /Cancellation unavailable: Only an authorized operator can cancel this run/u
+  );
   assert.doesNotMatch(markup, /Cancel batch/u);
 });
 
@@ -576,7 +610,10 @@ test("assignment count details use the Runtime result only when it is present", 
   );
   assert.doesNotMatch(markup, /Assignment counts/u);
   assert.match(markup, /Runtime accepted 1 assignment/u);
-  assert.match(markup, /Individual results are recorded when execution finishes/u);
+  assert.match(
+    markup,
+    /Individual results are recorded when execution finishes/u
+  );
   assert.doesNotMatch(markup, /0 of 1 assignments have a terminal result/u);
 });
 

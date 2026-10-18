@@ -1071,7 +1071,15 @@ export class RoutingPolicy {
         (role === "orchestrator"
           ? (this.config.orchestrator.reasoningEffort?.[provider] ?? null)
           : null);
-      return [{ ...route, model, reasoningEffort: configuredEffort }];
+      return [
+        {
+          ...route,
+          model,
+          ...(configuredEffort !== null
+            ? { reasoningEffort: configuredEffort }
+            : {})
+        }
+      ];
     });
   }
 

@@ -10,6 +10,9 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import {
+  isSmartDirectVisualPolicyAvailable,
+  isSmartDirectVisualPolicyConfigured,
+  resetSmartDirectVisualPolicyAvailabilityCache,
   SmartDirectPolicyError,
   SmartDirectVisualPolicy
 } from "../src/playtesting/smart-direct-policy.ts";
@@ -403,6 +406,76 @@ test("Smart-direct fails closed when usage is absent or target/frame identity ch
       error instanceof SmartDirectPolicyError &&
       error.code === "frame-unavailable"
   );
+});
+
+test("Smart-direct readiness checks auth without exposing its token", () => {
+  assert.equal(isSmartDirectVisualPolicyConfigured("4100", undefined), false);
+  assert.equal(isSmartDirectVisualPolicyConfigured("4100", "   "), false);
+  assert.equal(isSmartDirectVisualPolicyConfigured("4100", "configured"), true);
+  assert.equal(isSmartDirectVisualPolicyConfigured("", "configured"), true);
+  assert.equal(
+    isSmartDirectVisualPolicyConfigured("not-a-port", "configured"),
+    false
+  );
+  assert.equal(
+    isSmartDirectVisualPolicyConfigured("999999", "configured"),
+    false
+  );
+});
+
+test("Smart-direct availability probes the authenticated local health endpoint and caches", async () => {
+  resetSmartDirectVisualPolicyAvailabilityCache();
+  let fetchCount = 0;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    fetchCount += 1;
+    assert.equal(String(input), "http://127.0.0.1:4321/health");
+    assert.equal(
+      new Headers(init?.headers).get("authorization"),
+      "Bearer test-router-token"
+    );
+    return Response.json({ status: "ok", router: "codex-model-router" });
+  };
+  assert.equal(
+    await isSmartDirectVisualPolicyAvailable({
+      portValue: "4321",
+      authToken: "test-router-token",
+      fetchImpl,
+      now: () => 1_000,
+      cacheMs: 500
+    }),
+    true
+  );
+  assert.equal(
+    await isSmartDirectVisualPolicyAvailable({
+      portValue: "4321",
+      authToken: "test-router-token",
+      fetchImpl,
+      now: () => 1_100,
+      cacheMs: 500
+    }),
+    true
+  );
+  assert.equal(fetchCount, 1);
+  resetSmartDirectVisualPolicyAvailabilityCache();
+  assert.equal(
+    await isSmartDirectVisualPolicyAvailable({
+      portValue: "4321",
+      authToken: "test-router-token",
+      fetchImpl: async () =>
+        Response.json({ status: "ok", router: "different-service" }),
+      now: () => 2_000
+    }),
+    false
+  );
+  assert.equal(
+    await isSmartDirectVisualPolicyAvailable({
+      portValue: "4321",
+      authToken: "",
+      fetchImpl
+    }),
+    false
+  );
+  resetSmartDirectVisualPolicyAvailabilityCache();
 });
 
 test("Smart-direct refuses non-local model endpoints before sending game evidence", () => {

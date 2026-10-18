@@ -90,6 +90,31 @@ import {
   type PlaytestArtifactStore
 } from "./artifact-store.ts";
 
+let cachedChromiumAvailability: boolean | null = null;
+
+/**
+ * Cached, no-launch check for whether a Playwright Chromium executable is
+ * resolvable on this host. Readiness probes must call this instead of
+ * opening a browser per request; the result is memoized for the process
+ * lifetime since the installed browser binary does not change between
+ * requests. Call {@link resetPlaytestVisualBrowserDriverAvailabilityCache}
+ * in tests that need to force re-resolution.
+ */
+export function isPlaytestVisualBrowserDriverAvailable(
+  browserType: Pick<typeof chromium, "executablePath"> = chromium
+): boolean {
+  if (cachedChromiumAvailability === null) {
+    cachedChromiumAvailability =
+      resolveChromiumExecutablePath(browserType) !== null;
+  }
+  return cachedChromiumAvailability;
+}
+
+/** Test-only seam: forces the next availability check to re-resolve. */
+export function resetPlaytestVisualBrowserDriverAvailabilityCache(): void {
+  cachedChromiumAvailability = null;
+}
+
 const CONTROL_SELECTOR =
   'button,a[href],input,textarea,select,[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[role="tab"],[role="menuitem"],[role="option"],[role="textbox"],[role="combobox"]';
 const MASK_SELECTOR =

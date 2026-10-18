@@ -7,6 +7,9 @@ import {
 } from "../../../../src/features/playtesting/playtesting-episode-presentation.ts";
 import { parsePlaytestingScope } from "../../../../src/features/playtesting/playtesting-url.ts";
 import { PlaytestingReadiness } from "../../../../src/features/playtesting/PlaytestingReadiness.tsx";
+import { activeRunOwnsEpisode } from "../../../../src/features/playtesting/playtesting-active-runs.ts";
+import { PlaytestingSessionLiveWatch } from "../../../../src/features/playtesting/PlaytestingSessionLiveWatch.ts";
+import { MUTED_BODY_CLASS } from "../../../../src/components/ui/text-classes.ts";
 import { PlaytestingSessionView } from "../../../../src/features/playtesting/PlaytestingSessionView.ts";
 import {
   controlApiFailureCode,
@@ -19,6 +22,7 @@ import {
   ResourceUnavailable
 } from "../../../_console.ts";
 import {
+  fetchPlaytestingActiveRuns,
   fetchPlaytestingEpisode,
   fetchPlaytestingWindow,
   playtestingReadinessFailure
@@ -101,6 +105,59 @@ export default async function PlaytestingSessionPage({
   }
 
   if (result.kind !== "ok") {
+    const activeRuns = await fetchPlaytestingActiveRuns(
+      scope.workspaceId,
+      config
+    );
+    const hasActiveRun =
+      activeRuns.kind === "ok" &&
+      activeRuns.data.runs.some((run) =>
+        activeRunOwnsEpisode(
+          {
+            batchId: run.batchId,
+            assignmentCount: run.assignmentCount,
+            createdAt: run.createdAt,
+            record: run.status
+          },
+          id
+        )
+      );
+    if (hasActiveRun) {
+      return React.createElement(
+        ConsolePageShell,
+        { section },
+        React.createElement(
+          "section",
+          {
+            className:
+              "space-y-4 rounded-xl border border-border bg-surface-raised p-6 shadow-sm",
+            "data-testid": "session-pending-state"
+          },
+          React.createElement(
+            "div",
+            { className: "flex flex-wrap items-center justify-between gap-4" },
+            React.createElement(
+              "div",
+              null,
+              React.createElement(
+                "h2",
+                { className: "text-lg font-semibold text-fg" },
+                "Session Initializing"
+              ),
+              React.createElement(
+                "p",
+                { className: MUTED_BODY_CLASS },
+                "Episode " +
+                  id +
+                  " is scheduled or starting in an active playtesting run. Waiting for initial frames and telemetry…"
+              )
+            ),
+            React.createElement(PlaytestingSessionLiveWatch, { isLive: true })
+          )
+        )
+      );
+    }
+
     const readinessFailure = playtestingReadinessFailure(result);
     const content = readinessFailure
       ? React.createElement(PlaytestingReadiness, {

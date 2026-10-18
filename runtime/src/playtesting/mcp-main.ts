@@ -34,6 +34,7 @@ export interface PlaytestStdioConfiguration {
   readonly repositoryRoot: string | null;
   readonly analysisId?: string;
   readonly selectedEpisodeIds?: readonly string[];
+  readonly analysisKind?: "confirmatory" | "discovery";
   readonly metricAggregation?: PlaytestCrossSessionMetricAggregation;
 }
 
@@ -47,11 +48,15 @@ export function assertPlaytestStdioSessionBinding(
     (!config.analysisId ||
       !SESSION_VALUE_PATTERN.test(config.analysisId) ||
       !isValidSelectedEpisodeIds(config.selectedEpisodeIds) ||
-      !config.metricAggregation)
+      (config.analysisKind !== "confirmatory" &&
+        config.analysisKind !== "discovery") ||
+      (config.analysisKind === "confirmatory" && !config.metricAggregation) ||
+      (config.analysisKind === "discovery" &&
+        config.metricAggregation !== undefined))
   ) {
     throw new Error(ANALYST_SELECTION_ERROR);
   }
-  if (config.role === ANALYST_ROLE) {
+  if (config.role === ANALYST_ROLE && config.analysisKind === "confirmatory") {
     try {
       assertPlaytestCrossSessionMetricAggregation(
         config.metricAggregation,
@@ -191,8 +196,19 @@ export function playtestStdioConfiguration(
       : undefined;
   const selectedEpisodeIds =
     role === ANALYST_ROLE ? selectedEpisodeIdsFromEnvironment(env) : undefined;
-  const metricAggregation =
+  const analysisKind =
     role === ANALYST_ROLE
+      ? env.AUTODEV_PLAYTEST_ANALYSIS_KIND?.trim()
+      : undefined;
+  if (
+    role === ANALYST_ROLE &&
+    analysisKind !== "confirmatory" &&
+    analysisKind !== "discovery"
+  ) {
+    throw new Error(ANALYST_SELECTION_ERROR);
+  }
+  const metricAggregation =
+    role === ANALYST_ROLE && analysisKind === "confirmatory"
       ? metricAggregationFromEnvironment({
           env,
           workspaceId,
@@ -210,6 +226,9 @@ export function playtestStdioConfiguration(
     repositoryRoot,
     ...(analysisId === undefined ? {} : { analysisId }),
     ...(selectedEpisodeIds === undefined ? {} : { selectedEpisodeIds }),
+    ...(analysisKind === undefined
+      ? {}
+      : { analysisKind: analysisKind as "confirmatory" | "discovery" }),
     ...(metricAggregation === undefined ? {} : { metricAggregation })
   };
 }
@@ -230,6 +249,9 @@ export function playtestMcpSessionProvider(
     ...(config.selectedEpisodeIds === undefined
       ? {}
       : { selectedEpisodeIds: config.selectedEpisodeIds }),
+    ...(config.analysisKind === undefined
+      ? {}
+      : { analysisKind: config.analysisKind }),
     ...(config.metricAggregation === undefined
       ? {}
       : { metricAggregation: config.metricAggregation })

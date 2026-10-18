@@ -74,6 +74,7 @@ test("analyst dispatch uses the existing provider-agent role with a read-only sc
       workspaceId: "owner/RacingGame",
       actor: "control-api:abcd",
       episodeIds: ["episode-1", "episode-2"],
+      analysisKind: "confirmatory",
       metricAggregation: aggregationFor(["episode-1", "episode-2"])
     },
     {
@@ -244,6 +245,7 @@ test("analyst dispatch needs no unused Control API credential", async () => {
       workspaceId: "owner/RacingGame",
       actor: "control-api:abcd",
       episodeIds: ["episode-1"],
+      analysisKind: "confirmatory",
       metricAggregation: aggregationFor(["episode-1"])
     },
     {
@@ -252,6 +254,65 @@ test("analyst dispatch needs no unused Control API credential", async () => {
     }
   );
   assert.equal(spawnCount, 1);
+  eventHandlers.get("close")?.(0, null);
+  assert.deepEqual(await processHandle.completion, {
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    launchFailed: false
+  });
+});
+
+test("discovery analyst dispatch has no metric aggregation and receives a hypothesis-only prompt", async () => {
+  const eventHandlers = new Map<string, (...args: unknown[]) => void>();
+  const child = {
+    once(event: string, handler: (...args: unknown[]) => void) {
+      eventHandlers.set(event, handler);
+      return child;
+    },
+    kill: () => true,
+    emitForTest(event: string, ...args: unknown[]) {
+      eventHandlers.get(event)?.(...args);
+    }
+  } as unknown as ChildProcess & {
+    emitForTest(event: string, ...args: unknown[]): void;
+  };
+  const calls: {
+    args: readonly string[];
+    options: SpawnOptions;
+  }[] = [];
+  const spawnProcess = ((
+    _command: string,
+    args: string[],
+    options: SpawnOptions
+  ) => {
+    calls.push({ args, options });
+    return child;
+  }) as unknown as typeof spawn;
+  const processHandle = launchPlaytestAnalystProcess(
+    {
+      analysisId: "analysis-discovery-1",
+      workspaceId: "owner/RacingGame",
+      actor: "control-api:abcd",
+      episodeIds: ["ep-visual-1"],
+      analysisKind: "discovery",
+      metricAggregation: null
+    },
+    { environment: {}, spawnProcess }
+  );
+  const call = calls[0];
+  assert.ok(call);
+  const prompt = call.args.at(-1) ?? "";
+  const childEnvironment = call.options.env ?? {};
+  assert.match(prompt, /analysisKind=discovery/u);
+  assert.match(prompt, /playtest.submitDiscoveryReview/u);
+  assert.match(prompt, /unscored discovery only/u);
+  assert.doesNotMatch(prompt, /ratio-of-sums/u);
+  assert.equal(childEnvironment.AUTODEV_PLAYTEST_ANALYSIS_KIND, "discovery");
+  assert.equal(
+    childEnvironment.AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION,
+    undefined
+  );
   eventHandlers.get("close")?.(0, null);
   assert.deepEqual(await processHandle.completion, {
     exitCode: 0,

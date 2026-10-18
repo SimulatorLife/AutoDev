@@ -21,6 +21,8 @@ import {
   type PlaytestBenchmark,
   type PlaytestComparison,
   type PlaytestEpisode,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
+  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   type PlaytestLaunchRequest,
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
@@ -45,6 +47,12 @@ import {
   type PlaytestingRunControlApiOptions
 } from "../src/control-api/playtesting-run-control.ts";
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
+import {
+  isSmartDirectVisualPolicyAvailable,
+  isSmartDirectVisualPolicyConfigured,
+  resetSmartDirectVisualPolicyAvailabilityCache
+} from "../src/playtesting/smart-direct-policy.ts";
+import { isPlaytestVisualBrowserDriverAvailable } from "../src/playtesting/visual-browser-driver.ts";
 import { PlaytestSandboxUnavailableError } from "../src/playtesting/docker-sandbox.ts";
 import {
   type PlaytestAnalystReviewDispatch,
@@ -691,6 +699,8 @@ test("capabilities expose approved visual targets without claiming an uninstalle
     name: "Gated browser game",
     entryRequirements: "consent-or-age-screen"
   };
+  resetSmartDirectVisualPolicyAvailabilityCache();
+  const smartDirectAvailable = await isSmartDirectVisualPolicyAvailable();
   const response = await callRunControl(
     "GET",
     `/control/playtesting/capabilities?workspaceId=${encodeURIComponent(WORKSPACE)}`,
@@ -719,7 +729,26 @@ test("capabilities expose approved visual targets without claiming an uninstalle
   };
   assert.equal(modes["adapter-accelerated"].status, "check-required");
   assert.equal(modes["autonomous-visual"].targetStore, "available");
-  assert.equal(modes["autonomous-visual"].status, "check-required");
+  const visualDriverAvailable = isPlaytestVisualBrowserDriverAvailable();
+  const smartDirectConfigured = isSmartDirectVisualPolicyConfigured();
+  assert.equal(
+    modes["autonomous-visual"].status,
+    visualDriverAvailable && smartDirectAvailable
+      ? "check-required"
+      : "unavailable"
+  );
+  assert.equal(
+    modes["autonomous-visual"].reasons.some(
+      (reason) => reason.code === "visual-driver-unavailable"
+    ),
+    !visualDriverAvailable
+  );
+  assert.equal(
+    modes["autonomous-visual"].reasons.some(
+      (reason) => reason.code === "smart-direct-policy-unavailable"
+    ),
+    !smartDirectConfigured || !smartDirectAvailable
+  );
   assert.deepEqual(
     modes["autonomous-visual"].targets.map((entry) => entry.target.targetId),
     ["racing-game-local", "continuous-game-local", "gated-game-local"]
@@ -751,17 +780,6 @@ test("capabilities expose approved visual targets without claiming an uninstalle
     ),
     "target-local limitations are not reported as workspace-wide blockers"
   );
-  assert.ok(
-    !modes["autonomous-visual"].reasons.some(
-      (reason) => reason.code === "visual-driver-unavailable"
-    )
-  );
-  assert.ok(
-    !modes["autonomous-visual"].reasons.some(
-      (reason) => reason.code === "smart-direct-policy-unavailable"
-    )
-  );
-
   const operatorResponse = await callRunControl(
     "GET",
     `/control/playtesting/capabilities?workspaceId=${encodeURIComponent(WORKSPACE)}`,
@@ -775,10 +793,23 @@ test("capabilities expose approved visual targets without claiming an uninstalle
   );
   assert.equal(operatorResponse.status, 200);
   const operatorModes = operatorResponse.body.modeReadiness as {
-    readonly "autonomous-visual": { readonly status: string; readonly reasons: readonly unknown[] };
+    readonly "autonomous-visual": {
+      readonly status: string;
+      readonly reasons: readonly unknown[];
+    };
   };
-  assert.equal(operatorModes["autonomous-visual"].status, "ready");
-  assert.deepEqual(operatorModes["autonomous-visual"].reasons, []);
+  assert.equal(
+    operatorModes["autonomous-visual"].status,
+    visualDriverAvailable && smartDirectAvailable ? "ready" : "unavailable"
+  );
+  assert.equal(
+    operatorModes["autonomous-visual"].reasons.some(
+      (reason) =>
+        (reason as { readonly code?: string }).code ===
+        "visual-driver-unavailable"
+    ),
+    !visualDriverAvailable
+  );
 
   const noEligibleTarget = await callRunControl(
     "GET",
@@ -899,10 +930,7 @@ test("Control API refuses unavailable visual and scripted modes without adapter 
       options,
       launchPayload
     );
-    assert.equal(
-      response.status,
-      launch.mode === "autonomous-visual" ? 409 : 503
-    );
+    assert.equal(response.status, 503);
     assert.equal(
       (response.body.error as { readonly code: string }).code,
       "autodev_control_playtesting_preflight_not_ready"
@@ -985,7 +1013,13 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
     };
   };
   assert.equal(readiness["adapter-accelerated"].status, "check-required");
-  assert.equal(readiness["autonomous-visual"].status, "check-required");
+  assert.equal(
+    readiness["autonomous-visual"].status,
+    isPlaytestVisualBrowserDriverAvailable() &&
+      (await isSmartDirectVisualPolicyAvailable())
+      ? "check-required"
+      : "unavailable"
+  );
   assert.ok(
     readiness["autonomous-visual"].reasons.some(
       (reason) => reason.code === "operator-required"
@@ -1708,13 +1742,51 @@ test("selected episode returns its latest review and remains workspace-scoped", 
     }
   };
   const review = { reviewId: "review-1", status: "hypothesis" };
+  const discoveryReview = {
+    schema: PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
+    analysisKind: "discovery",
+    reviewId: "discovery-review-1",
+    version: 1,
+    workspaceId: WORKSPACE,
+    batchId: "batch-1",
+    episodeId: "episode-1",
+    supersedes: null,
+    evidencePacket: {
+      packetId: "packet-discovery-1",
+      artifact: {
+        artifactId: "packet-discovery-1",
+        sha256: "b".repeat(64),
+        bytes: 512,
+        mediaType: PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE
+      }
+    },
+    authorRole: "playtest-analyst",
+    authorId: "analyst-1",
+    measurementVersion: "playtesting-measurement-v2",
+    chronologicalSummary: "A visible control was observed.",
+    observations: [
+      {
+        hypothesisId: "obs-1",
+        status: "hypothesis",
+        text: "A visible control was available.",
+        evidenceRefs: [{ kind: "episode", id: "episode-1" }]
+      }
+    ],
+    interpretations: [],
+    alternativeExplanations: [],
+    experiments: [],
+    evidenceRefs: [{ kind: "episode", id: "episode-1" }],
+    createdAt: "2026-10-17T12:00:00.000Z",
+    status: "hypothesis"
+  };
   let lookup: unknown;
   const repository = readRepository({
     getEpisode: async (workspaceId, episodeId) => {
       lookup = { workspaceId, episodeId };
       return episode as never;
     },
-    getLatestReviewForEpisode: async () => review as never
+    getLatestReviewForEpisode: async () => review as never,
+    getLatestDiscoveryReviewForEpisode: async () => discoveryReview as never
   });
   const response = await call(
     "GET",
@@ -1723,9 +1795,10 @@ test("selected episode returns its latest review and remains workspace-scoped", 
   );
   assert.equal(response.status, 200);
   assert.deepEqual(lookup, { workspaceId: WORKSPACE, episodeId: "episode-1" });
-  assert.equal(response.body.schema, "autodev-control-playtesting-detail-v1");
+  assert.equal(response.body.schema, "autodev-control-playtesting-detail-v2");
   assert.deepEqual(response.body.record, episode);
   assert.deepEqual(response.body.latestReview, review);
+  assert.deepEqual(response.body.latestDiscoveryReview, discoveryReview);
 });
 
 test("Playtesting API is GET-only and reports a missing episode as not found", async () => {

@@ -166,6 +166,131 @@ function routerEndpoint(
   return `http://127.0.0.1:${String(port)}/v1/responses`;
 }
 
+/**
+ * Cheap, non-network readiness probe: true when the Smart-direct router
+ * endpoint this policy would construct is well-formed and credential-free
+ * local AutoDev router endpoint. This never performs a network call; it
+ * mirrors exactly the configuration {@link SmartDirectVisualPolicy}'s
+ * constructor requires before it can dispatch a single decision.
+ */
+export function isSmartDirectVisualPolicyConfigured(
+  portValue = process.env.CODEX_MODEL_ROUTER_PORT,
+  authToken = process.env.CODEX_ROUTER_AUTH_TOKEN
+): boolean {
+  try {
+    assertLocalRouterEndpoint(routerEndpoint(portValue));
+    // The local router enables bearer authentication whenever this token is
+    // configured. Smart-direct must have the same credential available.
+    return typeof authToken === "string" && authToken.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+interface SmartDirectAvailabilityCache {
+  readonly endpoint: string;
+  readonly authFingerprint: string;
+  readonly expiresAt: number;
+  readonly available: boolean;
+}
+
+let smartDirectAvailabilityCache: SmartDirectAvailabilityCache | null = null;
+
+export interface SmartDirectAvailabilityProbeOptions {
+  readonly portValue?: string | undefined;
+  readonly authToken?: string | undefined;
+  readonly fetchImpl?: typeof fetch;
+  readonly now?: () => number;
+  readonly cacheMs?: number;
+}
+
+/**
+ * Check the actual local AutoDev router health contract, with a short cache so
+ * capability reads do not add a network request per render. This probes only
+ * loopback and authenticates using the same token the decision client uses.
+ */
+export async function isSmartDirectVisualPolicyAvailable(
+  options: SmartDirectAvailabilityProbeOptions = {}
+): Promise<boolean> {
+  const portValue =
+    options.portValue ?? process.env.CODEX_MODEL_ROUTER_PORT;
+  const authToken = options.authToken ?? process.env.CODEX_ROUTER_AUTH_TOKEN;
+  if (!isSmartDirectVisualPolicyConfigured(portValue, authToken)) return false;
+
+  let endpoint: string;
+  try {
+    endpoint = routerEndpoint(portValue);
+    assertLocalRouterEndpoint(endpoint);
+  } catch {
+    return false;
+  }
+  const normalizedToken = authToken!.trim();
+  const authFingerprint = createHash("sha256")
+    .update(normalizedToken)
+    .digest("hex");
+  const now = options.now ?? Date.now;
+  const current = now();
+  const cached = smartDirectAvailabilityCache;
+  if (
+    cached &&
+    cached.endpoint === endpoint &&
+    cached.authFingerprint === authFingerprint &&
+    cached.expiresAt > current
+  ) {
+    return cached.available;
+  }
+
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    Math.max(100, Math.min(options.cacheMs ?? 1500, 3000))
+  );
+  timeout.unref?.();
+  let available = false;
+  try {
+    const headers: Record<string, string> = { accept: "application/json" };
+    headers.authorization = "Bearer " + normalizedToken;
+    const response = await fetchImpl(
+      new URL("/health", endpoint).toString(),
+      { method: "GET", headers, signal: controller.signal }
+    );
+    if (response.ok) {
+      const body = await response.text();
+      if (Buffer.byteLength(body, "utf8") <= 4096) {
+        try {
+          const parsed: unknown = JSON.parse(body);
+          available =
+            typeof parsed === "object" &&
+            parsed !== null &&
+            !Array.isArray(parsed) &&
+            (parsed as Record<string, unknown>).status === "ok" &&
+            (parsed as Record<string, unknown>).router ===
+              "codex-model-router";
+        } catch {
+          available = false;
+        }
+      }
+    }
+  } catch {
+    available = false;
+  } finally {
+    clearTimeout(timeout);
+  }
+  smartDirectAvailabilityCache = {
+    endpoint,
+    authFingerprint,
+    expiresAt: current + Math.max(0, options.cacheMs ?? 1500),
+    available
+  };
+  return available;
+}
+
+/** Test seam to isolate readiness probe cache lifetimes. */
+export function resetSmartDirectVisualPolicyAvailabilityCache(): void {
+  smartDirectAvailabilityCache = null;
+}
+
 function assertLocalRouterEndpoint(value: string): void {
   const endpoint = new URL(value);
   if (

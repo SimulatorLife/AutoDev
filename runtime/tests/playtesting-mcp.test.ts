@@ -46,14 +46,18 @@ import {
   PLAYTESTS_MEASUREMENT_VERSION,
   type PlaytestSessionReview,
   selectPlaytestBatchReviews,
-  type WorkspacePlaytestApproval
+  type WorkspacePlaytestApproval,
+  type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
 import type { WorkspaceCatalogRead } from "@simulatorlife/autodev-data";
 import {
   type PlaytestLaunchIntent,
   PlaytestSourceUnavailableError
 } from "@simulatorlife/autodev-data/playtesting";
-import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
+import {
+  WorkspacePlaytestApprovalRepository,
+  WorkspaceVisualPlaytestTargetRepository
+} from "@simulatorlife/autodev-data/workspaces";
 
 import type {
   PlaytestAnalystProcess,
@@ -66,6 +70,7 @@ import {
 } from "../src/playtesting/docker-sandbox.ts";
 import type { PlaytestEpisodeRunOptions } from "../src/playtesting/episode-runner.ts";
 import {
+  assertVisualLaunchLimitsWithinApprovedTarget,
   createPlaytestMcpServer,
   createPlaytestRunControl,
   type PlaytestingRepositoryOps,
@@ -647,6 +652,7 @@ test("playtest stdio requires explicit trusted session context", async () => {
     ...validEnv,
     AUTODEV_PLAYTEST_ROLE: "playtest-analyst",
     AUTODEV_PLAYTEST_ANALYSIS_ID: "analysis-1",
+    AUTODEV_PLAYTEST_ANALYSIS_KIND: "confirmatory",
     AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS: JSON.stringify(["episode-1"]),
     AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION: JSON.stringify(
       analystMetricAggregation(["episode-1"])
@@ -663,6 +669,7 @@ test("playtest stdio requires explicit trusted session context", async () => {
   const analystConfig = playtestStdioConfiguration(analystEnv);
   assert.deepEqual(analystConfig.selectedEpisodeIds, ["episode-1"]);
   assert.equal(analystConfig.analysisId, "analysis-1");
+  assert.equal(analystConfig.analysisKind, "confirmatory");
   assert.deepEqual(
     analystConfig.metricAggregation,
     analystMetricAggregation(["episode-1"])
@@ -672,6 +679,7 @@ test("playtest stdio requires explicit trusted session context", async () => {
   );
   assert.deepEqual(analystSession.selectedEpisodeIds, ["episode-1"]);
   assert.equal(analystSession.analysisId, "analysis-1");
+  assert.equal(analystSession.analysisKind, "confirmatory");
   assert.deepEqual(
     analystSession.metricAggregation,
     analystMetricAggregation(["episode-1"])
@@ -692,6 +700,18 @@ test("playtest stdio requires explicit trusted session context", async () => {
       }),
     /analyst session selection/
   );
+  const discoveryConfig = playtestStdioConfiguration({
+    ...analystEnv,
+    AUTODEV_PLAYTEST_ANALYSIS_KIND: "discovery",
+    AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION: undefined
+  });
+  assert.equal(discoveryConfig.analysisKind, "discovery");
+  assert.equal(discoveryConfig.metricAggregation, undefined);
+  const discoverySession = await Promise.resolve(
+    playtestMcpSessionProvider(discoveryConfig).current()
+  );
+  assert.equal(discoverySession.analysisKind, "discovery");
+  assert.equal(discoverySession.metricAggregation, undefined);
   for (const selectedEpisodeIds of [
     "not-json",
     JSON.stringify([]),
@@ -1127,6 +1147,8 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
         insertedEpisodes.find((e) => e.episodeId === epId) ?? null,
       getLatestReviewForEpisode: async (_workspaceId, episodeId) =>
         latestReviews.get(episodeId) ?? null,
+      getLatestDiscoveryReviewForEpisode: async () => null,
+      insertDiscoveryReview: async () => {},
       getFinding: async () => null,
       getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
@@ -1739,11 +1761,11 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     assert.equal(dispatched.receipts.length, 39);
     assert.deepEqual(analystDispatch.input?.episodeIds, [reviewedEpisodeId]);
     assert.equal(
-      analystDispatch.input?.metricAggregation.status,
+      analystDispatch.input?.metricAggregation?.status,
       "insufficient-packets"
     );
     assert.deepEqual(
-      analystDispatch.input?.metricAggregation.sourcePackets.map(
+      analystDispatch.input?.metricAggregation?.sourcePackets.map(
         (source) => source.episodeId
       ),
       [reviewedEpisodeId]
@@ -2089,6 +2111,8 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
       listHumanStudies: async () => ({ rows: [], total: 0, nextCursor: null }),
       getEpisode: async () => null,
       getLatestReviewForEpisode: async () => null,
+      getLatestDiscoveryReviewForEpisode: async () => null,
+      insertDiscoveryReview: async () => {},
       getFinding: async () => null,
       getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
@@ -2364,6 +2388,8 @@ test("playtest MCP: Docker preflight and adapter reset failures are never comple
         }),
         getEpisode: async () => null,
         getLatestReviewForEpisode: async () => null,
+        getLatestDiscoveryReviewForEpisode: async () => null,
+        insertDiscoveryReview: async () => {},
         getFinding: async () => null,
         getLatestFindingByFingerprint: async () => null,
         getLatestReview: async () => null,
@@ -2614,6 +2640,8 @@ test("playtest MCP serializes concurrent assignment reservations before checking
       listHumanStudies: async () => ({ rows: [], total: 0, nextCursor: null }),
       getEpisode: async () => null,
       getLatestReviewForEpisode: async () => null,
+      getLatestDiscoveryReviewForEpisode: async () => null,
+      insertDiscoveryReview: async () => {},
       getFinding: async () => null,
       getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
@@ -2765,6 +2793,8 @@ test("playtest batch remains cancellable while a completed assignment persists a
       listHumanStudies: async () => ({ rows: [], total: 0, nextCursor: null }),
       getEpisode: async () => null,
       getLatestReviewForEpisode: async () => null,
+      getLatestDiscoveryReviewForEpisode: async () => null,
+      insertDiscoveryReview: async () => {},
       getFinding: async () => null,
       getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
@@ -2959,6 +2989,8 @@ test("review sampling selects complete sessions only and preserves truncated ass
       listHumanStudies: async () => ({ rows: [], total: 0, nextCursor: null }),
       getEpisode: async () => null,
       getLatestReviewForEpisode: async () => null,
+      getLatestDiscoveryReviewForEpisode: async () => null,
+      insertDiscoveryReview: async () => {},
       getFinding: async () => null,
       getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
@@ -3132,6 +3164,8 @@ test("playtest MCP: per-run cancellation and approval/workspace revocation abort
         }),
         getEpisode: async () => null,
         getLatestReviewForEpisode: async () => null,
+        getLatestDiscoveryReviewForEpisode: async () => null,
+        insertDiscoveryReview: async () => {},
         getFinding: async () => null,
         getLatestFindingByFingerprint: async () => null,
         getLatestReview: async () => null,
@@ -3475,6 +3509,8 @@ test("run status restores interrupted batch progress from Data and durably close
     listHumanStudies: async () => ({ rows: [], total: 0, nextCursor: null }),
     getEpisode: async () => null,
     getLatestReviewForEpisode: async () => null,
+    getLatestDiscoveryReviewForEpisode: async () => null,
+    insertDiscoveryReview: async () => {},
     getFinding: async () => null,
     getLatestFindingByFingerprint: async () => null,
     getLatestReview: async () => null,
@@ -3670,6 +3706,8 @@ test("playtest MCP: batch-only contract rejects unapproved cells and over-budget
       listHumanStudies: async () => ({ rows: [], total: 0, nextCursor: null }),
       getEpisode: async () => null,
       getLatestReviewForEpisode: async () => null,
+      getLatestDiscoveryReviewForEpisode: async () => null,
+      insertDiscoveryReview: async () => {},
       getFinding: async () => null,
       getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
@@ -3902,6 +3940,8 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
             episode.episodeId === episodeId
         ) ?? null,
       getLatestReviewForEpisode: async () => null,
+      getLatestDiscoveryReviewForEpisode: async () => null,
+      insertDiscoveryReview: async () => {},
       getFinding: async () => null,
       getLatestFindingByFingerprint: async () => null,
       getLatestReview: async () => null,
@@ -4749,6 +4789,8 @@ test("playtest MCP server: submitReview validates evidence against the real stor
             ? episodeTwo
             : null,
       getLatestReviewForEpisode: async () => insertedReviews[0] ?? null,
+      getLatestDiscoveryReviewForEpisode: async () => null,
+      insertDiscoveryReview: async () => {},
       getFinding: async (_ws, findingId) =>
         insertedFindings.find((finding) => finding.findingId === findingId) ??
         null,
@@ -6370,6 +6412,8 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
             ? missingMetricEpisode
             : null,
       getLatestReviewForEpisode: async () => null,
+      getLatestDiscoveryReviewForEpisode: async () => null,
+      insertDiscoveryReview: async () => {},
       getFinding: async (_ws, findingId) =>
         findingId === dummyFinding.findingId ? dummyFinding : null,
       getLatestFindingByFingerprint: async () => null,
@@ -6634,5 +6678,167 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
     assert.equal(findingsParsed.rows[0].findingId, dummyFinding.findingId);
   } finally {
     rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("assertVisualLaunchLimitsWithinApprovedTarget refuses any single field above its approved ceiling and never clamps", () => {
+  const approved = {
+    episodeCount: 10,
+    maxStepsPerEpisode: 50,
+    wallTimeMs: 120_000,
+    smartRequestsPerEpisode: 30,
+    smartTokensPerEpisode: 20_000,
+    screenshotCountPerEpisode: 50,
+    artifactBytesPerEpisode: 33_554_432
+  };
+  assert.doesNotThrow(() =>
+    assertVisualLaunchLimitsWithinApprovedTarget(approved, approved)
+  );
+  for (const field of Object.keys(approved) as (keyof typeof approved)[]) {
+    const requested = { ...approved, [field]: approved[field] + 1 };
+    assert.throws(
+      () => assertVisualLaunchLimitsWithinApprovedTarget(requested, approved),
+      new RegExp('"' + field + '".*exceeds the approved target', "u"),
+      field + " must be refused, not silently clamped"
+    );
+  }
+});
+
+test("playtest MCP: autonomous-visual launch refuses any requested limit above the approved target, never clamping", async () => {
+  const visualRoot = realpathSync(
+    mkdtempSync(path.join(tmpdir(), "playtest-visual-target-"))
+  );
+  const artifactRoot = realpathSync(
+    mkdtempSync(path.join(tmpdir(), "playtest-visual-artifacts-"))
+  );
+  try {
+    const visualTargetRepository = new WorkspaceVisualPlaytestTargetRepository(
+      visualRoot
+    );
+    const approval: WorkspaceVisualPlaytestTargetApproval = {
+      schema: "autodev-workspace-visual-playtest-target-v1",
+      workspaceId: WORKSPACE_ID,
+      targetId: "racing-game-local",
+      revision: 1,
+      approvalId: "visual-approval-racing-1",
+      name: "Racing game",
+      entryUrl: "http://127.0.0.1:5173/",
+      allowedOrigins: ["http://127.0.0.1:5173"],
+      inputCapabilities: ["keyboard", "pointer"],
+      controlTimingClass: "turn-based",
+      entryRequirements: "none",
+      sandboxProfile: "transient-browser-profile",
+      capturePolicy: "screenshots-only-redact-or-refuse",
+      limits: {
+        episodeCount: 10,
+        maxStepsPerEpisode: 50,
+        wallTimeMs: 120_000,
+        smartRequestsPerEpisode: 30,
+        smartTokensPerEpisode: 20_000,
+        screenshotCountPerEpisode: 50,
+        artifactBytesPerEpisode: 33_554_432
+      },
+      approvedAt: "2026-10-17T00:00:00.000Z",
+      approvedBy: "operator-1",
+      revokedAt: null,
+      revokedBy: null,
+      revocationReason: null
+    };
+    visualTargetRepository.approve(approval, null);
+
+    const artifacts = new PlaytestArtifactStore({
+      workspaceId: WORKSPACE_ID,
+      rootDirectory: artifactRoot
+    });
+    let repositoryTouched = false;
+    const repository: PlaytestingRepositoryOps = {
+      getBatch: async () => null,
+      listBatches: async () => ({ rows: [], total: 0, nextCursor: null }),
+      listEpisodes: async () => ({ rows: [], total: 0, nextCursor: null }),
+      listFindings: async () => ({ rows: [], total: 0, nextCursor: null }),
+      listComparisons: async () => ({ rows: [], total: 0, nextCursor: null }),
+      listBenchmarks: async () => ({ rows: [], total: 0, nextCursor: null }),
+      listExperiments: async () => ({ rows: [], total: 0, nextCursor: null }),
+      listHumanStudies: async () => ({ rows: [], total: 0, nextCursor: null }),
+      getEpisode: async () => null,
+      getLatestReviewForEpisode: async () => null,
+      getLatestDiscoveryReviewForEpisode: async () => null,
+      insertDiscoveryReview: async () => {},
+      getFinding: async () => null,
+      getLatestFindingByFingerprint: async () => null,
+      getLatestReview: async () => null,
+      getLatestComparison: async () => null,
+      insertComparison: async () => {
+        repositoryTouched = true;
+      },
+      insertBatch: async () => {
+        repositoryTouched = true;
+      },
+      insertEpisode: async () => {
+        repositoryTouched = true;
+      },
+      insertCrossSessionSynthesis: async () => {
+        repositoryTouched = true;
+      },
+      getCrossSessionSynthesisForAnalysis: async () => null,
+      listCrossSessionSyntheses: async () => ({
+        rows: [],
+        total: 0,
+        nextCursor: null
+      }),
+      insertReview: async () => {
+        repositoryTouched = true;
+      },
+      insertFinding: async () => {
+        repositoryTouched = true;
+      }
+    };
+
+    const server = createTestPlaytestMcpServer({
+      sessionProvider: {
+        current: () => ({
+          workspaceId: WORKSPACE_ID,
+          role: "playtester",
+          actor: "user-1"
+        })
+      },
+      artifactStoreForWorkspace: () => artifacts,
+      playtestRepository: repository,
+      visualTargetRepository,
+      readWorkspaceCatalog: enabledWorkspaceCatalog()
+    });
+
+    const overLimitRequest: PlaytestLaunchRequest = {
+      schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+      mode: "autonomous-visual",
+      workspaceId: WORKSPACE_ID,
+      requestId: nextLaunchRequestId(),
+      capabilityRevision: "a".repeat(64),
+      targetId: "racing-game-local",
+      policyId: "smart-direct",
+      areasOfFocus: null,
+      limits: {
+        episodeCount: 11,
+        maxStepsPerEpisode: 50,
+        wallTimeMs: 120_000,
+        smartRequestsPerEpisode: 30,
+        smartTokensPerEpisode: 20_000,
+        screenshotCountPerEpisode: 50,
+        artifactBytesPerEpisode: 33_554_432
+      }
+    };
+    const result = await (server as any)._registeredTools[
+      "playtest.run"
+    ].handler({ launchRequest: overLimitRequest });
+    const body = parsedMcpError(result);
+    assert.equal(body.code, "playtest_invalid_request");
+    assert.equal(
+      repositoryTouched,
+      false,
+      "an over-approval request must be refused before any Data write, never clamped to the approved ceiling"
+    );
+  } finally {
+    rmSync(visualRoot, { recursive: true, force: true });
+    rmSync(artifactRoot, { recursive: true, force: true });
   }
 });

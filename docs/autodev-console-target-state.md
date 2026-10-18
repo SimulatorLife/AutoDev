@@ -8,7 +8,7 @@
 >
 > **Focused Memory design:** [memory-target-state.md](memory-target-state.md) and [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
 >
-> **Last reviewed:** 2026-10-14 (Control API compatibility handshake, revision-checked RuleSync Skill editing, source-confirmed context-compaction Usage, the five-column Providers contract, provider-owned model-discovery states, and the black/charcoal neutral background-surface hierarchy).
+> **Last reviewed:** 2026-10-17 (Control API compatibility revision 6, mode-specific visual discovery review persistence, player-visible live Watch and one-click review dispatch, bounded visual launch/readiness contracts, revision-checked RuleSync Skill editing, source-confirmed context-compaction Usage, provider-owned model discovery, and the neutral background-surface hierarchy).
 
 ## 1. Canonical-document contract
 

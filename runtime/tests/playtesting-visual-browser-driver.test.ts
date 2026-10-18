@@ -11,7 +11,9 @@ import { chromium } from "playwright-core";
 
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
 import {
+  isPlaytestVisualBrowserDriverAvailable,
   PlaytestVisualBrowserDriver,
+  resetPlaytestVisualBrowserDriverAvailabilityCache,
   type PlaytestVisualBrowserDriverOptions
 } from "../src/playtesting/visual-browser-driver.ts";
 
@@ -428,4 +430,24 @@ test("visual browser refuses coordinate input when the captured canvas frame cha
     await source.close();
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("visual driver availability is cached per process and never relaunches a browser to check", () => {
+  resetPlaytestVisualBrowserDriverAvailabilityCache();
+  let calls = 0;
+  const probe = {
+    executablePath: () => {
+      calls += 1;
+      return chromium.executablePath();
+    }
+  };
+  const first = isPlaytestVisualBrowserDriverAvailable(probe);
+  const second = isPlaytestVisualBrowserDriverAvailable(probe);
+  assert.equal(first, true);
+  assert.equal(second, true);
+  // The probe's executablePath is consulted at most once per cache
+  // lifetime: the second call is served from the memoized result, never
+  // re-resolving (let alone launching) a browser.
+  assert.equal(calls, 1);
+  resetPlaytestVisualBrowserDriverAvailabilityCache();
 });

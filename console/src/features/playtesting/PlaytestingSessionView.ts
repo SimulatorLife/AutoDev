@@ -1,11 +1,15 @@
 import type {
   ControlApiPlaytestingEpisodeDetailResponse,
+  PlaytestSessionReview,
   ControlApiPlaytestingWindowResponse,
   PlaytestEpisode,
+  PlaytestDiscoverySessionReview,
   PlaytestJsonValue,
   PlaytestReviewClaim
 } from "@simulatorlife/autodev-core";
 import React from "react";
+import { PlaytestingSessionLiveWatch } from "./PlaytestingSessionLiveWatch.ts";
+import { PlaytestingSpectatorAnalystButton } from "./PlaytestingSpectatorAnalystButton.ts";
 
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
@@ -1082,8 +1086,20 @@ function visualGameSpectatorStage(
   window: ControlApiPlaytestingWindowResponse | null,
   workspaceId?: string | null
 ): React.JSX.Element {
-  const currentStep = traceScope.step ?? 0;
+  const isNonTerminal =
+    episode.status === "assigned" || episode.status === "started";
   const totalSteps = episode.stepCount;
+  const lastFrame =
+    episode.frames.length > 0
+      ? episode.frames[episode.frames.length - 1]
+      : undefined;
+  const latestStep =
+    lastFrame !== undefined
+      ? (lastFrame.step ?? lastFrame.frameIndex ?? Math.max(totalSteps - 1, 0))
+      : Math.max(totalSteps - 1, 0);
+  const isFollowingLive =
+    traceScope.step === null || traceScope.step === latestStep;
+  const currentStep = traceScope.step ?? latestStep;
   const currentEntry = window?.entries.find((e) => {
     const facts = traceStepFacts(e);
     return facts.step === currentStep;
@@ -1091,9 +1107,7 @@ function visualGameSpectatorStage(
   const currentFacts = currentEntry ? traceStepFacts(currentEntry) : null;
   const actionText = currentFacts?.actionId ?? episode.identity.policyId;
   const phaseText =
-    currentFacts?.visiblePhase ??
-    currentFacts?.phase ??
-    "Simulation Active";
+    currentFacts?.visiblePhase ?? currentFacts?.phase ?? "Simulation Active";
   const bankroll = episode.outcomeMetrics?.bankroll_gold ?? 100;
 
   // Frame identification: check trace facts, matching episode frame, or indexed frame
@@ -1170,19 +1184,40 @@ function visualGameSpectatorStage(
             ? "⚡ Fast Engine Simulation"
             : "🌐 Autonomous Visual AI Player"
         ),
-        React.createElement(
-          NavigationLink,
-          {
-            href: playtestingAnalyzeEpisodeHref(traceScope, episode.episodeId),
-            className:
-              "inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-fg-inverse shadow-sm hover:brightness-110 transition",
-            dataAttributes: {
-              "data-playtesting-spectator-analyze": episode.episodeId
-            }
-          },
-          React.createElement("span", { "aria-hidden": true }, "🔍"),
-          "Analyze with Playtest Analyst"
-        )
+        React.createElement(PlaytestingSessionLiveWatch, {
+          isLive: isNonTerminal
+        }),
+        isFollowingLive
+          ? React.createElement(
+              "span",
+              {
+                className:
+                  "rounded-full bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent",
+                "data-testid": "follow-live-active"
+              },
+              "● Following live"
+            )
+          : React.createElement(
+              NavigationLink,
+              {
+                href: playtestingEpisodeHref(
+                  traceScope,
+                  episode.episodeId,
+                  null
+                ),
+                className:
+                  "rounded-full border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-fg hover:bg-surface-raised transition",
+                dataAttributes: {
+                  "data-testid": "jump-to-live"
+                }
+              },
+              "Follow live →"
+            ),
+        React.createElement(PlaytestingSpectatorAnalystButton, {
+          workspaceId: workspaceId ?? null,
+          episodeId: episode.episodeId,
+          scope: traceScope
+        })
       )
     ),
     // Center Stage: Game Screen (Rendered frame image or Headless telemetry canvas)
@@ -1212,7 +1247,7 @@ function visualGameSpectatorStage(
               "div",
               {
                 className:
-                  "flex items-center gap-2 rounded-md bg-black/75 px-2.5 py-1 text-xs font-mono font-medium text-white backdrop-blur-sm"
+                  "flex items-center gap-2 rounded-md bg-black/75 px-2.5 py-1 text-xs font-mono font-medium text-fg-inverse backdrop-blur-sm"
               },
               React.createElement("span", { className: "text-accent" }, "●"),
               "STEP " + String(currentStep) + " · " + phaseText
@@ -1232,16 +1267,22 @@ function visualGameSpectatorStage(
                 "div",
                 {
                   className:
-                    "absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 text-white"
+                    "absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 text-fg-inverse"
                 },
                 React.createElement(
                   "p",
-                  { className: "text-xs font-semibold uppercase tracking-wider text-accent" },
+                  {
+                    className:
+                      "text-xs font-semibold uppercase tracking-wider text-accent"
+                  },
                   "AI Player Intention"
                 ),
                 React.createElement(
                   "p",
-                  { className: "mt-0.5 text-sm font-medium text-white drop-shadow" },
+                  {
+                    className:
+                      "mt-0.5 text-sm font-medium text-fg-inverse drop-shadow"
+                  },
                   currentFacts.intention
                 )
               )
@@ -1253,7 +1294,7 @@ function visualGameSpectatorStage(
       "div",
       {
         className:
-          "rounded-lg border border-border/80 bg-surface p-3.5 space-y-2.5",
+          "rounded-lg border border-border bg-surface p-3.5 space-y-2.5",
         "data-testid": "spectator-step-scrubber"
       },
       React.createElement(
@@ -1261,13 +1302,22 @@ function visualGameSpectatorStage(
         { className: "flex flex-wrap items-center justify-between gap-2" },
         React.createElement(
           "span",
-          { className: "text-xs font-semibold uppercase tracking-wider text-fg-muted" },
+          {
+            className:
+              "text-xs font-semibold uppercase tracking-wider text-fg-muted"
+          },
           "Interactive Step Scrubber"
         ),
         React.createElement(
           "span",
           { className: "font-mono text-xs font-medium text-accent" },
-          "Step " + String(currentStep) + " of " + String(lastStep) + " (" + String(progressPct) + "%)"
+          "Step " +
+            String(currentStep) +
+            " of " +
+            String(lastStep) +
+            " (" +
+            String(progressPct) +
+            "%)"
         )
       ),
       // Progress line
@@ -1291,7 +1341,7 @@ function visualGameSpectatorStage(
                 "span",
                 {
                   className:
-                    "rounded-md border border-border/40 px-2.5 py-1 text-xs text-fg-muted/40 cursor-not-allowed",
+                    "rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted/40 cursor-not-allowed",
                   "aria-disabled": "true"
                 },
                 "⏮ Step 0"
@@ -1314,7 +1364,7 @@ function visualGameSpectatorStage(
                 "span",
                 {
                   className:
-                    "rounded-md border border-border/40 px-2.5 py-1 text-xs text-fg-muted/40 cursor-not-allowed",
+                    "rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted/40 cursor-not-allowed",
                   "aria-disabled": "true"
                 },
                 "◀ Prev Step"
@@ -1349,7 +1399,7 @@ function visualGameSpectatorStage(
                 "span",
                 {
                   className:
-                    "rounded-md border border-border/40 px-2.5 py-1 text-xs text-fg-muted/40 cursor-not-allowed",
+                    "rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted/40 cursor-not-allowed",
                   "aria-disabled": "true"
                 },
                 "Next Step ▶"
@@ -1372,7 +1422,7 @@ function visualGameSpectatorStage(
                 "span",
                 {
                   className:
-                    "rounded-md border border-border/40 px-2.5 py-1 text-xs text-fg-muted/40 cursor-not-allowed",
+                    "rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted/40 cursor-not-allowed",
                   "aria-disabled": "true"
                 },
                 "⏭ Last Step"
@@ -1398,12 +1448,15 @@ function visualGameSpectatorStage(
       "div",
       {
         className:
-          "grid gap-3 rounded-xl border border-accent/30 bg-surface p-4 shadow-sm",
+          "grid gap-3 rounded-xl border border-accent bg-surface p-4 shadow-sm",
         "data-testid": "ai-intention-callout"
       },
       React.createElement(
         "div",
-        { className: "flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-2.5" },
+        {
+          className:
+            "flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2.5"
+        },
         React.createElement(
           "div",
           { className: "flex items-center gap-2" },
@@ -1425,10 +1478,15 @@ function visualGameSpectatorStage(
         { className: "grid gap-3 sm:grid-cols-2" },
         React.createElement(
           "div",
-          { className: "rounded-lg border border-border/60 bg-surface-raised p-3" },
+          {
+            className: "rounded-lg border border-border bg-surface-raised p-3"
+          },
           React.createElement(
             "p",
-            { className: "text-xs font-semibold text-accent uppercase tracking-wider" },
+            {
+              className:
+                "text-xs font-semibold text-accent uppercase tracking-wider"
+            },
             "🎯 Planned Intention"
           ),
           React.createElement(
@@ -1440,10 +1498,15 @@ function visualGameSpectatorStage(
         ),
         React.createElement(
           "div",
-          { className: "rounded-lg border border-border/60 bg-surface-raised p-3" },
+          {
+            className: "rounded-lg border border-border bg-surface-raised p-3"
+          },
           React.createElement(
             "p",
-            { className: "text-xs font-semibold text-accent uppercase tracking-wider" },
+            {
+              className:
+                "text-xs font-semibold text-accent uppercase tracking-wider"
+            },
             "🔮 Predicted Visible Effect"
           ),
           React.createElement(
@@ -1455,10 +1518,15 @@ function visualGameSpectatorStage(
         ),
         React.createElement(
           "div",
-          { className: "rounded-lg border border-border/60 bg-surface-raised p-3" },
+          {
+            className: "rounded-lg border border-border bg-surface-raised p-3"
+          },
           React.createElement(
             "p",
-            { className: "text-xs font-semibold text-fg-muted uppercase tracking-wider" },
+            {
+              className:
+                "text-xs font-semibold text-fg-muted uppercase tracking-wider"
+            },
             "⚡ Executed Action & Tactical Reason"
           ),
           React.createElement(
@@ -1472,16 +1540,22 @@ function visualGameSpectatorStage(
         ),
         React.createElement(
           "div",
-          { className: "rounded-lg border border-border/60 bg-surface-raised p-3" },
+          {
+            className: "rounded-lg border border-border bg-surface-raised p-3"
+          },
           React.createElement(
             "p",
-            { className: "text-xs font-semibold text-fg-muted uppercase tracking-wider" },
+            {
+              className:
+                "text-xs font-semibold text-fg-muted uppercase tracking-wider"
+            },
             "🕹️ Visible Controls & Phase"
           ),
           React.createElement(
             "p",
             { className: "mt-1 text-xs text-fg" },
-            (currentFacts?.visibleControls && currentFacts.visibleControls.length > 0
+            (currentFacts?.visibleControls &&
+            currentFacts.visibleControls.length > 0
               ? currentFacts.visibleControls.join(", ")
               : "Steering & Throttle Controls") +
               " · Phase: " +
@@ -1506,28 +1580,47 @@ function visualGameSpectatorStage(
       { className: "grid grid-cols-2 gap-3 sm:grid-cols-4" },
       React.createElement(
         "div",
-        { className: "rounded-lg border border-border/60 bg-surface p-3" },
-        React.createElement("p", { className: SECTION_LABEL_CLASS }, "Current Action"),
+        { className: "rounded-lg border border-border bg-surface p-3" },
         React.createElement(
           "p",
-          { className: "mt-1 truncate font-mono text-xs font-medium text-accent", title: actionText },
+          { className: SECTION_LABEL_CLASS },
+          "Current Action"
+        ),
+        React.createElement(
+          "p",
+          {
+            className:
+              "mt-1 truncate font-mono text-xs font-medium text-accent",
+            title: actionText
+          },
           actionText
         )
       ),
       React.createElement(
         "div",
-        { className: "rounded-lg border border-border/60 bg-surface p-3" },
-        React.createElement("p", { className: SECTION_LABEL_CLASS }, "Game Phase"),
+        { className: "rounded-lg border border-border bg-surface p-3" },
         React.createElement(
           "p",
-          { className: "mt-1 truncate text-xs font-medium text-fg", title: phaseText },
+          { className: SECTION_LABEL_CLASS },
+          "Game Phase"
+        ),
+        React.createElement(
+          "p",
+          {
+            className: "mt-1 truncate text-xs font-medium text-fg",
+            title: phaseText
+          },
           phaseText
         )
       ),
       React.createElement(
         "div",
-        { className: "rounded-lg border border-border/60 bg-surface p-3" },
-        React.createElement("p", { className: SECTION_LABEL_CLASS }, "Purse / Bankroll"),
+        { className: "rounded-lg border border-border bg-surface p-3" },
+        React.createElement(
+          "p",
+          { className: SECTION_LABEL_CLASS },
+          "Purse / Bankroll"
+        ),
         React.createElement(
           "p",
           { className: "mt-1 font-mono text-xs font-semibold text-fg" },
@@ -1536,8 +1629,12 @@ function visualGameSpectatorStage(
       ),
       React.createElement(
         "div",
-        { className: "rounded-lg border border-border/60 bg-surface p-3" },
-        React.createElement("p", { className: SECTION_LABEL_CLASS }, "Execution Speed"),
+        { className: "rounded-lg border border-border bg-surface p-3" },
+        React.createElement(
+          "p",
+          { className: SECTION_LABEL_CLASS },
+          "Execution Speed"
+        ),
         React.createElement(
           "p",
           { className: "mt-1 text-xs font-medium text-fg" },
@@ -1554,51 +1651,317 @@ function visualGameSpectatorStage(
 }
 
 function aiGameplayCriticScorecard(
-  episode: PlaytestEpisode
+  episode: PlaytestEpisode,
+  review: PlaytestSessionReview | null,
+  scope: PlaytestingScope
 ): React.JSX.Element {
-  const isComplete = episode.status === "completed";
-  const outcomeLabel = episode.outcome ?? "unknown";
+  const claims = review
+    ? [
+        ...review.observations.map((claim) => ({
+          kind: "Observation",
+          claim
+        })),
+        ...review.interpretations.map((claim) => ({
+          kind: "Interpretation",
+          claim
+        }))
+      ]
+    : [];
   return React.createElement(
     "section",
     {
-      className: "rounded-xl border border-border bg-surface-raised p-5 shadow-sm",
-      "aria-label": "AI Gameplay Critic Debrief"
+      className:
+        "rounded-xl border border-border bg-surface-raised p-5 shadow-sm space-y-4",
+      "aria-label": "Persisted Analyst Hypotheses"
     },
     React.createElement(
       "div",
-      { className: "flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3" },
+      {
+        className:
+          "flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3"
+      },
       React.createElement(
         "div",
         { className: "flex items-center gap-2.5" },
         React.createElement("span", { className: "text-xl" }, "🧠"),
-        React.createElement("h3", { className: "text-sm font-semibold text-fg" }, "AI Gameplay Critic Scorecard")
+        React.createElement(
+          "h3",
+          { className: "text-sm font-semibold text-fg" },
+          "Persisted Analyst Hypotheses"
+        )
       ),
-      React.createElement("span", { className: "rounded bg-surface px-2.5 py-0.5 text-xs font-medium text-fg-muted" }, "Playtest Analyst Evaluation")
+      React.createElement(
+        "span",
+        {
+          className:
+            "rounded bg-surface px-2.5 py-0.5 text-xs font-medium text-fg-muted"
+        },
+        review ? "Status: " + review.status : "No persisted review"
+      )
     ),
+    claims.length > 0
+      ? React.createElement(
+          "div",
+          {
+            className: "grid gap-3",
+            "data-testid": "analyst-hypotheses-list"
+          },
+          ...claims.map(({ kind, claim }, index) =>
+            React.createElement(
+              "article",
+              {
+                key: kind + ":" + String(index),
+                className:
+                  "rounded-lg border border-border bg-surface p-3 space-y-2"
+              },
+              React.createElement(
+                "p",
+                {
+                  className:
+                    "text-[11px] font-semibold uppercase tracking-wide text-fg-muted"
+                },
+                kind
+              ),
+              React.createElement(
+                "p",
+                { className: "text-sm text-fg" },
+                claim.text
+              ),
+              claim.evidenceRefs.length > 0
+                ? React.createElement(
+                    "div",
+                    { className: "flex flex-wrap gap-x-3 gap-y-1" },
+                    ...claim.evidenceRefs.map((ref, refIndex) =>
+                      React.createElement(
+                        NavigationLink,
+                        {
+                          key: ref.kind + ":" + ref.id + ":" + String(refIndex),
+                          href: playtestingEpisodeHref(
+                            scope,
+                            episode.episodeId,
+                            typeof ref.step === "number" ? ref.step : null
+                          ),
+                          className: EVIDENCE_LINK_CLASS,
+                          dataAttributes: {
+                            "data-analyst-evidence": ref.kind,
+                            "data-analyst-evidence-id": ref.id
+                          }
+                        },
+                        ref.kind +
+                          (typeof ref.step === "number"
+                            ? " · step " + String(ref.step)
+                            : " · " + ref.id)
+                      )
+                    )
+                  )
+                : null
+            )
+          )
+        )
+      : React.createElement(
+          "div",
+          {
+            className:
+              "rounded-lg border border-border bg-surface/50 p-4 text-xs text-fg-muted"
+          },
+          "No persisted analyst hypotheses recorded for this session."
+        ),
+    review && review.experiments.length > 0
+      ? React.createElement(
+          "details",
+          { className: "rounded-lg border border-border p-3" },
+          React.createElement(
+            "summary",
+            { className: "cursor-pointer text-xs font-semibold text-fg" },
+            "Follow-up experiments"
+          ),
+          React.createElement(
+            "ul",
+            { className: "mt-2 space-y-2" },
+            ...review.experiments.map((experiment, index) =>
+              React.createElement(
+                "li",
+                {
+                  key: "experiment:" + String(index),
+                  className: "text-xs text-fg-secondary"
+                },
+                experiment.hypothesis + " · Falsifier: " + experiment.falsifier
+              )
+            )
+          )
+        )
+      : null
+  );
+}
+
+function discoveryAnalystReview(
+  review: PlaytestDiscoverySessionReview | null,
+  scope: PlaytestingScope
+): React.JSX.Element | null {
+  if (review === null) return null;
+  const claims = [
+    ...review.observations.map((claim) => ({
+      section: "Observation",
+      claim
+    })),
+    ...review.interpretations.map((claim) => ({
+      section: "Interpretation",
+      claim
+    }))
+  ];
+  return React.createElement(
+    "section",
+    {
+      className:
+        "rounded-xl border border-border bg-surface-raised p-5 shadow-sm space-y-4",
+      "data-testid": "discovery-analyst-review"
+    },
     React.createElement(
       "div",
-      { className: "mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4" },
-      [
-        { name: "Controls & Handling", score: "9.0 / 10", status: "Excellent" },
-        { name: "Progression & Pacing", score: isComplete ? "9.5 / 10" : "8.0 / 10", status: "Balanced" },
-        { name: "AI Opponents & Track", score: "9.0 / 10", status: "Fluid" },
-        { name: "Wagering & Economy", score: "8.5 / 10", status: "Stable" }
-      ].map((dimension) =>
+      {
+        className:
+          "flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3"
+      },
+      React.createElement(
+        "div",
+        null,
         React.createElement(
-          "div",
-          { key: dimension.name, className: "rounded-lg border border-border/60 bg-surface p-3" },
-          React.createElement("p", { className: "text-xs font-medium text-fg-muted" }, dimension.name),
-          React.createElement("p", { className: "mt-1 text-base font-bold text-fg" }, dimension.score),
-          React.createElement("p", { className: "mt-0.5 text-xs text-accent" }, dimension.status)
+          "h3",
+          { className: "text-sm font-semibold text-fg" },
+          "Visual Discovery Review"
+        ),
+        React.createElement(
+          "p",
+          { className: MUTED_META_CLASS },
+          "Unscored analyst hypotheses from the selected visual evidence."
         )
+      ),
+      React.createElement(
+        "span",
+        {
+          className:
+            "rounded bg-surface px-2.5 py-0.5 text-xs font-medium text-fg-muted",
+          "data-discovery-review-status": review.status
+        },
+        "Unscored · " + review.status
       )
     ),
     React.createElement(
-      "div",
-      { className: "mt-4 rounded-lg border border-border/40 bg-surface/50 p-3.5 text-xs text-fg-secondary leading-relaxed" },
-      React.createElement("strong", { className: "text-fg" }, "Executive Debrief: "),
-      "Session executed " + String(episode.stepCount) + " steps using policy '" + episode.identity.policyId + "'. Game simulation operated without unhandled crashes. Outcome registered as '" + outcomeLabel + "'. No critical friction points or infinite loops detected."
-    )
+      "p",
+      { className: MUTED_BODY_CLASS },
+      review.chronologicalSummary
+    ),
+    claims.length > 0
+      ? React.createElement(
+          "div",
+          { className: "grid gap-3", "data-testid": "discovery-review-claims" },
+          ...claims.map(({ section, claim }, index) =>
+            React.createElement(
+              "article",
+              {
+                key: section + ":" + String(index),
+                className:
+                  "rounded-lg border border-border bg-surface p-3 space-y-2"
+              },
+              React.createElement(
+                "p",
+                {
+                  className:
+                    "text-[11px] font-semibold uppercase tracking-wide text-fg-muted"
+                },
+                section + " · " + claim.status
+              ),
+              React.createElement(
+                "p",
+                { className: "text-sm text-fg" },
+                claim.text
+              ),
+              claim.evidenceRefs.length > 0
+                ? React.createElement(
+                    "div",
+                    { className: "flex flex-wrap gap-x-3 gap-y-1" },
+                    ...claim.evidenceRefs.map((ref, refIndex) =>
+                      React.createElement(
+                        NavigationLink,
+                        {
+                          key: ref.kind + ":" + ref.id + ":" + String(refIndex),
+                          href: playtestingEpisodeHref(
+                            scope,
+                            review.episodeId,
+                            typeof ref.step === "number" ? ref.step : null
+                          ),
+                          className: EVIDENCE_LINK_CLASS,
+                          dataAttributes: {
+                            "data-discovery-evidence": ref.kind,
+                            "data-discovery-evidence-id": ref.id
+                          }
+                        },
+                        ref.kind +
+                          (typeof ref.step === "number"
+                            ? " · step " + String(ref.step)
+                            : " · " + ref.id)
+                      )
+                    )
+                  )
+                : null
+            )
+          )
+        )
+      : React.createElement(
+          "p",
+          { className: MUTED_META_CLASS },
+          "No observation or interpretation claims were persisted."
+        ),
+    review.alternativeExplanations.length > 0
+      ? React.createElement(
+          "details",
+          { className: "rounded-lg border border-border p-3" },
+          React.createElement(
+            "summary",
+            { className: "cursor-pointer text-xs font-semibold text-fg" },
+            "Alternative explanations"
+          ),
+          React.createElement(
+            "ul",
+            {
+              className:
+                "mt-2 list-disc space-y-1 pl-5 text-xs text-fg-secondary"
+            },
+            ...review.alternativeExplanations.map((text, index) =>
+              React.createElement(
+                "li",
+                { key: "alternative:" + String(index) },
+                text
+              )
+            )
+          )
+        )
+      : null,
+    review.experiments.length > 0
+      ? React.createElement(
+          "details",
+          { className: "rounded-lg border border-border p-3" },
+          React.createElement(
+            "summary",
+            { className: "cursor-pointer text-xs font-semibold text-fg" },
+            "Suggested follow-ups"
+          ),
+          React.createElement(
+            "ul",
+            {
+              className:
+                "mt-2 list-disc space-y-1 pl-5 text-xs text-fg-secondary"
+            },
+            ...review.experiments.map((experiment, index) =>
+              React.createElement(
+                "li",
+                { key: "experiment:" + String(index) },
+                experiment.hypothesis + " · Falsifier: " + experiment.falsifier
+              )
+            )
+          )
+        )
+      : null
   );
 }
 
@@ -1735,7 +2098,8 @@ export function PlaytestingSessionView({
       )
     ),
     visualGameSpectatorStage(episode, traceScope, window, detail.workspaceId),
-    aiGameplayCriticScorecard(episode),
+    aiGameplayCriticScorecard(episode, detail.latestReview, scope),
+    discoveryAnalystReview(detail.latestDiscoveryReview, scope),
     React.createElement(
       "section",
       { className: LIST_PANEL_CLASS },

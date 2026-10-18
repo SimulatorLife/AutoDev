@@ -438,7 +438,7 @@ export function WorkspaceVisualPlaytestTargetManager({
     React.createElement(
       "p",
       { className: `${MUTED_META_CLASS} mt-2` },
-      "Approval records permission; it does not mean Play can run yet. This Runtime has no visual browser driver. P1 also refuses targets requiring consent/account setup or continuous timing. Local apps need an isolated browser profile and exact loopback origin."
+      "Approval records permission; it does not mean Play can run yet. Runtime preflight confirms the isolated browser driver and policy are ready before Play can start. P1 also refuses targets requiring consent/account setup or continuous timing. Local apps need an isolated browser profile and exact loopback origin."
     ),
     unavailable
       ? React.createElement(

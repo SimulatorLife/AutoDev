@@ -54,6 +54,10 @@
     <!-- Configuration read models resolve from the authoritative checkout, not CODEX_HOME. -->
     <key>AUTODEV_REPO_ROOT</key>
     <string>__AUTODEV_REPO_ROOT__</string>
+    <key>AUTODEV_CONTROL_API_LISTEN_HOST</key>
+    <string>0.0.0.0</string>
+    <key>AUTODEV_CONTROL_API_LISTEN_PORT</key>
+    <string>4101</string>
   </dict>
 
   <!-- Separate stdout/stderr so structured router events (autodev-router-event-v1
