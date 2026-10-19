@@ -215,16 +215,18 @@ export function ConsolePageShell({
   section,
   counts,
   description,
+  actions,
   children
 }: {
   readonly section: CanonicalNavSection;
   readonly counts?: Partial<Record<CanonicalNavSection, number>> | undefined;
   readonly description?: string | undefined;
+  readonly actions?: React.ReactNode | undefined;
   readonly children?: React.ReactNode;
 }): React.JSX.Element {
   return React.createElement(
     AppShell,
-    { activeSection: section, counts, description },
+    { activeSection: section, counts, description, actions },
     children
   );
 }

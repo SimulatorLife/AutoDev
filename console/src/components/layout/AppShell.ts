@@ -74,8 +74,8 @@ export function AppShell({
             // width set by whichever child refuses to shrink, and on a narrow
             // window the *title* absorbs all of it -- the same failure the
             // section-heading rows on `/mcps` and `/prompts` had, one level up.
-            // No page fills `actions` yet, so this changes nothing today; it is
-            // here so the first one to use the prop does not inherit the bug.
+            // The action slot wraps too, so a page can use it without forcing a
+            // phone-width header to scroll horizontally.
             "min-h-16 border-b border-border bg-surface/50 backdrop-blur px-4 xl:px-8 py-3 flex flex-wrap items-center justify-between gap-6 shrink-0"
         },
         React.createElement(
@@ -125,7 +125,10 @@ export function AppShell({
           ? null
           : React.createElement(
               "div",
-              { className: "flex shrink-0 items-center gap-3" },
+              {
+                className:
+                  "flex min-w-0 max-w-full flex-wrap items-center justify-end gap-3"
+              },
               actions
             )
       ),
@@ -244,7 +247,9 @@ export function ConsoleNotFoundPage({
         ),
         React.createElement(
           "div",
-          { className: "mt-6 flex flex-wrap items-center justify-center gap-3" },
+          {
+            className: "mt-6 flex flex-wrap items-center justify-center gap-3"
+          },
           React.createElement(
             NavigationLink,
             {
@@ -377,4 +382,3 @@ export function ConsoleErrorPage({
     )
   );
 }
-

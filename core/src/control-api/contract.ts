@@ -12,11 +12,15 @@
  * references so the Console can open an in-progress session without guessing.
  * v9: episode detail carries the persisted Core-owned player-debrief state and
  * evidence references under episode schema v8.
+ * v10: the Providers page header exposes a confirmation-bound
+ * \`POST /control/providers/reset\` operation that clears provider Runtime
+ * overrides (role assignments, provider disables, model disables, and
+ * provider agent limits) to their static-config defaults.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 9
+  version: 10
 } as const;
 
 export type ControlApiContractResponse = {

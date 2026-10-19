@@ -65,6 +65,8 @@ import {
   type ControlApiProviderModelDiscovery,
   type ControlApiProviderModelsResponse,
   type ControlApiProviderRolePatchResponse,
+  type ControlApiProvidersResetRequest,
+  type ControlApiProvidersResetResponse,
   type ControlApiProvidersResponse,
   type ControlApiRuntimeResponse,
   type ControlApiSkillContentPatchRequest,
@@ -1100,6 +1102,25 @@ export function patchProviderRole(
         ? {}
         : { reasoningEffort: assignment.reasoningEffort })
     },
+    config,
+    options
+  );
+}
+
+/**
+ * Server-only typed reset of Runtime-owned provider overrides. The Console
+ * sends no routing configuration or credential data; Runtime clears only its
+ * operator overlay and reads the static routing source as the default.
+ */
+export function resetProviderSettings(
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiProvidersResetResponse>> {
+  const body: ControlApiProvidersResetRequest = { confirm: true };
+  return mutateControlApi<ControlApiProvidersResetResponse>(
+    "POST",
+    `${CONTROL_API_PATHS.providers}/reset`,
+    body,
     config,
     options
   );

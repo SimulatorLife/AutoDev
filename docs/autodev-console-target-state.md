@@ -8,7 +8,7 @@
 >
 > **Focused Memory design:** [memory-target-state.md](memory-target-state.md) and [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
 >
-> **Last reviewed:** 2026-10-17 (Control API compatibility revision 6, mode-specific visual discovery review persistence, player-visible live Watch and one-click review dispatch, bounded visual launch/readiness contracts, revision-checked RuleSync Skill editing, source-confirmed context-compaction Usage, provider-owned model discovery, and the neutral background-surface hierarchy).
+> **Last reviewed:** 2026-10-18 (Control API compatibility revision 10, confirmation-bound provider override reset, mode-specific visual discovery review persistence, player-visible live Watch and one-click review dispatch, bounded visual launch/readiness contracts, revision-checked RuleSync Skill editing, source-confirmed context-compaction Usage, provider-owned model discovery, and the neutral background-surface hierarchy).
 
 ## 1. Canonical-document contract
 
@@ -521,6 +521,7 @@ The page header names the surface and states its purpose — _Configure which pr
 **Agent Limits are provider-wide**, not per-role, and carry a provider-level **Disabled control beside the Unlimited control**. That control globally disables use of the provider regardless of individual role settings, **while preserving its configured priorities, models and limits** so re-enabling later restores the same configuration rather than requiring it to be re-entered.
 
 **Agent Limits controls:** The **Unlimited** button clears the operator-set ceiling on both concurrency axes. Steppers restore a finite limit at the minimum allowed value when leaving Unlimited. A **Disable / Enable** button changes provider availability while preserving the provider's configured models, role priorities and limits. Each action uses the established server-confirmed mutation flow.
+**Reset to defaults** is a confirmation-bound, operator-only `POST /control/providers/reset` operation. It clears only Runtime-owned provider overrides (per-role assignments, provider/model enablement, and provider agent limits), returning those values to the canonical routing defaults without editing `config/model-routing.json`. It preserves named-Agent admission, provider discovery snapshots, live health/cooldown evidence, and Runtime concurrency limits. The operation is audited and reports the same server-confirmed reconciliation vocabulary as other Control API mutations.
 
 The Providers tab has five columns: **Provider, Status, Active Agents, Roles, Agent Limits**. **Status** summarizes provider usability and configuration; **Active Agents** reports Runtime's current count; **Roles** exposes per-role priority/model assignment. The **Models** tab lists models across providers, each with its current active count and enable/disable control under the contextual-controls rule.
 
@@ -878,6 +879,7 @@ Canonical skill source reads and edits use `GET/PATCH /control/skills/:name/cont
 The skill-assignment mutation response reports its complete `desiredRoles` separately from `actualRoles`. `actualRoles: []` is an observed unassignment; `actualRoles: null` means the Runtime could not confirm the readback and must never be converted to empty. The versioned response includes the shared reconciliation view and a bounded diff. The Console accepts `converged` only when the confirmed actual set matches the requested set; pending, error, and not-observed outcomes remain explicit.
 
 Use named typed operations only; no arbitrary command endpoint.
+The operator-only `POST /control/providers/reset` is the explicit, confirmation-bound reset action for Runtime-owned provider overrides; it never rewrites static routing source or resets Agent admission, discovery, health, or Runtime concurrency state.
 
 The authenticated, read-only `GET /control/provider-models` publishes Runtime-refreshed model availability separately from operator routing assignments. Each provider snapshot is `observed`, `stale` with its last confirmed list, or `unavailable`; each source-reported ID separately states whether the active Runtime route and adapter can serve it. Discovery runs off request/routing hot paths. The Console reads this snapshot and never performs provider discovery itself.
 

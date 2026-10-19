@@ -33,12 +33,12 @@ import {
   setControlApiProviderModelDiscoverySource,
   setGithubActionsAdapterForTests
 } from "@simulatorlife/autodev-runtime/control-api";
+import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import {
   getDefaultPersistenceManager,
   type RouterPersistence,
   setDefaultPersistenceManager
 } from "@simulatorlife/autodev-runtime/router/persistence";
-import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import { ROUTING_POLICY } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   getDefaultExecutionContract,
@@ -645,8 +645,10 @@ test("operator role PATCH configures and validates reasoning effort, respecting 
       return true;
     }
   } as unknown as RouterPersistence);
-  const previousClaude = ROUTING_POLICY.assignmentFor("claude", "subagent") ?? null;
-  const previousAgy = ROUTING_POLICY.assignmentFor("antigravity", "subagent") ?? null;
+  const previousClaude =
+    ROUTING_POLICY.assignmentFor("claude", "subagent") ?? null;
+  const previousAgy =
+    ROUTING_POLICY.assignmentFor("antigravity", "subagent") ?? null;
   try {
     configure();
     ROUTING_POLICY.setProviderAssignment("claude", "subagent", {
@@ -711,7 +713,11 @@ test("operator role PATCH configures and validates reasoning effort, respecting 
     const agyPath = CONTROL_API_PATHS.providers + "/antigravity/roles/subagent";
     const agyPatch = await call("PATCH", agyPath, {
       actor: "operator-a",
-      body: { priority: 1, model: "gemini-3.8-flash-high", reasoningEffort: "low" }
+      body: {
+        priority: 1,
+        model: "gemini-3.8-flash-high",
+        reasoningEffort: "low"
+      }
     });
     assert.equal(agyPatch.response.statusCode, 200);
     assert.equal(agyPatch.body.reasoningEffort, "low");
@@ -719,10 +725,18 @@ test("operator role PATCH configures and validates reasoning effort, respecting 
     assert.equal(agyPatch.body.reasoningEffortInForce, false);
   } finally {
     if (previousClaude)
-      ROUTING_POLICY.setProviderAssignment("claude", "subagent", previousClaude);
+      ROUTING_POLICY.setProviderAssignment(
+        "claude",
+        "subagent",
+        previousClaude
+      );
     else ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
     if (previousAgy)
-      ROUTING_POLICY.setProviderAssignment("antigravity", "subagent", previousAgy);
+      ROUTING_POLICY.setProviderAssignment(
+        "antigravity",
+        "subagent",
+        previousAgy
+      );
     else ROUTING_POLICY.clearProviderAssignment("antigravity", "subagent");
     setDefaultPersistenceManager(originalPersistence);
     restoreEnv(saved);
@@ -1030,6 +1044,349 @@ test("a failed persist cannot leave behind an assignment that had none before", 
     );
   } finally {
     ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("provider reset requires an operator actor and a body of exactly { confirm: true }", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  setDefaultPersistenceManager({
+    async persistNow() {
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    const path = CONTROL_API_PATHS.providersReset;
+
+    const viewer = await call("POST", path, {
+      actor: "viewer-a",
+      body: { confirm: true }
+    });
+    assert.equal(viewer.response.statusCode, 403);
+    assert.equal(
+      viewer.body.error.code,
+      "autodev_control_api_viewer_forbidden"
+    );
+
+    for (const body of [
+      {},
+      { confirm: false },
+      { confirm: "true" },
+      { confirm: true, extra: 1 },
+      { force: true }
+    ]) {
+      const rejected = await call("POST", path, { actor: "operator-a", body });
+      assert.equal(
+        rejected.response.statusCode,
+        400,
+        `reset body ${JSON.stringify(body)} must be rejected`
+      );
+      assert.equal(rejected.body.error.code, "autodev_control_api_bad_body");
+    }
+
+    // An exact-path GET must be rejected as a method mismatch on the reset
+    // route itself, not fall through and be read as a lookup for a provider
+    // literally named "reset".
+    const wrongMethod = await call("GET", path, { actor: "operator-a" });
+    assert.equal(wrongMethod.response.statusCode, 405);
+    assert.notEqual(
+      wrongMethod.body.error.code,
+      "autodev_control_api_unknown_provider"
+    );
+  } finally {
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("provider reset clears only role assignments, provider disables, model disables, and provider limits, and preserves everything else", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  const priorState = ROUTING_POLICY.runtimeState();
+  const priorDiscoveredModels = ROUTING_POLICY.discoveredModels();
+  const manager = getDefaultConcurrencyManager();
+  const priorConcurrencyState = manager.persistenceSnapshot();
+  setDefaultPersistenceManager({
+    async persistNow() {
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    const staticRoutingConfig = ROUTING_POLICY.config;
+    const staticProviderGroups = structuredClone(
+      ROUTING_POLICY.config.providerGroups
+    );
+    const staticProviderModels = Object.fromEntries(
+      Object.entries(ROUTING_POLICY.config.providers).map(
+        ([provider, config]) => [provider, { ...config.models }]
+      )
+    );
+    // Provider Runtime overrides, spread across more than one provider and
+    // role so the cleared counts cannot be mistaken for a single-entry case.
+    ROUTING_POLICY.setProviderAssignment("claude", "subagent", {
+      priority: 2,
+      model: "sonnet"
+    });
+    ROUTING_POLICY.setProviderAssignment("claude", "orchestrator", {
+      priority: 1,
+      model: "claude-opus-5-5"
+    });
+    ROUTING_POLICY.setProviderAssignment("antigravity", "subagent", {
+      priority: 1,
+      model: "gemini-3.8-flash-high"
+    });
+    ROUTING_POLICY.setProviderEnabled("claude", false);
+    ROUTING_POLICY.setModelEnabled("sonnet", false);
+    ROUTING_POLICY.setProviderLimits("antigravity", {
+      perSession: 2,
+      acrossSessions: 5
+    });
+
+    // Out-of-scope state the reset must never touch.
+    ROUTING_POLICY.setAgentEnabled("worker", false);
+    const preservedAgentEnabled = ROUTING_POLICY.isAgentEnabled("worker");
+    const preservedGeneration =
+      ROUTING_POLICY.agentEnablementGeneration("worker");
+    ROUTING_POLICY.setDiscoveredProviderModels("claude", [
+      {
+        id: "sonnet",
+        displayName: "Sonnet",
+        routeability: { status: "supported" }
+      }
+    ]);
+    const preservedDiscovery = ROUTING_POLICY.discoveredModels();
+    manager.setMaxConcurrentThreadsPerSession(6);
+    const preservedConcurrency = manager.effectivePerSessionLimit();
+
+    const expectedCounts = {
+      roleAssignments: 3,
+      disabledProviders: 1,
+      disabledModels: 1,
+      providerLimits: 1
+    };
+
+    const captured = await captureAudit(() =>
+      call("POST", CONTROL_API_PATHS.providersReset, {
+        actor: "operator-a",
+        body: { confirm: true }
+      })
+    );
+    assert.equal(captured.result.response.statusCode, 200);
+    assert.equal(
+      captured.result.body.schema,
+      "autodev-control-providers-reset-v1"
+    );
+    assert.equal(captured.result.body.actor, "operator-a");
+    assert.deepEqual(captured.result.body.cleared, expectedCounts);
+    assert.equal(
+      captured.result.body.reconciliation.status.convergence,
+      "converged"
+    );
+
+    // The four provider Runtime override fields are cleared.
+    assert.equal(ROUTING_POLICY.assignmentFor("claude", "subagent"), undefined);
+    assert.equal(
+      ROUTING_POLICY.assignmentFor("claude", "orchestrator"),
+      undefined
+    );
+    assert.equal(
+      ROUTING_POLICY.assignmentFor("antigravity", "subagent"),
+      undefined
+    );
+    assert.equal(ROUTING_POLICY.isProviderDisabled("claude"), false);
+    assert.equal(ROUTING_POLICY.isModelEnabled("sonnet"), true);
+    assert.equal(ROUTING_POLICY.limitsFor("antigravity"), undefined);
+
+    // Static routing source remains the default authority; Reset clears only
+    // the in-memory operator overlay and never edits its configuration object.
+    assert.equal(ROUTING_POLICY.config, staticRoutingConfig);
+    assert.deepEqual(
+      ROUTING_POLICY.config.providerGroups,
+      staticProviderGroups
+    );
+    assert.deepEqual(
+      Object.fromEntries(
+        Object.entries(ROUTING_POLICY.config.providers).map(
+          ([provider, config]) => [provider, { ...config.models }]
+        )
+      ),
+      staticProviderModels
+    );
+
+    // Everything out of scope survives exactly.
+    assert.equal(
+      ROUTING_POLICY.isAgentEnabled("worker"),
+      preservedAgentEnabled
+    );
+    assert.equal(
+      ROUTING_POLICY.agentEnablementGeneration("worker"),
+      preservedGeneration
+    );
+    assert.deepEqual(ROUTING_POLICY.discoveredModels(), preservedDiscovery);
+    assert.equal(manager.effectivePerSessionLimit(), preservedConcurrency);
+
+    const audit = captured.lines
+      .map((line) => JSON.parse(line))
+      .find(
+        (entry) =>
+          entry.schema === "autodev-control-api-audit-v1" &&
+          entry.action === "reset_providers"
+      );
+    assert.equal(audit.outcome, "ok");
+    assert.equal(audit.resource, CONTROL_API_PATHS.providersReset);
+    assert.deepEqual(audit.changes, { cleared: expectedCounts });
+
+    // The next reset observes the first operation's history for this resource;
+    // the first response is empty only because no reset has happened yet.
+    const repeated = await call("POST", CONTROL_API_PATHS.providersReset, {
+      actor: "operator-a",
+      body: { confirm: true }
+    });
+    assert.equal(repeated.response.statusCode, 200);
+    assert.deepEqual(repeated.body.cleared, {
+      roleAssignments: 0,
+      disabledProviders: 0,
+      disabledModels: 0,
+      providerLimits: 0
+    });
+    assert.ok(
+      repeated.body.reconciliation.history.some(
+        (entry: { action: string }) => entry.action === "reset_providers"
+      )
+    );
+  } finally {
+    ROUTING_POLICY.restoreRuntimeState(priorState);
+    for (const provider of ROUTING_POLICY.providerIds()) {
+      ROUTING_POLICY.setDiscoveredProviderModels(
+        provider,
+        priorDiscoveredModels
+          .filter((model) => model.provider === provider)
+          .map(({ provider: _provider, ...model }) => model)
+      );
+    }
+    manager.restorePersistence(priorConcurrencyState);
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("a failed provider reset persist restores the exact prior provider state", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  const priorState = ROUTING_POLICY.runtimeState();
+  setDefaultPersistenceManager({
+    async persistNow() {
+      throw new Error("disk failure");
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    ROUTING_POLICY.setProviderAssignment("claude", "subagent", {
+      priority: 2,
+      model: "sonnet"
+    });
+    ROUTING_POLICY.setProviderEnabled("claude", false);
+    ROUTING_POLICY.setModelEnabled("sonnet", false);
+    ROUTING_POLICY.setProviderLimits("claude", {
+      perSession: 1,
+      acrossSessions: 2
+    });
+    const stateBeforeReset = ROUTING_POLICY.runtimeState();
+
+    const result = await call("POST", CONTROL_API_PATHS.providersReset, {
+      actor: "operator-a",
+      body: { confirm: true }
+    });
+    assert.equal(result.response.statusCode, 500);
+    assert.equal(
+      result.body.error.code,
+      "autodev_control_api_persistence_failed"
+    );
+    // A rejected reset must restore the exact state it started from, not an
+    // empty one: the in-memory clear happens before persistence is attempted,
+    // so the rollback has to put every override back.
+    assert.deepEqual(ROUTING_POLICY.runtimeState(), stateBeforeReset);
+  } finally {
+    ROUTING_POLICY.restoreRuntimeState(priorState);
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("provider reset serializes with a concurrent provider role mutation on the shared router-state queue", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  const priorState = ROUTING_POLICY.runtimeState();
+  const { promise: firstPersist, resolve: releaseFirstPersist } =
+    Promise.withResolvers<boolean>();
+  const { promise: firstPersistStarted, resolve: signalFirstPersist } =
+    Promise.withResolvers<void>();
+  let persistCalls = 0;
+  let resetCall: Promise<any> | null = null;
+  let roleCall: Promise<any> | null = null;
+  setDefaultPersistenceManager({
+    async persistNow() {
+      persistCalls += 1;
+      if (persistCalls === 1) {
+        signalFirstPersist();
+        return firstPersist;
+      }
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    ROUTING_POLICY.setProviderAssignment("claude", "subagent", {
+      priority: 2,
+      model: "sonnet"
+    });
+
+    resetCall = call("POST", CONTROL_API_PATHS.providersReset, {
+      actor: "operator-a",
+      body: { confirm: true }
+    });
+    await firstPersistStarted;
+
+    // The reset's persist is in flight; a provider role mutation that shares
+    // the same router-state queue must wait rather than interleave with the
+    // reset's own apply/persist/rollback sequence.
+    roleCall = call(
+      "PATCH",
+      CONTROL_API_PATHS.providers + "/antigravity/roles/subagent",
+      {
+        actor: "operator-a",
+        body: { priority: "disabled", model: null }
+      }
+    );
+    const nextTurn = Promise.withResolvers<void>();
+    setImmediate(nextTurn.resolve);
+    await nextTurn.promise;
+    assert.equal(
+      persistCalls,
+      1,
+      "the role mutation must not persist before the reset's turn completes"
+    );
+
+    releaseFirstPersist(true);
+    const [resetResult, roleResult] = await Promise.all([resetCall, roleCall]);
+    assert.equal(resetResult.response.statusCode, 200);
+    assert.equal(roleResult.response.statusCode, 200);
+    assert.equal(persistCalls, 2);
+    // The role mutation ran strictly after the reset committed, so its
+    // assignment must be the one still standing.
+    assert.equal(
+      ROUTING_POLICY.assignmentFor("antigravity", "subagent")?.priority,
+      "disabled"
+    );
+    assert.equal(ROUTING_POLICY.assignmentFor("claude", "subagent"), undefined);
+  } finally {
+    releaseFirstPersist(true);
+    await Promise.all([resetCall, roleCall].filter(Boolean));
+    ROUTING_POLICY.restoreRuntimeState(priorState);
     setDefaultPersistenceManager(originalPersistence);
     restoreEnv(saved);
   }
@@ -3379,10 +3736,7 @@ test("Control API /control/runtime/concurrency mutates orchestrator concurrency 
       }
     });
     assert.equal(staleAttempt.response.statusCode, 409);
-    assert.equal(
-      staleAttempt.body.error.code,
-      "autodev_control_api_conflict"
-    );
+    assert.equal(staleAttempt.body.error.code, "autodev_control_api_conflict");
 
     // 5. Operator mutates limit to null (Unlimited)
     const unlimited = await call("PATCH", CONTROL_API_PATHS.concurrency, {
@@ -3416,3 +3770,155 @@ test("Control API /control/runtime/concurrency mutates orchestrator concurrency 
   }
 });
 
+test("queued provider role patches revalidate an unchanged model after reset clears its assignment", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  const priorState = ROUTING_POLICY.runtimeState();
+  const { promise: firstPersist, resolve: releaseFirstPersist } =
+    Promise.withResolvers<boolean>();
+  const { promise: firstPersistStarted, resolve: signalFirstPersist } =
+    Promise.withResolvers<void>();
+  let persistCalls = 0;
+  let firstCall: Promise<any> | null = null;
+  let resetCall: Promise<any> | null = null;
+  let staleRoleCall: Promise<any> | null = null;
+  setDefaultPersistenceManager({
+    async persistNow() {
+      persistCalls += 1;
+      if (persistCalls === 1) {
+        signalFirstPersist();
+        return firstPersist;
+      }
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    // This assignment is preserved when discovery is unavailable, but once
+    // reset clears it the same model is no longer admissible as a new choice.
+    ROUTING_POLICY.setProviderAssignment("claude", "subagent", {
+      priority: 2,
+      model: "retired-model"
+    });
+
+    firstCall = call(
+      "PATCH",
+      CONTROL_API_PATHS.providers + "/antigravity/roles/default",
+      {
+        actor: "operator-a",
+        body: { priority: 1, model: null }
+      }
+    );
+    await firstPersistStarted;
+
+    // Queue the reset first, then submit the old preserved model while the
+    // assignment still exists in memory. Its value must be checked again only
+    // after the reset's serialized turn clears that assignment.
+    resetCall = call("POST", CONTROL_API_PATHS.providersReset, {
+      actor: "operator-a",
+      body: { confirm: true }
+    });
+    staleRoleCall = call(
+      "PATCH",
+      CONTROL_API_PATHS.providers + "/claude/roles/subagent",
+      {
+        actor: "operator-a",
+        body: { priority: 1, model: "retired-model" }
+      }
+    );
+
+    releaseFirstPersist(true);
+    const [firstResult, resetResult, staleRoleResult] = await Promise.all([
+      firstCall,
+      resetCall,
+      staleRoleCall
+    ]);
+    assert.equal(firstResult.response.statusCode, 200);
+    assert.equal(resetResult.response.statusCode, 200);
+    assert.equal(staleRoleResult.response.statusCode, 400);
+    assert.equal(
+      staleRoleResult.body.error.code,
+      "autodev_control_api_bad_body"
+    );
+    assert.equal(ROUTING_POLICY.assignmentFor("claude", "subagent"), undefined);
+  } finally {
+    releaseFirstPersist(true);
+    await Promise.all([firstCall, resetCall, staleRoleCall].filter(Boolean));
+    ROUTING_POLICY.restoreRuntimeState(priorState);
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});
+
+test("queued provider role patches recheck provider enablement after a disable commits", async () => {
+  const saved = saveEnv();
+  const originalPersistence = getDefaultPersistenceManager();
+  const priorState = ROUTING_POLICY.runtimeState();
+  const { promise: firstPersist, resolve: releaseFirstPersist } =
+    Promise.withResolvers<boolean>();
+  const { promise: firstPersistStarted, resolve: signalFirstPersist } =
+    Promise.withResolvers<void>();
+  let persistCalls = 0;
+  let firstCall: Promise<any> | null = null;
+  let disableCall: Promise<any> | null = null;
+  let roleCall: Promise<any> | null = null;
+  setDefaultPersistenceManager({
+    async persistNow() {
+      persistCalls += 1;
+      if (persistCalls === 1) {
+        signalFirstPersist();
+        return firstPersist;
+      }
+      return true;
+    }
+  } as unknown as RouterPersistence);
+  try {
+    configure();
+    ROUTING_POLICY.setProviderEnabled("claude", true);
+
+    firstCall = call(
+      "PATCH",
+      CONTROL_API_PATHS.providers + "/antigravity/roles/default",
+      {
+        actor: "operator-a",
+        body: { priority: 1, model: null }
+      }
+    );
+    await firstPersistStarted;
+
+    disableCall = call("PATCH", CONTROL_API_PATHS.providers + "/claude", {
+      actor: "operator-a",
+      body: { disabled: true }
+    });
+    roleCall = call(
+      "PATCH",
+      CONTROL_API_PATHS.providers + "/claude/roles/subagent",
+      {
+        actor: "operator-a",
+        body: { priority: 1, model: "sonnet" }
+      }
+    );
+
+    releaseFirstPersist(true);
+    const [firstResult, disableResult, roleResult] = await Promise.all([
+      firstCall,
+      disableCall,
+      roleCall
+    ]);
+    assert.equal(firstResult.response.statusCode, 200);
+    assert.equal(disableResult.response.statusCode, 200);
+    assert.equal(roleResult.response.statusCode, 409);
+    assert.equal(
+      roleResult.body.error.code,
+      "autodev_control_api_provider_disabled"
+    );
+    assert.equal(ROUTING_POLICY.isProviderDisabled("claude"), true);
+    assert.equal(ROUTING_POLICY.assignmentFor("claude", "subagent"), undefined);
+  } finally {
+    releaseFirstPersist(true);
+    await Promise.all([firstCall, disableCall, roleCall].filter(Boolean));
+    ROUTING_POLICY.restoreRuntimeState(priorState);
+    setDefaultPersistenceManager(originalPersistence);
+    restoreEnv(saved);
+  }
+});

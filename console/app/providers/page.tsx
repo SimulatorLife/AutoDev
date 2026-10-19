@@ -1,8 +1,15 @@
 import type { Metadata } from "next";
 import React from "react";
 
-import { ProvidersView } from "../../src/features/providers/ProvidersView.ts";
-import { isControlFailure } from "../../src/lib/control-failure.ts";
+import { providersPath } from "../../src/features/providers/paths.ts";
+import {
+  ProvidersHeaderActions,
+  ProvidersView
+} from "../../src/features/providers/ProvidersView.ts";
+import {
+  isControlFailure,
+  readControlRefusal
+} from "../../src/lib/control-failure.ts";
 import {
   controlApiFailureCode,
   fetchModels,
@@ -69,6 +76,9 @@ export default async function ProvidersPage({
       // saying what the surface is for.
       description:
         "Configure which providers to use, which models to use for each role, and agent spawn limits.",
+      actions: React.createElement(ProvidersHeaderActions, {
+        returnTo: providersPath(tab === "models" ? "models" : "providers")
+      }),
       counts: { Providers: providersResult.data.providers.length }
     },
     React.createElement(ProvidersView, {
@@ -86,7 +96,8 @@ export default async function ProvidersPage({
           : { status: "unavailable", message: discoveryResult.message },
       runtime: runtimeResult.kind === "ok" ? runtimeResult.data : undefined,
       activeTab: tab,
-      controlFailed: isControlFailure(query.control)
+      controlFailed: isControlFailure(query.control),
+      controlRefusal: readControlRefusal(query.refusal)
     })
   );
 }

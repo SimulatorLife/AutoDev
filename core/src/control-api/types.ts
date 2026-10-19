@@ -27,8 +27,8 @@ import type {
   PlaytestBatchCancellationReason,
   PlaytestBenchmark,
   PlaytestCrossSessionSynthesis,
-  PlaytestEpisode,
   PlaytestDiscoverySessionReview,
+  PlaytestEpisode,
   PlaytestEvidencePacket,
   PlaytestExperiment,
   PlaytestSessionReview
@@ -344,6 +344,38 @@ export interface ControlApiProviderLimitsPatchResponse {
   readonly agentLimits: ControlApiProviderAgentLimits;
   readonly previous: ControlApiProviderAgentLimits | null;
   readonly actor: string;
+  readonly reconciliation: {
+    readonly status: ReconciliationStatus;
+    readonly history: readonly OperationHistoryEntry[];
+  };
+}
+
+/** Exact body for the confirmation-bound provider overrides reset. */
+export interface ControlApiProvidersResetRequest {
+  readonly confirm: true;
+}
+
+/**
+ * Response of `POST /control/providers/reset` -- the Providers page header's
+ * confirmation-bound "Reset to defaults" operation.
+ *
+ * This clears only provider Runtime overrides (role assignments, provider
+ * disables, model disables, and provider agent limits), returning routing to
+ * the static `config/model-routing.json` defaults. Agent enablement, provider
+ * discovery snapshots, cooldown/health state, and concurrency limits are
+ * untouched -- none of them are provider routing overrides. Bounded counts
+ * rather than the cleared state itself are reported, so the audit trail
+ * proves the action's exact blast radius without replaying configuration.
+ */
+export interface ControlApiProvidersResetResponse {
+  readonly schema: "autodev-control-providers-reset-v1";
+  readonly actor: string;
+  readonly cleared: {
+    readonly roleAssignments: number;
+    readonly disabledProviders: number;
+    readonly disabledModels: number;
+    readonly providerLimits: number;
+  };
   readonly reconciliation: {
     readonly status: ReconciliationStatus;
     readonly history: readonly OperationHistoryEntry[];

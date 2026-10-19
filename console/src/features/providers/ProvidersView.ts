@@ -8,6 +8,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { Button } from "../../components/forms/Button.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import {
@@ -18,7 +19,10 @@ import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
-import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
+import {
+  ControlFailureNotice,
+  type ControlFailureNoticeProps
+} from "../../components/status/ControlFailureNotice.ts";
 import {
   NOT_OBSERVED_LABEL,
   StatusBadge
@@ -68,6 +72,93 @@ import {
 } from "./ProviderModelAvailabilityBadge.ts";
 import { ProviderRoleControls } from "./ProviderRoleControls.ts";
 
+export function ProvidersHeaderActions({
+  returnTo
+}: {
+  readonly returnTo: string;
+}): React.JSX.Element {
+  return React.createElement(
+    "div",
+    {
+      role: "group",
+      "aria-label": "Provider configuration actions",
+      className: "flex min-w-0 flex-wrap items-start justify-end gap-3"
+    },
+    React.createElement(
+      "form",
+      {
+        action: "/api/providers/reset",
+        method: "post",
+        className: "flex min-w-0 flex-wrap items-center gap-2",
+        "data-provider-reset-form": "true"
+      },
+      React.createElement("input", {
+        type: "hidden",
+        name: "returnTo",
+        value: returnTo
+      }),
+      React.createElement(
+        "label",
+        {
+          className:
+            "flex min-w-0 max-w-full items-start gap-2 text-xs text-fg-secondary",
+          htmlFor: "confirm-provider-reset"
+        },
+        React.createElement("input", {
+          id: "confirm-provider-reset",
+          type: "checkbox",
+          name: "confirm",
+          value: "true",
+          required: true,
+          className:
+            "mt-0.5 size-4 shrink-0 rounded border border-border-strong bg-input accent-accent",
+          "data-provider-reset-confirm": "true"
+        }),
+        React.createElement(
+          "span",
+          null,
+          "Confirm clearing role overrides, disabled models, and provider limits"
+        )
+      ),
+      React.createElement(
+        Button,
+        {
+          type: "submit",
+          variant: "secondary",
+          testId: "provider-reset"
+        },
+        "Reset to defaults"
+      )
+    ),
+    React.createElement(
+      "div",
+      { className: "flex min-w-0 flex-col items-end gap-1" },
+      React.createElement(
+        Button,
+        {
+          disabled: true,
+          variant: "secondary",
+          title:
+            "Adding a provider requires a Runtime adapter that is not currently available.",
+          dataAttributes: {
+            "aria-describedby": "provider-add-disabled-reason"
+          },
+          testId: "provider-add"
+        },
+        "Add provider"
+      ),
+      React.createElement(
+        "span",
+        {
+          id: "provider-add-disabled-reason",
+          className: "max-w-48 text-right text-micro text-fg-muted"
+        },
+        "Add a Runtime adapter before configuring another provider."
+      )
+    )
+  );
+}
+
 export const PROVIDERS_VIEW_TABS: readonly TabDefinition[] = [
   { id: "providers", label: "Providers" },
   { id: "models", label: "Models" }
@@ -86,6 +177,7 @@ export interface ProvidersViewProps {
   /** Raw `?tab=` value; unknown values fall back to the Providers tab. */
   readonly activeTab?: string | undefined;
   readonly controlFailed?: boolean | undefined;
+  readonly controlRefusal?: ControlFailureNoticeProps["refusal"];
 }
 
 function ProviderLink({
@@ -663,7 +755,8 @@ export function ProvidersView({
   modelDiscovery,
   runtime,
   activeTab,
-  controlFailed
+  controlFailed,
+  controlRefusal
 }: ProvidersViewProps): React.JSX.Element {
   const tab = resolveActiveTabId(PROVIDERS_VIEW_TABS, activeTab, "providers");
   return React.createElement(
@@ -676,7 +769,9 @@ export function ProvidersView({
       tabs: PROVIDERS_VIEW_TABS,
       activeTabId: tab
     }),
-    controlFailed ? React.createElement(ControlFailureNotice) : null,
+    controlFailed
+      ? React.createElement(ControlFailureNotice, { refusal: controlRefusal })
+      : null,
     tab === "models"
       ? React.createElement(ModelsTab, { models, modelDiscovery, runtime })
       : React.createElement(ProvidersTab, {

@@ -493,6 +493,18 @@ function defaultRoleAliases(config: RoutingConfig): string[] {
   ];
 }
 
+/**
+ * Bounded counts of provider Runtime overrides cleared by
+ * `RoutingPolicy.resetProviderOverrides`, reported to the Control API audit
+ * trail in place of replaying the (potentially large) cleared state.
+ */
+export interface ProviderOverrideResetCounts {
+  readonly roleAssignments: number;
+  readonly disabledProviders: number;
+  readonly disabledModels: number;
+  readonly providerLimits: number;
+}
+
 export class RoutingPolicy {
   readonly config: RoutingConfig;
   readonly routes: readonly ProviderRoute[];
@@ -582,7 +594,9 @@ export class RoutingPolicy {
     existing[role] = {
       priority: assignment.priority,
       model: assignment.model,
-      ...(assignment.reasoningEffort ? { reasoningEffort: assignment.reasoningEffort } : {})
+      ...(assignment.reasoningEffort
+        ? { reasoningEffort: assignment.reasoningEffort }
+        : {})
     };
     this.roleAssignments.set(key, existing);
   }
@@ -661,6 +675,36 @@ export class RoutingPolicy {
       perSession: normaliseLimit(limits.perSession),
       acrossSessions: normaliseLimit(limits.acrossSessions)
     });
+  }
+
+  /**
+   * Clear every provider Runtime override -- role assignments, provider-wide
+   * disables, model disables, and provider agent limits -- in one atomic
+   * in-memory step. Agent enablement, provider discovery snapshots,
+   * cooldown/health state, and concurrency limits are untouched: none of them
+   * are provider routing overrides, so an operator resetting providers has no
+   * reason to expect them to move.
+   *
+   * Returns bounded counts rather than the cleared state itself, so a caller
+   * can audit exactly what was cleared without replaying potentially large
+   * configuration back into the audit log.
+   */
+  resetProviderOverrides(): ProviderOverrideResetCounts {
+    const roleAssignmentCount = [...this.roleAssignments.values()].reduce(
+      (total, assignments) => total + Object.keys(assignments).length,
+      0
+    );
+    const counts: ProviderOverrideResetCounts = {
+      roleAssignments: roleAssignmentCount,
+      disabledProviders: this.disabledProviders.size,
+      disabledModels: this.disabledModels.size,
+      providerLimits: this.providerLimits.size
+    };
+    this.roleAssignments.clear();
+    this.disabledProviders.clear();
+    this.disabledModels.clear();
+    this.providerLimits.clear();
+    return counts;
   }
 
   /**

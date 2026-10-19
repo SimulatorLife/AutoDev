@@ -10,6 +10,8 @@ const TOOLS_ROLE_ORCHESTRATOR_URL = /\/tools\?role=orchestrator$/u;
 const PROVIDERS_NAV_LINK_PATTERN = /^Providers/u;
 const PROVIDERS_URL = /\/providers$/u;
 const PROVIDERS_MODELS_URL = /\/providers\?tab=models$/u;
+const PROVIDER_RESET_CONFIRMATION_PATTERN =
+  /Confirm clearing role overrides, disabled models, and provider limits/u;
 
 function documentFitsViewport(page: Page): Promise<boolean> {
   return page.evaluate(
@@ -189,4 +191,31 @@ test("Providers keeps its five-column role table readable at narrow and desktop 
   await checkWidth(390);
   await checkWidth(768);
   await checkWidth(1280);
+});
+
+test("Providers header exposes a confirmed reset and explains unavailable provider creation", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/providers?tab=providers");
+
+  const actions = page.getByRole("group", {
+    name: "Provider configuration actions"
+  });
+  await expect(actions).toBeVisible();
+  await expect(
+    actions.getByRole("checkbox", {
+      name: PROVIDER_RESET_CONFIRMATION_PATTERN
+    })
+  ).toHaveAttribute("required", "");
+  await expect(
+    actions.getByRole("button", { name: "Reset to defaults" })
+  ).toBeVisible();
+  await expect(
+    actions.getByRole("button", { name: "Add provider" })
+  ).toBeDisabled();
+  await expect(
+    page.getByText("Add a Runtime adapter before configuring another provider.")
+  ).toBeVisible();
+  expect(await documentFitsViewport(page)).toBe(true);
 });

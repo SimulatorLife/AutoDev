@@ -33,6 +33,8 @@ import {
   type ControlApiProviderModelsResponse,
   type ControlApiProviderRoleAssignment,
   type ControlApiProviderRolePatchResponse,
+  type ControlApiProvidersResetRequest,
+  type ControlApiProvidersResetResponse,
   type ControlApiProvidersResponse,
   type ControlApiRoutingResponse,
   type ControlApiRuntimeResponse,
@@ -140,6 +142,7 @@ export const CONTROL_API_PATHS = {
   contracts: CONTROL_API_CONTRACT.path,
   agents: "/control/agents",
   providers: "/control/providers",
+  providersReset: "/control/providers/reset",
   providerModels: "/control/provider-models",
   models: "/control/models",
   mcps: "/control/mcps",
@@ -222,8 +225,9 @@ function loadModelCatalogData(catalogPath: string): CachedModelCatalog {
                   .default_reasoning_level
               : null;
           const supportedLevels: string[] = [];
-          const rawSupported = (entry as { supported_reasoning_levels?: unknown })
-            .supported_reasoning_levels;
+          const rawSupported = (
+            entry as { supported_reasoning_levels?: unknown }
+          ).supported_reasoning_levels;
           if (Array.isArray(rawSupported)) {
             for (const item of rawSupported) {
               if (
@@ -237,7 +241,8 @@ function loadModelCatalogData(catalogPath: string): CachedModelCatalog {
           }
           levels.set(slug, { defaultLevel, supportedLevels });
           if (
-            typeof (entry as { display_name?: unknown }).display_name === "string"
+            typeof (entry as { display_name?: unknown }).display_name ===
+            "string"
           ) {
             names.set(slug, (entry as { display_name: string }).display_name);
           }
@@ -295,26 +300,36 @@ const SKILL_CONTENT_PATH = /^\/control\/skills\/([a-z0-9-]{1,64})\/content$/u;
 const SKILL_CONTENT_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const AGENT_ENABLEMENT_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const SKILL_CONTENT_REQUEST_MAX_BYTES = 300_000;
-const enablementMutationTails = new Map<string, Promise<void>>();
+const routerStateMutationTails = new Map<string, Promise<void>>();
 
-async function serializeEnablementMutation<T>(
+/**
+ * Shared serialization key for every Control API mutation that persists the
+ * Runtime's shared router state (provider role, provider enabled, provider
+ * limits, model enabled, agent enablement, runtime concurrency, and the
+ * providers reset). A single key rather than one per resource, because reset
+ * spans multiple provider settings and must not interleave with a mutation
+ * whose failure rollback could otherwise overwrite part of that state.
+ */
+const ROUTER_STATE_MUTATION_KEY = "router-state";
+
+async function serializeRouterStateMutation<T>(
   key: string,
   operation: () => Promise<T>
 ): Promise<T> {
-  const previous = enablementMutationTails.get(key) ?? Promise.resolve();
+  const previous = routerStateMutationTails.get(key) ?? Promise.resolve();
   let release!: () => void;
   const turn = new Promise<void>((resolve) => {
     release = resolve;
   });
   const tail = previous.then(() => turn);
-  enablementMutationTails.set(key, tail);
+  routerStateMutationTails.set(key, tail);
   await previous;
   try {
     return await operation();
   } finally {
     release();
-    if (enablementMutationTails.get(key) === tail)
-      enablementMutationTails.delete(key);
+    if (routerStateMutationTails.get(key) === tail)
+      routerStateMutationTails.delete(key);
   }
 }
 
@@ -2568,7 +2583,7 @@ async function patchEnablement(
   };
 
   if (mutation.serializeKey)
-    await serializeEnablementMutation(mutation.serializeKey, applyMutation);
+    await serializeRouterStateMutation(mutation.serializeKey, applyMutation);
   else await applyMutation();
 }
 
@@ -2643,12 +2658,10 @@ async function patchProviderRole(
     priority === 2 ||
     priority === 3 ||
     priority === "disabled";
-  const modelIsValid =
-    model === null ||
-    (typeof model === "string" &&
-      (model === ROUTING_POLICY.assignmentFor(provider, role)?.model ||
-        (ROUTING_POLICY.isModelAvailableForProvider(provider, model) &&
-          providerHasCurrentModelDiscovery(provider, model))));
+  // Model routeability depends on mutable assignments and discovery state. It
+  // is checked inside the serialized mutation turn below, not against a value
+  // that may be cleared or disabled while this request waits in the queue.
+  const modelTypeIsValid = model === null || typeof model === "string";
   const reasoningEffortIsValid =
     reasoningEffort === null ||
     (typeof reasoningEffort === "string" &&
@@ -2661,7 +2674,7 @@ async function patchProviderRole(
         key !== "priority" && key !== "model" && key !== "reasoningEffort"
     ) ||
     !priorityIsValid ||
-    !modelIsValid ||
+    !modelTypeIsValid ||
     !reasoningEffortIsValid
   ) {
     audit("error", null, "invalid_body");
@@ -2692,32 +2705,6 @@ async function patchProviderRole(
     return;
   }
 
-  // A globally disabled provider is meant to be off entirely, with its roles,
-  // models and limits preserved for re-enabling. Editing a role while it is
-  // disabled is therefore not a valid change: the Console renders these rows
-  // with `mutable: false` and tells the operator to enable the provider first,
-  // so accepting the write here would leave that message a claim the API does
-  // not honour. `isProviderEnabledForRole` is not the right test — it folds in
-  // the per-role `disabled` priority, which this endpoint is what sets.
-  if (ROUTING_POLICY.isProviderDisabled(provider)) {
-    audit(
-      "denied",
-      {
-        priority,
-        model,
-        ...(body.reasoningEffort !== undefined ? { reasoningEffort } : {})
-      },
-      "provider_disabled"
-    );
-    sendControlError(
-      response,
-      409,
-      "autodev_control_api_provider_disabled",
-      "This provider is disabled. Enable it before changing its roles."
-    );
-    return;
-  }
-
   const isAgyFixed =
     provider === "antigravity" && Boolean(modelEffort(assignedModel ?? ""));
   const effectiveReasoningEffort = isAgyFixed
@@ -2728,93 +2715,135 @@ async function patchProviderRole(
     reasoningEffort === null ||
     reasoningEffort === effectiveReasoningEffort;
 
-  const next: ProviderRoleAssignment = {
-    priority,
-    model,
-    reasoningEffort
-  };
-  // An unobserved assignment is reported as null on the wire: JSON carries no
-  // undefined, and "there was no assignment" must not be reported as an empty
-  // object, which would read as a role whose model was cleared.
-  const previous = ROUTING_POLICY.assignmentFor(provider, role) ?? null;
-  const auditChanges: Record<string, unknown> = {
-    priority,
-    model,
-    ...(body.reasoningEffort !== undefined ? { reasoningEffort } : {})
-  };
-  try {
-    ROUTING_POLICY.setProviderAssignment(provider, role, next);
-    await persistRoutingPolicy();
-  } catch {
-    try {
-      // Restoring the prior state means clearing the assignment when there was
-      // none, not only writing back the one this change replaced. A rejected
-      // change must never keep steering routing just because it had nothing to
-      // overwrite.
-      if (previous)
-        ROUTING_POLICY.setProviderAssignment(provider, role, previous);
-      else ROUTING_POLICY.clearProviderAssignment(provider, role);
-    } catch {
-      // Preserve the original failure; the audit record captures it.
+  await serializeRouterStateMutation(ROUTER_STATE_MUTATION_KEY, async () => {
+    // State-dependent checks belong inside the same serialized turn as the
+    // write. Otherwise a role request accepted as "unchanged" can wait behind
+    // Reset to defaults, then reintroduce a model that is no longer configured
+    // or currently observed after the reset clears its prior assignment.
+    if (ROUTING_POLICY.isProviderDisabled(provider)) {
+      audit(
+        "denied",
+        {
+          priority,
+          model,
+          ...(body.reasoningEffort !== undefined ? { reasoningEffort } : {})
+        },
+        "provider_disabled"
+      );
+      sendControlError(
+        response,
+        409,
+        "autodev_control_api_provider_disabled",
+        "This provider is disabled. Enable it before changing its roles."
+      );
+      return;
     }
-    audit("error", { ...auditChanges, previous }, "persistence_failed");
-    sendControlError(
-      response,
-      500,
-      "autodev_control_api_persistence_failed",
-      "Provider role change could not be persisted."
-    );
-    return;
-  }
 
-  const observed = ROUTING_POLICY.assignmentFor(provider, role) ?? null;
-  const desiredGeneration = `${role}:${priority}/${model ?? "none"}`;
-  const observedGeneration =
-    observed?.priority === priority &&
-    observed?.model === model &&
-    (observed?.reasoningEffort ?? null) === reasoningEffort
-      ? desiredGeneration
-      : null;
-  const appliedAt = new Date().toISOString();
-  // The audit record and the response body must carry the same generations the
-  // operator sees, so both are derived from these two values rather than
-  // computed twice.
-  const auditReconciliation: EnablementReconciliation = {
-    desiredGeneration,
-    observedGeneration,
-    restartRequired: false
-  };
-  const reconciliation = buildReconciliationView({
-    evidence: {
-      desiredGeneration,
-      observedGeneration,
-      lastApplyAt: appliedAt,
-      lastObservationAt: observedGeneration === null ? null : appliedAt,
-      lastError: null
-    },
-    history: historyForResource(resource),
-    hasObservation: observedGeneration !== null
-  });
-  audit("ok", { ...auditChanges, previous }, undefined, auditReconciliation);
-  sendJson(
-    response,
-    200,
-    {
-      schema: "autodev-control-provider-role-v3",
-      provider,
-      role,
+    const previous = ROUTING_POLICY.assignmentFor(provider, role) ?? null;
+    const modelIsValid =
+      model === null ||
+      (typeof model === "string" &&
+        (model === previous?.model ||
+          (ROUTING_POLICY.isModelAvailableForProvider(provider, model) &&
+            providerHasCurrentModelDiscovery(provider, model))));
+    if (!modelIsValid) {
+      audit("error", null, "invalid_body");
+      sendControlError(
+        response,
+        400,
+        "autodev_control_api_bad_body",
+        'Provider role body must carry a priority of 1, 2, 3 or "disabled", an optional reasoningEffort that matches one of the assigned model\'s supported reasoning levels, and a model that is null, unchanged from the current assignment, or currently observed as routeable for this provider.'
+      );
+      return;
+    }
+
+    const next: ProviderRoleAssignment = {
       priority,
       model,
-      reasoningEffort,
-      effectiveReasoningEffort,
-      reasoningEffortInForce,
-      supportedReasoningLevels,
-      previous,
-      actor: actor.actor,
-      reconciliation
-    } satisfies ControlApiProviderRolePatchResponse,
-    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
-  );
+      reasoningEffort
+    };
+    // An unobserved assignment is reported as null on the wire: JSON carries no
+    // undefined, and "there was no assignment" must not be reported as an empty
+    // object, which would read as a role whose model was cleared.
+    const auditChanges: Record<string, unknown> = {
+      priority,
+      model,
+      ...(body.reasoningEffort !== undefined ? { reasoningEffort } : {})
+    };
+    try {
+      ROUTING_POLICY.setProviderAssignment(provider, role, next);
+      await persistRoutingPolicy();
+    } catch {
+      try {
+        // Restoring the prior state means clearing the assignment when there was
+        // none, not only writing back the one this change replaced. A rejected
+        // change must never keep steering routing just because it had nothing to
+        // overwrite.
+        if (previous)
+          ROUTING_POLICY.setProviderAssignment(provider, role, previous);
+        else ROUTING_POLICY.clearProviderAssignment(provider, role);
+      } catch {
+        // Preserve the original failure; the audit record captures it.
+      }
+      audit("error", { ...auditChanges, previous }, "persistence_failed");
+      sendControlError(
+        response,
+        500,
+        "autodev_control_api_persistence_failed",
+        "Provider role change could not be persisted."
+      );
+      return;
+    }
+
+    const observed = ROUTING_POLICY.assignmentFor(provider, role) ?? null;
+    const desiredGeneration = `${role}:${priority}/${model ?? "none"}`;
+    const observedGeneration =
+      observed?.priority === priority &&
+      observed?.model === model &&
+      (observed?.reasoningEffort ?? null) === reasoningEffort
+        ? desiredGeneration
+        : null;
+    const appliedAt = new Date().toISOString();
+    // The audit record and the response body must carry the same generations the
+    // operator sees, so both are derived from these two values rather than
+    // computed twice.
+    const auditReconciliation: EnablementReconciliation = {
+      desiredGeneration,
+      observedGeneration,
+      restartRequired: false
+    };
+    const reconciliation = buildReconciliationView({
+      evidence: {
+        desiredGeneration,
+        observedGeneration,
+        lastApplyAt: appliedAt,
+        lastObservationAt: observedGeneration === null ? null : appliedAt,
+        lastError: null
+      },
+      history: historyForResource(resource),
+      hasObservation: observedGeneration !== null
+    });
+    audit("ok", { ...auditChanges, previous }, undefined, auditReconciliation);
+    sendJson(
+      response,
+      200,
+      {
+        schema: "autodev-control-provider-role-v3",
+        provider,
+        role,
+        priority,
+        model,
+        reasoningEffort,
+        effectiveReasoningEffort,
+        reasoningEffortInForce,
+        supportedReasoningLevels,
+        previous,
+        actor: actor.actor,
+        reconciliation
+      } satisfies ControlApiProviderRolePatchResponse,
+      { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+    );
+  });
 }
 /**
  * Whether the runtime currently serves this provider at all. Used by both
@@ -2859,6 +2888,122 @@ function providerMutationReconciliation(
       hasObservation: observed
     })
   };
+}
+
+/**
+ * `POST /control/providers/reset` -- the Providers page header's
+ * confirmation-bound "Reset to defaults" operation.
+ *
+ * Clears only provider Runtime overrides -- role assignments, provider
+ * disables, model disables, and provider agent limits -- returning routing to
+ * the static `config/model-routing.json` defaults. Agent enablement,
+ * provider discovery snapshots, cooldown/health state, and concurrency
+ * limits are untouched: none of them are provider routing overrides.
+ *
+ * Runs inside `ROUTER_STATE_MUTATION_KEY`'s serialized queue alongside
+ * every other mutation that persists the shared router state, so the
+ * snapshot taken for rollback and the reset itself can never interleave with
+ * a concurrent provider/model/agent/concurrency mutation. The body must be
+ * exactly `{ confirm: true }`: there is no implicit or partial reset.
+ */
+function isProvidersResetRequest(
+  value: Record<string, unknown>
+): value is Record<string, unknown> & ControlApiProvidersResetRequest {
+  const keys = Object.keys(value);
+  return keys.length === 1 && keys[0] === "confirm" && value.confirm === true;
+}
+
+async function resetProviders(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor
+): Promise<void> {
+  const resource = CONTROL_API_PATHS.providersReset;
+  const audit = (
+    outcome: "ok" | "denied" | "error",
+    changes: Record<string, unknown> | null,
+    reason?: string,
+    reconciliation: EnablementReconciliation | null = null
+  ): void =>
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "reset_providers",
+      resource,
+      outcome,
+      changes,
+      ...(reason ? { reason } : {}),
+      ...auditReconciliationFields(reconciliation)
+    });
+
+  if (actor.role !== "operator") {
+    audit("denied", null, "viewer_cannot_mutate");
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_viewer_forbidden",
+      "Operator access is required to reset providers to defaults."
+    );
+    return;
+  }
+
+  const parsed = await readControlApiJsonObject(request);
+  if (!parsed.ok) {
+    audit("error", null, "invalid_body");
+    sendControlError(response, parsed.status, parsed.code, parsed.message);
+    return;
+  }
+  const body = parsed.body;
+  if (!isProvidersResetRequest(body)) {
+    audit("error", null, "invalid_body");
+    sendControlError(
+      response,
+      400,
+      "autodev_control_api_bad_body",
+      "Provider reset requires a body of exactly { confirm: true }."
+    );
+    return;
+  }
+
+  await serializeRouterStateMutation(ROUTER_STATE_MUTATION_KEY, async () => {
+    const snapshot = ROUTING_POLICY.runtimeState();
+    const cleared = ROUTING_POLICY.resetProviderOverrides();
+    try {
+      await persistRoutingPolicy();
+    } catch {
+      // The snapshot was taken, and the reset applied, inside this same
+      // serialized turn, so no other mutation could have run in between: the
+      // restore below cannot erase a concurrent change.
+      ROUTING_POLICY.restoreRuntimeState(snapshot);
+      audit("error", { cleared }, "persistence_failed");
+      sendControlError(
+        response,
+        500,
+        "autodev_control_api_persistence_failed",
+        "Provider reset could not be persisted."
+      );
+      return;
+    }
+
+    const reconciliation = providerMutationReconciliation(
+      resource,
+      `cleared=${JSON.stringify(cleared)}`,
+      true
+    );
+    audit("ok", { cleared }, undefined, reconciliation.audit);
+    sendJson(
+      response,
+      200,
+      {
+        schema: "autodev-control-providers-reset-v1",
+        actor: actor.actor,
+        cleared,
+        reconciliation: reconciliation.view
+      } satisfies ControlApiProvidersResetResponse,
+      { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+    );
+  });
 }
 
 /**
@@ -2934,46 +3079,48 @@ async function patchProviderEnabled(
   }
   const disabled = body.disabled;
 
-  const previous = ROUTING_POLICY.isProviderDisabled(provider);
-  try {
-    ROUTING_POLICY.setProviderEnabled(provider, !disabled);
-    await persistRoutingPolicy();
-  } catch {
+  await serializeRouterStateMutation(ROUTER_STATE_MUTATION_KEY, async () => {
+    const previous = ROUTING_POLICY.isProviderDisabled(provider);
     try {
-      ROUTING_POLICY.setProviderEnabled(provider, !previous);
+      ROUTING_POLICY.setProviderEnabled(provider, !disabled);
+      await persistRoutingPolicy();
     } catch {
-      // Preserve the original failure; the audit record captures it.
+      try {
+        ROUTING_POLICY.setProviderEnabled(provider, !previous);
+      } catch {
+        // Preserve the original failure; the audit record captures it.
+      }
+      audit("error", { disabled, previous }, "persistence_failed");
+      sendControlError(
+        response,
+        500,
+        "autodev_control_api_persistence_failed",
+        "Provider enablement change could not be persisted."
+      );
+      return;
     }
-    audit("error", { disabled, previous }, "persistence_failed");
-    sendControlError(
-      response,
-      500,
-      "autodev_control_api_persistence_failed",
-      "Provider enablement change could not be persisted."
-    );
-    return;
-  }
 
-  const observed = ROUTING_POLICY.isProviderDisabled(provider) === disabled;
-  const reconciliation = providerMutationReconciliation(
-    resource,
-    `disabled=${disabled ? "true" : "false"}`,
-    observed
-  );
-  audit("ok", { disabled, previous }, undefined, reconciliation.audit);
-  sendJson(
-    response,
-    200,
-    {
-      schema: "autodev-control-provider-enabled-v1",
-      provider,
-      disabled,
-      previous,
-      actor: actor.actor,
-      reconciliation: reconciliation.view
-    } satisfies ControlApiProviderEnabledPatchResponse,
-    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
-  );
+    const observed = ROUTING_POLICY.isProviderDisabled(provider) === disabled;
+    const reconciliation = providerMutationReconciliation(
+      resource,
+      `disabled=${disabled ? "true" : "false"}`,
+      observed
+    );
+    audit("ok", { disabled, previous }, undefined, reconciliation.audit);
+    sendJson(
+      response,
+      200,
+      {
+        schema: "autodev-control-provider-enabled-v1",
+        provider,
+        disabled,
+        previous,
+        actor: actor.actor,
+        reconciliation: reconciliation.view
+      } satisfies ControlApiProviderEnabledPatchResponse,
+      { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+    );
+  });
 }
 
 /**
@@ -3054,59 +3201,61 @@ async function patchProviderLimits(
     return;
   }
 
-  const previous = ROUTING_POLICY.limitsFor(provider) ?? null;
-  const next = {
-    perSession: body.perSession as number | null,
-    acrossSessions: body.acrossSessions as number | null
-  };
-  try {
-    ROUTING_POLICY.setProviderLimits(provider, next);
-    await persistRoutingPolicy();
-  } catch {
+  await serializeRouterStateMutation(ROUTER_STATE_MUTATION_KEY, async () => {
+    const previous = ROUTING_POLICY.limitsFor(provider) ?? null;
+    const next = {
+      perSession: body.perSession as number | null,
+      acrossSessions: body.acrossSessions as number | null
+    };
     try {
-      if (previous) ROUTING_POLICY.setProviderLimits(provider, previous);
-      else ROUTING_POLICY.clearProviderLimits(provider);
+      ROUTING_POLICY.setProviderLimits(provider, next);
+      await persistRoutingPolicy();
     } catch {
-      // Preserve the original failure; the audit record captures it.
+      try {
+        if (previous) ROUTING_POLICY.setProviderLimits(provider, previous);
+        else ROUTING_POLICY.clearProviderLimits(provider);
+      } catch {
+        // Preserve the original failure; the audit record captures it.
+      }
+      audit("error", { ...next, previous }, "persistence_failed");
+      sendControlError(
+        response,
+        500,
+        "autodev_control_api_persistence_failed",
+        "Provider agent limits change could not be persisted."
+      );
+      return;
     }
-    audit("error", { ...next, previous }, "persistence_failed");
-    sendControlError(
-      response,
-      500,
-      "autodev_control_api_persistence_failed",
-      "Provider agent limits change could not be persisted."
-    );
-    return;
-  }
 
-  const applied = ROUTING_POLICY.limitsFor(provider) ?? null;
-  const observed =
-    applied?.perSession === next.perSession &&
-    applied?.acrossSessions === next.acrossSessions;
-  const reconciliation = providerMutationReconciliation(
-    resource,
-    `limits=${JSON.stringify(next)}`,
-    observed
-  );
-  audit("ok", { ...next, previous }, undefined, reconciliation.audit);
-  sendJson(
-    response,
-    200,
-    {
-      schema: "autodev-control-provider-limits-v1",
-      provider,
-      // `applied` alone is `null` once the policy holds no record, which is what
-      // clearing every limit produces -- and `null` says "no idea" where the
-      // truth is "no limit on either axis". Reporting `next` in that case keeps
-      // a cleared provider distinguishable from one whose limits were never
-      // read, and it is the state the write just put there.
-      agentLimits: applied ?? next,
-      previous,
-      actor: actor.actor,
-      reconciliation: reconciliation.view
-    } satisfies ControlApiProviderLimitsPatchResponse,
-    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
-  );
+    const applied = ROUTING_POLICY.limitsFor(provider) ?? null;
+    const observed =
+      applied?.perSession === next.perSession &&
+      applied?.acrossSessions === next.acrossSessions;
+    const reconciliation = providerMutationReconciliation(
+      resource,
+      `limits=${JSON.stringify(next)}`,
+      observed
+    );
+    audit("ok", { ...next, previous }, undefined, reconciliation.audit);
+    sendJson(
+      response,
+      200,
+      {
+        schema: "autodev-control-provider-limits-v1",
+        provider,
+        // `applied` alone is `null` once the policy holds no record, which is what
+        // clearing every limit produces -- and `null` says "no idea" where the
+        // truth is "no limit on either axis". Reporting `next` in that case keeps
+        // a cleared provider distinguishable from one whose limits were never
+        // read, and it is the state the write just put there.
+        agentLimits: applied ?? next,
+        previous,
+        actor: actor.actor,
+        reconciliation: reconciliation.view
+      } satisfies ControlApiProviderLimitsPatchResponse,
+      { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+    );
+  });
 }
 
 /**
@@ -3195,60 +3344,65 @@ async function patchConcurrencyLimit(
       ? body.revision
       : undefined;
 
-  const previousLimit = manager.effectivePerSessionLimit();
-  const mutationResult =
-    nextLimit === undefined
-      ? manager.clearStoredLimit(expectedRevision)
-      : manager.setMaxConcurrentThreadsPerSession(nextLimit, expectedRevision);
+  await serializeRouterStateMutation(ROUTER_STATE_MUTATION_KEY, async () => {
+    const previousLimit = manager.effectivePerSessionLimit();
+    const mutationResult =
+      nextLimit === undefined
+        ? manager.clearStoredLimit(expectedRevision)
+        : manager.setMaxConcurrentThreadsPerSession(
+            nextLimit,
+            expectedRevision
+          );
 
-  if (!mutationResult.ok) {
-    audit(
-      "error",
-      { expectedRevision, currentRevision: mutationResult.currentRevision },
-      "conflict"
-    );
-    sendControlError(
-      response,
-      409,
-      "autodev_control_api_conflict",
-      "Concurrency limit configuration was changed by another operator. Reload to see current state."
-    );
-    return;
-  }
-
-  try {
-    await persistRoutingPolicy();
-  } catch {
-    if (previousLimit === undefined) {
-      manager.clearStoredLimit();
-    } else {
-      manager.setMaxConcurrentThreadsPerSession(previousLimit);
+    if (!mutationResult.ok) {
+      audit(
+        "error",
+        { expectedRevision, currentRevision: mutationResult.currentRevision },
+        "conflict"
+      );
+      sendControlError(
+        response,
+        409,
+        "autodev_control_api_conflict",
+        "Concurrency limit configuration was changed by another operator. Reload to see current state."
+      );
+      return;
     }
-    audit("error", { nextLimit, previousLimit }, "persistence_failed");
-    sendControlError(
-      response,
-      500,
-      "autodev_control_api_persistence_failed",
-      "Concurrency limit change could not be persisted."
-    );
-    return;
-  }
 
-  const updatedStatus = manager.concurrencyStatus(Date.now());
-  audit("ok", {
-    limit: nextLimit,
-    previous: previousLimit,
-    revision: updatedStatus.revision
+    try {
+      await persistRoutingPolicy();
+    } catch {
+      if (previousLimit === undefined) {
+        manager.clearStoredLimit();
+      } else {
+        manager.setMaxConcurrentThreadsPerSession(previousLimit);
+      }
+      audit("error", { nextLimit, previousLimit }, "persistence_failed");
+      sendControlError(
+        response,
+        500,
+        "autodev_control_api_persistence_failed",
+        "Concurrency limit change could not be persisted."
+      );
+      return;
+    }
+
+    const updatedStatus = manager.concurrencyStatus(Date.now());
+    audit("ok", {
+      limit: nextLimit,
+      previous: previousLimit,
+      revision: updatedStatus.revision
+    });
+    sendJson(
+      response,
+      200,
+      {
+        schema: "autodev-control-concurrency-v1",
+        concurrency: updatedStatus
+      },
+      { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+    );
   });
-  sendJson(
-    response,
-    200,
-    {
-      schema: "autodev-control-concurrency-v1",
-      concurrency: updatedStatus
-    },
-    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
-  );
 }
 
 function patchAgentEnablement(
@@ -3287,7 +3441,7 @@ function patchAgentEnablement(
       return current.kind === "observed" ? current.revision : null;
     },
     revisionConflictCode: "autodev_control_api_agent_enablement_conflict",
-    serializeKey: `agent:${role}`,
+    serializeKey: ROUTER_STATE_MUTATION_KEY,
     apply: (next) => {
       if (!ROUTING_POLICY.setAgentEnabled(role, next))
         throw new Error("Agent has no configured router alias.");
@@ -3356,6 +3510,7 @@ function patchModel(
       ? "Model enablement requires a currently observed provider model that Runtime can route."
       : "Unknown model.",
     current: () => ROUTING_POLICY.isModelEnabled(model),
+    serializeKey: ROUTER_STATE_MUTATION_KEY,
     apply: (enabled) => ROUTING_POLICY.setModelEnabled(model, enabled),
     result: (enabled, previous) => {
       const observed = ROUTING_POLICY.isModelEnabled(model);
@@ -5100,6 +5255,27 @@ export async function handleControlApiRequest(
       actor,
       providerLimitsMatch[1]!
     );
+    return true;
+  }
+  if (pathname === CONTROL_API_PATHS.providersReset) {
+    if (method !== "POST") {
+      auditRejectedRequest(
+        request,
+        method,
+        pathname,
+        "method_not_allowed",
+        actor
+      );
+      response.setHeader("allow", "POST");
+      sendControlError(
+        response,
+        405,
+        "autodev_control_api_method_not_allowed",
+        "Provider reset is mutated via POST only."
+      );
+      return true;
+    }
+    await resetProviders(request, response, actor);
     return true;
   }
   const providerOnlyMatch = pathname.match(PROVIDER_PATH);
