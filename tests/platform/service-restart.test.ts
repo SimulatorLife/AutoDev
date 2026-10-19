@@ -142,6 +142,7 @@ function deps(
       return label && state.loaded.has(label) ? [JOB_PIDS[label]] : [];
     },
     commandLine: () => null,
+    workingDirectory: () => null,
     kill: (pid, signal) => {
       kills.push({ pid, signal });
     },
@@ -343,10 +344,168 @@ test("an unowned Console listener prevents build publication and service restart
   );
   assert.equal(status, 1);
   assert.match(stderr, /Console port 3300 is held by pid 68804 outside/u);
+  assert.match(
+    stderr,
+    /Stop it, or set AUTODEV_CONSOLE_PORT to a free port/u,
+    "a refused port says how to clear it"
+  );
   assert.equal(base.calls.includes("build-console"), false);
   assert.equal(
     base.calls.some((call) => call.startsWith("bootout:")),
     false
+  );
+});
+
+test("a Console dev session this runtime owns is stopped so the managed Console can take the port", async () => {
+  const fake = deps({}, { strays: new Map([[3300, 52_465]]) });
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options(), {
+      ...fake,
+      commandLine: (pid) =>
+        pid === 52_465
+          ? "node /repo/console/node_modules/.bin/../../../node_modules/.pnpm/next@15.5.27/node_modules/next/dist/bin/next dev -p 3300 -H 127.0.0.1"
+          : null,
+      kill: (pid, signal) => {
+        fake.kills.push({ pid, signal });
+        fake.calls.push(`kill:${pid}:${signal}`);
+        fake.state.strays.delete(3300);
+      }
+    })
+  );
+  assert.equal(status, 0);
+  assert.match(
+    stderr,
+    /reaping unmanaged com\.codex\.autodev-console on port 3300 \(pid 52465\)/u
+  );
+  assert.deepEqual(fake.kills, [{ pid: 52_465, signal: "SIGTERM" }]);
+  assert.equal(
+    fake.calls.includes("build-console"),
+    true,
+    "an owned Console holder no longer blocks the build"
+  );
+  assert.ok(
+    fake.calls.indexOf("kill:52465:SIGTERM") <
+      fake.calls.indexOf(
+        `bootstrap:/home/Library/LaunchAgents/${LABEL_AUTODEV_CONSOLE}.plist`
+      ),
+    "the dev session is stopped before the managed Console binds the port"
+  );
+});
+
+test("a Console dev session that displaced a loaded managed Console is reconciled", async () => {
+  const fake = deps(
+    {},
+    {
+      loaded: new Set([LABEL_AUTODEV_CONSOLE]),
+      strays: new Map([[3300, 52_465]])
+    }
+  );
+  const [status] = await captureStderr(() =>
+    restartServices(options(), {
+      ...fake,
+      commandLine: (pid) =>
+        pid === 52_465
+          ? "node /repo/console/node_modules/.bin/../../../node_modules/.pnpm/next@15.5.27/node_modules/next/dist/bin/next dev -p 3300 -H 127.0.0.1"
+          : null,
+      kill: (pid, signal) => {
+        fake.kills.push({ pid, signal });
+        fake.state.strays.delete(3300);
+      }
+    })
+  );
+  assert.equal(status, 0);
+  assert.deepEqual(fake.kills, [{ pid: 52_465, signal: "SIGTERM" }]);
+  assert.ok(
+    fake.calls.includes(`bootout:${LABEL_AUTODEV_CONSOLE}`),
+    "the displaced managed job is unloaded before the port is taken"
+  );
+  assert.ok(
+    fake.calls.includes(
+      `bootstrap:/home/Library/LaunchAgents/${LABEL_AUTODEV_CONSOLE}.plist`
+    )
+  );
+});
+
+test("a loaded but dead managed Console job with an owned dev session is reconciled", async () => {
+  const fake = deps(
+    {},
+    {
+      loaded: new Set([LABEL_AUTODEV_CONSOLE]),
+      jobLines: { [LABEL_AUTODEV_CONSOLE]: "\tlast exit code = 1" },
+      strays: new Map([[3300, 52_465]])
+    }
+  );
+  const [status] = await captureStderr(() =>
+    restartServices(options(), {
+      ...fake,
+      commandLine: (pid) =>
+        pid === 52_465
+          ? "node /repo/console/node_modules/.bin/../../../node_modules/.pnpm/next@15.5.27/node_modules/next/dist/bin/next dev -p 3300 -H 127.0.0.1"
+          : null,
+      kill: (pid, signal) => {
+        fake.kills.push({ pid, signal });
+        fake.state.strays.delete(3300);
+      }
+    })
+  );
+  assert.equal(status, 0);
+  assert.deepEqual(fake.kills, [{ pid: 52_465, signal: "SIGTERM" }]);
+});
+
+test("a Console holder outside this runtime is refused rather than stopped", async () => {
+  const fake = deps({}, { strays: new Map([[3300, 52_465]]) });
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options(), {
+      ...fake,
+      commandLine: (pid) =>
+        pid === 52_465 ? "/usr/local/bin/some-other-server" : null
+    })
+  );
+  assert.equal(status, 1);
+  assert.deepEqual(fake.kills, []);
+  assert.match(
+    stderr,
+    /Console port 3300 is held by pid 52465 outside this AutoDev Console/u
+  );
+  assert.equal(fake.calls.includes("build-console"), false);
+});
+
+test("a Console holder is recognized by its working directory when the process list is unreadable", async () => {
+  const fake = deps({}, { strays: new Map([[3300, 52_465]]) });
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options(), {
+      ...fake,
+      commandLine: () => null,
+      workingDirectory: (pid) => (pid === 52_465 ? "/repo/console" : null),
+      kill: (pid, signal) => {
+        fake.kills.push({ pid, signal });
+        fake.state.strays.delete(3300);
+      }
+    })
+  );
+  assert.equal(status, 0);
+  assert.match(
+    stderr,
+    /reaping unmanaged com\.codex\.autodev-console on port 3300 \(pid 52465\)/u
+  );
+  assert.deepEqual(fake.kills, [{ pid: 52_465, signal: "SIGTERM" }]);
+});
+
+test("a holder from another runtime's console directory is refused rather than stopped", async () => {
+  const fake = deps({}, { strays: new Map([[3300, 52_465]]) });
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options(), {
+      ...fake,
+      commandLine: () => null,
+      workingDirectory: (pid) =>
+        pid === 52_465 ? "/other/checkout/console" : null
+    })
+  );
+  assert.equal(status, 1);
+  assert.deepEqual(fake.kills, []);
+  assert.match(
+    stderr,
+    /Console port 3300 is held by pid 52465 outside this AutoDev Console/u
   );
 });
 

@@ -31,7 +31,9 @@ const AUTH_TOKEN_PATTERN =
 const JOB_PID_PATTERN = /^\tpid = (\d+)$/mu;
 const JOB_LAST_EXIT_PATTERN = /^\tlast exit code = (\d+)/mu;
 const JOB_STDERR_PATTERN = /^\tstderr path = (.+)$/mu;
-const LOG_LINE_SPLIT_PATTERN = /\r?\n/u;
+const LINE_SPLIT_PATTERN = /\r?\n/u;
+/** `lsof -Fn` prefixes each field's value with its field name. */
+const LSOF_NAME_PREFIX = "n";
 
 export const LABEL_MODEL_ROUTER = "com.codex.model-router";
 export const LABEL_CLAUDE_BRIDGE = "com.codex.claude-bridge";
@@ -79,6 +81,8 @@ export interface ServiceRestartDeps {
   ) => number;
   readonly listeningPids: (port: number) => readonly number[] | null;
   readonly commandLine: (pid: number) => string | null;
+  /** The process's current working directory, when it can be read. */
+  readonly workingDirectory: (pid: number) => string | null;
   readonly kill: (pid: number, signal: KillSignal) => void;
 }
 
@@ -192,7 +196,7 @@ function readLogTail(filePath: string, lines: number): string[] {
     readSync(fd, buffer, 0, length, size - length);
     return buffer
       .toString("utf8")
-      .split(LOG_LINE_SPLIT_PATTERN)
+      .split(LINE_SPLIT_PATTERN)
       .filter((line) => line.trim().length > 0)
       .slice(-lines);
   } catch {
@@ -283,6 +287,21 @@ function defaultDeps(options: ServiceRestartOptions): ServiceRestartDeps {
         return null;
       }
     },
+    workingDirectory: (pid) => {
+      try {
+        const output = execFileSync(
+          "lsof",
+          ["-a", "-p", String(pid), "-d", "cwd", "-Fn"],
+          { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+        );
+        const name = output
+          .split(LINE_SPLIT_PATTERN)
+          .find((line) => line.startsWith(LSOF_NAME_PREFIX));
+        return name ? name.slice(LSOF_NAME_PREFIX.length) : null;
+      } catch {
+        return null;
+      }
+    },
     kill: (pid, signal) => {
       try {
         process.kill(pid, signal);
@@ -367,6 +386,69 @@ function serviceHook(
   }
 }
 
+interface ServiceOwnership {
+  /** Path fragments that identify the process in its command line. */
+  readonly commandLinePaths: readonly string[];
+  /** The directory the service runs in, when it pins one. */
+  readonly workingDirectory: string | null;
+}
+
+/**
+ * How a port holder is recognized as a process this runtime runs for a
+ * label.
+ *
+ * The Console matches its whole installation root rather than the launcher's
+ * entry script alone: a dev session reaches Next.js through pnpm's bin shim
+ * (`console/node_modules/.bin/../..`), so the launcher's exact path never
+ * appears in its command line, and the Console would then look foreign to
+ * every reaper and refuse to converge.
+ */
+function serviceOwnership(
+  options: ServiceRestartOptions,
+  label: ManagedServiceLabel
+): ServiceOwnership {
+  if (label === CONSOLE_SERVICE_LABEL)
+    return {
+      commandLinePaths: [
+        path.join(options.repositoryRoot, "console", "node_modules") + path.sep
+      ],
+      // The Console runs from the repository's console directory whether its
+      // launchd job started it or a dev session did.
+      workingDirectory: path.join(options.repositoryRoot, "console")
+    };
+  return {
+    commandLinePaths: [serviceHook(options, label)],
+    workingDirectory: null
+  };
+}
+
+/**
+ * Whether a port holder is a process this runtime runs for the label.
+ *
+ * The command line is the primary signal, but the process list is not
+ * readable in every environment (sandboxes deny `ps`), so a service that
+ * pins a working directory is recognized by that too. A holder that matches
+ * neither signal belongs to someone else and is never stopped.
+ */
+function isOwnedServiceProcess(
+  options: ServiceRestartOptions,
+  label: ManagedServiceLabel,
+  pid: number,
+  deps: ServiceRestartDeps
+): boolean {
+  const ownership = serviceOwnership(options, label);
+  const commandLine = deps.commandLine(pid);
+  if (
+    commandLine &&
+    ownership.commandLinePaths.some((ownedPath) =>
+      commandLine.includes(ownedPath)
+    )
+  )
+    return true;
+  if (ownership.workingDirectory === null) return false;
+  return deps.workingDirectory(pid) === ownership.workingDirectory;
+}
+
 function plistOwner(
   options: ServiceRestartOptions,
   deps: ServiceRestartDeps
@@ -408,7 +490,7 @@ async function reapUnmanaged(
   const [pid, ...rest] = pids;
   if (pid === undefined) return true;
   const port = servicePort(options, label);
-  if (!deps.commandLine(pid)?.includes(serviceHook(options, label))) {
+  if (!isOwnedServiceProcess(options, label, pid, deps)) {
     writeErrorLine(
       `port ${port} held by a process this installer does not own (pid ${pid}); ${label} not started`
     );
@@ -639,6 +721,14 @@ function foreignLabels(
   );
 }
 
+/**
+ * The production build is published over the console port, so that port has
+ * to belong to this runtime: free, held by the managed LaunchAgent, or held
+ * by a Console process this runtime owns — a previous install's console, or
+ * a dev session — which the reload path stops before it bootstraps the
+ * managed job. A holder this runtime does not own is a hard stop, because
+ * neither the build nor the restart may take its port.
+ */
 function consolePortIsSafeToPublish(
   options: ServiceRestartOptions,
   deps: ServiceRestartDeps
@@ -652,18 +742,28 @@ function consolePortIsSafeToPublish(
   }
   if (listeners.length === 0) return true;
 
-  if (!deps.launchd.isLoaded(CONSOLE_SERVICE_LABEL)) {
-    writeErrorLine(
-      `Console port ${options.consolePort} is held by pid ${listeners.join(", ")} outside its managed LaunchAgent; refusing to replace the build.`
+  if (deps.launchd.isLoaded(CONSOLE_SERVICE_LABEL)) {
+    const job = parseJobState(readLaunchdJobDump(deps, CONSOLE_SERVICE_LABEL));
+    const foreign = listeners.filter(
+      (pid) =>
+        pid !== job.pid &&
+        !isOwnedServiceProcess(options, CONSOLE_SERVICE_LABEL, pid, deps)
     );
-    return false;
+    if (foreign.length > 0) {
+      writeErrorLine(
+        `Console port ${options.consolePort} is not owned by its managed LaunchAgent; refusing to replace the build.`
+      );
+      return false;
+    }
+    return true;
   }
 
-  const job = parseJobState(readLaunchdJobDump(deps, CONSOLE_SERVICE_LABEL));
-  const unowned = listeners.filter((pid) => pid !== job.pid);
-  if (job.pid === null || unowned.length > 0) {
+  const foreign = listeners.filter(
+    (pid) => !isOwnedServiceProcess(options, CONSOLE_SERVICE_LABEL, pid, deps)
+  );
+  if (foreign.length > 0) {
     writeErrorLine(
-      `Console port ${options.consolePort} is not owned by its managed LaunchAgent; refusing to replace the build.`
+      `Console port ${options.consolePort} is held by pid ${foreign.join(", ")} outside this AutoDev Console; refusing to replace the build. Stop it, or set AUTODEV_CONSOLE_PORT to a free port.`
     );
     return false;
   }
