@@ -12,6 +12,9 @@ const PROVIDERS_URL = /\/providers$/u;
 const PROVIDERS_MODELS_URL = /\/providers\?tab=models$/u;
 const PROVIDER_RESET_CONFIRMATION_PATTERN =
   /Confirm clearing role overrides, disabled models, and provider limits/u;
+const CLAUDE_PROVIDER_ID = "claude";
+const PROVIDERS_TAB_URL = "/providers?tab=providers";
+const PROVIDER_DETAIL_URL_PATTERN = /\/providers\/[A-Za-z0-9._-]+$/u;
 
 function documentFitsViewport(page: Page): Promise<boolean> {
   return page.evaluate(
@@ -35,7 +38,7 @@ test("Providers distinguishes live, stale, unavailable, and unsupported models",
     page.getByRole("button", { name: "Expand sidebar" })
   ).toBeVisible();
   await expect(
-    page.locator('[data-provider-discovery="claude"]')
+    page.locator(`[data-provider-discovery="${CLAUDE_PROVIDER_ID}"]`)
   ).toContainText("Observed · 2 models");
   await expect(page.locator('[data-provider-discovery="codex"]')).toContainText(
     "Stale · 1 last-known models"
@@ -51,10 +54,10 @@ test("Providers distinguishes live, stale, unavailable, and unsupported models",
   ).toHaveCount(0);
   expect(await documentFitsViewport(page)).toBe(true);
 
-  await page.goto("/providers?tab=providers");
+  await page.goto(PROVIDERS_TAB_URL);
   await expect(page.locator('[data-tab-panel="providers"]')).toBeVisible();
   const currentModel = page.locator(
-    '[data-select="role-model-claude-default"]'
+    `[data-select="role-model-${CLAUDE_PROVIDER_ID}-default"]`
   );
   await expect(currentModel).toBeVisible();
   const currentOptions = await currentModel
@@ -146,7 +149,7 @@ test("Tools source/role filters and resource/tab links navigate in place without
 test("Providers keeps its five-column role table readable at narrow and desktop widths", async ({
   page
 }) => {
-  await page.goto("/providers?tab=providers");
+  await page.goto(PROVIDERS_TAB_URL);
   const table = page.locator('[data-tab-panel="providers"] table');
   const expectedColumns = [
     "Provider",
@@ -197,7 +200,7 @@ test("Providers header exposes a confirmed reset and explains unavailable provid
   page
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/providers?tab=providers");
+  await page.goto(PROVIDERS_TAB_URL);
 
   const actions = page.getByRole("group", {
     name: "Provider configuration actions"
@@ -217,5 +220,48 @@ test("Providers header exposes a confirmed reset and explains unavailable provid
   await expect(
     page.getByText("Add a Runtime adapter before configuring another provider.")
   ).toBeVisible();
+  expect(await documentFitsViewport(page)).toBe(true);
+});
+
+test("Provider detail reuses provider-wide controls and navigates in place", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(PROVIDERS_TAB_URL);
+  await page.evaluate((token) => {
+    (
+      globalThis as typeof globalThis & {
+        __autodevProviderDetailDocumentToken?: string;
+      }
+    ).__autodevProviderDetailDocumentToken = token;
+  }, MOUNTED_DOCUMENT_TOKEN);
+
+  await page
+    .locator('[data-tab-panel="providers"] [data-section="providers"]')
+    .getByRole("link", { name: `Open provider ${CLAUDE_PROVIDER_ID}` })
+    .click();
+  await expect(page).toHaveURL(PROVIDER_DETAIL_URL_PATTERN);
+  await expect(
+    page.locator(`[data-role-form="${CLAUDE_PROVIDER_ID}-default"]`)
+  ).toBeVisible();
+  await expect(
+    page.locator(`[data-provider-limits="${CLAUDE_PROVIDER_ID}"]`)
+  ).toBeVisible();
+  await expect(
+    page.locator(`[data-provider-disabled="${CLAUDE_PROVIDER_ID}"]`)
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (
+          globalThis as typeof globalThis & {
+            __autodevProviderDetailDocumentToken?: string;
+          }
+        ).__autodevProviderDetailDocumentToken
+    )
+  ).toBe(MOUNTED_DOCUMENT_TOKEN);
+  expect(await documentFitsViewport(page)).toBe(true);
+
+  await page.setViewportSize({ width: 1280, height: 844 });
   expect(await documentFitsViewport(page)).toBe(true);
 });

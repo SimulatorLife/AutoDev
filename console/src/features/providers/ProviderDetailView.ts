@@ -47,6 +47,7 @@ import {
 } from "./provider-model-discovery.ts";
 import { CredentialBadge, ProviderHealthBadge } from "./provider-status.ts";
 import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
+import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
 import {
   ProviderModelAvailabilityBadge,
   ProviderModelDiscoveryBadge
@@ -96,6 +97,34 @@ function RolesPanel({
       modelDiscovery,
       returnTo
     })
+  );
+}
+
+function ProviderLimitsPanel({
+  provider,
+  returnTo
+}: {
+  readonly provider: ControlApiProviderRecord;
+  readonly returnTo: string;
+}): React.JSX.Element {
+  return React.createElement(
+    "section",
+    { className: DETAIL_PANEL_CLASS, "data-section": "provider-agent-limits" },
+    React.createElement(
+      "div",
+      { className: "mb-3" },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Agent limits"
+      ),
+      React.createElement(
+        "p",
+        { className: `mt-1 ${MUTED_META_CLASS}` },
+        "Provider-wide concurrent-agent limits and provider availability. Disabling the provider preserves its role assignments and limits."
+      )
+    ),
+    React.createElement(ProviderLimitsControls, { provider, returnTo })
   );
 }
 
@@ -606,6 +635,7 @@ export function ProviderDetailView({
       modelDiscovery,
       returnTo
     }),
+    React.createElement(ProviderLimitsPanel, { provider, returnTo }),
     React.createElement(ModelsPanel, {
       provider,
       models,

@@ -13655,6 +13655,22 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
     form.includes('data-enablement-form="model"')
   );
   assert.equal(roleForms.length, 4);
+  assert.match(markup, /data-section="provider-agent-limits"/);
+  assert.match(markup, /data-provider-limits="claude"/);
+  assert.match(markup, /data-provider-disabled="claude"/);
+  assert.equal(
+    forms.filter((form) =>
+      form.includes('action="/api/providers/claude/limits"')
+    ).length,
+    1,
+    "provider detail reuses the same limits mutation as the Providers row"
+  );
+  assert.equal(
+    forms.filter((form) => form.includes('action="/api/providers/claude"'))
+      .length,
+    1,
+    "provider detail reuses the same enablement mutation as the Providers row"
+  );
   for (const role of ["default", "smart", "orchestrator", "subagent"]) {
     assert.ok(
       roleForms.some((form) =>
