@@ -140,3 +140,53 @@ test("Tools source/role filters and resource/tab links navigate in place without
   await expect(page.locator('[data-tab-panel="models"]')).toBeVisible();
   expect(await readMountToken()).toBe(MOUNTED_DOCUMENT_TOKEN);
 });
+
+test("Providers keeps its five-column role table readable at narrow and desktop widths", async ({
+  page
+}) => {
+  await page.goto("/providers?tab=providers");
+  const table = page.locator('[data-tab-panel="providers"] table');
+  const expectedColumns = [
+    "Provider",
+    "Status",
+    "Active Agents",
+    "Roles",
+    "Agent Limits"
+  ];
+  const checkWidth = async (width: number): Promise<void> => {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(table).toBeVisible();
+    await expect(
+      page.locator('[data-tab-panel="providers"] [data-column-label]')
+    ).toHaveText(expectedColumns);
+
+    const roleLabels = await table
+      .locator("tbody [data-role-label]")
+      .evaluateAll((nodes) =>
+        Array.from(new Set(nodes.map((node) => node.textContent?.trim() ?? "")))
+      );
+    expect(roleLabels).toEqual([
+      "Default",
+      "Smart",
+      "Orchestrator",
+      "Subagent"
+    ]);
+
+    const widths = await table.evaluate((element) => {
+      const scroller = element.parentElement;
+      return {
+        scroller: scroller?.clientWidth ?? 0,
+        table: element.scrollWidth
+      };
+    });
+    expect(widths.table).toBeGreaterThan(0);
+    if (width === 390) {
+      expect(widths.table).toBeGreaterThan(widths.scroller);
+    }
+    expect(await documentFitsViewport(page)).toBe(true);
+  };
+
+  await checkWidth(390);
+  await checkWidth(768);
+  await checkWidth(1280);
+});
