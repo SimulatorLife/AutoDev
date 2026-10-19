@@ -15,6 +15,7 @@ import test from "node:test";
 
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import {
+  type ControlApiProviderHealth,
   type ControlApiProviderModelDiscovery,
   LOCAL_CONTROL_API_ACTOR,
   PROVIDER_ROLES,
@@ -39,7 +40,10 @@ import {
   type RouterPersistence,
   setDefaultPersistenceManager
 } from "@simulatorlife/autodev-runtime/router/persistence";
-import { ROUTING_POLICY } from "@simulatorlife/autodev-runtime/router/routing";
+import {
+  ROUTES,
+  ROUTING_POLICY
+} from "@simulatorlife/autodev-runtime/router/routing";
 import {
   getDefaultExecutionContract,
   setExecutionContractForTests
@@ -2135,6 +2139,9 @@ test("Agent enablement is Runtime-owned, revision-bound, and independent of prov
     assert.equal(reenabled.response.statusCode, 200);
     assert.equal(reenabled.body.enabled, true);
     assert.notEqual(reenabled.body.revision, initialRevision);
+    const reconciled = await call("GET", path, { actor: "viewer-a" });
+    assert.equal(reconciled.body.convergence, "converged");
+
     const staleAfterRoundTrip = await call("PATCH", path, {
       actor: "operator-a",
       body: { enabled: false, expectedRevision: initialRevision }
@@ -2152,6 +2159,15 @@ test("Agent enablement is Runtime-owned, revision-bound, and independent of prov
     });
     assert.equal(disabledAgain.response.statusCode, 200);
     assert.equal(disabledAgain.body.enabled, false);
+
+    ROUTING_POLICY.setAgentEnabled("worker", true);
+    const drifted = await call("GET", path, { actor: "viewer-a" });
+    assert.equal(
+      drifted.body.convergence,
+      "pending",
+      "the current runtime state must be compared with the last observed apply"
+    );
+    ROUTING_POLICY.setAgentEnabled("worker", false);
 
     const disabled = await call("GET", path, { actor: "viewer-a" });
     failPersistence = true;
@@ -2290,8 +2306,12 @@ test("Control API surfaces all 13 typed resource families", async () => {
       (agent: { role: string }) => agent.role === "orchestrator"
     );
     assert.ok(configuredAgent);
-    assert.equal(configuredAgent.status, "configured");
-    assert.equal(configuredAgent.valid, null);
+    assert.equal(
+      configuredAgent.status,
+      "configured",
+      "configuration without successful provider health evidence is not ready"
+    );
+    assert.equal(configuredAgent.valid, true);
     assert.equal(configuredAgent.convergence, "not-observed");
 
     const agentDetail = await call(
@@ -2304,7 +2324,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
     assert.equal(agentDetail.body.role, "orchestrator");
     assert.equal(agentDetail.body.kind, "orchestrator");
     assert.equal(agentDetail.body.status, "configured");
-    assert.equal(agentDetail.body.valid, null);
+    assert.equal(agentDetail.body.valid, true);
     assert.equal(agentDetail.body.convergence, "not-observed");
 
     const unknownAgent = await call(
@@ -2606,6 +2626,99 @@ test("Control API surfaces all 13 typed resource families", async () => {
     });
     assert.equal(githubMutation.response.statusCode, 405);
   } finally {
+    restoreEnv(saved);
+  }
+});
+
+test("Agent readiness uses observed provider health rather than configuration alone", async () => {
+  const saved = saveEnv();
+  const previousPolicyState = ROUTING_POLICY.runtimeState();
+  const routeCredentialKeys: string[] = [
+    ...new Set(
+      ROUTES.flatMap((route) =>
+        typeof route.envKey === "string" ? [route.envKey] : []
+      )
+    )
+  ];
+  const previousRouteCredentials = Object.fromEntries(
+    routeCredentialKeys.map((key) => [key, process.env[key]])
+  );
+  try {
+    configure();
+    for (const key of routeCredentialKeys) {
+      process.env[key] = "provider-health-fixture-credential";
+    }
+    ROUTING_POLICY.setAgentEnabled("worker", true);
+
+    const health = (
+      overrides: Partial<ControlApiProviderHealth> = {}
+    ): ControlApiProviderHealth => ({
+      cooldown: null,
+      failureStreak: 0,
+      probeFailureStreak: 0,
+      inFlightRequests: 0,
+      activeAgents: 0,
+      attempts: 0,
+      successes: 0,
+      failures: 0,
+      lastSuccessAt: null,
+      lastFailure: null,
+      ...overrides
+    });
+    const healthy: Record<string, ControlApiProviderHealth> =
+      Object.fromEntries(
+        ROUTES.map((route) => [
+          route.provider,
+          health({
+            attempts: 1,
+            successes: 1,
+            lastSuccessAt: "2026-10-19T12:00:00.000Z"
+          })
+        ])
+      );
+    setControlApiProviderHealthSource(() => healthy);
+    const ready = await call("GET", `${CONTROL_API_PATHS.agents}/worker`, {
+      actor: "viewer-a"
+    });
+    assert.equal(ready.body.status, "ready");
+
+    setControlApiProviderHealthSource(() => ({}));
+    const unobserved = await call("GET", `${CONTROL_API_PATHS.agents}/worker`, {
+      actor: "viewer-a"
+    });
+    assert.equal(unobserved.body.status, "configured");
+
+    setControlApiProviderHealthSource(() =>
+      Object.fromEntries(
+        ROUTES.map((route) => [
+          route.provider,
+          health({
+            cooldown: {
+              kind: "probe",
+              failureClass: "probe_unavailable",
+              until: "2026-10-19T12:05:00.000Z",
+              resetsAt: null,
+              lastResortEligible: false
+            },
+            probeFailureStreak: 1
+          })
+        ])
+      )
+    );
+    const unavailable = await call(
+      "GET",
+      `${CONTROL_API_PATHS.agents}/worker`,
+      { actor: "viewer-a" }
+    );
+    assert.equal(unavailable.body.status, "unavailable");
+  } finally {
+    setControlApiProviderHealthSource(null);
+    ROUTING_POLICY.restoreRuntimeState(previousPolicyState);
+    for (const key of routeCredentialKeys) {
+      const value = previousRouteCredentials[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     restoreEnv(saved);
   }
 });

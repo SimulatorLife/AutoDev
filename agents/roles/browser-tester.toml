@@ -20,6 +20,19 @@ enabled = false
 [mcp_servers.playwright]
 enabled = true
 default_tools_approval_mode = "approve"
+env_vars = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "LC_ALL",
+  "CODEX_HOME",
+  "AUTODEV_REPO_ROOT",
+  "AUTODEV_NODE_BIN",
+  "PLAYWRIGHT_BROWSERS_PATH",
+]
 enabled_tools = [
   "browser_navigate",
   "browser_tabs",
@@ -40,6 +53,22 @@ enabled_tools = [
   "browser_resize",
   "browser_close",
 ]
+
+[features]
+shell_tool = false
+multi_agent = false
+multi_agent_v2 = false
+hooks = false
+memories = false
+
+[tools]
+web_search = false
+
+[shell_environment_policy]
+inherit = "none"
+
+[plugins."codex-app-tools@openai-bundled"]
+enabled = false
 
 [mcp_servers."cocoindex-code"]
 enabled = false

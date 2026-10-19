@@ -44,10 +44,7 @@ test("typed install command rejects unknown options", () => {
 test("findStaleCodexPids ignores sandboxed child codex helpers under an authenticated root codex process", () => {
   const token = "current-token-123";
   const commands = new Map<string, string>([
-    [
-      "7487",
-      `codex app-server CODEX_ROUTER_AUTH_TOKEN=${token} PATH=/usr/bin`
-    ],
+    ["7487", `codex app-server CODEX_ROUTER_AUTH_TOKEN=${token} PATH=/usr/bin`],
     [
       "59372",
       "codex app-server --listen stdio:// CODEX_HOME=/Users/test/.codex PATH=/usr/bin"

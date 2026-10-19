@@ -47,7 +47,7 @@ function makeWidget(
 }
 
 const partialPayload = {
-  schema: "autodev-openlit-usage-v4",
+  schema: "autodev-openlit-usage-v5",
   widgets: [
     makeWidget("logical-requests", {
       observed: true,
@@ -134,6 +134,59 @@ const partialPayload = {
       xAxis: "g0",
       yAxis: "compactions"
     }),
+    makeWidget("git-commits", {
+      observed: true,
+      rows: [{ commits: "2" }],
+      valuePath: "0.commits"
+    }),
+    makeWidget("git-files-changed", {
+      observed: true,
+      rows: [{ files_changed: "4" }],
+      valuePath: "0.files_changed"
+    }),
+    makeWidget("git-files-added", {
+      observed: true,
+      rows: [{ files_added: "2" }],
+      valuePath: "0.files_added"
+    }),
+    makeWidget("git-files-deleted", {
+      observed: true,
+      rows: [{ files_deleted: "1" }],
+      valuePath: "0.files_deleted"
+    }),
+    makeWidget("git-lines-added", {
+      observed: true,
+      rows: [{ lines_added: "20" }],
+      valuePath: "0.lines_added"
+    }),
+    makeWidget("git-lines-removed", {
+      observed: true,
+      rows: [{ lines_removed: "5" }],
+      valuePath: "0.lines_removed"
+    }),
+    makeWidget("git-partial-commits", {
+      observed: true,
+      rows: [{ partial_commits: "1" }],
+      valuePath: "0.partial_commits"
+    }),
+    makeWidget("git-commits-by-workspace", {
+      observed: true,
+      rows: [{ g0: "repo-a", commits: "2" }],
+      xAxis: "g0",
+      yAxis: "commits"
+    }),
+    makeWidget("git-commits-by-provider", {
+      observed: true,
+      rows: [{ g0: "codex", commits: "2" }],
+      xAxis: "g0",
+      yAxis: "commits"
+    }),
+    makeWidget("git-commits-by-agent", {
+      observed: true,
+      rows: [{ g0: "worker", commits: "2" }],
+      xAxis: "g0",
+      yAxis: "commits"
+    }),
     makeWidget("skill-events-by-event", {
       observed: true,
       rows: [{ event: "used", events: "4" }],
@@ -215,6 +268,23 @@ test("OpenLITUsageClient sends typed URL filter state with server credentials", 
     { event: "used", count: 4 }
   ]);
   assert.equal(result.data.metrics.estimatedCostUsd, 0.0081);
+  assert.deepEqual(result.data.metrics.gitChanges, {
+    status: "observed",
+    notApplicableReason: null,
+    unsupportedFilters: [],
+    partial: true,
+    breakdownsPartial: false,
+    commits: 2,
+    filesChanged: 4,
+    filesAdded: 2,
+    filesDeleted: 1,
+    linesAdded: 20,
+    linesRemoved: 5,
+    partialCommits: 1,
+    commitsByWorkspace: [{ name: "repo-a", count: 2 }],
+    commitsByProvider: [{ name: "codex", count: 2 }],
+    commitsByAgent: [{ name: "worker", count: 2 }]
+  });
   assert.deepEqual(result.data.metrics.requestsByRole, []);
   assert.deepEqual(result.data.filterOptions.workspace, ["repo-a"]);
   assert.equal(result.data.filterOptions.model, null);
@@ -243,6 +313,129 @@ test("OpenLITUsageClient does not claim compaction metrics for provider or skill
     "provider",
     "skill"
   ]);
+  assert.deepEqual(result.data.metrics.gitChanges, {
+    status: "not-applicable",
+    notApplicableReason: "unsupported-filter",
+    unsupportedFilters: ["skill"],
+    partial: null,
+    breakdownsPartial: false,
+    commits: null,
+    filesChanged: null,
+    filesAdded: null,
+    filesDeleted: null,
+    linesAdded: null,
+    linesRemoved: null,
+    partialCommits: null,
+    commitsByWorkspace: null,
+    commitsByProvider: null,
+    commitsByAgent: null
+  });
+});
+
+test("Git Usage distinguishes a source-confirmed zero from no observed metric", async () => {
+  const noObservation = structuredClone(partialPayload);
+  const commits = noObservation.widgets.find(
+    (widget) => widget.key === "git-commits"
+  );
+  assert.ok(commits);
+  commits.observed = false;
+  commits.rows = [];
+  for (const id of [
+    "git-commits-by-workspace",
+    "git-commits-by-provider",
+    "git-commits-by-agent"
+  ]) {
+    const breakdown = noObservation.widgets.find((widget) => widget.key === id);
+    assert.ok(breakdown);
+    breakdown.observed = false;
+    breakdown.rows = [];
+  }
+
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(noObservation)
+  });
+  const unobserved = await client.query(supportedSelection);
+  assert.equal(unobserved.kind, "ok");
+  if (unobserved.kind === "ok") {
+    assert.equal(unobserved.data.metrics.gitChanges.status, "not-observed");
+    assert.equal(unobserved.data.metrics.gitChanges.commits, null);
+  }
+
+  commits.observed = true;
+  commits.rows = [{ commits: "0" }];
+  for (const id of [
+    "git-files-changed",
+    "git-files-added",
+    "git-files-deleted",
+    "git-lines-added",
+    "git-lines-removed",
+    "git-partial-commits"
+  ]) {
+    const count = noObservation.widgets.find((widget) => widget.key === id);
+    assert.ok(count);
+    count.observed = true;
+    count.rows = [{ value: "0" }];
+    count.valuePath = "0.value";
+  }
+  const emptyClient = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(noObservation)
+  });
+  const empty = await emptyClient.query(supportedSelection);
+  assert.equal(empty.kind, "ok");
+  if (empty.kind === "ok") {
+    assert.equal(empty.data.metrics.gitChanges.status, "observed");
+    assert.equal(empty.data.metrics.gitChanges.commits, 0);
+    assert.deepEqual(empty.data.metrics.gitChanges.commitsByWorkspace, []);
+  }
+});
+
+test("Git Usage is not applicable to the live Active Sessions scope", async () => {
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(partialPayload)
+  });
+  const result = await client.query({ range: "ACTIVE_SESSIONS", values: {} });
+  assert.equal(result.kind, "ok");
+  if (result.kind === "ok") {
+    assert.equal(result.data.metrics.gitChanges.status, "not-applicable");
+    assert.equal(
+      result.data.metrics.gitChanges.notApplicableReason,
+      "active-sessions"
+    );
+    assert.equal(result.data.metrics.gitChanges.commits, null);
+  }
+});
+
+test("Git line totals stay unobserved when partial-diff coverage failed", async () => {
+  const incomplete = structuredClone(partialPayload);
+  const partialWidget = incomplete.widgets.find(
+    (widget) => widget.key === "git-partial-commits"
+  );
+  assert.ok(partialWidget);
+  partialWidget.querySucceeded = false;
+  partialWidget.observed = false;
+  partialWidget.rows = [];
+
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(incomplete)
+  });
+  const result = await client.query(supportedSelection);
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.equal(result.data.metrics.gitChanges.status, "observed");
+  assert.equal(result.data.metrics.gitChanges.commits, 2);
+  assert.equal(result.data.metrics.gitChanges.partial, null);
+  assert.equal(result.data.metrics.gitChanges.partialCommits, null);
+  assert.equal(result.data.metrics.gitChanges.filesChanged, 4);
+  assert.equal(result.data.metrics.gitChanges.linesAdded, null);
+  assert.equal(result.data.metrics.gitChanges.linesRemoved, null);
 });
 
 test("OpenLITUsageClient distinguishes a successful empty series from a failed query", async () => {

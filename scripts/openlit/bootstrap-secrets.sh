@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Generate OpenLIT/Control secrets outside the repo and provision local Console server env.
+# Generate OpenLIT, Control, and Playtesting secrets outside the repo and
+# provision only the Console-owned secrets into the local Next.js environment.
 #
 # The input is a mode-0600 env file under CODEX_HOME (not the tracked
 # config/openlit/openlit.env template). Existing strong values are preserved;
@@ -58,10 +59,12 @@ DB_PASSWORD="$(read_secret OPENLIT_DB_PASSWORD)"
 CONTROL_TOKEN="$(read_secret AUTODEV_CONTROL_API_TOKEN)"
 OTLP_TOKEN="$(read_secret OPENLIT_OTLP_API_KEY)"
 USAGE_TOKEN="$(read_secret AUTODEV_OPENLIT_USAGE_TOKEN)"
+PLAYTEST_CONTROL_TOKEN="$(read_secret AUTODEV_PLAYTEST_CONTROL_API_TOKEN)"
 if is_weak "$DB_PASSWORD"; then DB_PASSWORD="$(generate_secret)"; fi
 if is_weak "$CONTROL_TOKEN"; then CONTROL_TOKEN="$(generate_secret)"; fi
 if is_weak "$OTLP_TOKEN"; then OTLP_TOKEN="$(generate_secret)"; fi
 if is_weak "$USAGE_TOKEN"; then USAGE_TOKEN="$(generate_secret)"; fi
+if is_weak "$PLAYTEST_CONTROL_TOKEN"; then PLAYTEST_CONTROL_TOKEN="$(generate_secret)"; fi
 
 mkdir -p "$(dirname "$SECRET_FILE")"
 chmod 0700 "$(dirname "$SECRET_FILE")"
@@ -73,6 +76,7 @@ OPENLIT_DB_PASSWORD=$DB_PASSWORD
 AUTODEV_CONTROL_API_TOKEN=$CONTROL_TOKEN
 OPENLIT_OTLP_API_KEY=$OTLP_TOKEN
 AUTODEV_OPENLIT_USAGE_TOKEN=$USAGE_TOKEN
+AUTODEV_PLAYTEST_CONTROL_API_TOKEN=$PLAYTEST_CONTROL_TOKEN
 SECRETS
 chmod 0600 "$TEMP_FILE"
 mv -f "$TEMP_FILE" "$SECRET_FILE"
@@ -98,4 +102,4 @@ CONSOLE_ENV
 	fi
 fi
 
-printf '==> OpenLIT, Control, and Usage secrets are ready in %s (mode 0600; values redacted)\n' "$SECRET_FILE"
+printf '==> OpenLIT, Control, Usage, and Playtest runner secrets are ready in %s (mode 0600; values redacted)\n' "$SECRET_FILE"

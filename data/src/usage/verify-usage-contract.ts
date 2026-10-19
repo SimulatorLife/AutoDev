@@ -2,7 +2,7 @@ import { OpenLITUsageClient } from "./openlit-usage-client.ts";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:3000";
 // Use a bounded historical date window so ClickHouse partition/primary-key
-// pruning validates every v4 widget, filter-option, and trace-list query
+// pruning validates every v5 widget, filter-option, and trace-list query
 // contract without scanning the full 24-hour live telemetry volume on every
 // Console service restart.
 const CONTRACT_PROBE_DATE = "2000-01-01";
@@ -24,12 +24,12 @@ if (serviceToken) {
 
   switch (result.kind) {
     case "ok": {
-      process.stdout.write("[openlit] Usage v4 response contract verified.\n");
+      process.stdout.write("[openlit] Usage v5 response contract verified.\n");
       break;
     }
     case "invalid-response": {
       process.stderr.write(
-        "[openlit] Usage API returned a response that does not match the required v4 contract. Rebuild/reconcile the patched OpenLIT image.\n"
+        "[openlit] Usage API returned a response that does not match the required v5 contract. Rebuild/reconcile the patched OpenLIT image.\n"
       );
       process.exitCode = 1;
       break;

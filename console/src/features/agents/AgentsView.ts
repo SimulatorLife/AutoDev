@@ -25,6 +25,7 @@ import {
   NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
+import { Chip } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable,
@@ -175,33 +176,93 @@ export function AgentsView({
         React.createElement(StatusBadge, { status: agent.convergence })
     },
     {
-      id: "skillsCount",
+      id: "skills",
       header: "Skills",
-      weight: 103,
-      cell: (agent) =>
-        React.createElement(
-          "span",
-          { className: "text-xs text-fg-secondary tabular-nums" },
-          agent.tools.filter((tool) => tool.type === "skill").length
-        )
+      align: "tokens",
+      weight: 147,
+      cell: (agent) => {
+        const skills = agent.tools.filter((tool) => tool.type === "skill");
+        if (skills.length === 0) {
+          return React.createElement(
+            "span",
+            { className: MUTED_META_CLASS },
+            "None"
+          );
+        }
+        return React.createElement(
+          "ul",
+          {
+            className: "flex flex-wrap list-none items-center gap-1 p-0 m-0",
+            "data-agent-skills": agent.role
+          },
+          ...skills.map((skill) =>
+            React.createElement(
+              "li",
+              { key: skill.name, className: "flex min-w-0 items-center" },
+              React.createElement(
+                Chip,
+                {
+                  href: "/skills/" + encodeURIComponent(skill.name),
+                  label: skill.name,
+                  className: "font-mono"
+                },
+                skill.name
+              )
+            )
+          )
+        );
+      }
     },
     {
-      id: "mcpsCount",
+      id: "mcps",
       header: "MCPs",
-      weight: 93,
-      cell: (agent) =>
-        React.createElement(
-          "span",
-          { className: "text-xs text-fg-secondary tabular-nums" },
-          agent.tools.filter((tool) => tool.type === "mcp").length
-        )
+      align: "tokens",
+      weight: 147,
+      cell: (agent) => {
+        const mcps = Array.from(
+          new Set(
+            agent.tools
+              .filter((tool) => tool.type === "mcp")
+              .map((tool) => tool.server ?? tool.name)
+          )
+        );
+        if (mcps.length === 0) {
+          return React.createElement(
+            "span",
+            { className: MUTED_META_CLASS },
+            "None"
+          );
+        }
+        return React.createElement(
+          "ul",
+          {
+            className: "flex flex-wrap list-none items-center gap-1 p-0 m-0",
+            "data-agent-mcps": agent.role
+          },
+          ...mcps.map((mcp) =>
+            React.createElement(
+              "li",
+              { key: mcp, className: "flex min-w-0 items-center" },
+              React.createElement(
+                Chip,
+                {
+                  href: "/mcps/" + encodeURIComponent(mcp),
+                  label: mcp,
+                  className: "font-mono"
+                },
+                mcp
+              )
+            )
+          )
+        );
+      }
     }
   ];
 
   return React.createElement(
     PageBody,
     { feature: "agents" },
-    React.createElement(LiveCountRefresh),
+    React.createElement(LiveCountRefresh, { silent: true }),
     controlFailed
       ? React.createElement(ControlFailureNotice, { refusal: controlRefusal })
       : null,
@@ -384,4 +445,3 @@ export function AgentsView({
 function observed(value: number | undefined): string {
   return value === undefined ? NOT_OBSERVED_LABEL : String(value);
 }
-

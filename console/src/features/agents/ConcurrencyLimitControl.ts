@@ -30,7 +30,10 @@ function stepped(
       fallbackLimit !== null && fallbackLimit !== undefined
         ? fallbackLimit
         : DEFAULT_STEP_LIMIT;
-    return Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, base + (delta < 0 ? -1 : 1)));
+    return Math.min(
+      MAX_LIMIT,
+      Math.max(MIN_LIMIT, base + (delta < 0 ? -1 : 1))
+    );
   }
   return Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, current + delta));
 }

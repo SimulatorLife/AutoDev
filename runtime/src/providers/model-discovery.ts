@@ -8,8 +8,10 @@ import type {
   ControlApiProviderModelDiscovery,
   ControlApiProviderModelsResponse
 } from "@simulatorlife/autodev-core";
+import { resolveCodexBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import { providerQuotaPool } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
+import { loadCodexAuth } from "../router/proxy.ts";
 import { ROUTES, ROUTING_POLICY } from "../router/routing.ts";
 
 const DEFAULT_REFRESH_INTERVAL_MS = 15 * 60_000;
@@ -17,11 +19,15 @@ const DISCOVERY_TIMEOUT_MS = 8000;
 const MAX_AGY_OUTPUT_BYTES = 64 * 1024;
 const MAX_HTTP_RESPONSE_BYTES = 256 * 1024;
 const MINIMAX_API_BASE_URL = "https://api.minimax.io";
+const CODEX_BACKEND_BASE_URL = "https://chatgpt.com/backend-api/codex";
+const CODEX_MODEL_LIST_URL = `${CODEX_BACKEND_BASE_URL}/models`;
 const MAX_DISCOVERED_MODELS = 512;
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const PROVIDER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const DISPLAY_NAME_LIMIT = 256;
 const MODEL_LIST_LINE_SPLIT = /\r?\n/u;
+const CODEX_CLI_VERSION_PATTERN = /^codex-cli\s+(\d+\.\d+\.\d+)$/u;
+const TRAILING_SLASH_PATTERN = /\/+$/u;
 const MODEL_DISCOVERY_COLLATOR = new Intl.Collator();
 const DISCOVERY_PERSISTENCE_SCHEMA =
   "autodev-provider-model-discovery-state-v1" as const;
@@ -390,12 +396,225 @@ function minimaxModelAdapter(
   };
 }
 
+export function parseCodexModelList(
+  payload: unknown
+): readonly ProviderModelDiscoveryItem[] {
+  if (
+    !isRecord(payload) ||
+    !Array.isArray(payload.models) ||
+    payload.models.length > MAX_DISCOVERED_MODELS
+  ) {
+    throw new Error(
+      "Codex model-list response did not contain a bounded models array."
+    );
+  }
+  const seen = new Set<string>();
+  return payload.models.map((entry) => {
+    if (!isRecord(entry)) {
+      throw new Error("Codex model-list response contained an invalid entry.");
+    }
+    const id = entry.slug;
+    const displayName = entry.display_name;
+    if (
+      typeof id !== "string" ||
+      !MODEL_ID_PATTERN.test(id) ||
+      seen.has(id) ||
+      (displayName !== undefined &&
+        (typeof displayName !== "string" ||
+          displayName.length > DISPLAY_NAME_LIMIT))
+    ) {
+      throw new Error(
+        "Codex model-list response contained an invalid or duplicate model ID."
+      );
+    }
+    seen.add(id);
+    return {
+      id,
+      displayName: typeof displayName === "string" ? displayName : null
+    };
+  });
+}
+
+function codexClientVersion(
+  env: NodeJS.ProcessEnv,
+  signal: AbortSignal
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error("Codex model discovery was cancelled."));
+      return;
+    }
+
+    let binary: string;
+    try {
+      binary = resolveCodexBinary(env);
+    } catch {
+      reject(
+        new Error("Codex CLI version is unavailable for model discovery.")
+      );
+      return;
+    }
+
+    const child = spawn(binary, ["--version"], {
+      cwd: env.HOME?.trim() || homedir(),
+      env,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    const chunks: Buffer[] = [];
+    let byteLength = 0;
+    let settled = false;
+    let forceKill: ReturnType<typeof setTimeout> | null = null;
+    const terminate = (): void => {
+      child.kill("SIGTERM");
+      if (forceKill !== null) return;
+      forceKill = setTimeout(() => child.kill("SIGKILL"), 250);
+      forceKill.unref();
+    };
+    const finish = (error?: Error, version?: string): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      if (error) reject(error);
+      else resolve(version ?? "");
+    };
+    const abort = (): void => {
+      terminate();
+      finish(new Error("Codex model discovery was cancelled."));
+    };
+    const timer = setTimeout(() => {
+      terminate();
+      finish(new Error("Codex CLI version lookup timed out."));
+    }, 2000);
+    timer.unref();
+    signal.addEventListener("abort", abort, { once: true });
+    child.stdout.on("data", (chunk: Buffer) => {
+      byteLength += chunk.length;
+      if (byteLength > 1024) {
+        terminate();
+        finish(new Error("Codex CLI version output exceeded its bound."));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.once("error", () => {
+      finish(new Error("Codex CLI version lookup could not be started."));
+    });
+    child.once("close", (code) => {
+      if (forceKill !== null) clearTimeout(forceKill);
+      if (settled) return;
+      if (code !== 0) {
+        finish(new Error("Codex CLI version lookup failed."));
+        return;
+      }
+      const output = Buffer.concat(chunks).toString("utf8").trim();
+      const match = CODEX_CLI_VERSION_PATTERN.exec(output);
+      if (!match?.[1]) {
+        finish(new Error("Codex CLI returned an unrecognized version."));
+        return;
+      }
+      finish(undefined, match[1]);
+    });
+  });
+}
+
+function codexRouteUsesAccountBackend(): boolean {
+  const route = ROUTES.find((candidate) => candidate.provider === "codex");
+  if (!route) return false;
+  try {
+    const configured = new URL(route.baseUrl);
+    const expected = new URL(CODEX_BACKEND_BASE_URL);
+    return (
+      configured.origin === expected.origin &&
+      configured.pathname.replace(TRAILING_SLASH_PATTERN, "") ===
+        expected.pathname.replace(TRAILING_SLASH_PATTERN, "")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function discoverCodexModels(
+  fetchImpl: typeof fetch = globalThis.fetch,
+  loadAuth: typeof loadCodexAuth = loadCodexAuth,
+  getClientVersion: (signal: AbortSignal) => Promise<string> = (signal) =>
+    codexClientVersion(process.env, signal),
+  parentSignal?: AbortSignal
+): Promise<readonly ProviderModelDiscoveryItem[]> {
+  if (!codexRouteUsesAccountBackend()) {
+    throw new Error(
+      "Codex route is not the account backend used for provider model discovery."
+    );
+  }
+  const timeout = AbortSignal.timeout(DISCOVERY_TIMEOUT_MS);
+  const signal =
+    parentSignal === undefined
+      ? timeout
+      : AbortSignal.any([parentSignal, timeout]);
+  let auth: Awaited<ReturnType<typeof loadCodexAuth>>;
+  try {
+    auth = await loadAuth();
+  } catch {
+    throw new Error(
+      "Codex account authentication is unavailable for model discovery."
+    );
+  }
+  if (signal.aborted) {
+    throw new Error("Codex model discovery was cancelled.");
+  }
+  const clientVersion = await getClientVersion(signal);
+  const url = new URL(CODEX_MODEL_LIST_URL);
+  url.searchParams.set("client_version", clientVersion);
+
+  const response = await fetchImpl(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${auth.token}`,
+      "chatgpt-account-id": auth.accountId,
+      Accept: "application/json"
+    },
+    signal
+  });
+  if (!response.ok) {
+    throw new Error(`Codex model-list API returned HTTP ${response.status}.`);
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(
+      await boundedResponseText(response, MAX_HTTP_RESPONSE_BYTES)
+    ) as unknown;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("size bound")) {
+      throw error;
+    }
+    throw new Error("Codex model-list API returned invalid JSON.");
+  }
+  return parseCodexModelList(payload);
+}
+
+function codexModelAdapter(
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = globalThis.fetch
+): ProviderModelDiscoveryAdapter {
+  return {
+    source: "Codex account GET /backend-api/codex/models",
+    discover: (signal) =>
+      discoverCodexModels(
+        fetchImpl,
+        loadCodexAuth,
+        (parentSignal) => codexClientVersion(env, parentSignal),
+        signal
+      )
+  };
+}
+
 function defaultAdapters(): Readonly<
   Record<string, ProviderModelDiscoveryAdapter>
 > {
   return {
     antigravity: discoverAgyModels(),
-    minimax: minimaxModelAdapter()
+    minimax: minimaxModelAdapter(),
+    codex: codexModelAdapter()
   };
 }
 

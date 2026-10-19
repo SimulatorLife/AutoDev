@@ -1,6 +1,7 @@
 export * from "./agents/types.ts";
 export * from "./control/types.ts";
 export * from "./control-api/contract.ts";
+export * from "./control-api/provider-health.ts";
 export * from "./control-api/types.ts";
 export * from "./evaluations/types.ts";
 export * from "./github/types.ts";

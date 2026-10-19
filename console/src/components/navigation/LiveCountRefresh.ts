@@ -9,7 +9,14 @@ import {
   startLiveCountRefresh
 } from "./live-count-refresh.ts";
 
-export function LiveCountRefresh(): React.JSX.Element {
+export interface LiveCountRefreshProps {
+  readonly silent?: boolean | undefined;
+}
+
+export function LiveCountRefresh(
+  props: LiveCountRefreshProps
+): React.JSX.Element | null {
+  const silent = props?.silent ?? false;
   React.useEffect(
     () =>
       startLiveCountRefresh(() =>
@@ -17,6 +24,8 @@ export function LiveCountRefresh(): React.JSX.Element {
       ),
     []
   );
+
+  if (silent) return null;
 
   return React.createElement(
     "p",

@@ -90,6 +90,12 @@ function createFixtureEnvironment(): {
   const root = mkdtempSync(join(tmpdir(), "autodev-agy-mcp-test-"));
   const codexHome = join(root, "codex");
   const userHome = join(root, "user-home");
+  mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+  writeFileSync(
+    join(codexHome, "openlit-secrets.env"),
+    `AUTODEV_PLAYTEST_CONTROL_API_TOKEN=${"p".repeat(64)}\n`,
+    { mode: 0o600 }
+  );
 
   // Create provider-runtime catalog
   const runtimeDir = join(codexHome, "provider-runtime");
@@ -835,6 +841,71 @@ try {
     assert.equal(exitCode, 0, `runner failed:\n${stderr}\n${stdout}`);
   } finally {
     rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("playtester receives only its allowlisted Playtest MCP with trusted non-secret session env", () => {
+  const env = createFixtureEnvironment();
+  try {
+    const { mcpConfig, cleanup } = createIsolatedAntigravityHome(
+      "playtester",
+      null,
+      {
+        originalHome: env.userHome,
+        codexHome: env.codexHome,
+        cwd: "/Users/henrykirk/Desktop/RacingGame",
+        requestId: "trusted-request-1",
+        workspaceKey: "SimulatorLife/RacingGame"
+      }
+    );
+    try {
+      assert.deepEqual(Object.keys(mcpConfig.mcpServers), ["playtest"]);
+      const playtestServer = mcpConfig.mcpServers.playtest;
+      assert.ok(playtestServer, "playtester must receive the Playtest MCP");
+      const args = playtestServer.args;
+      assert.ok(args, "Playtest must use the role tool filter");
+      assert.equal(
+        args[0],
+        pathResolve(REPO_ROOT, "runtime/src/mcp/tool-filter.ts")
+      );
+      assert.deepEqual(
+        JSON.parse(args[3]!),
+        roleMcpToolList("playtester", "playtest")
+      );
+      assert.deepEqual(playtestServer.env, {
+        CODEX_HOME: env.codexHome,
+        AUTODEV_REPO_ROOT: REPO_ROOT,
+        AUTODEV_NODE_BIN: process.execPath,
+        AUTODEV_PLAYTEST_WORKSPACE_ID: "SimulatorLife/RacingGame",
+        AUTODEV_PLAYTEST_ROLE: "playtester",
+        AUTODEV_PLAYTEST_ACTOR_ID:
+          playtestServer.env?.AUTODEV_PLAYTEST_ACTOR_ID,
+        AUTODEV_PLAYTEST_TASK_ID: "provider-task-trusted-request-1",
+        AUTODEV_PLAYTEST_RUN_ID: "provider-run-trusted-request-1",
+        AUTODEV_PLAYTEST_REPOSITORY_ROOT: "/Users/henrykirk/Desktop/RacingGame",
+        AUTODEV_OPENLIT_SECRET_FILE: join(env.codexHome, "openlit-secrets.env"),
+        AUTODEV_CONTROL_API_BASE_URL: "http://127.0.0.1:4101",
+        AUTODEV_PLAYTEST_CONTROL_API_ACTOR: "autodev-playtester-runtime",
+        AUTODEV_PLAYTEST_CONTROL_API_ROLE: "playtester"
+      });
+      assert.equal(
+        Object.hasOwn(
+          playtestServer.env ?? {},
+          "AUTODEV_PLAYTEST_CONTROL_API_TOKEN"
+        ),
+        false,
+        "the runner credential stays in the protected secret file"
+      );
+      assert.equal(
+        Object.hasOwn(playtestServer.env ?? {}, "AUTODEV_CONTROL_API_TOKEN"),
+        false,
+        "the general Console Control credential is never delegated"
+      );
+    } finally {
+      cleanup();
+    }
+  } finally {
+    env.cleanup();
   }
 });
 

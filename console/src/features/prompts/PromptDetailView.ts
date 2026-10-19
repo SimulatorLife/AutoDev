@@ -224,8 +224,7 @@ const PROMPT_MARKDOWN_COMPONENTS: Components = {
     React.createElement(
       "blockquote",
       {
-        className:
-          `mb-3 border-l-2 border-border-strong pl-4 ${MUTED_BODY_CLASS}`
+        className: `mb-3 border-l-2 border-border-strong pl-4 ${MUTED_BODY_CLASS}`
       },
       children
     ),
@@ -271,8 +270,7 @@ function renderPromptPreview(prompt: PromptDocument): React.ReactNode {
     React.createElement(
       "summary",
       {
-        className:
-          `cursor-pointer font-semibold ${SECTION_LABEL_CLASS}`
+        className: `cursor-pointer font-semibold ${SECTION_LABEL_CLASS}`
       },
       "Preview rendered Markdown"
     ),

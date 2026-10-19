@@ -175,7 +175,11 @@ function durationMsFromWindow(window: string): number | null {
     if (!Number.isFinite(amount)) return null;
     total +=
       amount *
-      (unit === "h" ? MS_PER_HOUR : unit === "m" ? MS_PER_MINUTE : MS_PER_SECOND);
+      (unit === "h"
+        ? MS_PER_HOUR
+        : unit === "m"
+          ? MS_PER_MINUTE
+          : MS_PER_SECOND);
     components += 1;
   }
   return components > 0 && total > 0 ? total : null;

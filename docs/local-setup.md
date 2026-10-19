@@ -787,7 +787,7 @@ bash scripts/openlit/down.sh
 
 ### Console startup contract
 
-Use `pnpm run dev` as the supported development entrypoint. Directly launching the Next.js workspace bypasses backend reconciliation and contract validation and is intentionally not exposed as a root script. The production Console launcher performs the same read-only Control API compatibility check and validates the OpenLIT Usage v4 response before it starts `next start`.
+Use `pnpm run dev` as the supported development entrypoint. Directly launching the Next.js workspace bypasses backend reconciliation and contract validation and is intentionally not exposed as a root script. The production Console launcher performs the same read-only Control API compatibility check and validates the OpenLIT Usage v5 response before it starts `next start`.
 
 The normal `pnpm run install:codex` release materializes the Console LaunchAgent, verifies that this Runtime owns the Console port, builds Next into a unique staging directory, leaves the active production artifact untouched on build failure, then reloads/verifies the managed Console after Runtime. `bash scripts/install.sh --materialize-only` deliberately skips both the production build and service restart for an active session. The installer owns the Console port: it stops a Console process this Runtime owns — a previous install's console, or a development server occupying the configured port — and takes the port for the managed Console, so a repeated install converges instead of failing. It never kills a listener it does not own and never publishes over a foreign listener's port; that listener has to be stopped, or the port changed with `AUTODEV_CONSOLE_PORT`.
 
@@ -799,7 +799,7 @@ Control API base defaults to `http://127.0.0.1:4101` and can be configured with
 `AUTODEV_CONTROL_API_BASE_URL`. `pnpm run dev` validates the configured endpoint’s
 compatibility revision, Providers, provider-model discovery, and Playtesting contracts before starting
 Next.js. The production launcher runs the same Control API check and verifies
-the OpenLIT Usage v4 contract before `next start`; neither startup path starts
+the OpenLIT Usage v5 contract before `next start`; neither startup path starts
 with known-stale backend responses. The runner Playtesting MCP uses a **separate, Playtesting-only**
 `AUTODEV_PLAYTEST_CONTROL_API_TOKEN` provisioned in the Runtime and MCP process,
 plus the trusted `AUTODEV_PLAYTEST_CONTROL_API_ACTOR` and exact
@@ -807,6 +807,20 @@ plus the trusted `AUTODEV_PLAYTEST_CONTROL_API_ACTOR` and exact
 configured run-control role); the configured role must match the MCP role. The
 Runtime accepts that role-bound credential only on typed Playtesting
 capability/run routes and rejects missing or role-escalated session context.
+Codex-native `multi_agent_v1` subagents inherit the parent session's MCP set;
+a custom agent's `mcp_servers` table does not enable or narrow MCP servers for
+that child ([Codex subagent configuration](https://learn.chatgpt.com/docs/agent-configuration/subagents)). AutoDev intentionally keeps `playtest` and `playwright` disabled in
+the root session, so a native Codex child must not be assumed to have those
+tools just because its role TOML declares them. Do not enable either server at
+the root as a workaround: every native child would inherit the same set, and
+Playtest run authority is bound to trusted Runtime-provided session context.
+For an isolated Browser Tester CLI run, use the `browser-tester` role through
+`run-provider-agent.sh`; that path reasserts the exact Playwright tool and
+environment allowlists. Playtester MCP launches require the dedicated trusted
+runner context and must be dispatched by a Runtime-owned caller; an arbitrary
+shell launch is expected to fail closed. Console Play/Watch and Runtime-owned
+analysis remain the supported UI lifecycle.
+
 The read-only analyst MCP does not use the Control API run-control client: its
 allowlisted packet/review operations read and write through the workspace-bound
 Playtesting repository and artifact store, and the analyst receives no Control
@@ -832,9 +846,9 @@ by the game adapter. To query Usage, set
 separately generated value in `$CODEX_HOME/openlit-secrets.env`;
 `AUTODEV_OPENLIT_USAGE_URL` defaults to `http://127.0.0.1:3000`. The Console is the only Memory operator surface: durable records, experiences, and outcome cohorts are read through the Control API in `console/app/memory`. The transitional external Memory portal is gone, so `AUTODEV_OPENLIT_UI_URL` no longer has a consumer — delete it from `$CODEX_HOME/.env` and do not reintroduce it. The Console launcher forwards only the two URL variables the server actually reads (`AUTODEV_CONTROL_API_BASE_URL`, `AUTODEV_OPENLIT_USAGE_URL`). Do not source or expose the full secret file to browser code.
 
-If `/usage` reports `autodev_openlit_usage_unreachable`, check that OpenLIT is running and that `AUTODEV_OPENLIT_USAGE_URL` points to an address reachable from the Console server. The local default is port 3000; start the OpenLIT stack with `scripts/openlit/up.sh` when Docker is available. A successful HTTP response with an invalid Usage schema is reported separately as `autodev_openlit_usage_invalid_response`. Verify that OpenLIT serves the required AutoDev Usage v4 contract; if that live contract is valid, rebuild and restart the managed Console so its long-lived server process loads the matching bundle. Neither failure state renders metric panels or substitutes sample values.
+If `/usage` reports `autodev_openlit_usage_unreachable`, check that OpenLIT is running and that `AUTODEV_OPENLIT_USAGE_URL` points to an address reachable from the Console server. The local default is port 3000; start the OpenLIT stack with `scripts/openlit/up.sh` when Docker is available. A successful HTTP response with an invalid Usage schema is reported separately as `autodev_openlit_usage_invalid_response`. Verify that OpenLIT serves the required AutoDev Usage v5 contract; if that live contract is valid, rebuild and restart the managed Console so its long-lived server process loads the matching bundle. Neither failure state renders metric panels or substitutes sample values.
 
-The AutoDev summary response is `autodev-openlit-usage-v4`, including validated widget data, filter options, and the bounded recent-attempt list. After changing the Usage patch set (including the v4 compaction widgets), rebuild and restart the patched OpenLIT stack with `scripts/openlit/up.sh`; the Console deliberately rejects older response contracts instead of silently dropping data.
+The AutoDev summary response is `autodev-openlit-usage-v5`, including validated widget data, filter options, bounded recent-attempt data, and Git change metrics. After changing the Usage patch set (including the v4 compaction and v5 Git metrics widgets), rebuild and restart the patched OpenLIT stack with `scripts/openlit/up.sh`; the Console deliberately rejects older response contracts instead of silently dropping data.
 
 The two Console server-only tokens are seeded into the server environment by
 exactly one writer: `scripts/openlit/bootstrap-secrets.sh`, which is the same

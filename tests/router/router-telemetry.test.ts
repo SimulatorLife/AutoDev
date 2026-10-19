@@ -6,7 +6,8 @@ import test from "node:test";
 import { trace } from "@opentelemetry/api";
 import {
   AggregationTemporality,
-  InMemoryMetricExporter
+  InMemoryMetricExporter,
+  InstrumentType
 } from "@opentelemetry/sdk-metrics";
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
@@ -29,6 +30,7 @@ import {
   compactCompactionDimension,
   COMPACTION_DIMENSION_ALLOWLISTS,
   COMPACTION_DIMENSION_OTHER,
+  createOtlpMetricExporter,
   endAttemptSpan,
   endLogicalRequestSpan,
   flushTelemetryMetrics,
@@ -1468,6 +1470,34 @@ test(
   }
 );
 
+test(
+  "Router metric export stays cumulative for Usage window deltas despite a global delta preference",
+  { concurrency: false },
+  async () => {
+    const previousPreference =
+      process.env.OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE;
+    process.env.OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE = "delta";
+    const exporter = createOtlpMetricExporter(
+      "http://127.0.0.1:4318/v1/metrics",
+      {}
+    );
+    try {
+      assert.equal(
+        exporter.selectAggregationTemporality(InstrumentType.COUNTER),
+        AggregationTemporality.CUMULATIVE
+      );
+    } finally {
+      await exporter.shutdown();
+      if (previousPreference === undefined) {
+        delete process.env.OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE;
+      } else {
+        process.env.OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE =
+          previousPreference;
+      }
+    }
+  }
+);
+
 test("the OTLP exporter is not installed when OTEL_EXPORTER_OTLP_ENDPOINT is unset", async () => {
   const previousEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
@@ -2729,6 +2759,45 @@ test("an unmeasurable commit is refused rather than recorded as zero changes", a
   // Nothing was emitted: the two refused calls left the running total exactly
   // where it was, rather than adding a zero-change commit.
   assert.equal(totalGitCommits(), totalBefore);
+});
+
+test("an invalid observation does not consume the commit's idempotency claim", async () => {
+  installExporter();
+  resetTrackedGitCommitsForTest();
+  await flushTelemetryMetrics();
+  const totalBefore = totalGitCommits();
+  const commit = "e".repeat(40);
+
+  assert.equal(
+    recordGitCommit({
+      commit,
+      filesChanged: -1,
+      filesAdded: 0,
+      filesDeleted: 0,
+      linesAdded: 0,
+      linesRemoved: 0
+    }),
+    false
+  );
+  assert.equal(
+    recordGitCommit({
+      commit,
+      filesChanged: 1,
+      filesAdded: 1,
+      filesDeleted: 0,
+      linesAdded: 1,
+      linesRemoved: 0,
+      actorFromCommitIdentity: true,
+      role: "worker",
+      provider: "codex"
+    }),
+    true,
+    "a valid remeasurement must be recordable after an invalid attempt"
+  );
+
+  telemetryMetricExporter.reset();
+  await flushTelemetryMetrics();
+  assert.equal(totalGitCommits(), totalBefore + 1);
 });
 
 /** Cumulative temporality keeps one point per attribute set, so sum them. */

@@ -1,67 +1,83 @@
 ---
 name: game-playtesting
-description: Trigger only when asked to execute, play, run, or simulate a game (e.g. "play ten episodes", "run a playtest batch", "simulate this scenario"). Covers adapter/capability checks, seed/cohort/policy/budget setup, running the session, and preserving the authoritative trace with evidence IDs. Not for analyzing, scoring, comparing, or publishing a recorded session -- use playtest-analysis for that, and do not use this skill for ordinary code changes.
+description: Trigger only when asked to execute, play, run, or simulate a game. Covers mode-specific adapter/visual authorization, capability preflight, launch idempotency, bounded execution, and factual evidence handoff. Not for ordinary code changes or analyzing/scoring/comparing/publishing recorded sessions; use playtest-analysis for analysis.
 targets: []
 ---
 
 # Game Playtesting
 
-Execute a bounded, isolated gameplay session and hand off its evidence. This skill owns **running** play, not interpreting it.
+Execute one explicitly authorized bounded gameplay workflow and hand off its evidence. This skill owns running play, not interpreting it.
 
 ## AutoDev tool invocation
 
-Provider-agent roles run in AutoDev Code Mode. Use the `exec` JavaScript tool for MCP operations and call only the exact `tools.mcp__<server>__<tool>` names advertised in `ALL_TOOLS`. Names such as `playtest.prepareReview` and `playtest.run` are the typed MCP operation labels, not direct top-level provider functions. Use only the tools enabled for this role; do not use shell, filesystem, network, or another role's capabilities.
+Use the AutoDev Code Mode exec tool and only the exact tools.mcp__<server>__<tool> names advertised in ALL_TOOLS. Dotted playtest.* labels name operations; they are not top-level provider functions. Use only this role's enabled tools. Do not use shell, filesystem, arbitrary network access, or another role's capabilities. Do not print, copy, or broaden trusted session credentials.
 
 ## Trigger
 
-Use this skill when the request is to **execute, play, run, or simulate** a target game or scenario (e.g. "play 10 episodes of RacingGame", "run a smoke playtest on this build", "simulate the aggressive cohort on seed 42").
-
-Do **not** use this skill for:
-
-- Reviewing, scoring, interpreting, or comparing an **existing** recorded session -- that is `playtest-analysis`.
-- Fixing code, game logic, or configuration -- ordinary coding skills apply instead.
-- Filing or triaging a GitHub issue -- that is a separately authorized root step, never part of running a session.
+Use this skill only for an explicit request to execute, play, run, or simulate a target game or scenario, including a bounded Smart-directed visual run against an approved browser target.
 
 ### Negative trigger examples
 
-Do not trigger for requests such as:
+Do not use this skill for:
+- Reviewing, scoring, interpreting, or comparing an existing session; that belongs to playtest-analysis.
+- Fixing code, game logic, or configuration; use ordinary engineering skills.
+- Filing or triaging a GitHub issue; that is a separately authorized root step.
+- Asking the Console to analyze an existing result; that belongs to playtest-analysis.
+- "fix this code so the build passes"
+- "analyze this existing trace"
+- "score the difficulty curve"
+- "file a GitHub issue for this bug"
 
-- "fix this code so the build passes" (source code repair, use standard engineering skills)
-- "analyze this existing trace" (session critique, use playtest-analysis)
-- "score the difficulty curve" (qualitative evaluation, use playtest-analysis)
-- "file a GitHub issue for this bug" (root issue publication)
+## Mode separation
 
-## Non-goals
+Core defines three distinct execution modes — `autonomous-visual`, `adapter-accelerated`, and `scripted-regression` — with separate authorization, readiness, launch fields, and evidence. A run never falls back across modes.
 
-- No analysis, scoring, or critique of the recorded play (no "was it fun", no dimension scores).
-- No GitHub issue creation or publication policy -- that belongs to `playtest-analysis` and the root orchestrator, not here.
-- No invented outcomes: only report what the runner actually recorded.
+- Adapter-accelerated runs use the approved committed checkout snapshot; Runtime resolves the build SHA at batch start. Uncommitted edits never run.
+- Autonomous-visual runs use an active Workspaces-approved visual target with exact targetId/targetRevision/approvalId, origin, permitted inputs, and bounded per-episode limits; they never use a checkout build SHA. It does not require an adapter manifest or checkout build. URL-only targets stay Build unknown / Commit not applicable and never inherit this AutoDev checkout's HEAD or any other game's HEAD.
+- Scripted-regression is a third separately gated mode. Use only when explicitly assigned, Runtime readiness is ready, and an exact supported recipe and limits were supplied.
+- A refused/not-ready visual request is a typed refusal, never a fallback to adapter-accelerated or scripted-regression; adapter-accelerated never accepts a visual target.
+- A code-implementation request does not authorize gameplay. Do not run merely because this task asked for code. Before playtest.run, require explicit exact operator authorization for the workspace and selected mode.
 
 ## Workspace and build authorization gate
 
-Verify the exact authorized workspace and build before execution: workspace enablement alone is not run approval. The game adapter runs only for an authorized workspace and approved checkout/build SHA: the Runtime resolves the approved checkout's latest commit at batch start, runs a read-only snapshot of exactly that commit, and records it as the batch build SHA, so uncommitted edits never run and no per-commit approval exists; reject unauthorized workspaces, unapproved builds, or commands outside the approved allowlist.
+Workspace enablement alone is not run approval. Verify exact workspace, selected mode, current capability revision, and authorization before execution.
+
+- Adapter-accelerated runs: use only the approved committed checkout build SHA Runtime resolved at batch start; never execute uncommitted checkout changes.
+- Autonomous-visual runs: use only the selected active visual target's exact approval, origin, permitted input capabilities, and budgets, never a build SHA. URL-only sources are Build unknown / Commit not applicable; never inherit this AutoDev checkout's HEAD or any other game's HEAD.
+- Scripted-regression: use only its explicit workspace approval, ready recipe, and assigned resource limits.
+- Never invent or relax build SHA, target approval, origin, sandbox, capture policy, request budget, scenario, seed, cohort, capabilityRevision, or trusted actor/session identity. Never fabricate scenario, seed, cohort, build SHA, target approval, origin, or request budget. The approved permissions/evidence contract is in docs/playtesting-target-state.md §3. The role receives only its trusted workspace-bound session context; the general Control API token, provider API keys, and analyst-only credentials are not available for forwarding.
 
 ## Workflow
 
-1. **Preflight the adapter and authorize workspace.** Call `playtest.capabilities` for the target workspace/game. Confirm the authorized workspace and build, adapter compatibility, supported policies/cohorts, and budget limits. Report an unsupported or missing adapter instead of improvising a substitute runner or fixture.
-2. **Establish seed, cohort, policy, and limits.** Use the assigned scenario/seed, player cohort/policy (random, novice, learning, intermediate, expert, exploratory/stress, or visual-only -- see `docs/playtesting-target-state.md` §6), and the authorized episode/time/resource budget. Never fabricate a seed, cohort, or budget the task or adapter did not provide.
-3. **Preflight + run.** Call `playtest.capabilities` and copy its `capabilityRevision` unchanged into one versioned `launchRequest` (`autodev-playtest-launch-v1`, one explicit `mode` per run). Generate a unique 1-128 character `requestId` using only letters, digits, dot, underscore, colon or hyphen, and preserve the exact payload until acceptance is confirmed. A revision mismatch means readiness changed: re-read capabilities and reassess; do not blindly retry. If acceptance is uncertain, call `playtest.lookupRequest` with that same ID; retry only the identical payload after `not-found`, never a new key. Execute `playtest.run` with that request; the bounded playtester role may use only `mode: "adapter-accelerated"` with `operation.kind: "batch"`. Counterfactual branch requests use the same Core DTO with `operation.kind: "branch"`, but `playtest.branch` is not in this role's allowlist and must be handed to an authorized orchestrator. Visual and scripted launch requests remain typed but Runtime refuses them until their drivers are ready. Within the authorized budget, retain the server-generated batch ID. Use bounded `playtest.wait` calls for status/result. Do not exceed the approved budget or retry past the adapter's own retry policy. If cancellation is required, list `playtest.activeRuns` and cancel only the server-generated batch ID belonging to this trusted run; preserve partial evidence and never label it a game outcome.
-4. **Preserve the authoritative trace.** Keep the full decision/event/frame timeline and replay/trace references; do not summarize, truncate, or silently drop failures or normal context. If coverage is incomplete, say so explicitly.
-5. **Report completeness, failures, and hand off evidence IDs.** Return the run/episode IDs, exact completeness/coverage, and any observed failures (crash, timeout, replay-integrity break, adapter error). Hand these evidence IDs to the caller or `playtest-analyst`; do not interpret them yourself.
+1. Establish the assigned workspace, mode, exact operator approval, goal/focus, and budget. If authorization or the assigned payload is missing, do not run.
+2. Call playtest.capabilities and copy capabilityRevision unchanged into the launch request. Confirm workspace authorization and the selected mode's readiness.
+   - Adapter-accelerated: require modeReadiness["adapter-accelerated"].status = ready, adapter configuration validated, and assigned scenario/policy/cohort/seed and limits supported. Refuse a missing or unsupported adapter; do not substitute a fixture.
+   - Autonomous-visual: require modeReadiness["autonomous-visual"].status = ready, targetStore = available, and selected target eligibility = supported. Verify target revision/approval/origin/input permissions and each limit against the approved target. Visual mode does not require an adapter, game manifest, scenario, seed, or cohort.
+   - Scripted-regression: require modeReadiness["scripted-regression"].status = ready and an explicitly assigned supported recipe and limits.
+   - If status is not ready, target unsupported/revoked, or capabilityRevision changed, report the typed blocker and stop. Never fall back across modes.
+3. Build exactly one versioned PlaytestLaunchRequest (schema autodev-playtest-launch-v1) for one mode.
+   - Adapter-accelerated: mode, workspaceId, requestId, capabilityRevision, and operation.kind=batch with the assigned ordered assignments.
+   - Autonomous-visual: mode, workspaceId, requestId, capabilityRevision, targetId, policyId=`smart-direct`, verbatim areasOfFocus (or null), and limits: episodeCount, maxStepsPerEpisode, wallTimeMs, smartRequestsPerEpisode, smartTokensPerEpisode, screenshotCountPerEpisode, artifactBytesPerEpisode. Each limit must be within its approved ceiling.
+   - Scripted-regression: use the assigned recipeId, maxSteps, and wallTimeMs only.
+   - Never cross-contaminate DTOs. The visual DTO never carries scenario/seed/repository/build SHA; adapter requests contain no visual target ID/approval ID/origin/visual limits. A Runtime typed refusal identifies a blocker; never treat it as a reason to silently retry another mode.
+4. Same-request idempotency applies. For a new request, generate one unique 1-128 character requestId from letters, digits, dot, underscore, colon, or hyphen. For recovery, preserve the exact original requestId and immutable payload; never create a replacement ID. Keep the exact launchRequest until acceptance is confirmed. If a POST outcome is uncertain, call playtest.lookupRequest using the same ID; retry only the identical payload after not-found. After a not-found receipt, re-submit the exact stored payload only. If the exact payload or authorized recovery action is unavailable, stop and ask the parent.
+5. Call playtest.run with launchRequest. Use bounded playtest.wait calls for status. To stop, inspect playtest.activeRuns in the same trusted workspace and cancel only the server-generated batch ID; cancellation is partial evidence, never a game outcome.
+6. Read playtest.listEpisodes/readEpisode/readWindow only to confirm completeness and report factual evidence/failures. Preserve all returned event/frame references. Do not analyze, score, or critique the play.
+7. Hand off evidence IDs to the parent. Analysis stays separate: the operator triggers analysis in Console; `playtest-analyst` independently reviews completed evidence through its read-only role.
 
 ## Explicit evidence/report format
 
-Every playtest execution report must follow this format:
-
-- **Workspace & build authorization**: workspace ID, git SHA, engine build, adapter protocol version.
-- **Run configuration**: scenario, seed / RNG provenance, player policy / cohort, authorized episode and step budgets.
-- **Execution summary**: batch/run ID, episode IDs, step count, duration, completion status (completed, partial, truncated, failed, timeout).
-- **Authoritative trace & evidence locators**: evidence IDs, frame index refs, trace hashes, and storage paths.
-- **Observed anomalies & failures**: adapter errors, invariant violations, crashes, timeouts, replay integrity failures (stated factually without narrative critique).
-- **Handoff**: evidence IDs handed off to `playtest-analyst` or parent orchestrator; no self-critique or issue publication.
+- Workspace & build authorization: workspace ID/mode; adapter build SHA/protocol, or visual target ID/revision/approval ID/origin/input permissions/readiness/ceilings. URL-only visual remains Build unknown / Commit not applicable.
+- Run configuration: adapter scenario/seed/policy/cohort, or visual verbatim areasOfFocus/Runtime-resolved policy-model identity/limits/assignment inventory. Do not invent a policy revision.
+- Execution: batch/run/episode IDs, recorded status/counts/duration, and completeness.
+- Authoritative trace & evidence locators: actual trace/frame/step locators and integrity hashes returned by Runtime.
+- Observed anomalies & failures: only recorded facts (crashes, timeouts, adapter/browser/screenshot failures, Smart-direct refusals, missing evidence).
+- Handoff: evidence IDs to the parent; analysis is independently requested through Console, never by this role.
 
 ## Gotchas
 
-- A gameplay loss, DNF, or crash is not automatically a bug -- report it as an observed outcome, not a verdict.
-- Do not critique your own gameplay inside this skill; that crosses into `playtest-analysis`'s ownership.
-- Visual/screenshot capture (PlayJev-style) is optional and adapter-gated; report it unsupported rather than faking frames.
+- A gameplay loss, DNF, or crash is an observation, not automatically a bug.
+- A screenshot is evidence only when the approved Runtime driver or adapter actually captured and linked it; never fake frames. Autonomous-visual requires its authorized browser-driver evidence; adapter-accelerated does not imply rendered UI observations.
+- Do not critique the play inside this skill; that crosses into playtest-analysis.
+- A code task alone never authorizes play. Require explicit exact operator approval.
+- Do not relax or fall back across modes. Read docs/playtesting-target-state.md §3 for the Workspaces-owned authorization and evidence contract.

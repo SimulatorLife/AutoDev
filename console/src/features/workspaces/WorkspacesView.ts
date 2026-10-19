@@ -107,8 +107,7 @@ export function WorkspacesView({
       weight: 180,
       cell: (ws) =>
         React.createElement(Tag, {
-          className:
-            `border-border-strong bg-surface-raised font-mono ${MUTED_TEXT_CLASS}`,
+          className: `border-border-strong bg-surface-raised font-mono ${MUTED_TEXT_CLASS}`,
           children: ws.baseBranch
         })
     },

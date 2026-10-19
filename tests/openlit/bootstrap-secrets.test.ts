@@ -76,7 +76,8 @@ test("OpenLIT bootstrap provisions separate strong Usage service credentials out
       "OPENLIT_DB_PASSWORD",
       "AUTODEV_CONTROL_API_TOKEN",
       "OPENLIT_OTLP_API_KEY",
-      "AUTODEV_OPENLIT_USAGE_TOKEN"
+      "AUTODEV_OPENLIT_USAGE_TOKEN",
+      "AUTODEV_PLAYTEST_CONTROL_API_TOKEN"
     ];
     const secrets = secretNames.map((name) => values[name]);
     assert.ok(
@@ -143,6 +144,11 @@ test("OpenLIT bootstrap materializes server-only Console tokens into console/.en
       false,
       "console/.env.local must not carry the OTLP receiver token (proxy-only credential)"
     );
+    assert.equal(
+      consoleContent.includes("AUTODEV_PLAYTEST_CONTROL_API_TOKEN"),
+      false,
+      "console/.env.local must not carry the Playtest runner token"
+    );
     assert.ok(
       !result.stdout.includes(secretValues.AUTODEV_CONTROL_API_TOKEN ?? ""),
       "stdout must never echo the CONTROL token"
@@ -150,6 +156,12 @@ test("OpenLIT bootstrap materializes server-only Console tokens into console/.en
     assert.ok(
       !result.stdout.includes(secretValues.AUTODEV_OPENLIT_USAGE_TOKEN ?? ""),
       "stdout must never echo the USAGE token"
+    );
+    assert.ok(
+      !result.stdout.includes(
+        secretValues.AUTODEV_PLAYTEST_CONTROL_API_TOKEN ?? ""
+      ),
+      "stdout must never echo the Playtest runner token"
     );
   } finally {
     rmSync(secretDirectory, { recursive: true, force: true });
@@ -170,6 +182,7 @@ test("OpenLIT bootstrap overwrites stale console/.env.local and enforces mode 06
       [
         "AUTODEV_CONTROL_API_TOKEN=stale-previous-value",
         "AUTODEV_OPENLIT_USAGE_TOKEN=stale-previous-usage",
+        "AUTODEV_PLAYTEST_CONTROL_API_TOKEN=stale-runner-secret",
         "AUTODEV_CUSTOM_NOTE=this should not survive an overwrite"
       ].join("\n") + "\n",
       { mode: 0o644 }
@@ -195,6 +208,11 @@ test("OpenLIT bootstrap overwrites stale console/.env.local and enforces mode 06
       "manual entries are not preserved: console/.env.local is the canonical Console environment file"
     );
     assert.equal(consoleContent.includes("AUTODEV_CONTROL_API_TOKEN"), true);
+    assert.equal(
+      consoleContent.includes("AUTODEV_PLAYTEST_CONTROL_API_TOKEN"),
+      false,
+      "the Playtest runner token must not be copied into the Console environment"
+    );
   } finally {
     rmSync(secretDirectory, { recursive: true, force: true });
     rmSync(repoRoot, { recursive: true, force: true });

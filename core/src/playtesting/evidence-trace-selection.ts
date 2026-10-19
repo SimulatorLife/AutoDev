@@ -166,11 +166,15 @@ export function assertTraceStep(
 export interface SelectionRange {
   readonly startStep: number;
   readonly endStep: number;
-  readonly reasons: ReadonlySet<"event-bearing-step" | "terminal" | "ordinary-sample">;
+  readonly reasons: ReadonlySet<
+    "event-bearing-step" | "terminal" | "ordinary-sample"
+  >;
   readonly mandatory: boolean;
 }
 
-export function mergeRanges(ranges: readonly SelectionRange[]): SelectionRange[] {
+export function mergeRanges(
+  ranges: readonly SelectionRange[]
+): SelectionRange[] {
   const sorted = [...ranges].sort(
     (left, right) =>
       left.startStep - right.startStep || left.endStep - right.endStep
@@ -519,7 +523,10 @@ interface EvidencePacketLocatorIndex {
   readonly selectedSteps: ReadonlySet<number>;
   readonly events: ReadonlyMap<
     string,
-    { readonly event: PlaytestEvidenceTraceStep["events"][number]; readonly step: number }
+    {
+      readonly event: PlaytestEvidenceTraceStep["events"][number];
+      readonly step: number;
+    }
   >;
   readonly frames: ReadonlyMap<string, PlaytestEvidenceLocator>;
 }
@@ -530,7 +537,10 @@ function evidencePacketLocatorIndex(
   const selectedSteps = new Set<number>();
   const events = new Map<
     string,
-    { readonly event: PlaytestEvidenceTraceStep["events"][number]; readonly step: number }
+    {
+      readonly event: PlaytestEvidenceTraceStep["events"][number];
+      readonly step: number;
+    }
   >();
   const frames = new Map<string, PlaytestEvidenceLocator>();
   for (const window of packet.selectedWindows) {
@@ -561,7 +571,7 @@ function assertEpisodeLocatorWithinPacket(
   const siblingEpisodes =
     packet.crossSessionContext !== undefined &&
     packet.crossSessionContext.status === "included"
-      ? packet.crossSessionContext.sessions ?? []
+      ? (packet.crossSessionContext.sessions ?? [])
       : [];
   if (
     !siblingEpisodes.some((episode) => episode.episodeId === locator.id) ||
@@ -764,4 +774,3 @@ export function assertOmittedPacketArtifacts(
     omittedIds.add(artifact.artifactId);
   }
 }
-

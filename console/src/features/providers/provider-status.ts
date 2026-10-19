@@ -1,6 +1,7 @@
-import type {
-  ControlApiProviderHealth,
-  ControlApiProviderRecord
+import {
+  type ControlApiProviderHealth,
+  type ControlApiProviderRecord,
+  providerHealthReadiness
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
@@ -40,10 +41,9 @@ export type ProviderStatus = {
  * credentials before live health. The most fundamental blocker is reported, not
  * the most recently discovered one.
  *
- * Health is checked last and reports `Not observed` when the Runtime sent no
- * health evidence at all. That is deliberately not `Ready`: an unreadable
- * health signal is not a healthy one, and rendering it as Ready would
- * synthesize the single claim this column exists to make honestly.
+ * Health is checked last and reports `Not observed` until Runtime has observed
+ * a successful provider request. A configured route with no successful
+ * observation is not `Ready`.
  */
 export function resolveProviderStatus(
   provider: ControlApiProviderRecord
@@ -74,23 +74,32 @@ export function resolveProviderStatus(
       title: `Missing ${provider.credential.envKey}`
     };
   }
-  if (provider.health === null) {
+  const readiness = providerHealthReadiness(provider.health);
+  if (readiness === "not-observed") {
     return {
       tone: "not-observed",
       label: NOT_OBSERVED_LABEL,
-      title: "No router health evidence has been observed for this provider."
+      title: "No successful provider health observation is available yet."
     };
   }
-  if (provider.health.cooldown !== null) {
-    const failureClass = provider.health.cooldown.failureClass;
+  if (readiness === "unavailable") {
+    if (provider.health?.cooldown) {
+      const failureClass = provider.health.cooldown.failureClass;
+      return {
+        tone: "unavailable",
+        label:
+          failureClass === null
+            ? "Cooling down"
+            : `Cooling down (${failureClass})`,
+        title:
+          "This provider is in cooldown and will not serve requests until it passes."
+      };
+    }
+    const failureClass = provider.health?.lastFailure?.failureClass;
     return {
       tone: "unavailable",
-      label:
-        failureClass === null
-          ? "Cooling down"
-          : `Cooling down (${failureClass})`,
-      title:
-        "This provider is in cooldown and will not serve requests until it passes."
+      label: failureClass ? `Unavailable (${failureClass})` : "Unavailable",
+      title: "The latest provider health evidence is a failure."
     };
   }
   return {
@@ -163,12 +172,20 @@ export function ProviderHealthBadge({
       status: NOT_OBSERVED_STATUS
     });
   }
-  if (health.cooldown !== null) {
+  const readiness = providerHealthReadiness(health);
+  if (readiness === "not-observed") {
+    return React.createElement(StatusBadge, {
+      status: NOT_OBSERVED_STATUS
+    });
+  }
+  if (readiness === "unavailable") {
     return React.createElement(StatusBadge, {
       status: "unavailable",
-      label: health.cooldown.failureClass
+      label: health.cooldown?.failureClass
         ? `Cooling down (${health.cooldown.failureClass})`
-        : "Cooling down"
+        : health.lastFailure?.failureClass
+          ? `Unavailable (${health.lastFailure.failureClass})`
+          : "Unavailable"
     });
   }
   return React.createElement(StatusBadge, { status: "ready", label: "Ready" });

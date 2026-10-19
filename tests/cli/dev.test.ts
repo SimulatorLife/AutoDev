@@ -626,7 +626,9 @@ test("ensureConsoleSecrets synchronizes only a temporary Console environment", (
   const secretFile = join(secretDir, "openlit-secrets.env");
   writeFileSync(
     secretFile,
-    "AUTODEV_CONTROL_API_TOKEN=synced-token\nAUTODEV_OPENLIT_USAGE_TOKEN=synced-usage\n"
+    "AUTODEV_CONTROL_API_TOKEN=synced-token\nAUTODEV_OPENLIT_USAGE_TOKEN=synced-usage\nAUTODEV_PLAYTEST_CONTROL_API_TOKEN=" +
+      "a".repeat(64) +
+      "\n"
   );
   const previousSecretFile = process.env.AUTODEV_OPENLIT_SECRET_FILE;
   process.env.AUTODEV_OPENLIT_SECRET_FILE = secretFile;
@@ -635,6 +637,11 @@ test("ensureConsoleSecrets synchronizes only a temporary Console environment", (
     const synchronized = readFileSync(consoleEnv, "utf8");
     assert.match(synchronized, /AUTODEV_CONTROL_API_TOKEN=synced-token/u);
     assert.match(synchronized, /AUTODEV_OPENLIT_USAGE_TOKEN=synced-usage/u);
+    assert.doesNotMatch(
+      synchronized,
+      /AUTODEV_PLAYTEST_CONTROL_API_TOKEN/u,
+      "Console env must never receive the Playtest-only runner credential"
+    );
   } finally {
     if (previousSecretFile === undefined) {
       delete process.env.AUTODEV_OPENLIT_SECRET_FILE;
@@ -680,7 +687,7 @@ test("already-ready services still reconcile the current image and config", asyn
   );
   assert.ok(
     loggedMessages.some((msg) =>
-      msg.includes("OpenLIT Usage v4 and ClickHouse are ready")
+      msg.includes("OpenLIT Usage v5 and ClickHouse are ready")
     )
   );
 });
@@ -882,7 +889,11 @@ test("ensureModelRouter recognizes already-active router without restarting", as
   });
 
   assert.equal(ready, true);
-  assert.equal(commands.length, 0, "Must not execute commands if already active");
+  assert.equal(
+    commands.length,
+    0,
+    "Must not execute commands if already active"
+  );
   assert.ok(
     loggedMessages.some((msg) =>
       msg.includes("AutoDev Model Router is active (ports 4100, 4101)")
@@ -921,9 +932,14 @@ test("ensureModelRouter materializes runtime and kickstarts launchd service when
   });
 
   assert.equal(ready, true);
-  assert.ok(commands.length >= 3, "Must materialize, check launchctl, and kickstart");
+  assert.ok(
+    commands.length >= 3,
+    "Must materialize, check launchctl, and kickstart"
+  );
   assert.equal(commands[0]?.command, "node");
-  assert.ok(commands[0]?.args.some((arg) => arg.includes("--materialize-only")));
+  assert.ok(
+    commands[0]?.args.some((arg) => arg.includes("--materialize-only"))
+  );
   assert.equal(commands[1]?.command, "launchctl");
   assert.equal(commands[1]?.args[0], "print");
   assert.equal(commands[2]?.command, "launchctl");
@@ -958,16 +974,23 @@ test("ensureModelRouter restarts router when forceRestart is true even if ports 
   });
 
   assert.equal(ready, true);
-  assert.ok(commands.length >= 3, "Must materialize and kickstart despite ports listening");
+  assert.ok(
+    commands.length >= 3,
+    "Must materialize and kickstart despite ports listening"
+  );
   assert.equal(commands[0]?.command, "node");
-  assert.ok(commands[0]?.args.some((arg) => arg.includes("--materialize-only")));
+  assert.ok(
+    commands[0]?.args.some((arg) => arg.includes("--materialize-only"))
+  );
   assert.equal(commands[1]?.command, "launchctl");
   assert.equal(commands[1]?.args[0], "print");
   assert.equal(commands[2]?.command, "launchctl");
   assert.equal(commands[2]?.args[0], "kickstart");
   assert.ok(
     loggedMessages.some((msg) =>
-      msg.includes("Reconciling AutoDev Model Router integration and restarting...")
+      msg.includes(
+        "Reconciling AutoDev Model Router integration and restarting..."
+      )
     )
   );
 });

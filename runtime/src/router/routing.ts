@@ -10,6 +10,10 @@ import {
   type RoutingPolicyState
 } from "@simulatorlife/autodev-core";
 import {
+  providerInjectsRoleMcp,
+  roleScopedMcp
+} from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import {
   ANTIGRAVITY_MODEL_PATTERN,
   CLAUDE_MODEL_PATTERN,
   MINIMAX_MODEL_PATTERN
@@ -1119,9 +1123,9 @@ export class RoutingPolicy {
         {
           ...route,
           model,
-          ...(configuredEffort !== null
-            ? { reasoningEffort: configuredEffort }
-            : {})
+          ...(configuredEffort === null
+            ? {}
+            : { reasoningEffort: configuredEffort })
         }
       ];
     });
@@ -1132,15 +1136,16 @@ export class RoutingPolicy {
     random = Math.random,
     preferred: string | null = null
   ): Candidate[] {
-    return this.preferProvider(
-      this.tierCandidates(
-        typeof role === "string" ? this.config.roles[role]?.tier : undefined,
-        random,
-        "subagent"
-      ),
-      preferred,
+    const scopedMcp = roleScopedMcp(role);
+    const candidates = this.tierCandidates(
+      typeof role === "string" ? this.config.roles[role]?.tier : undefined,
+      random,
       "subagent"
+    ).filter(
+      (candidate) =>
+        scopedMcp.length === 0 || providerInjectsRoleMcp(candidate.provider)
     );
+    return this.preferProvider(candidates, preferred, "subagent");
   }
 
   orchestratorCandidates(

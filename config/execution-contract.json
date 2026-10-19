@@ -29,7 +29,25 @@
           "browser_resize",
           "browser_close"
         ]
-      }
+      },
+      "mcpEnvVars": {
+        "playwright": [
+          "PATH",
+          "HOME",
+          "TMPDIR",
+          "TMP",
+          "TEMP",
+          "LANG",
+          "LC_ALL",
+          "CODEX_HOME",
+          "AUTODEV_REPO_ROOT",
+          "AUTODEV_NODE_BIN",
+          "PLAYWRIGHT_BROWSERS_PATH"
+        ]
+      },
+      "roleScopedMcp": [
+        "playwright"
+      ]
     },
     "default": {
       "kind": "leaf",
@@ -165,6 +183,26 @@
           "playtest.submitReview",
           "playtest.submitCrossSessionSynthesis"
         ]
+      },
+      "mcpEnvVars": {
+        "playtest": [
+          "CLICKHOUSE_URL",
+          "OPENLIT_DB_USER",
+          "OPENLIT_DB_NAME",
+          "CODEX_HOME",
+          "AUTODEV_PLAYTEST_ROLE",
+          "AUTODEV_PLAYTEST_WORKSPACE_ID",
+          "AUTODEV_PLAYTEST_ACTOR_ID",
+          "AUTODEV_PLAYTEST_TASK_ID",
+          "AUTODEV_PLAYTEST_RUN_ID",
+          "AUTODEV_PLAYTEST_ANALYSIS_ID",
+          "AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS",
+          "AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION",
+          "AUTODEV_PLAYTEST_REPOSITORY_ROOT",
+          "AUTODEV_PLAYTEST_UV",
+          "AUTODEV_REPO_ROOT",
+          "AUTODEV_NODE_BIN"
+        ]
       }
     },
     "playtester": {
@@ -188,7 +226,39 @@
           "playtest.readEpisode",
           "playtest.readWindow"
         ]
-      }
+      },
+      "mcpEnvVars": {
+        "playtest": [
+          "PATH",
+          "HOME",
+          "TMPDIR",
+          "TMP",
+          "TEMP",
+          "LANG",
+          "LC_ALL",
+          "AUTODEV_NODE_BIN",
+          "AUTODEV_PLAYTEST_WORKSPACE_ID",
+          "AUTODEV_PLAYTEST_ROLE",
+          "AUTODEV_PLAYTEST_ACTOR_ID",
+          "AUTODEV_PLAYTEST_TASK_ID",
+          "AUTODEV_PLAYTEST_RUN_ID",
+          "AUTODEV_PLAYTEST_REPOSITORY_ROOT",
+          "AUTODEV_REPO_ROOT",
+          "CODEX_HOME",
+          "AUTODEV_OPENLIT_SECRET_FILE",
+          "CLICKHOUSE_URL",
+          "OPENLIT_DB_USER",
+          "OPENLIT_DB_NAME",
+          "AUTODEV_CONTROL_API_BASE_URL",
+          "AUTODEV_CONTROL_API_LISTEN_HOST",
+          "AUTODEV_CONTROL_API_LISTEN_PORT",
+          "AUTODEV_PLAYTEST_CONTROL_API_ACTOR",
+          "AUTODEV_PLAYTEST_CONTROL_API_ROLE"
+        ]
+      },
+      "roleScopedMcp": [
+        "playtest"
+      ]
     },
     "smart": {
       "kind": "leaf",
@@ -325,7 +395,8 @@
         "invoke_subagent"
       ],
       "permissionMode": "configured",
-      "delegation": "codex-shim"
+      "delegation": "codex-shim",
+      "roleMcpInjection": true
     },
     "minimax": {
       "spawnTools": [],
@@ -335,7 +406,8 @@
     "copilot": {
       "spawnTools": [],
       "permissionMode": "configured",
-      "delegation": "codex-shim"
+      "delegation": "codex-shim",
+      "roleMcpInjection": true
     },
     "codex": {
       "spawnTools": [],

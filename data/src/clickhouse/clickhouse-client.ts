@@ -252,7 +252,10 @@ export async function runParameterizedClickHouseStatement(
         method: "POST",
         ...(options.body === undefined
           ? {}
-          : { headers: { "Content-Type": "application/json" }, body: options.body })
+          : {
+              headers: { "Content-Type": "application/json" },
+              body: options.body
+            })
       });
       if (!res.ok) {
         throw new ClickHouseStatementError(res.status, await res.text());

@@ -375,8 +375,7 @@ test("reset durations parse in every unit combination agy states them in", () =>
   ];
   for (const [stated, expected] of cases) {
     assert.equal(
-      classifyCliLimit(`Individual quota reached. ${stated}`, 3, now)
-        ?.resetsAt,
+      classifyCliLimit(`Individual quota reached. ${stated}`, 3, now)?.resetsAt,
       expected,
       stated
     );

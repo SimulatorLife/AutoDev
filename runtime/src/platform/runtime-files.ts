@@ -149,8 +149,7 @@ export function runRulesyncGenerate(
   );
   Atomics.wait(signal, 0, 0);
   const response = receiveMessageOnPort(port1)?.message as
-    | { ok: boolean; message?: string }
-    | undefined;
+    { ok: boolean; message?: string } | undefined;
   port1.close();
   if (!response?.ok) {
     throw new Error(response?.message ?? "rulesync generate failed");
@@ -170,8 +169,7 @@ export function resolveCommandOnPath(
       return null;
     }
   }
-  const envPath =
-    typeof envOrPath === "string" ? envOrPath : envOrPath?.PATH;
+  const envPath = typeof envOrPath === "string" ? envOrPath : envOrPath?.PATH;
   if (!envPath) return null;
   for (const rawEntry of envPath.split(path.delimiter)) {
     const candidate = path.join(rawEntry || ".", command);

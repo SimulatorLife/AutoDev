@@ -1,15 +1,12 @@
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
-  accessSync,
   chmodSync,
-  constants as fsConstants,
   copyFileSync,
   cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   realpathSync,
   statSync
@@ -27,27 +24,33 @@ import {
   resolveRouterEnsureOptions,
   runRouterEnsure
 } from "@simulatorlife/autodev-runtime/platform";
+import { resolveCodexBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import { readRuntimeSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 import {
   resolveRuntimeSourcePath,
   resolveRuntimeSourceRoot
 } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+import { gitCommitIdentityEnv } from "@simulatorlife/autodev-runtime/telemetry";
 
 const repositoryRoot = path.resolve(
   resolveRuntimeSourceRoot(import.meta.dirname)
 );
+const CODEX_CONFIG_FILE = "config.toml";
+const BROWSER_TESTER_ROLE = "browser-tester";
+const PLAYTESTER_ROLE = "playtester";
+const PLAYTEST_ANALYST_ROLE = "playtest-analyst";
 const SUPPORTED_ROLES = [
   "default",
   "docs-researcher",
-  "browser-tester",
+  BROWSER_TESTER_ROLE,
   "explorer",
   "worker",
   "validator",
   "smart",
-  "playtest-analyst",
-  "playtester"
+  PLAYTEST_ANALYST_ROLE,
+  PLAYTESTER_ROLE
 ] as const;
-const NUMERIC_COLLATOR = new Intl.Collator(undefined, { numeric: true });
 const LINE_BREAK = /\r?\n/u;
 const TOML_BARE_KEY_PATTERN = /^[A-Za-z0-9_-]+$/u;
 export type ProviderAgentRole = (typeof SUPPORTED_ROLES)[number];
@@ -180,46 +183,6 @@ Options:
 
 function isRole(value: string): value is ProviderAgentRole {
   return (SUPPORTED_ROLES as readonly string[]).includes(value);
-}
-
-function executable(candidate: string): boolean {
-  try {
-    accessSync(candidate, fsConstants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function resolveCodexBinary(env: NodeJS.ProcessEnv, home: string): string {
-  const configured = env.CODEX_BIN?.trim();
-  if (configured) {
-    if (executable(configured)) return configured;
-    throw new Error(`Codex CLI is not executable: ${configured}`);
-  }
-  try {
-    const found = execFileSync("which", ["codex"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"]
-    }).trim();
-    if (executable(found)) return found;
-  } catch {
-    /* try the version-managed installation below */
-  }
-  const nvmRoot = path.join(home, ".nvm", "versions", "node");
-  if (existsSync(nvmRoot)) {
-    const versions = readdirSync(nvmRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort((left, right) => NUMERIC_COLLATOR.compare(right, left));
-    for (const version of versions) {
-      const candidate = path.join(nvmRoot, version, "bin", "codex");
-      if (executable(candidate)) return candidate;
-    }
-  }
-  throw new Error(
-    "Codex CLI not found; set CODEX_BIN to the current codex executable."
-  );
 }
 
 function stringValue(value: TomlValue | undefined): string {
@@ -410,8 +373,8 @@ function prepareAnalystCodexHome(
   chmodSync(homes.codexHome, 0o700);
   copyAnalystRole(homes);
   copyRegularFileIfPresent(
-    path.join(homes.sourceCodexHome, "config.toml"),
-    path.join(homes.codexHome, "config.toml"),
+    path.join(homes.sourceCodexHome, CODEX_CONFIG_FILE),
+    path.join(homes.codexHome, CODEX_CONFIG_FILE),
     "The source Codex configuration",
     true
   );
@@ -616,7 +579,7 @@ function analystCodexOverrides(
     );
   }
   const baseConfig = parseTomlFile(
-    path.join(sourceCodexHome, "config.toml"),
+    path.join(sourceCodexHome, CODEX_CONFIG_FILE),
     "base Codex configuration",
     false
   );
@@ -760,8 +723,8 @@ function bindPlaytesterMcpContext(
   const existingControlRole =
     environment.AUTODEV_PLAYTEST_CONTROL_API_ROLE?.trim();
   if (
-    (existingRole && existingRole !== "playtester") ||
-    (existingControlRole && existingControlRole !== "playtester")
+    (existingRole && existingRole !== PLAYTESTER_ROLE) ||
+    (existingControlRole && existingControlRole !== PLAYTESTER_ROLE)
   ) {
     throw new Error("Playtester MCP context is bound to another role.");
   }
@@ -770,12 +733,18 @@ function bindPlaytesterMcpContext(
     "AUTODEV_PLAYTEST_ACTOR_ID",
     "AUTODEV_PLAYTEST_TASK_ID",
     "AUTODEV_PLAYTEST_RUN_ID",
-    "AUTODEV_PLAYTEST_CONTROL_API_TOKEN",
     "AUTODEV_PLAYTEST_CONTROL_API_ACTOR"
   ] as const;
   const missing = required.filter((name) => !environment[name]?.trim());
+  const secretFileEnvironment = { ...environment };
+  delete secretFileEnvironment.AUTODEV_PLAYTEST_CONTROL_API_TOKEN;
+  const runnerToken = readRuntimeSecret(
+    "AUTODEV_PLAYTEST_CONTROL_API_TOKEN",
+    secretFileEnvironment
+  );
   if (
     missing.length > 0 ||
+    !runnerToken ||
     (!environment.AUTODEV_CONTROL_API_BASE_URL?.trim() &&
       !environment.AUTODEV_CONTROL_API_LISTEN_HOST?.trim())
   ) {
@@ -783,15 +752,39 @@ function bindPlaytesterMcpContext(
       "Playtester dispatch requires trusted workspace/session context and the dedicated Control API runner credential."
     );
   }
-  return {
+  const boundEnvironment: NodeJS.ProcessEnv = {
     ...environment,
-    AUTODEV_PLAYTEST_ROLE: "playtester",
-    AUTODEV_PLAYTEST_CONTROL_API_ROLE: "playtester",
+    AUTODEV_PLAYTEST_ROLE: PLAYTESTER_ROLE,
+    AUTODEV_PLAYTEST_CONTROL_API_ROLE: PLAYTESTER_ROLE,
     CODEX_HOME: options.codexHome,
     AUTODEV_REPO_ROOT: options.repositoryRoot,
     AUTODEV_PLAYTEST_REPOSITORY_ROOT:
       environment.AUTODEV_PLAYTEST_REPOSITORY_ROOT?.trim() || options.workspace
   };
+  // The MCP child reads the separate runner token from CODEX_HOME's protected
+  // secret file. Do not put that credential into the model process environment.
+  delete boundEnvironment.AUTODEV_PLAYTEST_CONTROL_API_TOKEN;
+  return boundEnvironment;
+}
+
+/** The sanitized process environment for an isolated Browser Tester run. */
+function browserTesterEnvironment(
+  options: ProviderAgentOptions,
+  providerEnvironment: NodeJS.ProcessEnv,
+  executionEnvironment: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const name of BROWSER_TESTER_PROCESS_ENVIRONMENT_VARIABLES) {
+    const value = providerEnvironment[name];
+    if (value !== undefined) environment[name] = value;
+  }
+  environment.HOME = executionEnvironment.HOME?.trim() || homedir();
+  environment.CODEX_HOME = options.codexHome;
+  environment.AUTODEV_REPO_ROOT = options.repositoryRoot;
+  environment.CODEX_PROJECT_ROOT = options.workspace;
+  environment.AUTODEV_NODE_BIN =
+    executionEnvironment.AUTODEV_NODE_BIN?.trim() || process.execPath;
+  return environment;
 }
 
 function providerCodexEnvironment(
@@ -812,20 +805,90 @@ function providerCodexEnvironment(
   // MCPs receive only their distinct role-scoped token.
   delete providerEnvironment.AUTODEV_CONTROL_API_TOKEN;
   delete providerEnvironment.AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN;
-  if (options.role === "playtester") {
+  if (options.role !== PLAYTESTER_ROLE) {
+    delete providerEnvironment.AUTODEV_PLAYTEST_CONTROL_API_TOKEN;
+  }
+  if (options.role === BROWSER_TESTER_ROLE) {
+    return {
+      args: [],
+      environment: browserTesterEnvironment(
+        options,
+        providerEnvironment,
+        executionEnvironment
+      )
+    };
+  }
+  if (options.role === PLAYTESTER_ROLE) {
     const environment = bindPlaytesterMcpContext(providerEnvironment, options);
     for (const key of Object.keys(environment)) {
       if (key.startsWith("AUTODEV_MEMORY_")) delete environment[key];
     }
     return { args: [], environment };
   }
-  if (options.role === "playtest-analyst") {
+  if (options.role === PLAYTEST_ANALYST_ROLE) {
     for (const key of Object.keys(providerEnvironment)) {
       if (key.startsWith("AUTODEV_MEMORY_")) delete providerEnvironment[key];
     }
   }
-  return configureMemoryMcp(options, providerEnvironment);
+  const gitIdentity =
+    options.role === PLAYTEST_ANALYST_ROLE
+      ? {}
+      : gitCommitIdentityEnv({ role: options.role, provider: "codex" });
+  return configureMemoryMcp(options, {
+    ...providerEnvironment,
+    ...gitIdentity
+  });
 }
+
+const BROWSER_TESTER_ENABLED_TOOLS = [
+  "browser_navigate",
+  "browser_tabs",
+  "browser_snapshot",
+  "browser_take_screenshot",
+  "browser_click",
+  "browser_type",
+  "browser_fill_form",
+  "browser_press_key",
+  "browser_wait_for",
+  "browser_console_messages",
+  "browser_network_requests",
+  "browser_find",
+  "browser_hover",
+  "browser_select_option",
+  "browser_drag",
+  "browser_handle_dialog",
+  "browser_resize",
+  "browser_close"
+] as const;
+
+const BROWSER_TESTER_MCP_ENVIRONMENT_VARIABLES = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "LC_ALL",
+  "CODEX_HOME",
+  "AUTODEV_REPO_ROOT",
+  "AUTODEV_NODE_BIN",
+  "PLAYWRIGHT_BROWSERS_PATH"
+] as const;
+
+const BROWSER_TESTER_PROCESS_ENVIRONMENT_VARIABLES = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "LC_ALL",
+  "CODEX_ROUTER_AUTH_TOKEN",
+  "OTEL_EXPORTER_OTLP_ENDPOINT",
+  "OTEL_EXPORTER_OTLP_PROTOCOL",
+  "OTEL_RESOURCE_ATTRIBUTES",
+  "PLAYWRIGHT_BROWSERS_PATH"
+] as const;
 
 const PLAYTESTER_ENABLED_TOOLS = [
   "playtest.capabilities",
@@ -840,6 +903,14 @@ const PLAYTESTER_ENABLED_TOOLS = [
 ] as const;
 
 const PLAYTESTER_MCP_ENVIRONMENT_VARIABLES = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "LC_ALL",
+  "AUTODEV_NODE_BIN",
   "AUTODEV_PLAYTEST_WORKSPACE_ID",
   "AUTODEV_PLAYTEST_ROLE",
   "AUTODEV_PLAYTEST_ACTOR_ID",
@@ -848,13 +919,13 @@ const PLAYTESTER_MCP_ENVIRONMENT_VARIABLES = [
   "AUTODEV_PLAYTEST_REPOSITORY_ROOT",
   "AUTODEV_REPO_ROOT",
   "CODEX_HOME",
+  "AUTODEV_OPENLIT_SECRET_FILE",
   "CLICKHOUSE_URL",
   "OPENLIT_DB_USER",
   "OPENLIT_DB_NAME",
   "AUTODEV_CONTROL_API_BASE_URL",
   "AUTODEV_CONTROL_API_LISTEN_HOST",
   "AUTODEV_CONTROL_API_LISTEN_PORT",
-  "AUTODEV_PLAYTEST_CONTROL_API_TOKEN",
   "AUTODEV_PLAYTEST_CONTROL_API_ACTOR",
   "AUTODEV_PLAYTEST_CONTROL_API_ROLE"
 ] as const;
@@ -870,6 +941,110 @@ const PLAYTESTER_MCP_ENVIRONMENT_VARIABLES = [
  * Playtest MCP enablement never happens globally; it is only ever injected
  * for this one role's own Codex invocation.
  */
+function browserTesterCodexOverrides(
+  options: ProviderAgentOptions
+): readonly string[] {
+  const role = parseTomlFile(options.roleFile, "browser-tester role");
+  const roleMcpServers = tomlRecord(role.mcp_servers);
+  const playwrightServer = tomlRecord(roleMcpServers.playwright);
+  const enabledTools = stringArray(playwrightServer.enabled_tools);
+  const expectedTools = new Set<string>(BROWSER_TESTER_ENABLED_TOOLS);
+  const envVars = stringArray(playwrightServer.env_vars);
+  const expectedEnvVars = new Set<string>(
+    BROWSER_TESTER_MCP_ENVIRONMENT_VARIABLES
+  );
+  const features = tomlRecord(role.features);
+  const tools = tomlRecord(role.tools);
+  const shellEnvironmentPolicy = tomlRecord(role.shell_environment_policy);
+  const rolePlugins = tomlRecord(role.plugins);
+  if (
+    role.name !== BROWSER_TESTER_ROLE ||
+    playwrightServer.enabled !== true ||
+    role.sandbox_mode !== "read-only" ||
+    features.shell_tool !== false ||
+    features.multi_agent !== false ||
+    features.multi_agent_v2 !== false ||
+    features.hooks !== false ||
+    features.memories !== false ||
+    tools.web_search !== false ||
+    shellEnvironmentPolicy.inherit !== "none" ||
+    Object.values(rolePlugins).some(
+      (plugin) => tomlRecord(plugin).enabled !== false
+    ) ||
+    enabledTools.length !== expectedTools.size ||
+    new Set(enabledTools).size !== enabledTools.length ||
+    !enabledTools.every((tool) => expectedTools.has(tool)) ||
+    envVars.length !== expectedEnvVars.size ||
+    new Set(envVars).size !== envVars.length ||
+    !envVars.every((name) => expectedEnvVars.has(name))
+  ) {
+    throw new Error(
+      "The browser-tester role must be read-only, shell-disabled, and allowlist only its exact Playwright tools and environment."
+    );
+  }
+
+  const baseConfig = parseTomlFile(
+    path.join(options.codexHome, CODEX_CONFIG_FILE),
+    "base Codex configuration",
+    false
+  );
+  const configuredServers = new Set([
+    ...Object.keys(tomlRecord(baseConfig.mcp_servers)),
+    ...Object.keys(roleMcpServers)
+  ]);
+  configuredServers.delete("playwright");
+  const configKey = (name: string): string =>
+    TOML_BARE_KEY_PATTERN.test(name) ? name : JSON.stringify(name);
+  const mcpEntry = resolveRuntimeSourcePath(
+    options.repositoryRoot,
+    "mcp/launcher.ts"
+  );
+  const args = [
+    "features.shell_tool=false",
+    "features.multi_agent=false",
+    "features.multi_agent_v2=false",
+    "features.hooks=false",
+    "features.memories=false",
+    'web_search="disabled"',
+    'shell_environment_policy.inherit="none"'
+  ];
+  for (const name of configuredServers) {
+    args.push(`mcp_servers.${configKey(name)}.enabled=false`);
+  }
+  args.push(
+    "mcp_servers.playwright.enabled=true",
+    `mcp_servers.playwright.command=${JSON.stringify(process.execPath)}`,
+    `mcp_servers.playwright.args=${JSON.stringify([mcpEntry, "playwright"])}`,
+    'mcp_servers.playwright.default_tools_approval_mode="approve"',
+    `mcp_servers.playwright.enabled_tools=${JSON.stringify(BROWSER_TESTER_ENABLED_TOOLS)}`,
+    `mcp_servers.playwright.env_vars=${JSON.stringify(BROWSER_TESTER_MCP_ENVIRONMENT_VARIABLES)}`,
+    `mcp_servers.playwright.env={CODEX_HOME=${JSON.stringify(options.codexHome)},AUTODEV_REPO_ROOT=${JSON.stringify(options.repositoryRoot)},AUTODEV_NODE_BIN=${JSON.stringify(process.execPath)}}`
+  );
+
+  const configuredPlugins = new Set([
+    ...Object.keys(tomlRecord(baseConfig.plugins)),
+    ...Object.keys(rolePlugins)
+  ]);
+  for (const name of [...configuredPlugins].sort()) {
+    const rolePlugin = tomlRecord(rolePlugins[name]);
+    args.push(
+      `plugins.${configKey(name)}.enabled=${rolePlugin?.enabled === true}`
+    );
+  }
+  const roleSkills = tomlRecord(role.skills);
+  if (typeof roleSkills.include_instructions === "boolean") {
+    args.push(`skills.include_instructions=${roleSkills.include_instructions}`);
+  }
+  const bundledSkills = tomlRecord(roleSkills.bundled);
+  if (typeof bundledSkills.enabled === "boolean") {
+    args.push(`skills.bundled.enabled=${bundledSkills.enabled}`);
+  }
+  if (roleSkills.config !== undefined) {
+    args.push(roleSkillsConfigOverride(roleSkills.config, BROWSER_TESTER_ROLE));
+  }
+  return args;
+}
+
 function playtesterCodexOverrides(
   options: ProviderAgentOptions
 ): readonly string[] {
@@ -883,7 +1058,7 @@ function playtesterCodexOverrides(
   const shellEnvironmentPolicy = tomlRecord(role.shell_environment_policy);
   const rolePlugins = tomlRecord(role.plugins);
   if (
-    role.name !== "playtester" ||
+    role.name !== PLAYTESTER_ROLE ||
     playtestServer.enabled !== true ||
     role.sandbox_mode !== "read-only" ||
     features.shell_tool !== false ||
@@ -916,7 +1091,7 @@ function playtesterCodexOverrides(
     );
   }
   const baseConfig = parseTomlFile(
-    path.join(options.codexHome, "config.toml"),
+    path.join(options.codexHome, CODEX_CONFIG_FILE),
     "base Codex configuration",
     false
   );
@@ -970,7 +1145,7 @@ function playtesterCodexOverrides(
     args.push(`skills.bundled.enabled=${bundledSkills.enabled}`);
   }
   if (roleSkills.config !== undefined) {
-    args.push(roleSkillsConfigOverride(roleSkills.config, "playtester"));
+    args.push(roleSkillsConfigOverride(roleSkills.config, PLAYTESTER_ROLE));
   }
   return args;
 }
@@ -1009,7 +1184,15 @@ function providerCodexArguments(
       ).flatMap((override) => ["-c", override])
     );
   }
-  if (options.role === "playtester") {
+  if (options.role === BROWSER_TESTER_ROLE) {
+    args.push(
+      ...browserTesterCodexOverrides(options).flatMap((override) => [
+        "-c",
+        override
+      ])
+    );
+  }
+  if (options.role === PLAYTESTER_ROLE) {
     args.push(
       ...playtesterCodexOverrides(options).flatMap((override) => [
         "-c",
@@ -1207,7 +1390,7 @@ export async function runProviderAgent(
     return 0;
   }
   const requestedRole = requestedProviderAgentRole(argv);
-  const analystDispatch = requestedRole === "playtest-analyst";
+  const analystDispatch = requestedRole === PLAYTEST_ANALYST_ROLE;
   if (env.AUTODEV_PLAYTEST_ANALYSIS_MODE === "1" && !analystDispatch) {
     throw new Error(
       "The isolated Playtesting analysis context is analyst-only."

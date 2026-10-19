@@ -10,7 +10,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -20,6 +20,29 @@ import {
   runMcp
 } from "@simulatorlife/autodev-runtime/mcp";
 import { MCP_SERVER_CODEGRAPHCONTEXT } from "@simulatorlife/autodev-runtime/shared/tool-names";
+
+function createIsolatedTempDir(prefix: string): string {
+  const candidates = Array.from(new Set(["/var/tmp", tmpdir()]));
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    const base = realpathSync(candidate);
+    let current = resolve(base);
+    let containsProject = false;
+    for (;;) {
+      if (existsSync(join(current, ".cocoindex_code"))) {
+        containsProject = true;
+        break;
+      }
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+    if (!containsProject) return mkdtempSync(join(base, prefix));
+  }
+  throw new Error(
+    "MCP launcher tests need a temporary directory outside initialized cocoindex-code projects"
+  );
+}
 
 test("MCP launcher resolves pinned AutoDev binaries without shell commands", () => {
   assert.deepEqual(resolveMcpCommand("lsp", "/repo"), {
@@ -74,7 +97,7 @@ test("MCP launcher rejects unknown tools", () => {
 });
 
 test("runMcp auto-initializes cocoindex-code if .cocoindex_code is absent", () => {
-  const tempDir = mkdtempSync(join(tmpdir(), "autodev-mcp-launcher-"));
+  const tempDir = createIsolatedTempDir("autodev-mcp-launcher-");
   const prevCwd = process.cwd();
   try {
     const mockBin = join(tempDir, "mock-ccc");
@@ -108,7 +131,7 @@ test("resolveMcpWorkspace keeps the caller's directory unless it declares a work
 });
 
 test("resolveMcpWorkspace reports why a declared workspace is unusable", () => {
-  const tempDir = mkdtempSync(join(tmpdir(), "autodev-mcp-workspace-"));
+  const tempDir = createIsolatedTempDir("autodev-mcp-workspace-");
   try {
     assert.equal(
       resolveMcpWorkspace({ AUTODEV_MCP_WORKSPACE: tempDir }, "/callers/dir"),
@@ -136,7 +159,7 @@ test("resolveMcpWorkspace reports why a declared workspace is unusable", () => {
 });
 
 test("findCocoindexProjectRoot agrees with the ancestor walk ccc performs", () => {
-  const repo = mkdtempSync(join(tmpdir(), "autodev-cocoindex-root-"));
+  const repo = createIsolatedTempDir("autodev-cocoindex-root-");
   try {
     const nested = join(repo, "runtime", "src", "mcp");
     mkdirSync(nested, { recursive: true });
@@ -154,8 +177,8 @@ test("runMcp serves cocoindex-code from the declared workspace, not the caller's
   // The desktop runtime starts MCP servers from its own process directory, so
   // inheriting cwd left `ccc mcp` with no project and it exited with
   // "Not in an initialized project directory".
-  const root = mkdtempSync(join(tmpdir(), "autodev-mcp-declared-"));
-  const elsewhere = mkdtempSync(join(tmpdir(), "autodev-mcp-caller-"));
+  const root = createIsolatedTempDir("autodev-mcp-declared-");
+  const elsewhere = createIsolatedTempDir("autodev-mcp-caller-");
   const prevCwd = process.cwd();
   try {
     const workspace = join(root, "workspace");
@@ -188,7 +211,7 @@ test("runMcp serves cocoindex-code from the declared workspace, not the caller's
 });
 
 test("runMcp refuses a workspace it cannot initialize instead of serving the wrong project", () => {
-  const root = mkdtempSync(join(tmpdir(), "autodev-mcp-uninitializable-"));
+  const root = createIsolatedTempDir("autodev-mcp-uninitializable-");
   const prevCwd = process.cwd();
   try {
     const workspace = join(root, "workspace");
@@ -217,7 +240,7 @@ test("the LSP server finds the language servers AutoDev pins, whatever PATH Code
   // Observed 2026-09-18: under Codex's environment lsp-mcp-server could not
   // spawn `typescript-language-server` (ENOENT) and exited on its first
   // TypeScript request, which agents saw as "Transport closed".
-  const repo = mkdtempSync(join(tmpdir(), "autodev-mcp-lsp-"));
+  const repo = createIsolatedTempDir("autodev-mcp-lsp-");
   try {
     const bin = join(repo, "node_modules", ".bin");
     mkdirSync(bin, { recursive: true });

@@ -60,6 +60,7 @@ import {
 import { awaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 import {
   type AgentEventReporter,
+  gitCommitIdentityEnv,
   resolveAgentEventReporter
 } from "@simulatorlife/autodev-runtime/telemetry";
 import {
@@ -1066,7 +1067,14 @@ function startResponsesTurn(
       cwd,
       // A parked call must not time out inside the CLI before the turn does.
       env: {
-        ...withAutoDevOtelResourceContext(environment, workspaceKey, agentRole),
+        ...withAutoDevOtelResourceContext(
+          {
+            ...environment,
+            ...gitCommitIdentityEnv({ role: agentRole, provider: "claude" })
+          },
+          workspaceKey,
+          agentRole
+        ),
         MCP_TOOL_TIMEOUT: String(Math.ceil(CLAUDE_PARK_SECONDS * 1000))
       },
       signal: turn.signal,
@@ -1108,7 +1116,10 @@ async function handle(
   if (pathname === "/v1/models") {
     sendJson(response, 200, {
       object: "list",
-      data: [{ id: MODEL, object: "model", owned_by: "anthropic" }],
+      data: [
+        { id: DEFAULT_CLAUDE_MODEL, object: "model", owned_by: "anthropic" },
+        { id: MODEL, object: "model", owned_by: "anthropic" }
+      ],
       models: [claudeModelMetadata()]
     });
     return;

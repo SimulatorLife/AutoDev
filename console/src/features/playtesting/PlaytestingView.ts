@@ -431,7 +431,10 @@ function overview(
     React.createElement(StatCard, {
       title: "AI Critic Findings",
       value: data.findingCount,
-      subtitle: data.findingCount === 0 ? "No anomalies detected" : "Issues surfaced by critic"
+      subtitle:
+        data.findingCount === 0
+          ? "No anomalies detected"
+          : "Issues surfaced by critic"
     }),
     React.createElement(StatCard, {
       title: "A/B Comparisons",

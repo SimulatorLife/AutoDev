@@ -1,0 +1,1376 @@
+diff --git a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+index 8689892c..83ea387d 100644
+--- a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
++++ b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+@@ -8,6 +8,7 @@ const mockResolveTelemetrySourceDescriptor = jest.fn();
+ const mockGetTelemetryAdapter = jest.fn();
+ const mockListSpans = jest.fn();
+ const mockRunWidgetQuery = jest.fn();
++const mockReadGitUsageWidgets = jest.fn();
+ 
+ jest.mock("@/lib/platform/dashboard-variables", () => ({
+   fetchVariableAllowedValues: (...args: unknown[]) =>
+@@ -21,6 +22,9 @@ jest.mock("@/lib/telemetry-source", () => ({
+ jest.mock("@/lib/platform/manage-dashboard/widget", () => ({
+   runWidgetQuery: (...args: unknown[]) => mockRunWidgetQuery(...args)
+ }));
++jest.mock("@/lib/autodev/usage-git-metrics", () => ({
++  readGitUsageWidgets: (...args: unknown[]) => mockReadGitUsageWidgets(...args)
++}));
+ 
+ const previousUsageToken = process.env.AUTODEV_OPENLIT_USAGE_TOKEN;
+ process.env.AUTODEV_OPENLIT_USAGE_TOKEN = "server-only-usage-test-token";
+@@ -51,6 +55,25 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+     mockListSpans.mockResolvedValue({ rows: [], meta: {} });
+     mockRunWidgetQuery.mockReset();
+     mockRunWidgetQuery.mockResolvedValue({ data: [] });
++    mockReadGitUsageWidgets.mockReset();
++    mockReadGitUsageWidgets.mockResolvedValue([
++      "git-commits",
++      "git-files-changed",
++      "git-files-added",
++      "git-files-deleted",
++      "git-lines-added",
++      "git-lines-removed",
++      "git-partial-commits",
++      "git-commits-by-workspace",
++      "git-commits-by-provider",
++      "git-commits-by-agent"
++    ].map((key) => ({
++      key,
++      querySucceeded: true,
++      observed: false,
++      partial: false,
++      rows: []
++    })));
+   });
+ 
+   it("fetches filter values across AutoDev logical and MCP spans", async () => {
+@@ -67,7 +90,7 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+ 
+     expect(response.status).toBe(200);
+     const body = await response.json();
+-    expect(body.schema).toBe("autodev-openlit-usage-v4");
++    expect(body.schema).toBe("autodev-openlit-usage-v5");
+     expect(body.traceList).toEqual({ kind: "not-applicable", reason: "skill-filter" });
+     expect(body.widgets.every((widget: { querySucceeded: unknown; partial: unknown }) =>
+       typeof widget.querySucceeded === "boolean" && typeof widget.partial === "boolean"
+@@ -146,6 +169,64 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+     }
+   });
+ 
++  it("returns the fixed Git metric widgets in the v5 response", async () => {
++    const selection = {
++      range: "7D",
++      values: { workspace: ["repo-a"], provider: ["codex"], agent: ["worker"] }
++    };
++    mockReadGitUsageWidgets.mockResolvedValueOnce([
++      {
++        key: "git-commits",
++        querySucceeded: true,
++        observed: true,
++        partial: false,
++        rows: [{ commits: 3 }],
++        valuePath: "0.commits"
++      },
++      ...[
++        "git-files-changed",
++        "git-files-added",
++        "git-files-deleted",
++        "git-lines-added",
++        "git-lines-removed",
++        "git-partial-commits",
++        "git-commits-by-workspace",
++        "git-commits-by-provider",
++        "git-commits-by-agent"
++      ].map((key) => ({
++        key,
++        querySucceeded: true,
++        observed: false,
++        partial: false,
++        rows: []
++      }))
++    ]);
++    const request = new NextRequest("http://localhost/api/autodev/usage", {
++      method: "POST",
++      headers: {
++        authorization: "Bearer server-only-usage-test-token",
++        "content-type": "application/json"
++      },
++      body: JSON.stringify({ selection })
++    });
++
++    const response = await POST(request);
++    const body = await response.json();
++    const gitWidgets = body.widgets.filter((widget: { key: string }) =>
++      widget.key.startsWith("git-")
++    );
++
++    expect(response.status).toBe(200);
++    expect(body.schema).toBe("autodev-openlit-usage-v5");
++    expect(gitWidgets).toHaveLength(10);
++    expect(gitWidgets.find((widget: { key: string }) => widget.key === "git-commits"))
++      .toMatchObject({ observed: true, rows: [{ commits: 3 }] });
++    expect(mockReadGitUsageWidgets).toHaveBeenCalledWith(
++      selection,
++      expect.objectContaining({ start: expect.any(Date), end: expect.any(Date) })
++    );
++  });
++
+   it("runs source-confirmed compaction time-series and bounded breakdown widgets", async () => {
+     const timeWidgetId = "47c52af8-0c4a-4e85-8a9e-a8f85745b112";
+     const workspaceWidgetId = "47c52af8-0c4a-4e85-8a9e-a8f85745b113";
+@@ -189,7 +270,7 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+       body.widgets.find((candidate: { key: string }) => candidate.key === key);
+ 
+     expect(response.status).toBe(200);
+-    expect(body.schema).toBe("autodev-openlit-usage-v4");
++    expect(body.schema).toBe("autodev-openlit-usage-v5");
+     expect(widget("context-compactions-over-time")).toMatchObject({
+       querySucceeded: true,
+       observed: true,
+@@ -219,14 +300,14 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+       workspaceWidgetId,
+       modelWidgetId,
+       "47c52af8-0c4a-4e85-8a9e-a8f85745b115"
+-    ]) {
++    ] as const) {
+       expect(usageDashboard.widgets[widgetId].properties.optInVariables).toEqual(
+         logicalWidget.properties.optInVariables
+       );
+     }
+   });
+ 
+-  it("returns bounded, privacy-filtered recent provider attempts in the v4 response", async () => {
++  it("returns bounded, privacy-filtered recent provider attempts in the v5 response", async () => {
+     mockGetTelemetryAdapter.mockResolvedValue({ listSpans: mockListSpans });
+     mockListSpans.mockResolvedValue({
+       rows: [
+@@ -263,7 +344,7 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+     const body = await response.json();
+ 
+     expect(response.status).toBe(200);
+-    expect(body.schema).toBe("autodev-openlit-usage-v4");
++    expect(body.schema).toBe("autodev-openlit-usage-v5");
+     expect(body.traceList).toEqual({
+       kind: "observed",
+       partial: false,
+@@ -308,9 +389,9 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+       body: JSON.stringify({ selection: { range: "24H", values: {} } })
+     });
+     const costWidgetId = "47c52af8-0c4a-4e85-8a9e-a8f85745b111";
+-    mockRunWidgetQuery.mockImplementation(async (widgetId: string) => ({
++    mockRunWidgetQuery.mockImplementation(async (widget: { id: string }) => ({
+       data:
+-        widgetId === costWidgetId
++        widget.id === costWidgetId
+           ? [{ estimated_cost: 0, costed_attempts: 0 }]
+           : []
+     }));
+@@ -322,9 +403,9 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+     );
+     expect(emptyCost.observed).toBe(false);
+ 
+-    mockRunWidgetQuery.mockImplementation(async (widgetId: string) => ({
++    mockRunWidgetQuery.mockImplementation(async (widget: { id: string }) => ({
+       data:
+-        widgetId === costWidgetId
++        widget.id === costWidgetId
+           ? [{ estimated_cost: 0, costed_attempts: 2 }]
+           : []
+     }));
+diff --git a/src/client/src/__tests__/lib/autodev/usage-git-metrics.test.ts b/src/client/src/__tests__/lib/autodev/usage-git-metrics.test.ts
+new file mode 100644
+index 00000000..912729eb
+--- /dev/null
++++ b/src/client/src/__tests__/lib/autodev/usage-git-metrics.test.ts
+@@ -0,0 +1,219 @@
++const mockResolveTelemetrySourceDescriptor = jest.fn();
++const mockGetTelemetryAdapter = jest.fn();
++const mockMetricCounterDeltas = jest.fn();
++
++jest.mock("@/lib/telemetry-source", () => ({
++	resolveTelemetrySourceDescriptor: (...args: unknown[]) =>
++		mockResolveTelemetrySourceDescriptor(...args),
++	getTelemetryAdapter: (...args: unknown[]) =>
++		mockGetTelemetryAdapter(...args),
++}));
++
++import {
++	buildGitMetricQuery,
++	readGitUsageWidgets,
++} from "@/lib/autodev/usage-git-metrics";
++import type { UsageSelection } from "@/lib/autodev/usage-api";
++
++const selection: UsageSelection = {
++	range: "7D",
++	values: { workspace: ["repo-a"], provider: ["codex"], agent: ["worker"] },
++};
++const range = {
++	start: new Date("2026-10-01T00:00:00.000Z"),
++	end: new Date("2026-10-08T00:00:00.000Z"),
++};
++const commonAttributes = {
++	"autodev.git.attribution": "commit_identity",
++	"autodev.workspace": "repo-a",
++	"gen_ai.provider.name": "codex",
++	"autodev.agent.role": "worker",
++};
++
++function point(
++	metricName: string,
++	value: number,
++	extra: Record<string, string> = {},
++) {
++	return {
++		metricName,
++		serviceName: "autodev-router",
++		timestamp: "2026-10-06T00:00:00.000Z",
++		value,
++		attributes: { ...commonAttributes, ...extra },
++		resourceAttributes: {},
++	};
++}
++
++function adapterWith(rows: readonly ReturnType<typeof point>[]) {
++	mockGetTelemetryAdapter.mockResolvedValue({
++		capabilities: () => ({ cumulativeCounterDeltas: true }),
++		metricCounterDeltas: mockMetricCounterDeltas,
++	});
++	mockMetricCounterDeltas.mockResolvedValue({ rows, meta: {} });
++}
++
++describe("Usage Git metric query", () => {
++	beforeEach(() => {
++		mockResolveTelemetrySourceDescriptor.mockReset();
++		mockResolveTelemetrySourceDescriptor.mockResolvedValue({
++			type: "clickhouse",
++			id: "builtin:default-db",
++		});
++		mockGetTelemetryAdapter.mockReset();
++		mockMetricCounterDeltas.mockReset();
++	});
++
++	it("uses only bounded, typed metric filters for source-confirmed commits", () => {
++		const untrusted = "repo-a' OR 1=1 --";
++		const query = buildGitMetricQuery(
++			{
++				...selection,
++				values: { ...selection.values, workspace: [untrusted] },
++			},
++			range,
++		);
++
++		expect(query.signal).toBe("metrics");
++		expect(query.timeRange).toEqual(range);
++		expect(query.aiSelector).toBe(false);
++		expect(query.filters).toEqual(
++			expect.arrayContaining([
++				expect.objectContaining({
++					target: "spanName",
++					op: "in",
++					value: expect.arrayContaining(["autodev.git.commits"]),
++				}),
++				expect.objectContaining({
++					key: "autodev.git.attribution",
++					op: "eq",
++					value: "commit_identity",
++				}),
++				expect.objectContaining({
++					key: "autodev.workspace",
++					op: "in",
++					value: [untrusted],
++				}),
++			]),
++		);
++		expect(JSON.stringify(query)).toContain(untrusted);
++	});
++
++	it("aggregates typed cumulative-counter deltas into the ten fixed Git widgets", async () => {
++		adapterWith([
++			point("autodev.git.commits", 12),
++			point("autodev.git.commits", 2, { "autodev.git.partial": "true" }),
++			point("autodev.git.files_changed", 24),
++			point("autodev.git.files_added", 6),
++			point("autodev.git.files_deleted", 3),
++			point("autodev.git.lines_added", 50),
++			point("autodev.git.lines_removed", 40),
++		]);
++
++		const widgets = await readGitUsageWidgets(selection, range);
++		const widget = (key: string) =>
++			widgets.find((candidate) => candidate.key === key);
++		expect(widgets).toHaveLength(10);
++		expect(widget("git-commits")).toMatchObject({
++			querySucceeded: true,
++			observed: true,
++			rows: [{ commits: 14 }],
++		});
++		expect(widget("git-partial-commits")).toMatchObject({
++			observed: true,
++			rows: [{ value: 2 }],
++		});
++		expect(widget("git-files-changed")?.rows).toEqual([{ value: 24 }]);
++		expect(widget("git-files-added")?.rows).toEqual([{ value: 6 }]);
++		expect(widget("git-files-deleted")?.rows).toEqual([{ value: 3 }]);
++		expect(widget("git-lines-added")?.rows).toEqual([{ value: 50 }]);
++		expect(widget("git-lines-removed")?.rows).toEqual([{ value: 40 }]);
++		expect(widget("git-commits-by-workspace")?.rows).toEqual([
++			{ name: "repo-a", count: 14 },
++		]);
++		expect(widget("git-commits-by-provider")?.rows).toEqual([
++			{ name: "codex", count: 14 },
++		]);
++		expect(widget("git-commits-by-agent")?.rows).toEqual([
++			{ name: "worker", count: 14 },
++		]);
++		expect(mockResolveTelemetrySourceDescriptor).toHaveBeenCalledWith({
++			signal: "metrics",
++		});
++		expect(mockGetTelemetryAdapter).toHaveBeenCalledWith({
++			signal: "metrics",
++			sourceId: "builtin:default-db",
++		});
++		expect(mockMetricCounterDeltas).toHaveBeenCalledWith(
++			queryFor(selection),
++		);
++	});
++
++	it("omits unknown attribution from breakdowns and marks a bounded truncation", async () => {
++		const rows = Array.from({ length: 21 }, (_, index) =>
++			point("autodev.git.commits", 1, {
++				"autodev.workspace": `workspace-${index}`,
++			}),
++		);
++		rows.push(
++			point("autodev.git.commits", 100, {
++				"autodev.workspace": "",
++				"gen_ai.provider.name": "",
++				"autodev.agent.role": "",
++			}),
++		);
++		adapterWith(rows);
++		const widgets = await readGitUsageWidgets(selection, range);
++		const workspace = widgets.find(
++			(candidate) => candidate.key === "git-commits-by-workspace",
++		);
++		const provider = widgets.find(
++			(candidate) => candidate.key === "git-commits-by-provider",
++		);
++		expect(workspace?.rows).toHaveLength(20);
++		expect(workspace?.partial).toBe(true);
++		expect(provider?.rows).toEqual([{ name: "codex", count: 21 }]);
++	});
++
++	it("fails closed for unsupported sources, adapters, metric filters and query bounds", async () => {
++		mockResolveTelemetrySourceDescriptor.mockResolvedValue({
++			type: "prometheus",
++		});
++		let widgets = await readGitUsageWidgets(selection, range);
++		expect(widgets.every((candidate) => !candidate.querySucceeded)).toBe(
++			true,
++		);
++		expect(mockGetTelemetryAdapter).not.toHaveBeenCalled();
++
++		mockResolveTelemetrySourceDescriptor.mockResolvedValue({
++			type: "clickhouse",
++			id: "source",
++		});
++		mockGetTelemetryAdapter.mockResolvedValue({ capabilities: () => ({}) });
++		widgets = await readGitUsageWidgets(selection, range);
++		expect(widgets.every((candidate) => !candidate.querySucceeded)).toBe(
++			true,
++		);
++
++		adapterWith([point("autodev.git.commits", 1)]);
++		mockMetricCounterDeltas.mockRejectedValueOnce(new Error("no baseline"));
++		widgets = await readGitUsageWidgets(selection, range);
++		expect(widgets.every((candidate) => !candidate.querySucceeded)).toBe(
++			true,
++		);
++
++		adapterWith([point("autodev.git.commits", 1)]);
++		mockMetricCounterDeltas.mockResolvedValueOnce({
++			rows: [],
++			meta: { truncated: true },
++		});
++		widgets = await readGitUsageWidgets(selection, range);
++		expect(widgets.every((candidate) => !candidate.querySucceeded)).toBe(
++			true,
++		);
++	});
++});
++
++function queryFor(selection: UsageSelection) {
++	return buildGitMetricQuery(selection, range);
++}
+diff --git a/src/client/src/__tests__/lib/platform/datasource/clickhouse-counter-deltas.test.ts b/src/client/src/__tests__/lib/platform/datasource/clickhouse-counter-deltas.test.ts
+new file mode 100644
+index 00000000..63b327ad
+--- /dev/null
++++ b/src/client/src/__tests__/lib/platform/datasource/clickhouse-counter-deltas.test.ts
+@@ -0,0 +1,175 @@
++const mockQueryConnectorMetrics = jest.fn();
++
++jest.mock("@/lib/platform/common", () => ({
++	OTEL_METRICS_SUM_TABLE_NAME: "otel_metrics_sum",
++}));
++
++jest.mock(
++	"@/lib/platform/connectors/datasource/clickhouse/direct-read",
++	() => ({
++		queryConnectorMetrics: (...args: unknown[]) =>
++			mockQueryConnectorMetrics(...args),
++	}),
++);
++
++import {
++	buildCounterDeltaQuery,
++	readCounterDeltaSeries,
++} from "@/lib/platform/connectors/datasource/clickhouse/counter-deltas";
++import type { OpenLITQuery } from "@/lib/platform/connectors/datasource/types";
++
++const query: OpenLITQuery = {
++	signal: "metrics",
++	timeRange: {
++		start: new Date("2026-10-01T00:00:00.000Z"),
++		end: new Date("2026-10-08T00:00:00.000Z"),
++	},
++	aiSelector: false,
++	filters: [
++		{
++			target: "spanName",
++			op: "in",
++			value: [
++				"autodev.git.commits",
++				"autodev.git.files_changed",
++				"autodev.git.files_added",
++				"autodev.git.files_deleted",
++				"autodev.git.lines_added",
++				"autodev.git.lines_removed",
++			],
++		},
++		{
++			target: "attribute",
++			scope: "resource",
++			key: "service.name",
++			op: "eq",
++			value: "autodev-router",
++		},
++		{
++			target: "attribute",
++			scope: "metric",
++			key: "autodev.git.attribution",
++			op: "eq",
++			value: "commit_identity",
++		},
++		{
++			target: "attribute",
++			scope: "metric",
++			key: "autodev.workspace",
++			op: "in",
++			value: ["repo-a' OR 1=1 --"],
++		},
++	],
++};
++
++function row(overrides: Record<string, unknown> = {}) {
++	return {
++		MetricName: "autodev.git.commits",
++		Attributes: {
++			"autodev.git.attribution": "commit_identity",
++			"autodev.workspace": "repo-a",
++			"gen_ai.provider.name": "codex",
++			"autodev.agent.role": "worker",
++		},
++		currentValue: 22,
++		baselineValue: 10,
++		baselinePoints: 1,
++		startedInWindow: 0,
++		timestampMs: new Date("2026-10-07T00:00:00.000Z").getTime(),
++		...overrides,
++	};
++}
++
++describe("ClickHouse cumulative metric windows", () => {
++	beforeEach(() => mockQueryConnectorMetrics.mockReset());
++
++	it("uses a fixed parameterized sum query and never averages cumulative samples", () => {
++		const prepared = buildCounterDeltaQuery(query);
++		expect(prepared.sql).toContain("otel_metrics_sum");
++		expect(prepared.sql).toContain("AggregationTemporality = 2");
++		expect(prepared.sql).toContain("IsMonotonic = 1");
++		expect(prepared.sql).toContain("argMax(Value, TimeUnix)");
++		expect(prepared.sql).toContain("baseline_latest");
++		expect(prepared.sql).toContain("{dimension_0_values:Array(String)}");
++		expect(prepared.sql).not.toMatch(/avg\s*\(/iu);
++		expect(prepared.sql).not.toContain("repo-a' OR 1=1 --");
++		expect(prepared.params.dimension_0_values).toEqual([
++			"repo-a' OR 1=1 --",
++		]);
++		expect(prepared.params.start).toBe("2026-10-01T00:00:00.000Z");
++		expect(prepared.params.end).toBe("2026-10-08T00:00:00.000Z");
++	});
++
++	it("subtracts the prior cumulative reading and accepts a series that starts inside the window", async () => {
++		mockQueryConnectorMetrics.mockResolvedValue({ data: [row()] });
++		const delta = await readCounterDeltaSeries(query, "db-1");
++		expect(delta.rows).toEqual([
++			expect.objectContaining({
++				metricName: "autodev.git.commits",
++				value: 12,
++				serviceName: "autodev-router",
++			}),
++		]);
++		expect(mockQueryConnectorMetrics).toHaveBeenCalledWith(
++			expect.stringContaining("LEFT JOIN baseline_latest"),
++			"db-1",
++			expect.objectContaining({ attribution_value: "commit_identity" }),
++		);
++
++		mockQueryConnectorMetrics.mockResolvedValueOnce({
++			data: [
++				row({
++					currentValue: 3,
++					baselineValue: 0,
++					baselinePoints: 0,
++					startedInWindow: 1,
++				}),
++			],
++		});
++		const newSeries = await readCounterDeltaSeries(query, "db-1");
++		expect(newSeries.rows[0]?.value).toBe(3);
++	});
++
++	it("rejects missing baselines, counter resets, and non-integral counters instead of undercounting", async () => {
++		for (const invalid of [
++			row({ baselinePoints: 0, startedInWindow: 0 }),
++			row({ currentValue: 3, baselineValue: 10 }),
++			row({ currentValue: 3.5 }),
++		]) {
++			mockQueryConnectorMetrics.mockResolvedValueOnce({
++				data: [invalid],
++			});
++			await expect(readCounterDeltaSeries(query)).rejects.toThrow(
++				/baseline|window/u,
++			);
++		}
++	});
++
++	it("rejects any query outside the fixed AutoDev metric/filter contract", () => {
++		const missingAttribution = {
++			...query,
++			filters: query.filters?.filter(
++				(filter) => filter.key !== "autodev.git.attribution",
++			),
++		};
++		const injected = {
++			...query,
++			filters: [
++				...(query.filters ?? []),
++				{
++					target: "attribute" as const,
++					scope: "metric" as const,
++					key: "arbitrary",
++					op: "eq" as const,
++					value: "x",
++				},
++			],
++		};
++		expect(() => buildCounterDeltaQuery(missingAttribution)).toThrow(
++			/identity/u,
++		);
++		expect(() => buildCounterDeltaQuery(injected)).toThrow(
++			/dimension filter/u,
++		);
++	});
++});
+diff --git a/src/client/src/__tests__/lib/platform/datasource/clickhouse-direct-read.test.ts b/src/client/src/__tests__/lib/platform/datasource/clickhouse-direct-read.test.ts
+index e0dbb5f8..351d3613 100644
+--- a/src/client/src/__tests__/lib/platform/datasource/clickhouse-direct-read.test.ts
++++ b/src/client/src/__tests__/lib/platform/datasource/clickhouse-direct-read.test.ts
+@@ -9,6 +9,7 @@ jest.mock("@/lib/db-config", () => ({
+ }));
+ 
+ import {
++	queryConnectorMetrics,
+ 	queryConnectorTraces,
+ 	resolveTracesTableRef,
+ } from "@/lib/platform/connectors/datasource/clickhouse/direct-read";
+@@ -42,4 +43,17 @@ describe("clickhouse direct-read", () => {
+ 		);
+ 		expect(result.data).toEqual([{ TraceId: "t1" }]);
+ 	});
++
++	it("queries metric points with bound values through the read-only connector", async () => {
++		mockConnectorDataCollector.mockResolvedValue({ data: [{ currentValue: 3 }] });
++		const query = "SELECT Value FROM otel_metrics_sum WHERE MetricName = {metric:String}";
++		const queryParams = { metric: "autodev.git.commits" };
++		const result = await queryConnectorMetrics(query, "cfg-1", queryParams);
++		expect(mockConnectorDataCollector).toHaveBeenCalledWith(
++			{ query, query_params: queryParams, enable_readonly: true },
++			"query",
++			"cfg-1"
++		);
++		expect(result.data).toEqual([{ currentValue: 3 }]);
++	});
+ });
+diff --git a/src/client/src/app/api/autodev/usage/route.ts b/src/client/src/app/api/autodev/usage/route.ts
+index fac25957..c89a9d8a 100644
+--- a/src/client/src/app/api/autodev/usage/route.ts
++++ b/src/client/src/app/api/autodev/usage/route.ts
+@@ -1,6 +1,7 @@
+ import { NextRequest } from "next/server";
+ import usageDashboard from "@/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json";
+ import type { MetricParams } from "@/lib/platform/common";
++import { readGitUsageWidgets } from "@/lib/autodev/usage-git-metrics";
+ import type { NormalizedSpan, OpenLITQuery } from "@/lib/platform/connectors/datasource/types";
+ import {
+ 	getTelemetryAdapter,
+@@ -218,15 +219,17 @@ export async function POST(request: NextRequest): Promise<Response> {
+ 		),
+ 	);
+ 	const traceListPromise = readRecentAttempts(adapter, selection, timeRange);
+-	const [filterOptions, widgets, traceList] = await Promise.all([
++	const gitWidgetsPromise = readGitUsageWidgets(selection, timeRange);
++	const [filterOptions, widgets, traceList, gitWidgets] = await Promise.all([
+ 		filterOptionsPromise,
+ 		widgetQueries,
+ 		traceListPromise,
++		gitWidgetsPromise,
+ 	]);
+ 
+ 	return Response.json({
+-		schema: "autodev-openlit-usage-v4",
+-		widgets,
++		schema: "autodev-openlit-usage-v5",
++		widgets: [...widgets, ...gitWidgets],
+ 		filterOptions,
+ 		traceList,
+ 	});
+diff --git a/src/client/src/lib/autodev/usage-git-metrics.ts b/src/client/src/lib/autodev/usage-git-metrics.ts
+new file mode 100644
+index 00000000..5ba220ff
+--- /dev/null
++++ b/src/client/src/lib/autodev/usage-git-metrics.ts
+@@ -0,0 +1,317 @@
++import {
++	getTelemetryAdapter,
++	resolveTelemetrySourceDescriptor,
++} from "@/lib/telemetry-source";
++import type {
++	NormalizedFilter,
++	NormalizedMetricPoint,
++	OpenLITQuery,
++} from "@/lib/platform/connectors/datasource/types";
++import type { UsageSelection } from "@/lib/autodev/usage-api";
++
++const METRIC_NAMES = [
++	"autodev.git.commits",
++	"autodev.git.files_changed",
++	"autodev.git.files_added",
++	"autodev.git.files_deleted",
++	"autodev.git.lines_added",
++	"autodev.git.lines_removed",
++] as const;
++const METRIC_WIDGET_KEYS = [
++	"git-commits",
++	"git-files-changed",
++	"git-files-added",
++	"git-files-deleted",
++	"git-lines-added",
++	"git-lines-removed",
++	"git-partial-commits",
++	"git-commits-by-workspace",
++	"git-commits-by-provider",
++	"git-commits-by-agent",
++] as const;
++const BREAKDOWN_LIMIT = 20;
++const SERVICE_NAME = "autodev-router";
++const ATTRIBUTION_KEY = "autodev.git.attribution";
++const ATTRIBUTION_VALUE = "commit_identity";
++const PARTIAL_KEY = "autodev.git.partial";
++
++export interface GitUsageWidget {
++	readonly key: (typeof METRIC_WIDGET_KEYS)[number];
++	readonly querySucceeded: boolean;
++	readonly observed: boolean;
++	readonly partial: boolean;
++	readonly rows: readonly Record<string, string | number>[];
++	readonly valuePath?: string;
++	readonly xAxis?: string;
++	readonly yAxis?: string;
++	readonly resultLimit?: number;
++}
++
++interface CounterObservation {
++	readonly metric: (typeof METRIC_NAMES)[number];
++	readonly value: number;
++	readonly attributes: Readonly<Record<string, string>>;
++}
++
++/** Create the fixed, typed OpenLIT metrics query for source-confirmed Git changes. */
++export function buildGitMetricQuery(
++	selection: UsageSelection,
++	range: { readonly start: Date; readonly end: Date },
++): OpenLITQuery {
++	const filters: NormalizedFilter[] = [
++		{ target: "spanName", op: "in", value: [...METRIC_NAMES] },
++		{
++			target: "attribute",
++			scope: "resource",
++			key: "service.name",
++			op: "eq",
++			value: SERVICE_NAME,
++		},
++		{
++			target: "attribute",
++			scope: "metric",
++			key: ATTRIBUTION_KEY,
++			op: "eq",
++			value: ATTRIBUTION_VALUE,
++		},
++	];
++	for (const [id, key] of [
++		["workspace", "autodev.workspace"],
++		["provider", "gen_ai.provider.name"],
++		["agent", "autodev.agent.role"],
++	] as const) {
++		const values = selection.values[id];
++		if (values?.length) {
++			filters.push({
++				target: "attribute",
++				scope: "metric",
++				key,
++				op: "in",
++				value: [...values],
++			});
++		}
++	}
++	return {
++		signal: "metrics",
++		timeRange: { start: range.start, end: range.end },
++		filters,
++		aiSelector: false,
++	};
++}
++
++/** Read source-confirmed agent commit counters and translate them into fixed Usage widgets. */
++export async function readGitUsageWidgets(
++	selection: UsageSelection,
++	range: { readonly start: Date; readonly end: Date },
++): Promise<readonly GitUsageWidget[]> {
++	const unavailable = unavailableWidgets();
++	if (
++		(selection.values.model?.length ?? 0) > 0 ||
++		(selection.values.skill?.length ?? 0) > 0
++	) {
++		return unavailable;
++	}
++
++	try {
++		const descriptor = await resolveTelemetrySourceDescriptor({
++			signal: "metrics",
++		});
++		if (descriptor.type !== "clickhouse") return unavailable;
++		const adapter = await getTelemetryAdapter({
++			signal: "metrics",
++			sourceId: descriptor.id,
++		});
++		if (
++			adapter.capabilities().cumulativeCounterDeltas !== true ||
++			typeof adapter.metricCounterDeltas !== "function"
++		) {
++			return unavailable;
++		}
++		const frame = await adapter.metricCounterDeltas(
++			buildGitMetricQuery(selection, range),
++		);
++		if (frame.meta?.truncated) return unavailable;
++		const observations = parseCounterObservations(frame.rows);
++		if (!observations) return unavailable;
++		return widgetsFromObservations(observations);
++	} catch {
++		return unavailable;
++	}
++}
++
++function parseCounterObservations(
++	rows: readonly NormalizedMetricPoint[],
++): CounterObservation[] | null {
++	const observations: CounterObservation[] = [];
++	for (const row of rows) {
++		if (
++			!METRIC_NAMES.includes(
++				row.metricName as (typeof METRIC_NAMES)[number],
++			) ||
++			row.serviceName !== SERVICE_NAME ||
++			!isRecord(row.attributes)
++		) {
++			return null;
++		}
++		const value = finiteCounter(row.value);
++		if (value === null) return null;
++		const attributes: Record<string, string> = {};
++		for (const [key, candidate] of Object.entries(row.attributes)) {
++			if (typeof candidate !== "string") return null;
++			attributes[key] = candidate;
++		}
++		if (attributes[ATTRIBUTION_KEY] !== ATTRIBUTION_VALUE) return null;
++		observations.push({
++			metric: row.metricName as (typeof METRIC_NAMES)[number],
++			value,
++			attributes,
++		});
++	}
++	return observations;
++}
++
++function widgetsFromObservations(
++	observations: readonly CounterObservation[],
++): readonly GitUsageWidget[] {
++	const metricValues = new Map<string, number>();
++	for (const observation of observations) {
++		metricValues.set(
++			observation.metric,
++			(metricValues.get(observation.metric) ?? 0) + observation.value,
++		);
++	}
++	const commits = observations.filter(
++		(row) => row.metric === "autodev.git.commits",
++	);
++	const observedCommitCount = commits.length > 0;
++	const partialCommits = commits
++		.filter((row) => row.attributes[PARTIAL_KEY] === "true")
++		.reduce((total, row) => total + row.value, 0);
++	const numericWidget = (
++		key: (typeof METRIC_WIDGET_KEYS)[number],
++		metric: (typeof METRIC_NAMES)[number],
++		field: string,
++	): GitUsageWidget => {
++		const found = metricValues.has(metric);
++		return {
++			key,
++			querySucceeded: true,
++			observed: found,
++			partial: false,
++			rows: found ? [{ [field]: metricValues.get(metric)! }] : [],
++			valuePath: `0.${field}`,
++		};
++	};
++	const partialWidget: GitUsageWidget = {
++		key: "git-partial-commits",
++		querySucceeded: true,
++		observed: observedCommitCount,
++		partial: false,
++		rows: observedCommitCount ? [{ value: partialCommits }] : [],
++		valuePath: "0.value",
++	};
++	return [
++		numericWidget("git-commits", "autodev.git.commits", "commits"),
++		numericWidget(
++			"git-files-changed",
++			"autodev.git.files_changed",
++			"value",
++		),
++		numericWidget("git-files-added", "autodev.git.files_added", "value"),
++		numericWidget(
++			"git-files-deleted",
++			"autodev.git.files_deleted",
++			"value",
++		),
++		numericWidget("git-lines-added", "autodev.git.lines_added", "value"),
++		numericWidget(
++			"git-lines-removed",
++			"autodev.git.lines_removed",
++			"value",
++		),
++		partialWidget,
++		breakdownWidget(
++			"git-commits-by-workspace",
++			commits,
++			"autodev.workspace",
++		),
++		breakdownWidget(
++			"git-commits-by-provider",
++			commits,
++			"gen_ai.provider.name",
++		),
++		breakdownWidget("git-commits-by-agent", commits, "autodev.agent.role"),
++	];
++}
++
++function breakdownWidget(
++	key:
++		| "git-commits-by-workspace"
++		| "git-commits-by-provider"
++		| "git-commits-by-agent",
++	commits: readonly CounterObservation[],
++	attribute: string,
++): GitUsageWidget {
++	const counts = new Map<string, number>();
++	for (const commit of commits) {
++		const name = safeLabel(commit.attributes[attribute]);
++		if (name) counts.set(name, (counts.get(name) ?? 0) + commit.value);
++	}
++	const rows = Array.from(counts.entries())
++		.sort(
++			([leftName, leftCount], [rightName, rightCount]) =>
++				rightCount - leftCount || leftName.localeCompare(rightName),
++		)
++		.slice(0, BREAKDOWN_LIMIT)
++		.map(([name, count]) => ({ name, count }));
++	return {
++		key,
++		querySucceeded: true,
++		observed: commits.length > 0,
++		partial: counts.size > BREAKDOWN_LIMIT,
++		rows,
++		xAxis: "name",
++		yAxis: "count",
++		resultLimit: BREAKDOWN_LIMIT,
++	};
++}
++
++function unavailableWidgets(): readonly GitUsageWidget[] {
++	return METRIC_WIDGET_KEYS.map((key) => ({
++		key,
++		querySucceeded: false,
++		observed: false,
++		partial: false,
++		rows: [],
++		...(key.startsWith("git-commits-by-")
++			? { xAxis: "name", yAxis: "count", resultLimit: BREAKDOWN_LIMIT }
++			: {}),
++		...(key === "git-commits" ? { valuePath: "0.commits" } : {}),
++		...(key === "git-partial-commits" ? { valuePath: "0.value" } : {}),
++		...(key.startsWith("git-files-") || key.startsWith("git-lines-")
++			? { valuePath: "0.value" }
++			: {}),
++	}));
++}
++
++function finiteCounter(value: unknown): number | null {
++	const parsed = typeof value === "number" ? value : Number(value);
++	return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
++}
++
++function safeLabel(value: unknown): string | null {
++	if (
++		typeof value !== "string" ||
++		value.length === 0 ||
++		value.length > 128 ||
++		value.trim() !== value ||
++		/[\u0000-\u001f]/u.test(value)
++	) {
++		return null;
++	}
++	return value;
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++	return value !== null && typeof value === "object" && !Array.isArray(value);
++}
+diff --git a/src/client/src/lib/platform/connectors/datasource/clickhouse/adapter.ts b/src/client/src/lib/platform/connectors/datasource/clickhouse/adapter.ts
+index b0e2349d..b2d68986 100644
+--- a/src/client/src/lib/platform/connectors/datasource/clickhouse/adapter.ts
++++ b/src/client/src/lib/platform/connectors/datasource/clickhouse/adapter.ts
+@@ -17,6 +17,7 @@ import {
+ 	queryConnectorTraces,
+ 	resolveTracesTableRef,
+ } from "./direct-read";
++import { readCounterDeltaSeries } from "./counter-deltas";
+ import {
+ 	getAttributeKeys,
+ } from "@/lib/platform/request";
+@@ -139,6 +140,7 @@ export class ClickHouseAdapter implements DataSourceAdapter {
+ 			spanMutation: true,
+ 			distinctValues: true,
+ 			dashboardVariableSignals: ["traces"],
++			cumulativeCounterDeltas: true,
+ 			crossTraceSession: true,
+ 			rawQuery: true,
+ 		};
+@@ -435,6 +437,12 @@ export class ClickHouseAdapter implements DataSourceAdapter {
+ 		};
+ 	}
+ 
++	async metricCounterDeltas(
++		query: OpenLITQuery
++	): Promise<DataFrame<NormalizedMetricPoint>> {
++		return readCounterDeltaSeries(query, this.dbConfigId);
++	}
++
+ 	async metricTimeSeries(
+ 		query: OpenLITQuery
+ 	): Promise<DataFrame<NormalizedMetricPoint>> {
+diff --git a/src/client/src/lib/platform/connectors/datasource/clickhouse/counter-deltas.ts b/src/client/src/lib/platform/connectors/datasource/clickhouse/counter-deltas.ts
+new file mode 100644
+index 00000000..a7deb120
+--- /dev/null
++++ b/src/client/src/lib/platform/connectors/datasource/clickhouse/counter-deltas.ts
+@@ -0,0 +1,316 @@
++import { OTEL_METRICS_SUM_TABLE_NAME } from "@/lib/platform/common";
++import { queryConnectorMetrics } from "./direct-read";
++import type {
++	DataFrame,
++	NormalizedMetricPoint,
++	NormalizedFilter,
++	OpenLITQuery,
++} from "../types";
++
++const GIT_METRIC_NAMES = [
++	"autodev.git.commits",
++	"autodev.git.files_changed",
++	"autodev.git.files_added",
++	"autodev.git.files_deleted",
++	"autodev.git.lines_added",
++	"autodev.git.lines_removed",
++] as const;
++const ATTRIBUTE_FILTERS = new Set([
++	"autodev.workspace",
++	"gen_ai.provider.name",
++	"autodev.agent.role",
++]);
++const MAX_COUNTER_SERIES = 10_000;
++const MAX_COUNTER_WINDOW_MS = 90 * 24 * 60 * 60 * 1_000;
++const SERVICE_NAME = "autodev-router";
++const ATTRIBUTION_KEY = "autodev.git.attribution";
++const ATTRIBUTION_VALUE = "commit_identity";
++
++interface CounterDeltaQuery {
++	readonly sql: string;
++	readonly params: Readonly<Record<string, unknown>>;
++}
++
++interface CounterDeltaRow {
++	readonly MetricName?: unknown;
++	readonly Attributes?: unknown;
++	readonly currentValue?: unknown;
++	readonly baselineValue?: unknown;
++	readonly baselinePoints?: unknown;
++	readonly startedInWindow?: unknown;
++	readonly timestampMs?: unknown;
++}
++
++/** Read one exact window of cumulative monotonic counters through the metrics adapter. */
++export async function readCounterDeltaSeries(
++	query: OpenLITQuery,
++	dbConfigId?: string,
++): Promise<DataFrame<NormalizedMetricPoint>> {
++	const prepared = buildCounterDeltaQuery(query);
++	const startedAt = Date.now();
++	const result = await queryConnectorMetrics(prepared.sql, dbConfigId, {
++		...prepared.params,
++	});
++	if (result.err || !Array.isArray(result.data)) {
++		throw result.err instanceof Error
++			? result.err
++			: new Error("ClickHouse metric-counter query failed");
++	}
++	if (result.data.length > MAX_COUNTER_SERIES) {
++		throw new Error("ClickHouse metric-counter result exceeded its bound");
++	}
++	const rows = (result.data as CounterDeltaRow[]).map(toCounterDeltaPoint);
++	if (rows.some((row) => row === null)) {
++		throw new Error(
++			"Cumulative metric window has an incomplete or invalid baseline",
++		);
++	}
++	return {
++		fields: [],
++		rows: rows as NormalizedMetricPoint[],
++		meta: { latencyMs: Date.now() - startedAt, rowsScanned: rows.length },
++	};
++}
++
++export function buildCounterDeltaQuery(query: OpenLITQuery): CounterDeltaQuery {
++	const filters = validateCounterQuery(query);
++	const params: Record<string, unknown> = {
++		metric_names: [...GIT_METRIC_NAMES],
++		service_name: SERVICE_NAME,
++		attribution_key: ATTRIBUTION_KEY,
++		attribution_value: ATTRIBUTION_VALUE,
++		start: query.timeRange.start.toISOString(),
++		end: query.timeRange.end.toISOString(),
++	};
++	const dimensionFilters = filters.flatMap((filter, index) => {
++		const key = filter.key!;
++		const values = filter.value as string[];
++		params[`dimension_${index}_key`] = key;
++		params[`dimension_${index}_values`] = values;
++		return [
++			`AND Attributes[{dimension_${index}_key:String}] IN {dimension_${index}_values:Array(String)}`,
++		];
++	});
++	const selectionWhere = dimensionFilters.join("\n\t\t");
++	const start = "parseDateTime64BestEffort({start:String}, 9, 'UTC')";
++	const end = "parseDateTime64BestEffort({end:String}, 9, 'UTC')";
++	const where = `MetricName IN {metric_names:Array(String)}
++		AND ServiceName = {service_name:String}
++		AND IsMonotonic = 1
++		AND AggregationTemporality = 2
++		AND Attributes[{attribution_key:String}] = {attribution_value:String}
++		${selectionWhere}
++		AND TimeUnix <= ${end}`;
++	const sql = `
++WITH matching_points AS (
++	SELECT
++		MetricName,
++		ServiceName,
++		Attributes,
++		ResourceAttributes,
++		ScopeName,
++		ScopeVersion,
++		ScopeAttributes,
++		StartTimeUnix,
++		TimeUnix,
++		Value,
++		toJSONString(Attributes) AS attributes_key,
++		toJSONString(ResourceAttributes) AS resource_attributes_key,
++		toJSONString(ScopeAttributes) AS scope_attributes_key
++	FROM ${OTEL_METRICS_SUM_TABLE_NAME}
++	WHERE ${where}
++), window_latest AS (
++	SELECT
++		MetricName,
++		ServiceName,
++		attributes_key,
++		resource_attributes_key,
++		ScopeName,
++		ScopeVersion,
++		scope_attributes_key,
++		StartTimeUnix,
++		any(Attributes) AS Attributes,
++		argMax(Value, TimeUnix) AS currentValue,
++		toUInt8(StartTimeUnix >= ${start}) AS startedInWindow,
++		max(TimeUnix) AS timestamp
++	FROM matching_points
++	WHERE TimeUnix >= ${start}
++	GROUP BY MetricName, ServiceName, attributes_key, resource_attributes_key,
++		ScopeName, ScopeVersion, scope_attributes_key, StartTimeUnix
++), baseline_latest AS (
++	SELECT
++		MetricName,
++		ServiceName,
++		attributes_key,
++		resource_attributes_key,
++		ScopeName,
++		ScopeVersion,
++		scope_attributes_key,
++		StartTimeUnix,
++		argMax(Value, TimeUnix) AS baselineValue,
++		count() AS baselinePoints
++	FROM matching_points
++	WHERE TimeUnix < ${start}
++	GROUP BY MetricName, ServiceName, attributes_key, resource_attributes_key,
++		ScopeName, ScopeVersion, scope_attributes_key, StartTimeUnix
++)
++SELECT
++	window_latest.MetricName AS MetricName,
++	window_latest.Attributes AS Attributes,
++	window_latest.currentValue AS currentValue,
++	ifNull(baseline_latest.baselineValue, 0) AS baselineValue,
++	ifNull(baseline_latest.baselinePoints, 0) AS baselinePoints,
++	window_latest.startedInWindow AS startedInWindow,
++	toUnixTimestamp64Milli(window_latest.timestamp) AS timestampMs
++FROM window_latest
++LEFT JOIN baseline_latest ON
++	window_latest.MetricName = baseline_latest.MetricName
++	AND window_latest.ServiceName = baseline_latest.ServiceName
++	AND window_latest.attributes_key = baseline_latest.attributes_key
++	AND window_latest.resource_attributes_key = baseline_latest.resource_attributes_key
++	AND window_latest.ScopeName = baseline_latest.ScopeName
++	AND window_latest.ScopeVersion = baseline_latest.ScopeVersion
++	AND window_latest.scope_attributes_key = baseline_latest.scope_attributes_key
++	AND window_latest.StartTimeUnix = baseline_latest.StartTimeUnix
++ORDER BY window_latest.MetricName, window_latest.attributes_key, window_latest.StartTimeUnix
++LIMIT ${MAX_COUNTER_SERIES + 1}`;
++	return { sql, params };
++}
++
++function validateCounterQuery(query: OpenLITQuery): NormalizedFilter[] {
++	if (
++		query.signal !== "metrics" ||
++		query.aiSelector !== false ||
++		!Number.isFinite(query.timeRange.start.getTime()) ||
++		!Number.isFinite(query.timeRange.end.getTime()) ||
++		query.timeRange.start >= query.timeRange.end
++	) {
++		throw new Error("Invalid cumulative metric window");
++	}
++	const allFilters = query.filters ?? [];
++	const metricFilters = allFilters.filter(
++		(filter) => filter.target === "spanName",
++	);
++	const metricNames = metricFilters.flatMap((filter) =>
++		Array.isArray(filter.value) ? filter.value : [filter.value],
++	);
++	if (
++		metricFilters.length !== 1 ||
++		metricNames.length !== GIT_METRIC_NAMES.length ||
++		GIT_METRIC_NAMES.some((name) => !metricNames.includes(name))
++	) {
++		throw new Error(
++			"Unsupported metric names for cumulative counter query",
++		);
++	}
++	const serviceFilters = allFilters.filter(
++		(filter) =>
++			filter.target === "attribute" && filter.key === "service.name",
++	);
++	const attributionFilters = allFilters.filter(
++		(filter) =>
++			filter.target === "attribute" && filter.key === ATTRIBUTION_KEY,
++	);
++	if (
++		serviceFilters.length !== 1 ||
++		serviceFilters[0]?.scope !== "resource" ||
++		serviceFilters[0]?.op !== "eq" ||
++		serviceFilters[0]?.value !== SERVICE_NAME ||
++		attributionFilters.length !== 1 ||
++		attributionFilters[0]?.scope !== "metric" ||
++		attributionFilters[0]?.op !== "eq" ||
++		attributionFilters[0]?.value !== ATTRIBUTION_VALUE
++	) {
++		throw new Error(
++			"Cumulative counters require the AutoDev router and commit identity",
++		);
++	}
++	const dimensions = allFilters.filter(
++		(filter) =>
++			filter.target === "attribute" &&
++			filter.key !== "service.name" &&
++			filter.key !== ATTRIBUTION_KEY,
++	);
++	const invalidDimension = dimensions.some((filter) => {
++		if (
++			filter.target !== "attribute" ||
++			filter.scope !== "metric" ||
++			!filter.key ||
++			!ATTRIBUTE_FILTERS.has(filter.key) ||
++			filter.op !== "in" ||
++			!Array.isArray(filter.value) ||
++			filter.value.length === 0 ||
++			filter.value.length > 32
++		) {
++			return true;
++		}
++		return !filter.value.every(
++			(value) =>
++				typeof value === "string" &&
++				value.length <= 256 &&
++				value.trim() === value,
++		);
++	});
++	if (allFilters.length !== 3 + dimensions.length || invalidDimension) {
++		throw new Error("Unsupported metric dimension filter");
++	}
++	return dimensions;
++}
++
++function toCounterDeltaPoint(
++	row: CounterDeltaRow,
++): NormalizedMetricPoint | null {
++	if (
++		typeof row.MetricName !== "string" ||
++		!GIT_METRIC_NAMES.includes(
++			row.MetricName as (typeof GIT_METRIC_NAMES)[number],
++		) ||
++		!isRecord(row.Attributes)
++	) {
++		return null;
++	}
++	const currentValue = finiteCounter(row.currentValue);
++	const baselineValue = finiteCounter(row.baselineValue);
++	const baselinePoints = finiteCounter(row.baselinePoints);
++	const startedInWindow =
++		row.startedInWindow === 1 || row.startedInWindow === "1";
++	if (
++		currentValue === null ||
++		baselineValue === null ||
++		baselinePoints === null ||
++		(baselinePoints === 0 && !startedInWindow) ||
++		(baselinePoints > 0 && currentValue < baselineValue)
++	) {
++		return null;
++	}
++	const attributes: Record<string, string> = {};
++	for (const [key, value] of Object.entries(row.Attributes)) {
++		if (typeof value !== "string") return null;
++		attributes[key] = value;
++	}
++	if (attributes[ATTRIBUTION_KEY] !== ATTRIBUTION_VALUE) return null;
++	const timestampMillis = Number(row.timestampMs);
++	const timestamp = new Date(timestampMillis);
++	if (
++		!Number.isSafeInteger(timestampMillis) ||
++		!Number.isFinite(timestamp.getTime())
++	)
++		return null;
++	return {
++		metricName: row.MetricName,
++		serviceName: SERVICE_NAME,
++		timestamp: timestamp.toISOString(),
++		value: baselinePoints > 0 ? currentValue - baselineValue : currentValue,
++		attributes,
++		resourceAttributes: {},
++	};
++}
++
++function finiteCounter(value: unknown): number | null {
++	const parsed = typeof value === "number" ? value : Number(value);
++	return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++	return value !== null && typeof value === "object" && !Array.isArray(value);
++}
+diff --git a/src/client/src/lib/platform/connectors/datasource/clickhouse/direct-read.ts b/src/client/src/lib/platform/connectors/datasource/clickhouse/direct-read.ts
+index 89c71f28..0c04c2f9 100644
+--- a/src/client/src/lib/platform/connectors/datasource/clickhouse/direct-read.ts
++++ b/src/client/src/lib/platform/connectors/datasource/clickhouse/direct-read.ts
+@@ -25,3 +25,21 @@ export async function queryConnectorTraces(
+ 		dbConfigId
+ 	);
+ }
++
++
++/** Read bounded, parameterized metric points through the connector-owned ClickHouse client. */
++export async function queryConnectorMetrics(
++	query: string,
++	dbConfigId?: string,
++	queryParams?: Record<string, unknown>
++) {
++	return connectorDataCollector(
++		{
++			query,
++			...(queryParams ? { query_params: queryParams } : {}),
++			enable_readonly: true,
++		},
++		"query",
++		dbConfigId
++	);
++}
+diff --git a/src/client/src/lib/platform/connectors/datasource/types.ts b/src/client/src/lib/platform/connectors/datasource/types.ts
+index e92c0124..dbbc1af2 100644
+--- a/src/client/src/lib/platform/connectors/datasource/types.ts
++++ b/src/client/src/lib/platform/connectors/datasource/types.ts
+@@ -233,6 +233,8 @@ export interface SourceCapabilities {
+ 	distinctValues: boolean;
+ 	/** Signals whose dashboard-variable filters are bound as typed query parameters. */
+ 	dashboardVariableSignals?: Signal[];
++	/** Can compute exact deltas for cumulative monotonic metric counters. */
++	cumulativeCounterDeltas?: boolean;
+ 	/** Can stitch coding-agent sessions across multiple trace ids. */
+ 	crossTraceSession: boolean;
+ 	/** Max lookback window in milliseconds, if the vendor caps it. */
+@@ -417,6 +419,8 @@ export interface DataSourceAdapter {
+ 	// Metrics
+ 	listMetricSeries(query: OpenLITQuery): Promise<DataFrame<NormalizedMetricPoint>>;
+ 	metricTimeSeries(query: OpenLITQuery): Promise<DataFrame<NormalizedMetricPoint>>;
++	/** Exact window deltas for cumulative monotonic sums; unsupported sources omit this. */
++	metricCounterDeltas?(query: OpenLITQuery): Promise<DataFrame<NormalizedMetricPoint>>;
+ 	metricNames(window: QueryTimeRange): Promise<string[]>;
+ 
+ 	// Discovery (agents / clusters)

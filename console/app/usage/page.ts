@@ -56,7 +56,7 @@ function unavailableUsageState(result: UsageEndpointFailure) {
         code: "autodev_openlit_usage_invalid_response",
         message:
           "OpenLIT returned data that does not match the validated AutoDev Usage response schema.",
-        hint: "Confirm OpenLIT serves the required AutoDev Usage v4 contract. After an upgrade, rebuild and restart the managed Console; metric panels stay hidden until validation succeeds."
+        hint: "Confirm OpenLIT serves the required AutoDev Usage v5 contract. After an upgrade, rebuild and restart the managed Console; metric panels stay hidden until validation succeeds."
       };
     }
     case "unauthorized": {

@@ -60,6 +60,14 @@ export function validateProviderContracts(value: unknown): UnknownRecord {
   for (const [name, raw] of Object.entries(providers)) {
     const provider = record(raw);
     const delegation = provider.delegation;
+    if (
+      provider.roleMcpInjection !== undefined &&
+      typeof provider.roleMcpInjection !== "boolean"
+    ) {
+      throw new ConfigError(
+        `provider '${name}' roleMcpInjection must be boolean when present`
+      );
+    }
     if (typeof delegation !== "string" || !DELEGATION_MODES.has(delegation)) {
       throw new ConfigError(
         `provider '${name}' must declare delegation as one of: ${[...DELEGATION_MODES].join(", ")}`
@@ -91,6 +99,8 @@ type RoleProjection = {
   mcp: string[];
   skills: string[];
   mcpTools?: Record<string, string[]>;
+  mcpEnvVars?: Record<string, string[]>;
+  roleScopedMcp?: string[];
   webResearch?: { search: true; fetch: true; optionalMcp: string[] };
 };
 
@@ -133,9 +143,12 @@ function readRole(source: string): RoleProjection {
     MCP_ORDER
   );
   const mcpTools: Record<string, string[]> = {};
+  const mcpEnvVars: Record<string, string[]> = {};
   for (const [name, value] of enabledServers) {
     const tools = stringArray(record(value).enabled_tools);
     if (tools.length > 0) mcpTools[name] = tools;
+    const envVars = stringArray(record(value).env_vars);
+    if (envVars.length > 0) mcpEnvVars[name] = envVars;
   }
 
   const skillsTable = record(config.skills);
@@ -177,6 +190,7 @@ function readRole(source: string): RoleProjection {
     skills: sortedByOrder(skills, SKILL_ORDER)
   };
   if (Object.keys(mcpTools).length > 0) projection.mcpTools = mcpTools;
+  if (Object.keys(mcpEnvVars).length > 0) projection.mcpEnvVars = mcpEnvVars;
   if (webResearch) {
     if (roleName === "smart") webResearch.optionalMcp = ["playwright"];
     projection.webResearch = webResearch;
@@ -218,6 +232,30 @@ export function renderExecutionContract(
       .filter(([, value]) => record(value).enabled !== false)
       .map(([name]) => name)
   );
+  const templateRoles = record(template.roles);
+  for (const [roleName, role] of Object.entries(roles)) {
+    const policy = record(templateRoles[roleName]);
+    const roleScopedMcp = stringArray(policy.roleScopedMcp);
+    if (new Set(roleScopedMcp).size !== roleScopedMcp.length) {
+      throw new ConfigError(
+        `role '${roleName}' roleScopedMcp must contain unique server names.`
+      );
+    }
+    for (const server of roleScopedMcp) {
+      if (
+        !role.mcp.includes(server) ||
+        enabledRootMcp.has(server) ||
+        PLUGIN_MCPS.has(server) ||
+        (role.mcpTools?.[server] === undefined &&
+          role.mcpEnvVars?.[server] === undefined)
+      ) {
+        throw new ConfigError(
+          `role '${roleName}' cannot scope MCP '${server}': it must be enabled for the role, disabled in the root, non-plugin-owned, and have a role tool or environment allowlist.`
+        );
+      }
+    }
+    if (roleScopedMcp.length > 0) role.roleScopedMcp = roleScopedMcp;
+  }
   const missingRootMcp = roles.orchestrator.mcp.filter(
     (name) =>
       name !== "autodev_spawn" &&

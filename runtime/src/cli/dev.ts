@@ -107,6 +107,10 @@ export function ensureConsoleSecrets(root = repoRoot): void {
     canonicalSecrets,
     "AUTODEV_OPENLIT_USAGE_TOKEN"
   );
+  const canonicalPlaytestRunnerToken = parseToken(
+    canonicalSecrets,
+    "AUTODEV_PLAYTEST_CONTROL_API_TOKEN"
+  );
   const consoleControlToken = parseToken(
     consoleEnv,
     "AUTODEV_CONTROL_API_TOKEN"
@@ -115,10 +119,17 @@ export function ensureConsoleSecrets(root = repoRoot): void {
     consoleEnv,
     "AUTODEV_OPENLIT_USAGE_TOKEN"
   );
+  const consolePlaytestRunnerToken = parseToken(
+    consoleEnv,
+    "AUTODEV_PLAYTEST_CONTROL_API_TOKEN"
+  );
 
   if (
     !consoleControlToken ||
     !consoleUsageToken ||
+    !canonicalPlaytestRunnerToken ||
+    !/^[0-9a-f]{64}$/u.test(canonicalPlaytestRunnerToken) ||
+    consolePlaytestRunnerToken !== null ||
     consoleControlToken !== canonicalControlToken ||
     consoleUsageToken !== canonicalUsageToken
   ) {
@@ -401,7 +412,7 @@ export async function ensureBackends(
   }
 
   dependencies.writeLine(
-    "[dev] ✔ OpenLIT Usage v4 and ClickHouse are ready (ports 3000, 8123)."
+    "[dev] ✔ OpenLIT Usage v5 and ClickHouse are ready (ports 3000, 8123)."
   );
   const routerActive = await dependencies.isPortListening(4100);
   if (routerActive) {
@@ -452,7 +463,9 @@ export async function ensureModelRouter(
     const isListening =
       (await deps.isPortListening(4100)) && (await deps.isPortListening(4101));
     if (isListening) {
-      deps.writeLine("[dev] ✔ AutoDev Model Router is active (ports 4100, 4101).");
+      deps.writeLine(
+        "[dev] ✔ AutoDev Model Router is active (ports 4100, 4101)."
+      );
       return true;
     }
 
@@ -534,9 +547,7 @@ export async function ensureModelRouter(
     15_000
   );
   if (ready) {
-    deps.writeLine(
-      "[dev] ✔ AutoDev Model Router is ready (ports 4100, 4101)."
-    );
+    deps.writeLine("[dev] ✔ AutoDev Model Router is ready (ports 4100, 4101).");
     return true;
   }
 
@@ -627,10 +638,14 @@ export async function startDev(): Promise<void> {
     await ensureBackends();
     await ensureModelRouter();
     try {
-      await verifyControlApiCompatibility(readDevControlApiConfig(), undefined, {
-        timeoutMs: 15_000,
-        retryDelayMs: 250
-      });
+      await verifyControlApiCompatibility(
+        readDevControlApiConfig(),
+        undefined,
+        {
+          timeoutMs: 15_000,
+          retryDelayMs: 250
+        }
+      );
     } catch (probeError) {
       const probeMsg =
         probeError instanceof Error ? probeError.message : String(probeError);

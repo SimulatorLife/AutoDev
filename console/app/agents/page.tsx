@@ -52,9 +52,7 @@ export default async function AgentsPage({
       fetchProviders(config),
       fetchRuntime(config),
       searchParams ??
-        Promise.resolve(
-          {} as Record<string, string | string[] | undefined>
-        )
+        Promise.resolve({} as Record<string, string | string[] | undefined>)
     ]);
   if (agentsResult.kind !== "ok") {
     return React.createElement(

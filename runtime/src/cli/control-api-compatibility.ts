@@ -457,7 +457,9 @@ async function verifyEvaluationsRoute(request: ControlApiProbe): Promise<void> {
     evaluations.body.schema !== "autodev-control-evaluations-v1" ||
     !Array.isArray(evaluations.body.evaluations)
   ) {
-    throw startupError("the current Evaluations v1 response contract is missing");
+    throw startupError(
+      "the current Evaluations v1 response contract is missing"
+    );
   }
 }
 

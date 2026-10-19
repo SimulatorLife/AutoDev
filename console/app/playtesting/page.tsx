@@ -280,11 +280,7 @@ async function loadList(
   if (readiness !== null) return readiness;
   if (scope.view === "sessions") {
     const [result, capabilities] = await Promise.all([
-      fetchPlaytestingPage(
-        "episodes",
-        pageRequest(scope, "episodes"),
-        config
-      ),
+      fetchPlaytestingPage("episodes", pageRequest(scope, "episodes"), config),
       fetchPlaytestingRunCapabilities(scope.workspaceId!, config)
     ]);
     if (result.kind !== "ok") return { kind: "unavailable", result };
@@ -301,11 +297,7 @@ async function loadList(
   }
   if (scope.view === "findings") {
     const [result, capabilities] = await Promise.all([
-      fetchPlaytestingPage(
-        "findings",
-        pageRequest(scope, "findings"),
-        config
-      ),
+      fetchPlaytestingPage("findings", pageRequest(scope, "findings"), config),
       fetchPlaytestingRunCapabilities(scope.workspaceId!, config)
     ]);
     if (result.kind !== "ok") return { kind: "unavailable", result };

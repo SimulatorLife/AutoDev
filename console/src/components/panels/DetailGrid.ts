@@ -65,12 +65,10 @@ const GRID_LADDER: Readonly<Record<GridColumns, string>> = {
 /** The shared base: one column until `sm`, then the ladder's step for `columns`. */
 export function gridRowClass(
   columns: GridColumns,
-  gap: "gap-3" | "gap-4" | "gap-6" = "gap-4"
+  gap: "gap-3" | "gap-4" | "gap-6" = "gap-4",
+  alignment: "items-start" | "items-stretch" = "items-start"
 ): string {
-  // `items-start` so a row keeps its natural height instead of stretching every
-  // card to the tallest one, which leaves a short summary with a tall empty box
-  // under it.
-  return `grid grid-cols-1 items-start ${gap} ${GRID_LADDER[columns]}`;
+  return `grid grid-cols-1 ${alignment} ${gap} ${GRID_LADDER[columns]}`;
 }
 
 export interface GridRowProps {
@@ -85,7 +83,7 @@ export function StatGrid({
   return React.createElement(
     "div",
     {
-      className: gridRowClass(columns),
+      className: gridRowClass(columns, "gap-4", "items-stretch"),
       "data-stat-grid": String(columns)
     },
     children

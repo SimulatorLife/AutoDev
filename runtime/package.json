@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./agents": "./src/agents/index.ts",
+    "./agents/role-mcp-environment": "./src/agents/role-mcp-environment.ts",
     "./cli": "./src/cli/index.ts",
     "./cli/autodev": "./src/cli/autodev.ts",
     "./cli/dev": "./src/cli/dev.ts",
@@ -90,6 +91,7 @@
     "./shared/responses-continuation": "./src/shared/responses-continuation.ts",
     "./shared/responses-item-ids": "./src/shared/responses-item-ids.ts",
     "./shared/runtime-source-root": "./src/shared/runtime-source-root.ts",
+    "./shared/runtime-secrets": "./src/shared/runtime-secrets.ts",
     "./shared/tool-names": "./src/shared/tool-names.ts",
     "./telemetry": "./src/telemetry/index.ts",
     "./telemetry/resource-context": "./src/telemetry/resource-context/index.ts"

@@ -35,6 +35,7 @@ import {
   CONFIGURED_SMART_MODEL,
   ORCHESTRATOR_ALIAS,
   ROUTING_POLICY as routing,
+  RoutingPolicy,
   validateRoutingConfig
 } from "@simulatorlife/autodev-runtime/router/routing";
 import {
@@ -103,6 +104,10 @@ import {
 } from "@simulatorlife/autodev-runtime/router/server";
 import { UsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 import { AGENT_ROLE_HEADER } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
+import {
+  providerInjectsRoleMcp,
+  roleScopedMcp
+} from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { RESPONSES_ITEM_ID_PREFIXES } from "@simulatorlife/autodev-runtime/shared/responses-item-ids";
 import {
   REQUEST_ID_HEADER as AGENT_EVENTS_REQUEST_ID_HEADER,
@@ -623,6 +628,41 @@ test("routes supported model families without provider aliases", () => {
     "antigravity"
   );
   assert.equal(routing.routeForModel("unknown-model"), null);
+});
+
+test("MCP-specialist roles never fall back to providers that cannot inject role-scoped tools", () => {
+  for (const [role, expectedServer] of [
+    ["browser-tester", "playwright"],
+    ["playtester", "playtest"]
+  ] as const) {
+    assert.deepEqual(roleScopedMcp(role), [expectedServer]);
+    const providers = routing
+      .roleCandidates(role, () => 0.5)
+      .map((c) => c.provider);
+    assert.ok(providers.length > 0, `${role} must retain an MCP-capable route`);
+    for (const provider of providers) {
+      assert.equal(
+        providerInjectsRoleMcp(provider),
+        true,
+        `${role} must not route through ${provider}, which cannot inject role MCPs`
+      );
+    }
+  }
+
+  const codexOnly = structuredClone(routing.config);
+  codexOnly.providerGroups["browser-tester"] = [["codex"]];
+  const failClosed = new RoutingPolicy(codexOnly, "test-role-mcp", process.env);
+  assert.deepEqual(
+    failClosed.roleCandidates("browser-tester"),
+    [],
+    "a role-scoped MCP task must fail closed rather than route to Codex's inherited root tools"
+  );
+  assert.ok(
+    routing
+      .roleCandidates("default")
+      .some((candidate) => candidate.provider === "codex"),
+    "roles using inherited root MCPs retain ordinary provider-neutral routing"
+  );
 });
 
 test("resolves role aliases through tier-specific randomized provider groups with smart model fallback", () => {

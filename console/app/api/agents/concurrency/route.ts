@@ -12,7 +12,10 @@
 
 import { type NextRequest, NextResponse } from "next/server.js";
 
-import { AGENTS_PATH, isAgentsReturnPath } from "../../../../src/features/agents/paths.ts";
+import {
+  AGENTS_PATH,
+  isAgentsReturnPath
+} from "../../../../src/features/agents/paths.ts";
 import {
   withControlFailure,
   withControlRefusal
@@ -40,7 +43,9 @@ function redirectTo(location: string): NextResponse {
 
 function parseRevision(
   raw: string | null
-): { readonly valid: true; readonly revision?: number } | { readonly valid: false } {
+):
+  | { readonly valid: true; readonly revision?: number }
+  | { readonly valid: false } {
   if (raw === null || raw === "") {
     return { valid: true };
   }

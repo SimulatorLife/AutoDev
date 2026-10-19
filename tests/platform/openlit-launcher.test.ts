@@ -27,6 +27,7 @@ test("OpenLIT ingress launcher supplies protected OTLP and control-only listener
       [
         `OPENLIT_OTLP_API_KEY=${otlpToken}`,
         `AUTODEV_CONTROL_API_TOKEN=${controlToken}`,
+        `AUTODEV_PLAYTEST_CONTROL_API_TOKEN=${"d".repeat(64)}`,
         `OPENLIT_DB_PASSWORD=${"c".repeat(64)}`
       ].join("\n") + "\n",
       { mode: 0o600 }
@@ -35,7 +36,7 @@ test("OpenLIT ingress launcher supplies protected OTLP and control-only listener
       fakeNode,
       [
         "#!/usr/bin/env bash",
-        String.raw`printf "%s\n" "$OTEL_EXPORTER_OTLP_ENDPOINT" "$OTEL_EXPORTER_OTLP_HEADERS" "$AUTODEV_CONTROL_API_LISTEN_HOST" "$AUTODEV_CONTROL_API_LISTEN_PORT" "$AUTODEV_CONTROL_API_TOKEN"`,
+        String.raw`printf "%s\n" "$OTEL_EXPORTER_OTLP_ENDPOINT" "$OTEL_EXPORTER_OTLP_HEADERS" "$AUTODEV_CONTROL_API_LISTEN_HOST" "$AUTODEV_CONTROL_API_LISTEN_PORT" "$AUTODEV_CONTROL_API_TOKEN" "$AUTODEV_PLAYTEST_CONTROL_API_TOKEN" "$AUTODEV_PLAYTEST_CONTROL_API_ACTOR" "$AUTODEV_PLAYTEST_CONTROL_API_ROLE"`,
         ""
       ].join("\n"),
       { mode: 0o700 }
@@ -63,7 +64,10 @@ test("OpenLIT ingress launcher supplies protected OTLP and control-only listener
       `Authorization=Bearer%20${otlpToken}`,
       "0.0.0.0",
       "4101",
-      controlToken
+      controlToken,
+      "d".repeat(64),
+      "autodev-playtester-runtime",
+      "playtester"
     ]);
   } finally {
     rmSync(directory, { recursive: true, force: true });

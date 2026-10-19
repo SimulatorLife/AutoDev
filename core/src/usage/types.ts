@@ -13,7 +13,7 @@ export interface UsageVariable {
   readonly id: UsageVariableId;
   readonly label: string;
   readonly signal: "traces" | "metrics";
-  readonly scope: "resource" | "span";
+  readonly scope: "resource" | "span" | "metric";
   readonly key: string;
   readonly multi: boolean;
   readonly supportsAll: boolean;
@@ -38,6 +38,16 @@ export type UsageWidgetId =
   | "context-compactions-by-workspace"
   | "context-compactions-by-model"
   | "context-compactions-by-agent"
+  | "git-commits"
+  | "git-files-changed"
+  | "git-files-added"
+  | "git-files-deleted"
+  | "git-lines-added"
+  | "git-lines-removed"
+  | "git-partial-commits"
+  | "git-commits-by-workspace"
+  | "git-commits-by-provider"
+  | "git-commits-by-agent"
   | "skill-events-by-event"
   | "estimated-cost";
 
@@ -56,13 +66,43 @@ export interface UsageBreakdownCount {
 /** Axes that do not have source-confirmed semantics for logical compaction spans. */
 export type UsageCompactionUnsupportedFilter = "provider" | "skill";
 
+/** Filters the source does not record on a commit itself. */
+export type UsageGitChangeUnsupportedFilter = "model" | "skill";
+
+export type UsageGitChangeStatus =
+  "observed" | "not-observed" | "unavailable" | "not-applicable";
+
+export type UsageGitChangeNotApplicableReason =
+  "active-sessions" | "unsupported-filter";
+
+/** Bounded Git output measurements from commit-owned Runtime metric counters. */
+export interface UsageGitChangeMetrics {
+  readonly status: UsageGitChangeStatus;
+  readonly notApplicableReason: UsageGitChangeNotApplicableReason | null;
+  readonly unsupportedFilters: readonly UsageGitChangeUnsupportedFilter[];
+  /** Whether the window contains partial diff measurements; null if unknown. */
+  readonly partial: boolean | null;
+  /** True when one or more bounded category queries may be truncated. */
+  readonly breakdownsPartial: boolean;
+  readonly commits: number | null;
+  readonly filesChanged: number | null;
+  readonly filesAdded: number | null;
+  readonly filesDeleted: number | null;
+  readonly linesAdded: number | null;
+  readonly linesRemoved: number | null;
+  readonly partialCommits: number | null;
+  readonly commitsByWorkspace: readonly UsageBreakdownCount[] | null;
+  readonly commitsByProvider: readonly UsageBreakdownCount[] | null;
+  readonly commitsByAgent: readonly UsageBreakdownCount[] | null;
+}
+
 export interface UsageWidgetConfig {
   readonly id: UsageWidgetId;
   readonly title: string;
   readonly description?: string;
   readonly optInVariables: readonly UsageVariableId[];
   readonly variableScopeOverrides?: Partial<
-    Record<UsageVariableId, "resource" | "span">
+    Record<UsageVariableId, "resource" | "span" | "metric">
   >;
 }
 
@@ -191,6 +231,7 @@ export interface UsageMetricsData {
   readonly contextCompactionsUnsupportedFilters: readonly UsageCompactionUnsupportedFilter[];
   /** True when one or more bounded compaction breakdowns may be truncated. */
   readonly contextCompactionsBreakdownsPartial: boolean;
+  readonly gitChanges: UsageGitChangeMetrics;
   readonly skillEventsByEvent:
     readonly { readonly event: string; readonly count: number }[] | null;
   readonly requestsByRole:

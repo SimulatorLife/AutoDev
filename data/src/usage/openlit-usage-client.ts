@@ -3,9 +3,12 @@ import {
   isOpenTelemetrySpanId,
   isOpenTelemetryTraceId,
   USAGE_VARIABLE_IDS,
+  type UsageBreakdownCount,
   type UsageCompactionUnsupportedFilter,
   type UsageFilterOptions,
   type UsageFilterSelection,
+  type UsageGitChangeMetrics,
+  type UsageGitChangeUnsupportedFilter,
   type UsageMetricsData,
   type UsageSnapshot,
   type UsageTraceAttempt,
@@ -20,6 +23,7 @@ import {
 const TRAILING_SLASHES = /\/+$/u;
 const USAGE_API_PATH = "/api/autodev/usage";
 const TRACE_DETAIL_API_PATH = "/api/autodev/usage/span";
+const NOT_APPLICABLE_KIND = "not-applicable" as const;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_TRACE_SPANS = 200;
 const MAX_USAGE_TRACE_ATTEMPTS = 25;
@@ -47,6 +51,16 @@ const USAGE_WIDGET_IDS: readonly UsageWidgetId[] = [
   "context-compactions-by-workspace",
   "context-compactions-by-model",
   "context-compactions-by-agent",
+  "git-commits",
+  "git-files-changed",
+  "git-files-added",
+  "git-files-deleted",
+  "git-lines-added",
+  "git-lines-removed",
+  "git-partial-commits",
+  "git-commits-by-workspace",
+  "git-commits-by-provider",
+  "git-commits-by-agent",
   "skill-events-by-event",
   "estimated-cost"
 ];
@@ -71,7 +85,7 @@ interface OpenLITWidgetResult {
 }
 
 interface OpenLITUsageResponse {
-  readonly schema: "autodev-openlit-usage-v4";
+  readonly schema: "autodev-openlit-usage-v5";
   readonly widgets: readonly OpenLITWidgetResult[];
   readonly filterOptions: Readonly<
     Record<
@@ -270,7 +284,7 @@ function parseOpenLITTraceDetail(value: unknown): UsageTraceDetail | null {
 function parseOpenLITUsageResponse(
   value: unknown
 ): OpenLITUsageResponse | null {
-  if (!isRecord(value) || value.schema !== "autodev-openlit-usage-v4") {
+  if (!isRecord(value) || value.schema !== "autodev-openlit-usage-v5") {
     return null;
   }
   if (!Array.isArray(value.widgets)) return null;
@@ -296,7 +310,7 @@ function parseOpenLITUsageResponse(
   const traceList = parseOpenLITTraceList(value.traceList);
   if (!traceList) return null;
   return {
-    schema: "autodev-openlit-usage-v4",
+    schema: "autodev-openlit-usage-v5",
     widgets,
     filterOptions,
     traceList
@@ -307,10 +321,10 @@ function parseOpenLITTraceList(value: unknown): UsageTraceList | null {
   if (!isRecord(value) || typeof value.kind !== "string") return null;
   if (value.kind === "unavailable") return { kind: "unavailable" };
   if (
-    value.kind === "not-applicable" &&
+    value.kind === NOT_APPLICABLE_KIND &&
     (value.reason === "skill-filter" || value.reason === "unsupported-filter")
   ) {
-    return { kind: "not-applicable", reason: value.reason };
+    return { kind: NOT_APPLICABLE_KIND, reason: value.reason };
   }
   if (
     value.kind !== "observed" ||
@@ -530,6 +544,132 @@ function contextCompactionUnsupportedFilters(
   return unsupported;
 }
 
+function gitChangeUnsupportedFilters(
+  selection: UsageFilterSelection
+): readonly UsageGitChangeUnsupportedFilter[] {
+  const unsupported: UsageGitChangeUnsupportedFilter[] = [];
+  if ((selection.values.model?.length ?? 0) > 0) unsupported.push("model");
+  if ((selection.values.skill?.length ?? 0) > 0) unsupported.push("skill");
+  return unsupported;
+}
+
+function unavailableGitChanges(
+  status: UsageGitChangeMetrics["status"],
+  unsupportedFilters: readonly UsageGitChangeUnsupportedFilter[],
+  notApplicableReason: UsageGitChangeMetrics["notApplicableReason"] = null
+): UsageGitChangeMetrics {
+  return {
+    status,
+    notApplicableReason,
+    unsupportedFilters,
+    partial: null,
+    breakdownsPartial: false,
+    commits: null,
+    filesChanged: null,
+    filesAdded: null,
+    filesDeleted: null,
+    linesAdded: null,
+    linesRemoved: null,
+    partialCommits: null,
+    commitsByWorkspace: null,
+    commitsByProvider: null,
+    commitsByAgent: null
+  };
+}
+
+function gitBreakdownRows(
+  widget: OpenLITWidgetResult | undefined,
+  observedCommits: number | null
+): readonly UsageBreakdownCount[] | null {
+  if (!widget?.querySucceeded) return null;
+  if (!widget.observed || widget.rows.length === 0) {
+    return observedCommits === 0 ? [] : null;
+  }
+  const rows = groupedRows(widget);
+  return rows?.every((row) => Number.isSafeInteger(row.count) && row.count >= 0)
+    ? rows
+    : null;
+}
+
+function gitChangeMetrics(
+  widgets: ReadonlyMap<UsageWidgetId, OpenLITWidgetResult>,
+  selection: UsageFilterSelection
+): UsageGitChangeMetrics {
+  const unsupportedFilters = gitChangeUnsupportedFilters(selection);
+  if (selection.range === "ACTIVE_SESSIONS") {
+    return unavailableGitChanges(
+      NOT_APPLICABLE_KIND,
+      unsupportedFilters,
+      "active-sessions"
+    );
+  }
+  if (unsupportedFilters.length > 0) {
+    return unavailableGitChanges(
+      NOT_APPLICABLE_KIND,
+      unsupportedFilters,
+      "unsupported-filter"
+    );
+  }
+
+  const commitsWidget = widgets.get("git-commits");
+  const commits = observedCount(commitsWidget);
+  const status: UsageGitChangeMetrics["status"] =
+    commitsWidget?.querySucceeded === true
+      ? commits === null
+        ? "not-observed"
+        : "observed"
+      : "unavailable";
+  if (status !== "observed") {
+    return unavailableGitChanges(status, unsupportedFilters);
+  }
+  const partialWidget = widgets.get("git-partial-commits");
+  const observedPartialCommits = observedCount(partialWidget);
+  const partialCommits =
+    observedPartialCommits ??
+    (partialWidget?.querySucceeded === true ? 0 : null);
+  const breakdownIds: readonly UsageWidgetId[] = [
+    "git-commits-by-workspace",
+    "git-commits-by-provider",
+    "git-commits-by-agent"
+  ];
+  const breakdownsPartial = breakdownIds.some(
+    (id) => widgets.get(id)?.partial === true
+  );
+
+  return {
+    status,
+    notApplicableReason: null,
+    unsupportedFilters,
+    partial: partialCommits === null ? null : partialCommits > 0,
+    breakdownsPartial,
+    commits,
+    filesChanged: observedCount(widgets.get("git-files-changed")),
+    filesAdded: observedCount(widgets.get("git-files-added")),
+    filesDeleted: observedCount(widgets.get("git-files-deleted")),
+    linesAdded:
+      partialCommits === null
+        ? null
+        : observedCount(widgets.get("git-lines-added")),
+    linesRemoved:
+      partialCommits === null
+        ? null
+        : observedCount(widgets.get("git-lines-removed")),
+    partialCommits,
+    commitsByWorkspace: gitBreakdownRows(
+      widgets.get("git-commits-by-workspace"),
+      commits
+    ),
+    commitsByProvider: gitBreakdownRows(
+      widgets.get("git-commits-by-provider"),
+      commits
+    ),
+    commitsByAgent: gitBreakdownRows(
+      widgets.get("git-commits-by-agent"),
+      commits
+    )
+  };
+}
+
 function toUsageSnapshot(
   response: OpenLITUsageResponse,
   selection: UsageFilterSelection
@@ -611,6 +751,7 @@ function toUsageSnapshot(
     contextCompactionsUnsupportedFilters: unsupportedCompactionFilters,
     contextCompactionsBreakdownsPartial:
       compactionsAvailable && breakdownsPartial,
+    gitChanges: gitChangeMetrics(widgets, selection),
     skillEventsByEvent:
       skillEvents === null
         ? null

@@ -39,7 +39,10 @@ import {
   trace,
   type Tracer
 } from "@opentelemetry/api";
-import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
+import {
+  AggregationTemporalityPreference,
+  OTLPMetricExporter
+} from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import {
@@ -66,6 +69,8 @@ import {
   safeAutoDevAgentRole,
   safeAutoDevWorkspaceKey
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
+
+import { createRouterWorkspaceGitCommitObserver } from "./git-commit-observation.ts";
 // Experimental (incubating) attribute keys are imported via the package's
 // `./incubating` subpath. NodeNext module resolution does not always resolve
 // the subpath declaration, so the keys are also declared inline below to
@@ -304,18 +309,35 @@ function parseOtlpHeaders(
   return headers;
 }
 
+/**
+ * Git Usage derives exact time-window counts by subtracting cumulative counter
+ * readings. Keep the Router's OTLP stream cumulative even if a process-wide
+ * temporality preference requests delta data, which has different window
+ * boundary semantics.
+ */
+export function createOtlpMetricExporter(
+  endpoint: string,
+  headers: Record<string, string>
+): OTLPMetricExporter {
+  return new OTLPMetricExporter({
+    url: endpoint,
+    headers,
+    temporalityPreference: AggregationTemporalityPreference.CUMULATIVE
+  });
+}
+
 function createOtlpMetricReader(): MetricReader | null {
   const endpoint = readOtlpMetricEndpoint();
   if (!endpoint) return null;
   try {
     return new PeriodicExportingMetricReader({
-      exporter: new OTLPMetricExporter({
-        url: endpoint,
-        headers: parseOtlpHeaders(
+      exporter: createOtlpMetricExporter(
+        endpoint,
+        parseOtlpHeaders(
           process.env.OTEL_EXPORTER_OTLP_HEADERS,
           process.env.OTEL_EXPORTER_OTLP_METRICS_HEADERS
         )
-      }),
+      ),
       exportIntervalMillis: 60_000,
       exportTimeoutMillis: 10_000,
       cardinalityLimits: { default: 500 }
@@ -924,10 +946,6 @@ export interface RecordGitCommitOptions {
  */
 export function recordGitCommit(options: RecordGitCommitOptions): boolean {
   if (!options.commit) return false;
-  // Deduplicate before anything else: a second producer observing the same
-  // commit must not double-count it.
-  if (!claimGitCommit(options.commit)) return false;
-
   const counters = [
     options.filesChanged,
     options.filesAdded,
@@ -941,6 +959,11 @@ export function recordGitCommit(options: RecordGitCommitOptions): boolean {
 
   ensureOtelInitialized();
   if (!instruments) return false;
+
+  // Claim only after the measurement and telemetry sink are usable. A failed
+  // or unavailable observation must not consume the commit's one idempotency
+  // slot before any counters were emitted.
+  if (!claimGitCommit(options.commit)) return false;
 
   const attributes: Record<string, string> = metricAttributes({
     // Actor dimensions are only carried when the commit itself established
@@ -969,6 +992,10 @@ export function recordGitCommit(options: RecordGitCommitOptions): boolean {
     return false;
   }
 }
+
+/** Router event listener for commit observations; this module owns the metric emitter. */
+export const observeRouterWorkspaceGitCommits =
+  createRouterWorkspaceGitCommitObserver(recordGitCommit);
 
 export interface LogicalRequestSpanOptions {
   requestId: string | null;

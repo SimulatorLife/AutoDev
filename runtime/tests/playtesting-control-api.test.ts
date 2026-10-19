@@ -2271,6 +2271,7 @@ test("Playtesting run credentials cannot authorize cross-session analysis", asyn
     "AUTODEV_PLAYTEST_CONTROL_API_TOKEN",
     "AUTODEV_PLAYTEST_CONTROL_API_ACTOR",
     "AUTODEV_PLAYTEST_CONTROL_API_ROLE",
+    "AUTODEV_OPENLIT_SECRET_FILE",
     "AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN"
   ] as const;
   const previous = new Map(envKeys.map((key) => [key, process.env[key]]));
@@ -2278,9 +2279,16 @@ test("Playtesting run credentials cannot authorize cross-session analysis", asyn
     process.env.AUTODEV_CONTROL_API_TOKEN = "console-control-secret";
     process.env.AUTODEV_CONTROL_VIEWERS = "";
     process.env.AUTODEV_CONTROL_OPERATORS = "console-operator";
-    process.env.AUTODEV_PLAYTEST_CONTROL_API_TOKEN = "scoped-playtest-secret";
-    process.env.AUTODEV_PLAYTEST_CONTROL_API_ACTOR = "playtest-runtime";
-    process.env.AUTODEV_PLAYTEST_CONTROL_API_ROLE = "playtester";
+    const runnerSecretFile = path.join(root, "openlit-secrets.env");
+    writeFileSync(
+      runnerSecretFile,
+      "AUTODEV_PLAYTEST_CONTROL_API_TOKEN=scoped-playtest-secret\n",
+      { mode: 0o600 }
+    );
+    process.env.AUTODEV_OPENLIT_SECRET_FILE = runnerSecretFile;
+    delete process.env.AUTODEV_PLAYTEST_CONTROL_API_TOKEN;
+    delete process.env.AUTODEV_PLAYTEST_CONTROL_API_ACTOR;
+    delete process.env.AUTODEV_PLAYTEST_CONTROL_API_ROLE;
     process.env.AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN =
       "analyst-scoped-secret";
     const session = {

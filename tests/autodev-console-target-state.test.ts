@@ -652,21 +652,32 @@ test("canonical migration tracker records the current repository quality-gate ev
   // typecheck
   assert.match(
     migration,
-    /`pnpm run typecheck` passed the root project and all four workspaces/u,
+    /`pnpm (?:run )?typecheck` passes for root and all four workspaces/u,
     "typecheck evidence must record the current root and workspace typecheck result"
   );
-  // Lint/format status is evidence, not a desired green badge. Generated
-  // artifacts are excluded and repository-wide source lint is clean.
+  // Lint/format status is evidence, not a desired green badge. Do not require
+  // green while other sessions have in-progress files; the migration must
+  // report the observed failure rather than claiming a pass.
   assert.match(
     migration,
-    /`pnpm run lint:ci` pass/u,
+    /`pnpm lint:ci` currently fails with 306 errors/u,
     "the tracker must report the current repository-wide lint result"
   );
   assert.match(
     migration,
-    /Repository-wide `pnpm run format:check` and `pnpm run lint:ci` pass/u,
+    /`pnpm format:check` currently fails only on three concurrently modified Playtesting-related files/u,
     "the tracker must record the current repository-wide formatting result"
   );
+  assert.match(
+    migration,
+    /`TMPDIR=\/tmp pnpm test:root` reports 1,597 passed \/ 3 failed \/ 5 skipped/u,
+    "the tracker must record the root suite result under the isolated-temp collision reproduction"
+  );
+  assert.match(
+    migration,
+    /MCP launcher fixture selects a temp root outside any initialized CocoIndex project and passes 10\/10 under `TMPDIR=\/tmp`/u
+  );
+  assert.match(migration, /runtime manifest closure passes 30\/30/u);
 
   // p25 acceptance must record concrete OpenLIT patch-level evidence, not a
   // bare "p25" mention: the patch-application suite result, the patched
@@ -778,7 +789,7 @@ test("Usage cost and unavailable evidence remain honest", () => {
     );
   assert.ok(usage, "the Usage dashboard contract must be present");
   const body = usage?.[1] ?? "";
-  assert.match(body, /`autodev-openlit-usage-v4`/u);
+  assert.match(body, /`autodev-openlit-usage-v5`/u);
   assert.match(body, /bounded recent-attempt list/u);
   assert.match(body, /Core owns the canonical `USAGE_VARIABLE_IDS` tuple/u);
   assert.match(body, /fixed OpenLIT endpoint mirrors this bounded list/u);
@@ -915,10 +926,16 @@ test("git change metrics are defined with exact counting and cardinality rules",
   );
   assert.match(body, /no Git mutation path/u);
 
-  // Per the §1 docs contract the observed gap is tracked in the migration
-  // tracker, which must record that nothing is emitted yet.
-  assert.match(migration, /Git change metrics/u);
-  assert.match(migration, /not implemented/u);
+  // The exporter must preserve the cumulative temporality required by the
+  // fixed metrics query, and the migration tracker must distinguish source
+  // implementation from still-pending live acceptance.
+  assert.match(
+    body,
+    /Runtime's OTLP metric exporter explicitly uses CUMULATIVE temporality/u
+  );
+  assert.match(migration, /Runtime producer \+ v5 Usage consumer implemented/u);
+  assert.match(migration, /live acceptance open/u);
+  assert.match(migration, /cumulative temporality/u);
 });
 
 test("canonical target and migration tracker track gaps without claiming premature cutover", () => {
@@ -994,6 +1011,22 @@ test("canonical target and migration tracker track gaps without claiming prematu
   assert.doesNotMatch(
     migration,
     /original M0-M6 observability migration is complete/u
+  );
+});
+
+test("OpenLIT cost UI is removed while source-owned pricing computation stays internal", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+  const migration = readFileSync(migrationPath, "utf8");
+  const removalSection = /### Remove from the AutoDev product\/distribution\n([\s\S]*?)(?=\n### AutoDev branding)/u.exec(target)?.[1] ?? "";
+
+  assert.match(removalSection, /Duplicate Costs\/Pricing UI/u);
+  assert.match(removalSection, /Console `\/usage` is the canonical cost-analytics surface/u);
+  assert.match(removalSection, /manual per-span repricing/u);
+  assert.match(removalSection, /existing cost attribute as read-only evidence/u);
+  assert.match(removalSection, /batched AutoPricing implementation only as telemetry infrastructure/u);
+  assert.match(
+    migration,
+    /OpenLIT Costs\/Pricing UI \| \*\*Removed in patch 56; internal batch pricing path retained\*\*/u
   );
 });
 

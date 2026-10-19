@@ -278,7 +278,9 @@ test("a reset the retry actually lands on is stated once, not twice", () => {
   const message = (body as any).error.message as string;
   assert.match(
     message,
-    new RegExp(String.raw`resets at ${resetsAt.replaceAll(".", String.raw`\.`)}`)
+    new RegExp(
+      String.raw`resets at ${resetsAt.replaceAll(".", String.raw`\.`)}`
+    )
   );
   assert.doesNotMatch(message, /retrying in/);
 });

@@ -417,7 +417,10 @@ export class ConcurrencyManager {
         this.storedLimit = undefined;
       }
     }
-    if (typeof saved.revision === "number" && Number.isInteger(saved.revision)) {
+    if (
+      typeof saved.revision === "number" &&
+      Number.isInteger(saved.revision)
+    ) {
       this.revision = saved.revision;
     }
   }
@@ -432,7 +435,8 @@ export class ConcurrencyManager {
       scope: "router-admitted-child-requests",
       configSource: isStored ? "stored_override" : this.configSource,
       configFileExists: existsSync(this.config.file),
-      maxConcurrentThreadsPerSession: this.config.maxConcurrentThreadsPerSession,
+      maxConcurrentThreadsPerSession:
+        this.config.maxConcurrentThreadsPerSession,
       effectivePerSessionLimit: this.effectivePerSessionLimit(),
       activeSubagentThreads: this.agentActivity.countLive(
         { kind: SUBAGENT_SLOT_KIND },

@@ -345,6 +345,17 @@ test("the orchestrator prompt teaches the canonical code-mode spawn path", () =>
   assert.match(orchestrator, /spawn_subagent/);
   // Lifecycle handling follows spawning, rather than blocking the spawn call.
   assert.match(orchestrator, /After spawning, poll child results/);
+  // Custom Codex agent profiles do not provide child-specific MCP servers;
+  // tool-specialized roles need the isolated AutoDev provider-agent path.
+  assert.match(
+    orchestrator,
+    /Codex-native `multi_agent_v1` children inherit the root MCP set/
+  );
+  assert.match(
+    orchestrator,
+    /scripts\/run-provider-agent\.sh --role browser-tester/
+  );
+  assert.match(orchestrator, /Runtime-owned\s+Playtester dispatch/);
 });
 
 test("the orchestrator prompt tells the model to quote a spawn message so Markdown cannot break it", () => {

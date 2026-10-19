@@ -12,6 +12,7 @@ if [[ -f "$codex_home/.env" ]]; then
   set +a
 fi
 openlit_secret_file="${AUTODEV_OPENLIT_SECRET_FILE:-$codex_home/openlit-secrets.env}"
+unset AUTODEV_PLAYTEST_CONTROL_API_TOKEN
 if [[ -f "$openlit_secret_file" ]]; then
   read_openlit_secret() {
     local name="$1"
@@ -19,7 +20,24 @@ if [[ -f "$openlit_secret_file" ]]; then
   }
   OPENLIT_OTLP_API_KEY="$(read_openlit_secret OPENLIT_OTLP_API_KEY)"
   AUTODEV_CONTROL_API_TOKEN="$(read_openlit_secret AUTODEV_CONTROL_API_TOKEN)"
+  AUTODEV_PLAYTEST_CONTROL_API_TOKEN="$(read_openlit_secret AUTODEV_PLAYTEST_CONTROL_API_TOKEN)"
   export AUTODEV_CONTROL_API_TOKEN
+fi
+
+# The Playtest runner credential is deliberately separate from the Console's
+# general Control API credential. Keep it in the router process only; role
+# bridges pass it solely to the workspace-bound Playtest MCP process after
+# validating the trusted Playtester role and session context. Never publish it
+# to the launchd user environment or the Console.
+if [[ "${AUTODEV_PLAYTEST_CONTROL_API_TOKEN:-}" =~ ^[0-9a-f]{64}$ ]]; then
+  export AUTODEV_PLAYTEST_CONTROL_API_TOKEN
+  export AUTODEV_PLAYTEST_CONTROL_API_ACTOR="autodev-playtester-runtime"
+  export AUTODEV_PLAYTEST_CONTROL_API_ROLE="playtester"
+  export AUTODEV_CONTROL_API_BASE_URL="${AUTODEV_CONTROL_API_BASE_URL:-http://127.0.0.1:${AUTODEV_CONTROL_API_LISTEN_PORT:-4101}}"
+else
+  unset AUTODEV_PLAYTEST_CONTROL_API_TOKEN
+  unset AUTODEV_PLAYTEST_CONTROL_API_ACTOR
+  unset AUTODEV_PLAYTEST_CONTROL_API_ROLE
 fi
 
 # Republish the router auth token to the launchd user domain.

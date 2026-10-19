@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
+  discoverCodexModels,
   discoverMiniMaxModels,
   parseAntigravityModelList,
+  parseCodexModelList,
   type ProviderModelDiscoveryAdapter,
   providerModelDiscoveryPersistenceSnapshot,
   ProviderModelDiscoveryService,
@@ -111,6 +119,93 @@ test("MiniMax model discovery refuses malformed and oversized listings", async (
   await assert.rejects(
     discoverMiniMaxModels(env, async () => oversized),
     /size bound/u
+  );
+});
+
+test("Codex discovery queries the authenticated account model endpoint", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "autodev-codex-model-list-"));
+  const binary = join(directory, "codex");
+  const previousCodexBin = process.env.CODEX_BIN;
+  writeFileSync(binary, "#!/bin/sh\nprintf 'codex-cli 0.154.0\\n'\n");
+  chmodSync(binary, 0o755);
+  process.env.CODEX_BIN = binary;
+  const requests: Array<{
+    url: string;
+    authorization: string | null;
+    accountId: string | null;
+  }> = [];
+  try {
+    const models = await discoverCodexModels(
+      async (input, init) => {
+        const headers = new Headers(init?.headers);
+        requests.push({
+          url: String(input),
+          authorization: headers.get("authorization"),
+          accountId: headers.get("chatgpt-account-id")
+        });
+        return Response.json({
+          models: [
+            { slug: "gpt-6-luna", display_name: "GPT-6 Luna" },
+            { slug: "codex-new-account-model", display_name: "New Model" }
+          ]
+        });
+      },
+      async () => ({
+        token: "fixture-account-token",
+        accountId: "fixture-account"
+      })
+    );
+
+    assert.deepEqual(models, [
+      { id: "gpt-6-luna", displayName: "GPT-6 Luna" },
+      { id: "codex-new-account-model", displayName: "New Model" }
+    ]);
+    assert.deepEqual(requests, [
+      {
+        url: "https://chatgpt.com/backend-api/codex/models?client_version=0.154.0",
+        authorization: "Bearer fixture-account-token",
+        accountId: "fixture-account"
+      }
+    ]);
+    assert.deepEqual(
+      parseCodexModelList({ models: [] }),
+      [],
+      "an empty successful account listing is an observation"
+    );
+  } finally {
+    if (previousCodexBin === undefined) delete process.env.CODEX_BIN;
+    else process.env.CODEX_BIN = previousCodexBin;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Codex discovery rejects malformed account listings without leaking auth", async () => {
+  await assert.rejects(
+    discoverCodexModels(
+      async () => Response.json({ models: [{ slug: "invalid/model" }] }),
+      async () => ({ token: "fixture-secret", accountId: "fixture-account" })
+    ),
+    /invalid or duplicate model ID/u
+  );
+  await assert.rejects(
+    discoverCodexModels(
+      async () => {
+        throw new Error("network error");
+      },
+      async () => {
+        throw new Error(
+          "invalid auth at /private/path with secret fixture-secret"
+        );
+      }
+    ),
+    (error: Error) => {
+      assert.equal(
+        error.message,
+        "Codex account authentication is unavailable for model discovery."
+      );
+      assert.doesNotMatch(error.message, /fixture-secret|private\/path/u);
+      return true;
+    }
   );
 });
 
@@ -382,4 +477,24 @@ test("an invalid persisted model snapshot is discarded and remains unavailable",
   service.stop();
   restoreProviderModelDiscoveryPersistence(previousPersistence);
   ROUTING_POLICY.setDiscoveredProviderModels("antigravity", previousDiscovered);
+});
+
+test("providers without verified provider-owned listings remain unavailable", async () => {
+  const service = new ProviderModelDiscoveryService({
+    providerIds: () => ["codex", "claude", "copilot"],
+    adapters: {}
+  });
+
+  await service.refresh();
+
+  for (const entry of service.snapshot().providers) {
+    assert.deepEqual(entry.discovery, {
+      status: "unavailable",
+      source: null,
+      lastAttemptAt: null,
+      reason:
+        "No machine-readable model discovery adapter is configured for this provider."
+    });
+  }
+  service.stop();
 });

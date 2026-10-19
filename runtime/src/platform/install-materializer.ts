@@ -54,6 +54,11 @@ import { removeStalePaths } from "./runtime-reconciliation.ts";
 
 export const RUNTIME_MODULES = [
   "runtime/src/router/telemetry.ts",
+  "runtime/src/router/git-commit-observation.ts",
+  "runtime/src/telemetry/git-change-metrics.ts",
+  "runtime/src/telemetry/git-commit-identity.ts",
+  "runtime/src/telemetry/resource-context/index.ts",
+  "runtime/src/telemetry/workspace-commit-observer.ts",
   "runtime/src/router/responses.ts",
   "runtime/src/router/memory-injection.ts",
   "runtime/src/control-api/memory.ts",
@@ -186,6 +191,7 @@ export const OBSOLETE_RUNTIME_MODULES = [
   "src/mcp/codex-tools-shim-telemetry.ts",
   "src/mcp/launcher.ts",
   "src/agents/agent-activity.ts",
+  "src/agents/role-mcp-environment.ts",
   "src/agents/bridge-role.ts",
   "src/agents/bridge-sandbox.ts",
   "src/agents/bridge-spawn-session.ts",

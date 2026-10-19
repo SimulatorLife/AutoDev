@@ -5,7 +5,10 @@ import { useRouter } from "next/navigation";
 import React from "react";
 
 import { SelectField } from "../../components/forms/SelectField.ts";
-import { playtestingListHref, type PlaytestingScope } from "./playtesting-url.ts";
+import {
+  playtestingListHref,
+  type PlaytestingScope
+} from "./playtesting-url.ts";
 
 export function PlaytestingWorkspacePicker({
   scope,

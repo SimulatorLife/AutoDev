@@ -32,6 +32,7 @@ import {
   isOrchestratorRole,
   readOnlySystemPromptInjection,
   resolveAgentRole,
+  roleMcpEnvironment,
   SpawnSessionRegistry,
   type SpawnToolCallOutput
 } from "@simulatorlife/autodev-runtime/agents";
@@ -2009,6 +2010,8 @@ interface IsolatedHomeOptions {
   originalHome?: string;
   codexHome?: string;
   cwd?: string;
+  requestId?: string | null;
+  workspaceKey?: unknown;
   sandboxMode?: "read-only" | "workspace-write" | null;
   isolatedHome?: string;
   /**
@@ -2073,10 +2076,15 @@ function bridgeMcpCatalogue(codexHome?: string): Record<string, JsonRecord> {
 function bridgeMcpEntry(
   name: string,
   server: JsonRecord,
-  tools: unknown
+  tools: unknown,
+  roleEnvironment: Record<string, string> = {}
 ): AntigravityMcpServerConfig {
   const remoteUrl = server.serverUrl ?? server.url;
   if (remoteUrl !== undefined) {
+    if (Object.keys(roleEnvironment).length > 0)
+      throw new Error(
+        `MCP server ${name} cannot receive role environment over its remote transport`
+      );
     if (Array.isArray(tools))
       throw new Error(
         `MCP server ${name} has a per-tool role allowlist but uses a remote transport that Antigravity cannot filter`
@@ -2085,7 +2093,7 @@ function bridgeMcpEntry(
       throw new Error(`MCP server ${name} has an invalid remote URL`);
     return bridgeHttpMcpEntry(name, server, remoteUrl);
   }
-  return bridgeStdioMcpEntry(name, server, tools);
+  return bridgeStdioMcpEntry(name, server, tools, roleEnvironment);
 }
 
 function bridgeHttpMcpEntry(
@@ -2116,7 +2124,8 @@ function bridgeHttpMcpEntry(
 function bridgeStdioMcpEntry(
   name: string,
   server: JsonRecord,
-  tools: unknown
+  tools: unknown,
+  roleEnvironment: Record<string, string> = {}
 ): AntigravityMcpServerConfig {
   if (typeof server.command !== "string" || !server.command.trim())
     throw new Error(`MCP server ${name} has no supported launch definition`);
@@ -2131,11 +2140,11 @@ function bridgeStdioMcpEntry(
     : [];
   const entry: JsonRecord = {};
   if (server.cwd !== undefined) entry.cwd = server.cwd;
-  if (server.env !== undefined) {
-    if (!isJsonRecord(server.env))
-      throw new Error(`MCP server ${name} has an invalid environment`);
-    entry.env = { ...server.env };
-  }
+  if (server.env !== undefined && !isJsonRecord(server.env))
+    throw new Error(`MCP server ${name} has an invalid environment`);
+  const configuredEnv = isJsonRecord(server.env) ? server.env : {};
+  const mergedEnv = { ...configuredEnv, ...roleEnvironment };
+  if (Object.keys(mergedEnv).length > 0) entry.env = mergedEnv;
   if (tools === undefined) {
     entry.command = server.command;
     entry.args = serverArgs;
@@ -2265,7 +2274,28 @@ function buildInvocationMcpConfig(
       throw new Error(
         `MCP server ${name} granted to role ${agentRole ?? "default"} is not in the bridge MCP catalogue; rerun scripts/install.sh`
       );
-    mcpServers[name] = bridgeMcpEntry(name, server, contract.mcpTools?.[name]);
+    const roleEnvironment = roleMcpEnvironment({
+      role: agentRole,
+      server: name,
+      requestId: options?.requestId ?? null,
+      workspaceId:
+        typeof options?.workspaceKey === "string" ? options.workspaceKey : null,
+      workspaceRoot: options?.cwd ?? null,
+      repositoryRoot: REPO_ROOT,
+      codeHome:
+        options?.codexHome ??
+        process.env.CODEX_HOME ??
+        pathApi.join(
+          options?.originalHome ?? process.env.HOME ?? homedir(),
+          ".codex"
+        )
+    });
+    mcpServers[name] = bridgeMcpEntry(
+      name,
+      server,
+      contract.mcpTools?.[name],
+      roleEnvironment
+    );
   }
   if (isOrchestratorRole(agentRole) && spawnSession)
     mcpServers.autodev_spawn = bridgeSpawnMcpEntry(options);
@@ -2759,12 +2789,15 @@ function runAgy(
   sandboxMode: "read-only" | "workspace-write" | null = null,
   skillContext: string | null = null,
   workspaceKey: unknown = null,
-  toolTurnId: string | null = null
+  toolTurnId: string | null = null,
+  requestId: string | null = null
 ): Promise<RunAgyResult> {
   let isolatedState: IsolatedHomeResult;
   try {
     isolatedState = createIsolatedAntigravityHome(agentRole, spawnSession, {
       cwd,
+      requestId,
+      workspaceKey,
       sandboxMode,
       toolTurnId
     });
@@ -3414,7 +3447,8 @@ function runTurnAgy(
     turn.sandboxMode,
     turn.skillContext,
     turn.workspaceKey,
-    codexToolsTurnId(turn)
+    codexToolsTurnId(turn),
+    turn.requestId
   );
 }
 

@@ -28,6 +28,67 @@ import { parse as parseToml } from "smol-toml";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
+const BROWSER_TESTER_TOOL_ALLOWLIST = [
+  "browser_navigate",
+  "browser_tabs",
+  "browser_snapshot",
+  "browser_take_screenshot",
+  "browser_click",
+  "browser_type",
+  "browser_fill_form",
+  "browser_press_key",
+  "browser_wait_for",
+  "browser_console_messages",
+  "browser_network_requests",
+  "browser_find",
+  "browser_hover",
+  "browser_select_option",
+  "browser_drag",
+  "browser_handle_dialog",
+  "browser_resize",
+  "browser_close"
+] as const;
+const BROWSER_TESTER_MCP_ENV_ALLOWLIST = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "LC_ALL",
+  "CODEX_HOME",
+  "AUTODEV_REPO_ROOT",
+  "AUTODEV_NODE_BIN",
+  "PLAYWRIGHT_BROWSERS_PATH"
+] as const;
+
+function browserTesterRoleToml(): string {
+  return (
+    [
+      'name = "browser-tester"',
+      'developer_instructions = "Test only the authorized rendered UI."',
+      'sandbox_mode = "read-only"',
+      "[features]",
+      "shell_tool = false",
+      "multi_agent = false",
+      "multi_agent_v2 = false",
+      "hooks = false",
+      "memories = false",
+      "[tools]",
+      "web_search = false",
+      "[shell_environment_policy]",
+      'inherit = "none"',
+      "[mcp_servers.playwright]",
+      "enabled = true",
+      'default_tools_approval_mode = "approve"',
+      `enabled_tools = ${JSON.stringify(BROWSER_TESTER_TOOL_ALLOWLIST)}`,
+      `env_vars = ${JSON.stringify(BROWSER_TESTER_MCP_ENV_ALLOWLIST)}`,
+      '[plugins."codex-app-tools@openai-bundled"]',
+      "enabled = false"
+    ].join("\n") + "\n"
+  );
+}
+
 const PLAYTESTER_TOOL_ALLOWLIST = [
   "playtest.capabilities",
   "playtest.run",
@@ -40,6 +101,14 @@ const PLAYTESTER_TOOL_ALLOWLIST = [
   "playtest.readWindow"
 ] as const;
 const PLAYTESTER_MCP_ENV_ALLOWLIST = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "LC_ALL",
+  "AUTODEV_NODE_BIN",
   "AUTODEV_PLAYTEST_WORKSPACE_ID",
   "AUTODEV_PLAYTEST_ROLE",
   "AUTODEV_PLAYTEST_ACTOR_ID",
@@ -48,13 +117,13 @@ const PLAYTESTER_MCP_ENV_ALLOWLIST = [
   "AUTODEV_PLAYTEST_REPOSITORY_ROOT",
   "AUTODEV_REPO_ROOT",
   "CODEX_HOME",
+  "AUTODEV_OPENLIT_SECRET_FILE",
   "CLICKHOUSE_URL",
   "OPENLIT_DB_USER",
   "OPENLIT_DB_NAME",
   "AUTODEV_CONTROL_API_BASE_URL",
   "AUTODEV_CONTROL_API_LISTEN_HOST",
   "AUTODEV_CONTROL_API_LISTEN_PORT",
-  "AUTODEV_PLAYTEST_CONTROL_API_TOKEN",
   "AUTODEV_PLAYTEST_CONTROL_API_ACTOR",
   "AUTODEV_PLAYTEST_CONTROL_API_ROLE"
 ] as const;
@@ -142,8 +211,17 @@ function fixture(): {
 function playtesterEnvironment(
   f: ReturnType<typeof fixture>
 ): NodeJS.ProcessEnv {
+  const secretFile = join(f.root, "openlit-secrets.env");
+  writeFileSync(
+    secretFile,
+    "AUTODEV_PLAYTEST_CONTROL_API_TOKEN=runner-scoped-token\n",
+    {
+      mode: 0o600
+    }
+  );
   return {
     ...f.env,
+    AUTODEV_OPENLIT_SECRET_FILE: secretFile,
     AUTODEV_CONTROL_API_BASE_URL: "http://127.0.0.1:4101",
     AUTODEV_CONTROL_API_TOKEN: "general-console-secret",
     CLICKHOUSE_URL: "http://127.0.0.1:8123",
@@ -157,7 +235,6 @@ function playtesterEnvironment(
     AUTODEV_PLAYTEST_TASK_ID: "playtest-task",
     AUTODEV_PLAYTEST_RUN_ID: "playtest-run",
     AUTODEV_PLAYTEST_REPOSITORY_ROOT: repositoryRoot,
-    AUTODEV_PLAYTEST_CONTROL_API_TOKEN: "runner-scoped-token",
     AUTODEV_PLAYTEST_CONTROL_API_ACTOR: "playtest-runtime",
     AUTODEV_PLAYTEST_CONTROL_API_ROLE: "playtester"
   };
@@ -272,7 +349,8 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
     );
     assert.equal(
       calls[0]?.env.AUTODEV_PLAYTEST_CONTROL_API_TOKEN,
-      "analyst-env-secret"
+      undefined,
+      "ordinary roles must not inherit the Playtest runner secret"
     );
     assert.equal(
       calls[0]?.env.AUTODEV_PLAYTEST_CONTROL_API_ROLE,
@@ -335,6 +413,16 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
     assert.equal(calls[0]?.env.AUTODEV_MEMORY_TASK_TEXT, undefined);
     assert.match(calls[0]?.env.AUTODEV_MEMORY_TASK_ID ?? "", /^provider-task-/);
     assert.match(calls[0]?.env.AUTODEV_MEMORY_RUN_ID ?? "", /^provider-run-/);
+    assert.equal(calls[0]?.env.GIT_AUTHOR_NAME, "AutoDev Agent (smart)");
+    assert.equal(
+      calls[0]?.env.GIT_AUTHOR_EMAIL,
+      "autodev-smart-codex@agents.autodev.local"
+    );
+    assert.equal(calls[0]?.env.GIT_COMMITTER_NAME, "AutoDev Agent (smart)");
+    assert.equal(
+      calls[0]?.env.GIT_COMMITTER_EMAIL,
+      "autodev-smart-codex@agents.autodev.local"
+    );
     assert.equal(calls[0]?.args.at(-1), prompt);
   } finally {
     rmSync(f.root, { recursive: true, force: true });
@@ -1064,6 +1152,154 @@ test("argument parsing accepts the bounded playtester role", () => {
   }
 });
 
+test("the installed browser-tester role file matches its exact read-only MCP contract", () => {
+  const role = parseToml(
+    readFileSync(
+      join(repositoryRoot, "agents", "roles", "browser-tester.toml"),
+      "utf8"
+    )
+  ) as unknown as {
+    readonly name: string;
+    readonly sandbox_mode: string;
+    readonly features: Record<string, unknown>;
+    readonly tools: Record<string, unknown>;
+    readonly shell_environment_policy: Record<string, unknown>;
+    readonly mcp_servers: {
+      readonly playwright: {
+        readonly enabled: boolean;
+        readonly enabled_tools: readonly string[];
+        readonly env_vars: readonly string[];
+      };
+    };
+  };
+  assert.equal(role.name, "browser-tester");
+  assert.equal(role.sandbox_mode, "read-only");
+  assert.deepEqual(role.features, {
+    shell_tool: false,
+    multi_agent: false,
+    multi_agent_v2: false,
+    hooks: false,
+    memories: false
+  });
+  assert.equal(role.tools.web_search, false);
+  assert.equal(role.shell_environment_policy.inherit, "none");
+  assert.equal(role.mcp_servers.playwright.enabled, true);
+  assert.deepEqual(
+    role.mcp_servers.playwright.enabled_tools,
+    BROWSER_TESTER_TOOL_ALLOWLIST
+  );
+  assert.deepEqual(
+    role.mcp_servers.playwright.env_vars,
+    BROWSER_TESTER_MCP_ENV_ALLOWLIST
+  );
+});
+
+test("browser-tester provider run injects only its bounded Playwright MCP and strips unrelated credentials", async () => {
+  const f = fixture();
+  try {
+    const roleFile = join(f.root, ".codex", "agents", "browser-tester.toml");
+    writeFileSync(roleFile, browserTesterRoleToml());
+    writeFileSync(
+      join(f.root, ".codex", "config.toml"),
+      [
+        "[mcp_servers.lsp]",
+        "enabled = true",
+        "[mcp_servers.playwright]",
+        "enabled = false",
+        "[mcp_servers.playtest]",
+        "enabled = false",
+        "[mcp_servers.codex_app]",
+        "enabled = true",
+        "[mcp_servers.unexpected]",
+        "enabled = true"
+      ].join("\n") + "\n"
+    );
+    const credentialFile = join(f.root, "browser-provider.env");
+    writeFileSync(
+      credentialFile,
+      [
+        "CODEX_ROUTER_AUTH_TOKEN=router-secret",
+        "AUTODEV_CONTROL_API_TOKEN=general-secret",
+        "AUTODEV_PLAYTEST_CONTROL_API_TOKEN=runner-secret",
+        "OPENAI_API_KEY=provider-secret",
+        "AUTODEV_MEMORY_DATABASE_URL=memory-secret"
+      ].join("\n") + "\n"
+    );
+    const calls: Array<{ args: string[]; environment: NodeJS.ProcessEnv }> = [];
+    const result = await runProviderAgent(
+      [
+        "--role",
+        "browser-tester",
+        "--cwd",
+        join(f.root, "workspace"),
+        "--prompt",
+        "Inspect the authorized rendered UI without changing state."
+      ],
+      { ...f.env, CODEX_ENV_FILE: credentialFile },
+      {
+        ensureRouter: async () => undefined,
+        runCodex: (_binary, args, environment) => {
+          calls.push({ args, environment });
+          return 0;
+        }
+      }
+    );
+
+    assert.equal(result, 0);
+    assert.equal(calls.length, 1);
+    const call = calls[0];
+    assert.ok(call);
+    for (const disabled of ["lsp", "playtest", "codex_app", "unexpected"])
+      assert.ok(call.args.includes(`mcp_servers.${disabled}.enabled=false`));
+    assert.ok(call.args.includes("mcp_servers.playwright.enabled=true"));
+    assert.ok(call.args.includes("features.shell_tool=false"));
+    assert.ok(call.args.includes("features.multi_agent=false"));
+    assert.ok(call.args.includes('web_search="disabled"'));
+    const toolsArgument = call.args.find((argument) =>
+      argument.startsWith("mcp_servers.playwright.enabled_tools=")
+    );
+    assert.ok(toolsArgument);
+    const tools = parseToml(toolsArgument) as {
+      mcp_servers: { playwright: { enabled_tools: string[] } };
+    };
+    assert.deepEqual(
+      tools.mcp_servers.playwright.enabled_tools,
+      BROWSER_TESTER_TOOL_ALLOWLIST
+    );
+    const envVarsArgument = call.args.find((argument) =>
+      argument.startsWith("mcp_servers.playwright.env_vars=")
+    );
+    assert.ok(envVarsArgument);
+    const envVars = parseToml(envVarsArgument) as {
+      mcp_servers: { playwright: { env_vars: string[] } };
+    };
+    assert.deepEqual(
+      envVars.mcp_servers.playwright.env_vars,
+      BROWSER_TESTER_MCP_ENV_ALLOWLIST
+    );
+    assert.ok(
+      call.args.some((argument) =>
+        argument.startsWith("mcp_servers.playwright.command=")
+      )
+    );
+    assert.ok(
+      call.args.some((argument) =>
+        argument.startsWith("mcp_servers.playwright.args=")
+      )
+    );
+    assert.equal(call.environment.CODEX_ROUTER_AUTH_TOKEN, "router-secret");
+    assert.equal(call.environment.AUTODEV_CONTROL_API_TOKEN, undefined);
+    assert.equal(
+      call.environment.AUTODEV_PLAYTEST_CONTROL_API_TOKEN,
+      undefined
+    );
+    assert.equal(call.environment.OPENAI_API_KEY, undefined);
+    assert.equal(call.environment.AUTODEV_MEMORY_DATABASE_URL, undefined);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("the installed playtester role file matches its exact read-only MCP contract", () => {
   const role = parseToml(
     readFileSync(
@@ -1203,6 +1439,14 @@ test("playtester provider run enables only the exact read-only runner Playtestin
       mcp_servers: { playtest: { env_vars: string[] } };
     };
     assert.deepEqual(envVars.mcp_servers.playtest.env_vars, [
+      "PATH",
+      "HOME",
+      "TMPDIR",
+      "TMP",
+      "TEMP",
+      "LANG",
+      "LC_ALL",
+      "AUTODEV_NODE_BIN",
       "AUTODEV_PLAYTEST_WORKSPACE_ID",
       "AUTODEV_PLAYTEST_ROLE",
       "AUTODEV_PLAYTEST_ACTOR_ID",
@@ -1211,13 +1455,13 @@ test("playtester provider run enables only the exact read-only runner Playtestin
       "AUTODEV_PLAYTEST_REPOSITORY_ROOT",
       "AUTODEV_REPO_ROOT",
       "CODEX_HOME",
+      "AUTODEV_OPENLIT_SECRET_FILE",
       "CLICKHOUSE_URL",
       "OPENLIT_DB_USER",
       "OPENLIT_DB_NAME",
       "AUTODEV_CONTROL_API_BASE_URL",
       "AUTODEV_CONTROL_API_LISTEN_HOST",
       "AUTODEV_CONTROL_API_LISTEN_PORT",
-      "AUTODEV_PLAYTEST_CONTROL_API_TOKEN",
       "AUTODEV_PLAYTEST_CONTROL_API_ACTOR",
       "AUTODEV_PLAYTEST_CONTROL_API_ROLE"
     ]);
@@ -1244,7 +1488,8 @@ test("playtester provider run enables only the exact read-only runner Playtestin
     );
     assert.equal(
       call.environment.AUTODEV_PLAYTEST_CONTROL_API_TOKEN,
-      "runner-scoped-token"
+      undefined,
+      "the runner token must remain in the protected CODEX_HOME file"
     );
     assert.equal(
       call.environment.CODEX_ROUTER_AUTH_TOKEN,

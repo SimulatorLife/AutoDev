@@ -67,9 +67,18 @@ const HOOK_EVENTS: ReadonlySet<string> = new Set([
   "preToolUse"
 ]);
 const SOURCE_UPDATE_QUEUES = new Map<string, Promise<void>>();
-const COMMAND_PARSED_CACHE = new Map<string, { content: string; command: RuleSyncCommand }>();
-const SKILL_ENTRY_CACHE = new Map<string, { text: string; entry: SkillEntry }>();
-const COMMAND_HISTORY_CACHE = new Map<string, { timestamp: number; history: RuleSyncCommandHistory }>();
+const COMMAND_PARSED_CACHE = new Map<
+  string,
+  { content: string; command: RuleSyncCommand }
+>();
+const SKILL_ENTRY_CACHE = new Map<
+  string,
+  { text: string; entry: SkillEntry }
+>();
+const COMMAND_HISTORY_CACHE = new Map<
+  string,
+  { timestamp: number; history: RuleSyncCommandHistory }
+>();
 const COMMAND_HISTORY_CACHE_TTL_MS = 5000;
 
 export function clearRuleSyncCachesForTests(): void {
@@ -1345,7 +1354,10 @@ export class RuleSyncRepository {
     } catch {
       const fallback = commandHistoryFallback(git);
       if (fallback.status === "available") {
-        COMMAND_HISTORY_CACHE.set(cacheKey, { timestamp: now, history: fallback });
+        COMMAND_HISTORY_CACHE.set(cacheKey, {
+          timestamp: now,
+          history: fallback
+        });
       }
       return fallback;
     }

@@ -16,10 +16,7 @@ import { PageBody } from "../../components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.ts";
-import {
-  DetailGrid,
-  DetailValue
-} from "../../components/panels/DetailGrid.ts";
+import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import {
   ControlFailureNotice,
   type ControlFailureNoticeProps

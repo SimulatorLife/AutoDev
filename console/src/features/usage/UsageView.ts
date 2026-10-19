@@ -3,6 +3,7 @@ import {
   type UsageActiveSessions,
   type UsageFilterOptions,
   type UsageFilterSelection,
+  type UsageGitChangeMetrics,
   type UsageMetricsData,
   type UsageTraceAttempt,
   type UsageTraceDetail,
@@ -84,6 +85,7 @@ export type UsageTraceLookup =
 const COUNT_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0
 });
+const RECENT_PROVIDER_ATTEMPTS_LABEL = "Recent provider attempts";
 const TOKEN_FORMATTER = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 1
@@ -105,6 +107,7 @@ const SUB_DOLLAR_COST_FORMATTER = new Intl.NumberFormat("en-US", {
 });
 const CONTEXT_COMPACTION_EMPTY_MESSAGE =
   "No source-confirmed compactions were observed in this time range.";
+const NOT_APPLICABLE_STATUS = "not-applicable" as const;
 
 export function formatTokenCount(value: number | null): string {
   if (value === null) return NOT_OBSERVED_LABEL;
@@ -333,8 +336,7 @@ function renderScopeMeta(
   return React.createElement(
     "details",
     {
-      className:
-        `flex min-w-0 flex-wrap items-center gap-2 ${MUTED_META_CLASS}`,
+      className: `flex min-w-0 flex-wrap items-center gap-2 ${MUTED_META_CLASS}`,
       open: selection.range === "CUSTOM"
     },
     React.createElement(
@@ -613,15 +615,15 @@ function renderRecentAttempts(
     content = React.createElement(
       "p",
       { className: MUTED_BODY_CLASS, role: "status" },
-      "Recent provider attempts were not observed. Aggregate Usage metrics may still be available."
+      `${RECENT_PROVIDER_ATTEMPTS_LABEL} were not observed. Aggregate Usage metrics may still be available.`
     );
-  } else if (traceList.kind === "not-applicable") {
+  } else if (traceList.kind === NOT_APPLICABLE_STATUS) {
     content = React.createElement(
       "p",
       { className: MUTED_BODY_CLASS },
       traceList.reason === "skill-filter"
-        ? "Recent provider attempts are not shown with a Skill filter because the source cannot safely attribute provider attempts to a skill."
-        : "Recent provider attempts are not available for this filter combination."
+        ? `${RECENT_PROVIDER_ATTEMPTS_LABEL} are not shown with a Skill filter because the source cannot safely attribute provider attempts to a skill.`
+        : `${RECENT_PROVIDER_ATTEMPTS_LABEL} are not available for this filter combination.`
     );
   } else {
     content = React.createElement(
@@ -660,7 +662,7 @@ function renderRecentAttempts(
           id: "usage-recent-attempts-heading",
           className: SECTION_HEADING_CLASS
         },
-        "Recent provider attempts"
+        RECENT_PROVIDER_ATTEMPTS_LABEL
       ),
       React.createElement(
         "p",
@@ -793,6 +795,177 @@ function renderTraceLookup(
  * add to that function's cognitive complexity; `UsageView` only decides
  * *whether* to call this, never *what* it renders.
  */
+function renderGitChangeMetrics(
+  metrics: UsageGitChangeMetrics
+): React.JSX.Element {
+  if (metrics.status === NOT_APPLICABLE_STATUS) {
+    const reason =
+      metrics.notApplicableReason === "active-sessions"
+        ? "Git change output is historical and has no Active Sessions scope."
+        : `Git change output is unavailable for the selected ${metrics.unsupportedFilters.join(" and ")} filter; commit identity does not include those dimensions.`;
+    return React.createElement(
+      "section",
+      { "data-git-change-output": NOT_APPLICABLE_STATUS },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Git change output"
+      ),
+      React.createElement(
+        "p",
+        { className: CALLOUT_WARNING_CLASS, role: "status" },
+        reason
+      )
+    );
+  }
+
+  const unavailableMessage =
+    metrics.status === "unavailable"
+      ? "Git change metrics are unavailable for this time range."
+      : metrics.status === "not-observed"
+        ? "No source-confirmed AutoDev commits were observed in this time range."
+        : null;
+  return React.createElement(
+    "section",
+    {
+      className: PAGE_SECTION_STACK_CLASS,
+      "data-git-change-output": metrics.status
+    },
+    React.createElement(
+      "h3",
+      { className: SECTION_HEADING_CLASS },
+      "Git change output"
+    ),
+    unavailableMessage === null
+      ? null
+      : React.createElement(
+          "p",
+          {
+            className:
+              metrics.status === "unavailable"
+                ? CALLOUT_WARNING_CLASS
+                : MUTED_BODY_CLASS,
+            role: "status"
+          },
+          unavailableMessage
+        ),
+    metrics.partial === true
+      ? React.createElement(
+          "p",
+          {
+            className: CALLOUT_WARNING_CLASS,
+            role: "status",
+            "data-git-change-output-partial": "true"
+          },
+          `Partial diff measurements were observed for ${formatCount(metrics.partialCommits)} commit${metrics.partialCommits === 1 ? "" : "s"}; line totals may be incomplete.`
+        )
+      : null,
+    metrics.breakdownsPartial
+      ? React.createElement(
+          "p",
+          {
+            className: CALLOUT_WARNING_CLASS,
+            role: "status",
+            "data-git-change-breakdowns": "partial"
+          },
+          "A Git breakdown reached its result limit; shown categories may be partial."
+        )
+      : null,
+    React.createElement(
+      StatGrid,
+      { columns: 3 },
+      React.createElement(StatCard, {
+        title: "Agent Commits",
+        value: formatCount(metrics.commits),
+        subtitle: "Commit identity confirmed"
+      }),
+      React.createElement(StatCard, {
+        title: "Files Changed",
+        value: formatCount(metrics.filesChanged),
+        subtitle: "Distinct paths; includes additions and deletions"
+      }),
+      React.createElement(StatCard, {
+        title: "Lines Added / Removed",
+        value: `${formatCount(metrics.linesAdded)} / ${formatCount(metrics.linesRemoved)}`,
+        subtitle: "Git numstat; partial commits are labeled"
+      }),
+      React.createElement(StatCard, {
+        title: "Files Added",
+        value: formatCount(metrics.filesAdded),
+        subtitle: "Subset of files changed"
+      }),
+      React.createElement(StatCard, {
+        title: "Files Deleted",
+        value: formatCount(metrics.filesDeleted),
+        subtitle: "Subset of files changed"
+      }),
+      React.createElement(StatCard, {
+        title: "Partial Commits",
+        value: formatCount(metrics.partialCommits),
+        subtitle: "Binary or unsummarized diffs"
+      })
+    ),
+    React.createElement(
+      "div",
+      { className: gridRowClass(3, "gap-6") },
+      ...[
+        {
+          title: "Commits by workspace",
+          data: metrics.commitsByWorkspace,
+          label: "Source-confirmed agent commits by workspace",
+          notObservedMessage: "Workspace commit telemetry not observed.",
+          emptyMessage: "No workspace-attributed commits were observed.",
+          barClass: "bg-chart-1",
+          valueClass: "text-chart-1"
+        },
+        {
+          title: "Commits by provider",
+          data: metrics.commitsByProvider,
+          label: "Source-confirmed agent commits by provider",
+          notObservedMessage: "Provider commit telemetry not observed.",
+          emptyMessage: "No provider-attributed commits were observed.",
+          barClass: "bg-chart-2",
+          valueClass: "text-chart-2"
+        },
+        {
+          title: "Commits by agent role",
+          data: metrics.commitsByAgent,
+          label: "Source-confirmed agent commits by role",
+          notObservedMessage: "Agent-role commit telemetry not observed.",
+          emptyMessage: "No agent-attributed commits were observed.",
+          barClass: "bg-chart-4",
+          valueClass: "text-chart-4"
+        }
+      ].map((chart) =>
+        React.createElement(
+          "div",
+          { key: chart.title, className: LIST_PANEL_CLASS },
+          React.createElement(
+            "h4",
+            { className: SECTION_HEADING_CLASS },
+            chart.title
+          ),
+          React.createElement(BarChart, {
+            data:
+              chart.data === null
+                ? null
+                : chart.data.map((item) => ({
+                    label: formatDimension(item.name),
+                    value: item.count,
+                    valueText: formatCount(item.count)
+                  })),
+            label: chart.label,
+            notObservedMessage: chart.notObservedMessage,
+            emptyMessage: chart.emptyMessage,
+            barClass: chart.barClass,
+            valueClass: chart.valueClass
+          })
+        )
+      )
+    )
+  );
+}
+
 function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
   const requestsByRole = metrics.requestsByRole;
   const attemptsByProvider = metrics.attemptsByProvider;
@@ -925,7 +1098,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
               {
                 className: CALLOUT_WARNING_CLASS,
                 role: "status",
-                "data-context-compaction-scope": "not-applicable"
+                "data-context-compaction-scope": NOT_APPLICABLE_STATUS
               },
               `Context compaction data is unavailable for the selected ${compactionUnsupportedFilters.join(" and ")} filter${compactionUnsupportedFilters.length === 1 ? "" : "s"}; this source attributes compactions to logical requests, not those dimensions.`
             )
@@ -1181,7 +1354,40 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
         barClass: "bg-chart-3",
         valueClass: "text-chart-3"
       })
-    )
+    ),
+    renderGitChangeMetrics(metrics.gitChanges)
+  );
+}
+
+function usageMetricsObserved(metrics: UsageMetricsData | undefined): boolean {
+  if (metrics === undefined) return false;
+  const signals: readonly unknown[] = [
+    metrics.logicalRequests,
+    metrics.totalInputTokens,
+    metrics.totalOutputTokens,
+    metrics.cacheReadRate,
+    metrics.p95LatencyMs,
+    metrics.estimatedCostUsd,
+    metrics.physicalAttempts,
+    metrics.mcpCalls,
+    metrics.p95McpDurationMs,
+    metrics.mcpErrors,
+    metrics.failedAttempts,
+    metrics.attemptErrorsByProvider,
+    metrics.contextCompactions,
+    metrics.contextCompactionRatePercent,
+    metrics.contextCompactionsOverTime,
+    metrics.contextCompactionsByWorkspace,
+    metrics.contextCompactionsByModel,
+    metrics.contextCompactionsByAgent,
+    metrics.skillEventsByEvent,
+    metrics.requestsByRole,
+    metrics.attemptsByProvider,
+    metrics.callsByTool
+  ];
+  return (
+    metrics.gitChanges.status === "observed" ||
+    signals.some((value) => value !== null)
   );
 }
 
@@ -1199,9 +1405,7 @@ export function UsageView({
   // anything here. Rendering them would offer an operator a control that cannot
   // affect the reading in front of them.
   const isActiveSessions = selection.range === "ACTIVE_SESSIONS";
-  const observed =
-    metrics !== undefined &&
-    Object.values(metrics).some((value) => value !== null);
+  const observed = usageMetricsObserved(metrics);
 
   return React.createElement(
     PageBody,

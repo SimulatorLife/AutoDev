@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 
 export interface RoleContract {
   mcp: string[];
+  mcpEnvVars?: Record<string, string[]>;
+  roleScopedMcp?: string[];
   webResearch?: {
     search?: boolean;
     fetch?: boolean;
@@ -13,6 +15,7 @@ export interface ProviderContract {
   spawnTools: string[];
   delegation: "native" | "codex-shim" | "bridge-native" | "none";
   permissionMode: string;
+  roleMcpInjection?: boolean;
   [key: string]: unknown;
 }
 export interface ExecutionContract {
@@ -46,9 +49,20 @@ export function providerContract(provider: string): ProviderContract {
     CONTRACT.providers[provider] ?? {
       spawnTools: [],
       delegation: "none",
-      permissionMode: "unknown"
+      permissionMode: "unknown",
+      roleMcpInjection: false
     }
   );
+}
+
+/** MCP servers that must be launched inside a role-scoped provider session. */
+export function roleScopedMcp(role: unknown): string[] {
+  return roleContract(role).roleScopedMcp ?? [];
+}
+
+/** Whether a provider bridge owns MCP startup and role-specific tool filtering. */
+export function providerInjectsRoleMcp(provider: string): boolean {
+  return providerContract(provider).roleMcpInjection === true;
 }
 
 /**

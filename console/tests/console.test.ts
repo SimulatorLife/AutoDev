@@ -38,6 +38,7 @@ import {
   SANDBOX_MODES,
   type SkillEligibility,
   type ToolCatalogItem,
+  type UsageGitChangeMetrics,
   type UsageMetricsData
 } from "@simulatorlife/autodev-core";
 import {
@@ -144,6 +145,7 @@ import {
   DETAIL_DRAWER_SUBTITLE_CLASS,
   DETAIL_DRAWER_TITLE_ROW_CLASS,
   DetailDrawer,
+  DetailGrid,
   EMPTY_BOX_CLASS,
   EMPTY_INLINE_CLASS,
   EmptyState,
@@ -185,9 +187,11 @@ import {
   ProvidersView,
   resolveActiveTabId,
   resolveMemoryPage,
+  resolveProviderStatus,
   SECTION_HEADING_CLASS,
   SkillsView,
   StatCard,
+  StatGrid,
   StatusBadge,
   tabHref,
   TabNav,
@@ -328,6 +332,24 @@ const CONFIGURED_AGENT: AgentDefinition = {
   ],
   toolNames: ["orchestration", "playwright"]
 };
+
+const UNOBSERVED_GIT_CHANGES = {
+  status: "not-observed",
+  notApplicableReason: null,
+  unsupportedFilters: [],
+  partial: null,
+  breakdownsPartial: false,
+  commits: null,
+  filesChanged: null,
+  filesAdded: null,
+  filesDeleted: null,
+  linesAdded: null,
+  linesRemoved: null,
+  partialCommits: null,
+  commitsByWorkspace: null,
+  commitsByProvider: null,
+  commitsByAgent: null
+} satisfies UsageGitChangeMetrics;
 
 /**
  * Desired-vs-actual evidence for an agent. The detail response guard treats this
@@ -2277,6 +2299,18 @@ test("AgentsView keeps readiness and convergence unknown without observations", 
   assert.match(markup, /href="\/agents\/orchestrator"/);
 });
 
+test("AgentsView links each assigned skill and MCP chip to its canonical resource", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(AgentsView, { agents: [CONFIGURED_AGENT] })
+  );
+
+  assert.match(
+    markup,
+    /href="\/skills\/orchestration"[^>]*>orchestration<\/a>/u
+  );
+  assert.match(markup, /href="\/mcps\/playwright"[^>]*>playwright<\/a>/u);
+});
+
 test("Agent detail separates configuration from unobserved runtime state", () => {
   // Rendered with 70-character unbreakable skill and MCP identifiers rather
   // than the tidy fixture. A detail page whose real inputs are canonical
@@ -3617,6 +3651,68 @@ test("StatCard renders value and title", () => {
   assert.ok(markup.includes("Last 24h"));
 });
 
+test("stat rows stretch cards without stretching labelled-fact rows", () => {
+  const statGrid = renderToStaticMarkup(
+    React.createElement(StatGrid, { columns: 3 })
+  );
+  const detailGrid = renderToStaticMarkup(
+    React.createElement(DetailGrid, { columns: 3 })
+  );
+
+  assert.match(statGrid, /items-stretch/u);
+  assert.match(detailGrid, /items-start/u);
+});
+
+test("provider readiness never turns configuration without a success into Ready", () => {
+  const provider = (health: unknown) =>
+    ({
+      disabled: false,
+      route: {
+        pattern: "^codex$",
+        baseUrl: "https://example.test",
+        healthUrl: null
+      },
+      credential: { envKey: null, configured: true },
+      health
+    }) as unknown as Parameters<typeof resolveProviderStatus>[0];
+
+  assert.equal(resolveProviderStatus(provider(null)).label, "Not observed");
+  assert.equal(
+    resolveProviderStatus(
+      provider({
+        cooldown: null,
+        failureStreak: 0,
+        probeFailureStreak: 0,
+        inFlightRequests: 0,
+        activeAgents: 0,
+        attempts: 0,
+        successes: 0,
+        failures: 0,
+        lastSuccessAt: null,
+        lastFailure: null
+      })
+    ).label,
+    "Not observed"
+  );
+  assert.equal(
+    resolveProviderStatus(
+      provider({
+        cooldown: null,
+        failureStreak: 0,
+        probeFailureStreak: 0,
+        inFlightRequests: 0,
+        activeAgents: 0,
+        attempts: 1,
+        successes: 1,
+        failures: 0,
+        lastSuccessAt: "2026-10-19T12:00:00.000Z",
+        lastFailure: null
+      })
+    ).label,
+    "Ready"
+  );
+});
+
 test("a stat card pairs its label with its value as a definition list", () => {
   // A card is a labelled fact, which this codebase already says is a
   // definition list: DetailGrid is "the <dl> behind a row of label/value pairs"
@@ -3634,7 +3730,11 @@ test("a stat card pairs its label with its value as a definition list", () => {
 
   assert.match(markup, /^<dl /u, "the card is a definition list");
   assert.match(markup, /<dt[^>]*>Passed<\/dt>/u, "the label is the term");
-  assert.match(markup, /<dd>[\s\S]*?>34</u, "the value is the description");
+  assert.match(
+    markup,
+    /<dd[^>]*>[\s\S]*?>34</u,
+    "the value is the description"
+  );
 
   // The pairing has to hold in one grouping element. A <dl> allows dt, dd, and
   // divs wrapping them, and a div is what pairs them -- so splitting the title
@@ -3642,7 +3742,7 @@ test("a stat card pairs its label with its value as a definition list", () => {
   // description in two different groups, each announcing alone.
   assert.match(
     markup,
-    /<div><div[^>]*><dt[^>]*>Passed<\/dt>[\s\S]*?<\/div><dd>/u,
+    /<div[^>]*><div[^>]*><dt[^>]*>Passed<\/dt>[\s\S]*?<\/div><dd/u,
     "the term and its description sit in the same group"
   );
 });
@@ -4064,6 +4164,7 @@ test("Usage role and provider breakdowns use distinct semantic chart series", ()
     contextCompactionsByAgent: [{ name: "orchestrator", count: 1 }],
     contextCompactionsUnsupportedFilters: [],
     contextCompactionsBreakdownsPartial: false,
+    gitChanges: UNOBSERVED_GIT_CHANGES,
     skillEventsByEvent: [{ event: "used", count: 1 }],
     requestsByRole: [{ role: "orchestrator", count: 3 }],
     attemptsByProvider: [{ provider: "codex", count: 5 }],
@@ -4148,6 +4249,7 @@ test("Usage values stay readable at large scales and keep unattributed groups ex
         contextCompactionsByAgent: [],
         contextCompactionsUnsupportedFilters: [],
         contextCompactionsBreakdownsPartial: false,
+        gitChanges: UNOBSERVED_GIT_CHANGES,
         skillEventsByEvent: [],
         requestsByRole: [{ role: "", count: 126 }],
         attemptsByProvider: [{ provider: "codex", count: 3419 }],
@@ -4476,6 +4578,7 @@ test("UsageView with empty arrays still reports no synthetic counts", () => {
         contextCompactionsByAgent: null,
         contextCompactionsUnsupportedFilters: [],
         contextCompactionsBreakdownsPartial: false,
+        gitChanges: UNOBSERVED_GIT_CHANGES,
         skillEventsByEvent: null,
         requestsByRole: [],
         attemptsByProvider: [],
@@ -17481,7 +17584,18 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     models: [{ tier: "orchestrator", model: "anthropic/claude" }],
     priorities: [{ tier: "orchestrator", group: 1 }],
     orchestratorReasoningEffort: null,
-    health: { cooldown: null, lastFailure: null }
+    health: {
+      cooldown: null,
+      failureStreak: 0,
+      probeFailureStreak: 0,
+      inFlightRequests: 0,
+      activeAgents: 0,
+      attempts: 0,
+      successes: 0,
+      failures: 0,
+      lastSuccessAt: null,
+      lastFailure: null
+    }
   };
   const providersEnvelope = (providers: unknown[]) => ({
     schema: "autodev-control-providers-v2",
@@ -17540,6 +17654,28 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     )
   );
   assert.equal(halfCooldown.kind, "invalid-response");
+  for (const dropped of [
+    "probeFailureStreak",
+    "lastSuccessAt",
+    "lastFailure"
+  ]) {
+    const incompleteHealth = await fetchProviders(
+      config,
+      serve(
+        providersEnvelope([
+          {
+            ...providerRow,
+            health: { ...providerRow.health, [dropped]: undefined }
+          }
+        ])
+      )
+    );
+    assert.equal(
+      incompleteHealth.kind,
+      "invalid-response",
+      `health without ${dropped} is not a complete provider observation`
+    );
+  }
 
   // --- Permissions: the whole policy was checked only as "a record", so one
   // --- with no members passed. That produced four wrong cards in one row --

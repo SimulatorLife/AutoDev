@@ -8,3 +8,4 @@ export {
   buildSpawnToolCallOutput,
   type SpawnToolCallOutput
 } from "./spawn-tools.ts";
+export * from "./role-mcp-environment.ts";

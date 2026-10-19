@@ -614,8 +614,7 @@ function spanLink(
         React.createElement(
           "span",
           {
-            className:
-              `text-micro font-medium uppercase tracking-wider ${MUTED_TEXT_CLASS}`
+            className: `text-micro font-medium uppercase tracking-wider ${MUTED_TEXT_CLASS}`
           },
           "Selected"
         )
@@ -1401,8 +1400,7 @@ function renderPager(
           {
             ...sharedProps,
             ...stepAttributes,
-            className:
-              `rounded border border-border px-3 py-1 opacity-50 ${MUTED_META_CLASS}`,
+            className: `rounded border border-border px-3 py-1 opacity-50 ${MUTED_META_CLASS}`,
             "aria-disabled": "true"
           },
           label

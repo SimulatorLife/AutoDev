@@ -57,7 +57,8 @@ export function sha256Hex(input: string | Uint8Array): string {
       w[t] = view.getUint32(i + t * 4, false);
     }
     for (let t = 16; t < 64; t++) {
-      const s0 = rotr(7, w[t - 15]!) ^ rotr(18, w[t - 15]!) ^ (w[t - 15]! >>> 3);
+      const s0 =
+        rotr(7, w[t - 15]!) ^ rotr(18, w[t - 15]!) ^ (w[t - 15]! >>> 3);
       const s1 = rotr(17, w[t - 2]!) ^ rotr(19, w[t - 2]!) ^ (w[t - 2]! >>> 10);
       w[t] = (w[t - 16]! + s0 + w[t - 7]! + s1) >>> 0;
     }

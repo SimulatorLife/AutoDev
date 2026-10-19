@@ -115,7 +115,11 @@ export function HooksView({
                   className:
                     "flex items-center justify-between border-b border-border pb-2"
                 },
-                React.createElement("span", { className: MONO_ID_CLASS }, h.event)
+                React.createElement(
+                  "span",
+                  { className: MONO_ID_CLASS },
+                  h.event
+                )
               ),
               React.createElement(
                 "div",
@@ -130,8 +134,7 @@ export function HooksView({
                     React.createElement(
                       "div",
                       {
-                        className:
-                          `flex items-center justify-between ${MUTED_TEXT_CLASS}`
+                        className: `flex items-center justify-between ${MUTED_TEXT_CLASS}`
                       },
                       React.createElement(
                         "span",

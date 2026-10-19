@@ -135,7 +135,9 @@ export function createControlApiServer(): Server {
   return server;
 }
 
-function configuredControlApiListener(routerPort: number): { host: string; port: number } | null {
+function configuredControlApiListener(
+  routerPort: number
+): { host: string; port: number } | null {
   if (
     process.env.AUTODEV_CONTROL_API_DISABLED === "1" ||
     process.env.AUTODEV_CONTROL_API_LISTEN_HOST === "none"

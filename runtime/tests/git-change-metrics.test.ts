@@ -101,6 +101,28 @@ test("a commit's added and deleted files are subsets of the files it changed", a
   });
 });
 
+test("a root commit's files and lines are measured against the empty tree", async () => {
+  await withGitRepository(async (root) => {
+    await writeFile(join(root, "initial.txt"), "first\nsecond\n");
+    execGit(root, ["add", "."]);
+    execGit(root, ["commit", "-q", "-m", "initial"]);
+    const commit = execGit(root, ["rev-parse", "HEAD"]);
+
+    const [change] = await measureGitCommitChanges({
+      repositoryRoot: root,
+      commits: [commit]
+    });
+
+    assert.ok(change, "the root commit must be measurable");
+    assert.equal(change.filesChanged, 1);
+    assert.equal(change.filesAdded, 1);
+    assert.equal(change.filesDeleted, 0);
+    assert.equal(change.linesAdded, 2);
+    assert.equal(change.linesRemoved, 0);
+    assert.equal(change.partial, false);
+  });
+});
+
 test("commit measurements bound independent Git reads and preserve commit order", async () => {
   const commits = ["1", "2", "3", "4", "5", "6"].map((digit) =>
     digit.repeat(40)

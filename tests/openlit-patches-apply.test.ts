@@ -205,8 +205,8 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   );
   assert.match(
     usageRoute,
-    /schema: "autodev-openlit-usage-v4"/u,
-    "patch 54 exposes only the fixed v4 Usage response"
+    /schema: "autodev-openlit-usage-v5"/u,
+    "patch 55 exposes the fixed v5 Usage response"
   );
   assert.match(usageRoute, /USAGE_VARIABLE_SOURCES/u);
   assert.match(usageRoute, /key: "service\.name"/u);
@@ -263,6 +263,37 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
       `patch 54 must freeze ${widget} to its source-confirmed ${axis} axis`
     );
   }
+  assert.match(usageRoute, /readGitUsageWidgets\(selection, timeRange\)/u);
+  assert.match(usageRoute, /widgets: \[\.\.\.widgets, \.\.\.gitWidgets\]/u);
+  const gitMetricReader = readFileSync(
+    join(dir, "src/client/src/lib/autodev/usage-git-metrics.ts"),
+    "utf8"
+  );
+  assert.match(gitMetricReader, /signal: "metrics"/u);
+  assert.match(gitMetricReader, /metricCounterDeltas/u);
+  assert.doesNotMatch(
+    gitMetricReader,
+    /SELECT\s|otel_metrics_sum/u,
+    "Usage must use the typed metrics adapter rather than a route-owned raw query"
+  );
+  assert.match(gitMetricReader, /autodev\.git\.attribution/u);
+  assert.match(gitMetricReader, /commit_identity/u);
+  const counterDeltaQuery = readFileSync(
+    join(
+      dir,
+      "src/client/src/lib/platform/connectors/datasource/clickhouse/counter-deltas.ts"
+    ),
+    "utf8"
+  );
+  assert.match(counterDeltaQuery, /AggregationTemporality = 2/u);
+  assert.match(counterDeltaQuery, /IsMonotonic = 1/u);
+  assert.match(counterDeltaQuery, /argMax\(Value, TimeUnix\)/u);
+  assert.match(counterDeltaQuery, /baseline_latest/u);
+  assert.doesNotMatch(
+    counterDeltaQuery,
+    /avg\s*\(/iu,
+    "Git counters must be window deltas, not averages of cumulative readings"
+  );
   assert.match(
     usageRoute,
     /const querySucceeded = !err && Array\.isArray\(data\)/u
@@ -282,7 +313,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     join(dir, "src/client/src/__tests__/app/api/autodev/usage/route.test.ts"),
     "utf8"
   );
-  assert.match(usageRouteTests, /autodev-openlit-usage-v4/u);
+  assert.match(usageRouteTests, /autodev-openlit-usage-v5/u);
   assert.doesNotMatch(
     usageRouteTests,
     /autodev-openlit-usage-v3/u,
@@ -734,46 +765,82 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /GET \/api\/providers\/providers/u,
     "the doc comment naming the wrong path is what misled both callers"
   );
-  for (const component of [
-    "src/client/src/components/(playground)/costs/manage-models-section.tsx",
-    "src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx"
-  ]) {
-    assert.doesNotMatch(
-      readFileSync(join(dir, component), "utf8"),
-      /"\/api\/providers\/providers"/u,
-      `${component} must not request a route that does not exist`
-    );
-  }
-
-  // A failed read is not an empty catalog. "No models found" claimed the
-  // operator had configured nothing when nothing could be read at all.
-  const modelSidebar = readFileSync(
+  const evaluationConfiguration = readFileSync(
     join(
       dir,
-      "src/client/src/components/(playground)/models/model-list-sidebar.tsx"
+      "src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx"
     ),
     "utf8"
   );
-  assert.match(
-    modelSidebar,
-    /loadError\??:\s*string \| null/u,
-    "the model list must be able to say a read failed"
+  assert.doesNotMatch(
+    evaluationConfiguration,
+    /"\/api\/providers\/providers"/u,
+    "the evaluation configuration must not request a nonexistent provider route"
   );
-  assert.match(
-    modelSidebar,
-    /loadError\s*\?\s*\(/u,
-    "a failed read must not fall through to the empty-state branch"
+
+  // Console Usage is the only user-facing cost surface. OpenLIT's internal
+  // batch annotation engine remains, but its separate Cost/Pricing UI is gone.
+  for (const removedPath of [
+    "src/client/src/app/(playground)/costs/page.tsx",
+    "src/client/src/app/(playground)/pricing/page.tsx",
+    "src/client/src/app/(playground)/dashboard/costs/index.tsx",
+    "src/client/src/app/(playground)/dashboard/costs/auto-pricing-runs.tsx",
+    "src/client/src/app/(playground)/dashboard/costs/cost-per-time.tsx",
+    "src/client/src/app/(playground)/dashboard/costs/number-stats.tsx",
+    "src/client/src/app/(playground)/dashboard/costs/optimization-charts.tsx",
+    "src/client/src/app/(playground)/dashboard/costs/usage-charts.tsx",
+    "src/client/src/components/(playground)/costs/costs-analytics.tsx",
+    "src/client/src/components/(playground)/costs/costs-auto-pricing-banner.tsx",
+    "src/client/src/components/(playground)/costs/costs-configuration.tsx",
+    "src/client/src/components/(playground)/costs/manage-models-section.tsx",
+    "src/client/src/components/(playground)/models/model-editor-panel.tsx",
+    "src/client/src/components/(playground)/models/model-list-sidebar.tsx",
+    "src/client/src/components/(playground)/models/provider-editor-dialog.tsx",
+    "src/client/src/components/(playground)/models/sdk-usage-dialog.tsx",
+    "src/client/src/app/api/pricing/[spanId]/route.ts",
+    "src/client/src/app/api/pricing/config/route.ts",
+    "src/client/src/app/api/pricing/cron-analytics/route.ts",
+    "src/client/src/app/api/pricing/export/[dbConfigId]/route.ts",
+    "src/client/src/app/api/pricing/guidance/route.ts",
+    "src/client/src/lib/platform/pricing/cron-analytics.ts",
+    "src/client/src/lib/platform/pricing/export.ts",
+    "src/client/src/lib/platform/pricing/guidance.ts"
+  ]) {
+    assert.equal(
+      existsSync(join(dir, removedPath)),
+      false,
+      `${removedPath} must not preserve a duplicate Costs/Pricing UI path`
+    );
+  }
+  for (const internalPricingPath of [
+    "src/client/src/app/api/pricing/auto/route.ts"
+  ]) {
+    assert.ok(
+      existsSync(join(dir, internalPricingPath)),
+      `${internalPricingPath} must remain for internal scheduled price annotation`
+    );
+  }
+  const openlitSidebar = readFileSync(
+    join(dir, "src/client/src/constants/sidebar.tsx"),
+    "utf8"
   );
-  assert.match(
-    readFileSync(
-      join(
-        dir,
-        "src/client/src/components/(playground)/costs/manage-models-section.tsx"
-      ),
-      "utf8"
+  assert.doesNotMatch(openlitSidebar, /link:\s*"\/costs"/u);
+  const openlitMiddleware = readFileSync(
+    join(dir, "src/client/src/middleware.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(openlitMiddleware, /"\/costs"|"\/pricing"/u);
+  const traceDetail = readFileSync(
+    join(
+      dir,
+      "src/client/src/components/(playground)/observability/trace-detail-page.tsx"
     ),
-    /loadError=/u,
-    "the section must forward the fetch error to the list"
+    "utf8"
+  );
+  assert.doesNotMatch(
+    traceDetail,
+    /api\/pricing|Recalculate Cost/u,
+    "historical trace detail must not retain the OpenLIT price-mutation action"
   );
 
   // A framework error page is a document, not a message. Passing the body
@@ -788,8 +855,8 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "an HTML error body must not become the error message"
   );
 
-  // The /manage-models alias redirected to /costs?tab=models and nothing
-  // linked to it; its breadcrumb entry was duplicated twice over.
+  // Neither the removed alias nor its former Costs destination belongs in
+  // the OpenLIT shell after Usage becomes the canonical cost surface.
   assert.equal(
     existsSync(
       join(dir, "src/client/src/app/(playground)/manage-models/page.tsx")
@@ -803,18 +870,13 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   );
   assert.doesNotMatch(
     breadcrumbs,
-    /manage-models/u,
-    "a breadcrumb entry for a deleted route is dead data"
-  );
-  assert.equal(
-    breadcrumbs.split(String.raw`regex: /^\/costs$/`).length - 1,
-    1,
-    "the /costs breadcrumb block was duplicated verbatim; keep exactly one"
+    /manage-models|\/costs|\/pricing/u,
+    "breadcrumbs must not preserve removed Costs/Pricing routes"
   );
   assert.doesNotMatch(
     readFileSync(join(dir, "src/client/src/middleware.ts"), "utf8"),
-    /"\/manage-models"/u,
-    "the matcher must not list a page that no longer exists"
+    /"\/manage-models"|"\/costs"|"\/pricing"/u,
+    "the matcher must not retain deleted Costs/Pricing pages"
   );
 
   // The Rule Engine's last UI trace linked to /rule-engine/<id>, a route patch
@@ -1120,8 +1182,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   for (const site of [
     "src/client/src/components/(playground)/stat-card.tsx",
     "src/client/src/components/(playground)/pie-chart-card.tsx",
-    "src/client/src/components/(playground)/evaluations/evaluation-analytics.tsx",
-    "src/client/src/app/(playground)/dashboard/costs/cost-per-time.tsx"
+    "src/client/src/components/(playground)/evaluations/evaluation-analytics.tsx"
   ]) {
     const source = readFileSync(join(dir, site), "utf8");
     assert.doesNotMatch(
@@ -1204,8 +1265,6 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "components/(playground)/observability/agent-loop-bar.tsx",
     "components/(playground)/observability/generation-health-bar.tsx",
     "components/(playground)/evaluations/evaluation-analytics.tsx",
-    "app/(playground)/dashboard/costs/auto-pricing-runs.tsx",
-    "app/(playground)/dashboard/costs/cost-per-time.tsx",
     "app/(playground)/dashboard/evaluations/metrics-per-time.tsx",
     "app/(playground)/dashboard/llm/requests-per-time.tsx",
     "app/(playground)/dashboard/llm/token-charts.tsx",
@@ -1258,27 +1317,6 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     ),
     /props\.children \?\? "No data to display"/u,
     'the nodata arm must accept an override, as the loading arm already does, or "No data" is the only word it can say'
-  );
-
-  // An unreadable run list must not offer the Enable-Auto-Pricing CTA: the
-  // operator would go change a setting that is not the cause.
-  const cronRuns = readFileSync(
-    join(clientSrc, "app/(playground)/dashboard/costs/auto-pricing-runs.tsx"),
-    "utf8"
-  );
-  assert.match(
-    cronRuns,
-    /unreadable \? \([\s\S]*?COSTS_CRON_TABLE_UNAVAILABLE/u,
-    "the unreadable run list must say the runs could not be read"
-  );
-  const unreachableArm = cronRuns.slice(
-    cronRuns.indexOf("unreadable ? ("),
-    cronRuns.indexOf("runs.length === 0 ?")
-  );
-  assert.doesNotMatch(
-    unreachableArm,
-    /COSTS_CRON_TABLE_EMPTY_CTA/u,
-    "a failed read must not present the Enable-Auto-Pricing call to action"
   );
 
   // ── Chart time axes ────────────────────────────────────────────────────────
@@ -1409,9 +1447,15 @@ test(
       "src/client/src/lib/platform/dashboard-variables/index.ts",
       "src/client/src/lib/platform/dashboard-variables/distinct-values.ts",
       "src/client/src/lib/platform/connectors/datasource/clickhouse/parameterized-query.ts",
+      "src/client/src/lib/platform/connectors/datasource/clickhouse/direct-read.ts",
+      "src/client/src/lib/platform/connectors/datasource/clickhouse/counter-deltas.ts",
+      "src/client/src/lib/platform/connectors/datasource/clickhouse/adapter.ts",
+      "src/client/src/lib/platform/connectors/datasource/types.ts",
       "src/client/src/__tests__/lib/platform/dashboard-variables/translate.test.ts",
       "src/client/src/__tests__/lib/platform/dashboard-variables/distinct-values.test.ts",
       "src/client/src/__tests__/lib/platform/datasource/parameterized-trace-query.test.ts",
+      "src/client/src/__tests__/lib/platform/datasource/clickhouse-direct-read.test.ts",
+      "src/client/src/__tests__/lib/platform/datasource/clickhouse-counter-deltas.test.ts",
       // 02-autodev-pages
       "src/client/src/lib/autodev/control-api.ts",
       "src/client/src/lib/autodev/index.ts",
@@ -1421,8 +1465,11 @@ test(
       "src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts",
       // 07-autodev-usage-api
       "src/client/src/lib/autodev/usage-api.ts",
+      "src/client/src/lib/autodev/usage-git-metrics.ts",
       "src/client/src/app/api/autodev/usage/route.ts",
       "src/client/src/__tests__/lib/autodev/usage-api.test.ts",
+      "src/client/src/__tests__/lib/autodev/usage-git-metrics.test.ts",
+      "src/client/src/__tests__/app/api/autodev/usage/route.test.ts",
       // 08-autodev-memory-connector
       "src/client/src/lib/platform/connectors/memory/autodev/adapter.ts",
       "src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts",
@@ -3097,7 +3144,7 @@ test("openlit pin metadata matches the published digest and image tag", () => {
   );
   assert.match(
     bootstrapSecrets,
-    /OPENLIT_DB_PASSWORD|AUTODEV_CONTROL_API_TOKEN|OPENLIT_OTLP_API_KEY|AUTODEV_OPENLIT_USAGE_TOKEN/u,
+    /OPENLIT_DB_PASSWORD|AUTODEV_CONTROL_API_TOKEN|OPENLIT_OTLP_API_KEY|AUTODEV_OPENLIT_USAGE_TOKEN|AUTODEV_PLAYTEST_CONTROL_API_TOKEN/u,
     "bootstrap-secrets.sh must generate all required secrets"
   );
   assert.match(bootstrapSecrets, /--secret-file/u);
@@ -3117,7 +3164,7 @@ test("secret bootstrap writes mode-0600 files outside the repository without pri
     const keyFile = join(directory, "openlit-otlp-api-key");
     writeFileSync(
       secretFile,
-      "OPENLIT_DB_PASSWORD=replace-me-stale-secret\nAUTODEV_CONTROL_API_TOKEN=change-me-stale-service-secret\n",
+      "OPENLIT_DB_PASSWORD=replace-me-stale-secret\nAUTODEV_CONTROL_API_TOKEN=change-me-stale-service-secret\nAUTODEV_PLAYTEST_CONTROL_API_TOKEN=stale-playtest-secret\n",
       { mode: 0o600 }
     );
     const bootstrap = run(
@@ -3157,6 +3204,8 @@ test("secret bootstrap writes mode-0600 files outside the repository without pri
       values.get("AUTODEV_CONTROL_API_TOKEN") ?? "",
       /^[0-9a-f]{64}$/u
     );
+    const playtestToken = values.get("AUTODEV_PLAYTEST_CONTROL_API_TOKEN");
+    assert.match(playtestToken ?? "", /^[0-9a-f]{64}$/u);
     assert.match(receiverToken ?? "", /^[0-9a-f]{64}$/u);
     const stableSecrets = readFileSync(secretFile, "utf8");
     const rerun = run(
@@ -3171,7 +3220,13 @@ test("secret bootstrap writes mode-0600 files outside the repository without pri
     assert.equal(rerun.status, 0, rerun.stderr);
     assert.equal(readFileSync(secretFile, "utf8"), stableSecrets);
     assert.ok(receiverToken);
+    assert.ok(playtestToken);
     assert.equal(readFileSync(keyFile, "utf8").trim(), receiverToken);
+    assert.equal(
+      (bootstrap.stdout + keyBootstrap.stdout).includes(playtestToken),
+      false,
+      "bootstrap output must never include the Playtest runner token"
+    );
     assert.equal(statSync(secretFile).mode & 0o777, 0o600);
     assert.equal(statSync(keyFile).mode & 0o777, 0o600);
     assert.equal(

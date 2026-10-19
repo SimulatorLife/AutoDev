@@ -213,14 +213,22 @@ test("bridge MCP catalogues are deterministic and preserve launch authentication
 test("execution-contract provider delegation is explicit and consistent", () => {
   assert.deepEqual(
     validateProviderContracts({
-      codex: { delegation: "native", spawnTools: [] },
-      claude: { delegation: "codex-shim", spawnTools: ["Agent"] },
-      minimax: { delegation: "none", spawnTools: [] }
+      codex: { delegation: "native", spawnTools: [], roleMcpInjection: false },
+      claude: {
+        delegation: "codex-shim",
+        spawnTools: ["Agent"],
+        roleMcpInjection: false
+      },
+      minimax: { delegation: "none", spawnTools: [], roleMcpInjection: false }
     }),
     {
-      codex: { delegation: "native", spawnTools: [] },
-      claude: { delegation: "codex-shim", spawnTools: ["Agent"] },
-      minimax: { delegation: "none", spawnTools: [] }
+      codex: { delegation: "native", spawnTools: [], roleMcpInjection: false },
+      claude: {
+        delegation: "codex-shim",
+        spawnTools: ["Agent"],
+        roleMcpInjection: false
+      },
+      minimax: { delegation: "none", spawnTools: [], roleMcpInjection: false }
     }
   );
   assert.throws(
@@ -233,6 +241,17 @@ test("execution-contract provider delegation is explicit and consistent", () => 
         minimax: { delegation: "none", spawnTools: ["invoke_subagent"] }
       }),
     /cannot declare spawnTools/
+  );
+  assert.throws(
+    () =>
+      validateProviderContracts({
+        antigravity: {
+          delegation: "codex-shim",
+          spawnTools: ["invoke_subagent"],
+          roleMcpInjection: "true"
+        }
+      }),
+    /roleMcpInjection must be boolean/
   );
 });
 
@@ -469,4 +488,49 @@ test("lsp is scoped to precision tools on normal implementation roles and unrest
       `${roleName} must keep the unrestricted lsp surface`
     );
   }
+});
+
+test("Playtester and Browser Tester declare isolated MCP injection requirements", () => {
+  const contract = JSON.parse(
+    readFileSync("config/execution-contract.json", "utf8")
+  ) as {
+    roles: Record<
+      string,
+      {
+        roleScopedMcp?: string[];
+        mcpEnvVars?: Record<string, string[]>;
+        mcpTools?: Record<string, string[]>;
+      }
+    >;
+    providers: Record<string, { roleMcpInjection?: boolean }>;
+  };
+  assert.deepEqual(contract.roles["browser-tester"]?.roleScopedMcp, [
+    "playwright"
+  ]);
+  assert.deepEqual(contract.roles.playtester?.roleScopedMcp, ["playtest"]);
+  assert.deepEqual(contract.roles["browser-tester"]?.mcpEnvVars?.playwright, [
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "LANG",
+    "LC_ALL",
+    "CODEX_HOME",
+    "AUTODEV_REPO_ROOT",
+    "AUTODEV_NODE_BIN",
+    "PLAYWRIGHT_BROWSERS_PATH"
+  ]);
+  assert.equal(
+    contract.roles.playtester?.mcpEnvVars?.playtest?.includes(
+      "AUTODEV_PLAYTEST_CONTROL_API_TOKEN"
+    ),
+    false,
+    "the MCP reads the runner token from the protected secret file"
+  );
+  assert.deepEqual(contract.providers.antigravity?.roleMcpInjection, true);
+  assert.deepEqual(contract.providers.copilot?.roleMcpInjection, true);
+  assert.equal(contract.providers.codex?.roleMcpInjection ?? false, false);
+  assert.equal(contract.providers.claude?.roleMcpInjection ?? false, false);
+  assert.equal(contract.providers.minimax?.roleMcpInjection ?? false, false);
 });

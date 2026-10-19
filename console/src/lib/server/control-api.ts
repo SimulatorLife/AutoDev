@@ -359,7 +359,9 @@ export async function fetchControlApi<T>(
 
     return {
       kind: "unreachable",
-      message: describeTransportFailure(new Error("Connection retries exhausted"))
+      message: describeTransportFailure(
+        new Error("Connection retries exhausted")
+      )
     };
   } finally {
     clearTimeout(timer);
@@ -479,7 +481,9 @@ export async function fetchControlApiBinary(
           .trim()
           .toLowerCase();
         if (
-          !(DISPLAYABLE_FRAME_TYPES as readonly string[]).includes(mediaType ?? "")
+          !(DISPLAYABLE_FRAME_TYPES as readonly string[]).includes(
+            mediaType ?? ""
+          )
         ) {
           return {
             kind: INVALID_RESPONSE_KIND,
@@ -521,7 +525,10 @@ export async function fetchControlApiBinary(
         }
         return {
           kind: "ok",
-          data: { bytes, mediaType: mediaType as ControlApiBinaryData["mediaType"] }
+          data: {
+            bytes,
+            mediaType: mediaType as ControlApiBinaryData["mediaType"]
+          }
         };
       } catch (error) {
         const isLastAttempt = attempt >= maxRetries;
@@ -543,7 +550,9 @@ export async function fetchControlApiBinary(
 
     return {
       kind: "unreachable",
-      message: describeTransportFailure(new Error("Connection retries exhausted"))
+      message: describeTransportFailure(
+        new Error("Connection retries exhausted")
+      )
     };
   } finally {
     clearTimeout(timer);
@@ -976,27 +985,43 @@ function isEnablementWithConvergence(value: unknown): boolean {
   );
 }
 
-/**
- * Narrows one provider health projection. Both nested records are nullable, but
- * "nullable" means the Runtime sent `null` -- a payload that omits the key
- * entirely arrives as `undefined`, which is not `null`, so `health.cooldown !==
- * null` would be true and the badge would read `.failureClass` off undefined
- * and throw. The check distinguishes absent from observed.
- */
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+/** Health is a complete Runtime observation, not a partially present record. */
 function isProviderHealth(value: unknown): boolean {
   return (
     isRecord(value) &&
     (value.cooldown === null ||
       (isRecord(value.cooldown) &&
         typeof value.cooldown.kind === "string" &&
+        value.cooldown.kind.length > 0 &&
         (value.cooldown.failureClass === null ||
-          typeof value.cooldown.failureClass === "string") &&
-        typeof value.cooldown.until === "string")) &&
+          (typeof value.cooldown.failureClass === "string" &&
+            value.cooldown.failureClass.length <= 128)) &&
+        isCanonicalTimestamp(value.cooldown.until) &&
+        (value.cooldown.resetsAt === null ||
+          isCanonicalTimestamp(value.cooldown.resetsAt)) &&
+        typeof value.cooldown.lastResortEligible === "boolean")) &&
+    isNonNegativeInteger(value.failureStreak) &&
+    isNonNegativeInteger(value.probeFailureStreak) &&
+    isNonNegativeInteger(value.inFlightRequests) &&
+    isNonNegativeInteger(value.activeAgents) &&
+    isNonNegativeInteger(value.attempts) &&
+    isNonNegativeInteger(value.successes) &&
+    isNonNegativeInteger(value.failures) &&
+    (value.lastSuccessAt === null ||
+      isCanonicalTimestamp(value.lastSuccessAt)) &&
     (value.lastFailure === null ||
       (isRecord(value.lastFailure) &&
-        typeof value.lastFailure.at === "string" &&
+        isCanonicalTimestamp(value.lastFailure.at) &&
         (value.lastFailure.failureClass === null ||
-          typeof value.lastFailure.failureClass === "string")))
+          (typeof value.lastFailure.failureClass === "string" &&
+            value.lastFailure.failureClass.length <= 128)) &&
+        (value.lastFailure.status === null ||
+          (isNonNegativeInteger(value.lastFailure.status) &&
+            value.lastFailure.status <= 999))))
   );
 }
 
@@ -2353,8 +2378,10 @@ function isConcurrencyStatus(
   if (!isRecord(value)) return false;
   return (
     (value.scope === undefined || typeof value.scope === "string") &&
-    (value.configSource === undefined || typeof value.configSource === "string") &&
-    (value.configFileExists === undefined || typeof value.configFileExists === "boolean") &&
+    (value.configSource === undefined ||
+      typeof value.configSource === "string") &&
+    (value.configFileExists === undefined ||
+      typeof value.configFileExists === "boolean") &&
     (value.revision === undefined ||
       (typeof value.revision === "number" &&
         Number.isInteger(value.revision) &&

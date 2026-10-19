@@ -84,11 +84,11 @@ export function StatCard({
     "dl",
     {
       className:
-        "bg-surface border border-border rounded-lg p-5 shadow-sm flex flex-col justify-between"
+        "bg-surface border border-border rounded-lg p-5 shadow-sm flex flex-col justify-between h-full min-h-[104px]"
     },
     React.createElement(
       "div",
-      null,
+      { className: "flex flex-col justify-between h-full" },
       React.createElement(
         "div",
         { className: "flex items-center justify-between mb-2" },
@@ -104,7 +104,7 @@ export function StatCard({
       ),
       React.createElement(
         "dd",
-        null,
+        { className: "mt-auto" },
         React.createElement(
           "div",
           { className: "flex items-baseline gap-2" },

@@ -15,6 +15,7 @@ import {
   PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS
 } from "@simulatorlife/autodev-core";
 
+import { readRuntimeSecret } from "../shared/runtime-secrets.ts";
 import { PlaytestSandboxApprovalError } from "./docker-sandbox.ts";
 import {
   PlaytestMcpAuthorizationError,
@@ -684,7 +685,10 @@ export function playtestControlApiRunClientFromEnvironment(
       "Configure the private Runtime Control API URL before enabling Playtesting MCP."
     );
   }
-  const serviceToken = env.AUTODEV_PLAYTEST_CONTROL_API_TOKEN?.trim() ?? "";
+  const serviceToken =
+    env.AUTODEV_PLAYTEST_CONTROL_API_TOKEN?.trim() ||
+    readRuntimeSecret("AUTODEV_PLAYTEST_CONTROL_API_TOKEN", env) ||
+    "";
   const actor = env.AUTODEV_PLAYTEST_CONTROL_API_ACTOR?.trim() ?? "";
   if (
     !serviceToken ||

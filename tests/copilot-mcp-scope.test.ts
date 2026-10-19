@@ -11,6 +11,7 @@ import {
   EXECUTION_CONTRACT,
   roleContract
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { gitCommitIdentityEnv } from "@simulatorlife/autodev-runtime/telemetry";
 
 import { createBridgeMcpHomes } from "./bridge-mcp-fixture.ts";
 
@@ -19,6 +20,7 @@ type McpServer = {
   url?: string;
   command?: string;
   args?: string[];
+  env?: Record<string, string>;
   tools: string[];
 };
 type ParsedMcpArgs = {
@@ -214,7 +216,7 @@ test("runCopilot hands the role's MCP arguments to the Copilot CLI", async () =>
   const argsFile = join(homes.root, "copilot-args.json");
   await writeFile(
     fakeCli,
-    `#!/usr/bin/env node\nimport { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)));\n`,
+    `#!/usr/bin/env node\nimport { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(argsFile)}, JSON.stringify({\n  args: process.argv.slice(2),\n  gitIdentity: {\n    GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME,\n    GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL,\n    GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME,\n    GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL\n  }\n}));\n`,
     "utf8"
   );
   await chmod(fakeCli, 0o755);
@@ -232,8 +234,54 @@ test("runCopilot hands the role's MCP arguments to the Copilot CLI", async () =>
     if (saved === undefined) delete process.env.COPILOT_BIN;
     else process.env.COPILOT_BIN = saved;
   }
-  const argv = JSON.parse(await readFile(argsFile, "utf8"));
+  const result = JSON.parse(await readFile(argsFile, "utf8")) as {
+    args: string[];
+    gitIdentity: Record<string, string | undefined>;
+  };
   const expected = copilotMcpArgs("browser-tester");
-  const start = argv.indexOf(expected[0]);
-  assert.deepEqual(argv.slice(start, start + expected.length), expected);
+  const first = expected[0];
+  assert.ok(
+    first !== undefined,
+    "copilotMcpArgs must provide at least one argument"
+  );
+  const start = result.args.indexOf(first);
+  const actual = parse(result.args.slice(start, start + expected.length));
+  const declared = parse(expected);
+  assert.deepEqual(actual.disabled, declared.disabled);
+  assert.deepEqual(actual.allowed, declared.allowed);
+  const playwright = actual.additional.playwright;
+  assert.ok(
+    playwright,
+    "browser-tester must receive the role-scoped Playwright MCP"
+  );
+  const { env: playwrightEnv, ...playwrightLaunch } = playwright;
+  assert.deepEqual(playwrightLaunch, declared.additional.playwright);
+  // runCopilot binds only the role's declared MCP environment allowlist.
+  const allowedEnv = new Set<string>(
+    (
+      roleContract("browser-tester") as RoleContractWithTools & {
+        mcpEnvVars?: Record<string, string[]>;
+      }
+    ).mcpEnvVars?.playwright
+  );
+  assert.ok(
+    playwrightEnv,
+    "the Playwright MCP must receive its role environment"
+  );
+  for (const key of Object.keys(playwrightEnv))
+    assert.ok(allowedEnv.has(key), `unexpected Playwright MCP env ${key}`);
+  assert.equal(playwrightEnv.AUTODEV_PLAYTEST_CONTROL_API_TOKEN, undefined);
+  assert.equal(playwrightEnv.AUTODEV_CONTROL_API_TOKEN, undefined);
+  assert.deepEqual(
+    result.gitIdentity,
+    gitCommitIdentityEnv({ role: "browser-tester", provider: "copilot" })
+  );
+
+  // The spawn MCP is a forwarding shim; its environment cannot reach the
+  // separate Copilot CLI that actually executes native git tools.
+  const spawnEnvironment = parse(
+    copilotMcpArgs("orchestrator", "spawn-session")
+  ).additional.autodev_spawn?.env;
+  assert.ok(spawnEnvironment);
+  assert.equal(spawnEnvironment.GIT_COMMITTER_EMAIL, undefined);
 });

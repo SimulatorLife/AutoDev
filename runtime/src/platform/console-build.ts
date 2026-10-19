@@ -365,12 +365,7 @@ export function buildConsole(
     normalizeGeneratedTsconfig(consoleRoot, deps);
     publishStagedBuild(stagingPath, buildPath, previousPath, deps);
   } catch (error) {
-    restoreBuildCacheOnFailure(
-      buildPath,
-      stagingPath,
-      movedCacheSubdirs,
-      deps
-    );
+    restoreBuildCacheOnFailure(buildPath, stagingPath, movedCacheSubdirs, deps);
     restoreOptionalFile(nextEnvPath, previousNextEnv, deps);
     restoreOptionalFile(tsconfigPath, previousTsconfig, deps);
     throw error;

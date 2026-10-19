@@ -52,6 +52,7 @@ import {
   type McpServerResource,
   type OperationHistoryEntry,
   PROVIDER_ROLES,
+  providerHealthReadiness,
   type ProviderRole,
   type ProviderRoleAssignment,
   type ReconciliationDiff,
@@ -104,6 +105,7 @@ import {
   ROUTING_POLICY
 } from "@simulatorlife/autodev-runtime/router/routing";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import { readRuntimeSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   WEB_FETCH_TOOL,
@@ -1633,6 +1635,69 @@ function agentEnablementView(
   };
 }
 
+function agentStatus(
+  role: string,
+  hasPrompt: boolean,
+  allowedProviders: readonly string[]
+): ControlApiAgentRecord["status"] {
+  if (!hasPrompt || allowedProviders.length === 0) {
+    return "unavailable";
+  }
+  const enablement = agentEnablementView(role);
+  if (enablement.kind === "unavailable" || !enablement.enabled) {
+    return "unavailable";
+  }
+  const health = providerHealthSource?.(Date.now()) ?? null;
+  const eligibleProviders = allowedProviders.filter((provider) => {
+    if (!ROUTING_POLICY.isProviderEnabled(provider)) return false;
+    const route = ROUTES.find((entry) => entry.provider === provider);
+    return (
+      route !== undefined && ROUTING_POLICY.routeCredentialAvailable(route)
+    );
+  });
+  if (eligibleProviders.length === 0) return "unavailable";
+
+  const readiness = eligibleProviders.map((provider) =>
+    providerHealthReadiness(health?.[provider] ?? null)
+  );
+  if (readiness.includes("ready")) return "ready";
+  if (readiness.every((state) => state === "unavailable")) {
+    return "unavailable";
+  }
+  return "configured";
+}
+
+function agentConvergence(
+  role: string,
+  hasPrompt: boolean
+): ControlApiAgentRecord["convergence"] {
+  const resource = CONTROL_API_PATHS.agents + "/" + role;
+  const latest = findLatestAuditFor(resource);
+  const alias = ROUTING_POLICY.agentModelAlias(role);
+  if (!hasPrompt || alias === null) {
+    return "error";
+  }
+  const enabled = ROUTING_POLICY.isAgentEnabled(role);
+  if (enabled === null || latest === null) {
+    return "not-observed";
+  }
+  const observedGeneration =
+    latest.observedGeneration === null
+      ? null
+      : `enabled=${enabled ? "true" : "false"}`;
+  return buildReconciliationView({
+    evidence: {
+      desiredGeneration: latest.desiredGeneration,
+      observedGeneration,
+      lastApplyAt: latest?.timestamp ?? null,
+      lastObservationAt: observedGeneration === null ? null : latest.timestamp,
+      lastError: boundReconciliationError(latest?.reason ?? null)
+    },
+    history: historyForResource(resource),
+    hasObservation: observedGeneration !== null
+  }).status.convergence;
+}
+
 function agentsView(
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
@@ -1678,15 +1743,19 @@ function agentsView(
         "roles",
         `${role}.md`
       );
+      const hasPrompt = existsSync(promptPath);
+      const status = agentStatus(role, hasPrompt, allowedProviders);
+      const convergence = agentConvergence(role, hasPrompt);
+      const valid = hasPrompt && allowedProviders.length > 0;
       return {
         id: role,
         role,
         kind,
         readOnly,
         configured: true,
-        valid: null,
-        status: "configured",
-        convergence: "not-observed",
+        valid,
+        status,
+        convergence,
         enablement: agentEnablementView(role),
         primaryModel: isOrchestrator
           ? "autodev/orchestrator"
@@ -1755,6 +1824,11 @@ function agentDetailView(
     ROUTING_POLICY.isProviderEnabledForRole(provider, roleType)
   );
 
+  const hasPrompt = existsSync(promptPath);
+  const status = agentStatus(role, hasPrompt, allowedProviders);
+  const convergence = agentConvergence(role, hasPrompt);
+  const valid = hasPrompt && allowedProviders.length > 0;
+
   return {
     schema: "autodev-control-agent-detail-v3",
     id: role,
@@ -1762,9 +1836,9 @@ function agentDetailView(
     kind,
     readOnly,
     configured: true,
-    valid: null,
-    status: "configured",
-    convergence: "not-observed",
+    valid,
+    status,
+    convergence,
     enablement: agentEnablementView(role),
     primaryModel: isOrchestrator ? "autodev/orchestrator" : "autodev/subagent",
     allowedProviders,
@@ -5053,9 +5127,11 @@ function authorizePlaytestingRunService(
   const authorization = header(request, "authorization");
   if (!authorization) return PLAYTEST_SERVICE_NOT_MATCHED;
   const configuredRole =
-    process.env.AUTODEV_PLAYTEST_CONTROL_API_ROLE?.trim() ?? "";
+    process.env.AUTODEV_PLAYTEST_CONTROL_API_ROLE?.trim() || "playtester";
   const configuredToken =
-    process.env.AUTODEV_PLAYTEST_CONTROL_API_TOKEN?.trim() ?? "";
+    process.env.AUTODEV_PLAYTEST_CONTROL_API_TOKEN?.trim() ||
+    readRuntimeSecret("AUTODEV_PLAYTEST_CONTROL_API_TOKEN") ||
+    "";
   if (
     !["playtester", "validator", "root", "operator"].includes(configuredRole) ||
     !configuredToken ||
@@ -5063,7 +5139,9 @@ function authorizePlaytestingRunService(
   ) {
     return PLAYTEST_SERVICE_NOT_MATCHED;
   }
-  const actor = process.env.AUTODEV_PLAYTEST_CONTROL_API_ACTOR?.trim() ?? "";
+  const actor =
+    process.env.AUTODEV_PLAYTEST_CONTROL_API_ACTOR?.trim() ||
+    "autodev-playtester-runtime";
   if (!ACTOR_ID_PATTERN.test(actor)) {
     sendControlError(
       response,

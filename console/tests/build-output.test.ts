@@ -28,11 +28,7 @@ test("Console build, dev, and production server artifacts have distinct ownershi
     CONSOLE_BUILD_DIST_DIR
   );
   assert.equal(
-    consoleDistDir(
-      PHASE_PRODUCTION_SERVER,
-      undefined,
-      ".next-staging-e2e-123"
-    ),
+    consoleDistDir(PHASE_PRODUCTION_SERVER, undefined, ".next-staging-e2e-123"),
     ".next-staging-e2e-123"
   );
   assert.equal(

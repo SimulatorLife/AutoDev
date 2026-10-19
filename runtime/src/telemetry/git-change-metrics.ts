@@ -182,6 +182,7 @@ export async function measureGitCommitChanges({
         runGit(repositoryRoot, ["log", "-1", "--format=%ce", commit]),
         runGit(repositoryRoot, [
           "diff-tree",
+          "--root",
           "--no-commit-id",
           "--name-status",
           "-r",

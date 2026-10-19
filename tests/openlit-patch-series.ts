@@ -68,7 +68,9 @@ export const OPENLIT_PATCH_NAMES = [
   "51-format-chart-time-axis-ticks",
   "52-request-time-telemetry-rendering",
   "53-batch-auto-pricing-mutations",
-  "54-autodev-context-compaction-usage"
+  "54-autodev-context-compaction-usage",
+  "55-autodev-git-metrics-usage",
+  "56-remove-duplicate-costs-ui"
 ] as const;
 
 /** Strips the `.patch` suffix a directory listing carries. */

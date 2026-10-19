@@ -161,7 +161,10 @@ import {
   SubagentRegistry,
   subagentStatus
 } from "./subagents.ts";
-import { withExtractedTraceContext } from "./telemetry.ts";
+import {
+  observeRouterWorkspaceGitCommits,
+  withExtractedTraceContext
+} from "./telemetry.ts";
 import {
   attributionDiagnosticsStatus,
   countLiveAgentActivity,
@@ -299,6 +302,17 @@ const routerEvents = new RouterEventRecorder({
   routerInstanceId: ROUTER_INSTANCE_ID,
   resolveOrigin: (role, provider) => usageOrigin(role, provider),
   onEvent: (event, input, effectiveOrigin) => {
+    const workspaceSessionKey =
+      event.thread ??
+      (event.activitySubject?.startsWith("thread:")
+        ? event.activitySubject.slice("thread:".length)
+        : event.activitySubject);
+    void observeRouterWorkspaceGitCommits({
+      phase: event.phase,
+      workspaceKey: event.workspace,
+      repositoryRoot: getWorkspaceMetadata(workspaceSessionKey),
+      routerInstanceId: ROUTER_INSTANCE_ID
+    });
     liveFeedEvents.record({
       category: "routing",
       type: `routing.${event.phase}`,

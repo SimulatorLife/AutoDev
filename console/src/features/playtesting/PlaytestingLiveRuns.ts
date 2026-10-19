@@ -152,7 +152,11 @@ export function PlaytestingLiveRuns({
       if (!known) return;
       setBusyBatchId(batchId);
       setActionError(null);
-      if (!globalThis.confirm(`Cancel playtest batch ${batchId}? The run cannot be resumed.`)) {
+      if (
+        !globalThis.confirm(
+          `Cancel playtest batch ${batchId}? The run cannot be resumed.`
+        )
+      ) {
         setBusyBatchId(null);
         return;
       }

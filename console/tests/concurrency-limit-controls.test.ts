@@ -136,7 +136,10 @@ test("patchConcurrencyLimit fetcher PATCHes /control/runtime/concurrency", async
   );
 
   assert.equal(result.kind, "ok");
-  assert.equal(captured?.url, "http://runtime.test/control/runtime/concurrency");
+  assert.equal(
+    captured?.url,
+    "http://runtime.test/control/runtime/concurrency"
+  );
   assert.equal(captured?.init.method, "PATCH");
   const headers = new Headers(captured?.init.headers);
   assert.equal(headers.get("authorization"), "Bearer server-secret");
@@ -147,16 +150,19 @@ test("patchConcurrencyLimit fetcher PATCHes /control/runtime/concurrency", async
 });
 
 test("POST /api/agents/concurrency rejects non-same-origin requests", async () => {
-  const request = new NextRequest("http://console.test/api/agents/concurrency", {
-    method: "POST",
-    headers: {
-      origin: "http://attacker.test",
-      host: "console.test",
-      "sec-fetch-site": "cross-site",
-      "content-type": "application/x-www-form-urlencoded"
-    },
-    body: "returnTo=/agents&setLimit=10"
-  });
+  const request = new NextRequest(
+    "http://console.test/api/agents/concurrency",
+    {
+      method: "POST",
+      headers: {
+        origin: "http://attacker.test",
+        host: "console.test",
+        "sec-fetch-site": "cross-site",
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      body: "returnTo=/agents&setLimit=10"
+    }
+  );
 
   const response = await POST(request);
   assert.equal(response.status, 303);
@@ -188,16 +194,19 @@ test("POST /api/agents/concurrency sets numeric limit and redirects to returnTo"
   };
 
   try {
-    const request = new NextRequest("http://console.test/api/agents/concurrency", {
-      method: "POST",
-      headers: {
-        origin: "http://console.test",
-        host: "console.test",
-        "sec-fetch-site": "same-origin",
-        "content-type": "application/x-www-form-urlencoded"
-      },
-      body: "returnTo=/agents&setLimit=10&revision=1"
-    });
+    const request = new NextRequest(
+      "http://console.test/api/agents/concurrency",
+      {
+        method: "POST",
+        headers: {
+          origin: "http://console.test",
+          host: "console.test",
+          "sec-fetch-site": "same-origin",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        body: "returnTo=/agents&setLimit=10&revision=1"
+      }
+    );
 
     const response = await POST(request);
     assert.equal(response.status, 303);
@@ -232,16 +241,19 @@ test("POST /api/agents/concurrency handles conflict (409) with refusal=conflicte
   };
 
   try {
-    const request = new NextRequest("http://console.test/api/agents/concurrency", {
-      method: "POST",
-      headers: {
-        origin: "http://console.test",
-        host: "console.test",
-        "sec-fetch-site": "same-origin",
-        "content-type": "application/x-www-form-urlencoded"
-      },
-      body: "returnTo=/agents&setLimit=10&revision=1"
-    });
+    const request = new NextRequest(
+      "http://console.test/api/agents/concurrency",
+      {
+        method: "POST",
+        headers: {
+          origin: "http://console.test",
+          host: "console.test",
+          "sec-fetch-site": "same-origin",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        body: "returnTo=/agents&setLimit=10&revision=1"
+      }
+    );
 
     const response = await POST(request);
     assert.equal(response.status, 303);
@@ -284,16 +296,19 @@ test("POST /api/agents/concurrency resets to config file and redirects", async (
   };
 
   try {
-    const request = new NextRequest("http://console.test/api/agents/concurrency", {
-      method: "POST",
-      headers: {
-        origin: "http://console.test",
-        host: "console.test",
-        "sec-fetch-site": "same-origin",
-        "content-type": "application/x-www-form-urlencoded"
-      },
-      body: "returnTo=/agents/orchestrator&resetToConfigFile=true&revision=3"
-    });
+    const request = new NextRequest(
+      "http://console.test/api/agents/concurrency",
+      {
+        method: "POST",
+        headers: {
+          origin: "http://console.test",
+          host: "console.test",
+          "sec-fetch-site": "same-origin",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        body: "returnTo=/agents/orchestrator&resetToConfigFile=true&revision=3"
+      }
+    );
 
     const response = await POST(request);
     assert.equal(response.status, 303);

@@ -29,6 +29,24 @@ const compactionSelection: UsageFilterSelection = {
   }
 };
 
+const unobservedGitChanges: UsageMetricsData["gitChanges"] = {
+  status: "not-observed",
+  notApplicableReason: null,
+  unsupportedFilters: [],
+  partial: null,
+  breakdownsPartial: false,
+  commits: null,
+  filesChanged: null,
+  filesAdded: null,
+  filesDeleted: null,
+  linesAdded: null,
+  linesRemoved: null,
+  partialCommits: null,
+  commitsByWorkspace: null,
+  commitsByProvider: null,
+  commitsByAgent: null
+};
+
 const observedMetrics: UsageMetricsData = {
   logicalRequests: 42,
   totalInputTokens: 1200,
@@ -53,6 +71,23 @@ const observedMetrics: UsageMetricsData = {
   contextCompactionsByAgent: [{ name: "orchestrator", count: 3 }],
   contextCompactionsUnsupportedFilters: [],
   contextCompactionsBreakdownsPartial: false,
+  gitChanges: {
+    status: "observed",
+    notApplicableReason: null,
+    unsupportedFilters: [],
+    partial: true,
+    breakdownsPartial: true,
+    commits: 2,
+    filesChanged: 4,
+    filesAdded: 2,
+    filesDeleted: 1,
+    linesAdded: 20,
+    linesRemoved: 5,
+    partialCommits: 1,
+    commitsByWorkspace: [{ name: "repo-a", count: 2 }],
+    commitsByProvider: [{ name: "codex", count: 2 }],
+    commitsByAgent: [{ name: "worker", count: 2 }]
+  },
   skillEventsByEvent: [{ event: "used", count: 4 }],
   requestsByRole: [{ role: "Default", count: 42 }],
   attemptsByProvider: [{ provider: "openai", count: 48 }],
@@ -63,6 +98,57 @@ test("Usage cost formatting keeps catalog estimates explicit and unobserved dist
   assert.equal(formatEstimatedCost(0.0081), "$0.0081");
   assert.equal(formatEstimatedCost(541.080_125), "$541.08");
   assert.equal(formatEstimatedCost(null), "Not observed");
+});
+
+test("Usage renders Git output without double-counting file subsets or hiding partial diffs", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, { metrics: observedMetrics })
+  );
+
+  assert.match(markup, /data-git-change-output="observed"/u);
+  assert.match(markup, /Agent Commits/u);
+  assert.match(markup, /Files Changed/u);
+  assert.match(markup, /Subset of files changed/u);
+  assert.match(markup, /Partial diff measurements were observed for 1 commit/u);
+  assert.match(markup, /reached its result limit/u);
+  assert.match(markup, /Commits by workspace/u);
+  assert.match(markup, /Commits by provider/u);
+  assert.match(markup, /Commits by agent role/u);
+});
+
+test("unobserved Git status alone does not make the Usage page look observed", () => {
+  const metrics: UsageMetricsData = {
+    ...observedMetrics,
+    logicalRequests: null,
+    totalInputTokens: null,
+    totalOutputTokens: null,
+    cacheReadRate: null,
+    p95LatencyMs: null,
+    estimatedCostUsd: null,
+    physicalAttempts: null,
+    mcpCalls: null,
+    p95McpDurationMs: null,
+    mcpErrors: null,
+    failedAttempts: null,
+    attemptErrorsByProvider: null,
+    contextCompactions: null,
+    contextCompactionRatePercent: null,
+    contextCompactionsOverTime: null,
+    contextCompactionsByWorkspace: null,
+    contextCompactionsByModel: null,
+    contextCompactionsByAgent: null,
+    skillEventsByEvent: null,
+    requestsByRole: null,
+    attemptsByProvider: null,
+    callsByTool: null,
+    gitChanges: unobservedGitChanges
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(UsageView, { metrics })
+  );
+
+  assert.match(markup, /data-usage-observed="false"/u);
+  assert.match(markup, /No source-confirmed AutoDev commits were observed/u);
 });
 
 test("Usage latency formatting renders sub-millisecond durations in microseconds", () => {

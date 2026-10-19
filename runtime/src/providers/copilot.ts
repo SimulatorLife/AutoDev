@@ -21,6 +21,7 @@ import {
   isOrchestratorRole,
   readOnlySystemPromptInjection,
   resolveAgentRole,
+  roleMcpEnvironment,
   SpawnSessionRegistry,
   type SpawnToolCallOutput
 } from "@simulatorlife/autodev-runtime/agents";
@@ -118,6 +119,14 @@ function copilotRoleContract(role: unknown): CopilotRoleContract {
 // router's rows say which mechanism made the skill available.
 const SKILL_EXPOSURE_SOURCE = "role_contract";
 const MCP_EXPOSURE_SOURCE = "role_contract";
+
+interface CopilotRoleMcpContext {
+  readonly requestId: string | null;
+  readonly workspaceId: string | null;
+  readonly workspaceRoot: string;
+  readonly repositoryRoot: string;
+  readonly codeHome: string;
+}
 
 function readOnlyHeaderValue(
   headers: Record<string, unknown>
@@ -671,9 +680,55 @@ function userMcpServerNames(): string[] {
  * User-level servers in the contract stay as Rulesync wrote them: they come
  * from the same `.rulesync/mcp.jsonc` declaration as the catalogue.
  */
+/** Only the role's declared MCP environment, bound to this request's identity. */
+function copilotRoleMcpEnvironment(
+  agentRole: string | null,
+  server: string,
+  context: CopilotRoleMcpContext | null
+): Record<string, string> {
+  if (!context) return {};
+  return roleMcpEnvironment(
+    {
+      role: agentRole,
+      server,
+      requestId: context.requestId,
+      workspaceId: context.workspaceId,
+      workspaceRoot: context.workspaceRoot,
+      repositoryRoot: context.repositoryRoot,
+      codeHome: context.codeHome
+    },
+    process.env
+  );
+}
+
+/** One per-session MCP server entry with its role tool allowlist. */
+function copilotAdditionalServer(
+  name: string,
+  server: JsonRecord,
+  tools: string[] | undefined,
+  roleEnvironment: Record<string, string>
+): JsonRecord {
+  const hasEnvironment = Object.keys(roleEnvironment).length > 0;
+  if (server.url) {
+    if (hasEnvironment)
+      throw new Error(
+        `MCP server ${name} cannot receive role environment over its remote transport`
+      );
+    return { type: "http", url: server.url, tools: tools ?? ["*"] };
+  }
+  return {
+    type: "stdio",
+    command: server.command,
+    args: server.args ?? [],
+    tools: tools ?? ["*"],
+    ...(hasEnvironment ? { env: roleEnvironment } : {})
+  };
+}
+
 function copilotMcpArgs(
   agentRole: string | null,
-  spawnSession: string | null = null
+  spawnSession: string | null = null,
+  roleMcpContext: CopilotRoleMcpContext | null = null
 ): string[] {
   const contract = copilotRoleContract(agentRole);
   const granted = (contract.mcp ?? []).filter(
@@ -701,14 +756,12 @@ function copilotMcpArgs(
         );
       continue;
     }
-    additional[name] = server.url
-      ? { type: "http", url: server.url, tools: tools ?? ["*"] }
-      : {
-          type: "stdio",
-          command: server.command,
-          args: server.args ?? [],
-          tools: tools ?? ["*"]
-        };
+    additional[name] = copilotAdditionalServer(
+      name,
+      server,
+      tools,
+      copilotRoleMcpEnvironment(agentRole, name, roleMcpContext)
+    );
   }
   if (isOrchestratorRole(agentRole) && spawnSession) {
     // The CLI cannot reach Codex directly. Give only this identified root turn
@@ -722,10 +775,7 @@ function copilotMcpArgs(
       env: {
         AUTODEV_BRIDGE_URL: `http://${HOST}:${PORT}`,
         AUTODEV_BRIDGE_TOKEN: AUTH_TOKEN,
-        AUTODEV_SPAWN_SESSION: spawnSession,
-        // The spawned Codex inherits this, so commits it makes carry an
-        // identity attribution can be read back from.
-        ...gitCommitIdentityEnv({ role: agentRole, provider: "copilot" })
+        AUTODEV_SPAWN_SESSION: spawnSession
       }
     };
   }
@@ -1014,7 +1064,8 @@ function runCopilot(
   agentRole: string | null = null,
   spawnSession: string | null = null,
   sandboxMode: "read-only" | "workspace-write" | null = null,
-  workspaceKey: unknown = null
+  workspaceKey: unknown = null,
+  requestId: string | null = null
 ): Promise<RunCopilotResult> {
   return new Promise<RunCopilotResult>((resolve, reject) => {
     const args = [
@@ -1026,7 +1077,15 @@ function runCopilot(
       prompt
     ];
     const contract = copilotRoleContract(agentRole);
-    args.push(...copilotMcpArgs(agentRole, spawnSession));
+    args.push(
+      ...copilotMcpArgs(agentRole, spawnSession, {
+        requestId,
+        workspaceId: typeof workspaceKey === "string" ? workspaceKey : null,
+        workspaceRoot: cwd,
+        repositoryRoot: REPO_ROOT,
+        codeHome: process.env.CODEX_HOME ?? pathApi.join(homedir(), ".codex")
+      })
+    );
     if (isResearchRole(agentRole))
       args.push("--allow-tool=web_search", "--allow-tool=web_fetch");
     // The router forwards the declared sandbox via x-autodev-sandbox-mode. We
@@ -1048,7 +1107,17 @@ function runCopilot(
       args.push("--model", String(model));
     const child = spawn(process.env.COPILOT_BIN ?? "copilot", args, {
       cwd,
-      env: withAutoDevOtelResourceContext(process.env, workspaceKey, agentRole),
+      env: withAutoDevOtelResourceContext(
+        {
+          ...process.env,
+          // The Copilot CLI itself executes its native tools in this process
+          // tree. Commit identity must be attached here, not to the MCP spawn
+          // shim that only forwards a request to another provider process.
+          ...gitCommitIdentityEnv({ role: agentRole, provider: "copilot" })
+        },
+        workspaceKey,
+        agentRole
+      ),
       stdio: ["ignore", "pipe", "pipe"]
     });
     const state: CopilotRunState = {
@@ -1140,6 +1209,7 @@ function headerValue(
 
 interface CopilotRequestContext {
   payload: JsonRecord;
+  requestId: string | null;
   agentRole: string | null;
   workspaceKey: unknown;
   agentEvents: AgentReporter | null;
@@ -1638,6 +1708,7 @@ function prepareCopilotRequest(
   if (!cwd) return null;
   const headers: Record<string, unknown> = { ...request.headers };
   const agentRole = resolveAgentRole(request.headers);
+  const requestId = headerValue(request.headers, "x-autodev-request-id");
   const workspaceKey = request.headers[AUTODEV_WORKSPACE_KEY_HEADER];
   const agentEvents = resolveAgentEventReporter(headers);
   const sandboxModeHeader = readOnlyHeaderValue(headers);
@@ -1686,6 +1757,7 @@ function prepareCopilotRequest(
   reportCopilotExposure(agentEvents, bootstrapContract);
   return {
     payload,
+    requestId,
     agentRole,
     workspaceKey,
     agentEvents,
@@ -1724,7 +1796,8 @@ async function sendCopilotNonStreamingResponse(
         context.agentRole,
         context.spawnSession,
         context.sandboxModeHeader,
-        context.workspaceKey
+        context.workspaceKey,
+        context.requestId
       );
     } finally {
       clearInterval(nonStreamHeartbeat);
@@ -1769,7 +1842,8 @@ async function streamCopilotResponse(
       context.agentRole,
       context.spawnSession,
       context.sandboxModeHeader,
-      context.workspaceKey
+      context.workspaceKey,
+      context.requestId
     );
     stream.complete(result);
   } catch (error) {
@@ -1815,6 +1889,13 @@ async function handle(
     pathname === "/v1/bridge-spawn/call"
   ) {
     await handleSpawnRoute(request, response, pathname);
+    return;
+  }
+  if (pathname === "/v1/models" && request.method === "GET") {
+    sendJson(response, 200, {
+      object: "list",
+      data: [{ id: "copilot", object: "model", owned_by: "github" }]
+    });
     return;
   }
   if (pathname !== "/v1/responses" || request.method !== "POST") {

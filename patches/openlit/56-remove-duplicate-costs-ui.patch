@@ -1,0 +1,5164 @@
+diff --git a/src/client/src/__tests__/app/api/pricing/export/[dbConfigId]/route.test.ts b/src/client/src/__tests__/app/api/pricing/export/[dbConfigId]/route.test.ts
+deleted file mode 100644
+index 62801a36..00000000
+--- a/src/client/src/__tests__/app/api/pricing/export/[dbConfigId]/route.test.ts
++++ /dev/null
+@@ -1,59 +0,0 @@
+-jest.mock("next/server", () => ({
+-	NextResponse: {
+-		json: jest.fn((body: unknown, init?: { status?: number; headers?: Record<string, string> }) => ({
+-			status: init?.status ?? 200,
+-			headers: { get: (key: string) => init?.headers?.[key] ?? null },
+-			json: async () => body,
+-		})),
+-	},
+-}));
+-
+-jest.mock("@/lib/audit/route", () => ({
+-	withAudit: (handler: unknown) => handler,
+-}));
+-
+-jest.mock("@/lib/platform/pricing/export", () => ({
+-	getPricingExport: jest.fn(),
+-}));
+-
+-import { getPricingExport } from "@/lib/platform/pricing/export";
+-import { GET } from "@/app/api/pricing/export/[dbConfigId]/route";
+-
+-const mockedGetPricingExport = getPricingExport as jest.MockedFunction<
+-	typeof getPricingExport
+->;
+-
+-describe("GET /api/pricing/export/[dbConfigId]", () => {
+-	beforeEach(() => {
+-		mockedGetPricingExport.mockReset();
+-	});
+-
+-	it("returns the shared pricing export data with a cache header on success", async () => {
+-		mockedGetPricingExport.mockResolvedValue({
+-			data: { chat: { "gpt-4": { promptPrice: 0.01, completionPrice: 0.02 } } },
+-		});
+-
+-		const response = await GET({} as any, { params: { dbConfigId: "db-1" } });
+-
+-		expect(getPricingExport).toHaveBeenCalledWith("db-1");
+-		expect(response.status).toBe(200);
+-		expect(response.headers.get("Cache-Control")).toBe("public, max-age=300");
+-		await expect(response.json()).resolves.toEqual({
+-			chat: { "gpt-4": { promptPrice: 0.01, completionPrice: 0.02 } },
+-		});
+-	});
+-
+-	it("passes through the shared function's error status", async () => {
+-		mockedGetPricingExport.mockResolvedValue({
+-			error: "Database config not found",
+-			status: 404,
+-		});
+-
+-		const response = await GET({} as any, { params: { dbConfigId: "missing" } });
+-
+-		expect(response.status).toBe(404);
+-		await expect(response.json()).resolves.toEqual({
+-			error: "Database config not found",
+-		});
+-	});
+-});
+diff --git a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+index 6cf9cb7a..5a802c99 100644
+--- a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
++++ b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+@@ -394,7 +394,7 @@ describe("AutoDev Usage dashboard seed", () => {
+ 	it("labels OpenLIT pricing attributes as an estimate rather than billed cost", () => {
+ 		const widget = widgets.find((candidate) => candidate.title === "Estimated GenAI cost");
+ 		expect(widget).toBeDefined();
+-		expect(widget?.description).toMatch(/pricing estimate/i);
++		expect(widget?.description).toMatch(/pricing(?:-catalog)? estimate/i);
+ 		expect(widget?.description).toMatch(/not a provider billing statement/i);
+ 		expect(widget?.properties.value).toBe("0.estimated_cost");
+ 		expect(widget?.properties.prefix).toBe("$");
+diff --git a/src/client/src/__tests__/lib/platform/pricing/cron-analytics.test.ts b/src/client/src/__tests__/lib/platform/pricing/cron-analytics.test.ts
+deleted file mode 100644
+index 30902594..00000000
+--- a/src/client/src/__tests__/lib/platform/pricing/cron-analytics.test.ts
++++ /dev/null
+@@ -1,211 +0,0 @@
+-jest.mock("@/lib/platform/common", () => ({
+-	dataCollector: jest.fn(),
+-}));
+-
+-jest.mock("@/helpers/server/platform", () => ({
+-	getFilterPreviousParams: jest.fn((params) => ({
+-		...params,
+-		timeLimit: {
+-			...params.timeLimit,
+-			start: "2024-01-01T00:00:00.000Z",
+-			end: "2024-01-01T12:00:00.000Z",
+-		},
+-	})),
+-}));
+-
+-import { dataCollector } from "@/lib/platform/common";
+-import { getPricingCronAnalytics } from "@/lib/platform/pricing/cron-analytics";
+-
+-const mockedDataCollector = dataCollector as jest.MockedFunction<
+-	typeof dataCollector
+->;
+-
+-const params = {
+-	timeLimit: {
+-		start: "2024-01-01T12:00:00.000Z",
+-		end: "2024-01-02T12:00:00.000Z",
+-		type: "24H",
+-	},
+-};
+-
+-describe("getPricingCronAnalytics", () => {
+-	beforeEach(() => {
+-		mockedDataCollector.mockReset();
+-	});
+-
+-	it("returns summary stats and recent runs with costs applied", async () => {
+-		mockedDataCollector
+-			.mockResolvedValueOnce({
+-				data: [
+-					{
+-						totalRuns: 4,
+-						successfulRuns: 3,
+-						totalUpdated: 12,
+-						totalSpans: 40,
+-					},
+-				],
+-			})
+-			.mockResolvedValueOnce({
+-				data: [
+-					{
+-						totalRuns: 2,
+-						successfulRuns: 2,
+-						totalUpdated: 5,
+-						totalSpans: 20,
+-					},
+-				],
+-			})
+-			.mockResolvedValueOnce({
+-				data: [
+-					{
+-						startedAt: "2024-01-02 10:00:00",
+-						finishedAt: "2024-01-02 10:00:05",
+-						duration: 5,
+-						runStatus: "SUCCESS",
+-						totalSpans: 10,
+-						totalUpdated: 4,
+-						totalFailed: 0,
+-						totalSkipped: 6,
+-					},
+-				],
+-			});
+-
+-		const res = await getPricingCronAnalytics(params);
+-
+-		expect(res.data[0]).toEqual({
+-			total_runs: 4,
+-			previous_total_runs: 2,
+-			successful_runs: 3,
+-			previous_successful_runs: 2,
+-			total_updated: 12,
+-			previous_total_updated: 5,
+-			total_spans: 40,
+-			previous_total_spans: 20,
+-		});
+-		expect(res.runs).toHaveLength(1);
+-		expect(res.runs[0].totalUpdated).toBe(4);
+-		expect(mockedDataCollector.mock.calls[2][0].query).toContain(
+-			"totalUpdated"
+-		);
+-	});
+-
+-	it("clamps the limit between 1 and 100 and defaults to 25", async () => {
+-		mockedDataCollector.mockResolvedValue({ data: [{}] });
+-
+-		await getPricingCronAnalytics(params, { limit: 500 });
+-		expect(mockedDataCollector.mock.calls[2][0].query).toContain("LIMIT 100");
+-
+-		mockedDataCollector.mockClear();
+-		mockedDataCollector.mockResolvedValue({ data: [{}] });
+-		await getPricingCronAnalytics(params, { limit: 0 });
+-		expect(mockedDataCollector.mock.calls[2][0].query).toContain("LIMIT 1");
+-
+-		mockedDataCollector.mockClear();
+-		mockedDataCollector.mockResolvedValue({ data: [{}] });
+-		await getPricingCronAnalytics(params);
+-		expect(mockedDataCollector.mock.calls[2][0].query).toContain("LIMIT 25");
+-	});
+-
+-	it("returns zeroed summaries and surfaces the error when the current period query fails", async () => {
+-		mockedDataCollector
+-			.mockResolvedValueOnce({ err: "clickhouse down", data: [] })
+-			.mockResolvedValueOnce({ data: [{ totalRuns: 1, successfulRuns: 1, totalUpdated: 1, totalSpans: 1 }] })
+-			.mockResolvedValueOnce({ data: [] });
+-
+-		const res = await getPricingCronAnalytics(params);
+-
+-		expect(res.data[0]).toEqual(
+-			expect.objectContaining({
+-				total_runs: 0,
+-				successful_runs: 0,
+-				total_updated: 0,
+-				total_spans: 0,
+-			})
+-		);
+-		expect(res.err).toBe("clickhouse down");
+-	});
+-
+-	it("surfaces the error from the previous period query when only it fails", async () => {
+-		mockedDataCollector
+-			.mockResolvedValueOnce({ data: [{ totalRuns: 2, successfulRuns: 2, totalUpdated: 2, totalSpans: 2 }] })
+-			.mockResolvedValueOnce({ err: "previous failed", data: [] })
+-			.mockResolvedValueOnce({ data: [] });
+-
+-		const res = await getPricingCronAnalytics(params);
+-
+-		expect(res.data[0].previous_total_runs).toBe(0);
+-		expect(res.err).toBe("previous failed");
+-	});
+-
+-	it("surfaces the runs-query error when both summaries succeed", async () => {
+-		mockedDataCollector
+-			.mockResolvedValueOnce({ data: [{ totalRuns: 1, successfulRuns: 1, totalUpdated: 1, totalSpans: 1 }] })
+-			.mockResolvedValueOnce({ data: [{ totalRuns: 1, successfulRuns: 1, totalUpdated: 1, totalSpans: 1 }] })
+-			.mockResolvedValueOnce({ err: "runs query failed", data: [] });
+-
+-		const res = await getPricingCronAnalytics(params);
+-
+-		expect(res.runs).toEqual([]);
+-		expect(res.err).toBe("runs query failed");
+-	});
+-
+-	it("defaults missing numeric fields to 0 and handles an empty runs result set", async () => {
+-		mockedDataCollector
+-			.mockResolvedValueOnce({ data: [{}] })
+-			.mockResolvedValueOnce({ data: [{}] })
+-			.mockResolvedValueOnce({ data: undefined });
+-
+-		const res = await getPricingCronAnalytics(params);
+-
+-		expect(res.data[0]).toEqual({
+-			total_runs: 0,
+-			previous_total_runs: 0,
+-			successful_runs: 0,
+-			previous_successful_runs: 0,
+-			total_updated: 0,
+-			previous_total_updated: 0,
+-			total_spans: 0,
+-			previous_total_spans: 0,
+-		});
+-		expect(res.runs).toEqual([]);
+-		expect(res.err).toBeUndefined();
+-	});
+-
+-	it("coerces non-finite row fields (missing startedAt/duration) to safe defaults", async () => {
+-		mockedDataCollector
+-			.mockResolvedValueOnce({ data: [{}] })
+-			.mockResolvedValueOnce({ data: [{}] })
+-			.mockResolvedValueOnce({
+-				data: [
+-					{
+-						duration: "not-a-number",
+-						totalSpans: undefined,
+-					},
+-				],
+-			});
+-
+-		const res = await getPricingCronAnalytics(params);
+-
+-		expect(res.runs[0]).toEqual({
+-			startedAt: "",
+-			finishedAt: "",
+-			duration: 0,
+-			runStatus: "",
+-			totalSpans: 0,
+-			totalUpdated: 0,
+-			totalFailed: 0,
+-			totalSkipped: 0,
+-		});
+-	});
+-
+-	it("treats a non-array summary data payload as an empty row", async () => {
+-		mockedDataCollector
+-			.mockResolvedValueOnce({ data: undefined })
+-			.mockResolvedValueOnce({ data: [{}] })
+-			.mockResolvedValueOnce({ data: [] });
+-
+-		const res = await getPricingCronAnalytics(params);
+-
+-		expect(res.data[0].total_runs).toBe(0);
+-	});
+-});
+diff --git a/src/client/src/__tests__/lib/platform/pricing/export.test.ts b/src/client/src/__tests__/lib/platform/pricing/export.test.ts
+deleted file mode 100644
+index 4d5923db..00000000
+--- a/src/client/src/__tests__/lib/platform/pricing/export.test.ts
++++ /dev/null
+@@ -1,128 +0,0 @@
+-jest.mock("@/lib/platform/common", () => ({
+-	dataCollector: jest.fn(),
+-}));
+-
+-jest.mock("@/lib/db-config", () => ({
+-	getDBConfigByIdInternal: jest.fn(),
+-}));
+-
+-import { dataCollector } from "@/lib/platform/common";
+-import { getDBConfigByIdInternal } from "@/lib/db-config";
+-import { getPricingExport } from "@/lib/platform/pricing/export";
+-
+-const mockedDataCollector = dataCollector as jest.MockedFunction<
+-	typeof dataCollector
+->;
+-const mockedGetDBConfigByIdInternal =
+-	getDBConfigByIdInternal as jest.MockedFunction<typeof getDBConfigByIdInternal>;
+-
+-describe("getPricingExport", () => {
+-	beforeEach(() => {
+-		jest.clearAllMocks();
+-	});
+-
+-	it("returns a 400 when dbConfigId is missing", async () => {
+-		await expect(getPricingExport("")).resolves.toEqual({
+-			error: "Database config ID is required",
+-			status: 400,
+-		});
+-	});
+-
+-	it("returns a 404 when the database config does not exist", async () => {
+-		mockedGetDBConfigByIdInternal.mockResolvedValue(null as any);
+-
+-		await expect(getPricingExport("db-1")).resolves.toEqual({
+-			error: "Database config not found",
+-			status: 404,
+-		});
+-	});
+-
+-	it("returns a 500 when the pricing query fails", async () => {
+-		mockedGetDBConfigByIdInternal.mockResolvedValue({ id: "db-1" } as any);
+-		mockedDataCollector.mockResolvedValue({ err: "boom" } as any);
+-
+-		await expect(getPricingExport("db-1")).resolves.toEqual({
+-			error: "Failed to fetch model pricing",
+-			status: 500,
+-		});
+-	});
+-
+-	it("builds SDK-compatible pricing.json, including optional cache prices", async () => {
+-		mockedGetDBConfigByIdInternal.mockResolvedValue({ id: "db-1" } as any);
+-		mockedDataCollector.mockResolvedValue({
+-			data: [
+-				{
+-					model_id: "gpt-4",
+-					model_type: "chat",
+-					inputPrice: 10,
+-					outputPrice: 20,
+-					cacheReadPrice: 1,
+-					cacheCreationPrice: 2,
+-				},
+-				{
+-					model_id: "gpt-3.5",
+-					model_type: "chat",
+-					inputPrice: 5,
+-					outputPrice: 10,
+-					cacheReadPrice: 0,
+-					cacheCreationPrice: 0,
+-				},
+-				{
+-					model_id: "text-embedding-3",
+-					model_type: "embeddings",
+-					inputPrice: 1,
+-					outputPrice: 0,
+-				},
+-				{
+-					model_id: "whisper-1",
+-					model_type: "audio",
+-					inputPrice: 6,
+-					outputPrice: 0,
+-				},
+-				{
+-					model_id: "dall-e-3",
+-					model_type: "images",
+-					inputPrice: 40,
+-					outputPrice: 0,
+-				},
+-			],
+-		} as any);
+-
+-		const result = await getPricingExport("db-1");
+-
+-		expect(result).toEqual({
+-			data: {
+-				chat: {
+-					"gpt-4": {
+-						promptPrice: 0.01,
+-						completionPrice: 0.02,
+-						cacheReadPrice: 0.001,
+-						cacheCreationPrice: 0.002,
+-					},
+-					"gpt-3.5": {
+-						promptPrice: 0.005,
+-						completionPrice: 0.01,
+-					},
+-				},
+-				embeddings: {
+-					"text-embedding-3": 0.001,
+-				},
+-				audio: {
+-					"whisper-1": 0.006,
+-				},
+-				images: {
+-					"dall-e-3": {
+-						standard: {
+-							"1024x1024": 0.04,
+-						},
+-					},
+-				},
+-			},
+-		});
+-		expect(dataCollector).toHaveBeenCalledWith(
+-			expect.objectContaining({ query: expect.stringContaining("cache_read_price_per_m_token") }),
+-			"query",
+-			"db-1"
+-		);
+-	});
+-});
+diff --git a/src/client/src/__tests__/lib/platform/pricing/guidance.test.ts b/src/client/src/__tests__/lib/platform/pricing/guidance.test.ts
+deleted file mode 100644
+index b4248b8e..00000000
+--- a/src/client/src/__tests__/lib/platform/pricing/guidance.test.ts
++++ /dev/null
+@@ -1,80 +0,0 @@
+-jest.mock("@/lib/platform/common", () => ({
+-	dataCollector: jest.fn(),
+-	OTEL_TRACES_TABLE_NAME: "otel_traces",
+-}));
+-
+-jest.mock("@/helpers/server/platform", () => ({
+-	getFilterWhereCondition: jest.fn(() => "1 = 1"),
+-}));
+-
+-jest.mock("@/helpers/server/trace", () => ({
+-	getTraceMappingKeyFullPath: jest.fn(() => "gen_ai.usage.cost"),
+-}));
+-
+-jest.mock("@/lib/platform/pricing/config", () => ({
+-	getPricingConfig: jest.fn(),
+-}));
+-
+-import { dataCollector } from "@/lib/platform/common";
+-import { getPricingConfig } from "@/lib/platform/pricing/config";
+-import { getCostPricingGuidance } from "@/lib/platform/pricing/guidance";
+-
+-const mockedDataCollector = dataCollector as jest.MockedFunction<
+-	typeof dataCollector
+->;
+-const mockedGetPricingConfig = getPricingConfig as jest.MockedFunction<
+-	typeof getPricingConfig
+->;
+-
+-const params = {
+-	timeLimit: {
+-		start: "2024-01-01T00:00:00.000Z",
+-		end: "2024-01-02T00:00:00.000Z",
+-		type: "24H",
+-	},
+-};
+-
+-describe("getCostPricingGuidance", () => {
+-	beforeEach(() => {
+-		mockedDataCollector.mockReset();
+-		mockedGetPricingConfig.mockReset();
+-	});
+-
+-	it("shows backfill banner when auto pricing is off and missing costs exist", async () => {
+-		mockedGetPricingConfig.mockResolvedValue({ auto: false } as never);
+-		mockedDataCollector.mockResolvedValue({
+-			data: [{ missing_cost_spans: 12 }],
+-		});
+-
+-		const res = await getCostPricingGuidance(params);
+-
+-		expect(res).toEqual({
+-			autoEnabled: false,
+-			missingCostSpans: 12,
+-			showBackfillBanner: true,
+-		});
+-	});
+-
+-	it("hides banner when auto pricing is already enabled", async () => {
+-		mockedGetPricingConfig.mockResolvedValue({ auto: true } as never);
+-		mockedDataCollector.mockResolvedValue({
+-			data: [{ missing_cost_spans: 12 }],
+-		});
+-
+-		const res = await getCostPricingGuidance(params);
+-
+-		expect(res.showBackfillBanner).toBe(false);
+-		expect(res.autoEnabled).toBe(true);
+-	});
+-
+-	it("hides banner when there are no missing costs", async () => {
+-		mockedGetPricingConfig.mockResolvedValue({ auto: false } as never);
+-		mockedDataCollector.mockResolvedValue({
+-			data: [{ missing_cost_spans: 0 }],
+-		});
+-
+-		const res = await getCostPricingGuidance(params);
+-
+-		expect(res.showBackfillBanner).toBe(false);
+-	});
+-});
+diff --git a/src/client/src/__tests__/lib/platform/pricing/pricing-config.test.ts b/src/client/src/__tests__/lib/platform/pricing/pricing-config.test.ts
+index 2936daa1..40c451d6 100644
+--- a/src/client/src/__tests__/lib/platform/pricing/pricing-config.test.ts
++++ b/src/client/src/__tests__/lib/platform/pricing/pricing-config.test.ts
+@@ -1,388 +1,139 @@
+-jest.mock('@/constants/messages', () => ({
+-  __esModule: true,
+-  default: jest.fn(() => ({
+-    DATABASE_CONFIG_NOT_FOUND: 'DB config not found',
+-    OPERATION_FAILED: 'Operation failed',
+-    CRON_JOB_UPDATION_ERROR: 'Cron job error',
+-  })),
+-}));
+-jest.mock('@/lib/db-config', () => ({
+-  getDBConfigByUser: jest.fn(),
+-}));
+-jest.mock('@/lib/prisma', () => ({
+-  __esModule: true,
+-  default: {
+-    pricingConfigs: {
+-      findFirst: jest.fn(),
+-      findMany: jest.fn(),
+-      update: jest.fn(),
+-      create: jest.fn(),
+-    },
+-  },
+-}));
+-jest.mock('@/utils/asaw', () => jest.fn());
+-jest.mock('@/utils/error', () => ({
+-  throwIfError: jest.fn((condition: boolean, msg: string) => {
+-    if (condition) throw new Error(msg);
+-  }),
+-}));
+-jest.mock('@/helpers/server/cron', () => ({
+-  __esModule: true,
+-  default: jest.fn().mockImplementation(() => ({
+-    validateCronSchedule: jest.fn(),
+-    updateCrontab: jest.fn().mockResolvedValue(undefined),
+-    deleteCronJob: jest.fn().mockResolvedValue(undefined),
+-  })),
+-}));
+-jest.mock('@/utils/json', () => ({
+-  jsonParse: jest.fn((v: string) => {
+-    try { return JSON.parse(v); } catch { return {}; }
+-  }),
+-  jsonStringify: jest.fn((v: unknown) => JSON.stringify(v)),
+-}));
+-jest.mock('lodash', () => ({
+-  merge: jest.fn((a: any, b: any) => ({ ...a, ...b })),
+-}));
+-jest.mock('crypto', () => ({
+-  randomUUID: jest.fn(() => 'test-cron-uuid'),
+-}));
+-jest.mock('path', () => ({
+-  join: jest.fn((...args: string[]) => args.join('/')),
+-}));
+-
+-import { getPricingConfig, getPricingConfigById, setPricingConfig, restorePricingCronJobs } from '@/lib/platform/pricing/config';
+-import { getDBConfigByUser } from '@/lib/db-config';
+-import prisma from '@/lib/prisma';
+-import asaw from '@/utils/asaw';
+-import { throwIfError } from '@/utils/error';
+-import Cron from '@/helpers/server/cron';
+-import getMessage from '@/constants/messages';
+-import { randomUUID } from 'crypto';
+-import { jsonParse, jsonStringify } from '@/utils/json';
+-
+-const mockDBConfig = { id: 'db-1', name: 'test-db' };
+-
+-beforeEach(() => {
+-  jest.resetAllMocks();
+-
+-  (getMessage as jest.Mock).mockReturnValue({
+-    DATABASE_CONFIG_NOT_FOUND: 'DB config not found',
+-    OPERATION_FAILED: 'Operation failed',
+-    CRON_JOB_UPDATION_ERROR: 'Cron job error',
+-  });
+-
+-  (throwIfError as jest.Mock).mockImplementation((condition: boolean, msg: string) => {
+-    if (condition) throw new Error(msg);
+-  });
+-
+-  (randomUUID as jest.Mock).mockReturnValue('test-cron-uuid');
+-
+-  (Cron as jest.Mock).mockImplementation(() => ({
+-    validateCronSchedule: jest.fn(),
+-    updateCrontab: jest.fn().mockResolvedValue(undefined),
+-    deleteCronJob: jest.fn().mockResolvedValue(undefined),
+-  }));
+-
+-  (jsonParse as jest.Mock).mockImplementation((v: string) => {
+-    try { return JSON.parse(v); } catch { return {}; }
+-  });
+-  // Re-apply jsonStringify mock after resetAllMocks (unlike the `lodash` mock,
+-  // this aliased module's factory implementation does not survive a reset).
+-  (jsonStringify as jest.Mock).mockImplementation((v: unknown) => JSON.stringify(v));
+-
+-  // Default asaw: wrap a promise into [err, data]
+-  (asaw as jest.Mock).mockImplementation(async (promise: Promise<any>) => {
+-    try {
+-      const data = await promise;
+-      return [null, data];
+-    } catch (err) {
+-      return [err, null];
+-    }
+-  });
+-
+-  // Re-apply path.join mock
+-  const path = require('path');
+-  (path.join as jest.Mock).mockImplementation((...args: string[]) => args.join('/'));
++const mockPrisma = {
++	pricingConfigs: {
++		findFirst: jest.fn(),
++		findMany: jest.fn(),
++	},
++};
++const mockAsaw = jest.fn();
++const mockCronConstructor = jest.fn();
++const mockJsonParse = jest.fn((value: string) => {
++	try {
++		return JSON.parse(value);
++	} catch {
++		return {};
++	}
+ });
+ 
+-describe('getPricingConfig', () => {
+-  it('returns config when it exists', async () => {
+-    const mockConfig = { id: 'pc-1', auto: false, recurringTime: '', meta: '{}', databaseConfigId: 'db-1' };
+-    (getDBConfigByUser as jest.Mock).mockResolvedValue(mockDBConfig);
+-    (prisma.pricingConfigs.findFirst as jest.Mock).mockResolvedValue(mockConfig);
+-
+-    const result = await getPricingConfig();
+-
+-    expect(result).toEqual(mockConfig);
+-  });
+-
+-  it('returns null when no config exists', async () => {
+-    (getDBConfigByUser as jest.Mock).mockResolvedValue(mockDBConfig);
+-    (prisma.pricingConfigs.findFirst as jest.Mock).mockResolvedValue(null);
+-
+-    const result = await getPricingConfig();
+-
+-    expect(result).toBeNull();
+-  });
+-
+-  it('returns null when no dbConfig', async () => {
+-    (getDBConfigByUser as jest.Mock).mockRejectedValue(new Error('no db'));
+-
+-    const result = await getPricingConfig();
+-
+-    expect(result).toBeNull();
+-  });
+-
+-  it('uses the provided dbConfig and skips getDBConfigByUser when it already has an id', async () => {
+-    const mockConfig = { id: 'pc-1', auto: false, recurringTime: '', meta: '{}', databaseConfigId: 'db-provided' };
+-    (prisma.pricingConfigs.findFirst as jest.Mock).mockResolvedValue(mockConfig);
+-
+-    const result = await getPricingConfig({ id: 'db-provided' } as any);
+-
+-    expect(getDBConfigByUser).not.toHaveBeenCalled();
+-    expect(prisma.pricingConfigs.findFirst).toHaveBeenCalledWith(
+-      expect.objectContaining({ where: { databaseConfigId: 'db-provided' } })
+-    );
+-    expect(result).toEqual(mockConfig);
+-  });
+-});
+-
+-describe('getPricingConfigById', () => {
+-  it('returns the config when found', async () => {
+-    const mockConfig = { id: 'pc-1', auto: true, recurringTime: '* * * * *', meta: '{}', databaseConfigId: 'db-1' };
+-    (prisma.pricingConfigs.findFirst as jest.Mock).mockResolvedValue(mockConfig);
+-
+-    const result = await getPricingConfigById('pc-1');
+-
+-    expect(result).toEqual(mockConfig);
+-  });
++jest.mock("@/lib/prisma", () => ({ __esModule: true, default: mockPrisma }));
++jest.mock("@/utils/asaw", () => mockAsaw);
++jest.mock("@/utils/json", () => ({ jsonParse: mockJsonParse }));
++jest.mock("@/helpers/server/cron", () => ({
++	__esModule: true,
++	default: jest.fn((...args: unknown[]) => mockCronConstructor(...args)),
++}));
+ 
+-  it('returns null when not found', async () => {
+-    (prisma.pricingConfigs.findFirst as jest.Mock).mockResolvedValue(null);
++import {
++	getPricingConfigById,
++	restorePricingCronJobs,
++} from "@/lib/platform/pricing/config";
++import Cron from "@/helpers/server/cron";
+ 
+-    const result = await getPricingConfigById('nonexistent');
++function cronMock() {
++	return {
++		updateCrontab: jest.fn(),
++	};
++}
+ 
+-    expect(result).toBeNull();
+-  });
++beforeEach(() => {
++	jest.resetAllMocks();
++	mockJsonParse.mockImplementation((value: string) => {
++		try {
++			return JSON.parse(value);
++		} catch {
++			return {};
++		}
++	});
++	mockAsaw.mockImplementation(async (promise: Promise<unknown>) => {
++		try {
++			return [null, await promise];
++		} catch (error) {
++			return [error, null];
++		}
++	});
++	mockCronConstructor.mockImplementation(cronMock);
++	(Cron as jest.Mock).mockImplementation((...args: unknown[]) =>
++		mockCronConstructor(...args),
++	);
+ });
+ 
+-describe('setPricingConfig', () => {
+-  it('creates a new config with cron when auto=true', async () => {
+-    (getDBConfigByUser as jest.Mock).mockResolvedValue(mockDBConfig);
+-    (prisma.pricingConfigs.create as jest.Mock).mockResolvedValue({ id: 'pc-new' });
+-
+-    await setPricingConfig(
+-      { auto: true, recurringTime: '*/15 * * * *', meta: '{}' },
+-      'http://localhost:3000'
+-    );
+-
+-    expect(prisma.pricingConfigs.create).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        data: expect.objectContaining({
+-          auto: true,
+-          recurringTime: '*/15 * * * *',
+-          databaseConfigId: 'db-1',
+-        }),
+-      })
+-    );
+-
+-    const cronInstance = (Cron as jest.Mock).mock.results[0].value;
+-    expect(cronInstance.updateCrontab).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        cronId: 'test-cron-uuid',
+-        cronSchedule: '*/15 * * * *',
+-        cronScriptPath: expect.stringContaining('scripts/pricing/auto.js'),
+-      })
+-    );
+-  });
+-
+-  it('updates existing config', async () => {
+-    (getDBConfigByUser as jest.Mock).mockResolvedValue(mockDBConfig);
+-    (prisma.pricingConfigs.findFirst as jest.Mock).mockResolvedValue({
+-      id: 'pc-1', auto: false, recurringTime: '', meta: '{}', databaseConfigId: 'db-1',
+-    });
+-    (prisma.pricingConfigs.update as jest.Mock).mockResolvedValue({ id: 'pc-1' });
+-
+-    await setPricingConfig(
+-      { id: 'pc-1', auto: false, recurringTime: '', meta: '{}' },
+-      'http://localhost:3000'
+-    );
+-
+-    expect(prisma.pricingConfigs.update).toHaveBeenCalled();
+-  });
+-
+-  it('throws when cron updateCrontab fails (auto=true)', async () => {
+-    (getDBConfigByUser as jest.Mock).mockResolvedValue(mockDBConfig);
+-    (prisma.pricingConfigs.create as jest.Mock).mockResolvedValue({ id: 'pc-new' });
+-    (Cron as jest.Mock).mockImplementation(() => ({
+-      validateCronSchedule: jest.fn(),
+-      updateCrontab: jest.fn().mockRejectedValue(new Error('cron failed')),
+-      deleteCronJob: jest.fn(),
+-    }));
+-
+-    await expect(
+-      setPricingConfig(
+-        { auto: true, recurringTime: '*/15 * * * *', meta: '{}' },
+-        'http://localhost:3000'
+-      )
+-    ).rejects.toThrow('cron failed');
+-  });
+-
+-  it('deletes cron job when auto=false', async () => {
+-    (getDBConfigByUser as jest.Mock).mockResolvedValue(mockDBConfig);
+-    (prisma.pricingConfigs.findFirst as jest.Mock).mockResolvedValue({
+-      id: 'pc-1', auto: true, recurringTime: '* * * * *',
+-      meta: JSON.stringify({ cronJobId: 'existing-cron-id' }),
+-      databaseConfigId: 'db-1',
+-    });
+-    (prisma.pricingConfigs.update as jest.Mock).mockResolvedValue({ id: 'pc-1' });
+-
+-    await setPricingConfig(
+-      { id: 'pc-1', auto: false, recurringTime: '', meta: '{}' },
+-      'http://localhost:3000'
+-    );
+-
+-    const cronInstance = (Cron as jest.Mock).mock.results[0].value;
+-    expect(cronInstance.deleteCronJob).toHaveBeenCalledWith('existing-cron-id');
+-  });
+-
+-  it('generates a fresh cronJobId and defaults meta to {} when the previous config lookup returns nothing', async () => {
+-    (getDBConfigByUser as jest.Mock).mockResolvedValue(mockDBConfig);
+-    // previousConfig lookup (getPricingConfigById -> prisma.findFirst) returns null
+-    (prisma.pricingConfigs.findFirst as jest.Mock).mockResolvedValue(null);
+-    (prisma.pricingConfigs.update as jest.Mock).mockResolvedValue({ id: 'pc-missing' });
+-
+-    await setPricingConfig(
+-      { id: 'pc-missing', auto: false, recurringTime: '', meta: '{}' },
+-      'http://localhost:3000'
+-    );
+-
+-    expect(prisma.pricingConfigs.update).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        data: expect.objectContaining({
+-          meta: JSON.stringify({ cronJobId: 'test-cron-uuid' }),
+-        }),
+-      })
+-    );
+-  });
+-
+-  it('defaults meta to {} on create when an empty meta string is provided', async () => {
+-    (getDBConfigByUser as jest.Mock).mockResolvedValue(mockDBConfig);
+-    (prisma.pricingConfigs.create as jest.Mock).mockResolvedValue({ id: 'pc-new' });
+-
+-    await setPricingConfig(
+-      { auto: false, recurringTime: '', meta: '' },
+-      'http://localhost:3000'
+-    );
+-
+-    expect(prisma.pricingConfigs.create).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        data: expect.objectContaining({
+-          meta: JSON.stringify({ cronJobId: 'test-cron-uuid' }),
+-        }),
+-      })
+-    );
+-  });
++describe("getPricingConfigById", () => {
++	it("returns the config when found", async () => {
++		const config = {
++			id: "pc-1",
++			auto: true,
++			recurringTime: "* * * * *",
++			meta: "{}",
++			databaseConfigId: "db-1",
++		};
++		mockPrisma.pricingConfigs.findFirst.mockResolvedValue(config);
++
++		expect(await getPricingConfigById("pc-1")).toEqual(config);
++		expect(mockPrisma.pricingConfigs.findFirst).toHaveBeenCalledWith({
++			where: { id: "pc-1" },
++		});
++	});
++
++	it("returns null when no config exists", async () => {
++		mockPrisma.pricingConfigs.findFirst.mockResolvedValue(null);
++		expect(await getPricingConfigById("missing")).toBeNull();
++	});
+ });
+ 
+-describe('restorePricingCronJobs', () => {
+-  it('restores cron jobs for all active configs', async () => {
+-    (prisma.pricingConfigs.findMany as jest.Mock).mockResolvedValue([
+-      {
+-        id: 'pc-1',
+-        auto: true,
+-        recurringTime: '*/10 * * * *',
+-        meta: JSON.stringify({ cronJobId: 'cron-1' }),
+-      },
+-    ]);
+-
+-    await restorePricingCronJobs('http://localhost:3000');
+-
+-    const cronInstance = (Cron as jest.Mock).mock.results[0].value;
+-    expect(cronInstance.updateCrontab).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        cronId: 'cron-1',
+-        cronSchedule: '*/10 * * * *',
+-      })
+-    );
+-  });
+-
+-  it('skips configs without cronJobId', async () => {
+-    (prisma.pricingConfigs.findMany as jest.Mock).mockResolvedValue([
+-      { id: 'pc-1', auto: true, recurringTime: '* * * * *', meta: '{}' },
+-    ]);
+-
+-    await restorePricingCronJobs('http://localhost:3000');
+-
+-    // Cron is instantiated but updateCrontab is never called (no cronJobId)
+-    const cronInstance = (Cron as jest.Mock).mock.results[0]?.value;
+-    if (cronInstance) {
+-      expect(cronInstance.updateCrontab).not.toHaveBeenCalled();
+-    }
+-  });
+-
+-  it('does nothing when no auto configs exist', async () => {
+-    (prisma.pricingConfigs.findMany as jest.Mock).mockResolvedValue([]);
+-
+-    await restorePricingCronJobs('http://localhost:3000');
+-
+-    // Cron may or may not be instantiated, but updateCrontab should not run
+-    const cronInstance = (Cron as jest.Mock).mock.results[0]?.value;
+-    if (cronInstance) {
+-      expect(cronInstance.updateCrontab).not.toHaveBeenCalled();
+-    }
+-  });
+-
+-  it('catches per-config errors and continues', async () => {
+-    (prisma.pricingConfigs.findMany as jest.Mock).mockResolvedValue([
+-      {
+-        id: 'pc-1',
+-        auto: true,
+-        recurringTime: '*/10 * * * *',
+-        meta: JSON.stringify({ cronJobId: 'cron-1' }),
+-      },
+-      {
+-        id: 'pc-2',
+-        auto: true,
+-        recurringTime: '*/10 * * * *',
+-        meta: JSON.stringify({ cronJobId: 'cron-2' }),
+-      },
+-    ]);
+-    let call = 0;
+-    (Cron as jest.Mock).mockImplementation(() => ({
+-      validateCronSchedule: jest.fn(),
+-      updateCrontab: jest.fn().mockImplementation(() => {
+-        call++;
+-        if (call === 1) throw new Error('cron-1 failed');
+-      }),
+-      deleteCronJob: jest.fn(),
+-    }));
+-
+-    // Should not throw — per-config errors are caught
+-    await expect(
+-      restorePricingCronJobs('http://localhost:3000')
+-    ).resolves.toBeUndefined();
+-  });
+-
+-  it('catches top-level findMany errors', async () => {
+-    (prisma.pricingConfigs.findMany as jest.Mock).mockRejectedValue(
+-      new Error('DB down')
+-    );
+-
+-    // Should not throw — top-level error is caught
+-    await expect(
+-      restorePricingCronJobs('http://localhost:3000')
+-    ).resolves.toBeUndefined();
+-  });
+-
+-  it('skips a config with a falsy meta string (defaults to {} then has no cronJobId)', async () => {
+-    (prisma.pricingConfigs.findMany as jest.Mock).mockResolvedValue([
+-      { id: 'pc-1', auto: true, recurringTime: '* * * * *', meta: '' },
+-    ]);
+-
+-    await restorePricingCronJobs('http://localhost:3000');
+-
+-    const cronInstance = (Cron as jest.Mock).mock.results[0]?.value;
+-    expect(cronInstance.updateCrontab).not.toHaveBeenCalled();
+-  });
++describe("restorePricingCronJobs", () => {
++	it("restores retained auto-pricing schedules", async () => {
++		mockPrisma.pricingConfigs.findMany.mockResolvedValue([
++			{
++				id: "pc-1",
++				auto: true,
++				recurringTime: "*/10 * * * *",
++				meta: JSON.stringify({ cronJobId: "cron-1" }),
++			},
++		]);
++
++		await restorePricingCronJobs("http://localhost:3000");
++
++		expect(mockCronConstructor).toHaveBeenCalledTimes(1);
++		expect(mockCronConstructor.mock.results[0]?.value.updateCrontab).toHaveBeenCalledWith(
++			expect.objectContaining({
++				cronId: "cron-1",
++				cronSchedule: "*/10 * * * *",
++				cronScriptPath: expect.stringContaining("scripts/pricing/auto.js"),
++			}),
++		);
++	});
++
++	it("skips malformed schedule entries", async () => {
++		mockPrisma.pricingConfigs.findMany.mockResolvedValue([
++			{ id: "pc-missing-id", auto: true, recurringTime: "* * * * *", meta: "{}" },
++			{ id: "pc-missing-time", auto: true, recurringTime: "", meta: JSON.stringify({ cronJobId: "cron-2" }) },
++		]);
++
++		await restorePricingCronJobs("http://localhost:3000");
++		expect(mockCronConstructor).toHaveBeenCalledTimes(1);
++		expect(mockCronConstructor.mock.results[0]?.value.updateCrontab).not.toHaveBeenCalled();
++	});
++
++	it("continues after a config cannot be restored", async () => {
++		mockPrisma.pricingConfigs.findMany.mockResolvedValue([
++			{ id: "pc-1", auto: true, recurringTime: "*/10 * * * *", meta: JSON.stringify({ cronJobId: "cron-1" }) },
++			{ id: "pc-2", auto: true, recurringTime: "*/10 * * * *", meta: JSON.stringify({ cronJobId: "cron-2" }) },
++		]);
++		const cron = cronMock();
++		cron.updateCrontab.mockImplementationOnce(() => {
++			throw new Error("cron-1 failed");
++		});
++		mockCronConstructor.mockImplementation(() => cron);
++
++		await expect(restorePricingCronJobs("http://localhost:3000")).resolves.toBeUndefined();
++		expect(cron.updateCrontab).toHaveBeenCalledTimes(2);
++	});
++
++	it("handles no schedules and an unreadable config store", async () => {
++		mockPrisma.pricingConfigs.findMany.mockResolvedValueOnce([]);
++		await expect(restorePricingCronJobs("http://localhost:3000")).resolves.toBeUndefined();
++		expect(mockCronConstructor).not.toHaveBeenCalled();
++
++		mockPrisma.pricingConfigs.findMany.mockRejectedValueOnce(new Error("DB down"));
++		await expect(restorePricingCronJobs("http://localhost:3000")).resolves.toBeUndefined();
++	});
+ });
+diff --git a/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts b/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
+index 1cd9f12e..55f42086 100644
+--- a/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
++++ b/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
+@@ -1,32 +1,15 @@
+ jest.mock('@/constants/messages', () => ({
+   __esModule: true,
+   default: jest.fn(() => ({
+-    UNAUTHORIZED_USER: 'Unauthorized',
+-    TRACE_NOT_FOUND: 'Trace not found',
+     DATABASE_CONFIG_NOT_FOUND: 'DB config not found',
+     TRACE_FETCHING_ERROR: 'Trace fetching error',
+   })),
+ }));
+-jest.mock('@/lib/session', () => ({
+-  getCurrentUser: jest.fn(),
+-}));
+ jest.mock('@/lib/platform/common', () => ({
+   dataCollector: jest.fn(),
+   OTEL_TRACES_TABLE_NAME: 'otel_traces',
+ }));
+-jest.mock('@/lib/platform/request', () => ({
+-  getRequestViaSpanId: jest.fn(),
+-}));
+-jest.mock('@/lib/platform/traces/read', () => ({
+-  getTraceSpanRecord: (...args: unknown[]) =>
+-    require('@/lib/platform/request').getRequestViaSpanId(...args),
+-}));
+ jest.mock('@/lib/telemetry-source', () => ({
+-  resolveTelemetrySourceDescriptor: jest.fn().mockResolvedValue({
+-    type: 'clickhouse',
+-    id: 'builtin:test',
+-    isBuiltIn: true,
+-  }),
+   getTelemetryAdapterForDbConfig: jest.fn().mockResolvedValue({
+     isBuiltIn: true,
+     descriptor: { type: 'clickhouse', isBuiltIn: true },
+@@ -66,11 +49,6 @@ jest.mock('@/utils/sanitizer', () => ({
+   __esModule: true,
+   default: { sanitizeValue: jest.fn((v: string) => v) },
+ }));
+-jest.mock('@/utils/error', () => ({
+-  throwIfError: jest.fn((condition: boolean, msg: string) => {
+-    if (condition) throw new Error(msg);
+-  }),
+-}));
+ jest.mock('@/utils/asaw', () => jest.fn());
+ jest.mock('@/lib/platform/pricing/config', () => ({
+   getPricingConfigById: jest.fn(),
+@@ -81,30 +59,17 @@ jest.mock('@/lib/platform/cron-log', () => ({
+ }));
+ jest.mock('@/lib/db-config', () => ({
+   getDBConfigByIdInternal: jest.fn(),
+-  getDBConfigByUser: jest.fn(),
+ }));
+ jest.mock('date-fns', () => ({
+   differenceInSeconds: jest.fn(() => 1),
+ }));
+-// Mock dynamic import of prisma used inside setPricingForSpanId
+-jest.mock('@/lib/prisma', () => ({
+-  __esModule: true,
+-  default: {
+-    pricingConfigs: {
+-      findFirst: jest.fn().mockResolvedValue({ databaseConfigId: 'db-1' }),
+-    },
+-  },
+-}));
+ 
+-import { setPricingForSpanId, autoUpdatePricing } from '@/lib/platform/pricing';
+-import { getCurrentUser } from '@/lib/session';
++import { autoUpdatePricing } from '@/lib/platform/pricing';
+ import { dataCollector } from '@/lib/platform/common';
+-import { getRequestViaSpanId } from '@/lib/platform/request';
+ import { ProviderRegistry } from '@/lib/platform/providers/provider-registry';
+ import { getPricingConfigById } from '@/lib/platform/pricing/config';
+ import { insertCronLog } from '@/lib/platform/cron-log';
+ import getMessage from '@/constants/messages';
+-import { throwIfError } from '@/utils/error';
+ import asaw from '@/utils/asaw';
+ import Sanitizer from '@/utils/sanitizer';
+ 
+@@ -112,16 +77,10 @@ beforeEach(() => {
+   jest.resetAllMocks();
+ 
+   (getMessage as jest.Mock).mockReturnValue({
+-    UNAUTHORIZED_USER: 'Unauthorized',
+-    TRACE_NOT_FOUND: 'Trace not found',
+     DATABASE_CONFIG_NOT_FOUND: 'DB config not found',
+     TRACE_FETCHING_ERROR: 'Trace fetching error',
+   });
+ 
+-  (throwIfError as jest.Mock).mockImplementation((condition: boolean, msg: string) => {
+-    if (condition) throw new Error(msg);
+-  });
+-
+   // Re-apply Sanitizer mock after resetAllMocks (aliased module factory
+   // implementations do not survive a reset, unlike e.g. the `lodash` mock).
+   (Sanitizer.sanitizeValue as jest.Mock).mockImplementation((v: string) => v);
+@@ -129,16 +88,7 @@ beforeEach(() => {
+   // Re-apply insertCronLog mock
+   (insertCronLog as jest.Mock).mockResolvedValue({ err: null });
+ 
+-  // Re-apply prisma mock for setPricingForSpanId's dynamic import
+-  const prisma = require('@/lib/prisma').default;
+-  prisma.pricingConfigs.findFirst.mockResolvedValue({ databaseConfigId: 'db-1' });
+-
+-  const { resolveTelemetrySourceDescriptor, getTelemetryAdapterForDbConfig } = require('@/lib/telemetry-source');
+-  (resolveTelemetrySourceDescriptor as jest.Mock).mockResolvedValue({
+-    type: 'clickhouse',
+-    id: 'builtin:test',
+-    isBuiltIn: true,
+-  });
++  const { getTelemetryAdapterForDbConfig } = require('@/lib/telemetry-source');
+   (getTelemetryAdapterForDbConfig as jest.Mock).mockResolvedValue({
+     isBuiltIn: true,
+     descriptor: { type: 'clickhouse', isBuiltIn: true },
+@@ -146,314 +96,6 @@ beforeEach(() => {
+   });
+ });
+ 
+-describe('setPricingForSpanId', () => {
+-  const mockTrace = {
+-    SpanId: 'span-1',
+-    Timestamp: '2026-01-01',
+-    SpanAttributes: {
+-      'gen_ai.system': 'openai',
+-      'gen_ai.request.model': 'gpt-4o',
+-      'gen_ai.usage.input_tokens': '100',
+-      'gen_ai.usage.output_tokens': '200',
+-    },
+-  };
+-
+-  it('computes and writes cost successfully', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
+-    (getRequestViaSpanId as jest.Mock).mockResolvedValue({ record: mockTrace });
+-    (ProviderRegistry.getModel as jest.Mock).mockResolvedValue({
+-      id: 'gpt-4o',
+-      inputPricePerMToken: 2.5,
+-      outputPricePerMToken: 10.0,
+-    });
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-
+-    const result = await setPricingForSpanId('span-1');
+-
+-    expect(result.success).toBe(true);
+-    expect(result.data).toBeDefined();
+-    expect(result.data!.cost).toBeCloseTo(
+-      (100 / 1_000_000) * 2.5 + (200 / 1_000_000) * 10.0
+-    );
+-    // Should call ALTER TABLE to update the trace
+-    expect(dataCollector).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        query: expect.stringContaining('mapUpdate'),
+-      }),
+-      'exec',
+-      expect.any(String)
+-    );
+-  });
+-
+-  it('computes cost from direct input and output token attributes', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
+-    (getRequestViaSpanId as jest.Mock).mockResolvedValue({
+-      record: {
+-        SpanId: 'span-1',
+-        Timestamp: '2026-01-01',
+-        SpanAttributes: {
+-          'gen_ai.system': 'openai',
+-          'gen_ai.request.model': 'gpt-4o',
+-          input_tokens: '300',
+-          output_tokens: '400',
+-        },
+-      },
+-    });
+-    (ProviderRegistry.getModel as jest.Mock).mockResolvedValue({
+-      id: 'gpt-4o',
+-      inputPricePerMToken: 2.5,
+-      outputPricePerMToken: 10.0,
+-    });
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-
+-    const result = await setPricingForSpanId('span-1');
+-
+-    expect(result.success).toBe(true);
+-    expect(result.data!.cost).toBeCloseTo(
+-      (300 / 1_000_000) * 2.5 + (400 / 1_000_000) * 10.0
+-    );
+-  });
+-
+-  it('keeps canonical gen_ai token attributes ahead of direct fallback keys', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
+-    (getRequestViaSpanId as jest.Mock).mockResolvedValue({
+-      record: {
+-        SpanId: 'span-1',
+-        Timestamp: '2026-01-01',
+-        SpanAttributes: {
+-          'gen_ai.system': 'openai',
+-          'gen_ai.request.model': 'gpt-4o',
+-          'gen_ai.usage.input_tokens': '100',
+-          'gen_ai.usage.output_tokens': '200',
+-          input_tokens: '300',
+-          output_tokens: '400',
+-        },
+-      },
+-    });
+-    (ProviderRegistry.getModel as jest.Mock).mockResolvedValue({
+-      id: 'gpt-4o',
+-      inputPricePerMToken: 2.5,
+-      outputPricePerMToken: 10.0,
+-    });
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-
+-    const result = await setPricingForSpanId('span-1');
+-
+-    expect(result.success).toBe(true);
+-    expect(result.data!.cost).toBeCloseTo(
+-      (100 / 1_000_000) * 2.5 + (200 / 1_000_000) * 10.0
+-    );
+-  });
+-
+-  it('returns error when model not found', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
+-    (getRequestViaSpanId as jest.Mock).mockResolvedValue({ record: mockTrace });
+-    (ProviderRegistry.getModel as jest.Mock).mockResolvedValue(null);
+-
+-    const result = await setPricingForSpanId('span-1');
+-
+-    expect(result.success).toBe(false);
+-    expect(result.err).toContain('not found');
+-  });
+-
+-  it('returns error when trace has no provider', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
+-    (getRequestViaSpanId as jest.Mock).mockResolvedValue({
+-      record: {
+-        SpanId: 'span-1',
+-        Timestamp: '2026-01-01',
+-        SpanAttributes: {},
+-      },
+-    });
+-
+-    const result = await setPricingForSpanId('span-1');
+-
+-    expect(result.success).toBe(false);
+-    expect(result.err).toContain('Missing');
+-  });
+-
+-  it('returns error mentioning only "model" when provider is present but model is missing', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
+-    (getRequestViaSpanId as jest.Mock).mockResolvedValue({
+-      record: {
+-        SpanId: 'span-1',
+-        Timestamp: '2026-01-01',
+-        SpanAttributes: { 'gen_ai.system': 'openai' },
+-      },
+-    });
+-
+-    const result = await setPricingForSpanId('span-1');
+-
+-    expect(result.success).toBe(false);
+-    expect(result.err).toContain('Missing model');
+-    expect(result.err).not.toContain(' and ');
+-  });
+-
+-  it('returns error mentioning only "provider" when model is present but provider is missing', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
+-    (getRequestViaSpanId as jest.Mock).mockResolvedValue({
+-      record: {
+-        SpanId: 'span-1',
+-        Timestamp: '2026-01-01',
+-        SpanAttributes: { 'gen_ai.request.model': 'gpt-4o' },
+-      },
+-    });
+-
+-    const result = await setPricingForSpanId('span-1');
+-
+-    expect(result.success).toBe(false);
+-    expect(result.err).toContain('Missing provider');
+-    expect(result.err).not.toContain(' and ');
+-  });
+-
+-  it('handles a trace whose SpanAttributes object is entirely absent', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
+-    (getRequestViaSpanId as jest.Mock).mockResolvedValue({
+-      record: {
+-        SpanId: 'span-1',
+-        Timestamp: '2026-01-01',
+-      },
+-    });
+-
+-    const result = await setPricingForSpanId('span-1');
+-
+-    expect(result.success).toBe(false);
+-    expect(result.err).toContain('Missing');
+-    expect(result.err).toContain(' and ');
+-  });
+-
+-  it('throws when user is not authenticated', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue(null);
+-
+-    await expect(setPricingForSpanId('span-1')).rejects.toThrow('Unauthorized');
+-  });
+-
+-  it('returns error when zero tokens', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
+-    (getRequestViaSpanId as jest.Mock).mockResolvedValue({
+-      record: {
+-        SpanId: 'span-1',
+-        Timestamp: '2026-01-01',
+-        SpanAttributes: {
+-          'gen_ai.system': 'openai',
+-          'gen_ai.request.model': 'gpt-4o',
+-          'gen_ai.usage.input_tokens': '0',
+-          'gen_ai.usage.output_tokens': '0',
+-        },
+-      },
+-    });
+-
+-    const result = await setPricingForSpanId('span-1');
+-
+-    expect(result.success).toBe(false);
+-    expect(result.err).toContain('zero tokens');
+-  });
+-
+-  it('returns error when writeCostToTrace fails', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
+-    (getRequestViaSpanId as jest.Mock).mockResolvedValue({ record: mockTrace });
+-    (ProviderRegistry.getModel as jest.Mock).mockResolvedValue({
+-      id: 'gpt-4o',
+-      inputPricePerMToken: 2.5,
+-      outputPricePerMToken: 10.0,
+-    });
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: 'write failed' });
+-
+-    const result = await setPricingForSpanId('span-1');
+-
+-    expect(result.success).toBe(false);
+-    expect(result.err).toBe('write failed');
+-  });
+-
+-  it('returns DB config not found when no config + no fallback', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
+-    (getRequestViaSpanId as jest.Mock).mockResolvedValue({ record: mockTrace });
+-    const prisma = require('@/lib/prisma').default;
+-    prisma.pricingConfigs.findFirst.mockResolvedValue(null);
+-    // The fallback uses asaw(getDBConfigByUser(true)) — return null dbConfig
+-    (asaw as jest.Mock).mockResolvedValue([null, null]);
+-
+-    const result = await setPricingForSpanId('span-1');
+-
+-    expect(result.success).toBe(false);
+-    expect(result.err).toBe('DB config not found');
+-  });
+-
+-  it('falls back to the user default DB config when no pricing config row exists', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
+-    (getRequestViaSpanId as jest.Mock).mockResolvedValue({ record: mockTrace });
+-    const prisma = require('@/lib/prisma').default;
+-    prisma.pricingConfigs.findFirst.mockResolvedValue(null);
+-    // The fallback uses asaw(getDBConfigByUser(true)) — return a real dbConfig
+-    (asaw as jest.Mock).mockResolvedValue([null, { id: 'fallback-db' }]);
+-    (ProviderRegistry.getModel as jest.Mock).mockResolvedValue({
+-      id: 'gpt-4o',
+-      inputPricePerMToken: 2.5,
+-      outputPricePerMToken: 10.0,
+-    });
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-
+-    const result = await setPricingForSpanId('span-1');
+-
+-    expect(result.success).toBe(true);
+-    expect(ProviderRegistry.getModel).toHaveBeenCalledWith(
+-      'openai',
+-      'gpt-4o',
+-      'fallback-db'
+-    );
+-  });
+-
+-  it('passes environment and traceId from opts through to the routed lookup and logging', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
+-    (getRequestViaSpanId as jest.Mock).mockResolvedValue({ record: mockTrace });
+-    (ProviderRegistry.getModel as jest.Mock).mockResolvedValue({
+-      id: 'gpt-4o',
+-      inputPricePerMToken: 2.5,
+-      outputPricePerMToken: 10.0,
+-    });
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-
+-    const result = await setPricingForSpanId('span-1', {
+-      environment: 'prod',
+-      traceId: 'trace-99',
+-    });
+-
+-    expect(result.success).toBe(true);
+-    const { resolveTelemetrySourceDescriptor } = require('@/lib/telemetry-source');
+-    expect(resolveTelemetrySourceDescriptor).toHaveBeenCalledWith(
+-      expect.objectContaining({ signal: 'traces', environment: 'prod' })
+-    );
+-    expect(getRequestViaSpanId).toHaveBeenCalledWith(
+-      'span-1',
+-      expect.objectContaining({ environment: 'prod', traceId: 'trace-99' })
+-    );
+-  });
+-
+-  it('reports the cost as unpersisted when routed to a non-clickhouse, non-builtin connector', async () => {
+-    (getCurrentUser as jest.Mock).mockResolvedValue({ id: 'user-1' });
+-    (getRequestViaSpanId as jest.Mock).mockResolvedValue({ record: mockTrace });
+-    (ProviderRegistry.getModel as jest.Mock).mockResolvedValue({
+-      id: 'gpt-4o',
+-      inputPricePerMToken: 2.5,
+-      outputPricePerMToken: 10.0,
+-    });
+-    const { resolveTelemetrySourceDescriptor } = require('@/lib/telemetry-source');
+-    (resolveTelemetrySourceDescriptor as jest.Mock).mockResolvedValue({
+-      type: 'jaeger',
+-      id: 'src-1',
+-      isBuiltIn: false,
+-    });
+-
+-    const result = await setPricingForSpanId('span-1');
+-
+-    expect(result.success).toBe(true);
+-    expect(result.data!.persisted).toBe(false);
+-    expect(result.message).toContain('jaeger');
+-    // Read-only external connector: no ALTER TABLE / exec write
+-    expect(dataCollector).not.toHaveBeenCalled();
+-  });
+-});
+-
+ describe('autoUpdatePricing', () => {
+   it('persists many priced spans with one bounded mutation', async () => {
+     (getPricingConfigById as jest.Mock).mockResolvedValue({ id: 'pc-1', databaseConfigId: 'db-1' });
+diff --git a/src/client/src/__tests__/middleware/middleware.test.ts b/src/client/src/__tests__/middleware/middleware.test.ts
+index 9127f548..883650ae 100644
+--- a/src/client/src/__tests__/middleware/middleware.test.ts
++++ b/src/client/src/__tests__/middleware/middleware.test.ts
+@@ -59,9 +59,10 @@ describe('middleware', () => {
+ 
+   // Regression: pages omitted from the matcher skip auth entirely and
+   // render the playground shell while unauthenticated (APIs still 307).
+-  it('matches connectors, costs, and evaluations routes', () => {
++  it('matches connectors and evaluations routes but not the removed Costs surface', () => {
+     expect(config.matcher).toContain('/connectors');
+-    expect(config.matcher).toContain('/costs');
++    expect(config.matcher).not.toContain('/costs');
++    expect(config.matcher).not.toContain('/pricing');
+     expect(config.matcher).toContain('/evaluations');
+     expect(config.matcher).toContain('/evaluations/:path*');
+   });
+@@ -78,7 +79,7 @@ describe('middleware', () => {
+     expect(config.matcher).not.toContain('/rule-engine');
+     expect(config.matcher).toContain('/context');
+     expect(config.matcher).toContain('/context/:path*');
+-    expect(config.matcher).toContain('/pricing');
++    expect(config.matcher).not.toContain('/pricing');
+   });
+ 
+   it('does not match routes whose pages no longer exist', () => {
+diff --git a/src/client/src/__tests__/utils/breadcrumbs.test.ts b/src/client/src/__tests__/utils/breadcrumbs.test.ts
+index 12e20628..c4356c40 100644
+--- a/src/client/src/__tests__/utils/breadcrumbs.test.ts
++++ b/src/client/src/__tests__/utils/breadcrumbs.test.ts
+@@ -26,6 +26,11 @@ describe('extractRouteParams', () => {
+ });
+ 
+ describe('generatePageHeader', () => {
++  it('does not retain separate OpenLIT Costs or Pricing routes', () => {
++    expect(ROUTE_CONFIGS.some(({ regex }) => regex.test('/costs'))).toBe(false);
++    expect(ROUTE_CONFIGS.some(({ regex }) => regex.test('/pricing'))).toBe(false);
++  });
++
+   it('generates correct header for /dashboard', () => {
+     const header = generatePageHeader('/dashboard');
+     expect(header.title).toBe('Dashboard');
+@@ -68,17 +73,6 @@ describe('generatePageHeader', () => {
+     expect(header.breadcrumbs).toEqual([]);
+   });
+ 
+-  it('generates correct header for /costs', () => {
+-    const header = generatePageHeader('/costs');
+-    expect(header.title).toBe('Costs');
+-    expect(header.breadcrumbs).toEqual([]);
+-  });
+-
+-  it('generates breadcrumbs for /pricing', () => {
+-    const header = generatePageHeader('/pricing');
+-    expect(header.breadcrumbs).toContainEqual({ title: 'Costs', href: '/costs' });
+-  });
+-
+   it('generates breadcrumbs for /evaluations/settings', () => {
+     const header = generatePageHeader('/evaluations/settings');
+     expect(header.title).toBe('Evaluation Settings');
+diff --git a/src/client/src/app/(playground)/costs/page.tsx b/src/client/src/app/(playground)/costs/page.tsx
+deleted file mode 100644
+index f37fef56..00000000
+--- a/src/client/src/app/(playground)/costs/page.tsx
++++ /dev/null
+@@ -1,127 +0,0 @@
+-"use client";
+-
+-import { useCallback, useEffect, useState } from "react";
+-import { useRouter, useSearchParams } from "next/navigation";
+-import { CircleDollarSign } from "lucide-react";
+-import getMessage from "@/constants/messages";
+-import FeaturePageHeader from "@/components/(playground)/feature-page-header";
+-import Filter from "@/components/(playground)/filter";
+-import CostsAnalytics from "@/components/(playground)/costs/costs-analytics";
+-import CostsConfiguration from "@/components/(playground)/costs/costs-configuration";
+-import ManageModelsSection from "@/components/(playground)/costs/manage-models-section";
+-
+-type Tab = "analytics" | "models" | "configuration";
+-
+-const COSTS_HEADER_TONE =
+-	"border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300";
+-
+-const COSTS_PILL_TAB_ACTIVE =
+-	"border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200";
+-
+-function coerceTab(value: string | null): Tab {
+-	if (value === "configuration") return "configuration";
+-	if (value === "models") return "models";
+-	return "analytics";
+-}
+-
+-function CostsPillTab({
+-	active,
+-	label,
+-	onClick,
+-}: {
+-	active: boolean;
+-	label: string;
+-	onClick: () => void;
+-}) {
+-	return (
+-		<button
+-			type="button"
+-			onClick={onClick}
+-			aria-pressed={active}
+-			className={`inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs font-medium transition ${
+-				active
+-					? COSTS_PILL_TAB_ACTIVE
+-					: "border-stone-200 bg-stone-50 text-stone-600 hover:bg-stone-100 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300 dark:hover:bg-stone-800"
+-			}`}
+-		>
+-			<span>{label}</span>
+-		</button>
+-	);
+-}
+-
+-export default function CostsPage() {
+-	const m = getMessage();
+-	const router = useRouter();
+-	const searchParams = useSearchParams();
+-	const [activeTab, setActiveTabState] = useState<Tab>(() =>
+-		coerceTab(searchParams.get("tab"))
+-	);
+-
+-	useEffect(() => {
+-		setActiveTabState(coerceTab(searchParams.get("tab")));
+-	}, [searchParams]);
+-
+-	const setActiveTab = useCallback(
+-		(tab: Tab) => {
+-			setActiveTabState(tab);
+-			const params = new URLSearchParams(window.location.search);
+-			if (tab === "analytics") {
+-				params.delete("tab");
+-			} else {
+-				params.set("tab", tab);
+-			}
+-			const qs = params.toString();
+-			router.replace(`/costs${qs ? `?${qs}` : ""}`, { scroll: false });
+-		},
+-		[router]
+-	);
+-
+-	return (
+-		<div className="flex h-full w-full flex-col overflow-hidden">
+-			<FeaturePageHeader
+-				eyebrow={m.SIDEBAR_MONITOR}
+-				title={m.COSTS_TITLE}
+-				icon={<CircleDollarSign className="h-4 w-4" />}
+-				tone={COSTS_HEADER_TONE}
+-				actions={
+-					<div className="flex flex-wrap items-center gap-2">
+-						<CostsPillTab
+-							active={activeTab === "analytics"}
+-							label={m.COSTS_TAB_ANALYTICS}
+-							onClick={() => setActiveTab("analytics")}
+-						/>
+-						<CostsPillTab
+-							active={activeTab === "models"}
+-							label={m.COSTS_TAB_MODELS}
+-							onClick={() => setActiveTab("models")}
+-						/>
+-						<CostsPillTab
+-							active={activeTab === "configuration"}
+-							label={m.COSTS_TAB_CONFIGURATION}
+-							onClick={() => setActiveTab("configuration")}
+-						/>
+-					</div>
+-				}
+-			/>
+-
+-			{activeTab === "analytics" ? (
+-				<section className="flex min-h-0 flex-1 flex-col overflow-hidden">
+-					<div className="flex items-center justify-end border-b border-stone-200 px-4 py-2 dark:border-stone-800">
+-						<Filter />
+-					</div>
+-					<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+-						<CostsAnalytics onConfigure={() => setActiveTab("configuration")} />
+-					</div>
+-				</section>
+-			) : activeTab === "models" ? (
+-				<section className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
+-					<ManageModelsSection />
+-				</section>
+-			) : (
+-				<section className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+-					<CostsConfiguration />
+-				</section>
+-			)}
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/dashboard/costs/auto-pricing-runs.tsx b/src/client/src/app/(playground)/dashboard/costs/auto-pricing-runs.tsx
+deleted file mode 100644
+index 782fb8b4..00000000
+--- a/src/client/src/app/(playground)/dashboard/costs/auto-pricing-runs.tsx
++++ /dev/null
+@@ -1,217 +0,0 @@
+-"use client";
+-
+-import { useCallback, useEffect } from "react";
+-import { format, parseISO, isValid } from "date-fns";
+-import {
+-	Activity,
+-	BadgeCheck,
+-	CircleDollarSign,
+-	ScanSearch,
+-} from "lucide-react";
+-import StatCard from "@/components/(playground)/stat-card";
+-import { Button } from "@/components/ui/button";
+-import { Card, CardContent } from "@/components/ui/card";
+-import { Skeleton } from "@/components/ui/skeleton";
+-import getMessage from "@/constants/messages";
+-import { getFilterParamsForDashboard } from "@/helpers/client/filter";
+-import { getFilterDetails } from "@/selectors/filter";
+-import { getPingStatus } from "@/selectors/database-config";
+-import { useRootStore } from "@/store";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import type { PricingCronRunRow } from "@/lib/platform/pricing/cron-analytics";
+-
+-type PricingCronAnalyticsResponse = {
+-	data?: Array<Record<string, number>>;
+-	runs?: PricingCronRunRow[];
+-	err?: unknown;
+-};
+-
+-function formatStartedAt(value: string) {
+-	try {
+-		const date = parseISO(value.includes("T") ? value : value.replace(" ", "T"));
+-		if (!isValid(date)) return value;
+-		return format(date, "yyyy-MM-dd HH:mm:ss");
+-	} catch {
+-		return value;
+-	}
+-}
+-
+-function statusClass(status: string) {
+-	if (status === "SUCCESS") {
+-		return "text-emerald-700 dark:text-emerald-300";
+-	}
+-	if (status === "PARTIAL_SUCCESS") {
+-		return "text-amber-700 dark:text-amber-300";
+-	}
+-	if (status === "FAILURE") {
+-		return "text-red-700 dark:text-red-300";
+-	}
+-	return "text-stone-600 dark:text-stone-300";
+-}
+-
+-export default function AutoPricingRuns({
+-	onConfigure,
+-}: {
+-	onConfigure: () => void;
+-}) {
+-	const m = getMessage();
+-	const filter = useRootStore(getFilterDetails);
+-	const pingStatus = useRootStore(getPingStatus);
+-	const { data, fireRequest, isFetched, isLoading, error } =
+-		useFetchWrapper<PricingCronAnalyticsResponse>();
+-
+-	const fetchData = useCallback(() => {
+-		fireRequest({
+-			body: JSON.stringify({
+-				...getFilterParamsForDashboard(filter),
+-				limit: 25,
+-			}),
+-			requestType: "POST",
+-			url: "/api/pricing/cron-analytics",
+-		});
+-	}, [filter, fireRequest]);
+-
+-	useEffect(() => {
+-		if (filter.timeLimit.start && filter.timeLimit.end) {
+-			fetchData();
+-		}
+-	}, [filter, fetchData, pingStatus]);
+-
+-	// A failed read settles as zero runs. Offering the Enable-Auto-Pricing CTA
+-	// for that would point the operator at a setting that is not the cause.
+-	const unreadable = pingStatus === "failure" || !!error || (isFetched && !data);
+-	const loading = !unreadable && (isLoading || !isFetched || pingStatus === "pending");
+-	const runs = data?.runs || [];
+-	const summary = data?.data?.[0];
+-	const totalRuns = Number(summary?.total_runs) || 0;
+-	const summaryUrl = "/api/pricing/cron-analytics";
+-
+-	return (
+-		<div className="flex flex-col gap-3">
+-			<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+-				<StatCard
+-					dataKey="total_runs"
+-					heading={m.COSTS_STAT_CRON_RUNS}
+-					icon={Activity}
+-					url={summaryUrl}
+-					roundTo={0}
+-				/>
+-				<StatCard
+-					dataKey="successful_runs"
+-					heading={m.COSTS_STAT_CRON_SUCCESS}
+-					icon={BadgeCheck}
+-					url={summaryUrl}
+-					roundTo={0}
+-				/>
+-				<StatCard
+-					dataKey="total_updated"
+-					heading={m.COSTS_STAT_PRICING_APPLIED}
+-					icon={CircleDollarSign}
+-					url={summaryUrl}
+-					roundTo={0}
+-				/>
+-				<StatCard
+-					dataKey="total_spans"
+-					heading={m.COSTS_STAT_SPANS_SCANNED}
+-					icon={ScanSearch}
+-					url={summaryUrl}
+-					roundTo={0}
+-				/>
+-			</div>
+-
+-			<Card className="overflow-hidden border-stone-200 shadow-sm dark:border-stone-800">
+-				<CardContent className="p-0">
+-					{loading ? (
+-						<div className="p-4">
+-							<Skeleton className="h-24 w-full" />
+-						</div>
+-					) : unreadable ? (
+-						<div className="flex flex-col items-center justify-center gap-3 px-4 py-8 text-center">
+-							<p className="text-sm text-stone-500 dark:text-stone-400">
+-								{m.COSTS_CRON_TABLE_UNAVAILABLE}
+-							</p>
+-						</div>
+-					) : runs.length === 0 ? (
+-						<div className="flex flex-col items-center justify-center gap-3 px-4 py-8 text-center">
+-							<p className="text-sm text-stone-500 dark:text-stone-400">
+-								{m.COSTS_CRON_TABLE_EMPTY}
+-							</p>
+-							{totalRuns === 0 ? (
+-								<>
+-									<p className="max-w-md text-xs text-stone-500 dark:text-stone-400">
+-										{m.COSTS_CRON_TABLE_EMPTY_HINT}
+-									</p>
+-									<Button size="sm" onClick={onConfigure}>
+-										{m.COSTS_CRON_TABLE_EMPTY_CTA}
+-									</Button>
+-								</>
+-							) : null}
+-						</div>
+-					) : (
+-						<div className="overflow-x-auto">
+-							<table className="w-full text-sm">
+-								<thead>
+-									<tr className="border-y border-stone-200 text-left text-[11px] uppercase tracking-wide text-stone-500 dark:border-stone-800 dark:text-stone-400">
+-										<th className="px-4 py-2 font-medium">
+-											{m.COSTS_CRON_TABLE_STARTED}
+-										</th>
+-										<th className="px-4 py-2 font-medium">
+-											{m.COSTS_CRON_TABLE_STATUS}
+-										</th>
+-										<th className="px-4 py-2 font-medium text-right">
+-											{m.COSTS_CRON_TABLE_DURATION}
+-										</th>
+-										<th className="px-4 py-2 font-medium text-right">
+-											{m.COSTS_CRON_TABLE_UPDATED}
+-										</th>
+-										<th className="px-4 py-2 font-medium text-right">
+-											{m.COSTS_CRON_TABLE_SCANNED}
+-										</th>
+-										<th className="px-4 py-2 font-medium text-right">
+-											{m.COSTS_CRON_TABLE_SKIPPED}
+-										</th>
+-										<th className="px-4 py-2 font-medium text-right">
+-											{m.COSTS_CRON_TABLE_FAILED}
+-										</th>
+-									</tr>
+-								</thead>
+-								<tbody>
+-									{runs.map((row, index) => (
+-										<tr
+-											key={`${row.startedAt}-${index}`}
+-											className="border-b border-stone-100 hover:bg-stone-50 dark:border-stone-900 dark:hover:bg-stone-900/50"
+-										>
+-											<td className="px-4 py-2.5 tabular-nums text-stone-800 dark:text-stone-200">
+-												{formatStartedAt(row.startedAt)}
+-											</td>
+-											<td
+-												className={`px-4 py-2.5 text-xs font-medium ${statusClass(row.runStatus)}`}
+-											>
+-												{row.runStatus}
+-											</td>
+-											<td className="px-4 py-2.5 text-right tabular-nums text-stone-800 dark:text-stone-200">
+-												{row.duration.toLocaleString()}s
+-											</td>
+-											<td className="px-4 py-2.5 text-right tabular-nums font-medium text-stone-900 dark:text-stone-100">
+-												{row.totalUpdated.toLocaleString()}
+-											</td>
+-											<td className="px-4 py-2.5 text-right tabular-nums text-stone-800 dark:text-stone-200">
+-												{row.totalSpans.toLocaleString()}
+-											</td>
+-											<td className="px-4 py-2.5 text-right tabular-nums text-stone-800 dark:text-stone-200">
+-												{row.totalSkipped.toLocaleString()}
+-											</td>
+-											<td className="px-4 py-2.5 text-right tabular-nums text-stone-800 dark:text-stone-200">
+-												{row.totalFailed.toLocaleString()}
+-											</td>
+-										</tr>
+-									))}
+-								</tbody>
+-							</table>
+-						</div>
+-					)}
+-				</CardContent>
+-			</Card>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/dashboard/costs/cost-per-time.tsx b/src/client/src/app/(playground)/dashboard/costs/cost-per-time.tsx
+deleted file mode 100644
+index 16be0469..00000000
+--- a/src/client/src/app/(playground)/dashboard/costs/cost-per-time.tsx
++++ /dev/null
+@@ -1,106 +0,0 @@
+-"use client";
+-
+-import { useCallback, useEffect } from "react";
+-import {
+-	LineChart,
+-	Line,
+-	XAxis,
+-	YAxis,
+-	CartesianGrid,
+-	Tooltip,
+-	ResponsiveContainer,
+-} from "recharts";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { useRootStore } from "@/store";
+-import { getFilterDetails } from "@/selectors/filter";
+-import { getPingStatus } from "@/selectors/database-config";
+-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+-import { COLORS } from "../../../../../styles/colors";
+-import IntermediateState from "@/components/(playground)/intermediate-state";
+-import { getFilterParamsForDashboard } from "@/helpers/client/filter";
+-import getMessage from "@/constants/messages";
+-
+-export default function CostsPerTime() {
+-	const m = getMessage();
+-	const filter = useRootStore(getFilterDetails);
+-	const pingStatus = useRootStore(getPingStatus);
+-	const { data, fireRequest, isFetched, isLoading, error } = useFetchWrapper();
+-
+-	const fetchData = useCallback(async () => {
+-		fireRequest({
+-			body: JSON.stringify(getFilterParamsForDashboard(filter)),
+-			requestType: "POST",
+-			url: "/api/metrics/llm/cost/time",
+-			responseDataKey: "data",
+-		});
+-	}, [filter, fireRequest]);
+-
+-	// The ping is a pre-flight, not a precondition for the data; see the note in
+-	// stat-card.tsx for what gating on it cost.
+-	useEffect(() => {
+-		if (filter.timeLimit.start && filter.timeLimit.end) {
+-			fetchData();
+-		}
+-	}, [filter, fetchData]);
+-
+-	const chartData = ((data as { request_time?: string; cost?: number }[]) || []).map(
+-		(row) => ({
+-			request_time: row.request_time,
+-			cost: Number(row.cost) || 0,
+-		})
+-	);
+-
+-	// A failed read is not an empty one: the 'No data to display' branch covered both.
+-	const unreadable = pingStatus === "failure" || !!error || (isFetched && !data);
+-	const isLoadingData = !unreadable && (isLoading || !isFetched);
+-
+-	return (
+-		<Card>
+-			<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+-				<CardTitle className="text-sm font-medium text-stone-950 dark:text-stone-100">
+-					{m.COSTS_CHART_OVER_TIME}
+-				</CardTitle>
+-			</CardHeader>
+-			<CardContent>
+-				<ResponsiveContainer className="h-40" width="100%" height={160}>
+-					{unreadable ? (
+-						<div
+-							role="alert"
+-							className="flex h-40 w-full items-center justify-center text-sm text-stone-500 dark:text-stone-400"
+-						>
+-							Unavailable
+-						</div>
+-					) : isLoadingData ? (
+-						<IntermediateState type="loading" classNames="h-40" />
+-					) : chartData.length === 0 ? (
+-						<IntermediateState type="nodata" classNames="h-40" />
+-					) : (
+-						<LineChart
+-							data={chartData}
+-							margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+-						>
+-							<CartesianGrid strokeDasharray="3 3" />
+-							<XAxis
+-								dataKey="request_time"
+-								className="text-xs stroke-stone-300"
+-								stroke="currentColor"
+-							/>
+-							<YAxis
+-								className="text-xs stroke-stone-300"
+-								stroke="currentColor"
+-								domain={[0, "dataMax + 0.01"]}
+-							/>
+-							<Tooltip labelClassName="dark:text-stone-700" />
+-							<Line
+-								type="monotone"
+-								dataKey="cost"
+-								stroke={`${COLORS.primary}`}
+-								activeDot={{ r: 4 }}
+-							/>
+-						</LineChart>
+-					)}
+-				</ResponsiveContainer>
+-			</CardContent>
+-		</Card>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/dashboard/costs/index.tsx b/src/client/src/app/(playground)/dashboard/costs/index.tsx
+deleted file mode 100644
+index 771f2f6d..00000000
+--- a/src/client/src/app/(playground)/dashboard/costs/index.tsx
++++ /dev/null
+@@ -1,43 +0,0 @@
+-"use client";
+-
+-import CostsNumberStats from "@/app/(playground)/dashboard/costs/number-stats";
+-import CostsUsageCharts from "@/app/(playground)/dashboard/costs/usage-charts";
+-import CostsOptimizationCharts from "@/app/(playground)/dashboard/costs/optimization-charts";
+-import CostsPerTime from "@/app/(playground)/dashboard/costs/cost-per-time";
+-import AutoPricingRuns from "@/app/(playground)/dashboard/costs/auto-pricing-runs";
+-import CostsAutoPricingBanner from "@/components/(playground)/costs/costs-auto-pricing-banner";
+-import getMessage from "@/constants/messages";
+-
+-export default function CostsDashboard({
+-	onConfigure,
+-}: {
+-	onConfigure: () => void;
+-}) {
+-	const m = getMessage();
+-
+-	return (
+-		<div className="flex flex-col gap-6 w-full">
+-			<CostsAutoPricingBanner onConfigure={onConfigure} />
+-			<section className="flex flex-col gap-3">
+-				<h2 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+-					{m.COSTS_USAGE_SECTION}
+-				</h2>
+-				<CostsNumberStats />
+-				<CostsUsageCharts />
+-			</section>
+-			<section className="flex flex-col gap-3">
+-				<h2 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+-					{m.COSTS_AUTO_PRICING_SECTION}
+-				</h2>
+-				<AutoPricingRuns onConfigure={onConfigure} />
+-			</section>
+-			<section className="flex flex-col gap-3">
+-				<h2 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+-					{m.COSTS_OPTIMIZATION_SECTION}
+-				</h2>
+-				<CostsPerTime />
+-				<CostsOptimizationCharts />
+-			</section>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/dashboard/costs/number-stats.tsx b/src/client/src/app/(playground)/dashboard/costs/number-stats.tsx
+deleted file mode 100644
+index 41606a7a..00000000
+--- a/src/client/src/app/(playground)/dashboard/costs/number-stats.tsx
++++ /dev/null
+@@ -1,72 +0,0 @@
+-"use client";
+-
+-import StatCard from "@/components/(playground)/stat-card";
+-import getMessage from "@/constants/messages";
+-import {
+-	Banknote,
+-	Bot,
+-	CircleDollarSign,
+-	FlaskConical,
+-	Layers,
+-	RadioTower,
+-} from "lucide-react";
+-
+-export default function CostsNumberStats() {
+-	const m = getMessage();
+-	const summaryUrl = "/api/metrics/cost/summary";
+-
+-	return (
+-		<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4">
+-			<StatCard
+-				dataKey="total_platform_cost"
+-				heading={m.COSTS_STAT_TOTAL_PLATFORM}
+-				icon={CircleDollarSign}
+-				url={summaryUrl}
+-				textPrefix="$"
+-				roundTo={7}
+-			/>
+-			<StatCard
+-				dataKey="llm_cost"
+-				heading={m.COSTS_STAT_LLM}
+-				icon={Layers}
+-				url={summaryUrl}
+-				textPrefix="$"
+-				roundTo={7}
+-			/>
+-			<StatCard
+-				dataKey="coding_agents_cost"
+-				heading={m.COSTS_STAT_CODING_AGENTS}
+-				icon={Bot}
+-				url={summaryUrl}
+-				textPrefix="$"
+-				roundTo={7}
+-			/>
+-			<StatCard
+-				dataKey="evaluations_cost"
+-				heading={m.COSTS_STAT_EVALUATIONS}
+-				icon={FlaskConical}
+-				url={summaryUrl}
+-				textPrefix="$"
+-				roundTo={7}
+-			/>
+-			<StatCard
+-				dataKey="total_requests"
+-				extraParams={{
+-					operationType: "llm",
+-				}}
+-				heading={m.COSTS_STAT_TOTAL_REQUESTS}
+-				icon={RadioTower}
+-				url="/api/metrics/request/total"
+-				roundTo={0}
+-			/>
+-			<StatCard
+-				dataKey="average_usage_cost"
+-				heading={m.COSTS_STAT_AVG_REQUEST}
+-				icon={Banknote}
+-				url="/api/metrics/llm/cost/request/average"
+-				textPrefix="$"
+-				roundTo={7}
+-			/>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/dashboard/costs/optimization-charts.tsx b/src/client/src/app/(playground)/dashboard/costs/optimization-charts.tsx
+deleted file mode 100644
+index 1d4e0f93..00000000
+--- a/src/client/src/app/(playground)/dashboard/costs/optimization-charts.tsx
++++ /dev/null
+@@ -1,25 +0,0 @@
+-"use client";
+-
+-import PieChartCard from "@/components/(playground)/pie-chart-card";
+-import getMessage from "@/constants/messages";
+-
+-export default function CostsOptimizationCharts() {
+-	const m = getMessage();
+-
+-	return (
+-		<div className="grid gap-4 md:grid-cols-2">
+-			<PieChartCard
+-				categoryKey="cost"
+-				heading={m.COSTS_CHART_BY_PROVIDER}
+-				indexKey="provider"
+-				url="/api/metrics/llm/cost/provider"
+-			/>
+-			<PieChartCard
+-				categoryKey="cost"
+-				heading={m.COSTS_CHART_BY_MODEL}
+-				indexKey="model"
+-				url="/api/metrics/llm/cost/model"
+-			/>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/dashboard/costs/usage-charts.tsx b/src/client/src/app/(playground)/dashboard/costs/usage-charts.tsx
+deleted file mode 100644
+index 1752302b..00000000
+--- a/src/client/src/app/(playground)/dashboard/costs/usage-charts.tsx
++++ /dev/null
+@@ -1,25 +0,0 @@
+-"use client";
+-
+-import PieChartCard from "@/components/(playground)/pie-chart-card";
+-import getMessage from "@/constants/messages";
+-
+-export default function CostsUsageCharts() {
+-	const m = getMessage();
+-
+-	return (
+-		<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2">
+-			<PieChartCard
+-				categoryKey="cost"
+-				heading={m.COSTS_CHART_BY_ENVIRONMENT}
+-				indexKey="environment"
+-				url="/api/metrics/llm/cost/environment"
+-			/>
+-			<PieChartCard
+-				categoryKey="cost"
+-				heading={m.COSTS_CHART_BY_APPLICATION}
+-				indexKey="applicationName"
+-				url="/api/metrics/llm/cost/application"
+-			/>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/pricing/page.tsx b/src/client/src/app/(playground)/pricing/page.tsx
+deleted file mode 100644
+index 1b82fb69..00000000
+--- a/src/client/src/app/(playground)/pricing/page.tsx
++++ /dev/null
+@@ -1,14 +0,0 @@
+-"use client";
+-
+-import { useEffect } from "react";
+-import { useRouter } from "next/navigation";
+-
+-export default function PricingRedirectPage() {
+-	const router = useRouter();
+-
+-	useEffect(() => {
+-		router.replace("/costs?tab=configuration");
+-	}, [router]);
+-
+-	return null;
+-}
+diff --git a/src/client/src/app/api/pricing/[spanId]/route.ts b/src/client/src/app/api/pricing/[spanId]/route.ts
+deleted file mode 100644
+index 3496969e..00000000
+--- a/src/client/src/app/api/pricing/[spanId]/route.ts
++++ /dev/null
+@@ -1,22 +0,0 @@
+-import { setPricingForSpanId } from "@/lib/platform/pricing";
+-import asaw from "@/utils/asaw";
+-
+-export async function POST(
+-	request: Request,
+-	{ params }: { params: { spanId: string } }
+-) {
+-	const { spanId } = params;
+-	const url = new URL(request.url);
+-	const [err, res] = await asaw(
+-		setPricingForSpanId(spanId, {
+-			environment: url.searchParams.get("environment") || undefined,
+-			traceId: url.searchParams.get("traceId") || undefined,
+-		})
+-	);
+-
+-	if (err) {
+-		return Response.json({ success: false, err: err.message || String(err) }, { status: 400 });
+-	}
+-
+-	return Response.json(res);
+-}
+diff --git a/src/client/src/app/api/pricing/config/route.ts b/src/client/src/app/api/pricing/config/route.ts
+deleted file mode 100644
+index a4be61d0..00000000
+--- a/src/client/src/app/api/pricing/config/route.ts
++++ /dev/null
+@@ -1,47 +0,0 @@
+-import { withAudit } from "@/lib/audit/route";
+-import {
+-	getPricingConfig,
+-	setPricingConfig,
+-	PricingConfigInput,
+-} from "@/lib/platform/pricing/config";
+-import { SERVER_EVENTS } from "@/constants/events";
+-import PostHogServer from "@/lib/posthog";
+-import { NextRequest } from "next/server";
+-import asaw from "@/utils/asaw";
+-
+-async function GETHandler(_: NextRequest) {
+-	const config = await getPricingConfig();
+-	return Response.json({ data: config });
+-}
+-
+-async function POSTHandler(request: NextRequest) {
+-	const startTimestamp = Date.now();
+-	const formData = await request.json();
+-	const pricingConfig: PricingConfigInput = {
+-		id: formData.id,
+-		auto: !!formData.auto,
+-		recurringTime: formData.recurringTime || "",
+-		meta: formData.meta || "{}",
+-	};
+-
+-	const [err, data] = await asaw(
+-		setPricingConfig(pricingConfig, request.nextUrl.origin)
+-	);
+-
+-	if (err) {
+-		return Response.json(err, { status: 400 });
+-	}
+-
+-	// Anonymous feature-adoption signal: whether auto-pricing is enabled.
+-	// Boolean only — never the pricing table, API keys, or provider secrets.
+-	PostHogServer.fireEvent({
+-		event: SERVER_EVENTS.PRICING_CONFIG_UPDATED,
+-		properties: { auto: pricingConfig.auto },
+-		startTimestamp,
+-	});
+-
+-	return Response.json({ data });
+-}
+-
+-export const GET = GETHandler;
+-export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/pricing/cron-analytics/route.ts b/src/client/src/app/api/pricing/cron-analytics/route.ts
+deleted file mode 100644
+index 8990fb45..00000000
+--- a/src/client/src/app/api/pricing/cron-analytics/route.ts
++++ /dev/null
+@@ -1,35 +0,0 @@
+-import { MetricParams, TimeLimit } from "@/lib/platform/common";
+-import { getPricingCronAnalytics } from "@/lib/platform/pricing/cron-analytics";
+-import {
+-	validateMetricsRequest,
+-	validateMetricsRequestType,
+-} from "@/helpers/server/platform";
+-
+-export async function POST(request: Request) {
+-	let formData: Record<string, unknown>;
+-	try {
+-		formData = await request.json();
+-	} catch {
+-		return Response.json("Invalid JSON body", { status: 400 });
+-	}
+-
+-	const timeLimit = formData.timeLimit as TimeLimit;
+-	const params: MetricParams = {
+-		timeLimit,
+-		selectedConfig: formData.selectedConfig,
+-	};
+-
+-	const validationParam = validateMetricsRequest(
+-		params,
+-		validateMetricsRequestType.TOTAL_COST
+-	);
+-
+-	if (!validationParam.success) {
+-		return Response.json(validationParam.err, { status: 400 });
+-	}
+-
+-	const limit =
+-		typeof formData.limit === "number" ? formData.limit : undefined;
+-	const res = await getPricingCronAnalytics(params, { limit });
+-	return Response.json(res);
+-}
+diff --git a/src/client/src/app/api/pricing/export/[dbConfigId]/route.ts b/src/client/src/app/api/pricing/export/[dbConfigId]/route.ts
+deleted file mode 100644
+index e9ad10fa..00000000
+--- a/src/client/src/app/api/pricing/export/[dbConfigId]/route.ts
++++ /dev/null
+@@ -1,35 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import { withAudit } from "@/lib/audit/route";
+-import { getPricingExport } from "@/lib/platform/pricing/export";
+-
+-/**
+- * GET /api/pricing/export/[dbConfigId]
+- *
+- * Public (no auth required) endpoint that returns all model pricing in the
+- * OpenLIT SDK `pricing_json` format. The URL is unique per database config
+- * and can be shared / used in SDK init:
+- *
+- *   openlit.init(pricing_json="http://localhost:3000/api/pricing/export/<dbConfigId>")
+- *
+- * withAudit is a no-op pass-through here; enterprise editions resolve it to a
+- * real audit check.
+- */
+-async function GETHandler(
+-	_request: NextRequest,
+-	{ params }: { params: { dbConfigId: string } }
+-) {
+-	const { dbConfigId } = params;
+-	const result = await getPricingExport(dbConfigId);
+-
+-	if ("error" in result) {
+-		return NextResponse.json({ error: result.error }, { status: result.status });
+-	}
+-
+-	return NextResponse.json(result.data, {
+-		headers: {
+-			"Cache-Control": "public, max-age=300",
+-		},
+-	});
+-}
+-
+-export const GET = withAudit(GETHandler);
+diff --git a/src/client/src/app/api/pricing/guidance/route.ts b/src/client/src/app/api/pricing/guidance/route.ts
+deleted file mode 100644
+index 6f0ac7e6..00000000
+--- a/src/client/src/app/api/pricing/guidance/route.ts
++++ /dev/null
+@@ -1,33 +0,0 @@
+-import { MetricParams, TimeLimit } from "@/lib/platform/common";
+-import { getCostPricingGuidance } from "@/lib/platform/pricing/guidance";
+-import {
+-	validateMetricsRequest,
+-	validateMetricsRequestType,
+-} from "@/helpers/server/platform";
+-
+-export async function POST(request: Request) {
+-	let formData: Record<string, unknown>;
+-	try {
+-		formData = await request.json();
+-	} catch {
+-		return Response.json("Invalid JSON body", { status: 400 });
+-	}
+-
+-	const timeLimit = formData.timeLimit as TimeLimit;
+-	const params: MetricParams = {
+-		timeLimit,
+-		selectedConfig: formData.selectedConfig,
+-	};
+-
+-	const validationParam = validateMetricsRequest(
+-		params,
+-		validateMetricsRequestType.TOTAL_COST
+-	);
+-
+-	if (!validationParam.success) {
+-		return Response.json(validationParam.err, { status: 400 });
+-	}
+-
+-	const data = await getCostPricingGuidance(params);
+-	return Response.json({ data });
+-}
+diff --git a/src/client/src/components/(playground)/clickhouse-connectivity-wrapper.tsx b/src/client/src/components/(playground)/clickhouse-connectivity-wrapper.tsx
+index 89d57223..1dbfa1e7 100644
+--- a/src/client/src/components/(playground)/clickhouse-connectivity-wrapper.tsx
++++ b/src/client/src/components/(playground)/clickhouse-connectivity-wrapper.tsx
+@@ -11,7 +11,7 @@ import { DatabaseZap, ExternalLink, RefreshCw } from "lucide-react";
+ // that could show the alert, and that list outlived the products it named:
+ // `/home`, `/exceptions`, `/d/<uuid>`, `/vault`, `/dashboards*` and
+ // `/observability*` were all removed while they stayed on it, and the pages
+-// that actually consume ClickHouse — `/evaluations`, `/costs`, `/memory` — were
++// that actually consume ClickHouse — `/evaluations`, `/memory` — were
+ // not on it. The banner therefore stayed silent on exactly the surfaces its
+ // own text describes as unavailable. A dead connector is a global condition,
+ // so the alert renders wherever the shell renders.
+diff --git a/src/client/src/components/(playground)/costs/costs-analytics.tsx b/src/client/src/components/(playground)/costs/costs-analytics.tsx
+deleted file mode 100644
+index a22052ba..00000000
+--- a/src/client/src/components/(playground)/costs/costs-analytics.tsx
++++ /dev/null
+@@ -1,11 +0,0 @@
+-"use client";
+-
+-import CostsDashboard from "@/app/(playground)/dashboard/costs";
+-
+-export default function CostsAnalytics({
+-	onConfigure,
+-}: {
+-	onConfigure: () => void;
+-}) {
+-	return <CostsDashboard onConfigure={onConfigure} />;
+-}
+diff --git a/src/client/src/components/(playground)/costs/costs-auto-pricing-banner.tsx b/src/client/src/components/(playground)/costs/costs-auto-pricing-banner.tsx
+deleted file mode 100644
+index 0ec921df..00000000
+--- a/src/client/src/components/(playground)/costs/costs-auto-pricing-banner.tsx
++++ /dev/null
+@@ -1,77 +0,0 @@
+-"use client";
+-
+-import { useCallback, useEffect } from "react";
+-import { Info } from "lucide-react";
+-import { Button } from "@/components/ui/button";
+-import getMessage from "@/constants/messages";
+-import { getFilterParamsForDashboard } from "@/helpers/client/filter";
+-import { getFilterDetails } from "@/selectors/filter";
+-import { getPingStatus } from "@/selectors/database-config";
+-import { useRootStore } from "@/store";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import type { CostPricingGuidance } from "@/lib/platform/pricing/guidance";
+-
+-export default function CostsAutoPricingBanner({
+-	onConfigure,
+-}: {
+-	onConfigure: () => void;
+-}) {
+-	const m = getMessage();
+-	const filter = useRootStore(getFilterDetails);
+-	const pingStatus = useRootStore(getPingStatus);
+-	const { data, fireRequest, isFetched, isLoading } =
+-		useFetchWrapper<CostPricingGuidance>();
+-
+-	const fetchData = useCallback(() => {
+-		fireRequest({
+-			body: JSON.stringify(getFilterParamsForDashboard(filter)),
+-			requestType: "POST",
+-			url: "/api/pricing/guidance",
+-			responseDataKey: "data",
+-		});
+-	}, [filter, fireRequest]);
+-
+-	useEffect(() => {
+-		if (
+-			filter.timeLimit.start &&
+-			filter.timeLimit.end
+-		) {
+-			fetchData();
+-		}
+-	}, [filter, fetchData, pingStatus]);
+-
+-	if (isLoading || !isFetched || pingStatus === "pending") {
+-		return null;
+-	}
+-
+-	if (!data?.showBackfillBanner) {
+-		return null;
+-	}
+-
+-	return (
+-		<div className="flex flex-col gap-3 rounded-md border border-emerald-200 bg-emerald-50/60 px-4 py-3 dark:border-emerald-900/70 dark:bg-emerald-950/30 sm:flex-row sm:items-center sm:justify-between">
+-			<div className="flex items-start gap-3 min-w-0">
+-				<Info className="mt-0.5 size-4 shrink-0 text-emerald-700 dark:text-emerald-300" />
+-				<div className="min-w-0">
+-					<p className="text-sm font-medium text-stone-900 dark:text-stone-100">
+-						{m.COSTS_BACKFILL_BANNER_TITLE}
+-					</p>
+-					<p className="mt-0.5 text-xs text-stone-600 dark:text-stone-400">
+-						{m.COSTS_BACKFILL_BANNER_DESCRIPTION}
+-					</p>
+-					<p className="mt-1 text-xs tabular-nums text-emerald-800 dark:text-emerald-200">
+-						{data.missingCostSpans.toLocaleString()}{" "}
+-						{m.COSTS_BACKFILL_BANNER_COUNT}
+-					</p>
+-				</div>
+-			</div>
+-			<Button
+-				size="sm"
+-				className="shrink-0"
+-				onClick={onConfigure}
+-			>
+-				{m.COSTS_BACKFILL_BANNER_CTA}
+-			</Button>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/costs/costs-configuration.tsx b/src/client/src/components/(playground)/costs/costs-configuration.tsx
+deleted file mode 100644
+index ef654f12..00000000
+--- a/src/client/src/components/(playground)/costs/costs-configuration.tsx
++++ /dev/null
+@@ -1,208 +0,0 @@
+-"use client";
+-
+-import { Button } from "@/components/ui/button";
+-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+-import { Input } from "@/components/ui/input";
+-import { Label } from "@/components/ui/label";
+-import { Switch } from "@/components/ui/switch";
+-import getMessage from "@/constants/messages";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { Clock, Info, Play, Workflow, Zap } from "lucide-react";
+-import Link from "next/link";
+-import { useEffect, useState } from "react";
+-import { toast } from "sonner";
+-
+-interface PricingConfig {
+-	id?: string;
+-	auto?: boolean;
+-	recurringTime?: string;
+-	meta?: string;
+-}
+-
+-const PRICING_TOAST_ID = "pricing-config";
+-
+-export default function CostsConfiguration() {
+-	const m = getMessage();
+-	const [autoPricing, setAutoPricing] = useState(false);
+-	const [recurringTime, setRecurringTime] = useState("");
+-
+-	const {
+-		fireRequest: getConfig,
+-		data: config,
+-		isLoading: isLoadingConfig,
+-	} = useFetchWrapper<PricingConfig>();
+-	const { fireRequest: saveConfig, isLoading: isSaving } = useFetchWrapper();
+-
+-	useEffect(() => {
+-		getConfig({
+-			requestType: "GET",
+-			url: "/api/pricing/config",
+-			responseDataKey: "data",
+-		});
+-	}, []);
+-
+-	useEffect(() => {
+-		if (config) {
+-			setAutoPricing(config.auto || false);
+-			setRecurringTime(config.recurringTime || "");
+-		}
+-	}, [config]);
+-
+-	const handleSave = () => {
+-		toast.loading(m.SAVING, { id: PRICING_TOAST_ID });
+-
+-		saveConfig({
+-			body: JSON.stringify({
+-				id: config?.id,
+-				auto: autoPricing,
+-				recurringTime: recurringTime || "* * * * *",
+-				meta: config?.meta || "{}",
+-			}),
+-			requestType: "POST",
+-			url: "/api/pricing/config",
+-			responseDataKey: "data",
+-			successCb: () => {
+-				toast.success(m.PRICING_CONFIG_SAVED, { id: PRICING_TOAST_ID });
+-				getConfig({
+-					requestType: "GET",
+-					url: "/api/pricing/config",
+-					responseDataKey: "data",
+-				});
+-			},
+-			failureCb: (err?: string) => {
+-				toast.error(err || m.OPERATION_FAILED, {
+-					id: PRICING_TOAST_ID,
+-				});
+-			},
+-		});
+-	};
+-
+-	if (isLoadingConfig && !config) {
+-		return (
+-			<div className="animate-pulse grid gap-4 w-full max-w-3xl">
+-				<div className="h-40 bg-stone-100 dark:bg-stone-900" />
+-			</div>
+-		);
+-	}
+-
+-	return (
+-		<div className="flex flex-col w-full gap-4">
+-			<Card className="border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/20">
+-				<CardContent className="py-3">
+-					<div className="flex items-start gap-3">
+-						<Info className="size-4 text-blue-600 dark:text-blue-500 shrink-0 mt-0.5" />
+-						<p className="text-xs text-stone-600 dark:text-stone-400 leading-relaxed">
+-							{m.PRICING_INFO_BAR}{" "}
+-							<Link
+-								href="/costs?tab=models"
+-								className="font-medium text-stone-700 dark:text-stone-300 underline"
+-							>
+-								{m.MANAGE_MODELS_TITLE}
+-							</Link>
+-							.
+-						</p>
+-					</div>
+-				</CardContent>
+-			</Card>
+-
+-			<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+-				<Card className="border-stone-200 dark:border-stone-800 shadow-sm flex flex-col">
+-					<CardHeader className="pb-4">
+-						<CardTitle className="text-base flex items-center gap-2">
+-							<Zap className="size-4" />
+-							{m.PRICING_AUTO_TITLE}
+-						</CardTitle>
+-						<p className="text-sm text-stone-500 dark:text-stone-400 font-normal">
+-							{m.PRICING_AUTO_DESCRIPTION}
+-						</p>
+-					</CardHeader>
+-					<CardContent className="space-y-4 flex-1">
+-						<div className="flex items-center justify-between rounded-lg border border-stone-200 dark:border-stone-700 p-4">
+-							<div className="space-y-0.5">
+-								<Label>{m.PRICING_AUTO_ENABLE_LABEL}</Label>
+-								<p className="text-xs text-stone-500 dark:text-stone-400">
+-									{m.PRICING_AUTO_ENABLE_HINT}
+-								</p>
+-							</div>
+-							<Switch
+-								checked={autoPricing}
+-								onCheckedChange={setAutoPricing}
+-							/>
+-						</div>
+-						{autoPricing && (
+-							<div className="grid gap-3">
+-								<Label className="flex items-center gap-2">
+-									<Clock className="size-3.5" />
+-									{m.PRICING_AUTO_CRON_LABEL}
+-								</Label>
+-								<Input
+-									placeholder={m.PRICING_AUTO_CRON_PLACEHOLDER}
+-									value={recurringTime}
+-									onChange={(e) => setRecurringTime(e.target.value)}
+-								/>
+-								<p className="text-xs text-stone-500 dark:text-stone-400">
+-									{m.PRICING_AUTO_CRON_HELP}
+-								</p>
+-							</div>
+-						)}
+-						<Button
+-							onClick={handleSave}
+-							disabled={isSaving}
+-							className="bg-primary dark:bg-primary text-white dark:text-white hover:bg-primary/90 dark:hover:bg-primary/90"
+-						>
+-							{isSaving
+-								? m.SAVING
+-								: config?.id
+-									? m.PRICING_UPDATE
+-									: m.PRICING_SAVE}
+-						</Button>
+-					</CardContent>
+-				</Card>
+-
+-				<Card className="border-stone-200 dark:border-stone-800 shadow-sm flex flex-col">
+-					<CardHeader className="pb-4">
+-						<CardTitle className="text-base flex items-center gap-2">
+-							<Play className="size-4" />
+-							{m.PRICING_MANUAL_TITLE}
+-						</CardTitle>
+-						<p className="text-sm text-stone-500 dark:text-stone-400 font-normal">
+-							{m.PRICING_MANUAL_DESCRIPTION}
+-						</p>
+-					</CardHeader>
+-					<CardContent className="space-y-4 flex-1">
+-						<ol className="list-decimal list-inside space-y-2 text-sm text-stone-600 dark:text-stone-400">
+-							<li>{m.PRICING_MANUAL_STEP_1}</li>
+-							<li>{m.PRICING_MANUAL_STEP_2}</li>
+-							<li>{m.PRICING_MANUAL_STEP_3}</li>
+-						</ol>
+-						<Link href="/telemetry" className="mt-3 inline-block">
+-							<Button variant="default">{m.PRICING_GO_TO_TRACES}</Button>
+-						</Link>
+-					</CardContent>
+-				</Card>
+-			</div>
+-
+-			<Card className="border-stone-200 dark:border-stone-800 shadow-sm">
+-				<CardHeader className="pb-3">
+-					<CardTitle className="text-base flex items-center gap-2">
+-						<Workflow className="size-4" />
+-						{m.PRICING_HOW_AUTO_WORKS_TITLE}
+-					</CardTitle>
+-					<p className="text-sm text-stone-500 dark:text-stone-400 font-normal">
+-						{m.PRICING_HOW_AUTO_WORKS_DESCRIPTION}
+-					</p>
+-				</CardHeader>
+-				<CardContent>
+-					<ol className="list-decimal list-inside space-y-2 text-sm text-stone-600 dark:text-stone-400 marker:text-stone-400">
+-						<li>{m.PRICING_HOW_AUTO_WORKS_STEP_1}</li>
+-						<li>{m.PRICING_HOW_AUTO_WORKS_STEP_2}</li>
+-						<li>{m.PRICING_HOW_AUTO_WORKS_STEP_3}</li>
+-						<li>{m.PRICING_HOW_AUTO_WORKS_STEP_4}</li>
+-						<li>{m.PRICING_HOW_AUTO_WORKS_STEP_5}</li>
+-						<li>{m.PRICING_HOW_AUTO_WORKS_STEP_6}</li>
+-					</ol>
+-				</CardContent>
+-			</Card>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/costs/manage-models-section.tsx b/src/client/src/components/(playground)/costs/manage-models-section.tsx
+deleted file mode 100644
+index cbf22fd2..00000000
+--- a/src/client/src/components/(playground)/costs/manage-models-section.tsx
++++ /dev/null
+@@ -1,406 +0,0 @@
+-"use client";
+-
+-import { useState, useEffect, useMemo } from "react";
+-import { usePostHog } from "posthog-js/react";
+-import { CLIENT_EVENTS } from "@/constants/events";
+-import { Button } from "@/components/ui/button";
+-import {
+-	SettingsIcon,
+-	Download,
+-	Upload,
+-	Copy,
+-	Link as LinkIcon,
+-	Code2,
+-	PlusCircle,
+-} from "lucide-react";
+-import getMessage from "@/constants/messages";
+-import ModelListSidebar from "@/components/(playground)/models/model-list-sidebar";
+-import ModelEditorPanel from "@/components/(playground)/models/model-editor-panel";
+-import SdkUsageDialog from "@/components/(playground)/models/sdk-usage-dialog";
+-import ProviderEditorDialog, {
+-	ProviderFormData,
+-} from "@/components/(playground)/models/provider-editor-dialog";
+-import { ProviderMetadata, ModelMetadata } from "@/types/providers";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import {
+-	Dialog,
+-	DialogContent,
+-	DialogDescription,
+-	DialogFooter,
+-	DialogHeader,
+-	DialogTitle,
+-} from "@/components/ui/dialog";
+-import { Textarea } from "@/components/ui/textarea";
+-import { toast } from "sonner";
+-import { useRootStore } from "@/store";
+-import { getDatabaseConfigList } from "@/selectors/database-config";
+-import { Input } from "@/components/ui/input";
+-import copy from "copy-to-clipboard";
+-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+-
+-interface CustomModel extends ModelMetadata {
+-	id: string;
+-	customId?: string;
+-	model_id: string;
+-	provider?: string;
+-	modelType?: string;
+-}
+-
+-export default function ManageModelsSection() {
+-	const m = getMessage();
+-	const posthog = usePostHog();
+-	const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
+-	const [selectedModel, setSelectedModel] = useState<ModelMetadata | null>(null);
+-	const [isCustomModel, setIsCustomModel] = useState(false);
+-	const [isAddingNew, setIsAddingNew] = useState(false);
+-	const [showImport, setShowImport] = useState(false);
+-	const [showSdkUsage, setShowSdkUsage] = useState(false);
+-	const [showProviderEditor, setShowProviderEditor] = useState(false);
+-	const [editingProvider, setEditingProvider] = useState<ProviderFormData | null>(null);
+-	const [importJson, setImportJson] = useState("");
+-
+-	const databaseConfigListRaw = useRootStore(getDatabaseConfigList);
+-	const databaseConfigList = Array.isArray(databaseConfigListRaw)
+-		? databaseConfigListRaw
+-		: [];
+-	const activeDbConfig = useMemo(
+-		() => databaseConfigList.find((item) => !!item.isCurrent),
+-		[databaseConfigList]
+-	);
+-	const dbConfigId = activeDbConfig?.id || "";
+-
+-	const {
+-		data: providers,
+-		fireRequest: fetchProviders,
+-		isLoading: loadingProviders,
+-		error: providersError,
+-	} = useFetchWrapper<ProviderMetadata[]>();
+-	const {
+-		data: customModels,
+-		fireRequest: fetchCustomModels,
+-		isLoading: loadingCustom,
+-		error: customModelsError,
+-	} = useFetchWrapper<Record<string, CustomModel[]>>();
+-	const { fireRequest: fireImport, isLoading: importing } = useFetchWrapper();
+-
+-	useEffect(() => {
+-		posthog?.capture(CLIENT_EVENTS.SETTINGS_MANAGE_MODELS_PAGE_VISITED);
+-	}, [posthog]);
+-
+-	useEffect(() => {
+-		loadProviders();
+-		loadAllCustomModels();
+-	}, []);
+-
+-	const loadProviders = () => {
+-		fetchProviders({ requestType: "GET", url: "/api/providers" });
+-	};
+-
+-	const loadAllCustomModels = () => {
+-		fetchCustomModels({ requestType: "GET", url: "/api/providers/models" });
+-	};
+-
+-	const handleSelectModel = (
+-		model: ModelMetadata,
+-		provider: string,
+-		_isCustom: boolean
+-	) => {
+-		setSelectedModel(model);
+-		setSelectedProvider(provider);
+-		setIsCustomModel(true);
+-		setIsAddingNew(false);
+-	};
+-
+-	const handleAddNew = (provider: string) => {
+-		setSelectedProvider(provider);
+-		setSelectedModel(null);
+-		setIsCustomModel(true);
+-		setIsAddingNew(true);
+-	};
+-
+-	const handleModelSaved = () => {
+-		loadAllCustomModels();
+-		setIsAddingNew(false);
+-	};
+-
+-	const handleModelDeleted = () => {
+-		loadAllCustomModels();
+-		setSelectedModel(null);
+-		setSelectedProvider(null);
+-		setIsCustomModel(false);
+-	};
+-
+-	const handleAddProvider = () => {
+-		setEditingProvider(null);
+-		setShowProviderEditor(true);
+-	};
+-
+-	const handleEditProvider = (provider: ProviderMetadata) => {
+-		setEditingProvider({
+-			providerId: provider.providerId,
+-			displayName: provider.displayName,
+-			description: provider.description || "",
+-			requiresVault: provider.requiresVault,
+-		});
+-		setShowProviderEditor(true);
+-	};
+-
+-	const handleProviderSaved = () => {
+-		loadProviders();
+-		loadAllCustomModels();
+-	};
+-
+-	const pricingUrl = dbConfigId
+-		? `${typeof window !== "undefined" ? window.location.origin : ""}/api/pricing/export/${dbConfigId}`
+-		: "";
+-
+-	const copyUrl = () => {
+-		if (!pricingUrl) return;
+-		copy(pricingUrl);
+-		toast.success(m.MANAGE_MODELS_PRICING_URL_COPIED, { id: "url-copy" });
+-	};
+-
+-	const handleImport = () => {
+-		let parsed: unknown;
+-		try {
+-			parsed = JSON.parse(importJson);
+-		} catch {
+-			toast.error(m.MANAGE_MODELS_INVALID_JSON, { id: "import" });
+-			return;
+-		}
+-
+-		fireImport({
+-			requestType: "POST",
+-			url: "/api/providers/models/import",
+-			body: JSON.stringify(parsed),
+-			successCb: (res: { imported?: number; skipped?: number }) => {
+-				toast.success(
+-					`${m.MANAGE_MODELS_IMPORT_SUCCESS}: ${res?.imported ?? 0} imported, ${res?.skipped ?? 0} skipped`,
+-					{ id: "import" }
+-				);
+-				setShowImport(false);
+-				setImportJson("");
+-				loadAllCustomModels();
+-				loadProviders();
+-			},
+-			failureCb: (err?: string) => {
+-				toast.error(err || m.MANAGE_MODELS_IMPORT_FAILED, { id: "import" });
+-			},
+-		});
+-	};
+-
+-	const actionButtons = (
+-		<div className="flex items-center gap-1.5 shrink-0">
+-			{pricingUrl && (
+-				<Tooltip>
+-					<TooltipTrigger>
+-						<Button
+-							variant="outline"
+-							size="sm"
+-							className="h-8 w-8 p-0"
+-							onClick={copyUrl}
+-						>
+-							<Copy className="h-3.5 w-3.5" />
+-						</Button>
+-					</TooltipTrigger>
+-					<TooltipContent>{m.COPY}</TooltipContent>
+-				</Tooltip>
+-			)}
+-			<Tooltip>
+-				<TooltipTrigger>
+-					<Button
+-						variant="outline"
+-						size="sm"
+-						className="h-8 w-8 p-0"
+-						onClick={handleAddProvider}
+-					>
+-						<PlusCircle className="h-3.5 w-3.5" />
+-					</Button>
+-				</TooltipTrigger>
+-				<TooltipContent>{m.MANAGE_PROVIDERS_ADD}</TooltipContent>
+-			</Tooltip>
+-			{pricingUrl && (
+-				<Tooltip>
+-					<TooltipTrigger>
+-						<Button
+-							variant="outline"
+-							size="sm"
+-							className="h-8 w-8 p-0"
+-							onClick={() => setShowSdkUsage(true)}
+-						>
+-							<Code2 className="h-3.5 w-3.5" />
+-						</Button>
+-					</TooltipTrigger>
+-					<TooltipContent>{m.MANAGE_MODELS_SDK_USAGE}</TooltipContent>
+-				</Tooltip>
+-			)}
+-			<Tooltip>
+-				<TooltipTrigger>
+-					<Button
+-						variant="outline"
+-						size="sm"
+-						className="h-8 w-8 p-0"
+-						onClick={() => setShowImport(true)}
+-					>
+-						<Upload className="h-3.5 w-3.5" />
+-					</Button>
+-				</TooltipTrigger>
+-				<TooltipContent>{m.MANAGE_MODELS_IMPORT_PRICING}</TooltipContent>
+-			</Tooltip>
+-			<Tooltip>
+-				<TooltipTrigger>
+-					<Button
+-						variant="outline"
+-						size="sm"
+-						className="h-8 w-8 p-0"
+-						onClick={() => {
+-							window.open("/api/providers/models/export", "_blank");
+-						}}
+-					>
+-						<Download className="h-3.5 w-3.5" />
+-					</Button>
+-				</TooltipTrigger>
+-				<TooltipContent>{m.MANAGE_MODELS_EXPORT_PRICING}</TooltipContent>
+-			</Tooltip>
+-		</div>
+-	);
+-
+-	return (
+-		<div className="flex flex-col w-full h-full min-h-0 overflow-hidden">
+-			<div className="flex flex-col w-full flex-1 min-h-0 border border-stone-200 dark:border-stone-800 rounded-md overflow-hidden">
+-				<div className="flex items-center gap-3 px-4 py-2.5 bg-stone-50 dark:bg-stone-950 border-b border-stone-200 dark:border-stone-800 shrink-0">
+-					{pricingUrl ? (
+-						<>
+-							<LinkIcon className="h-3.5 w-3.5 text-stone-400 shrink-0" />
+-							<span className="text-xs font-medium text-stone-500 dark:text-stone-400 shrink-0">
+-								{m.MANAGE_MODELS_PRICING_URL_LABEL}
+-							</span>
+-							<Input
+-								readOnly
+-								value={pricingUrl}
+-								onFocus={(e) => e.target.select()}
+-								className="font-mono text-xs h-8 flex-1 min-w-0"
+-							/>
+-						</>
+-					) : (
+-						<div className="flex-1" />
+-					)}
+-					{actionButtons}
+-				</div>
+-
+-				<div className="flex flex-1 overflow-hidden min-h-0">
+-					<ModelListSidebar
+-						providers={providers || []}
+-						customModels={customModels || {}}
+-						loading={loadingProviders || loadingCustom}
+-						loadError={
+-							providersError || customModelsError
+-								? String(providersError || customModelsError)
+-								: null
+-						}
+-						selectedModel={selectedModel}
+-						selectedProvider={selectedProvider}
+-						selectedIsCustom={isCustomModel}
+-						onSelectModel={handleSelectModel}
+-						onAddNew={handleAddNew}
+-						onEditProvider={handleEditProvider}
+-					/>
+-
+-					<div className="flex-1 overflow-auto bg-stone-50 dark:bg-stone-950">
+-						{selectedModel || isAddingNew ? (
+-							<ModelEditorPanel
+-								model={selectedModel}
+-								provider={selectedProvider}
+-								isCustomModel={isCustomModel}
+-								isAddingNew={isAddingNew}
+-								onSave={handleModelSaved}
+-								onDelete={handleModelDeleted}
+-								onCancel={() => {
+-									setSelectedModel(null);
+-									setSelectedProvider(null);
+-									setIsAddingNew(false);
+-								}}
+-							/>
+-						) : (
+-							<div className="flex flex-col items-center justify-center h-full p-8 text-center">
+-								<SettingsIcon className="h-16 w-16 text-stone-300 dark:text-stone-700 mb-4" />
+-								<h3 className="text-lg font-medium text-stone-900 dark:text-stone-100 mb-2">
+-									{m.MANAGE_MODELS_SELECT_MODEL_TO_VIEW}
+-								</h3>
+-								<p className="text-sm text-stone-500 dark:text-stone-400 max-w-md">
+-									{m.MANAGE_MODELS_SELECT_MODEL_TO_VIEW_DESCRIPTION}
+-								</p>
+-								{pricingUrl && (
+-									<Button
+-										variant="outline"
+-										size="sm"
+-										className="gap-2 mt-6"
+-										onClick={() => setShowSdkUsage(true)}
+-									>
+-										<Code2 className="h-4 w-4" />
+-										{m.MANAGE_MODELS_SDK_USAGE}
+-									</Button>
+-								)}
+-							</div>
+-						)}
+-					</div>
+-				</div>
+-			</div>
+-
+-			<Dialog open={showImport} onOpenChange={setShowImport}>
+-				<DialogContent className="sm:max-w-lg">
+-					<DialogHeader>
+-						<DialogTitle>{m.MANAGE_MODELS_IMPORT_DIALOG_TITLE}</DialogTitle>
+-						<DialogDescription>
+-							{m.MANAGE_MODELS_IMPORT_DIALOG_DESCRIPTION}
+-						</DialogDescription>
+-					</DialogHeader>
+-					<Textarea
+-						placeholder={`{
+-		"providers": [
+-			{
+-				"providerId": "my-provider",
+-				"displayName": "My Provider",
+-				"description": "Custom LLM provider"
+-			}
+-		],
+-		"models": [
+-			{
+-				"provider": "my-provider",
+-				"model_id": "my-model-v1",
+-				"displayName": "My Model v1",
+-				"inputPricePerMToken": 2.5,
+-				"outputPricePerMToken": 10
+-			}
+-		]
+-	}`}
+-						value={importJson}
+-						onChange={(e) => setImportJson(e.target.value)}
+-						className="min-h-[200px] text-xs dark:text-stone-100 text-stone-800"
+-					/>
+-					<DialogFooter>
+-						<Button variant="outline" onClick={() => setShowImport(false)}>
+-							{m.CANCEL}
+-						</Button>
+-						<Button onClick={handleImport} disabled={importing || !importJson.trim()}>
+-							{importing ? m.SAVING : m.MANAGE_MODELS_IMPORT_PRICING}
+-						</Button>
+-					</DialogFooter>
+-				</DialogContent>
+-			</Dialog>
+-
+-			<SdkUsageDialog
+-				open={showSdkUsage}
+-				onOpenChange={setShowSdkUsage}
+-				pricingUrl={pricingUrl}
+-			/>
+-
+-			<ProviderEditorDialog
+-				open={showProviderEditor}
+-				onOpenChange={setShowProviderEditor}
+-				provider={editingProvider}
+-				onSaved={handleProviderSaved}
+-			/>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx b/src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx
+index 246991b8..debcf6bd 100644
+--- a/src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx
++++ b/src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx
+@@ -21,7 +21,7 @@ import {
+ } from "@/components/ui/select";
+ import { Input } from "@/components/ui/input";
+ import Link from "next/link";
+-import { Zap, Settings2, Clock, Play, Info, SettingsIcon } from "lucide-react";
++import { Zap, Settings2, Clock, Play, Info } from "lucide-react";
+ import { ProviderMetadata } from "@/types/providers";
+ import { Badge } from "@/components/ui/badge";
+ import { evalSampleRateToPercent } from "@/constants/evaluation-sampling";
+@@ -191,19 +191,9 @@ export default function EvaluationConfiguration() {
+ 						</CardHeader>
+ 						<CardContent className="space-y-4">
+ 							<div className="grid gap-3">
+-								<div className="flex items-center justify-between">
+-									<Label>{m.EVALUATION_PROVIDER_LABEL}</Label>
+-									<Link href="/costs?tab=models">
+-										<Button
+-											variant="ghost"
+-											size="sm"
+-											className="h-7 text-xs px-2"
+-										>
+-											<SettingsIcon className="h-3 w-3 mr-1" />
+-											{m.MANAGE_MODELS_TITLE}
+-										</Button>
+-									</Link>
+-								</div>
++								<div>
++								<Label>{m.EVALUATION_PROVIDER_LABEL}</Label>
++							</div>
+ 								<Select
+ 									value={provider}
+ 									onValueChange={(v) => {
+diff --git a/src/client/src/components/(playground)/models/model-editor-panel.tsx b/src/client/src/components/(playground)/models/model-editor-panel.tsx
+deleted file mode 100644
+index 924705db..00000000
+--- a/src/client/src/components/(playground)/models/model-editor-panel.tsx
++++ /dev/null
+@@ -1,367 +0,0 @@
+-"use client";
+-
+-import { useState, useEffect } from "react";
+-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+-import { Button } from "@/components/ui/button";
+-import { Label } from "@/components/ui/label";
+-import { Input } from "@/components/ui/input";
+-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+-import { Trash2Icon } from "lucide-react";
+-import getMessage from "@/constants/messages";
+-import { ModelMetadata } from "@/types/providers";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { toast } from "sonner";
+-
+-interface CustomModel extends ModelMetadata {
+-	id: string;
+-	customId?: string; // UUID from database
+-	model_id: string; // Model identifier like "gpt-4o"
+-	modelType?: string;
+-}
+-
+-const MODEL_TYPES = [
+-	{ value: "chat", label: "Chat" },
+-	{ value: "embeddings", label: "Embeddings" },
+-	{ value: "images", label: "Images" },
+-	{ value: "audio", label: "Audio" },
+-];
+-
+-interface ModelEditorPanelProps {
+-	model: ModelMetadata | null;
+-	provider: string | null;
+-	isCustomModel: boolean;
+-	isAddingNew: boolean;
+-	onSave: () => void;
+-	onDelete: () => void;
+-	onCancel: () => void;
+-}
+-
+-export default function ModelEditorPanel({
+-	model,
+-	provider,
+-	isCustomModel,
+-	isAddingNew,
+-	onSave,
+-	onDelete,
+-	onCancel,
+-}: ModelEditorPanelProps) {
+-	const { fireRequest: fireSaveRequest, isLoading: saving } = useFetchWrapper();
+-	const { fireRequest: fireDeleteRequest, isLoading: deleting } = useFetchWrapper();
+-
+-	const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+-	const [formData, setFormData] = useState<Partial<CustomModel>>({
+-		id: "", // UUID (only for existing custom models)
+-		model_id: "", // Model identifier
+-		displayName: "",
+-		modelType: "chat",
+-		contextWindow: 4096,
+-		inputPricePerMToken: 0,
+-		outputPricePerMToken: 0,
+-		cacheReadPricePerMToken: 0,
+-		cacheCreationPricePerMToken: 0,
+-		capabilities: [],
+-	});
+-
+-	useEffect(() => {
+-		if (model && !isAddingNew) {
+-			const customModel = model as any;
+-			// The API returns `customId` as the UUID and `id` as the model_id.
+-			// Map them correctly: UUID goes to `id`, model identifier goes to `model_id`.
+-			const uuid = customModel.customId || customModel.id || "";
+-			const modelIdentifier = customModel.model_id || customModel.id || "";
+-			setFormData({
+-				id: uuid,
+-				model_id: modelIdentifier,
+-				displayName: model.displayName,
+-				modelType: customModel.modelType || "chat",
+-				contextWindow: model.contextWindow,
+-				inputPricePerMToken: model.inputPricePerMToken,
+-				outputPricePerMToken: model.outputPricePerMToken,
+-				cacheReadPricePerMToken: model.cacheReadPricePerMToken || 0,
+-				cacheCreationPricePerMToken: model.cacheCreationPricePerMToken || 0,
+-				capabilities: model.capabilities || [],
+-			});
+-		} else if (isAddingNew) {
+-			setFormData({
+-				id: "",
+-				model_id: "",
+-				displayName: "",
+-				modelType: "chat",
+-				contextWindow: 4096,
+-				inputPricePerMToken: 0,
+-				outputPricePerMToken: 0,
+-				cacheReadPricePerMToken: 0,
+-				cacheCreationPricePerMToken: 0,
+-				capabilities: [],
+-			});
+-		}
+-	}, [model, isAddingNew, isCustomModel]);
+-
+-
+-	const handleSave = () => {
+-		if (!formData.model_id || !formData.displayName || !provider) {
+-			toast.error(getMessage().MANAGE_MODELS_MODEL_ID + " and " + getMessage().MANAGE_MODELS_MODEL_DISPLAY_NAME + " are required");
+-			return;
+-		}
+-
+-		const payload = {
+-			provider: provider,
+-			model: {
+-				id: formData.model_id,
+-				model_id: formData.model_id,
+-				displayName: formData.displayName,
+-				modelType: formData.modelType || "chat",
+-				contextWindow: formData.contextWindow || 4096,
+-				inputPricePerMToken: formData.inputPricePerMToken || 0,
+-				outputPricePerMToken: formData.outputPricePerMToken || 0,
+-				cacheReadPricePerMToken: formData.cacheReadPricePerMToken || 0,
+-				cacheCreationPricePerMToken: formData.cacheCreationPricePerMToken || 0,
+-				capabilities: formData.capabilities || [],
+-			},
+-			customId: formData.id || undefined,
+-		};
+-
+-		fireSaveRequest({
+-			requestType: "POST",
+-			url: "/api/providers/models",
+-			body: JSON.stringify(payload),
+-			successCb: () => {
+-				toast.success(getMessage().MANAGE_MODELS_MODEL_SAVED_SUCCESS, {
+-					id: "model-saved",
+-				});
+-				onSave();
+-			},
+-			failureCb: (err?: string) => {
+-				toast.error(err || getMessage().OPERATION_FAILED, {
+-					id: "model-save-error",
+-				});
+-			},
+-		});
+-	};
+-
+-	const handleDelete = () => {
+-		if (!formData.model_id || !provider) return;
+-
+-		const params = new URLSearchParams();
+-		params.set("model_id", formData.model_id);
+-		params.set("provider", provider);
+-
+-		fireDeleteRequest({
+-			requestType: "DELETE",
+-			url: `/api/providers/models?${params.toString()}`,
+-			successCb: () => {
+-				toast.success(getMessage().MANAGE_MODELS_MODEL_DELETED_SUCCESS, {
+-					id: "model-deleted",
+-				});
+-				setShowDeleteDialog(false);
+-				onDelete();
+-			},
+-			failureCb: (err?: string) => {
+-				toast.error(err || getMessage().OPERATION_FAILED, {
+-					id: "model-delete-error",
+-				});
+-			},
+-		});
+-	};
+-
+-	return (
+-		<>
+-			<Card className="rounded-none">
+-				<CardHeader>
+-					<div className="flex items-center justify-between">
+-						<CardTitle className="text-lg">
+-							{isAddingNew
+-								? getMessage().MANAGE_MODELS_ADD_CUSTOM_MODEL
+-								: getMessage().MANAGE_MODELS_EDIT_MODEL}
+-						</CardTitle>
+-					</div>
+-				</CardHeader>
+-
+-				<CardContent className="space-y-4">
+-					{/* Model ID */}
+-					<div className="space-y-2">
+-						<Label htmlFor="model-id">{getMessage().MANAGE_MODELS_MODEL_ID}*</Label>
+-						<Input
+-							id="model-id"
+-							placeholder="gpt-4o-custom"
+-							value={formData.model_id}
+-							onChange={(e) => {
+-								let v = e.target.value.toLowerCase().replace(/ /g, "-");
+-								v = v.replace(/[^a-z0-9-/.]/g, "");
+-								setFormData({ ...formData, model_id: v });
+-							}}
+-							disabled={!isAddingNew}
+-						/>
+-					</div>
+-
+-					{/* Display Name */}
+-					<div className="space-y-2">
+-						<Label htmlFor="display-name">{getMessage().MANAGE_MODELS_MODEL_DISPLAY_NAME}*</Label>
+-						<Input
+-							id="display-name"
+-							placeholder="GPT-4o Custom"
+-							value={formData.displayName}
+-							onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
+-						/>
+-					</div>
+-
+-					{/* Model Type */}
+-					<div className="space-y-2">
+-						<Label>Model Type</Label>
+-						<Select
+-							value={formData.modelType || "chat"}
+-							onValueChange={(val) => setFormData({ ...formData, modelType: val })}
+-						>
+-							<SelectTrigger>
+-								<SelectValue />
+-							</SelectTrigger>
+-							<SelectContent>
+-								{MODEL_TYPES.map((mt) => (
+-									<SelectItem key={mt.value} value={mt.value}>
+-										{mt.label}
+-									</SelectItem>
+-								))}
+-							</SelectContent>
+-						</Select>
+-						<p className="text-xs text-stone-500 dark:text-stone-400">
+-							Determines pricing format when exported (chat, embeddings, images, audio)
+-						</p>
+-					</div>
+-
+-					{/* Context Window */}
+-					<div className="space-y-2">
+-						<Label htmlFor="context-window">{getMessage().MANAGE_MODELS_CONTEXT_WINDOW}</Label>
+-						<Input
+-							id="context-window"
+-							type="number"
+-							placeholder="4096"
+-							value={formData.contextWindow}
+-							onChange={(e) => setFormData({ ...formData, contextWindow: parseInt(e.target.value) || 0 })}
+-						/>
+-					</div>
+-
+-					{/* Pricing */}
+-					<div className="grid grid-cols-2 gap-4">
+-						<div className="space-y-2">
+-							<Label htmlFor="input-price">{getMessage().MANAGE_MODELS_INPUT_PRICE_PER_M_TOKENS}</Label>
+-							<Input
+-								id="input-price"
+-								type="number"
+-								step="0.001"
+-								placeholder="0.5"
+-								value={formData.inputPricePerMToken}
+-								onChange={(e) => setFormData({ ...formData, inputPricePerMToken: parseFloat(e.target.value) || 0 })}
+-							/>
+-						</div>
+-						<div className="space-y-2">
+-							<Label htmlFor="output-price">{getMessage().MANAGE_MODELS_OUTPUT_PRICE_PER_M_TOKENS}</Label>
+-							<Input
+-								id="output-price"
+-								type="number"
+-								step="0.001"
+-								placeholder="1.5"
+-								value={formData.outputPricePerMToken}
+-								onChange={(e) => setFormData({ ...formData, outputPricePerMToken: parseFloat(e.target.value) || 0 })}
+-							/>
+-						</div>
+-						<div className="space-y-2">
+-							<Label htmlFor="cache-read-price">
+-								{getMessage().MANAGE_MODELS_CACHE_READ_PRICE_PER_M_TOKENS}
+-							</Label>
+-							<Input
+-								id="cache-read-price"
+-								type="number"
+-								step="0.001"
+-								placeholder="0"
+-								value={formData.cacheReadPricePerMToken}
+-								onChange={(e) =>
+-									setFormData({
+-										...formData,
+-										cacheReadPricePerMToken: parseFloat(e.target.value) || 0,
+-									})
+-								}
+-							/>
+-						</div>
+-						<div className="space-y-2">
+-							<Label htmlFor="cache-creation-price">
+-								{getMessage().MANAGE_MODELS_CACHE_CREATION_PRICE_PER_M_TOKENS}
+-							</Label>
+-							<Input
+-								id="cache-creation-price"
+-								type="number"
+-								step="0.001"
+-								placeholder="0"
+-								value={formData.cacheCreationPricePerMToken}
+-								onChange={(e) =>
+-									setFormData({
+-										...formData,
+-										cacheCreationPricePerMToken: parseFloat(e.target.value) || 0,
+-									})
+-								}
+-							/>
+-						</div>
+-					</div>
+-
+-					{/* Capabilities */}
+-					<div className="space-y-2">
+-						<Label htmlFor="capabilities">{getMessage().MANAGE_MODELS_MODEL_CAPABILITIES}</Label>
+-						<Input
+-							id="capabilities"
+-							placeholder="function-calling, vision, streaming"
+-							value={Array.isArray(formData.capabilities) ? formData.capabilities.join(", ") : ""}
+-							onChange={(e) => {
+-								const caps = e.target.value.split(",").map(s => s.trim()).filter(Boolean);
+-								setFormData({ ...formData, capabilities: caps });
+-							}}
+-						/>
+-						<p className="text-xs text-stone-500 dark:text-stone-400">
+-							Comma-separated list of model capabilities
+-						</p>
+-					</div>
+-
+-					{/* Actions — all models editable now */}
+-					<div className="flex gap-4 pt-4">
+-						<Button onClick={handleSave} disabled={saving} className="w-1/3 h-9">
+-							{saving ? getMessage().SAVING : getMessage().MANAGE_MODELS_SAVE_MODEL}
+-						</Button>
+-						{!isAddingNew && (
+-							<Button
+-								variant="destructive"
+-								onClick={() => setShowDeleteDialog(true)}
+-								disabled={deleting}
+-								className=" h-9"
+-							>
+-								<Trash2Icon className="h-4 w-4 mr-2" />
+-								{getMessage().DELETE}
+-							</Button>
+-						)}
+-						<Button variant="outline" onClick={onCancel} className=" h-9">
+-							{getMessage().CANCEL}
+-						</Button>
+-					</div>
+-				</CardContent>
+-			</Card>
+-
+-			{/* Delete Confirmation Dialog */}
+-			<Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+-				<DialogContent>
+-					<DialogHeader>
+-						<DialogTitle>{getMessage().MANAGE_MODELS_DELETE_MODEL}</DialogTitle>
+-						<DialogDescription>
+-							{getMessage().MANAGE_MODELS_DELETE_MODEL_CONFIRMATION}
+-						</DialogDescription>
+-					</DialogHeader>
+-					<DialogFooter>
+-						<Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
+-							{getMessage().CANCEL}
+-						</Button>
+-						<Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+-							{deleting ? getMessage().LOADING : getMessage().DELETE}
+-						</Button>
+-					</DialogFooter>
+-				</DialogContent>
+-			</Dialog>
+-		</>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/models/model-list-sidebar.tsx b/src/client/src/components/(playground)/models/model-list-sidebar.tsx
+deleted file mode 100644
+index 474da2d3..00000000
+--- a/src/client/src/components/(playground)/models/model-list-sidebar.tsx
++++ /dev/null
+@@ -1,228 +0,0 @@
+-"use client";
+-
+-import { useState, useMemo } from "react";
+-import { Input } from "@/components/ui/input";
+-import { Button } from "@/components/ui/button";
+-import { Badge } from "@/components/ui/badge";
+-import { SearchIcon, PlusIcon, ChevronDownIcon, ChevronRightIcon, PencilIcon } from "lucide-react";
+-import getMessage from "@/constants/messages";
+-import { ProviderMetadata, ModelMetadata } from "@/types/providers";
+-import { cn } from "@/lib/utils";
+-
+-interface CustomModel extends ModelMetadata {
+-	id: string;
+-	customId?: string; // UUID from database
+-	model_id: string; // Model identifier like "gpt-4o"
+-	provider?: string;
+-	modelType?: string;
+-	isDefault?: boolean;
+-}
+-
+-interface ModelListSidebarProps {
+-	providers: ProviderMetadata[];
+-	customModels: Record<string, CustomModel[]>;
+-	loading: boolean;
+-	/** Set when the catalog could not be read. Empty is not the same as unreadable. */
+-	loadError?: string | null;
+-	selectedModel: ModelMetadata | null;
+-	selectedProvider: string | null;
+-	selectedIsCustom: boolean;
+-	onSelectModel: (model: ModelMetadata, provider: string, isCustom: boolean) => void;
+-	onAddNew: (provider: string) => void;
+-	onEditProvider?: (provider: ProviderMetadata) => void;
+-}
+-
+-export default function ModelListSidebar({
+-	providers,
+-	customModels,
+-	loading,
+-	loadError,
+-	selectedModel,
+-	selectedProvider,
+-	selectedIsCustom,
+-	onSelectModel,
+-	onAddNew,
+-	onEditProvider,
+-}: ModelListSidebarProps) {
+-	const [searchQuery, setSearchQuery] = useState("");
+-	const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
+-
+-	const toggleProvider = (providerId: string) => {
+-		const newExpanded = new Set(expandedProviders);
+-		if (newExpanded.has(providerId)) {
+-			newExpanded.delete(providerId);
+-		} else {
+-			newExpanded.add(providerId);
+-		}
+-		setExpandedProviders(newExpanded);
+-	};
+-
+-	const filteredProviders = useMemo(() => {
+-		if (!searchQuery.trim()) return providers;
+-
+-		const query = searchQuery.toLowerCase();
+-		return providers.filter((provider) => {
+-			const matchesProviderName = provider.displayName.toLowerCase().includes(query);
+-			const matchesModelName = (customModels[provider.providerId] || []).some(
+-				(model) =>
+-					model.displayName.toLowerCase().includes(query) ||
+-					(model.model_id || "").toLowerCase().includes(query)
+-			);
+-
+-			return matchesProviderName || matchesModelName;
+-		});
+-	}, [providers, customModels, searchQuery]);
+-
+-	const isModelSelected = (model: CustomModel, provider: string) => {
+-		if (selectedProvider !== provider) return false;
+-		if (!selectedModel) return false;
+-
+-		const selectedCustomModel = selectedModel as any;
+-		const currentKey = model.customId || model.id || model.model_id;
+-		const selectedKey =
+-			selectedCustomModel.customId || selectedCustomModel.id || selectedCustomModel.model_id;
+-		return currentKey === selectedKey;
+-	};
+-
+-	return (
+-		<div className="w-80 border-r border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 flex flex-col">
+-			{/* Search */}
+-			<div className="p-4 border-b border-stone-200 dark:border-stone-800">
+-				<div className="relative">
+-					<SearchIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-stone-400" />
+-					<Input
+-						placeholder={getMessage().MANAGE_MODELS_SEARCH_MODELS}
+-						value={searchQuery}
+-						onChange={(e) => setSearchQuery(e.target.value)}
+-						className="pl-9"
+-					/>
+-				</div>
+-			</div>
+-
+-			{/* Provider List */}
+-			<div className="flex-1 overflow-y-auto">
+-				{loading ? (
+-					<div className="p-4 text-center text-sm text-stone-500">
+-						{getMessage().LOADING}...
+-					</div>
+-				) : loadError ? (
+-					// An unreadable catalog is not an empty one. Saying "no models
+-					// found" here would claim the operator has configured nothing
+-					// when the truth is that nothing could be read.
+-					<div className="p-4 text-center text-sm text-stone-500">
+-						<div className="font-medium text-stone-900 dark:text-stone-100">
+-							{getMessage().MANAGE_MODELS_CATALOG_UNREADABLE}
+-						</div>
+-						<div className="mt-1 break-words text-xs text-error">{loadError}</div>
+-					</div>
+-				) : filteredProviders.length === 0 ? (
+-					<div className="p-4 text-center text-sm text-stone-500">
+-						{getMessage().MANAGE_MODELS_NO_MODELS_FOUND}
+-					</div>
+-				) : (
+-					<div className="p-2">
+-						{filteredProviders.map((provider) => {
+-							const isExpanded = expandedProviders.has(provider.providerId);
+-							const providerModels = customModels[provider.providerId] || [];
+-							const totalModels = providerModels.length;
+-
+-							return (
+-								<div key={provider.providerId} className="mb-2">
+-									{/* Provider Header */}
+-									<button
+-										onClick={() => toggleProvider(provider.providerId)}
+-										className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors group/provider"
+-									>
+-										<div className="flex items-center gap-2">
+-											{isExpanded ? (
+-												<ChevronDownIcon className="h-4 w-4 text-stone-500" />
+-											) : (
+-												<ChevronRightIcon className="h-4 w-4 text-stone-500" />
+-											)}
+-											<span className="font-medium text-sm text-stone-900 dark:text-stone-100">
+-												{provider.displayName}
+-											</span>
+-											<Badge variant="secondary" className="text-xs">
+-												{totalModels}
+-											</Badge>
+-										</div>
+-										<div className="flex items-center gap-0.5">
+-											{onEditProvider && (
+-												<Button
+-													variant="ghost"
+-													size="sm"
+-													className="h-6 w-6 p-0 text-stone-400 opacity-0 group-hover/provider:opacity-100 transition-opacity"
+-													onClick={(e) => {
+-														e.stopPropagation();
+-														onEditProvider(provider);
+-													}}
+-												>
+-													<PencilIcon className="h-3 w-3" />
+-												</Button>
+-											)}
+-											<Button
+-												variant="ghost"
+-												size="sm"
+-												className="h-6 w-6 p-0 text-stone-500"
+-												onClick={(e) => {
+-													e.stopPropagation();
+-													onAddNew(provider.providerId);
+-												}}
+-											>
+-												<PlusIcon className="h-3 w-3" />
+-											</Button>
+-										</div>
+-									</button>
+-
+-									{/* Models List — all editable */}
+-									{isExpanded && (
+-										<div className="ml-4 mt-1 space-y-1">
+-											{providerModels.length === 0 ? (
+-												<div className="text-xs text-stone-500 dark:text-stone-400 px-2 py-2">
+-													{getMessage().MANAGE_MODELS_NO_MODELS_FOUND}
+-												</div>
+-											) : (
+-												providerModels.map((model) => (
+-													<button
+-														key={model.customId || model.id || model.model_id}
+-														onClick={() => onSelectModel(model, provider.providerId, true)}
+-														className={cn(
+-															"w-full text-left p-2 rounded-md transition-colors border-l-2 group/model",
+-															isModelSelected(model, provider.providerId)
+-																? "bg-primary/10 dark:bg-primary/20 border-primary text-stone-900 dark:text-stone-100"
+-																: "border-transparent hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-700 dark:text-stone-300"
+-														)}
+-													>
+-														<div className="flex items-center justify-between">
+-															<div className="flex items-center gap-2">
+-																<div className="text-sm font-medium">{model.displayName}</div>
+-																{model.isDefault ? (
+-																	<Badge variant="outline" className="text-xs h-4">Default</Badge>
+-																) : (
+-																	<Badge className="text-xs h-4">Custom</Badge>
+-																)}
+-															</div>
+-															<PencilIcon className="h-3 w-3 text-stone-400 opacity-0 group-hover/model:opacity-100 transition-opacity" />
+-														</div>
+-														<div className="flex items-center gap-2 mt-1">
+-															<Badge variant="outline" className="text-xs">
+-																{(model.contextWindow || 0).toLocaleString()} tokens
+-															</Badge>
+-															<Badge variant="outline" className="text-xs">
+-																${model.inputPricePerMToken}/M
+-															</Badge>
+-														</div>
+-													</button>
+-												))
+-											)}
+-										</div>
+-									)}
+-								</div>
+-							);
+-						})}
+-					</div>
+-				)}
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/models/provider-editor-dialog.tsx b/src/client/src/components/(playground)/models/provider-editor-dialog.tsx
+deleted file mode 100644
+index dc6e2328..00000000
+--- a/src/client/src/components/(playground)/models/provider-editor-dialog.tsx
++++ /dev/null
+@@ -1,181 +0,0 @@
+-"use client";
+-
+-import { useState, useEffect } from "react";
+-import { Button } from "@/components/ui/button";
+-import { Input } from "@/components/ui/input";
+-import { Label } from "@/components/ui/label";
+-import { Switch } from "@/components/ui/switch";
+-import {
+-	Dialog,
+-	DialogContent,
+-	DialogDescription,
+-	DialogFooter,
+-	DialogHeader,
+-	DialogTitle,
+-} from "@/components/ui/dialog";
+-import getMessage from "@/constants/messages";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { toast } from "sonner";
+-
+-export interface ProviderFormData {
+-	providerId: string;
+-	displayName: string;
+-	description: string;
+-	requiresVault: boolean;
+-}
+-
+-interface ProviderEditorDialogProps {
+-	open: boolean;
+-	onOpenChange: (open: boolean) => void;
+-	provider: ProviderFormData | null; // null = adding new
+-	onSaved: () => void;
+-}
+-
+-export default function ProviderEditorDialog({
+-	open,
+-	onOpenChange,
+-	provider,
+-	onSaved,
+-}: ProviderEditorDialogProps) {
+-	const m = getMessage();
+-	const isEditing = !!provider;
+-
+-	const [formData, setFormData] = useState<ProviderFormData>({
+-		providerId: "",
+-		displayName: "",
+-		description: "",
+-		requiresVault: true,
+-	});
+-
+-	const { fireRequest, isLoading } = useFetchWrapper();
+-
+-	useEffect(() => {
+-		if (provider) {
+-			setFormData(provider);
+-		} else {
+-			setFormData({
+-				providerId: "",
+-				displayName: "",
+-				description: "",
+-				requiresVault: true,
+-			});
+-		}
+-	}, [provider, open]);
+-
+-	const handleSave = () => {
+-		if (!formData.providerId || !formData.displayName) {
+-			toast.error(
+-				`${m.MANAGE_PROVIDERS_ID_LABEL} and ${m.MANAGE_PROVIDERS_DISPLAY_NAME} are required`
+-			);
+-			return;
+-		}
+-
+-		fireRequest({
+-			requestType: isEditing ? "PUT" : "POST",
+-			url: "/api/providers",
+-			body: JSON.stringify(formData),
+-			successCb: () => {
+-				toast.success(m.MANAGE_PROVIDERS_SAVED, { id: "provider-save" });
+-				onOpenChange(false);
+-				onSaved();
+-			},
+-			failureCb: (err?: string) => {
+-				toast.error(err || m.MANAGE_PROVIDERS_SAVE_FAILED, {
+-					id: "provider-save",
+-				});
+-			},
+-		});
+-	};
+-
+-	return (
+-		<Dialog open={open} onOpenChange={onOpenChange}>
+-			<DialogContent className="sm:max-w-lg">
+-				<DialogHeader>
+-					<DialogTitle>
+-						{isEditing ? m.MANAGE_PROVIDERS_EDIT : m.MANAGE_PROVIDERS_ADD}
+-					</DialogTitle>
+-					<DialogDescription>
+-						{isEditing
+-							? m.MANAGE_PROVIDERS_ID_HINT
+-							: m.MANAGE_PROVIDERS_ID_HINT}
+-					</DialogDescription>
+-				</DialogHeader>
+-
+-				<div className="space-y-4">
+-					<div className="space-y-2">
+-						<Label htmlFor="provider-id">{m.MANAGE_PROVIDERS_ID_LABEL}</Label>
+-						<Input
+-							id="provider-id"
+-							placeholder="my-provider"
+-							value={formData.providerId}
+-							onChange={(e) => {
+-								let v = e.target.value.toLowerCase().replace(/ /g, "-");
+-								v = v.replace(/[^a-z0-9-]/g, "");
+-								setFormData({ ...formData, providerId: v });
+-							}}
+-							disabled={isEditing}
+-						/>
+-						{!isEditing && (
+-							<p className="text-xs text-stone-500 dark:text-stone-400">
+-								{m.MANAGE_PROVIDERS_ID_HINT}
+-							</p>
+-						)}
+-					</div>
+-
+-					<div className="space-y-2">
+-						<Label htmlFor="display-name">
+-							{m.MANAGE_PROVIDERS_DISPLAY_NAME}
+-						</Label>
+-						<Input
+-							id="display-name"
+-							placeholder="My Provider"
+-							value={formData.displayName}
+-							onChange={(e) =>
+-								setFormData({ ...formData, displayName: e.target.value })
+-							}
+-						/>
+-					</div>
+-
+-					<div className="space-y-2">
+-						<Label htmlFor="description">
+-							{m.MANAGE_PROVIDERS_DESCRIPTION}
+-						</Label>
+-						<Input
+-							id="description"
+-							placeholder="Custom LLM provider"
+-							value={formData.description}
+-							onChange={(e) =>
+-								setFormData({ ...formData, description: e.target.value })
+-							}
+-						/>
+-					</div>
+-
+-					<div className="flex items-center justify-between rounded-lg border border-stone-200 dark:border-stone-700 p-4">
+-						<div className="space-y-0.5">
+-							<Label>{m.MANAGE_PROVIDERS_REQUIRES_VAULT}</Label>
+-						</div>
+-						<Switch
+-							checked={formData.requiresVault}
+-							onCheckedChange={(val) =>
+-								setFormData({ ...formData, requiresVault: val })
+-							}
+-						/>
+-					</div>
+-				</div>
+-
+-				<DialogFooter>
+-					<Button variant="outline" onClick={() => onOpenChange(false)}>
+-						{m.CANCEL}
+-					</Button>
+-					<Button onClick={handleSave} disabled={isLoading}>
+-						{isLoading
+-							? m.SAVING
+-							: isEditing
+-								? m.MANAGE_PROVIDERS_EDIT
+-								: m.MANAGE_PROVIDERS_ADD}
+-					</Button>
+-				</DialogFooter>
+-			</DialogContent>
+-		</Dialog>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/models/sdk-usage-dialog.tsx b/src/client/src/components/(playground)/models/sdk-usage-dialog.tsx
+deleted file mode 100644
+index 4052b950..00000000
+--- a/src/client/src/components/(playground)/models/sdk-usage-dialog.tsx
++++ /dev/null
+@@ -1,135 +0,0 @@
+-"use client";
+-
+-import { Button } from "@/components/ui/button";
+-import {
+-	Dialog,
+-	DialogContent,
+-	DialogDescription,
+-	DialogFooter,
+-	DialogHeader,
+-	DialogTitle,
+-} from "@/components/ui/dialog";
+-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+-import { Input } from "@/components/ui/input";
+-import { Label } from "@/components/ui/label";
+-import CodeBlock from "@/components/common/code-block";
+-import { Copy } from "lucide-react";
+-import getMessage from "@/constants/messages";
+-import copy from "copy-to-clipboard";
+-import { toast } from "sonner";
+-
+-interface SdkUsageDialogProps {
+-	open: boolean;
+-	onOpenChange: (open: boolean) => void;
+-	pricingUrl: string;
+-}
+-
+-const LANGUAGES = [
+-	{ value: "python", label: "Python", lang: "python" },
+-	{ value: "typescript", label: "TypeScript", lang: "typescript" },
+-	{ value: "go", label: "Go", lang: "go" },
+-] as const;
+-
+-function buildSnippets(pricingUrl: string): Record<string, string> {
+-	return {
+-		python: `import openlit
+-
+-openlit.init(
+-    otlp_endpoint="http://127.0.0.1:4318",
+-    pricing_json="${pricingUrl}",
+-)`,
+-		typescript: `import openlit from "openlit";
+-
+-openlit.init({
+-  otlpEndpoint: "http://127.0.0.1:4318",
+-  pricingJson: "${pricingUrl}",
+-});`,
+-		go: `package main
+-
+-import openlit "github.com/openlit/openlit/sdk/go"
+-
+-func main() {
+-    openlit.Init(openlit.Config{
+-        OtlpEndpoint: "http://127.0.0.1:4318",
+-        PricingJson:  "${pricingUrl}",
+-    })
+-}`,
+-	};
+-}
+-
+-export default function SdkUsageDialog({
+-	open,
+-	onOpenChange,
+-	pricingUrl,
+-}: SdkUsageDialogProps) {
+-	const m = getMessage();
+-	const snippets = buildSnippets(pricingUrl);
+-
+-	const handleCopyUrl = () => {
+-		if (!pricingUrl) return;
+-		copy(pricingUrl);
+-		toast.success(m.MANAGE_MODELS_PRICING_URL_COPIED, { id: "url-copy" });
+-	};
+-
+-	return (
+-		<Dialog open={open} onOpenChange={onOpenChange}>
+-			<DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+-				<DialogHeader>
+-					<DialogTitle>{m.MANAGE_MODELS_SDK_USAGE_DIALOG_TITLE}</DialogTitle>
+-					<DialogDescription>
+-						{m.MANAGE_MODELS_SDK_USAGE_DIALOG_DESCRIPTION}
+-					</DialogDescription>
+-				</DialogHeader>
+-
+-				{/* URL block — uses Input (readonly) + Button for visual consistency */}
+-				<div className="space-y-2">
+-					<Label className="text-xs text-stone-500 dark:text-stone-400">
+-						{m.MANAGE_MODELS_PRICING_URL_LABEL}
+-					</Label>
+-					<div className="flex items-center gap-2">
+-						<Input
+-							readOnly
+-							value={pricingUrl}
+-							onFocus={(e) => e.target.select()}
+-							className="font-mono text-xs"
+-						/>
+-						<Button
+-							variant="outline"
+-							size="sm"
+-							className="gap-1.5 shrink-0"
+-							onClick={handleCopyUrl}
+-						>
+-							<Copy className="h-3.5 w-3.5" />
+-							{m.COPY}
+-						</Button>
+-					</div>
+-				</div>
+-
+-				{/* Language tabs — CodeBlock has built-in copy + syntax highlighting */}
+-				<Tabs defaultValue="python" className="w-full">
+-					<TabsList className="grid grid-cols-3 w-full">
+-						{LANGUAGES.map((l) => (
+-							<TabsTrigger key={l.value} value={l.value}>
+-								{l.label}
+-							</TabsTrigger>
+-						))}
+-					</TabsList>
+-					{LANGUAGES.map((l) => (
+-						<TabsContent key={l.value} value={l.value} className="mt-2">
+-							<CodeBlock
+-								className="text-xs rounded-lg"
+-								code={snippets[l.value]}
+-								language={l.lang}
+-							/>
+-						</TabsContent>
+-					))}
+-				</Tabs>
+-
+-				<p className="text-xs text-stone-500 dark:text-stone-400">
+-					<strong>{m.MANAGE_MODELS_SDK_USAGE_NOTE_LABEL}</strong>{" "}
+-					{m.MANAGE_MODELS_SDK_USAGE_NOTE}
+-				</p>
+-			</DialogContent>
+-		</Dialog>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/observability/trace-detail-page.tsx b/src/client/src/components/(playground)/observability/trace-detail-page.tsx
+index e41b3c81..e87d423a 100644
+--- a/src/client/src/components/(playground)/observability/trace-detail-page.tsx
++++ b/src/client/src/components/(playground)/observability/trace-detail-page.tsx
+@@ -13,7 +13,7 @@ import {
+ import { getTimeLimitObject } from "@/store/filter";
+ import { FilterConfig, FilterType, TIME_RANGES } from "@/types/store/filter";
+ import { useCustomBreadcrumbs } from "@/utils/hooks/useBreadcrumbs";
+-import { AlertTriangle, ArrowLeft, ChevronLeft, ChevronRight, Clock, Copy, Cpu, DollarSign, Info, RefreshCw, Zap } from "lucide-react";
++import { AlertTriangle, ArrowLeft, ChevronLeft, ChevronRight, Clock, Copy, Cpu, DollarSign, Info, Zap } from "lucide-react";
+ import SpanHierarchyExplorer from "./span-hierarchy-explorer";
+ import { Button } from "@/components/ui/button";
+ import getMessage from "@/constants/messages";
+@@ -32,14 +32,12 @@ import {
+ 	ResizablePanel,
+ 	ResizablePanelGroup,
+ } from "@/components/ui/resizable";
+-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+ import {
+ 	CodingAgentVendorIcon,
+ 	hasCodingAgentVendorIcon,
+ } from "@/components/svg/coding-agents";
+ import { toast } from "sonner";
+ import { useRootStore } from "@/store";
+-import { DEFAULT_ENVIRONMENT } from "@/constants/environment";
+ 
+ // Mirror of `durationLabel` in observability/columns.tsx — kept local
+ // so the top-card override for coding-agent sessions can format the
+@@ -156,89 +154,13 @@ function Stat({ icon, label, value }: { icon: ReactNode; label: string; value?:
+ 	);
+ }
+ 
+-function CostStat({
+-	costValue,
+-	spanId,
+-	traceId,
+-	hasModel,
+-	onRecalculated,
+-}: {
+-	costValue?: string;
+-	spanId?: string;
+-	traceId?: string;
+-	hasModel: boolean;
+-	onRecalculated: () => void;
+-}) {
++function CostStat({ costValue }: { costValue?: string }) {
+ 	const m = getMessage();
+-	const currentEnvironment = DEFAULT_ENVIRONMENT;
+-	const hasCost =
+-		!!costValue &&
+-		costValue !== "-" &&
+-		costValue !== m.GOVERNANCE_COST_NOT_REPORTED;
+-	const canRecalculate = hasModel && !!spanId;
+-	const { fireRequest, isLoading } = useFetchWrapper<{
+-		success: boolean;
+-		err?: string;
+-		data?: { spanId: string; cost: number };
+-	}>();
+-
+-	const handleRecalculate = (event: React.MouseEvent) => {
+-		event.stopPropagation();
+-		if (!spanId || isLoading) return;
+-		fireRequest({
+-			requestType: "POST",
+-			url: `/api/pricing/${spanId}?${new URLSearchParams({
+-				...(currentEnvironment ? { environment: currentEnvironment } : {}),
+-				...(traceId ? { traceId } : {}),
+-			})}`,
+-			successCb: (response) => {
+-				if (response?.success) {
+-					toast.success(
+-						`${m.RECALCULATE_COST_SUCCESS}: ${(response.data?.cost ?? 0).toFixed(4)}`,
+-						{ id: "pricing-update" }
+-					);
+-					onRecalculated();
+-				} else {
+-					toast.error(response?.err || m.RECALCULATE_COST_FAILURE, {
+-						id: "pricing-update",
+-					});
+-				}
+-			},
+-			failureCb: (err?: string) => {
+-				toast.error(err || m.RECALCULATE_COST_REQUEST_FAILED, {
+-					id: "pricing-update",
+-				});
+-			},
+-		});
+-	};
+-
+ 	return (
+ 		<div className="rounded-md bg-stone-100 px-2.5 py-1.5 dark:bg-stone-900">
+ 			<div className="flex items-center gap-1.5 text-[11px] text-stone-500 dark:text-stone-400">
+ 				<DollarSign className="h-3.5 w-3.5" />
+ 				{m.OBSERVABILITY_COST}
+-				{canRecalculate && (
+-					<TooltipProvider delayDuration={200}>
+-						<Tooltip>
+-							<TooltipTrigger asChild>
+-								<button
+-									type="button"
+-									onClick={handleRecalculate}
+-									disabled={isLoading}
+-									className="relative ml-auto rounded p-0.5 transition-colors hover:bg-stone-200 disabled:opacity-50 dark:hover:bg-stone-700"
+-								>
+-									<RefreshCw className={`h-3 w-3 ${isLoading ? "animate-spin" : ""}`} />
+-									{!hasCost && !isLoading && (
+-										<span className="absolute -right-0.5 -top-0.5 h-2 w-2 animate-ping rounded-full bg-primary" />
+-									)}
+-								</button>
+-							</TooltipTrigger>
+-							<TooltipContent side="bottom" className="max-w-[220px] text-xs">
+-								{m.RECALCULATE_COST_TITLE}
+-							</TooltipContent>
+-						</Tooltip>
+-					</TooltipProvider>
+-				)}
+ 			</div>
+ 			<div className="mt-0.5 truncate text-xs font-semibold text-stone-900 dark:text-stone-100">
+ 				{costValue || "-"}
+@@ -909,13 +831,7 @@ export function TraceDetailView({
+ 						)}
+ 						<Stat icon={<Clock className="h-3.5 w-3.5" />} label={m.OBSERVABILITY_DURATION} value={durationValue} />
+ 						<Stat icon={<Zap className="h-3.5 w-3.5" />} label={m.OBSERVABILITY_TOKENS} value={tokensValue} />
+-						<CostStat
+-							costValue={displayCostValue}
+-							spanId={trace.spanId}
+-							traceId={knownTraceId}
+-							hasModel={!!modelValue}
+-							onRecalculated={fetchData}
+-						/>
++						<CostStat costValue={displayCostValue} />
+ 						<Stat icon={<Cpu className="h-3.5 w-3.5" />} label={m.OBSERVABILITY_MODEL} value={modelValue} />
+ 					</div>
+ 				) : fetchError ? (
+diff --git a/src/client/src/constants/events.ts b/src/client/src/constants/events.ts
+index df86ee0f..95bf7483 100644
+--- a/src/client/src/constants/events.ts
++++ b/src/client/src/constants/events.ts
+@@ -117,7 +117,6 @@ export const CLIENT_EVENTS = {
+ 	SETTINGS_PAGE_VISITED: "SETTINGS_PAGE_VISITED",
+ 	SETTINGS_API_KEYS_PAGE_VISITED: "SETTINGS_API_KEYS_PAGE_VISITED",
+ 	SETTINGS_EVALUATION_PAGE_VISITED: "SETTINGS_EVALUATION_PAGE_VISITED",
+-	SETTINGS_MANAGE_MODELS_PAGE_VISITED: "SETTINGS_MANAGE_MODELS_PAGE_VISITED",
+ 	DASHBOARDS_PAGE_VISITED: "DASHBOARDS_PAGE_VISITED",
+ 	DASHBOARD_DETAIL_PAGE_VISITED: "DASHBOARD_DETAIL_PAGE_VISITED",
+ };
+@@ -221,7 +220,6 @@ export const SERVER_EVENTS = {
+ 	USER_ONBOARDING_COMPLETE_FAILURE: "USER_ONBOARDING_COMPLETE_FAILURE",
+ 
+ 	// Auto pricing
+-	PRICING_CONFIG_UPDATED: "PRICING_CONFIG_UPDATED",
+ 	PRICING_AUTO_RUN_SUCCESS: "PRICING_AUTO_RUN_SUCCESS",
+ 	PRICING_AUTO_RUN_FAILURE: "PRICING_AUTO_RUN_FAILURE",
+ 
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+index fc58b8bc..9c2362dd 100644
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -704,86 +704,8 @@ export const WIDGET_STRUCTURED_QUERY_FAILED = "Structured widget query failed.";
+ export const WIDGET_SOURCE_SIGNAL_UNSUPPORTED = (signal: string, source: string) =>
+ 	`The data source "${source}" does not serve ${signal}.`;
+ 
+-export const MANAGE_MODELS_TITLE = "Manage models";
+-
+-export const MANAGE_MODELS_EDIT_MODEL = "Edit Model";
+-
+-export const MANAGE_MODELS_MODEL_ID = "Model ID";
+-
+-export const MANAGE_MODELS_MODEL_DISPLAY_NAME = "Display Name";
+-
+-export const MANAGE_MODELS_CONTEXT_WINDOW = "Context Window";
+-
+-export const MANAGE_MODELS_INPUT_PRICE_PER_M_TOKENS = "Input Price (per 1M tokens)";
+-
+-export const MANAGE_MODELS_OUTPUT_PRICE_PER_M_TOKENS = "Output Price (per 1M tokens)";
+-
+-export const MANAGE_MODELS_CACHE_READ_PRICE_PER_M_TOKENS =
+-	"Cache Read Price (per 1M tokens)";
+-
+-export const MANAGE_MODELS_CACHE_CREATION_PRICE_PER_M_TOKENS =
+-	"Cache Creation Price (per 1M tokens)";
+-
+-export const MANAGE_MODELS_MODEL_CAPABILITIES = "Capabilities (comma separated)";
+-
+-export const MANAGE_MODELS_SAVE_MODEL = "Save Model";
+-
+-export const MANAGE_MODELS_MODEL_SAVED_SUCCESS = "Model saved successfully!";
+-
+-export const MANAGE_MODELS_MODEL_DELETED_SUCCESS = "Model deleted successfully!";
+-
+-export const MANAGE_MODELS_DELETE_MODEL = "Delete Model";
+-
+-export const MANAGE_MODELS_DELETE_MODEL_CONFIRMATION = "Are you sure you want to delete this model?";
+-
+-export const MANAGE_MODELS_SELECT_MODEL_TO_VIEW = "Select a model to view details";
+-
+-export const MANAGE_MODELS_SELECT_MODEL_TO_VIEW_DESCRIPTION = "Choose a model from the sidebar to view its details, or add a new custom model for any provider.";
+-
+-export const MANAGE_MODELS_ADD_CUSTOM_MODEL = "Add Custom Model";
+-
+-export const MANAGE_MODELS_SEARCH_MODELS = "Search models...";
+-
+-export const MANAGE_MODELS_NO_MODELS_FOUND = "No models found";
+-export const MANAGE_MODELS_CATALOG_UNREADABLE = "Model catalog unavailable";
+-
+-export const MANAGE_MODELS_EXPORT_PRICING = "Export Pricing";
+-
+-export const MANAGE_MODELS_IMPORT_PRICING = "Import Pricing JSON";
+-
+-export const MANAGE_MODELS_IMPORT_SUCCESS = "Import complete";
+-
+-export const MANAGE_MODELS_IMPORT_FAILED = "Import failed";
+-
+-export const MANAGE_MODELS_PRICING_URL_LABEL = "SDK Pricing URL";
+-
+-export const MANAGE_MODELS_PRICING_URL_DESCRIPTION =
+-	"Use this URL in your AutoDev SDK to load pricing from this database. The endpoint is public and does not require authentication.";
+-
+-export const MANAGE_MODELS_PRICING_URL_COPIED = "URL copied to clipboard";
+-
+-export const MANAGE_MODELS_IMPORT_DIALOG_TITLE = "Import Pricing JSON";
+-
+-export const MANAGE_MODELS_IMPORT_DIALOG_DESCRIPTION =
+-	"Paste a pricing JSON (SDK format or structured models array). Existing models with the same provider + model ID are skipped.";
+-
+-export const MANAGE_MODELS_SDK_USAGE = "SDK Usage";
+-
+-export const MANAGE_MODELS_SDK_USAGE_DIALOG_TITLE =
+-	"Use this pricing in your AutoDev SDK";
+-
+-export const MANAGE_MODELS_SDK_USAGE_DIALOG_DESCRIPTION =
+-	"Pass this public URL to pricing_json in openlit.init() and your SDK will use the model pricing from Manage Models. No API key required.";
+-
+-export const MANAGE_MODELS_SDK_USAGE_NOTE_LABEL = "Note:";
+-
+-export const MANAGE_MODELS_SDK_USAGE_NOTE =
+-	"The SDK fetches this URL on startup. If you update a model's price here, it will be applied to future tracing.";
+-
+ export const COPY = "Copy";
+ 
+-export const MANAGE_MODELS_INVALID_JSON = "Invalid JSON";
+-
+ // Provider management
+ export const MANAGE_PROVIDERS_ADD = "Add Provider";
+ 
+@@ -813,181 +735,12 @@ export const MANAGE_PROVIDERS_DESCRIPTION = "Description";
+ 
+ export const MANAGE_PROVIDERS_REQUIRES_VAULT = "Requires API Key (Vault)";
+ 
+-// Costs
+-export const COSTS_TITLE = "Costs";
+-
+-export const COSTS_TAB_ANALYTICS = "Analytics";
+-
+-export const COSTS_TAB_MODELS = "Manage models";
+-
+-export const COSTS_TAB_CONFIGURATION = "Configuration";
+-
+-export const COSTS_USAGE_SECTION = "Cost usage";
+-
+-export const COSTS_OPTIMIZATION_SECTION = "Cost optimization";
+-
+-export const COSTS_AUTO_PRICING_SECTION = "Auto pricing runs";
+-
+-export const COSTS_STAT_TOTAL_PLATFORM = "Total AI cost";
+-
+-export const COSTS_STAT_LLM = "App LLM cost";
+-
+-export const COSTS_STAT_CODING_AGENTS = "Coding agents";
+-
+-export const COSTS_STAT_EVALUATIONS = "Evaluations cost";
+-
+-export const COSTS_STAT_AVG_REQUEST = "Avg cost per request";
+-
+-export const COSTS_STAT_TOTAL_REQUESTS = "Total LLM requests";
+-
+-export const COSTS_STAT_CRON_RUNS = "Cron runs";
+-
+-export const COSTS_STAT_CRON_SUCCESS = "Successful runs";
+-
+-export const COSTS_STAT_PRICING_APPLIED = "Costs applied";
+-
+-export const COSTS_STAT_SPANS_SCANNED = "Spans scanned";
+-
+-export const COSTS_CRON_TABLE_STARTED = "Started";
+-
+-export const COSTS_CRON_TABLE_STATUS = "Status";
+-
+-export const COSTS_CRON_TABLE_DURATION = "Duration";
+-
+-export const COSTS_CRON_TABLE_UPDATED = "Costs applied";
+-
+-export const COSTS_CRON_TABLE_SCANNED = "Scanned";
+-
+-export const COSTS_CRON_TABLE_SKIPPED = "Skipped";
+-
+-export const COSTS_CRON_TABLE_FAILED = "Failed";
+-
+-export const COSTS_CRON_TABLE_EMPTY =
+-	"No Auto Pricing runs applied costs in this time range.";
+-
+-export const COSTS_CRON_TABLE_EMPTY_CTA = "Enable Auto Pricing";
+-
+-export const COSTS_CRON_TABLE_EMPTY_HINT =
+-	"Turn on Auto Pricing to backfill missing LLM costs on a schedule.";
+-
+-// A read that never landed is not "no runs happened". Offering the
+-// Enable-Auto-Pricing CTA here would send the operator after a setting that
+-// is not the cause.
+-export const COSTS_CRON_TABLE_UNAVAILABLE =
+-	"Auto Pricing runs could not be read from the configured connector.";
+-
+-export const COSTS_BACKFILL_BANNER_TITLE = "Some LLM traces are missing cost";
+-
+-export const COSTS_BACKFILL_BANNER_DESCRIPTION =
+-	"Auto Pricing can backfill gen_ai.usage.cost for spans that arrived without a price. Existing spend charts still work for costs already on your traces.";
+-
+-export const COSTS_BACKFILL_BANNER_CTA = "Configure Auto Pricing";
+-
+-export const COSTS_BACKFILL_BANNER_COUNT = "spans missing cost in this range";
+-
+-export const COSTS_CHART_BY_PROVIDER = "Cost by provider";
+-
+-export const COSTS_CHART_BY_MODEL = "Cost by model";
+-
+-export const COSTS_CHART_BY_ENVIRONMENT = "Cost by environment";
+-
+-export const COSTS_CHART_BY_APPLICATION = "Cost by application";
+-
+-export const COSTS_CHART_OVER_TIME = "Cost over time";
+-
+-// Pricing (configuration tab copy)
+-export const PRICING_TITLE = "Pricing";
+-
+-export const PRICING_PAGE_DESCRIPTION =
+-	"Recalculate the cost of LLM traces using the current model pricing in Manage Models. Updates the `gen_ai.usage.cost` attribute on existing traces.";
+-
+-export const PRICING_INFO_BAR =
+-	"Pricing is computed from the input/output token counts on the trace and the per-million-token price stored for each model in Manage Models. Edit a model there to update what auto/manual pricing computes.";
+-
+-export const PRICING_AUTO_TITLE = "Auto Pricing";
+-
+-export const PRICING_AUTO_DESCRIPTION =
+-	"Recompute pricing on a schedule for new LLM traces.";
+-
+-export const PRICING_AUTO_ENABLE_LABEL = "Enable Auto Pricing";
+-
+-export const PRICING_AUTO_ENABLE_HINT =
+-	"Periodically recompute and store pricing for new traces.";
+-
+-export const PRICING_AUTO_CRON_LABEL = "Cron Schedule";
+-
+-export const PRICING_AUTO_CRON_PLACEHOLDER = "*/15 * * * *";
+-
+-export const PRICING_AUTO_CRON_HELP =
+-	"Standard cron expression. Example: */15 * * * * runs every 15 minutes.";
+-
+-export const PRICING_MANUAL_TITLE = "Manual Pricing";
+-
+-export const PRICING_MANUAL_DESCRIPTION =
+-	"Recalculate the cost for a specific trace on demand.";
+-
+-export const PRICING_MANUAL_STEP_1 = "Open any LLM request in the trace explorer.";
+-
+-export const PRICING_MANUAL_STEP_2 =
+-	'Click "Recalculate Cost" in the trace detail panel.';
+-
+-export const PRICING_MANUAL_STEP_3 =
+-	"The gen_ai.usage.cost attribute is updated using the latest model pricing.";
+-
+-export const PRICING_GO_TO_TRACES = "Go to Traces";
+-
+-export const PRICING_SAVE = "Save";
+-
+-export const PRICING_UPDATE = "Update";
+-
+-export const PRICING_CONFIG_SAVED = "Pricing config saved";
+-
+-export const PRICING_HOW_AUTO_WORKS_TITLE = "How Auto Pricing Works";
+-
+-export const PRICING_HOW_AUTO_WORKS_DESCRIPTION =
+-	"On each cron tick, AutoDev selects LLM spans from otel_traces, looks up each span's provider + model in openlit_provider_models, recomputes the cost from token counts, and writes it back to gen_ai.usage.cost.";
+-
+-export const PRICING_HOW_AUTO_WORKS_STEP_1 =
+-	"Selects LLM spans: spans whose gen_ai.operation.name matches supported LLM operations (e.g. chat).";
+-
+-export const PRICING_HOW_AUTO_WORKS_STEP_2 =
+-	"Incremental window: only spans with Timestamp >= the last successful cron run are processed. First run processes all historical LLM spans.";
+-
+-export const PRICING_HOW_AUTO_WORKS_STEP_3 =
+-	"Looks up the model: for each span, reads gen_ai.system (provider) + gen_ai.request.model and finds the matching row in openlit_provider_models.";
+-
+-export const PRICING_HOW_AUTO_WORKS_STEP_4 =
+-	"Computes cost from input/output tokens plus optional cache-read and cache-creation tokens at their Manage Models rates (inclusive vs exclusive prompt accounting by provider).";
+-
+-export const PRICING_HOW_AUTO_WORKS_STEP_5 =
+-	"Writes back: ALTER TABLE otel_traces UPDATE SpanAttributes['gen_ai.usage.cost'] for each processed span. Spans with missing provider/model/tokens or an unknown model are skipped (not errors).";
+-
+-export const PRICING_HOW_AUTO_WORKS_STEP_6 =
+-	"Run is logged: totalSpans, totalUpdated, totalFailed, totalSkipped are recorded in the cron log with SUCCESS / PARTIAL_SUCCESS / FAILURE status.";
+-
+-// Recalculate Cost (in trace detail panel)
+-export const RECALCULATE_COST_LABEL = "Recalculate Cost";
+-
+-export const RECALCULATE_COST_UPDATING = "Updating…";
+-
+-export const RECALCULATE_COST_TITLE =
+-	"Recalculate cost using the model's price in Manage Models";
+-
+-export const RECALCULATE_COST_SUCCESS = "Cost updated";
+-
+-export const RECALCULATE_COST_FAILURE =
+-	"Could not update cost — model not found in Manage Models or pricing unavailable";
+-
+-export const RECALCULATE_COST_REQUEST_FAILED = "Failed to recalculate cost";
+-
+ export const FEATURE_PROMPTS = "Prompt Hub";
+ 
+ export const FEATURE_MEMORY = "Memory";
+ 
+ export const FEATURE_EVALS = "Evaluations";
+ 
+-export const FEATURE_MANAGE_MODELS = "Manage models";
+-
+ export const SIDEBAR_MONITOR = "Monitor";
+ 
+ export const SIDEBAR_DEVELOP = "Develop";
+diff --git a/src/client/src/constants/route.ts b/src/client/src/constants/route.ts
+index d38fc536..8b8fccc8 100644
+--- a/src/client/src/constants/route.ts
++++ b/src/client/src/constants/route.ts
+@@ -9,7 +9,6 @@ export const ALLOWED_OPENLIT_ROUTES_WITHOUT_TOKEN = [
+ 
+ /** Routes that don't require auth, matched by prefix (for dynamic segments). */
+ export const ALLOWED_OPENLIT_ROUTE_PREFIXES_WITHOUT_TOKEN = [
+-	"/api/pricing/export/",
+ 	"/api/evaluation/offline/",
+ ];
+ 
+diff --git a/src/client/src/constants/sidebar.tsx b/src/client/src/constants/sidebar.tsx
+index 43c22332..4a629d09 100644
+--- a/src/client/src/constants/sidebar.tsx
++++ b/src/client/src/constants/sidebar.tsx
+@@ -7,7 +7,6 @@ import {
+ 	BookOpen,
+ 	Boxes,
+ 	BrainCircuit,
+-	CircleDollarSign,
+ 	Component,
+ 	Key,
+ 	LayoutDashboard,
+@@ -47,12 +46,6 @@ export const SIDEBAR_ITEMS: SidebarItemProps[] = [
+ 						link: "/evaluations",
+ 						type: "action",
+ 					},
+-					{
+-						icon: <CircleDollarSign className={ICON_CLASSES} />,
+-						text: m.COSTS_TITLE,
+-						link: "/costs",
+-						type: "action",
+-					},
+ 				],
+ 			},
+ 			{
+diff --git a/src/client/src/lib/platform/pricing/config.ts b/src/client/src/lib/platform/pricing/config.ts
+index ca009c6b..d9a0f647 100644
+--- a/src/client/src/lib/platform/pricing/config.ts
++++ b/src/client/src/lib/platform/pricing/config.ts
+@@ -1,13 +1,7 @@
+-import getMessage from "@/constants/messages";
+-import { getDBConfigByUser } from "@/lib/db-config";
+ import prisma from "@/lib/prisma";
+ import asaw from "@/utils/asaw";
+-import { throwIfError } from "@/utils/error";
+-import { DatabaseConfig } from "@/types/database-config";
+ import Cron from "@/helpers/server/cron";
+-import { jsonParse, jsonStringify } from "@/utils/json";
+-import { merge } from "lodash";
+-import { randomUUID } from "crypto";
++import { jsonParse } from "@/utils/json";
+ import path from "path";
+ 
+ export interface PricingConfig {
+@@ -18,35 +12,6 @@ export interface PricingConfig {
+ 	meta: string;
+ }
+ 
+-export interface PricingConfigInput {
+-	id?: string;
+-	auto: boolean;
+-	recurringTime: string;
+-	meta: string;
+-}
+-
+-/**
+- * Get the pricing config for the current user's database.
+- * Returns an empty shell (no id) if nothing exists yet — pricing is optional.
+- */
+-export async function getPricingConfig(
+-	dbConfig?: DatabaseConfig
+-): Promise<PricingConfig | null> {
+-	let updatedDBConfig: DatabaseConfig | undefined = dbConfig;
+-	if (!dbConfig?.id) {
+-		[, updatedDBConfig] = await asaw(getDBConfigByUser(true));
+-	}
+-
+-	if (!updatedDBConfig?.id) return null;
+-
+-	const [, config] = await asaw(
+-		prisma.pricingConfigs.findFirst({
+-			where: { databaseConfigId: updatedDBConfig.id },
+-		})
+-	);
+-
+-	return (config as PricingConfig) || null;
+-}
+ 
+ export async function getPricingConfigById(
+ 	id: string
+@@ -57,86 +22,6 @@ export async function getPricingConfigById(
+ 	return (config as PricingConfig) || null;
+ }
+ 
+-/**
+- * Create or update pricing config, and wire up cron if auto is enabled.
+- */
+-export async function setPricingConfig(
+-	pricingConfig: PricingConfigInput,
+-	apiURL: string
+-) {
+-	const [, dbConfig] = await asaw(getDBConfigByUser(true));
+-	throwIfError(!dbConfig?.id, getMessage().DATABASE_CONFIG_NOT_FOUND);
+-
+-	const cronObject = new Cron();
+-	if (pricingConfig.auto) {
+-		cronObject.validateCronSchedule(pricingConfig.recurringTime);
+-	}
+-
+-	let previousConfig: PricingConfig | null = null;
+-	let cronJobId: string | undefined;
+-	let pricingConfigId: string | undefined;
+-	let data: any;
+-	let err: any;
+-
+-	if (pricingConfig.id) {
+-		previousConfig = await getPricingConfigById(pricingConfig.id);
+-		pricingConfigId = previousConfig?.id;
+-		const meta = jsonParse(previousConfig?.meta || "{}") as Record<string, any>;
+-		cronJobId = meta?.cronJobId || randomUUID();
+-		pricingConfig.meta = jsonStringify({ ...meta, cronJobId });
+-		pricingConfig = merge(previousConfig || {}, pricingConfig) as PricingConfigInput;
+-		[err, data] = await asaw(
+-			prisma.pricingConfigs.update({
+-				data: {
+-					auto: pricingConfig.auto,
+-					recurringTime: pricingConfig.recurringTime,
+-					meta: pricingConfig.meta,
+-				},
+-				where: { id: pricingConfig.id },
+-			})
+-		);
+-	} else {
+-		cronJobId = randomUUID();
+-		const meta = jsonParse(pricingConfig.meta || "{}") as Record<string, any>;
+-		pricingConfig.meta = jsonStringify({ ...meta, cronJobId });
+-		[err, data] = await asaw(
+-			prisma.pricingConfigs.create({
+-				data: {
+-					auto: pricingConfig.auto,
+-					recurringTime: pricingConfig.recurringTime,
+-					meta: pricingConfig.meta,
+-					databaseConfigId: dbConfig.id,
+-				},
+-			})
+-		);
+-		pricingConfigId = data?.id;
+-	}
+-
+-	throwIfError(err, getMessage().OPERATION_FAILED);
+-
+-	try {
+-		if (pricingConfig.auto) {
+-			await cronObject.updateCrontab({
+-				cronId: cronJobId!,
+-				cronSchedule: pricingConfig.recurringTime,
+-				cronEnvVars: {
+-					PRICING_CONFIG_ID: pricingConfigId!,
+-					API_URL: apiURL,
+-				},
+-				cronScriptPath: path.join(process.cwd(), "scripts/pricing/auto.js"),
+-				cronLogPath: path.join(process.cwd(), "logs/pricing/auto.log"),
+-			});
+-		} else {
+-			await cronObject.deleteCronJob(cronJobId!);
+-		}
+-	} catch (error) {
+-		console.error(getMessage().CRON_JOB_UPDATION_ERROR, error);
+-		throw error;
+-	}
+-
+-	return data;
+-}
+-
+ /**
+  * Restore cron jobs for pricing configs with auto=true on startup.
+  */
+diff --git a/src/client/src/lib/platform/pricing/cron-analytics.ts b/src/client/src/lib/platform/pricing/cron-analytics.ts
+deleted file mode 100644
+index 9b714c5b..00000000
+--- a/src/client/src/lib/platform/pricing/cron-analytics.ts
++++ /dev/null
+@@ -1,142 +0,0 @@
+-import { dataCollector, MetricParams } from "@/lib/platform/common";
+-import { OPENLIT_CRON_LOG_TABLE_NAME } from "@/lib/platform/cron-log/table-details";
+-import { CronType } from "@/types/cron";
+-import Sanitizer from "@/utils/sanitizer";
+-import { getFilterPreviousParams } from "@/helpers/server/platform";
+-
+-export type PricingCronRunRow = {
+-	startedAt: string;
+-	finishedAt: string;
+-	duration: number;
+-	runStatus: string;
+-	totalSpans: number;
+-	totalUpdated: number;
+-	totalFailed: number;
+-	totalSkipped: number;
+-};
+-
+-export type PricingCronAnalyticsSummary = {
+-	totalRuns: number;
+-	previousTotalRuns: number;
+-	totalUpdated: number;
+-	previousTotalUpdated: number;
+-	totalSpans: number;
+-	previousTotalSpans: number;
+-	successfulRuns: number;
+-	previousSuccessfulRuns: number;
+-};
+-
+-function timeWhere(params: MetricParams) {
+-	const start = Sanitizer.sanitizeValue(String(params.timeLimit.start));
+-	const end = Sanitizer.sanitizeValue(String(params.timeLimit.end));
+-	return `
+-		started_at >= parseDateTimeBestEffort('${start}')
+-		AND started_at <= parseDateTimeBestEffort('${end}')
+-		AND cron_type = '${CronType.SPAN_PRICING}'
+-	`;
+-}
+-
+-function toNumber(value: unknown): number {
+-	const n = Number(value);
+-	return Number.isFinite(n) ? n : 0;
+-}
+-
+-async function getSummaryForPeriod(
+-	params: MetricParams
+-): Promise<PricingCronAnalyticsSummary & { err?: unknown }> {
+-	const query = `
+-		SELECT
+-			count() AS totalRuns,
+-			countIf(run_status = 'SUCCESS' OR run_status = 'PARTIAL_SUCCESS') AS successfulRuns,
+-			sum(toFloat64OrZero(meta['totalUpdated'])) AS totalUpdated,
+-			sum(toFloat64OrZero(meta['totalSpans'])) AS totalSpans
+-		FROM ${OPENLIT_CRON_LOG_TABLE_NAME}
+-		WHERE ${timeWhere(params)}
+-	`;
+-
+-	const { data, err } = await dataCollector({ query });
+-	if (err) {
+-		return {
+-			err,
+-			totalRuns: 0,
+-			previousTotalRuns: 0,
+-			totalUpdated: 0,
+-			previousTotalUpdated: 0,
+-			totalSpans: 0,
+-			previousTotalSpans: 0,
+-			successfulRuns: 0,
+-			previousSuccessfulRuns: 0,
+-		};
+-	}
+-
+-	const row = Array.isArray(data) ? data[0] : undefined;
+-	return {
+-		totalRuns: toNumber(row?.totalRuns),
+-		previousTotalRuns: 0,
+-		totalUpdated: toNumber(row?.totalUpdated),
+-		previousTotalUpdated: 0,
+-		totalSpans: toNumber(row?.totalSpans),
+-		previousTotalSpans: 0,
+-		successfulRuns: toNumber(row?.successfulRuns),
+-		previousSuccessfulRuns: 0,
+-	};
+-}
+-
+-export async function getPricingCronAnalytics(
+-	params: MetricParams,
+-	options?: { limit?: number }
+-) {
+-	const limit = Math.min(Math.max(options?.limit ?? 25, 1), 100);
+-	const previousParams = getFilterPreviousParams(params);
+-
+-	const [current, previous, runsRes] = await Promise.all([
+-		getSummaryForPeriod(params),
+-		getSummaryForPeriod(previousParams),
+-		dataCollector({
+-			query: `
+-				SELECT
+-					started_at AS startedAt,
+-					finished_at AS finishedAt,
+-					duration,
+-					run_status AS runStatus,
+-					toFloat64OrZero(meta['totalSpans']) AS totalSpans,
+-					toFloat64OrZero(meta['totalUpdated']) AS totalUpdated,
+-					toFloat64OrZero(meta['totalFailed']) AS totalFailed,
+-					toFloat64OrZero(meta['totalSkipped']) AS totalSkipped
+-				FROM ${OPENLIT_CRON_LOG_TABLE_NAME}
+-				WHERE ${timeWhere(params)}
+-					AND toFloat64OrZero(meta['totalUpdated']) > 0
+-				ORDER BY started_at DESC
+-				LIMIT ${limit}
+-			`,
+-		}),
+-	]);
+-
+-	const runs = ((runsRes.data as PricingCronRunRow[]) || []).map((row) => ({
+-		startedAt: String(row.startedAt ?? ""),
+-		finishedAt: String(row.finishedAt ?? ""),
+-		duration: toNumber(row.duration),
+-		runStatus: String(row.runStatus ?? ""),
+-		totalSpans: toNumber(row.totalSpans),
+-		totalUpdated: toNumber(row.totalUpdated),
+-		totalFailed: toNumber(row.totalFailed),
+-		totalSkipped: toNumber(row.totalSkipped),
+-	}));
+-
+-	return {
+-		data: [
+-			{
+-				total_runs: current.totalRuns,
+-				previous_total_runs: previous.totalRuns,
+-				successful_runs: current.successfulRuns,
+-				previous_successful_runs: previous.successfulRuns,
+-				total_updated: current.totalUpdated,
+-				previous_total_updated: previous.totalUpdated,
+-				total_spans: current.totalSpans,
+-				previous_total_spans: previous.totalSpans,
+-			},
+-		],
+-		runs,
+-		err: current.err || previous.err || runsRes.err,
+-	};
+-}
+diff --git a/src/client/src/lib/platform/pricing/export.ts b/src/client/src/lib/platform/pricing/export.ts
+deleted file mode 100644
+index c3a04668..00000000
+--- a/src/client/src/lib/platform/pricing/export.ts
++++ /dev/null
+@@ -1,85 +0,0 @@
+-import { dataCollector } from "@/lib/platform/common";
+-import { getDBConfigByIdInternal } from "@/lib/db-config";
+-import { OPENLIT_PROVIDER_MODELS_TABLE_NAME } from "@/lib/platform/providers/table-details";
+-import asaw from "@/utils/asaw";
+-
+-export type PricingExportResult =
+-	| { data: Record<string, any> }
+-	| { error: string; status: number };
+-
+-// Shared by the public (no-auth) CE route and the auth-gated enterprise
+-// route so both stay in lockstep with the SDK `pricing_json` format instead
+-// of drifting apart as two hand-duplicated copies.
+-export async function getPricingExport(
+-	dbConfigId: string
+-): Promise<PricingExportResult> {
+-	if (!dbConfigId) {
+-		return { error: "Database config ID is required", status: 400 };
+-	}
+-
+-	const [err, dbConfig] = await asaw(getDBConfigByIdInternal({ id: dbConfigId }));
+-
+-	if (err || !dbConfig?.id) {
+-		return { error: "Database config not found", status: 404 };
+-	}
+-
+-	const query = `
+-		SELECT
+-			model_id,
+-			model_type,
+-			input_price_per_m_token as inputPrice,
+-			output_price_per_m_token as outputPrice,
+-			cache_read_price_per_m_token as cacheReadPrice,
+-			cache_creation_price_per_m_token as cacheCreationPrice
+-		FROM ${OPENLIT_PROVIDER_MODELS_TABLE_NAME}
+-		ORDER BY model_type, model_id
+-	`;
+-
+-	const { data, err: queryErr } = await dataCollector(
+-		{ query },
+-		"query",
+-		dbConfig.id
+-	);
+-
+-	if (queryErr) {
+-		return { error: "Failed to fetch model pricing", status: 500 };
+-	}
+-
+-	const models = (data as any[]) || [];
+-
+-	// Build SDK-compatible pricing.json format
+-	const pricing: Record<string, any> = {};
+-
+-	for (const model of models) {
+-		const type = model.model_type || "chat";
+-		if (!pricing[type]) {
+-			pricing[type] = {};
+-		}
+-
+-		if (type === "chat") {
+-			const entry: Record<string, number> = {
+-				promptPrice: model.inputPrice / 1000,
+-				completionPrice: model.outputPrice / 1000,
+-			};
+-			if (model.cacheReadPrice > 0) {
+-				entry.cacheReadPrice = model.cacheReadPrice / 1000;
+-			}
+-			if (model.cacheCreationPrice > 0) {
+-				entry.cacheCreationPrice = model.cacheCreationPrice / 1000;
+-			}
+-			pricing[type][model.model_id] = entry;
+-		} else if (type === "embeddings") {
+-			pricing[type][model.model_id] = model.inputPrice / 1000;
+-		} else if (type === "audio") {
+-			pricing[type][model.model_id] = model.inputPrice / 1000;
+-		} else if (type === "images") {
+-			pricing[type][model.model_id] = {
+-				standard: {
+-					"1024x1024": model.inputPrice / 1000,
+-				},
+-			};
+-		}
+-	}
+-
+-	return { data: pricing };
+-}
+diff --git a/src/client/src/lib/platform/pricing/guidance.ts b/src/client/src/lib/platform/pricing/guidance.ts
+deleted file mode 100644
+index f131adf4..00000000
+--- a/src/client/src/lib/platform/pricing/guidance.ts
++++ /dev/null
+@@ -1,43 +0,0 @@
+-import { dataCollector, MetricParams, OTEL_TRACES_TABLE_NAME } from "@/lib/platform/common";
+-import { getFilterWhereCondition } from "@/helpers/server/platform";
+-import { getTraceMappingKeyFullPath } from "@/helpers/server/trace";
+-import { getPricingConfig } from "@/lib/platform/pricing/config";
+-
+-export type CostPricingGuidance = {
+-	autoEnabled: boolean;
+-	missingCostSpans: number;
+-	showBackfillBanner: boolean;
+-};
+-
+-export async function getCostPricingGuidance(
+-	params: MetricParams
+-): Promise<CostPricingGuidance> {
+-	const config = await getPricingConfig();
+-	const autoEnabled = !!config?.auto;
+-
+-	const costKeyPath = `SpanAttributes['${getTraceMappingKeyFullPath("cost")}']`;
+-	const query = `
+-		SELECT
+-			CAST(count() AS INTEGER) AS missing_cost_spans
+-		FROM ${OTEL_TRACES_TABLE_NAME}
+-		WHERE ${getFilterWhereCondition(
+-			{
+-				...params,
+-				operationType: "llm",
+-			},
+-			true
+-		)}
+-			AND (${costKeyPath} = '' OR toFloat64OrZero(${costKeyPath}) = 0)
+-	`;
+-
+-	const { data, err } = await dataCollector({ query });
+-	const row = Array.isArray(data) ? data[0] : undefined;
+-	const missingCostSpans =
+-		err || !row ? 0 : Number(row.missing_cost_spans) || 0;
+-
+-	return {
+-		autoEnabled,
+-		missingCostSpans,
+-		showBackfillBanner: !autoEnabled && missingCostSpans > 0,
+-	};
+-}
+diff --git a/src/client/src/lib/platform/pricing/index.ts b/src/client/src/lib/platform/pricing/index.ts
+index f7e264d3..487d1ea1 100644
+--- a/src/client/src/lib/platform/pricing/index.ts
++++ b/src/client/src/lib/platform/pricing/index.ts
+@@ -1,6 +1,4 @@
+ import getMessage from "@/constants/messages";
+-import { getCurrentUser } from "@/lib/session";
+-import { throwIfError } from "@/utils/error";
+ import { dataCollector, OTEL_TRACES_TABLE_NAME } from "@/lib/platform/common";
+ import {
+ 	getTraceMappingKeyFullPath,
+@@ -8,7 +6,6 @@ import {
+ } from "@/helpers/server/trace";
+ import { SUPPORTED_EVALUATION_OPERATIONS } from "@/constants/traces";
+ import { getDBConfigByIdInternal } from "@/lib/db-config";
+-import { getTraceSpanRecord } from "@/lib/platform/traces/read";
+ import { ProviderRegistry } from "@/lib/platform/providers/provider-registry";
+ import { getPricingConfigById } from "./config";
+ import { getLastRunCronLogByCronId, insertCronLog } from "@/lib/platform/cron-log";
+@@ -16,7 +13,6 @@ import { CronRunStatus, CronType } from "@/types/cron";
+ import { differenceInSeconds } from "date-fns";
+ import Sanitizer from "@/utils/sanitizer";
+ import asaw from "@/utils/asaw";
+-import { consoleLog } from "@/utils/log";
+ import {
+ 	getChatModelCostPerM,
+ 	promptTokensIncludeCache,
+@@ -213,85 +209,6 @@ async function writeCostsToTraces(
+ 	return { err: err as string | undefined };
+ }
+ 
+-/**
+- * Manually recalculate + persist cost for a single span.
+- * Exposed via POST /api/pricing/[spanId].
+- */
+-export async function setPricingForSpanId(
+-	spanId: string,
+-	opts?: { environment?: string; traceId?: string }
+-) {
+-	const user = await getCurrentUser();
+-	throwIfError(!user, getMessage().UNAUTHORIZED_USER);
+-
+-	const sanitizedSpanId = Sanitizer.sanitizeValue(spanId);
+-	const { resolveTelemetrySourceDescriptor } = await import("@/lib/telemetry-source");
+-	const descriptor = await resolveTelemetrySourceDescriptor({
+-		signal: "traces",
+-		environment: opts?.environment,
+-	});
+-	const { record: spanData, err: traceErr } = await getTraceSpanRecord(
+-		sanitizedSpanId,
+-		{ environment: opts?.environment, traceId: opts?.traceId }
+-	);
+-	consoleLog("[pricing] routed span lookup", {
+-		spanId: sanitizedSpanId,
+-		environment: opts?.environment || null,
+-		traceId: opts?.traceId || null,
+-		descriptorId: descriptor.id,
+-		type: descriptor.type,
+-		found: !!(spanData as any)?.SpanId,
+-		error: traceErr || null,
+-	});
+-	throwIfError(!!traceErr, getMessage().TRACE_NOT_FOUND);
+-	throwIfError(
+-		!(spanData as any)?.SpanId,
+-		getMessage().TRACE_NOT_FOUND
+-	);
+-
+-	const trace = spanData as unknown as TraceRow;
+-
+-	// The trace itself doesn't tell us the dbConfig; fall back to the default
+-	const { default: prisma } = await import("@/lib/prisma");
+-	const pricingConfig = await prisma.pricingConfigs.findFirst();
+-	const dbConfigId =
+-		pricingConfig?.databaseConfigId ||
+-		(await (async () => {
+-			const { getDBConfigByUser } = await import("@/lib/db-config");
+-			const [, dbc] = await asaw(getDBConfigByUser(true));
+-			return dbc?.id;
+-		})());
+-
+-	if (!dbConfigId) {
+-		return { success: false, err: getMessage().DATABASE_CONFIG_NOT_FOUND };
+-	}
+-
+-	const { cost, reason } = await computeCostForTrace(trace, dbConfigId);
+-	if (cost === null) {
+-		return {
+-			success: false,
+-			err:
+-				reason ||
+-				"Could not compute cost — missing provider/model/tokens or model not in openlit_provider_models",
+-		};
+-	}
+-
+-	// External telemetry backends are read-only from OpenLIT's perspective.
+-	// The cost is still calculated using the project's ClickHouse intelligence
+-	// store, but must not be written to the external vendor's trace backend.
+-	if (!descriptor.isBuiltIn && descriptor.type !== "clickhouse") {
+-		return {
+-			success: true,
+-			data: { spanId: trace.SpanId, cost, persisted: false },
+-			message: `Cost calculated from the ${descriptor.type} connector. External telemetry sources are read-only, so the source span was not modified.`,
+-		};
+-	}
+-
+-	const { err } = await writeCostToTrace(trace.SpanId, cost, dbConfigId);
+-	if (err) return { success: false, err };
+-
+-	return { success: true, data: { spanId: trace.SpanId, cost } };
+-}
+ 
+ interface AutoPricingPayload {
+ 	pricingConfigId: string;
+diff --git a/src/client/src/middleware.ts b/src/client/src/middleware.ts
+index 866417ab..2215055e 100644
+--- a/src/client/src/middleware.ts
++++ b/src/client/src/middleware.ts
+@@ -34,10 +34,8 @@ export const config = {
+ 		"/prompt-hub/:path*",
+ 		"/settings/:path*",
+ 		"/connectors",
+-		"/costs",
+ 		"/evaluations",
+ 		"/evaluations/:path*",
+-		"/pricing",
+ 		"/context",
+ 		"/context/:path*",
+ 		"/memory",
+diff --git a/src/client/src/utils/breadcrumbs.ts b/src/client/src/utils/breadcrumbs.ts
+index fd6b80b0..5f2a3410 100644
+--- a/src/client/src/utils/breadcrumbs.ts
++++ b/src/client/src/utils/breadcrumbs.ts
+@@ -36,20 +36,6 @@ export function extractRouteParams(pathname: string, regex: RegExp): Record<stri
+ // Route configurations for all pages
+ export const ROUTE_CONFIGS: RouteConfig[] = [
+ 	// Home page
+-	// Costs
+-	{
+-		regex: /^\/costs$/,
+-		getTitle: () => getMessage().COSTS_TITLE,
+-		getBreadcrumbs: () => [],
+-	},
+-	{
+-		regex: /^\/pricing$/,
+-		getTitle: () => getMessage().COSTS_TAB_CONFIGURATION,
+-		getBreadcrumbs: () => [
+-			{ title: getMessage().COSTS_TITLE, href: "/costs" },
+-		],
+-	},
+-
+ 	// Dashboard routes
+ 	{
+ 		regex: /^\/dashboard$/,

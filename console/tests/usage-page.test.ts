@@ -25,11 +25,21 @@ const usageWidgetIds = [
   "context-compactions-by-workspace",
   "context-compactions-by-model",
   "context-compactions-by-agent",
+  "git-commits",
+  "git-files-changed",
+  "git-files-added",
+  "git-files-deleted",
+  "git-lines-added",
+  "git-lines-removed",
+  "git-partial-commits",
+  "git-commits-by-workspace",
+  "git-commits-by-provider",
+  "git-commits-by-agent",
   "skill-events-by-event",
   "estimated-cost"
 ] as const;
 const usageResponse = {
-  schema: "autodev-openlit-usage-v4",
+  schema: "autodev-openlit-usage-v5",
   widgets: usageWidgetIds.map((key) => ({
     key,
     querySucceeded: false,
@@ -93,7 +103,7 @@ function withUsageConfig(): () => void {
   };
 }
 
-test("UsagePage renders a validated v4 snapshot and selected trace using server-side OpenLIT calls", async () => {
+test("UsagePage renders a validated v5 snapshot and selected trace using server-side OpenLIT calls", async () => {
   const restore = withUsageConfig();
   try {
     const requests: { url: string; init: RequestInit | undefined }[] = [];
@@ -155,7 +165,7 @@ test("UsagePage fails closed on a stale response schema while retaining its filt
     );
 
     assert.match(markup, /Usage telemetry response was invalid/);
-    assert.match(markup, /required AutoDev Usage v4 contract/);
+    assert.match(markup, /required AutoDev Usage v5 contract/);
     assert.match(markup, /restart the managed Console/);
     assert.match(markup, /data-usage-observed="false"/);
     assert.match(markup, /Selected: openai/);

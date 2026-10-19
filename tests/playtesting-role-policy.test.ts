@@ -86,6 +86,14 @@ test("playtester role enforces read-only sandbox and approved run/read tool subs
   }
 
   assert.equal(isServerEnabled(servers, "playtest"), true);
+  const playtestServer = servers.playtest as Record<string, unknown>;
+  const playtestEnvVars = playtestServer.env_vars;
+  assert.ok(Array.isArray(playtestEnvVars));
+  assert.equal(
+    playtestEnvVars.includes("AUTODEV_PLAYTEST_CONTROL_API_TOKEN"),
+    false,
+    "the Playtest MCP resolves its runner token from protected CODEX_HOME secrets, not child env"
+  );
   const playtestTools = getEnabledTools(servers, "playtest");
   assert.deepEqual(
     [...playtestTools].sort(),
@@ -278,9 +286,9 @@ test("playtester prompt requires exact authorized workspace/build gate and expli
 
   // Negative trigger examples:
   assert.match(prompt, /Negative triggers/i);
-  assert.match(prompt, /"fix this code so the build passes"/);
-  assert.match(prompt, /"analyze why the player was confused"/);
-  assert.match(prompt, /"file a GitHub issue for this bug"/);
+  assert.match(prompt, /fix this code so the build passes/);
+  assert.match(prompt, /analyze why the player was confused/);
+  assert.match(prompt, /file a GitHub issue for this bug/);
 
   // Safety boundaries:
   assert.match(prompt, /source-code read-only/i);
@@ -472,4 +480,311 @@ test("playtest-analysis skill enforces workspace gate, negative triggers, and nu
       )
     )
   );
+});
+
+test("playtester prompt separates autonomous-visual and adapter-accelerated identity, preflight, and DTO", () => {
+  const prompt = readText("agents/prompts/roles/playtester.md");
+
+  // The prompt must declare both modes by canonical name and forbid silent fallback.
+  assert.match(prompt, /`autonomous-visual`/u);
+  assert.match(prompt, /`adapter-accelerated`/u);
+  assert.match(prompt, /never (?:falls back|collapse|covert)/iu);
+  assert.match(prompt, /typed refusal/u);
+
+  // Operator authorization gate is explicit; "this task" is not authorization.
+  assert.match(
+    prompt,
+    /explicit exact operator approval/u,
+    "playtester prompt must require explicit exact operator approval"
+  );
+  assert.match(prompt, /operator authorization/u);
+
+  // Visual preflight must confirm capabilityRevision + target identity + readiness.
+  assert.match(
+    prompt,
+    /capabilityRevision/u,
+    "playtester prompt must mention capabilityRevision"
+  );
+  assert.match(prompt, /targetId/u);
+  assert.match(prompt, /targetRevision/u);
+  assert.match(prompt, /approvalId/u);
+  assert.match(prompt, /`origin`/u);
+  assert.match(prompt, /capabilityRevision/u);
+  assert.match(prompt, /`smart-direct`/u);
+  assert.match(
+    prompt,
+    /typed blocker[\s\S]{0,80}`ready`|ready[\s\S]{0,200}typed blocker/is,
+    "playtester prompt must cite a typed blocker state with a readiness check"
+  );
+
+  // Visual DTO uses the versioned schema, explicit mode, and the seven limits.
+  assert.match(prompt, /autodev-playtest-launch-v1/u);
+  assert.match(prompt, /`areasOfFocus`/u);
+  for (const limit of [
+    "episodeCount",
+    "maxStepsPerEpisode",
+    "wallTimeMs",
+    "smartRequestsPerEpisode",
+    "smartTokensPerEpisode",
+    "screenshotCountPerEpisode",
+    "artifactBytesPerEpisode"
+  ]) {
+    assert.match(
+      prompt,
+      new RegExp(limit, "u"),
+      `playtester prompt missing visual limit: ${limit}`
+    );
+  }
+
+  // URL-only visual must stay Build unknown / Commit not applicable and never
+  // inherit *any* game checkout's HEAD; in particular not RacingGame/HEAD.
+  assert.match(prompt, /Build unknown/u);
+  assert.match(prompt, /Commit not applicable/u);
+  assert.match(
+    prompt,
+    /never inherit.{0,40}(?:HEAD|checkout)/iu,
+    "playtester prompt must forbid inheriting any checkout HEAD"
+  );
+
+  // The prompt must refuse not-ready/unsupported visual rather than fall back
+  // to adapter-accelerated or scripted-regression.
+  assert.match(
+    prompt,
+    /not-ready.{0,200}typed refusal/is,
+    "playtester prompt must treat not-ready visual as a typed refusal"
+  );
+  assert.match(
+    prompt,
+    /typed refusal.{0,200}adapter-accelerated.{0,200}scripted-regression/is,
+    "playtester prompt must refuse fallback to adapter/scripted"
+  );
+
+  // No-fabrication rule must cover scenario/seed/cohort/build SHA/approval/origin/budget.
+  assert.match(
+    prompt,
+    /Never fabricate[\s\S]{0,200}scenario[\s\S]{0,40}seed[\s\S]{0,40}cohort[\s\S]{0,40}build SHA[\s\S]{0,80}(?:target approval|approval)[\s\S]{0,40}origin[\s\S]{0,120}request budget/is,
+    "playtester prompt must forbid fabricating scenario/seed/cohort/build SHA/approval/origin/budget"
+  );
+
+  // Mode-specific launch fields must never cross-contaminate.
+  assert.match(
+    prompt,
+    /never cross-contaminate|never carry .{0,40}scenario/u,
+    "playtester prompt must forbid visual DTO from carrying scenario/seed/repo/build SHA"
+  );
+
+  // Analysis stays separate: playtester reads traces; operator triggers
+  // analysis in Console; playtest-analyst reviews independently.
+  assert.match(
+    prompt,
+    /Analysis is separate/u,
+    "playtester prompt must separate execution from analysis"
+  );
+  assert.match(prompt, /`playtest-analyst` independently/u);
+
+  // Same-request idempotency/recovery rules survive the mode split.
+  assert.match(prompt, /[Ss]ame-request idempotency/u);
+  assert.match(prompt, /never mint a new ID/u);
+});
+
+test("playtester prompt never leaks an adapter build-SHA requirement into URL-only visual", () => {
+  const prompt = readText("agents/prompts/roles/playtester.md");
+
+  // The adapter-accelerated gate and the autonomous-visual gate must be
+  // articulated as two separate gates; only one of them uses a build SHA.
+  // The adapter-accelerated gate identifies the approved build SHA.
+  assert.match(
+    prompt,
+    /`adapter-accelerated`[\s\S]{0,400}approved committed checkout build SHA/u
+  );
+  // The autonomous-visual gate explicitly says no build SHA.
+  assert.match(
+    prompt,
+    /`autonomous-visual`[\s\S]{0,400}(?:not|never)[\s\S]{0,200}build SHA/u
+  );
+
+  // The visual DTO must never appear with adapter-only fields inside it.
+  assert.match(
+    prompt,
+    /visual DTO[\s\S]{0,400}?scenario[\s\S]{0,200}?seed[\s\S]{0,200}?build SHA/u,
+    "visual DTO must never carry scenario/seed/build SHA"
+  );
+
+  // The visual gate must include "Build unknown / Commit not applicable"
+  // verbatim and explicitly say it does not inherit this AutoDev checkout.
+  assert.match(prompt, /`?Build unknown \/ Commit not applicable`?/u);
+  assert.match(
+    prompt,
+    /never inherit this AutoDev checkout/u,
+    "visual gate must forbid inheriting this AutoDev checkout"
+  );
+
+  // Section 1 of the explicit evidence/report format must show both modes
+  // with mode-specific identity and explicitly mark URL-only as Build unknown.
+  assert.match(
+    prompt,
+    /1\. Workspace & build authorization[\s\S]{0,800}Build unknown/u,
+    "report-format section 1 must include Build unknown for URL-only visual"
+  );
+});
+
+test("game-playtesting skill separates autonomous-visual and adapter-accelerated identity, preflight, and DTO", () => {
+  const skillText = readText(".rulesync/skills/game-playtesting/SKILL.md");
+
+  // Header section that names both modes and forbids silent fallback.
+  assert.match(skillText, /^## Mode separation(?: |\b|$)/mu);
+  assert.match(
+    skillText,
+    /`autonomous-visual`[\s\S]{0,100}`adapter-accelerated`[\s\S]{0,100}`scripted-regression`/u
+  );
+  assert.match(
+    skillText,
+    /never (?:falls back|collapse|covert|retried) across modes?/iu
+  );
+  assert.match(
+    skillText,
+    /typed refusal/u,
+    "skill must treat unavailable visual as a typed refusal"
+  );
+
+  // Visual preflight: capabilityRevision + target ID/revision/approval/origin
+  // + permitted inputs + per-episode ceilings + smart-direct readiness.
+  assert.match(skillText, /capabilityRevision/u);
+  assert.match(skillText, /targetId/u);
+  assert.match(skillText, /targetRevision/u);
+  assert.match(skillText, /approvalId/u);
+  assert.match(skillText, /origin/u);
+  assert.match(skillText, /`smart-direct`/u);
+  assert.match(skillText, /readiness/u);
+
+  // Visual DTO uses the seven limits and the verbatim areasOfFocus.
+  for (const limit of [
+    "episodeCount",
+    "maxStepsPerEpisode",
+    "wallTimeMs",
+    "smartRequestsPerEpisode",
+    "smartTokensPerEpisode",
+    "screenshotCountPerEpisode",
+    "artifactBytesPerEpisode"
+  ]) {
+    assert.match(
+      skillText,
+      new RegExp(limit, "u"),
+      `skill missing visual limit: ${limit}`
+    );
+  }
+  assert.match(skillText, /areasOfFocus/u);
+
+  // No-fabrication rule covers scenario/seed/cohort/build SHA/approval/origin/budget.
+  assert.match(
+    skillText,
+    /Never fabricate[\s\S]{0,200}scenario[\s\S]{0,40}seed[\s\S]{0,40}build SHA/u,
+    "skill must forbid fabricating scenario/seed/build SHA"
+  );
+
+  // Same-request idempotency/recovery rules survive the mode split.
+  assert.match(
+    skillText,
+    /[Ss]ame-request idempotency|[Ss]ame.{0,10}request idempotency/u
+  );
+  assert.match(skillText, /re-submit the exact stored payload/u);
+
+  // Operator authorization gate: this task is not authorization.
+  assert.match(
+    skillText,
+    /explicit exact operator (?:approval|authorization)/iu,
+    "skill must require explicit exact operator approval/authorization"
+  );
+  assert.match(skillText, /merely because this task asked for code/u);
+
+  // Analysis remains separate and is dispatched through Console by operator.
+  assert.match(skillText, /Analysis stays separate/u);
+  assert.match(skillText, /`playtest-analyst` independently/u);
+
+  // Existing required strings still appear.
+  assert.match(skillText, /## Workspace and build authorization gate/u);
+  assert.match(skillText, /workspace enablement alone is not run approval/iu);
+  assert.match(skillText, /### Negative trigger examples/u);
+  assert.match(skillText, /"fix this code so the build passes"/u);
+  assert.match(skillText, /"analyze this existing trace"/u);
+  assert.match(skillText, /"score the difficulty curve"/u);
+  assert.match(skillText, /"file a GitHub issue for this bug"/u);
+  assert.match(skillText, /## Explicit evidence\/report format/u);
+  assert.match(skillText, /Workspace & build authorization/u);
+  assert.match(skillText, /Authoritative trace & evidence locators/u);
+  assert.match(skillText, /Observed anomalies & failures/u);
+});
+
+test("game-playtesting skill never leaks an adapter build-SHA requirement into URL-only visual", () => {
+  const skillText = readText(".rulesync/skills/game-playtesting/SKILL.md");
+
+  // The Workspace and build authorization gate section must split the two
+  // modes and only use build SHA for adapter-accelerated.
+  assert.match(skillText, /Adapter-accelerated runs?:[\s\S]{0,400}build SHA/u);
+  assert.match(
+    skillText,
+    /Autonomous-visual runs?:[\s\S]{0,400}never[\s\S]{0,200}build SHA/u
+  );
+
+  // URL-only must stay Build unknown / Commit not applicable and explicitly
+  // must not inherit this AutoDev checkout's HEAD.
+  assert.match(skillText, /Build unknown \/ Commit not applicable/u);
+  assert.match(
+    skillText,
+    /never inherit this AutoDev checkout's HEAD/u,
+    "skill must forbid inheriting this AutoDev checkout's HEAD"
+  );
+
+  // The visual DTO must never carry adapter-only fields.
+  assert.match(
+    skillText,
+    /visual DTO never carries scenario\/seed\/repository\/build SHA/u
+  );
+
+  // The visual-assignment/RunConfiguration section must enumerate the seven
+  // approved ceilings verbatim.
+  for (const limit of [
+    "episodeCount",
+    "maxStepsPerEpisode",
+    "wallTimeMs",
+    "smartRequestsPerEpisode",
+    "smartTokensPerEpisode",
+    "screenshotCountPerEpisode",
+    "artifactBytesPerEpisode"
+  ]) {
+    assert.match(
+      skillText,
+      new RegExp(limit, "u"),
+      `skill explicit evidence section missing limit: ${limit}`
+    );
+  }
+});
+
+test("playtester visual mode is not blocked by stale adapter-only or pre-driver wording", () => {
+  const prompt = readText("agents/prompts/roles/playtester.md");
+  const skillText = readText(".rulesync/skills/game-playtesting/SKILL.md");
+
+  for (const text of [prompt, skillText]) {
+    assert.match(
+      text,
+      /modeReadiness\["autonomous-visual"\]\.status\s*=\s*ready/u
+    );
+    assert.match(text, /visual mode does not require an adapter/iu);
+    assert.match(
+      text,
+      /never fall back|never a fallback|never retry visual as adapter/iu
+    );
+    assert.doesNotMatch(
+      text,
+      /bounded playtester role may use only mode:\s*["']adapter-accelerated["']/iu
+    );
+    assert.doesNotMatch(
+      text,
+      /visual and scripted launch requests remain typed, but Runtime refuses/iu
+    );
+    assert.doesNotMatch(
+      text,
+      /visual\/screenshot capture is optional and adapter-gated/iu
+    );
+  }
 });
