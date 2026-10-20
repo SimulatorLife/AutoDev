@@ -108,7 +108,6 @@ export const RUNTIME_MODULES = [
   "runtime/src/shared/map-concurrent-ordered.ts",
   "runtime/src/shared/provider-model-ids.ts",
   "runtime/src/shared/output.ts",
-  "runtime/src/shared/resolve-workspace.ts",
   "runtime/src/shared/runtime-source-root.ts",
   "runtime/vendor/jev-playtest-lab/src/core.js",
   "runtime/src/control-api/index.ts",

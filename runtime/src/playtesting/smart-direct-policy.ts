@@ -17,7 +17,7 @@ import {
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
 
-import { isDirectory } from "../shared/resolve-workspace.ts";
+import { isDirectory } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 
 const SMART_MODEL_ALIAS = "autodev/smart" as const;
 export const SMART_DIRECT_POLICY_VERSION = "1" as const;
