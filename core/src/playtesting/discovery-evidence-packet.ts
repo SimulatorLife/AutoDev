@@ -111,13 +111,19 @@ export interface PlaytestDiscoveryObservationNote {
   readonly detail: string;
 }
 
+/**
+ * One visible affordance of a step.
+ *
+ * The note is the flat index of the visible affordances: a stable id for
+ * citation and the control it points at. The control's name, role and
+ * enabled state live in the step's visible observation, under the same
+ * control id, and repeating them here would put the visible state of every
+ * step into the packet a second time.
+ */
 export interface PlaytestDiscoveryAffordanceNote {
   readonly noteId: string;
   readonly step: number;
   readonly controlId: string;
-  readonly role: string;
-  readonly name: string;
-  readonly enabled: boolean;
 }
 
 export interface PlaytestDiscoveryActionReceipt {
@@ -1385,10 +1391,7 @@ function assertStepEvidence(
       !isRecord(affordance) ||
       !isText(affordance.noteId) ||
       !isCount(affordance.step) ||
-      !isText(affordance.controlId) ||
-      !isText(affordance.role) ||
-      !isText(affordance.name) ||
-      typeof affordance.enabled !== "boolean"
+      !isText(affordance.controlId)
     ) {
       throw new TypeError("Discovery packet affordance note is malformed.");
     }

@@ -249,6 +249,12 @@ function makeStepEvidence(input: {
       ) {
         return [];
       }
+      // The note indexes the visible affordance; the control's name, role
+      // and enabled state live in the visible observation under the same
+      // control id. Repeating them here would put the visible state of
+      // every step into the packet a second time, and a session of a real
+      // game does not fit the analyst's packet budget when it is counted
+      // twice.
       return [
         {
           noteId:
@@ -258,10 +264,7 @@ function makeStepEvidence(input: {
             "-" +
             String(index),
           step,
-          controlId: control.controlId,
-          role: control.role,
-          name: control.name,
-          enabled: control.enabled
+          controlId: control.controlId
         }
       ];
     });

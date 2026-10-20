@@ -578,6 +578,116 @@ test("visual discovery dispatch prepares one packet and stores only hypothesis r
   }
 });
 
+test("a real game's visible state produces one packet that fits the analyst budget", () => {
+  // A game puts every visible control's name into the screen, and those
+  // names are long. The packet carries the visible state once, so a session
+  // of a real game fits the analyst's byte budget.
+  const root = mkdtempSync(path.join(tmpdir(), "playtest-discovery-budget-"));
+  try {
+    const artifacts = new PlaytestArtifactStore({
+      rootDirectory: root,
+      workspaceId: WORKSPACE
+    });
+    const controlName = (step: number, index: number) =>
+      "Velocity Motors - #" +
+      String(index) +
+      " at step " +
+      String(step) +
+      " - Position 1 - Lap 1, 99% of the lap - Delta gap unavailable before " +
+      "race start - mechanically healthy - Tire age 0 laps - 0 of 1 required " +
+      "pit stops completed - 1% of the lap to the finish line";
+    const controlsFor = (step: number) =>
+      Array.from({ length: 23 }, (_, index) => ({
+        controlId: "ctl-" + String(index),
+        role: "button",
+        name: controlName(step, index),
+        bounds: { x: 0, y: 0, width: 10, height: 10 },
+        enabled: true,
+        focused: false
+      }));
+    const frameRefs = [0, 1].map(
+      (step) =>
+        artifacts.writeArtifact({
+          artifactId: "frame-racing-" + String(step),
+          mediaType: "image/png",
+          bytes: PNG
+        }).reference
+    );
+    const trace = artifacts.writeWindow({
+      artifactId: "trace-racing-budget",
+      entries: [0, 1].map((step) => ({
+        step,
+        phaseId: "race-setup",
+        revisionBefore: step,
+        revisionAfter: step + 1,
+        observationVisibility: "visual-only" as const,
+        visibleObservation: {
+          capturedAt: NOW,
+          viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+          privacyState: "clear",
+          controls: controlsFor(step),
+          warnings: [],
+          phase: "race-setup",
+          progress: null
+        },
+        legalActionIds: controlsFor(step).map((control) => control.controlId),
+        selectedActionId: "ctl-0",
+        preActionPrediction: {
+          intention: "Advance the visible formation lap.",
+          predictedVisibleEffect: "Race playback progresses.",
+          reasonCode: "advance"
+        },
+        authoritativeOutcome: {
+          status: "dispatched",
+          actionKind: "activate-control",
+          observationId: "obs-racing-" + String(step),
+          actionDetail: { controlId: "ctl-0" },
+          dispatchedAt: "2026-10-17T12:00:02.000Z",
+          receiptAt: "2026-10-17T12:00:02.001Z",
+          refusalReason: null
+        },
+        events: [],
+        frameRefs: [
+          {
+            kind: "frame" as const,
+            id: frameRefs[step]!.artifactId,
+            step,
+            frameIndex: step
+          }
+        ]
+      }))
+    }).reference;
+    const episode = {
+      ...visualEpisode(trace.artifactId, frameRefs[0]!.artifactId),
+      stepCount: 2,
+      frames: frameRefs.map((reference, step) => ({
+        kind: "frame" as const,
+        id: reference.artifactId,
+        step,
+        frameIndex: step
+      }))
+    };
+    const prepared = preparePlaytestDiscoveryEvidencePacket({
+      workspaceId: WORKSPACE,
+      episode,
+      batch: visualBatch(),
+      artifacts
+    });
+    const serialized = canonicalPlaytestJson(prepared.packet);
+    assert.equal(
+      serialized.split(controlName(1, 7)).length - 1,
+      1,
+      "the visible state of a control is in the packet once"
+    );
+    assert.ok(
+      serialized.length < 32_768,
+      "the packet of a real session fits the analyst's byte budget"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("runtime-prepared discovery packet keeps a null operator focus null and binds it to the content hash", () => {
   const root = mkdtempSync(path.join(tmpdir(), "playtest-discovery-review-"));
   try {

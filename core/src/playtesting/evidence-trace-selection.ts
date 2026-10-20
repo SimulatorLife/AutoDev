@@ -469,7 +469,11 @@ export function buildBoundedEvidenceWindows<TPacket extends object>(input: {
       );
     if (!removable) {
       throw new RangeError(
-        "Mandatory event and terminal evidence exceeds the analyst packet byte/token budget."
+        "Mandatory event and terminal evidence exceeds the analyst packet byte/token budget: " +
+          String(bytes) +
+          " bytes against a budget of " +
+          String(Math.min(input.packetByteBudget, input.tokenBudget)) +
+          " bytes."
       );
     }
     for (let step = removable.startStep; step <= removable.endStep; step += 1) {
