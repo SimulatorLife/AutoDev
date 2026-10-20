@@ -2724,6 +2724,125 @@ function handleRuntimeFixture(
 }
 
 /**
+ * The evaluation results the fixture holds.
+ *
+ * The rows keep the states the Evaluations view has to tell apart: a run
+ * that passed, a run that failed and a run whose verdict was never observed;
+ * a run that reported a prompt and one that did not; a run whose trace the
+ * Usage fixture can open and one whose trace was never retained.
+ */
+const EVALUATION_ROLES = ["orchestrator", "browser-tester"] as const;
+const EVALUATION_MODELS = ["claude-sonnet-5", "gpt-6-meridian"] as const;
+const EVALUATION_PROMPTS = ["release-notes", "review"] as const;
+/** The rows one read carries. */
+const EVALUATION_WINDOW = 60;
+/** The results the store holds behind that window. */
+const EVALUATION_STORE = 120;
+/** The instant the fixture's newest run was recorded. */
+const EVALUATION_NEWEST_AT = "2026-02-11T09:30:00.000Z";
+/** The span id the Usage fixture never retained. */
+const EVALUATION_UNOBSERVED_SPAN_ID = "ffffffffffffffff";
+
+/**
+ * One of the fixture's axes, chosen by the row's place in the window.
+ */
+function evaluationAxis<T>(values: readonly T[], index: number): T {
+  const value = values[index % values.length];
+  if (value === undefined) {
+    throw new Error("the fixture's evaluation axes are empty");
+  }
+  return value;
+}
+
+/**
+ * A span id the Usage fixture answers with a trace.
+ */
+function evaluationSpanId(index: number): string {
+  return `a1a1a1a1${index.toString(16).padStart(8, "0")}`;
+}
+
+/**
+ * One evaluation result.
+ *
+ * The row carries the states the Evaluations view has to tell apart: a run
+ * that passed, a run that failed and a run whose verdict was never observed;
+ * a run that reported a prompt and one that did not; a run whose trace the
+ * Usage fixture can open and one whose trace was never retained.
+ */
+function evaluationRow(index: number): Record<string, unknown> {
+  const verdict = index % 3;
+  const passed = verdict === 0 ? true : verdict === 1 ? false : null;
+  const spanId =
+    index % 4 === 0
+      ? evaluationSpanId(index)
+      : index % 7 === 3
+        ? EVALUATION_UNOBSERVED_SPAN_ID
+        : undefined;
+  const row: Record<string, unknown> = {
+    id: `eval-${String(index + 1).padStart(4, "0")}`,
+    agentRole: evaluationAxis(EVALUATION_ROLES, index),
+    model: evaluationAxis(EVALUATION_MODELS, Math.floor(index / 2)),
+    metrics: [
+      {
+        name: index % 2 === 0 ? "tool_failures" : "latency_ms",
+        value: index % 2 === 0 ? index % 4 : 120 + index,
+        threshold: index % 2 === 0 ? 0 : 500,
+        pass: passed
+      }
+    ],
+    passed,
+    timestamp: new Date(
+      Date.parse(EVALUATION_NEWEST_AT) - index * 60_000
+    ).toISOString()
+  };
+  // One run in five never reported a prompt, so the row that says so is
+  // present rather than implied.
+  if (index % 5 !== 4) {
+    row.promptName = evaluationAxis(EVALUATION_PROMPTS, index);
+  }
+  if (spanId !== undefined) {
+    row.spanId = spanId;
+  }
+  return row;
+}
+
+/**
+ * The retained evaluation results, most recent first.
+ *
+ * The window is bounded and the store behind it is larger, because the two
+ * numbers are different facts: one is what the read carried, the other is
+ * what the store holds.
+ */
+function evaluationRows(): readonly Record<string, unknown>[] {
+  const rows: Record<string, unknown>[] = [];
+  for (let index = 0; index < EVALUATION_WINDOW; index += 1) {
+    rows.push(evaluationRow(index));
+  }
+  return rows;
+}
+
+/**
+ * The retained evaluation results.
+ *
+ * The envelope says the read is a bounded window over a larger store, so the
+ * page has to render the store's size and the window's size as the different
+ * facts they are.
+ */
+function handleEvaluationsRead(url: URL, response: ServerResponse): boolean {
+  if (url.pathname !== "/control/evaluations") return false;
+  const rows = evaluationRows();
+  sendJson(response, {
+    schema: "autodev-control-evaluations-v1",
+    source: "fixture",
+    readOnly: true,
+    totalEvaluations: EVALUATION_STORE,
+    truncated: EVALUATION_STORE > rows.length,
+    evaluations: rows
+  });
+  return true;
+}
+
+/**
  * The catalog resources the Console reads: the MCP catalog and the Configure
  * group's agents, skills, hooks, prompts and permissions.
  *
@@ -3048,6 +3167,7 @@ function handleFixtureCatalogRoutes(
 ): boolean {
   if (configureSkillFixture(request, response, url)) return true;
   if (handleRuntimeFixture(request, response, url)) return true;
+  if (handleEvaluationsRead(url, response)) return true;
   return handleCatalogResourceRead(url, response);
 }
 

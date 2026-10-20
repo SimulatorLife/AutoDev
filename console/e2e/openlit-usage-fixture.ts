@@ -40,6 +40,14 @@ const HTTP_ERROR_SCOPE = "3M";
 const UNREACHABLE_SCOPE = "1M";
 const UNAUTHORIZED_SCOPE = "CUSTOM";
 
+/**
+ * The span id the telemetry source never retained.
+ *
+ * The Control fixture's evaluation rows point at it, so the trace lookup has
+ * a span whose absence is the source's own answer rather than a broken read.
+ */
+const UNOBSERVED_SPAN_ID = "ffffffffffffffff";
+
 /** The widget set the v5 contract requires, in the contract's own order. */
 const USAGE_WIDGET_IDS = [
   "logical-requests",
@@ -207,10 +215,85 @@ function respond(scope: string | null, response: ServerResponse): void {
     .end(JSON.stringify(usageResponse()));
 }
 
+/**
+ * The trace detail for one span.
+ *
+ * The trace reader asks for one span and gets the spans around it, so the
+ * panel has a tree to draw: the selected span, the work it asked for, and the
+ * call that work made. The span that was never retained answers with the
+ * not-found code the reader looks for, which is what tells the Console that
+ * the span is absent rather than that the source is broken.
+ */
+function respondTrace(spanId: string, response: ServerResponse): void {
+  if (spanId === UNOBSERVED_SPAN_ID) {
+    response.writeHead(404, { "content-type": "application/json" }).end(
+      JSON.stringify({
+        error: { code: "autodev_usage_trace_not_found", message: "no span" }
+      })
+    );
+    return;
+  }
+  const suffix = spanId.slice(-8).padStart(8, "1");
+  const rootSpanId = `b2b2b2b2${suffix}`;
+  const childSpanId = `c3c3c3c3${suffix}`;
+  response.writeHead(200, { "content-type": "application/json" }).end(
+    JSON.stringify({
+      schema: "autodev-openlit-trace-detail-v1",
+      traceId: `d4d4d4d4d4d4d4d4${suffix}d4d4d4d4`,
+      selectedSpanId: spanId,
+      partial: false,
+      spans: [
+        {
+          spanId: rootSpanId,
+          parentSpanId: null,
+          spanName: "codex.turn",
+          serviceName: "autodev-codex",
+          timestamp: "2026-02-11T09:29:58.000Z",
+          durationNs: 4_820_000_000,
+          statusCode: "OK"
+        },
+        {
+          spanId,
+          parentSpanId: rootSpanId,
+          spanName: "agent.orchestrator",
+          serviceName: "autodev-codex",
+          timestamp: "2026-02-11T09:29:58.400Z",
+          durationNs: 3_940_000_000,
+          statusCode: "OK"
+        },
+        {
+          spanId: childSpanId,
+          parentSpanId: spanId,
+          spanName: "mcp.lsp.goto_definition",
+          serviceName: "autodev-codex",
+          timestamp: "2026-02-11T09:29:59.100Z",
+          durationNs: 940_000_000,
+          statusCode: "ERROR"
+        }
+      ]
+    })
+  );
+}
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   if (url.pathname === "/health") {
     response.writeHead(200).end("ok");
+    return;
+  }
+  // The trace detail is a GET addressed by the span it is about, and it
+  // answers before the Usage contract's POST guard: the two are different
+  // routes, and a read that arrived on the wrong one would be answered with
+  // the wrong contract.
+  if (url.pathname.startsWith("/api/autodev/usage/span/")) {
+    if (request.method !== "GET") {
+      response.writeHead(405).end();
+      return;
+    }
+    respondTrace(
+      decodeURIComponent(url.pathname.slice("/api/autodev/usage/span/".length)),
+      response
+    );
     return;
   }
   // The Usage contract is a POST: the Console sends its selection in the
