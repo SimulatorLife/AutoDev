@@ -1,0 +1,29 @@
+diff --git a/src/client/src/__tests__/constants/events.test.ts b/src/client/src/__tests__/constants/events.test.ts
+index 3addf58f..2e7db221 100644
+--- a/src/client/src/__tests__/constants/events.test.ts
++++ b/src/client/src/__tests__/constants/events.test.ts
+@@ -245,7 +245,10 @@ describe("SERVER_EVENTS", () => {
+ 	});
+ 
+ 	it("has auto pricing events", () => {
+-		expect(SERVER_EVENTS.PRICING_CONFIG_UPDATED).toBe("PRICING_CONFIG_UPDATED");
++		// `PRICING_CONFIG_UPDATED` is gone with the pricing configuration
++		// mutation route it reported. The auto-run events stay: the batched
++		// AutoPricing worker still runs, it just cannot be configured from
++		// OpenLIT any more.
+ 		expect(SERVER_EVENTS.PRICING_AUTO_RUN_SUCCESS).toBe(
+ 			"PRICING_AUTO_RUN_SUCCESS"
+ 		);
+diff --git a/src/client/src/__tests__/lib/platform/datasource/clickhouse-adapter.test.ts b/src/client/src/__tests__/lib/platform/datasource/clickhouse-adapter.test.ts
+index c45fd559..9fc8d3d9 100644
+--- a/src/client/src/__tests__/lib/platform/datasource/clickhouse-adapter.test.ts
++++ b/src/client/src/__tests__/lib/platform/datasource/clickhouse-adapter.test.ts
+@@ -99,6 +99,8 @@ describe("ClickHouseAdapter", () => {
+ 			dashboardVariableSignals: ["traces"],
+ 			crossTraceSession: true,
+ 			rawQuery: true,
++			// The cumulative counter deltas the AutoDev Usage path reads.
++			cumulativeCounterDeltas: true,
+ 		});
+ 	});
+ 

@@ -740,25 +740,22 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   // identity from a NextAuth session can never pass. The provider/model
   // routes did exactly that while their sibling `/api/providers` used the
   // canonical single-user accessor, and the Manage models tab answered 401.
-  for (const route of [
-    "src/client/src/app/api/providers/models/route.ts",
-    "src/client/src/app/api/providers/models/import/route.ts",
-    "src/client/src/app/api/providers/models/export/route.ts",
-    "src/client/src/app/api/providers/models/cleanup/route.ts",
-    "src/client/src/app/api/providers/models/debug/route.ts"
-  ]) {
-    const source = readFileSync(join(dir, route), "utf8");
-    assert.doesNotMatch(
-      source,
-      /getServerSession/u,
-      `${route} must not require a session cookie in a no-login product`
-    );
-    assert.match(
-      source,
-      /getCurrentUser\(/u,
-      `${route} must resolve identity the way every other route does`
-    );
-  }
+  //
+  // Patch 61 answered the larger problem: those routes were a second
+  // authority over the provider and model catalog, and nothing called them.
+  // They are gone, so the assertion is that they stay gone rather than that
+  // they resolve identity the canonical way.
+  assertPathsRemoved(
+    dir,
+    [
+      "src/client/src/app/api/providers/models/route.ts",
+      "src/client/src/app/api/providers/models/import/route.ts",
+      "src/client/src/app/api/providers/models/export/route.ts",
+      "src/client/src/app/api/providers/models/cleanup/route.ts",
+      "src/client/src/app/api/providers/models/debug/route.ts"
+    ],
+    "provider and model administration removal"
+  );
   assert.doesNotMatch(
     readFileSync(
       join(dir, "src/client/src/app/api/providers/route.ts"),
@@ -1592,6 +1589,61 @@ function assertDeadClientModulesRemoved(dir: string): void {
     audit.uninstalled,
     [],
     "every package the patched client declares must be installed by its lockfile"
+  );
+}
+
+/**
+ * The fork's provider and model administration is gone, and the read that
+ * survives is the one the evaluations page actually uses.
+ *
+ * `61-remove-provider-model-administration.patch` deletes the write half of
+ * the provider route and the whole `/api/providers/models` tree. Both wrote
+ * straight into the provider metadata and per-provider model tables that
+ * AutoDev's Control API owns, and neither had a page, a caller or an SDK --
+ * a provider created that way would have existed in OpenLIT and nowhere
+ * else. The read stays because the evaluations configuration page lists
+ * providers and their models to pick a judge from, and the migrations still
+ * seed both tables, so the picker still has a catalog.
+ */
+function assertProviderModelAdministrationRemoved(dir: string): void {
+  assertPathsRemoved(
+    dir,
+    [
+      "src/client/src/lib/platform/providers/models-service.ts",
+      "src/client/src/__tests__/lib/platform/providers/models-service.test.ts"
+    ],
+    "provider and model administration removal"
+  );
+
+  const providerRoute = readFileSync(
+    join(dir, "src/client/src/app/api/providers/route.ts"),
+    "utf8"
+  );
+  assert.match(
+    providerRoute,
+    /export const GET = GETHandler;/u,
+    "the provider route must keep the read the evaluations page depends on"
+  );
+  assert.doesNotMatch(
+    providerRoute,
+    /export const (?:POST|PUT|DELETE)\b/u,
+    "the provider route must not keep a second write authority over the provider catalog"
+  );
+  assert.doesNotMatch(
+    providerRoute,
+    /async function (?:POST|PUT|DELETE)Handler\b/u,
+    "the provider route must not keep the write handlers behind the exports"
+  );
+
+  // The fork's own guard for the removal has to travel with the patch.
+  assert.ok(
+    existsSync(
+      join(
+        dir,
+        "src/client/src/__tests__/platform/provider-model-administration.test.ts"
+      )
+    ),
+    "the fork must carry the test that keeps provider and model administration removed"
   );
 }
 
@@ -2612,6 +2664,11 @@ test(
     // 60-remove-dead-client-modules deletes the modules nothing imports any
     // more and takes the dependency and the unresolvable import with them.
     assertDeadClientModulesRemoved(dir);
+
+    // 61-remove-provider-model-administration deletes the fork's write half
+    // of the provider catalog, which was a second authority over rows the
+    // Control API owns.
+    assertProviderModelAdministrationRemoved(dir);
   }
 );
 

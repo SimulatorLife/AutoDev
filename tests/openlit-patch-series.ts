@@ -74,7 +74,9 @@ export const OPENLIT_PATCH_NAMES = [
   "57-remove-generic-settings-ui",
   "58-retire-openlit-memory-ui",
   "59-autodev-usage-requests-by-workspace",
-  "60-remove-dead-client-modules"
+  "60-remove-dead-client-modules",
+  "61-remove-provider-model-administration",
+  "62-fix-stale-fork-test-assertions"
 ] as const;
 
 /** Strips the `.patch` suffix a directory listing carries. */

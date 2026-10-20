@@ -1,0 +1,1882 @@
+diff --git a/src/client/src/__tests__/lib/platform/providers/models-service.test.ts b/src/client/src/__tests__/lib/platform/providers/models-service.test.ts
+deleted file mode 100644
+index b7fa7a88..00000000
+--- a/src/client/src/__tests__/lib/platform/providers/models-service.test.ts
++++ /dev/null
+@@ -1,304 +0,0 @@
+-jest.mock('@/lib/platform/common', () => ({
+-  dataCollector: jest.fn(),
+-}));
+-jest.mock('@/utils/sanitizer', () => ({
+-  __esModule: true,
+-  default: { sanitizeValue: jest.fn((v: string) => v) },
+-}));
+-
+-import {
+-  getCustomModels,
+-  getCustomModelsGroupedByProvider,
+-  createCustomModel,
+-  updateCustomModel,
+-  deleteCustomModel,
+-  getCustomModelsForProvider,
+-} from '@/lib/platform/providers/models-service';
+-import { dataCollector } from '@/lib/platform/common';
+-
+-const mockModel = {
+-  id: 'uuid-1',
+-  model_id: 'gpt-4o-custom',
+-  provider: 'openai',
+-  displayName: 'GPT-4o Custom',
+-  modelType: 'chat',
+-  contextWindow: 128000,
+-  inputPricePerMToken: 2.5,
+-  outputPricePerMToken: 10.0,
+-  capabilities: ['streaming'],
+-  isDefault: false,
+-};
+-
+-const Sanitizer = require('@/utils/sanitizer').default;
+-
+-beforeEach(() => {
+-  jest.resetAllMocks();
+-  // Re-apply sanitizer mock after resetAllMocks
+-  Sanitizer.sanitizeValue.mockImplementation((v: string) => v);
+-});
+-
+-describe('getCustomModels', () => {
+-  it('returns all models when no provider filter', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ data: [mockModel] });
+-
+-    const result = await getCustomModels('user-1', 'db-1');
+-
+-    expect(result.data).toHaveLength(1);
+-    expect(result.data![0].model_id).toBe('gpt-4o-custom');
+-    // Query should NOT have a WHERE clause for provider
+-    expect(dataCollector).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        query: expect.not.stringContaining("provider = "),
+-      }),
+-      'query',
+-      'db-1'
+-    );
+-  });
+-
+-  it('filters by provider when specified', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ data: [mockModel] });
+-
+-    await getCustomModels('user-1', 'db-1', 'openai');
+-
+-    expect(dataCollector).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        query: expect.stringContaining("provider = 'openai'"),
+-      }),
+-      'query',
+-      'db-1'
+-    );
+-  });
+-
+-  it('returns error on DB failure', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: 'DB error' });
+-
+-    const result = await getCustomModels('user-1', 'db-1');
+-    expect(result.err).toBe('DB error');
+-  });
+-
+-  it('defaults to an empty array when data is undefined (no rows, no error)', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ data: undefined, err: null });
+-
+-    const result = await getCustomModels('user-1', 'db-1');
+-    expect(result.data).toEqual([]);
+-  });
+-});
+-
+-describe('getCustomModelsGroupedByProvider', () => {
+-  it('groups models by provider', async () => {
+-    const models = [
+-      { ...mockModel, provider: 'openai' },
+-      { ...mockModel, id: 'uuid-2', provider: 'anthropic', model_id: 'claude-3' },
+-    ];
+-    (dataCollector as jest.Mock).mockResolvedValue({ data: models });
+-
+-    const result = await getCustomModelsGroupedByProvider('user-1', 'db-1');
+-
+-    expect(result.data).toBeDefined();
+-    expect(Object.keys(result.data!)).toContain('openai');
+-    expect(Object.keys(result.data!)).toContain('anthropic');
+-    expect(result.data!['openai']).toHaveLength(1);
+-  });
+-
+-  it('returns error when underlying getCustomModels fails', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: 'fail' });
+-
+-    const result = await getCustomModelsGroupedByProvider('user-1', 'db-1');
+-
+-    expect(result.err).toBe('fail');
+-  });
+-
+-  it('handles empty data', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ data: [] });
+-
+-    const result = await getCustomModelsGroupedByProvider('user-1', 'db-1');
+-
+-    expect(result.data).toEqual({});
+-  });
+-});
+-
+-describe('createCustomModel', () => {
+-  it('validates required fields', async () => {
+-    const result = await createCustomModel('user-1', 'db-1', {
+-      provider: '',
+-      model_id: '',
+-      displayName: '',
+-    });
+-    expect(result.err).toContain('required');
+-    expect(dataCollector).not.toHaveBeenCalled();
+-  });
+-
+-  it('inserts and returns the new model', async () => {
+-    (dataCollector as jest.Mock)
+-      .mockResolvedValueOnce({ err: null }) // insert
+-      .mockResolvedValueOnce({ data: [mockModel] }); // select
+-
+-    const result = await createCustomModel('user-1', 'db-1', {
+-      provider: 'openai',
+-      model_id: 'gpt-4o-custom',
+-      displayName: 'GPT-4o Custom',
+-    });
+-
+-    expect(result.data).toBeDefined();
+-    expect(result.data!.model_id).toBe('gpt-4o-custom');
+-    // INSERT call should use 'insert' type
+-    expect(dataCollector).toHaveBeenCalledWith(
+-      expect.objectContaining({ table: 'openlit_provider_models' }),
+-      'insert',
+-      'db-1'
+-    );
+-  });
+-
+-  it('returns error when insert fails', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValueOnce({ err: 'insert failed' });
+-
+-    const result = await createCustomModel('user-1', 'db-1', {
+-      provider: 'openai',
+-      model_id: 'm',
+-      displayName: 'M',
+-    });
+-
+-    expect(result.err).toBe('insert failed');
+-  });
+-
+-  it('returns error when post-insert select fails', async () => {
+-    (dataCollector as jest.Mock)
+-      .mockResolvedValueOnce({ err: null }) // insert succeeds
+-      .mockResolvedValueOnce({ err: 'select failed' });
+-
+-    const result = await createCustomModel('user-1', 'db-1', {
+-      provider: 'openai',
+-      model_id: 'm',
+-      displayName: 'M',
+-    });
+-
+-    expect(result.err).toBe('select failed');
+-  });
+-});
+-
+-describe('updateCustomModel', () => {
+-  it('builds an ALTER TABLE UPDATE query', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-
+-    const result = await updateCustomModel('user-1', 'db-1', 'gpt-4o-custom', {
+-      displayName: 'Renamed Model',
+-      contextWindow: 256000,
+-    });
+-
+-    expect(result.data).toBe(true);
+-    expect(dataCollector).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        query: expect.stringContaining('ALTER TABLE'),
+-      }),
+-      'exec',
+-      'db-1'
+-    );
+-  });
+-
+-  it('still runs update when only updated_at changes (empty input)', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-
+-    const result = await updateCustomModel('user-1', 'db-1', 'id', {});
+-    // updated_at = now() is always appended, so the query runs even with empty input
+-    expect(result.data).toBe(true);
+-    expect(dataCollector).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        query: expect.stringContaining('updated_at = now()'),
+-      }),
+-      'exec',
+-      'db-1'
+-    );
+-  });
+-
+-  it('updates all optional fields together', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-
+-    const result = await updateCustomModel('user-1', 'db-1', 'id', {
+-      displayName: 'New',
+-      modelType: 'chat',
+-      contextWindow: 8000,
+-      inputPricePerMToken: 1.5,
+-      outputPricePerMToken: 3.0,
+-      capabilities: ['streaming', 'vision'],
+-    });
+-
+-    expect(result.data).toBe(true);
+-    expect(dataCollector).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        query: expect.stringMatching(
+-          /display_name.*model_type.*context_window.*capabilities/s
+-        ),
+-      }),
+-      'exec',
+-      'db-1'
+-    );
+-  });
+-
+-  it('includes cache pricing fields in the UPDATE when provided', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-
+-    const result = await updateCustomModel('user-1', 'db-1', 'id', {
+-      cacheReadPricePerMToken: 0.3,
+-      cacheCreationPricePerMToken: 3.75,
+-    });
+-
+-    expect(result.data).toBe(true);
+-    const [{ query }] = (dataCollector as jest.Mock).mock.calls[0];
+-    expect(query).toContain('cache_read_price_per_m_token = 0.3');
+-    expect(query).toContain('cache_creation_price_per_m_token = 3.75');
+-  });
+-
+-  it('returns error when ALTER UPDATE fails', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: 'alter failed' });
+-
+-    const result = await updateCustomModel('user-1', 'db-1', 'id', {
+-      displayName: 'X',
+-    });
+-
+-    expect(result.err).toBe('alter failed');
+-  });
+-});
+-
+-describe('deleteCustomModel', () => {
+-  it('deletes by model id', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: null });
+-
+-    const result = await deleteCustomModel('user-1', 'db-1', 'gpt-4o-custom');
+-    expect(result.data).toBe(true);
+-    expect(dataCollector).toHaveBeenCalledWith(
+-      expect.objectContaining({
+-        query: expect.stringContaining('DELETE FROM'),
+-      }),
+-      'exec',
+-      'db-1'
+-    );
+-  });
+-
+-  it('returns error on DELETE failure', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: 'delete failed' });
+-
+-    const result = await deleteCustomModel('user-1', 'db-1', 'id');
+-
+-    expect(result.err).toBe('delete failed');
+-  });
+-});
+-
+-describe('getCustomModelsForProvider', () => {
+-  it('returns models in ModelMetadata format', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ data: [mockModel] });
+-
+-    const result = await getCustomModelsForProvider('user-1', 'db-1', 'openai');
+-
+-    expect(result.data).toHaveLength(1);
+-    expect(result.data![0].id).toBe('gpt-4o-custom');
+-    expect(result.data![0]).not.toHaveProperty('model_id');
+-  });
+-
+-  it('returns error when underlying getCustomModels fails', async () => {
+-    (dataCollector as jest.Mock).mockResolvedValue({ err: 'fail' });
+-
+-    const result = await getCustomModelsForProvider('user-1', 'db-1', 'openai');
+-
+-    expect(result.err).toBe('fail');
+-  });
+-});
+diff --git a/src/client/src/__tests__/platform/provider-model-administration.test.ts b/src/client/src/__tests__/platform/provider-model-administration.test.ts
+new file mode 100644
+index 00000000..eafbc525
+--- /dev/null
++++ b/src/client/src/__tests__/platform/provider-model-administration.test.ts
+@@ -0,0 +1,73 @@
++import fs from "fs";
++import path from "path";
++
++describe("provider and model administration stays subtracted", () => {
++	const clientRoot = path.resolve(__dirname, "../../..");
++
++	it("keeps the provider route read-only", () => {
++		// The provider and model catalogs are owned by AutoDev's Control API.
++		// The read survives because the evaluations configuration page lists
++		// providers and their models so a judge can be picked from them. The
++		// writes would have been a second authority over the same rows: no
++		// page, no caller and no SDK used them, so a provider created that
++		// way would have existed in OpenLIT and nowhere else.
++		const route = fs.readFileSync(
++			path.join(clientRoot, "src/app/api/providers/route.ts"),
++			"utf-8"
++		);
++		expect(route).toContain("export const GET = GETHandler;");
++		expect(route).not.toMatch(/export const (?:POST|PUT|DELETE)\b/u);
++		expect(route).not.toMatch(/async function (?:POST|PUT|DELETE)Handler\b/u);
++	});
++
++	it("removes the model administration routes", () => {
++		expect(
++			fs.existsSync(path.join(clientRoot, "src/app/api/providers/models"))
++		).toBe(false);
++	});
++
++	it("removes the model service nothing imported", () => {
++		expect(
++			fs.existsSync(
++				path.join(
++					clientRoot,
++					"src/lib/platform/providers/models-service.ts"
++				)
++			)
++		).toBe(false);
++	});
++
++	it("keeps the read the evaluations configuration page depends on", () => {
++		const evaluationConfiguration = fs.readFileSync(
++			path.join(
++				clientRoot,
++				"src/components/(playground)/evaluations/evaluation-configuration.tsx"
++			),
++			"utf-8"
++		);
++		expect(evaluationConfiguration).toContain('url: "/api/providers"');
++	});
++
++	it("leaves the provider catalog seeded by the migrations", () => {
++		// The reads are only useful if something still populates the tables
++		// they read. The migrations seed both the provider metadata and the
++		// per-provider models, so removing the write routes leaves the
++		// evaluations picker with the catalog it had.
++		const providerMetadataMigration = fs.readFileSync(
++			path.join(
++				clientRoot,
++				"src/clickhouse/migrations/create-provider-metadata-migration.ts"
++			),
++			"utf-8"
++		);
++		const providersMigration = fs.readFileSync(
++			path.join(
++				clientRoot,
++				"src/clickhouse/migrations/create-providers-migration.ts"
++			),
++			"utf-8"
++		);
++		expect(providerMetadataMigration).toContain("DEFAULT_PROVIDERS");
++		expect(providersMigration).toContain("DEFAULT_MODELS_BY_PROVIDER");
++	});
++});
+diff --git a/src/client/src/app/api/providers/models/cleanup/route.ts b/src/client/src/app/api/providers/models/cleanup/route.ts
+deleted file mode 100644
+index 3e95eb8b..00000000
+--- a/src/client/src/app/api/providers/models/cleanup/route.ts
++++ /dev/null
+@@ -1,94 +0,0 @@
+-import { withAudit } from "@/lib/audit/route";
+-import { getCurrentUser } from "@/lib/session";
+-import { NextRequest, NextResponse } from "next/server";
+-import { dataCollector } from "@/lib/platform/common";
+-import { getDBConfigByUser } from "@/lib/db-config";
+-import getMessage from "@/constants/messages";
+-import { OPENLIT_PROVIDER_MODELS_TABLE_NAME } from "@/lib/platform/providers/table-details";
+-import asaw from "@/utils/asaw";
+-import Sanitizer from "@/utils/sanitizer";
+-
+-// POST: Clean up models with invalid UUIDs
+-async function POSTHandler(request: NextRequest) {
+-	const user = await getCurrentUser();
+-
+-	if (!user?.id) {
+-		return NextResponse.json(
+-			{ error: getMessage().UNAUTHORIZED_USER },
+-			{ status: 401 }
+-		);
+-	}
+-
+-	const [, dbConfig] = await asaw(getDBConfigByUser(true));
+-	if (!dbConfig?.id) {
+-		return NextResponse.json(
+-			{ error: getMessage().DATABASE_CONFIG_NOT_FOUND },
+-			{ status: 500 }
+-		);
+-	}
+-
+-	// First, get all models to see which ones have invalid UUIDs
+-	const selectQuery = `
+-		SELECT toString(id) as id, model_id, display_name
+-		FROM ${OPENLIT_PROVIDER_MODELS_TABLE_NAME}
+-	`;
+-
+-	const { data: allModels, err: selectErr } = await dataCollector(
+-		{ query: selectQuery },
+-		"query",
+-		dbConfig.id
+-	);
+-
+-	if (selectErr) {
+-		console.error("Error fetching models:", selectErr);
+-		return NextResponse.json(
+-			{ error: selectErr || getMessage().OPERATION_FAILED },
+-			{ status: 500 }
+-		);
+-	}
+-
+-	// Identify invalid UUIDs
+-	const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+-	const invalidModels = (allModels as any[] || []).filter(
+-		(model: any) => !model.id || !uuidRegex.test(model.id)
+-	);
+-
+-	if (invalidModels.length === 0) {
+-		return NextResponse.json({
+-			message: "No invalid models found",
+-			cleaned: 0,
+-		});
+-	}
+-
+-	// Delete all rows with invalid UUIDs
+-	const deleteQuery = `
+-		ALTER TABLE ${OPENLIT_PROVIDER_MODELS_TABLE_NAME}
+-		DELETE WHERE NOT match(toString(id), '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+-	`;
+-
+-	const { err: deleteErr } = await dataCollector(
+-		{ query: deleteQuery },
+-		"exec",
+-		dbConfig.id
+-	);
+-
+-	if (deleteErr) {
+-		console.error("Error cleaning up models:", deleteErr);
+-		return NextResponse.json(
+-			{ error: deleteErr || getMessage().OPERATION_FAILED },
+-			{ status: 500 }
+-		);
+-	}
+-
+-	return NextResponse.json({
+-		message: `Successfully cleaned up ${invalidModels.length} models with invalid UUIDs`,
+-		cleaned: invalidModels.length,
+-		invalidModels: invalidModels.map((m: any) => ({
+-			id: m.id,
+-			model_id: m.model_id,
+-			name: m.display_name,
+-		})),
+-	});
+-}
+-
+-export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/providers/models/debug/route.ts b/src/client/src/app/api/providers/models/debug/route.ts
+deleted file mode 100644
+index d4b87c19..00000000
+--- a/src/client/src/app/api/providers/models/debug/route.ts
++++ /dev/null
+@@ -1,103 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import { getCurrentUser } from "@/lib/session";
+-import { dataCollector } from "@/lib/platform/common";
+-import { getDBConfigByUser } from "@/lib/db-config";
+-import getMessage from "@/constants/messages";
+-import { OPENLIT_PROVIDER_MODELS_TABLE_NAME } from "@/lib/platform/providers/table-details";
+-import asaw from "@/utils/asaw";
+-
+-// GET: Debug endpoint to check table status
+-export async function GET(request: NextRequest) {
+-	const user = await getCurrentUser();
+-
+-	if (!user?.id) {
+-		return NextResponse.json(
+-			{ error: getMessage().UNAUTHORIZED_USER },
+-			{ status: 401 }
+-		);
+-	}
+-
+-	const [, dbConfig] = await asaw(getDBConfigByUser(true));
+-	if (!dbConfig?.id) {
+-		return NextResponse.json(
+-			{ error: getMessage().DATABASE_CONFIG_NOT_FOUND },
+-			{ status: 500 }
+-		);
+-	}
+-
+-	// Check if table exists
+-	const checkTableQuery = `
+-		SELECT name
+-		FROM system.tables
+-		WHERE database = currentDatabase()
+-		AND name = '${OPENLIT_PROVIDER_MODELS_TABLE_NAME}'
+-	`;
+-
+-	const { data: tableData, err: tableErr } = await dataCollector(
+-		{ query: checkTableQuery },
+-		"query",
+-		dbConfig.id
+-	);
+-
+-	// Use a SELECT-based schema probe so the read stays inside OpenPlait's
+-	// single-statement native-query safety policy.
+-	const schemaQuery = `
+-		SELECT
+-			name,
+-			type,
+-			default_kind AS default_type,
+-			default_expression,
+-			comment,
+-			compression_codec AS codec_expression,
+-			ttl_expression
+-		FROM system.columns
+-		WHERE database = currentDatabase()
+-			AND table = '${OPENLIT_PROVIDER_MODELS_TABLE_NAME}'
+-		ORDER BY position
+-	`;
+-	const { data: schemaData, err: schemaErr } = await dataCollector(
+-		{ query: schemaQuery },
+-		"query",
+-		dbConfig.id
+-	);
+-
+-	// Try to count rows
+-	const countQuery = `SELECT count() as count FROM ${OPENLIT_PROVIDER_MODELS_TABLE_NAME}`;
+-	const { data: countData, err: countErr } = await dataCollector(
+-		{ query: countQuery },
+-		"query",
+-		dbConfig.id
+-	);
+-
+-	// Get actual data to see what's being stored
+-	const dataQuery = `SELECT toString(id) as id, provider, model_id, display_name FROM ${OPENLIT_PROVIDER_MODELS_TABLE_NAME} LIMIT 5`;
+-	const { data: sampleData, err: dataQueryErr } = await dataCollector(
+-		{ query: dataQuery },
+-		"query",
+-		dbConfig.id
+-	);
+-
+-	return NextResponse.json({
+-		tableName: OPENLIT_PROVIDER_MODELS_TABLE_NAME,
+-		databaseConfigId: dbConfig.id,
+-		userId: user.id,
+-		checks: {
+-			tableExists: {
+-				result: tableData,
+-				error: tableErr,
+-			},
+-			schema: {
+-				result: schemaData,
+-				error: schemaErr,
+-			},
+-			rowCount: {
+-				result: countData,
+-				error: countErr,
+-			},
+-			sampleData: {
+-				result: sampleData,
+-				error: dataQueryErr,
+-			},
+-		},
+-	});
+-}
+diff --git a/src/client/src/app/api/providers/models/export/route.ts b/src/client/src/app/api/providers/models/export/route.ts
+deleted file mode 100644
+index a2e9c116..00000000
+--- a/src/client/src/app/api/providers/models/export/route.ts
++++ /dev/null
+@@ -1,97 +0,0 @@
+-import { NextRequest, NextResponse } from "next/server";
+-import { getCurrentUser } from "@/lib/session";
+-import { dataCollector } from "@/lib/platform/common";
+-import { getDBConfigByUser } from "@/lib/db-config";
+-import getMessage from "@/constants/messages";
+-import Sanitizer from "@/utils/sanitizer";
+-import { OPENLIT_PROVIDER_MODELS_TABLE_NAME } from "@/lib/platform/providers/table-details";
+-import asaw from "@/utils/asaw";
+-
+-/**
+- * GET /api/providers/models/export
+- * Export custom models in pricing.json format compatible with OpenLIT SDK pricing
+- */
+-export async function GET(request: NextRequest) {
+-	const user = await getCurrentUser();
+-
+-	if (!user?.id) {
+-		return NextResponse.json(
+-			{ error: getMessage().UNAUTHORIZED_USER },
+-			{ status: 401 }
+-		);
+-	}
+-
+-	const [, dbConfig] = await asaw(getDBConfigByUser(true));
+-	if (!dbConfig?.id) {
+-		return NextResponse.json(
+-			{ error: getMessage().DATABASE_CONFIG_NOT_FOUND },
+-			{ status: 500 }
+-		);
+-	}
+-
+-	const query = `
+-		SELECT
+-			model_id,
+-			model_type,
+-			input_price_per_m_token as inputPrice,
+-			output_price_per_m_token as outputPrice,
+-			cache_read_price_per_m_token as cacheReadPrice,
+-			cache_creation_price_per_m_token as cacheCreationPrice
+-		FROM ${OPENLIT_PROVIDER_MODELS_TABLE_NAME}
+-		ORDER BY model_type, model_id
+-	`;
+-
+-	const { data, err } = await dataCollector(
+-		{ query },
+-		"query",
+-		dbConfig.id
+-	);
+-
+-	if (err) {
+-		return NextResponse.json({ error: getMessage().OPERATION_FAILED }, { status: 500 });
+-	}
+-
+-	const models = (data as any[]) || [];
+-
+-	// Build pricing.json format grouped by model_type
+-	const pricing: Record<string, any> = {};
+-
+-	for (const model of models) {
+-		const type = model.model_type || "chat";
+-		if (!pricing[type]) {
+-			pricing[type] = {};
+-		}
+-
+-		if (type === "chat") {
+-			const entry: Record<string, number> = {
+-				promptPrice: model.inputPrice / 1000, // per-M to per-K
+-				completionPrice: model.outputPrice / 1000,
+-			};
+-			if (model.cacheReadPrice > 0) {
+-				entry.cacheReadPrice = model.cacheReadPrice / 1000;
+-			}
+-			if (model.cacheCreationPrice > 0) {
+-				entry.cacheCreationPrice = model.cacheCreationPrice / 1000;
+-			}
+-			pricing[type][model.model_id] = entry;
+-		} else if (type === "embeddings") {
+-			pricing[type][model.model_id] = model.inputPrice / 1000;
+-		} else if (type === "audio") {
+-			pricing[type][model.model_id] = model.inputPrice / 1000;
+-		} else if (type === "images") {
+-			pricing[type][model.model_id] = {
+-				standard: {
+-					"1024x1024": model.inputPrice / 1000,
+-				},
+-			};
+-		}
+-	}
+-
+-	// Return as downloadable JSON
+-	return new NextResponse(JSON.stringify(pricing, null, 4), {
+-		headers: {
+-			"Content-Type": "application/json",
+-			"Content-Disposition": "attachment; filename=custom-pricing.json",
+-		},
+-	});
+-}
+diff --git a/src/client/src/app/api/providers/models/import/route.ts b/src/client/src/app/api/providers/models/import/route.ts
+deleted file mode 100644
+index 1ae90191..00000000
+--- a/src/client/src/app/api/providers/models/import/route.ts
++++ /dev/null
+@@ -1,246 +0,0 @@
+-import { withAudit } from "@/lib/audit/route";
+-import { getCurrentUser } from "@/lib/session";
+-import { NextRequest, NextResponse } from "next/server";
+-import { dataCollector } from "@/lib/platform/common";
+-import { getDBConfigByUser } from "@/lib/db-config";
+-import getMessage from "@/constants/messages";
+-import {
+-	OPENLIT_PROVIDER_MODELS_TABLE_NAME,
+-	OPENLIT_PROVIDER_METADATA_TABLE_NAME,
+-} from "@/lib/platform/providers/table-details";
+-import asaw from "@/utils/asaw";
+-
+-/**
+- * POST /api/providers/models/import
+- *
+- * Bulk-import models from a pricing JSON (same format as the export endpoint
+- * or the SDK pricing_json). Skips models that already exist (same provider +
+- * model_id combination).
+- *
+- * Body: {
+- *   models: Array<{
+- *     provider: string;
+- *     model_id: string;
+- *     displayName: string;
+- *     modelType?: string;
+- *     contextWindow?: number;
+- *     inputPricePerMToken?: number;
+- *     outputPricePerMToken?: number;
+- *     capabilities?: string[];
+- *   }>
+- * }
+- *
+- * OR the SDK pricing_json format:
+- * {
+- *   chat: { "model-id": { promptPrice, completionPrice } },
+- *   embeddings: { "model-id": price },
+- *   ...
+- * }
+- */
+-async function POSTHandler(request: NextRequest) {
+-	const user = await getCurrentUser();
+-
+-	if (!user?.id) {
+-		return NextResponse.json(
+-			{ error: getMessage().UNAUTHORIZED_USER },
+-			{ status: 401 }
+-		);
+-	}
+-
+-	const [, dbConfig] = await asaw(getDBConfigByUser(true));
+-	if (!dbConfig?.id) {
+-		return NextResponse.json(
+-			{ error: getMessage().DATABASE_CONFIG_NOT_FOUND },
+-			{ status: 500 }
+-		);
+-	}
+-
+-	const body = await request.json();
+-
+-	// Normalize input — accept both structured models array and SDK pricing_json format
+-	let modelsToImport: Array<{
+-		provider: string;
+-		model_id: string;
+-		display_name: string;
+-		model_type: string;
+-		context_window: number;
+-		input_price_per_m_token: number;
+-		output_price_per_m_token: number;
+-		cache_read_price_per_m_token: number;
+-		cache_creation_price_per_m_token: number;
+-		capabilities: string[];
+-		is_default: boolean;
+-		created_by_user_id: string;
+-	}> = [];
+-
+-	if (Array.isArray(body.models)) {
+-		// Structured format
+-		modelsToImport = body.models.map((m: any) => ({
+-			provider: m.provider || "unknown",
+-			model_id: m.model_id || m.id,
+-			display_name: m.displayName || m.display_name || m.model_id || m.id,
+-			model_type: m.modelType || m.model_type || "chat",
+-			context_window: m.contextWindow || m.context_window || 4096,
+-			input_price_per_m_token: m.inputPricePerMToken || m.input_price_per_m_token || 0,
+-			output_price_per_m_token: m.outputPricePerMToken || m.output_price_per_m_token || 0,
+-			cache_read_price_per_m_token:
+-				m.cacheReadPricePerMToken || m.cache_read_price_per_m_token || 0,
+-			cache_creation_price_per_m_token:
+-				m.cacheCreationPricePerMToken ||
+-				m.cache_creation_price_per_m_token ||
+-				0,
+-			capabilities: m.capabilities || [],
+-			is_default: false,
+-			created_by_user_id: user.id,
+-		}));
+-	} else {
+-		// SDK pricing_json format: { chat: { "model-id": { promptPrice, completionPrice } }, ... }
+-		for (const [modelType, models] of Object.entries(body)) {
+-			if (modelType === "models") continue; // skip if mixed format
+-			if (typeof models !== "object" || models === null) continue;
+-
+-			for (const [modelId, pricing] of Object.entries(models as Record<string, any>)) {
+-				let inputPrice = 0;
+-				let outputPrice = 0;
+-				let cacheReadPrice = 0;
+-				let cacheCreationPrice = 0;
+-
+-				if (typeof pricing === "number") {
+-					// embeddings / audio format
+-					inputPrice = pricing * 1000; // per-K to per-M
+-				} else if (typeof pricing === "object" && pricing !== null) {
+-					if ("promptPrice" in pricing) {
+-						inputPrice = (pricing.promptPrice || 0) * 1000;
+-						outputPrice = (pricing.completionPrice || 0) * 1000;
+-						cacheReadPrice = (pricing.cacheReadPrice || 0) * 1000;
+-						cacheCreationPrice = (pricing.cacheCreationPrice || 0) * 1000;
+-					} else if ("standard" in pricing) {
+-						// images format
+-						const firstRes = Object.values(pricing.standard || {})[0];
+-						inputPrice = ((firstRes as number) || 0) * 1000;
+-					}
+-				}
+-
+-				modelsToImport.push({
+-					provider: body.provider || "unknown",
+-					model_id: modelId,
+-					display_name: modelId,
+-					model_type: modelType,
+-					context_window: 4096,
+-					input_price_per_m_token: inputPrice,
+-					output_price_per_m_token: outputPrice,
+-					cache_read_price_per_m_token: cacheReadPrice,
+-					cache_creation_price_per_m_token: cacheCreationPrice,
+-					capabilities: [],
+-					is_default: false,
+-					created_by_user_id: user.id,
+-				});
+-			}
+-		}
+-	}
+-
+-	// --- Import providers if present ---
+-	let providersImported = 0;
+-	let providersSkipped = 0;
+-
+-	if (Array.isArray(body.providers) && body.providers.length > 0) {
+-		const { data: existingProviders } = await dataCollector(
+-			{
+-				query: `SELECT provider_id FROM ${OPENLIT_PROVIDER_METADATA_TABLE_NAME} FINAL`,
+-			},
+-			"query",
+-			dbConfig.id
+-		);
+-
+-		const existingProviderIds = new Set(
+-			((existingProviders as any[]) || []).map((r: any) => r.provider_id)
+-		);
+-
+-		const providersToInsert = body.providers
+-			.filter((p: any) => p.providerId && !existingProviderIds.has(p.providerId))
+-			.map((p: any) => ({
+-				provider_id: p.providerId,
+-				display_name: p.displayName || p.providerId,
+-				description: p.description || "",
+-				requires_vault: p.requiresVault ?? true,
+-				config_schema: JSON.stringify(p.configSchema || {}),
+-				is_default: false,
+-			}));
+-
+-		providersSkipped = body.providers.length - providersToInsert.length;
+-
+-		if (providersToInsert.length > 0) {
+-			await dataCollector(
+-				{
+-					table: OPENLIT_PROVIDER_METADATA_TABLE_NAME,
+-					values: providersToInsert,
+-				},
+-				"insert",
+-				dbConfig.id
+-			);
+-			providersImported = providersToInsert.length;
+-		}
+-	}
+-
+-	// --- Import models ---
+-	if (modelsToImport.length === 0 && providersImported === 0 && providersSkipped === 0) {
+-		return NextResponse.json(
+-			{ error: "No models or providers to import." },
+-			{ status: 400 }
+-		);
+-	}
+-
+-	let modelsImported = 0;
+-	let modelsSkipped = 0;
+-
+-	if (modelsToImport.length > 0) {
+-		const { data: existingRows } = await dataCollector(
+-			{
+-				query: `SELECT provider, model_id FROM ${OPENLIT_PROVIDER_MODELS_TABLE_NAME}`,
+-			},
+-			"query",
+-			dbConfig.id
+-		);
+-
+-		const existingKeys = new Set(
+-			((existingRows as any[]) || []).map(
+-				(r: any) => `${r.provider}::${r.model_id}`
+-			)
+-		);
+-
+-		const toInsert = modelsToImport.filter(
+-			(m) => !existingKeys.has(`${m.provider}::${m.model_id}`)
+-		);
+-
+-		modelsSkipped = modelsToImport.length - toInsert.length;
+-
+-		if (toInsert.length > 0) {
+-			const { err } = await dataCollector(
+-				{
+-					table: OPENLIT_PROVIDER_MODELS_TABLE_NAME,
+-					values: toInsert,
+-				},
+-				"insert",
+-				dbConfig.id
+-			);
+-
+-			if (err) {
+-				return NextResponse.json(
+-					{ error: err || getMessage().OPERATION_FAILED },
+-					{ status: 500 }
+-				);
+-			}
+-			modelsImported = toInsert.length;
+-		}
+-	}
+-
+-	return NextResponse.json({
+-		success: true,
+-		imported: modelsImported,
+-		skipped: modelsSkipped,
+-		providersImported,
+-		providersSkipped,
+-	});
+-}
+-
+-export const POST = withAudit(POSTHandler);
+diff --git a/src/client/src/app/api/providers/models/route.ts b/src/client/src/app/api/providers/models/route.ts
+deleted file mode 100644
+index 75351f73..00000000
+--- a/src/client/src/app/api/providers/models/route.ts
++++ /dev/null
+@@ -1,348 +0,0 @@
+-import { withAudit } from "@/lib/audit/route";
+-import { getCurrentUser } from "@/lib/session";
+-import { NextRequest, NextResponse } from "next/server";
+-import { SERVER_EVENTS } from "@/constants/events";
+-import { dataCollector } from "@/lib/platform/common";
+-import { getDBConfigByUser } from "@/lib/db-config";
+-import getMessage from "@/constants/messages";
+-import PostHogServer from "@/lib/posthog";
+-import Sanitizer from "@/utils/sanitizer";
+-import { OPENLIT_PROVIDER_MODELS_TABLE_NAME } from "@/lib/platform/providers/table-details";
+-import asaw from "@/utils/asaw";
+-
+-// GET: List all custom models for a provider (or all providers if no provider specified)
+-async function GETHandler(request: NextRequest) {
+-	const user = await getCurrentUser();
+-
+-	if (!user?.id) {
+-		return NextResponse.json(
+-			{ error: getMessage().UNAUTHORIZED_USER },
+-			{ status: 401 }
+-		);
+-	}
+-
+-	const [, dbConfig] = await asaw(getDBConfigByUser(true));
+-	if (!dbConfig?.id) {
+-		return NextResponse.json(
+-			{ error: getMessage().DATABASE_CONFIG_NOT_FOUND },
+-			{ status: 500 }
+-		);
+-	}
+-
+-	const searchParams = request.nextUrl.searchParams;
+-	const provider = searchParams.get("provider");
+-
+-	// If no provider specified, return all custom models grouped by provider
+-	if (!provider) {
+-		const query = `
+-			SELECT
+-				toString(id) as customId,
+-				model_id,
+-				model_id as id,
+-				provider,
+-				display_name as displayName,
+-				model_type as modelType,
+-				context_window as contextWindow,
+-				input_price_per_m_token as inputPricePerMToken,
+-				output_price_per_m_token as outputPricePerMToken,
+-				cache_read_price_per_m_token as cacheReadPricePerMToken,
+-				cache_creation_price_per_m_token as cacheCreationPricePerMToken,
+-				capabilities,
+-				is_default as isDefault
+-			FROM ${OPENLIT_PROVIDER_MODELS_TABLE_NAME}
+-			ORDER BY provider, is_default DESC, created_at DESC
+-		`;
+-
+-		const { data, err } = await dataCollector(
+-			{ query },
+-			"query",
+-			dbConfig.id
+-		);
+-
+-		if (err) {
+-			return NextResponse.json(
+-				{ error: getMessage().OPERATION_FAILED },
+-				{ status: 500 }
+-			);
+-		}
+-
+-		// Group models by provider
+-		const grouped: Record<string, any[]> = {};
+-
+-		(data as any[] || []).forEach((model: any) => {
+-			if (!grouped[model.provider]) {
+-				grouped[model.provider] = [];
+-			}
+-			grouped[model.provider].push(model);
+-		});
+-
+-		return NextResponse.json(grouped);
+-	}
+-
+-	// Get models for specific provider
+-	const query = `
+-		SELECT
+-			toString(id) as customId,
+-			provider,
+-			model_id as id,
+-			display_name as displayName,
+-			model_type as modelType,
+-			context_window as contextWindow,
+-			input_price_per_m_token as inputPricePerMToken,
+-			output_price_per_m_token as outputPricePerMToken,
+-			cache_read_price_per_m_token as cacheReadPricePerMToken,
+-			cache_creation_price_per_m_token as cacheCreationPricePerMToken,
+-			capabilities,
+-			is_default as isDefault
+-		FROM ${OPENLIT_PROVIDER_MODELS_TABLE_NAME}
+-		WHERE provider = '${Sanitizer.sanitizeValue(provider)}'
+-		ORDER BY is_default DESC, created_at DESC
+-	`;
+-
+-	const { data, err } = await dataCollector(
+-		{ query },
+-		"query",
+-		dbConfig.id
+-	);
+-
+-	if (err) {
+-		return NextResponse.json(
+-			{ error: getMessage().OPERATION_FAILED },
+-			{ status: 500 }
+-		);
+-	}
+-
+-	return NextResponse.json(data || []);
+-}
+-
+-// POST: Create or update a custom model
+-async function POSTHandler(request: NextRequest) {
+-	const startTimestamp = Date.now();
+-	const user = await getCurrentUser();
+-
+-	if (!user?.id) {
+-		return NextResponse.json(
+-			{ error: getMessage().UNAUTHORIZED_USER },
+-			{ status: 401 }
+-		);
+-	}
+-
+-	const [, dbConfig] = await asaw(getDBConfigByUser(true));
+-	if (!dbConfig?.id) {
+-		return NextResponse.json(
+-			{ error: getMessage().DATABASE_CONFIG_NOT_FOUND },
+-			{ status: 500 }
+-		);
+-	}
+-
+-	const body = await request.json();
+-	const { provider, model, customId } = body;
+-
+-	// Support both model.id and model.model_id for compatibility
+-	const modelId = model?.id || model?.model_id;
+-	if (!provider || !modelId || !model?.displayName) {
+-		return NextResponse.json(
+-			{ error: "Provider, model ID, and display name are required" },
+-			{ status: 400 }
+-		);
+-	}
+-
+-	// Check if updating existing model
+-	if (customId) {
+-		// Use ALTER TABLE UPDATE for ClickHouse
+-		const capabilitiesArray = (model.capabilities || [])
+-			.map((c: string) => `'${Sanitizer.sanitizeValue(c)}'`)
+-			.join(", ");
+-
+-		const updateQuery = `
+-			ALTER TABLE ${OPENLIT_PROVIDER_MODELS_TABLE_NAME}
+-			UPDATE
+-				display_name = '${Sanitizer.sanitizeValue(model.displayName)}',
+-				model_type = '${Sanitizer.sanitizeValue(model.modelType || "chat")}',
+-				context_window = ${model.contextWindow || 4096},
+-				input_price_per_m_token = ${model.inputPricePerMToken || 0},
+-				output_price_per_m_token = ${model.outputPricePerMToken || 0},
+-				cache_read_price_per_m_token = ${model.cacheReadPricePerMToken || 0},
+-				cache_creation_price_per_m_token = ${
+-					model.cacheCreationPricePerMToken || 0
+-				},
+-				capabilities = [${capabilitiesArray}],
+-				updated_at = now()
+-			WHERE model_id = '${Sanitizer.sanitizeValue(modelId)}'
+-			  AND provider = '${Sanitizer.sanitizeValue(provider)}'
+-		`;
+-
+-		const { err } = await dataCollector(
+-			{ query: updateQuery },
+-			"exec",
+-			dbConfig.id
+-		);
+-
+-		if (err) {
+-			PostHogServer.fireEvent({
+-				event: SERVER_EVENTS.PROVIDER_MODELS_CREATE_FAILURE,
+-				startTimestamp,
+-			});
+-			return NextResponse.json(
+-				{ error: err || getMessage().OPERATION_FAILED },
+-				{ status: 500 }
+-			);
+-		}
+-
+-		PostHogServer.fireEvent({
+-			event: SERVER_EVENTS.PROVIDER_MODELS_CREATE_SUCCESS,
+-			startTimestamp,
+-		});
+-		return NextResponse.json({ success: true, updated: true });
+-	}
+-
+-	// Insert new model - Use dataCollector's insert type to let ClickHouse handle UUID generation
+-	const { err } = await dataCollector(
+-		{
+-			table: OPENLIT_PROVIDER_MODELS_TABLE_NAME,
+-			values: [
+-				{
+-					provider: provider,
+-					model_id: modelId,
+-					display_name: model.displayName,
+-					model_type: model.modelType || "chat",
+-					context_window: model.contextWindow || 4096,
+-					input_price_per_m_token: model.inputPricePerMToken || 0,
+-					output_price_per_m_token: model.outputPricePerMToken || 0,
+-					cache_read_price_per_m_token: model.cacheReadPricePerMToken || 0,
+-					cache_creation_price_per_m_token:
+-						model.cacheCreationPricePerMToken || 0,
+-					capabilities: model.capabilities || [],
+-					is_default: false,
+-					created_by_user_id: user.id,
+-				},
+-			],
+-		},
+-		"insert",
+-		dbConfig.id
+-	);
+-
+-	if (err) {
+-		PostHogServer.fireEvent({
+-			event: SERVER_EVENTS.PROVIDER_MODELS_CREATE_FAILURE,
+-			startTimestamp,
+-		});
+-		return NextResponse.json(
+-			{ error: err || getMessage().OPERATION_FAILED },
+-			{ status: 500 }
+-		);
+-	}
+-
+-	// Fetch the newly created model to return it
+-	const selectQuery = `
+-		SELECT
+-			toString(id) as customId,
+-			provider,
+-			model_id as id,
+-			display_name as displayName,
+-			model_type as modelType,
+-			context_window as contextWindow,
+-			input_price_per_m_token as inputPricePerMToken,
+-			output_price_per_m_token as outputPricePerMToken,
+-			cache_read_price_per_m_token as cacheReadPricePerMToken,
+-			cache_creation_price_per_m_token as cacheCreationPricePerMToken,
+-			capabilities,
+-			is_default as isDefault
+-		FROM ${OPENLIT_PROVIDER_MODELS_TABLE_NAME}
+-		WHERE provider = '${Sanitizer.sanitizeValue(provider)}'
+-		  AND model_id = '${Sanitizer.sanitizeValue(modelId)}'
+-		ORDER BY created_at DESC
+-		LIMIT 1
+-	`;
+-
+-	const { data: newModel } = await dataCollector(
+-		{ query: selectQuery },
+-		"query",
+-		dbConfig.id
+-	);
+-
+-	PostHogServer.fireEvent({
+-		event: SERVER_EVENTS.PROVIDER_MODELS_CREATE_SUCCESS,
+-		startTimestamp,
+-	});
+-	return NextResponse.json({
+-		success: true,
+-		created: true,
+-		model: (newModel as any[])?.[0]
+-	});
+-}
+-
+-// DELETE: Remove a custom model
+-async function DELETEHandler(request: NextRequest) {
+-	const startTimestamp = Date.now();
+-	const user = await getCurrentUser();
+-
+-	if (!user?.id) {
+-		return NextResponse.json(
+-			{ error: getMessage().UNAUTHORIZED_USER },
+-			{ status: 401 }
+-		);
+-	}
+-
+-	const [, dbConfig] = await asaw(getDBConfigByUser(true));
+-	if (!dbConfig?.id) {
+-		return NextResponse.json(
+-			{ error: getMessage().DATABASE_CONFIG_NOT_FOUND },
+-			{ status: 500 }
+-		);
+-	}
+-
+-	const searchParams = request.nextUrl.searchParams;
+-	const id = searchParams.get("id");
+-	const modelId = searchParams.get("model_id");
+-	const provider = searchParams.get("provider");
+-
+-	if (!id && !modelId) {
+-		return NextResponse.json(
+-			{ error: "Model ID or model_id parameter is required" },
+-			{ status: 400 }
+-		);
+-	}
+-
+-	// Build WHERE clause — prefer model_id+provider match, fall back to UUID id
+-	const whereConditions: string[] = [];
+-
+-	if (modelId && provider) {
+-		whereConditions.push(`model_id = '${Sanitizer.sanitizeValue(modelId)}'`);
+-		whereConditions.push(`provider = '${Sanitizer.sanitizeValue(provider)}'`);
+-	} else if (id) {
+-		whereConditions.push(`(toString(id) = '${Sanitizer.sanitizeValue(id)}' OR model_id = '${Sanitizer.sanitizeValue(id)}')`);
+-	}
+-
+-	const deleteQuery = `
+-		DELETE FROM ${OPENLIT_PROVIDER_MODELS_TABLE_NAME}
+-		WHERE ${whereConditions.join(" AND ")}
+-	`;
+-
+-	const { err } = await dataCollector(
+-		{ query: deleteQuery },
+-		"exec",
+-		dbConfig.id
+-	);
+-
+-	if (err) {
+-		PostHogServer.fireEvent({
+-			event: SERVER_EVENTS.PROVIDER_MODELS_DELETE_FAILURE,
+-			startTimestamp,
+-		});
+-		return NextResponse.json(
+-			{ error: err || getMessage().OPERATION_FAILED },
+-			{ status: 500 }
+-		);
+-	}
+-
+-	PostHogServer.fireEvent({
+-		event: SERVER_EVENTS.PROVIDER_MODELS_DELETE_SUCCESS,
+-		startTimestamp,
+-	});
+-	return NextResponse.json({ success: true, deleted: true });
+-}
+-
+-export const GET = GETHandler;
+-export const POST = withAudit(POSTHandler);
+-export const DELETE = withAudit(DELETEHandler);
+diff --git a/src/client/src/app/api/providers/route.ts b/src/client/src/app/api/providers/route.ts
+index be45ca01..9de65235 100644
+--- a/src/client/src/app/api/providers/route.ts
++++ b/src/client/src/app/api/providers/route.ts
+@@ -1,24 +1,30 @@
+-import { withAudit } from "@/lib/audit/route";
+ import { NextRequest, NextResponse } from "next/server";
+ import { getCurrentUser } from "@/lib/session";
+ import { getDBConfigByUser } from "@/lib/db-config";
+ import getMessage from "@/constants/messages";
+-import Sanitizer from "@/utils/sanitizer";
+ import asaw from "@/utils/asaw";
+ import {
+ 	getAllProvidersWithCustomModels,
+ 	getProviderByIdWithCustomModels,
+ 	searchProvidersWithCustomModels,
+ } from "@/lib/platform/providers/provider-service";
+-import { dataCollector } from "@/lib/platform/common";
+-import {
+-	OPENLIT_PROVIDER_METADATA_TABLE_NAME,
+-	OPENLIT_PROVIDER_MODELS_TABLE_NAME,
+-} from "@/lib/platform/providers/table-details";
+ 
+ /**
+  * GET /api/providers
+  * Get all available LLM providers with custom models merged in
++ *
++ * Read-only on purpose. The provider and model catalogs are owned by
++ * AutoDev's Control API, so this route reads the provider metadata table
++ * that telemetry populates and never writes to it.
++ *
++ * The write half used to live here as well -- POST, PUT and DELETE on this
++ * route, and the whole `/api/providers/models` tree beside it. It was a
++ * second authority over the same rows: no page, no caller and no SDK ever
++ * used it, so a provider created through it would have existed in OpenLIT
++ * and nowhere else, and nothing would have been able to remove it again.
++ * The only consumer of this read is the evaluations configuration page,
++ * which lists providers and their models so a judge can be picked from
++ * what the telemetry actually observed.
+  */
+ async function GETHandler(request: NextRequest) {
+ 	try {
+@@ -93,240 +99,4 @@ async function GETHandler(request: NextRequest) {
+ 	}
+ }
+ 
+-/**
+- * POST /api/providers/providers
+- * Create a new provider
+- */
+-async function POSTHandler(request: NextRequest) {
+-	try {
+-		const user = await getCurrentUser();
+-		if (!user) {
+-			return NextResponse.json(
+-				{ error: getMessage().UNAUTHORIZED_USER },
+-				{ status: 401 }
+-			);
+-		}
+-
+-		const [, dbConfig] = await asaw(getDBConfigByUser(true));
+-		if (!dbConfig?.id) {
+-			return NextResponse.json(
+-				{ error: getMessage().DATABASE_CONFIG_NOT_FOUND },
+-				{ status: 500 }
+-			);
+-		}
+-
+-		const body = await request.json();
+-		const { providerId, displayName, description, requiresVault, configSchema } = body;
+-
+-		if (!providerId || !displayName) {
+-			return NextResponse.json(
+-				{ error: "Provider ID and display name are required" },
+-				{ status: 400 }
+-			);
+-		}
+-
+-		const { err } = await dataCollector(
+-			{
+-				table: OPENLIT_PROVIDER_METADATA_TABLE_NAME,
+-				values: [
+-					{
+-						provider_id: providerId,
+-						display_name: displayName,
+-						description: description || "",
+-						requires_vault: requiresVault ?? true,
+-						config_schema: JSON.stringify(configSchema || {}),
+-						is_default: false,
+-					},
+-				],
+-			},
+-			"insert",
+-			dbConfig.id
+-		);
+-
+-		if (err) {
+-			return NextResponse.json(
+-				{ error: err || getMessage().OPERATION_FAILED },
+-				{ status: 500 }
+-			);
+-		}
+-
+-		return NextResponse.json({ success: true, providerId });
+-	} catch (error: any) {
+-		console.error("Providers POST error:", error);
+-		return NextResponse.json(
+-			{ error: getMessage().OPERATION_FAILED },
+-			{ status: 500 }
+-		);
+-	}
+-}
+-
+-/**
+- * PUT /api/providers/providers
+- * Update an existing provider's metadata.
+- *
+- * Since the table uses ReplacingMergeTree, we INSERT a new row with the same
+- * provider_id — the engine deduplicates by primary key, keeping the row with
+- * the latest updated_at. This avoids string-interpolated ALTER TABLE UPDATE
+- * and the SQL injection surface that comes with it.
+- */
+-async function PUTHandler(request: NextRequest) {
+-	try {
+-		const user = await getCurrentUser();
+-		if (!user) {
+-			return NextResponse.json(
+-				{ error: getMessage().UNAUTHORIZED_USER },
+-				{ status: 401 }
+-			);
+-		}
+-
+-		const [, dbConfig] = await asaw(getDBConfigByUser(true));
+-		if (!dbConfig?.id) {
+-			return NextResponse.json(
+-				{ error: getMessage().DATABASE_CONFIG_NOT_FOUND },
+-				{ status: 500 }
+-			);
+-		}
+-
+-		const body = await request.json();
+-		const { providerId, displayName, description, requiresVault, configSchema } = body;
+-
+-		if (!providerId) {
+-			return NextResponse.json(
+-				{ error: "Provider ID is required" },
+-				{ status: 400 }
+-			);
+-		}
+-
+-		// Fetch the existing row so we can merge unchanged fields
+-		const existingQuery = `
+-			SELECT provider_id, display_name, description, requires_vault, config_schema, is_default
+-			FROM ${OPENLIT_PROVIDER_METADATA_TABLE_NAME} FINAL
+-			WHERE provider_id = '${Sanitizer.sanitizeValue(providerId)}'
+-			LIMIT 1
+-		`;
+-		const { data: existingRows } = await dataCollector(
+-			{ query: existingQuery },
+-			"query",
+-			dbConfig.id
+-		);
+-
+-		const existing = (existingRows as any[])?.[0];
+-		if (!existing) {
+-			return NextResponse.json(
+-				{ error: "Provider not found" },
+-				{ status: 404 }
+-			);
+-		}
+-
+-		// INSERT a new row — ReplacingMergeTree deduplicates by provider_id
+-		const { err } = await dataCollector(
+-			{
+-				table: OPENLIT_PROVIDER_METADATA_TABLE_NAME,
+-				values: [
+-					{
+-						provider_id: providerId,
+-						display_name: displayName ?? existing.display_name,
+-						description: description ?? existing.description,
+-						requires_vault: requiresVault ?? existing.requires_vault,
+-						config_schema:
+-							configSchema !== undefined
+-								? JSON.stringify(configSchema)
+-								: existing.config_schema,
+-						is_default: existing.is_default,
+-					},
+-				],
+-			},
+-			"insert",
+-			dbConfig.id
+-		);
+-
+-		if (err) {
+-			return NextResponse.json(
+-				{ error: err || getMessage().OPERATION_FAILED },
+-				{ status: 500 }
+-			);
+-		}
+-
+-		return NextResponse.json({ success: true, providerId });
+-	} catch (error: any) {
+-		console.error("Providers PUT error:", error);
+-		return NextResponse.json(
+-			{ error: getMessage().OPERATION_FAILED },
+-			{ status: 500 }
+-		);
+-	}
+-}
+-
+-/**
+- * DELETE /api/providers/providers
+- * Delete a provider and all its models
+- */
+-async function DELETEHandler(request: NextRequest) {
+-	try {
+-		const user = await getCurrentUser();
+-		if (!user) {
+-			return NextResponse.json(
+-				{ error: getMessage().UNAUTHORIZED_USER },
+-				{ status: 401 }
+-			);
+-		}
+-
+-		const [, dbConfig] = await asaw(getDBConfigByUser(true));
+-		if (!dbConfig?.id) {
+-			return NextResponse.json(
+-				{ error: getMessage().DATABASE_CONFIG_NOT_FOUND },
+-				{ status: 500 }
+-			);
+-		}
+-
+-		const { searchParams } = new URL(request.url);
+-		const providerId = searchParams.get("provider");
+-
+-		if (!providerId) {
+-			return NextResponse.json(
+-				{ error: "Provider ID is required" },
+-				{ status: 400 }
+-			);
+-		}
+-
+-		const sanitizedId = Sanitizer.sanitizeValue(providerId);
+-
+-		// Delete provider metadata + all its models
+-		const [metaResult, modelsResult] = await Promise.all([
+-			dataCollector(
+-				{
+-					query: `DELETE FROM ${OPENLIT_PROVIDER_METADATA_TABLE_NAME} WHERE provider_id = '${sanitizedId}'`,
+-				},
+-				"exec",
+-				dbConfig.id
+-			),
+-			dataCollector(
+-				{
+-					query: `DELETE FROM ${OPENLIT_PROVIDER_MODELS_TABLE_NAME} WHERE provider = '${sanitizedId}'`,
+-				},
+-				"exec",
+-				dbConfig.id
+-			),
+-		]);
+-
+-		if (metaResult.err || modelsResult.err) {
+-			return NextResponse.json(
+-				{ error: metaResult.err || modelsResult.err || getMessage().OPERATION_FAILED },
+-				{ status: 500 }
+-			);
+-		}
+-
+-		return NextResponse.json({ success: true, deleted: providerId });
+-	} catch (error: any) {
+-		console.error("Providers DELETE error:", error);
+-		return NextResponse.json(
+-			{ error: getMessage().OPERATION_FAILED },
+-			{ status: 500 }
+-		);
+-	}
+-}
+-
+ export const GET = GETHandler;
+-export const POST = withAudit(POSTHandler);
+-export const PUT = withAudit(PUTHandler);
+-export const DELETE = withAudit(DELETEHandler);
+diff --git a/src/client/src/lib/platform/providers/models-service.ts b/src/client/src/lib/platform/providers/models-service.ts
+deleted file mode 100644
+index 889f14e0..00000000
+--- a/src/client/src/lib/platform/providers/models-service.ts
++++ /dev/null
+@@ -1,286 +0,0 @@
+-import { dataCollector } from "@/lib/platform/common";
+-import Sanitizer from "@/utils/sanitizer";
+-import { OPENLIT_PROVIDER_MODELS_TABLE_NAME } from "./table-details";
+-import { CustomModel, CustomModelInput, ModelMetadata } from "@/types/providers";
+-
+-/**
+- * Model management service for openlit_provider_models.
+- *
+- * All models (seeded defaults + user-created) live in a single table per
+- * ClickHouse instance. Every model returned by this service is editable/deletable.
+- */
+-
+-/**
+- * Get all models for a database config, optionally filtered by provider.
+- */
+-export async function getCustomModels(
+-	userId: string,
+-	databaseConfigId: string,
+-	provider?: string
+-): Promise<{ data?: CustomModel[]; err?: string }> {
+-	const whereConditions: string[] = [];
+-
+-	if (provider) {
+-		whereConditions.push(`provider = '${Sanitizer.sanitizeValue(provider)}'`);
+-	}
+-
+-	const whereClause = whereConditions.length > 0
+-		? `WHERE ${whereConditions.join(" AND ")}`
+-		: "";
+-
+-	const query = `
+-		SELECT
+-			toString(id) as id,
+-			model_id,
+-			provider,
+-			display_name as displayName,
+-			model_type as modelType,
+-			context_window as contextWindow,
+-			input_price_per_m_token as inputPricePerMToken,
+-			output_price_per_m_token as outputPricePerMToken,
+-			cache_read_price_per_m_token as cacheReadPricePerMToken,
+-			cache_creation_price_per_m_token as cacheCreationPricePerMToken,
+-			capabilities,
+-			is_default as isDefault
+-		FROM ${OPENLIT_PROVIDER_MODELS_TABLE_NAME}
+-		${whereClause}
+-		ORDER BY provider, is_default DESC, created_at DESC
+-	`;
+-
+-	const { data, err } = await dataCollector(
+-		{ query },
+-		"query",
+-		databaseConfigId
+-	);
+-
+-	if (err) {
+-		return { err: err as string };
+-	}
+-
+-	return { data: (data as CustomModel[]) || [] };
+-}
+-
+-/**
+- * Get all models grouped by provider.
+- */
+-export async function getCustomModelsGroupedByProvider(
+-	userId: string,
+-	databaseConfigId: string
+-): Promise<{ data?: Record<string, CustomModel[]>; err?: string }> {
+-	const { data: models, err } = await getCustomModels(userId, databaseConfigId);
+-
+-	if (err) {
+-		return { err };
+-	}
+-
+-	const grouped: Record<string, CustomModel[]> = {};
+-	(models || []).forEach((model) => {
+-		if (!grouped[model.provider!]) {
+-			grouped[model.provider!] = [];
+-		}
+-		grouped[model.provider!].push(model);
+-	});
+-
+-	return { data: grouped };
+-}
+-
+-/**
+- * Create a new model.
+- */
+-export async function createCustomModel(
+-	userId: string,
+-	databaseConfigId: string,
+-	input: CustomModelInput
+-): Promise<{ data?: CustomModel; err?: string }> {
+-	if (!input.provider || !input.model_id || !input.displayName) {
+-		return { err: "Provider, model ID, and display name are required" };
+-	}
+-
+-	const { err } = await dataCollector(
+-		{
+-			table: OPENLIT_PROVIDER_MODELS_TABLE_NAME,
+-			values: [
+-				{
+-					provider: input.provider,
+-					model_id: input.model_id,
+-					display_name: input.displayName,
+-					model_type: input.modelType || "chat",
+-					context_window: input.contextWindow || 4096,
+-					input_price_per_m_token: input.inputPricePerMToken || 0,
+-					output_price_per_m_token: input.outputPricePerMToken || 0,
+-					cache_read_price_per_m_token: input.cacheReadPricePerMToken || 0,
+-					cache_creation_price_per_m_token:
+-						input.cacheCreationPricePerMToken || 0,
+-					capabilities: input.capabilities || [],
+-					is_default: false,
+-					created_by_user_id: userId,
+-				},
+-			],
+-		},
+-		"insert",
+-		databaseConfigId
+-	);
+-
+-	if (err) {
+-		return { err: err as string };
+-	}
+-
+-	const selectQuery = `
+-		SELECT
+-			toString(id) as id,
+-			model_id,
+-			provider,
+-			display_name as displayName,
+-			model_type as modelType,
+-			context_window as contextWindow,
+-			input_price_per_m_token as inputPricePerMToken,
+-			output_price_per_m_token as outputPricePerMToken,
+-			cache_read_price_per_m_token as cacheReadPricePerMToken,
+-			cache_creation_price_per_m_token as cacheCreationPricePerMToken,
+-			capabilities,
+-			is_default as isDefault
+-		FROM ${OPENLIT_PROVIDER_MODELS_TABLE_NAME}
+-		WHERE provider = '${Sanitizer.sanitizeValue(input.provider)}'
+-		  AND model_id = '${Sanitizer.sanitizeValue(input.model_id)}'
+-		ORDER BY created_at DESC
+-		LIMIT 1
+-	`;
+-
+-	const { data: newModel, err: selectErr } = await dataCollector(
+-		{ query: selectQuery },
+-		"query",
+-		databaseConfigId
+-	);
+-
+-	if (selectErr) {
+-		return { err: selectErr as string };
+-	}
+-
+-	return { data: (newModel as any[])?.[0] as CustomModel };
+-}
+-
+-/**
+- * Update an existing model. Matches on the (provider, model_id) composite key.
+- */
+-export async function updateCustomModel(
+-	userId: string,
+-	databaseConfigId: string,
+-	id: string,
+-	input: Partial<CustomModelInput>
+-): Promise<{ data?: boolean; err?: string }> {
+-	const updateFields: string[] = [];
+-
+-	if (input.displayName !== undefined) {
+-		updateFields.push(`display_name = '${Sanitizer.sanitizeValue(input.displayName)}'`);
+-	}
+-	if (input.modelType !== undefined) {
+-		updateFields.push(`model_type = '${Sanitizer.sanitizeValue(input.modelType)}'`);
+-	}
+-	if (input.contextWindow !== undefined) {
+-		updateFields.push(`context_window = ${input.contextWindow}`);
+-	}
+-	if (input.inputPricePerMToken !== undefined) {
+-		updateFields.push(`input_price_per_m_token = ${input.inputPricePerMToken}`);
+-	}
+-	if (input.outputPricePerMToken !== undefined) {
+-		updateFields.push(`output_price_per_m_token = ${input.outputPricePerMToken}`);
+-	}
+-	if (input.cacheReadPricePerMToken !== undefined) {
+-		updateFields.push(
+-			`cache_read_price_per_m_token = ${input.cacheReadPricePerMToken}`
+-		);
+-	}
+-	if (input.cacheCreationPricePerMToken !== undefined) {
+-		updateFields.push(
+-			`cache_creation_price_per_m_token = ${input.cacheCreationPricePerMToken}`
+-		);
+-	}
+-	if (input.capabilities !== undefined) {
+-		const capabilitiesArray = input.capabilities
+-			.map((c) => `'${Sanitizer.sanitizeValue(c)}'`)
+-			.join(", ");
+-		updateFields.push(`capabilities = [${capabilitiesArray}]`);
+-	}
+-
+-	updateFields.push(`updated_at = now()`);
+-
+-	if (updateFields.length === 0) {
+-		return { err: "No fields to update" };
+-	}
+-
+-	const updateQuery = `
+-		ALTER TABLE ${OPENLIT_PROVIDER_MODELS_TABLE_NAME}
+-		UPDATE ${updateFields.join(", ")}
+-		WHERE (toString(id) = '${Sanitizer.sanitizeValue(id)}' OR model_id = '${Sanitizer.sanitizeValue(id)}')
+-	`;
+-
+-	const { err } = await dataCollector(
+-		{ query: updateQuery },
+-		"exec",
+-		databaseConfigId
+-	);
+-
+-	if (err) {
+-		return { err: err as string };
+-	}
+-
+-	return { data: true };
+-}
+-
+-/**
+- * Delete a model.
+- */
+-export async function deleteCustomModel(
+-	userId: string,
+-	databaseConfigId: string,
+-	id: string
+-): Promise<{ data?: boolean; err?: string }> {
+-	const deleteQuery = `
+-		DELETE FROM ${OPENLIT_PROVIDER_MODELS_TABLE_NAME}
+-		WHERE (toString(id) = '${Sanitizer.sanitizeValue(id)}' OR model_id = '${Sanitizer.sanitizeValue(id)}')
+-	`;
+-
+-	const { err } = await dataCollector(
+-		{ query: deleteQuery },
+-		"exec",
+-		databaseConfigId
+-	);
+-
+-	if (err) {
+-		return { err: err as string };
+-	}
+-
+-	return { data: true };
+-}
+-
+-/**
+- * Get models for a provider (used when merging with provider metadata).
+- */
+-export async function getCustomModelsForProvider(
+-	userId: string,
+-	databaseConfigId: string,
+-	providerId: string
+-): Promise<{ data?: ModelMetadata[]; err?: string }> {
+-	const { data: models, err } = await getCustomModels(
+-		userId,
+-		databaseConfigId,
+-		providerId
+-	);
+-
+-	if (err) {
+-		return { err };
+-	}
+-
+-	const transformed = (models || []).map((model) => ({
+-		id: model.model_id,
+-		displayName: model.displayName,
+-		contextWindow: model.contextWindow,
+-		inputPricePerMToken: model.inputPricePerMToken,
+-		outputPricePerMToken: model.outputPricePerMToken,
+-		cacheReadPricePerMToken: model.cacheReadPricePerMToken,
+-		cacheCreationPricePerMToken: model.cacheCreationPricePerMToken,
+-		capabilities: model.capabilities,
+-	}));
+-
+-	return { data: transformed };
+-}
