@@ -13,6 +13,8 @@ const PROVIDERS_MODELS_URL = /\/providers\?tab=models$/u;
 const PROVIDER_RESET_CONFIRMATION_PATTERN =
   /Confirm clearing role overrides, disabled models, and provider limits/u;
 const CLAUDE_PROVIDER_ID = "claude";
+const MODEL_ID = "sonnet";
+const NOT_OBSERVED = "Not observed";
 const PROVIDERS_TAB_URL = "/providers?tab=providers";
 const PROVIDER_DETAIL_URL_PATTERN = /\/providers\/[A-Za-z0-9._-]+$/u;
 
@@ -263,5 +265,50 @@ test("Provider detail reuses provider-wide controls and navigates in place", asy
   expect(await documentFitsViewport(page)).toBe(true);
 
   await page.setViewportSize({ width: 1280, height: 844 });
+  expect(await documentFitsViewport(page)).toBe(true);
+});
+
+test("the model detail is the model's own page, not its provider's", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await page.goto(`/providers/${CLAUDE_PROVIDER_ID}/models/${MODEL_ID}`);
+
+  // The page is about this model.
+  await expect(
+    page.getByRole("heading", { name: MODEL_ID, exact: true })
+  ).toBeVisible();
+  const details = page.locator("[data-detail-grid]");
+  await expect(
+    details
+      .locator('dt:text-is("Provider")')
+      .locator("xpath=following-sibling::dd[1]")
+  ).toHaveText(CLAUDE_PROVIDER_ID);
+  await expect(
+    details
+      .locator('dt:text-is("Tiers")')
+      .locator("xpath=following-sibling::dd[1]")
+  ).toHaveText("default, smart, subagent");
+
+  // The enablement control is the model's own, and the action it offers is
+  // the one the model's own state calls for: the model is enabled, so the
+  // action is to disable it.
+  const enablement = page.locator('[data-enablement="model"]');
+  await expect(enablement).toHaveAttribute("data-enablement-target", MODEL_ID);
+  await expect(enablement).toHaveText("Enabled");
+  await expect(enablement).toHaveAttribute("aria-label", `Disable ${MODEL_ID}`);
+  // The provider's own enablement is a different control and is not here.
+  await expect(page.locator('[data-enablement="provider"]')).toHaveCount(0);
+
+  // The Runtime has not reported the model's convergence, so the page says
+  // that rather than presenting the desired state as a settled one.
+  await expect(details.locator('[data-status="not-observed"]')).toBeVisible();
+  // The Runtime published no live projection, so the live agent count is not
+  // observed rather than measured as zero.
+  await expect(
+    details
+      .locator('dt:text-is("Active agents")')
+      .locator("xpath=following-sibling::dd[1]")
+  ).toHaveText(NOT_OBSERVED);
   expect(await documentFitsViewport(page)).toBe(true);
 });
