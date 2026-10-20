@@ -26,6 +26,19 @@ interface RunningServer {
   close(): Promise<void>;
 }
 
+/** Wait for a condition the page reports, without assuming how long it takes. */
+async function waitFor(
+  ready: () => boolean,
+  timeoutMs: number
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (!ready()) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return true;
+}
+
 async function listen(
   handler: (
     requestPath: string,
@@ -469,16 +482,40 @@ test("visual browser stops before further input when a password gate appears mid
 });
 
 test("visual browser refuses coordinate input when the captured canvas frame changes", async () => {
-  const source = await listen(
-    () => `<!doctype html><html><body>
+  // The frame has to change after the observation and before the action.
+  // The test asks the page to change and waits for the page to say it did,
+  // so the refusal is never a race against a loaded machine.
+  let repaintRequested = false;
+  let repaintsAcknowledged = 0;
+  const source = await listen((requestPath) => {
+    if (requestPath === "/phase") {
+      if (!repaintRequested) return "hold";
+      repaintsAcknowledged += 1;
+      return "repaint";
+    }
+    if (requestPath === "/painted") {
+      repaintsAcknowledged += 1;
+      return "painted";
+    }
+    return `<!doctype html><html><body>
     <canvas id="game" width="100" height="100"></canvas>
     <script>
       const context=document.getElementById('game').getContext('2d');
       context.fillStyle='red'; context.fillRect(0,0,30,30);
-      setTimeout(()=>{ context.fillStyle='blue'; context.fillRect(0,0,30,30); }, 250);
+      const poll = () => {
+        fetch('/phase').then((response) => response.text()).then((answer) => {
+          if (answer === 'repaint') {
+            context.fillStyle='blue'; context.fillRect(0,0,30,30);
+            fetch('/painted');
+            return;
+          }
+          setTimeout(poll, 25);
+        });
+      };
+      setTimeout(poll, 0);
     </script>
-  </body></html>`
-  );
+  </body></html>`;
+  });
   const { store, root } = artifacts();
   let driver: PlaytestVisualBrowserDriver | null = null;
   try {
@@ -486,7 +523,11 @@ test("visual browser refuses coordinate input when the captured canvas frame cha
     const captured = await driver.observe();
     assert.equal(captured.status, "observed");
     if (captured.status !== "observed") return;
-    await new Promise((resolve) => setTimeout(resolve, 350));
+    repaintRequested = true;
+    assert.ok(
+      await waitFor(() => repaintsAcknowledged >= 2, 10_000),
+      "the page was asked to repaint and said it had"
+    );
     const receipt = await driver.act({
       schema: "autodev-playtest-visual-action-v1",
       workspaceId: WORKSPACE,

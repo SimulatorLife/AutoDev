@@ -9,9 +9,11 @@ import {
   assertPlaytestDiscoveryReviewGroundedInPacket,
   assertPlaytestDiscoverySessionReview,
   buildPlaytestDiscoveryEvidencePacket,
+  canonicalPlaytestJson,
   playtestAssignmentManifestHashInput,
   type PlaytestDiscoveryEvidencePacket,
   type PlaytestDiscoveryEvidencePacketV2,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MAX_TOKENS,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2,
   playtestDiscoveryEvidencePacketHashInput,
@@ -434,6 +436,51 @@ test("visual discovery packet is content-addressed, hypothesis-only, and contain
   assert.equal("rubricHash" in packet, false);
   assert.equal("coverageManifest" in packet, false);
   assert.equal("metrics" in packet, false);
+});
+
+test("the packet carries a step's visible evidence once, so a real session fits its budget", () => {
+  // A real game's visible state is large: one step carries every visible
+  // control and its name. The packet carries that state once per step, so a
+  // session of a real game fits the analyst's budget.
+  const marker = (step: number, index: number) =>
+    "Racer " + String(step) + "-" + String(index) + " - Position 1 - Lap 1";
+  const bulky = (step: number, frameId: string) => ({
+    ...stepEvidence(step, frameId),
+    visibleObservation: {
+      phase: "race-setup",
+      controls: Array.from({ length: 20 }, (_, index) => ({
+        controlId: "control-" + String(step) + "-" + String(index),
+        role: "button",
+        name:
+          marker(step, index) +
+          ", 99% of the lap - Delta gap unavailable before race start - " +
+          "mechanically healthy - Tire age 0 laps",
+        enabled: true
+      }))
+    }
+  });
+  const packet = buildPacket({
+    tokenBudget: PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MAX_TOKENS,
+    stepEvidence: [bulky(0, "frame-visual-0"), bulky(1, "frame-visual-1")]
+  });
+  assertPlaytestDiscoveryEvidencePacket(packet);
+  const window = packet.selectedWindows[0];
+  assert.ok(window);
+  // The window says which steps it covers and which frames they captured;
+  // the visible state itself is carried once, in the step evidence.
+  assert.deepEqual(
+    window.steps.map((step) => step.step),
+    [0, 1]
+  );
+  assert.ok(
+    window.steps.every((step) => !("visibleObservation" in step)),
+    "the window does not repeat the step's visible observation"
+  );
+  assert.equal(
+    canonicalPlaytestJson(packet).split(marker(1, 7)).length - 1,
+    1,
+    "the visible state of a step is in the packet exactly once"
+  );
 });
 
 test("discovery packet rejects adapter episodes and mismatched target/assignment identity", () => {

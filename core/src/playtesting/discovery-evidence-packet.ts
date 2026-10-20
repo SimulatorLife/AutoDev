@@ -20,7 +20,9 @@ import {
   type PlaytestDiscoverySessionReview,
   type PlaytestEpisode,
   type PlaytestEvidenceOmittedArtifact,
+  type PlaytestEvidenceSelectionReason,
   type PlaytestEvidenceSuppliedArtifact,
+  type PlaytestEvidenceTraceEvent,
   type PlaytestEvidenceTraceStep,
   type PlaytestEvidenceWindow,
   type PlaytestGameOutcomeKind,
@@ -167,6 +169,31 @@ export interface PlaytestDiscoveryStepEvidence {
   readonly frameIds: readonly string[];
 }
 
+/**
+ * One step inside a selected window.
+ *
+ * The step's evidence is carried once, in the packet's step evidence. A
+ * window repeats only what the selection needs: which step it covers, which
+ * events that step recorded and which frames it captured. Repeating the
+ * observation as well would put every step's visible state into the packet
+ * twice, and a session of a real game does not fit the analyst's packet
+ * budget when it is counted twice.
+ */
+export interface PlaytestDiscoveryEvidenceWindowStep {
+  readonly step: number;
+  readonly phaseId: string | null;
+  readonly events: readonly PlaytestEvidenceTraceEvent[];
+  readonly frameRefs: readonly PlaytestEvidenceLocator[];
+}
+
+/** The selection record of one selected window of the source trace. */
+export interface PlaytestDiscoveryEvidenceWindow {
+  readonly startStep: number;
+  readonly endStep: number;
+  readonly selectionReasons: readonly PlaytestEvidenceSelectionReason[];
+  readonly steps: readonly PlaytestDiscoveryEvidenceWindowStep[];
+}
+
 export interface PlaytestDiscoveryEvidenceSessionContext {
   readonly status: "visual-discovery-session-level";
   readonly reason: "visual-discovery-session-level";
@@ -229,7 +256,7 @@ export interface PlaytestDiscoveryEvidencePacketV1 {
     readonly step: number;
     readonly reason: PlaytestDiscoveryOmissionReason;
   }[];
-  readonly selectedWindows: readonly PlaytestEvidenceWindow[];
+  readonly selectedWindows: readonly PlaytestDiscoveryEvidenceWindow[];
   readonly omittedWindows: readonly PlaytestOmittedEvidenceWindow[];
   readonly omittedArtifacts: readonly PlaytestEvidenceOmittedArtifact[];
   readonly suppliedArtifacts: readonly PlaytestEvidenceSuppliedArtifact[];
@@ -562,7 +589,7 @@ function buildDiscoveryPacketValue(input: {
     stepEvidence: data.stepEvidence,
     frames: data.frames,
     omittedFrames: data.omittedFrames ?? [],
-    selectedWindows: windows,
+    selectedWindows: windows.map(discoveryWindowValue),
     omittedWindows: omitted,
     omittedArtifacts: data.omittedArtifacts ?? [],
     suppliedArtifacts,
@@ -570,6 +597,32 @@ function buildDiscoveryPacketValue(input: {
     measurementVersion: data.measurementVersion,
     tokenBudget: data.tokenBudget,
     generatedAt: new Date(data.generatedAt).toISOString()
+  };
+}
+
+/**
+ * The selection record of a window.
+ *
+ * The packet carries each step's visible evidence once, in its step
+ * evidence. A window says which steps it covers and which frames and events
+ * those steps recorded, and nothing more: repeating the observation here
+ * would put every step's visible state into the packet a second time, and a
+ * session of a real game does not fit the analyst's packet budget when it is
+ * counted twice.
+ */
+function discoveryWindowValue(
+  window: PlaytestEvidenceWindow
+): PlaytestDiscoveryEvidenceWindow {
+  return {
+    startStep: window.startStep,
+    endStep: window.endStep,
+    selectionReasons: window.selectionReasons,
+    steps: window.steps.map((step) => ({
+      step: step.step,
+      phaseId: step.phaseId,
+      events: step.events,
+      frameRefs: step.frameRefs
+    }))
   };
 }
 
@@ -984,7 +1037,7 @@ export function assertPlaytestDiscoveryEvidencePacket(
     );
   }
   const selectedWindows =
-    value.selectedWindows as readonly PlaytestEvidenceWindow[];
+    value.selectedWindows as readonly PlaytestDiscoveryEvidenceWindow[];
   const omittedWindows =
     value.omittedWindows as readonly PlaytestOmittedEvidenceWindow[];
   for (const window of selectedWindows) {
@@ -1197,7 +1250,7 @@ function assertFrame(
 
 function assertSelectedWindow(
   value: unknown
-): asserts value is PlaytestEvidenceWindow {
+): asserts value is PlaytestDiscoveryEvidenceWindow {
   if (
     !isRecord(value) ||
     Object.keys(value).length !== 4 ||
@@ -1231,7 +1284,32 @@ function assertSelectedWindow(
     );
   }
   for (const [index, step] of steps.entries()) {
-    assertTraceStep(step, (value.startStep as number) + index);
+    assertDiscoveryWindowStep(step, (value.startStep as number) + index);
+  }
+}
+
+function assertDiscoveryWindowStep(
+  value: unknown,
+  expectedStep: number
+): asserts value is PlaytestDiscoveryEvidenceWindowStep {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 4 ||
+    Object.keys(value).some(
+      (key) => !["step", "phaseId", "events", "frameRefs"].includes(key)
+    ) ||
+    !isCount(value.step) ||
+    value.step !== expectedStep ||
+    (value.phaseId !== null && !isText(value.phaseId)) ||
+    !Array.isArray(value.events) ||
+    !Array.isArray(value.frameRefs)
+  ) {
+    throw new TypeError(
+      "Discovery evidence packet selected window step is malformed."
+    );
+  }
+  for (const frame of value.frameRefs) {
+    assertPlaytestEvidenceLocator(frame);
   }
 }
 

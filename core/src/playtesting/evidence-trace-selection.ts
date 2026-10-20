@@ -9,6 +9,7 @@
 import {
   type PlaytestEvidenceOmittedArtifact,
   type PlaytestEvidenceSuppliedArtifact,
+  type PlaytestEvidenceTraceEvent,
   type PlaytestEvidenceTraceStep,
   type PlaytestEvidenceWindow,
   type PlaytestOmittedEvidenceWindow
@@ -484,7 +485,9 @@ export function buildBoundedEvidenceWindows<TPacket extends object>(input: {
 }
 
 export function assertUniqueTraceEventIds(
-  steps: readonly PlaytestEvidenceTraceStep[],
+  steps: readonly {
+    readonly events: readonly PlaytestEvidenceTraceEvent[];
+  }[],
   eventIds = new Set<string>()
 ): void {
   for (const step of steps) {
@@ -500,7 +503,11 @@ export function assertUniqueTraceEventIds(
 }
 
 export function assertUniqueSelectedEventIds(
-  windows: readonly PlaytestEvidenceWindow[]
+  windows: readonly {
+    readonly steps: readonly {
+      readonly events: readonly PlaytestEvidenceTraceEvent[];
+    }[];
+  }[]
 ): void {
   const eventIds = new Set<string>();
   for (const window of windows) {
@@ -512,7 +519,19 @@ export function assertUniqueSelectedEventIds(
 export interface PlaytestEvidencePacketLocatorView {
   readonly episodeId: string;
   readonly traceArtifactId: string;
-  readonly selectedWindows: readonly PlaytestEvidenceWindow[];
+  /**
+   * The selected windows, reduced to what a citation needs: the step
+   * ordinal, the events it recorded and the frames it captured. A packet
+   * that carries its step evidence once may leave the observation itself out
+   * of the window.
+   */
+  readonly selectedWindows: readonly {
+    readonly steps: readonly {
+      readonly step: number;
+      readonly events: readonly PlaytestEvidenceTraceEvent[];
+      readonly frameRefs: readonly PlaytestEvidenceLocator[];
+    }[];
+  }[];
   readonly crossSessionContext?: {
     readonly status: "included" | "unavailable";
     readonly sessions?: readonly { readonly episodeId: string }[];
