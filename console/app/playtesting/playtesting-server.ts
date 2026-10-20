@@ -69,8 +69,25 @@ import {
   fetchControlApi,
   fetchControlApiBinary,
   type FetchControlApiOptions,
+  PLAYTESTING_CONTROL_API_TIMEOUT_MS,
   postControlApi
 } from "../../src/lib/server/control-api.ts";
+
+/**
+ * Give every playtesting Control API call the playtesting budget. The
+ * playtesting store is ClickHouse-backed and answers one read in seconds,
+ * while the playtesting page fans several reads out in parallel, so the
+ * generic Control API deadline would expire against a service that is
+ * answering normally.
+ */
+function playtestingControlApiOptions(
+  options: FetchControlApiOptions
+): FetchControlApiOptions {
+  return {
+    ...options,
+    timeoutMs: options.timeoutMs ?? PLAYTESTING_CONTROL_API_TIMEOUT_MS
+  };
+}
 
 const RESOURCE_SCHEMAS: Readonly<
   Record<ControlApiPlaytestingResource, string>
@@ -108,8 +125,17 @@ export async function fetchPlaytestingReadiness(
   }
   const path = `${options.retry ? CONTROL_API_PATHS.playtestingInitialization : CONTROL_API_PATHS.playtestingReadiness}?workspaceId=${encodeURIComponent(workspaceId)}`;
   const result = options.retry
-    ? await postControlApi<unknown>(path, undefined, config, options)
-    : await fetchControlApi<unknown>(path, config, options);
+    ? await postControlApi<unknown>(
+      path,
+      undefined,
+      config,
+      playtestingControlApiOptions(options)
+    )
+    : await fetchControlApi<unknown>(
+    path,
+    config,
+    playtestingControlApiOptions(options)
+  );
   if (result.kind !== "ok") return result;
   const value = result.data;
   return isRecord(value) &&
@@ -531,7 +557,7 @@ export async function fetchPlaytestingPage<
   const result = await fetchControlApi<unknown>(
     pagePath(request, resource),
     config,
-    options
+    playtestingControlApiOptions(options)
   );
   if (result.kind !== "ok") return result;
   return isPlaytestingPageResponse(result.data, resource, request.workspaceId)
@@ -546,7 +572,11 @@ export async function fetchPlaytestingEpisode(
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiPlaytestingEpisodeDetailResponse>> {
   const path = `${CONTROL_API_PATHS.playtesting}/episodes/${encodeURIComponent(episodeId)}?workspaceId=${encodeURIComponent(workspaceId)}`;
-  const result = await fetchControlApi<unknown>(path, config, options);
+  const result = await fetchControlApi<unknown>(
+    path,
+    config,
+    playtestingControlApiOptions(options)
+  );
   if (result.kind !== "ok") return result;
   return isEpisodeDetailResponse(result.data, workspaceId, episodeId)
     ? { kind: "ok", data: result.data }
@@ -566,7 +596,11 @@ export function fetchPlaytestingFrame(
   const path = `${CONTROL_API_PATHS.playtesting}/episodes/${encodeURIComponent(
     episodeId
   )}/media/${encodeURIComponent(artifactId)}?workspaceId=${encodeURIComponent(workspaceId)}`;
-  return fetchControlApiBinary(path, config, options);
+  return fetchControlApiBinary(
+    path,
+    config,
+    playtestingControlApiOptions(options)
+  );
 }
 
 function isWindowResponse(
@@ -596,7 +630,11 @@ export async function fetchPlaytestingWindow(
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiPlaytestingWindowResponse>> {
   const path = `${CONTROL_API_PATHS.playtesting}/episodes/${encodeURIComponent(request.episodeId)}/windows/${encodeURIComponent(request.artifactId)}?workspaceId=${encodeURIComponent(request.workspaceId)}&startStep=${request.startStep}&endStep=${request.endStep}`;
-  const result = await fetchControlApi<unknown>(path, config, options);
+  const result = await fetchControlApi<unknown>(
+    path,
+    config,
+    playtestingControlApiOptions(options)
+  );
   if (result.kind !== "ok") return result;
   return isWindowResponse(result.data, request)
     ? { kind: "ok", data: result.data }
@@ -788,7 +826,11 @@ export async function fetchPlaytestingRunCapabilities(
     );
   }
   const path = `${CONTROL_API_PATHS.playtesting}/capabilities?workspaceId=${encodeURIComponent(workspaceId)}`;
-  const result = await fetchControlApi<unknown>(path, config, options);
+  const result = await fetchControlApi<unknown>(
+    path,
+    config,
+    playtestingControlApiOptions(options)
+  );
   if (result.kind !== "ok") return result;
   return isPlaytestingCapabilitiesResponse(result.data, workspaceId)
     ? { kind: "ok", data: result.data }
@@ -982,7 +1024,7 @@ export async function fetchPlaytestingActiveRuns(
   const result = await fetchControlApi<unknown>(
     `${CONTROL_API_PATHS.playtesting}/runs?${params}`,
     config,
-    options
+    playtestingControlApiOptions(options)
   );
   if (result.kind !== "ok") return result;
   const data = result.data;
@@ -1110,7 +1152,7 @@ export async function listPlaytestingAnalyses(
   const result = await fetchControlApi(
     `${CONTROL_API_PATHS.playtesting}/analyses?${params}`,
     config,
-    options
+    playtestingControlApiOptions(options)
   );
   if (result.kind !== "ok") return result;
   const data = result.data;
@@ -1158,7 +1200,7 @@ export async function requestPlaytestingAnalysis(
     `${CONTROL_API_PATHS.playtesting}/analyses?${params}`,
     { episodeIds: selected, operation: "dispatch" },
     config,
-    options
+    playtestingControlApiOptions(options)
   );
   if (result.kind !== "ok") return result;
   const data = result.data;
@@ -1240,7 +1282,7 @@ export async function startPlaytestingRun(
     `${CONTROL_API_PATHS.playtesting}/runs`,
     request,
     config,
-    options
+    playtestingControlApiOptions(options)
   );
   if (result.kind !== "ok") return result;
   return isRunStartedResponse(result.data, request.workspaceId)
@@ -1268,7 +1310,11 @@ export async function fetchPlaytestingRunRequest(
   }
   const query = new URLSearchParams({ workspaceId, requestId });
   const path = `${CONTROL_API_PATHS.playtesting}/runs/by-request?${query}`;
-  const result = await fetchControlApi<unknown>(path, config, options);
+  const result = await fetchControlApi<unknown>(
+    path,
+    config,
+    playtestingControlApiOptions(options)
+  );
   if (result.kind !== "ok") return result;
   return isRunRequestLookupResponse(result.data, workspaceId, requestId)
     ? { kind: "ok", data: result.data }
@@ -1297,7 +1343,7 @@ export async function fetchPlaytestingRunStatus(
   const result = await fetchControlApi<unknown>(
     `${CONTROL_API_PATHS.playtesting}/runs/${encodeURIComponent(batchId)}?${params}`,
     config,
-    options
+    playtestingControlApiOptions(options)
   );
   if (result.kind !== "ok") return result;
   return isRunStatusResponse(result.data, workspaceId, batchId)
@@ -1328,7 +1374,7 @@ export async function cancelPlaytestingRun(
     `${CONTROL_API_PATHS.playtesting}/runs/${encodeURIComponent(batchId)}/cancel?${params}`,
     { expectedStatus: "running" },
     config,
-    options
+    playtestingControlApiOptions(options)
   );
   if (result.kind !== "ok") return result;
   const data = result.data;
@@ -1373,7 +1419,12 @@ export async function recordPlaytestingComparisonDecision(
     );
   }
   const path = `${CONTROL_API_PATHS.playtesting}/comparisons/${encodeURIComponent(request.comparisonId)}/decision`;
-  const result = await postControlApi<unknown>(path, request, config, options);
+  const result = await postControlApi<unknown>(
+    path,
+    request,
+    config,
+    playtestingControlApiOptions(options)
+  );
   if (result.kind !== "ok") return result;
   const response = result.data;
   if (
@@ -1606,7 +1657,11 @@ export async function fetchPlaytestingHumanValidation(
   }
   const params = new URLSearchParams({ workspaceId, buildSha });
   const path = `${CONTROL_API_PATHS.playtesting}/human-studies/${encodeURIComponent(studyId)}/validation?${params}`;
-  const result = await fetchControlApi<unknown>(path, config, options);
+  const result = await fetchControlApi<unknown>(
+    path,
+    config,
+    playtestingControlApiOptions(options)
+  );
   if (result.kind !== "ok") return result;
   return isHumanValidationResponse(result.data, workspaceId, studyId, buildSha)
     ? { kind: "ok", data: result.data }

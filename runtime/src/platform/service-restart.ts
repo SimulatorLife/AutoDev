@@ -86,7 +86,15 @@ export interface ServiceRestartDeps {
   readonly kill: (pid: number, signal: KillSignal) => void;
 }
 
-const DEFAULT_ATTEMPTS = 180;
+/**
+ * The supervised Console answers only after Next.js has booted, which takes
+ * tens of seconds on a loaded machine, and it starts booting only once the
+ * Model Router's Control API answers. The readiness budget therefore has to
+ * cover the slowest supervised service's own startup: a shorter budget makes
+ * the installer report a failed restart for a service that is about to come
+ * up, while the service itself keeps starting.
+ */
+const DEFAULT_ATTEMPTS = 400;
 const DEFAULT_DELAY_MS = 250;
 // An unmanaged process gets the same graceful budget launchd gives the router
 // (ExitTimeOut 45s) before it is killed outright.

@@ -137,6 +137,15 @@ export type ControlApiResult<T> =
 const DEFAULT_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
 const CONTROL_API_TIMEOUT_MS = 5000;
 const GITHUB_CONTROL_API_TIMEOUT_MS = 20_000;
+/**
+ * Playtesting reads and writes are answered by the Control API's
+ * ClickHouse-backed store. Measured against the live Control API, one
+ * playtesting read takes 1-3 seconds on its own, and the playtesting page
+ * fans five of them out in parallel, so the generic 5-second Control API
+ * deadline expires against a service that is answering normally. The
+ * GitHub projection already carries its own budget for the same reason.
+ */
+export const PLAYTESTING_CONTROL_API_TIMEOUT_MS = 20_000;
 const INVALID_RESPONSE_KIND = "invalid-response" as const;
 const PROMPT_VERSION_TIMEOUT_MS = 12_000;
 const CONTROL_API_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
