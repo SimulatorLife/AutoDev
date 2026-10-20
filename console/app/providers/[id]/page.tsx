@@ -1,8 +1,17 @@
+import type { ControlApiProviderRecord } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
 
-import { ProviderDetailView } from "../../../src/features/providers/ProviderDetailView.ts";
+import {
+  type ProviderUsageSource,
+  summarizeProviderUsage
+} from "../../../src/features/providers/provider-usage.ts";
+import {
+  ProviderDetailView,
+  ProviderUsagePanel,
+  ProviderUsagePendingPanel
+} from "../../../src/features/providers/ProviderDetailView.ts";
 import { isControlFailure } from "../../../src/lib/control-failure.ts";
 import {
   controlApiFailureCode,
@@ -11,6 +20,7 @@ import {
   fetchProviders,
   fetchRuntime
 } from "../../../src/lib/server/control-api.ts";
+import { loadOpenLITUsage } from "../../../src/lib/server/openlit-usage.ts";
 import {
   ConsolePageShell,
   controlApiCredentialUnavailable,
@@ -33,6 +43,37 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { id } = await params;
   return { title: `${id} · Providers` };
+}
+
+async function ProviderUsageSummarySection({
+  provider
+}: {
+  readonly provider: ControlApiProviderRecord;
+}): Promise<React.JSX.Element> {
+  let source: ProviderUsageSource;
+  try {
+    const result = await loadOpenLITUsage({
+      range: "7D",
+      values: { provider: [provider.id] }
+    });
+    source =
+      result.kind === "not-configured"
+        ? { kind: "not-configured" }
+        : result.kind === "ok"
+          ? {
+              kind: "available",
+              attemptsByProvider: result.data.metrics.attemptsByProvider,
+              attemptErrorsByProvider:
+                result.data.metrics.attemptErrorsByProvider
+            }
+          : { kind: "unavailable" };
+  } catch {
+    source = { kind: "unavailable" };
+  }
+  return React.createElement(ProviderUsagePanel, {
+    provider,
+    summary: summarizeProviderUsage(source, provider.id)
+  });
 }
 
 export default async function ProviderDetailPage({
@@ -97,6 +138,13 @@ export default async function ProviderDetailPage({
         discoveryResult.kind === "ok"
           ? { status: "available", data: discoveryResult.data }
           : { status: "unavailable", message: discoveryResult.message },
+      usagePanel: React.createElement(
+        React.Suspense,
+        {
+          fallback: React.createElement(ProviderUsagePendingPanel, { provider })
+        },
+        React.createElement(ProviderUsageSummarySection, { provider })
+      ),
       runtime: runtimeResult.kind === "ok" ? runtimeResult.data : undefined,
       controlFailed: isControlFailure(query.control)
     })

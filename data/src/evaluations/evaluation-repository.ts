@@ -3,6 +3,7 @@ import {
   type EvaluationResult
 } from "@simulatorlife/autodev-core";
 
+import { withClickHouseConnectionRetry } from "../clickhouse/retry.ts";
 import {
   type OpenLitClickHouseOptions,
   resolveOpenLitClickHouseConnection
@@ -218,9 +219,8 @@ export class EvaluationRepository {
   }
 
   private async query(endpoint: string, query: string): Promise<string> {
-    const maxRetries = 2;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
+    try {
+      return await withClickHouseConnectionRetry(async () => {
         const response = await this.fetchImpl(
           `${endpoint}&query=${encodeURIComponent(query)}`,
           {
@@ -229,28 +229,16 @@ export class EvaluationRepository {
           }
         );
         if (!response.ok) throw new EvaluationSourceUnavailableError();
-        return await response.text();
-      } catch (error) {
-        if (error instanceof EvaluationSourceUnavailableError) throw error;
-        const cause = (error as { readonly cause?: unknown } | null | undefined)
-          ?.cause;
-        const code = (cause as { readonly code?: unknown } | null | undefined)
-          ?.code;
-        const isRetryable =
-          typeof code === "string" &&
-          (code === "ECONNRESET" ||
-            code === "ECONNREFUSED" ||
-            code === "ETIMEDOUT");
-        if (attempt < maxRetries && isRetryable) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, 100 * (attempt + 1))
-          );
-          continue;
-        }
-        throw new EvaluationSourceUnavailableError();
-      }
+        // Returned rather than awaited: the retry helper awaits the attempt
+        // itself, so a failed read still fails the attempt.
+        return response.text();
+      });
+    } catch (error) {
+      // A non-OK response and a transport failure are the same condition to
+      // every caller: evaluation history is unavailable.
+      if (error instanceof EvaluationSourceUnavailableError) throw error;
+      throw new EvaluationSourceUnavailableError();
     }
-    throw new EvaluationSourceUnavailableError();
   }
 
   parseEvaluationRows(text: string): readonly EvaluationResult[] {

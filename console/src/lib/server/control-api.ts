@@ -134,6 +134,7 @@ export type ControlApiResult<T> =
 
 const DEFAULT_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
 const CONTROL_API_TIMEOUT_MS = 5000;
+const GITHUB_CONTROL_API_TIMEOUT_MS = 20_000;
 const INVALID_RESPONSE_KIND = "invalid-response" as const;
 const PROMPT_VERSION_TIMEOUT_MS = 12_000;
 const CONTROL_API_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
@@ -293,6 +294,77 @@ function isRetryableNetworkError(error: unknown): boolean {
   return typeof code === "string" && RETRYABLE_NETWORK_CODES.has(code);
 }
 
+/** Resolve after `milliseconds`, without handing back the timer handle. */
+function waitBeforeRetry(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
+
+/**
+ * The one retry policy for the Control API reads.
+ *
+ * The JSON read and the binary read each used to carry their own copy of this
+ * loop, and the copies had already drifted apart. The policy lives here so
+ * both reads stop for the same reasons -- the Console's own deadline, a
+ * caller-supplied abort, or a failure that is not worth retrying -- and so a
+ * retry never outlives the request that asked for it.
+ */
+interface ControlApiRetryOptions {
+  readonly maxRetries: number;
+  readonly baseRetryDelayMs: number;
+  readonly controller: AbortController;
+  readonly callerSignal: AbortSignal | undefined;
+  readonly timeoutMs: number;
+}
+
+async function withControlApiRetry<T>(
+  attempt: (attemptIndex: number) => Promise<ControlApiResult<T>>,
+  options: ControlApiRetryOptions
+): Promise<ControlApiResult<T>> {
+  const {
+    maxRetries,
+    baseRetryDelayMs,
+    controller,
+    callerSignal,
+    timeoutMs
+  } = options;
+  /* eslint-disable no-await-in-loop -- each attempt must settle before the next request starts */
+  for (let attemptIndex = 0; attemptIndex <= maxRetries; attemptIndex++) {
+    try {
+      return await attempt(attemptIndex);
+    } catch (error) {
+      const isLastAttempt = attemptIndex >= maxRetries;
+      const canRetry =
+        !isLastAttempt &&
+        !controller.signal.aborted &&
+        !callerSignal?.aborted &&
+        isRetryableNetworkError(error);
+
+      if (canRetry) {
+        await waitBeforeRetry(baseRetryDelayMs * (attemptIndex + 1));
+        continue;
+      }
+
+      // Our own deadline, read off the controller rather than off the error: the
+      // abort surfaces as a `DOMException` whose message is a browser
+      // implementation detail ("This operation was aborted"), and forwarding that
+      // to an operator says nothing about their system. `controller.signal` rather
+      // than the caller's signal because a caller may supply its own, in which
+      // case this controller aborting means nothing -- the caller gave up, which
+      // is not the Console's deadline.
+      return transportFailure(error, controller.signal.aborted, timeoutMs);
+    }
+  }
+  /* eslint-enable no-await-in-loop */
+  return {
+    kind: "unreachable",
+    message: describeTransportFailure(
+      new Error("Connection retries exhausted")
+    )
+  };
+}
+
 export async function fetchControlApi<T>(
   path: string,
   config: ControlApiConfig,
@@ -303,12 +375,10 @@ export async function fetchControlApi<T>(
   const timeoutMs = options.timeoutMs ?? CONTROL_API_TIMEOUT_MS;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const signal = options.signal ?? controller.signal;
-  const maxRetries = options.maxRetries ?? 2;
-  const baseRetryDelayMs = options.retryDelayMs ?? 100;
 
   try {
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
+    return await withControlApiRetry(
+      async () => {
         const response = await fetchImpl(`${config.baseUrl}${path}`, {
           method: "GET",
           headers: {
@@ -332,37 +402,15 @@ export async function fetchControlApi<T>(
         }
 
         return readControlApiFailure(response);
-      } catch (error) {
-        const isLastAttempt = attempt >= maxRetries;
-        const canRetry =
-          !isLastAttempt &&
-          !controller.signal.aborted &&
-          !options.signal?.aborted &&
-          isRetryableNetworkError(error);
-
-        if (canRetry) {
-          const delay = baseRetryDelayMs * (attempt + 1);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          continue;
-        }
-
-        // Our own deadline, read off the controller rather than off the error: the
-        // abort surfaces as a `DOMException` whose message is a browser
-        // implementation detail ("This operation was aborted"), and forwarding that
-        // to an operator says nothing about their system. `controller.signal` rather
-        // than `signal` because a caller may supply its own signal, in which case
-        // this controller aborting means nothing -- the caller gave up, which is not
-        // the Console's deadline.
-        return transportFailure(error, controller.signal.aborted, timeoutMs);
+      },
+      {
+        maxRetries: options.maxRetries ?? 2,
+        baseRetryDelayMs: options.retryDelayMs ?? 100,
+        controller,
+        callerSignal: options.signal,
+        timeoutMs
       }
-    }
-
-    return {
-      kind: "unreachable",
-      message: describeTransportFailure(
-        new Error("Connection retries exhausted")
-      )
-    };
+    );
   } finally {
     clearTimeout(timer);
   }
@@ -456,106 +504,125 @@ export async function fetchControlApiBinary(
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs ?? CONTROL_API_TIMEOUT_MS;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const maxRetries = options.maxRetries ?? 2;
-  const baseRetryDelayMs = options.retryDelayMs ?? 100;
 
   try {
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await fetchImpl(`${config.baseUrl}${path}`, {
-          method: "GET",
-          redirect: "error",
-          headers: {
-            Authorization: `Bearer ${config.serviceToken}`,
-            "X-AutoDev-Actor": LOCAL_CONTROL_API_ACTOR,
-            Accept: DISPLAYABLE_FRAME_TYPES.join(", ")
-          },
-          signal: options.signal ?? controller.signal
-        });
-        if (!response.ok) return readControlApiFailure(response);
-        const contentType = response.headers.get("content-type") ?? "";
-        const separator = contentType.indexOf(";");
-        const mediaType = (
-          separator === -1 ? contentType : contentType.slice(0, separator)
-        )
-          .trim()
-          .toLowerCase();
-        if (
-          !(DISPLAYABLE_FRAME_TYPES as readonly string[]).includes(
-            mediaType ?? ""
-          )
-        ) {
-          return {
-            kind: INVALID_RESPONSE_KIND,
-            code: "autodev_control_api_invalid_playtesting_frame_type",
-            message:
-              "The Control API returned a non-displayable Playtesting frame type."
-          };
-        }
-        const length = response.headers.get("content-length");
-        if (
-          length !== null &&
-          CONTENT_LENGTH_PATTERN.test(length) &&
-          Number(length) > BINARY_RESPONSE_MAX_BYTES
-        ) {
-          return {
-            kind: "http-error",
-            status: 413,
-            code: "autodev_control_api_playtesting_frame_too_large",
-            message: "The selected frame exceeds the Console display bound."
-          };
-        }
-        let bytes: Uint8Array;
-        try {
-          bytes = await readBoundedBinary(response, BINARY_RESPONSE_MAX_BYTES);
-        } catch (error) {
-          if (error instanceof RangeError) {
-            return {
-              kind: "http-error",
-              status: 413,
-              code: "autodev_control_api_playtesting_frame_too_large",
-              message: "The selected frame exceeds the Console display bound."
-            };
-          }
-          return {
-            kind: INVALID_RESPONSE_KIND,
-            code: "autodev_control_api_invalid_playtesting_frame_body",
-            message: "The Control API returned an unreadable Playtesting frame."
-          };
-        }
-        return {
-          kind: "ok",
-          data: {
-            bytes,
-            mediaType: mediaType as ControlApiBinaryData["mediaType"]
-          }
-        };
-      } catch (error) {
-        const isLastAttempt = attempt >= maxRetries;
-        const canRetry =
-          !isLastAttempt &&
-          !controller.signal.aborted &&
-          !options.signal?.aborted &&
-          isRetryableNetworkError(error);
-
-        if (canRetry) {
-          const delay = baseRetryDelayMs * (attempt + 1);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          continue;
-        }
-
-        return transportFailure(error, controller.signal.aborted, timeoutMs);
+    return await withControlApiRetry(
+      () =>
+        readControlApiBinaryFrame(
+          fetchImpl,
+          path,
+          config,
+          options.signal ?? controller.signal
+        ),
+      {
+        maxRetries: options.maxRetries ?? 2,
+        baseRetryDelayMs: options.retryDelayMs ?? 100,
+        controller,
+        callerSignal: options.signal,
+        timeoutMs
       }
-    }
-
-    return {
-      kind: "unreachable",
-      message: describeTransportFailure(
-        new Error("Connection retries exhausted")
-      )
-    };
+    );
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * The media type of a Playtesting frame, or `null` when the Control API
+ * returned a type the Console will not display.
+ */
+function displayableFrameMediaType(contentType: string): string | null {
+  const separator = contentType.indexOf(";");
+  const mediaType = (
+    separator === -1 ? contentType : contentType.slice(0, separator)
+  )
+    .trim()
+    .toLowerCase();
+  if (!(DISPLAYABLE_FRAME_TYPES as readonly string[]).includes(mediaType)) {
+    return null;
+  }
+  return mediaType;
+}
+
+/** True when the declared content length already exceeds the display bound. */
+function exceedsBinaryResponseLimit(contentLength: string | null): boolean {
+  return (
+    contentLength !== null &&
+    CONTENT_LENGTH_PATTERN.test(contentLength) &&
+    Number(contentLength) > BINARY_RESPONSE_MAX_BYTES
+  );
+}
+
+/** The result for a frame body that could not be read within the bound. */
+function binaryReadFailure(
+  error: unknown
+): ControlApiResult<ControlApiBinaryData> {
+  if (error instanceof RangeError) {
+    return {
+      kind: "http-error",
+      status: 413,
+      code: "autodev_control_api_playtesting_frame_too_large",
+      message: "The selected frame exceeds the Console display bound."
+    };
+  }
+  return {
+    kind: INVALID_RESPONSE_KIND,
+    code: "autodev_control_api_invalid_playtesting_frame_body",
+    message: "The Control API returned an unreadable Playtesting frame."
+  };
+}
+
+/**
+ * One attempt at reading a Playtesting frame: the request, the type and size
+ * guards, and the bounded body read.
+ */
+async function readControlApiBinaryFrame(
+  fetchImpl: typeof fetch,
+  path: string,
+  config: ControlApiConfig,
+  signal: AbortSignal
+): Promise<ControlApiResult<ControlApiBinaryData>> {
+  const response = await fetchImpl(`${config.baseUrl}${path}`, {
+    method: "GET",
+    redirect: "error",
+    headers: {
+      Authorization: `Bearer ${config.serviceToken}`,
+      "X-AutoDev-Actor": LOCAL_CONTROL_API_ACTOR,
+      Accept: DISPLAYABLE_FRAME_TYPES.join(", ")
+    },
+    signal
+  });
+  if (!response.ok) return readControlApiFailure(response);
+
+  const mediaType = displayableFrameMediaType(
+    response.headers.get("content-type") ?? ""
+  );
+  if (mediaType === null) {
+    return {
+      kind: INVALID_RESPONSE_KIND,
+      code: "autodev_control_api_invalid_playtesting_frame_type",
+      message: "The Control API returned a non-displayable Playtesting frame type."
+    };
+  }
+  if (exceedsBinaryResponseLimit(response.headers.get("content-length"))) {
+    return {
+      kind: "http-error",
+      status: 413,
+      code: "autodev_control_api_playtesting_frame_too_large",
+      message: "The selected frame exceeds the Console display bound."
+    };
+  }
+  try {
+    const bytes = await readBoundedBinary(response, BINARY_RESPONSE_MAX_BYTES);
+    return {
+      kind: "ok",
+      data: {
+        bytes,
+        mediaType: mediaType as ControlApiBinaryData["mediaType"]
+      }
+    };
+  } catch (error) {
+    return binaryReadFailure(error);
   }
 }
 
@@ -3302,10 +3369,18 @@ export async function fetchGithubWorkflows(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<ControlApiGithubResponse>> {
+  // Runtime's GitHub projection performs bounded external Actions API reads
+  // (each with its own 10-second deadline). The generic 5-second Control API
+  // deadline expired first on a cold snapshot, so the Console mislabeled an
+  // in-progress read as a Control API timeout. Allow the server-side GitHub
+  // budget to finish, while retaining a strict 20-second outer bound.
   const result = await fetchControlApi<unknown>(
     CONTROL_API_PATHS.github,
     config,
-    options
+    {
+      ...options,
+      timeoutMs: options.timeoutMs ?? GITHUB_CONTROL_API_TIMEOUT_MS
+    }
   );
   if (result.kind !== "ok") return result;
   // GitHub's page is explicitly about unobserved state: a catalog that cannot be

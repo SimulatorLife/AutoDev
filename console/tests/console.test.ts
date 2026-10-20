@@ -117,6 +117,10 @@ import {
   unreadWindow
 } from "../src/features/evaluations/evaluations-url.ts";
 import type { ProviderModelDiscoveryState } from "../src/features/providers/provider-model-discovery.ts";
+import {
+  ProviderUsagePanel,
+  ProviderUsagePendingPanel
+} from "../src/features/providers/ProviderDetailView.ts";
 import { ProviderLimitsControls } from "../src/features/providers/ProviderLimitsControls.ts";
 import { ProviderRoleControls } from "../src/features/providers/ProviderRoleControls.ts";
 import { saveOutcomeForConvergence } from "../src/features/skills/SkillRoleAssignment.ts";
@@ -13735,6 +13739,10 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
   const claude = PROVIDERS_FIXTURE.providers[0]!;
   const markup = renderToStaticMarkup(
     React.createElement(ProviderDetailView, {
+      usagePanel: React.createElement(ProviderUsagePanel, {
+        provider: claude,
+        summary: { status: "observed", attempts: 42, failures: 3 }
+      }),
       modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       provider: claude,
       tiers: PROVIDERS_FIXTURE.tiers,
@@ -13793,7 +13801,19 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
   assert.match(markup, /data-section="provider-health"/);
   assert.match(markup, /2026-10-05T16:00:00.000Z/);
   assert.match(markup, /session_limit · HTTP 429/);
-  assert.match(markup, /href="\/usage\?provider=claude"/);
+  assert.match(
+    markup,
+    /data-section="provider-usage"[^>]*data-provider-usage-status="observed"/u
+  );
+  assert.match(markup, /Physical attempts · last 7 days/u);
+  assert.match(markup, /Failed attempts · last 7 days/u);
+  assert.match(markup, /href="\/usage\?range=7D&amp;provider=claude"/u);
+  const pendingUsage = renderToStaticMarkup(
+    React.createElement(ProviderUsagePendingPanel, { provider: claude })
+  );
+  assert.match(pendingUsage, /data-provider-usage-status="pending"/u);
+  assert.match(pendingUsage, /aria-busy="true"/u);
+  assert.match(pendingUsage, /role="status"[^>]*aria-live="polite"/u);
   // The provider's own pages come from its record and open outside the Console.
   for (const [kind, href] of Object.entries(claude.links)) {
     assert.match(
@@ -13810,6 +13830,10 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
 
   const withoutModels = renderToStaticMarkup(
     React.createElement(ProviderDetailView, {
+      usagePanel: React.createElement(ProviderUsagePanel, {
+        provider: PROVIDERS_FIXTURE.providers[1]!,
+        summary: { status: "not-observed" }
+      }),
       modelDiscovery: {
         status: "unavailable",
         message: "Runtime unreachable"
@@ -13861,6 +13885,10 @@ test("ProviderDetailView reads an absent provider route without throwing", async
   const render = (provider: ControlApiProviderRecord): string =>
     renderToStaticMarkup(
       React.createElement(ProviderDetailView, {
+        usagePanel: React.createElement(ProviderUsagePanel, {
+          provider,
+          summary: { status: "not-observed" }
+        }),
         modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
         provider,
         tiers: PROVIDERS_FIXTURE.tiers,
@@ -14005,6 +14033,10 @@ test("Providers surfaces report unconfirmed changes without optimistic state", (
       controlFailed: true
     }),
     React.createElement(ProviderDetailView, {
+      usagePanel: React.createElement(ProviderUsagePanel, {
+        provider: PROVIDERS_FIXTURE.providers[0]!,
+        summary: { status: "not-observed" }
+      }),
       modelDiscovery: PROVIDER_MODEL_DISCOVERY_FIXTURE,
       provider: PROVIDERS_FIXTURE.providers[0]!,
       tiers: PROVIDERS_FIXTURE.tiers,

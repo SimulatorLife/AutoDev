@@ -50,6 +50,9 @@ export function isPortListening(
 
 const NEWLINE_SPLIT_REGEX = /\r?\n/u;
 
+/** A Playtesting runner token is a 64-character lowercase hex digest. */
+const PLAYTEST_RUNNER_TOKEN_PATTERN = /^[0-9a-f]{64}$/u;
+
 function parseToken(filePath: string, key: string): string | null {
   try {
     const content = readFileSync(filePath, "utf8");
@@ -128,7 +131,7 @@ export function ensureConsoleSecrets(root = repoRoot): void {
     !consoleControlToken ||
     !consoleUsageToken ||
     !canonicalPlaytestRunnerToken ||
-    !/^[0-9a-f]{64}$/u.test(canonicalPlaytestRunnerToken) ||
+    !PLAYTEST_RUNNER_TOKEN_PATTERN.test(canonicalPlaytestRunnerToken) ||
     consolePlaytestRunnerToken !== null ||
     consoleControlToken !== canonicalControlToken ||
     consoleUsageToken !== canonicalUsageToken

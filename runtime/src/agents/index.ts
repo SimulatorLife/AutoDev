@@ -3,9 +3,9 @@ export * from "./bridge-role.ts";
 export * from "./bridge-sandbox.ts";
 export * from "./bridge-spawn-session.ts";
 // Cross-module bridge operations; spawn-script helpers remain private here.
+export * from "./role-mcp-environment.ts";
 export {
   buildRecoveryScript,
   buildSpawnToolCallOutput,
   type SpawnToolCallOutput
 } from "./spawn-tools.ts";
-export * from "./role-mcp-environment.ts";

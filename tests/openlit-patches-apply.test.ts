@@ -148,6 +148,44 @@ function freshClone(): string {
 }
 
 /**
+ * Assert that every listed path is gone from the fork.
+ *
+ * Each retired OpenLIT product repeated this loop with its own path list and
+ * its own wording, and the repetition is what pushed the removal assertions
+ * past the complexity ceiling. One loop, so a retired product is one call.
+ */
+function assertPathsRemoved(
+  dir: string,
+  paths: readonly string[],
+  reason: string
+): void {
+  for (const removed of paths) {
+    assert.equal(
+      existsSync(join(dir, removed)),
+      false,
+      `${removed} must not survive the ${reason}`
+    );
+  }
+}
+
+/**
+ * Assert that every listed path survives in the fork.
+ *
+ * A removal is only half a subtraction: the read paths the remaining product
+ * depends on have to still be there, and they were checked with the same
+ * loop written out again.
+ */
+function assertPathsSurvive(
+  dir: string,
+  paths: readonly string[],
+  reason: string
+): void {
+  for (const path of paths) {
+    assert.ok(existsSync(join(dir, path)), `${path} ${reason}`);
+  }
+}
+
+/**
  * The OpenLIT board-authoring and Vault administration products are gone;
  * their surviving read paths are not. Kept out of the apply test body so the
  * per-patch removals stay readable and the callback stays under the
@@ -158,27 +196,25 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   // folder, widget or board-widget module, and no ClickHouse table
   // behind them. The AutoDev Usage board survives as a read-only seed
   // that runWidgetQuery reads directly.
-  for (const removed of [
-    "src/client/src/lib/platform/manage-dashboard/board.ts",
-    "src/client/src/lib/platform/manage-dashboard/board-format.ts",
-    "src/client/src/lib/platform/manage-dashboard/folder.ts",
-    "src/client/src/lib/platform/manage-dashboard/heirarchy.ts",
-    "src/client/src/lib/platform/manage-dashboard/derived-value.ts",
-    "src/client/src/lib/platform/manage-dashboard/table-details.ts",
-    "src/client/src/helpers/server/widget.ts",
-    "src/client/src/clickhouse/migrations/create-custom-dashboards-migration.ts",
-    "src/client/src/clickhouse/migrations/add-board-variables-column-migration.ts",
-    "src/client/src/clickhouse/seed/dashboards.ts",
-    "src/client/src/clickhouse/seed-data/openlit-dashboard-LLM-dashboard-layout.json",
-    "src/client/src/clickhouse/seed-data/openlit-dashboard-Vector-DB-layout.json",
-    "src/client/src/clickhouse/seed-data/openlit-dashboard-coding-agents-layout.json"
-  ]) {
-    assert.equal(
-      existsSync(join(dir, removed)),
-      false,
-      `${removed} must not survive the board-authoring removal`
-    );
-  }
+  assertPathsRemoved(
+    dir,
+    [
+      "src/client/src/lib/platform/manage-dashboard/board.ts",
+      "src/client/src/lib/platform/manage-dashboard/board-format.ts",
+      "src/client/src/lib/platform/manage-dashboard/folder.ts",
+      "src/client/src/lib/platform/manage-dashboard/heirarchy.ts",
+      "src/client/src/lib/platform/manage-dashboard/derived-value.ts",
+      "src/client/src/lib/platform/manage-dashboard/table-details.ts",
+      "src/client/src/helpers/server/widget.ts",
+      "src/client/src/clickhouse/migrations/create-custom-dashboards-migration.ts",
+      "src/client/src/clickhouse/migrations/add-board-variables-column-migration.ts",
+      "src/client/src/clickhouse/seed/dashboards.ts",
+      "src/client/src/clickhouse/seed-data/openlit-dashboard-LLM-dashboard-layout.json",
+      "src/client/src/clickhouse/seed-data/openlit-dashboard-Vector-DB-layout.json",
+      "src/client/src/clickhouse/seed-data/openlit-dashboard-coding-agents-layout.json"
+    ],
+    "board-authoring removal"
+  );
 
   // The surviving reader takes the seeded definition, not a stored id:
   // nothing writes widget rows any more, so an id lookup would fail
@@ -376,20 +412,18 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   );
 
   // The Vault administration product is gone; its read paths are not.
-  for (const gone of [
-    "src/client/src/app/(playground)/vault/page.tsx",
-    "src/client/src/components/(playground)/vault/form.tsx",
-    "src/client/src/components/(playground)/vault/header.tsx",
-    "src/client/src/app/api/vault/route.ts",
-    "src/client/src/app/api/vault/get/route.ts",
-    "src/client/src/app/api/vault/[id]/route.ts"
-  ]) {
-    assert.equal(
-      existsSync(join(dir, gone)),
-      false,
-      `${gone} must not survive the Vault administration removal`
-    );
-  }
+  assertPathsRemoved(
+    dir,
+    [
+      "src/client/src/app/(playground)/vault/page.tsx",
+      "src/client/src/components/(playground)/vault/form.tsx",
+      "src/client/src/components/(playground)/vault/header.tsx",
+      "src/client/src/app/api/vault/route.ts",
+      "src/client/src/app/api/vault/get/route.ts",
+      "src/client/src/app/api/vault/[id]/route.ts"
+    ],
+    "Vault administration removal"
+  );
   assert.equal(
     existsSync(join(dir, "src/client/src/app/api/vault/get-secrets/route.ts")),
     true,
@@ -507,18 +541,16 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
 
   // The fork's agents workspace duplicated the AutoDev Console's Agents
   // surface and is gone; the data plane it fed is not.
-  for (const gone of [
-    "src/client/src/app/(playground)/agents/page.tsx",
-    "src/client/src/app/(playground)/agents/[agentKey]/page.tsx",
-    "src/client/src/components/(playground)/agents/agent-scope-provider.tsx",
-    "src/client/src/components/(playground)/coding-agents/coding-agent-detail.tsx"
-  ]) {
-    assert.equal(
-      existsSync(join(dir, gone)),
-      false,
-      `${gone} must not survive the duplicate-agents-shell removal`
-    );
-  }
+  assertPathsRemoved(
+    dir,
+    [
+      "src/client/src/app/(playground)/agents/page.tsx",
+      "src/client/src/app/(playground)/agents/[agentKey]/page.tsx",
+      "src/client/src/components/(playground)/agents/agent-scope-provider.tsx",
+      "src/client/src/components/(playground)/coding-agents/coding-agent-detail.tsx"
+    ],
+    "duplicate-agents-shell removal"
+  );
   assert.equal(
     existsSync(
       join(
@@ -560,45 +592,16 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
 
   // Documentation chrome and account-scoped preferences are gone; the
   // surfaces AutoDev still owns stay.
-  for (const gone of [
-    "src/client/src/app/(playground)/openapi-spec/page.tsx",
-    "src/client/src/app/(playground)/settings/profile/page.tsx",
-    "src/client/src/components/(playground)/api-keys/api-reference.tsx",
-    "src/client/src/components/(playground)/coding-agents/coding-sessions-tab.tsx",
-    "src/client/src/components/(playground)/coding-agents/coding-users-tab.tsx"
-  ]) {
-    assert.equal(
-      existsSync(join(dir, gone)),
-      false,
-      `${gone} must not survive the docs/account-surface removal`
-    );
-  }
-
-  // /settings used to redirect to the profile page; it must land somewhere
-  // that still exists rather than on a 404.
-  const settingsIndex = readFileSync(
-    join(dir, "src/client/src/app/(playground)/settings/page.tsx"),
-    "utf8"
-  );
-  assert.match(
-    settingsIndex,
-    /router\.replace\("\/settings\/api-keys"\)/u,
-    "the settings index must redirect to a surviving page"
-  );
-  assert.doesNotMatch(
-    settingsIndex,
-    /\/settings\/profile/u,
-    "the settings index must not redirect to a deleted page"
-  );
-
-  const settingsTabs = readFileSync(
-    join(dir, "src/client/src/constants/settings.ts"),
-    "utf8"
-  );
-  assert.doesNotMatch(
-    settingsTabs,
-    /\/settings\/profile/u,
-    "the removed profile page must leave the settings tab list"
+  assertPathsRemoved(
+    dir,
+    [
+      "src/client/src/app/(playground)/openapi-spec/page.tsx",
+      "src/client/src/app/(playground)/settings/profile/page.tsx",
+      "src/client/src/components/(playground)/api-keys/api-reference.tsx",
+      "src/client/src/components/(playground)/coding-agents/coding-sessions-tab.tsx",
+      "src/client/src/components/(playground)/coding-agents/coding-users-tab.tsx"
+    ],
+    "docs/account-surface removal"
   );
 
   const apiKeyNav = readFileSync(
@@ -614,18 +617,16 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   // Sharing a database config with another user is not a product concept:
   // there is a single operator. The share dialog, its API, the invited-user
   // storage and the per-user edit/delete/share grants all go with it.
-  for (const gone of [
-    "src/client/src/components/(playground)/database-config/share-dialog.tsx",
-    "src/client/src/components/(playground)/database-config/database-config-tabs.tsx",
-    "src/client/src/app/api/db-config/share/route.ts",
-    "src/client/src/app/(playground)/settings/database-config/page.tsx"
-  ]) {
-    assert.equal(
-      existsSync(join(dir, gone)),
-      false,
-      `${gone} must not survive the database-config sharing removal`
-    );
-  }
+  assertPathsRemoved(
+    dir,
+    [
+      "src/client/src/components/(playground)/database-config/share-dialog.tsx",
+      "src/client/src/components/(playground)/database-config/database-config-tabs.tsx",
+      "src/client/src/app/api/db-config/share/route.ts",
+      "src/client/src/app/(playground)/settings/database-config/page.tsx"
+    ],
+    "database-config sharing removal"
+  );
 
   // The header's "add a datasource" control is the only way to create a
   // config from anywhere in the shell, so it must land on the real form
@@ -778,46 +779,201 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "the evaluation configuration must not request a nonexistent provider route"
   );
 
-  // Console Usage is the only user-facing cost surface. OpenLIT's internal
-  // batch annotation engine remains, but its separate Cost/Pricing UI is gone.
-  for (const removedPath of [
-    "src/client/src/app/(playground)/costs/page.tsx",
-    "src/client/src/app/(playground)/pricing/page.tsx",
-    "src/client/src/app/(playground)/dashboard/costs/index.tsx",
-    "src/client/src/app/(playground)/dashboard/costs/auto-pricing-runs.tsx",
-    "src/client/src/app/(playground)/dashboard/costs/cost-per-time.tsx",
-    "src/client/src/app/(playground)/dashboard/costs/number-stats.tsx",
-    "src/client/src/app/(playground)/dashboard/costs/optimization-charts.tsx",
-    "src/client/src/app/(playground)/dashboard/costs/usage-charts.tsx",
-    "src/client/src/components/(playground)/costs/costs-analytics.tsx",
-    "src/client/src/components/(playground)/costs/costs-auto-pricing-banner.tsx",
-    "src/client/src/components/(playground)/costs/costs-configuration.tsx",
-    "src/client/src/components/(playground)/costs/manage-models-section.tsx",
-    "src/client/src/components/(playground)/models/model-editor-panel.tsx",
-    "src/client/src/components/(playground)/models/model-list-sidebar.tsx",
-    "src/client/src/components/(playground)/models/provider-editor-dialog.tsx",
-    "src/client/src/components/(playground)/models/sdk-usage-dialog.tsx",
-    "src/client/src/app/api/pricing/[spanId]/route.ts",
-    "src/client/src/app/api/pricing/config/route.ts",
-    "src/client/src/app/api/pricing/cron-analytics/route.ts",
-    "src/client/src/app/api/pricing/export/[dbConfigId]/route.ts",
-    "src/client/src/app/api/pricing/guidance/route.ts",
-    "src/client/src/lib/platform/pricing/cron-analytics.ts",
-    "src/client/src/lib/platform/pricing/export.ts",
-    "src/client/src/lib/platform/pricing/guidance.ts"
+  // Console Usage is the canonical cost overview. OpenLIT's internal batch
+  // annotation engine remains, but its separate Cost/Pricing UI is gone.
+  assertPathsRemoved(
+    dir,
+    [
+      "src/client/src/app/(playground)/costs/page.tsx",
+      "src/client/src/app/(playground)/pricing/page.tsx",
+      "src/client/src/app/(playground)/dashboard/costs/index.tsx",
+      "src/client/src/app/(playground)/dashboard/costs/auto-pricing-runs.tsx",
+      "src/client/src/app/(playground)/dashboard/costs/cost-per-time.tsx",
+      "src/client/src/app/(playground)/dashboard/costs/number-stats.tsx",
+      "src/client/src/app/(playground)/dashboard/costs/optimization-charts.tsx",
+      "src/client/src/app/(playground)/dashboard/costs/usage-charts.tsx",
+      "src/client/src/components/(playground)/costs/costs-analytics.tsx",
+      "src/client/src/components/(playground)/costs/costs-auto-pricing-banner.tsx",
+      "src/client/src/components/(playground)/costs/costs-configuration.tsx",
+      "src/client/src/components/(playground)/costs/manage-models-section.tsx",
+      "src/client/src/components/(playground)/models/model-editor-panel.tsx",
+      "src/client/src/components/(playground)/models/model-list-sidebar.tsx",
+      "src/client/src/components/(playground)/models/provider-editor-dialog.tsx",
+      "src/client/src/components/(playground)/models/sdk-usage-dialog.tsx",
+      "src/client/src/app/api/pricing/[spanId]/route.ts",
+      "src/client/src/app/api/pricing/config/route.ts",
+      "src/client/src/app/api/pricing/cron-analytics/route.ts",
+      "src/client/src/app/api/pricing/export/[dbConfigId]/route.ts",
+      "src/client/src/app/api/pricing/guidance/route.ts",
+      "src/client/src/lib/platform/pricing/cron-analytics.ts",
+      "src/client/src/lib/platform/pricing/export.ts",
+      "src/client/src/lib/platform/pricing/guidance.ts"
+    ],
+    "duplicate Costs/Pricing UI removal"
+  );
+  // The Console is the only Memory operator UI. Retain OpenLIT's connector
+  // APIs for integrations, but delete the temporary standalone Memory page.
+  assertPathsRemoved(
+    dir,
+    [
+      "src/client/src/app/(playground)/memory/page.tsx",
+      "src/client/src/components/(playground)/memory/memory-page.tsx"
+    ],
+    "standalone Memory page removal"
+  );
+  assert.equal(
+    existsSync(join(dir, "src/client/src/components/(playground)/memory")),
+    false,
+    "OpenLIT Memory UI-only components must be removed after Console parity"
+  );
+  const openlitMemorySidebar = readFileSync(
+    join(dir, "src/client/src/constants/sidebar.tsx"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    openlitMemorySidebar,
+    /link:\s*"\/memory"/u,
+    "the OpenLIT shell must not link to its retired Memory page"
+  );
+  const openlitMemoryMiddleware = readFileSync(
+    join(dir, "src/client/src/middleware.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    openlitMemoryMiddleware,
+    /"\/memory"/u,
+    "the retired Memory page must not remain in middleware matchers"
+  );
+  const openlitMemoryBreadcrumbs = readFileSync(
+    join(dir, "src/client/src/utils/breadcrumbs.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    openlitMemoryBreadcrumbs,
+    /regex:\s*\/\^\\\/memory/u,
+    "the retired Memory page must not retain route metadata"
+  );
+  const retainedMemoryApi = readFileSync(
+    join(dir, "src/client/src/app/api/memory/route.ts"),
+    "utf8"
+  );
+  assert.match(
+    retainedMemoryApi,
+    /queryProjectMemories/u,
+    "OpenLIT's backend Memory connector API remains available"
+  );
+
+  // Settings is not a canonical Console resource. Remove its pages, redirects,
+  // shell and API-key management UI. Keep the key-store operations as direct
+  // REST provisioning and server-side auth for retained integration APIs.
+  assertPathsRemoved(
+    dir,
+    [
+      "src/client/src/app/(playground)/settings/page.tsx",
+      "src/client/src/app/(playground)/settings/layout.tsx",
+      "src/client/src/app/(playground)/settings/api-keys/page.tsx",
+      "src/client/src/app/(playground)/settings/evaluation/page.tsx",
+      "src/client/src/app/(playground)/evaluations/settings/page.tsx",
+      "src/client/src/components/(playground)/api-keys/manage.tsx",
+      "src/client/src/components/(playground)/api-keys/generate.tsx",
+      "src/client/src/constants/settings.ts",
+      "src/client/src/types/api-key.ts"
+    ],
+    "redundant Settings surface removal"
+  );
+  const openlitSettingsSidebar = readFileSync(
+    join(dir, "src/client/src/constants/sidebar.tsx"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    openlitSettingsSidebar,
+    /title:\s*"Settings"|link:\s*"\/settings/u,
+    "the OpenLIT shell must not expose generic Settings navigation"
+  );
+  const openlitSettingsMiddleware = readFileSync(
+    join(dir, "src/client/src/middleware.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    openlitSettingsMiddleware,
+    /"\/settings(?:\/|")/u,
+    "removed Settings routes must not remain in the middleware surface"
+  );
+  const openlitSettingsBreadcrumbs = readFileSync(
+    join(dir, "src/client/src/utils/breadcrumbs.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    openlitSettingsBreadcrumbs,
+    /regex:\s*\/\^\\\/settings|regex:\s*\/\^\\\/evaluations\\\/settings/u,
+    "removed Settings aliases must not retain route/breadcrumb configuration"
+  );
+  assertPathsSurvive(
+    dir,
+    [
+      "src/client/src/app/api/api-key/route.ts",
+      "src/client/src/app/api/api-key/[id]/route.ts"
+    ],
+    "remains the REST API-key provisioning surface"
+  );
+  assertPathsSurvive(
+    dir,
+    [
+      "src/client/src/lib/platform/api-keys/index.ts",
+      "src/client/src/lib/platform/evaluation/offline-auth.ts",
+      "src/client/src/lib/platform/vault/index.ts",
+      "src/client/src/helpers/server/sdk-intelligence.ts"
+    ],
+    "remains a server-side API-key authentication consumer"
+  );
+  assertPathsSurvive(
+    dir,
+    ["src/client/src/app/api/pricing/auto/route.ts"],
+    "must remain for internal scheduled price annotation"
+  );
+  // There is no user-facing raw SQL/query-builder product: board authoring is
+  // removed, the generic preview API is gone, and the remaining widget runner
+  // is called only with the server-owned Usage seed.
+  const clientSource = join(dir, "src/client");
+  const userFacingUiModules = clientSourceModules(clientSource).filter(
+    (path) =>
+      path.startsWith("app/(playground)/") ||
+      path.startsWith("components/(playground)/")
+  );
+  const arbitraryQueryUi = userFacingUiModules.filter((path) =>
+    /raw\s+sql|sql\s+(?:editor|query|statement)|(?:query|widget)\s+builder|custom\s+query/iu.test(
+      readFileSync(join(clientSource, "src", path), "utf8")
+    )
+  );
+  assert.deepEqual(
+    arbitraryQueryUi,
+    [],
+    "user-facing OpenLIT pages/components must not expose raw SQL or query-builder authoring"
+  );
+  assert.equal(
+    existsSync(join(dir, "src/client/src/app/api/manage-dashboard")),
+    false,
+    "the arbitrary dashboard widget/query preview API must remain removed"
+  );
+  const fixedUsageRoute = readFileSync(
+    join(dir, "src/client/src/app/api/autodev/usage/route.ts"),
+    "utf8"
+  );
+  assert.match(
+    fixedUsageRoute,
+    /runWidgetQuery\(seedWidget,/u,
+    "the only retained widget execution surface must use a server-owned seeded definition"
+  );
+
+  for (const dashboardPath of [
+    "src/client/src/app/(playground)/dashboard/llm/number-stats.tsx",
+    "src/client/src/app/(playground)/dashboard/llm/data-charts.tsx",
+    "src/client/src/app/(playground)/dashboard/evaluations/number-stats.tsx"
   ]) {
-    assert.equal(
-      existsSync(join(dir, removedPath)),
-      false,
-      `${removedPath} must not preserve a duplicate Costs/Pricing UI path`
-    );
-  }
-  for (const internalPricingPath of [
-    "src/client/src/app/api/pricing/auto/route.ts"
-  ]) {
-    assert.ok(
-      existsSync(join(dir, internalPricingPath)),
-      `${internalPricingPath} must remain for internal scheduled price annotation`
+    assert.doesNotMatch(
+      readFileSync(join(dir, dashboardPath), "utf8"),
+      /(?:total_usage_cost|average_usage_cost|total_cost|Cost by Environment|Cost by application|api\/telemetry\/llm\/cost)/u,
+      `${dashboardPath} must not duplicate cost analytics outside Console Usage`
     );
   }
   const openlitSidebar = readFileSync(
@@ -830,7 +986,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "utf8"
   );
   assert.doesNotMatch(openlitMiddleware, /"\/costs"|"\/pricing"/u);
-  const traceDetail = readFileSync(
+  const costTraceDetail = readFileSync(
     join(
       dir,
       "src/client/src/components/(playground)/observability/trace-detail-page.tsx"
@@ -838,7 +994,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "utf8"
   );
   assert.doesNotMatch(
-    traceDetail,
+    costTraceDetail,
     /api\/pricing|Recalculate Cost/u,
     "historical trace detail must not retain the OpenLIT price-mutation action"
   );
@@ -1032,10 +1188,10 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /isOnboardingWhitelisted/u,
     "a computed-and-discarded onboarding branch is dead weight in the auth chain"
   );
-  assert.match(
+  assert.doesNotMatch(
     readFileSync(join(dir, "src/client/src/middleware.ts"), "utf8"),
     /"\/memory"/u,
-    "/memory shipped outside config.matcher, so the whole middleware chain skipped it"
+    "the retired standalone Memory page must not remain in config.matcher"
   );
   assert.doesNotMatch(
     readFileSync(
@@ -1474,20 +1630,14 @@ test(
       "src/client/src/lib/platform/connectors/memory/autodev/adapter.ts",
       "src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts",
       // 09-autodev-memory-lifecycle-actions
-      "src/client/src/components/(playground)/memory/memory-action-dialog.tsx",
       "src/client/src/app/api/memory/[id]/actions/route.ts",
       "src/client/src/__tests__/app/api/memory/[id]/actions/route.test.ts",
-      "src/client/src/__tests__/components/memory-action-dialog.test.tsx",
       // 13-autodev-memory-outcome-cohorts
       "src/client/src/app/api/memory/cohorts/route.ts",
-      "src/client/src/components/(playground)/memory/memory-cohort-view.tsx",
       "src/client/src/__tests__/app/api/memory/cohorts/route.test.ts",
-      "src/client/src/__tests__/components/memory-cohort-view.test.tsx",
       // 14-autodev-memory-outcome-reporting
       "src/client/src/app/api/memory/experiences/[id]/outcomes/route.ts",
       "src/client/src/__tests__/app/api/memory/experiences/[id]/outcomes/route.test.ts",
-      "src/client/src/components/(playground)/memory/memory-outcome-report-form.tsx",
-      "src/client/src/__tests__/components/memory-outcome-report-form.test.tsx",
       // 16-autodev-memory-session-outcome-cohorts
       "src/client/src/app/api/memory/session-cohorts/route.ts",
       "src/client/src/__tests__/app/api/memory/session-cohorts/route.test.ts",
@@ -1495,9 +1645,7 @@ test(
       "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts",
       "src/client/src/__tests__/app/api/memory/experiences/[id]/use-assessments/route.test.ts",
       "src/client/src/app/api/memory/use-cohorts/route.ts",
-      "src/client/src/__tests__/app/api/memory/use-cohorts/route.test.ts",
-      "src/client/src/components/(playground)/memory/memory-injection-use-report-form.tsx",
-      "src/client/src/__tests__/components/memory-injection-use-report-form.test.tsx"
+      "src/client/src/__tests__/app/api/memory/use-cohorts/route.test.ts"
     ];
     const removedAutoDevProductFiles = [
       "src/client/src/app/(playground)/autodev/layout.tsx",
@@ -1620,16 +1768,6 @@ test(
       /fetches filter values across AutoDev logical and MCP spans/u
     );
 
-    const memoryDetailSheet = readFileSync(
-      join(
-        dir,
-        "src/client/src/components/(playground)/memory/memory-detail-sheet.tsx"
-      ),
-      "utf8"
-    );
-    assert.match(memoryDetailSheet, /title=\{messages\.MEMORY_EDIT\}/u);
-    assert.match(memoryDetailSheet, /title=\{messages\.MEMORY_DELETE\}/u);
-    assert.match(memoryDetailSheet, /aria-label="Memory lifecycle actions"/u);
     const memoryConnectorReadme = readFileSync(
       join(dir, "src/client/src/lib/platform/connectors/memory/README.md"),
       "utf8"
@@ -2193,16 +2331,6 @@ test(
       /MEMORY_SESSION_COHORTS_UNSUPPORTED_CONNECTOR/u
     );
     assert.match(sessionCohortsRoute, /MAX_COHORT_WINDOW_MS/u);
-    const memoryCohortView = readFileSync(
-      join(
-        dir,
-        "src/client/src/components/(playground)/memory/memory-cohort-view.tsx"
-      ),
-      "utf8"
-    );
-    assert.match(memoryCohortView, /\/api\/memory\/session-cohorts/u);
-    assert.match(memoryCohortView, /MEMORY_SESSION_COHORTS_TITLE/u);
-    assert.match(memoryCohortView, /MemorySessionCohortResult/u);
     assert.match(messagesEn, /MEMORY_SESSION_COHORTS_TITLE/u);
     assert.match(messagesEn, /MEMORY_SESSION_COHORTS_NOTE/u);
     assert.match(autoDevMemoryAdapter, /readSessionOutcomeCohorts/u);
@@ -2263,47 +2391,6 @@ test(
       /export const GET\s*=\s*withMemoryAccess\("read"/u
     );
     assert.match(useCohortsRoute, /readInjectionUseCohorts\(/u);
-    const useForm = readFileSync(
-      join(
-        dir,
-        "src/client/src/components/(playground)/memory/memory-injection-use-report-form.tsx"
-      ),
-      "utf8"
-    );
-    assert.match(useForm, /MEMORY_USE_KIND_PLACEHOLDER/u);
-    assert.match(
-      useForm,
-      /value=\{EMPTY_KIND\}[\s\S]*?MEMORY_USE_KIND_PLACEHOLDER/u
-    );
-    assert.match(useForm, /formatUseKindLabel/u);
-    const useDetail = readFileSync(
-      join(
-        dir,
-        "src/client/src/components/(playground)/memory/memory-detail-sheet.tsx"
-      ),
-      "utf8"
-    );
-    assert.match(
-      useDetail,
-      /injection\.injectionResult === "injected" && packetIds\.length > 0/u
-    );
-    assert.match(useDetail, /MEMORY_DETAIL_INJECTION_USE_INELIGIBLE/u);
-    const useCohortView = readFileSync(
-      join(
-        dir,
-        "src/client/src/components/(playground)/memory/memory-cohort-view.tsx"
-      ),
-      "utf8"
-    );
-    assert.match(useCohortView, /\/api\/memory\/use-cohorts/u);
-    assert.match(useCohortView, /MEMORY_USE_COHORTS_SCOPE_NOTE/u);
-    assert.match(useCohortView, /MEMORY_USE_COHORTS_UNASSESSED/u);
-    assert.doesNotMatch(
-      useCohortView,
-      /percentage|success\s*rate|(?:Math\.)?round\([^\n]*\*\s*100|toFixed\(/iu,
-      "patch 22 must render counts, not percentages or outcome/use rates"
-    );
-
     // Verify patch 17 removes OpenLIT session gating in favor of Control API:
     assert.match(
       proxy,
@@ -2658,12 +2745,11 @@ test(
       }
 
       // 22-autodev-memory-injection-use adds curator assessment and count-only
-      // cohort UI to the existing AutoDev Memory connector. Verify the new
-      // routes and form were applied by the script after patch 21.
+      // cohort APIs to the retained Memory connector. Verify the API routes
+      // were applied by the script after patch 21; the OpenLIT UI is retired.
       for (const rel of [
         "src/client/src/app/api/memory/experiences/[id]/use-assessments/route.ts",
-        "src/client/src/app/api/memory/use-cohorts/route.ts",
-        "src/client/src/components/(playground)/memory/memory-injection-use-report-form.tsx"
+        "src/client/src/app/api/memory/use-cohorts/route.ts"
       ]) {
         assert.ok(
           statSync(join(workDirectory, rel)).isFile(),
@@ -2703,32 +2789,6 @@ test(
         appliedUseAdapter,
         /correlationToken\s*:\s*(?:injection|joined|value)|reporterId\s*:/u
       );
-      const appliedUseDetail = readFileSync(
-        join(
-          workDirectory,
-          "src/client/src/components/(playground)/memory/memory-detail-sheet.tsx"
-        ),
-        "utf8"
-      );
-      assert.match(
-        appliedUseDetail,
-        /injection\.injectionResult === "injected" && packetIds\.length > 0/u
-      );
-      assert.match(appliedUseDetail, /MEMORY_DETAIL_INJECTION_USE_INELIGIBLE/u);
-      const appliedUseCohortView = readFileSync(
-        join(
-          workDirectory,
-          "src/client/src/components/(playground)/memory/memory-cohort-view.tsx"
-        ),
-        "utf8"
-      );
-      assert.match(appliedUseCohortView, /\/api\/memory\/use-cohorts/u);
-      assert.match(appliedUseCohortView, /MEMORY_USE_COHORTS_SCOPE_NOTE/u);
-      assert.doesNotMatch(
-        appliedUseCohortView,
-        /percentage|success\s*rate|(?:Math\.)?round\([^\n]*\*\s*100|toFixed\(/iu
-      );
-
       // 23-autodev-memory-visible-connector adds the read-only AutoDev
       // Memory connector to the CE UI's visible-connector allowlist so it
       // can be created through the canonical Add Connector UI.

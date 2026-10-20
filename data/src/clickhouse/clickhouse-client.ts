@@ -17,6 +17,8 @@
  * the same server, and the default endpoint is knowledge both halves need.
  */
 
+import { withClickHouseConnectionRetry } from "./retry.ts";
+
 /** The ClickHouse endpoint used when nothing else names one. */
 export const DEFAULT_CLICKHOUSE_URL = "http://127.0.0.1:8123";
 
@@ -233,7 +235,7 @@ export class ClickHouseStatementError extends Error {
  * a named `params` entry bound through ClickHouse's native `{name:Type}`
  * placeholder syntax, never through string interpolation into `query`.
  */
-export async function runParameterizedClickHouseStatement(
+export function runParameterizedClickHouseStatement(
   endpoint: string,
   query: string,
   params: Readonly<Record<string, ClickHouseParamValue>> = {},
@@ -246,8 +248,8 @@ export async function runParameterizedClickHouseStatement(
     url.searchParams.set(`param_${name}`, clickHouseParamLiteral(value));
   }
   const maxRetries = 2;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
+  return withClickHouseConnectionRetry(
+    async () => {
       const res = await fetchImpl(url.toString(), {
         method: "POST",
         ...(options.body === undefined
@@ -258,28 +260,15 @@ export async function runParameterizedClickHouseStatement(
             })
       });
       if (!res.ok) {
-        throw new ClickHouseStatementError(res.status, await res.text());
+        const failureBody = await res.text();
+        throw new ClickHouseStatementError(res.status, failureBody);
       }
-      return await res.text();
-    } catch (error) {
-      if (error instanceof ClickHouseStatementError) throw error;
-      const cause = (error as { readonly cause?: unknown } | null | undefined)
-        ?.cause;
-      const code = (cause as { readonly code?: unknown } | null | undefined)
-        ?.code;
-      const isRetryable =
-        typeof code === "string" &&
-        (code === "ECONNRESET" ||
-          code === "ECONNREFUSED" ||
-          code === "ETIMEDOUT");
-      if (attempt < maxRetries && isRetryable) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, 100 * (attempt + 1))
-        );
-        continue;
-      }
-      throw error;
-    }
-  }
-  throw new Error("ClickHouse request retries exhausted");
+      // The body is read inside the attempt so a truncated response is
+      // retried with the request rather than surfaced as a partial result.
+      // The promise is returned rather than awaited: the retry helper awaits
+      // the attempt itself, so a truncated read still fails the attempt.
+      return res.text();
+    },
+    { maxRetries }
+  );
 }

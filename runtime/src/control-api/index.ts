@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { type IncomingMessage, type ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -200,6 +200,40 @@ interface CachedModelCatalog {
 }
 const MODEL_CATALOG_CACHE = new Map<string, CachedModelCatalog>();
 
+/**
+ * The reasoning level a catalog entry defaults to, or `null` when it declares
+ * none. A catalog is untrusted JSON, so every field is read as `unknown`.
+ */
+function catalogDefaultReasoningLevel(entry: object): string | null {
+  const raw = (entry as { default_reasoning_level?: unknown })
+    .default_reasoning_level;
+  return typeof raw === "string" ? raw : null;
+}
+
+/** The reasoning levels a catalog entry supports, in the order it lists them. */
+function catalogSupportedReasoningLevels(entry: object): readonly string[] {
+  const raw = (entry as { supported_reasoning_levels?: unknown })
+    .supported_reasoning_levels;
+  if (!Array.isArray(raw)) return [];
+  const levels: string[] = [];
+  for (const item of raw) {
+    if (
+      item &&
+      typeof item === "object" &&
+      typeof (item as { effort?: unknown }).effort === "string"
+    ) {
+      levels.push((item as { effort: string }).effort);
+    }
+  }
+  return levels;
+}
+
+/** The display name a catalog entry declares, or `null` when it declares none. */
+function catalogDisplayName(entry: object): string | null {
+  const raw = (entry as { display_name?: unknown }).display_name;
+  return typeof raw === "string" ? raw : null;
+}
+
 function loadModelCatalogData(catalogPath: string): CachedModelCatalog {
   const stat = statSync(catalogPath);
   const cached = MODEL_CATALOG_CACHE.get(catalogPath);
@@ -214,41 +248,15 @@ function loadModelCatalogData(catalogPath: string): CachedModelCatalog {
     };
     if (Array.isArray(parsed.models)) {
       for (const entry of parsed.models as unknown[]) {
-        if (
-          entry &&
-          typeof entry === "object" &&
-          typeof (entry as { slug?: unknown }).slug === "string"
-        ) {
-          const slug = (entry as { slug: string }).slug;
-          const defaultLevel =
-            typeof (entry as { default_reasoning_level?: unknown })
-              .default_reasoning_level === "string"
-              ? (entry as { default_reasoning_level: string })
-                  .default_reasoning_level
-              : null;
-          const supportedLevels: string[] = [];
-          const rawSupported = (
-            entry as { supported_reasoning_levels?: unknown }
-          ).supported_reasoning_levels;
-          if (Array.isArray(rawSupported)) {
-            for (const item of rawSupported) {
-              if (
-                item &&
-                typeof item === "object" &&
-                typeof (item as { effort?: unknown }).effort === "string"
-              ) {
-                supportedLevels.push((item as { effort: string }).effort);
-              }
-            }
-          }
-          levels.set(slug, { defaultLevel, supportedLevels });
-          if (
-            typeof (entry as { display_name?: unknown }).display_name ===
-            "string"
-          ) {
-            names.set(slug, (entry as { display_name: string }).display_name);
-          }
-        }
+        if (!entry || typeof entry !== "object") continue;
+        const slug = (entry as { slug?: unknown }).slug;
+        if (typeof slug !== "string") continue;
+        levels.set(slug, {
+          defaultLevel: catalogDefaultReasoningLevel(entry),
+          supportedLevels: catalogSupportedReasoningLevels(entry)
+        });
+        const displayName = catalogDisplayName(entry);
+        if (displayName !== null) names.set(slug, displayName);
       }
     }
   } catch {
@@ -1533,7 +1541,12 @@ export async function githubWorkflowsView(
         { limit: 30 }
       );
       if (!isTestOverride) {
-        GITHUB_SNAPSHOT_CACHE.set(cacheKey, { timestamp: now, snapshot });
+        // A slow external Actions read must not age out its own cache entry
+        // before the snapshot is available to the next Console request.
+        GITHUB_SNAPSHOT_CACHE.set(cacheKey, {
+          timestamp: Date.now(),
+          snapshot
+        });
       }
     }
     const projected = projectGithubWorkflows(catalog.workflows, snapshot);
@@ -2766,7 +2779,7 @@ async function patchProviderRole(
       {
         priority,
         model,
-        ...(body.reasoningEffort !== undefined ? { reasoningEffort } : {})
+        ...(body.reasoningEffort === undefined ? {} : { reasoningEffort })
       },
       "unknown_provider"
     );
@@ -2800,7 +2813,7 @@ async function patchProviderRole(
         {
           priority,
           model,
-          ...(body.reasoningEffort !== undefined ? { reasoningEffort } : {})
+          ...(body.reasoningEffort === undefined ? {} : { reasoningEffort })
         },
         "provider_disabled"
       );
@@ -2842,7 +2855,7 @@ async function patchProviderRole(
     const auditChanges: Record<string, unknown> = {
       priority,
       model,
-      ...(body.reasoningEffort !== undefined ? { reasoningEffort } : {})
+      ...(body.reasoningEffort === undefined ? {} : { reasoningEffort })
     };
     try {
       ROUTING_POLICY.setProviderAssignment(provider, role, next);
@@ -5210,6 +5223,122 @@ async function agentDetailRoute(
   return true;
 }
 
+/**
+ * The one answer to a request that used the wrong verb for a mutation route.
+ *
+ * Each mutation-only route repeated the same guard, and the copies had drifted:
+ * two of them only audited the rejection without answering it, so a GET
+ * against the provider limits or the provider enablement route left the caller
+ * with no response at all and no way to learn why. One rejection, so every
+ * mutation-only route audits the attempt, advertises the verb it accepts, and
+ * answers 405.
+ */
+function rejectUnsupportedMethod(
+  request: IncomingMessage,
+  response: ServerResponse,
+  method: string,
+  pathname: string,
+  actor: ControlApiActor,
+  allowed: "PATCH" | "POST",
+  message: string
+): void {
+  auditRejectedRequest(request, method, pathname, "method_not_allowed", actor);
+  response.setHeader("allow", allowed);
+  sendControlError(
+    response,
+    405,
+    "autodev_control_api_method_not_allowed",
+    message
+  );
+}
+
+/**
+ * The routes that only ever mutate.
+ *
+ * They live together so the verb guard is written once, and so a request that
+ * used the wrong verb is answered the same way whichever route it called.
+ */
+async function handleMutationOnlyRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  method: string,
+  pathname: string,
+  actor: ControlApiActor
+): Promise<boolean> {
+  if (pathname === CONTROL_API_PATHS.concurrency) {
+    if (method !== "PATCH") {
+      rejectUnsupportedMethod(
+        request,
+        response,
+        method,
+        pathname,
+        actor,
+        "PATCH",
+        "Orchestrator concurrency limits are mutated via PATCH only."
+      );
+      return true;
+    }
+    await patchConcurrencyLimit(request, response, actor);
+    return true;
+  }
+  const providerLimitsMatch = pathname.match(PROVIDER_LIMITS_PATH);
+  if (providerLimitsMatch) {
+    if (method !== "PATCH") {
+      rejectUnsupportedMethod(
+        request,
+        response,
+        method,
+        pathname,
+        actor,
+        "PATCH",
+        "Provider limits are mutated via PATCH only."
+      );
+      return true;
+    }
+    await patchProviderLimits(
+      request,
+      response,
+      actor,
+      providerLimitsMatch[1]!
+    );
+    return true;
+  }
+  if (pathname === CONTROL_API_PATHS.providersReset) {
+    if (method !== "POST") {
+      rejectUnsupportedMethod(
+        request,
+        response,
+        method,
+        pathname,
+        actor,
+        "POST",
+        "Provider reset is mutated via POST only."
+      );
+      return true;
+    }
+    await resetProviders(request, response, actor);
+    return true;
+  }
+  const providerOnlyMatch = pathname.match(PROVIDER_PATH);
+  if (providerOnlyMatch) {
+    if (method !== "PATCH") {
+      rejectUnsupportedMethod(
+        request,
+        response,
+        method,
+        pathname,
+        actor,
+        "PATCH",
+        "Provider enablement is mutated via PATCH only."
+      );
+      return true;
+    }
+    await patchProviderEnabled(request, response, actor, providerOnlyMatch[1]!);
+    return true;
+  }
+  return false;
+}
+
 export async function handleControlApiRequest(
   request: IncomingMessage,
   response: ServerResponse,
@@ -5294,81 +5423,9 @@ export async function handleControlApiRequest(
     );
     return true;
   }
-  if (pathname === CONTROL_API_PATHS.concurrency) {
-    if (method !== "PATCH") {
-      auditRejectedRequest(
-        request,
-        method,
-        pathname,
-        "method_not_allowed",
-        actor
-      );
-      response.setHeader("allow", "PATCH");
-      sendControlError(
-        response,
-        405,
-        "autodev_control_api_method_not_allowed",
-        "Orchestrator concurrency limits are mutated via PATCH only."
-      );
-      return true;
-    }
-    await patchConcurrencyLimit(request, response, actor);
-    return true;
-  }
-  const providerLimitsMatch = pathname.match(PROVIDER_LIMITS_PATH);
-  if (providerLimitsMatch) {
-    if (method !== "PATCH") {
-      auditRejectedRequest(
-        request,
-        method,
-        pathname,
-        "method_not_allowed",
-        actor
-      );
-      return true;
-    }
-    await patchProviderLimits(
-      request,
-      response,
-      actor,
-      providerLimitsMatch[1]!
-    );
-    return true;
-  }
-  if (pathname === CONTROL_API_PATHS.providersReset) {
-    if (method !== "POST") {
-      auditRejectedRequest(
-        request,
-        method,
-        pathname,
-        "method_not_allowed",
-        actor
-      );
-      response.setHeader("allow", "POST");
-      sendControlError(
-        response,
-        405,
-        "autodev_control_api_method_not_allowed",
-        "Provider reset is mutated via POST only."
-      );
-      return true;
-    }
-    await resetProviders(request, response, actor);
-    return true;
-  }
-  const providerOnlyMatch = pathname.match(PROVIDER_PATH);
-  if (providerOnlyMatch) {
-    if (method !== "PATCH") {
-      auditRejectedRequest(
-        request,
-        method,
-        pathname,
-        "method_not_allowed",
-        actor
-      );
-      return true;
-    }
-    await patchProviderEnabled(request, response, actor, providerOnlyMatch[1]!);
+  if (
+    await handleMutationOnlyRoute(request, response, method, pathname, actor)
+  ) {
     return true;
   }
   const modelMatch = pathname.match(MODEL_PATH);
