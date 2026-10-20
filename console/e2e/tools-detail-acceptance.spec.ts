@@ -66,7 +66,8 @@ test("the tool detail reports the catalog's source authority for an MCP tool", a
   await expect(page.getByText("mcp · lsp · RuleSync MCP")).toBeVisible();
 
   // A complete catalog entry says so, rather than letting a partial one read
-  // as if it were whole.
+  // as if it were whole. The page body is the only element that publishes
+  // these two facts, so the locator below names one element and not a set.
   await expect(page.locator("[data-tools-coverage]")).toHaveAttribute(
     "data-tools-coverage",
     "complete"

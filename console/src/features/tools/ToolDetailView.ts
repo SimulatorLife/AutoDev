@@ -242,13 +242,15 @@ function coverageBanner(
       : variant === "warning"
         ? CALLOUT_WARNING_CLASS
         : CALLOUT_ACCENT_CLASS;
+  // The banner announces the coverage tier in words; it does not also publish
+  // the tier as an attribute. The page body owns `data-tools-coverage` and
+  // `data-tools-validity` -- the same single owner the Tools list page uses --
+  // and a second element carrying the same attribute makes every
+  // `[data-tools-coverage]` selector ambiguous, so a browser assertion can no
+  // longer tell which of the two elements it read.
   return React.createElement(
     "p",
-    {
-      className: classes,
-      "data-tools-coverage": coverage,
-      "data-tools-validity": validity
-    },
+    { className: classes },
     validity === "invalid"
       ? "The canonical RuleSync MCP source is invalid; this tool entry is rendered as Invalid until the source is repaired."
       : validity === NOT_OBSERVED_STATUS

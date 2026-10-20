@@ -4,7 +4,20 @@ const WORKSPACES_URL = "/workspaces";
 const WORKSPACE_ID = "fixture/game";
 const WORKSPACE_DETAIL_URL = "/workspaces/fixture/game";
 const OBSERVED_REQUESTS = "12";
-const REQUESTS_VALUE = "[data-workspace-requests]";
+const REQUESTS_ATTRIBUTE = "data-workspace-requests";
+const REQUESTS_VALUE = `[${REQUESTS_ATTRIBUTE}]`;
+
+/**
+ * The Requests cell for one specific reading state.
+ *
+ * The attribute carries the state as its value, so the selector has to name
+ * the attribute and the value together -- `[data-workspace-requests]` on its own
+ * matches the cell whatever it holds, which is the opposite of what these
+ * assertions ask.
+ */
+function requestsState(state: string): string {
+  return `[${REQUESTS_ATTRIBUTE}="${state}"]`;
+}
 
 function documentFitsViewport(page: Page): Promise<boolean> {
   return page.evaluate(
@@ -83,10 +96,8 @@ test("Workspaces names the reason there is no aggregate usage count", async ({
   await page.goto(WORKSPACES_URL);
 
   await expect(page.locator(REQUESTS_VALUE)).toHaveCount(1);
-  await expect(page.locator(`${REQUESTS_VALUE}="unavailable"]`)).toHaveCount(0);
-  await expect(page.locator(`${REQUESTS_VALUE}="not-observed"]`)).toHaveCount(
-    0
-  );
+  await expect(page.locator(requestsState("unavailable"))).toHaveCount(0);
+  await expect(page.locator(requestsState("not-observed"))).toHaveCount(0);
   await expect(page.locator(REQUESTS_VALUE)).toHaveText(OBSERVED_REQUESTS);
 });
 

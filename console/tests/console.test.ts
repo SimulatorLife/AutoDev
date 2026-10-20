@@ -15251,6 +15251,49 @@ test("ToolDetailView renders source authority, edit surface, and unobserved hist
   assert.doesNotMatch(markup, /0</);
 });
 
+test("ToolDetailView publishes one owner for the catalog's coverage and validity", () => {
+  // The detail page used to publish `data-tools-coverage` and
+  // `data-tools-validity` twice: once on the page body and once on the
+  // coverage banner. Two owners make every `[data-tools-coverage]` selector
+  // ambiguous -- a browser assertion resolves to a set and cannot tell which
+  // element it read -- so the page body is the one owner, the way the Tools
+  // list page already is.
+  const markup = renderToStaticMarkup(
+    React.createElement(ToolDetailView, {
+      tool: {
+        name: "lsp_goto_definition",
+        source: "mcp",
+        sourceAuthority: "execution-contract",
+        server: "lsp",
+        availability: "configured",
+        exposedRoles: ["default", "worker"],
+        canonicalEditSurface: {
+          section: "mcps",
+          identifier: "lsp",
+          label: "MCP lsp"
+        }
+      },
+      coverage: "complete",
+      validity: "valid",
+      usage: { calls: null, errors: null, observed: false },
+      usageLink: "/usage",
+      usageUnavailable: false
+    })
+  );
+  assert.equal(
+    markup.match(/data-tools-coverage="/gu)?.length ?? 0,
+    1,
+    "the coverage tier has exactly one owner"
+  );
+  assert.equal(
+    markup.match(/data-tools-validity="/gu)?.length ?? 0,
+    1,
+    "the source validity has exactly one owner"
+  );
+  // The banner still says the tier out loud; only the attribute moved.
+  assert.match(markup, /Composite catalog entry: source authority/u);
+});
+
 test("every detail view titles its resource with the one canonical entity title", () => {
   // A detail view used to invent its own title treatment: `/tools` emitted a
   // second `h1` under the shell's, `/memory` skipped to `h3` at a third of the
