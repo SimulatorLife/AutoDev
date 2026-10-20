@@ -1,16 +1,12 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 
+import { documentFitsViewport } from "./acceptance-helpers.ts";
+
 const TOOLS_URL = "/tools";
 const NATIVE_TOOL_ID = "read_file";
 const MCP_TOOL_ID = "mcp__lsp__lsp_goto_definition";
 const MCP_TOOL_SOURCE_QUALIFIED_ID = "mcp:lsp:lsp_goto_definition";
 const MCP_SERVER = "lsp";
-
-function documentFitsViewport(page: Page): Promise<boolean> {
-  return page.evaluate(
-    () => document.documentElement.scrollWidth <= globalThis.innerWidth
-  );
-}
 
 /**
  * The value cell of one labelled field inside a detail section.

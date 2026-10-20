@@ -1,5 +1,7 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 
+import { documentFitsViewport } from "./acceptance-helpers.ts";
+
 const MOUNTED_DOCUMENT_TOKEN = "mounted-document-1";
 /** The list the Agent trail's ancestor names. */
 const AGENTS_LIST_URL = /\/agents$/u;
@@ -124,12 +126,6 @@ async function visibleBreadcrumbTrail(page: Page): Promise<Locator> {
   const landmark = breadcrumbTrail(page);
   await expect(landmark).toBeVisible();
   return landmark;
-}
-
-function documentFitsViewport(page: Page): Promise<boolean> {
-  return page.evaluate(
-    () => document.documentElement.scrollWidth <= globalThis.innerWidth
-  );
 }
 
 /**

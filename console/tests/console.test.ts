@@ -13497,11 +13497,14 @@ test("ProvidersView renders configuration columns and live provider counts", () 
   assert.equal(markup.includes("⠿"), false);
   assert.doesNotMatch(markup, /draggable=/u);
 
-  // Every role form shares one grid so labels and selects stay aligned.
+  // Every role form shares one grid so labels and selects stay aligned. The
+  // label column is sized to its content: `Orchestrator` with its icon needs
+  // 92px, and the fixed `5.5rem` was four pixels short of that, so the label
+  // was painted past the edge of its own column.
   const roleForms = forms.filter((form) => form.includes("data-role-form="));
   assert.equal(roleForms.length, PROVIDERS_FIXTURE.providers.length * 4);
   for (const roleForm of roleForms) {
-    assert.match(roleForm, /grid-cols-\[5\.5rem_5rem_12rem_7rem\]/u);
+    assert.match(roleForm, /grid-cols-\[max-content_5rem_12rem_7rem\]/u);
     assert.doesNotMatch(roleForm, /flex-wrap/u);
   }
   assert.doesNotMatch(markup, /data-apply-role|>Apply<\/button>/u);

@@ -6,6 +6,8 @@ import {
   test
 } from "@playwright/test";
 
+import { documentFitsViewport } from "./acceptance-helpers.ts";
+
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const SKILL_NAME = "code-review";
 const NOT_OBSERVED = "Not observed";
@@ -29,12 +31,6 @@ const PROMPT_SOURCE_PATTERN =
   /Review the pending diff and report what changed\./u;
 const CONFLICT_MESSAGE =
   "The execution contract changed after this page was loaded, so nothing was written.";
-
-function documentFitsViewport(page: Page): Promise<boolean> {
-  return page.evaluate(
-    () => document.documentElement.scrollWidth <= globalThis.innerWidth
-  );
-}
 
 /** The role checkbox of one skill. */
 function roleCheckbox(page: Page, role: string): Locator {

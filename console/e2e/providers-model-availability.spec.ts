@@ -1,4 +1,6 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+
+import { documentFitsViewport } from "./acceptance-helpers.ts";
 
 const UNSUPPORTED_MODEL_ID = "claude-preview-unroutable";
 const STALE_AVAILABILITY_TITLE = /availability is stale/u;
@@ -17,12 +19,6 @@ const MODEL_ID = "sonnet";
 const NOT_OBSERVED = "Not observed";
 const PROVIDERS_TAB_URL = "/providers?tab=providers";
 const PROVIDER_DETAIL_URL_PATTERN = /\/providers\/[A-Za-z0-9._-]+$/u;
-
-function documentFitsViewport(page: Page): Promise<boolean> {
-  return page.evaluate(
-    () => document.documentElement.scrollWidth <= globalThis.innerWidth
-  );
-}
 
 test("Providers distinguishes live, stale, unavailable, and unsupported models", async ({
   page

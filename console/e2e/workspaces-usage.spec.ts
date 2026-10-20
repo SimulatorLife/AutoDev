@@ -1,4 +1,6 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+
+import { documentFitsViewport } from "./acceptance-helpers.ts";
 
 const WORKSPACES_URL = "/workspaces";
 const WORKSPACE_ID = "fixture/game";
@@ -17,12 +19,6 @@ const REQUESTS_VALUE = `[${REQUESTS_ATTRIBUTE}]`;
  */
 function requestsState(state: string): string {
   return `[${REQUESTS_ATTRIBUTE}="${state}"]`;
-}
-
-function documentFitsViewport(page: Page): Promise<boolean> {
-  return page.evaluate(
-    () => document.documentElement.scrollWidth <= globalThis.innerWidth
-  );
 }
 
 test("Workspaces reports each workspace's aggregate request count", async ({

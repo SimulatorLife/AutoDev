@@ -162,7 +162,7 @@ function renderActiveSessionsScope(
       "div",
       null,
       React.createElement(
-        "h3",
+        "h2",
         { className: SECTION_HEADING_CLASS },
         "Active Sessions"
       ),
@@ -182,7 +182,7 @@ function renderActiveSessionsScope(
     "div",
     null,
     React.createElement(
-      "h3",
+      "h2",
       { className: SECTION_HEADING_CLASS },
       "Active Sessions"
     ),
@@ -650,7 +650,7 @@ function renderRecentAttempts(
       "div",
       { className: "flex flex-wrap items-center justify-between gap-3" },
       React.createElement(
-        "h3",
+        "h2",
         {
           id: "usage-recent-attempts-heading",
           className: SECTION_HEADING_CLASS
@@ -698,7 +698,7 @@ function renderTraceLookup(
         "data-trace-state": traceLookup.kind
       },
       React.createElement(
-        "h3",
+        "h2",
         { id: USAGE_TRACE_DETAIL_HEADING_ID, className: SECTION_HEADING_CLASS },
         USAGE_TRACE_DETAIL_TITLE
       ),
@@ -728,7 +728,7 @@ function renderTraceLookup(
       "div",
       { className: "flex flex-wrap items-center justify-between gap-3" },
       React.createElement(
-        "h3",
+        "h2",
         { id: USAGE_TRACE_DETAIL_HEADING_ID, className: SECTION_HEADING_CLASS },
         USAGE_TRACE_DETAIL_TITLE
       ),
@@ -800,7 +800,7 @@ function renderGitChangeMetrics(
       "section",
       { "data-git-change-output": NOT_APPLICABLE_STATUS },
       React.createElement(
-        "h3",
+        "h2",
         { className: SECTION_HEADING_CLASS },
         "Git change output"
       ),
@@ -825,7 +825,7 @@ function renderGitChangeMetrics(
       "data-git-change-output": metrics.status
     },
     React.createElement(
-      "h3",
+      "h2",
       { className: SECTION_HEADING_CLASS },
       "Git change output"
     ),
@@ -934,7 +934,7 @@ function renderGitChangeMetrics(
           "div",
           { key: chart.title, className: LIST_PANEL_CLASS },
           React.createElement(
-            "h4",
+            "h3",
             { className: SECTION_HEADING_CLASS },
             chart.title
           ),
@@ -975,7 +975,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
       "div",
       null,
       React.createElement(
-        "h3",
+        "h2",
         {
           className: SECTION_HEADING_CLASS
         },
@@ -1020,7 +1020,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
           className: LIST_PANEL_CLASS
         },
         React.createElement(
-          "h4",
+          "h3",
           {
             className: SECTION_HEADING_CLASS
           },
@@ -1048,7 +1048,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
           className: LIST_PANEL_CLASS
         },
         React.createElement(
-          "h4",
+          "h3",
           {
             className: SECTION_HEADING_CLASS
           },
@@ -1076,7 +1076,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
       "div",
       null,
       React.createElement(
-        "h3",
+        "h2",
         {
           className: SECTION_HEADING_CLASS
         },
@@ -1135,7 +1135,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
           "div",
           { className: LIST_PANEL_CLASS },
           React.createElement(
-            "h4",
+            "h3",
             { className: SECTION_HEADING_CLASS },
             "Context Compactions Over Time"
           ),
@@ -1162,7 +1162,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
             "div",
             { className: LIST_PANEL_CLASS },
             React.createElement(
-              "h4",
+              "h3",
               { className: SECTION_HEADING_CLASS },
               "Context Compactions by Workspace"
             ),
@@ -1187,7 +1187,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
             "div",
             { className: LIST_PANEL_CLASS },
             React.createElement(
-              "h4",
+              "h3",
               { className: SECTION_HEADING_CLASS },
               "Context Compactions by Requested Model"
             ),
@@ -1212,7 +1212,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
             "div",
             { className: LIST_PANEL_CLASS },
             React.createElement(
-              "h4",
+              "h3",
               { className: SECTION_HEADING_CLASS },
               "Context Compactions by Agent Role"
             ),
@@ -1238,7 +1238,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
           "div",
           { className: LIST_PANEL_CLASS },
           React.createElement(
-            "h4",
+            "h3",
             {
               className: SECTION_HEADING_CLASS
             },
@@ -1268,7 +1268,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
       "div",
       { className: LIST_PANEL_CLASS },
       React.createElement(
-        "h3",
+        "h2",
         {
           className: SECTION_HEADING_CLASS
         },
@@ -1294,7 +1294,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
       "div",
       null,
       React.createElement(
-        "h3",
+        "h2",
         {
           className: SECTION_HEADING_CLASS
         },
@@ -1326,7 +1326,7 @@ function renderHistoricalMetrics(metrics: UsageMetricsData): React.JSX.Element {
         className: LIST_PANEL_CLASS
       },
       React.createElement(
-        "h4",
+        "h3",
         {
           className: SECTION_HEADING_CLASS
         },

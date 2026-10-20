@@ -23,6 +23,7 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import { PathText } from "../../components/tables/PathText.ts";
 import {
   ACTION_LINK_CLASS,
   ENTITY_LINK_CLASS,
@@ -91,11 +92,15 @@ export function GithubView({
             { className: "font-semibold text-fg" },
             workflow.name ?? workflow.id
           ),
-          React.createElement(
-            "span",
-            { className: MONO_META_CLASS },
-            workflow.path
-          )
+          React.createElement(PathText, {
+            path: workflow.path,
+            // `break-normal` is the path's own rule: the only legal breaks are
+            // the ones `PathText` marks between its segments. A `tokens`
+            // column is `break-words`, which would let the browser invent a
+            // break inside a segment -- the thing a path column exists to
+            // prevent.
+            className: `${MONO_META_CLASS} break-normal`
+          })
         )
     },
     {
@@ -215,6 +220,10 @@ export function GithubView({
     columns.push({
       id: "lastRun",
       header: "Last Run",
+      // A badge and a link, so the cell holds two things rather than one line
+      // of text: `truncate` cannot ellipsize a row of blocks, so the link was
+      // cut off the edge of the cell with nothing to show that it was there.
+      align: "tokens",
       cell: (workflow) => {
         if (!workflow.lastRunStatus && !workflow.lastRunConclusion) {
           return React.createElement(
@@ -266,6 +275,11 @@ export function GithubView({
     {
       id: "id",
       header: "Run",
+      // The run's own name over the workflow path it belongs to, which is two
+      // things: `truncate` cuts a cell whose content is a column of blocks
+      // rather than ellipsizing it, so the path was cut mid-segment with no
+      // sign that there was more of it.
+      align: "tokens",
       cell: (run) =>
         React.createElement(
           "div",
@@ -286,11 +300,10 @@ export function GithubView({
                 { className: "font-semibold text-fg font-mono text-xs" },
                 `#${run.id} ${run.name ?? ""}`.trim()
               ),
-          React.createElement(
-            "span",
-            { className: MONO_META_CLASS },
-            run.workflowPath
-          )
+          React.createElement(PathText, {
+            path: run.workflowPath,
+            className: `${MONO_META_CLASS} break-normal`
+          })
         )
     },
     {
@@ -305,15 +318,18 @@ export function GithubView({
     {
       id: "commit",
       header: "Branch / Commit",
+      // The branch over the short commit, which is two things: `truncate` cuts
+      // a cell whose content is a column of blocks rather than ellipsizing it,
+      // so the branch was cut mid-segment with no sign that there was more.
+      align: "tokens",
       cell: (run) =>
         React.createElement(
           "div",
           { className: "flex flex-col text-xs font-mono" },
-          React.createElement(
-            "span",
-            { className: "text-fg-secondary" },
-            run.headBranch ?? NOT_OBSERVED_LABEL
-          ),
+          React.createElement(PathText, {
+            path: run.headBranch ?? NOT_OBSERVED_LABEL,
+            className: "text-fg-secondary break-normal"
+          }),
           React.createElement(
             "span",
             { className: MUTED_TEXT_CLASS },
@@ -408,20 +424,28 @@ export function GithubView({
           "div",
           {
             className:
-              "rounded-lg border border-success/60 bg-success/10 p-4 text-xs text-success leading-relaxed flex items-center justify-between",
+              "rounded-lg border border-success/60 bg-success/10 p-4 text-xs text-success leading-relaxed",
             role: "note",
             "data-status": "available"
           },
           React.createElement(
             "div",
-            { className: "flex items-center gap-2" },
+            {
+              // The badge and the message stack on a narrow window rather than
+              // sharing a line: side by side, the message had 120px to say
+              // that the Actions API was connected and that no mutation
+              // controls exist, and the repository name was cut off the edge
+              // of the callout with nothing to show that it was there.
+              className:
+                "flex min-w-0 flex-col items-start gap-2 sm:flex-row sm:items-center"
+            },
             React.createElement(StatusBadge, {
               status: "ready",
               label: "Actions API Connected"
             }),
             React.createElement(
               "span",
-              null,
+              { className: "min-w-0 break-words" },
               "Authoritative read-only runtime state observed for ",
               React.createElement(
                 "span",

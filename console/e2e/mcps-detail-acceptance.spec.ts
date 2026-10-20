@@ -1,5 +1,7 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 
+import { documentFitsViewport } from "./acceptance-helpers.ts";
+
 const MOUNTED_DOCUMENT_TOKEN = "mounted-document-1";
 const LSP_SERVER = "lsp";
 const ANTIGRAVITY_SERVER = "antigravity-cli";
@@ -33,12 +35,6 @@ const MCP_DETAIL_TAB_IDS = [
 const DEFAULT_STATE_COLUMN = "Default State";
 const CONNECTION_COLUMN = "Connection";
 const OVERRIDES_COLUMN = "Overrides";
-
-function documentFitsViewport(page: Page): Promise<boolean> {
-  return page.evaluate(
-    () => document.documentElement.scrollWidth <= globalThis.innerWidth
-  );
-}
 
 /**
  * One row of the MCP table, found by the server's own link.

@@ -184,7 +184,7 @@ test("Usage active-session stats and detail use the shared section spacing", () 
 
   assert.match(
     markup,
-    /Active Sessions<\/h3><div class="flex flex-col gap-6"><div class="[^"]*" data-stat-grid="4">/u
+    /Active Sessions<\/h2><div class="flex flex-col gap-6"><div class="[^"]*" data-stat-grid="4">/u
   );
 });
 
@@ -236,9 +236,12 @@ test("UsageView groups validated request, reliability, skill, and MCP metrics wi
   const reliabilityStart = markup.indexOf("Reliability &amp; context");
   const skillActivityStart = markup.indexOf("Skill activity", reliabilityStart);
   const reliabilitySection = markup.slice(reliabilityStart, skillActivityStart);
+  // The section heading is an `h2`: the shell's own `h1` names the page, and
+  // the Usage page used to start at `h3`, so its outline skipped a level
+  // before anything was said about the page.
   assert.match(
     reliabilitySection,
-    /<\/h3><div class="flex flex-col gap-6"><div class="[^"]*" data-stat-grid="4">[\s\S]*Failed attempts by provider/u
+    /<\/h2><div class="flex flex-col gap-6"><div class="[^"]*" data-stat-grid="4">[\s\S]*Failed attempts by provider/u
   );
 });
 

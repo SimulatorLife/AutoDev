@@ -1,40 +1,6 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 
-/**
- * One canonical resource route and the resource it answers with.
- */
-interface CanonicalRoute {
-  /** The route's path. */
-  readonly path: string;
-  /** The section the route belongs to, which is what the sidebar marks. */
-  readonly section: string;
-  /** The heading the route answers with. */
-  readonly heading: string;
-}
-
-/**
- * The canonical resources the target state names.
- *
- * The grouping is presentation only: all fourteen resources have first-class
- * routes, and each one answers with its own resource rather than with a
- * shared surface that says something about all of them.
- */
-const CANONICAL_ROUTES: readonly CanonicalRoute[] = [
-  { path: "/agents", section: "agents", heading: "Agents" },
-  { path: "/providers", section: "providers", heading: "Providers" },
-  { path: "/mcps", section: "mcps", heading: "MCPs" },
-  { path: "/skills", section: "skills", heading: "Skills" },
-  { path: "/hooks", section: "hooks", heading: "Hooks" },
-  { path: "/prompts", section: "prompts", heading: "Prompts" },
-  { path: "/permissions", section: "permissions", heading: "Permissions" },
-  { path: "/tools", section: "tools", heading: "Tools" },
-  { path: "/usage", section: "usage", heading: "Usage" },
-  { path: "/evaluations", section: "evaluations", heading: "Evaluations" },
-  { path: "/memory", section: "memory", heading: "Memory" },
-  { path: "/playtesting", section: "playtesting", heading: "Playtesting" },
-  { path: "/workspaces", section: "workspaces", heading: "Workspaces" },
-  { path: "/github", section: "github", heading: "GitHub" }
-];
+import { CANONICAL_ROUTES, routeHeading } from "./acceptance-helpers.ts";
 
 /**
  * The generic surfaces the target state rules out.
@@ -48,13 +14,6 @@ const GENERIC_SURFACES: readonly string[] = ["/home", "/dashboard"];
  * The URL the root route must end on.
  */
 const AGENTS_URL = /\/agents$/u;
-
-/**
- * The heading a route answers with.
- */
-function routeHeading(page: Page, route: CanonicalRoute): Locator {
-  return page.getByRole("heading", { name: route.heading, level: 1 });
-}
 
 /**
  * The sidebar's entry for one section.

@@ -301,7 +301,22 @@ function RoleRow({
       action: `/api/providers/${encodeURIComponent(provider)}/roles/${encodeURIComponent(role)}`,
       method: "POST",
       className:
-        "grid min-w-0 grid-cols-[5.5rem_5rem_12rem_7rem] items-center gap-2",
+        // The label column is sized to its content rather than to a guess.
+        // `Orchestrator` is the longest role label, and with its icon it needs
+        // 92px; the fixed `5.5rem` was 88px, so the label's last four pixels
+        // were painted past the edge of its own column on every role row.
+        //
+        // `max-content` rather than `minmax(5.5rem, max-content)`: a track
+        // whose base size is its minimum only grows into space the grid
+        // already has, and this grid has none -- its width is the sum of its
+        // own tracks -- so the label column stayed at 88px and kept cutting
+        // the label it was supposed to fit.
+        //
+        // The gaps are `1.5` rather than `2` because the four tracks now sum
+        // to 494px against a 496px cell: the columns were sized to fill that
+        // cell exactly, so the four pixels the label needed had to come from
+        // the gaps rather than from a column that was already measured.
+        "grid min-w-0 grid-cols-[max-content_5rem_12rem_7rem] items-center gap-1.5",
       "data-role-form": `${provider}-${role}`
     },
     React.createElement("input", {

@@ -87,6 +87,14 @@ export function AgentsView({
       // reconciled with either is what had these seven summing to 1125 against
       // a 1076px content column, so every percentage on the page was handing
       // out 96% of the budget its weight described.
+      //
+      // The cell holds three things -- the role, the live count, and the
+      // enablement control with its reason -- so it is a `tokens` column and
+      // not a truncating one. `truncate` cannot ellipsize a cell whose content
+      // is a column of blocks, so the row for an agent with no runtime
+      // enablement projection was cut mid-sentence with nothing to say that
+      // anything was cut.
+      align: "tokens",
       weight: 221,
       cell: (agent) =>
         React.createElement(
