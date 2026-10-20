@@ -7,7 +7,10 @@
 import { type NextRequest, NextResponse } from "next/server.js";
 
 import { isAgentsReturnPath } from "../../../../src/features/agents/paths.ts";
-import { withControlFailure } from "../../../../src/lib/control-failure.ts";
+import {
+  withControlFailure,
+  withControlRefusal
+} from "../../../../src/lib/control-failure.ts";
 import {
   patchAgentEnablement,
   readControlApiConfig
@@ -70,5 +73,14 @@ export async function POST(
     { enabled, expectedRevision },
     config
   );
-  return result.kind === "ok" ? redirectTo(returnTo) : failed(returnTo);
+  if (result.kind === "ok") return redirectTo(returnTo);
+  // A stale revision is a conflict, and the operator's next move is different
+  // from every other refusal: the enablement changed after this page was
+  // read, so the answer is to reload and decide again rather than to send the
+  // same write again. The generic notice would not say that, and would leave
+  // the first operator retrying an identical request.
+  if (result.kind === "http-error" && result.status === 409) {
+    return redirectTo(withControlRefusal(returnTo, "conflicted"));
+  }
+  return failed(returnTo);
 }

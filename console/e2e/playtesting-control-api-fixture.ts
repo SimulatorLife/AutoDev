@@ -2519,6 +2519,64 @@ const skillRoles: Record<string, string[]> = {
   "code-review": [...INITIAL_SKILL_ROLES]
 };
 
+/**
+ * The agent enablement the fixture holds.
+ *
+ * The revision is what the Console's compare-and-swap is checked against, so
+ * it has to move when the enablement moves: a page that loaded the old
+ * revision and then wrote is a conflict, not a silent overwrite of somebody
+ * else's change. The second role has no runtime projection at all, so it has
+ * no enablement to change and no revision to offer -- which is the state the
+ * Console has to keep distinct from "disabled".
+ */
+const INITIAL_AGENT_ENABLEMENT_REVISION = "a".repeat(64);
+const agentEnablement: Record<
+  string,
+  { mutable: boolean; enabled: boolean; revision: string }
+> = {
+  default: {
+    mutable: true,
+    enabled: true,
+    revision: INITIAL_AGENT_ENABLEMENT_REVISION
+  },
+  worker: { mutable: false, enabled: false, revision: "" }
+};
+
+function nextAgentEnablementRevision(revision: string): string {
+  return (BigInt(`0x${revision}`) + 1n).toString(16).padStart(64, "0");
+}
+
+/**
+ * One role's enablement, as the Runtime reports it.
+ *
+ * The list and the detail read the same state through this one function, so a
+ * write that lands is the same fact on both surfaces rather than two the
+ * fixture keeps in step by hand.
+ */
+function agentEnablementFor(role: string): {
+  kind: "observed" | "unavailable";
+  enabled: boolean | null;
+  mutable: boolean;
+  revision?: string;
+  reason?: string;
+} {
+  const state = agentEnablement[role];
+  if (state === undefined || !state.mutable) {
+    return {
+      kind: "unavailable",
+      enabled: null,
+      mutable: false,
+      reason: "The fixture has no runtime enablement projection."
+    };
+  }
+  return {
+    kind: "observed",
+    enabled: state.enabled,
+    mutable: true,
+    revision: state.revision
+  };
+}
+
 function nextSkillAssignmentRevision(): string {
   return (BigInt(`0x${skillAssignmentRevision}`) + 1n)
     .toString(16)
@@ -2610,6 +2668,151 @@ async function handleSyntheticSkillRoleMutation(
       summary: `Assigned ${name} to ${skillRoles[name].join(", ") || "no role"}.`,
       identifier: generation
     }
+  });
+  return true;
+}
+
+/**
+ * The agent enablement write.
+ *
+ * The Runtime owns this state, so the write carries the revision the caller
+ * read and is checked against it: a page holding a stale revision is a
+ * conflict, not a silent overwrite of somebody else's change. A role with no
+ * runtime projection has nothing to enable, so the write is refused there too
+ * rather than inventing a value for it.
+ */
+async function handleAgentEnablementMutation(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): Promise<boolean> {
+  const match = url.pathname.match(AGENT_DETAIL_ROUTE);
+  if (match === null) return false;
+  if (request.method !== "PATCH") return false;
+
+  const role = decodeURIComponent(match[1]);
+  const body = await readJsonBody(request);
+  const enabled = body?.enabled;
+  const expectedRevision = body?.expectedRevision;
+  if (typeof enabled !== "boolean" || typeof expectedRevision !== "string") {
+    sendJson(
+      response,
+      {
+        code: "autodev_control_api_invalid_body",
+        message: "The fixture needs an enabled boolean and an expectedRevision."
+      },
+      400
+    );
+    return true;
+  }
+
+  const state = agentEnablement[role];
+  if (state === undefined) {
+    sendJson(
+      response,
+      {
+        code: "autodev_control_agent_not_found",
+        message: "The fixture has no agent with that role."
+      },
+      404
+    );
+    return true;
+  }
+  if (!state.mutable) {
+    sendJson(
+      response,
+      {
+        code: "autodev_control_agent_enablement_not_mutable",
+        message:
+          "The fixture has no runtime enablement projection for that agent, so there is nothing to enable."
+      },
+      409
+    );
+    return true;
+  }
+  if (expectedRevision !== state.revision) {
+    sendJson(
+      response,
+      {
+        code: "autodev_control_agent_enablement_conflict",
+        message:
+          "The enablement changed after this page was read, so nothing was written."
+      },
+      409
+    );
+    return true;
+  }
+
+  const previous = state.enabled;
+  state.enabled = enabled;
+  state.revision = nextAgentEnablementRevision(state.revision);
+  sendJson(response, {
+    schema: "autodev-control-agent-enablement-v1",
+    role,
+    enabled,
+    previous,
+    revision: state.revision,
+    actor: "fixture-operator",
+    reconciliation: {
+      status: {
+        convergence: "pending",
+        desiredGeneration: `agent-${role}`,
+        observedGeneration: null,
+        lastApplyAt: FIXTURE_APPLIED_AT,
+        lastObservationAt: null,
+        lastError: null,
+        explanation:
+          "The desired enablement was written; the runtime has not reported it back yet."
+      },
+      history: []
+    }
+  });
+  return true;
+}
+
+/**
+ * The fixture's own control over the agent enablement.
+ *
+ * `/fixture/agents/state?state=revision-moved` moves the revision without this
+ * Console knowing: the page that has the agent open holds the revision it was
+ * rendered with, so moving it here is what makes the page's next write a
+ * conflict rather than a silent overwrite of somebody else's change. The
+ * `enabled` and `disabled` states put the enablement back where a test that
+ * writes starts from.
+ */
+function configureAgentEnablementFixture(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (url.pathname !== "/fixture/agents/state") return false;
+  if (request.method !== "POST") {
+    response.writeHead(405).end();
+    return true;
+  }
+  const state = url.searchParams.get("state");
+  if (state === "enabled" || state === "disabled") {
+    agentEnablement.default.enabled = state === "enabled";
+    agentEnablement.default.revision = INITIAL_AGENT_ENABLEMENT_REVISION;
+  } else if (state === "revision-moved") {
+    agentEnablement.default.revision = nextAgentEnablementRevision(
+      agentEnablement.default.revision
+    );
+  } else {
+    sendJson(
+      response,
+      {
+        code: "autodev_fixture_unknown_state",
+        message: "The fixture knows enabled, disabled and revision-moved."
+      },
+      400
+    );
+    return true;
+  }
+  sendJson(response, {
+    state: state === "revision-moved" ? "revision-moved" : state,
+    enabled: agentEnablement.default.enabled,
+    revision: agentEnablement.default.revision
   });
   return true;
 }
@@ -3407,12 +3610,7 @@ function handleCatalogResourceRead(
           valid: true,
           status: "idle",
           convergence: "converged",
-          enablement: {
-            kind: "observed",
-            enabled: true,
-            mutable: true,
-            revision: "a".repeat(64)
-          },
+          enablement: agentEnablementFor("default"),
           primaryModel: "claude",
           allowedProviders: ["claude"],
           mcps: ["lsp"],
@@ -3428,12 +3626,7 @@ function handleCatalogResourceRead(
           valid: true,
           status: "idle",
           convergence: NOT_OBSERVED_CONVERGENCE,
-          enablement: {
-            kind: "unavailable",
-            enabled: null,
-            mutable: false,
-            reason: "The fixture has no runtime enablement projection."
-          },
+          enablement: agentEnablementFor("worker"),
           primaryModel: "claude",
           allowedProviders: ["claude"],
           mcps: [],
@@ -3551,12 +3744,7 @@ function handleCatalogResourceRead(
       valid: true,
       status: "idle",
       convergence: "converged",
-      enablement: {
-        kind: "observed",
-        enabled: true,
-        mutable: true,
-        revision: "a".repeat(64)
-      },
+      enablement: agentEnablementFor(decodeURIComponent(agentDetail[1])),
       primaryModel: "claude",
       allowedProviders: ["claude"],
       mcps: ["lsp"],
@@ -3643,6 +3831,33 @@ function handleFixtureCatalogRoutes(
   return handleCatalogResourceRead(url, response);
 }
 
+/**
+ * The fixture's own write routes.
+ *
+ * One dispatch for the writes, so the request handler stays within the
+ * complexity budget it was written to. Each of these answers a route that the
+ * read-only guard would otherwise reject with a bare 405 -- which reads as a
+ * route that does not exist.
+ */
+async function handleSyntheticMutationRoutes(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): Promise<boolean> {
+  if (await handleSyntheticWorkspaceApproval(request, response, url.pathname)) {
+    return true;
+  }
+  if (await handleSyntheticAnalysisMutation(request, response, url))
+    return true;
+  if (await handleSyntheticRunMutation(request, response, url)) return true;
+  if (handleSyntheticReadinessInitialization(request, response, url))
+    return true;
+  if (await handleSyntheticSkillRoleMutation(request, response, url))
+    return true;
+  if (await handleAgentEnablementMutation(request, response, url)) return true;
+  return configureAgentEnablementFixture(request, response, url);
+}
+
 const server = createServer(
   async (request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -3653,17 +3868,7 @@ const server = createServer(
     if (resetSyntheticFixture(request, response)) return;
     if (configureReadinessFixture(url, response)) return;
     if (handleSyntheticReadFailureConfiguration(url, response)) return;
-    if (
-      await handleSyntheticWorkspaceApproval(request, response, url.pathname)
-    ) {
-      return;
-    }
-    if (await handleSyntheticAnalysisMutation(request, response, url)) return;
-    if (await handleSyntheticRunMutation(request, response, url)) return;
-    if (handleSyntheticReadinessInitialization(request, response, url)) return;
-    if (await handleSyntheticSkillRoleMutation(request, response, url)) {
-      return;
-    }
+    if (await handleSyntheticMutationRoutes(request, response, url)) return;
     // The catalog and the fixture's own control routes are answered before the
     // read-only guard: one of them is a write, and a write that the guard
     // rejects with a bare 405 is a route that does not exist.
