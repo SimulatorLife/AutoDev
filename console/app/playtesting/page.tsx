@@ -27,7 +27,8 @@ import {
   type ControlApiConfig,
   controlApiFailureCode,
   type ControlApiResult,
-  fetchWorkspaces
+  fetchWorkspaces,
+  PLAYTESTING_CONTROL_API_TIMEOUT_MS
 } from "../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
@@ -421,7 +422,9 @@ export default async function PlaytestingPage({
   }
 
   if (scope.workspaceId === null) {
-    const workspaceResult = await fetchWorkspaces(config);
+    const workspaceResult = await fetchWorkspaces(config, {
+      timeoutMs: PLAYTESTING_CONTROL_API_TIMEOUT_MS
+    });
     if (workspaceResult.kind !== "ok") {
       return React.createElement(
         ConsolePageShell,
@@ -464,7 +467,11 @@ export default async function PlaytestingPage({
   }
 
   const [workspaceResult, loaded] = await Promise.all([
-    fetchWorkspaces(config),
+    // The workspace read runs beside the playtesting reads, so it shares
+    // their budget: the Control API answers this page's read set as one
+    // fan-out, and a shorter deadline here fails the whole page while the
+    // Control API is still answering it.
+    fetchWorkspaces(config, { timeoutMs: PLAYTESTING_CONTROL_API_TIMEOUT_MS }),
     scope.view === "overview"
       ? loadOverview(scope, config)
       : loadList(scope, config)
