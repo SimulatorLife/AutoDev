@@ -2,7 +2,9 @@ import { expect, type Page, test } from "@playwright/test";
 
 const WORKSPACES_URL = "/workspaces";
 const WORKSPACE_ID = "fixture/game";
+const WORKSPACE_DETAIL_URL = "/workspaces/fixture/game";
 const OBSERVED_REQUESTS = "12";
+const REQUESTS_VALUE = "[data-workspace-requests]";
 
 function documentFitsViewport(page: Page): Promise<boolean> {
   return page.evaluate(
@@ -16,7 +18,7 @@ test("Workspaces reports each workspace's aggregate request count", async ({
   await page.setViewportSize({ width: 1280, height: 844 });
   await page.goto(WORKSPACES_URL);
 
-  const requests = page.locator("[data-workspace-requests]");
+  const requests = page.locator(REQUESTS_VALUE);
   await expect(requests).toHaveCount(1);
   // The count is a measurement, so it renders as the number the Usage
   // telemetry reported for this workspace.
@@ -80,14 +82,41 @@ test("Workspaces names the reason there is no aggregate usage count", async ({
   await page.setViewportSize({ width: 1280, height: 844 });
   await page.goto(WORKSPACES_URL);
 
-  await expect(page.locator("[data-workspace-requests]")).toHaveCount(1);
-  await expect(
-    page.locator('[data-workspace-requests="unavailable"]')
-  ).toHaveCount(0);
-  await expect(
-    page.locator('[data-workspace-requests="not-observed"]')
-  ).toHaveCount(0);
-  await expect(page.locator("[data-workspace-requests]")).toHaveText(
-    OBSERVED_REQUESTS
+  await expect(page.locator(REQUESTS_VALUE)).toHaveCount(1);
+  await expect(page.locator(`${REQUESTS_VALUE}="unavailable"]`)).toHaveCount(0);
+  await expect(page.locator(`${REQUESTS_VALUE}="not-observed"]`)).toHaveCount(
+    0
   );
+  await expect(page.locator(REQUESTS_VALUE)).toHaveText(OBSERVED_REQUESTS);
+});
+
+test("the workspace detail shows the same aggregate usage the list shows", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await page.goto(WORKSPACE_DETAIL_URL);
+
+  // The detail page resolves the same reading the list row does, so the two
+  // surfaces cannot drift into different vocabularies for the same fact.
+  const value = page.locator(REQUESTS_VALUE);
+  await expect(value).toHaveCount(1);
+  await expect(value).toHaveAttribute("data-workspace-requests", "observed");
+  await expect(value).toHaveText(OBSERVED_REQUESTS);
+  await expect(page.getByText("Requests (24h)")).toBeVisible();
+  await expect(
+    page.locator('[data-section="workspace-configuration"]')
+  ).toBeVisible();
+  expect(await documentFitsViewport(page)).toBe(true);
+});
+
+test("the workspace detail stays inside the viewport at a narrow width", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(WORKSPACE_DETAIL_URL);
+
+  const value = page.locator(REQUESTS_VALUE);
+  await expect(value).toHaveText(OBSERVED_REQUESTS);
+  await expect(value).toBeVisible();
+  expect(await documentFitsViewport(page)).toBe(true);
 });

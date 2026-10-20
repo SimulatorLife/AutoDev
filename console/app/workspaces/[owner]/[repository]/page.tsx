@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import React from "react";
 
 import { isWorkspaceId } from "../../../../src/features/workspaces/paths.ts";
+import { workspaceRequestReading } from "../../../../src/features/workspaces/workspace-usage.ts";
 import { WorkspaceDetailView } from "../../../../src/features/workspaces/WorkspaceDetailView.ts";
 import {
   isControlFailure,
@@ -20,6 +21,7 @@ import {
   readNodeContext,
   ResourceUnavailable
 } from "../../../_console.ts";
+import { readWorkspaceRequestSource } from "../../_requests.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -60,11 +62,12 @@ export default async function WorkspaceDetailPage({
   if (!isWorkspaceId(id)) notFound();
 
   const query = (await searchParams) ?? {};
-  const [workspacesResult, approvalResult, visualTargetsResult] =
+  const [workspacesResult, approvalResult, visualTargetsResult, requestSource] =
     await Promise.all([
       fetchWorkspaces(config),
       fetchWorkspacePlaytestApproval(id, config),
-      fetchWorkspaceVisualPlaytestTargets(id, config)
+      fetchWorkspaceVisualPlaytestTargets(id, config),
+      readWorkspaceRequestSource()
     ]);
 
   if (workspacesResult.kind !== "ok") {
@@ -120,6 +123,7 @@ export default async function WorkspaceDetailPage({
               code: controlApiFailureCode(visualTargetsResult),
               message: visualTargetsResult.message
             },
+      requests: workspaceRequestReading(requestSource, id),
       controlFailed: isControlFailure(query.control),
       refusal: readControlRefusal(query.refusal)
     })

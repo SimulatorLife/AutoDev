@@ -9,6 +9,7 @@ import {
   type WorkspaceRequestLookup,
   workspaceRequestLookup
 } from "../src/features/workspaces/workspace-usage.ts";
+import { WorkspaceDetailView } from "../src/features/workspaces/WorkspaceDetailView.ts";
 import { WorkspacesView } from "../src/features/workspaces/WorkspacesView.ts";
 
 const WORKSPACE_ID = "SimulatorLife/FixtureGame";
@@ -162,6 +163,47 @@ test("the Requests column says why there is no count", () => {
   assert.match(unavailable, />Unavailable</u);
 
   const notObserved = renderWorkspaces(lookup({ kind: "not-observed" }));
+  assert.match(notObserved, /data-workspace-requests="not-observed"/u);
+  assert.match(notObserved, />Not observed</u);
+});
+
+function renderDetail(
+  requests: Parameters<typeof WorkspaceDetailView>[0]["requests"]
+): string {
+  return renderToStaticMarkup(
+    React.createElement(WorkspaceDetailView, {
+      workspace: {
+        id: WORKSPACE_ID,
+        baseBranch: "main",
+        enabled: true,
+        agentRoles: null,
+        configuration: { status: "configured" },
+        runtime: { status: "not-observed" }
+      },
+      approval: null,
+      visualTargets: null,
+      requests
+    })
+  );
+}
+
+test("the workspace detail shows the same aggregate usage the list shows", () => {
+  const markup = renderDetail({ kind: "observed", count: 12 });
+
+  // The detail page renders the value the list renders, from the same
+  // reading, so the two surfaces cannot drift into different vocabularies
+  // for the same fact.
+  assert.match(markup, /Requests \(24h\)/u);
+  assert.match(markup, /data-workspace-requests="observed"/u);
+  assert.match(markup, />12</u);
+});
+
+test("the workspace detail says why there is no aggregate usage count", () => {
+  const unavailable = renderDetail({ kind: "unavailable" });
+  assert.match(unavailable, /data-workspace-requests="unavailable"/u);
+  assert.match(unavailable, />Unavailable</u);
+
+  const notObserved = renderDetail({ kind: "not-observed" });
   assert.match(notObserved, /data-workspace-requests="not-observed"/u);
   assert.match(notObserved, />Not observed</u);
 });

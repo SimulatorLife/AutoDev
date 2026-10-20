@@ -38,6 +38,10 @@ import {
   workspaceConfigurationBadgeLabel,
   workspaceConfigurationBadgeVariant
 } from "./workspace-health.ts";
+import {
+  type WorkspaceRequestReading,
+  workspaceRequestValue
+} from "./workspace-usage.ts";
 import { WorkspacePlaytestApprovalForm } from "./WorkspacePlaytestApprovalForm.ts";
 import { WorkspacePlaytestRevokeForm } from "./WorkspacePlaytestRevokeForm.ts";
 import {
@@ -60,6 +64,14 @@ export interface WorkspaceDetailViewProps {
     readonly WorkspaceVisualPlaytestTargetApproval[] | null | undefined;
   readonly visualTargetsUnavailable?:
     WorkspaceVisualTargetUnavailable | undefined;
+  /**
+   * This workspace's logical-request count over the last 24 hours.
+   *
+   * `undefined` when the page could not resolve the workspace's reading at
+   * all; the three states it can carry are the three the list's Requests
+   * column renders.
+   */
+  readonly requests?: WorkspaceRequestReading | undefined;
   readonly controlFailed?: boolean | undefined;
   readonly refusal?:
     React.ComponentProps<typeof ControlFailureNotice>["refusal"] | undefined;
@@ -159,9 +171,11 @@ function LimitsPanel({
  * rather than an idle one.
  */
 function ConfigurationPanel({
-  workspace
+  workspace,
+  requests
 }: {
   readonly workspace: ControlApiWorkspaceRecord;
+  readonly requests: WorkspaceRequestReading | undefined;
 }): React.JSX.Element {
   return React.createElement(
     DetailGrid,
@@ -195,6 +209,11 @@ function ConfigurationPanel({
         status: workspaceAvailabilityBadgeVariant(workspace.runtime),
         label: workspaceAvailabilityBadgeLabel(workspace.runtime)
       })
+    ),
+    React.createElement(
+      DetailValue,
+      { label: "Requests (24h)" },
+      workspaceRequestValue(requests)
     )
   );
 }
@@ -313,6 +332,7 @@ export function WorkspaceDetailView({
   approvalUnavailable,
   visualTargets,
   visualTargetsUnavailable,
+  requests,
   controlFailed,
   refusal
 }: WorkspaceDetailViewProps): React.JSX.Element {
@@ -573,7 +593,7 @@ export function WorkspaceDetailView({
       React.createElement(
         "div",
         { className: "mt-3 flex flex-col gap-4" },
-        React.createElement(ConfigurationPanel, { workspace })
+        React.createElement(ConfigurationPanel, { workspace, requests })
       )
     ),
     React.createElement(

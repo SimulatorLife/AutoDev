@@ -9,10 +9,7 @@ import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
-import {
-  NOT_OBSERVED_LABEL,
-  StatusBadge
-} from "../../components/status/StatusBadge.ts";
+import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
@@ -24,7 +21,6 @@ import {
   ENTITY_LINK_CLASS,
   MONO_ID_CLASS,
   MONO_VALUE_CLASS,
-  MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
@@ -41,7 +37,7 @@ import {
 } from "./workspace-health.ts";
 import {
   type WorkspaceRequestLookup,
-  type WorkspaceRequestReading
+  workspaceRequestValue
 } from "./workspace-usage.ts";
 
 /**
@@ -87,43 +83,6 @@ export interface WorkspacesViewProps {
   readonly workspaces: readonly ControlApiWorkspaceRecord[];
   readonly approvals: WorkspaceApprovalLookup;
   readonly requests: WorkspaceRequestLookup;
-}
-
-/**
- * The request count cell.
- *
- * A count is rendered as a number, and everything else is rendered as the
- * reason there is no number: the source could not be read, or it answered
- * without reporting this workspace.
- */
-function workspaceRequestCell(
-  reading: WorkspaceRequestReading | undefined
-): React.JSX.Element {
-  if (reading === undefined || reading.kind === "not-observed") {
-    return React.createElement(
-      "span",
-      {
-        className: MUTED_META_CLASS,
-        "data-workspace-requests": "not-observed"
-      },
-      NOT_OBSERVED_LABEL
-    );
-  }
-  if (reading.kind === "unavailable") {
-    return React.createElement(
-      "span",
-      { className: MUTED_META_CLASS, "data-workspace-requests": "unavailable" },
-      "Unavailable"
-    );
-  }
-  return React.createElement(
-    "span",
-    {
-      className: "text-xs text-fg-secondary tabular-nums",
-      "data-workspace-requests": "observed"
-    },
-    String(reading.count)
-  );
 }
 
 export function WorkspacesView({
@@ -256,7 +215,7 @@ export function WorkspacesView({
       headerHelp:
         "Logical routed requests attributed to this workspace in the last 24 hours. A request that carried no workspace attribution is not counted in any workspace, so these counts do not have to add up to the total.",
       weight: 118,
-      cell: (ws) => workspaceRequestCell(requests.get(ws.id))
+      cell: (ws) => workspaceRequestValue(requests.get(ws.id))
     }
   ];
 

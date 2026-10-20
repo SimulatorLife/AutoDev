@@ -1,4 +1,8 @@
 import type { UsageWorkspaceRequestBreakdown } from "@simulatorlife/autodev-core";
+import React from "react";
+
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
 /**
  * What the Usage telemetry says about one workspace's logical requests.
@@ -45,11 +49,7 @@ export type WorkspaceRequestSource =
     };
 
 /**
- * Resolve each workspace's logical-request count from the Usage breakdown.
- *
- * The breakdown is the whole-product one, read once for the page rather than
- * per workspace: one query answers every workspace, which is what keeps this
- * surface affordable.
+ * Resolve one workspace's logical-request count from the Usage breakdown.
  *
  * A workspace that is absent from a *complete* breakdown made no requests in
  * the window, which is a measured zero and is reported as one. A workspace
@@ -59,33 +59,81 @@ export type WorkspaceRequestSource =
  * Requests that carried no workspace attribution belong to no workspace and
  * are not counted in any of them.
  */
+export function workspaceRequestReading(
+  source: WorkspaceRequestSource,
+  workspaceId: string
+): WorkspaceRequestReading {
+  if (source.kind !== "observed") return { kind: source.kind };
+  const matching = source.breakdown.rows.filter(
+    (row) => row.workspace === workspaceId
+  );
+  if (matching.length > 0) {
+    return {
+      kind: "observed",
+      count: matching.reduce((total, row) => total + row.count, 0)
+    };
+  }
+  return source.breakdown.partial
+    ? { kind: "not-observed" }
+    : { kind: "observed", count: 0 };
+}
+
+/**
+ * Resolve each workspace's logical-request count from the Usage breakdown.
+ *
+ * The breakdown is the whole-product one, read once for the page rather than
+ * per workspace: one query answers every workspace, which is what keeps this
+ * surface affordable.
+ */
 export function workspaceRequestLookup(
   source: WorkspaceRequestSource,
   workspaceIds: readonly string[]
 ): WorkspaceRequestLookup {
   const readings = new Map<string, WorkspaceRequestReading>();
-
   for (const workspaceId of workspaceIds) {
-    if (source.kind !== "observed") {
-      readings.set(workspaceId, { kind: source.kind });
-      continue;
-    }
-    const matching = source.breakdown.rows.filter(
-      (row) => row.workspace === workspaceId
-    );
-    if (matching.length > 0) {
-      readings.set(workspaceId, {
-        kind: "observed",
-        count: matching.reduce((total, row) => total + row.count, 0)
-      });
-      continue;
-    }
-    readings.set(
-      workspaceId,
-      source.breakdown.partial
-        ? { kind: "not-observed" }
-        : { kind: "observed", count: 0 }
-    );
+    readings.set(workspaceId, workspaceRequestReading(source, workspaceId));
   }
   return readings;
+}
+
+/**
+ * The rendered Requests value.
+ *
+ * A count is rendered as a number, and everything else is rendered as the
+ * reason there is no number: the source could not be read, or it answered
+ * without reporting this workspace. The list row and the workspace detail
+ * render this same value, so the two surfaces cannot drift into different
+ * vocabularies for the same fact.
+ */
+export function workspaceRequestValue(
+  reading: WorkspaceRequestReading | undefined
+): React.JSX.Element {
+  if (reading === undefined || reading.kind === "not-observed") {
+    return React.createElement(
+      "span",
+      {
+        className: MUTED_META_CLASS,
+        "data-workspace-requests": "not-observed"
+      },
+      NOT_OBSERVED_LABEL
+    );
+  }
+  if (reading.kind === "unavailable") {
+    return React.createElement(
+      "span",
+      {
+        className: MUTED_META_CLASS,
+        "data-workspace-requests": "unavailable"
+      },
+      "Unavailable"
+    );
+  }
+  return React.createElement(
+    "span",
+    {
+      className: "text-xs text-fg-secondary tabular-nums",
+      "data-workspace-requests": "observed"
+    },
+    String(reading.count)
+  );
 }

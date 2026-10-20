@@ -2,11 +2,6 @@ import type { Metadata } from "next";
 import React from "react";
 
 import {
-  type WorkspaceRequestLookup,
-  workspaceRequestLookup,
-  type WorkspaceRequestSource
-} from "../../src/features/workspaces/workspace-usage.ts";
-import {
   type WorkspaceApprovalLookup,
   WorkspacesView
 } from "../../src/features/workspaces/WorkspacesView.ts";
@@ -16,13 +11,13 @@ import {
   fetchWorkspacePlaytestApproval,
   fetchWorkspaces
 } from "../../src/lib/server/control-api.ts";
-import { loadOpenLITUsage } from "../../src/lib/server/openlit-usage.ts";
 import {
   ConsolePageShell,
   controlApiCredentialUnavailable,
   readNodeContext,
   ResourceUnavailable
 } from "../_console.ts";
+import { readWorkspaceRequests } from "./_requests.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -52,39 +47,6 @@ async function readApprovals(
     })
   );
   return new Map(entries);
-}
-
-/**
- * What the Usage read produced, as the three distinct claims the Requests
- * cell can make.
- *
- * A source the Console could not read is `unavailable`; a source that read
- * but produced no breakdown is `not-observed`. Keeping them apart is the point:
- * neither is a workspace that made no requests.
- */
-function workspaceRequestSource(
-  result: Awaited<ReturnType<typeof loadOpenLITUsage>>
-): WorkspaceRequestSource {
-  if (result.kind !== "ok") return { kind: "unavailable" };
-  const breakdown = result.data.metrics.requestsByWorkspace;
-  if (breakdown === null) return { kind: "not-observed" };
-  return { kind: "observed", breakdown };
-}
-
-/**
- * Each workspace's logical-request count over the last 24 hours.
- *
- * The Usage telemetry groups logical routed requests by workspace, so one
- * read answers every row; asking per workspace would run one query per row
- * to read the same breakdown. A Usage source the Console could not read at
- * all leaves every workspace unavailable rather than empty -- an unread source
- * is not a source that observed nothing.
- */
-async function readWorkspaceRequests(
-  workspaceIds: readonly string[]
-): Promise<WorkspaceRequestLookup> {
-  const result = await loadOpenLITUsage({ range: "24H", values: {} });
-  return workspaceRequestLookup(workspaceRequestSource(result), workspaceIds);
 }
 
 export default async function WorkspacesPage(): Promise<React.JSX.Element> {
