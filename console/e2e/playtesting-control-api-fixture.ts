@@ -2683,6 +2683,262 @@ let runtimeUnavailable = false;
 let githubRuntimeUnavailable = false;
 
 /**
+ * The workspace the durable memory belongs to.
+ */
+const MEMORY_WORKSPACE_ID = "fixture/game";
+/** The claims the store holds behind the window one read carries. */
+const MEMORY_RECORDS_TOTAL = 1204;
+/** The rows one read carries. */
+const MEMORY_RECORDS_LIMIT = 50;
+
+/**
+ * Whether durable memory storage is connected.
+ *
+ * The storage status and the records read answer different questions, and the
+ * page uses the status to explain a failed records read rather than guessing
+ * why it failed. So the fixture has to be able to take the storage away, or
+ * the page's explanation is only ever a guess that happens to be right.
+ */
+let memoryStorageNotConfigured = false;
+
+/**
+ * The durable claims the fixture holds.
+ *
+ * The rows carry the states the Memory view has to tell apart -- a claim
+ * that is active, one that was proposed, one that was superseded, one that
+ * was invalidated and one whose state is uncertain -- and the lifecycle
+ * rollup is about the whole filtered collection rather than the rows on the
+ * page, because a page is a window the reader chose.
+ */
+function memoryRecords(): readonly Record<string, unknown>[] {
+  return [
+    {
+      id: "mem-0001",
+      kind: "semantic",
+      scope: {
+        kind: "repository",
+        workspaceId: MEMORY_WORKSPACE_ID,
+        repositoryId: MEMORY_WORKSPACE_ID
+      },
+      claim: "The Console's breadcrumb landmark is named Breadcrumb.",
+      status: "active",
+      provenance: {
+        experienceIds: ["exp-0001"],
+        evidence: [
+          {
+            kind: "file",
+            uri: "console/src/components/navigation/Breadcrumbs.ts",
+            revision: "00b76b4d"
+          }
+        ],
+        createdBy: "autodev-local",
+        createdAt: "2026-02-11T09:12:00.000Z",
+        verificationSource: "console/e2e/breadcrumbs-acceptance.spec.ts",
+        lastVerifiedAt: "2026-02-11T10:02:00.000Z"
+      },
+      validity: {
+        state: "verified",
+        validFrom: "2026-02-11T09:12:00.000Z",
+        checkedAt: "2026-02-11T10:02:00.000Z",
+        verificationSource: "console/e2e/breadcrumbs-acceptance.spec.ts",
+        evidence: [
+          {
+            kind: "file",
+            uri: "console/src/components/navigation/Breadcrumbs.ts"
+          }
+        ]
+      },
+      createdAt: "2026-02-11T09:12:00.000Z",
+      updatedAt: "2026-02-11T10:02:00.000Z"
+    },
+    {
+      id: "mem-0002",
+      kind: "episodic",
+      scope: { kind: "workspace", workspaceId: MEMORY_WORKSPACE_ID },
+      claim: "The Usage p95 latency card read a duration in milliseconds.",
+      status: "proposed",
+      provenance: {
+        experienceIds: ["exp-0002"],
+        evidence: [
+          {
+            kind: "trace",
+            uri: "a1a1a1a100000000",
+            observedAt: "2026-02-11T09:40:00.000Z"
+          }
+        ],
+        createdBy: "autodev-local",
+        createdAt: "2026-02-11T09:40:00.000Z"
+      },
+      validity: {
+        state: "unverified",
+        evidence: []
+      },
+      createdAt: "2026-02-11T09:40:00.000Z",
+      updatedAt: "2026-02-11T09:40:00.000Z"
+    },
+    {
+      id: "mem-0003",
+      kind: "procedural",
+      scope: {
+        kind: "role",
+        workspaceId: MEMORY_WORKSPACE_ID,
+        role: "orchestrator",
+        repositoryId: MEMORY_WORKSPACE_ID
+      },
+      claim: "A duration has one owner.",
+      status: "superseded",
+      provenance: {
+        experienceIds: ["exp-0003"],
+        evidence: [{ kind: "commit", uri: "79767fb8" }],
+        createdBy: "autodev-local",
+        createdAt: "2026-02-10T16:04:00.000Z"
+      },
+      validity: {
+        state: "contradicted",
+        evidence: [{ kind: "commit", uri: "79767fb8" }]
+      },
+      supersededBy: ["mem-0004"],
+      createdAt: "2026-02-10T16:04:00.000Z",
+      updatedAt: "2026-02-11T08:22:00.000Z"
+    },
+    {
+      id: "mem-0004",
+      kind: "semantic",
+      scope: {
+        kind: "repository",
+        workspaceId: MEMORY_WORKSPACE_ID,
+        repositoryId: MEMORY_WORKSPACE_ID
+      },
+      claim: "Every duration on the Console is rendered by one formatter.",
+      status: "active",
+      provenance: {
+        experienceIds: ["exp-0004"],
+        evidence: [{ kind: "commit", uri: "79767fb8" }],
+        createdBy: "autodev-local",
+        createdAt: "2026-02-11T08:22:00.000Z",
+        verificationSource: "console/tests/duration-format.test.ts",
+        lastVerifiedAt: "2026-02-11T08:31:00.000Z"
+      },
+      validity: {
+        state: "verified",
+        validFrom: "2026-02-11T08:22:00.000Z",
+        checkedAt: "2026-02-11T08:31:00.000Z",
+        verificationSource: "console/tests/duration-format.test.ts",
+        evidence: [
+          { kind: "file", uri: "console/src/components/ui/duration.ts" }
+        ]
+      },
+      supersedes: ["mem-0003"],
+      createdAt: "2026-02-11T08:22:00.000Z",
+      updatedAt: "2026-02-11T08:31:00.000Z"
+    },
+    {
+      id: "mem-0005",
+      kind: "episodic",
+      scope: { kind: "global" },
+      claim: "The Evaluations page had never been driven in a browser.",
+      status: "invalidated",
+      provenance: {
+        experienceIds: ["exp-0005"],
+        evidence: [{ kind: "commit", uri: "8ea55f37" }],
+        createdBy: "autodev-local",
+        createdAt: "2026-02-09T11:00:00.000Z"
+      },
+      validity: {
+        state: "contradicted",
+        evidence: [{ kind: "commit", uri: "8ea55f37" }]
+      },
+      createdAt: "2026-02-09T11:00:00.000Z",
+      updatedAt: "2026-02-11T09:05:00.000Z"
+    }
+  ];
+}
+
+/**
+ * The durable memory reads the Memory page makes.
+ *
+ * The records read is a bounded window over a collection, and the lifecycle
+ * rollup it carries is about the collection rather than about the rows on the
+ * page -- the page is a window the reader chose, so counting off it reports
+ * at most a page of claims beside a total of thousands.
+ */
+function handleMemoryRead(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (url.pathname === "/fixture/memory/state") {
+    if (request.method !== "POST") {
+      response.writeHead(405).end();
+      return true;
+    }
+    memoryStorageNotConfigured =
+      url.searchParams.get("state") === "not_configured";
+    sendJson(response, {
+      state: memoryStorageNotConfigured ? "not_configured" : "configured"
+    });
+    return true;
+  }
+  if (url.pathname === "/control/memory/status") {
+    sendJson(response, {
+      schema: "autodev-memory-status-v1",
+      storage: {
+        state: memoryStorageNotConfigured ? "not_configured" : "configured",
+        backend: "postgresql",
+        embeddings: memoryStorageNotConfigured
+          ? "not_configured"
+          : "configured",
+        probeTimeoutMs: 2000
+      }
+    });
+    return true;
+  }
+  if (url.pathname === "/control/memory/records") {
+    if (memoryStorageNotConfigured) {
+      response.writeHead(503).end();
+      return true;
+    }
+    const records = memoryRecords();
+    sendJson(response, {
+      schema: "autodev-memory-records-v1",
+      items: records,
+      total: MEMORY_RECORDS_TOTAL,
+      limit: MEMORY_RECORDS_LIMIT,
+      offset: 0,
+      statusCounts: {
+        proposed: 412,
+        active: 604,
+        superseded: 120,
+        invalidated: 48,
+        uncertain: 20
+      }
+    });
+    return true;
+  }
+  if (url.pathname === "/control/memory/experiences") {
+    sendJson(response, {
+      schema: "autodev-memory-experiences-v1",
+      items: [],
+      total: 0,
+      limit: MEMORY_RECORDS_LIMIT,
+      offset: 0
+    });
+    return true;
+  }
+  if (url.pathname === "/control/memory/session-cohorts") {
+    sendJson(response, {
+      schema: "autodev-memory-session-outcome-cohorts-v1",
+      cells: [],
+      sessionCount: 18,
+      reportedSessionCount: 12,
+      unreportedSessionCount: 6
+    });
+    return true;
+  }
+  return false;
+}
+
+/**
  * The workflow definitions the repository declares.
  *
  * The rows carry the states the page has to tell apart: a workflow that is
@@ -3382,6 +3638,7 @@ function handleFixtureCatalogRoutes(
   if (configureSkillFixture(request, response, url)) return true;
   if (handleRuntimeFixture(request, response, url)) return true;
   if (handleGithubRead(request, response, url)) return true;
+  if (handleMemoryRead(request, response, url)) return true;
   if (handleEvaluationsRead(url, response)) return true;
   return handleCatalogResourceRead(url, response);
 }
