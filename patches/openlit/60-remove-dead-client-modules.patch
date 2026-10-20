@@ -1,0 +1,922 @@
+diff --git a/src/client/package-lock.json b/src/client/package-lock.json
+index 0b24f2f2..59cc1389 100644
+--- a/src/client/package-lock.json
++++ b/src/client/package-lock.json
+@@ -30,7 +30,6 @@
+         "@openplait/runtime": "1.0.0",
+         "@prisma/client": "^5.15.0",
+         "@radix-ui/react-accordion": "^1.2.1",
+-        "@radix-ui/react-alert-dialog": "^1.1.15",
+         "@radix-ui/react-avatar": "^1.1.10",
+         "@radix-ui/react-checkbox": "^1.1.0",
+         "@radix-ui/react-collapsible": "^1.1.0",
+@@ -68,7 +67,6 @@
+         "mustache": "^4.2.0",
+         "next": "^14.2.4",
+         "next-auth": "^4.24.7",
+-        "next-themes": "^0.3.0",
+         "openai": "^4.50.0",
+         "posthog-js": "^1.364.4",
+         "react": "^18.3.1",
+@@ -85,7 +83,6 @@
+         "sqlstring": "^2.3.3",
+         "tailwind-merge": "^2.2.2",
+         "tailwindcss-animate": "^1.0.7",
+-        "tiny-cookie": "^2.5.1",
+         "zustand": "^4.5.2"
+       },
+       "devDependencies": {
+@@ -4600,372 +4597,6 @@
+         }
+       }
+     },
+-    "node_modules/@radix-ui/react-alert-dialog": {
+-      "version": "1.1.15",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-alert-dialog/-/react-alert-dialog-1.1.15.tgz",
+-      "integrity": "sha512-oTVLkEw5GpdRe29BqJ0LSDFWI3qu0vR1M0mUkOQWDIUnY/QIkLpgDMWuKxP94c2NAC2LGcgVhG1ImF3jkZ5wXw==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "@radix-ui/primitive": "1.1.3",
+-        "@radix-ui/react-compose-refs": "1.1.2",
+-        "@radix-ui/react-context": "1.1.2",
+-        "@radix-ui/react-dialog": "1.1.15",
+-        "@radix-ui/react-primitive": "2.1.3",
+-        "@radix-ui/react-slot": "1.2.3"
+-      },
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "@types/react-dom": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc",
+-        "react-dom": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        },
+-        "@types/react-dom": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/primitive": {
+-      "version": "1.1.3",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/primitive/-/primitive-1.1.3.tgz",
+-      "integrity": "sha512-JTF99U/6XIjCBo0wqkU5sK10glYe27MRRsfwoiq5zzOEZLHU3A3KCMa5X/azekYRCJ0HlwI0crAXS/5dEHTzDg==",
+-      "license": "MIT"
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/react-compose-refs": {
+-      "version": "1.1.2",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-compose-refs/-/react-compose-refs-1.1.2.tgz",
+-      "integrity": "sha512-z4eqJvfiNnFMHIIvXP3CY57y2WJs5g2v3X0zm9mEJkrkNv4rDxu+sg9Jh8EkXyeqBkB7SOcboo9dMVqhyrACIg==",
+-      "license": "MIT",
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/react-context": {
+-      "version": "1.1.2",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-context/-/react-context-1.1.2.tgz",
+-      "integrity": "sha512-jCi/QKUM2r1Ju5a3J64TH2A5SpKAgh0LpknyqdQ4m6DCV0xJ2HG1xARRwNGPQfi1SLdLWZ1OJz6F4OMBBNiGJA==",
+-      "license": "MIT",
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/react-dialog": {
+-      "version": "1.1.15",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-dialog/-/react-dialog-1.1.15.tgz",
+-      "integrity": "sha512-TCglVRtzlffRNxRMEyR36DGBLJpeusFcgMVD9PZEzAKnUs1lKCgX5u9BmC2Yg+LL9MgZDugFFs1Vl+Jp4t/PGw==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "@radix-ui/primitive": "1.1.3",
+-        "@radix-ui/react-compose-refs": "1.1.2",
+-        "@radix-ui/react-context": "1.1.2",
+-        "@radix-ui/react-dismissable-layer": "1.1.11",
+-        "@radix-ui/react-focus-guards": "1.1.3",
+-        "@radix-ui/react-focus-scope": "1.1.7",
+-        "@radix-ui/react-id": "1.1.1",
+-        "@radix-ui/react-portal": "1.1.9",
+-        "@radix-ui/react-presence": "1.1.5",
+-        "@radix-ui/react-primitive": "2.1.3",
+-        "@radix-ui/react-slot": "1.2.3",
+-        "@radix-ui/react-use-controllable-state": "1.2.2",
+-        "aria-hidden": "^1.2.4",
+-        "react-remove-scroll": "^2.6.3"
+-      },
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "@types/react-dom": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc",
+-        "react-dom": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        },
+-        "@types/react-dom": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/react-dismissable-layer": {
+-      "version": "1.1.11",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-dismissable-layer/-/react-dismissable-layer-1.1.11.tgz",
+-      "integrity": "sha512-Nqcp+t5cTB8BinFkZgXiMJniQH0PsUt2k51FUhbdfeKvc4ACcG2uQniY/8+h1Yv6Kza4Q7lD7PQV0z0oicE0Mg==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "@radix-ui/primitive": "1.1.3",
+-        "@radix-ui/react-compose-refs": "1.1.2",
+-        "@radix-ui/react-primitive": "2.1.3",
+-        "@radix-ui/react-use-callback-ref": "1.1.1",
+-        "@radix-ui/react-use-escape-keydown": "1.1.1"
+-      },
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "@types/react-dom": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc",
+-        "react-dom": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        },
+-        "@types/react-dom": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/react-focus-guards": {
+-      "version": "1.1.3",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-focus-guards/-/react-focus-guards-1.1.3.tgz",
+-      "integrity": "sha512-0rFg/Rj2Q62NCm62jZw0QX7a3sz6QCQU0LpZdNrJX8byRGaGVTqbrW9jAoIAHyMQqsNpeZ81YgSizOt5WXq0Pw==",
+-      "license": "MIT",
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/react-focus-scope": {
+-      "version": "1.1.7",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-focus-scope/-/react-focus-scope-1.1.7.tgz",
+-      "integrity": "sha512-t2ODlkXBQyn7jkl6TNaw/MtVEVvIGelJDCG41Okq/KwUsJBwQ4XVZsHAVUkK4mBv3ewiAS3PGuUWuY2BoK4ZUw==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "@radix-ui/react-compose-refs": "1.1.2",
+-        "@radix-ui/react-primitive": "2.1.3",
+-        "@radix-ui/react-use-callback-ref": "1.1.1"
+-      },
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "@types/react-dom": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc",
+-        "react-dom": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        },
+-        "@types/react-dom": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/react-id": {
+-      "version": "1.1.1",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-id/-/react-id-1.1.1.tgz",
+-      "integrity": "sha512-kGkGegYIdQsOb4XjsfM97rXsiHaBwco+hFI66oO4s9LU+PLAC5oJ7khdOVFxkhsmlbpUqDAvXw11CluXP+jkHg==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "@radix-ui/react-use-layout-effect": "1.1.1"
+-      },
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/react-portal": {
+-      "version": "1.1.9",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-portal/-/react-portal-1.1.9.tgz",
+-      "integrity": "sha512-bpIxvq03if6UNwXZ+HTK71JLh4APvnXntDc6XOX8UVq4XQOVl7lwok0AvIl+b8zgCw3fSaVTZMpAPPagXbKmHQ==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "@radix-ui/react-primitive": "2.1.3",
+-        "@radix-ui/react-use-layout-effect": "1.1.1"
+-      },
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "@types/react-dom": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc",
+-        "react-dom": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        },
+-        "@types/react-dom": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/react-presence": {
+-      "version": "1.1.5",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-presence/-/react-presence-1.1.5.tgz",
+-      "integrity": "sha512-/jfEwNDdQVBCNvjkGit4h6pMOzq8bHkopq458dPt2lMjx+eBQUohZNG9A7DtO/O5ukSbxuaNGXMjHicgwy6rQQ==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "@radix-ui/react-compose-refs": "1.1.2",
+-        "@radix-ui/react-use-layout-effect": "1.1.1"
+-      },
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "@types/react-dom": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc",
+-        "react-dom": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        },
+-        "@types/react-dom": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/react-primitive": {
+-      "version": "2.1.3",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-primitive/-/react-primitive-2.1.3.tgz",
+-      "integrity": "sha512-m9gTwRkhy2lvCPe6QJp4d3G1TYEUHn/FzJUtq9MjH46an1wJU+GdoGC5VLof8RX8Ft/DlpshApkhswDLZzHIcQ==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "@radix-ui/react-slot": "1.2.3"
+-      },
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "@types/react-dom": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc",
+-        "react-dom": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        },
+-        "@types/react-dom": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/react-slot": {
+-      "version": "1.2.3",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-slot/-/react-slot-1.2.3.tgz",
+-      "integrity": "sha512-aeNmHnBxbi2St0au6VBVC7JXFlhLlOnvIIlePNniyUNAClzmtAUEY8/pBiK3iHjufOlwA+c20/8jngo7xcrg8A==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "@radix-ui/react-compose-refs": "1.1.2"
+-      },
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/react-use-callback-ref": {
+-      "version": "1.1.1",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-use-callback-ref/-/react-use-callback-ref-1.1.1.tgz",
+-      "integrity": "sha512-FkBMwD+qbGQeMu1cOHnuGB6x4yzPjho8ap5WtbEJ26umhgqVXbhekKUQO+hZEL1vU92a3wHwdp0HAcqAUF5iDg==",
+-      "license": "MIT",
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/react-use-controllable-state": {
+-      "version": "1.2.2",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-use-controllable-state/-/react-use-controllable-state-1.2.2.tgz",
+-      "integrity": "sha512-BjasUjixPFdS+NKkypcyyN5Pmg83Olst0+c6vGov0diwTEo6mgdqVR6hxcEgFuh4QrAs7Rc+9KuGJ9TVCj0Zzg==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "@radix-ui/react-use-effect-event": "0.0.2",
+-        "@radix-ui/react-use-layout-effect": "1.1.1"
+-      },
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/react-use-escape-keydown": {
+-      "version": "1.1.1",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-use-escape-keydown/-/react-use-escape-keydown-1.1.1.tgz",
+-      "integrity": "sha512-Il0+boE7w/XebUHyBjroE+DbByORGR9KKmITzbR7MyQ4akpORYP/ZmbhAr0DG7RmmBqoOnZdy2QlvajJ2QA59g==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "@radix-ui/react-use-callback-ref": "1.1.1"
+-      },
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/@radix-ui/react-use-layout-effect": {
+-      "version": "1.1.1",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-use-layout-effect/-/react-use-layout-effect-1.1.1.tgz",
+-      "integrity": "sha512-RbJRS4UWQFkzHTTwVymMTUv8EqYhOp8dOOviLj2ugtTiXRaRQS7GLGxZTLL1jWhMeoSCf5zmcZkqTl9IiYfXcQ==",
+-      "license": "MIT",
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-alert-dialog/node_modules/react-remove-scroll": {
+-      "version": "2.7.2",
+-      "resolved": "https://registry.npmjs.org/react-remove-scroll/-/react-remove-scroll-2.7.2.tgz",
+-      "integrity": "sha512-Iqb9NjCCTt6Hf+vOdNIZGdTiH1QSqr27H/Ek9sv/a97gfueI/5h1s3yRi1nngzMUaOOToin5dI1dXKdXiF+u0Q==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "react-remove-scroll-bar": "^2.3.7",
+-        "react-style-singleton": "^2.2.3",
+-        "tslib": "^2.1.0",
+-        "use-callback-ref": "^1.3.3",
+-        "use-sidecar": "^1.1.3"
+-      },
+-      "engines": {
+-        "node": ">=10"
+-      },
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        }
+-      }
+-    },
+     "node_modules/@radix-ui/react-arrow": {
+       "version": "1.0.3",
+       "resolved": "https://registry.npmjs.org/@radix-ui/react-arrow/-/react-arrow-1.0.3.tgz",
+@@ -6648,39 +6279,6 @@
+         }
+       }
+     },
+-    "node_modules/@radix-ui/react-use-effect-event": {
+-      "version": "0.0.2",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-use-effect-event/-/react-use-effect-event-0.0.2.tgz",
+-      "integrity": "sha512-Qp8WbZOBe+blgpuUT+lw2xheLP8q0oatc9UpmiemEICxGvFLYmHm9QowVZGHtJlGbS6A6yJ3iViad/2cVjnOiA==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "@radix-ui/react-use-layout-effect": "1.1.1"
+-      },
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        }
+-      }
+-    },
+-    "node_modules/@radix-ui/react-use-effect-event/node_modules/@radix-ui/react-use-layout-effect": {
+-      "version": "1.1.1",
+-      "resolved": "https://registry.npmjs.org/@radix-ui/react-use-layout-effect/-/react-use-layout-effect-1.1.1.tgz",
+-      "integrity": "sha512-RbJRS4UWQFkzHTTwVymMTUv8EqYhOp8dOOviLj2ugtTiXRaRQS7GLGxZTLL1jWhMeoSCf5zmcZkqTl9IiYfXcQ==",
+-      "license": "MIT",
+-      "peerDependencies": {
+-        "@types/react": "*",
+-        "react": "^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc"
+-      },
+-      "peerDependenciesMeta": {
+-        "@types/react": {
+-          "optional": true
+-        }
+-      }
+-    },
+     "node_modules/@radix-ui/react-use-escape-keydown": {
+       "version": "1.0.3",
+       "resolved": "https://registry.npmjs.org/@radix-ui/react-use-escape-keydown/-/react-use-escape-keydown-1.0.3.tgz",
+@@ -14957,15 +14555,6 @@
+         "uuid": "dist/bin/uuid"
+       }
+     },
+-    "node_modules/next-themes": {
+-      "version": "0.3.0",
+-      "resolved": "https://registry.npmjs.org/next-themes/-/next-themes-0.3.0.tgz",
+-      "integrity": "sha512-/QHIrsYpd6Kfk7xakK4svpDI5mmXP0gfvCoJdGpZQ2TOrQZmsW0QxjaiLn8wbIKjtm4BTSqLoix4lxYYOnLJ/w==",
+-      "peerDependencies": {
+-        "react": "^16.8 || ^17 || ^18",
+-        "react-dom": "^16.8 || ^17 || ^18"
+-      }
+-    },
+     "node_modules/next/node_modules/postcss": {
+       "version": "8.4.31",
+       "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.4.31.tgz",
+@@ -17573,11 +17162,6 @@
+         "node": ">=0.8"
+       }
+     },
+-    "node_modules/tiny-cookie": {
+-      "version": "2.5.1",
+-      "resolved": "https://registry.npmjs.org/tiny-cookie/-/tiny-cookie-2.5.1.tgz",
+-      "integrity": "sha512-w8FlBk1LMEBA7NY1lreQu4iTma/jxRQaKc2ucXFIv9/pDDPcnFrgO4swahGFAwJebHjwrHTyeoI7moH7G9YzSg=="
+-    },
+     "node_modules/tiny-invariant": {
+       "version": "1.3.3",
+       "resolved": "https://registry.npmjs.org/tiny-invariant/-/tiny-invariant-1.3.3.tgz",
+diff --git a/src/client/package.json b/src/client/package.json
+index caaefc9c..3b7660e5 100644
+--- a/src/client/package.json
++++ b/src/client/package.json
+@@ -36,7 +36,6 @@
+     "@openplait/runtime": "1.0.0",
+     "@prisma/client": "^5.15.0",
+     "@radix-ui/react-accordion": "^1.2.1",
+-    "@radix-ui/react-alert-dialog": "^1.1.15",
+     "@radix-ui/react-avatar": "^1.1.10",
+     "@radix-ui/react-checkbox": "^1.1.0",
+     "@radix-ui/react-collapsible": "^1.1.0",
+diff --git a/src/client/src/__tests__/platform/controller-removal.test.ts b/src/client/src/__tests__/platform/controller-removal.test.ts
+index 471451e2..be046110 100644
+--- a/src/client/src/__tests__/platform/controller-removal.test.ts
++++ b/src/client/src/__tests__/platform/controller-removal.test.ts
+@@ -40,6 +40,11 @@ describe("controller removal and direct OTel receiver verification", () => {
+ 
+ 		const controllerTypes = path.join(clientRoot, "src/types/controller.ts");
+ 		expect(fs.existsSync(controllerTypes)).toBe(false);
++
++		// The fleet-hub types were the Controller's own; nothing imported
++		// them once the Controller's surfaces went.
++		const fleetHubTypes = path.join(clientRoot, "src/types/fleet-hub.ts");
++		expect(fs.existsSync(fleetHubTypes)).toBe(false);
+ 	});
+ 
+ 	it("removes unused Controller-only message constants", () => {
+diff --git a/src/client/src/__tests__/platform/dead-client-modules.test.ts b/src/client/src/__tests__/platform/dead-client-modules.test.ts
+new file mode 100644
+index 00000000..82baa961
+--- /dev/null
++++ b/src/client/src/__tests__/platform/dead-client-modules.test.ts
+@@ -0,0 +1,50 @@
++import fs from "fs";
++import path from "path";
++
++describe("dead client modules stay removed", () => {
++	const clientRoot = path.resolve(__dirname, "../../..");
++
++	// These modules lost their last importer when the AutoDev product
++	// subtraction removed the surfaces that used them. They are listed here
++	// so a later patch that reintroduces one has to say so deliberately
++	// rather than leaving an unused module behind.
++	const removedModules = [
++		"src/components/common/code-block.tsx",
++		"src/components/ui/alert.tsx",
++		"src/components/ui/alert-dialog.tsx",
++		"src/lib/autodev/index.ts",
++		"src/utils/hooks/use-database-setup.ts",
++	];
++
++	it("removes the modules nothing imports", () => {
++		for (const relative of removedModules) {
++			expect(fs.existsSync(path.join(clientRoot, relative))).toBe(false);
++		}
++	});
++
++	it("drops the dependency the removed alert dialog owned", () => {
++		const packageJson = JSON.parse(
++			fs.readFileSync(path.join(clientRoot, "package.json"), "utf-8")
++		);
++		expect(packageJson.dependencies).not.toHaveProperty(
++			"@radix-ui/react-alert-dialog"
++		);
++	});
++
++	it("keeps the lockfile free of packages the manifest no longer declares", () => {
++		// npm ci refuses a tree whose manifest and lock disagree, so a
++		// dependency dropped from one and left in the other breaks the
++		// image build rather than merely tidying it.
++		const packageJson = JSON.parse(
++			fs.readFileSync(path.join(clientRoot, "package.json"), "utf-8")
++		);
++		const lock = JSON.parse(
++			fs.readFileSync(path.join(clientRoot, "package-lock.json"), "utf-8")
++		);
++		const locked = Object.keys(lock.packages[""].dependencies || {});
++		const declared = Object.keys(packageJson.dependencies || {});
++		for (const name of locked) {
++			expect(declared).toContain(name);
++		}
++	});
++});
+diff --git a/src/client/src/__tests__/utils/hooks/hooks.test.ts b/src/client/src/__tests__/utils/hooks/hooks.test.ts
+index 5c34c5be..eb69f582 100644
+--- a/src/client/src/__tests__/utils/hooks/hooks.test.ts
++++ b/src/client/src/__tests__/utils/hooks/hooks.test.ts
+@@ -16,18 +16,12 @@ jest.mock('@/utils/api', () => ({
+ jest.mock('sonner', () => ({
+   toast: { error: jest.fn() },
+ }));
+-jest.mock('tiny-cookie', () => ({
+-  get: jest.fn(),
+-  set: jest.fn(),
+-}));
+-
+ import { renderHook, act } from '@testing-library/react';
+ import { usePathname } from 'next/navigation';
+ import { usePageHeader } from '@/selectors/page';
+ import { generatePageHeader, updatePageHeaderWithData } from '@/utils/breadcrumbs';
+ import { getData } from '@/utils/api';
+ import { toast } from 'sonner';
+-import { get as cookieGet, set as cookieSet } from 'tiny-cookie';
+ import { useBreadcrumbs, useDynamicBreadcrumbs, useCustomBreadcrumbs } from '@/utils/hooks/useBreadcrumbs';
+ import useClickhousePing from '@/utils/hooks/useClickhousePing';
+ 
+diff --git a/src/client/src/components/common/code-block.tsx b/src/client/src/components/common/code-block.tsx
+deleted file mode 100644
+index 176b39b6..00000000
+--- a/src/client/src/components/common/code-block.tsx
++++ /dev/null
+@@ -1,36 +0,0 @@
+-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+-import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism";
+-import copyToCB from "copy-to-clipboard";
+-import { Copy } from "lucide-react";
+-
+-export default function CodeBlock({
+-	className = "",
+-	code,
+-	copy = true,
+-	language,
+-}: {
+-	className?: string;
+-	code: string;
+-	copy?: boolean;
+-	language: string;
+-}) {
+-	const onClickCopy = () => copyToCB(code);
+-
+-	return (
+-		<section className="relative group">
+-			<SyntaxHighlighter
+-				language={language}
+-				style={dracula}
+-				className={`overflow-hidden ${className}`}
+-			>
+-				{code}
+-			</SyntaxHighlighter>
+-			{copy && (
+-				<Copy
+-					className="w-4 h-4 absolute right-3 top-4 hidden group-hover:inline-block z-10 text-stone-400 hover:text-primary cursor-pointer"
+-					onClick={onClickCopy}
+-				/>
+-			)}
+-		</section>
+-	);
+-}
+diff --git a/src/client/src/components/ui/alert-dialog.tsx b/src/client/src/components/ui/alert-dialog.tsx
+deleted file mode 100644
+index ca108df1..00000000
+--- a/src/client/src/components/ui/alert-dialog.tsx
++++ /dev/null
+@@ -1,141 +0,0 @@
+-"use client"
+-
+-import * as React from "react"
+-import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog"
+-
+-import { type VariantProps } from "class-variance-authority"
+-
+-import { cn } from "@/lib/utils"
+-import { buttonVariants } from "@/components/ui/button"
+-
+-const AlertDialog = AlertDialogPrimitive.Root
+-
+-const AlertDialogTrigger = AlertDialogPrimitive.Trigger
+-
+-const AlertDialogPortal = AlertDialogPrimitive.Portal
+-
+-const AlertDialogOverlay = React.forwardRef<
+-  React.ElementRef<typeof AlertDialogPrimitive.Overlay>,
+-  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Overlay>
+->(({ className, ...props }, ref) => (
+-  <AlertDialogPrimitive.Overlay
+-    className={cn(
+-      "fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+-      className
+-    )}
+-    {...props}
+-    ref={ref}
+-  />
+-))
+-AlertDialogOverlay.displayName = AlertDialogPrimitive.Overlay.displayName
+-
+-const AlertDialogContent = React.forwardRef<
+-  React.ElementRef<typeof AlertDialogPrimitive.Content>,
+-  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Content>
+->(({ className, ...props }, ref) => (
+-  <AlertDialogPortal>
+-    <AlertDialogOverlay />
+-    <AlertDialogPrimitive.Content
+-      ref={ref}
+-      className={cn(
+-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-stone-200 bg-white p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg dark:border-stone-800 dark:bg-stone-950",
+-        className
+-      )}
+-      {...props}
+-    />
+-  </AlertDialogPortal>
+-))
+-AlertDialogContent.displayName = AlertDialogPrimitive.Content.displayName
+-
+-const AlertDialogHeader = ({
+-  className,
+-  ...props
+-}: React.HTMLAttributes<HTMLDivElement>) => (
+-  <div
+-    className={cn(
+-      "flex flex-col space-y-2 text-center sm:text-left",
+-      className
+-    )}
+-    {...props}
+-  />
+-)
+-AlertDialogHeader.displayName = "AlertDialogHeader"
+-
+-const AlertDialogFooter = ({
+-  className,
+-  ...props
+-}: React.HTMLAttributes<HTMLDivElement>) => (
+-  <div
+-    className={cn(
+-      "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+-      className
+-    )}
+-    {...props}
+-  />
+-)
+-AlertDialogFooter.displayName = "AlertDialogFooter"
+-
+-const AlertDialogTitle = React.forwardRef<
+-  React.ElementRef<typeof AlertDialogPrimitive.Title>,
+-  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Title>
+->(({ className, ...props }, ref) => (
+-  <AlertDialogPrimitive.Title
+-    ref={ref}
+-    className={cn("text-lg font-semibold text-stone-900 dark:text-stone-50", className)}
+-    {...props}
+-  />
+-))
+-AlertDialogTitle.displayName = AlertDialogPrimitive.Title.displayName
+-
+-const AlertDialogDescription = React.forwardRef<
+-  React.ElementRef<typeof AlertDialogPrimitive.Description>,
+-  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Description>
+->(({ className, ...props }, ref) => (
+-  <AlertDialogPrimitive.Description
+-    ref={ref}
+-    className={cn("text-sm text-stone-500 dark:text-stone-400", className)}
+-    {...props}
+-  />
+-))
+-AlertDialogDescription.displayName =
+-  AlertDialogPrimitive.Description.displayName
+-
+-const AlertDialogAction = React.forwardRef<
+-  React.ElementRef<typeof AlertDialogPrimitive.Action>,
+-  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Action> &
+-    VariantProps<typeof buttonVariants>
+->(({ className, variant, size, ...props }, ref) => (
+-  <AlertDialogPrimitive.Action
+-    ref={ref}
+-    className={cn(buttonVariants({ variant, size }), className)}
+-    {...props}
+-  />
+-))
+-AlertDialogAction.displayName = AlertDialogPrimitive.Action.displayName
+-
+-const AlertDialogCancel = React.forwardRef<
+-  React.ElementRef<typeof AlertDialogPrimitive.Cancel>,
+-  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Cancel> &
+-    VariantProps<typeof buttonVariants>
+->(({ className, variant = "outline", size, ...props }, ref) => (
+-  <AlertDialogPrimitive.Cancel
+-    ref={ref}
+-    className={cn(buttonVariants({ variant, size }), className)}
+-    {...props}
+-  />
+-))
+-AlertDialogCancel.displayName = AlertDialogPrimitive.Cancel.displayName
+-
+-export {
+-  AlertDialog,
+-  AlertDialogPortal,
+-  AlertDialogOverlay,
+-  AlertDialogTrigger,
+-  AlertDialogContent,
+-  AlertDialogHeader,
+-  AlertDialogFooter,
+-  AlertDialogTitle,
+-  AlertDialogDescription,
+-  AlertDialogAction,
+-  AlertDialogCancel,
+-}
+diff --git a/src/client/src/components/ui/alert.tsx b/src/client/src/components/ui/alert.tsx
+deleted file mode 100644
+index 2f3000a3..00000000
+--- a/src/client/src/components/ui/alert.tsx
++++ /dev/null
+@@ -1,59 +0,0 @@
+-import * as React from "react"
+-import { cva, type VariantProps } from "class-variance-authority"
+-
+-import { cn } from "@/lib/utils"
+-
+-const alertVariants = cva(
+-  "relative w-full rounded-lg border border-stone-200 p-4 [&>svg~*]:pl-7 [&>svg+div]:translate-y-[-3px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-stone-950 dark:border-stone-800 dark:[&>svg]:text-stone-50",
+-  {
+-    variants: {
+-      variant: {
+-        default: "bg-white text-stone-950 dark:bg-stone-950 dark:text-stone-50",
+-        destructive:
+-          "border-red-500/50 text-red-500 dark:border-red-500 [&>svg]:text-red-500 dark:border-red-900/50 dark:text-red-900 dark:dark:border-red-900 dark:[&>svg]:text-red-900",
+-      },
+-    },
+-    defaultVariants: {
+-      variant: "default",
+-    },
+-  }
+-)
+-
+-const Alert = React.forwardRef<
+-  HTMLDivElement,
+-  React.HTMLAttributes<HTMLDivElement> & VariantProps<typeof alertVariants>
+->(({ className, variant, ...props }, ref) => (
+-  <div
+-    ref={ref}
+-    role="alert"
+-    className={cn(alertVariants({ variant }), className)}
+-    {...props}
+-  />
+-))
+-Alert.displayName = "Alert"
+-
+-const AlertTitle = React.forwardRef<
+-  HTMLParagraphElement,
+-  React.HTMLAttributes<HTMLHeadingElement>
+->(({ className, ...props }, ref) => (
+-  <h5
+-    ref={ref}
+-    className={cn("mb-1 font-medium leading-none tracking-tight", className)}
+-    {...props}
+-  />
+-))
+-AlertTitle.displayName = "AlertTitle"
+-
+-const AlertDescription = React.forwardRef<
+-  HTMLParagraphElement,
+-  React.HTMLAttributes<HTMLParagraphElement>
+->(({ className, ...props }, ref) => (
+-  <div
+-    ref={ref}
+-    className={cn("text-sm [&_p]:leading-relaxed", className)}
+-    {...props}
+-  />
+-))
+-AlertDescription.displayName = "AlertDescription"
+-
+-export { Alert, AlertTitle, AlertDescription }
+diff --git a/src/client/src/lib/autodev/index.ts b/src/client/src/lib/autodev/index.ts
+deleted file mode 100644
+index cc89a735..00000000
+--- a/src/client/src/lib/autodev/index.ts
++++ /dev/null
+@@ -1 +0,0 @@
+-export * from "./control-api";
+diff --git a/src/client/src/types/fleet-hub.ts b/src/client/src/types/fleet-hub.ts
+deleted file mode 100644
+index 6887a56b..00000000
+--- a/src/client/src/types/fleet-hub.ts
++++ /dev/null
+@@ -1,33 +0,0 @@
+-export interface AgentAttribute {
+-  key: string
+-  value: { Value: { StringValue: string } }
+-}
+-
+-export interface Agent {
+-  InstanceIdStr: string;
+-  Status: {
+-    health: {
+-      healthy: boolean
+-      status: string
+-      component_health_map: Record<string, { healthy: boolean; status: string }>
+-      last_error?: string
+-    }
+-    agent_description: {
+-      identifying_attributes: AgentAttribute[]
+-      non_identifying_attributes: AgentAttribute[]
+-    }
+-  };
+-  StartedAt: string;
+-  EffectiveConfig: string;
+-  CustomInstanceConfig: string;
+-}
+-
+-export enum OpampFilterType {
+-  "ALL" = "ALL",
+-  "HEALTHY" = "HEALTHY",
+-  "UNHEALTHY" = "UNHEALTHY",
+-}
+-
+-export type OpampFilters = {
+-  type: OpampFilterType;
+-}
+\ No newline at end of file
+diff --git a/src/client/src/utils/hooks/use-database-setup.ts b/src/client/src/utils/hooks/use-database-setup.ts
+deleted file mode 100644
+index e83e6627..00000000
+--- a/src/client/src/utils/hooks/use-database-setup.ts
++++ /dev/null
+@@ -1,38 +0,0 @@
+-"use client";
+-
+-import { useEffect } from "react";
+-import {
+-	fetchDatabaseConfigList,
+-	projectHasDatabaseConfig,
+-} from "@/helpers/client/database-config";
+-import {
+-	getDatabaseConfigList,
+-	getDatabaseConfigListIsLoading,
+-} from "@/selectors/database-config";
+-import { useRootStore } from "@/store";
+-
+-/**
+- * Whether the console has a datasource configured.
+- *
+- * This used to be `useProjectDatabaseSetup`/`useWorkspaceSetup` and waited on
+- * three things: the current project, the project list, and the database
+- * configs. With the tenancy layer removed there is exactly one thing to wait
+- * on. The gate also had a real cost — Home rendered a bare filter bar and
+- * nothing else for as long as a project happened to be unset, because
+- * `isSetupLoading` was derived from organisation/project loaders that no
+- * longer have anything to fetch.
+- */
+-export function useDatabaseSetup() {
+-	const databaseConfigs = useRootStore(getDatabaseConfigList);
+-	const isDatabaseConfigLoading = useRootStore(getDatabaseConfigListIsLoading);
+-
+-	useEffect(() => {
+-		void fetchDatabaseConfigList(() => {});
+-	}, []);
+-
+-	return {
+-		hasDbConfig: projectHasDatabaseConfig(databaseConfigs),
+-		isDatabaseSetupLoading:
+-			isDatabaseConfigLoading || databaseConfigs === undefined,
+-	};
+-}
+\ No newline at end of file

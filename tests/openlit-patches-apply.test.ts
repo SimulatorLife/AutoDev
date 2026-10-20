@@ -26,6 +26,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { auditClientDependencies } from "./openlit-client-dependencies.ts";
 import { assertOpenlitPatchSeries } from "./openlit-patch-series.ts";
 import {
   clientSourceModules,
@@ -1511,6 +1512,89 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   }
 }
 
+/**
+ * The fork's dead client modules are gone, and so are the dependency and the
+ * unresolvable import that came with them.
+ *
+ * `60-remove-dead-client-modules.patch` deletes six modules that nothing
+ * imports any more, drops the Radix alert-dialog package the deleted dialog
+ * owned, and removes a `tiny-cookie` import that no source file used and that
+ * the manifest never declared. That import could not resolve: `tiny-cookie`
+ * survived in the lockfile only as a stale entry, and the fork's own suite
+ * installs from that lockfile, so nothing inside the fork could see the
+ * break.
+ *
+ * The dependency contract is checked against the patched tree rather than
+ * against the patch's own diff, so a later patch that introduces an import
+ * the lockfile does not install fails here as well.
+ */
+function assertDeadClientModulesRemoved(dir: string): void {
+  assertPathsRemoved(
+    dir,
+    [
+      "src/client/src/components/common/code-block.tsx",
+      "src/client/src/components/ui/alert.tsx",
+      "src/client/src/components/ui/alert-dialog.tsx",
+      "src/client/src/lib/autodev/index.ts",
+      "src/client/src/types/fleet-hub.ts",
+      "src/client/src/utils/hooks/use-database-setup.ts"
+    ],
+    "dead client module removal"
+  );
+
+  const client = join(dir, "src/client");
+  const manifest = JSON.parse(
+    readFileSync(join(client, "package.json"), "utf8")
+  ) as { dependencies?: Record<string, string> };
+  assert.equal(
+    manifest.dependencies?.["@radix-ui/react-alert-dialog"],
+    undefined,
+    "the deleted alert dialog owned @radix-ui/react-alert-dialog; the dependency must go with it"
+  );
+
+  const lock = JSON.parse(
+    readFileSync(join(client, "package-lock.json"), "utf8")
+  ) as { packages?: Record<string, unknown> };
+  assert.equal(
+    Object.hasOwn(
+      lock.packages ?? {},
+      "node_modules/@radix-ui/react-alert-dialog"
+    ),
+    false,
+    "@radix-ui/react-alert-dialog must be absent from the lockfile's installed tree"
+  );
+
+  const hooksTest = readFileSync(
+    join(client, "src/__tests__/utils/hooks/hooks.test.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    hooksTest,
+    /from ["']tiny-cookie["']/u,
+    "the hooks test must not import tiny-cookie; no source file uses cookies and the manifest never declared the package"
+  );
+
+  // The fork's own guard for these removals has to travel with the patch.
+  assert.ok(
+    existsSync(
+      join(client, "src/__tests__/platform/dead-client-modules.test.ts")
+    ),
+    "the fork must carry the test that keeps the dead client modules removed"
+  );
+
+  const audit = auditClientDependencies(client);
+  assert.deepEqual(
+    audit.unresolved,
+    [],
+    "every package the patched client imports must be installed by its lockfile"
+  );
+  assert.deepEqual(
+    audit.uninstalled,
+    [],
+    "every package the patched client declares must be installed by its lockfile"
+  );
+}
+
 test("path literal matching preserves route and API suffix rules", () => {
   const client = mkdtempSync(join(tmpdir(), "autodev-openlit-path-scan-"));
   try {
@@ -1614,7 +1698,8 @@ test(
       "src/client/src/__tests__/lib/platform/datasource/clickhouse-counter-deltas.test.ts",
       // 02-autodev-pages
       "src/client/src/lib/autodev/control-api.ts",
-      "src/client/src/lib/autodev/index.ts",
+      // 60-remove-dead-client-modules deletes the `lib/autodev/index.ts`
+      // barrel: it only re-exported `./control-api`, and nothing imported it.
       "src/client/src/__tests__/lib/autodev/control-api.test.ts",
       // 04-autodev-usage-dashboard
       "src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json",
@@ -2523,6 +2608,10 @@ test(
         "patch 27 removes the unused Hindi locale"
       );
     }
+
+    // 60-remove-dead-client-modules deletes the modules nothing imports any
+    // more and takes the dependency and the unresolvable import with them.
+    assertDeadClientModulesRemoved(dir);
   }
 );
 
