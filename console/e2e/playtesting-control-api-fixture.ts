@@ -2436,6 +2436,8 @@ function resetSyntheticFixture(
   syntheticReadinessUnavailable = false;
   syntheticAnalystRunsReadFails = false;
   syntheticAnalystTaskHistoryMissing = false;
+  skillAssignmentRevision = INITIAL_SKILL_ASSIGNMENT_REVISION;
+  skillRoles["code-review"] = [...INITIAL_SKILL_ROLES];
   sendJson(response, { reset: true });
   return true;
 }
@@ -2481,6 +2483,405 @@ function configureReadinessFixture(
   return true;
 }
 
+/** The route that assigns the roles of one skill. */
+const SKILL_ROLES_ROUTE = /^\/control\/skills\/([^/]+)$/u;
+
+/** The agent kind a role runs as a leaf rather than as an orchestrator. */
+const LEAF_AGENT_KIND = "leaf";
+
+/** The convergence verdict for a state the Runtime has not reported. */
+const NOT_OBSERVED_CONVERGENCE = "not-observed";
+
+/**
+ * The skill role assignment the fixture holds.
+ *
+ * The revision is what the Console's compare-and-swap is checked against, so
+ * it has to move when the roles move: a page that loaded the old revision and
+ * then saved is a conflict, which is the state the acceptance needs to reach.
+ */
+const INITIAL_SKILL_ASSIGNMENT_REVISION = "b".repeat(64);
+const INITIAL_SKILL_ROLES = ["worker"];
+let skillAssignmentRevision = INITIAL_SKILL_ASSIGNMENT_REVISION;
+const skillRoles: Record<string, string[]> = {
+  "code-review": [...INITIAL_SKILL_ROLES]
+};
+
+function nextSkillAssignmentRevision(): string {
+  return (BigInt(`0x${skillAssignmentRevision}`) + 1n)
+    .toString(16)
+    .padStart(64, "0");
+}
+
+/**
+ * The skill role assignment write.
+ *
+ * The whole desired set travels with the write, so the fixture replaces the
+ * roles rather than adding to them, and the write is checked against the
+ * revision the caller read: a page holding a stale revision is a conflict,
+ * not a silent overwrite of somebody else's assignment.
+ */
+async function handleSyntheticSkillRoleMutation(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): Promise<boolean> {
+  const match = url.pathname.match(SKILL_ROLES_ROUTE);
+  if (match === null) return false;
+  if (request.method !== "PATCH") {
+    response.writeHead(405).end();
+    return true;
+  }
+  const name = decodeURIComponent(match[1]);
+  const body = await readJsonBody(request);
+  const expectedRevision = body?.expectedRevision;
+  const roles = body?.roles;
+  if (typeof expectedRevision !== "string" || !Array.isArray(roles)) {
+    sendJson(
+      response,
+      {
+        code: "autodev_control_api_invalid_body",
+        message: "The fixture needs an expectedRevision and a roles array."
+      },
+      400
+    );
+    return true;
+  }
+  if (!roles.every((role) => typeof role === "string")) {
+    sendJson(
+      response,
+      {
+        code: "autodev_control_execution_contract_invalid",
+        message: "The fixture only accepts role names."
+      },
+      400
+    );
+    return true;
+  }
+  if (expectedRevision !== skillAssignmentRevision) {
+    sendJson(
+      response,
+      {
+        code: "autodev_control_execution_contract_conflict",
+        message:
+          "The execution contract moved since this page was loaded; reload before writing."
+      },
+      409
+    );
+    return true;
+  }
+  skillRoles[name] = [...(roles as string[])];
+  skillAssignmentRevision = nextSkillAssignmentRevision();
+  const generation = `skill-assignment-${skillAssignmentRevision.slice(0, 8)}`;
+  sendJson(response, {
+    schema: "autodev-control-skill-assignment-v2",
+    skill: name,
+    desiredRoles: skillRoles[name],
+    // The fixture has no runtime projection, so the roles the runtime
+    // actually holds are not observed rather than empty.
+    actualRoles: null,
+    revision: skillAssignmentRevision,
+    reconciliation: {
+      status: {
+        convergence: "pending",
+        desiredGeneration: generation,
+        observedGeneration: null,
+        lastApplyAt: "2026-01-01T00:00:00.000Z",
+        lastObservationAt: null,
+        lastError: null,
+        explanation:
+          "The desired assignment was written; the runtime has not reported it back yet."
+      },
+      history: []
+    },
+    diff: {
+      summary: `Assigned ${name} to ${skillRoles[name].join(", ") || "no role"}.`,
+      identifier: generation
+    }
+  });
+  return true;
+}
+
+/**
+ * The fixture's own control over the skill assignment.
+ *
+ * `/fixture/skills/revision` moves the canonical roles without this Console
+ * knowing: the page that has the skills open holds the revision it was
+ * rendered with, so bumping the revision here is what makes its next write a
+ * conflict rather than a silent overwrite of somebody else's assignment.
+ * `/fixture/skills/reset` puts the assignment back, so a test that writes
+ * starts from the catalog the fixture declares.
+ */
+function configureSkillFixture(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (
+    url.pathname !== "/fixture/skills/revision" &&
+    url.pathname !== "/fixture/skills/reset"
+  ) {
+    return false;
+  }
+  if (request.method !== "POST") {
+    response.writeHead(405).end();
+    return true;
+  }
+  if (url.pathname === "/fixture/skills/reset") {
+    skillAssignmentRevision = INITIAL_SKILL_ASSIGNMENT_REVISION;
+    skillRoles["code-review"] = [...INITIAL_SKILL_ROLES];
+    sendJson(response, { revision: skillAssignmentRevision });
+    return true;
+  }
+  skillAssignmentRevision = nextSkillAssignmentRevision();
+  sendJson(response, { revision: skillAssignmentRevision });
+  return true;
+}
+
+/**
+ * The catalog resources the Console reads: the MCP catalog and the Configure
+ * group's agents, skills, hooks, prompts and permissions.
+ *
+ * Each response carries the states the Console has to keep apart -- a
+ * declared server and one that exists only in a target projection, an
+ * enabled assignment and one the Runtime could not report, a measured count
+ * and an unobserved one -- so the pages are exercised against the states
+ * rather than against a single happy row.
+ */
+function handleCatalogResourceRead(
+  url: URL,
+  response: ServerResponse
+): boolean {
+  if (url.pathname === "/control/contracts") {
+    sendJson(response, {
+      schema: "autodev-control-api-contract-v1",
+      version: CONTROL_API_CONTRACT.version
+    });
+    return true;
+  }
+  if (url.pathname === "/control/mcps") {
+    // Three servers that keep the three states apart: a declared and enabled
+    // stdio server with a target override, a server that is only present in a
+    // target projection (so its default state is not observed), and a
+    // declared http server with no target overrides at all.
+    sendJson(response, {
+      schema: "autodev-control-mcps-v1",
+      source: ".rulesync/mcp.jsonc",
+      readOnly: true,
+      valid: true,
+      issues: [],
+      servers: [
+        {
+          name: "lsp",
+          enabled: true,
+          transport: "stdio",
+          targetOverrides: [
+            {
+              target: "codex",
+              enabled: true,
+              defaultToolsApprovalMode: "never",
+              enabledTools: ["lsp_goto_definition"]
+            }
+          ],
+          command: "npx",
+          args: ["-y", "@modelcontextprotocol/server-lsp"],
+          envKeys: ["LSP_ROOT"],
+          cwd: "/workspace",
+          defaultToolsApprovalMode: "on-request",
+          declared: true,
+          roles: ["worker", "orchestrator"]
+        },
+        {
+          name: "antigravity-cli",
+          enabled: false,
+          transport: "stdio",
+          targetOverrides: [{ target: "codex", enabled: false }],
+          command: "antigravity",
+          args: ["mcp"],
+          declared: false,
+          roles: []
+        },
+        {
+          name: "openaiDeveloperDocs",
+          enabled: null,
+          transport: "http",
+          targetOverrides: [],
+          url: "https://docs.example.test/mcp",
+          declared: true,
+          roles: ["orchestrator"]
+        }
+      ]
+    });
+    return true;
+  }
+  if (url.pathname === "/control/agents") {
+    // Two agents: one whose enablement the Runtime reported and one whose
+    // enablement it could not report. The second is the state the Console
+    // has to keep distinct from "disabled".
+    sendJson(response, {
+      schema: "autodev-control-agents-v2",
+      source: ".rulesync/agents.jsonc",
+      readOnly: false,
+      totalAgents: 2,
+      agents: [
+        {
+          id: "default",
+          role: "default",
+          kind: "orchestrator",
+          readOnly: false,
+          configured: true,
+          valid: true,
+          status: "idle",
+          convergence: "converged",
+          enablement: {
+            kind: "observed",
+            enabled: true,
+            mutable: true,
+            revision: "a".repeat(64)
+          },
+          primaryModel: "claude",
+          allowedProviders: ["claude"],
+          mcps: ["lsp"],
+          skills: [],
+          hasPrompt: true
+        },
+        {
+          id: "worker",
+          role: "worker",
+          kind: LEAF_AGENT_KIND,
+          readOnly: false,
+          configured: true,
+          valid: true,
+          status: "idle",
+          convergence: NOT_OBSERVED_CONVERGENCE,
+          enablement: {
+            kind: "unavailable",
+            enabled: null,
+            mutable: false,
+            reason: "The fixture has no runtime enablement projection."
+          },
+          primaryModel: "claude",
+          allowedProviders: ["claude"],
+          mcps: [],
+          skills: [],
+          hasPrompt: false
+        }
+      ]
+    });
+    return true;
+  }
+  if (url.pathname === "/control/skills") {
+    sendJson(response, {
+      schema: "autodev-control-skills-v2",
+      source: ".rulesync/skills",
+      readOnly: true,
+      valid: true,
+      issues: [],
+      executionContractRevision: skillAssignmentRevision,
+      assignmentRoles: ["default", "worker"],
+      skills: [
+        {
+          name: "code-review",
+          description: "Review a diff for defects.",
+          path: ".rulesync/skills/code-review/SKILL.md",
+          roles: skillRoles["code-review"] ?? []
+        }
+      ],
+      unresolvedAssignments: []
+    });
+    return true;
+  }
+  if (url.pathname === "/control/hooks") {
+    sendJson(response, {
+      schema: "autodev-control-hooks-v1",
+      source: ".rulesync/hooks.jsonc",
+      readOnly: true,
+      valid: true,
+      issues: [],
+      hooks: {
+        PreToolUse: [
+          {
+            command: "echo guarded",
+            matcher: "Bash",
+            statusMessage: "Bash is guarded in this fixture."
+          }
+        ]
+      }
+    });
+    return true;
+  }
+  if (url.pathname === "/control/prompts") {
+    sendJson(response, {
+      schema: "autodev-control-prompts-v2",
+      source: ".rulesync/prompts",
+      readOnly: true,
+      valid: true,
+      issues: [],
+      totalCommands: 1,
+      commands: [
+        {
+          name: "review",
+          path: ".rulesync/prompts/review.md",
+          description: "Review the pending diff."
+        }
+      ],
+      rolePrompts: [{ role: "default", path: ".rulesync/prompts/default.md" }]
+    });
+    return true;
+  }
+  if (url.pathname === "/control/permissions") {
+    sendJson(response, {
+      schema: "autodev-control-permissions-v1",
+      source: ".rulesync/permissions.jsonc",
+      readOnly: true,
+      policy: {
+        approvalPolicy: "on-demand",
+        sandboxMode: "workspace-write",
+        networkAccess: false,
+        webSearch: false,
+        approvalsReviewer: "operator",
+        defaultToolsApprovalMode: "on-request"
+      },
+      rolePermissions: {
+        default: {
+          readOnly: false,
+          sandbox: "workspace-write",
+          networkAccess: false,
+          approvals: "on-demand",
+          mcp: ["lsp"],
+          skills: ["code-review"],
+          mcpTools: { lsp: ["lsp_goto_definition"] }
+        },
+        worker: {
+          readOnly: true,
+          sandbox: "read-only",
+          networkAccess: false,
+          approvals: "never",
+          mcp: [],
+          skills: ["code-review"],
+          mcpTools: {}
+        }
+      }
+    });
+    return true;
+  }
+  return false;
+}
+
+/**
+ * The fixture's own control routes and the catalog resources it answers.
+ *
+ * One dispatch from the request handler rather than two, so the handler
+ * stays within the complexity budget it was written to.
+ */
+function handleFixtureCatalogRoutes(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (configureSkillFixture(request, response, url)) return true;
+  return handleCatalogResourceRead(url, response);
+}
+
 const server = createServer(
   async (request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -2499,6 +2900,13 @@ const server = createServer(
     if (await handleSyntheticAnalysisMutation(request, response, url)) return;
     if (await handleSyntheticRunMutation(request, response, url)) return;
     if (handleSyntheticReadinessInitialization(request, response, url)) return;
+    if (await handleSyntheticSkillRoleMutation(request, response, url)) {
+      return;
+    }
+    // The catalog and the fixture's own control routes are answered before the
+    // read-only guard: one of them is a write, and a write that the guard
+    // rejects with a bare 405 is a route that does not exist.
+    if (handleFixtureCatalogRoutes(request, response, url)) return;
     if (request.method !== "GET") {
       response.writeHead(405).end();
       return;
@@ -2523,16 +2931,9 @@ const server = createServer(
       });
       return;
     }
-    if (url.pathname === "/control/contracts") {
-      sendJson(response, {
-        schema: "autodev-control-api-contract-v1",
-        version: CONTROL_API_CONTRACT.version
-      });
-      return;
-    }
     if (url.pathname === "/control/providers") {
       const convergence = {
-        convergence: "not-observed",
+        convergence: NOT_OBSERVED_CONVERGENCE,
         desiredGeneration: "fixture",
         observedGeneration: "fixture",
         lastApplyAt: null,
@@ -2583,7 +2984,7 @@ const server = createServer(
     }
     if (url.pathname === "/control/models") {
       const convergence = {
-        convergence: "not-observed",
+        convergence: NOT_OBSERVED_CONVERGENCE,
         desiredGeneration: "enabled=true",
         observedGeneration: "enabled=true",
         lastApplyAt: null,
@@ -2703,61 +3104,7 @@ const server = createServer(
       });
       return;
     }
-    if (url.pathname === "/control/mcps") {
-      // Three servers that keep the three states apart: a declared and enabled
-      // stdio server with a target override, a server that is only present in a
-      // target projection (so its default state is not observed), and a
-      // declared http server with no target overrides at all.
-      sendJson(response, {
-        schema: "autodev-control-mcps-v1",
-        source: ".rulesync/mcp.jsonc",
-        readOnly: true,
-        valid: true,
-        issues: [],
-        servers: [
-          {
-            name: "lsp",
-            enabled: true,
-            transport: "stdio",
-            targetOverrides: [
-              {
-                target: "codex",
-                enabled: true,
-                defaultToolsApprovalMode: "never",
-                enabledTools: ["lsp_goto_definition"]
-              }
-            ],
-            command: "npx",
-            args: ["-y", "@modelcontextprotocol/server-lsp"],
-            envKeys: ["LSP_ROOT"],
-            cwd: "/workspace",
-            defaultToolsApprovalMode: "on-request",
-            declared: true,
-            roles: ["worker", "orchestrator"]
-          },
-          {
-            name: "antigravity-cli",
-            enabled: false,
-            transport: "stdio",
-            targetOverrides: [{ target: "codex", enabled: false }],
-            command: "antigravity",
-            args: ["mcp"],
-            declared: false,
-            roles: []
-          },
-          {
-            name: "openaiDeveloperDocs",
-            enabled: null,
-            transport: "http",
-            targetOverrides: [],
-            url: "https://docs.example.test/mcp",
-            declared: true,
-            roles: ["orchestrator"]
-          }
-        ]
-      });
-      return;
-    }
+
     if (!url.pathname.startsWith("/control/playtesting/")) {
       response.writeHead(404).end();
       return;
