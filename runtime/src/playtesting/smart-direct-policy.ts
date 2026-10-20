@@ -250,12 +250,26 @@ interface SmartDirectAvailabilityCache {
 
 let smartDirectAvailabilityCache: SmartDirectAvailabilityCache | null = null;
 
+/**
+ * The reachability probe has to tell an unreachable Router from a busy one.
+ * The Router answers this loopback read in milliseconds while it is idle, but
+ * it also serves every model turn, and a Router that is mid-turn answers the
+ * same read seconds later. A deadline shorter than that reports a busy Router
+ * as an unreachable one, which takes the autonomous visual mode offline while
+ * the route is in fact reachable and a decision would still be dispatched. The
+ * budget that actually bounds a decision is the policy's own timeout, not this
+ * probe's deadline.
+ */
+const SMART_DIRECT_AVAILABILITY_TIMEOUT_MS = 10_000;
+
 export interface SmartDirectAvailabilityProbeOptions {
   readonly portValue?: string | undefined;
   readonly authToken?: string | undefined;
   readonly fetchImpl?: typeof fetch;
   readonly now?: () => number;
   readonly cacheMs?: number;
+  /** Deadline for the reachability read itself, independent of the cache. */
+  readonly timeoutMs?: number;
 }
 
 /**
@@ -297,7 +311,10 @@ export async function isSmartDirectVisualPolicyAvailable(
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
-    Math.max(100, Math.min(options.cacheMs ?? 1500, 3000))
+    Math.max(
+      100,
+      options.timeoutMs ?? SMART_DIRECT_AVAILABILITY_TIMEOUT_MS
+    )
   );
   timeout.unref?.();
   let available = false;

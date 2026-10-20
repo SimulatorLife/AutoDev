@@ -708,6 +708,36 @@ test("Smart-direct availability probes the authenticated local health endpoint a
   resetSmartDirectVisualPolicyAvailabilityCache();
 });
 
+test("a busy Router is available: the probe waits for a slow health answer", async () => {
+  resetSmartDirectVisualPolicyAvailabilityCache();
+  // A Router that is mid-turn answers the same loopback health read seconds
+  // later. It is reachable, so the probe must not report it as unavailable.
+  const fetchImpl: typeof fetch = async (_input, init) =>
+    await new Promise<Response>((resolve, reject) => {
+      const signal = init?.signal;
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", abort);
+        resolve(Response.json({ status: "ok", router: "codex-model-router" }));
+      }, 2_000);
+      const abort = () => {
+        clearTimeout(timer);
+        reject(new DOMException("Request aborted", "AbortError"));
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+    });
+  assert.equal(
+    await isSmartDirectVisualPolicyAvailable({
+      portValue: "4321",
+      authToken: "test-router-token",
+      fetchImpl,
+      now: () => 1_000,
+      cacheMs: 500
+    }),
+    true
+  );
+  resetSmartDirectVisualPolicyAvailabilityCache();
+});
+
 test("Smart-direct refuses non-local model endpoints before sending game evidence", () => {
   assert.throws(
     () =>
