@@ -3,6 +3,7 @@ import { expect, type Page, test } from "@playwright/test";
 import {
   CANONICAL_ROUTES,
   clippedContent,
+  DETAIL_ROUTES,
   documentStructure,
   routeHeading
 } from "./acceptance-helpers.ts";
@@ -17,6 +18,16 @@ import {
  * layouts that break are usually the ones that break there.
  */
 const WIDTHS: readonly number[] = [390, 768, 1280];
+
+/**
+ * Every surface the sweep measures.
+ *
+ * The list routes and the detail routes are measured together because the
+ * claim is about the Console and not about one kind of page: a detail view
+ * that is a list view's narrow neighbour has the same obligation to fit the
+ * width it is read at.
+ */
+const SURFACES = [...CANONICAL_ROUTES, ...DETAIL_ROUTES];
 
 /**
  * Wait until the page's own content has replaced its loading shell.
@@ -104,7 +115,7 @@ for (const width of WIDTHS) {
     // title shared by three tests cannot be told apart to run it on its own.
     test(`every canonical route fits ${width}px`, async ({ context }) => {
       const problems = await Promise.all(
-        batches(CANONICAL_ROUTES, ROUTES_PER_BATCH).map(async (batch) => {
+        batches(SURFACES, ROUTES_PER_BATCH).map(async (batch) => {
           const pages = await Promise.all(batch.map(() => context.newPage()));
           const batchProblems = await Promise.all(
             batch.map(async (route, index) => {

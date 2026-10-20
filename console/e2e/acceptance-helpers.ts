@@ -37,6 +37,36 @@ export const CANONICAL_ROUTES: readonly CanonicalRoute[] = [
 ];
 
 /**
+ * The detail surfaces of the resources that have one.
+ *
+ * A detail page carries the resource's own heading and names the item it is
+ * about underneath it, so the heading here is the resource's rather than the
+ * item's.
+ *
+ * The workspace detail is not among them: its page reads the Playtesting
+ * approval panel, and that surface belongs to the session working on
+ * Playtesting, so a sweep that judged it would be answering for work that is
+ * not this one's to judge.
+ */
+export const DETAIL_ROUTES: readonly CanonicalRoute[] = [
+  { path: "/agents/default", section: "agents", heading: "Agents" },
+  { path: "/providers/claude", section: "providers", heading: "Providers" },
+  {
+    path: "/providers/claude/models/sonnet",
+    section: "providers",
+    heading: "Providers"
+  },
+  { path: "/mcps/lsp", section: "mcps", heading: "MCPs" },
+  { path: "/prompts/review", section: "prompts", heading: "Prompts" },
+  { path: "/skills/code-review", section: "skills", heading: "Skills" },
+  {
+    path: "/tools/mcp__lsp__lsp_goto_definition",
+    section: "tools",
+    heading: "Tools"
+  }
+];
+
+/**
  * The heading a route answers with.
  */
 export function routeHeading(page: Page, route: CanonicalRoute): Locator {

@@ -424,7 +424,20 @@ export function ProviderRoleControls({
   return React.createElement(
     "ul",
     {
-      className: "flex list-none flex-col gap-1.5 p-0 m-0",
+      // The role strip is a wide, aligned configuration: a label and three
+      // controls per role, in columns that line up across the four roles. On
+      // the Providers row that strip lives in a table cell and the table
+      // scrolls; here it is the only thing in the panel, so the strip has to
+      // scroll itself. Without that, a phone-width detail page cut the model
+      // and effort controls off the edge of the panel with no way to reach
+      // them -- the same budget the shared table preserves by scrolling.
+      //
+      // `items-start` keeps each row at the width of its own content, so the
+      // row is not squeezed into the panel and left overflowing: the strip
+      // scrolls as one thing, which is one scrollbar for four roles rather
+      // than one per role.
+      className:
+        "flex list-none flex-col items-start gap-1.5 overflow-x-auto p-0 m-0",
       "data-provider-roles": provider.id
     },
     ...PROVIDER_ROLES.map((role) =>
