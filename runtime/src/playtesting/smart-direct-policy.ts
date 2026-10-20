@@ -22,7 +22,10 @@ import { isDirectory } from "@simulatorlife/autodev-runtime/shared/resolve-works
 const SMART_MODEL_ALIAS = "autodev/smart" as const;
 export const SMART_DIRECT_POLICY_VERSION = "1" as const;
 const DEFAULT_ROUTER_PORT = 4100;
-const DEFAULT_DECISION_TIMEOUT_MS = 30_000;
+/**
+ * Hard ceiling on a single decision. The Router ends its own turn on the same
+ * deadline, so a decision cannot usefully outlast it.
+ */
 const MAX_DECISION_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_REQUEST_BYTES = 12 * 1024 * 1024;
@@ -98,7 +101,11 @@ export interface SmartDirectDecisionInput {
   readonly frameBytes: Uint8Array;
   readonly areasOfFocus: string | null;
   readonly history: readonly SmartDirectHistoryEntry[];
-  /** Monotonic deadline owned by the visual batch/session runner. */
+  /**
+   * Monotonic deadline owned by the visual batch/session runner. It encodes the
+   * approved per-episode wall-time budget, and it is the operative bound on a
+   * decision: the policy never lets a request outlast it.
+   */
   readonly deadlineMonotonicMs: number;
 }
 
@@ -141,6 +148,12 @@ export interface SmartDirectPolicyUsage {
 export interface SmartDirectPolicyOptions {
   readonly endpoint?: string;
   readonly authToken?: string | undefined;
+  /**
+   * Optional tighter bound on a single decision. The operative bound is the
+   * caller's deadline — the approved per-episode wall-time budget — and this
+   * only lowers it. A decision that outlasts the Router's own turn deadline
+   * can never be served, so the default imposes no second, competing cap.
+   */
   readonly timeoutMs?: number;
   readonly maxResponseBytes?: number;
   readonly maxRequestBytes?: number;
@@ -807,7 +820,7 @@ export class SmartDirectVisualPolicy {
     this.endpoint = options.endpoint ?? routerEndpoint();
     assertLocalRouterEndpoint(this.endpoint);
     this.authToken = options.authToken ?? process.env.CODEX_ROUTER_AUTH_TOKEN;
-    this.timeoutMs = options.timeoutMs ?? DEFAULT_DECISION_TIMEOUT_MS;
+    this.timeoutMs = options.timeoutMs ?? MAX_DECISION_TIMEOUT_MS;
     this.maxResponseBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES;
     this.maxRequestBytes = options.maxRequestBytes ?? MAX_REQUEST_BYTES;
     this.maxFrameBytes = options.maxFrameBytes ?? MAX_FRAME_BYTES;

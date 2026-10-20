@@ -202,6 +202,30 @@ export interface PlaytestVisualBrowserDriverOptions {
   readonly browserType?: Pick<typeof chromium, "launch" | "executablePath">;
 }
 
+/**
+ * The browser surface one visual episode needs.
+ *
+ * The real driver implements it. The episode loop talks to this interface
+ * rather than to the concrete browser, so its budget accounting and its
+ * failure classification — the parts that decide whether a slow model
+ * truncates an episode or fails it — are exercisable without a browser.
+ */
+export interface PlaytestVisualEpisodeDriver {
+  observe(): Promise<PlaytestVisualObservationResult>;
+  act(
+    action: PlaytestVisualAction,
+    maxObservationAgeMs: number
+  ): Promise<PlaytestVisualActionReceipt>;
+  close(): Promise<unknown>;
+  /** Milliseconds left in the approved per-episode wall-time budget. */
+  remainingWallTimeMs(): number;
+}
+
+/** Opens the browser driver for one visual episode. Overridable for tests. */
+export type PlaytestVisualDriverOpener = (
+  options: PlaytestVisualBrowserDriverOptions
+) => Promise<PlaytestVisualEpisodeDriver>;
+
 export interface PlaytestVisualBrowserTelemetry {
   readonly schema: "autodev-playtest-visual-telemetry-v1";
   readonly version: 1;
@@ -528,7 +552,7 @@ function browserProcessEnvironment(profileRoot: string): NodeJS.ProcessEnv {
   };
 }
 
-export class PlaytestVisualBrowserDriver {
+export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver {
   private readonly target: WorkspaceVisualPlaytestTargetApproval;
   private readonly episodeId: string;
   private readonly artifacts: PlaytestArtifactStore;
@@ -785,6 +809,18 @@ export class PlaytestVisualBrowserDriver {
 
   private elapsedMs(): number {
     return Math.max(0, this.now() - this.startedAt);
+  }
+
+  /**
+   * Milliseconds left in the approved per-episode wall-time budget.
+   *
+   * The driver owns that budget — it enforces the same ceiling before every
+   * observation and before every action — so a caller that must not outlive the
+   * episode reads the remainder here instead of starting a second, divergent
+   * clock against the same limit.
+   */
+  remainingWallTimeMs(): number {
+    return Math.max(0, this.target.limits.wallTimeMs - this.elapsedMs());
   }
 
   private noteBlockedRequest(): void {

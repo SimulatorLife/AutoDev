@@ -202,6 +202,8 @@ import {
 import {
   PlaytestVisualBrowserDriver,
   PlaytestVisualBrowserDriverError,
+  type PlaytestVisualDriverOpener,
+  type PlaytestVisualEpisodeDriver,
   type PlaytestVisualObservationBlockReason
 } from "./visual-browser-driver.ts";
 
@@ -601,6 +603,8 @@ export interface PlaytestRunControlOptions {
   /** Overridable for tests; defaults to the real canonical workspace catalog. */
   readonly readWorkspaceCatalog?: () => WorkspaceCatalogRead;
   readonly launchAnalystProcess?: PlaytestAnalystProcessLauncher;
+  /** Opens the browser for one visual episode; overridable so the episode loop is testable. */
+  readonly openVisualDriver?: PlaytestVisualDriverOpener;
 }
 
 export interface PlaytestMcpOptions extends PlaytestRunControlOptions {
@@ -4264,6 +4268,7 @@ interface ExecuteVisualBatchInput {
   readonly readWorkspaceCatalog: () => WorkspaceCatalogRead;
   readonly activeRuns: Map<string, ActivePlaytestRun>;
   readonly assignmentLocks: Map<string, Promise<void>>;
+  readonly openVisualDriver: PlaytestVisualDriverOpener;
   readonly onRegistered: (
     batchId: string,
     createdAt: string,
@@ -4286,6 +4291,10 @@ type VisualEpisodeExit =
   | {
       readonly kind: "action-refused";
       readonly reason: string;
+      readonly step: number | null;
+    }
+  | {
+      readonly kind: "wall-time-limit";
       readonly step: number | null;
     }
   | {
@@ -4441,6 +4450,7 @@ function playerDebriefAfterExit(
         ? "action-refused"
         : exit.kind === "step-limit" ||
             exit.kind === "loop-guard" ||
+            exit.kind === "wall-time-limit" ||
             (exit.kind === "driver-blocked" &&
               VISUAL_BUDGET_BLOCK_REASONS.has(exit.reason))
           ? "budget-truncated"
@@ -4517,6 +4527,12 @@ function visualEpisodeDisposition(exit: VisualEpisodeExit): {
         termination: { reason: "unknown", step: exit.step },
         missingReason: "unobserved"
       };
+    case "wall-time-limit":
+      return {
+        status: "budget-truncated",
+        termination: { reason: "step-limit", step: exit.step },
+        missingReason: "budget-truncated"
+      };
     case "policy-stop":
       return {
         status: "completed",
@@ -4536,6 +4552,21 @@ function visualRuntimeFailureCode(err: unknown): string {
   }
   if (err instanceof Error) return "error:" + err.constructor.name;
   return "unknown-runtime-failure";
+}
+
+/**
+ * Whether a Smart-direct failure is the decision deadline running out.
+ *
+ * The deadline encodes the approved per-episode wall-time budget, so this
+ * separates "the approved budget was spent" from "the provider could not
+ * answer in time" — the first truncates the episode, the second is a runtime
+ * failure.
+ */
+function isDecisionDeadlineFailure(err: unknown): boolean {
+  return (
+    err instanceof SmartDirectPolicyError &&
+    err.code === "decision-deadline-exceeded"
+  );
 }
 
 /** Nine-field completion counters for exactly one visual-session episode. */
@@ -4866,9 +4897,9 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
         simulationWallMs: null
       });
 
-      let driver: PlaytestVisualBrowserDriver;
+      let driver: PlaytestVisualEpisodeDriver;
       try {
-        driver = await PlaytestVisualBrowserDriver.open({
+        driver = await input.openVisualDriver({
           target: sessionTarget,
           episodeId,
           artifacts: input.artifacts,
@@ -4973,7 +5004,13 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
             frameBytes,
             areasOfFocus,
             history,
-            deadlineMonotonicMs: performance.now() + 15_000
+            // The approved per-episode wall-time budget owns the decision
+            // deadline. The driver enforces that same ceiling before every
+            // observation and every action, so a decision may not outlive it;
+            // a deadline shorter than the budget would cut a healthy provider
+            // off mid-answer and report the episode as a runtime failure.
+            deadlineMonotonicMs:
+              performance.now() + driver.remainingWallTimeMs()
           });
         } catch (err) {
           const code = visualRuntimeFailureCode(err);
@@ -5011,7 +5048,10 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
               { id: obsResult.observation.frame.artifactId, kind: "frame" }
             ]
           });
-          exit = { kind: "infrastructure-failure", code, step };
+          exit =
+            isDecisionDeadlineFailure(err) && driver.remainingWallTimeMs() <= 0
+              ? { kind: "wall-time-limit", step }
+              : { kind: "infrastructure-failure", code, step };
           break;
         }
 
@@ -6645,6 +6685,10 @@ export function createPlaytestRunControl(
             readWorkspaceCatalog,
             activeRuns,
             assignmentLocks,
+            openVisualDriver:
+              options.openVisualDriver ??
+              ((driverOptions) =>
+                PlaytestVisualBrowserDriver.open(driverOptions)),
             onRegistered(batchId, createdAt, assignmentIds, sessions) {
               registeredBatchId = batchId;
               resolveStarted({ batchId, createdAt, assignmentIds, sessions });
