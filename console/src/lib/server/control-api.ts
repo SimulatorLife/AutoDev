@@ -94,7 +94,6 @@ import {
   type WorkspaceRuntimeAvailability
 } from "@simulatorlife/autodev-core";
 
-
 export type ControlApiResult<T> =
   | { readonly kind: "ok"; readonly data: T }
   | {
@@ -325,13 +324,8 @@ async function withControlApiRetry<T>(
   attempt: (attemptIndex: number) => Promise<ControlApiResult<T>>,
   options: ControlApiRetryOptions
 ): Promise<ControlApiResult<T>> {
-  const {
-    maxRetries,
-    baseRetryDelayMs,
-    controller,
-    callerSignal,
-    timeoutMs
-  } = options;
+  const { maxRetries, baseRetryDelayMs, controller, callerSignal, timeoutMs } =
+    options;
   /* eslint-disable no-await-in-loop -- each attempt must settle before the next request starts */
   for (let attemptIndex = 0; attemptIndex <= maxRetries; attemptIndex++) {
     try {
@@ -362,9 +356,7 @@ async function withControlApiRetry<T>(
   /* eslint-enable no-await-in-loop */
   return {
     kind: "unreachable",
-    message: describeTransportFailure(
-      new Error("Connection retries exhausted")
-    )
+    message: describeTransportFailure(new Error("Connection retries exhausted"))
   };
 }
 
@@ -604,7 +596,8 @@ async function readControlApiBinaryFrame(
     return {
       kind: INVALID_RESPONSE_KIND,
       code: "autodev_control_api_invalid_playtesting_frame_type",
-      message: "The Control API returned a non-displayable Playtesting frame type."
+      message:
+        "The Control API returned a non-displayable Playtesting frame type."
     };
   }
   if (exceedsBinaryResponseLimit(response.headers.get("content-length"))) {

@@ -61,7 +61,8 @@ import {
   type ToolCatalogItem,
   type ToolCatalogView,
   workspaceConfigurationHealth,
-  type WorkspaceRuntimeAvailability} from "@simulatorlife/autodev-core";
+  type WorkspaceRuntimeAvailability
+} from "@simulatorlife/autodev-core";
 import {
   assignSkillRoles,
   auditEnvelopesToHistory,
@@ -1244,7 +1245,10 @@ function workspaceRuntimeAvailability(
   liveAgents: ControlApiLiveAgentCounts | null
 ): WorkspaceRuntimeAvailability {
   if (liveAgents === null) return { status: "not-observed" };
-  return { status: "observed", liveAgents: liveAgents.byWorkspace[workspaceId] ?? 0 };
+  return {
+    status: "observed",
+    liveAgents: liveAgents.byWorkspace[workspaceId] ?? 0
+  };
 }
 
 /**

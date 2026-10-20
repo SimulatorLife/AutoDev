@@ -1,7 +1,4 @@
-import type {
-  WorkspaceConfigurationHealth,
-  WorkspaceEntry
-} from "./types.ts";
+import type { WorkspaceConfigurationHealth, WorkspaceEntry } from "./types.ts";
 
 /**
  * Judge one workspace's canonical configuration entry.

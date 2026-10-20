@@ -593,7 +593,10 @@ export function ProviderUsagePendingPanel({
           { className: SECTION_HEADING_CLASS },
           "Usage · last 7 days"
         ),
-        React.createElement(StatusBadge, { status: "pending", label: "Loading" })
+        React.createElement(StatusBadge, {
+          status: "pending",
+          label: "Loading"
+        })
       ),
       React.createElement(
         NavigationLink,
