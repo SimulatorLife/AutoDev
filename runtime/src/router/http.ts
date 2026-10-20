@@ -813,6 +813,7 @@ function controlApiLiveAgentCounts(now: number): ControlApiLiveAgentCounts {
     byRole: projection.byRole,
     byProvider: projection.byProvider,
     byModel: projection.byModel,
+    byWorkspace: projection.byWorkspace,
     missingProvider: projection.missingProvider,
     missingModel: projection.missingModel
   };

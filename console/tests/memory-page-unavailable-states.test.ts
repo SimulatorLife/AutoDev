@@ -135,7 +135,7 @@ function route(path: string, options: RouteOptions): Response | null {
   if (path.startsWith("/control/workspaces")) {
     return Response.json(
       options.workspaces ?? {
-        schema: "autodev-control-workspaces-v1",
+        schema: "autodev-control-workspaces-v2",
         source: "config/workspaces.json",
         readOnly: true,
         catalogStatus: "valid",
@@ -145,7 +145,9 @@ function route(path: string, options: RouteOptions): Response | null {
             id: "SimulatorLife/AutoDev",
             baseBranch: "main",
             enabled: true,
-            agentRoles: null
+            agentRoles: null,
+            configuration: { status: "configured" },
+            runtime: { status: "not-observed" }
           }
         ]
       }
@@ -240,7 +242,7 @@ test("a workspace catalog that is unreadable fails closed before any memory read
     {},
     {
       workspaces: {
-        schema: "autodev-control-workspaces-v1",
+        schema: "autodev-control-workspaces-v2",
         source: "config/workspaces.json",
         readOnly: true,
         catalogStatus: "unavailable",
@@ -267,7 +269,7 @@ test("an empty workspace catalog names the missing configuration, not an empty l
     {},
     {
       workspaces: {
-        schema: "autodev-control-workspaces-v1",
+        schema: "autodev-control-workspaces-v2",
         source: "config/workspaces.json",
         readOnly: true,
         catalogStatus: "valid",

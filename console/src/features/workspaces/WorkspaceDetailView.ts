@@ -3,7 +3,7 @@
 import {
   assertWorkspacePlaytestApproval,
   type ControlApiWorkspacePlaytestApprovalResponse,
-  type WorkspaceEntry,
+  type ControlApiWorkspaceRecord,
   type WorkspacePlaytestApproval,
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
@@ -32,6 +32,12 @@ import {
 } from "./approval-status.ts";
 import { WORKSPACE_PLAYTEST_LIMIT_FIELDS } from "./limits-fields.ts";
 import { WORKSPACES_PATH } from "./paths.ts";
+import {
+  workspaceAvailabilityBadgeLabel,
+  workspaceAvailabilityBadgeVariant,
+  workspaceConfigurationBadgeLabel,
+  workspaceConfigurationBadgeVariant
+} from "./workspace-health.ts";
 import { WorkspacePlaytestApprovalForm } from "./WorkspacePlaytestApprovalForm.ts";
 import { WorkspacePlaytestRevokeForm } from "./WorkspacePlaytestRevokeForm.ts";
 import {
@@ -45,7 +51,7 @@ export interface WorkspaceApprovalUnavailable {
 }
 
 export interface WorkspaceDetailViewProps {
-  readonly workspace: WorkspaceEntry;
+  readonly workspace: ControlApiWorkspaceRecord;
   /** `null` when read, but no approval has ever been granted. */
   readonly approval: WorkspacePlaytestApproval | null;
   /** Set instead of `approval` when the Control API read itself failed. */
@@ -139,6 +145,56 @@ function LimitsPanel({
         { key: field.name, label: field.label },
         String(approval.limits[field.name])
       )
+    )
+  );
+}
+
+/**
+ * The canonical configuration of one workspace, and the two facts beside it.
+ *
+ * The configuration is judged against the canonical role list, and the
+ * runtime's own answer about the workspace is a separate authority, so the
+ * panel keeps them apart: a scope that names a role nothing answers to is
+ * a configuration fault, and an unobserved workspace is missing evidence
+ * rather than an idle one.
+ */
+function ConfigurationPanel({
+  workspace
+}: {
+  readonly workspace: ControlApiWorkspaceRecord;
+}): React.JSX.Element {
+  return React.createElement(
+    DetailGrid,
+    { columns: 2, label: "Canonical configuration" },
+    React.createElement(
+      DetailValue,
+      { label: "Base branch" },
+      workspace.baseBranch
+    ),
+    React.createElement(
+      DetailValue,
+      { label: "Role scope" },
+      workspace.agentRoles === null
+        ? "Not configured"
+        : workspace.agentRoles.length === 0
+          ? "No roles assigned"
+          : workspace.agentRoles.join(", ")
+    ),
+    React.createElement(
+      DetailValue,
+      { label: "Configuration" },
+      React.createElement(StatusBadge, {
+        status: workspaceConfigurationBadgeVariant(workspace.configuration),
+        label: workspaceConfigurationBadgeLabel(workspace.configuration)
+      })
+    ),
+    React.createElement(
+      DetailValue,
+      { label: "Runtime availability" },
+      React.createElement(StatusBadge, {
+        status: workspaceAvailabilityBadgeVariant(workspace.runtime),
+        label: workspaceAvailabilityBadgeLabel(workspace.runtime)
+      })
     )
   );
 }
@@ -502,6 +558,23 @@ export function WorkspaceDetailView({
         "data-workspace-approval-announcement": true
       },
       announcement
+    ),
+    React.createElement(
+      "section",
+      {
+        className: DETAIL_PANEL_CLASS,
+        "data-section": "workspace-configuration"
+      },
+      React.createElement(
+        "h2",
+        { className: SECTION_HEADING_CLASS },
+        "Configuration"
+      ),
+      React.createElement(
+        "div",
+        { className: "mt-3 flex flex-col gap-4" },
+        React.createElement(ConfigurationPanel, { workspace })
+      )
     ),
     React.createElement(
       "section",

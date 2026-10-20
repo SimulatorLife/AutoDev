@@ -160,13 +160,20 @@ function route(path: string, wire: Wire): unknown {
   }
   if (path.startsWith("/control/workspaces")) {
     return {
-      schema: "autodev-control-workspaces-v1",
+      schema: "autodev-control-workspaces-v2",
       source: "config/workspaces.json",
       readOnly: true,
       catalogStatus: "valid",
       totalWorkspaces: 1,
       workspaces: [
-        { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
+        {
+          id: WORKSPACE,
+          baseBranch: "main",
+          enabled: true,
+          agentRoles: null,
+          configuration: { status: "configured" },
+          runtime: { status: "not-observed" }
+        }
       ]
     };
   }

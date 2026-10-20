@@ -1,5 +1,5 @@
 import type {
-  WorkspaceEntry,
+  ControlApiWorkspaceRecord,
   WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
 import React from "react";
@@ -9,10 +9,7 @@ import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
-import {
-  NOT_OBSERVED_STATUS,
-  StatusBadge
-} from "../../components/status/StatusBadge.ts";
+import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
@@ -32,6 +29,12 @@ import {
   workspaceApprovalStatus
 } from "./approval-status.ts";
 import { workspacePath } from "./paths.ts";
+import {
+  workspaceAvailabilityBadgeLabel,
+  workspaceAvailabilityBadgeVariant,
+  workspaceConfigurationBadgeLabel,
+  workspaceConfigurationBadgeVariant
+} from "./workspace-health.ts";
 
 /**
  * One workspace's most recently read playtesting approval, keyed by
@@ -48,9 +51,16 @@ export type WorkspaceApprovalLookup = ReadonlyMap<
  * Workspaces resource view.
  *
  * Each workspace has a configured `id` (GitHub owner/repo), `baseBranch`,
- * `enabled` state, and `agentRoles` scope (`null` means not configured). Its
- * actual availability/health is a runtime concern that must be reported by an
- * authoritative probe; until that adapter exists, availability is `Not observed`.
+ * `enabled` state, and `agentRoles` scope (`null` means not configured).
+ *
+ * Beside the configuration sit the two facts an operator needs to act on it.
+ * `configuration` is the Control API's judgement of the canonical entry --
+ * whether the role scope names roles the execution contract defines -- and
+ * `runtime` is the runtime's live answer about whether it is currently
+ * serving the workspace. The two are different authorities, so the view shows
+ * them apart: an unobserved workspace reads `Not observed` and an idle one
+ * reads `Idle`, because missing evidence and a measured zero are different
+ * claims.
  *
  * Playtesting approval is a *different* fact, and one this view can report:
  * Workspaces owns the checkout approval boundary a game adapter runs
@@ -59,7 +69,7 @@ export type WorkspaceApprovalLookup = ReadonlyMap<
  */
 
 export interface WorkspacesViewProps {
-  readonly workspaces: readonly WorkspaceEntry[];
+  readonly workspaces: readonly ControlApiWorkspaceRecord[];
   readonly approvals: WorkspaceApprovalLookup;
 }
 
@@ -78,7 +88,7 @@ export function WorkspacesView({
     );
   }).length;
 
-  const columns: ColumnDef<WorkspaceEntry>[] = [
+  const columns: ColumnDef<ControlApiWorkspaceRecord>[] = [
     {
       id: "id",
       header: "Repository / Workspace",
@@ -149,31 +159,41 @@ export function WorkspacesView({
       header: "Role Scope",
       weight: 200,
       cell: (ws) =>
-        React.createElement(
-          "span",
-          {
-            className: MONO_VALUE_CLASS,
-            "data-role-scope":
+        // A scope that names a role AutoDev does not define is a configuration
+        // fault, and it belongs in the cell that owns the scope: listing the
+        // roles anyway would show a scope that excludes every agent that
+        // could work here and say nothing about why.
+        ws.configuration.status === "invalid-role-scope"
+          ? React.createElement(StatusBadge, {
+              status: workspaceConfigurationBadgeVariant(ws.configuration),
+              label: workspaceConfigurationBadgeLabel(ws.configuration)
+            })
+          : React.createElement(
+              "span",
+              {
+                className: MONO_VALUE_CLASS,
+                "data-role-scope":
+                  ws.agentRoles === null
+                    ? "not-configured"
+                    : ws.agentRoles.length === 0
+                      ? "empty"
+                      : "configured"
+              },
               ws.agentRoles === null
-                ? "not-configured"
+                ? "Not configured"
                 : ws.agentRoles.length === 0
-                  ? "empty"
-                  : "configured"
-          },
-          ws.agentRoles === null
-            ? "Not configured"
-            : ws.agentRoles.length === 0
-              ? "No roles assigned"
-              : ws.agentRoles.join(", ")
-        )
+                  ? "No roles assigned"
+                  : ws.agentRoles.join(", ")
+            )
     },
     {
       id: "availability",
       header: "Availability",
       weight: 160,
-      cell: () =>
+      cell: (ws) =>
         React.createElement(StatusBadge, {
-          status: NOT_OBSERVED_STATUS
+          status: workspaceAvailabilityBadgeVariant(ws.runtime),
+          label: workspaceAvailabilityBadgeLabel(ws.runtime)
         })
     }
   ];
@@ -182,7 +202,16 @@ export function WorkspacesView({
     PageBody,
     {
       feature: "workspaces",
-      attributes: { "data-workspace-availability-observed": "false" }
+      // True only when the runtime answered for at least one workspace. The
+      // column is per-workspace, so this is the page-level summary of whether
+      // any live evidence exists at all.
+      attributes: {
+        "data-workspace-availability-observed": workspaces.some(
+          (workspace) => workspace.runtime.status === "observed"
+        )
+          ? "true"
+          : "false"
+      }
     },
     React.createElement(
       StatGrid,
@@ -213,10 +242,10 @@ export function WorkspacesView({
         },
         "Configured Workspaces"
       ),
-      React.createElement<DataTableProps<WorkspaceEntry>>(DataTable, {
+      React.createElement<DataTableProps<ControlApiWorkspaceRecord>>(DataTable, {
         data: workspaces,
         columns,
-        keyExtractor: (w: WorkspaceEntry) => w.id,
+        keyExtractor: (w: ControlApiWorkspaceRecord) => w.id,
         emptyMessage: "No workspace entries are configured."
       })
     )

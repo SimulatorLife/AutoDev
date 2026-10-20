@@ -67,7 +67,9 @@ import type {
 import type { WorkspacePlaytestApproval } from "../workspaces/playtesting.ts";
 import type {
   WorkspaceCatalogStatus,
-  WorkspaceEntry
+  WorkspaceConfigurationHealth,
+  WorkspaceEntry,
+  WorkspaceRuntimeAvailability
 } from "../workspaces/types.ts";
 import type { WorkspaceVisualPlaytestTargetApproval } from "../workspaces/visual-playtesting.ts";
 
@@ -693,13 +695,28 @@ export interface ControlApiPromptCommandPatchResponse {
   };
 }
 
+/**
+ * One workspace as the Control API reports it.
+ *
+ * The catalog entry is the canonical configuration; `configuration` and
+ * `runtime` are the two facts an operator needs beside it -- whether the
+ * entry is usable, and whether the runtime is currently serving the
+ * workspace. They are separate fields because they come from separate
+ * authorities: the configuration is judged against the canonical role list,
+ * and the runtime fact is a live projection that may be absent.
+ */
+export interface ControlApiWorkspaceRecord extends WorkspaceEntry {
+  readonly configuration: WorkspaceConfigurationHealth;
+  readonly runtime: WorkspaceRuntimeAvailability;
+}
+
 export interface ControlApiWorkspacesResponse {
-  readonly schema: "autodev-control-workspaces-v1";
+  readonly schema: "autodev-control-workspaces-v2";
   readonly source: string;
   readonly readOnly: boolean;
   readonly catalogStatus: WorkspaceCatalogStatus;
   readonly totalWorkspaces: number | null;
-  readonly workspaces: readonly WorkspaceEntry[];
+  readonly workspaces: readonly ControlApiWorkspaceRecord[];
 }
 
 export interface ControlApiGithubResponse {
@@ -818,6 +835,12 @@ export interface ControlApiLiveAgentCounts {
   readonly byProvider: Readonly<Record<string, number>>;
   /** Keys use the canonical `<provider>/<model>` identifier. */
   readonly byModel: Readonly<Record<string, number>>;
+  /**
+   * Keys use the canonical workspace id -- the same `owner/repository` key
+   * `config/workspaces.json` names. A workspace the source did not list has
+   * zero live agents, which is a measured fact rather than a missing one.
+   */
+  readonly byWorkspace: Readonly<Record<string, number>>;
   readonly missingProvider: number;
   readonly missingModel: number;
 }

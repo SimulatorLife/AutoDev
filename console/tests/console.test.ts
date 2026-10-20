@@ -654,7 +654,7 @@ test("an unrecognised URL filter is named, never resolved into a default", async
       const url = String(input);
       if (url.endsWith("/control/workspaces")) {
         return Response.json({
-          schema: "autodev-control-workspaces-v1",
+          schema: "autodev-control-workspaces-v2",
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
@@ -664,7 +664,9 @@ test("an unrecognised URL filter is named, never resolved into a default", async
               id: "SimulatorLife/AutoDev",
               baseBranch: "main",
               enabled: true,
-              agentRoles: null
+              agentRoles: null,
+              configuration: { status: "configured" },
+              runtime: { status: "not-observed" }
             }
           ]
         });
@@ -778,7 +780,7 @@ test("MemoryPage starts its independent status and records reads together", asyn
       const url = String(input);
       if (url.endsWith("/control/workspaces")) {
         return Response.json({
-          schema: "autodev-control-workspaces-v1",
+          schema: "autodev-control-workspaces-v2",
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
@@ -788,7 +790,9 @@ test("MemoryPage starts its independent status and records reads together", asyn
               id: "SimulatorLife/AutoDev",
               baseBranch: "main",
               enabled: true,
-              agentRoles: null
+              agentRoles: null,
+              configuration: { status: "configured" },
+              runtime: { status: "not-observed" }
             }
           ]
         });
@@ -869,7 +873,7 @@ test("MemoryPage asks the Runtime for the page the URL names", async () => {
       requested.push(url);
       if (url.endsWith("/control/workspaces")) {
         return Response.json({
-          schema: "autodev-control-workspaces-v1",
+          schema: "autodev-control-workspaces-v2",
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
@@ -879,7 +883,9 @@ test("MemoryPage asks the Runtime for the page the URL names", async () => {
               id: "SimulatorLife/AutoDev",
               baseBranch: "main",
               enabled: true,
-              agentRoles: null
+              agentRoles: null,
+              configuration: { status: "configured" },
+              runtime: { status: "not-observed" }
             }
           ]
         });
@@ -2135,7 +2141,9 @@ test("a path wraps between its segments and never inside one", () => {
           id: "SimulatorLife/Colourful-Life",
           baseBranch: "main",
           enabled: true,
-          agentRoles: null
+          agentRoles: null,
+          configuration: { status: "configured" },
+          runtime: { status: "not-observed" }
         }
       ],
       approvals: new Map()
@@ -3412,7 +3420,9 @@ test("no column is narrower than its own header", () => {
             id: "SimulatorLife/AutoDev",
             baseBranch: "main",
             enabled: true,
-            agentRoles: null
+            agentRoles: null,
+            configuration: { status: "configured" },
+            runtime: { status: "not-observed" }
           }
         ],
         approvals: new Map()
@@ -5283,13 +5293,17 @@ test("WorkspacesView keeps availability and unconfigured role scope explicit", (
           id: "SimulatorLife/AutoDev",
           baseBranch: "main",
           enabled: true,
-          agentRoles: null
+          agentRoles: null,
+          configuration: { status: "configured" },
+          runtime: { status: "not-observed" }
         },
         {
           id: "SimulatorLife/Other",
           baseBranch: "main",
           enabled: false,
-          agentRoles: []
+          agentRoles: [],
+          configuration: { status: "configured" },
+          runtime: { status: "not-observed" }
         }
       ],
       approvals: new Map()
@@ -5306,6 +5320,57 @@ test("WorkspacesView keeps availability and unconfigured role scope explicit", (
   assert.match(markup, /data-role-scope="empty">No roles assigned/);
   assert.match(markup, />Enabled</);
   assert.match(markup, />Disabled</);
+});
+
+test("WorkspacesView reports measured availability and a broken role scope instead of hiding either", () => {
+  // The Availability column used to read "Not observed" for every workspace
+  // forever, because no runtime evidence was ever wired to it. It now reads
+  // what the runtime answered: a measured count, a measured zero, or the
+  // honest absence of evidence.
+  const markup = renderToStaticMarkup(
+    React.createElement(WorkspacesView, {
+      workspaces: [
+        {
+          id: "SimulatorLife/AutoDev",
+          baseBranch: "main",
+          enabled: true,
+          agentRoles: null,
+          configuration: { status: "configured" },
+          runtime: { status: "observed", liveAgents: 2 }
+        },
+        {
+          id: "SimulatorLife/Idle",
+          baseBranch: "main",
+          enabled: true,
+          agentRoles: ["orchestrator"],
+          configuration: { status: "configured" },
+          runtime: { status: "observed", liveAgents: 0 }
+        },
+        {
+          id: "SimulatorLife/Broken",
+          baseBranch: "main",
+          enabled: true,
+          agentRoles: ["not-a-role"],
+          configuration: {
+            status: "invalid-role-scope",
+            unknownRoles: ["not-a-role"]
+          },
+          runtime: { status: "not-observed" }
+        }
+      ],
+      approvals: new Map()
+    })
+  );
+  // A workspace the runtime answered for reports its count; a workspace it
+  // did not list is idle, which is a measurement rather than a gap.
+  assert.match(markup, />2 live</);
+  assert.match(markup, />Idle</);
+  assert.match(markup, /data-workspace-availability-observed="true"/);
+  // The broken scope is named in the cell that owns the scope: listing the
+  // roles anyway would show a scope that excludes every agent that could
+  // work here, and say nothing about why.
+  assert.match(markup, /Unknown role: not-a-role/);
+  assert.match(markup, /data-status="invalid"/);
 });
 
 test("GithubView renders parsed workflow triggers and keeps Actions API facts explicitly unavailable", () => {
@@ -5590,7 +5655,7 @@ test("MemoryPage requires a valid canonical workspace catalog before querying me
     globalThis.fetch = async (input) => {
       requests.push(String(input));
       return Response.json({
-        schema: "autodev-control-workspaces-v1",
+        schema: "autodev-control-workspaces-v2",
         source: "config/workspaces.json",
         readOnly: true,
         catalogStatus: "invalid",
@@ -5627,7 +5692,7 @@ test("MemoryPage rejects URL workspace ids outside the canonical catalog before 
     globalThis.fetch = async (input) => {
       requests.push(String(input));
       return Response.json({
-        schema: "autodev-control-workspaces-v1",
+        schema: "autodev-control-workspaces-v2",
         source: "config/workspaces.json",
         readOnly: true,
         catalogStatus: "valid",
@@ -5637,7 +5702,9 @@ test("MemoryPage rejects URL workspace ids outside the canonical catalog before 
             id: "SimulatorLife/AutoDev",
             baseBranch: "main",
             enabled: true,
-            agentRoles: null
+            agentRoles: null,
+            configuration: { status: "configured" },
+            runtime: { status: "not-observed" }
           }
         ]
       });
@@ -5673,7 +5740,7 @@ test("MemoryPage reports failed experience history instead of rendering an empty
       const url = String(input);
       if (url.endsWith("/control/workspaces")) {
         return Response.json({
-          schema: "autodev-control-workspaces-v1",
+          schema: "autodev-control-workspaces-v2",
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
@@ -5683,7 +5750,9 @@ test("MemoryPage reports failed experience history instead of rendering an empty
               id: "SimulatorLife/AutoDev",
               baseBranch: "main",
               enabled: true,
-              agentRoles: null
+              agentRoles: null,
+              configuration: { status: "configured" },
+              runtime: { status: "not-observed" }
             }
           ]
         });
@@ -10581,6 +10650,7 @@ test("AgentsView shows read-only provider summaries that link to Providers", () 
           byRole: { orchestrator: 1 },
           byProvider: {},
           byModel: {},
+          byWorkspace: {},
           missingProvider: 1,
           missingModel: 1
         }
@@ -10870,7 +10940,7 @@ test("View adapters translate Control API responses without inventing data", () 
   });
 
   const workspaces = workspacesFromControlApi({
-    schema: "autodev-control-workspaces-v1",
+    schema: "autodev-control-workspaces-v2",
     source: "test",
     readOnly: true,
     catalogStatus: "valid",
@@ -10880,7 +10950,9 @@ test("View adapters translate Control API responses without inventing data", () 
         id: "SimulatorLife/AutoDev",
         baseBranch: "main",
         enabled: true,
-        agentRoles: null
+        agentRoles: null,
+        configuration: { status: "configured" },
+        runtime: { status: "not-observed" }
       }
     ]
   });
@@ -13144,13 +13216,20 @@ test("Memory detail and the workspace catalog fail closed on unreadable response
   // The catalog scopes every Memory read, so an unreadable catalog must not
   // reach the selector as "no workspaces are configured".
   const catalog = {
-    schema: "autodev-control-workspaces-v1",
+    schema: "autodev-control-workspaces-v2",
     source: "config/workspaces.json",
     readOnly: true,
     catalogStatus: "valid",
     totalWorkspaces: 1,
     workspaces: [
-      { id: workspaceId, baseBranch: "main", enabled: true, agentRoles: null }
+      {
+        id: workspaceId,
+        baseBranch: "main",
+        enabled: true,
+        agentRoles: null,
+        configuration: { status: "configured" },
+        runtime: { status: "not-observed" }
+      }
     ]
   };
   assert.equal((await fetchWorkspaces(config, serve(catalog))).kind, "ok");
@@ -13160,7 +13239,17 @@ test("Memory detail and the workspace catalog fail closed on unreadable response
     { ...catalog, workspaces: {} },
     { ...catalog, workspaces: [{ id: workspaceId }] },
     { ...catalog, workspaces: [{ ...catalog.workspaces[0], enabled: "yes" }] },
-    { ...catalog, workspaces: [{ ...catalog.workspaces[0], agentRoles: [1] }] }
+    {
+      ...catalog,
+      workspaces: [
+        {
+          ...catalog.workspaces[0],
+          agentRoles: [1],
+          configuration: { status: "configured" },
+          runtime: { status: "not-observed" }
+        }
+      ]
+    }
   ]) {
     assert.equal(
       (await fetchWorkspaces(config, serve(broken))).kind,
@@ -13617,6 +13706,7 @@ test("ProvidersView Models tab puts each model's toggle next to the model", () =
           count: MODELS_FIXTURE.models.length,
           byRole: {},
           byProvider: {},
+          byWorkspace: {},
           byModel: Object.fromEntries(
             MODELS_FIXTURE.models.map((model, index) => [
               `${model.provider}/${model.id}`,
@@ -13910,6 +14000,7 @@ test("ProviderDetailView reads an absent provider route without throwing", async
             byRole: {},
             byProvider: {},
             byModel: {},
+            byWorkspace: {},
             missingProvider: 0,
             missingModel: 0
           }
@@ -14857,6 +14948,7 @@ test("Console rejects a runtime response that does not match the v2 contract", a
       byRole: { fixtureRole: 2 },
       byProvider: { fixtureProvider: 2 },
       byModel: { "fixtureProvider/fixtureModel": 1 },
+      byWorkspace: { "SimulatorLife/AutoDev": 2 },
       missingProvider: 0,
       missingModel: 1
     }
@@ -15525,7 +15617,7 @@ test("the Memory page names why storage failed, from the status read rather than
       const url = String(input);
       if (url.includes("/control/workspaces")) {
         return Response.json({
-          schema: "autodev-control-workspaces-v1",
+          schema: "autodev-control-workspaces-v2",
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
@@ -15535,7 +15627,9 @@ test("the Memory page names why storage failed, from the status read rather than
               id: "SimulatorLife/AutoDev",
               baseBranch: "main",
               enabled: true,
-              agentRoles: null
+              agentRoles: null,
+              configuration: { status: "configured" },
+              runtime: { status: "not-observed" }
             }
           ]
         });
@@ -16139,7 +16233,7 @@ test("cohort filters reach the Runtime and stay on the cohorts tab", async () =>
       requested.push(url);
       if (url.endsWith("/control/workspaces")) {
         return Response.json({
-          schema: "autodev-control-workspaces-v1",
+          schema: "autodev-control-workspaces-v2",
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
@@ -16149,7 +16243,9 @@ test("cohort filters reach the Runtime and stay on the cohorts tab", async () =>
               id: "SimulatorLife/AutoDev",
               baseBranch: "main",
               enabled: true,
-              agentRoles: null
+              agentRoles: null,
+              configuration: { status: "configured" },
+              runtime: { status: "not-observed" }
             }
           ]
         });
@@ -16573,7 +16669,7 @@ test("the Memory page carries the Runtime's explanation into the record drawer",
       const url = String(input);
       if (url.endsWith("/control/workspaces")) {
         return Response.json({
-          schema: "autodev-control-workspaces-v1",
+          schema: "autodev-control-workspaces-v2",
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
@@ -16583,7 +16679,9 @@ test("the Memory page carries the Runtime's explanation into the record drawer",
               id: "SimulatorLife/AutoDev",
               baseBranch: "main",
               enabled: true,
-              agentRoles: null
+              agentRoles: null,
+              configuration: { status: "configured" },
+              runtime: { status: "not-observed" }
             }
           ]
         });

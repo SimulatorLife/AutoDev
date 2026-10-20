@@ -30,6 +30,7 @@ import {
   type ControlApiRequestOptions,
   githubWorkflowsView,
   handleControlApiRequest,
+  setControlApiLiveAgentCountsSource,
   setControlApiProviderHealthSource,
   setControlApiProviderModelDiscoverySource,
   setGithubActionsAdapterForTests
@@ -480,7 +481,7 @@ test("viewer reads control resources; MCP and Skills views contain configuration
       actor: "viewer-a"
     });
     assert.equal(workspaces.response.statusCode, 200);
-    assert.equal(workspaces.body.schema, "autodev-control-workspaces-v1");
+    assert.equal(workspaces.body.schema, "autodev-control-workspaces-v2");
     assert.equal(workspaces.body.source, "config/workspaces.json");
     assert.equal(workspaces.body.catalogStatus, "valid");
     assert.ok(Array.isArray(workspaces.body.workspaces));
@@ -492,6 +493,66 @@ test("viewer reads control resources; MCP and Skills views contain configuration
     );
   } finally {
     setExecutionContractForTests(priorContract);
+    restoreEnv(saved);
+  }
+});
+
+test("Control API reports per-workspace configuration health and runtime availability", async () => {
+  const saved = saveEnv();
+  interface WorkspaceFact {
+    readonly id: string;
+    readonly configuration: { readonly status: string };
+    readonly runtime: {
+      readonly status: string;
+      readonly liveAgents?: number;
+    };
+  }
+  try {
+    configure();
+    // No live source at all: the runtime has no evidence about any
+    // workspace, so every workspace reads as unobserved rather than as an
+    // idle zero. The two are different claims.
+    setControlApiLiveAgentCountsSource(null);
+    const unobserved = await call("GET", CONTROL_API_PATHS.workspaces, {
+      actor: "viewer-a"
+    });
+    assert.equal(unobserved.response.statusCode, 200);
+    const unobservedWorkspaces = unobserved.body.workspaces as WorkspaceFact[];
+    assert.ok(unobservedWorkspaces.length > 0);
+    for (const workspace of unobservedWorkspaces) {
+      assert.equal(workspace.configuration.status, "configured");
+      assert.equal(workspace.runtime.status, "not-observed");
+    }
+
+    // A registered live source answers for every workspace: the ones it
+    // lists carry their count, and the ones it does not list are a measured
+    // zero rather than an unknown.
+    setControlApiLiveAgentCountsSource(() => ({
+      count: 1,
+      byRole: {},
+      byProvider: {},
+      byModel: {},
+      byWorkspace: { "SimulatorLife/AutoDev": 1 },
+      missingProvider: 0,
+      missingModel: 0
+    }));
+    const observed = await call("GET", CONTROL_API_PATHS.workspaces, {
+      actor: "viewer-a"
+    });
+    assert.equal(observed.response.statusCode, 200);
+    const observedWorkspaces = observed.body.workspaces as WorkspaceFact[];
+    const active = observedWorkspaces.find(
+      (workspace) => workspace.id === "SimulatorLife/AutoDev"
+    );
+    assert.equal(active?.runtime.status, "observed");
+    assert.equal(active?.runtime.liveAgents, 1);
+    const idle = observedWorkspaces.find(
+      (workspace) => workspace.id !== "SimulatorLife/AutoDev"
+    );
+    assert.equal(idle?.runtime.status, "observed");
+    assert.equal(idle?.runtime.liveAgents, 0);
+  } finally {
+    setControlApiLiveAgentCountsSource(null);
     restoreEnv(saved);
   }
 });
@@ -2584,7 +2645,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(workspaces.response.statusCode, 200);
-    assert.equal(workspaces.body.schema, "autodev-control-workspaces-v1");
+    assert.equal(workspaces.body.schema, "autodev-control-workspaces-v2");
 
     // 11. Routing
     const routing = await call("GET", CONTROL_API_PATHS.routing, {
@@ -3542,6 +3603,92 @@ test("Control API /control/github surfaces authoritative read-only GitHub Action
   } finally {
     setGithubActionsAdapterForTests(null);
     restoreEnv(saved);
+  }
+});
+
+test("GitHub snapshot cache TTL starts after a slow upstream read completes", async () => {
+  const repositoryRoot = mkdtempSync(
+    join(tmpdir(), "autodev-github-cache-clock-")
+  );
+  const originalNow = Date.now;
+  const originalFetch = Object.getOwnPropertyDescriptor(
+    GithubActionsAdapter.prototype,
+    "fetchRuntimeSnapshot"
+  );
+  const snapshot = {
+    workflows: [],
+    runs: [],
+    stats: {
+      totalRuns: 0,
+      successfulRuns: 0,
+      failedRuns: 0,
+      inProgressRuns: 0,
+      cancelledRuns: 0,
+      successRate: null
+    }
+  } satisfies Awaited<
+    ReturnType<typeof GithubActionsAdapter.prototype.fetchRuntimeSnapshot>
+  >;
+  let now = 1000;
+  let fetchCount = 0;
+  try {
+    mkdirSync(join(repositoryRoot, ".github", "workflows"), {
+      recursive: true
+    });
+    mkdirSync(join(repositoryRoot, "config"), { recursive: true });
+    writeFileSync(
+      join(repositoryRoot, ".github", "workflows", "ci.yml"),
+      "name: CI\non:\n  push:\n"
+    );
+    writeFileSync(
+      join(repositoryRoot, "config", "workspaces.json"),
+      JSON.stringify({
+        schema: "autodev-workspaces-v1",
+        workspaces: [
+          {
+            id: "Owner/Repo",
+            baseBranch: "main",
+            enabled: true,
+            agentRoles: null
+          }
+        ]
+      })
+    );
+    setGithubActionsAdapterForTests(null);
+    Date.now = () => now;
+    Object.defineProperty(
+      GithubActionsAdapter.prototype,
+      "fetchRuntimeSnapshot",
+      {
+        configurable: true,
+        writable: true,
+        value: async () => {
+          fetchCount += 1;
+          // Simulate an upstream operation that outlasts the 15-second cache TTL.
+          now += 16_000;
+          return snapshot;
+        }
+      }
+    );
+
+    const options = { repository: "Owner/Repo", token: "test-token" };
+    const first = await githubWorkflowsView(repositoryRoot, options);
+    const second = await githubWorkflowsView(repositoryRoot, options);
+
+    assert.equal(first.runtimeFactsAvailable, true);
+    assert.equal(second.runtimeFactsAvailable, true);
+    assert.equal(fetchCount, 1);
+  } finally {
+    Date.now = originalNow;
+    if (originalFetch) {
+      Object.defineProperty(
+        GithubActionsAdapter.prototype,
+        "fetchRuntimeSnapshot",
+        originalFetch
+      );
+    }
+    setGithubActionsAdapterForTests(null);
+    rmSync(repositoryRoot, { recursive: true, force: true });
   }
 });
 

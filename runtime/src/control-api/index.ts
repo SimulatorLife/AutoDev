@@ -59,8 +59,9 @@ import {
   type ReconciliationEvidence,
   type ReconciliationStatus,
   type ToolCatalogItem,
-  type ToolCatalogView
-} from "@simulatorlife/autodev-core";
+  type ToolCatalogView,
+  workspaceConfigurationHealth,
+  type WorkspaceRuntimeAvailability} from "@simulatorlife/autodev-core";
 import {
   assignSkillRoles,
   auditEnvelopesToHistory,
@@ -1230,16 +1231,51 @@ function runtimeView(now: number): Record<string, unknown> {
   } satisfies ControlApiRuntimeResponse;
 }
 
+/**
+ * One workspace's live-agent availability, as the runtime reports it.
+ *
+ * The live projection is the only authority on whether the runtime is
+ * currently serving a workspace, and it may be absent: a standalone Control
+ * API has no live evidence and says so rather than reporting a zero that
+ * would read as an idle workspace.
+ */
+function workspaceRuntimeAvailability(
+  workspaceId: string,
+  liveAgents: ControlApiLiveAgentCounts | null
+): WorkspaceRuntimeAvailability {
+  if (liveAgents === null) return { status: "not-observed" };
+  return { status: "observed", liveAgents: liveAgents.byWorkspace[workspaceId] ?? 0 };
+}
+
+/**
+ * The role names the execution contract defines.
+ *
+ * A workspace's role scope is a list of these, and a scope that names
+ * something else excludes every agent that could work in the workspace.
+ */
+function configuredAgentRoleNames(): readonly string[] {
+  return Object.keys(getDefaultExecutionContract().roles ?? {});
+}
+
 function workspacesView(repositoryRoot?: string): Record<string, unknown> {
   const catalog = new ConfigRepository(repositoryRoot).readWorkspaceCatalog();
+  const liveAgents = liveAgentCountsSource?.(Date.now()) ?? null;
+  const knownRoles = configuredAgentRoleNames();
   return {
-    schema: "autodev-control-workspaces-v1",
+    schema: "autodev-control-workspaces-v2",
     source: "config/workspaces.json",
     readOnly: true,
     catalogStatus: catalog.status,
     totalWorkspaces:
       catalog.status === "valid" ? catalog.workspaces.length : null,
-    workspaces: catalog.workspaces
+    workspaces:
+      catalog.status === "valid"
+        ? catalog.workspaces.map((workspace) => ({
+            ...workspace,
+            configuration: workspaceConfigurationHealth(workspace, knownRoles),
+            runtime: workspaceRuntimeAvailability(workspace.id, liveAgents)
+          }))
+        : []
   } satisfies ControlApiWorkspacesResponse;
 }
 

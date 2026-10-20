@@ -699,8 +699,8 @@ test("canonical migration tracker records the current repository quality-gate ev
   );
   assert.match(
     migration,
-    /p26 trace-detail source applies to p25[\s\S]{0,260}isolated p26 validation image builds successfully[\s\S]{0,120}active image remains p25/u,
-    "p26 trace-detail source/build evidence must distinguish isolated build from active runtime acceptance"
+    /Patch 26 is active in the current p28c7 image[\s\S]{0,260}authenticated `OpenLITUsageClient\.queryTrace`[\s\S]{0,220}cross-source correlation/u,
+    "p26 route deployment must be distinguished from unverified trace/evaluation correlation"
   );
 
   // Data's ConfigRepository must be documented as owning workspaces.json as
@@ -933,8 +933,14 @@ test("git change metrics are defined with exact counting and cardinality rules",
     body,
     /Runtime's OTLP metric exporter explicitly uses CUMULATIVE temporality/u
   );
-  assert.match(migration, /Runtime producer \+ v5 Usage consumer implemented/u);
-  assert.match(migration, /live acceptance open/u);
+  assert.match(
+    migration,
+    /Runtime producer \+ v5 Usage consumer deployed; live metric sample not observed/u
+  );
+  assert.match(
+    migration,
+    /real producer sample and full Git-metric ingestion\/query acceptance remain open/u
+  );
   assert.match(migration, /cumulative temporality/u);
 });
 
@@ -952,6 +958,7 @@ test("canonical target and migration tracker track gaps without claiming prematu
     "Flat monorepo",
     "Workspaces",
     "Console",
+    "Workspace boundaries",
     "RuleSync ownership",
     "Telemetry cutover"
   ];
@@ -967,14 +974,27 @@ test("canonical target and migration tracker track gaps without claiming prematu
 
   // Workspaces delegates to Data ConfigRepository (semantic: Data owns the
   // canonical workspace registry).
+  assert.match(
+    migration,
+    /targeted `boundaries\/\*` ESLint rules reported zero violations across 324 Core\/Data\/non-Playtesting Runtime\/Console source files/u
+  );
+  assert.match(migration, /Playtesting paths and tests were excluded/u);
   assert.match(migration, /workspaces\.json[\s\S]{0,400}ConfigRepository/u);
 
-  // Per-workspace configuration-health and runtime-availability signals are
-  // named as remaining target gaps (not silently claimed done).
+  // Per-workspace configuration-health and runtime-availability signals were
+  // a named gap and are now shipped. The tracker must say which, and say how
+  // they are carried, rather than leaving the gap open or claiming it done
+  // without a name.
   assert.match(
     migration,
     /per-workspace configuration-health[\s\S]{0,200}runtime-availability/u
   );
+  assert.match(migration, /autodev-control-workspaces-v2/u);
+  assert.match(migration, /liveAgents\.byWorkspace/u);
+  // The rest of this area's gap must stay visible: the role scope is still
+  // unassigned for every workspace, and per-workspace usage is not on the
+  // Workspaces surface yet.
+  assert.match(migration, /agentRoles[\s\S]{0,200}unconfigured/u);
 
   // State correctness: missing evidence must remain explicit; never synthesize
   // success. This is durable target-state language, so it lives in the target doc.
@@ -1014,19 +1034,130 @@ test("canonical target and migration tracker track gaps without claiming prematu
   );
 });
 
+test("GitHub local live acceptance is distinct from production acceptance", () => {
+  const migration = readFileSync(migrationPath, "utf8");
+  assert.match(
+    migration,
+    /\| GitHub\s+\| \*\*Local authenticated Runtime and Console browser acceptance passed; production acceptance open\*\*/u
+  );
+  assert.match(
+    migration,
+    /authenticated Control API GET returned a valid catalog with 17 workflows, `runtimeFactsAvailable=true`, and 30 recent runs/u
+  );
+  assert.match(
+    migration,
+    /20-second outer deadline[\s\S]{0,160}Runtime's bounded 10-second GitHub Actions reads/u
+  );
+  assert.match(
+    migration,
+    /Runtime snapshot cache age now starts when the upstream fetch completes/u
+  );
+  assert.match(
+    migration,
+    /Headless Chromium against an isolated staged production build[\s\S]{0,180}HTTP 200 at 390px and 1280px/u
+  );
+  assert.match(
+    migration,
+    /managed production reload, remote-release, and production-credential acceptance remain open/u
+  );
+});
+
+test("representative staged-production browser evidence stays bounded", () => {
+  const migration = readFileSync(migrationPath, "utf8");
+  assert.match(
+    migration,
+    /staged production build covered `\/agents`, `\/agents\/smart`, `\/providers\?tab=models`, `\/providers\/claude`, `\/skills`, and `\/usage` at 390px and 1280px/u
+  );
+  assert.match(
+    migration,
+    /representative evidence only, not full visual, keyboard, mutation, or all-resource acceptance/u
+  );
+  assert.match(
+    migration,
+    /second pass against the same staged build covered `\/mcps`, `\/hooks`, `\/prompts`, `\/permissions`, `\/tools`, `\/evaluations`, and `\/memory` at both widths/u
+  );
+  assert.match(
+    migration,
+    /Workspaces was not probed because its page reads Playtesting-owned approvals/u
+  );
+});
+
+test("OpenLIT Memory UI is retired after Console parity while connector APIs remain", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+  const migration = readFileSync(migrationPath, "utf8");
+  assert.match(
+    target,
+    /retained OpenLIT Memory page may exist only as a \*\*temporary migration bridge\*\*/u
+  );
+  assert.match(
+    migration,
+    /Standalone OpenLIT Memory page\/portal \| \*\*Retired in patch 58; Console surface verified locally\*\*/u
+  );
+  assert.match(
+    migration,
+    /deployed OpenLIT manifest has no `\/memory` page but retains `\/api\/memory`/u
+  );
+});
+
+test("OpenLIT excludes arbitrary query authoring while retaining fixed query infrastructure", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+  const migration = readFileSync(migrationPath, "utf8");
+  const removalSection =
+    /### Remove from the AutoDev product\/distribution\n([\s\S]*?)(?=\n### AutoDev branding)/u.exec(
+      target
+    )?.[1] ?? "";
+
+  assert.match(removalSection, /Arbitrary raw SQL\/query-builder UI/u);
+  assert.match(
+    migration,
+    /Arbitrary raw SQL\/query-builder product UI \| \*\*No user-facing editor or preview API remains; internal fixed query paths retained\*\*/u
+  );
+});
+
 test("OpenLIT cost UI is removed while source-owned pricing computation stays internal", () => {
   const target = readFileSync(targetStatePath, "utf8");
   const migration = readFileSync(migrationPath, "utf8");
-  const removalSection = /### Remove from the AutoDev product\/distribution\n([\s\S]*?)(?=\n### AutoDev branding)/u.exec(target)?.[1] ?? "";
+  const removalSection =
+    /### Remove from the AutoDev product\/distribution\n([\s\S]*?)(?=\n### AutoDev branding)/u.exec(
+      target
+    )?.[1] ?? "";
 
   assert.match(removalSection, /Duplicate Costs\/Pricing UI/u);
-  assert.match(removalSection, /Console `\/usage` is the canonical cost-analytics surface/u);
+  assert.match(
+    removalSection,
+    /Console `\/usage` is the canonical cost-analytics surface/u
+  );
   assert.match(removalSection, /manual per-span repricing/u);
-  assert.match(removalSection, /existing cost attribute as read-only evidence/u);
-  assert.match(removalSection, /batched AutoPricing implementation only as telemetry infrastructure/u);
+  assert.match(
+    removalSection,
+    /existing cost attribute as read-only evidence/u
+  );
+  assert.match(
+    removalSection,
+    /batched AutoPricing implementation only as telemetry infrastructure/u
+  );
   assert.match(
     migration,
-    /OpenLIT Costs\/Pricing UI \| \*\*Removed in patch 56; internal batch pricing path retained\*\*/u
+    /Duplicate Costs\/Pricing UI \| \*\*Removed in patch 56; internal batch pricing path retained\*\*/u
+  );
+});
+
+test("OpenLIT generic Settings UI is removed while API-key auth remains internal", () => {
+  const target = readFileSync(targetStatePath, "utf8");
+  const migration = readFileSync(migrationPath, "utf8");
+  const removalSection =
+    /### Remove from the AutoDev product\/distribution\n([\s\S]*?)(?=\n### AutoDev branding)/u.exec(
+      target
+    )?.[1] ?? "";
+
+  assert.match(removalSection, /Redundant Settings pages/u);
+  assert.match(
+    migration,
+    /Redundant generic Settings[\s\S]{0,120}Settings UI removed in patch 57/u
+  );
+  assert.match(
+    migration,
+    /API-key store and verifier remain for the retained Evaluation, Vault, and SDK-intelligence server APIs/u
   );
 });
 

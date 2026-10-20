@@ -2505,7 +2505,7 @@ const server = createServer(
     }
     if (url.pathname === "/control/workspaces") {
       sendJson(response, {
-        schema: "autodev-control-workspaces-v1",
+        schema: "autodev-control-workspaces-v2",
         source: "fixture",
         readOnly: true,
         catalogStatus: "valid",
@@ -2515,7 +2515,9 @@ const server = createServer(
             id: WORKSPACE_ID,
             baseBranch: "main",
             enabled: true,
-            agentRoles: null
+            agentRoles: null,
+            configuration: { status: "configured" },
+            runtime: { status: "not-observed" }
           }
         ]
       });

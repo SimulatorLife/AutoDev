@@ -89,8 +89,11 @@ import {
   type ProviderRole,
   type ProviderRolePriority,
   type ReconciliationDiff,
-  type ReconciliationStatus
+  type ReconciliationStatus,
+  type WorkspaceConfigurationHealth,
+  type WorkspaceRuntimeAvailability
 } from "@simulatorlife/autodev-core";
+
 
 export type ControlApiResult<T> =
   | { readonly kind: "ok"; readonly data: T }
@@ -2523,6 +2526,7 @@ function isControlApiLiveAgentCounts(value: unknown): boolean {
     isCountMap(value.byRole) &&
     isCountMap(value.byProvider) &&
     isCountMap(value.byModel) &&
+    isCountMap(value.byWorkspace) &&
     typeof value.missingProvider === "number" &&
     Number.isInteger(value.missingProvider) &&
     value.missingProvider >= 0 &&
@@ -3147,12 +3151,57 @@ export function patchPromptCommand(
  * unreadable one must not reach the selector as an empty list: an operator
  * would see "no workspaces" rather than "the catalog could not be read".
  */
+/**
+ * Narrow one workspace's configuration health.
+ *
+ * The two states are different claims -- "this entry is usable" and "this
+ * scope names roles nothing answers to" -- and the second names the roles it
+ * could not place, so a fault can be shown rather than only counted.
+ */
+function isWorkspaceConfigurationHealth(
+  value: unknown
+): value is WorkspaceConfigurationHealth {
+  if (!isRecord(value)) return false;
+  if (value.status === "configured") return true;
+  return (
+    value.status === "invalid-role-scope" && isStringList(value.unknownRoles)
+  );
+}
+
+/**
+ * Narrow one workspace's runtime availability.
+ *
+ * `not-observed` and `observed` are different claims, and only the observed
+ * one carries a count: a workspace the source did not list has zero live
+ * agents, which is a measurement rather than an absence of evidence.
+ *
+ * The status key itself is not spelled here. The Console's server layer may
+ * not import the component that owns it, and a second spelling of the key
+ * would put the two out of step, so the no-evidence case is recognised by
+ * its shape instead: the contract's other status carries no payload at all.
+ * A response that carries a payload this contract does not define fails
+ * closed rather than being read as evidence.
+ */
+function isWorkspaceRuntimeAvailability(
+  value: unknown
+): value is WorkspaceRuntimeAvailability {
+  if (!isRecord(value)) return false;
+  if (value.status === "observed") {
+    return (
+      typeof value.liveAgents === "number" &&
+      Number.isInteger(value.liveAgents) &&
+      value.liveAgents >= 0
+    );
+  }
+  return Object.keys(value).length === 1 && typeof value.status === "string";
+}
+
 function isControlApiWorkspacesResponse(
   value: unknown
 ): value is ControlApiWorkspacesResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-workspaces-v1" &&
+    value.schema === "autodev-control-workspaces-v2" &&
     typeof value.source === "string" &&
     typeof value.readOnly === "boolean" &&
     (value.catalogStatus === "valid" ||
@@ -3166,7 +3215,9 @@ function isControlApiWorkspacesResponse(
         typeof workspace.id === "string" &&
         typeof workspace.baseBranch === "string" &&
         typeof workspace.enabled === "boolean" &&
-        (workspace.agentRoles === null || isStringList(workspace.agentRoles))
+        (workspace.agentRoles === null || isStringList(workspace.agentRoles)) &&
+        isWorkspaceConfigurationHealth(workspace.configuration) &&
+        isWorkspaceRuntimeAvailability(workspace.runtime)
     )
   );
 }
@@ -3188,7 +3239,7 @@ export async function fetchWorkspaces(
     kind: INVALID_RESPONSE_KIND,
     code: "autodev_control_api_invalid_workspaces_response",
     message:
-      "AutoDev Control API returned an incompatible Workspaces response; the Console requires the v1 workspace catalog contract."
+      "AutoDev Control API returned an incompatible Workspaces response; the Console requires the v2 workspace catalog contract."
   };
 }
 

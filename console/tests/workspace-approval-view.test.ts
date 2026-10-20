@@ -131,7 +131,9 @@ test("visual target management is a separate origin and input approval surface",
         id: WORKSPACE_ID,
         baseBranch: "main",
         enabled: true,
-        agentRoles: null
+        agentRoles: null,
+        configuration: { status: "configured" },
+        runtime: { status: "not-observed" }
       },
       approval: null,
       visualTargets: [visualTarget]
@@ -153,7 +155,9 @@ test("a disabled workspace with no approval cannot approve, and the form is neve
         id: WORKSPACE_ID,
         baseBranch: "main",
         enabled: false,
-        agentRoles: null
+        agentRoles: null,
+        configuration: { status: "configured" },
+        runtime: { status: "not-observed" }
       },
       approval: null
     })
@@ -176,7 +180,9 @@ test("an enabled workspace with no approval renders the keyboard-accessible Appr
         id: WORKSPACE_ID,
         baseBranch: "main",
         enabled: true,
-        agentRoles: null
+        agentRoles: null,
+        configuration: { status: "configured" },
+        runtime: { status: "not-observed" }
       },
       approval: null
     })
@@ -204,7 +210,9 @@ test("an active approval shows its exact identity, command, image and limits, an
         id: WORKSPACE_ID,
         baseBranch: "main",
         enabled: true,
-        agentRoles: null
+        agentRoles: null,
+        configuration: { status: "configured" },
+        runtime: { status: "not-observed" }
       },
       approval: activeApproval()
     })
@@ -235,7 +243,9 @@ test("a disabled workspace still offers Revoke on its existing active approval",
         id: WORKSPACE_ID,
         baseBranch: "main",
         enabled: false,
-        agentRoles: null
+        agentRoles: null,
+        configuration: { status: "configured" },
+        runtime: { status: "not-observed" }
       },
       approval: activeApproval()
     })
@@ -259,7 +269,9 @@ test("a revoked approval shows its revocation and offers re-approval when the wo
         id: WORKSPACE_ID,
         baseBranch: "main",
         enabled: true,
-        agentRoles: null
+        agentRoles: null,
+        configuration: { status: "configured" },
+        runtime: { status: "not-observed" }
       },
       approval: activeApproval({
         revokedAt: "2026-02-01T00:00:00.000Z",
@@ -293,7 +305,9 @@ test("a stale revision conflict is surfaced beside the freshly reloaded approval
         id: WORKSPACE_ID,
         baseBranch: "main",
         enabled: true,
-        agentRoles: null
+        agentRoles: null,
+        configuration: { status: "configured" },
+        runtime: { status: "not-observed" }
       },
       approval: activeApproval(),
       controlFailed: true,
@@ -320,7 +334,9 @@ test("an unreadable approval read renders an explicit unavailable state, not a q
         id: WORKSPACE_ID,
         baseBranch: "main",
         enabled: true,
-        agentRoles: null
+        agentRoles: null,
+        configuration: { status: "configured" },
+        runtime: { status: "not-observed" }
       },
       approval: null,
       approvalUnavailable: {

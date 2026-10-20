@@ -22,7 +22,10 @@ import { LiveCountRefresh } from "../src/components/navigation/LiveCountRefresh.
 import { AgentDetailView } from "../src/features/agents/AgentDetailView.ts";
 import { AgentsView } from "../src/features/agents/AgentsView.ts";
 import { liveAgentCount } from "../src/features/live-agent-count.ts";
-import { ProviderDetailView } from "../src/features/providers/ProviderDetailView.ts";
+import {
+  ProviderDetailView,
+  ProviderUsagePanel
+} from "../src/features/providers/ProviderDetailView.ts";
 import { ProvidersView } from "../src/features/providers/ProvidersView.ts";
 
 const NO_CONVERGENCE = {
@@ -90,6 +93,7 @@ const ACTIVE_COUNTS: ControlApiLiveAgentCounts = {
   byRole: { "role-fixture": 2 },
   byProvider: { "provider-fixture": 2 },
   byModel: { "provider-fixture/model-fixture": 1 },
+  byWorkspace: { "SimulatorLife/AutoDev": 1 },
   missingProvider: 1,
   missingModel: 2
 };
@@ -124,6 +128,7 @@ test("live-count lookup distinguishes unavailable data from observed zero", () =
         byRole: {},
         byProvider: {},
         byModel: {},
+        byWorkspace: {},
         missingProvider: 0,
         missingModel: 0
       },
@@ -226,6 +231,10 @@ test("agent, provider, and model views render counts from one Runtime projection
 
   const providerDetailMarkup = renderToStaticMarkup(
     React.createElement(ProviderDetailView, {
+      usagePanel: React.createElement(ProviderUsagePanel, {
+        provider: PROVIDER,
+        summary: { status: "not-observed" }
+      }),
       provider: PROVIDER,
       tiers: [],
       orchestratorTier: "root",
