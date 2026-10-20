@@ -2146,7 +2146,8 @@ test("a path wraps between its segments and never inside one", () => {
           runtime: { status: "not-observed" }
         }
       ],
-      approvals: new Map()
+      approvals: new Map(),
+      requests: new Map()
     })
   );
   assert.ok(
@@ -3263,6 +3264,11 @@ test("no column is narrower than its own header", () => {
     Tool: 69,
     MCPs: 71,
     "Skill Name": 71,
+    // Measured in Chromium against the Console's own compiled Tailwind output
+    // and the header typography the table renders it with: the `Requests`
+    // label measures 70.76px there, recorded rounded up. Measured the same
+    // way as the two entries below that are pure header-text widths.
+    Requests: 72,
     State: 74,
     "Role Scope": 77,
     Trace: 77,
@@ -3318,22 +3324,36 @@ test("no column is narrower than its own header", () => {
   };
 
   // Rendered header text -> column pixels at the table's own floor.
+  //
+  // Each table declares its own floor -- the sum of its column weights -- and
+  // a column's share of that floor is its own weight. Reading every table
+  // against the *first* table's floor made one table's rebalancing change
+  // another table's verdict: adding a column to the Workspaces table shrank
+  // its percentage shares, and the shared floor then reported a column as
+  // narrower than its header when that table's own floor gave it the full
+  // weight it declared. The criterion is unchanged -- a column must be at
+  // least as wide as its own header at its own table's floor -- and this now
+  // measures the thing the criterion names.
   function columnWidthsAtFloor(markup: string): readonly [string, number][] {
-    const minWidth = /style="[^"]*min-width:\s*(\d+)px/.exec(markup);
-    assert.ok(minWidth, "the table declares its own floor as a pixel width");
-    const floor = Number(minWidth[1]);
     const out: [string, number][] = [];
-    for (const th of markup.matchAll(
-      /<th [^>]*style="[^"]*width:\s*([\d.]+)%[^"]*"[^>]*>([\s\S]*?)<\/th>/g
-    )) {
-      // Read the label element rather than the whole header: a column may
-      // carry a help affordance beside its label, and that affordance is not
-      // part of the label a width has to fit.
-      const inner = th[2] ?? "";
-      const labelled =
-        /<span data-column-label="[^"]*">([\s\S]*?)<\/span>/.exec(inner);
-      const header = (labelled?.[1] ?? inner).replaceAll(/<[^>]*>/g, "").trim();
-      out.push([header, (Number(th[1]) / 100) * floor]);
+    for (const table of markup.split(/<table\b/gu).slice(1)) {
+      const minWidth = /style="[^"]*min-width:\s*(\d+)px/u.exec(table);
+      if (!minWidth) continue;
+      const floor = Number(minWidth[1]);
+      for (const th of table.matchAll(
+        /<th [^>]*style="[^"]*width:\s*([\d.]+)%[^"]*"[^>]*>([\s\S]*?)<\/th>/g
+      )) {
+        // Read the label element rather than the whole header: a column may
+        // carry a help affordance beside its label, and that affordance is not
+        // part of the label a width has to fit.
+        const inner = th[2] ?? "";
+        const labelled =
+          /<span data-column-label="[^"]*">([\s\S]*?)<\/span>/.exec(inner);
+        const header = (labelled?.[1] ?? inner)
+          .replaceAll(/<[^>]*>/g, "")
+          .trim();
+        out.push([header, (Number(th[1]) / 100) * floor]);
+      }
     }
     return out;
   }
@@ -3425,7 +3445,8 @@ test("no column is narrower than its own header", () => {
             runtime: { status: "not-observed" }
           }
         ],
-        approvals: new Map()
+        approvals: new Map(),
+        requests: new Map()
       })
     ),
     renderToStaticMarkup(
@@ -4181,6 +4202,10 @@ test("Usage role and provider breakdowns use distinct semantic chart series", ()
     gitChanges: UNOBSERVED_GIT_CHANGES,
     skillEventsByEvent: [{ event: "used", count: 1 }],
     requestsByRole: [{ role: "orchestrator", count: 3 }],
+    requestsByWorkspace: {
+      rows: [{ workspace: "SimulatorLife/AutoDev", count: 3 }],
+      partial: false
+    },
     attemptsByProvider: [{ provider: "codex", count: 5 }],
     callsByTool: []
   };
@@ -4266,6 +4291,10 @@ test("Usage values stay readable at large scales and keep unattributed groups ex
         gitChanges: UNOBSERVED_GIT_CHANGES,
         skillEventsByEvent: [],
         requestsByRole: [{ role: "", count: 126 }],
+        requestsByWorkspace: {
+          rows: [{ workspace: "repo-a", count: 126 }],
+          partial: false
+        },
         attemptsByProvider: [{ provider: "codex", count: 3419 }],
         callsByTool: [{ tool: "", count: 1234 }]
       }
@@ -4595,6 +4624,7 @@ test("UsageView with empty arrays still reports no synthetic counts", () => {
         gitChanges: UNOBSERVED_GIT_CHANGES,
         skillEventsByEvent: null,
         requestsByRole: [],
+        requestsByWorkspace: { rows: [], partial: false },
         attemptsByProvider: [],
         callsByTool: []
       }
@@ -5306,7 +5336,8 @@ test("WorkspacesView keeps availability and unconfigured role scope explicit", (
           runtime: { status: "not-observed" }
         }
       ],
-      approvals: new Map()
+      approvals: new Map(),
+      requests: new Map()
     })
   );
   assert.equal(markup.includes("Available"), false);
@@ -5358,7 +5389,8 @@ test("WorkspacesView reports measured availability and a broken role scope inste
           runtime: { status: "not-observed" }
         }
       ],
-      approvals: new Map()
+      approvals: new Map(),
+      requests: new Map()
     })
   );
   // A workspace the runtime answered for reports its count; a workspace it

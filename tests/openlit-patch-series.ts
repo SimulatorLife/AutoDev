@@ -72,7 +72,8 @@ export const OPENLIT_PATCH_NAMES = [
   "55-autodev-git-metrics-usage",
   "56-remove-duplicate-costs-ui",
   "57-remove-generic-settings-ui",
-  "58-retire-openlit-memory-ui"
+  "58-retire-openlit-memory-ui",
+  "59-autodev-usage-requests-by-workspace"
 ] as const;
 
 /** Strips the `.patch` suffix a directory listing carries. */

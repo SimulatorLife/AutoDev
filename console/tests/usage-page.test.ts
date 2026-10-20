@@ -15,6 +15,7 @@ const usageWidgetIds = [
   "p95-latency",
   "attempts-by-provider",
   "requests-by-agent",
+  "requests-by-workspace",
   "mcp-calls",
   "mcp-duration",
   "mcp-errors",

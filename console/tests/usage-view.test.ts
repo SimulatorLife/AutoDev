@@ -90,6 +90,10 @@ const observedMetrics: UsageMetricsData = {
   },
   skillEventsByEvent: [{ event: "used", count: 4 }],
   requestsByRole: [{ role: "Default", count: 42 }],
+  requestsByWorkspace: {
+    rows: [{ workspace: "repo-a", count: 42 }],
+    partial: false
+  },
   attemptsByProvider: [{ provider: "openai", count: 48 }],
   callsByTool: [{ tool: "mcp__playwright__test", count: 5 }]
 };
@@ -139,6 +143,7 @@ test("unobserved Git status alone does not make the Usage page look observed", (
     contextCompactionsByAgent: null,
     skillEventsByEvent: null,
     requestsByRole: null,
+    requestsByWorkspace: null,
     attemptsByProvider: null,
     callsByTool: null,
     gitChanges: unobservedGitChanges

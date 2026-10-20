@@ -1,0 +1,134 @@
+diff --git a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+index 83ea387d..6d1e6557 100644
+--- a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
++++ b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+@@ -104,7 +104,8 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+         "context-compactions-by-model",
+         "context-compactions-by-agent",
+         "skill-events-by-event",
+-        "estimated-cost"
++        "estimated-cost",
++        "requests-by-workspace"
+       ])
+     );
+     expect(body.filterOptions.skill).toEqual({ supported: true, values: [] });
+diff --git a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+index 5a802c99..05e85542 100644
+--- a/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
++++ b/src/client/src/__tests__/clickhouse/seed/autodev-usage-dashboard.test.ts
+@@ -149,6 +149,41 @@ describe("AutoDev Usage dashboard seed", () => {
+ 		]);
+ 	});
+ 
++	it("groups logical requests by workspace without assigning unattributed requests", () => {
++		// The workspace breakdown is a group-by of the same logical-request
++		// signal the total counts, so the two can be reconciled: the per-row
++		// counts add up to the total only when every request carried a
++		// workspace. A request that carries none is grouped separately, which
++		// is why the widget groups rather than filters on the attribute.
++		const widget = widgets.find(
++			(candidate) => candidate.title === "Logical requests by workspace",
++		);
++		expect(widget).toBeDefined();
++		expect(widget?.properties.optInVariables).toEqual([
++			"workspace",
++			"model",
++			"agent",
++		]);
++		expect(widget?.description).toMatch(/grouped separately/);
++		expect(widget?.config.structuredQuery?.query?.groupBy).toEqual([
++			"autodev.workspace",
++		]);
++		expect(widget?.config.structuredQuery?.query?.filters).toEqual([
++			{
++				target: "attribute",
++				scope: "resource",
++				key: "service.name",
++				op: "eq",
++				value: "autodev-router",
++			},
++			{
++				target: "spanName",
++				op: "eq",
++				value: "autodev.routed_request",
++			},
++		]);
++	});
++
+ 	it("scopes the G10 source-owned MCP tool-call widgets to autodev-codex-tools-mcp", () => {
+ 		// Every G10 widget MUST filter on the shim's resource
+ 		// service.name AND on the MCP method name span attribute,
+diff --git a/src/client/src/app/api/autodev/usage/route.ts b/src/client/src/app/api/autodev/usage/route.ts
+index c89a9d8a..2945ca0d 100644
+--- a/src/client/src/app/api/autodev/usage/route.ts
++++ b/src/client/src/app/api/autodev/usage/route.ts
+@@ -33,6 +33,7 @@ const USAGE_WIDGET_IDS = {
+ 	"p95-latency": "47c52af8-0c4a-4e85-8a9e-a8f85745b105",
+ 	"attempts-by-provider": "47c52af8-0c4a-4e85-8a9e-a8f85745b106",
+ 	"requests-by-agent": "47c52af8-0c4a-4e85-8a9e-a8f85745b107",
++	"requests-by-workspace": "47c52af8-0c4a-4e85-8a9e-a8f85745b116",
+ 	"mcp-calls": "47c52af8-0c4a-4e85-8a9e-a8f85745b201",
+ 	"mcp-duration": "47c52af8-0c4a-4e85-8a9e-a8f85745b202",
+ 	"mcp-errors": "47c52af8-0c4a-4e85-8a9e-a8f85745b203",
+diff --git a/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
+index 86fceb13..8d77b53e 100644
+--- a/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
++++ b/src/client/src/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json
+@@ -429,6 +429,57 @@
+         }
+       }
+     },
++    "47c52af8-0c4a-4e85-8a9e-a8f85745b116": {
++      "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b116",
++      "title": "Logical requests by workspace",
++      "description": "Logical routed requests grouped by workspace. This counts parent request spans, not unique agent sessions, and a request that carries no workspace attribution is grouped separately rather than assigned to a workspace.",
++      "type": "BAR_CHART",
++      "properties": {
++        "xAxis": "g0",
++        "yAxis": "requests",
++        "color": "#0ea5e9",
++        "resultLimit": 20,
++        "optInVariables": [
++          "workspace",
++          "model",
++          "agent"
++        ]
++      },
++      "config": {
++        "signal": "traces",
++        "structuredQuery": {
++          "mode": "aggregate",
++          "query": {
++            "signal": "traces",
++            "aiSelector": false,
++            "filters": [
++              {
++                "target": "attribute",
++                "scope": "resource",
++                "key": "service.name",
++                "op": "eq",
++                "value": "autodev-router"
++              },
++              {
++                "target": "spanName",
++                "op": "eq",
++                "value": "autodev.routed_request"
++              }
++            ],
++            "groupBy": [
++              "autodev.workspace"
++            ],
++            "aggregations": [
++              {
++                "fn": "count",
++                "as": "requests"
++              }
++            ],
++            "limit": 20
++          }
++        }
++      }
++    },
+     "47c52af8-0c4a-4e85-8a9e-a8f85745b201": {
+       "id": "47c52af8-0c4a-4e85-8a9e-a8f85745b201",
+       "title": "MCP tool calls",

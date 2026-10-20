@@ -9,7 +9,10 @@ import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
-import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  StatusBadge
+} from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
@@ -21,6 +24,7 @@ import {
   ENTITY_LINK_CLASS,
   MONO_ID_CLASS,
   MONO_VALUE_CLASS,
+  MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
@@ -35,6 +39,10 @@ import {
   workspaceConfigurationBadgeLabel,
   workspaceConfigurationBadgeVariant
 } from "./workspace-health.ts";
+import {
+  type WorkspaceRequestLookup,
+  type WorkspaceRequestReading
+} from "./workspace-usage.ts";
 
 /**
  * One workspace's most recently read playtesting approval, keyed by
@@ -66,16 +74,62 @@ export type WorkspaceApprovalLookup = ReadonlyMap<
  * Workspaces owns the checkout approval boundary a game adapter runs
  * under, and the Control API answers it per workspace, so each row's badge
  * is a server-fetched, per-workspace read rather than an inferred summary.
+ *
+ * Aggregate usage is a fourth fact, from a fourth authority: the Usage
+ * telemetry store groups logical routed requests by workspace. It is read once
+ * for the whole page rather than per workspace, because one breakdown answers
+ * every row. A workspace the breakdown does not report reads as unobserved
+ * rather than zero when the breakdown was truncated, and a measured zero stays
+ * a measured zero -- the two are different claims about the same cell.
  */
 
 export interface WorkspacesViewProps {
   readonly workspaces: readonly ControlApiWorkspaceRecord[];
   readonly approvals: WorkspaceApprovalLookup;
+  readonly requests: WorkspaceRequestLookup;
+}
+
+/**
+ * The request count cell.
+ *
+ * A count is rendered as a number, and everything else is rendered as the
+ * reason there is no number: the source could not be read, or it answered
+ * without reporting this workspace.
+ */
+function workspaceRequestCell(
+  reading: WorkspaceRequestReading | undefined
+): React.JSX.Element {
+  if (reading === undefined || reading.kind === "not-observed") {
+    return React.createElement(
+      "span",
+      {
+        className: MUTED_META_CLASS,
+        "data-workspace-requests": "not-observed"
+      },
+      NOT_OBSERVED_LABEL
+    );
+  }
+  if (reading.kind === "unavailable") {
+    return React.createElement(
+      "span",
+      { className: MUTED_META_CLASS, "data-workspace-requests": "unavailable" },
+      "Unavailable"
+    );
+  }
+  return React.createElement(
+    "span",
+    {
+      className: "text-xs text-fg-secondary tabular-nums",
+      "data-workspace-requests": "observed"
+    },
+    String(reading.count)
+  );
 }
 
 export function WorkspacesView({
   workspaces,
-  approvals
+  approvals,
+  requests
 }: WorkspacesViewProps): React.JSX.Element {
   const enabledCount = workspaces.filter((w) => w.enabled).length;
   const approvedCount = workspaces.filter((w) => {
@@ -195,6 +249,14 @@ export function WorkspacesView({
           status: workspaceAvailabilityBadgeVariant(ws.runtime),
           label: workspaceAvailabilityBadgeLabel(ws.runtime)
         })
+    },
+    {
+      id: "requests",
+      header: "Requests",
+      headerHelp:
+        "Logical routed requests attributed to this workspace in the last 24 hours. A request that carried no workspace attribution is not counted in any workspace, so these counts do not have to add up to the total.",
+      weight: 118,
+      cell: (ws) => workspaceRequestCell(requests.get(ws.id))
     }
   ];
 
@@ -242,12 +304,15 @@ export function WorkspacesView({
         },
         "Configured Workspaces"
       ),
-      React.createElement<DataTableProps<ControlApiWorkspaceRecord>>(DataTable, {
-        data: workspaces,
-        columns,
-        keyExtractor: (w: ControlApiWorkspaceRecord) => w.id,
-        emptyMessage: "No workspace entries are configured."
-      })
+      React.createElement<DataTableProps<ControlApiWorkspaceRecord>>(
+        DataTable,
+        {
+          data: workspaces,
+          columns,
+          keyExtractor: (w: ControlApiWorkspaceRecord) => w.id,
+          emptyMessage: "No workspace entries are configured."
+        }
+      )
     )
   );
 }

@@ -17,7 +17,9 @@ import {
   type UsageTraceSpan,
   type UsageTraceStatus,
   type UsageVariableId,
-  type UsageWidgetId
+  type UsageWidgetId,
+  type UsageWorkspaceRequestBreakdown,
+  type UsageWorkspaceRequestCount
 } from "@simulatorlife/autodev-core";
 
 const TRAILING_SLASHES = /\/+$/u;
@@ -36,6 +38,7 @@ const TRACE_STATUS_CODES = new Set<UsageTraceStatus>([
 const USAGE_WIDGET_IDS: readonly UsageWidgetId[] = [
   "logical-requests",
   "requests-by-agent",
+  "requests-by-workspace",
   "input-tokens",
   "output-tokens",
   "cache-rate",
@@ -591,6 +594,58 @@ function gitBreakdownRows(
     : null;
 }
 
+/**
+ * The logical-request breakdown by workspace.
+ *
+ * This is the one breakdown whose group key can be absent, so it cannot reuse
+ * `groupedRows`: a group key the source renders as an empty or null value is
+ * a request that carried no workspace attribution, not a malformed row, and
+ * rejecting the whole breakdown because of it would throw away every
+ * attributed workspace with it. Such requests belong to no workspace, so they
+ * are reported with a `null` workspace rather than folded into one.
+ *
+ * An empty breakdown is only read as "no requests at all" when the logical
+ * request total agrees; otherwise the source returned rows it cannot explain
+ * and the breakdown is not observed.
+ */
+function workspaceRequestBreakdown(
+  widget: OpenLITWidgetResult | undefined,
+  observedRequests: number | null
+): UsageWorkspaceRequestBreakdown | null {
+  if (!widget?.querySucceeded || !widget.observed) return null;
+  if (!widget.xAxis || !widget.yAxis) return null;
+  if (widget.rows.length === 0) {
+    return observedRequests === 0
+      ? { rows: [], partial: widget.partial }
+      : null;
+  }
+
+  const counts = new Map<string | null, number>();
+  for (const candidate of widget.rows) {
+    if (!isRecord(candidate)) return null;
+    const rawName = candidate[widget.xAxis];
+    if (
+      rawName !== null &&
+      rawName !== undefined &&
+      typeof rawName !== "string"
+    ) {
+      return null;
+    }
+    const name = typeof rawName === "string" ? rawName.trim() : "";
+    const count = numberValue(candidate[widget.yAxis]);
+    if (count === null || !Number.isSafeInteger(count) || count < 0)
+      return null;
+    const workspace = name === "" ? null : name;
+    counts.set(workspace, (counts.get(workspace) ?? 0) + count);
+  }
+
+  const rows: UsageWorkspaceRequestCount[] = Array.from(
+    counts,
+    ([workspace, count]) => ({ workspace, count })
+  );
+  return { rows, partial: widget.partial };
+}
+
 function gitChangeMetrics(
   widgets: ReadonlyMap<UsageWidgetId, OpenLITWidgetResult>,
   selection: UsageFilterSelection
@@ -760,6 +815,10 @@ function toUsageSnapshot(
       requests === null
         ? null
         : requests.map(({ name, count }) => ({ role: name, count })),
+    requestsByWorkspace: workspaceRequestBreakdown(
+      widgets.get("requests-by-workspace"),
+      logicalRequests
+    ),
     attemptsByProvider:
       attempts === null
         ? null

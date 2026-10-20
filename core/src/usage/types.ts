@@ -23,6 +23,7 @@ export interface UsageVariable {
 export type UsageWidgetId =
   | "logical-requests"
   | "requests-by-agent"
+  | "requests-by-workspace"
   | "input-tokens"
   | "output-tokens"
   | "cache-rate"
@@ -61,6 +62,33 @@ export interface UsageTimeBucketCount {
 export interface UsageBreakdownCount {
   readonly name: string;
   readonly count: number;
+}
+
+/**
+ * One workspace bucket of the logical-request breakdown.
+ *
+ * `workspace` is the workspace the requests were attributed to, or `null` when
+ * the request carried no workspace attribution at all. The two are different
+ * facts: an unattributed request belongs to no workspace, so a consumer must
+ * not fold it into the nearest workspace it can see.
+ */
+export interface UsageWorkspaceRequestCount {
+  readonly workspace: string | null;
+  readonly count: number;
+}
+
+/**
+ * The logical routed requests grouped by workspace.
+ *
+ * `partial` is true when the source's own row limit truncated the breakdown.
+ * It decides what an *absent* workspace means: a workspace missing from a
+ * complete breakdown made no requests, while a workspace missing from a
+ * truncated one is simply not reported, and rendering the second as the first
+ * would report a measured zero the source never measured.
+ */
+export interface UsageWorkspaceRequestBreakdown {
+  readonly rows: readonly UsageWorkspaceRequestCount[];
+  readonly partial: boolean;
 }
 
 /** Axes that do not have source-confirmed semantics for logical compaction spans. */
@@ -236,6 +264,8 @@ export interface UsageMetricsData {
     readonly { readonly event: string; readonly count: number }[] | null;
   readonly requestsByRole:
     readonly { readonly role: string; readonly count: number }[] | null;
+  /** Logical routed requests grouped by workspace; null when not observed. */
+  readonly requestsByWorkspace: UsageWorkspaceRequestBreakdown | null;
   readonly attemptsByProvider:
     readonly { readonly provider: string; readonly count: number }[] | null;
   readonly callsByTool:

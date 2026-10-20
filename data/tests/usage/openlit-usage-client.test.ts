@@ -60,6 +60,12 @@ const partialPayload = {
       xAxis: "role",
       yAxis: "requests"
     }),
+    makeWidget("requests-by-workspace", {
+      observed: true,
+      rows: [{ g0: "repo-a", requests: "12" }],
+      xAxis: "g0",
+      yAxis: "requests"
+    }),
     makeWidget("input-tokens", { valuePath: "0.input_tokens" }),
     makeWidget("output-tokens", {
       observed: true,
@@ -286,11 +292,137 @@ test("OpenLITUsageClient sends typed URL filter state with server credentials", 
     commitsByAgent: [{ name: "worker", count: 2 }]
   });
   assert.deepEqual(result.data.metrics.requestsByRole, []);
+  assert.deepEqual(result.data.metrics.requestsByWorkspace, {
+    rows: [{ workspace: "repo-a", count: 12 }],
+    partial: false
+  });
   assert.deepEqual(result.data.filterOptions.workspace, ["repo-a"]);
   assert.equal(result.data.filterOptions.model, null);
   assert.deepEqual(result.data.filterOptions.agent, []);
   assert.deepEqual(result.data.filterOptions.skill, ["agent-skill"]);
   assert.deepEqual(result.data.traceList, { kind: "unavailable" });
+});
+
+test("OpenLITUsageClient keeps unattributed requests out of every workspace without losing the breakdown", async () => {
+  // The workspace attribute is absent on a request that carried no workspace,
+  // so the source groups those requests under an empty key. That group is a
+  // real measurement that belongs to no workspace, and it must not take the
+  // attributed workspaces down with it.
+  const payload = structuredClone(partialPayload);
+  const widget = payload.widgets.find(
+    (candidate) => candidate.key === "requests-by-workspace"
+  );
+  assert.ok(widget);
+  widget.rows = [
+    { g0: "repo-a", requests: "9" },
+    { g0: "", requests: "3" }
+  ];
+
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(payload)
+  });
+  const result = await client.query(supportedSelection);
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.deepEqual(result.data.metrics.requestsByWorkspace, {
+    rows: [
+      { workspace: "repo-a", count: 9 },
+      { workspace: null, count: 3 }
+    ],
+    partial: false
+  });
+});
+
+test("OpenLITUsageClient reports a truncated workspace breakdown as partial", async () => {
+  // The source's row limit truncated the breakdown, so a workspace missing
+  // from it is not reported rather than measured at zero.
+  const payload = structuredClone(partialPayload);
+  const widget = payload.widgets.find(
+    (candidate) => candidate.key === "requests-by-workspace"
+  );
+  assert.ok(widget);
+  widget.partial = true;
+
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(payload)
+  });
+  const result = await client.query(supportedSelection);
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.equal(result.data.metrics.requestsByWorkspace?.partial, true);
+});
+
+test("OpenLITUsageClient does not read an empty workspace breakdown as zero requests", async () => {
+  // The breakdown came back empty while the logical request total says twelve
+  // requests happened. Those two facts cannot both be true, so the breakdown
+  // is not observed -- reading it as "no requests" would contradict the total
+  // it sits beside.
+  const payload = structuredClone(partialPayload);
+  const widget = payload.widgets.find(
+    (candidate) => candidate.key === "requests-by-workspace"
+  );
+  assert.ok(widget);
+  widget.rows = [];
+
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(payload)
+  });
+  const result = await client.query(supportedSelection);
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.equal(result.data.metrics.requestsByWorkspace, null);
+});
+
+test("OpenLITUsageClient reads an empty workspace breakdown against a zero total as an observed empty breakdown", async () => {
+  const payload = structuredClone(partialPayload);
+  const requests = payload.widgets.find(
+    (candidate) => candidate.key === "logical-requests"
+  );
+  assert.ok(requests);
+  requests.rows = [{ requests: "0" }];
+  const widget = payload.widgets.find(
+    (candidate) => candidate.key === "requests-by-workspace"
+  );
+  assert.ok(widget);
+  widget.rows = [];
+
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(payload)
+  });
+  const result = await client.query(supportedSelection);
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.deepEqual(result.data.metrics.requestsByWorkspace, {
+    rows: [],
+    partial: false
+  });
+});
+
+test("OpenLITUsageClient rejects a workspace breakdown with an unusable count", async () => {
+  const payload = structuredClone(partialPayload);
+  const widget = payload.widgets.find(
+    (candidate) => candidate.key === "requests-by-workspace"
+  );
+  assert.ok(widget);
+  widget.rows = [{ g0: "repo-a", requests: "many" }];
+
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(payload)
+  });
+  const result = await client.query(supportedSelection);
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  assert.equal(result.data.metrics.requestsByWorkspace, null);
 });
 
 test("OpenLITUsageClient does not claim compaction metrics for provider or skill filters", async () => {
