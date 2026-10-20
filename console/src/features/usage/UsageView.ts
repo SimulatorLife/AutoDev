@@ -34,6 +34,10 @@ import {
 } from "../../components/tables/DataTable.ts";
 import { TraceStatus } from "../../components/traces/TraceStatus.ts";
 import {
+  formatDurationMs,
+  formatSpanDuration
+} from "../../components/ui/duration.ts";
+import {
   FIELD_CONTROL_CLASS,
   FIELD_GROUP_CLASS
 } from "../../components/ui/field-classes.ts";
@@ -90,9 +94,6 @@ const TOKEN_FORMATTER = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 1
 });
-const DURATION_FORMATTER = new Intl.NumberFormat("en-US", {
-  maximumFractionDigits: 1
-});
 const COST_FORMATTER = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -121,15 +122,7 @@ export function formatCacheRate(value: number | null): string {
 
 export function formatLatency(value: number | null): string {
   if (value === null) return NOT_OBSERVED_LABEL;
-  if (value > 0 && value < 1) {
-    return `${Math.max(1, Math.round(value * 1000))} µs`;
-  }
-  if (value >= 3_600_000)
-    return `${DURATION_FORMATTER.format(value / 3_600_000)} h`;
-  if (value >= 60_000)
-    return `${DURATION_FORMATTER.format(value / 60_000)} min`;
-  if (value >= 1000) return `${DURATION_FORMATTER.format(value / 1000)} s`;
-  return `${DURATION_FORMATTER.format(value)} ms`;
+  return formatDurationMs(value);
 }
 
 export function formatCount(value: number | null): string {
@@ -458,7 +451,7 @@ function formatTraceTimestamp(timestamp: string): string {
 }
 
 function formatTraceDuration(durationNs: number): string {
-  return formatLatency(durationNs / 1_000_000);
+  return formatSpanDuration(durationNs);
 }
 
 function traceAttemptColumns(

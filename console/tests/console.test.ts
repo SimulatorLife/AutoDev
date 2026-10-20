@@ -6861,11 +6861,14 @@ test("a duration that rounds into its next minute says how many minutes", () => 
     // numbers and a bare match would read whichever came first.
     const traceStart = markup.indexOf('data-feature="evaluation-trace-detail"');
     assert.notEqual(traceStart, -1, "the trace panel is rendered");
-    // Three bounded alternatives rather than one optional group: `\d+(\.\d+)?`
+    // Four bounded alternatives rather than one optional group: `\d+(\.\d+)?`
     // nested under an alternation is the shape the unsafe-regex rule rejects.
-    const found = />(\d+m \d+s|\d+\.\d+ (?:ms|s)|\d+ µs)</.exec(
-      markup.slice(traceStart)
-    );
+    // The whole-second case is its own alternative because a duration with no
+    // fractional part carries no decimal point to match.
+    const found =
+      />(\d+m \d+s|\d+\.\d+ (?:ms|s|h)|\d+ (?:ms|s|h)|\d+ µs)</.exec(
+        markup.slice(traceStart)
+      );
     assert.ok(found !== null, `a duration is rendered for ${durationNs} ns`);
     return found[1] as string;
   };
@@ -6885,12 +6888,52 @@ test("a duration that rounds into its next minute says how many minutes", () => 
     "sub-millisecond still reads in µs"
   );
   assert.equal(spanWith(1_250_000), "1.3 ms", "milliseconds still read in ms");
-  assert.equal(spanWith(1_000_000_000), "1.00 s", "seconds still read in s");
+  assert.equal(spanWith(1_000_000_000), "1 s", "seconds still read in s");
   assert.equal(
     spanWith(60_000_000_000),
     "1m 0s",
     "a whole minute still reads as one"
   );
+});
+
+test("the trace panel counts its spans in the singular when it shows one", () => {
+  // The panel said "1 spans shown" for a trace holding one span. A count and
+  // its noun have to be read together, the way the filter bar's "1 retained
+  // result" is: a trace holding one span is the case an operator is most
+  // likely to be looking at, and it is the first thing the panel says.
+  const panelWith = (spanCount: number): string => {
+    const spanId = "0123456789abcdef";
+    const markup = renderEvaluations({
+      evaluations: [],
+      spanId,
+      traceLookup: {
+        kind: "observed",
+        detail: {
+          schema: "autodev-openlit-trace-detail-v1",
+          traceId: "0123456789abcdef0123456789abcdef",
+          selectedSpanId: spanId,
+          partial: false,
+          spans: Array.from({ length: spanCount }, (_unused, index) => ({
+            spanId: `${index}`.padStart(16, "0"),
+            parentSpanId: null,
+            spanName: "gen_ai.client_operation",
+            serviceName: "autodev-router",
+            timestamp: "2026-10-05T12:00:00.000Z",
+            durationNs: 1_250_000,
+            statusCode: "OK" as const
+          }))
+        }
+      }
+    });
+    const traceStart = markup.indexOf('data-feature="evaluation-trace-detail"');
+    assert.notEqual(traceStart, -1, "the trace panel is rendered");
+    const found = />(\d+ spans? shown)</.exec(markup.slice(traceStart));
+    assert.ok(found !== null, "the panel states how many spans it shows");
+    return found[1] ?? "";
+  };
+
+  assert.equal(panelWith(1), "1 span shown", "one span reads as one");
+  assert.equal(panelWith(2), "2 spans shown", "two still read as two");
 });
 
 test("the filter bar's leading sentence agrees with itself when there is one result", () => {
