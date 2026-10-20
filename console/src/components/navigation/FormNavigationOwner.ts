@@ -130,6 +130,9 @@ interface ScrollAndFocusSnapshot {
   readonly scrollY: number;
   readonly activeId?: string | undefined;
   readonly activeName?: string | undefined;
+  readonly activeTag?: string | undefined;
+  readonly activeValue?: string | undefined;
+  readonly activePath?: string | undefined;
 }
 
 const inFlightForms = new WeakSet<object>();
@@ -493,8 +496,67 @@ function captureScrollAndFocus(): ScrollAndFocusSnapshot {
     scrollX: win?.scrollX ?? 0,
     scrollY: win?.scrollY ?? 0,
     activeId: activeEl?.id || undefined,
-    activeName: (activeEl as HTMLInputElement | null)?.name || undefined
+    activeName: (activeEl as HTMLInputElement | null)?.name || undefined,
+    activeTag: activeEl?.tagName || undefined,
+    activeValue: activeEl?.getAttribute?.("value") ?? undefined,
+    activePath: activeEl ? elementPath(activeEl) : undefined
   };
+}
+
+/**
+ * The place an element holds in the document.
+ *
+ * A name is not an identity. A form can carry a dozen controls called
+ * "roles" -- one per role of one skill, on every row of the catalog -- and
+ * restoring the focus to the first of them moves the operator to a different
+ * control than the one they were working on, which is worse than leaving
+ * the focus alone. The path is the element's position in the document, which
+ * is what "the same control" means once the page has been rebuilt around
+ * it.
+ */
+function elementPath(element: Element): string | undefined {
+  const segments: string[] = [];
+  let current: Element | null = element;
+  while (current) {
+    const parent: Element | null = current.parentElement;
+    if (!parent) break;
+    const index = Array.from(parent.children).indexOf(current);
+    if (index === -1) break;
+    segments.unshift(
+      `${current.tagName.toLowerCase()}:nth-child(${index + 1})`
+    );
+    current = parent;
+  }
+  return segments.length > 0 ? segments.join(" > ") : undefined;
+}
+
+/**
+ * The control a snapshot pointed at, if it is still the same control.
+ *
+ * The path says where the control was; the tag, the name and the value say
+ * what it was. A control that has moved or been replaced since the snapshot
+ * was taken is not the control the operator was on, so it is not focused.
+ */
+function resolveSnapshotControl(
+  doc: Document,
+  snapshot: ScrollAndFocusSnapshot
+): HTMLElement | null {
+  if (!snapshot.activePath) return null;
+  let element: Element | null;
+  try {
+    element = doc.querySelector(snapshot.activePath);
+  } catch {
+    return null;
+  }
+  if (!element) return null;
+  if (snapshot.activeTag && element.tagName !== snapshot.activeTag) return null;
+  const name = (element as HTMLInputElement).name;
+  if (snapshot.activeName && name !== snapshot.activeName) return null;
+  const value = element.getAttribute("value") ?? undefined;
+  if (snapshot.activeValue !== undefined && value !== snapshot.activeValue) {
+    return null;
+  }
+  return element as HTMLElement;
 }
 
 function escapeCssSelector(value: string): string {
@@ -521,12 +583,24 @@ function restoreScrollAndFocus(snapshot: ScrollAndFocusSnapshot): void {
     }
   }
 
+  const byPath = resolveSnapshotControl(doc, snapshot);
+  if (byPath && typeof byPath.focus === "function") {
+    byPath.focus({ preventScroll: true });
+    return;
+  }
+
+  // A name identifies a control only when it is unique. When it is not,
+  // guessing the first match moves the operator to a different control, so
+  // the focus is left where the browser put it instead.
   if (snapshot.activeName) {
     try {
       const escapedName = escapeCssSelector(snapshot.activeName);
-      const el = doc.querySelector<HTMLElement>(`[name="${escapedName}"]`);
-      if (el && typeof el.focus === "function") {
-        el.focus({ preventScroll: true });
+      const matches = doc.querySelectorAll<HTMLElement>(
+        `[name="${escapedName}"]`
+      );
+      const only = matches.length === 1 ? matches[0] : undefined;
+      if (only) {
+        only.focus({ preventScroll: true });
       }
     } catch {
       // Ignore invalid selector queries.
