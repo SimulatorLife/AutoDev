@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, normalize, sep } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join, normalize, relative, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -70,6 +70,21 @@ function relativeImports(modulePath: string): string[] {
     modulePath,
     readFileSync(join(repositoryRoot, modulePath), "utf8")
   );
+}
+
+function runtimeSourceFiles(): string[] {
+  const root = join(repositoryRoot, "runtime/src");
+  const files: string[] = [];
+  const visit = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const absolute = join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute);
+      else if (entry.name.endsWith(".ts"))
+        files.push(normalize(join("runtime/src", relative(root, absolute))));
+    }
+  };
+  visit(root);
+  return files.sort();
 }
 
 const BARE_PACKAGE_IMPORT_PATTERN =
@@ -188,6 +203,83 @@ test("runtime manifest is closed under relative imports", () => {
     gaps.sort(),
     [],
     `RUNTIME_MODULES is not self-contained; add these entries to runtime/src/platform/install-materializer.ts:\n${gaps.join("\n")}`
+  );
+});
+
+/**
+ * The installed tree resolves some Runtime modules by path instead of by
+ * package import. Those modules are spawned as child processes, so a missing
+ * manifest entry is a runtime failure with no static symptom: the child exits
+ * before it can report anything.
+ */
+function pathResolvedModules(modulePath: string): string[] {
+  const file = ts.createSourceFile(
+    modulePath,
+    readFileSync(join(repositoryRoot, modulePath), "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const resolved: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "resolveRuntimeSourcePath"
+    ) {
+      const moduleArgument = node.arguments[1];
+      if (
+        moduleArgument !== undefined &&
+        ts.isStringLiteralLike(moduleArgument)
+      )
+        resolved.push(moduleArgument.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return resolved;
+}
+
+test("every Runtime module resolved by path is materialized into CODEX_HOME", () => {
+  const listed = new Set<string>(RUNTIME_MODULES);
+  const gaps: string[] = [];
+  for (const modulePath of runtimeSourceFiles()) {
+    for (const resolved of pathResolvedModules(modulePath)) {
+      const runtimePath = normalize(join("runtime", "src", resolved));
+      if (!listed.has(runtimePath))
+        gaps.push(`${runtimePath} (resolved by path from ${modulePath})`);
+    }
+  }
+  assert.deepEqual(
+    gaps.sort(),
+    [],
+    `modules resolved by path must be materialized into CODEX_HOME/src; add these entries to runtime/src/platform/install-materializer.ts:\n${gaps.join("\n")}`
+  );
+});
+
+test("the playtest analyst dispatch is fully materialized into the installed tree", () => {
+  const listed = new Set<string>(RUNTIME_MODULES);
+  // The analyst child process is spawned by path, and its Codex overrides
+  // register the playtest MCP entry point by path.
+  const pending = [
+    "runtime/src/cli/provider-agent.ts",
+    "runtime/src/playtesting/mcp-main.ts"
+  ];
+  const visited = new Set<string>();
+  const gaps: string[] = [];
+  while (pending.length > 0) {
+    const modulePath = pending.pop();
+    if (modulePath === undefined || visited.has(modulePath)) continue;
+    visited.add(modulePath);
+    if (!listed.has(modulePath))
+      gaps.push(`${modulePath} (needed by the playtest analyst dispatch)`);
+    for (const target of relativeImports(modulePath))
+      if (target.endsWith(".ts")) pending.push(target);
+  }
+  assert.deepEqual(
+    gaps.sort(),
+    [],
+    `the playtest analyst dispatch must be materialized in full; add these entries to runtime/src/platform/install-materializer.ts:\n${gaps.join("\n")}`
   );
 });
 

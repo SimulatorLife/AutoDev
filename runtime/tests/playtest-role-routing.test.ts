@@ -98,6 +98,7 @@ test("execution contract defines read-only playtest roles with scoped tools", ()
         mcp: string[];
         skills: string[];
         mcpTools?: Record<string, string[]>;
+        mcpEnvVars?: Record<string, string[]>;
       }
     >;
   };
@@ -134,8 +135,17 @@ test("execution contract defines read-only playtest roles with scoped tools", ()
     "playtest.metrics",
     "playtest.compare",
     "playtest.submitReview",
+    "playtest.submitDiscoveryReview",
     "playtest.submitCrossSessionSynthesis"
   ]);
+  // The analyst MCP server refuses to start without the analysis kind, so the
+  // allowlist has to carry it through to the child process.
+  assert.ok(
+    contract.roles["playtest-analyst"]?.mcpEnvVars?.playtest?.includes(
+      "AUTODEV_PLAYTEST_ANALYSIS_KIND"
+    ),
+    "playtest-analyst must forward AUTODEV_PLAYTEST_ANALYSIS_KIND to the playtest MCP server"
+  );
 
   // Ensure smart role does not have playtest MCP server added
   const smart = contract.roles.smart;

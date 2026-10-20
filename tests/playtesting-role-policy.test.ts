@@ -244,8 +244,15 @@ test("playtest-analyst reuses autodev/smart model tier without inheriting smart 
       "playtest.readEpisode",
       "playtest.readWindow",
       "playtest.submitReview",
+      "playtest.submitDiscoveryReview",
       "playtest.submitCrossSessionSynthesis"
     ].sort()
+  );
+  // The playtest MCP server refuses to start without the analysis kind, so the
+  // analyst allowlist has to carry it into the child process.
+  assert.ok(
+    analystEnvironmentVariables.includes("AUTODEV_PLAYTEST_ANALYSIS_KIND"),
+    "analyst MCP must receive AUTODEV_PLAYTEST_ANALYSIS_KIND"
   );
 
   // Forbidden tools for playtest-analyst:

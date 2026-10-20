@@ -60,6 +60,20 @@ function skillEnabled(
   return entry?.enabled as boolean | undefined;
 }
 
+function mcpEnvVars(servers: Record<string, unknown>, name: string): string[] {
+  const server = servers[name];
+  assert.ok(
+    server && typeof server === "object",
+    `expected [mcp_servers.${name}] to be declared`
+  );
+  const variables = (server as Record<string, unknown>).env_vars;
+  assert.ok(
+    Array.isArray(variables),
+    `[mcp_servers.${name}].env_vars must be an array`
+  );
+  return variables as string[];
+}
+
 // Source-code-write-capable or delegation-capable MCP servers that neither
 // new role may ever enable; both roles are source-read-only and leaf-only.
 const FORBIDDEN_SERVERS = [
@@ -152,6 +166,7 @@ test("playtest-analyst.toml reuses autodev/smart but overrides to read-only, evi
       "playtest.readEpisode",
       "playtest.readWindow",
       "playtest.submitReview",
+      "playtest.submitDiscoveryReview",
       "playtest.submitCrossSessionSynthesis"
     ].sort()
   );
@@ -164,6 +179,26 @@ test("playtest-analyst.toml reuses autodev/smart but overrides to read-only, evi
     "playtest.findings"
   ]) {
     assert.equal(playtestTools.includes(forbidden), false, forbidden);
+  }
+
+  // The playtest MCP server refuses to start unless the analysis kind reaches
+  // it, so the allowlist has to carry the whole analyst session context.
+  const playtestEnvVars = mcpEnvVars(servers, "playtest");
+  for (const required of [
+    "AUTODEV_PLAYTEST_ROLE",
+    "AUTODEV_PLAYTEST_WORKSPACE_ID",
+    "AUTODEV_PLAYTEST_ACTOR_ID",
+    "AUTODEV_PLAYTEST_TASK_ID",
+    "AUTODEV_PLAYTEST_RUN_ID",
+    "AUTODEV_PLAYTEST_ANALYSIS_ID",
+    "AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS",
+    "AUTODEV_PLAYTEST_ANALYSIS_KIND",
+    "AUTODEV_PLAYTEST_REPOSITORY_ROOT"
+  ]) {
+    assert.ok(
+      playtestEnvVars.includes(required),
+      `playtest-analyst must forward ${required} to the playtest MCP server`
+    );
   }
 
   assert.equal(skillEnabled(role, "orchestration"), false);
@@ -181,6 +216,7 @@ test("playtester prompt forbids code/issue writes and self-critique", () => {
 test("playtest-analyst prompt forbids run/branch authority and direct issue creation", () => {
   const prompt = readText("agents/prompts/roles/playtest-analyst.md");
   assert.match(prompt, /playtest\.submitReview/);
+  assert.match(prompt, /playtest\.submitDiscoveryReview/);
   assert.match(
     prompt,
     /Runtime-computed metric aggregation supplied with the task/u

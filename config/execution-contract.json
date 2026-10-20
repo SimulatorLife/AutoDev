@@ -181,6 +181,7 @@
           "playtest.metrics",
           "playtest.compare",
           "playtest.submitReview",
+          "playtest.submitDiscoveryReview",
           "playtest.submitCrossSessionSynthesis"
         ]
       },
@@ -197,6 +198,7 @@
           "AUTODEV_PLAYTEST_RUN_ID",
           "AUTODEV_PLAYTEST_ANALYSIS_ID",
           "AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS",
+          "AUTODEV_PLAYTEST_ANALYSIS_KIND",
           "AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION",
           "AUTODEV_PLAYTEST_REPOSITORY_ROOT",
           "AUTODEV_PLAYTEST_UV",

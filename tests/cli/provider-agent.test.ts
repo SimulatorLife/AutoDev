@@ -671,7 +671,7 @@ test("playtest analyst process excludes every Control API credential", async () 
         "[mcp_servers.playtest]",
         "enabled = true",
         'enabled_tools = ["playtest.prepareReview", "playtest.submitReview", "playtest.submitCrossSessionSynthesis"]',
-        'env_vars = ["AUTODEV_PLAYTEST_ROLE", "AUTODEV_PLAYTEST_WORKSPACE_ID", "AUTODEV_PLAYTEST_ACTOR_ID", "AUTODEV_PLAYTEST_TASK_ID", "AUTODEV_PLAYTEST_RUN_ID", "AUTODEV_PLAYTEST_ANALYSIS_ID", "AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS", "AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION", "AUTODEV_PLAYTEST_REPOSITORY_ROOT", "AUTODEV_REPO_ROOT", "CODEX_HOME"]'
+        'env_vars = ["AUTODEV_PLAYTEST_ROLE", "AUTODEV_PLAYTEST_WORKSPACE_ID", "AUTODEV_PLAYTEST_ACTOR_ID", "AUTODEV_PLAYTEST_TASK_ID", "AUTODEV_PLAYTEST_RUN_ID", "AUTODEV_PLAYTEST_ANALYSIS_ID", "AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS", "AUTODEV_PLAYTEST_ANALYSIS_KIND", "AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION", "AUTODEV_PLAYTEST_REPOSITORY_ROOT", "AUTODEV_REPO_ROOT", "CODEX_HOME"]'
       ].join("\n") + "\n"
     );
     writeFileSync(
@@ -825,7 +825,7 @@ test("playtest analysis restricts Codex to packet tools and an isolated executio
         "[mcp_servers.playtest]",
         "enabled = true",
         'enabled_tools = ["playtest.prepareReview", "playtest.submitReview", "playtest.submitCrossSessionSynthesis"]',
-        'env_vars = ["AUTODEV_PLAYTEST_ROLE", "AUTODEV_PLAYTEST_WORKSPACE_ID", "AUTODEV_PLAYTEST_ACTOR_ID", "AUTODEV_PLAYTEST_TASK_ID", "AUTODEV_PLAYTEST_RUN_ID", "AUTODEV_PLAYTEST_ANALYSIS_ID", "AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS", "AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION", "AUTODEV_PLAYTEST_REPOSITORY_ROOT", "AUTODEV_REPO_ROOT"]',
+        'env_vars = ["AUTODEV_PLAYTEST_ROLE", "AUTODEV_PLAYTEST_WORKSPACE_ID", "AUTODEV_PLAYTEST_ACTOR_ID", "AUTODEV_PLAYTEST_TASK_ID", "AUTODEV_PLAYTEST_RUN_ID", "AUTODEV_PLAYTEST_ANALYSIS_ID", "AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS", "AUTODEV_PLAYTEST_ANALYSIS_KIND", "AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION", "AUTODEV_PLAYTEST_REPOSITORY_ROOT", "AUTODEV_REPO_ROOT"]',
         "[mcp_servers.codex_app]",
         "enabled = false",
         '[plugins."codex-app-tools@openai-bundled"]',
@@ -892,6 +892,7 @@ test("playtest analysis restricts Codex to packet tools and an isolated executio
         "episode-2"
       ]),
       AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION: '{"status":"fixture"}',
+      AUTODEV_PLAYTEST_ANALYSIS_KIND: "discovery",
       AUTODEV_PLAYTEST_REPOSITORY_ROOT: repositoryRoot,
       AUTODEV_PLAYTEST_CONTROL_API_TOKEN: "analyst-scoped-token",
       AUTODEV_PLAYTEST_CONTROL_API_ACTOR: "playtest-runtime",
@@ -972,9 +973,15 @@ test("playtest analysis restricts Codex to packet tools and an isolated executio
         (argument) =>
           argument.startsWith("mcp_servers.playtest.env_vars=") &&
           argument.includes("AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS") &&
+          argument.includes("AUTODEV_PLAYTEST_ANALYSIS_KIND") &&
           argument.includes("AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION")
       ),
       "the analyst MCP must receive the Runtime-bound selection allowlist"
+    );
+    assert.equal(
+      call.env.AUTODEV_PLAYTEST_ANALYSIS_KIND,
+      "discovery",
+      "the analyst process must carry the analysis kind into the Codex child"
     );
     assert.equal(call.env.AUTODEV_CONTROL_API_TOKEN, undefined);
     assert.equal(call.env.AUTODEV_OPENLIT_USAGE_TOKEN, undefined);
@@ -1013,7 +1020,7 @@ test("analyst provider run enforces its role tool, skill, MCP, and environment p
         "[mcp_servers.playtest]",
         "enabled = true",
         'enabled_tools = ["playtest.prepareReview", "playtest.submitReview", "playtest.submitCrossSessionSynthesis"]',
-        'env_vars = ["AUTODEV_PLAYTEST_ROLE", "AUTODEV_PLAYTEST_WORKSPACE_ID", "AUTODEV_PLAYTEST_ACTOR_ID", "AUTODEV_PLAYTEST_TASK_ID", "AUTODEV_PLAYTEST_RUN_ID", "AUTODEV_PLAYTEST_ANALYSIS_ID", "AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS", "AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION", "AUTODEV_PLAYTEST_REPOSITORY_ROOT", "AUTODEV_REPO_ROOT"]',
+        'env_vars = ["AUTODEV_PLAYTEST_ROLE", "AUTODEV_PLAYTEST_WORKSPACE_ID", "AUTODEV_PLAYTEST_ACTOR_ID", "AUTODEV_PLAYTEST_TASK_ID", "AUTODEV_PLAYTEST_RUN_ID", "AUTODEV_PLAYTEST_ANALYSIS_ID", "AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS", "AUTODEV_PLAYTEST_ANALYSIS_KIND", "AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION", "AUTODEV_PLAYTEST_REPOSITORY_ROOT", "AUTODEV_REPO_ROOT"]',
         "[mcp_servers.codex_app]",
         "enabled = false",
         "[skills]",
@@ -1072,6 +1079,7 @@ test("analyst provider run enforces its role tool, skill, MCP, and environment p
         "episode-2"
       ]),
       AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION: '{"status":"fixture"}',
+      AUTODEV_PLAYTEST_ANALYSIS_KIND: "discovery",
       AUTODEV_PLAYTEST_REPOSITORY_ROOT: repositoryRoot,
       AUTODEV_CONTROL_API_BASE_URL: "http://127.0.0.1:4101",
       AUTODEV_OPENLIT_USAGE_TOKEN: "runtime-usage-secret",

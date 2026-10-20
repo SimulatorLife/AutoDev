@@ -53,8 +53,8 @@ ignore_default_excludes = false
 
 # Runtime-hosted Playtesting MCP server, registered through RuleSync. This role
 # allowlists evidence reads, code-owned metrics/compare, packet preparation,
-# review and cited batch-synthesis submission; it has no run/branch or
-# finding/issue-write tools.
+# confirmatory and discovery review submission, and cited batch-synthesis
+# submission; it has no run/branch or finding/issue-write tools.
 [mcp_servers.playtest]
 enabled = true
 default_tools_approval_mode = "approve"
@@ -66,6 +66,7 @@ enabled_tools = [
   "playtest.metrics",
   "playtest.compare",
   "playtest.submitReview",
+  "playtest.submitDiscoveryReview",
   "playtest.submitCrossSessionSynthesis",
 ]
 env_vars = [
@@ -80,6 +81,7 @@ env_vars = [
   "AUTODEV_PLAYTEST_RUN_ID",
   "AUTODEV_PLAYTEST_ANALYSIS_ID",
   "AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS",
+  "AUTODEV_PLAYTEST_ANALYSIS_KIND",
   "AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION",
   "AUTODEV_PLAYTEST_REPOSITORY_ROOT",
   "AUTODEV_PLAYTEST_UV",
