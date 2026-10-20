@@ -2486,6 +2486,18 @@ function configureReadinessFixture(
 /** The route that assigns the roles of one skill. */
 const SKILL_ROLES_ROUTE = /^\/control\/skills\/([^/]+)$/u;
 
+/** The route that reads one skill's canonical source. */
+const SKILL_CONTENT_ROUTE = /^\/control\/skills\/([^/]+)\/content$/u;
+
+/** The route that reads one agent's detail. */
+const AGENT_DETAIL_ROUTE = /^\/control\/agents\/([^/]+)$/u;
+
+/** The route that reads one prompt's detail. */
+const PROMPT_DETAIL_ROUTE = /^\/control\/prompts\/([^/]+)$/u;
+
+/** The moment the fixture says a write was applied. */
+const FIXTURE_APPLIED_AT = "2026-01-01T00:00:00.000Z";
+
 /** The agent kind a role runs as a leaf rather than as an orchestrator. */
 const LEAF_AGENT_KIND = "leaf";
 
@@ -2585,7 +2597,7 @@ async function handleSyntheticSkillRoleMutation(
         convergence: "pending",
         desiredGeneration: generation,
         observedGeneration: null,
-        lastApplyAt: "2026-01-01T00:00:00.000Z",
+        lastApplyAt: FIXTURE_APPLIED_AT,
         lastObservationAt: null,
         lastError: null,
         explanation:
@@ -2860,6 +2872,88 @@ function handleCatalogResourceRead(
           skills: ["code-review"],
           mcpTools: {}
         }
+      }
+    });
+    return true;
+  }
+  const agentDetail = url.pathname.match(AGENT_DETAIL_ROUTE);
+  if (agentDetail !== null) {
+    sendJson(response, {
+      schema: "autodev-control-agent-detail-v3",
+      id: decodeURIComponent(agentDetail[1]),
+      role: decodeURIComponent(agentDetail[1]),
+      kind: "orchestrator",
+      readOnly: false,
+      configured: true,
+      valid: true,
+      status: "idle",
+      convergence: "converged",
+      enablement: {
+        kind: "observed",
+        enabled: true,
+        mutable: true,
+        revision: "a".repeat(64)
+      },
+      primaryModel: "claude",
+      allowedProviders: ["claude"],
+      mcps: ["lsp"],
+      skills: [],
+      hasPrompt: true,
+      promptPath: "agents/prompts/default.md",
+      systemPrompt: "You are the AutoDev orchestrator.",
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: "agent-default",
+          observedGeneration: "agent-default",
+          lastApplyAt: FIXTURE_APPLIED_AT,
+          lastObservationAt: FIXTURE_APPLIED_AT,
+          lastError: null,
+          explanation: "The agent matches the canonical source."
+        },
+        history: []
+      }
+    });
+    return true;
+  }
+  const skillContent = url.pathname.match(SKILL_CONTENT_ROUTE);
+  if (skillContent !== null) {
+    const name = decodeURIComponent(skillContent[1]);
+    sendJson(response, {
+      schema: "autodev-control-skill-content-v1",
+      name,
+      path: `.rulesync/skills/${name}/SKILL.md`,
+      content: `---\nname: ${name}\n---\n\nReview a diff for defects.\n`,
+      revision: "c".repeat(64)
+    });
+    return true;
+  }
+  const promptDetail = url.pathname.match(PROMPT_DETAIL_ROUTE);
+  if (promptDetail !== null) {
+    const name = decodeURIComponent(promptDetail[1]);
+    sendJson(response, {
+      schema: "autodev-control-prompt-detail-v4",
+      name,
+      type: "command",
+      source: `.rulesync/commands/${name}.md`,
+      content: "Review the pending diff and report what changed.\n",
+      preview: "Review the pending diff and report what changed.",
+      revision: "d".repeat(64),
+      diff: {
+        summary: "The canonical command source.",
+        identifier: `prompt-${name}-1`
+      },
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: `prompt-${name}-1`,
+          observedGeneration: `prompt-${name}-1`,
+          lastApplyAt: FIXTURE_APPLIED_AT,
+          lastObservationAt: FIXTURE_APPLIED_AT,
+          lastError: null,
+          explanation: "The command matches the canonical source."
+        },
+        history: []
       }
     });
     return true;

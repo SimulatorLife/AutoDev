@@ -14,6 +14,19 @@ const PENDING_OUTCOME = "pending";
 const SKILL_CATALOG_URL = /\/skills\?save=/u;
 const SAVE_BUTTON_NAME = /save/iu;
 const STAT_GRID = "[data-stat-grid]";
+/**
+ * The live agent count, read as the label and the value it carries.
+ *
+ * The list page renders the pair as one string ("Active instances: Not
+ * observed") and the detail page as a definition list -- an "Active instances"
+ * term beside a "Not observed" value -- so the assertion has to accept both
+ * shapes rather than one of them.
+ */
+const ACTIVE_INSTANCES_NOT_OBSERVED = /Active instances:?\s*Not observed/u;
+const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
+const SKILL_SOURCE_PATTERN = /Review a diff for defects\./u;
+const PROMPT_SOURCE_PATTERN =
+  /Review the pending diff and report what changed\./u;
 const CONFLICT_MESSAGE =
   "The execution contract changed after this page was loaded, so nothing was written.";
 
@@ -85,7 +98,7 @@ test("the Agents list keeps the enabled agent apart from the one the Runtime cou
   // The Runtime published no live projection, so the live counts are not
   // observed rather than measured as zero.
   await expect(page.locator('[data-live-agent-role="default"]')).toContainText(
-    `Active instances: ${NOT_OBSERVED}`
+    ACTIVE_INSTANCES_NOT_OBSERVED
   );
 
   // The enablement the Runtime reported and the enablement it could not
@@ -239,6 +252,114 @@ test("the Prompts list shows the canonical commands and the role prompts", async
     page.getByRole("link", { name: "Open prompt review" })
   ).toBeVisible();
   await expect(page.getByText("Review the pending diff.")).toBeVisible();
+  expect(await documentFitsViewport(page)).toBe(true);
+});
+
+test("the agent detail shows the agent's own configuration and its convergence", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/agents/default");
+
+  await expect(page.locator('[data-section="agent-enablement"]')).toBeVisible();
+  await expect(
+    page.locator('[data-enablement-target="default"]')
+  ).toHaveAttribute("data-status", "enabled");
+  // The Runtime published no live projection, so the live count is not
+  // observed rather than measured as zero.
+  await expect(page.locator('[data-live-agent-role="default"]')).toContainText(
+    ACTIVE_INSTANCES_NOT_OBSERVED
+  );
+  // The value on its own is the not-observed label rather than a count.
+  await expect(
+    page
+      .locator('[data-live-agent-role="default"]')
+      .getByText(NOT_OBSERVED, { exact: true })
+  ).toBeVisible();
+
+  await expect(
+    page.locator('[data-section="agent-reconciliation"]')
+  ).toBeVisible();
+  await expect(page.getByText("Convergence", { exact: true })).toBeVisible();
+  // The reconciliation is the Runtime's own verdict on this agent, and the
+  // generations behind it -- not a restatement of the configuration.
+  await expect(
+    page.getByText("The agent matches the canonical source.")
+  ).toBeVisible();
+  await expect(page.locator('[data-field="desired-generation"]')).toHaveText(
+    "agent-default"
+  );
+  await expect(page.locator('[data-field="observed-generation"]')).toHaveText(
+    "agent-default"
+  );
+  // The role prompt is the agent's own source, under its own heading and in
+  // a block that names itself.
+  await expect(
+    page.getByRole("heading", { name: "System prompt", exact: true })
+  ).toBeVisible();
+  await expect(
+    page.locator('pre[aria-label="Agent system prompt"]')
+  ).toContainText("You are the AutoDev orchestrator.");
+  expect(await documentFitsViewport(page)).toBe(true);
+});
+
+test("the skill detail is the canonical source, edited against the revision it loaded", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/skills/code-review");
+
+  await expect(page.locator("[data-skill-content]")).toHaveAttribute(
+    "data-skill-content",
+    SKILL_NAME
+  );
+  const revision = await page
+    .locator("[data-skill-revision]")
+    .getAttribute("data-skill-revision");
+  expect(revision).toMatch(REVISION_PATTERN);
+
+  // The editor carries the source the page loaded, and the revision it was
+  // loaded at, so a write can be checked against it.
+  const editor = page.locator("[data-skill-content-editor]");
+  await expect(editor).toHaveValue(SKILL_SOURCE_PATTERN);
+  // The write is a compare-and-swap, so the form carries the revision this
+  // page loaded rather than one it read at submit time.
+  await expect(page.locator('input[name="expectedRevision"]')).toHaveValue(
+    revision
+  );
+  await expect(
+    page.getByRole("heading", { name: "Canonical RuleSync source" })
+  ).toBeVisible();
+  expect(await documentFitsViewport(page)).toBe(true);
+});
+
+test("the prompt detail shows the canonical source beside its rendered preview", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/prompts/review");
+
+  // The editor carries the canonical source the page loaded.
+  await expect(page.locator('[data-prompt-content="observed"]')).toHaveValue(
+    PROMPT_SOURCE_PATTERN
+  );
+  // The write is a compare-and-swap, so the form carries the revision this
+  // page loaded and the page reports that same revision.
+  const expectedRevision = page.locator('input[name="expectedRevision"]');
+  await expect(expectedRevision).toHaveValue(REVISION_PATTERN);
+  const revision = (await expectedRevision.getAttribute("value")) ?? "";
+  await expect(page.getByText(`rev ${revision.slice(0, 12)}`)).toBeVisible();
+  // The rendered preview is a disclosure, so it is opened rather than
+  // asserted to be on the page.
+  await page.getByText("Preview rendered Markdown").click();
+  await expect(
+    page.locator('[data-prompt-preview-body="observed"]')
+  ).toBeVisible();
+  await expect(
+    page
+      .locator('[data-prompt-preview-body="observed"]')
+      .getByText("Review the pending diff and report what changed.")
+  ).toBeVisible();
   expect(await documentFitsViewport(page)).toBe(true);
 });
 
