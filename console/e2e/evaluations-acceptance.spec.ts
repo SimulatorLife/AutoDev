@@ -1,5 +1,7 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 
+import { statCard } from "./acceptance-helpers.ts";
+
 /**
  * The evaluation results the Control fixture holds.
  *
@@ -19,20 +21,6 @@ const UNOBSERVED_SPAN_ID = "ffffffffffffffff";
 const NARROWED_ROLE = "orchestrator";
 /** The prompt the other role's rows report and the narrowed rows do not. */
 const OTHER_ROLE_PROMPT = "review";
-
-/**
- * One stat card of the page, addressed by its title.
- *
- * The cards are definition lists, so the title is the term and the value and
- * the subtitle belong to the same list. Addressing the card by its term
- * keeps the assertion about the card rather than about a number, which
- * appears in several places on the page.
- */
-function statCard(page: Page, title: string): Locator {
-  return page.locator("dl").filter({
-    has: page.locator("dt").filter({ hasText: title })
-  });
-}
 
 /**
  * The page's own body, which owns the state markers.

@@ -2673,6 +2673,220 @@ const RUNTIME_IN_FLIGHT_REQUESTS = 4;
 let runtimeUnavailable = false;
 
 /**
+ * Whether the GitHub Actions runtime state can be read.
+ *
+ * The workflow definitions are parsed from the repository's YAML and the
+ * runtime state comes from the GitHub Actions API, so the two can be read
+ * apart. The page has to keep them apart too: a page that can only render
+ * observed runtime facts cannot show that it refuses to invent them.
+ */
+let githubRuntimeUnavailable = false;
+
+/**
+ * The workflow definitions the repository declares.
+ *
+ * The rows carry the states the page has to tell apart: a workflow that is
+ * active in GitHub and one that was disabled by hand, one whose runtime state
+ * was never loaded, one that declares no trigger event and one that declares
+ * no schedule.
+ */
+function githubWorkflows(): readonly Record<string, unknown>[] {
+  return [
+    {
+      id: "_scheduler.yml",
+      name: "Scheduler",
+      path: ".github/workflows/_scheduler.yml",
+      events: ["push", "schedule", "workflow_dispatch"],
+      schedules: ["0 3 * * *"],
+      actionsState: "active",
+      actionsWorkflowId: 101,
+      actionsHtmlUrl:
+        "https://github.com/SimulatorLife/AutoDev/actions/workflows/101",
+      recentRunsCount: 12,
+      lastRunStatus: "completed",
+      lastRunConclusion: "success",
+      lastRunCreatedAt: "2026-02-11T03:00:12.000Z",
+      lastRunHtmlUrl:
+        "https://github.com/SimulatorLife/AutoDev/actions/runs/9001"
+    },
+    {
+      id: "ci.yml",
+      name: "CI",
+      path: ".github/workflows/ci.yml",
+      events: ["pull_request", "push"],
+      schedules: [],
+      actionsState: "disabled_manually",
+      actionsWorkflowId: 102,
+      actionsHtmlUrl:
+        "https://github.com/SimulatorLife/AutoDev/actions/workflows/102",
+      recentRunsCount: 7,
+      lastRunStatus: "completed",
+      lastRunConclusion: "failure",
+      lastRunCreatedAt: "2026-02-10T21:14:40.000Z",
+      lastRunHtmlUrl:
+        "https://github.com/SimulatorLife/AutoDev/actions/runs/9003"
+    },
+    {
+      id: "release.yml",
+      name: "Release",
+      path: ".github/workflows/release.yml",
+      events: ["release"],
+      schedules: ["0 0 1 * *"],
+      // The definition was read; this workflow's runtime state was not.
+      actionsState: "unavailable",
+      actionsWorkflowId: null,
+      actionsHtmlUrl: null,
+      recentRunsCount: null,
+      lastRunStatus: null,
+      lastRunConclusion: null,
+      lastRunCreatedAt: null,
+      lastRunHtmlUrl: null
+    },
+    {
+      id: "nightly.yml",
+      name: null,
+      path: ".github/workflows/nightly.yml",
+      events: [],
+      schedules: [],
+      actionsState: "active",
+      actionsWorkflowId: 104,
+      actionsHtmlUrl:
+        "https://github.com/SimulatorLife/AutoDev/actions/workflows/104",
+      recentRunsCount: 0,
+      lastRunStatus: null,
+      lastRunConclusion: null,
+      lastRunCreatedAt: null,
+      lastRunHtmlUrl: null
+    }
+  ];
+}
+
+/**
+ * The bounded recent-run sample the Actions API returned.
+ */
+function githubRecentRuns(): readonly Record<string, unknown>[] {
+  return [
+    {
+      id: 9001,
+      name: "Scheduler",
+      workflowId: 101,
+      workflowPath: ".github/workflows/_scheduler.yml",
+      headBranch: "main",
+      headSha: "9f2c41ab7d5e6083",
+      event: "schedule",
+      status: "completed",
+      conclusion: "success",
+      htmlUrl: "https://github.com/SimulatorLife/AutoDev/actions/runs/9001",
+      createdAt: "2026-02-11T03:00:12.000Z",
+      updatedAt: "2026-02-11T03:04:55.000Z",
+      runAttempt: 1
+    },
+    {
+      id: 9002,
+      name: "CI",
+      workflowId: 102,
+      workflowPath: ".github/workflows/ci.yml",
+      headBranch: "feature/breadcrumbs",
+      headSha: "1c77e0d9a2b4f631",
+      event: "pull_request",
+      status: "in_progress",
+      conclusion: null,
+      htmlUrl: "https://github.com/SimulatorLife/AutoDev/actions/runs/9002",
+      createdAt: "2026-02-11T09:41:03.000Z",
+      updatedAt: "2026-02-11T09:41:03.000Z",
+      runAttempt: 1
+    },
+    {
+      id: 9003,
+      name: "CI",
+      workflowId: 102,
+      workflowPath: ".github/workflows/ci.yml",
+      headBranch: "main",
+      headSha: "3ab90cd117f2e845",
+      event: "push",
+      status: "completed",
+      conclusion: "failure",
+      htmlUrl: "https://github.com/SimulatorLife/AutoDev/actions/runs/9003",
+      createdAt: "2026-02-10T21:14:40.000Z",
+      updatedAt: "2026-02-10T21:19:02.000Z",
+      runAttempt: 1
+    },
+    {
+      id: 9004,
+      name: "Release",
+      workflowId: 103,
+      workflowPath: ".github/workflows/release.yml",
+      headBranch: "main",
+      headSha: "77de0194bb31a2c6",
+      event: "release",
+      status: "completed",
+      conclusion: "cancelled",
+      htmlUrl: "https://github.com/SimulatorLife/AutoDev/actions/runs/9004",
+      createdAt: "2026-02-09T12:00:00.000Z",
+      updatedAt: "2026-02-09T12:02:11.000Z",
+      runAttempt: 1
+    }
+  ];
+}
+
+/**
+ * The GitHub workflow catalog and the observed Actions runtime state.
+ *
+ * The read is read-only in the product as well as here: dispatch, cancel,
+ * rerun and schedule controls are unimplemented, so the fixture answers no
+ * mutation of its own.
+ */
+function handleGithubRead(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (url.pathname === "/fixture/github/state") {
+    if (request.method !== "POST") {
+      response.writeHead(405).end();
+      return true;
+    }
+    githubRuntimeUnavailable = url.searchParams.get("state") === "unavailable";
+    sendJson(response, {
+      state: githubRuntimeUnavailable ? "unavailable" : "observed"
+    });
+    return true;
+  }
+  if (url.pathname !== "/control/github") return false;
+  if (request.method !== "GET") {
+    response.writeHead(405).end();
+    return true;
+  }
+  const workflows = githubWorkflows();
+  sendJson(response, {
+    schema: "autodev-control-github-v1",
+    source: ".github/workflows",
+    readOnly: true,
+    catalogStatus: "valid",
+    totalWorkflows: workflows.length,
+    workflows,
+    runtimeFactsAvailable: !githubRuntimeUnavailable,
+    runtimeStatus: githubRuntimeUnavailable ? "unavailable" : "available",
+    runtimeMessage: githubRuntimeUnavailable
+      ? "The GitHub Actions API could not be reached for the configured repository."
+      : null,
+    repository: "SimulatorLife/AutoDev",
+    stats: githubRuntimeUnavailable
+      ? null
+      : {
+          totalRuns: 30,
+          successfulRuns: 21,
+          failedRuns: 5,
+          inProgressRuns: 2,
+          cancelledRuns: 2,
+          successRate: 0.7
+        },
+    recentRuns: githubRuntimeUnavailable ? [] : githubRecentRuns()
+  });
+  return true;
+}
+
+/**
  * The Runtime's read-only live projection, and the fixture's control over it.
  *
  * `/fixture/runtime/state` takes the Runtime away, so a page that reads it
@@ -3167,6 +3381,7 @@ function handleFixtureCatalogRoutes(
 ): boolean {
   if (configureSkillFixture(request, response, url)) return true;
   if (handleRuntimeFixture(request, response, url)) return true;
+  if (handleGithubRead(request, response, url)) return true;
   if (handleEvaluationsRead(url, response)) return true;
   return handleCatalogResourceRead(url, response);
 }
