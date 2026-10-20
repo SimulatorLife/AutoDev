@@ -728,6 +728,14 @@ node_modules/.bin/rulesync generate --features skills
 node_modules/.bin/rulesync generate --features skills --check
 ```
 
+The installer also provisions `CODEX_ROUTER_COPILOT_API_KEY` in the private
+`$CODEX_HOME/.env`. It is a local Router-to-Copilot bridge bearer credential,
+not a GitHub or Copilot provider API key. The Router and Copilot proxy launcher
+load the same value; the Copilot CLI subprocess does not inherit it. A
+materialize-only install stages a newly generated key without restarting the
+Router or Copilot proxy, so both services must be reloaded before Copilot can
+serve routed tasks with that key.
+
 To enable the router authentication boundary during a planned restart, run:
 
 ```bash

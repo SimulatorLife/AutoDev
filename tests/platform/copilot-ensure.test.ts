@@ -1,4 +1,15 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve as resolvePath } from "node:path";
 import test from "node:test";
 
 import {
@@ -61,6 +72,50 @@ test("resolver derives the Copilot launchd and typed-runtime paths", () => {
     "/home/test/Library/LaunchAgents/com.codex.copilot-proxy.plist"
   );
   assert.equal(result.copilotBin, "/bin/copilot");
+});
+
+test("Copilot launcher loads the Router bridge key from the private CODEX_HOME env file", () => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-copilot-launcher-"));
+  const codexHome = join(root, ".codex");
+  const installedProxy = join(codexHome, "src", "providers", "copilot.ts");
+  const fakeNode = join(root, "fake-node");
+  const capture = join(root, "captured-key");
+  const token = "a".repeat(64);
+  const launcher = resolvePath(
+    import.meta.dirname,
+    "../../scripts/run-codex-copilot-cli-responses-proxy.sh"
+  );
+  try {
+    mkdirSync(join(codexHome, "src", "providers"), { recursive: true });
+    writeFileSync(installedProxy, "// fixture\n");
+    writeFileSync(
+      join(codexHome, ".env"),
+      `CODEX_ROUTER_COPILOT_API_KEY=${token}\n`,
+      { mode: 0o600 }
+    );
+    writeFileSync(
+      fakeNode,
+      '#!/bin/sh\nprintf "%s" "${CODEX_ROUTER_COPILOT_API_KEY:-}" > "$COPILOT_BRIDGE_AUTH_CAPTURE"\n',
+      { mode: 0o700 }
+    );
+    chmodSync(fakeNode, 0o700);
+    const result = spawnSync("/bin/bash", [launcher], {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        CODEX_HOME: codexHome,
+        HOME: root,
+        AUTODEV_NODE_BIN: fakeNode,
+        COPILOT_BRIDGE_AUTH_CAPTURE: capture,
+        PATH: "/usr/bin:/bin"
+      }
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(capture, "utf8"), token);
+    assert.doesNotMatch(result.stdout + result.stderr, new RegExp(token));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("healthy Copilot proxy is left untouched", async () => {

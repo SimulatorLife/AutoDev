@@ -77,6 +77,11 @@ test("every service LaunchAgent pins the installer's Node for its launcher", () 
       /<key>AUTODEV_NODE_BIN<\/key>\s*<string>__AUTODEV_NODE_BIN__<\/string>/u,
       `${label}: launchd's PATH would otherwise pick /usr/local/bin/node`
     );
+    assert.match(
+      template,
+      /<key>AUTODEV_REPO_ROOT<\/key>\s*<string>__AUTODEV_REPO_ROOT__<\/string>/u,
+      `${label}: runtime bridges must resolve their canonical source checkout`
+    );
     assert.doesNotMatch(
       template,
       /<string>Background<\/string>/u,

@@ -132,6 +132,21 @@ test("playtester role enforces read-only sandbox and approved run/read tool subs
   assert.equal(isSkillEnabled(role, "game-playtesting"), true);
 });
 
+test("Playtester instructions use the role-scoped provider MCP surface instead of the parent's tool list", () => {
+  const prompt = readText("agents/prompts/roles/playtester.md");
+  const skill = readText(".rulesync/skills/game-playtesting/SKILL.md");
+  for (const [source, label] of [
+    [prompt, "Playtester role prompt"],
+    [skill, "game-playtesting skill"]
+  ] as const) {
+    assert.match(source, /isolated AutoDev Code Mode process/u, label);
+    assert.match(source, /provider-managed bridge/u, label);
+    assert.match(source, /parent Codex session's `ALL_TOOLS` omits it/u, label);
+    assert.match(source, /unrelated\/global MCP server/u, label);
+    assert.match(source, /report the actual missing boundary and stop/u, label);
+  }
+});
+
 test("playtest-analyst reuses autodev/smart model tier without inheriting smart permissions", () => {
   const analystRole = readToml("agents/roles/playtest-analyst.toml");
   const smartRole = readToml("agents/roles/smart.toml");

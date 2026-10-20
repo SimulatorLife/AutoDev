@@ -13,6 +13,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  ensureCopilotRouterAuth,
   ensureRouterAuth,
   readOtelIngressMode,
   writeOtelIngressMode
@@ -59,6 +60,21 @@ test("router auth creates a private token, preserves existing env content, and i
       readFileSync(path, "utf8"),
       `OTHER=value\nCODEX_ROUTER_AUTH_TOKEN=${token}\n`
     );
+  }));
+
+test("Copilot bridge auth is separate, private, and stable across installs", () =>
+  withTempDir((directory) => {
+    const path = join(directory, ".env");
+    writeFileSync(path, "OTHER=value\nCODEX_ROUTER_AUTH_TOKEN=router-token\n");
+    const token = ensureCopilotRouterAuth(path);
+    assert.match(token, /^[0-9a-f]{64}$/u);
+    const contents =
+      `OTHER=value\nCODEX_ROUTER_AUTH_TOKEN=router-token\n` +
+      `CODEX_ROUTER_COPILOT_API_KEY=${token}\n`;
+    assert.equal(readFileSync(path, "utf8"), contents);
+    assert.equal(lstatSync(path).mode & 0o777, 0o600);
+    assert.equal(ensureCopilotRouterAuth(path), token);
+    assert.equal(readFileSync(path, "utf8"), contents);
   }));
 
 test("router auth replaces an empty token entry rather than treating it as configured", () =>

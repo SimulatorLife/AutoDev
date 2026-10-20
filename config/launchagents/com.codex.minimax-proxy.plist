@@ -33,6 +33,8 @@
     <string>__AUTODEV_NODE_BIN__</string>
     <key>CODEX_HOME</key>
     <string>__CODEX_HOME__</string>
+    <key>AUTODEV_REPO_ROOT</key>
+    <string>__AUTODEV_REPO_ROOT__</string>
   </dict>
 
   <key>StandardOutPath</key>

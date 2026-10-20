@@ -217,7 +217,16 @@ function assertResponse<T>(
 }
 
 function sessionHeader(session: PlaytestMcpSession): string {
-  return Buffer.from(JSON.stringify(session), "utf8").toString("base64url");
+  const processSession = {
+    workspaceId: session.workspaceId,
+    role: session.role,
+    actor: session.actor,
+    ...(session.taskId === undefined ? {} : { taskId: session.taskId }),
+    ...(session.runId === undefined ? {} : { runId: session.runId })
+  };
+  return Buffer.from(JSON.stringify(processSession), "utf8").toString(
+    "base64url"
+  );
 }
 
 /**

@@ -59,10 +59,10 @@ export function roleMcpEnvironment(
       );
     }
     const workspaceId =
-      env.AUTODEV_PLAYTEST_WORKSPACE_ID?.trim() || context.workspaceId?.trim();
+      context.workspaceId?.trim() || env.AUTODEV_PLAYTEST_WORKSPACE_ID?.trim();
     const workspaceRoot =
-      env.AUTODEV_PLAYTEST_REPOSITORY_ROOT?.trim() ||
-      context.workspaceRoot?.trim();
+      context.workspaceRoot?.trim() ||
+      env.AUTODEV_PLAYTEST_REPOSITORY_ROOT?.trim();
     if (!workspaceId || !WORKSPACE_ID_PATTERN.test(workspaceId)) {
       throw new Error(
         "The Playtester MCP requires a trusted canonical workspace identity."

@@ -588,8 +588,12 @@ come up empty:
 `CODEX_ROUTER_CHAIN_SELECTION_DEADLINE_MS` (default 120s) bounds how long the
 router may spend _looking_ for a provider. It is checked only before starting a
 candidate and never during one, so a long turn that lands on the last candidate
-still gets the full `CODEX_ROUTER_UPSTREAM_TIMEOUT_MS`. Without it, a tier of
-five hanging providers could hold a subagent slot for over an hour.
+still gets the full `CODEX_ROUTER_UPSTREAM_TIMEOUT_MS`. If an in-flight provider
+returns a fallbackable failure after the deadline, the router continues to the
+remaining candidates: no response has been sent to the caller, and a slow quota
+or availability failure must not suppress a healthy fallback. Without the
+deadline, a tier of five hanging providers could hold a subagent slot for over
+an hour.
 
 All of these are millisecond environment variables, and every one of them except
 the last is strictly positive: `0`, a negative value, or a non-number falls back
@@ -1830,7 +1834,7 @@ intended repository, and inspect the app task/log event for those failures.
 | Claude         | Codex -> Claude Responses bridge on `127.0.0.1:4000` -> Claude CLI   | Uses `CLAUDE_CODE_OAUTH_TOKEN`; the selected role model and reasoning effort are forwarded.                                                                                                                                                                                                                                                                                                          |
 | MiniMax        | Codex -> MiniMax Responses proxy on `127.0.0.1:18765`                | Pass-through to the remote API, not a CLI gateway; only `accept`, `authorization`, and `content-type` headers are forwarded, and `client_metadata` is dropped. MiniMax-M3 supports only `none` or `high` reasoning effort; MiniMax-M3.1-Flash-Preview supports `low` through `max` but never `none`. Provider quota/rate limits are upstream conditions; inspect the proxy log when diagnosing them. |
 | Antigravity    | Codex -> Antigravity adapter `:4002` -> `agy` CLI                    | `useAiCredits=false` and `useG1Credits=false` keep AI-credit overages disabled. Headless runs require the configured noninteractive permission mode.                                                                                                                                                                                                                                                 |
-| GitHub Copilot | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI    | Requires an authenticated local Copilot CLI; unavailable adapters are skipped by fallback.                                                                                                                                                                                                                                                                                                           |
+| GitHub Copilot | Codex -> local Copilot Responses adapter `:4003` -> `copilot` CLI    | Requires an authenticated local Copilot CLI. AutoDev provisions a separate local Router-to-bridge bearer key in `$CODEX_HOME/.env`; the proxy launcher loads it and the key is not forwarded into the Copilot CLI process. Unavailable adapters are skipped by fallback.                                                                                                                             |
 | Local router   | Codex Responses -> `127.0.0.1:4100` -> model-based provider dispatch | GPT/Codex models use the stored Codex OAuth; external model names use the existing local bridges.                                                                                                                                                                                                                                                                                                    |
 
 The Claude Responses adapter is not the GPT passthrough: it launches the

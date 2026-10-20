@@ -22,6 +22,7 @@ import {
 
 export type OtelIngressMode = "direct" | "openlit";
 export const ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_AUTH_TOKEN";
+export const COPILOT_ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_COPILOT_API_KEY";
 
 function fail(message: string): never {
   throw new Error(message);
@@ -78,24 +79,23 @@ export function writeOtelIngressMode(
   }
 }
 
-function existingToken(filePath: string): string | null {
+function existingToken(filePath: string, variable: string): string | null {
   if (!existsSync(filePath)) return null;
   const matches = readFileSync(filePath, "utf8").match(
-    new RegExp(String.raw`^${ROUTER_AUTH_VARIABLE}=([^\n]*)$`, "gmu")
+    new RegExp(String.raw`^${variable}=([^\n]*)$`, "gmu")
   );
-  const value =
-    matches?.at(-1)?.slice(`${ROUTER_AUTH_VARIABLE}=`.length).trim() ?? "";
+  const value = matches?.at(-1)?.slice(`${variable}=`.length).trim() ?? "";
   return value || null;
 }
 
-function appendToken(filePath: string, token: string): void {
+function appendToken(filePath: string, variable: string, token: string): void {
   mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
   if (existsSync(filePath)) {
     const contents = readFileSync(filePath, "utf8");
     if (contents.length > 0 && !contents.endsWith("\n"))
       appendFileSync(filePath, "\n");
   }
-  appendFileSync(filePath, `${ROUTER_AUTH_VARIABLE}=${token}\n`, {
+  appendFileSync(filePath, `${variable}=${token}\n`, {
     mode: 0o600
   });
   chmodSync(filePath, 0o600);
@@ -112,22 +112,46 @@ function publishLaunchdToken(token: string, env: NodeJS.ProcessEnv): void {
   }
 }
 
+function ensurePrivateToken(
+  filePath: string,
+  variable: string
+): {
+  token: string;
+  created: boolean;
+} {
+  const token = existingToken(filePath, variable);
+  if (token) {
+    chmodSync(filePath, 0o600);
+    return { token, created: false };
+  }
+  const generated = randomBytes(32).toString("hex");
+  appendToken(filePath, variable, generated);
+  return { token: generated, created: true };
+}
+
 export function ensureRouterAuth(
   filePath: string,
   env: NodeJS.ProcessEnv = process.env
 ): string {
-  const token = existingToken(filePath);
-  if (token) {
-    chmodSync(filePath, 0o600);
-    writeErrorLine(`ok router auth token already exists in ${filePath}`);
-    publishLaunchdToken(token, env);
-    return token;
-  }
-  const generated = randomBytes(32).toString("hex");
-  appendToken(filePath, generated);
-  writeErrorLine(`created router auth token in ${filePath}`);
-  publishLaunchdToken(generated, env);
-  return generated;
+  const result = ensurePrivateToken(filePath, ROUTER_AUTH_VARIABLE);
+  writeErrorLine(
+    result.created
+      ? `created router auth token in ${filePath}`
+      : `ok router auth token already exists in ${filePath}`
+  );
+  publishLaunchdToken(result.token, env);
+  return result.token;
+}
+
+/** The private Router-to-Copilot bridge credential is loaded by both launchers. */
+export function ensureCopilotRouterAuth(filePath: string): string {
+  const result = ensurePrivateToken(filePath, COPILOT_ROUTER_AUTH_VARIABLE);
+  writeErrorLine(
+    result.created
+      ? `created Copilot bridge auth token in ${filePath}`
+      : `ok Copilot bridge auth token already exists in ${filePath}`
+  );
+  return result.token;
 }
 
 function cli(argv: string[]): number {

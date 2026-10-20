@@ -395,9 +395,12 @@ test("Copilot CLI receives validated per-request OTel workspace and role resourc
   const temp = await mkdtemp(join(tmpdir(), "autodev-copilot-otel-context-"));
   const fakeCli = join(temp, "fake-copilot.mjs");
   const capture = join(temp, "resource-attributes.txt");
+  const authCapture = join(temp, "bridge-auth-presence.txt");
   const previous = {
     bin: process.env.COPILOT_BIN,
     capture: process.env.COPILOT_OTEL_CAPTURE_FILE,
+    authCapture: process.env.COPILOT_AUTH_CAPTURE_FILE,
+    bridgeKey: process.env.CODEX_ROUTER_COPILOT_API_KEY,
     resources: process.env.OTEL_RESOURCE_ATTRIBUTES
   };
 
@@ -407,6 +410,7 @@ test("Copilot CLI receives validated per-request OTel workspace and role resourc
       `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
 writeFileSync(process.env.COPILOT_OTEL_CAPTURE_FILE, process.env.OTEL_RESOURCE_ATTRIBUTES ?? "");
+writeFileSync(process.env.COPILOT_AUTH_CAPTURE_FILE, String(Object.hasOwn(process.env, "CODEX_ROUTER_COPILOT_API_KEY")));
 console.log(JSON.stringify({ type: "assistant.message_start", data: { messageId: "m1", phase: "final_answer" } }));
 console.log(JSON.stringify({ type: "assistant.message_delta", data: { messageId: "m1", deltaContent: "done" } }));
 console.log(JSON.stringify({ type: "result", exitCode: 0 }));
@@ -416,6 +420,8 @@ console.log(JSON.stringify({ type: "result", exitCode: 0 }));
     await chmod(fakeCli, 0o755);
     process.env.COPILOT_BIN = fakeCli;
     process.env.COPILOT_OTEL_CAPTURE_FILE = capture;
+    process.env.COPILOT_AUTH_CAPTURE_FILE = authCapture;
+    process.env.CODEX_ROUTER_COPILOT_API_KEY = "local-bridge-test-secret";
     process.env.OTEL_RESOURCE_ATTRIBUTES = "service.name=copilot-test";
 
     const result = await runCopilot(
@@ -433,12 +439,23 @@ console.log(JSON.stringify({ type: "result", exitCode: 0 }));
       await readFile(capture, "utf8"),
       "service.name=copilot-test,autodev.workspace=SimulatorLife%2FAutoDev,autodev.agent.role=worker"
     );
+    assert.equal(
+      await readFile(authCapture, "utf8"),
+      "false",
+      "the Router-to-Copilot credential must not reach the model CLI"
+    );
   } finally {
     if (previous.bin === undefined) delete process.env.COPILOT_BIN;
     else process.env.COPILOT_BIN = previous.bin;
     if (previous.capture === undefined)
       delete process.env.COPILOT_OTEL_CAPTURE_FILE;
     else process.env.COPILOT_OTEL_CAPTURE_FILE = previous.capture;
+    if (previous.authCapture === undefined)
+      delete process.env.COPILOT_AUTH_CAPTURE_FILE;
+    else process.env.COPILOT_AUTH_CAPTURE_FILE = previous.authCapture;
+    if (previous.bridgeKey === undefined)
+      delete process.env.CODEX_ROUTER_COPILOT_API_KEY;
+    else process.env.CODEX_ROUTER_COPILOT_API_KEY = previous.bridgeKey;
     if (previous.resources === undefined)
       delete process.env.OTEL_RESOURCE_ATTRIBUTES;
     else process.env.OTEL_RESOURCE_ATTRIBUTES = previous.resources;

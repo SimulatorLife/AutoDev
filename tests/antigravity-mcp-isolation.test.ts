@@ -128,6 +128,10 @@ function createFixtureEnvironment(): {
     playwright: {
       command: "bash",
       args: ["-lc", "exec run-autodev-mcp.sh playwright"]
+    },
+    playtest: {
+      command: "bash",
+      args: ["-lc", "exec run-autodev-mcp.sh playtest"]
     }
   };
   writeFileSync(
@@ -872,22 +876,53 @@ test("playtester receives only its allowlisted Playtest MCP with trusted non-sec
         JSON.parse(args[3]!),
         roleMcpToolList("playtester", "playtest")
       );
-      assert.deepEqual(playtestServer.env, {
-        CODEX_HOME: env.codexHome,
-        AUTODEV_REPO_ROOT: REPO_ROOT,
-        AUTODEV_NODE_BIN: process.execPath,
-        AUTODEV_PLAYTEST_WORKSPACE_ID: "SimulatorLife/RacingGame",
-        AUTODEV_PLAYTEST_ROLE: "playtester",
-        AUTODEV_PLAYTEST_ACTOR_ID:
-          playtestServer.env?.AUTODEV_PLAYTEST_ACTOR_ID,
-        AUTODEV_PLAYTEST_TASK_ID: "provider-task-trusted-request-1",
-        AUTODEV_PLAYTEST_RUN_ID: "provider-run-trusted-request-1",
-        AUTODEV_PLAYTEST_REPOSITORY_ROOT: "/Users/henrykirk/Desktop/RacingGame",
-        AUTODEV_OPENLIT_SECRET_FILE: join(env.codexHome, "openlit-secrets.env"),
-        AUTODEV_CONTROL_API_BASE_URL: "http://127.0.0.1:4101",
-        AUTODEV_PLAYTEST_CONTROL_API_ACTOR: "autodev-playtester-runtime",
-        AUTODEV_PLAYTEST_CONTROL_API_ROLE: "playtester"
-      });
+      const playtestEnvironment = playtestServer.env;
+      assert.ok(playtestEnvironment);
+      assert.equal(playtestEnvironment.CODEX_HOME, env.codexHome);
+      assert.equal(playtestEnvironment.AUTODEV_REPO_ROOT, REPO_ROOT);
+      assert.equal(
+        playtestEnvironment.AUTODEV_PLAYTEST_WORKSPACE_ID,
+        "SimulatorLife/RacingGame"
+      );
+      assert.equal(playtestEnvironment.AUTODEV_PLAYTEST_ROLE, "playtester");
+      const playtesterActorId = playtestEnvironment.AUTODEV_PLAYTEST_ACTOR_ID;
+      assert.ok(typeof playtesterActorId === "string");
+      assert.match(playtesterActorId, /^provider-playtester-/u);
+      assert.equal(
+        playtestEnvironment.AUTODEV_PLAYTEST_TASK_ID,
+        "provider-task-trusted-request-1"
+      );
+      assert.equal(
+        playtestEnvironment.AUTODEV_PLAYTEST_RUN_ID,
+        "provider-run-trusted-request-1"
+      );
+      assert.equal(
+        playtestEnvironment.AUTODEV_PLAYTEST_REPOSITORY_ROOT,
+        "/Users/henrykirk/Desktop/RacingGame"
+      );
+      assert.equal(
+        playtestEnvironment.AUTODEV_OPENLIT_SECRET_FILE,
+        join(env.codexHome, "openlit-secrets.env")
+      );
+      assert.equal(
+        playtestEnvironment.AUTODEV_CONTROL_API_BASE_URL,
+        "http://127.0.0.1:4101"
+      );
+      assert.equal(
+        playtestEnvironment.AUTODEV_PLAYTEST_CONTROL_API_ACTOR,
+        "autodev-playtester-runtime"
+      );
+      assert.equal(
+        playtestEnvironment.AUTODEV_PLAYTEST_CONTROL_API_ROLE,
+        "playtester"
+      );
+      const declaredMcpEnv = new Set(
+        roleContract("playtester").mcpEnvVars?.playtest
+      );
+      assert.ok(
+        Object.keys(playtestEnvironment).every((key) => declaredMcpEnv.has(key))
+      );
+
       assert.equal(
         Object.hasOwn(
           playtestServer.env ?? {},

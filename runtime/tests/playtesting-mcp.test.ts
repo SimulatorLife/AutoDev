@@ -83,7 +83,8 @@ import {
 import {
   assertPlaytestStdioSessionBinding,
   playtestMcpSessionProvider,
-  playtestStdioConfiguration
+  playtestStdioConfiguration,
+  playtestWorkspaceCatalogRoot
 } from "../src/playtesting/mcp-main.ts";
 import { createSeededRandomPlaytestPolicy } from "../src/playtesting/policies.ts";
 import { inMemoryPlaytestLaunchIntentRepository } from "./support/playtesting-launch-intents.ts";
@@ -895,6 +896,19 @@ test("playtest stdio requires explicit trusted session context", async () => {
       )
     );
   }
+});
+
+test("Playtest MCP loads its canonical workspace catalog from AutoDev, not the game checkout", () => {
+  assert.equal(
+    playtestWorkspaceCatalogRoot(
+      {
+        AUTODEV_REPO_ROOT: "/opt/AutoDev",
+        AUTODEV_PLAYTEST_REPOSITORY_ROOT: "/Users/test/RacingGame"
+      },
+      "/opt/AutoDev/runtime/src/playtesting"
+    ),
+    "/opt/AutoDev"
+  );
 });
 
 test("playtest MCP server: capabilities reports active or absent workspace approval without leaking host checkout paths", async () => {

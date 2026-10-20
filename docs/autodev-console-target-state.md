@@ -8,7 +8,7 @@
 >
 > **Focused Memory design:** [memory-target-state.md](memory-target-state.md) and [memory-injection-outcome-evaluation.md](memory-injection-outcome-evaluation.md).
 >
-> **Last reviewed:** 2026-10-19 (Control API compatibility revision 10, confirmation-bound provider override reset, mode-specific visual discovery review persistence, player-visible live Watch and one-click review dispatch, bounded visual launch/readiness contracts, revision-checked RuleSync Skill editing, source-confirmed context-compaction Usage, provider-owned model discovery, commit-identity process ownership, the neutral background-surface hierarchy, cumulative Git metric export semantics, and the sole Usage cost surface).
+> **Last reviewed:** 2026-10-19 (Control API compatibility revision 10, confirmation-bound provider override reset, mode-specific visual discovery review persistence, player-visible live Watch and one-click review dispatch, bounded visual launch/readiness contracts, revision-checked RuleSync Skill editing, source-confirmed context-compaction Usage, provider-owned model discovery, commit-identity process ownership, the neutral background-surface hierarchy, cumulative Git metric export semantics, removal of duplicate OpenLIT Costs/Pricing UI, removal of redundant OpenLIT Settings routes and API-key management UI, and retirement of the standalone OpenLIT Memory page after Console parity).
 
 ## 1. Canonical-document contract
 

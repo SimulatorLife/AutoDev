@@ -19,6 +19,7 @@ import {
 } from "./dependencies.ts";
 import { materializeInstallation } from "./install-materializer.ts";
 import {
+  ensureCopilotRouterAuth,
   ensureRouterAuth,
   type OtelIngressMode,
   readOtelIngressMode,
@@ -151,6 +152,7 @@ export function runInstallCommand(
     HOME: home
   };
   try {
+    ensureCopilotRouterAuth(path.join(codexHome, ".env"));
     if (flags.routerAuth)
       ensureRouterAuth(
         process.env.CODEX_ENV_FILE ?? path.join(codexHome, ".env"),

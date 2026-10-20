@@ -340,22 +340,21 @@ test("the orchestrator prompt teaches the canonical code-mode spawn path", () =>
   // A batch uses one spawn call and settles each result independently.
   assert.match(orchestrator, /single spawn call may dispatch a batch/);
   assert.match(orchestrator, /Promise\.allSettled/);
-  // Direct Codex must use its native spawner, not the bridge-only shim.
-  assert.match(orchestrator, /Do not switch to `autodev_spawn` instead of/);
-  assert.match(orchestrator, /spawn_subagent/);
-  // Lifecycle handling follows spawning, rather than blocking the spawn call.
-  assert.match(orchestrator, /After spawning, poll child results/);
-  // Custom Codex agent profiles do not provide child-specific MCP servers;
-  // tool-specialized roles need the isolated AutoDev provider-agent path.
+  // The parent host may not list the role MCP, while the routed provider does.
   assert.match(
     orchestrator,
     /Codex-native `multi_agent_v1` children inherit the root MCP set/
   );
+  assert.match(orchestrator, /provider-native tools even when they are absent/);
+  assert.match(orchestrator, /roleMcpInjection/);
+  assert.match(orchestrator, /spawn_subagent/);
+  // Lifecycle handling follows spawning, rather than blocking the spawn call.
+  assert.match(orchestrator, /After spawning, poll child results/);
+  // The dedicated runner remains restricted to trusted Runtime context.
   assert.match(
     orchestrator,
-    /scripts\/run-provider-agent\.sh --role browser-tester/
+    /Playtester MCP requires a dedicated run-control credential/
   );
-  assert.match(orchestrator, /Runtime-owned\s+Playtester dispatch/);
 });
 
 test("the orchestrator prompt tells the model to quote a spawn message so Markdown cannot break it", () => {

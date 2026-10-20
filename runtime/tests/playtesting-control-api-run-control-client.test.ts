@@ -305,13 +305,20 @@ test("Playtest Control API client forwards typed run operations and host-bound s
     fetcher
   });
 
-  const capabilities = await client.getCapabilities(SESSION, WORKSPACE);
+  const sessionWithGameRepository: PlaytestMcpSession = {
+    ...SESSION,
+    repositoryRoot: "/Users/test/RacingGame"
+  };
+  const capabilities = await client.getCapabilities(
+    sessionWithGameRepository,
+    WORKSPACE
+  );
   assert.equal(capabilities.runnablePolicies[0], "random");
   const launch = batchLaunch({
     requestId: "client-request-1",
     assignments: [{ scenario: "tutorial", policy: "random", seed: "seed-1" }]
   });
-  const started = await client.startRun(SESSION, launch);
+  const started = await client.startRun(sessionWithGameRepository, launch);
   assert.deepEqual(started, {
     batchId: "batch-1",
     assignmentCount: 1,
@@ -321,7 +328,7 @@ test("Playtest Control API client forwards typed run operations and host-bound s
     status: "running"
   });
   const recovered = await client.lookupRunByRequest(
-    SESSION,
+    sessionWithGameRepository,
     WORKSPACE,
     launch.requestId
   );
@@ -331,14 +338,26 @@ test("Playtest Control API client forwards typed run operations and host-bound s
   assert.deepEqual(recovered.sessions, [
     { assignmentId: "a-0001", episodeId: "batch-1.a-0001" }
   ]);
-  const listed = await client.listActiveRuns(SESSION, WORKSPACE);
+  const listed = await client.listActiveRuns(
+    sessionWithGameRepository,
+    WORKSPACE
+  );
   assert.equal(listed.length, 1);
   assert.deepEqual(listed[0]?.sessions, [
     { assignmentId: "a-0001", episodeId: "batch-1.a-0001" }
   ]);
-  const status = await client.waitForRun(SESSION, WORKSPACE, "batch-1", 100);
+  const status = await client.waitForRun(
+    sessionWithGameRepository,
+    WORKSPACE,
+    "batch-1",
+    100
+  );
   assert.equal(status.status, "completed");
-  const cancellation = await client.cancelRun(SESSION, WORKSPACE, "batch-1");
+  const cancellation = await client.cancelRun(
+    sessionWithGameRepository,
+    WORKSPACE,
+    "batch-1"
+  );
   assert.deepEqual(cancellation, {
     batchId: "batch-1",
     cancellationRequested: false

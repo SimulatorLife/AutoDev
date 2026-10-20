@@ -15,7 +15,10 @@ import { loadCodexAuth } from "../router/proxy.ts";
 import { ROUTES, ROUTING_POLICY } from "../router/routing.ts";
 
 const DEFAULT_REFRESH_INTERVAL_MS = 15 * 60_000;
-const DISCOVERY_TIMEOUT_MS = 8000;
+// `agy models` performs its own remote listing and runs off the request/routing
+// path, so give this CLI source an independent, still-bounded deadline.
+const ANTIGRAVITY_CLI_TIMEOUT_MS = 12_000;
+const PROVIDER_API_DISCOVERY_TIMEOUT_MS = 8000;
 const MAX_AGY_OUTPUT_BYTES = 64 * 1024;
 const MAX_HTTP_RESPONSE_BYTES = 256 * 1024;
 const MINIMAX_API_BASE_URL = "https://api.minimax.io";
@@ -199,8 +202,9 @@ function agyExecutable(env: NodeJS.ProcessEnv): string {
   );
 }
 
-function discoverAgyModels(
-  env: NodeJS.ProcessEnv = process.env
+export function createAntigravityModelDiscoveryAdapter(
+  env: NodeJS.ProcessEnv = process.env,
+  spawnProcess: typeof spawn = spawn
 ): ProviderModelDiscoveryAdapter {
   return {
     source: "agy models",
@@ -210,7 +214,7 @@ function discoverAgyModels(
           reject(new Error("provider model discovery was cancelled"));
           return;
         }
-        const child = spawn(agyExecutable(env), ["models"], {
+        const child = spawnProcess(agyExecutable(env), ["models"], {
           cwd: env.AUTODEV_REPO_ROOT?.trim() || process.cwd(),
           env,
           stdio: ["ignore", "pipe", "ignore"]
@@ -238,7 +242,7 @@ function discoverAgyModels(
           const forceKill = setTimeout(() => child.kill("SIGKILL"), 250);
           forceKill.unref();
           finish(new Error("agy model discovery timed out"));
-        }, DISCOVERY_TIMEOUT_MS);
+        }, ANTIGRAVITY_CLI_TIMEOUT_MS);
         timer.unref();
         signal.addEventListener("abort", abort, { once: true });
         child.stdout.on("data", (chunk: Buffer) => {
@@ -360,7 +364,7 @@ export async function discoverMiniMaxModels(
   if (!apiKey) {
     throw new Error("MINIMAX_API_KEY is not configured for model discovery.");
   }
-  const timeout = AbortSignal.timeout(DISCOVERY_TIMEOUT_MS);
+  const timeout = AbortSignal.timeout(PROVIDER_API_DISCOVERY_TIMEOUT_MS);
   const signal =
     parentSignal === undefined
       ? timeout
@@ -546,7 +550,7 @@ export async function discoverCodexModels(
       "Codex route is not the account backend used for provider model discovery."
     );
   }
-  const timeout = AbortSignal.timeout(DISCOVERY_TIMEOUT_MS);
+  const timeout = AbortSignal.timeout(PROVIDER_API_DISCOVERY_TIMEOUT_MS);
   const signal =
     parentSignal === undefined
       ? timeout
@@ -612,7 +616,7 @@ function defaultAdapters(): Readonly<
   Record<string, ProviderModelDiscoveryAdapter>
 > {
   return {
-    antigravity: discoverAgyModels(),
+    antigravity: createAntigravityModelDiscoveryAdapter(),
     minimax: minimaxModelAdapter(),
     codex: codexModelAdapter()
   };

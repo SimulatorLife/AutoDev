@@ -15,6 +15,7 @@ import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data
 
 import { errorMessage } from "../shared/error-message.ts";
 import { writeErrorLine } from "../shared/output.ts";
+import { resolveRuntimeSourceRoot } from "../shared/runtime-source-root.ts";
 import { PlaytestArtifactStore } from "./artifact-store.ts";
 import { playtestControlApiRunClientFromEnvironment } from "./control-api-run-control-client.ts";
 import {
@@ -36,6 +37,13 @@ export interface PlaytestStdioConfiguration {
   readonly selectedEpisodeIds?: readonly string[];
   readonly analysisKind?: "confirmatory" | "discovery";
   readonly metricAggregation?: PlaytestCrossSessionMetricAggregation;
+}
+
+export function playtestWorkspaceCatalogRoot(
+  env: NodeJS.ProcessEnv = process.env,
+  moduleDirectory: string = import.meta.dirname
+): string {
+  return resolveRuntimeSourceRoot(moduleDirectory, env.AUTODEV_REPO_ROOT);
 }
 
 export function assertPlaytestStdioSessionBinding(
@@ -266,8 +274,10 @@ export async function main(
 ): Promise<void> {
   const config = playtestStdioConfiguration(env);
   const sessionProvider = playtestMcpSessionProvider(config);
+  // `repositoryRoot` is the game checkout, not AutoDev's canonical workspace
+  // catalog. The trusted Runtime source root owns workspace/role identity.
   const configRepository = new ConfigRepository(
-    config.repositoryRoot ?? undefined
+    playtestWorkspaceCatalogRoot(env)
   );
   const catalog = configRepository.readWorkspaceCatalog();
   assertPlaytestStdioSessionBinding(

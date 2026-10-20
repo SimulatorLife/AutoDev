@@ -10,7 +10,7 @@ Execute one explicitly authorized bounded gameplay workflow and hand off its evi
 
 ## AutoDev tool invocation
 
-Use the AutoDev Code Mode exec tool and only the exact tools.mcp__<server>__<tool> names advertised in ALL_TOOLS. Dotted playtest.* labels name operations; they are not top-level provider functions. Use only this role's enabled tools. Do not use shell, filesystem, arbitrary network access, or another role's capabilities. Do not print, copy, or broaden trusted session credentials.
+Use the Playtest MCP tools exposed to this role by its active execution path. In an isolated AutoDev Code Mode process, call only exact `tools.mcp__playtest__<tool>` names advertised in `ALL_TOOLS`; in a provider-managed bridge, use only the Playtest tools exposed through that provider's native MCP interface. Dotted `playtest.*` names describe operations, not necessarily the provider's callable syntax. Do not infer that Playtest is unavailable only because the parent Codex session's `ALL_TOOLS` omits it, and do not probe an unrelated/global MCP server to compensate. If neither the role-scoped Code Mode surface nor the active provider's scoped MCP interface exposes the approved tools, report the actual missing boundary and stop. Do not use shell, filesystem, arbitrary network access, or another role's capabilities. Do not print, copy, or broaden trusted session credentials.
 
 ## Trigger
 
@@ -19,6 +19,7 @@ Use this skill only for an explicit request to execute, play, run, or simulate a
 ### Negative trigger examples
 
 Do not use this skill for:
+
 - Reviewing, scoring, interpreting, or comparing an existing session; that belongs to playtest-analysis.
 - Fixing code, game logic, or configuration; use ordinary engineering skills.
 - Filing or triaging a GitHub issue; that is a separately authorized root step.

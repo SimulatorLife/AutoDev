@@ -2,6 +2,16 @@
 set -euo pipefail
 hook_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 codex_home="${CODEX_HOME:-$(dirname -- "$hook_dir")}"
+if [[ -z "${CODEX_ROUTER_COPILOT_API_KEY:-}" && -f "$codex_home/.env" ]]; then
+  CODEX_ROUTER_COPILOT_API_KEY="$(awk -F= '$1 == "CODEX_ROUTER_COPILOT_API_KEY" { value = substr($0, index($0, "=") + 1) } END { print value }' "$codex_home/.env")"
+  if [[ -n "$CODEX_ROUTER_COPILOT_API_KEY" ]]; then
+    export CODEX_ROUTER_COPILOT_API_KEY
+  fi
+fi
+if [[ -z "${CODEX_ROUTER_COPILOT_API_KEY:-}" ]]; then
+  echo "Copilot bridge auth key is missing from $codex_home/.env; rerun the AutoDev installer." >&2
+  exit 78
+fi
 resolve_node() {
   # launchd passes the native Node the installer resolved; PATH order alone
   # can pick an Intel build that Rosetta translates on every cold start.

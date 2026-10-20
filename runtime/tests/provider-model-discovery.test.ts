@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { spawn } from "node:child_process";
 import {
   chmodSync,
   mkdtempSync,
@@ -8,9 +9,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import {
+  createAntigravityModelDiscoveryAdapter,
   discoverCodexModels,
   discoverMiniMaxModels,
   parseAntigravityModelList,
@@ -22,6 +25,36 @@ import {
 } from "../src/providers/model-discovery.ts";
 import { RouterPersistence } from "../src/router/persistence/index.ts";
 import { ROUTING_POLICY } from "../src/router/routing.ts";
+
+interface FakeAgyChild {
+  readonly stdout: PassThrough;
+  kill(signal: NodeJS.Signals): boolean;
+  once(eventName: string, listener: (...args: unknown[]) => void): FakeAgyChild;
+  emit(eventName: string, ...args: unknown[]): boolean;
+}
+
+function fakeAgyChild(killedSignals: NodeJS.Signals[]): FakeAgyChild {
+  const listeners = new Map<string, (...args: unknown[]) => void>();
+  const child: FakeAgyChild = {
+    stdout: new PassThrough(),
+    kill: (signal) => {
+      killedSignals.push(signal);
+      return true;
+    },
+    once: (eventName, listener) => {
+      listeners.set(eventName, listener);
+      return child;
+    },
+    emit: (eventName, ...args) => {
+      const listener = listeners.get(eventName);
+      if (!listener) return false;
+      listeners.delete(eventName);
+      listener(...args);
+      return true;
+    }
+  };
+  return child;
+}
 
 const AGY_MODELS = [
   "gemini-3.8-flash-low\tGemini 3.8 Flash (Low)",
@@ -40,6 +73,66 @@ test("agy model parsing preserves provider IDs and labels", () => {
     }
   ]);
   assert.deepEqual(parseAntigravityModelList(""), []);
+});
+
+test("Antigravity discovery accepts a slow bounded CLI listing", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const killedSignals: NodeJS.Signals[] = [];
+  const child = fakeAgyChild(killedSignals);
+  const spawnProcess = (() => child) as unknown as typeof spawn;
+  const adapter = createAntigravityModelDiscoveryAdapter(
+    { AGY_CLI_PATH: "/fixture/agy" } as NodeJS.ProcessEnv,
+    spawnProcess
+  );
+  try {
+    const outcome = adapter.discover(new AbortController().signal).then(
+      (models) => ({ models }),
+      (error: unknown) => ({ error })
+    );
+    t.mock.timers.tick(8500);
+    child.stdout.end(`${AGY_MODELS}\n`);
+    child.emit("close", 0);
+
+    const result = await outcome;
+    assert.deepEqual(result, {
+      models: [
+        {
+          id: "gemini-3.8-flash-low",
+          displayName: "Gemini 3.8 Flash (Low)"
+        },
+        { id: "gpt-oss-120b-medium", displayName: "GPT OSS 120B (Medium)" }
+      ]
+    });
+    assert.deepEqual(killedSignals, []);
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test("Antigravity discovery remains bounded when the CLI stalls", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const killedSignals: NodeJS.Signals[] = [];
+  const child = fakeAgyChild(killedSignals);
+  const spawnProcess = (() => child) as unknown as typeof spawn;
+  const adapter = createAntigravityModelDiscoveryAdapter(
+    { AGY_CLI_PATH: "/fixture/agy" } as NodeJS.ProcessEnv,
+    spawnProcess
+  );
+  try {
+    const outcome = adapter.discover(new AbortController().signal).then(
+      () => null,
+      (error: unknown) => error
+    );
+    t.mock.timers.tick(12_000);
+    const error = await outcome;
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /agy model discovery timed out/u);
+    assert.deepEqual(killedSignals, ["SIGTERM"]);
+    t.mock.timers.tick(250);
+    assert.deepEqual(killedSignals, ["SIGTERM", "SIGKILL"]);
+  } finally {
+    t.mock.timers.reset();
+  }
 });
 
 test("agy model parsing rejects malformed IDs and duplicates", () => {

@@ -801,13 +801,11 @@ function providerCodexEnvironment(
           executionEnvironment
         )
       };
-  // The general Control API credential belongs to the Console server. Playtest
-  // MCPs receive only their distinct role-scoped token.
+  // Control credentials are never sent to the model process. Playtest MCP
+  // reads its dedicated runner token directly from the protected secret file.
   delete providerEnvironment.AUTODEV_CONTROL_API_TOKEN;
+  delete providerEnvironment.AUTODEV_PLAYTEST_CONTROL_API_TOKEN;
   delete providerEnvironment.AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN;
-  if (options.role !== PLAYTESTER_ROLE) {
-    delete providerEnvironment.AUTODEV_PLAYTEST_CONTROL_API_TOKEN;
-  }
   if (options.role === BROWSER_TESTER_ROLE) {
     return {
       args: [],
@@ -1261,7 +1259,7 @@ export function buildProviderPrompt(
     "Provider-neutral role instructions:",
     settings.developerInstructions,
     "Tool invocation:",
-    "This Runtime launches roles in AutoDev Code Mode. Call MCP operations only from the `exec` JavaScript tool, using the exact `tools.mcp__<server>__<tool>` names advertised in `ALL_TOOLS`. Dotted names in role instructions describe MCP operations; they are not direct top-level functions. Use only tools enabled for this role; do not invoke shell, filesystem, network, or unconfigured tools.",
+    "This Runtime launches roles in AutoDev Code Mode. When MCP tools are provided in Code Mode, call them only from the `exec` JavaScript tool using exact `tools.mcp__<server>__<tool>` names advertised in `ALL_TOOLS`. Provider-managed bridge roles may instead expose their role-scoped MCP tools through the provider's native MCP interface; use only tools actually exposed there. Dotted names in role instructions describe operations and are not necessarily callable syntax. Never infer tool absence from the parent session's tool list, and never compensate by enabling or probing an unrelated/global MCP server. If neither authorized surface exposes the role's tools, report that boundary and stop. Do not invoke shell, filesystem, network, or unconfigured tools.",
     "Bounded task:",
     prompt
   ].join("\n");
@@ -1350,10 +1348,23 @@ function providerAgentRuntimeEnvironment(
   environment: NodeJS.ProcessEnv
 ): ProviderAgentRuntimeEnvironment {
   if (environment.AUTODEV_PLAYTEST_ANALYSIS_MODE !== "1") {
+    const sourceHome = environment.HOME?.trim() || homedir();
+    const sourceCodexHome =
+      environment.CODEX_HOME?.trim() || path.join(sourceHome, ".codex");
+    const loaded = loadEnvironmentFile(
+      environment.CODEX_ENV_FILE?.trim() || path.join(sourceCodexHome, ".env"),
+      environment
+    );
+    // Control credentials belong to Runtime-owned MCP processes, not this
+    // provider-agent process or the router readiness probe. Playtest's
+    // dedicated token is read from the protected secret file by the MCP.
+    delete loaded.AUTODEV_CONTROL_API_TOKEN;
+    delete loaded.AUTODEV_PLAYTEST_CONTROL_API_TOKEN;
+    delete loaded.AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN;
     return {
       analystDispatch: false,
-      execution: environment,
-      router: environment
+      execution: loaded,
+      router: loaded
     };
   }
   const sourceHome =

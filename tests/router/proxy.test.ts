@@ -9,6 +9,7 @@ import {
   type CooldownSummary
 } from "@simulatorlife/autodev-runtime/router/cooldown";
 import {
+  CHAIN_SELECTION_DEADLINE_MS,
   CONCRETE_STATUS_MAX_ATTEMPTS,
   declaredLimit,
   downstreamHeaders,
@@ -325,6 +326,82 @@ test(
       globalThis.fetch = originalFetch;
       if (previousKey === undefined) delete process.env.LITELLM_API_KEY;
       else process.env.LITELLM_API_KEY = previousKey;
+      COOLDOWNS.clearAll();
+    }
+  }
+);
+
+test(
+  "role-scoped specialists reach Copilot after a late Antigravity quota failure",
+  { concurrency: false },
+  async () => {
+    COOLDOWNS.clearAll();
+    const saved = {
+      LITELLM_API_KEY: process.env.LITELLM_API_KEY,
+      CODEX_ROUTER_COPILOT_API_KEY: process.env.CODEX_ROUTER_COPILOT_API_KEY
+    };
+    process.env.LITELLM_API_KEY = "antigravity-key";
+    process.env.CODEX_ROUTER_COPILOT_API_KEY = "copilot-key";
+    const originalFetch = globalThis.fetch;
+    const originalNow = Date.now;
+    let now = 1_000_000;
+    Date.now = () => now;
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes("antigravity.test")) {
+        now += CHAIN_SELECTION_DEADLINE_MS + 1;
+        return new Response("quota exhausted", { status: 429 });
+      }
+      return jsonResponse({
+        id: "resp_late_fallback",
+        status: "completed",
+        model: "copilot",
+        output: []
+      });
+    }) as typeof fetch;
+    try {
+      for (const role of ["browser-tester", "playtester"] as const) {
+        COOLDOWNS.clearAll();
+        calls.length = 0;
+        const response = responseRecorder();
+        await proxyFallbackChain(
+          response,
+          {
+            candidates: [
+              {
+                ...route("antigravity", "LITELLM_API_KEY"),
+                model: "gemini-3.8-flash-medium"
+              },
+              {
+                ...route("copilot", "CODEX_ROUTER_COPILOT_API_KEY"),
+                model: "copilot"
+              }
+            ],
+            role,
+            subject: `${role} turn`
+          },
+          { model: `autodev/${role}`, input: [], stream: false },
+          false,
+          `req-late-fallback-${role}`,
+          null,
+          null
+        );
+        assert.deepEqual(calls, [
+          "http://antigravity.test/v1/responses",
+          "http://copilot.test/v1/responses"
+        ]);
+        assert.equal(response.statusCode, 200);
+        assert.match(response.body, /resp_late_fallback/);
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      Date.now = originalNow;
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
       COOLDOWNS.clearAll();
     }
   }

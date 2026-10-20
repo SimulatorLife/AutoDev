@@ -2753,7 +2753,8 @@ export async function proxyFallbackChain(
   };
   const state = {
     deadlineReached: false,
-    lastResortAttempts: 0
+    lastResortAttempts: 0,
+    fallbackableProviderFailure: false
   };
 
   let logicalOutcome: "ok" | "error" = "error";
@@ -2794,6 +2795,7 @@ export async function proxyFallbackChain(
       failures,
       attempted
     );
+    if (outcome === "fallback") state.fallbackableProviderFailure = true;
     if (outcome === "served") {
       logicalOutcome = "ok";
       logicalErrorMessage = null;
@@ -2927,7 +2929,11 @@ async function tryPrimaryRoute(
   ctx: FallbackContext,
   candidates: Candidate[] | OrchestratorCandidate[],
   index: number,
-  state: { deadlineReached: boolean; lastResortAttempts: number },
+  state: {
+    deadlineReached: boolean;
+    lastResortAttempts: number;
+    fallbackableProviderFailure: boolean;
+  },
   skipped: Candidate[],
   tryCandidate: (
     route: Candidate,
@@ -2937,7 +2943,12 @@ async function tryPrimaryRoute(
 ): Promise<boolean> {
   if (index >= candidates.length) return false;
   const route = candidates[index]!;
-  if (Date.now() > ctx.selectionDeadline) {
+  // A slow provider failure leaves the downstream response untouched, so the
+  // remaining candidates still deserve a chance even after the search window.
+  if (
+    Date.now() > ctx.selectionDeadline &&
+    !state.fallbackableProviderFailure
+  ) {
     state.deadlineReached = true;
     return false;
   }
@@ -2993,7 +3004,11 @@ async function tryPrimaryRoute(
 function runPrimaryPass(
   ctx: FallbackContext,
   candidates: Candidate[] | OrchestratorCandidate[],
-  state: { deadlineReached: boolean; lastResortAttempts: number },
+  state: {
+    deadlineReached: boolean;
+    lastResortAttempts: number;
+    fallbackableProviderFailure: boolean;
+  },
   skipped: Candidate[],
   tryCandidate: (
     route: Candidate,

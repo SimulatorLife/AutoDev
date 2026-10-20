@@ -63,5 +63,5 @@ for patch in "${PATCH_FILES[@]}"; do
 	git apply "$patch"
 done
 echo "==> Patch set applied to fresh pinned worktree $WORK_DIR"
-git status --short | head -30
+git status --short | sed -n '1,30p'
 popd >/dev/null

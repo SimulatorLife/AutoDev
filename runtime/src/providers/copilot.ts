@@ -1105,16 +1105,17 @@ function runCopilot(
       );
     if (model && model !== "copilot" && model !== "auto")
       args.push("--model", String(model));
+    const childEnvironment = {
+      ...process.env,
+      // The local Router credential belongs to this bridge, not the model CLI.
+      // Its orchestrator-only spawn shim receives the credential separately.
+      ...gitCommitIdentityEnv({ role: agentRole, provider: "copilot" })
+    };
+    delete childEnvironment.CODEX_ROUTER_COPILOT_API_KEY;
     const child = spawn(process.env.COPILOT_BIN ?? "copilot", args, {
       cwd,
       env: withAutoDevOtelResourceContext(
-        {
-          ...process.env,
-          // The Copilot CLI itself executes its native tools in this process
-          // tree. Commit identity must be attached here, not to the MCP spawn
-          // shim that only forwards a request to another provider process.
-          ...gitCommitIdentityEnv({ role: agentRole, provider: "copilot" })
-        },
+        childEnvironment,
         workspaceKey,
         agentRole
       ),

@@ -31,6 +31,8 @@ test("playtester MCP env binds trusted session identity but never the runner tok
       {
         HOME: root,
         AUTODEV_OPENLIT_SECRET_FILE: file,
+        AUTODEV_PLAYTEST_WORKSPACE_ID: "Other/Workspace",
+        AUTODEV_PLAYTEST_REPOSITORY_ROOT: "/tmp/other-game",
         AUTODEV_CONTROL_API_TOKEN: "general-secret",
         OPENAI_API_KEY: "provider-secret"
       }

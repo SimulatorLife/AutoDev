@@ -47,19 +47,24 @@ children and is the reference implementation.
 
 Codex-native `multi_agent_v1` children inherit the root MCP set, as do
 Claude-bridge turns, and AutoDev keeps Playtest and Playwright disabled at the
-root. The router therefore serves roles with role-scoped MCPs (`browser-tester`
--> Playwright, `playtester` -> Playtest) only through providers that build a
-per-invocation MCP config from the role contract (`roleMcpInjection`), and
-fails closed when none is available. Still confirm the child's actual tool
-list before acting, and never enable these servers at the root.
+root. That does not mean the provider invocation for a native role child has no
+MCP: the child uses its `autodev/<role>` model alias, and the AutoDev Router
+routes roles with `roleScopedMcp` (`browser-tester` -> Playwright,
+`playtester` -> Playtest) only through providers that build a per-invocation
+MCP config from the role contract (`roleMcpInjection`). The child may use those
+provider-native tools even when they are absent from the host's `ALL_TOOLS`.
+Use the active provider's exposed MCP interface and verify an actual tool call;
+do not infer absence only from the parent tool list or from `mcpExposed`
+telemetry, and never enable these servers at the root.
 
 Playtester MCP requires a dedicated run-control credential and trusted
 workspace/session context, which the Runtime binds; never pass credentials in
-a prompt or invent missing run context. Only a Runtime-owned
-Playtester dispatch may launch a run. For an isolated Browser Tester CLI task,
-`scripts/run-provider-agent.sh --role browser-tester` applies the same
-Playwright-only allowlist. Console Play/Watch and Runtime-owned analysis remain
-the supported end-to-end playtesting workflow.
+a prompt or invent missing run context. Keep run authorization, target approval
+and budgets exact. For a provider-internal delegation, use the bridge-injected
+`autodev_spawn` shim to ask Codex to create the native child; the resulting
+`autodev/<role>` request is then routed through the scoped provider path. Console
+Play/Watch and Runtime-owned analysis remain the supported end-to-end
+playtesting workflow.
 
 Canonical tool naming in code mode: every identifier the model can reach on
 the `tools` global follows `<namespace>__<tool>` with snake_case segments

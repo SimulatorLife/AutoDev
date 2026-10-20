@@ -296,7 +296,8 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
       "AUTODEV_CONTROL_API_TOKEN=general-secret\n" +
         "AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN=analyst-secret\n" +
         "AUTODEV_PLAYTEST_CONTROL_API_TOKEN=runner-file-secret\n" +
-        "AUTODEV_PLAYTEST_CONTROL_API_ROLE=playtester\n"
+        "AUTODEV_PLAYTEST_CONTROL_API_ROLE=playtester\n" +
+        "CODEX_ROUTER_AUTH_TOKEN=router-from-file\n"
     );
     const env = {
       ...f.env,
@@ -304,8 +305,11 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
       AUTODEV_PLAYTEST_CONTROL_API_TOKEN: "analyst-env-secret",
       AUTODEV_PLAYTEST_CONTROL_API_ROLE: "playtest-analyst"
     };
+    const routerEnvironments: NodeJS.ProcessEnv[] = [];
     const deps: ProviderAgentDeps = {
-      ensureRouter: async () => undefined,
+      ensureRouter: async (environment) => {
+        routerEnvironments.push(environment);
+      },
       runCodex: (binary, args, runtimeEnvironment, checkOnly) => {
         calls.push({ binary, args, env: runtimeEnvironment, checkOnly });
         return 0;
@@ -322,7 +326,15 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
     assert.match(prompt, /AutoDev Code Mode/u);
     assert.match(prompt, /`exec` JavaScript tool/u);
     assert.match(prompt, /tools\.mcp__<server>__<tool>/u);
-    assert.match(prompt, /Dotted names.*not direct top-level functions/u);
+    assert.match(prompt, /Dotted names.*not necessarily callable syntax/u);
+    assert.match(
+      prompt,
+      /Provider-managed bridge roles.*native MCP interface/u
+    );
+    assert.match(
+      prompt,
+      /Never infer tool absence from the parent session's tool list/u
+    );
     assert.match(prompt, /Bounded task:\ndo the task$/u);
     assert.equal(
       await runProviderAgent(
@@ -340,6 +352,20 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
       0
     );
     assert.equal(calls.length, 1);
+    assert.equal(
+      routerEnvironments[0]?.CODEX_ROUTER_AUTH_TOKEN,
+      "router-from-file",
+      "isolated provider-agent loads its protected router credential before ensuring the Router"
+    );
+    assert.equal(routerEnvironments[0]?.AUTODEV_CONTROL_API_TOKEN, undefined);
+    assert.equal(
+      routerEnvironments[0]?.AUTODEV_PLAYTEST_CONTROL_API_TOKEN,
+      undefined
+    );
+    assert.equal(
+      routerEnvironments[0]?.AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN,
+      undefined
+    );
     assert.equal(calls[0]?.binary, f.codex);
     assert.equal(calls[0]?.checkOnly, false);
     assert.equal(calls[0]?.env.AUTODEV_CONTROL_API_TOKEN, undefined);
