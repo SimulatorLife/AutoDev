@@ -30,7 +30,17 @@ const MAX_DECISION_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_REQUEST_BYTES = 12 * 1024 * 1024;
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
-const MAX_OUTPUT_TOKENS = 512;
+/**
+ * The decision's answer plus the reasoning the provider spends reaching it.
+ *
+ * A smaller cap lets a reasoning model spend the whole budget thinking and
+ * never emit the decision at all: the response then arrives truncated at the
+ * cap, and the episode fails on a provider that answered perfectly well. A
+ * measured decision spends ~370 tokens of reasoning and ~140 of answer, so
+ * the cap leaves several times the observed reasoning in hand. The approved
+ * per-episode token budget stays the real ceiling.
+ */
+const MAX_OUTPUT_TOKENS = 2048;
 const MAX_HISTORY_ITEMS = 8;
 const MAX_TEXT_LENGTH = 512;
 const MAX_FOCUS_LENGTH = 2000;

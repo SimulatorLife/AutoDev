@@ -368,7 +368,7 @@ test("Smart-direct stop returns a bounded self-report in the existing request an
       const visibleState = JSON.parse(
         String(body.input[0]?.content[0]?.text)
       ) as { readonly currentStep: number };
-      assert.equal(body.max_output_tokens, 512);
+      assert.equal(body.max_output_tokens, 2048);
       assert.equal(visibleState.currentStep, 0);
       assert.match(
         body.instructions,

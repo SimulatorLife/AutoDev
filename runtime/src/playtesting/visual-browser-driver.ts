@@ -122,6 +122,16 @@ const MASK_SELECTOR =
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu;
 const PAYMENT_CARD_PATTERN = /(?:\d[ -]*?){13,19}/gu;
 const SUPPORTED_INPUTS = ["keyboard", "pointer"] as const;
+/** How often the driver checks whether the game has painted. */
+const RENDER_WAIT_POLL_MS = 250;
+/**
+ * How long the driver waits for a game to paint before it captures anyway.
+ *
+ * It is a bound, not a delay: a game that paints in two seconds is captured
+ * as soon as it has painted, and a game that never paints costs the episode
+ * only this much.
+ */
+const DEFAULT_RENDER_WAIT_MS = 10_000;
 const VISUAL_EVENT_SCHEMA = "autodev-playtest-visual-event-v1" as const;
 
 interface RawControl {
@@ -197,6 +207,8 @@ export interface PlaytestVisualBrowserDriverOptions {
   /** Workload-selected; no implicit or magic action timeout. */
   readonly actionTimeoutMs: number;
   readonly maxSteps: number;
+  /** Bound on how long the driver waits for the game to paint. */
+  readonly renderWaitMs?: number;
   readonly now?: () => number;
   readonly id?: () => string;
   readonly browserType?: Pick<typeof chromium, "launch" | "executablePath">;
@@ -325,6 +337,101 @@ function redactName(value: string): string {
 
 function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+/**
+ * Whether the page is showing the game yet.
+ *
+ * A game boots in stages, and the stage the driver used to capture is the
+ * one where the document exists but nothing is on the screen: the canvas
+ * element has not been created, or it is hidden, or it is still one flat
+ * colour. A frame taken then shows a blank screen no matter what the player
+ * is looking at, and the decision that follows is grounded in nothing.
+ *
+ * The page shows the game when the player can see it, and a page shows
+ * itself in one of two ways:
+ *
+ * - a canvas that shows more than one colour is a painted scene. The canvas
+ *   is sampled inside a frame callback, because a drawing buffer that is not
+ *   preserved is emptied once the frame has been composited.
+ * - a game that renders into the DOM has no canvas to read, and it shows
+ *   itself as visible controls or visible text.
+ *
+ * This runs in the page, so it must not close over anything out here.
+ */
+function pageHasRenderedInBrowser(): Promise<boolean> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      // eslint-disable-next-line unicorn/consistent-function-scoping -- this function is serialized into the page, so it cannot use module scope
+      const visible = (element: Element): boolean => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        // An element that reaches past the viewport is still drawn; what
+        // matters is that the page shows part of it.
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          rect.right > 0 &&
+          rect.bottom > 0 &&
+          rect.left < window.innerWidth &&
+          rect.top < window.innerHeight &&
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          style.opacity !== "0"
+        );
+      };
+      for (const canvas of document.querySelectorAll("canvas")) {
+        if (!visible(canvas)) continue;
+        if (canvas.width === 0 || canvas.height === 0) continue;
+        const probe = document.createElement("canvas");
+        probe.width = 16;
+        probe.height = 16;
+        const context = probe.getContext("2d");
+        if (context === null) continue;
+        // Nearest-neighbour sampling: a smoothed downscale averages fine
+        // detail away, and a scene of thin stripes would read as one flat
+        // colour long after it has been painted.
+        context.imageSmoothingEnabled = false;
+        try {
+          context.drawImage(canvas, 0, 0, 16, 16);
+        } catch {
+          continue;
+        }
+        const pixels = context.getImageData(0, 0, 16, 16).data;
+        const first = [pixels[0], pixels[1], pixels[2], pixels[3]];
+        for (let index = 4; index < pixels.length; index += 4) {
+          if (
+            pixels[index] !== first[0] ||
+            pixels[index + 1] !== first[1] ||
+            pixels[index + 2] !== first[2] ||
+            pixels[index + 3] !== first[3]
+          ) {
+            resolve(true);
+            return;
+          }
+        }
+      }
+      // A game that renders into the DOM shows itself as rendered text.
+      // innerText counts only text the browser actually laid out: textContent
+      // counts the text of hidden descendants too, and a booting page is full
+      // of markup that is not on the screen.
+      // eslint-disable-next-line unicorn/prefer-dom-node-text-content -- textContent is the hidden text, which is exactly what this must not count
+      if ((document.body?.innerText ?? "").trim().length > 0) {
+        resolve(true);
+        return;
+      }
+      // Or as a control the player can see.
+      const controlSelector =
+        'button,a[href],input,textarea,select,[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[role="tab"],[role="menuitem"],[role="option"],[role="textbox"],[role="combobox"]';
+      for (const element of document.querySelectorAll(controlSelector)) {
+        if (visible(element)) {
+          resolve(true);
+          return;
+        }
+      }
+      resolve(false);
+    });
+  });
 }
 
 function pageReadInBrowser(): RawPageRead {
@@ -559,6 +666,7 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
   private readonly viewport: PlaytestVisualViewport;
   private readonly actionTimeoutMs: number;
   private readonly maxSteps: number;
+  private readonly renderWaitMs: number;
   private readonly now: () => number;
   private readonly id: () => string;
   private readonly browser: Browser;
@@ -583,6 +691,8 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
   private originEscape = false;
   private entryLoaded = false;
   private captureIncomplete = false;
+  /** Whether the driver has already waited for the page to show the game. */
+  private rendered = false;
   private terminalBlock: PlaytestVisualObservationBlockReason | null = null;
   private closeResult: {
     readonly events:
@@ -605,6 +715,7 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
     this.viewport = input.options.viewport;
     this.actionTimeoutMs = input.options.actionTimeoutMs;
     this.maxSteps = input.options.maxSteps;
+    this.renderWaitMs = input.options.renderWaitMs ?? DEFAULT_RENDER_WAIT_MS;
     this.now = input.options.now ?? Date.now;
     this.id = input.options.id ?? randomUUID;
     this.browser = input.browser;
@@ -764,12 +875,22 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
         const origin = safeOrigin(frame.url());
         if (!origin || !options.target.allowedOrigins.includes(origin)) {
           driver?.blockForOriginEscape();
+          return;
         }
+        // A new page has to show the game again before it is observed.
+        if (driver) driver.rendered = false;
       });
       await mainPage.goto(options.target.entryUrl, {
-        waitUntil: "domcontentloaded",
+        waitUntil: "load",
         timeout: options.actionTimeoutMs
       });
+      // The document is ready; whether the game has painted is not the
+      // navigation's business but the observation's, and the driver answers
+      // that from the page itself (see waitForRenderedGame). Settling the
+      // network here instead would only delay the first observation by a
+      // fixed amount, which is both an arbitrary number and a delay that
+      // lets the game move on before the frame the player is looking at is
+      // taken.
       const origin = safeOrigin(mainPage.url());
       if (!origin || !options.target.allowedOrigins.includes(origin)) {
         driver.blockForOriginEscape();
@@ -862,6 +983,43 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
     return this.page.evaluate(pageReadInBrowser);
   }
 
+  /**
+   * Wait for the page to show the game before a frame is captured.
+   *
+   * A game boots in stages, and the driver used to capture the stage where
+   * the document exists but nothing is on the screen yet: the observation
+   * would report a blank screen no matter what the player sees, and the
+   * decision that follows is grounded in nothing.
+   *
+   * The wait is bounded and it happens once per page. A game that never
+   * shows itself is captured as it is rather than failing the episode, and
+   * every later observation reports the screen as it is: from then on the
+   * browser has shown the player a scene, so a blank frame is a real thing
+   * on the screen rather than a game that has not started.
+   */
+  private async waitForRenderedGame(): Promise<void> {
+    if (this.rendered) return;
+    try {
+      const deadline = this.now() + this.renderWaitMs;
+      for (;;) {
+        let rendered = true;
+        try {
+          // eslint-disable-next-line no-await-in-loop -- the page is polled until it shows the game
+          rendered = await this.page.evaluate(pageHasRenderedInBrowser);
+        } catch {
+          break;
+        }
+        if (rendered || this.now() >= deadline) break;
+        // eslint-disable-next-line no-await-in-loop -- the page is polled until it shows the game
+        await this.page
+          .waitForTimeout(RENDER_WAIT_POLL_MS)
+          .catch(() => undefined);
+      }
+    } finally {
+      this.rendered = true;
+    }
+  }
+
   private async capturePng(): Promise<Uint8Array> {
     const bytes = await this.page.screenshot({
       type: "png",
@@ -897,6 +1055,7 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
     let pageRead: RawPageRead;
     let png: Uint8Array;
     try {
+      await this.waitForRenderedGame();
       pageRead = await this.readPage();
       if (pageRead.passwordVisible) {
         return this.blockObservation("auth-or-setup-required");

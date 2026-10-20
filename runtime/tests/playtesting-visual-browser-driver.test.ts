@@ -202,6 +202,97 @@ test("visual browser uses transient context, redacts text fields, stores real fr
   }
 });
 
+test("the first frame waits for the game to paint", async () => {
+  // A game that draws into a canvas has no DOM to read: the observation is
+  // the frame. Capturing it before the scene is painted reports a blank
+  // screen, whatever the player actually sees.
+  const source = await listen(
+    () => `<!doctype html><html><body style="margin:0">
+    <canvas id="game" width="320" height="200"></canvas>
+    <script>
+      setTimeout(() => {
+        const ctx = document.getElementById("game").getContext("2d");
+        ctx.fillStyle = "#101820";
+        ctx.fillRect(0, 0, 320, 200);
+        ctx.fillStyle = "#ff5a36";
+        for (let x = 0; x < 320; x += 16) ctx.fillRect(x, 0, 8, 200);
+        const button = document.createElement("button");
+        button.textContent = "Race ready";
+        button.style.position = "fixed";
+        button.style.left = "10px";
+        button.style.top = "10px";
+        document.body.appendChild(button);
+      }, 800);
+    </script>
+  </body></html>`
+  );
+  const { store, root } = artifacts();
+  let driver: PlaytestVisualBrowserDriver | null = null;
+  try {
+    driver = await openDriver({ source, store });
+    const captured = await driver.observe();
+    assert.equal(captured.status, "observed");
+    if (captured.status !== "observed") return;
+    assert.ok(
+      captured.observation.controls.some(
+        (control) => control.name === "Race ready"
+      ),
+      "the observation was taken after the game painted"
+    );
+    assert.ok(captured.observation.frame.bytes > 0);
+  } finally {
+    await driver?.close();
+    await source.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the first frame waits for a game whose canvas appears after the document loads", async () => {
+  // A game creates its canvas once it has booted, so at first the document
+  // has no canvas at all and nothing the player can see. Treating that as
+  // "the page has nothing to wait for" captures the empty screen.
+  const source = await listen(
+    () => `<!doctype html><html><body style="margin:0">
+    <button id="loading" style="visibility:hidden">Loading</button>
+    <script>
+      setTimeout(() => {
+        document.getElementById("loading").style.visibility = "visible";
+        const canvas = document.createElement("canvas");
+        canvas.width = 320;
+        canvas.height = 200;
+        canvas.style.position = "fixed";
+        canvas.style.left = "0";
+        canvas.style.top = "0";
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#101820";
+        ctx.fillRect(0, 0, 320, 200);
+        ctx.fillStyle = "#ff5a36";
+        ctx.fillRect(0, 0, 320, 120);
+        document.body.appendChild(canvas);
+      }, 800);
+    </script>
+  </body></html>`
+  );
+  const { store, root } = artifacts();
+  let driver: PlaytestVisualBrowserDriver | null = null;
+  try {
+    driver = await openDriver({ source, store });
+    const captured = await driver.observe();
+    assert.equal(captured.status, "observed");
+    if (captured.status !== "observed") return;
+    assert.ok(
+      captured.observation.controls.some(
+        (control) => control.name === "Loading"
+      ),
+      "the observation was taken after the game showed itself"
+    );
+  } finally {
+    await driver?.close();
+    await source.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("visual browser blocks cross-origin requests before they reach another host", async () => {
   let offOriginRequests = 0;
   const external = await listen(() => {
