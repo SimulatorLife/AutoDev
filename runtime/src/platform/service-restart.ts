@@ -166,6 +166,24 @@ function serviceSpecs(options: ServiceRestartOptions): readonly ServiceSpec[] {
   ];
 }
 
+/**
+ * Which service has to be serving before another one may be reloaded.
+ *
+ * The Console reads the Model Router's private Control API when it starts and
+ * refuses to serve traffic without it, so the Router has to be answering
+ * before the Console's job is bootstrapped. Reloading the two back to back
+ * races that dependency: the Console starts while the Router is still
+ * binding its ports, spends its own startup budget waiting, exits, and only
+ * comes back after launchd's throttle interval — long after the installer's
+ * readiness budget is gone, so the install reports a failure for a stack that
+ * is in fact healthy.
+ */
+const SERVICE_DEPENDENCIES: Partial<
+  Record<ManagedServiceLabel, ManagedServiceLabel>
+> = {
+  [CONSOLE_SERVICE_LABEL]: LABEL_MODEL_ROUTER
+};
+
 export function resolveServiceRestartOptions(
   env: NodeJS.ProcessEnv = process.env
 ): ServiceRestartOptions {
@@ -800,6 +818,30 @@ async function reloadOneLabel(
   }
 }
 
+/**
+ * Wait for the service another one depends on to be serving, so a dependent
+ * is never bootstrapped against an API that is not there yet.
+ */
+async function awaitDependency(
+  deps: ServiceRestartDeps,
+  options: ServiceRestartOptions,
+  label: ManagedServiceLabel
+): Promise<ServiceCheck> {
+  const dependency = SERVICE_DEPENDENCIES[label];
+  if (dependency === undefined) return { ready: true };
+  const spec = serviceSpecs(options).find(
+    (candidate) => candidate.label === dependency
+  );
+  if (spec === undefined) return { ready: true };
+  const check = await checkService(deps, options, spec);
+  if (!check.ready) {
+    writeErrorLine(
+      `${dependency} is not running: ${check.reason}; ${label} was not reloaded because it reads the Model Router's Control API`
+    );
+  }
+  return check;
+}
+
 async function reloadLabels(
   deps: ServiceRestartDeps,
   options: ServiceRestartOptions,
@@ -808,6 +850,11 @@ async function reloadLabels(
 ): Promise<ReloadResult[]> {
   const label = MANAGED_SERVICE_LABELS[index];
   if (label === undefined) return results;
+  const dependency = await awaitDependency(deps, options, label);
+  if (!dependency.ready) {
+    results.push("failed");
+    return results;
+  }
   results.push(await reloadOneLabel(deps, options, label));
   return reloadLabels(deps, options, index + 1, results);
 }

@@ -244,6 +244,83 @@ test("a crash-looping bridge is reported at once with its log, without holding u
   );
 });
 
+test("the Console is not bootstrapped before the Model Router is serving", async () => {
+  const base = deps();
+  const order: string[] = [];
+  let readinessProbes = 0;
+  let servingIndex = -1;
+  const consolePlist = `bootstrap:/home/Library/LaunchAgents/${LABEL_AUTODEV_CONSOLE}.plist`;
+  const [status] = await captureStderr(() =>
+    restartServices(options({ readyAttempts: 40 }), {
+      ...base,
+      launchd: {
+        ...base.launchd,
+        bootstrap: (plist) => {
+          order.push(`bootstrap:${plist}`);
+          base.launchd.bootstrap(plist);
+        }
+      },
+      probe: async (url, jsonBody) => {
+        if (url.includes("/health/readiness")) {
+          readinessProbes += 1;
+          // A cold Router takes tens of seconds to bind its ports.
+          if (readinessProbes > 3) {
+            if (servingIndex < 0) servingIndex = order.length;
+            order.push("router-serving");
+            return true;
+          }
+          order.push("router-not-serving");
+          return false;
+        }
+        return base.probe(url, jsonBody);
+      }
+    })
+  );
+  assert.equal(status, 0);
+  assert.ok(readinessProbes > 1, "the Router was waited for");
+  const consoleIndex = order.indexOf(consolePlist);
+  assert.ok(servingIndex >= 0 && consoleIndex >= 0);
+  assert.ok(
+    servingIndex < consoleIndex,
+    "the Console is bootstrapped only after the Router is serving"
+  );
+});
+
+test("a Model Router that never serves leaves the Console unbootstrapped", async () => {
+  const base = deps();
+  const bootstrapped: string[] = [];
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options({ readyAttempts: 3 }), {
+      ...base,
+      launchd: {
+        ...base.launchd,
+        bootstrap: (plist) => {
+          bootstrapped.push(plist);
+          base.launchd.bootstrap(plist);
+        }
+      },
+      probe: async (url, jsonBody) => {
+        if (url.includes("/health/readiness")) return false;
+        return base.probe(url, jsonBody);
+      }
+    })
+  );
+  assert.equal(status, 1);
+  assert.equal(
+    bootstrapped.some((plist) => plist.includes(LABEL_AUTODEV_CONSOLE)),
+    false,
+    "the Console is never bootstrapped against a Control API that is not there"
+  );
+  assert.match(
+    stderr,
+    /com\.codex\.model-router is not running: did not become ready/u
+  );
+  assert.match(
+    stderr,
+    /com\.codex\.autodev-console was not reloaded because it reads the Model Router's Control API/u
+  );
+});
+
 test("an unready service reads its launchd job only every few attempts", async () => {
   const base = deps();
   let jobReads = 0;
