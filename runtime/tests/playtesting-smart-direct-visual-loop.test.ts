@@ -136,7 +136,7 @@ test("a Smart-direct response drives one admitted action through the isolated vi
     });
     assert.equal(decision.status, "act");
     if (decision.status !== "act") return;
-    const receipt = await driver.act(decision.action, 5000);
+    const receipt = await driver.act(decision.action);
     assert.equal(receipt.status, "dispatched");
     if (receipt.status !== "dispatched") return;
     assert.equal(receipt.gameAcknowledgement, "not-observed");

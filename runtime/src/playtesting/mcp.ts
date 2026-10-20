@@ -5107,7 +5107,7 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
           break;
         }
 
-        const receipt = await driver.act(decision.action, 10_000);
+        const receipt = await driver.act(decision.action);
         history.push({
           step,
           action: JSON.stringify(decision.action),

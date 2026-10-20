@@ -108,6 +108,7 @@ async function openDriver(input: {
   readonly source: RunningServer;
   readonly store: PlaytestArtifactStore;
   readonly browserType?: PlaytestVisualBrowserDriverOptions["browserType"];
+  readonly now?: () => number;
 }): Promise<PlaytestVisualBrowserDriver> {
   return PlaytestVisualBrowserDriver.open({
     target: target(input.source.origin),
@@ -116,6 +117,7 @@ async function openDriver(input: {
     viewport: { width: 640, height: 480, deviceScaleFactor: 1 },
     actionTimeoutMs: 3000,
     maxSteps: 8,
+    ...(input.now === undefined ? {} : { now: input.now }),
     ...(input.browserType === undefined
       ? {}
       : { browserType: input.browserType })
@@ -157,18 +159,15 @@ test("visual browser uses transient context, redacts text fields, stores real fr
       (control) => control.name === "Start race"
     );
     assert.ok(start);
-    const receipt = await driver.act(
-      {
-        schema: "autodev-playtest-visual-action-v1",
-        workspaceId: WORKSPACE,
-        targetId: "visual-target-1",
-        episodeId: EPISODE_ID,
-        observationId: captured.observation.observationId,
-        kind: "activate-control",
-        controlId: start.controlId
-      },
-      1000
-    );
+    const receipt = await driver.act({
+      schema: "autodev-playtest-visual-action-v1",
+      workspaceId: WORKSPACE,
+      targetId: "visual-target-1",
+      episodeId: EPISODE_ID,
+      observationId: captured.observation.observationId,
+      kind: "activate-control",
+      controlId: start.controlId
+    });
     assert.equal(receipt.status, "dispatched");
     assert.equal(receipt.gameAcknowledgement, "not-observed");
     assert.deepEqual(driver.telemetry(), {
@@ -346,18 +345,15 @@ test("visual browser refuses a game action that attempts unapproved navigation",
       (control) => control.name === "Leave the game"
     );
     assert.ok(link);
-    const receipt = await driver.act(
-      {
-        schema: "autodev-playtest-visual-action-v1",
-        workspaceId: WORKSPACE,
-        targetId: "visual-target-1",
-        episodeId: EPISODE_ID,
-        observationId: captured.observation.observationId,
-        kind: "activate-control",
-        controlId: link.controlId
-      },
-      1000
-    );
+    const receipt = await driver.act({
+      schema: "autodev-playtest-visual-action-v1",
+      workspaceId: WORKSPACE,
+      targetId: "visual-target-1",
+      episodeId: EPISODE_ID,
+      observationId: captured.observation.observationId,
+      kind: "activate-control",
+      controlId: link.controlId
+    });
     assert.deepEqual(receipt, {
       status: "refused",
       step: 0,
@@ -441,31 +437,25 @@ test("visual browser stops before further input when a password gate appears mid
       (control) => control.name === "Continue"
     );
     assert.ok(continueControl);
-    const opening = await driver.act(
-      {
-        schema: "autodev-playtest-visual-action-v1",
-        workspaceId: WORKSPACE,
-        targetId: "visual-target-1",
-        episodeId: EPISODE_ID,
-        observationId: captured.observation.observationId,
-        kind: "activate-control",
-        controlId: continueControl.controlId
-      },
-      1000
-    );
+    const opening = await driver.act({
+      schema: "autodev-playtest-visual-action-v1",
+      workspaceId: WORKSPACE,
+      targetId: "visual-target-1",
+      episodeId: EPISODE_ID,
+      observationId: captured.observation.observationId,
+      kind: "activate-control",
+      controlId: continueControl.controlId
+    });
     assert.equal(opening.status, "dispatched");
-    const nextInput = await driver.act(
-      {
-        schema: "autodev-playtest-visual-action-v1",
-        workspaceId: WORKSPACE,
-        targetId: "visual-target-1",
-        episodeId: EPISODE_ID,
-        observationId: captured.observation.observationId,
-        kind: "key-press",
-        key: "Enter"
-      },
-      1000
-    );
+    const nextInput = await driver.act({
+      schema: "autodev-playtest-visual-action-v1",
+      workspaceId: WORKSPACE,
+      targetId: "visual-target-1",
+      episodeId: EPISODE_ID,
+      observationId: captured.observation.observationId,
+      kind: "key-press",
+      key: "Enter"
+    });
     assert.deepEqual(nextInput, {
       status: "refused",
       step: 1,
@@ -497,25 +487,62 @@ test("visual browser refuses coordinate input when the captured canvas frame cha
     assert.equal(captured.status, "observed");
     if (captured.status !== "observed") return;
     await new Promise((resolve) => setTimeout(resolve, 350));
-    const receipt = await driver.act(
-      {
-        schema: "autodev-playtest-visual-action-v1",
-        workspaceId: WORKSPACE,
-        targetId: "visual-target-1",
-        episodeId: EPISODE_ID,
-        observationId: captured.observation.observationId,
-        kind: "pointer-click",
-        frameArtifactId: captured.observation.frame.artifactId,
-        x: 50,
-        y: 50
-      },
-      1000
-    );
+    const receipt = await driver.act({
+      schema: "autodev-playtest-visual-action-v1",
+      workspaceId: WORKSPACE,
+      targetId: "visual-target-1",
+      episodeId: EPISODE_ID,
+      observationId: captured.observation.observationId,
+      kind: "pointer-click",
+      frameArtifactId: captured.observation.frame.artifactId,
+      x: 50,
+      y: 50
+    });
     assert.deepEqual(receipt, {
       status: "refused",
       step: 0,
       reason: "stale-observation"
     });
+  } finally {
+    await driver?.close();
+    await source.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a decision that arrives late in the episode is still acted on", async () => {
+  // A model that needs most of the approved budget to answer is still
+  // answering inside the budget the operator approved. The observation it
+  // answers is the latest one, and the page is read again before the input
+  // goes out, so the action is not a guess about a screen that is gone.
+  const source = await listen(
+    () => `<!doctype html><html><body>
+    <button id="start" onclick="this.textContent='Started'">Start race</button>
+  </body></html>`
+  );
+  const { store, root } = artifacts();
+  let driver: PlaytestVisualBrowserDriver | null = null;
+  let clock = Date.now();
+  try {
+    driver = await openDriver({ source, store, now: () => clock });
+    const captured = await driver.observe();
+    assert.equal(captured.status, "observed");
+    if (captured.status !== "observed") return;
+    const start = captured.observation.controls.find(
+      (control) => control.name === "Start race"
+    );
+    assert.ok(start);
+    clock += 30_000;
+    const receipt = await driver.act({
+      schema: "autodev-playtest-visual-action-v1",
+      workspaceId: WORKSPACE,
+      targetId: "visual-target-1",
+      episodeId: EPISODE_ID,
+      observationId: captured.observation.observationId,
+      kind: "activate-control",
+      controlId: start.controlId
+    });
+    assert.equal(receipt.status, "dispatched");
   } finally {
     await driver?.close();
     await source.close();

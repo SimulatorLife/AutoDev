@@ -224,10 +224,7 @@ export interface PlaytestVisualBrowserDriverOptions {
  */
 export interface PlaytestVisualEpisodeDriver {
   observe(): Promise<PlaytestVisualObservationResult>;
-  act(
-    action: PlaytestVisualAction,
-    maxObservationAgeMs: number
-  ): Promise<PlaytestVisualActionReceipt>;
+  act(action: PlaytestVisualAction): Promise<PlaytestVisualActionReceipt>;
   close(): Promise<unknown>;
   /** Milliseconds left in the approved per-episode wall-time budget. */
   remainingWallTimeMs(): number;
@@ -1155,8 +1152,7 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
   }
 
   async act(
-    action: PlaytestVisualAction,
-    maxObservationAgeMs: number
+    action: PlaytestVisualAction
   ): Promise<PlaytestVisualActionReceipt> {
     this.actionCalls += 1;
     if (this.terminalBlock) {
@@ -1194,7 +1190,14 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
       currentOrigin: origin,
       currentViewport: this.viewport,
       nowMs: this.now(),
-      maxObservationAgeMs
+      // An observation is trusted for as long as the episode may run. The
+      // approved wall-time budget is the only clock the episode has, and a
+      // model that needs most of it to answer is still answering inside the
+      // budget the operator approved. What the action must match is the
+      // latest observation, and that is checked by observation id; what it
+      // must still find on the screen is re-read from the page before the
+      // input is dispatched.
+      maxObservationAgeMs: this.target.limits.wallTimeMs
     });
     if (!admission.admitted) {
       return this.refuseAction(action, step, admission.reason);
