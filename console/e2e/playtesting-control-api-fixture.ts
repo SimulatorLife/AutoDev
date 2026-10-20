@@ -2703,6 +2703,61 @@ const server = createServer(
       });
       return;
     }
+    if (url.pathname === "/control/mcps") {
+      // Three servers that keep the three states apart: a declared and enabled
+      // stdio server with a target override, a server that is only present in a
+      // target projection (so its default state is not observed), and a
+      // declared http server with no target overrides at all.
+      sendJson(response, {
+        schema: "autodev-control-mcps-v1",
+        source: ".rulesync/mcp.jsonc",
+        readOnly: true,
+        valid: true,
+        issues: [],
+        servers: [
+          {
+            name: "lsp",
+            enabled: true,
+            transport: "stdio",
+            targetOverrides: [
+              {
+                target: "codex",
+                enabled: true,
+                defaultToolsApprovalMode: "never",
+                enabledTools: ["lsp_goto_definition"]
+              }
+            ],
+            command: "npx",
+            args: ["-y", "@modelcontextprotocol/server-lsp"],
+            envKeys: ["LSP_ROOT"],
+            cwd: "/workspace",
+            defaultToolsApprovalMode: "on-request",
+            declared: true,
+            roles: ["worker", "orchestrator"]
+          },
+          {
+            name: "antigravity-cli",
+            enabled: false,
+            transport: "stdio",
+            targetOverrides: [{ target: "codex", enabled: false }],
+            command: "antigravity",
+            args: ["mcp"],
+            declared: false,
+            roles: []
+          },
+          {
+            name: "openaiDeveloperDocs",
+            enabled: null,
+            transport: "http",
+            targetOverrides: [],
+            url: "https://docs.example.test/mcp",
+            declared: true,
+            roles: ["orchestrator"]
+          }
+        ]
+      });
+      return;
+    }
     if (!url.pathname.startsWith("/control/playtesting/")) {
       response.writeHead(404).end();
       return;
