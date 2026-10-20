@@ -1,6 +1,13 @@
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import {
+  type APIRequestContext,
+  expect,
+  type Locator,
+  type Page,
+  test
+} from "@playwright/test";
 
 const NOT_OBSERVED = "Not observed";
+const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const SCOPE_LABEL = "Usage scope";
 const TIME_RANGE_LABEL = "Time range";
 const SCOPE_OPTIONS = [
@@ -18,6 +25,7 @@ const INVALID_RESPONSE_CODE = "autodev_openlit_usage_invalid_response";
 const HTTP_ERROR_CODE = "autodev_openlit_usage_http_503";
 const UNREACHABLE_CODE = "autodev_openlit_usage_unreachable";
 const UNAUTHORIZED_CODE = "autodev_openlit_usage_unauthorized";
+const RUNTIME_UNAVAILABLE_CODE = "autodev_control_api_503";
 const STAT_GRID = "[data-stat-grid]";
 const FAILURE_PANEL = "[data-error-code]";
 const ERROR_CODE_ATTRIBUTE = "data-error-code";
@@ -70,6 +78,23 @@ async function assertDimensionIsUnobserved(
   await expect(select).toHaveAttribute("data-filter-options-observed", "false");
   await expect(select).toBeDisabled();
   await expect(select.locator("option")).toHaveText([NOT_OBSERVED]);
+}
+
+/**
+ * Whether the Runtime's live projection answers.
+ *
+ * The live scope has to be able to show what a failed read looks like, and the
+ * only way to reach that state is for the Runtime to stop answering. The
+ * fixture is told directly, because the Console has no handle on it.
+ */
+async function setRuntimeAvailable(
+  request: APIRequestContext,
+  available: boolean
+): Promise<void> {
+  const response = await request.post(
+    `${FIXTURE_BASE_URL}/fixture/runtime/state?state=${available ? "observed" : "unavailable"}`
+  );
+  expect(response.ok()).toBe(true);
 }
 
 test("the scope control names both kinds of selection", async ({ page }) => {
@@ -211,4 +236,69 @@ test("the four failure kinds are four different failures", async ({ page }) => {
     ERROR_CODE_ATTRIBUTE,
     UNAUTHORIZED_CODE
   );
+});
+
+test("the Active Sessions scope is its own scope, not a time range", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/usage?range=ACTIVE_SESSIONS");
+
+  // The live scope has its own heading and its own counters, taken from the
+  // Runtime rather than from a telemetry window.
+  await expect(
+    page.getByRole("heading", { name: "Active Sessions" })
+  ).toBeVisible();
+  await expect(statValue(page, "Active Sessions")).toHaveText("3");
+  await expect(statValue(page, "Active Subagent Threads")).toHaveText("2");
+  await expect(statValue(page, "In-flight Requests")).toHaveText("4");
+  await expect(statValue(page, "Router Lifecycle")).toHaveText("Ready");
+
+  // The historical widgets are not on this scope. A live scope that also
+  // carried the last window's numbers would be a time range with a different
+  // label.
+  await expect(page.getByText("Logical Routed Requests")).toHaveCount(0);
+  await expect(page.getByText("Recent provider attempts")).toHaveCount(0);
+
+  // The Runtime publishes a count but no per-session identity, so the page
+  // says why there is no list instead of drawing an empty one.
+  await expect(
+    page.getByText(
+      "The Runtime reports a live session count but no per-session identity yet, so no session list is shown.",
+      { exact: false }
+    )
+  ).toBeVisible();
+});
+
+test("a Runtime that does not answer is not an idle Runtime", async ({
+  page,
+  request
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await setRuntimeAvailable(request, false);
+  try {
+    await page.goto("/usage?range=ACTIVE_SESSIONS");
+
+    // The read failed, and the page says so with the reason.
+    await expect(page.locator(FAILURE_PANEL)).toHaveAttribute(
+      ERROR_CODE_ATTRIBUTE,
+      RUNTIME_UNAVAILABLE_CODE
+    );
+    await expect(
+      page.getByText(
+        "Live session state is unavailable. The Runtime did not report session evidence, so no count is shown; an unavailable read is not an idle Runtime.",
+        { exact: false }
+      )
+    ).toBeVisible();
+
+    // No counter at all: a count of zero would report an idle Runtime that
+    // was never observed.
+    await expect(page.locator(STAT_GRID)).toHaveCount(0);
+    await expect(page.locator('dt:text-is("Active Sessions")')).toHaveCount(0);
+
+    // The scope control stays, so the operator can read a scope that works.
+    await expect(page.getByLabel(SCOPE_LABEL)).toBeVisible();
+  } finally {
+    await setRuntimeAvailable(request, true);
+  }
 });

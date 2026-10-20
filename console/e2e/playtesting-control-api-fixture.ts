@@ -2438,6 +2438,7 @@ function resetSyntheticFixture(
   syntheticAnalystTaskHistoryMissing = false;
   skillAssignmentRevision = INITIAL_SKILL_ASSIGNMENT_REVISION;
   skillRoles["code-review"] = [...INITIAL_SKILL_ROLES];
+  runtimeUnavailable = false;
   sendJson(response, { reset: true });
   return true;
 }
@@ -2646,6 +2647,79 @@ function configureSkillFixture(
   }
   skillAssignmentRevision = nextSkillAssignmentRevision();
   sendJson(response, { revision: skillAssignmentRevision });
+  return true;
+}
+
+/**
+ * The Runtime's live projection, as this fixture reports it.
+ *
+ * `liveAgents` is null on purpose. The Runtime registered no live-agent
+ * activity source, so the Agents list keeps saying that a per-agent live
+ * count is not observed instead of inventing a zero for it. The router's own
+ * counters are a separate source and are reported, and they are what the
+ * Usage Active Sessions scope reads.
+ */
+const RUNTIME_ACTIVE_SESSIONS = 3;
+const RUNTIME_ACTIVE_SUBAGENT_THREADS = 2;
+const RUNTIME_IN_FLIGHT_REQUESTS = 4;
+
+/**
+ * Whether the Runtime answers at all.
+ *
+ * A live scope that can only ever be read successfully cannot show what a
+ * failed read looks like, and the difference between "the Runtime is idle" and
+ * "the Runtime was never observed" is the whole point of the scope.
+ */
+let runtimeUnavailable = false;
+
+/**
+ * The Runtime's read-only live projection, and the fixture's control over it.
+ *
+ * `/fixture/runtime/state` takes the Runtime away, so a page that reads it
+ * has to say that the read failed rather than showing an idle Runtime.
+ */
+function handleRuntimeFixture(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (url.pathname === "/fixture/runtime/state") {
+    if (request.method !== "POST") {
+      response.writeHead(405).end();
+      return true;
+    }
+    runtimeUnavailable = url.searchParams.get("state") === "unavailable";
+    sendJson(response, {
+      state: runtimeUnavailable ? "unavailable" : "observed"
+    });
+    return true;
+  }
+  if (url.pathname !== "/control/runtime") return false;
+  if (runtimeUnavailable) {
+    response.writeHead(503).end();
+    return true;
+  }
+  sendJson(response, {
+    schema: "autodev-control-runtime-v2",
+    routerInstanceId: "fixture-router",
+    lifecycle: {
+      state: "ready",
+      draining: false,
+      changedAt: FIXTURE_APPLIED_AT,
+      activeResponseRequests: 1
+    },
+    concurrency: {
+      scope: "fixture",
+      configSource: "fixture",
+      configFileExists: true,
+      maxConcurrentThreadsPerSession: 4,
+      effectivePerSessionLimit: 4,
+      activeSubagentThreads: RUNTIME_ACTIVE_SUBAGENT_THREADS,
+      activeSessions: RUNTIME_ACTIVE_SESSIONS
+    },
+    inFlightRequestCount: RUNTIME_IN_FLIGHT_REQUESTS,
+    liveAgents: null
+  });
   return true;
 }
 
@@ -2973,6 +3047,7 @@ function handleFixtureCatalogRoutes(
   url: URL
 ): boolean {
   if (configureSkillFixture(request, response, url)) return true;
+  if (handleRuntimeFixture(request, response, url)) return true;
   return handleCatalogResourceRead(url, response);
 }
 
