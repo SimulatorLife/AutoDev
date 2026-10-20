@@ -8,12 +8,37 @@
  * assertions depend on are observed; the rest answer as unobserved rather
  * than as zero, because a synthetic fixture that invented zeros would make
  * the surface look measured when nothing measured it.
+ *
+ * Four scopes answer with a failure instead of a snapshot, one for each way
+ * the Usage contract says a read can fail, so the page's failure paths can
+ * be reached at all rather than only described.
  */
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 
 const PORT = Number(process.env.AUTODEV_OPENLIT_USAGE_FIXTURE_PORT ?? 4312);
 const WORKSPACE_ID = "fixture/game";
 const LOGICAL_REQUESTS = 12;
+
+/**
+ * The scopes that answer with a failure instead of a snapshot.
+ *
+ * The Usage contract distinguishes four ways a read can fail, and the Console
+ * has to say which one happened: the transport failed, the response did not
+ * validate, the service rejected the credential, or the service answered with
+ * an HTTP error. A fixture that only ever answers correctly can only prove
+ * that the Console renders a snapshot; it cannot prove that the Console keeps
+ * metric cards off the page when the read failed, or that it names the
+ * failure rather than reporting an empty interval.
+ *
+ * The scopes are chosen by the selection the Console sends, because that is
+ * the only handle the Console's read has on the source: the request body
+ * carries the scope it was asked for. Each one therefore reaches a different
+ * failure path in the same request.
+ */
+const INVALID_RESPONSE_SCOPE = "7D";
+const HTTP_ERROR_SCOPE = "3M";
+const UNREACHABLE_SCOPE = "1M";
+const UNAUTHORIZED_SCOPE = "CUSTOM";
 
 /** The widget set the v5 contract requires, in the contract's own order. */
 const USAGE_WIDGET_IDS = [
@@ -118,6 +143,70 @@ function usageResponse(): unknown {
   };
 }
 
+/**
+ * The scope the Console asked for.
+ *
+ * The request body carries the whole selection, and the scope is the part of
+ * it that says which failure this read should meet.
+ */
+function requestedScope(body: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed === null || typeof parsed !== "object") return null;
+    const selection = (parsed as { readonly selection?: unknown }).selection;
+    if (selection === null || typeof selection !== "object") return null;
+    const range = (selection as { readonly range?: unknown }).range;
+    return typeof range === "string" ? range : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The answer for one scope.
+ *
+ * The three failure scopes each break the read in a different way, because
+ * the three are different facts about the source: a body the contract cannot
+ * validate, an HTTP status the source chose, and a connection that died
+ * before the source answered at all.
+ */
+function respond(scope: string | null, response: ServerResponse): void {
+  if (scope === INVALID_RESPONSE_SCOPE) {
+    // A body that is not the Usage contract. The schema is right and the
+    // payload is not, so the source answered and the answer is unusable.
+    response
+      .writeHead(200, { "content-type": "application/json" })
+      .end(
+        JSON.stringify({ schema: "autodev-openlit-usage-v5", widgets: "none" })
+      );
+    return;
+  }
+  if (scope === HTTP_ERROR_SCOPE) {
+    response
+      .writeHead(503, { "content-type": "application/json" })
+      .end(JSON.stringify({ error: "the usage source is unavailable" }));
+    return;
+  }
+  if (scope === UNAUTHORIZED_SCOPE) {
+    // The source answered and refused the server credential. The Console
+    // never sends that credential to the browser, so this is a fact about the
+    // server-to-server read and nothing the operator can fix in the page.
+    response
+      .writeHead(401, { "content-type": "application/json" })
+      .end(JSON.stringify({ error: "the usage credential was refused" }));
+    return;
+  }
+  if (scope === UNREACHABLE_SCOPE) {
+    // The connection dies before the source answers, so the Console never
+    // learns a status: the read failed in transport, not in the payload.
+    response.socket?.destroy();
+    return;
+  }
+  response
+    .writeHead(200, { "content-type": "application/json" })
+    .end(JSON.stringify(usageResponse()));
+}
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   if (url.pathname === "/health") {
@@ -134,10 +223,11 @@ const server = createServer((request, response) => {
     response.writeHead(404).end();
     return;
   }
-  request.resume();
-  response
-    .writeHead(200, { "content-type": "application/json" })
-    .end(JSON.stringify(usageResponse()));
+  const chunks: Buffer[] = [];
+  request.on("data", (chunk: Buffer) => chunks.push(chunk));
+  request.on("end", () => {
+    respond(requestedScope(Buffer.concat(chunks).toString("utf8")), response);
+  });
 });
 server.listen(PORT, "127.0.0.1");
 
