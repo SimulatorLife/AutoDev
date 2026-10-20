@@ -1,0 +1,685 @@
+diff --git a/src/client/src/__tests__/constants/events.test.ts b/src/client/src/__tests__/constants/events.test.ts
+index 686ef526..4d6e58a9 100644
+--- a/src/client/src/__tests__/constants/events.test.ts
++++ b/src/client/src/__tests__/constants/events.test.ts
+@@ -46,11 +46,6 @@ describe("CLIENT_EVENTS", () => {
+ 		expect(CLIENT_EVENTS.PROFILE_UPDATE_FAILURE).toBe("PROFILE_UPDATE_FAILURE");
+ 	});
+ 
+-	it("has API key events", () => {
+-		expect(CLIENT_EVENTS.API_KEY_ADD_SUCCESS).toBe("API_KEY_ADD_SUCCESS");
+-		expect(CLIENT_EVENTS.API_KEY_ADD_FAILURE).toBe("API_KEY_ADD_FAILURE");
+-	});
+-
+ 	it("has prompt events", () => {
+ 		expect(CLIENT_EVENTS.PROMPT_ADD_SUCCESS).toBe("PROMPT_ADD_SUCCESS");
+ 		expect(CLIENT_EVENTS.PROMPT_ADD_FAILURE).toBe("PROMPT_ADD_FAILURE");
+diff --git a/src/client/src/__tests__/constants/settings.test.ts b/src/client/src/__tests__/constants/settings.test.ts
+deleted file mode 100644
+index 3bf69dba..00000000
+--- a/src/client/src/__tests__/constants/settings.test.ts
++++ /dev/null
+@@ -1,22 +0,0 @@
+-jest.mock("@/constants/messages", () => ({
+-	__esModule: true,
+-	default: jest.fn(() => ({
+-		USER_PROFILE: "User Profile",
+-		API_KEYS: "API Keys",
+-	})),
+-}));
+-
+-import { getSettingsTabs } from "@/constants/settings";
+-
+-describe("getSettingsTabs", () => {
+-	it("returns the API keys tab only", () => {
+-		// The profile tab went with the account-scoped preferences surface;
+-		// AutoDev identity is owned by the runtime, not by this app.
+-		const tabs = getSettingsTabs();
+-
+-		expect(tabs).toEqual([
+-			{ value: "api-keys", label: "API Keys", path: "/settings/api-keys" },
+-		]);
+-		expect(tabs.map((tab) => tab.path)).not.toContain("/settings/profile");
+-	});
+-});
+\ No newline at end of file
+diff --git a/src/client/src/__tests__/utils/breadcrumbs.test.ts b/src/client/src/__tests__/utils/breadcrumbs.test.ts
+index c4356c40..9ac4b1e2 100644
+--- a/src/client/src/__tests__/utils/breadcrumbs.test.ts
++++ b/src/client/src/__tests__/utils/breadcrumbs.test.ts
+@@ -61,25 +61,6 @@ describe('generatePageHeader', () => {
+     expect(header.breadcrumbs).toEqual([]);
+   });
+ 
+-  it('generates correct header for /settings', () => {
+-    const header = generatePageHeader('/settings');
+-    expect(header.title).toBe('Settings');
+-    expect(header.breadcrumbs).toEqual([]);
+-  });
+-
+-  it('generates a title for /settings/api-keys matching the sidebar label exactly', () => {
+-    const header = generatePageHeader('/settings/api-keys');
+-    expect(header.title).toBe('Api Keys');
+-    expect(header.breadcrumbs).toEqual([]);
+-  });
+-
+-  it('generates breadcrumbs for /evaluations/settings', () => {
+-    const header = generatePageHeader('/evaluations/settings');
+-    expect(header.title).toBe('Evaluation Settings');
+-    expect(header.breadcrumbs).toContainEqual({ title: 'Evaluations', href: '/evaluations' });
+-    expect(header.breadcrumbs).toContainEqual({ title: 'Settings', href: '/evaluations/settings' });
+-  });
+-
+   it('generates breadcrumbs for /evaluations/evaluators/:id', () => {
+     const header = generatePageHeader('/evaluations/evaluators/bias');
+     expect(header.title).toBe('Evaluator');
+@@ -137,7 +118,11 @@ describe('routes removed from the product', () => {
+     '/dashboards/explorer',
+     '/dashboards/widget',
+     '/d/123e4567-e89b-12d3-a456-426614174000',
++    '/settings',
++    '/settings/api-keys',
++    '/settings/evaluation',
+     '/settings/profile',
++    '/evaluations/settings',
+     '/evaluations/manual',
+     '/agents',
+     '/agents/cursor',
+diff --git a/src/client/src/__tests__/utils/hooks/hooks.test.ts b/src/client/src/__tests__/utils/hooks/hooks.test.ts
+index a420a468..5c34c5be 100644
+--- a/src/client/src/__tests__/utils/hooks/hooks.test.ts
++++ b/src/client/src/__tests__/utils/hooks/hooks.test.ts
+@@ -61,9 +61,9 @@ describe('useBreadcrumbs', () => {
+   });
+ 
+   it('re-runs effect when pathname changes', () => {
+-    (usePathname as jest.Mock).mockReturnValue('/settings');
++    (usePathname as jest.Mock).mockReturnValue('/usage');
+     renderHook(() => useBreadcrumbs());
+-    expect(generatePageHeader).toHaveBeenCalledWith('/settings');
++    expect(generatePageHeader).toHaveBeenCalledWith('/usage');
+   });
+ });
+ 
+diff --git a/src/client/src/app/(playground)/evaluations/settings/page.tsx b/src/client/src/app/(playground)/evaluations/settings/page.tsx
+deleted file mode 100644
+index a75b1545..00000000
+--- a/src/client/src/app/(playground)/evaluations/settings/page.tsx
++++ /dev/null
+@@ -1,14 +0,0 @@
+-"use client";
+-
+-import { useEffect } from "react";
+-import { useRouter } from "next/navigation";
+-
+-export default function EvaluationSettingsPage() {
+-	const router = useRouter();
+-
+-	useEffect(() => {
+-		router.replace("/evaluations?tab=configuration");
+-	}, [router]);
+-
+-	return null;
+-}
+diff --git a/src/client/src/app/(playground)/settings/api-keys/page.tsx b/src/client/src/app/(playground)/settings/api-keys/page.tsx
+deleted file mode 100644
+index a6aeb91c..00000000
+--- a/src/client/src/app/(playground)/settings/api-keys/page.tsx
++++ /dev/null
+@@ -1,21 +0,0 @@
+-"use client";
+-import { useEffect } from "react";
+-import { usePostHog } from "posthog-js/react";
+-import { CLIENT_EVENTS } from "@/constants/events";
+-import ManageKeys from "@/components/(playground)/api-keys/manage";
+-
+-export default function APIKeys() {
+-	const posthog = usePostHog();
+-
+-	useEffect(() => {
+-		posthog?.capture(CLIENT_EVENTS.SETTINGS_API_KEYS_PAGE_VISITED);
+-	}, []);
+-
+-	return (
+-		<div className="flex w-full flex-1 overflow-hidden">
+-			<div className="flex flex-col grow w-full rounded overflow-auto text-stone-900 dark:text-stone-300 gap-4">
+-				<ManageKeys />
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/settings/evaluation/page.tsx b/src/client/src/app/(playground)/settings/evaluation/page.tsx
+deleted file mode 100644
+index f73daafe..00000000
+--- a/src/client/src/app/(playground)/settings/evaluation/page.tsx
++++ /dev/null
+@@ -1,18 +0,0 @@
+-"use client";
+-
+-import { useEffect } from "react";
+-import { usePostHog } from "posthog-js/react";
+-import { CLIENT_EVENTS } from "@/constants/events";
+-import { useRouter } from "next/navigation";
+-
+-export default function SettingsEvaluationPage() {
+-	const posthog = usePostHog();
+-	const router = useRouter();
+-
+-	useEffect(() => {
+-		posthog?.capture(CLIENT_EVENTS.SETTINGS_EVALUATION_PAGE_VISITED);
+-		router.replace("/evaluations?tab=configuration");
+-	}, [posthog, router]);
+-
+-	return null;
+-}
+diff --git a/src/client/src/app/(playground)/settings/layout.tsx b/src/client/src/app/(playground)/settings/layout.tsx
+deleted file mode 100644
+index 2cecbbe0..00000000
+--- a/src/client/src/app/(playground)/settings/layout.tsx
++++ /dev/null
+@@ -1,14 +0,0 @@
+-"use client";
+-import type React from "react";
+-
+-export default function SettingsLayout({
+-	children,
+-}: {
+-	children: React.ReactNode;
+-}) {
+-	return (
+-		<div className="flex h-full w-full grow overflow-hidden">
+-			{children}
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/app/(playground)/settings/page.tsx b/src/client/src/app/(playground)/settings/page.tsx
+deleted file mode 100644
+index 62b183f7..00000000
+--- a/src/client/src/app/(playground)/settings/page.tsx
++++ /dev/null
+@@ -1,17 +0,0 @@
+-"use client";
+-import { useEffect } from "react";
+-import { usePostHog } from "posthog-js/react";
+-import { CLIENT_EVENTS } from "@/constants/events";
+-import { useRouter } from "next/navigation";
+-
+-export default function DefaultSettingsPage() {
+-  const posthog = usePostHog();
+-  const router = useRouter();
+-
+-  useEffect(() => {
+-    posthog?.capture(CLIENT_EVENTS.SETTINGS_PAGE_VISITED);
+-    router.replace("/settings/api-keys");
+-  }, []);
+-
+-  return null;
+-}
+\ No newline at end of file
+diff --git a/src/client/src/components/(playground)/api-keys/generate.tsx b/src/client/src/components/(playground)/api-keys/generate.tsx
+deleted file mode 100644
+index 8c320ff9..00000000
+--- a/src/client/src/components/(playground)/api-keys/generate.tsx
++++ /dev/null
+@@ -1,106 +0,0 @@
+-import { Button } from "@/components/ui/button";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { noop } from "@/utils/noop";
+-import copy from "copy-to-clipboard";
+-import { toast } from "sonner";
+-import FormBuilder from "@/components/common/form-builder";
+-import {
+-	Dialog,
+-	DialogContent,
+-	DialogHeader,
+-	DialogTitle,
+-	DialogTrigger,
+-} from "@/components/ui/dialog";
+-import { jsonStringify } from "@/utils/json";
+-import { useState } from "react";
+-import { usePostHog } from "posthog-js/react";
+-import { CLIENT_EVENTS } from "@/constants/events";
+-import { FieldProps, FormBuilderEvent } from "@/types/form";
+-import getMessage from "@/constants/messages";
+-
+-export default function Generate({ refresh }: { refresh: () => void }) {
+-	const posthog = usePostHog();
+-	const messages = getMessage();
+-	const [isOpen, setIsOpen] = useState(false);
+-	const { fireRequest: fireCreateRequest, isLoading: isCreating } =
+-		useFetchWrapper();
+-	const handleCreation: FormBuilderEvent = async (event, formdata) => {
+-		event.preventDefault();
+-		if (formdata.name?.length < 3) {
+-			toast.error("Name length should be greater than 2...", {
+-				id: "api-key",
+-			});
+-			return;
+-		}
+-		toast.loading("Generating api key...", {
+-			id: "api-key",
+-		});
+-		fireCreateRequest({
+-			requestType: "POST",
+-			url: `/api/api-key`,
+-			body: jsonStringify({
+-				name: formdata.name,
+-			}),
+-			successCb: (data: any) => {
+-				copy(data.apiKey);
+-				toast.success("Generated and copied. This key is shown only once.", {
+-					id: "api-key",
+-				});
+-				setIsOpen(false);
+-				refresh();
+-				posthog?.capture(CLIENT_EVENTS.API_KEY_ADD_SUCCESS);
+-			},
+-			failureCb: (err?: string) => {
+-				toast.error(err || `Cannot connect to server!`, {
+-					id: "api-key",
+-				});
+-				posthog?.capture(CLIENT_EVENTS.API_KEY_ADD_FAILURE);
+-			},
+-		});
+-	};
+-
+-	const formFields: FieldProps[] = [
+-		{
+-			label: "Name",
+-			description: "Assign a name to api key for better references in future",
+-			inputKey: `api-name`,
+-			fieldType: "INPUT",
+-			fieldTypeProps: {
+-				type: "text",
+-				name: "name",
+-				placeholder: "",
+-				defaultValue: "default",
+-			},
+-		},
+-	];
+-
+-	return (
+-		<Dialog onOpenChange={setIsOpen} open={isOpen}>
+-			<DialogTrigger asChild>
+-				<Button
+-					variant="secondary"
+-					size={"sm"}
+-					className="bg-primary hover:bg-primary dark:bg-primary dark:hover:bg-primary text-stone-100 dark:text-stone-100 px-8 h-8 self-end"
+-				>
+-					{messages.GENERATE_NEW_API_KEY}
+-				</Button>
+-			</DialogTrigger>
+-			<DialogContent className="max-w-lg">
+-				<DialogHeader>
+-					<DialogTitle className="dark:text-stone-200 text-stone-800">
+-						{messages.CREATE_NEW_KEY}
+-					</DialogTitle>
+-				</DialogHeader>
+-				<div className="flex items-center overflow-y-auto">
+-					<FormBuilder
+-						alignment="vertical"
+-						fields={formFields}
+-						isLoading={isCreating}
+-						onSubmit={isCreating ? noop : handleCreation}
+-						submitButtonText={messages.CREATE}
+-					/>
+-				</div>
+-			</DialogContent>
+-		</Dialog>
+-	);
+-}
+diff --git a/src/client/src/components/(playground)/api-keys/manage.tsx b/src/client/src/components/(playground)/api-keys/manage.tsx
+deleted file mode 100644
+index 96a6a1f8..00000000
+--- a/src/client/src/components/(playground)/api-keys/manage.tsx
++++ /dev/null
+@@ -1,166 +0,0 @@
+-"use client";
+-import ConfirmationModal from "@/components/common/confirmation-modal";
+-import { Badge } from "@/components/ui/badge";
+-import { getPingStatus } from "@/selectors/database-config";
+-import { useRootStore } from "@/store";
+-import useFetchWrapper from "@/utils/hooks/useFetchWrapper";
+-import { format } from "date-fns";
+-import { TrashIcon } from "lucide-react";
+-import { useCallback, useEffect } from "react";
+-import { toast } from "sonner";
+-import Generate from "./generate";
+-import { ApiKey } from "@/types/api-key";
+-import { Columns } from "@/components/data-table/columns";
+-import DataTable from "@/components/data-table/table";
+-import { escapeEmailForDisplay } from "@/utils/string";
+-import { Key, Shield, RotateCcw, Trash2, BookOpen } from "lucide-react";
+-import Link from "next/link";
+-import FeaturePageHeader from "@/components/(playground)/feature-page-header";
+-import getMessage from "@/constants/messages";
+-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+-
+-const columns: Columns<string, ApiKey> = {
+-	name: {
+-		header: () => "Name",
+-		cell: ({ row }) => row.name,
+-	},
+-	apiKey: {
+-		header: () => "Api Key",
+-		cell: ({ row }) => {
+-			return (
+-				<Badge variant="outline" className="rounded-md">
+-					{row.apiKeyPreview}
+-				</Badge>
+-			);
+-		},
+-	},
+-	createdBy: {
+-		header: () => "Created By",
+-		cell: ({ row }) => {
+-			return escapeEmailForDisplay(row.createdByUser.email);
+-		},
+-	},
+-	createdAt: {
+-		header: () => "Created At",
+-		cell: ({ row }) => {
+-			return format(row.createdAt, "MMM do, y");
+-		},
+-	},
+-	actions: {
+-		header: () => "Actions",
+-		cell: ({ row, extraFunctions }) => {
+-			return (
+-				<div className="flex gap-4 justify-center">
+-					<ConfirmationModal
+-						handleYes={extraFunctions?.handleYes}
+-						title="Are you sure you want to delete?"
+-						subtitle="Deleting API keys might result in breaking application if they are getting used. Please confirm before deleting it."
+-						params={{
+-							id: row.id,
+-						}}
+-					>
+-						<TrashIcon className="w-4 cursor-pointer" />
+-					</ConfirmationModal>
+-				</div>
+-			);
+-		},
+-	},
+-};
+-
+-export default function ManageKeys() {
+-	const messages = getMessage();
+-	const { data, fireRequest, isFetched, isLoading } = useFetchWrapper<ApiKey[]>();
+-	const { fireRequest: fireDeleteRequest } = useFetchWrapper();
+-	const pingStatus = useRootStore(getPingStatus);
+-	const fetchData = useCallback(async () => {
+-		fireRequest({
+-			requestType: "GET",
+-			url: `/api/api-key`,
+-			failureCb: (err?: string) => {
+-				toast.error(err || `Cannot connect to server!`, {
+-					id: "api-key",
+-				});
+-			},
+-		});
+-	}, []);
+-
+-	useEffect(() => {
+-		if (pingStatus !== "pending") {
+-			fetchData();
+-		}
+-	}, [pingStatus]);
+-
+-	const handleYes = useCallback(
+-		async ({ id }: { id: string }) => {
+-			fireDeleteRequest({
+-				requestType: "DELETE",
+-				url: `/api/api-key/${id}`,
+-				successCb: () => {
+-					fetchData();
+-				},
+-				failureCb: (err?: string) => {
+-					toast.error(err || `Cannot connect to server!`, {
+-						id: "api-key",
+-					});
+-				},
+-			});
+-		},
+-		[fetchData]
+-	);
+-
+-	return (
+-		<div className="flex flex-col grow w-full overflow-hidden">
+-			<FeaturePageHeader
+-				eyebrow={messages.SETTINGS}
+-				title={messages.API_KEYS}
+-				icon={<Key className="h-4 w-4" />}
+-				tone="border-primary/20 bg-primary/10 text-primary dark:border-primary/30 dark:bg-primary/15"
+-				actions={
+-					<div className="flex items-center gap-2">
+-						<Generate refresh={fetchData} />
+-					</div>
+-				}
+-			/>
+-			<div className="flex flex-col w-full h-full p-4 gap-4">
+-				<Alert className="border-amber-200 bg-amber-50/70 py-3 text-stone-700 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-stone-300">
+-					<Shield className="h-4 w-4 stroke-amber-700 dark:stroke-amber-300" />
+-					<AlertTitle className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+-						Important notice
+-					</AlertTitle>
+-					<AlertDescription className="mt-1">
+-						<div className="grid gap-2 text-xs leading-relaxed text-stone-600 dark:text-stone-400 md:grid-cols-3">
+-							<div className="flex items-start gap-2">
+-								<Key className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+-								<span>Secret keys are shown only once after generation.</span>
+-							</div>
+-							<div className="flex items-start gap-2">
+-								<RotateCcw className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+-								<span>Rotate keys periodically and after team changes.</span>
+-							</div>
+-							<div className="flex items-start gap-2">
+-								<Trash2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+-								<span>Revoke unused or exposed keys immediately.</span>
+-							</div>
+-						</div>
+-					</AlertDescription>
+-				</Alert>
+-				<DataTable
+-					columns={columns}
+-					data={data || []}
+-					isFetched={isFetched || pingStatus !== "pending"}
+-					isLoading={isLoading || pingStatus === "pending"}
+-					visibilityColumns={{
+-						name: true,
+-						apiKey: true,
+-						createdBy: true,
+-						createdAt: true,
+-						actions: true,
+-					}}
+-					extraFunctions={{
+-						handleYes,
+-					}}
+-				/>
+-			</div>
+-		</div>
+-	);
+-}
+diff --git a/src/client/src/constants/events.ts b/src/client/src/constants/events.ts
+index 95bf7483..6469d7c8 100644
+--- a/src/client/src/constants/events.ts
++++ b/src/client/src/constants/events.ts
+@@ -14,9 +14,6 @@ export const CLIENT_EVENTS = {
+ 	// Profile
+ 	PROFILE_UPDATE_SUCCESS: "PROFILE_UPDATE_SUCCESS",
+ 	PROFILE_UPDATE_FAILURE: "PROFILE_UPDATE_FAILURE",
+-	// API KEY
+-	API_KEY_ADD_SUCCESS: "API_KEY_ADD_SUCCESS",
+-	API_KEY_ADD_FAILURE: "API_KEY_ADD_FAILURE",
+ 	// Prompt
+ 	PROMPT_ADD_SUCCESS: "PROMPT_ADD_SUCCESS",
+ 	PROMPT_ADD_FAILURE: "PROMPT_ADD_FAILURE",
+@@ -114,9 +111,6 @@ export const CLIENT_EVENTS = {
+ 	CONTEXT_PAGE_VISITED: "CONTEXT_PAGE_VISITED",
+ 	CONTEXT_NEW_PAGE_VISITED: "CONTEXT_NEW_PAGE_VISITED",
+ 	CONTEXT_DETAIL_PAGE_VISITED: "CONTEXT_DETAIL_PAGE_VISITED",
+-	SETTINGS_PAGE_VISITED: "SETTINGS_PAGE_VISITED",
+-	SETTINGS_API_KEYS_PAGE_VISITED: "SETTINGS_API_KEYS_PAGE_VISITED",
+-	SETTINGS_EVALUATION_PAGE_VISITED: "SETTINGS_EVALUATION_PAGE_VISITED",
+ 	DASHBOARDS_PAGE_VISITED: "DASHBOARDS_PAGE_VISITED",
+ 	DASHBOARD_DETAIL_PAGE_VISITED: "DASHBOARD_DETAIL_PAGE_VISITED",
+ };
+diff --git a/src/client/src/constants/messages/en.ts b/src/client/src/constants/messages/en.ts
+index 9c2362dd..db399f5d 100644
+--- a/src/client/src/constants/messages/en.ts
++++ b/src/client/src/constants/messages/en.ts
+@@ -13,16 +13,10 @@ export const OPERATION_FAILED = "Operation failed!";
+ // API Keys
+ export const NO_API_KEY = "No such apiKey exists!";
+ 
+-export const MANAGE_API_KEYS = "Manage API Keys";
+-
+ export const OPENAI_SPEC = "OpenAPI Specification";
+ 
+-export const GENERATE_NEW_API_KEY = "Generate New API Key";
+-
+ export const CREATE_NEW_KEY = "Create a new api key";
+ 
+-export const SETTINGS = "Settings";
+-
+ export const OPENAPI_SPECIFICATION = "OpenAPI Specification";
+ 
+ export const OPENAPI_SPECIFICATION_UI = "OpenAPI Specification UI";
+@@ -1034,8 +1028,6 @@ export const CREATING = "Creating...";
+ 
+ export const DATABASE_CONFIG = "Database Config";
+ 
+-export const API_KEYS = "API Keys";
+-
+ export const USER_PROFILE = "User Profile";
+ 
+ export const DB_CONFIG = "DB Config";
+diff --git a/src/client/src/constants/settings.ts b/src/client/src/constants/settings.ts
+deleted file mode 100644
+index 7bb1fd85..00000000
+--- a/src/client/src/constants/settings.ts
++++ /dev/null
+@@ -1,15 +0,0 @@
+-import getMessage from "@/constants/messages";
+-
+-export type SettingsTab = {
+-	value: string;
+-	label: string;
+-	path: string;
+-};
+-
+-export function getSettingsTabs(): SettingsTab[] {
+-	const messages = getMessage();
+-
+-	return [
+-		{ value: "api-keys", label: messages.API_KEYS, path: "/settings/api-keys" },
+-	];
+-}
+diff --git a/src/client/src/constants/sidebar.tsx b/src/client/src/constants/sidebar.tsx
+index 4a629d09..f8426117 100644
+--- a/src/client/src/constants/sidebar.tsx
++++ b/src/client/src/constants/sidebar.tsx
+@@ -8,10 +8,8 @@ import {
+ 	Boxes,
+ 	BrainCircuit,
+ 	Component,
+-	Key,
+ 	LayoutDashboard,
+ 	MonitorCog,
+-	SettingsIcon,
+ } from "lucide-react";
+ 
+ export const ICON_CLASSES = "flex-shrink-0 size-4";
+@@ -85,18 +83,4 @@ export const SIDEBAR_ITEMS: SidebarItemProps[] = [
+ 			},
+ 		],
+ 	},
+-	{
+-		title: "Settings",
+-		type: "section",
+-		collapsible: true,
+-		icon: <SettingsIcon className={ICON_CLASSES} />,
+-		children: [
+-			{
+-				icon: <Key className={ICON_CLASSES} />,
+-				text: m.API_KEYS,
+-				link: "/settings/api-keys",
+-				type: "action",
+-			},
+-		],
+-	},
+ ];
+diff --git a/src/client/src/middleware.ts b/src/client/src/middleware.ts
+index 2215055e..e10f3676 100644
+--- a/src/client/src/middleware.ts
++++ b/src/client/src/middleware.ts
+@@ -32,7 +32,6 @@ export const config = {
+ 		"/exceptions",
+ 		"/prompt-hub",
+ 		"/prompt-hub/:path*",
+-		"/settings/:path*",
+ 		"/connectors",
+ 		"/evaluations",
+ 		"/evaluations/:path*",
+diff --git a/src/client/src/types/api-key.ts b/src/client/src/types/api-key.ts
+deleted file mode 100644
+index ab016c0a..00000000
+--- a/src/client/src/types/api-key.ts
++++ /dev/null
+@@ -1,10 +0,0 @@
+-export type ApiKey = {
+-	apiKey?: string;
+-	apiKeyPreview?: string;
+-	createdAt: string;
+-	createdByUser: {
+-		email: string;
+-	};
+-	id: string;
+-	name: string;
+-};
+diff --git a/src/client/src/utils/breadcrumbs.ts b/src/client/src/utils/breadcrumbs.ts
+index 5f2a3410..fd734359 100644
+--- a/src/client/src/utils/breadcrumbs.ts
++++ b/src/client/src/utils/breadcrumbs.ts
+@@ -130,13 +130,6 @@ export const ROUTE_CONFIGS: RouteConfig[] = [
+ 		getBreadcrumbs: () => [],
+ 	},
+ 
+-	// Settings
+-	{
+-		regex: /^\/settings$/,
+-		getTitle: () => "Settings",
+-		getBreadcrumbs: () => [],
+-	},
+-	
+ 	{
+ 		regex: /^\/evaluations\/evaluators\/[^/]+$/,
+ 		getTitle: () => "Evaluator",
+@@ -163,14 +156,6 @@ export const ROUTE_CONFIGS: RouteConfig[] = [
+ 			{ title: "Create", href: "/evaluations/types/new" },
+ 		],
+ 	},
+-	{
+-		regex: /^\/evaluations\/settings$/,
+-		getTitle: () => "Evaluation Settings",
+-		getBreadcrumbs: () => [
+-			{ title: getMessage().FEATURE_EVALS, href: "/evaluations" },
+-			{ title: "Settings", href: "/evaluations/settings" }
+-		],
+-	},
+ 	{
+ 		regex: /^\/evaluations\/types$/,
+ 		getTitle: () => "Evaluation Types",
+@@ -187,12 +172,6 @@ export const ROUTE_CONFIGS: RouteConfig[] = [
+ 		],
+ 	},
+ 	
+-	{
+-		regex: /^\/settings\/api-keys$/,
+-		getTitle: () => "Api Keys",
+-		getBreadcrumbs: () => [],
+-	},
+-	
+ ];
+ 
+ // Main function to generate page header based on pathname

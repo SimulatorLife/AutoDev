@@ -514,10 +514,10 @@ index b4248b8e..00000000
 -	});
 -});
 diff --git a/src/client/src/__tests__/lib/platform/pricing/pricing-config.test.ts b/src/client/src/__tests__/lib/platform/pricing/pricing-config.test.ts
-index 2936daa1..40c451d6 100644
+index 2936daa1..08409a33 100644
 --- a/src/client/src/__tests__/lib/platform/pricing/pricing-config.test.ts
 +++ b/src/client/src/__tests__/lib/platform/pricing/pricing-config.test.ts
-@@ -1,388 +1,139 @@
+@@ -1,388 +1,151 @@
 -jest.mock('@/constants/messages', () => ({
 -  __esModule: true,
 -  default: jest.fn(() => ({
@@ -623,22 +623,8 @@ index 2936daa1..40c451d6 100644
 -  // Re-apply path.join mock
 -  const path = require('path');
 -  (path.join as jest.Mock).mockImplementation((...args: string[]) => args.join('/'));
-+const mockPrisma = {
-+	pricingConfigs: {
-+		findFirst: jest.fn(),
-+		findMany: jest.fn(),
-+	},
-+};
-+const mockAsaw = jest.fn();
-+const mockCronConstructor = jest.fn();
-+const mockJsonParse = jest.fn((value: string) => {
-+	try {
-+		return JSON.parse(value);
-+	} catch {
-+		return {};
-+	}
- });
- 
+-});
+-
 -describe('getPricingConfig', () => {
 -  it('returns config when it exists', async () => {
 -    const mockConfig = { id: 'pc-1', auto: false, recurringTime: '', meta: '{}', databaseConfigId: 'db-1' };
@@ -690,53 +676,16 @@ index 2936daa1..40c451d6 100644
 -
 -    expect(result).toEqual(mockConfig);
 -  });
-+jest.mock("@/lib/prisma", () => ({ __esModule: true, default: mockPrisma }));
-+jest.mock("@/utils/asaw", () => mockAsaw);
-+jest.mock("@/utils/json", () => ({ jsonParse: mockJsonParse }));
-+jest.mock("@/helpers/server/cron", () => ({
-+	__esModule: true,
-+	default: jest.fn((...args: unknown[]) => mockCronConstructor(...args)),
-+}));
- 
+-
 -  it('returns null when not found', async () => {
 -    (prisma.pricingConfigs.findFirst as jest.Mock).mockResolvedValue(null);
-+import {
-+	getPricingConfigById,
-+	restorePricingCronJobs,
-+} from "@/lib/platform/pricing/config";
-+import Cron from "@/helpers/server/cron";
- 
+-
 -    const result = await getPricingConfigById('nonexistent');
-+function cronMock() {
-+	return {
-+		updateCrontab: jest.fn(),
-+	};
-+}
- 
+-
 -    expect(result).toBeNull();
 -  });
-+beforeEach(() => {
-+	jest.resetAllMocks();
-+	mockJsonParse.mockImplementation((value: string) => {
-+		try {
-+			return JSON.parse(value);
-+		} catch {
-+			return {};
-+		}
-+	});
-+	mockAsaw.mockImplementation(async (promise: Promise<unknown>) => {
-+		try {
-+			return [null, await promise];
-+		} catch (error) {
-+			return [error, null];
-+		}
-+	});
-+	mockCronConstructor.mockImplementation(cronMock);
-+	(Cron as jest.Mock).mockImplementation((...args: unknown[]) =>
-+		mockCronConstructor(...args),
-+	);
- });
- 
+-});
+-
 -describe('setPricingConfig', () => {
 -  it('creates a new config with cron when auto=true', async () => {
 -    (getDBConfigByUser as jest.Mock).mockResolvedValue(mockDBConfig);
@@ -854,29 +803,8 @@ index 2936daa1..40c451d6 100644
 -      })
 -    );
 -  });
-+describe("getPricingConfigById", () => {
-+	it("returns the config when found", async () => {
-+		const config = {
-+			id: "pc-1",
-+			auto: true,
-+			recurringTime: "* * * * *",
-+			meta: "{}",
-+			databaseConfigId: "db-1",
-+		};
-+		mockPrisma.pricingConfigs.findFirst.mockResolvedValue(config);
-+
-+		expect(await getPricingConfigById("pc-1")).toEqual(config);
-+		expect(mockPrisma.pricingConfigs.findFirst).toHaveBeenCalledWith({
-+			where: { id: "pc-1" },
-+		});
-+	});
-+
-+	it("returns null when no config exists", async () => {
-+		mockPrisma.pricingConfigs.findFirst.mockResolvedValue(null);
-+		expect(await getPricingConfigById("missing")).toBeNull();
-+	});
- });
- 
+-});
+-
 -describe('restorePricingCronJobs', () => {
 -  it('restores cron jobs for all active configs', async () => {
 -    (prisma.pricingConfigs.findMany as jest.Mock).mockResolvedValue([
@@ -977,9 +905,86 @@ index 2936daa1..40c451d6 100644
 -    const cronInstance = (Cron as jest.Mock).mock.results[0]?.value;
 -    expect(cronInstance.updateCrontab).not.toHaveBeenCalled();
 -  });
+-});
++jest.mock("@/lib/prisma", () => ({
++	__esModule: true,
++	default: {
++		pricingConfigs: {
++			findFirst: jest.fn(),
++			findMany: jest.fn(),
++		},
++	},
++}));
++jest.mock("@/utils/asaw", () => jest.fn());
++jest.mock("@/utils/json", () => ({
++	jsonParse: jest.fn((value: string) => {
++		try {
++			return JSON.parse(value);
++		} catch {
++			return {};
++		}
++	}),
++}));
++jest.mock("@/helpers/server/cron", () => ({
++	__esModule: true,
++	default: jest.fn(),
++}));
++import Cron from "@/helpers/server/cron";
++import prisma from "@/lib/prisma";
++import asaw from "@/utils/asaw";
++import { jsonParse } from "@/utils/json";
++import {
++	getPricingConfigById,
++	restorePricingCronJobs,
++} from "@/lib/platform/pricing/config";
++function cronMock() {
++	return { updateCrontab: jest.fn() };
++}
++beforeEach(() => {
++	jest.resetAllMocks();
++	(jsonParse as jest.Mock).mockImplementation((value: string) => {
++		try {
++			return JSON.parse(value);
++		} catch {
++			return {};
++		}
++	});
++	(asaw as jest.Mock).mockImplementation(async (promise: Promise<unknown>) => {
++		try {
++			return [null, await promise];
++		} catch (error) {
++			return [error, null];
++		}
++	});
++	(Cron as jest.Mock).mockImplementation(cronMock);
++});
++
++describe("getPricingConfigById", () => {
++	it("returns the config when found", async () => {
++		const config = {
++			id: "pc-1",
++			auto: true,
++			recurringTime: "* * * * *",
++			meta: "{}",
++			databaseConfigId: "db-1",
++		};
++		(prisma.pricingConfigs.findFirst as jest.Mock).mockResolvedValue(config);
++
++		expect(await getPricingConfigById("pc-1")).toEqual(config);
++		expect(prisma.pricingConfigs.findFirst).toHaveBeenCalledWith({
++			where: { id: "pc-1" },
++		});
++	});
++
++	it("returns null when no config exists", async () => {
++		(prisma.pricingConfigs.findFirst as jest.Mock).mockResolvedValue(null);
++		expect(await getPricingConfigById("missing")).toBeNull();
++	});
++});
++
 +describe("restorePricingCronJobs", () => {
 +	it("restores retained auto-pricing schedules", async () => {
-+		mockPrisma.pricingConfigs.findMany.mockResolvedValue([
++		(prisma.pricingConfigs.findMany as jest.Mock).mockResolvedValue([
 +			{
 +				id: "pc-1",
 +				auto: true,
@@ -990,51 +995,68 @@ index 2936daa1..40c451d6 100644
 +
 +		await restorePricingCronJobs("http://localhost:3000");
 +
-+		expect(mockCronConstructor).toHaveBeenCalledTimes(1);
-+		expect(mockCronConstructor.mock.results[0]?.value.updateCrontab).toHaveBeenCalledWith(
-+			expect.objectContaining({
-+				cronId: "cron-1",
-+				cronSchedule: "*/10 * * * *",
-+				cronScriptPath: expect.stringContaining("scripts/pricing/auto.js"),
-+			}),
-+		);
++		expect(Cron).toHaveBeenCalledTimes(1);
++		expect((Cron as jest.Mock).mock.results[0]?.value.updateCrontab)
++			.toHaveBeenCalledWith(
++				expect.objectContaining({
++					cronId: "cron-1",
++					cronSchedule: "*/10 * * * *",
++					cronScriptPath: expect.stringContaining("scripts/pricing/auto.js"),
++				}),
++			);
 +	});
 +
 +	it("skips malformed schedule entries", async () => {
-+		mockPrisma.pricingConfigs.findMany.mockResolvedValue([
++		(prisma.pricingConfigs.findMany as jest.Mock).mockResolvedValue([
 +			{ id: "pc-missing-id", auto: true, recurringTime: "* * * * *", meta: "{}" },
-+			{ id: "pc-missing-time", auto: true, recurringTime: "", meta: JSON.stringify({ cronJobId: "cron-2" }) },
++			{
++				id: "pc-missing-time",
++				auto: true,
++				recurringTime: "",
++				meta: JSON.stringify({ cronJobId: "cron-2" }),
++			},
 +		]);
 +
 +		await restorePricingCronJobs("http://localhost:3000");
-+		expect(mockCronConstructor).toHaveBeenCalledTimes(1);
-+		expect(mockCronConstructor.mock.results[0]?.value.updateCrontab).not.toHaveBeenCalled();
++		expect(Cron).toHaveBeenCalledTimes(1);
++		expect((Cron as jest.Mock).mock.results[0]?.value.updateCrontab)
++			.not.toHaveBeenCalled();
 +	});
 +
 +	it("continues after a config cannot be restored", async () => {
-+		mockPrisma.pricingConfigs.findMany.mockResolvedValue([
-+			{ id: "pc-1", auto: true, recurringTime: "*/10 * * * *", meta: JSON.stringify({ cronJobId: "cron-1" }) },
-+			{ id: "pc-2", auto: true, recurringTime: "*/10 * * * *", meta: JSON.stringify({ cronJobId: "cron-2" }) },
++		(prisma.pricingConfigs.findMany as jest.Mock).mockResolvedValue([
++			{
++				id: "pc-1",
++				auto: true,
++				recurringTime: "*/10 * * * *",
++				meta: JSON.stringify({ cronJobId: "cron-1" }),
++			},
++			{
++				id: "pc-2",
++				auto: true,
++				recurringTime: "*/10 * * * *",
++				meta: JSON.stringify({ cronJobId: "cron-2" }),
++			},
 +		]);
 +		const cron = cronMock();
 +		cron.updateCrontab.mockImplementationOnce(() => {
 +			throw new Error("cron-1 failed");
 +		});
-+		mockCronConstructor.mockImplementation(() => cron);
++		(Cron as jest.Mock).mockImplementation(() => cron);
 +
 +		await expect(restorePricingCronJobs("http://localhost:3000")).resolves.toBeUndefined();
 +		expect(cron.updateCrontab).toHaveBeenCalledTimes(2);
 +	});
 +
 +	it("handles no schedules and an unreadable config store", async () => {
-+		mockPrisma.pricingConfigs.findMany.mockResolvedValueOnce([]);
++		(prisma.pricingConfigs.findMany as jest.Mock).mockResolvedValueOnce([]);
 +		await expect(restorePricingCronJobs("http://localhost:3000")).resolves.toBeUndefined();
-+		expect(mockCronConstructor).not.toHaveBeenCalled();
++		expect(Cron).not.toHaveBeenCalled();
 +
-+		mockPrisma.pricingConfigs.findMany.mockRejectedValueOnce(new Error("DB down"));
++		(prisma.pricingConfigs.findMany as jest.Mock).mockRejectedValueOnce(new Error("DB down"));
 +		await expect(restorePricingCronJobs("http://localhost:3000")).resolves.toBeUndefined();
 +	});
- });
++});
 diff --git a/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts b/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
 index 1cd9f12e..55f42086 100644
 --- a/src/client/src/__tests__/lib/platform/pricing/pricing.test.ts
@@ -2183,6 +2205,94 @@ index 1752302b..00000000
 -		</div>
 -	);
 -}
+diff --git a/src/client/src/app/(playground)/dashboard/evaluations/number-stats.tsx b/src/client/src/app/(playground)/dashboard/evaluations/number-stats.tsx
+index 03118bce..814e2c34 100644
+--- a/src/client/src/app/(playground)/dashboard/evaluations/number-stats.tsx
++++ b/src/client/src/app/(playground)/dashboard/evaluations/number-stats.tsx
+@@ -5,7 +5,6 @@ import getMessage from "@/constants/messages";
+ import {
+ 	Activity,
+ 	BadgeCheck,
+-	Banknote,
+ 	CheckCircle2,
+ 	Layers,
+ 	ListChecks,
+@@ -58,14 +57,6 @@ export default function EvaluationNumberStats() {
+ 				url={url}
+ 				roundTo={0}
+ 			/>
+-			<StatCard
+-				dataKey="total_cost"
+-				heading={m.EVALUATION_STAT_TOTAL_COST}
+-				icon={Banknote}
+-				url={url}
+-				textPrefix="$"
+-				roundTo={4}
+-			/>
+ 			<StatCard
+ 				dataKey="avg_pass_rate"
+ 				heading={m.EVALUATION_STAT_AVG_PASS_RATE}
+diff --git a/src/client/src/app/(playground)/dashboard/llm/data-charts.tsx b/src/client/src/app/(playground)/dashboard/llm/data-charts.tsx
+index 1b31a17f..e0c65953 100644
+--- a/src/client/src/app/(playground)/dashboard/llm/data-charts.tsx
++++ b/src/client/src/app/(playground)/dashboard/llm/data-charts.tsx
+@@ -15,18 +15,6 @@ export default function DataCharts() {
+ 				indexKey="provider"
+ 				url="/api/telemetry/llm/endpoint"
+ 			/>
+-			<PieChartCard
+-				categoryKey="cost"
+-				heading="Cost by Environment"
+-				indexKey="environment"
+-				url="/api/telemetry/llm/cost/environment"
+-			/>
+-			<PieChartCard
+-				categoryKey="cost"
+-				heading="Cost by application"
+-				indexKey="applicationName"
+-				url="/api/telemetry/llm/cost/application"
+-			/>
+ 		</div>
+ 	);
+ }
+diff --git a/src/client/src/app/(playground)/dashboard/llm/number-stats.tsx b/src/client/src/app/(playground)/dashboard/llm/number-stats.tsx
+index 42925054..9003f0c7 100644
+--- a/src/client/src/app/(playground)/dashboard/llm/number-stats.tsx
++++ b/src/client/src/app/(playground)/dashboard/llm/number-stats.tsx
+@@ -2,10 +2,8 @@ import StatCard from "@/components/(playground)/stat-card";
+ import { TraceMapping } from "@/constants/traces";
+ import { integerParser } from "@/helpers/client/trace";
+ import {
+-	Banknote,
+ 	Braces,
+ 	CheckCircle,
+-	CircleDollarSign,
+ 	RadioTower,
+ 	Timer,
+ } from "lucide-react";
+@@ -42,22 +40,6 @@ function NumberStats() {
+ 				icon={Braces}
+ 				url="/api/telemetry/llm/token/request/average"
+ 			/>
+-			<StatCard
+-				dataKey="total_usage_cost"
+-				heading="Total costs"
+-				icon={CircleDollarSign}
+-				roundTo={7}
+-				textPrefix="$"
+-				url="/api/telemetry/llm/cost/total"
+-			/>
+-			<StatCard
+-				dataKey="average_usage_cost"
+-				heading="Avg cost per request"
+-				icon={Banknote}
+-				roundTo={7}
+-				textPrefix="$"
+-				url="/api/telemetry/llm/cost/request/average"
+-			/>
+ 			<StatCard
+ 				dataKey="total_evaluation_detected"
+ 				heading="Total hallucination detected"
 diff --git a/src/client/src/app/(playground)/pricing/page.tsx b/src/client/src/app/(playground)/pricing/page.tsx
 deleted file mode 100644
 index 1b82fb69..00000000
