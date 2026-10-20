@@ -195,6 +195,11 @@ import {
   SmartDirectVisualPolicy
 } from "./smart-direct-policy.ts";
 import {
+  createPlaytestPolicyWorkspace,
+  removePlaytestPolicyWorkspace,
+  type PlaytestPolicyWorkspace
+} from "./policy-workspace.ts";
+import {
   PlaytestVisualBrowserDriver,
   PlaytestVisualBrowserDriverError,
   type PlaytestVisualObservationBlockReason
@@ -4713,6 +4718,7 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
     activeRun.sessions
   );
 
+  const policyWorkspaces: PlaytestPolicyWorkspace[] = [];
   try {
     for (const assignment of assignments) {
       if (activeRun.reason !== null) {
@@ -4726,6 +4732,11 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
         });
         continue;
       }
+      // The Smart-direct decision turns are bound to a private, source-empty
+      // workspace: the Router refuses to resolve a turn without one, and the
+      // policy plays a game rather than editing one.
+      const policyWorkspace = createPlaytestPolicyWorkspace();
+      policyWorkspaces.push(policyWorkspace);
       const episodeId = playtestVisualEpisodeRecordId(
         batchId,
         assignment.assignmentId
@@ -4910,7 +4921,9 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
         simulationWallMs: 0
       });
 
-      const policy = new SmartDirectVisualPolicy(sessionTarget);
+      const policy = new SmartDirectVisualPolicy(sessionTarget, {
+        workspacePath: policyWorkspace.workspacePath
+      });
       const history: { step: number; action: string; observation: string }[] =
         [];
       const traceSteps: PlaytestEvidenceTraceStep[] = [];
@@ -5212,7 +5225,9 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
       status: finalBatch.status
     };
   } finally {
-    // Done
+    for (const workspace of policyWorkspaces) {
+      removePlaytestPolicyWorkspace(workspace);
+    }
   }
 }
 function selectWindowRange(input: {

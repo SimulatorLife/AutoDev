@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -68,6 +68,8 @@ test("a Smart-direct response drives one admitted action through the isolated vi
     workspaceId: WORKSPACE_ID,
     rootDirectory: artifactRoot
   });
+  const policyWorkspace = path.join(artifactRoot, "policy-workspace");
+  mkdirSync(policyWorkspace, { mode: 0o700 });
   let driver: PlaytestVisualBrowserDriver | null = null;
   try {
     driver = await PlaytestVisualBrowserDriver.open({
@@ -85,6 +87,10 @@ test("a Smart-direct response drives one admitted action through the isolated vi
     const policyRequests: string[] = [];
     const policy = new SmartDirectVisualPolicy(target, {
       endpoint: "http://127.0.0.1:4100/v1/responses",
+      // The Router resolves a turn's workspace from structured metadata and
+      // refuses to guess one, so the decision request is bound to a private
+      // directory.
+      workspacePath: policyWorkspace,
       fetchImpl: async (_input, init) => {
         policyRequests.push(String(init?.body ?? ""));
         const request = JSON.parse(String(init?.body)) as {

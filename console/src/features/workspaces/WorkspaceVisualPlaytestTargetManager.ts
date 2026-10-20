@@ -367,9 +367,11 @@ export function WorkspaceVisualPlaytestTargetManager({
     setPendingTargetId(target.targetId);
     setFailure(null);
     setAnnouncement("");
+    // The revocation route owns the target identity through its path. Repeating
+    // it in the body would give the request two sources of truth for one
+    // target, and the route rejects unknown body fields outright.
     const body = new URLSearchParams({
       workspaceId,
-      targetId: target.targetId,
       approvalId: target.approvalId,
       expectedRevision: String(target.revision),
       reason,

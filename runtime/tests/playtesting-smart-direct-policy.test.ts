@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
 import test from "node:test";
 
@@ -20,6 +23,18 @@ import {
 const WORKSPACE_ID = "fixture/racing-game";
 const ORIGIN = "http://127.0.0.1:5173";
 const FRAME_BYTES = new TextEncoder().encode("bounded fixture frame bytes");
+
+// The Router resolves a turn's workspace from structured request metadata and
+// refuses to guess one, so every decision request is bound to a private
+// directory. The fixture uses a real empty directory for the same reason.
+const POLICY_WORKSPACE_ROOT = mkdtempSync(
+  path.join(tmpdir(), "autodev-smart-direct-policy-test-")
+);
+const POLICY_WORKSPACE = path.join(POLICY_WORKSPACE_ROOT, "workspace");
+mkdirSync(POLICY_WORKSPACE, { mode: 0o700 });
+test.after(() => {
+  rmSync(POLICY_WORKSPACE_ROOT, { recursive: true, force: true });
+});
 
 function target(
   overrides: Partial<WorkspaceVisualPlaytestTargetApproval> = {}
@@ -145,6 +160,7 @@ function createPolicy(options: {
   readonly limits?: Partial<WorkspaceVisualPlaytestTargetApproval["limits"]>;
   readonly authToken?: string;
   readonly now?: () => number;
+  readonly workspacePath?: string | null;
 }): SmartDirectVisualPolicy {
   return new SmartDirectVisualPolicy(
     target({
@@ -156,6 +172,10 @@ function createPolicy(options: {
     {
       endpoint: "http://127.0.0.1:4100/v1/responses",
       fetchImpl: options.fetchImpl,
+      workspacePath:
+        options.workspacePath === undefined
+          ? POLICY_WORKSPACE
+          : options.workspacePath,
       ...(options.authToken === undefined
         ? {}
         : { authToken: options.authToken }),
@@ -237,6 +257,91 @@ test("Smart-direct sends only the redacted observation to the local Smart route 
   assert.equal(policy.usage().tokensUsed, 340);
   assert.equal(policy.usage().tokenUsageComplete, true);
   assert.ok((policy.usage().lastLatencyMs ?? -1) >= 0);
+});
+
+test("Smart-direct binds its Router request to the private workspace it was given", async () => {
+  const requests: Array<{ url: string; init: RequestInit }> = [];
+  const policy = createPolicy({
+    authToken: "router-test-token",
+    fetchImpl: async (input, init) => {
+      requests.push({ url: String(input), init: init ?? {} });
+      return response(actDecision());
+    }
+  });
+
+  await policy.decide({
+    target: target(),
+    observation: observation(),
+    frameBytes: FRAME_BYTES,
+    areasOfFocus: "Explore the first race screen.",
+    history: [],
+    deadlineMonotonicMs: performance.now() + 5000
+  });
+
+  assert.equal(requests.length, 1);
+  const turnMetadata = new Headers(requests[0]?.init.headers).get(
+    "x-codex-turn-metadata"
+  );
+  assert.equal(typeof turnMetadata, "string");
+  assert.deepEqual(JSON.parse(String(turnMetadata)), {
+    workspaces: { [POLICY_WORKSPACE]: {} }
+  });
+});
+
+test("Smart-direct refuses to decide without a private workspace instead of sending an unbound request", async () => {
+  let requestCount = 0;
+  const policy = createPolicy({
+    workspacePath: null,
+    fetchImpl: async () => {
+      requestCount += 1;
+      return response(actDecision());
+    }
+  });
+
+  await assert.rejects(
+    policy.decide({
+      target: target(),
+      observation: observation(),
+      frameBytes: FRAME_BYTES,
+      areasOfFocus: "Explore the first race screen.",
+      history: [],
+      deadlineMonotonicMs: performance.now() + 5000
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof SmartDirectPolicyError);
+      assert.equal(error.code, "workspace-unavailable");
+      return true;
+    }
+  );
+  assert.equal(requestCount, 0);
+});
+
+test("Smart-direct states the action vocabulary the Runtime parses", async () => {
+  const requests: Array<{ init: RequestInit }> = [];
+  const policy = createPolicy({
+    fetchImpl: async (_input, init) => {
+      requests.push({ init: init ?? {} });
+      return response(actDecision());
+    }
+  });
+
+  await policy.decide({
+    target: target(),
+    observation: observation(),
+    frameBytes: FRAME_BYTES,
+    areasOfFocus: "Explore the first race screen.",
+    history: [],
+    deadlineMonotonicMs: performance.now() + 5000
+  });
+
+  const body = JSON.parse(String(requests[0]?.init.body)) as {
+    readonly instructions: string;
+  };
+  // A model that invents its own action name produces a decision the Runtime
+  // cannot execute, so the prompt must carry the accepted values.
+  assert.match(body.instructions, /activate-control/u);
+  assert.match(body.instructions, /pointer-click/u);
+  assert.match(body.instructions, /key-press/u);
 });
 
 test("Smart-direct stop returns a bounded self-report in the existing request and cites visible steps", async () => {
