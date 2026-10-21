@@ -36,6 +36,16 @@ export function skillContentSaveOutcome(
 export interface SkillDetailViewProps {
   readonly source: ControlApiSkillContentResponse;
   readonly saveOutcome?: SkillContentSaveOutcome | undefined;
+  /**
+   * The revision the editor's content is based on.
+   *
+   * A browser restores the text an operator typed into a form control when the
+   * write it submitted is redirected back to the page, so after a refused
+   * write the editor still holds the edit while the source has moved on. The
+   * write carries this revision, which keeps a second save from pairing that
+   * stale edit with the revision the source has moved to.
+   */
+  readonly editorRevision?: string | undefined;
 }
 
 function saveNotice(
@@ -45,7 +55,7 @@ function saveNotice(
   const warning = outcome === "conflict" || outcome === "validation";
   const message = {
     conflict:
-      "This skill changed after the editor loaded it. The current canonical source is shown; review it before saving again.",
+      "This skill changed after the editor loaded it, so your edit was not saved. Reload the editor to start from the current source; a save from this page would be refused.",
     validation:
       "RuleSync refused the submitted source. The canonical file was not changed; review its frontmatter and try again.",
     "apply-failed":
@@ -67,7 +77,8 @@ function saveNotice(
 
 export function SkillDetailView({
   source,
-  saveOutcome
+  saveOutcome,
+  editorRevision
 }: SkillDetailViewProps): React.JSX.Element {
   return React.createElement(
     PageBody,
@@ -107,7 +118,7 @@ export function SkillDetailView({
         React.createElement("input", {
           type: "hidden",
           name: "expectedRevision",
-          value: source.revision
+          value: editorRevision ?? source.revision
         }),
         React.createElement(
           "label",

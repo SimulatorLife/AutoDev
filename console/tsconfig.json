@@ -37,6 +37,7 @@
     ".next/types/**/*.ts",
     "app/**/*.ts",
     "app/**/*.tsx",
+    "e2e/**/*.ts",
     "next-env.d.ts",
     "src/**/*.ts",
     "src/**/*.tsx",
@@ -45,6 +46,8 @@
   ],
   "exclude": [
     "node_modules",
-    ".next-dev"
+    ".next-dev",
+    "e2e/playtesting-usability.spec.ts",
+    "e2e/playtesting-control-api-fixture.ts"
   ]
 }

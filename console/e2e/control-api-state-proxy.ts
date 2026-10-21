@@ -69,6 +69,17 @@ async function readBody(request: IncomingMessage): Promise<string> {
 }
 
 /**
+ * One header value.
+ *
+ * A header that arrived more than once arrives as an array, and an array is
+ * not a header value: the first one is the one the caller meant.
+ */
+function headerValue(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return value ?? "";
+}
+
+/**
  * The answer a degraded service gives, in the Control API's own error
  * envelope, so the Console reads the code the envelope carries.
  */
@@ -148,15 +159,16 @@ const server = createServer(
       return;
     }
     const upstream = await fetch(`${UPSTREAM}${url.pathname}${url.search}`, {
-      method: request.method,
+      method: request.method ?? "GET",
       headers: {
-        authorization: request.headers.authorization ?? "",
-        "x-autodev-actor": request.headers["x-autodev-actor"] ?? "",
-        "content-type": request.headers["content-type"] ?? "application/json"
+        authorization: headerValue(request.headers.authorization),
+        "x-autodev-actor": headerValue(request.headers["x-autodev-actor"]),
+        "content-type":
+          headerValue(request.headers["content-type"]) || "application/json"
       },
       body:
         request.method === "GET" || request.method === "HEAD"
-          ? undefined
+          ? null
           : await readBody(request)
     }).catch(() => null);
     if (upstream === null) {

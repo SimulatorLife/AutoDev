@@ -313,6 +313,9 @@ test("the skill detail is the canonical source, edited against the revision it l
     .locator("[data-skill-revision]")
     .getAttribute("data-skill-revision");
   expect(revision).toMatch(REVISION_PATTERN);
+  if (revision === null) {
+    throw new Error("The skill detail carries no source revision.");
+  }
 
   // The editor carries the source the page loaded, and the revision it was
   // loaded at, so a write can be checked against it.

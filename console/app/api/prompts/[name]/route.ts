@@ -3,6 +3,10 @@
 import { type NextRequest, NextResponse } from "next/server.js";
 
 import {
+  type CanonicalSourceSaveOutcome,
+  editorBaseRevision
+} from "../../../../src/lib/server/canonical-source.ts";
+import {
   patchPromptCommand,
   readControlApiConfig
 } from "../../../../src/lib/server/control-api.ts";
@@ -20,20 +24,24 @@ export const runtime = "nodejs";
 
 function redirectToPrompt(
   name: string,
-  saveOutcome?: "conflict" | "validation" | "apply-failed" | "failed"
+  saveOutcome?: CanonicalSourceSaveOutcome,
+  basedOn?: string
 ): NextResponse {
   const path = `/prompts/${encodeURIComponent(name)}`;
+  const query = new URLSearchParams();
+  if (saveOutcome) query.set("save", saveOutcome);
+  if (basedOn) query.set("based", basedOn);
   return new NextResponse(null, {
     status: 303,
     headers: {
-      location: saveOutcome ? `${path}?save=${saveOutcome}` : path
+      location: query.size > 0 ? `${path}?${query.toString()}` : path
     }
   });
 }
 
 function saveOutcomeForFailure(
   result: Awaited<ReturnType<typeof patchPromptCommand>>
-): "conflict" | "validation" | "apply-failed" | "failed" {
+): CanonicalSourceSaveOutcome {
   if (result.kind !== "http-error") return "failed";
   switch (result.code) {
     case "autodev_control_prompt_revision_conflict": {
@@ -88,7 +96,11 @@ export async function POST(
     { content, expectedRevision },
     config
   );
-  return result.kind === "ok"
-    ? redirectToPrompt(name)
-    : redirectToPrompt(name, saveOutcomeForFailure(result));
+  if (result.kind === "ok") return redirectToPrompt(name);
+  const outcome = saveOutcomeForFailure(result);
+  return redirectToPrompt(
+    name,
+    outcome,
+    editorBaseRevision(outcome, expectedRevision)
+  );
 }

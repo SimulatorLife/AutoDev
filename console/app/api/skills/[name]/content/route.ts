@@ -3,6 +3,10 @@
 import { type NextRequest, NextResponse } from "next/server.js";
 
 import {
+  type CanonicalSourceSaveOutcome,
+  editorBaseRevision
+} from "../../../../../src/lib/server/canonical-source.ts";
+import {
   patchSkillContent,
   readControlApiConfig
 } from "../../../../../src/lib/server/control-api.ts";
@@ -20,11 +24,13 @@ export const runtime = "nodejs";
 
 function redirectToSkill(
   name: string,
-  outcome?: "conflict" | "validation" | "apply-failed" | "failed"
+  outcome?: CanonicalSourceSaveOutcome,
+  basedOn?: string
 ): NextResponse {
   const path = `/skills/${encodeURIComponent(name)}`;
   const query = new URLSearchParams();
   if (outcome) query.set("save", outcome);
+  if (basedOn) query.set("based", basedOn);
   const suffix = query.size > 0 ? `?${query.toString()}` : "";
   return new NextResponse(null, {
     status: 303,
@@ -34,7 +40,7 @@ function redirectToSkill(
 
 function saveOutcomeForFailure(
   result: Awaited<ReturnType<typeof patchSkillContent>>
-): "conflict" | "validation" | "apply-failed" | "failed" {
+): CanonicalSourceSaveOutcome {
   if (result.kind !== "http-error") return "failed";
   switch (result.code) {
     case "autodev_control_skill_content_conflict": {
@@ -90,7 +96,11 @@ export async function POST(
     { content, expectedRevision },
     config
   );
-  return result.kind === "ok"
-    ? redirectToSkill(name)
-    : redirectToSkill(name, saveOutcomeForFailure(result));
+  if (result.kind === "ok") return redirectToSkill(name);
+  const outcome = saveOutcomeForFailure(result);
+  return redirectToSkill(
+    name,
+    outcome,
+    editorBaseRevision(outcome, expectedRevision)
+  );
 }

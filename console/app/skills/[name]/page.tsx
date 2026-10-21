@@ -6,6 +6,7 @@ import {
   skillContentSaveOutcome,
   SkillDetailView
 } from "../../../src/features/skills/SkillDetailView.ts";
+import { editorBaseRevisionFromQuery } from "../../../src/lib/server/canonical-source.ts";
 import {
   controlApiFailureCode,
   fetchSkillContent
@@ -68,11 +69,18 @@ export default async function SkillDetailPage({
   }
 
   const saveOutcome = skillContentSaveOutcome(query.save);
+  // The editor writes against the revision its content is based on. A refused
+  // write leaves the browser holding the operator's edit, so the page keeps
+  // the revision that edit was written for rather than the revision the
+  // source has moved to.
+  const editorRevision =
+    editorBaseRevisionFromQuery(query.based) ?? result.data.revision;
   return React.createElement(
     ConsolePageShell,
     { section },
     React.createElement(SkillDetailView, {
       source: result.data,
+      editorRevision,
       ...(saveOutcome ? { saveOutcome } : {})
     })
   );

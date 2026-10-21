@@ -66,12 +66,22 @@ export interface PromptDetailViewProps {
   readonly selectedVersion?: ControlApiPromptVersionResponse | undefined;
   readonly versionSelectionError?: string | undefined;
   readonly saveOutcome?: PromptSaveOutcome | undefined;
+  /**
+   * The revision the editor's content is based on.
+   *
+   * A browser restores the text an operator typed into a form control when the
+   * write it submitted is redirected back to the page, so after a refused
+   * write the editor still holds the edit while the source has moved on. The
+   * write carries this revision, which keeps a second save from pairing that
+   * stale edit with the revision the source has moved to.
+   */
+  readonly editorRevision?: string | undefined;
 }
 
 function saveOutcomeMessage(outcome: PromptSaveOutcome): string {
   switch (outcome) {
     case "conflict": {
-      return "This command changed after you loaded it. The current canonical source is shown; review it before saving again.";
+      return "This command changed after you loaded it, so your edit was not saved. Reload the editor to start from the current source; a save from this page would be refused.";
     }
     case "validation": {
       return "The canonical command was not updated because its source is invalid. Review the frontmatter and try again.";
@@ -101,7 +111,10 @@ function renderSaveOutcome(
   );
 }
 
-function renderPromptSource(prompt: PromptDocument): React.ReactNode {
+function renderPromptSource(
+  prompt: PromptDocument,
+  editorRevision: string | undefined
+): React.ReactNode {
   if (prompt.kind === "command") {
     return React.createElement(
       "form",
@@ -114,7 +127,7 @@ function renderPromptSource(prompt: PromptDocument): React.ReactNode {
       React.createElement("input", {
         type: "hidden",
         name: "expectedRevision",
-        value: prompt.revision
+        value: editorRevision ?? prompt.revision
       }),
       React.createElement(
         "label",
@@ -489,7 +502,8 @@ export function PromptDetailView({
   history,
   selectedVersion,
   versionSelectionError,
-  saveOutcome
+  saveOutcome,
+  editorRevision
 }: PromptDetailViewProps): React.JSX.Element {
   const lineCount = prompt.content ? prompt.content.split("\n").length : 0;
   const characterCount = prompt.content ? prompt.content.length : 0;
@@ -684,7 +698,7 @@ export function PromptDetailView({
           prompt.path
         )
       ),
-      renderPromptSource(prompt)
+      renderPromptSource(prompt, editorRevision)
     ),
     renderPromptPreview(prompt),
     renderPromptHistory(

@@ -9,14 +9,15 @@ import {
 import {
   buildPlaytestCoverageManifestDraft,
   buildPlaytestFindingIdentity,
+  buildReconciliationView,
   CONTROL_API_CONTRACT,
   CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
+  PLAYTEST_LAUNCH_REQUEST_SCHEMA,
   playtestAssignmentManifestHashInput,
-  playtestEpisodeRecordId,
-  playtestVisualEpisodeRecordId,
   type PlaytestComparison,
   playtestCoverageManifestHashInput,
   type PlaytestCrossSessionSynthesis,
+  playtestEpisodeRecordId,
   playtestFindingIdentityHashInput,
   playtestReviewOutcomeKey,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
@@ -29,10 +30,19 @@ import {
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
-  PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+  playtestVisualEpisodeRecordId,
   recordPlaytestOwnerDecision,
   selectPlaytestBatchReviews
 } from "@simulatorlife/autodev-core";
+
+import {
+  applyCanonicalSourceWrite,
+  armCanonicalSourceApplyFailure,
+  canonicalSource,
+  type CanonicalSourceKind,
+  moveCanonicalSource,
+  resetCanonicalSources
+} from "./canonical-source-fixture.ts";
 
 const PORT = Number(process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? 4311);
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
@@ -710,6 +720,25 @@ function sendJson(
     "cache-control": "no-store"
   });
   response.end(body);
+}
+
+/**
+ * A refusal, in the shape the Runtime refuses a request in.
+ *
+ * The Console reads the code out of the error, so a refusal that does not
+ * carry one leaves the Console guessing what happened from the status alone.
+ */
+function sendCanonicalSourceError(
+  response: ServerResponse,
+  status: number,
+  code: string,
+  message: string
+): void {
+  sendJson(
+    response,
+    { error: { message, type: "autodev_control_api_error", code } },
+    status
+  );
 }
 
 function page(
@@ -3769,36 +3798,66 @@ function handleCatalogResourceRead(
   }
   const skillContent = url.pathname.match(SKILL_CONTENT_ROUTE);
   if (skillContent !== null) {
-    const name = decodeURIComponent(skillContent[1]);
+    const name = decodeURIComponent(skillContent[1] ?? "");
+    const source = canonicalSource("skill", name);
+    if (source === null) {
+      sendJson(
+        response,
+        {
+          error: {
+            message: `The skill "${name}" does not exist.`,
+            type: "autodev_control_api_error",
+            code: "autodev_control_skill_not_found"
+          }
+        },
+        404
+      );
+      return true;
+    }
     sendJson(response, {
       schema: "autodev-control-skill-content-v1",
-      name,
-      path: `.rulesync/skills/${name}/SKILL.md`,
-      content: `---\nname: ${name}\n---\n\nReview a diff for defects.\n`,
-      revision: "c".repeat(64)
+      name: source.name,
+      path: source.path,
+      content: source.content,
+      revision: source.revision
     });
     return true;
   }
   const promptDetail = url.pathname.match(PROMPT_DETAIL_ROUTE);
   if (promptDetail !== null) {
-    const name = decodeURIComponent(promptDetail[1]);
+    const name = decodeURIComponent(promptDetail[1] ?? "");
+    const source = canonicalSource("prompt", name);
+    if (source === null) {
+      sendJson(
+        response,
+        {
+          error: {
+            message: `The command "${name}" does not exist.`,
+            type: "autodev_control_api_error",
+            code: "autodev_control_api_unknown_path"
+          }
+        },
+        404
+      );
+      return true;
+    }
     sendJson(response, {
       schema: "autodev-control-prompt-detail-v4",
-      name,
+      name: source.name,
       type: "command",
-      source: `.rulesync/commands/${name}.md`,
-      content: "Review the pending diff and report what changed.\n",
-      preview: "Review the pending diff and report what changed.",
-      revision: "d".repeat(64),
+      source: source.path,
+      content: source.content,
+      preview: source.preview ?? source.content,
+      revision: source.revision,
       diff: {
         summary: "The canonical command source.",
-        identifier: `prompt-${name}-1`
+        identifier: `prompt-${source.name}-1`
       },
       reconciliation: {
         status: {
           convergence: "converged",
-          desiredGeneration: `prompt-${name}-1`,
-          observedGeneration: `prompt-${name}-1`,
+          desiredGeneration: `prompt-${source.name}-1`,
+          observedGeneration: `prompt-${source.name}-1`,
           lastApplyAt: FIXTURE_APPLIED_AT,
           lastObservationAt: FIXTURE_APPLIED_AT,
           lastError: null,
@@ -3813,6 +3872,178 @@ function handleCatalogResourceRead(
 }
 
 /**
+ * The canonical source writes.
+ *
+ * The Runtime's write is a compare-and-swap against the revision the editor
+ * loaded, and only then the projection apply. The fixture holds a real
+ * canonical source, so the conflict it answers with is raised by the rule the
+ * Runtime applies rather than by a fixture that re-implements the rule and can
+ * drift from it.
+ */
+async function handleCanonicalSourceMutation(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): Promise<boolean> {
+  const prompt = url.pathname.match(PROMPT_DETAIL_ROUTE);
+  const skill = url.pathname.match(SKILL_CONTENT_ROUTE);
+  if (prompt === null && skill === null) return false;
+  // The same path is read as well as written, so a method that is not the
+  // write belongs to the read handler rather than to a refusal here.
+  if (request.method !== "PATCH") return false;
+  const kind: CanonicalSourceKind = prompt === null ? "skill" : "prompt";
+  const identifier = prompt?.[1] ?? skill?.[1] ?? "";
+  const name = decodeURIComponent(identifier);
+  const body = await readJsonBody(request);
+  const content = body?.content;
+  const expectedRevision = body?.expectedRevision;
+  if (typeof content !== "string" || typeof expectedRevision !== "string") {
+    sendCanonicalSourceError(
+      response,
+      400,
+      "autodev_control_api_invalid_body",
+      "A canonical source update requires exactly the expected revision and Markdown content."
+    );
+    return true;
+  }
+  const outcome = await applyCanonicalSourceWrite(kind, name, {
+    content,
+    expectedRevision
+  });
+  if (outcome.kind === "invalid-body") {
+    sendCanonicalSourceError(
+      response,
+      400,
+      "autodev_control_api_invalid_body",
+      "A canonical source update requires exactly the expected revision and Markdown content."
+    );
+    return true;
+  }
+  if (outcome.kind === "conflict") {
+    sendCanonicalSourceError(
+      response,
+      409,
+      kind === "prompt"
+        ? "autodev_control_prompt_revision_conflict"
+        : "autodev_control_skill_content_conflict",
+      outcome.message
+    );
+    return true;
+  }
+  if (outcome.kind === "invalid-source") {
+    sendCanonicalSourceError(
+      response,
+      400,
+      kind === "prompt"
+        ? "autodev_control_prompt_invalid_source"
+        : "autodev_control_skill_source_invalid",
+      outcome.message
+    );
+    return true;
+  }
+  if (outcome.kind === "apply-failed") {
+    sendCanonicalSourceError(
+      response,
+      503,
+      kind === "prompt"
+        ? "autodev_control_prompt_apply_failed"
+        : "autodev_control_skill_apply_failed",
+      outcome.message
+    );
+    return true;
+  }
+  const appliedAt = new Date().toISOString();
+  const reconciliation = buildReconciliationView({
+    evidence: {
+      desiredGeneration: outcome.source.revision,
+      observedGeneration: outcome.source.revision,
+      lastApplyAt: appliedAt,
+      lastObservationAt: appliedAt,
+      lastError: null
+    },
+    history: [],
+    hasObservation: true,
+    restartRequired: false
+  });
+  if (kind === "prompt") {
+    sendJson(response, {
+      schema: "autodev-control-prompt-command-patch-v2",
+      name: outcome.source.name,
+      revision: outcome.source.revision,
+      changed: outcome.changed,
+      diff: {
+        summary: "The canonical command source was updated.",
+        identifier: `prompt-${outcome.source.name}-2`
+      },
+      reconciliation
+    });
+    return true;
+  }
+  sendJson(response, {
+    schema: "autodev-control-skill-content-patch-v1",
+    name: outcome.source.name,
+    revision: outcome.source.revision,
+    changed: outcome.changed,
+    projectionApplied: true,
+    reconciliation
+  });
+  return true;
+}
+
+/**
+ * The fixture's own control over the canonical source.
+ *
+ * `/fixture/canonical-source/move` changes a canonical source without this
+ * Console knowing: the page that has the source open holds the revision it
+ * was rendered with, so moving the source here is what makes its next write a
+ * conflict rather than a silent overwrite of somebody else's edit.
+ * `/fixture/canonical-source/apply-failure` arms the projection apply to fail
+ * after the canonical source was saved -- the state the Runtime reports
+ * separately, because the source was written and the projections were not.
+ * `/fixture/canonical-source/reset` puts the sources back, so a test that
+ * writes starts from the sources the fixture declares.
+ */
+function configureCanonicalSourceFixture(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (!url.pathname.startsWith("/fixture/canonical-source/")) return false;
+  if (request.method !== "POST") {
+    response.writeHead(405).end();
+    return true;
+  }
+  const action = url.pathname.slice("/fixture/canonical-source/".length);
+  if (action === "reset") {
+    resetCanonicalSources();
+    sendJson(response, { reset: true });
+    return true;
+  }
+  const kind = url.searchParams.get("kind");
+  if (kind !== "prompt" && kind !== "skill") {
+    sendJson(response, { error: "A canonical source kind is required." }, 400);
+    return true;
+  }
+  if (action === "apply-failure") {
+    armCanonicalSourceApplyFailure(kind);
+    sendJson(response, { kind, armed: true });
+    return true;
+  }
+  if (action !== "move") {
+    response.writeHead(404).end();
+    return true;
+  }
+  const name = url.searchParams.get("name") ?? "";
+  const moved = moveCanonicalSource(kind, name);
+  if (moved === null) {
+    sendJson(response, { error: `No canonical ${kind} named "${name}".` }, 404);
+    return true;
+  }
+  sendJson(response, { kind, revision: moved.revision });
+  return true;
+}
+
+/**
  * The fixture's own control routes and the catalog resources it answers.
  *
  * One dispatch from the request handler rather than two, so the handler
@@ -3824,6 +4055,7 @@ function handleFixtureCatalogRoutes(
   url: URL
 ): boolean {
   if (configureSkillFixture(request, response, url)) return true;
+  if (configureCanonicalSourceFixture(request, response, url)) return true;
   if (handleRuntimeFixture(request, response, url)) return true;
   if (handleGithubRead(request, response, url)) return true;
   if (handleMemoryRead(request, response, url)) return true;
@@ -3855,6 +4087,7 @@ async function handleSyntheticMutationRoutes(
   if (await handleSyntheticSkillRoleMutation(request, response, url))
     return true;
   if (await handleAgentEnablementMutation(request, response, url)) return true;
+  if (await handleCanonicalSourceMutation(request, response, url)) return true;
   return configureAgentEnablementFixture(request, response, url);
 }
 
