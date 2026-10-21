@@ -81,6 +81,8 @@ function playtestAnalystPrompt(input: PlaytestAnalystProcessInput): string {
       ...input.episodeIds.map((episodeId) => `- ${episodeId}`),
       "For each episode, call playtest.prepareReview first. It must return analysisKind=discovery and one bounded packet artifact. Read only that packet. Do not read raw traces, source code, hidden state, other episodes, or additional artifacts.",
       "For each prepared packet, call playtest.submitDiscoveryReview with the exact episodeId, packetId, packetArtifactId and packetSha256. Include non-empty observation and interpretation claims with exact packet evidenceRefs. Each claim status must be hypothesis or not-observed. Alternative explanations use the same packet-cited hypothesis shape. Every proposed experiment must include evidenceRefs, a falsifier, explicit controls, and a bounded budget; never add metricId or scores.",
+      "The strict playtest.submitDiscoveryReview input requires exactly these keys: episodeId, packetId, packetArtifactId, packetSha256, chronologicalSummary, observations, interpretations, alternativeExplanations and experiments. The last two are required arrays even when you have nothing to put in them: send [] rather than omitting them. observations and interpretations each need at least one claim. Every claim is exactly {hypothesisId, status, text, evidenceRefs}: hypothesisId is a non-empty string you choose, status is hypothesis or not-observed, text is the claim, and evidenceRefs is a non-empty array of packet locators, each exactly {kind, id} with kind one of episode, event or frame and id taken from the packet. Every experiment is exactly {hypothesis, falsifier, controls, budget, evidenceRefs}: controls is a non-empty array of strings, budget is a bounded string, and evidenceRefs is a non-empty array of the same locators. Add no other keys, and send no score, rubricHash, status, findings, dimensionEvidence or reportCompleteness: this discovery contract has no such fields.",
+      "If playtest.submitDiscoveryReview rejects the payload, read the returned validation detail, correct only the rejected field, and retry once with the same packet ID, artifact ID and hash. Do not request a new packet, invent evidence, or abandon a fixable review.",
       "Treat packet.areasOfFocus as the operator's requested focus, not evidence that an objective was attempted or achieved. State progress or completion only when the cited visible evidence supports it; otherwise say it was not verified.",
       "When a v2 packet includes playerSelfReport, treat it as the player's testimony and a hypothesis prompt only. Do not use its summary, focus outcome, or report frame references as evidence or as a verified game result; every analyst claim must cite the packet's own visible step/frame evidence. If the report is absent, partial, pending, or unavailable, preserve that status instead of reconstructing a report from the trace.",
       "Report what the player-visible frame/control/phase actually shows separately from your interpretation. Preserve missing frames, partial status, action receipts and unobserved consequences. Use packet facts explicitly in summary and claims; never use placeholders or generic prose.",
@@ -198,7 +200,20 @@ export function launchPlaytestAnalystProcess(
     AUTODEV_PLAYTEST_ANALYST_CODEX_HOME: isolatedCodexHome,
     AUTODEV_PLAYTEST_ANALYST_SOURCE_HOME: sourceHome,
     AUTODEV_PLAYTEST_ANALYST_SOURCE_CODEX_HOME: sourceCodexHome,
-    AUTODEV_REPO_ROOT: repositoryRoot,
+    // The Runtime source root and AutoDev's managed configuration live in
+    // different trees once the Runtime is materialized into CODEX_HOME: the
+    // Runtime runs from the installed copy, while the model catalog and the
+    // analysis skill are the checkout's. Both are trusted, and the launcher's
+    // configuration root names the second one.
+    //
+    // The child's own repo root has to name that same checkout. The analyst's
+    // Playtesting MCP server reads the canonical workspace catalog and the
+    // agent role set from `<repo root>/config/`, the very files the Control API
+    // that dispatched this analysis reads, so the two must agree on one root.
+    // Pointing it at the materialized Runtime tree instead left the server
+    // without a catalog ("The canonical workspace catalog is unavailable"), so
+    // it exposed no playtest tool at all and the analyst submitted no review.
+    AUTODEV_REPO_ROOT: configurationRoot,
     // AutoDev's managed configuration -- the model catalog and the analysis
     // skill -- lives in the authoritative checkout, not in the materialized
     // Runtime tree. The analyst child may read it, and only it.

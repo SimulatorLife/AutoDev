@@ -798,7 +798,8 @@ function analystReviewRunError(input: {
     const diagnostic = input.result.diagnostic?.trim();
     return `The analyst process ended without completing all reviews (exit ${String(input.result.exitCode)}${input.result.signal ? `, ${input.result.signal}` : ""}).${diagnostic ? ` The analyst reported: ${boundedAnalystDiagnostic(diagnostic)}` : ""}`;
   }
-  return `The analyst submitted ${String(input.reviews.length)} of ${String(input.run.packets.length)} selected reviews.`;
+  const diagnostic = input.result.diagnostic?.trim();
+  return `The analyst submitted ${String(input.reviews.length)} of ${String(input.run.packets.length)} selected reviews.${diagnostic ? ` The analyst reported: ${boundedAnalystDiagnostic(diagnostic)}` : ""}`;
 }
 
 interface ActivePlaytestRun {

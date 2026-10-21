@@ -567,8 +567,7 @@ function roleSkillsConfigOverride(value: TomlValue, roleName: string): string {
 
 function analystCodexOverrides(
   roleFile: string,
-  sourceCodexHome: string,
-  autoDevRoot: string
+  sourceCodexHome: string
 ): readonly string[] {
   const role = parseTomlFile(roleFile, "playtest analyst role");
   const roleMcpServers = tomlRecord(role.mcp_servers);
@@ -596,10 +595,30 @@ function analystCodexOverrides(
   configuredServers.delete("playtest");
   const configKey = (name: string): string =>
     TOML_BARE_KEY_PATTERN.test(name) ? name : JSON.stringify(name);
-  const mcpEntry = resolveRuntimeSourcePath(
-    autoDevRoot,
-    "playtesting/mcp-main.ts"
+  // The playtest server must keep the launch keys the Runtime installed for it
+  // (the `run-autodev-mcp.sh` launcher). That launcher is what binds the
+  // trusted Playtesting session context -- workspace, role, actor, analysis,
+  // selected episodes and analysis kind -- to the server process. Starting
+  // `mcp-main.ts` directly hands the server a process environment that carries
+  // none of that context, so the server's session guard rejects the request,
+  // the server exits during its handshake, and the analyst is left with no
+  // Playtesting tools at all. Carry the installed launch keys over instead of
+  // replacing them.
+  const installedPlaytestServer = tomlRecord(
+    tomlRecord(baseConfig.mcp_servers).playtest
   );
+  const installedPlaytestCommand =
+    typeof installedPlaytestServer.command === "string"
+      ? installedPlaytestServer.command
+      : "bash";
+  const installedPlaytestArgs = stringArray(installedPlaytestServer.args);
+  const playtestLaunchArgs =
+    installedPlaytestArgs.length > 0
+      ? installedPlaytestArgs
+      : [
+          "-lc",
+          'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" playtest'
+        ];
   const args = [
     "features.shell_tool=false",
     "features.multi_agent=false",
@@ -613,9 +632,17 @@ function analystCodexOverrides(
   }
   args.push(
     "mcp_servers.playtest.enabled=true",
-    `mcp_servers.playtest.command=${JSON.stringify(process.execPath)}`,
-    `mcp_servers.playtest.args=${JSON.stringify([mcpEntry])}`,
+    `mcp_servers.playtest.command=${JSON.stringify(installedPlaytestCommand)}`,
+    `mcp_servers.playtest.args=${JSON.stringify(playtestLaunchArgs)}`,
     'mcp_servers.playtest.default_tools_approval_mode="approve"',
+    // The trusted Playtesting MCP server loads the Runtime's playtesting,
+    // core and data modules and opens the artifact, approval and OpenLIT
+    // stores before it answers its first request. Codex drops an MCP server
+    // that misses its startup timeout, and the analyst then finds no playtest
+    // tools at all and reports a boundary instead of a review. Give the
+    // server room to start on a machine that is busy serving the agent
+    // session that asked for the analysis.
+    "mcp_servers.playtest.startup_timeout_sec=60",
     `mcp_servers.playtest.enabled_tools=${JSON.stringify(enabledTools)}`,
     // Codex itself runs in the isolated home, but the trusted Playtesting MCP
     // must read the Runtime's real approval, artifact and OpenLIT stores, which
@@ -1107,10 +1134,25 @@ function playtesterCodexOverrides(
   configuredServers.delete("playtest");
   const configKey = (name: string): string =>
     TOML_BARE_KEY_PATTERN.test(name) ? name : JSON.stringify(name);
-  const mcpEntry = resolveRuntimeSourcePath(
-    options.repositoryRoot,
-    "playtesting/mcp-main.ts"
+  // Keep the installed launch keys: the `run-autodev-mcp.sh` launcher is what
+  // binds the trusted Playtesting session context to the server process. A
+  // direct `mcp-main.ts` spawn has no session context, so the server's guard
+  // rejects the request and the server exits during its handshake.
+  const installedPlaytestServer = tomlRecord(
+    tomlRecord(baseConfig.mcp_servers).playtest
   );
+  const installedPlaytestCommand =
+    typeof installedPlaytestServer.command === "string"
+      ? installedPlaytestServer.command
+      : "bash";
+  const installedPlaytestArgs = stringArray(installedPlaytestServer.args);
+  const playtestLaunchArgs =
+    installedPlaytestArgs.length > 0
+      ? installedPlaytestArgs
+      : [
+          "-lc",
+          'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" playtest'
+        ];
   const args = [
     "features.shell_tool=false",
     "features.multi_agent=false",
@@ -1125,9 +1167,10 @@ function playtesterCodexOverrides(
   }
   args.push(
     "mcp_servers.playtest.enabled=true",
-    `mcp_servers.playtest.command=${JSON.stringify(process.execPath)}`,
-    `mcp_servers.playtest.args=${JSON.stringify([mcpEntry])}`,
+    `mcp_servers.playtest.command=${JSON.stringify(installedPlaytestCommand)}`,
+    `mcp_servers.playtest.args=${JSON.stringify(playtestLaunchArgs)}`,
     'mcp_servers.playtest.default_tools_approval_mode="approve"',
+    "mcp_servers.playtest.startup_timeout_sec=60",
     `mcp_servers.playtest.enabled_tools=${JSON.stringify(PLAYTESTER_ENABLED_TOOLS)}`,
     `mcp_servers.playtest.env_vars=${JSON.stringify(PLAYTESTER_MCP_ENVIRONMENT_VARIABLES)}`
   );
@@ -1182,11 +1225,9 @@ function providerCodexArguments(
         ".codex"
       );
     args.push(
-      ...analystCodexOverrides(
-        options.roleFile,
-        sourceCodexHome,
-        options.repositoryRoot
-      ).flatMap((override) => ["-c", override])
+      ...analystCodexOverrides(options.roleFile, sourceCodexHome).flatMap(
+        (override) => ["-c", override]
+      )
     );
   }
   if (options.role === BROWSER_TESTER_ROLE) {

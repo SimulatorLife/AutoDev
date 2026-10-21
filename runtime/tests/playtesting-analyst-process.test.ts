@@ -180,6 +180,11 @@ test("analyst dispatch uses the existing provider-agent role with a read-only sc
     "/checkout",
     "the analyst child is told where AutoDev's managed configuration lives"
   );
+  assert.equal(
+    childEnvironment.AUTODEV_REPO_ROOT,
+    "/checkout",
+    "the analyst child's repo root is the checkout the dispatcher named, not a root derived from where the Runtime happens to be installed: the analyst's Playtesting MCP server reads the canonical workspace catalog and the agent role set from that root, so it has to be the same root the Control API that dispatched the analysis reads"
+  );
   assert.equal(childEnvironment.AUTODEV_PLAYTEST_ANALYSIS_ID, "analysis-123");
   assert.equal(
     childEnvironment.AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS,

@@ -10,11 +10,11 @@ import {
   canonicalPlaytestJson,
   type PlaytestArtifactReference,
   playtestAssignmentManifestHashInput,
-  PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH,
   type PlaytestDiscoveryEvidencePacketV3,
   type PlaytestDiscoverySessionReview,
   type PlaytestEpisode,
   PLAYTESTS_BATCH_SCHEMA,
+  PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_MEASUREMENT_VERSION,
@@ -574,6 +574,153 @@ test("visual discovery dispatch prepares one packet and stores only hypothesis r
     );
     assert.equal(status.runs[0]?.status, "completed");
     assert.equal(status.runs[0]?.reviews[0]?.reviewId, review.reviewId);
+  } finally {
+    await runControl.shutdown();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an analyst that submits no review reports its own words in the failure", async () => {
+  // A clean exit is not a success: the Runtime has to say how many reviews
+  // were submitted, and the analyst's own account of why it submitted none
+  // has to survive into the failure report. The analyst writes that account
+  // to its output, and the Runtime used to discard it whenever the process
+  // exited zero, which left the operator with a bare count.
+  const root = mkdtempSync(path.join(tmpdir(), "playtest-discovery-review-"));
+  const artifacts = new PlaytestArtifactStore({
+    rootDirectory: root,
+    workspaceId: WORKSPACE
+  });
+  const frameRef = artifacts.writeArtifact({
+    artifactId: "frame-racing-0",
+    mediaType: "image/png",
+    bytes: PNG
+  }).reference;
+  const trace = artifacts.writeWindow({
+    artifactId: "trace-racing-0",
+    entries: [
+      {
+        step: 0,
+        phaseId: "race-setup",
+        revisionBefore: 0,
+        revisionAfter: 1,
+        observationVisibility: "visual-only",
+        visibleObservation: {
+          capturedAt: NOW,
+          viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+          privacyState: "clear",
+          controls: [
+            {
+              controlId: "btn-stage",
+              role: "button",
+              name: "Stage 1",
+              bounds: { x: 20, y: 20, width: 120, height: 40 },
+              enabled: true,
+              focused: false
+            }
+          ],
+          warnings: [],
+          phase: "race-setup",
+          progress: null
+        },
+        legalActionIds: ["btn-stage"],
+        selectedActionId: "btn-stage",
+        preActionPrediction: {
+          intention: "Inspect the visible stage choice.",
+          predictedVisibleEffect: "The stage choice remains visible.",
+          reasonCode: "explore"
+        },
+        authoritativeOutcome: {
+          status: "dispatched",
+          actionKind: "activate-control",
+          observationId: "obs-racing-0",
+          actionDetail: { controlId: "btn-stage" },
+          dispatchedAt: "2026-10-17T12:00:02.000Z",
+          receiptAt: "2026-10-17T12:00:02.001Z",
+          refusalReason: null
+        },
+        events: [],
+        frameRefs: [
+          {
+            kind: "frame",
+            id: frameRef.artifactId,
+            step: 0,
+            frameIndex: 0
+          }
+        ]
+      }
+    ]
+  }).reference;
+  const episode = visualEpisode(trace.artifactId, frameRef.artifactId);
+  const batch = visualBatch();
+  const repository = {
+    getBatch: async () => batch,
+    getEpisode: async () => episode,
+    getLatestDiscoveryReviewForEpisode: async () => null,
+    insertDiscoveryReview: async () => {},
+    insertReview: async () => {},
+    getLatestReviewForEpisode: async () => null,
+    getLatestReview: async () => null,
+    listEpisodes: async () => ({
+      rows: [episode],
+      total: 1,
+      nextCursor: null
+    }),
+    listCrossSessionSyntheses: async () => ({
+      rows: [],
+      total: 0,
+      nextCursor: null
+    }),
+    getCrossSessionSynthesisForAnalysis: async () => null
+  } as unknown as PlaytestingRepositoryOps;
+  const finishProcess: ((result: PlaytestAnalystProcessResult) => void)[] = [];
+  const runControl = createPlaytestRunControl({
+    artifactStoreForWorkspace: () => artifacts,
+    playtestRepository: repository,
+    readWorkspaceCatalog: catalog,
+    launchAnalystProcess: () =>
+      ({
+        completion: new Promise((resolve) => {
+          finishProcess.push(resolve);
+        }),
+        terminate() {}
+      }) satisfies PlaytestAnalystProcess
+  });
+
+  try {
+    const operatorSession = {
+      workspaceId: WORKSPACE,
+      role: "operator",
+      actor: "operator-1"
+    };
+    const dispatch = await runControl.dispatchCrossSessionReview(
+      operatorSession,
+      WORKSPACE,
+      [episode.episodeId]
+    );
+    assert.equal(dispatch.packets.length, 1);
+    finishProcess[0]?.({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      launchFailed: false,
+      diagnostic:
+        "No review was submitted: the playtest MCP server never exposed its tools."
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const status = await runControl.listAnalystReviewRuns(
+      operatorSession,
+      WORKSPACE
+    );
+    assert.equal(status.runs[0]?.status, "failed");
+    assert.match(
+      status.runs[0]?.error ?? "",
+      /The analyst submitted 0 of 1 selected reviews\./u
+    );
+    assert.match(
+      status.runs[0]?.error ?? "",
+      /The analyst reported: No review was submitted/u
+    );
   } finally {
     await runControl.shutdown();
     rmSync(root, { recursive: true, force: true });

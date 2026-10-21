@@ -5,7 +5,36 @@
         <level>warning</level>
         <console>true</console>
     </logger>
-    
+
+    <!-- Background merges run in a pool sized for a server: the base pool times
+         a per-core multiplier, so a trace table that takes in tens of
+         thousands of spans an hour keeps every core of a developer machine
+         busy for hours. The stack runs on the same host as the Model Router
+         and the Console, and telemetry must never be the reason they stop
+         answering. Cap the pool, and cap the multiplier so the count does not
+         scale with the host's core count.
+
+         ClickHouse reserves pool slots for its own merge-tree work, and it
+         refuses to start when a reservation exceeds the pool. The reserved
+         counts below are the ones the merge-tree settings ask for by
+         default, lowered to fit the capped pool. -->
+    <background_pool_size>8</background_pool_size>
+    <background_merges_mutations_concurrency_ratio>1</background_merges_mutations_concurrency_ratio>
+    <merge_tree>
+        <number_of_free_entries_in_pool_to_lower_max_size_of_merge>2</number_of_free_entries_in_pool_to_lower_max_size_of_merge>
+        <number_of_free_entries_in_pool_to_execute_mutation>4</number_of_free_entries_in_pool_to_execute_mutation>
+        <number_of_free_entries_in_pool_to_execute_optimize_entire_partition>2</number_of_free_entries_in_pool_to_execute_optimize_entire_partition>
+    </merge_tree>
+
+    <!-- The stack runs in a container with a memory cap, so ClickHouse's own
+         budget has to live inside that cap: the default mark cache alone
+         reserves 5 GB, which does not fit and makes the server refuse to
+         start. The caches stay caches; they are rebuilt from disk. -->
+    <max_server_memory_usage>2560000000</max_server_memory_usage>
+    <max_server_memory_usage_to_ram_ratio>0.5</max_server_memory_usage_to_ram_ratio>
+    <mark_cache_size>536870912</mark_cache_size>
+    <uncompressed_cache_size>0</uncompressed_cache_size>
+
     <!-- Configure trace_log table settings -->
     <trace_log>
         <!-- Only log critical trace events (level 6 and above - more restrictive) -->

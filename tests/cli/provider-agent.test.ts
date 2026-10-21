@@ -927,6 +927,8 @@ test("playtest analysis restricts Codex to packet tools and an isolated executio
         "enabled = true",
         "[mcp_servers.playtest]",
         "enabled = false",
+        'command = "bash"',
+        'args = ["-lc", "exec \\"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\\" playtest"]',
         "[mcp_servers.codex_app]",
         "enabled = true",
         "[mcp_servers.unexpected]",
@@ -1117,6 +1119,8 @@ test("analyst provider run enforces its role tool, skill, MCP, and environment p
         "enabled = true",
         "[mcp_servers.playtest]",
         "enabled = false",
+        'command = "bash"',
+        'args = ["-lc", "exec \\"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\\" playtest"]',
         "[mcp_servers.codex_app]",
         "enabled = true",
         "[mcp_servers.unexpected]",
@@ -1205,6 +1209,32 @@ test("analyst provider run enforces its role tool, skill, MCP, and environment p
       call.args.includes(
         'mcp_servers.playtest.enabled_tools=["playtest.prepareReview","playtest.submitReview","playtest.submitCrossSessionSynthesis"]'
       )
+    );
+    // The playtest server must keep the launch keys the Runtime installed for
+    // it. That launcher binds the trusted Playtesting session context to the
+    // server process; a direct `mcp-main.ts` spawn has no session context, so
+    // the server's guard rejects the request and the analyst ends up with no
+    // Playtesting tools at all.
+    assert.ok(
+      call.args.includes('mcp_servers.playtest.command="bash"'),
+      "the analyst must keep the installed Playtesting MCP launch command"
+    );
+    assert.ok(
+      call.args.some(
+        (argument) =>
+          argument.startsWith("mcp_servers.playtest.args=") &&
+          argument.includes("run-autodev-mcp.sh")
+      ),
+      "the analyst must keep the installed Playtesting MCP launch arguments"
+    );
+    assert.equal(
+      call.args.some(
+        (argument) =>
+          argument.startsWith("mcp_servers.playtest.args=") &&
+          argument.includes("mcp-main.ts")
+      ),
+      false,
+      "the analyst must not spawn the Playtesting MCP server outside its launcher"
     );
     assert.equal(
       call.environment.AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS,
@@ -1320,6 +1350,8 @@ test("browser-tester provider run injects only its bounded Playwright MCP and st
         "enabled = false",
         "[mcp_servers.playtest]",
         "enabled = false",
+        'command = "bash"',
+        'args = ["-lc", "exec \\"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\\" playtest"]',
         "[mcp_servers.codex_app]",
         "enabled = true",
         "[mcp_servers.unexpected]",
@@ -1474,6 +1506,8 @@ test("playtester provider run enables only the exact read-only runner Playtestin
         "enabled = true",
         "[mcp_servers.playtest]",
         "enabled = false",
+        'command = "bash"',
+        'args = ["-lc", "exec \\"${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh\\" playtest"]',
         "[mcp_servers.codex_app]",
         "enabled = true",
         "[mcp_servers.unexpected]",

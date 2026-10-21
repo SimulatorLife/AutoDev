@@ -26,10 +26,17 @@
 #   - The upstream image/source is pinned via OPENLIT_IMAGE / OPENLIT_TAG
 #     in `config/openlit/openlit.env`.
 
+# Resource caps are deliberate: this stack shares the developer machine with
+# the runtime it observes. ClickHouse merges a high-volume trace table
+# continuously, and an unbounded container takes every core the host has --
+# which starves the Model Router and the Console that the telemetry is
+# supposed to describe. Telemetry is best-effort; the runtime is not.
 services:
   clickhouse:
     image: clickhouse/clickhouse-server:24.4.1
     container_name: openlit-clickhouse
+    cpus: "2.0"
+    mem_limit: 3g
     labels:
       io.autodev.openlit.clickhouse-config-sha256: ${AUTODEV_OPENLIT_CLICKHOUSE_CONFIG_HASH:?computed by scripts/openlit/up.sh}
     environment:
@@ -63,6 +70,11 @@ services:
     image: ${OPENLIT_IMAGE:-autodev-openlit:openlit-9938c6663866-patched}
     container_name: openlit
     init: true
+    # The OpenLIT UI answers trace queries with full scans of the trace
+    # table. On a developer machine that scan must not take the cores the
+    # Model Router needs to answer a request.
+    cpus: "1.0"
+    mem_limit: 1g
     labels:
       io.autodev.openlit.collector-config-sha256: ${AUTODEV_OPENLIT_OTEL_CONFIG_HASH:?computed by scripts/openlit/up.sh}
     extra_hosts:

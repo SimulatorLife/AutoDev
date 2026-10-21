@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -12,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   findCocoindexProjectRoot,
@@ -20,6 +22,9 @@ import {
   runMcp
 } from "@simulatorlife/autodev-runtime/mcp";
 import { MCP_SERVER_CODEGRAPHCONTEXT } from "@simulatorlife/autodev-runtime/shared/tool-names";
+
+const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+const mcpLauncherHook = join(repositoryRoot, "scripts", "run-autodev-mcp.sh");
 
 function createIsolatedTempDir(prefix: string): string {
   const candidates = Array.from(new Set(["/var/tmp", tmpdir()]));
@@ -73,9 +78,115 @@ test("MCP launcher resolves pinned AutoDev binaries without shell commands", () 
   );
   assert.deepEqual(resolveMcpCommand("playtest", "/repo"), {
     binary: process.execPath,
-    args: ["/repo/runtime/src/playtesting/mcp-main.ts"],
+    args: ["/repo/src/playtesting/mcp-main.ts"],
     pathPrepend: []
   });
+});
+
+test("MCP launcher resolves the playtest server in both Runtime layouts", () => {
+  // The Runtime lives at <root>/runtime/src in a checkout and at <root>/src
+  // once it is materialized into CODEX_HOME. The root alone does not say which
+  // layout it is, so the server module has to be resolved from the layout
+  // rather than by joining one fixed prefix onto the root: the analyst's
+  // playtest MCP server is launched from the materialized tree, and pointing it
+  // at <root>/runtime/src made it exit on startup, so the analyst could call
+  // no playtest tool and submitted no review.
+  const checkout = createIsolatedTempDir("autodev-mcp-checkout-");
+  const materialized = createIsolatedTempDir("autodev-mcp-materialized-");
+  try {
+    mkdirSync(join(checkout, "runtime"), { recursive: true });
+    writeFileSync(join(checkout, "runtime", "package.json"), "{}\n");
+    mkdirSync(join(materialized, "src", "playtesting"), { recursive: true });
+
+    assert.deepEqual(resolveMcpCommand("playtest", checkout).args, [
+      join(checkout, "runtime", "src", "playtesting", "mcp-main.ts")
+    ]);
+    assert.deepEqual(resolveMcpCommand("playtest", materialized).args, [
+      join(materialized, "src", "playtesting", "mcp-main.ts")
+    ]);
+  } finally {
+    rmSync(checkout, { recursive: true, force: true });
+    rmSync(materialized, { recursive: true, force: true });
+  }
+});
+
+test("the MCP launcher hook finds the launcher in both Runtime layouts", () => {
+  // The hook is the OS boundary the installed Codex configuration calls, and it
+  // is copied into CODEX_HOME/hooks, where its root is the materialized tree.
+  // Resolving only the checkout layout made the playtest MCP server fail to
+  // start, which the analyst reported as no reachable playtest tools.
+  const checkout = createIsolatedTempDir("autodev-mcp-hook-checkout-");
+  const materialized = createIsolatedTempDir("autodev-mcp-hook-materialized-");
+  try {
+    const checkoutLauncher = join(
+      checkout,
+      "runtime",
+      "src",
+      "mcp",
+      "launcher.ts"
+    );
+    const materializedLauncher = join(
+      materialized,
+      "src",
+      "mcp",
+      "launcher.ts"
+    );
+    mkdirSync(dirname(checkoutLauncher), { recursive: true });
+    mkdirSync(dirname(materializedLauncher), { recursive: true });
+    writeFileSync(checkoutLauncher, "export {};\n");
+    writeFileSync(materializedLauncher, "export {};\n");
+
+    for (const [root, expected] of [
+      [checkout, checkoutLauncher],
+      [materialized, materializedLauncher]
+    ] as const) {
+      const seen = join(root, "seen-args");
+      const fakeNode = join(root, "fake-node");
+      writeFileSync(
+        fakeNode,
+        `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${seen}"\n`
+      );
+      chmodSync(fakeNode, 0o755);
+
+      const result = spawnSync("bash", [mcpLauncherHook, "playtest"], {
+        env: {
+          ...process.env,
+          AUTODEV_REPO_ROOT: root,
+          AUTODEV_NODE_BIN: fakeNode
+        },
+        encoding: "utf8"
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(readFileSync(seen, "utf8").trim().split("\n"), [
+        expected,
+        "playtest"
+      ]);
+    }
+  } finally {
+    rmSync(checkout, { recursive: true, force: true });
+    rmSync(materialized, { recursive: true, force: true });
+  }
+});
+
+test("the MCP launcher hook reports a root that holds no launcher", () => {
+  const empty = createIsolatedTempDir("autodev-mcp-hook-empty-");
+  try {
+    const fakeNode = join(empty, "fake-node");
+    writeFileSync(fakeNode, "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(fakeNode, 0o755);
+    const result = spawnSync("bash", [mcpLauncherHook, "playtest"], {
+      env: {
+        ...process.env,
+        AUTODEV_REPO_ROOT: empty,
+        AUTODEV_NODE_BIN: fakeNode
+      },
+      encoding: "utf8"
+    });
+    assert.equal(result.status, 127);
+    assert.match(result.stderr, /launcher module not found/);
+  } finally {
+    rmSync(empty, { recursive: true, force: true });
+  }
 });
 
 test("MCP launcher fails clearly when codegraphcontext is missing", () => {

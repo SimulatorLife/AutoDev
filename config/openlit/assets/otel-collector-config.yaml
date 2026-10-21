@@ -19,11 +19,32 @@ receivers:
 processors:
   batch:
   memory_limiter:
-    # 80% of maximum memory up to 2G
-    limit_mib: 1500
-    # 25% of limit up to 2G
-    spike_limit_mib: 512
+    # The collector shares the OpenLIT container with the UI server, so its own
+    # budget is a fraction of the container envelope. The limiter governs the
+    # collector's RSS only; the UI server's heap is capped separately by the
+    # container entrypoint.
+    limit_mib: 640
+    spike_limit_mib: 192
     check_interval: 5s
+  # The Codex CLI exports an internal span for every operation it performs
+  # (receiving a request, persisting a rollout item, tracking conversation
+  # state). On a developer machine that is two orders of magnitude more spans
+  # than the router's own telemetry -- 5.3 million against 26 thousand over two
+  # days -- and the trace table it produces merges continuously, which starves
+  # the very runtime the stack exists to observe. Those spans are the CLI's
+  # internal debug trace, not AutoDev telemetry: the usage views filter on the
+  # router's service name, so dropping them costs the product nothing.
+  #
+  # The condition addresses the resource attribute through `resource.attributes`;
+  # a bare `service.name` is not a valid OTTL path in the span or log context.
+  filter/drop_codex_internal:
+    error_mode: ignore
+    traces:
+      span:
+        - 'resource.attributes["service.name"] == "codex-app-server"'
+    logs:
+      log_record:
+        - 'resource.attributes["service.name"] == "codex-app-server"'
 
 exporters:
   clickhouse:
@@ -48,11 +69,11 @@ service:
   pipelines:
     logs:
       receivers: [otlp]
-      processors: [batch]
+      processors: [filter/drop_codex_internal, batch]
       exporters: [clickhouse]
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
+      processors: [memory_limiter, filter/drop_codex_internal, batch]
       exporters: [clickhouse]
     metrics:
       receivers: [otlp]

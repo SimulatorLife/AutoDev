@@ -9,7 +9,10 @@ import {
   resolveCodeGraphContextBinary
 } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
-import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+import {
+  resolveRuntimeSourcePath,
+  resolveRuntimeSourceRoot
+} from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   MCP_SERVER_CODEGRAPHCONTEXT,
   MCP_SERVER_PLAYTEST
@@ -75,7 +78,13 @@ export function resolveMcpCommand(
   if (tool === MCP_SERVER_PLAYTEST || tool === "playtest") {
     return {
       binary: process.execPath,
-      args: [path.join(repoRoot, "runtime/src/playtesting/mcp-main.ts")],
+      // The Runtime lives at <root>/runtime/src in a checkout and at
+      // <root>/src once it is materialized into CODEX_HOME. The root alone does
+      // not say which layout it is, so the module path has to come from the
+      // resolver that knows both; joining "runtime/src" onto the root points
+      // the server at a path that does not exist in the installed tree, and the
+      // MCP server dies on startup instead of serving the playtest tools.
+      args: [resolveRuntimeSourcePath(repoRoot, "playtesting/mcp-main.ts")],
       pathPrepend: []
     };
   }
