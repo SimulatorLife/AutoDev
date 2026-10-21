@@ -215,19 +215,35 @@ test("MiniMax model discovery refuses malformed and oversized listings", async (
   );
 });
 
-test("Codex discovery queries the authenticated account model endpoint", async () => {
+/**
+ * Codex discovery asks the Codex CLI for its version before it queries the
+ * account, so a test that exercises the discovery itself has to answer that
+ * question. A host without a Codex installation cannot, and a test that waits
+ * for one measures the host rather than the discovery.
+ */
+async function withFakeCodexBinary<T>(callback: () => Promise<T>): Promise<T> {
   const directory = mkdtempSync(join(tmpdir(), "autodev-codex-model-list-"));
   const binary = join(directory, "codex");
   const previousCodexBin = process.env.CODEX_BIN;
   writeFileSync(binary, "#!/bin/sh\nprintf 'codex-cli 0.154.0\\n'\n");
   chmodSync(binary, 0o755);
   process.env.CODEX_BIN = binary;
-  const requests: Array<{
-    url: string;
-    authorization: string | null;
-    accountId: string | null;
-  }> = [];
   try {
+    return await callback();
+  } finally {
+    if (previousCodexBin === undefined) delete process.env.CODEX_BIN;
+    else process.env.CODEX_BIN = previousCodexBin;
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+test("Codex discovery queries the authenticated account model endpoint", async () => {
+  await withFakeCodexBinary(async () => {
+    const requests: Array<{
+      url: string;
+      authorization: string | null;
+      accountId: string | null;
+    }> = [];
     const models = await discoverCodexModels(
       async (input, init) => {
         const headers = new Headers(init?.headers);
@@ -265,41 +281,39 @@ test("Codex discovery queries the authenticated account model endpoint", async (
       [],
       "an empty successful account listing is an observation"
     );
-  } finally {
-    if (previousCodexBin === undefined) delete process.env.CODEX_BIN;
-    else process.env.CODEX_BIN = previousCodexBin;
-    rmSync(directory, { recursive: true, force: true });
-  }
+  });
 });
 
 test("Codex discovery rejects malformed account listings without leaking auth", async () => {
-  await assert.rejects(
-    discoverCodexModels(
-      async () => Response.json({ models: [{ slug: "invalid/model" }] }),
-      async () => ({ token: "fixture-secret", accountId: "fixture-account" })
-    ),
-    /invalid or duplicate model ID/u
-  );
-  await assert.rejects(
-    discoverCodexModels(
-      async () => {
-        throw new Error("network error");
-      },
-      async () => {
-        throw new Error(
-          "invalid auth at /private/path with secret fixture-secret"
+  await withFakeCodexBinary(async () => {
+    await assert.rejects(
+      discoverCodexModels(
+        async () => Response.json({ models: [{ slug: "invalid/model" }] }),
+        async () => ({ token: "fixture-secret", accountId: "fixture-account" })
+      ),
+      /invalid or duplicate model ID/u
+    );
+    await assert.rejects(
+      discoverCodexModels(
+        async () => {
+          throw new Error("network error");
+        },
+        async () => {
+          throw new Error(
+            "invalid auth at /private/path with secret fixture-secret"
+          );
+        }
+      ),
+      (error: Error) => {
+        assert.equal(
+          error.message,
+          "Codex account authentication is unavailable for model discovery."
         );
+        assert.doesNotMatch(error.message, /fixture-secret|private\/path/u);
+        return true;
       }
-    ),
-    (error: Error) => {
-      assert.equal(
-        error.message,
-        "Codex account authentication is unavailable for model discovery."
-      );
-      assert.doesNotMatch(error.message, /fixture-secret|private\/path/u);
-      return true;
-    }
-  );
+    );
+  });
 });
 
 test("discovery snapshots distinguish observed-empty, unavailable, and unsupported routes", async () => {
