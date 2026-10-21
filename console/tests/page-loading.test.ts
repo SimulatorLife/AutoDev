@@ -36,7 +36,10 @@ const DATA_READING_ROUTES = [
 ];
 
 function routeSource(relativePath: string): string {
-  return readFileSync(new URL(`../app/${relativePath}`, import.meta.url), "utf8");
+  return readFileSync(
+    new URL(`../app/${relativePath}`, import.meta.url),
+    "utf8"
+  );
 }
 
 test("the pending shell keeps the active shell and announces pending data", () => {
