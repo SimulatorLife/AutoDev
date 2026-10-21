@@ -298,6 +298,24 @@ const RETRYABLE_NETWORK_CODES = new Set([
   "ETIMEDOUT"
 ]);
 
+/**
+ * The Console's own deadline and a caller's abort, combined.
+ *
+ * A caller-supplied signal used to *replace* the deadline, which quietly
+ * removed the Console's promise that a service it cannot read becomes an
+ * explicit state: the read then waited for the caller instead, and a caller
+ * that waits for the read waits forever -- a page that never renders. The
+ * deadline belongs to the Console, so it has to hold whatever the caller
+ * asked for; the caller's abort only ever ends the read sooner.
+ */
+function deadlineSignal(
+  controller: AbortController,
+  callerSignal: AbortSignal | undefined
+): AbortSignal {
+  if (!callerSignal) return controller.signal;
+  return AbortSignal.any([controller.signal, callerSignal]);
+}
+
 function isRetryableNetworkError(error: unknown): boolean {
   const cause = (error as { readonly cause?: unknown } | null | undefined)
     ?.cause;
@@ -378,7 +396,7 @@ export async function fetchControlApi<T>(
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs ?? CONTROL_API_TIMEOUT_MS;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const signal = options.signal ?? controller.signal;
+  const signal = deadlineSignal(controller, options.signal);
 
   try {
     return await withControlApiRetry(
@@ -516,7 +534,7 @@ export async function fetchControlApiBinary(
           fetchImpl,
           path,
           config,
-          options.signal ?? controller.signal
+          deadlineSignal(controller, options.signal)
         ),
       {
         maxRetries: options.maxRetries ?? 2,
@@ -675,7 +693,7 @@ async function mutateControlApi<T>(
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs ?? CONTROL_API_TIMEOUT_MS;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const signal = options.signal ?? controller.signal;
+  const signal = deadlineSignal(controller, options.signal);
 
   let response: Response;
   try {

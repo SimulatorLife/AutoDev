@@ -41,6 +41,20 @@ type ProxyState = (typeof STATES)[number];
 
 const DELAY_MS = Number(process.env.AUTODEV_STATE_PROXY_DELAY_MS ?? 3000);
 
+/**
+ * How long the proxy waits for the service it stands in front of.
+ *
+ * A service that accepts a request and then never answers is a state the
+ * Console has to answer for, but the proxy used to wait on it forever: the
+ * Console's read then waited on the proxy, and the page an operator opens
+ * waited with it. The proxy's own deadline is longer than the Console's
+ * five-second one on purpose -- the Console's deadline is the one that
+ * should normally fire, and this is the backstop for a read that outlives it.
+ */
+const UPSTREAM_TIMEOUT_MS = Number(
+  process.env.AUTODEV_STATE_PROXY_UPSTREAM_TIMEOUT_MS ?? 10_000
+);
+
 let state: ProxyState = "normal";
 
 function isProxyState(value: unknown): value is ProxyState {
@@ -164,18 +178,25 @@ const server = createServer(
         authorization: headerValue(request.headers.authorization),
         "x-autodev-actor": headerValue(request.headers["x-autodev-actor"]),
         "content-type":
-          headerValue(request.headers["content-type"]) || "application/json"
+          headerValue(request.headers["content-type"]) || "application/json",
+        // One connection per forwarded request. A pooled connection can be one
+        // the service has already closed, and a request written into a closed
+        // connection is never answered -- the caller waits for an answer that
+        // cannot arrive. The traffic here is a test fixture's, so the
+        // connection cost is not worth a hang.
+        connection: "close"
       },
       body:
         request.method === "GET" || request.method === "HEAD"
           ? null
-          : await readBody(request)
+          : await readBody(request),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)
     }).catch(() => null);
     if (upstream === null) {
-      // The service this proxy stands in front of is not there. That is a
-      // state the Console has to answer for, not a reason for the proxy to
-      // fall over: a harness that dies with its upstream cannot measure the
-      // degraded states it exists to measure.
+      // The service this proxy stands in front of is not there, or it did not
+      // answer in time. That is a state the Console has to answer for, not a
+      // reason for the proxy to fall over: a harness that dies with its
+      // upstream cannot measure the degraded states it exists to measure.
       const answer = degradedAnswer("unavailable");
       sendJson(response, answer.status, answer.body);
       return;
