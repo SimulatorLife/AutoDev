@@ -48,7 +48,6 @@ import {
 } from "../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
-  ConsolePendingPage,
   controlApiCredentialUnavailable,
   readNodeContext,
   ResourceUnavailable
@@ -89,14 +88,6 @@ interface ParsedMemoryParams {
 }
 
 const MEMORY_TABS = ["records", "experiences", "cohorts"] as const;
-
-/**
- * The page's own read answered, but not with the memory records.
- *
- * The record read and the status read are separate, so the page can know that
- * the records are unreadable and still say why the storage is unhealthy.
- */
-const RECORDS_UNAVAILABLE = "records-unavailable";
 
 function parseMemoryQueryParams(
   raw: Record<string, string | string[] | undefined>
@@ -368,7 +359,7 @@ interface MemoryPageReadData extends MemoryReadResults {
 
 type MemoryPageReadResult =
   | {
-      readonly kind: typeof RECORDS_UNAVAILABLE;
+      readonly kind: "records-unavailable";
       readonly result: MemoryRecordsFailure;
       /**
        * Carried onto the failure path, and read there for the reason the failure
@@ -541,7 +532,7 @@ async function fetchMemoryPageData(
     )
   ]);
   if (recordsResult.kind !== "ok") {
-    return { kind: RECORDS_UNAVAILABLE, result: recordsResult, status };
+    return { kind: "records-unavailable", result: recordsResult, status };
   }
 
   const [selectedRecord, selectedExperience, experiences, cohorts, useCohorts] =
@@ -842,74 +833,6 @@ export const metadata: Metadata = {
   title: "Memory"
 };
 
-/**
- * What the page's own reads answered.
- *
- * The workspace scope is read before the page's data, because the scope
- * decides which repository the data is about. Both reads are started by the
- * page and awaited by the content below the page's pending boundary, so the
- * shell is on screen while they are on their way.
- */
-type MemoryPageLoad =
-  | {
-      readonly kind: "unavailable";
-      readonly title: string;
-      readonly code: string;
-      readonly message: string;
-    }
-  | {
-      readonly kind: typeof RECORDS_UNAVAILABLE;
-      readonly result: Exclude<
-        ControlApiResult<ControlApiMemoryRecordsResponse>,
-        { readonly kind: "ok" }
-      >;
-      readonly status: MemoryStatusResult;
-    }
-  | {
-      readonly kind: "ok";
-      readonly workspaces: readonly WorkspaceEntry[];
-      readonly currentWorkspaceId: string;
-      readonly data: MemoryPageReadData;
-    };
-
-async function loadMemoryPage(
-  params: ParsedMemoryParams,
-  config: ControlApiConfig
-): Promise<MemoryPageLoad> {
-  // Resolve the URL scope exclusively against the canonical workspace source.
-  const workspaceScope = await resolveMemoryWorkspaceScope(
-    config,
-    params.workspaceIdParam
-  );
-  if (workspaceScope.kind !== "ok") {
-    return {
-      kind: "unavailable",
-      title: workspaceScope.title,
-      code: workspaceScope.code,
-      message: workspaceScope.message
-    };
-  }
-  const { workspaces, currentWorkspaceId } = workspaceScope.scope;
-  const pageResult = await fetchMemoryPageData(
-    params,
-    currentWorkspaceId,
-    config
-  );
-  if (pageResult.kind === RECORDS_UNAVAILABLE) {
-    return {
-      kind: RECORDS_UNAVAILABLE,
-      result: pageResult.result,
-      status: pageResult.status
-    };
-  }
-  return {
-    kind: "ok",
-    workspaces,
-    currentWorkspaceId,
-    data: pageResult.data
-  };
-}
-
 export default async function MemoryPage(
   props: PageProps
 ): Promise<React.JSX.Element> {
@@ -920,44 +843,34 @@ export default async function MemoryPage(
 
   if (!config) return renderNoControlApiShell();
 
-  // The read starts here and is not awaited: the page renders its shell first,
-  // so the operator sees the surface they asked for while the Runtime is asked
-  // for its answer.
-  const pageLoad = loadMemoryPage(params, config);
-  return React.createElement(
-    ConsolePendingPage,
-    null,
-    React.createElement(MemoryContent, { pageLoad, params, rawParams })
+  // Resolve the URL scope exclusively against the canonical workspace source.
+  const workspaceScope = await resolveMemoryWorkspaceScope(
+    config,
+    params.workspaceIdParam
   );
-}
+  if (workspaceScope.kind !== "ok") {
+    return renderMemoryUnavailable(
+      workspaceScope.title,
+      workspaceScope.code,
+      workspaceScope.message
+    );
+  }
+  const { workspaces, currentWorkspaceId } = workspaceScope.scope;
 
-/**
- * The memory the Runtime confirmed, or the reason it could not answer.
- *
- * The read is awaited here, below the page's own pending boundary, so the
- * shell and the placeholder are already on screen while it is on its way.
- */
-async function MemoryContent({
-  pageLoad,
-  params,
-  rawParams
-}: {
-  readonly pageLoad: Promise<MemoryPageLoad>;
-  readonly params: ParsedMemoryParams;
-  readonly rawParams: Record<string, string | string[] | undefined>;
-}): Promise<React.JSX.Element> {
-  const loaded = await pageLoad;
-  if (loaded.kind === "unavailable") {
-    return renderMemoryUnavailable(loaded.title, loaded.code, loaded.message);
+  const pageResult = await fetchMemoryPageData(
+    params,
+    currentWorkspaceId,
+    config
+  );
+  if (pageResult.kind === "records-unavailable") {
+    return renderRecordsUnavailableShell(pageResult.result, pageResult.status);
   }
-  if (loaded.kind === RECORDS_UNAVAILABLE) {
-    return renderRecordsUnavailableShell(loaded.result, loaded.status);
-  }
+
   return renderMemoryContent(
     params,
     rawParams,
-    loaded.workspaces,
-    loaded.currentWorkspaceId,
-    loaded.data
+    workspaces,
+    currentWorkspaceId,
+    pageResult.data
   );
 }

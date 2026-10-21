@@ -12,7 +12,6 @@ import {
 import { AppNav } from "../navigation/AppNav.ts";
 import { NavigationLink } from "../navigation/NavigationLink.ts";
 import { MUTED_META_CLASS, MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
-import { ConsoleLoadingBody } from "./ConsoleLoadingBody.ts";
 import { PageBody } from "./PageBody.ts";
 import { DETAIL_PANEL_CLASS, DETAIL_PANEL_SHAPE } from "./Panel.ts";
 import { SkipLink } from "./SkipLink.ts";
@@ -143,11 +142,8 @@ export function AppShell({
 }
 
 /**
- * The page's pending shell.
- *
- * A page whose server-owned read is still on its way shows this: the same
- * navigation and page frame the page will have when it answers, with the
- * placeholder where the page's own content will be.
+ * The route-level loading boundary keeps the same navigation and page frame
+ * visible while a dynamic page waits for its server-owned data.
  */
 export function ConsoleLoadingShell(): React.JSX.Element {
   const pathname = usePathname();
@@ -155,7 +151,7 @@ export function ConsoleLoadingShell(): React.JSX.Element {
   return React.createElement(ConsoleLoadingPage, { activeSection });
 }
 
-/** Accessible shell used while the Console page's server data is pending. */
+/** Accessible fallback used while the Console page's server data is pending. */
 export function ConsoleLoadingPage({
   activeSection
 }: {
@@ -164,7 +160,40 @@ export function ConsoleLoadingPage({
   return React.createElement(
     AppShell,
     { activeSection },
-    React.createElement(ConsoleLoadingBody, { activeSection })
+    React.createElement(
+      "div",
+      {
+        "data-console-loading": activeSection,
+        "aria-busy": true,
+        className: "flex flex-col gap-4"
+      },
+      React.createElement(
+        "p",
+        {
+          role: "status",
+          "aria-live": "polite",
+          className: MUTED_TEXT_CLASS
+        },
+        `Loading ${activeSection.toLowerCase()}…`
+      ),
+      React.createElement(
+        "div",
+        {
+          "aria-hidden": true,
+          className: "grid grid-cols-1 gap-4 sm:grid-cols-3"
+        },
+        ...Array.from({ length: 3 }, (_, index) =>
+          React.createElement("div", {
+            key: index,
+            className: "h-24 rounded-lg border border-border bg-surface/60"
+          })
+        )
+      ),
+      React.createElement("div", {
+        "aria-hidden": true,
+        className: "h-80 rounded-lg border border-border bg-surface/60"
+      })
+    )
   );
 }
 

@@ -1,4 +1,3 @@
-import type { CanonicalNavSection } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
@@ -11,7 +10,6 @@ import {
 } from "../../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
-  ConsolePendingPage,
   controlApiCredentialUnavailable,
   readNodeContext,
   ResourceUnavailable
@@ -64,44 +62,10 @@ export default async function McpDetailPage({
     );
   }
 
-  // The reads start here and are not awaited: the page's own boundary keeps
-  // the pending shell on screen while the Runtime is asked for its answer.
-  const mcps = fetchMcps(config);
-  const tools = activeTab === "tools" ? fetchTools(config) : null;
-
-  return React.createElement(
-    ConsolePendingPage,
-    null,
-    React.createElement(McpDetailContent, {
-      section,
-      mcps,
-      tools,
-      name,
-      activeTab
-    })
-  );
-}
-
-/**
- * The MCP server the Runtime confirmed, or the reason it could not answer.
- *
- * The read is awaited here, below the page's own pending boundary, so the
- * pending shell is already on screen while it is on its way.
- */
-async function McpDetailContent({
-  section,
-  mcps: mcpsPromise,
-  tools: toolsPromise,
-  name,
-  activeTab
-}: {
-  readonly section: CanonicalNavSection;
-  readonly mcps: Promise<Awaited<ReturnType<typeof fetchMcps>>>;
-  readonly tools: Promise<Awaited<ReturnType<typeof fetchTools>>> | null;
-  readonly name: string;
-  readonly activeTab: string | undefined;
-}): Promise<React.JSX.Element> {
-  const [result, toolsResult] = await Promise.all([mcpsPromise, toolsPromise]);
+  const [result, toolsResult] = await Promise.all([
+    fetchMcps(config),
+    activeTab === "tools" ? fetchTools(config) : Promise.resolve(null)
+  ]);
   if (result.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,

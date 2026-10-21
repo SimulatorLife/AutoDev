@@ -8,10 +8,7 @@
 import { type CanonicalNavSection } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import {
-  AppShell,
-  ConsoleLoadingShell
-} from "../src/components/layout/AppShell.ts";
+import { AppShell } from "../src/components/layout/AppShell.ts";
 import { DETAIL_PANEL_SHAPE } from "../src/components/layout/Panel.ts";
 import { MUTED_META_CLASS } from "../src/components/ui/text-classes.ts";
 import { canonicalSectionFromPath } from "../src/lib/routes.ts";
@@ -230,32 +227,6 @@ export function ConsolePageShell({
   return React.createElement(
     AppShell,
     { activeSection: section, counts, description, actions },
-    children
-  );
-}
-
-/**
- * The page, while its own read is pending.
- *
- * The boundary belongs to the page, not to the route. A route-level boundary
- * splits the route segment itself: the shell and the page arrive as two
- * answers, the segment is replaced in the middle of the navigation, and the
- * navigation's commit -- the one that moves the address bar -- goes with it.
- * A page-level boundary leaves the segment whole, so the address bar and the
- * page move together.
- *
- * `children` is the page's own content, which reads its server-owned data
- * where it is rendered. Until that read answers, the pending shell is what
- * the operator sees.
- */
-export function ConsolePendingPage({
-  children
-}: {
-  readonly children?: React.ReactNode | undefined;
-}): React.JSX.Element {
-  return React.createElement(
-    React.Suspense,
-    { fallback: React.createElement(ConsoleLoadingShell) },
     children
   );
 }

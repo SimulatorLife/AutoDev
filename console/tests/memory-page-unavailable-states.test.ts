@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { renderToStaticMarkup } from "react-dom/server";
+
 import MemoryPage from "../app/memory/page.ts";
-import { renderPageMarkup } from "./render-page.ts";
 
 /**
  * The states the memory page can be in that nothing was reaching.
@@ -213,7 +214,7 @@ async function renderMemoryPage(
       if (!response) throw new Error(`Unexpected Memory page request: ${path}`);
       return response;
     }) as typeof fetch;
-    const markup = await renderPageMarkup(
+    const markup = renderToStaticMarkup(
       await MemoryPage({ searchParams: Promise.resolve(searchParams) })
     );
     return { markup, paths };

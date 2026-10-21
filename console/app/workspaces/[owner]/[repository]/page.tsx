@@ -1,4 +1,3 @@
-import type { CanonicalNavSection } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
@@ -18,7 +17,6 @@ import {
 } from "../../../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
-  ConsolePendingPage,
   controlApiCredentialUnavailable,
   readNodeContext,
   ResourceUnavailable
@@ -39,37 +37,38 @@ export async function generateMetadata({
   return { title: `${owner}/${repository} · Workspaces` };
 }
 
-/**
- * The workspace the catalog confirmed, or the reason it could not be read.
- *
- * The reads are awaited here, below the page's own pending boundary, so the
- * pending shell is already on screen while they are on their way.
- */
-async function WorkspaceDetailContent({
-  section,
-  catalog,
-  approval,
-  visualTargets,
-  requestSource,
-  id,
-  query
+export default async function WorkspaceDetailPage({
+  params,
+  searchParams
 }: {
-  readonly section: CanonicalNavSection;
-  readonly catalog: Promise<Awaited<ReturnType<typeof fetchWorkspaces>>>;
-  readonly approval: Promise<
-    Awaited<ReturnType<typeof fetchWorkspacePlaytestApproval>>
+  readonly params: Promise<{
+    readonly owner: string;
+    readonly repository: string;
+  }>;
+  readonly searchParams?: Promise<
+    Record<string, string | string[] | undefined>
   >;
-  readonly visualTargets: Promise<
-    Awaited<ReturnType<typeof fetchWorkspaceVisualPlaytestTargets>>
-  >;
-  readonly requestSource: Promise<
-    Awaited<ReturnType<typeof readWorkspaceRequestSource>>
-  >;
-  readonly id: string;
-  readonly query: Record<string, string | string[] | undefined>;
 }): Promise<React.JSX.Element> {
-  const [workspacesResult, approvalResult, visualTargetsResult, source] =
-    await Promise.all([catalog, approval, visualTargets, requestSource]);
+  const { owner, repository } = await params;
+  const id = `${owner}/${repository}`;
+  const { section, config } = readNodeContext("/workspaces");
+  if (!config) {
+    return React.createElement(
+      ConsolePageShell,
+      { section },
+      controlApiCredentialUnavailable("workspace configuration")
+    );
+  }
+  if (!isWorkspaceId(id)) notFound();
+
+  const query = (await searchParams) ?? {};
+  const [workspacesResult, approvalResult, visualTargetsResult, requestSource] =
+    await Promise.all([
+      fetchWorkspaces(config),
+      fetchWorkspacePlaytestApproval(id, config),
+      fetchWorkspaceVisualPlaytestTargets(id, config),
+      readWorkspaceRequestSource()
+    ]);
 
   if (workspacesResult.kind !== "ok") {
     return React.createElement(
@@ -124,55 +123,9 @@ async function WorkspaceDetailContent({
               code: controlApiFailureCode(visualTargetsResult),
               message: visualTargetsResult.message
             },
-      requests: workspaceRequestReading(source, id),
+      requests: workspaceRequestReading(requestSource, id),
       controlFailed: isControlFailure(query.control),
       refusal: readControlRefusal(query.refusal)
-    })
-  );
-}
-
-export default async function WorkspaceDetailPage({
-  params,
-  searchParams
-}: {
-  readonly params: Promise<{
-    readonly owner: string;
-    readonly repository: string;
-  }>;
-  readonly searchParams?: Promise<
-    Record<string, string | string[] | undefined>
-  >;
-}): Promise<React.JSX.Element> {
-  const { owner, repository } = await params;
-  const id = `${owner}/${repository}`;
-  const { section, config } = readNodeContext("/workspaces");
-  if (!config) {
-    return React.createElement(
-      ConsolePageShell,
-      { section },
-      controlApiCredentialUnavailable("workspace configuration")
-    );
-  }
-  if (!isWorkspaceId(id)) notFound();
-
-  const query = (await searchParams) ?? {};
-  // The reads start here and are not awaited: the page's own boundary keeps
-  // the pending shell on screen while the Runtime is asked for its answer.
-  const catalog = fetchWorkspaces(config);
-  const approval = fetchWorkspacePlaytestApproval(id, config);
-  const visualTargets = fetchWorkspaceVisualPlaytestTargets(id, config);
-  const requestSource = readWorkspaceRequestSource();
-  return React.createElement(
-    ConsolePendingPage,
-    null,
-    React.createElement(WorkspaceDetailContent, {
-      section,
-      catalog,
-      approval,
-      visualTargets,
-      requestSource,
-      id,
-      query
     })
   );
 }

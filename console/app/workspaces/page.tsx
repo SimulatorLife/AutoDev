@@ -1,4 +1,3 @@
-import type { CanonicalNavSection } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import React from "react";
 
@@ -14,7 +13,6 @@ import {
 } from "../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
-  ConsolePendingPage,
   controlApiCredentialUnavailable,
   readNodeContext,
   ResourceUnavailable
@@ -51,24 +49,16 @@ async function readApprovals(
   return new Map(entries);
 }
 
-/**
- * The workspace catalog, or the reason the Control API could not answer it.
- *
- * The catalog read is awaited here, below the page's own pending boundary, so
- * the pending shell is already on screen while it is on its way. The
- * approvals and the request usage are read from the catalog the read
- * answered, so they start once it has.
- */
-async function WorkspacesContent({
-  section,
-  catalog,
-  config
-}: {
-  readonly section: CanonicalNavSection;
-  readonly catalog: Promise<Awaited<ReturnType<typeof fetchWorkspaces>>>;
-  readonly config: ControlApiConfig;
-}): Promise<React.JSX.Element> {
-  const result = await catalog;
+export default async function WorkspacesPage(): Promise<React.JSX.Element> {
+  const { section, config } = readNodeContext("/workspaces");
+  if (!config) {
+    return React.createElement(
+      ConsolePageShell,
+      { section },
+      controlApiCredentialUnavailable("workspace configuration")
+    );
+  }
+  const result = await fetchWorkspaces(config);
   if (result.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
@@ -115,24 +105,5 @@ async function WorkspacesContent({
       counts: { Workspaces: workspaces.length }
     },
     React.createElement(WorkspacesView, { workspaces, approvals, requests })
-  );
-}
-
-export default function WorkspacesPage(): React.JSX.Element {
-  const { section, config } = readNodeContext("/workspaces");
-  if (!config) {
-    return React.createElement(
-      ConsolePageShell,
-      { section },
-      controlApiCredentialUnavailable("workspace configuration")
-    );
-  }
-  // The read starts here and is not awaited: the page's own boundary keeps
-  // the pending shell on screen while the Runtime is asked for its answer.
-  const catalog = fetchWorkspaces(config);
-  return React.createElement(
-    ConsolePendingPage,
-    null,
-    React.createElement(WorkspacesContent, { section, catalog, config })
   );
 }

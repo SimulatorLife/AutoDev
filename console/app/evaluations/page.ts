@@ -1,7 +1,4 @@
-import {
-  type CanonicalNavSection,
-  isOpenTelemetrySpanId
-} from "@simulatorlife/autodev-core";
+import { isOpenTelemetrySpanId } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import React from "react";
 
@@ -9,8 +6,6 @@ import {
   EVALUATION_RESULT_PARAM,
   EVALUATION_SPAN_PARAM,
   EVALUATIONS_PAGE_PARAM,
-  type EvaluationsFilters,
-  type EvaluationsTabId,
   filterEvaluations,
   filterOptionsFor,
   parseEvaluationsFilters,
@@ -30,7 +25,6 @@ import {
 import { loadOpenLITTrace } from "../../src/lib/server/openlit-usage.ts";
 import {
   ConsolePageShell,
-  ConsolePendingPage,
   controlApiCredentialUnavailable,
   readNodeContext,
   ResourceUnavailable
@@ -85,7 +79,7 @@ export const metadata: Metadata = {
 };
 
 function renderEvaluationsFailure(
-  section: CanonicalNavSection,
+  section: ReturnType<typeof readNodeContext>["section"],
   result: Exclude<Awaited<ReturnType<typeof fetchEvaluations>>, { kind: "ok" }>
 ): React.JSX.Element {
   const isTimeout = result.kind === "unreachable" && result.timedOut === true;
@@ -141,80 +135,24 @@ export default async function EvaluationsPage({
     );
   }
 
-  // The reads start here and are not awaited.
-  const result = fetchEvaluations(config);
-  const traceLookupResult =
+  const [result, traceLookupResult] = await Promise.all([
+    fetchEvaluations(config),
     spanIdValues !== undefined && !hasInvalidSpanSelection
       ? loadOpenLITTrace(requestedSpanId!)
-      : Promise.resolve(null);
-  return React.createElement(
-    ConsolePendingPage,
-    null,
-    React.createElement(EvaluationsContent, {
-      section,
-      result,
-      traceLookupResult,
-      filters,
-      tab,
-      page,
-      selectedResult,
-      spanIdValues,
-      requestedSpanId,
-      hasInvalidSpanSelection
-    })
-  );
-}
-
-/**
- * The retained evaluation results the Runtime confirmed, or the reason it
- * could not answer.
- *
- * The reads are awaited here, inside the page's own pending boundary. The
- * shell is rendered by the same component that read the data, so the
- * navigation's count arrives with the read instead of being resolved in the
- * browser.
- */
-async function EvaluationsContent({
-  section,
-  result,
-  traceLookupResult,
-  filters,
-  tab,
-  page,
-  selectedResult,
-  spanIdValues,
-  requestedSpanId,
-  hasInvalidSpanSelection
-}: {
-  readonly section: CanonicalNavSection;
-  readonly result: Promise<Awaited<ReturnType<typeof fetchEvaluations>>>;
-  readonly traceLookupResult: Promise<Awaited<
-    ReturnType<typeof loadOpenLITTrace>
-  > | null>;
-  readonly filters: EvaluationsFilters;
-  readonly tab: EvaluationsTabId;
-  readonly page: number;
-  readonly selectedResult: string | undefined;
-  readonly spanIdValues: string | readonly string[] | undefined;
-  readonly requestedSpanId: string | undefined;
-  readonly hasInvalidSpanSelection: boolean;
-}): Promise<React.JSX.Element> {
-  const [settled, traceLookupSettled] = await Promise.all([
-    result,
-    traceLookupResult
+      : Promise.resolve(null)
   ]);
-  if (settled.kind !== "ok") {
-    return renderEvaluationsFailure(section, settled);
+  if (result.kind !== "ok") {
+    return renderEvaluationsFailure(section, result);
   }
 
-  const available = settled.data.evaluations;
+  const available = result.data.evaluations;
   const placed = filterEvaluations(available, filters);
   const evaluations = placed.results;
-  const unread = unreadWindow(available, filters, settled.data.truncated);
+  const unread = unreadWindow(available, filters, result.data.truncated);
   const traceLookup = resolveTraceLookup(
     spanIdValues,
     hasInvalidSpanSelection,
-    traceLookupSettled
+    traceLookupResult
   );
 
   return React.createElement(
@@ -231,7 +169,7 @@ async function EvaluationsContent({
       // retained-results card needed, in the last place on this page that was
       // still reporting the window as the whole. The window and the narrowing
       // are already stated three times, all labelled, inside the page.
-      counts: { Evaluations: settled.data.totalEvaluations }
+      counts: { Evaluations: result.data.totalEvaluations }
     },
     React.createElement(EvaluationsView, {
       evaluations,
@@ -239,8 +177,8 @@ async function EvaluationsContent({
       // The store's own size, not the size of the window this read returned.
       // The filter summary states a narrowing against it, and a window that
       // reported itself as the whole history would make that summary wrong.
-      totalCount: settled.data.totalEvaluations,
-      truncated: settled.data.truncated,
+      totalCount: result.data.totalEvaluations,
+      truncated: result.data.truncated,
       filters,
       filterOptions: filterOptionsFor(available, filters),
       tab,

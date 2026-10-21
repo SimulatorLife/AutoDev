@@ -1,4 +1,3 @@
-import type { CanonicalNavSection } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import React from "react";
 
@@ -15,7 +14,6 @@ import {
 } from "../../src/lib/server/views.ts";
 import {
   ConsolePageShell,
-  ConsolePendingPage,
   controlApiCredentialUnavailable,
   readNodeContext,
   ResourceUnavailable
@@ -42,33 +40,13 @@ export default async function SkillsPage({
       controlApiCredentialUnavailable("skill configuration")
     );
   }
-  const query = (await searchParams) ?? {};
-  // The read starts here and is not awaited: the page's own boundary keeps
-  // the pending shell on screen while the Runtime is asked for its answer.
-  const skills = fetchSkills(config);
-  return React.createElement(
-    ConsolePendingPage,
-    null,
-    React.createElement(SkillsContent, { section, skills, save: query.save })
-  );
-}
-
-/**
- * The skills the Runtime confirmed, or the reason it could not answer.
- *
- * The read is awaited here, below the page's own pending boundary, so the
- * pending shell is already on screen while it is on its way.
- */
-async function SkillsContent({
-  section,
-  skills: skillsPromise,
-  save
-}: {
-  readonly section: CanonicalNavSection;
-  readonly skills: Promise<Awaited<ReturnType<typeof fetchSkills>>>;
-  readonly save: string | readonly string[] | undefined;
-}): Promise<React.JSX.Element> {
-  const result = await skillsPromise;
+  const [query, result] = await Promise.all([
+    searchParams ??
+      Promise.resolve(
+        {} as Record<string, string | readonly string[] | undefined>
+      ),
+    fetchSkills(config)
+  ]);
   if (result.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
@@ -85,7 +63,7 @@ async function SkillsContent({
   const unresolvedAssignments = unresolvedSkillAssignmentsFromControlApi(
     result.data
   );
-  const saveOutcome = skillSaveOutcome(save);
+  const saveOutcome = skillSaveOutcome(query.save);
   return React.createElement(
     ConsolePageShell,
     {

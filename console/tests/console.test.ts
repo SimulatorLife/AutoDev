@@ -267,7 +267,6 @@ import {
   unresolvedSkillAssignmentsFromControlApi,
   workspacesFromControlApi
 } from "../src/lib/server/views.ts";
-import { renderPageMarkup } from "./render-page.ts";
 
 /** Find one rendered anchor by destination without depending on prop order. */
 function anchorMarkupForHref(markup: string, href: string): string {
@@ -691,10 +690,9 @@ test("an unrecognised URL filter is named, never resolved into a default", async
       }
       throw new Error(`Unexpected Memory page request: ${url}`);
     };
-    const markup = await renderPageMarkup(
+    return renderToStaticMarkup(
       await MemoryPage({ searchParams: Promise.resolve(searchParams) })
     );
-    return markup;
   };
   try {
     process.env.HOME = isolatedHome;
@@ -825,7 +823,7 @@ test("MemoryPage starts its independent status and records reads together", asyn
 
     const page = MemoryPage({
       searchParams: Promise.resolve({ tab: "records" })
-    }).then(renderPageMarkup);
+    }).then(renderToStaticMarkup);
     let startTimeout: ReturnType<typeof setTimeout> | undefined;
     const startedTogether = await Promise.race([
       bothReadsStarted.then(() => true),
@@ -928,10 +926,9 @@ test("MemoryPage asks the Runtime for the page the URL names", async () => {
       }
       throw new Error(`Unexpected Memory page request: ${url}`);
     };
-    const markup = await renderPageMarkup(
+    return renderToStaticMarkup(
       await MemoryPage({ searchParams: Promise.resolve(searchParams) })
     );
-    return markup;
   };
 
   try {
@@ -5699,7 +5696,7 @@ test("MemoryPage requires a valid canonical workspace catalog before querying me
       });
     };
 
-    const markup = await renderPageMarkup(
+    const markup = renderToStaticMarkup(
       await MemoryPage({ searchParams: Promise.resolve({}) })
     );
     assert.match(markup, /data-error-code="autodev_workspace_catalog_invalid"/);
@@ -5745,7 +5742,7 @@ test("MemoryPage rejects URL workspace ids outside the canonical catalog before 
       });
     };
 
-    const markup = await renderPageMarkup(
+    const markup = renderToStaticMarkup(
       await MemoryPage({
         searchParams: Promise.resolve({ workspaceId: "Unlisted/Repository" })
       })
@@ -5838,7 +5835,7 @@ test("MemoryPage reports failed experience history instead of rendering an empty
       throw new Error(`Unexpected Memory page request: ${url}`);
     };
 
-    const markup = await renderPageMarkup(
+    const markup = renderToStaticMarkup(
       await MemoryPage({
         searchParams: Promise.resolve({ tab: "experiences" })
       })
@@ -5907,7 +5904,7 @@ test("the sidebar counts the resource, not the filter that emptied it", async ()
 
   try {
     // Unfiltered: the badge is the store, which the card beside it also shows.
-    const whole = await renderPageMarkup(
+    const whole = renderToStaticMarkup(
       await EvaluationsPage({ searchParams: Promise.resolve({}) })
     );
     assert.match(whole, /title="Evaluations \(5000\)"/);
@@ -5915,7 +5912,7 @@ test("the sidebar counts the resource, not the filter that emptied it", async ()
 
     // A filter that excludes everything: the sidebar still describes a resource
     // holding 5,000 runs rather than claiming it is empty.
-    const emptied = await renderPageMarkup(
+    const emptied = renderToStaticMarkup(
       await EvaluationsPage({
         searchParams: Promise.resolve({ prompt: "does-not-exist" })
       })
@@ -5977,7 +5974,7 @@ test("a Control API that is reachable but slow is not reported as unreachable", 
     const timedOut = await EvaluationsPage({
       searchParams: Promise.resolve({})
     });
-    const timedOutMarkup = await renderPageMarkup(timedOut);
+    const timedOutMarkup = renderToStaticMarkup(timedOut);
 
     assert.match(
       timedOutMarkup,
@@ -6023,7 +6020,7 @@ test("a Control API that is reachable but slow is not reported as unreachable", 
       throw new Error(`Unexpected Evaluations page request: ${url}`);
     }) as typeof globalThis.fetch;
 
-    const refused = await renderPageMarkup(
+    const refused = renderToStaticMarkup(
       await EvaluationsPage({ searchParams: Promise.resolve({}) })
     );
     assert.match(
@@ -6076,7 +6073,7 @@ test("a refused connection says what was refused without printing the address", 
 
   try {
     failWith("ECONNREFUSED");
-    const refusedMarkup = await renderPageMarkup(
+    const refusedMarkup = renderToStaticMarkup(
       await EvaluationsPage({ searchParams: Promise.resolve({}) })
     );
     assert.match(
@@ -6107,7 +6104,7 @@ test("a refused connection says what was refused without printing the address", 
     // A cause the Console has never seen is still named rather than flattened
     // into a sentence that claims to be the whole story.
     failWith("EPROTO");
-    const unknownMarkup = await renderPageMarkup(
+    const unknownMarkup = renderToStaticMarkup(
       await EvaluationsPage({ searchParams: Promise.resolve({}) })
     );
     assert.match(
@@ -6257,7 +6254,7 @@ test("an unconfigured Control API says which results it would have read", async 
   }) as typeof fetch;
 
   try {
-    const markup = await renderPageMarkup(await EvaluationsPage({}));
+    const markup = renderToStaticMarkup(await EvaluationsPage({}));
     assert.match(markup, /data-status="unavailable"/);
     assert.match(markup, /data-error-code="autodev_control_api_disabled"/);
     assert.match(
@@ -6352,7 +6349,7 @@ test("a trace lookup that failed says what failed and offers the way back", asyn
     // A span id that is not a span id. Nothing is requested, because nothing
     // could be: the failure is the request itself.
     requested.length = 0;
-    const malformed = await renderPageMarkup(
+    const malformed = renderToStaticMarkup(
       await EvaluationsPage({
         searchParams: Promise.resolve({ spanId: "not-a-span" })
       })
@@ -6376,7 +6373,7 @@ test("a trace lookup that failed says what failed and offers the way back", asyn
 
     // A span id of the right shape that telemetry no longer holds.
     requested.length = 0;
-    const missing = await renderPageMarkup(
+    const missing = renderToStaticMarkup(
       await EvaluationsPage({
         searchParams: Promise.resolve({ spanId })
       })
@@ -6482,7 +6479,7 @@ test("EvaluationsPage loads the linked trace through the Usage token and keeps p
       throw new Error(`Unexpected Evaluations page request: ${url}`);
     };
 
-    const markup = await renderPageMarkup(
+    const markup = renderToStaticMarkup(
       await EvaluationsPage({
         searchParams: Promise.resolve({ prompt: "dry", spanId })
       })
@@ -6576,7 +6573,7 @@ test("the trace table marks the span the trace was opened for, and only that one
       });
     };
 
-    const markup = await renderPageMarkup(
+    const markup = renderToStaticMarkup(
       await EvaluationsPage({ searchParams: Promise.resolve({ spanId: root }) })
     );
 
@@ -6695,7 +6692,7 @@ test("EvaluationsPage rejects malformed trace query IDs without calling the Usag
       throw new Error(`Unexpected trace lookup: ${url}`);
     };
 
-    const markup = await renderPageMarkup(
+    const markup = renderToStaticMarkup(
       await EvaluationsPage({
         searchParams: Promise.resolve({ spanId: "not-a-span-id" })
       })
@@ -7217,7 +7214,7 @@ test("a repeated selection parameter is not a choice, and opens nothing", async 
     // refuses to pick one, and says the selection could not be read rather than
     // quietly rendering no trace at all, because the URL did ask for one and
     // silence would report an unrequested absence.
-    const markup = await renderPageMarkup(
+    const markup = renderToStaticMarkup(
       await EvaluationsPage({
         searchParams: Promise.resolve({
           spanId: ["0123456789abcdef", "fedcba9876543210"]
@@ -7232,7 +7229,7 @@ test("a repeated selection parameter is not a choice, and opens nothing", async 
       "neither of the two spans may be presented as the one that was opened"
     );
 
-    const repeatedResult = await renderPageMarkup(
+    const repeatedResult = renderToStaticMarkup(
       await EvaluationsPage({
         searchParams: Promise.resolve({ result: ["run-1", "run-2"] })
       })
@@ -8461,12 +8458,10 @@ test("a page past the end clamps to the last page, however far past it is", asyn
   };
 
   try {
-    const render = async (query: Record<string, string>) => {
-      const markup = await renderPageMarkup(
+    const render = async (query: Record<string, string>) =>
+      renderToStaticMarkup(
         await EvaluationsPage({ searchParams: Promise.resolve(query) })
       );
-      return markup;
-    };
 
     const past = await render({ page: "100000" });
     assert.match(
@@ -9610,7 +9605,7 @@ test("fetchEvaluations rejects a response whose size claims contradict its rows"
   }) as typeof fetch;
 
   try {
-    const markup = await renderPageMarkup(await EvaluationsPage({}));
+    const markup = renderToStaticMarkup(await EvaluationsPage({}));
     assert.match(
       markup,
       /data-error-code="autodev_control_api_invalid_evaluations_response"/,
@@ -15789,10 +15784,9 @@ test("the Memory page names why storage failed, from the status read rather than
       );
       process.env.AUTODEV_CONTROL_API_TOKEN = "status-page-test-token";
       process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
-      const markup = await renderPageMarkup(
+      return renderToStaticMarkup(
         await MemoryPage({ searchParams: Promise.resolve({}) })
       );
-      return markup;
     } finally {
       globalThis.fetch = previousFetch;
       restoreConsolePageEnvironment(previousEnv);
@@ -16418,10 +16412,9 @@ test("cohort filters reach the Runtime and stay on the cohorts tab", async () =>
       }
       throw new Error(`Unexpected Memory page request: ${url}`);
     };
-    const markup = await renderPageMarkup(
+    return renderToStaticMarkup(
       await MemoryPage({ searchParams: Promise.resolve(searchParams) })
     );
-    return markup;
   };
 
   try {
@@ -16883,7 +16876,7 @@ test("the Memory page carries the Runtime's explanation into the record drawer",
       });
     };
 
-    const markup = await renderPageMarkup(
+    const markup = renderToStaticMarkup(
       await MemoryPage({
         searchParams: Promise.resolve({
           tab: "records",
