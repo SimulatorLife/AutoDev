@@ -11,7 +11,8 @@ import {
   renameSync,
   statSync,
   symlinkSync,
-  unlinkSync
+  unlinkSync,
+  writeFileSync
 } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -225,6 +226,46 @@ export function materializeRuntimeFile(
   try {
     copyFileSync(source, temporary);
     chmodSync(temporary, mode);
+    renameSync(temporary, target);
+  } finally {
+    try {
+      unlinkSync(temporary);
+    } catch {
+      /* already renamed or absent */
+    }
+  }
+}
+
+/**
+ * Atomically materialize generated Runtime content with its execution mode.
+ *
+ * The installed tree's package manifest is derived from the workspace package
+ * manifest rather than copied, so it is written from memory instead of from a
+ * repository file.
+ */
+export function materializeRuntimeContent(
+  content: string,
+  target: string,
+  mode: RuntimeFileMode
+): void {
+  ensureParent(target);
+  try {
+    const stat = lstatSync(target);
+    if (stat.isSymbolicLink()) {
+      unlinkSync(target);
+    } else if (
+      stat.isFile() &&
+      (stat.mode & 0o777) === mode &&
+      readFileSync(target, "utf8") === content
+    ) {
+      return;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const temporary = `${target}.autodev-${process.pid}-${Date.now()}`;
+  try {
+    writeFileSync(temporary, content, { mode });
     renameSync(temporary, target);
   } finally {
     try {

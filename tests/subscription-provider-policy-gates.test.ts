@@ -15,6 +15,10 @@ const REVIEWED_CLAUDE_TOKEN_CONSUMERS = new Set([
   "runtime/src/providers/claude.ts",
   "scripts/run-codex-claude-bridge.sh",
   "runtime/src/platform/claude-ensure.ts",
+  // Reads the account credential to ask Anthropic for the account's own model
+  // list, the provider-owned source the Console's role assignments come from.
+  // It never hands the token to a bridge, a proxy or a model request.
+  "runtime/src/providers/claude-credential.ts",
   ".github/workflows/claude-invoke.yml",
   "scripts/run-ci-provider.sh",
   ".github/workflows/agent-invoke.yml"

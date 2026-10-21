@@ -13,6 +13,7 @@ import { providerQuotaPool } from "@simulatorlife/autodev-runtime/shared/provide
 
 import { loadCodexAuth } from "../router/proxy.ts";
 import { ROUTES, ROUTING_POLICY } from "../router/routing.ts";
+import { readClaudeOAuthToken } from "./claude-credential.ts";
 
 const DEFAULT_REFRESH_INTERVAL_MS = 15 * 60_000;
 // `agy models` performs its own remote listing and runs off the request/routing
@@ -21,7 +22,17 @@ const ANTIGRAVITY_CLI_TIMEOUT_MS = 12_000;
 const PROVIDER_API_DISCOVERY_TIMEOUT_MS = 8000;
 const MAX_AGY_OUTPUT_BYTES = 64 * 1024;
 const MAX_HTTP_RESPONSE_BYTES = 256 * 1024;
+// The Codex account model list is not a compact ID list: every model carries
+// its base instructions, tool descriptors and message payloads, so a
+// six-model account response is already ~310 KB and grows with the plan. The
+// compact bound rejected every Codex refresh, which left the Runtime with a
+// stale Codex model list and no selectable Codex model.
+const MAX_CODEX_MODEL_LIST_BYTES = 2 * 1024 * 1024;
 const MINIMAX_API_BASE_URL = "https://api.minimax.io";
+const ANTHROPIC_MODEL_LIST_URL =
+  "https://api.anthropic.com/v1/models?limit=100";
+const ANTHROPIC_API_VERSION = "2023-06-01";
+const ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20";
 const CODEX_BACKEND_BASE_URL = "https://chatgpt.com/backend-api/codex";
 const CODEX_MODEL_LIST_URL = `${CODEX_BACKEND_BASE_URL}/models`;
 const MAX_DISCOVERED_MODELS = 512;
@@ -400,6 +411,106 @@ function minimaxModelAdapter(
   };
 }
 
+/**
+ * The Anthropic model list for the signed-in Claude account.
+ *
+ * The listing authenticates with the account's own OAuth token, so it reports
+ * the models this account can run rather than the models Anthropic sells. The
+ * Runtime needs that distinction: a model the account cannot run is not a
+ * choice an operator may assign to a role.
+ */
+export function parseAnthropicModelList(
+  payload: unknown
+): readonly ProviderModelDiscoveryItem[] {
+  if (
+    !isRecord(payload) ||
+    !Array.isArray(payload.data) ||
+    payload.data.length > MAX_DISCOVERED_MODELS
+  ) {
+    throw new Error(
+      "Claude model-list response did not contain a bounded models array."
+    );
+  }
+  const seen = new Set<string>();
+  return payload.data.map((entry) => {
+    if (!isRecord(entry)) {
+      throw new Error("Claude model-list response contained an invalid entry.");
+    }
+    const id = entry.id;
+    const displayName = entry.display_name;
+    if (
+      typeof id !== "string" ||
+      !MODEL_ID_PATTERN.test(id) ||
+      seen.has(id) ||
+      (displayName !== undefined &&
+        (typeof displayName !== "string" ||
+          displayName.length > DISPLAY_NAME_LIMIT))
+    ) {
+      throw new Error(
+        "Claude model-list response contained an invalid or duplicate model ID."
+      );
+    }
+    seen.add(id);
+    return {
+      id,
+      displayName: typeof displayName === "string" ? displayName : null
+    };
+  });
+}
+
+export async function discoverClaudeModels(
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = globalThis.fetch,
+  parentSignal?: AbortSignal,
+  readToken: (env: NodeJS.ProcessEnv) => string = readClaudeOAuthToken
+): Promise<readonly ProviderModelDiscoveryItem[]> {
+  const token = readToken(env);
+  if (!token) {
+    throw new Error(
+      "Claude Code OAuth token is not configured for model discovery."
+    );
+  }
+  const timeout = AbortSignal.timeout(PROVIDER_API_DISCOVERY_TIMEOUT_MS);
+  const signal =
+    parentSignal === undefined
+      ? timeout
+      : AbortSignal.any([parentSignal, timeout]);
+  const response = await fetchImpl(ANTHROPIC_MODEL_LIST_URL, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "anthropic-beta": ANTHROPIC_OAUTH_BETA,
+      "anthropic-version": ANTHROPIC_API_VERSION,
+      Accept: "application/json"
+    },
+    signal
+  });
+  if (!response.ok) {
+    throw new Error(`Claude model-list API returned HTTP ${response.status}.`);
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(
+      await boundedResponseText(response, MAX_HTTP_RESPONSE_BYTES)
+    ) as unknown;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("size bound"))
+      throw error;
+    throw new Error("Claude model-list API returned invalid JSON.");
+  }
+  return parseAnthropicModelList(payload);
+}
+
+function claudeModelAdapter(
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = globalThis.fetch
+): ProviderModelDiscoveryAdapter {
+  return {
+    source: "Claude account GET /v1/models",
+    discover: (signal) => discoverClaudeModels(env, fetchImpl, signal)
+  };
+}
+
 export function parseCodexModelList(
   payload: unknown
 ): readonly ProviderModelDiscoveryItem[] {
@@ -585,7 +696,7 @@ export async function discoverCodexModels(
   let payload: unknown;
   try {
     payload = JSON.parse(
-      await boundedResponseText(response, MAX_HTTP_RESPONSE_BYTES)
+      await boundedResponseText(response, MAX_CODEX_MODEL_LIST_BYTES)
     ) as unknown;
   } catch (error) {
     if (error instanceof Error && error.message.includes("size bound")) {
@@ -618,7 +729,8 @@ function defaultAdapters(): Readonly<
   return {
     antigravity: createAntigravityModelDiscoveryAdapter(),
     minimax: minimaxModelAdapter(),
-    codex: codexModelAdapter()
+    codex: codexModelAdapter(),
+    claude: claudeModelAdapter()
   };
 }
 

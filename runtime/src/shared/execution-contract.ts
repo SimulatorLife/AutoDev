@@ -1,4 +1,7 @@
 import { readFileSync } from "node:fs";
+import path from "node:path";
+
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 export interface RoleContract {
   mcp: string[];
@@ -26,12 +29,17 @@ export interface ExecutionContract {
 
 export type SandboxMode = "read-only" | "workspace-write";
 
-const CONTRACT_URL = new URL(
-  "../../../config/execution-contract.json",
-  import.meta.url
+// The contract lives with the Runtime's configuration, not with the module:
+// the installed tree at `CODEX_HOME/src` sits one level shallower than the
+// source checkout, so a path relative to this file would miss the installed
+// copy.
+const CONTRACT_PATH = path.join(
+  resolveRuntimeSourceRoot(import.meta.dirname),
+  "config",
+  "execution-contract.json"
 );
 const CONTRACT = Object.freeze(
-  JSON.parse(readFileSync(CONTRACT_URL, "utf8")) as ExecutionContract
+  JSON.parse(readFileSync(CONTRACT_PATH, "utf8")) as ExecutionContract
 );
 
 export const EXECUTION_CONTRACT = CONTRACT;

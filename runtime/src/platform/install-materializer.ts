@@ -45,11 +45,16 @@ import { LaunchdClient } from "./macos/launchd.ts";
 import {
   linkRuntimeSource,
   linkSkillSource,
+  materializeRuntimeContent,
   materializeRuntimeFile,
   resolveCommandOnPath,
   runRulesyncGenerate,
   runtimeTarget
 } from "./runtime-files.ts";
+import {
+  readRuntimePackageManifest,
+  renderRuntimeMirrorPackage
+} from "./runtime-mirror-package.ts";
 import { removeStalePaths } from "./runtime-reconciliation.ts";
 
 export const RUNTIME_MODULES = [
@@ -67,7 +72,6 @@ export const RUNTIME_MODULES = [
   "runtime/src/router/memory-reconstruction.ts",
   "runtime/src/router/memory-embedding.ts",
   "runtime/src/router/routing.ts",
-  "runtime/src/package.json",
   "runtime/src/control-api/playtesting.ts",
   "runtime/src/control-api/workspace-playtesting.ts",
   "runtime/src/control-api/workspace-visual-playtesting.ts",
@@ -115,6 +119,15 @@ export const RUNTIME_MODULES = [
   "runtime/src/shared/executables.ts",
   "runtime/src/shared/runtime-secrets.ts",
   "runtime/src/shared/runtime-source-root.ts",
+  "runtime/src/shared/agent-context-headers.ts",
+  "runtime/src/shared/env.ts",
+  "runtime/src/shared/execution-contract.ts",
+  "runtime/src/shared/provider-http.ts",
+  "runtime/src/shared/provider-limits.ts",
+  "runtime/src/shared/resolve-workspace.ts",
+  "runtime/src/shared/responses-continuation.ts",
+  "runtime/src/shared/responses-item-ids.ts",
+  "runtime/src/shared/tool-names.ts",
   "runtime/vendor/jev-playtest-lab/src/core.js",
   "runtime/src/control-api/index.ts",
   "runtime/src/router/subagents.ts",
@@ -126,8 +139,48 @@ export const RUNTIME_MODULES = [
   "runtime/src/router/proxy.ts",
   "runtime/src/router/http.ts",
   "runtime/src/router/server.ts",
+  "runtime/src/router/auth.ts",
+  "runtime/src/router/concurrency/index.ts",
+  "runtime/src/router/cooldown/index.ts",
+  "runtime/src/router/events.ts",
+  "runtime/src/router/lifecycle/index.ts",
+  "runtime/src/router/live-feed.ts",
+  "runtime/src/router/persistence/index.ts",
+  "runtime/src/router/state-collector.ts",
+  "runtime/src/router/status.ts",
+  "runtime/src/router/tool-call-ownership/index.ts",
+  "runtime/src/agents/index.ts",
+  "runtime/src/agents/agent-activity.ts",
+  "runtime/src/agents/bridge-role.ts",
+  "runtime/src/agents/bridge-sandbox.ts",
+  "runtime/src/agents/bridge-spawn-session.ts",
+  "runtime/src/agents/role-mcp-environment.ts",
+  "runtime/src/agents/spawn-tools.ts",
+  "runtime/src/config/index.ts",
+  "runtime/src/config/cli-args.ts",
+  "runtime/src/config/compose-user-config.ts",
+  "runtime/src/config/config-files.ts",
+  "runtime/src/config/render-agent-configs.ts",
+  "runtime/src/config/render-bridge-mcp-catalogue.ts",
+  "runtime/src/config/render-execution-contract.ts",
+  "runtime/src/config/render-model-catalog.ts",
+  "runtime/src/memory/index.ts",
+  "runtime/src/memory/context-injection.ts",
+  "runtime/src/memory/git-curation.ts",
+  "runtime/src/memory/mcp.ts",
+  "runtime/src/memory/openai-compatible-embedding.ts",
+  "runtime/src/memory/postgres.ts",
+  "runtime/src/memory/privacy.ts",
+  "runtime/src/memory/service.ts",
+  "runtime/src/memory/skill-promotion.ts",
+  "runtime/src/memory/stdio.ts",
+  "runtime/src/memory/trajectory.ts",
+  "runtime/src/telemetry/index.ts",
+  "runtime/src/telemetry/agent-events.ts",
+  "runtime/src/telemetry/github-metrics.ts",
   "runtime/src/providers/minimax.ts",
   "runtime/src/providers/model-discovery.ts",
+  "runtime/src/providers/claude-credential.ts",
   "runtime/src/providers/copilot.ts",
   "runtime/src/providers/antigravity.ts",
   "runtime/src/providers/claude.ts",
@@ -139,6 +192,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/mcp/codex-tools-shim.ts",
   "runtime/src/mcp/codex-tools-shim-telemetry.ts",
   "runtime/src/mcp/launcher.ts",
+  "runtime/src/mcp/process-registry.ts",
   "runtime/src/cli/router-status.ts",
   "runtime/src/cli/router-status-client.ts",
   "runtime/src/cli/provider-agent.ts",
@@ -152,6 +206,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/hooks/subagent-start.ts",
   "runtime/src/hooks/memory-session-end.ts",
   "runtime/src/platform/macos/launchd.ts",
+  "runtime/src/platform/index.ts",
   "runtime/src/platform/host-arch.ts",
   "runtime/src/platform/macos/launchagent.ts",
   "runtime/src/platform/router-ensure.ts",
@@ -162,6 +217,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/minimax-ensure.ts",
   "runtime/src/platform/antigravity-settings.ts",
   "runtime/src/platform/runtime-files.ts",
+  "runtime/src/platform/runtime-mirror-package.ts",
   "runtime/src/platform/runtime-reconciliation.ts",
   "runtime/src/platform/service-restart.ts",
   "runtime/src/platform/sleep.ts",
@@ -179,88 +235,19 @@ export const RUNTIME_MODULES = [
   ".rulesync/skills/orchestration/SKILL.md"
 ] as const;
 export const OBSOLETE_RUNTIME_MODULES = [
-  "src/shared/resolve-workspace.ts",
   "src/shared/otel-resource-context.ts",
-  "src/shared/executables.ts",
-  "src/shared/env.ts",
-  "src/shared/provider-limits.ts",
-  "src/shared/responses-item-ids.ts",
-  "src/shared/responses-continuation.ts",
-  "src/shared/output.ts",
-  "src/shared/tool-names.ts",
-  "src/shared/execution-contract.ts",
-  "src/telemetry/agent-events.ts",
   "src/router/cooldown.ts",
   "src/router/lifecycle.ts",
   "src/router/tool-call-ownership.ts",
-  "src/mcp/spawn-shim.ts",
-  "src/mcp/tool-filter.ts",
-  "src/mcp/codex-tools-shim.ts",
-  "src/mcp/codex-tools-shim-telemetry.ts",
-  "src/mcp/launcher.ts",
-  "src/agents/agent-activity.ts",
-  "src/agents/role-mcp-environment.ts",
-  "src/agents/bridge-role.ts",
-  "src/agents/bridge-sandbox.ts",
-  "src/agents/bridge-spawn-session.ts",
-  "src/agents/spawn-tools.ts",
-  "src/router/state-collector.ts",
   "src/router/mcp-process-registry.ts",
   "src/router/concurrency.ts",
-  "src/router/status.ts",
-  "src/router/auth.ts",
   "src/router/persistence.ts",
-  "src/router/routing.ts",
-  "src/router/events.ts",
-  "src/router/live-feed.ts",
   "src/router/control-api-body.ts",
   "src/router/control-api.ts",
-  "src/router/http.ts",
   "src/router/memory-control-api.ts",
-  "src/router/memory-embedding.ts",
-  "src/router/memory-injection.ts",
-  "src/router/memory-reconstruction.ts",
-  "src/router/otel.ts",
-  "src/router/proxy.ts",
-  "src/router/responses.ts",
-  "src/router/server.ts",
-  "src/router/subagents.ts",
-  "src/router/telemetry.ts",
-  "src/router/usage.ts",
-  "src/platform/host-arch.ts",
-  "src/platform/macos/launchd.ts",
-  "src/platform/macos/launchagent.ts",
-  "src/platform/runtime-files.ts",
-  "src/platform/runtime-reconciliation.ts",
-  "src/platform/router-ensure.ts",
-  "src/platform/copilot-ensure.ts",
-  "src/platform/code-graph-ensure.ts",
-  "src/platform/antigravity-ensure.ts",
-  "src/platform/claude-ensure.ts",
-  "src/platform/minimax-ensure.ts",
-  "src/platform/service-restart.ts",
-  "src/platform/install-state.ts",
-  "src/config/cli-args.ts",
-  "src/config/compose-user-config.ts",
-  "src/config/config-files.ts",
-  "src/config/render-agent-configs.ts",
-  "src/config/render-bridge-mcp-catalogue.ts",
-  "src/config/render-execution-contract.ts",
-  "src/config/render-model-catalog.ts",
-  "src/platform/antigravity-settings.ts",
-  "src/platform/dependencies.ts",
-  "src/platform/install-check.ts",
-  "src/platform/install-command.ts",
-  "src/platform/install-materializer.ts",
   "src/platform/otel-collector.ts",
   "src/platform/otel-provision.ts",
-  "src/platform/sync-rulesync-workspaces.ts",
-  "src/cli/router-status.ts",
-  "src/cli/router-status-client.ts",
-  "src/memory/openai-compatible-embedding.ts",
-  "src/memory/privacy.ts",
-  "src/memory/service.ts",
-  "src/memory/trajectory.ts"
+  "src/platform/sync-rulesync-workspaces.ts"
 ] as const;
 export const OBSOLETE_CLAUDE_SKILL_VIEWS = path.join(
   "provider-runtime",
@@ -1016,6 +1003,30 @@ function materializeRuntimeSources(
     );
 }
 
+/**
+ * Write the installed tree's package manifest.
+ *
+ * The Runtime imports its own modules through the workspace package name, so
+ * the installed copy has to declare the package it mirrors. Without a name and
+ * an exports map those imports resolve against the repository checkout, the
+ * Runtime loads two copies of every such module, and module-scoped state --
+ * the routing policy, provider discovery, cooldowns -- splits across them.
+ */
+function materializeRuntimeMirrorPackage(
+  repositoryRoot: string,
+  codexHome: string
+): void {
+  const manifest = renderRuntimeMirrorPackage({
+    runtimePackage: readRuntimePackageManifest(repositoryRoot),
+    materialized: new Set<string>(RUNTIME_MODULES)
+  });
+  materializeRuntimeContent(
+    manifest,
+    path.join(codexHome, "src", "package.json"),
+    0o644
+  );
+}
+
 function materializeScripts(hooks: string, source: FileTarget): void {
   for (const name of HOOKS) {
     chmodSync(source(`scripts/${name}`), 0o755);
@@ -1609,6 +1620,7 @@ export function materializeInstallation(options: MaterializeOptions): void {
   const target: FileTarget = (filePath) =>
     runtimeTarget(filePath, options.codexHome, hooks);
   materializeRuntimeSources(source, target);
+  materializeRuntimeMirrorPackage(options.repositoryRoot, options.codexHome);
   materializeScripts(hooks, source);
   runModelCatalog(
     source("config/model-routing.json"),

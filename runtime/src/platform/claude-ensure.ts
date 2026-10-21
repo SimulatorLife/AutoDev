@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -13,6 +13,7 @@ import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/e
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { CLAUDE_MODEL_PATTERN } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
+import { readClaudeOAuthToken } from "../providers/claude-credential.ts";
 import { httpHealthProbe } from "./health-probe.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 import { sleep } from "./sleep.ts";
@@ -42,27 +43,7 @@ export interface ClaudeEnsureDeps {
 const DEFAULT_TIMEOUT_MS = 5000;
 
 function keychainToken(env: NodeJS.ProcessEnv): string {
-  if (env.CLAUDE_CODE_OAUTH_TOKEN?.trim())
-    return env.CLAUDE_CODE_OAUTH_TOKEN.trim();
-  try {
-    return execFileSync(
-      "/usr/bin/security",
-      [
-        "find-generic-password",
-        "-a",
-        env.USER ?? "",
-        "-s",
-        "com.codex.claude-bridge.oauth-token",
-        "-w"
-      ],
-      {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"]
-      }
-    ).trim();
-  } catch {
-    return "";
-  }
+  return readClaudeOAuthToken(env);
 }
 
 export function isClaudeModel(input: string): boolean {

@@ -151,6 +151,7 @@ import { z } from "zod/v4";
 import type { PlaytestingReadRepository } from "../control-api/playtesting.ts";
 import { mapConcurrentOrdered } from "../shared/map-concurrent-ordered.ts";
 import { writeErrorLine } from "../shared/output.ts";
+import { resolveRuntimePackageManifest } from "../shared/runtime-source-root.ts";
 import type {
   PlaytestAnalystProcess,
   PlaytestAnalystProcessInput,
@@ -1403,7 +1404,7 @@ function approvalIsStillExact(
 function currentRuntimeVersion(): string {
   try {
     const manifest = JSON.parse(
-      readFileSync(new URL("../../package.json", import.meta.url), "utf8")
+      readFileSync(resolveRuntimePackageManifest(import.meta.dirname), "utf8")
     ) as { version?: unknown };
     return typeof manifest.version === "string" && manifest.version.length > 0
       ? manifest.version

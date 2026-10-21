@@ -17,10 +17,12 @@ import { fileURLToPath } from "node:url";
 
 import { LOCAL_CONTROL_API_ACTOR } from "@simulatorlife/autodev-core";
 import {
+  materializeRuntimeContent,
   materializeRuntimeFile,
   runtimeFileMatches,
   runtimeTarget
 } from "@simulatorlife/autodev-runtime/platform/runtime-files";
+import { renderRuntimeMirrorPackage } from "@simulatorlife/autodev-runtime/platform/runtime-mirror-package";
 
 import {
   createMemorySessionEndHandler,
@@ -231,19 +233,35 @@ test("materialized Codex hook reads its installed secret and posts to the loopba
     // The materialized Runtime subtree must retain its ESM package boundary;
     // otherwise direct Node execution reparses this .ts module and writes a
     // MODULE_TYPELESS_PACKAGE_JSON warning to the hook's stderr contract.
-    const modulePackage = path.join(repositoryRoot, "runtime/src/package.json");
+    // The boundary also has to name the package the installed tree mirrors, so
+    // the tree's own imports resolve inside it instead of the checkout.
     const installedModulePackage = runtimeTarget(
       "runtime/src/package.json",
       codexHome
     );
-    materializeRuntimeFile(modulePackage, installedModulePackage, 0o644);
-    assert.equal(
-      runtimeFileMatches(modulePackage, installedModulePackage),
-      true
+    const runtimePackage = JSON.parse(
+      readFileSync(path.join(repositoryRoot, "runtime/package.json"), "utf8")
+    ) as { name: string; exports: Record<string, string> };
+    materializeRuntimeContent(
+      renderRuntimeMirrorPackage({
+        runtimePackage,
+        materialized: new Set([
+          "runtime/src/hooks/memory-session-end.ts",
+          "runtime/src/router/routing.ts"
+        ])
+      }),
+      installedModulePackage,
+      0o644
     );
-    assert.deepEqual(JSON.parse(readFileSync(installedModulePackage, "utf8")), {
-      type: "module"
-    });
+    const installedManifest = JSON.parse(
+      readFileSync(installedModulePackage, "utf8")
+    ) as { name: string; type: string; exports: Record<string, string> };
+    assert.equal(installedManifest.type, "module");
+    assert.equal(installedManifest.name, "@simulatorlife/autodev-runtime");
+    assert.equal(
+      installedManifest.exports["./router/routing"],
+      "./router/routing.ts"
+    );
 
     const source = path.join(
       repositoryRoot,
