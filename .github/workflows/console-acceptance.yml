@@ -55,3 +55,18 @@ jobs:
       - name: Run the Console acceptance
         working-directory: console
         run: pnpm exec playwright test --config playwright.config.ts
+
+      # A failed acceptance is only evidence if it can be read. Playwright
+      # writes the trace, the screenshot and the page snapshot of a failed test
+      # into `test-results/`, and the runner throws that directory away with
+      # the job: without this step the only record of a failure is the
+      # assertion text, which says what the page looked like and not how it
+      # got there.
+      - name: Upload the acceptance evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-acceptance-evidence-${{ github.run_id }}
+          path: console/test-results/
+          retention-days: 14
+          if-no-files-found: ignore
