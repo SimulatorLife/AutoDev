@@ -264,6 +264,7 @@ async function runVisualEpisode(options: {
   readonly budgetMs: number;
   readonly decision: unknown;
   readonly routerDelayMs: number;
+  readonly limits?: WorkspaceVisualPlaytestTargetApproval["limits"];
 }): Promise<EpisodeRun> {
   const visualRoot = mkdtempSync(path.join(tmpdir(), "visual-budget-target-"));
   const artifactRoot = mkdtempSync(
@@ -278,7 +279,8 @@ async function runVisualEpisode(options: {
     const visualTargetRepository = new WorkspaceVisualPlaytestTargetRepository(
       visualRoot
     );
-    visualTargetRepository.approve(approval(targetLimits()), null);
+    const limits = options.limits ?? targetLimits();
+    visualTargetRepository.approve(approval(limits), null);
     const artifacts = new PlaytestArtifactStore({
       workspaceId: WORKSPACE_ID,
       rootDirectory: artifactRoot
@@ -343,7 +345,7 @@ async function runVisualEpisode(options: {
       targetId: TARGET_ID,
       policyId: "smart-direct",
       areasOfFocus: "Explore the visible controls.",
-      limits: targetLimits()
+      limits
     };
     const receipt = await control.startRun(session(), request);
     await control.waitForRun(session(), WORKSPACE_ID, receipt.batchId, 20_000);
@@ -389,17 +391,23 @@ test("a visual episode stops at the approved wall-time budget instead of failing
 
 test("a decision is bounded by the approved wall-time budget, not by a shorter cap", async () => {
   const run = await runVisualEpisode({
-    budgetMs: 300,
+    // The approved budget has to survive the work the episode does before the
+    // decision is due -- reading the observation and storing the frame -- or
+    // the decision is refused before it is ever sent, and the test would be
+    // measuring how fast the host is rather than how the deadline is cut. It
+    // stays well below the model's answer, so a decision that is not cut is
+    // still distinguishable from one that is.
+    budgetMs: 1500,
     decision: STOP_DECISION,
     // The model answers long after the approved budget is gone.
-    routerDelayMs: 5_000
+    routerDelayMs: 5000
   });
   assert.equal(run.routerRequests, 1);
   assert.equal(run.episode.status, "budget-truncated");
   assert.deepEqual(run.episode.completionCounts.budgetTruncated, 1);
   assert.deepEqual(run.episode.completionCounts.infrastructureFailed, 0);
   assert.ok(
-    (run.episode.simulationWallMs ?? 0) < 3_000,
+    (run.episode.simulationWallMs ?? 0) < 3000,
     `the decision must be cut at the approved budget, not later (wall ${String(run.episode.simulationWallMs)} ms)`
   );
 });
@@ -413,5 +421,26 @@ test("a visual episode completes when the model answers inside the budget", asyn
   assert.equal(run.routerRequests, 1);
   assert.equal(run.episode.status, "completed");
   assert.deepEqual(run.episode.completionCounts.completed, 1);
+  assert.deepEqual(run.episode.completionCounts.infrastructureFailed, 0);
+});
+
+test("a visual episode records the usage budget, not the step cap, when the policy's budget runs out", async () => {
+  const run = await runVisualEpisode({
+    budgetMs: 20_000,
+    decision: STOP_DECISION,
+    routerDelayMs: 0,
+    // The model answers with 340 tokens and the approved per-episode token
+    // budget is smaller, so the decision is refused once the response is read.
+    limits: targetLimits({ smartTokensPerEpisode: 300 })
+  });
+  assert.equal(run.routerRequests, 1);
+  assert.equal(run.episode.status, "budget-truncated");
+  assert.deepEqual(
+    run.episode.termination,
+    { reason: "usage-budget", step: 0 },
+    "the episode never reached the step cap, so the recorded reason must not claim that it did"
+  );
+  assert.deepEqual(run.episode.missingReasons, ["budget-truncated"]);
+  assert.deepEqual(run.episode.completionCounts.budgetTruncated, 1);
   assert.deepEqual(run.episode.completionCounts.infrastructureFailed, 0);
 });

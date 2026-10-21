@@ -375,7 +375,14 @@ function VisualPlaytestLaunchCockpit({
             (effectiveEpisodes === 1 ? " episode" : " episodes") +
             " · " +
             String(effectiveSteps) +
-            " steps · Focus: " +
+            " steps · " +
+            "approved budget: " +
+            String(primaryTarget.limits.smartTokensPerEpisode) +
+            " tokens, " +
+            String(primaryTarget.limits.smartRequestsPerEpisode) +
+            " decisions, " +
+            String(Math.round(primaryTarget.limits.wallTimeMs / 1000)) +
+            "s · Focus: " +
             focusLabel
         : "No approved visual target is available; configure one in Workspaces before starting."
     ),

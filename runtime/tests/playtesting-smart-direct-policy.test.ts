@@ -639,7 +639,18 @@ test("Smart-direct fails closed when usage is absent or target/frame identity ch
 });
 
 test("Smart-direct readiness checks auth without exposing its token", () => {
-  assert.equal(isSmartDirectVisualPolicyConfigured("4100", undefined), false);
+  // An omitted token means "the one this process was given", so the absence of
+  // a token is a property of the environment the check runs in. The launcher
+  // publishes the Router's token into the maintainer's shell, so an unset
+  // ambient token is asserted here rather than assumed.
+  const ambientToken = process.env.CODEX_ROUTER_AUTH_TOKEN;
+  delete process.env.CODEX_ROUTER_AUTH_TOKEN;
+  try {
+    assert.equal(isSmartDirectVisualPolicyConfigured("4100", undefined), false);
+  } finally {
+    if (ambientToken === undefined) delete process.env.CODEX_ROUTER_AUTH_TOKEN;
+    else process.env.CODEX_ROUTER_AUTH_TOKEN = ambientToken;
+  }
   assert.equal(isSmartDirectVisualPolicyConfigured("4100", "   "), false);
   assert.equal(isSmartDirectVisualPolicyConfigured("4100", "configured"), true);
   assert.equal(isSmartDirectVisualPolicyConfigured("", "configured"), true);

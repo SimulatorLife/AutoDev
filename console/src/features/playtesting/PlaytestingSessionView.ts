@@ -940,7 +940,9 @@ function truncationExplanation(
     loopStep === null
       ? episode.termination.reason === "step-limit"
         ? `Runtime reached the episode step limit after ${episode.stepCount} executed decisions. No terminal game outcome was observed; no win or loss is inferred.`
-        : "No terminal game outcome was observed. Runtime marked this episode budget-truncated; no win or loss is inferred. Inspect the last recorded steps to diagnose the stop."
+        : episode.termination.reason === "usage-budget"
+          ? `The approved per-episode usage budget ran out after ${episode.stepCount} executed decisions, before the step cap was reached. No terminal game outcome was observed; no win or loss is inferred.`
+          : "No terminal game outcome was observed. Runtime marked this episode budget-truncated; no win or loss is inferred. Inspect the last recorded steps to diagnose the stop."
       : `Runtime's loop guard stopped at step ${loopStep} after the same player-visible state and action repeated. That action was not executed. No terminal game outcome was observed; no win or loss is inferred.`;
   return React.createElement(
     "p",

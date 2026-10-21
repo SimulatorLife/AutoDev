@@ -751,6 +751,30 @@ test("a step-limit stop says how many decisions ran without inventing a game out
   assert.doesNotMatch(html, /Inspect stop at step/u);
 });
 
+test("a usage-budget stop says the approved budget ran out, not that the step cap was reached", () => {
+  const partialEpisode: PlaytestEpisode = {
+    ...episode(),
+    status: "budget-truncated",
+    termination: { reason: "usage-budget", step: 3 },
+    outcome: "unknown",
+    stepCount: 4,
+    completeness: "partial",
+    missingReasons: ["budget-truncated"]
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail(partialEpisode),
+      scope: scope({ view: "sessions" }),
+      window: traceWindow()
+    })
+  );
+  assert.match(
+    html,
+    /The approved per-episode usage budget ran out after 4 executed decisions, before the step cap was reached/u
+  );
+  assert.doesNotMatch(html, /reached the episode step limit/u);
+});
+
 test("step details open only for the addressed step and raw trace JSON stays collapsed", () => {
   const html = renderToStaticMarkup(
     React.createElement(PlaytestingSessionView, {

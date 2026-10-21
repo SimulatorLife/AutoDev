@@ -160,6 +160,7 @@ export const PLAYTESTS_EXPERIMENT_SCHEMA =
 export const PLAYTESTS_EPISODE_TERMINATION_REASONS = [
   "game-terminal",
   "step-limit",
+  "usage-budget",
   "loop-guard",
   "cancelled",
   "approval-revoked",

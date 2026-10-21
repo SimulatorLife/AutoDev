@@ -234,7 +234,11 @@ test("a visual episode that exhausts an approved budget is truncated, not a runt
       "an exhausted approved budget is a truncation, not infrastructure loss"
     );
     assert.deepEqual(terminal.missingReasons, ["budget-truncated"]);
-    assert.equal(terminal.termination?.reason, "step-limit");
+    assert.equal(
+      terminal.termination?.reason,
+      "usage-budget",
+      "the episode ran out of the approved usage budget, not of the step cap, so the recorded reason must say which one"
+    );
   } finally {
     rmSync(visualRoot, { recursive: true, force: true });
     rmSync(artifactRoot, { recursive: true, force: true });

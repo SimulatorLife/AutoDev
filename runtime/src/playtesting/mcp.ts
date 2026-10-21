@@ -4303,10 +4303,19 @@ interface ExecuteVisualBatchInput {
   ) => void;
 }
 
+/**
+ * The approved per-episode usage budget of the decision policy ran out before
+ * the step cap. The episode is budget-truncated, but it did not reach the step
+ * limit, and recording it as one tells the operator and the analyst that a cap
+ * they chose was reached when it was not.
+ */
+const USAGE_BUDGET = "usage-budget" as const;
+
 /** Visual-session loop exit signal; mapped to a Core termination/status pair. */
 type VisualEpisodeExit =
   | { readonly kind: "cancelled"; readonly step: number | null }
   | { readonly kind: "step-limit"; readonly step: number | null }
+  | { readonly kind: typeof USAGE_BUDGET; readonly step: number | null }
   | { readonly kind: "loop-guard"; readonly step: number | null }
   | { readonly kind: "policy-stop"; readonly step: number | null }
   | {
@@ -4475,6 +4484,7 @@ function playerDebriefAfterExit(
       exit.kind === "action-refused"
         ? "action-refused"
         : exit.kind === "step-limit" ||
+            exit.kind === USAGE_BUDGET ||
             exit.kind === "loop-guard" ||
             exit.kind === "wall-time-limit" ||
             (exit.kind === "driver-blocked" &&
@@ -4523,6 +4533,13 @@ function visualEpisodeDisposition(exit: VisualEpisodeExit): {
         termination: { reason: "step-limit", step: exit.step },
         missingReason: "budget-truncated"
       };
+    case USAGE_BUDGET: {
+      return {
+        status: "budget-truncated",
+        termination: { reason: USAGE_BUDGET, step: exit.step },
+        missingReason: "budget-truncated"
+      };
+    }
     case "loop-guard":
       return {
         status: "budget-truncated",
@@ -5140,7 +5157,7 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
             isDecisionDeadlineFailure(err) && driver.remainingWallTimeMs() <= 0
               ? { kind: "wall-time-limit", step }
               : isSmartDirectBudgetExhaustion(err)
-                ? { kind: "step-limit", step }
+                ? { kind: USAGE_BUDGET, step }
                 : { kind: "infrastructure-failure", code, step };
           break;
         }

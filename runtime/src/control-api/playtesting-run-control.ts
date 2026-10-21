@@ -143,6 +143,16 @@ export interface PlaytestingRunControlApiOptions {
     WorkspaceVisualPlaytestTargetRepository,
     "list"
   >;
+  /**
+   * The probes that decide whether the visual browser driver and the
+   * Smart-direct route are reachable. They read the machine by default; a
+   * caller that owns its own environment pins them so the mode's readiness
+   * is a property of the caller rather than of the host it runs on.
+   */
+  readonly visualReadinessProbes?: {
+    readonly visualDriverAvailable?: () => boolean;
+    readonly smartDirectPolicyAvailable?: () => Promise<boolean>;
+  };
   readonly readWorkspaceCatalog?: () => ReturnType<
     ConfigRepository["readWorkspaceCatalog"]
   >;
@@ -1224,6 +1234,7 @@ async function capabilitiesForLaunchRequest(input: {
     visualTargetsForWorkspace(input.workspaceId, input.options)
   ]);
   const operatorActionsAvailable = input.actor.role === "operator";
+  const probes = input.options.visualReadinessProbes;
   const capabilities: Omit<
     ControlApiPlaytestingCapabilitiesResponse,
     "capabilityRevision"
@@ -1239,8 +1250,12 @@ async function capabilitiesForLaunchRequest(input: {
       "autonomous-visual": visualModeReadiness({
         workspaceEnabled: runCapabilities.workspaceEnabled,
         operatorActionsAvailable,
-        visualDriverAvailable: isPlaytestVisualBrowserDriverAvailable(),
-        smartDirectPolicyAvailable: await isSmartDirectVisualPolicyAvailable(),
+        visualDriverAvailable:
+          probes?.visualDriverAvailable?.() ??
+          isPlaytestVisualBrowserDriverAvailable(),
+        smartDirectPolicyAvailable:
+          (await (probes?.smartDirectPolicyAvailable?.() ??
+            isSmartDirectVisualPolicyAvailable())) === true,
         ...visualTargets
       }),
       "scripted-regression": scriptedModeReadiness(operatorActionsAvailable)

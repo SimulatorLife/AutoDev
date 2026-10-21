@@ -913,7 +913,14 @@ test("Control API refuses unavailable visual and scripted modes without adapter 
   const calls: unknown[] = [];
   const options: PlaytestingRunControlApiOptions = {
     runControl: runControlFixture(calls),
-    visualTargetRepository: { list: () => [] }
+    visualTargetRepository: { list: () => [] },
+    // The visual driver's and the Smart-direct route's reachability are
+    // properties of the host. Pin them so the refusal this test asserts is a
+    // property of the mode's readiness rule, not of the machine it runs on.
+    visualReadinessProbes: {
+      visualDriverAvailable: () => false,
+      smartDirectPolicyAvailable: async () => false
+    }
   };
   const operator = { actor: "operator-1", role: "operator" as const };
   const unavailableLaunches = [
@@ -967,6 +974,71 @@ test("Control API refuses unavailable visual and scripted modes without adapter 
       "autodev_control_playtesting_preflight_not_ready"
     );
   }
+  assert.equal(
+    calls.filter(
+      (entry) => (entry as { operation?: string }).operation === "start"
+    ).length,
+    0
+  );
+});
+
+test("Control API refuses a visual launch that only needs an approved target, without dispatching a run", async () => {
+  const calls: unknown[] = [];
+  const options: PlaytestingRunControlApiOptions = {
+    runControl: runControlFixture(calls),
+    visualTargetRepository: { list: () => [] },
+    // Everything the host provides is reachable, so the only thing missing is
+    // an approved target: the mode is check-required, not unavailable.
+    visualReadinessProbes: {
+      visualDriverAvailable: () => true,
+      smartDirectPolicyAvailable: async () => true
+    }
+  };
+  const operator = { actor: "operator-1", role: "operator" as const };
+  const capabilities = await callRunControl(
+    "GET",
+    `/control/playtesting/capabilities?workspaceId=${encodeURIComponent(WORKSPACE)}`,
+    operator,
+    options
+  );
+  const readiness = capabilities.body.modeReadiness as {
+    readonly "autonomous-visual": { readonly status: string };
+  };
+  assert.equal(readiness["autonomous-visual"].status, "check-required");
+  const response = await callRunControl(
+    "POST",
+    "/control/playtesting/runs",
+    operator,
+    options,
+    {
+      schema: "autodev-playtest-launch-v1",
+      mode: "autonomous-visual",
+      workspaceId: WORKSPACE,
+      requestId: "check-required-visual-1",
+      targetId: "racing-game-local",
+      policyId: "smart-direct",
+      areasOfFocus: null,
+      capabilityRevision: String(capabilities.body.capabilityRevision),
+      limits: {
+        episodeCount: 1,
+        maxStepsPerEpisode: 80,
+        wallTimeMs: 120_000,
+        smartRequestsPerEpisode: 30,
+        smartTokensPerEpisode: 25_000,
+        screenshotCountPerEpisode: 160,
+        artifactBytesPerEpisode: 64 * 1024 * 1024
+      }
+    }
+  );
+  assert.equal(
+    response.status,
+    409,
+    "a mode that only needs an operator action is a conflict, not an outage"
+  );
+  assert.equal(
+    (response.body.error as { readonly code: string }).code,
+    "autodev_control_playtesting_preflight_not_ready"
+  );
   assert.equal(
     calls.filter(
       (entry) => (entry as { operation?: string }).operation === "start"

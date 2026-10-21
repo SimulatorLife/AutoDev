@@ -42,8 +42,7 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "tests/**/*.ts",
-    "tests/**/*.tsx",
-    ".next-staging-base/types/**/*.ts"
+    "tests/**/*.tsx"
   ],
   "exclude": [
     "node_modules",
