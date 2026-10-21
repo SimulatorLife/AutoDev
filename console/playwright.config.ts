@@ -69,6 +69,14 @@ export default defineConfig({
   testDir: "./e2e",
   testMatch: "**/*.spec.ts",
   fullyParallel: false,
+  // One worker, because the acceptance shares one fixture and one Console.
+  //
+  // A spec that writes shared state and a spec that puts the service into a
+  // state it cannot be in otherwise would otherwise run at the same time: the
+  // second one degrades the Control API the first one reads, and the spec
+  // that was only reading is measured against a service that is down. The
+  // specs run in order instead, so each one measures the service it expects.
+  workers: 1,
   forbidOnly: Boolean(process.env.CI),
   retries: 0,
   reporter: "list",
