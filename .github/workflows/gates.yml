@@ -1,0 +1,53 @@
+name: "Gates"
+
+# The migration gate the target state asks for: current-main CI/workflow
+# evidence that the monorepo's acceptance gates hold. Without a workflow that
+# runs them on main, the gates are a claim anybody can make and nobody can
+# check.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install AutoDev dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The four gates, in the order that fails fastest. Formatting first
+      # because it is a second, and the slowest gate is the test suite.
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint:ci
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # The root suite and every workspace suite. `--workspace-concurrency=1`
+      # is the repository's own choice: the suites share temporary roots, and
+      # running them at once has them collide.
+      - name: Test
+        run: pnpm test
