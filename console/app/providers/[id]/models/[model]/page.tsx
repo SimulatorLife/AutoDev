@@ -1,3 +1,4 @@
+import type { CanonicalNavSection } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
@@ -13,6 +14,7 @@ import {
 } from "../../../../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
+  ConsolePendingPage,
   controlApiCredentialUnavailable,
   readNodeContext,
   ResourceUnavailable
@@ -54,12 +56,62 @@ export default async function ModelDetailPage({
     );
   }
   const query = (await searchParams) ?? {};
+  // The reads start here and are not awaited: the page renders its shell
+  // first, so the operator sees the surface they asked for while the Runtime
+  // is asked for its answer.
+  const models = fetchModels(config);
+  const providers = fetchProviders(config);
+  const discovery = fetchProviderModelDiscovery(config);
+  const runtime = fetchRuntime(config);
+  return React.createElement(
+    ConsolePendingPage,
+    null,
+    React.createElement(ModelDetailContent, {
+      section,
+      id,
+      modelId,
+      models,
+      providers,
+      discovery,
+      runtime,
+      control: query.control
+    })
+  );
+}
+
+/**
+ * The model the Runtime confirmed, or the reason it could not answer.
+ *
+ * The read is awaited here, below the page's own pending boundary, so the
+ * shell and the placeholder are already on screen while it is on its way.
+ */
+async function ModelDetailContent({
+  section,
+  id,
+  modelId,
+  models: modelsPromise,
+  providers: providersPromise,
+  discovery: discoveryPromise,
+  runtime: runtimePromise,
+  control
+}: {
+  readonly section: CanonicalNavSection;
+  readonly id: string;
+  readonly modelId: string;
+  readonly models: Promise<Awaited<ReturnType<typeof fetchModels>>>;
+  readonly providers: Promise<Awaited<ReturnType<typeof fetchProviders>>>;
+  readonly discovery: Promise<
+    Awaited<ReturnType<typeof fetchProviderModelDiscovery>>
+  >;
+  readonly runtime: Promise<Awaited<ReturnType<typeof fetchRuntime>>>;
+  readonly control: string | string[] | undefined;
+}): Promise<React.JSX.Element> {
   const [modelsResult, providersResult, discoveryResult, runtimeResult] =
     await Promise.all([
-      fetchModels(config),
-      fetchProviders(config),
-      fetchProviderModelDiscovery(config),
-      fetchRuntime(config)
+      modelsPromise,
+      providersPromise,
+      discoveryPromise,
+      runtimePromise
     ]);
   if (modelsResult.kind !== "ok") {
     return React.createElement(
@@ -83,7 +135,10 @@ export default async function ModelDetailPage({
     ConsolePageShell,
     {
       section,
-      counts: providers ? { Providers: providers.length } : undefined
+      counts:
+        providersResult.kind === "ok"
+          ? { Providers: providersResult.data.providers.length }
+          : undefined
     },
     React.createElement(ModelDetailView, {
       model,
@@ -93,7 +148,7 @@ export default async function ModelDetailPage({
           ? { status: "available", data: discoveryResult.data }
           : { status: "unavailable", message: discoveryResult.message },
       runtime: runtimeResult.kind === "ok" ? runtimeResult.data : undefined,
-      controlFailed: isControlFailure(query.control)
+      controlFailed: isControlFailure(control)
     })
   );
 }

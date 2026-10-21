@@ -1,20 +1,15 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ConsoleLoadingPage } from "../src/components/layout/AppShell.ts";
+import { ConsoleLoadingBody } from "../src/components/layout/ConsoleLoadingBody.ts";
 
-test("route loading fallback keeps the active shell and announces pending data", () => {
+test("the page's loading placeholder announces pending data", () => {
   const markup = renderToStaticMarkup(
-    React.createElement(ConsoleLoadingPage, { activeSection: "Providers" })
-  );
-  assert.match(markup, /<h1[^>]*title="Providers">Providers<\/h1>/u);
-  assert.match(
-    markup,
-    /<a\b(?=[^>]*data-nav-item="providers")(?=[^>]*aria-current="page")[^>]*>/u
+    React.createElement(ConsoleLoadingBody, { activeSection: "Providers" })
   );
   assert.match(markup, /data-console-loading="Providers" aria-busy="true"/u);
   assert.match(
@@ -27,10 +22,36 @@ test("route loading fallback keeps the active shell and announces pending data",
   );
 });
 
-test("the Console route loading boundary renders the shared shell", () => {
+test("no Console route owns a route-level loading boundary", () => {
+  // A route-level boundary splits the route segment itself: the shell and
+  // the page arrive as two answers, the segment is replaced in the middle of
+  // the navigation, and the navigation's commit -- the one that moves the
+  // address bar -- goes with it. The pending state belongs to the page, so
+  // the route segment stays whole.
+  assert.equal(
+    existsSync(new URL("../app/loading.tsx", import.meta.url)),
+    false
+  );
+});
+
+test("the pending state belongs to the page, and the page renders it", () => {
   const source = readFileSync(
-    new URL("../app/loading.tsx", import.meta.url),
+    new URL("../app/_console.ts", import.meta.url),
     "utf8"
   );
-  assert.match(source, /ConsoleLoadingShell/u);
+  assert.match(source, /export function ConsolePendingPage/u);
+  // The pending shell is the boundary's fallback: the operator sees the
+  // surface they asked for while the page's own read is on its way, and the
+  // final page replaces it with the confirmed content and counts.
+  assert.match(
+    source,
+    /fallback: React\.createElement\(ConsoleLoadingShell\)/u
+  );
+
+  const page = readFileSync(
+    new URL("../app/providers/page.tsx", import.meta.url),
+    "utf8"
+  );
+  assert.match(page, /ConsolePendingPage/u);
+  assert.doesNotMatch(page, /ConsolePage\b(?!Shell)/u);
 });

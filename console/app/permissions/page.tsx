@@ -1,3 +1,4 @@
+import type { CanonicalNavSection } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import React from "react";
 
@@ -9,6 +10,7 @@ import {
 import { permissionsFromControlApi } from "../../src/lib/server/views.ts";
 import {
   ConsolePageShell,
+  ConsolePendingPage,
   controlApiCredentialUnavailable,
   readNodeContext,
   ResourceUnavailable
@@ -20,7 +22,7 @@ export const metadata: Metadata = {
   title: "Permissions"
 };
 
-export default async function PermissionsPage(): Promise<React.JSX.Element> {
+export default function PermissionsPage(): React.JSX.Element {
   const { section, config } = readNodeContext("/permissions");
   if (!config) {
     return React.createElement(
@@ -29,19 +31,43 @@ export default async function PermissionsPage(): Promise<React.JSX.Element> {
       controlApiCredentialUnavailable("permission policy")
     );
   }
-  const result = await fetchPermissions(config);
-  if (result.kind !== "ok") {
+  // The read starts here and is not awaited.
+  const result = fetchPermissions(config);
+  return React.createElement(
+    ConsolePendingPage,
+    null,
+    React.createElement(PermissionsContent, { section, result })
+  );
+}
+
+/**
+ * The permission policy the Runtime confirmed, or the reason it could not
+ * answer.
+ *
+ * The read is awaited here, inside the page's own pending boundary. The shell
+ * is rendered by the same component that read the data, so the navigation's
+ * count arrives with the read instead of being resolved in the browser.
+ */
+async function PermissionsContent({
+  section,
+  result
+}: {
+  readonly section: CanonicalNavSection;
+  readonly result: Promise<Awaited<ReturnType<typeof fetchPermissions>>>;
+}): Promise<React.JSX.Element> {
+  const settled = await result;
+  if (settled.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
       { section },
       React.createElement(ResourceUnavailable, {
         title: "Permissions could not be loaded",
-        code: controlApiFailureCode(result),
-        message: result.message
+        code: controlApiFailureCode(settled),
+        message: settled.message
       })
     );
   }
-  const { policy, roleMatrices } = permissionsFromControlApi(result.data);
+  const { policy, roleMatrices } = permissionsFromControlApi(settled.data);
   return React.createElement(
     ConsolePageShell,
     {

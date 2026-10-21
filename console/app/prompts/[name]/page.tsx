@@ -1,4 +1,7 @@
-import type { ControlApiPromptVersionResponse } from "@simulatorlife/autodev-core";
+import type {
+  CanonicalNavSection,
+  ControlApiPromptVersionResponse
+} from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
@@ -10,6 +13,7 @@ import {
 } from "../../../src/features/prompts/PromptDetailView.ts";
 import { editorBaseRevisionFromQuery } from "../../../src/lib/server/canonical-source.ts";
 import {
+  type ControlApiConfig,
   controlApiFailureCode,
   fetchPromptDetail,
   fetchPromptVersion,
@@ -18,6 +22,7 @@ import {
 import { promptDocumentFromControlApi } from "../../../src/lib/server/views.ts";
 import {
   ConsolePageShell,
+  ConsolePendingPage,
   controlApiCredentialUnavailable,
   readNodeContext,
   ResourceUnavailable
@@ -140,7 +145,6 @@ export default async function PromptDetailPage({
         {} as Record<string, string | readonly string[] | undefined>
       )
   ]);
-  const saveOutcome = promptSaveOutcome(query.save);
   const { section, config } = readNodeContext("/prompts");
   if (!config) {
     return React.createElement(
@@ -150,21 +154,53 @@ export default async function PromptDetailPage({
     );
   }
 
-  const result = await fetchPromptDetail(name, config);
-  if (result.kind === "http-error" && result.status === 404) notFound();
-  if (result.kind !== "ok") {
+  // The read starts here and is not awaited.
+  const result = fetchPromptDetail(name, config);
+  return React.createElement(
+    ConsolePendingPage,
+    null,
+    React.createElement(PromptDetailContent, {
+      section,
+      result,
+      config,
+      query
+    })
+  );
+}
+
+/**
+ * The prompt the Runtime confirmed, or the reason it could not answer.
+ *
+ * The read is awaited here, inside the page's own pending boundary. The
+ * version-history read follows this one because it is keyed on the prompt this
+ * read names: a command prompt has a history and a role prompt does not.
+ */
+async function PromptDetailContent({
+  section,
+  result,
+  config,
+  query
+}: {
+  readonly section: CanonicalNavSection;
+  readonly result: Promise<Awaited<ReturnType<typeof fetchPromptDetail>>>;
+  readonly config: ControlApiConfig;
+  readonly query: Record<string, string | readonly string[] | undefined>;
+}): Promise<React.JSX.Element> {
+  const settled = await result;
+  if (settled.kind === "http-error" && settled.status === 404) notFound();
+  if (settled.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
       { section },
       React.createElement(ResourceUnavailable, {
         title: "Prompt source could not be loaded",
-        code: controlApiFailureCode(result),
-        message: result.message
+        code: controlApiFailureCode(settled),
+        message: settled.message
       })
     );
   }
 
-  const prompt = promptDocumentFromControlApi(result.data);
+  const prompt = promptDocumentFromControlApi(settled.data);
   const requestedRevision = query.revision;
   const shouldFetchVersion =
     prompt.kind === "command" &&
@@ -191,19 +227,20 @@ export default async function PromptDetailPage({
           versionResult
         )
       : {};
+  const saveOutcome = promptSaveOutcome(query.save);
   return React.createElement(
     ConsolePageShell,
     { section },
     React.createElement(PromptDetailView, {
       prompt,
-      reconciliation: result.data.reconciliation,
+      reconciliation: settled.data.reconciliation,
       history,
       // The editor writes against the revision its content is based on. A
       // refused write leaves the browser holding the operator's edit, so the
       // page keeps the revision that edit was written for rather than the
       // revision the source has moved to.
       editorRevision:
-        editorBaseRevisionFromQuery(query.based) ?? result.data.revision,
+        editorBaseRevisionFromQuery(query.based) ?? settled.data.revision,
       ...(selection.selectedVersion
         ? { selectedVersion: selection.selectedVersion }
         : {}),

@@ -1,3 +1,4 @@
+import type { CanonicalNavSection } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import React from "react";
 
@@ -8,6 +9,7 @@ import {
 } from "../../src/lib/server/control-api.ts";
 import {
   ConsolePageShell,
+  ConsolePendingPage,
   controlApiCredentialUnavailable,
   readNodeContext,
   ResourceUnavailable
@@ -42,24 +44,46 @@ export default async function ToolsPage({
     );
   }
 
-  const [result, resolvedSearch] = await Promise.all([
-    fetchTools(config),
-    (searchParams ?? Promise.resolve({})) as Promise<ToolsSearchParams>
-  ]);
-  const sourceFilter = first(resolvedSearch.source);
-  const roleFilter = first(resolvedSearch.role);
-  if (result.kind !== "ok") {
+  // The read starts here and is not awaited.
+  const result = fetchTools(config);
+  const query = ((await searchParams) ?? {}) as ToolsSearchParams;
+  return React.createElement(
+    ConsolePendingPage,
+    null,
+    React.createElement(ToolsContent, { section, result, query })
+  );
+}
+
+/**
+ * The tool catalog the Runtime confirmed, or the reason it could not answer.
+ *
+ * The read is awaited here, inside the page's own pending boundary. The shell
+ * is rendered by the same component that read the data, so the navigation's
+ * count arrives with the read instead of being resolved in the browser.
+ */
+async function ToolsContent({
+  section,
+  result,
+  query
+}: {
+  readonly section: CanonicalNavSection;
+  readonly result: Promise<Awaited<ReturnType<typeof fetchTools>>>;
+  readonly query: ToolsSearchParams;
+}): Promise<React.JSX.Element> {
+  const settled = await result;
+  if (settled.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
       { section },
       React.createElement(ResourceUnavailable, {
         title: "Tool catalog could not be loaded",
-        code: controlApiFailureCode(result),
-        message: result.message
+        code: controlApiFailureCode(settled),
+        message: settled.message
       })
     );
   }
-
+  const sourceFilter = first(query.source);
+  const roleFilter = first(query.role);
   return React.createElement(
     ConsolePageShell,
     {
@@ -71,13 +95,13 @@ export default async function ToolsPage({
       // can disagree: a payload carrying two entries under a `totalTools` of 1
       // put "1" in the sidebar and "Showing 2 of 2 tool entries" on the page it
       // links to. Counting what was observed removes the second authority.
-      counts: { Tools: result.data.tools.length }
+      counts: { Tools: settled.data.tools.length }
     },
     React.createElement(ToolsView, {
-      tools: result.data.tools,
-      coverage: result.data.coverage,
-      validity: result.data.validity,
-      usageLink: result.data.usageLink,
+      tools: settled.data.tools,
+      coverage: settled.data.coverage,
+      validity: settled.data.validity,
+      usageLink: settled.data.usageLink,
       filters: { source: sourceFilter, role: roleFilter }
     })
   );

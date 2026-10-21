@@ -1,3 +1,4 @@
+import type { CanonicalNavSection } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
@@ -11,6 +12,7 @@ import {
 import { loadOpenLITUsage } from "../../../src/lib/server/openlit-usage.ts";
 import {
   ConsolePageShell,
+  ConsolePendingPage,
   controlApiCredentialUnavailable,
   readNodeContext,
   ResourceUnavailable
@@ -65,30 +67,59 @@ export default async function ToolDetailPage({
     );
   }
 
-  const [result, usageResult] = await Promise.all([
-    fetchTools(config),
-    loadOpenLITUsage({
-      range: "24H",
-      values: {},
-      customRange: {
-        startDate: first(sp.startDate),
-        endDate: first(sp.endDate)
-      }
+  // The reads start here and are not awaited.
+  const result = fetchTools(config);
+  const usageResult = loadOpenLITUsage({
+    range: "24H",
+    values: {},
+    customRange: {
+      startDate: first(sp.startDate),
+      endDate: first(sp.endDate)
+    }
+  });
+  return React.createElement(
+    ConsolePendingPage,
+    null,
+    React.createElement(ToolDetailContent, {
+      section,
+      result,
+      usageResult,
+      decoded
     })
-  ]);
-  if (result.kind !== "ok") {
+  );
+}
+
+/**
+ * The tool the Runtime confirmed, or the reason it could not answer.
+ *
+ * The reads are awaited here, inside the page's own pending boundary, so the
+ * shell and the placeholder are one answer rather than two.
+ */
+async function ToolDetailContent({
+  section,
+  result,
+  usageResult,
+  decoded
+}: {
+  readonly section: CanonicalNavSection;
+  readonly result: Promise<Awaited<ReturnType<typeof fetchTools>>>;
+  readonly usageResult: Promise<Awaited<ReturnType<typeof loadOpenLITUsage>>>;
+  readonly decoded: string;
+}): Promise<React.JSX.Element> {
+  const [settled, usageSettled] = await Promise.all([result, usageResult]);
+  if (settled.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
       { section },
       React.createElement(ResourceUnavailable, {
         title: "Tool details could not be loaded",
-        code: controlApiFailureCode(result),
-        message: result.message
+        code: controlApiFailureCode(settled),
+        message: settled.message
       })
     );
   }
 
-  const tool = result.data.tools.find(
+  const tool = settled.data.tools.find(
     (entry) =>
       entry.name === decoded ||
       `mcp__${entry.server ?? ""}__${entry.name}` === decoded ||
@@ -97,8 +128,8 @@ export default async function ToolDetailPage({
   if (!tool) notFound();
 
   const usage =
-    usageResult.kind === "ok"
-      ? filterToolCatalogUsage(usageResult.data, tool)
+    usageSettled.kind === "ok"
+      ? filterToolCatalogUsage(usageSettled.data, tool)
       : { calls: null, errors: null, observed: false };
 
   return React.createElement(
@@ -106,12 +137,12 @@ export default async function ToolDetailPage({
     { section },
     React.createElement(ToolDetailView, {
       tool,
-      coverage: result.data.coverage,
-      validity: result.data.validity,
+      coverage: settled.data.coverage,
+      validity: settled.data.validity,
       usage,
-      usageLink: result.data.usageLink,
+      usageLink: settled.data.usageLink,
       usageUnavailable:
-        usageResult.kind !== "ok" && usageResult.kind !== "not-configured"
+        usageSettled.kind !== "ok" && usageSettled.kind !== "not-configured"
     })
   );
 }

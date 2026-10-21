@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { renderToStaticMarkup } from "react-dom/server";
-
 import UsagePage from "../app/usage/page.ts";
+import { renderPageMarkup } from "./render-page.ts";
 
 const usageToken = "usage-page-test-token";
 const traceSpanId = "0123456789abcdef";
@@ -120,7 +119,7 @@ test("UsagePage renders a validated v5 snapshot and selected trace using server-
       throw new Error(`Unexpected Usage request: ${url}`);
     };
 
-    const markup = renderToStaticMarkup(
+    const markup = await renderPageMarkup(
       await UsagePage({
         searchParams: Promise.resolve({
           range: "7D",
@@ -159,7 +158,7 @@ test("UsagePage fails closed on a stale response schema while retaining its filt
     globalThis.fetch = async () =>
       Response.json({ ...usageResponse, schema: "autodev-openlit-usage-v2" });
 
-    const markup = renderToStaticMarkup(
+    const markup = await renderPageMarkup(
       await UsagePage({
         searchParams: Promise.resolve({ range: "7D", provider: "openai" })
       })
@@ -184,7 +183,7 @@ test("UsagePage maps an unreachable OpenLIT source to the actionable unavailable
       throw new TypeError("connection refused");
     };
 
-    const markup = renderToStaticMarkup(
+    const markup = await renderPageMarkup(
       await UsagePage({
         searchParams: Promise.resolve({ range: "24H", provider: "openai" })
       })

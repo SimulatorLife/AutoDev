@@ -1,3 +1,4 @@
+import type { CanonicalNavSection } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import React from "react";
 
@@ -9,6 +10,7 @@ import {
 import { hooksFromControlApi } from "../../src/lib/server/views.ts";
 import {
   ConsolePageShell,
+  ConsolePendingPage,
   controlApiCredentialUnavailable,
   readNodeContext,
   ResourceUnavailable
@@ -20,7 +22,7 @@ export const metadata: Metadata = {
   title: "Hooks"
 };
 
-export default async function HooksPage(): Promise<React.JSX.Element> {
+export default function HooksPage(): React.JSX.Element {
   const { section, config } = readNodeContext("/hooks");
   if (!config) {
     return React.createElement(
@@ -29,7 +31,30 @@ export default async function HooksPage(): Promise<React.JSX.Element> {
       controlApiCredentialUnavailable("hook configuration")
     );
   }
-  const result = await fetchHooks(config);
+  // The read starts here and is not awaited: the page's own boundary keeps
+  // the pending shell on screen while the Runtime is asked for its answer.
+  const hooks = fetchHooks(config);
+  return React.createElement(
+    ConsolePendingPage,
+    null,
+    React.createElement(HooksContent, { section, hooks })
+  );
+}
+
+/**
+ * The hooks the Runtime confirmed, or the reason it could not answer.
+ *
+ * The read is awaited here, below the page's own pending boundary, so the
+ * pending shell is already on screen while it is on its way.
+ */
+async function HooksContent({
+  section,
+  hooks: hooksPromise
+}: {
+  readonly section: CanonicalNavSection;
+  readonly hooks: Promise<Awaited<ReturnType<typeof fetchHooks>>>;
+}): Promise<React.JSX.Element> {
+  const result = await hooksPromise;
   if (result.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,

@@ -4,9 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { renderToStaticMarkup } from "react-dom/server";
-
 import MemoryPage from "../app/memory/page.ts";
+import { renderPageMarkup } from "./render-page.ts";
 
 /**
  * The selected-experience page, rendered from wire data for the first time.
@@ -270,7 +269,7 @@ async function renderExperiencePage(
         headers: { "content-type": "application/json" }
       });
     }) as typeof fetch;
-    const markup = renderToStaticMarkup(
+    const markup = await renderPageMarkup(
       await MemoryPage({
         searchParams: Promise.resolve({
           tab: "experiences",

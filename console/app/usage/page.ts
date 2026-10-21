@@ -1,4 +1,5 @@
 import {
+  type CanonicalNavSection,
   isHistoricalUsageSelection,
   type UsageFilterSelection
 } from "@simulatorlife/autodev-core";
@@ -19,12 +20,23 @@ import {
 import { loadUsageActiveSessions } from "../../src/lib/server/usage-active-sessions.ts";
 import {
   ConsolePageShell,
+  ConsolePendingPage,
   readNodeContext,
   ResourceUnavailable
 } from "../_console.ts";
 
 export const dynamic = "force-dynamic";
 const NOT_CONFIGURED = "not-configured";
+
+/**
+ * What the Usage surface is for.
+ *
+ * The sentence does not depend on the read, so the shell can state it once the
+ * read has answered. The read decides what the body shows; it does not decide
+ * what the surface is.
+ */
+const USAGE_DESCRIPTION =
+  "Active runtime sessions and OpenTelemetry request, token, cost, latency, and trace telemetry.";
 
 interface UsagePageProps {
   readonly searchParams: Promise<UsageSearchParams>;
@@ -122,45 +134,13 @@ export default async function UsagePage({
   // read-only control-plane projection rather than by a Usage telemetry query.
   // Asking OpenLIT for it would request a window that does not exist.
   if (!isHistoricalUsageSelection(selection)) {
-    const live = await loadUsageActiveSessions(config ?? null);
-    if (live.kind === NOT_CONFIGURED) {
-      return React.createElement(
-        ConsolePageShell,
-        { section },
-        React.createElement(ResourceUnavailable, {
-          title: "Control API credential is not configured",
-          code: live.code,
-          message:
-            "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read live session state.",
-          hint: "Active sessions come from the Runtime's read-only /control/runtime projection."
-        }),
-        React.createElement(UsageView, { selection })
-      );
-    }
-    if (live.kind === "unavailable") {
-      return React.createElement(
-        ConsolePageShell,
-        { section },
-        React.createElement(ResourceUnavailable, {
-          title: "Live session state could not be read",
-          code: live.code,
-          message: live.message,
-          hint: "An unavailable read is not an idle Runtime; no session count is shown until the Runtime reports one."
-        }),
-        React.createElement(UsageView, { selection })
-      );
-    }
+    // The read starts here and is not awaited: the page's own boundary keeps
+    // the pending shell on screen while the Runtime is asked for its answer.
+    const live = loadUsageActiveSessions(config ?? null);
     return React.createElement(
-      ConsolePageShell,
-      {
-        section,
-        description:
-          "Active runtime sessions and OpenTelemetry request, token, cost, latency, and trace telemetry."
-      },
-      React.createElement(UsageView, {
-        selection,
-        activeSessions: live.activeSessions
-      })
+      ConsolePendingPage,
+      null,
+      React.createElement(UsageLiveContent, { section, live, selection })
     );
   }
 
@@ -172,12 +152,97 @@ export default async function UsagePage({
         ? rawSpanId[0]
         : undefined;
   const hasTraceSelection = rawSpanId !== undefined;
-  const [result, traceResult] = await Promise.all([
-    loadOpenLITUsage(selection),
-    hasTraceSelection
-      ? loadOpenLITTrace(selectedSpanId ?? "")
-      : Promise.resolve(undefined)
-  ]);
+  // The reads start here and are not awaited: the page's own boundary keeps
+  // the pending shell on screen while the Usage source is asked for its answer.
+  const usage = loadOpenLITUsage(selection);
+  const trace = hasTraceSelection
+    ? loadOpenLITTrace(selectedSpanId ?? "")
+    : Promise.resolve(undefined);
+  return React.createElement(
+    ConsolePendingPage,
+    null,
+    React.createElement(UsageHistoricalContent, {
+      section,
+      usage,
+      trace,
+      selection
+    })
+  );
+}
+
+/**
+ * The live-session scope's evidence, or the reason it could not be read.
+ *
+ * The read is awaited here, below the page's own pending boundary, so the
+ * pending shell is already on screen while it is on its way.
+ */
+async function UsageLiveContent({
+  section,
+  live,
+  selection
+}: {
+  readonly section: CanonicalNavSection;
+  readonly live: Promise<Awaited<ReturnType<typeof loadUsageActiveSessions>>>;
+  readonly selection: UsageFilterSelection;
+}): Promise<React.JSX.Element> {
+  const result = await live;
+  if (result.kind === NOT_CONFIGURED) {
+    return React.createElement(
+      ConsolePageShell,
+      { section },
+      React.createElement(ResourceUnavailable, {
+        title: "Control API credential is not configured",
+        code: result.code,
+        message:
+          "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read live session state.",
+        hint: "Active sessions come from the Runtime's read-only /control/runtime projection."
+      }),
+      React.createElement(UsageView, { selection })
+    );
+  }
+  if (result.kind === "unavailable") {
+    return React.createElement(
+      ConsolePageShell,
+      { section },
+      React.createElement(ResourceUnavailable, {
+        title: "Live session state could not be read",
+        code: result.code,
+        message: result.message,
+        hint: "An unavailable read is not an idle Runtime; no session count is shown until the Runtime reports one."
+      }),
+      React.createElement(UsageView, { selection })
+    );
+  }
+  return React.createElement(
+    ConsolePageShell,
+    { section, description: USAGE_DESCRIPTION },
+    React.createElement(UsageView, {
+      selection,
+      activeSessions: result.activeSessions
+    })
+  );
+}
+
+/**
+ * The Usage telemetry the source confirmed, or the reason it could not answer.
+ *
+ * The reads are awaited here, below the page's own pending boundary, so the
+ * pending shell is already on screen while they are on their way.
+ */
+async function UsageHistoricalContent({
+  section,
+  usage,
+  trace,
+  selection
+}: {
+  readonly section: CanonicalNavSection;
+  readonly usage: Promise<Awaited<ReturnType<typeof loadOpenLITUsage>>>;
+  readonly trace: Promise<
+    Awaited<ReturnType<typeof loadOpenLITTrace>> | undefined
+  >;
+  readonly selection: UsageFilterSelection;
+}): Promise<React.JSX.Element> {
+  const [result, traceResult] = await Promise.all([usage, trace]);
   const traceLookup =
     traceResult === undefined ||
     (result.kind !== "ok" && traceResult.kind !== "ok")
@@ -216,11 +281,7 @@ export default async function UsagePage({
 
   return React.createElement(
     ConsolePageShell,
-    {
-      section,
-      description:
-        "Active runtime sessions and OpenTelemetry request, token, cost, latency, and trace telemetry."
-    },
+    { section, description: USAGE_DESCRIPTION },
     React.createElement(UsageView, {
       metrics: result.data.metrics,
       filterOptions: result.data.filterOptions,

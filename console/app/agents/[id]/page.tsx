@@ -1,3 +1,4 @@
+import type { CanonicalNavSection } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
@@ -16,6 +17,7 @@ import {
 import { agentDetailFromControlApi } from "../../../src/lib/server/views.ts";
 import {
   ConsolePageShell,
+  ConsolePendingPage,
   controlApiCredentialUnavailable,
   readNodeContext,
   ResourceUnavailable
@@ -48,7 +50,6 @@ export default async function AgentDetailPage({
   >;
 }): Promise<React.JSX.Element> {
   const { id } = await params;
-  const query = (await searchParams) ?? {};
   const { section, config } = readNodeContext("/agents");
   if (!config) {
     return React.createElement(
@@ -57,14 +58,57 @@ export default async function AgentDetailPage({
       controlApiCredentialUnavailable("agent configuration")
     );
   }
+  const query = (await searchParams) ?? {};
 
   // `/control/runtime` already publishes the validated `concurrency` projection
   // alongside `lifecycle` and `liveAgents`, so fetching `/control/routing` as
   // well was a redundant round-trip that let the two disagree if one failed.
+  //
+  // The reads start here and are not awaited: the page's own boundary keeps
+  // the pending shell on screen while the Runtime is asked for its answer.
+  const detail = fetchAgentDetail(id, config);
+  const providers = fetchProviders(config);
+  const runtime = fetchRuntime(config);
+
+  return React.createElement(
+    ConsolePendingPage,
+    null,
+    React.createElement(AgentDetailContent, {
+      section,
+      detail,
+      providers,
+      runtime,
+      control: query.control,
+      refusal: query.refusal
+    })
+  );
+}
+
+/**
+ * The agent the Runtime confirmed, or the reason it could not answer.
+ *
+ * The read is awaited here, below the page's own pending boundary, so the
+ * pending shell is already on screen while it is on its way.
+ */
+async function AgentDetailContent({
+  section,
+  detail: detailPromise,
+  providers: providersPromise,
+  runtime: runtimePromise,
+  control,
+  refusal
+}: {
+  readonly section: CanonicalNavSection;
+  readonly detail: Promise<Awaited<ReturnType<typeof fetchAgentDetail>>>;
+  readonly providers: Promise<Awaited<ReturnType<typeof fetchProviders>>>;
+  readonly runtime: Promise<Awaited<ReturnType<typeof fetchRuntime>>>;
+  readonly control: string | string[] | undefined;
+  readonly refusal: string | string[] | undefined;
+}): Promise<React.JSX.Element> {
   const [detailResult, providersResult, runtimeResult] = await Promise.all([
-    fetchAgentDetail(id, config),
-    fetchProviders(config),
-    fetchRuntime(config)
+    detailPromise,
+    providersPromise,
+    runtimePromise
   ]);
 
   if (detailResult.kind === "http-error" && detailResult.status === 404) {
@@ -94,8 +138,8 @@ export default async function AgentDetailPage({
       reconciliation: detailResult.data.reconciliation,
       providers,
       runtime,
-      controlFailed: isControlFailure(query.control),
-      controlRefusal: readControlRefusal(query.refusal)
+      controlFailed: isControlFailure(control),
+      controlRefusal: readControlRefusal(refusal)
     })
   );
 }
