@@ -3,12 +3,14 @@ import type {
   ControlApiPlaytestingReview,
   PlaytestBatch,
   PlaytestComparison,
+  PlaytestCoverageCellStatus,
   PlaytestEpisode,
   PlaytestFinding,
   WorkspaceEntry
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { StatCard } from "../../components/cards/StatCard.ts";
 import { FilterBar } from "../../components/filters/FilterBar.ts";
 import { SelectField } from "../../components/forms/SelectField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
@@ -17,9 +19,13 @@ import {
   LIST_PANEL_CLASS,
   NESTED_PANEL_CLASS
 } from "../../components/layout/Panel.ts";
-import { StatCard } from "../../components/cards/StatCard.ts";
-import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
+import { DetailDrawer } from "../../components/panels/DetailDrawer.ts";
+import {
+  DetailGrid,
+  DetailValue,
+  StatGrid
+} from "../../components/panels/DetailGrid.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -53,6 +59,8 @@ import {
   playtestingFilterHref,
   type PlaytestingFilterKey,
   playtestingPageHref,
+  playtestingReviewCloseHref,
+  playtestingReviewHref,
   type PlaytestingScope,
   type PlaytestingView as PlaytestingViewTab,
   playtestingViewHref
@@ -331,6 +339,257 @@ function PageSummary({
   );
 }
 
+/**
+ * The badge for one measurement-coverage cell.
+ *
+ * Each coverage state has its own word: "Not assigned" is not "Partial", and
+ * neither is "Unsupported". Collapsing them into one badge would claim the
+ * operator had measured something they had not.
+ */
+function coverageCellBadge(status: PlaytestCoverageCellStatus): {
+  readonly status: StatusBadgeVariant;
+  readonly label: string;
+} {
+  switch (status) {
+    case "covered": {
+      return { status: "valid", label: "Covered" };
+    }
+    case "not-assigned": {
+      return { status: NOT_OBSERVED_STATUS, label: "Not assigned" };
+    }
+    case "unsupported":
+    case "unsupported-modality": {
+      return { status: "unavailable", label: "Unsupported" };
+    }
+    case "partial": {
+      return { status: "unavailable", label: "Partial" };
+    }
+    default: {
+      return { status: "unavailable", label: "Insufficient" };
+    }
+  }
+}
+
+/**
+ * The panel for the most recent run.
+ *
+ * It says what the run was, whether it finished, and which build it ran
+ * against — including when that build is not the one currently available to
+ * run, which is the fact an operator comparing results needs most.
+ */
+function latestResultSection(
+  latest: PlaytestBatch | undefined,
+  latestSourceLabel: string | null,
+  currentBuildSha: string | null,
+  scope: PlaytestingScope
+): React.JSX.Element {
+  return React.createElement(
+    "section",
+    {
+      className: LIST_PANEL_CLASS,
+      "aria-labelledby": "playtesting-latest-run-heading",
+      "data-testid": "playtesting-latest-run"
+    },
+    React.createElement(
+      "div",
+      { className: "flex flex-wrap items-start justify-between gap-3" },
+      React.createElement(
+        "div",
+        { className: "min-w-0" },
+        React.createElement(
+          "h2",
+          {
+            id: "playtesting-latest-run-heading",
+            className: SECTION_HEADING_CLASS
+          },
+          "Latest result"
+        ),
+        latest
+          ? React.createElement(
+              React.Fragment,
+              null,
+              React.createElement(
+                "div",
+                { className: "flex flex-wrap items-center gap-2" },
+                React.createElement(StatusBadge, {
+                  status:
+                    latest.status === "completed"
+                      ? "valid"
+                      : latest.status === "running" ||
+                          latest.status === "queued"
+                        ? "pending"
+                        : "unavailable",
+                  label: batchStateLabel(latest.status)
+                }),
+                React.createElement(
+                  "span",
+                  { className: "text-sm" },
+                  `${String(latest.counts.completed)} of ${String(latest.counts.assigned)} ${latest.executionMode === "autonomous-visual" ? "sessions" : "assignments"} completed`
+                )
+              ),
+              React.createElement(
+                "p",
+                { className: MUTED_META_CLASS },
+                latestSourceLabel
+              ),
+              latest.executionMode === "adapter-accelerated" &&
+                currentBuildSha !== null &&
+                latest.buildSha !== currentBuildSha
+                ? React.createElement(
+                    "p",
+                    { className: MUTED_META_CLASS },
+                    "This result is from an earlier commit than the build currently available to run. Its evidence remains tied to the SHA shown here."
+                  )
+                : null,
+              React.createElement(
+                "p",
+                { className: MUTED_META_CLASS },
+                "Execution records describe whether assignments ran; game outcomes are shown separately on each session."
+              )
+            )
+          : React.createElement(
+              "p",
+              { className: MUTED_BODY_CLASS },
+              "No playtest runs are recorded yet. Start with the recommended bounded assignment above."
+            )
+      ),
+      React.createElement(
+        NavigationLink,
+        {
+          href: playtestingViewHref(scope, "sessions"),
+          className: "text-sm font-medium text-accent hover:underline",
+          dataAttributes: { "data-playtesting-browse-sessions": "true" }
+        },
+        "Browse all sessions"
+      )
+    ),
+    latest
+      ? React.createElement(
+          NavigationLink,
+          {
+            href: playtestingFilterHref(scope, {
+              view: "sessions",
+              batchId: latest.batchId
+            }),
+            className:
+              "mt-3 inline-flex text-sm font-medium text-accent hover:underline",
+            dataAttributes: {
+              "data-playtesting-latest-batch-sessions": latest.batchId
+            }
+          },
+          "Open sessions from this run"
+        )
+      : null
+  );
+}
+
+/**
+ * The panel for the sessions recorded most recently.
+ *
+ * Each row leads with the outcome in words and carries the session's own id,
+ * so a reader can tell two similar runs apart before opening either.
+ */
+function recentSessionsSection(
+  recentEpisodes: readonly PlaytestEpisode[],
+  episodeCount: number,
+  batchCount: number,
+  scope: PlaytestingScope
+): React.JSX.Element {
+  return React.createElement(
+    "section",
+    {
+      className: "flex flex-col gap-3",
+      "aria-labelledby": "playtesting-recent-sessions-heading"
+    },
+    React.createElement(
+      "div",
+      { className: "flex flex-wrap items-center justify-between gap-3" },
+      React.createElement(
+        "h2",
+        {
+          id: "playtesting-recent-sessions-heading",
+          className: SECTION_HEADING_CLASS
+        },
+        "Recent sessions"
+      ),
+      React.createElement(
+        "p",
+        { className: MUTED_META_CLASS },
+        `${String(episodeCount)} recorded across ${String(batchCount)} batches`
+      )
+    ),
+    recentEpisodes.length === 0
+      ? React.createElement(EmptyState, {
+          variant: "inline",
+          message:
+            episodeCount === 0
+              ? "No sessions have been persisted yet. A run can still be active or may finish without a session; check the live run status above."
+              : "Recent sessions were not observed in this response. Browse the Sessions view to inspect the archive."
+        })
+      : React.createElement(
+          "ul",
+          {
+            className: "grid gap-2",
+            "aria-label": "Recent playtest sessions"
+          },
+          ...recentEpisodes.map((episode) =>
+            React.createElement(
+              "li",
+              {
+                key: episode.episodeId,
+                className:
+                  "flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-3"
+              },
+              React.createElement(
+                "div",
+                { className: "min-w-0 flex-1" },
+                React.createElement(
+                  "div",
+                  { className: "flex flex-wrap items-center gap-2" },
+                  React.createElement(
+                    "span",
+                    { className: "font-medium" },
+                    episodeScenarioLabel(episode)
+                  ),
+                  executionStatusBadge(
+                    episode.status,
+                    episode.termination.reason
+                  ),
+                  gameOutcomeBadge(episode.outcome)
+                ),
+                React.createElement(
+                  "p",
+                  {
+                    className: `mt-1 break-all font-mono text-xs ${MUTED_META_CLASS}`,
+                    title: episode.episodeId
+                  },
+                  episode.episodeId
+                ),
+                React.createElement(
+                  "p",
+                  { className: MUTED_META_CLASS },
+                  sessionMetaLine(episode)
+                )
+              ),
+              React.createElement(
+                NavigationLink,
+                {
+                  href: playtestingEpisodeHref(scope, episode.episodeId, null),
+                  className: "text-sm font-medium text-accent hover:underline",
+                  dataAttributes: {
+                    "data-playtest-episode-link": episode.episodeId
+                  }
+                },
+                episode.status === "assigned" || episode.status === "started"
+                  ? "Watch"
+                  : "Open session"
+              )
+            )
+          )
+        )
+  );
+}
+
 function overview(
   data: PlaytestingOverviewData,
   scope: PlaytestingScope,
@@ -368,17 +627,7 @@ function overview(
             "div",
             { className: "mt-4 flex flex-col gap-3" },
             ...coverage.cells.map((cell) => {
-              const badge: { status: StatusBadgeVariant; label: string } =
-                cell.status === "covered"
-                  ? { status: "valid", label: "Covered" }
-                  : cell.status === "not-assigned"
-                    ? { status: NOT_OBSERVED_STATUS, label: "Not assigned" }
-                    : cell.status === "unsupported" ||
-                        cell.status === "unsupported-modality"
-                      ? { status: "unavailable", label: "Unsupported" }
-                      : cell.status === "partial"
-                        ? { status: "unavailable", label: "Partial" }
-                        : { status: "unavailable", label: "Insufficient" };
+              const badge = coverageCellBadge(cell.status);
               return React.createElement(
                 "div",
                 {
@@ -456,203 +705,125 @@ function overview(
     React.Fragment,
     null,
     summaryMetrics,
+    latestResultSection(latest, latestSourceLabel, currentBuildSha, scope),
+    recentSessionsSection(
+      recentEpisodes,
+      data.episodeCount,
+      data.batchCount,
+      scope
+    ),
+    coverageDetails
+  );
+}
+
+/**
+ * The detail of one analyst review.
+ *
+ * The list clamps the headline so a column of them stays scannable, which is
+ * right for scanning and wrong for reading: the analyst's conclusion is the
+ * reason an operator comes to this view. The drawer is where the whole
+ * conclusion is readable, and it is address state, so one review can be
+ * linked to and a Back returns to it still open.
+ */
+function analystReviewDetail(
+  review: ControlApiPlaytestingReview,
+  scope: PlaytestingScope
+): React.JSX.Element {
+  return React.createElement(
+    DetailDrawer,
+    {
+      title: review.reviewId,
+      badges: React.createElement(StatusBadge, {
+        status: "pending",
+        label:
+          review.kind === "discovery"
+            ? "Discovery review"
+            : "Confirmatory review"
+      }),
+      subtitle: `Recorded ${new Date(review.createdAt).toISOString()}`,
+      closeHref: playtestingReviewCloseHref(scope),
+      closeLabel: "Close review detail",
+      anchorId: `review-detail-${review.reviewId}`,
+      dataAttributes: { "data-review-detail": review.reviewId }
+    },
     React.createElement(
-      "section",
-      {
-        className: LIST_PANEL_CLASS,
-        "aria-labelledby": "playtesting-latest-run-heading",
-        "data-testid": "playtesting-latest-run"
-      },
-      React.createElement(
-        "div",
-        { className: "flex flex-wrap items-start justify-between gap-3" },
-        React.createElement(
-          "div",
-          { className: "min-w-0" },
-          React.createElement(
-            "h2",
-            {
-              id: "playtesting-latest-run-heading",
-              className: SECTION_HEADING_CLASS
-            },
-            "Latest result"
-          ),
-          latest
-            ? React.createElement(
-                React.Fragment,
-                null,
-                React.createElement(
-                  "div",
-                  { className: "flex flex-wrap items-center gap-2" },
-                  React.createElement(StatusBadge, {
-                    status:
-                      latest.status === "completed"
-                        ? "valid"
-                        : latest.status === "running" ||
-                            latest.status === "queued"
-                          ? "pending"
-                          : "unavailable",
-                    label: batchStateLabel(latest.status)
-                  }),
-                  React.createElement(
-                    "span",
-                    { className: "text-sm" },
-                    `${String(latest.counts.completed)} of ${String(latest.counts.assigned)} ${latest.executionMode === "autonomous-visual" ? "sessions" : "assignments"} completed`
-                  )
-                ),
-                React.createElement(
-                  "p",
-                  { className: MUTED_META_CLASS },
-                  latestSourceLabel
-                ),
-                latest.executionMode === "adapter-accelerated" &&
-                  currentBuildSha !== null &&
-                  latest.buildSha !== currentBuildSha
-                  ? React.createElement(
-                      "p",
-                      { className: MUTED_META_CLASS },
-                      "This result is from an earlier commit than the build currently available to run. Its evidence remains tied to the SHA shown here."
-                    )
-                  : null,
-                React.createElement(
-                  "p",
-                  { className: MUTED_META_CLASS },
-                  "Execution records describe whether assignments ran; game outcomes are shown separately on each session."
-                )
-              )
-            : React.createElement(
-                "p",
-                { className: MUTED_BODY_CLASS },
-                "No playtest runs are recorded yet. Start with the recommended bounded assignment above."
-              )
-        ),
-        React.createElement(
-          NavigationLink,
-          {
-            href: playtestingViewHref(scope, "sessions"),
-            className: "text-sm font-medium text-accent hover:underline",
-            dataAttributes: { "data-playtesting-browse-sessions": "true" }
-          },
-          "Browse all sessions"
-        )
-      ),
-      latest
-        ? React.createElement(
-            NavigationLink,
-            {
-              href: playtestingFilterHref(scope, {
-                view: "sessions",
-                batchId: latest.batchId
-              }),
-              className:
-                "mt-3 inline-flex text-sm font-medium text-accent hover:underline",
-              dataAttributes: {
-                "data-playtesting-latest-batch-sessions": latest.batchId
-              }
-            },
-            "Open sessions from this run"
-          )
-        : null
+      "p",
+      { className: "text-sm text-fg leading-relaxed" },
+      review.headline.length > 0
+        ? review.headline
+        : "The analyst recorded no written conclusion for this session."
     ),
     React.createElement(
-      "section",
-      {
-        className: "flex flex-col gap-3",
-        "aria-labelledby": "playtesting-recent-sessions-heading"
-      },
+      DetailGrid,
+      null,
+      React.createElement(DetailValue, {
+        label: "Hypotheses",
+        children: String(review.interpretationCount)
+      }),
+      React.createElement(DetailValue, {
+        label: "Observations",
+        children: String(review.observationCount)
+      }),
+      React.createElement(DetailValue, {
+        label: "Findings",
+        children: String(review.findingCount)
+      }),
+      React.createElement(DetailValue, {
+        label: "Status",
+        children: review.status
+      })
+    ),
+    React.createElement(
+      "div",
+      { className: "flex flex-col gap-2" },
       React.createElement(
-        "div",
-        { className: "flex flex-wrap items-center justify-between gap-3" },
-        React.createElement(
-          "h2",
-          {
-            id: "playtesting-recent-sessions-heading",
-            className: SECTION_HEADING_CLASS
-          },
-          "Recent sessions"
-        ),
-        React.createElement(
-          "p",
-          { className: MUTED_META_CLASS },
-          `${String(data.episodeCount)} recorded across ${String(data.batchCount)} batches`
-        )
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "What the analyst recorded"
       ),
-      recentEpisodes.length === 0
-        ? React.createElement(EmptyState, {
-            variant: "inline",
-            message:
-              data.episodeCount === 0
-                ? "No sessions have been persisted yet. A run can still be active or may finish without a session; check the live run status above."
-                : "Recent sessions were not observed in this response. Browse the Sessions view to inspect the archive."
-          })
+      React.createElement(
+        "p",
+        { className: `text-sm leading-relaxed ${MUTED_BODY_CLASS}` },
+        review.summary.length > 0
+          ? review.summary
+          : "This review carries no written summary."
+      )
+    ),
+    React.createElement(
+      "div",
+      { className: "flex flex-col gap-2" },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        `Evidence cited (${String(review.evidenceRefs.length)})`
+      ),
+      review.evidenceRefs.length === 0
+        ? React.createElement(
+            "p",
+            { className: `text-sm ${MUTED_META_CLASS}` },
+            "This review cites no evidence."
+          )
         : React.createElement(
             "ul",
-            {
-              className: "grid gap-2",
-              "aria-label": "Recent playtest sessions"
-            },
-            ...recentEpisodes.map((episode) =>
+            { className: "flex flex-col gap-1 text-sm text-fg-secondary" },
+            review.evidenceRefs.map((ref, index) =>
               React.createElement(
                 "li",
-                {
-                  key: episode.episodeId,
-                  className:
-                    "flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-3"
-                },
-                React.createElement(
-                  "div",
-                  { className: "min-w-0 flex-1" },
-                  React.createElement(
-                    "div",
-                    { className: "flex flex-wrap items-center gap-2" },
-                    React.createElement(
-                      "span",
-                      { className: "font-medium" },
-                      episodeScenarioLabel(episode)
-                    ),
-                    executionStatusBadge(
-                      episode.status,
-                      episode.termination.reason
-                    ),
-                    gameOutcomeBadge(episode.outcome)
-                  ),
-                  React.createElement(
-                    "p",
-                    {
-                      className: `mt-1 break-all font-mono text-xs ${MUTED_META_CLASS}`,
-                      title: episode.episodeId
-                    },
-                    episode.episodeId
-                  ),
-                  React.createElement(
-                    "p",
-                    { className: MUTED_META_CLASS },
-                    sessionMetaLine(episode)
-                  )
-                ),
-                React.createElement(
-                  NavigationLink,
-                  {
-                    href: playtestingEpisodeHref(
-                      scope,
-                      episode.episodeId,
-                      null
-                    ),
-                    className:
-                      "text-sm font-medium text-accent hover:underline",
-                    dataAttributes: {
-                      "data-playtest-episode-link": episode.episodeId
-                    }
-                  },
-                  episode.status === "assigned" || episode.status === "started"
-                    ? "Watch"
-                    : "Open session"
-                )
+                { key: `${ref.kind}-${ref.id}-${index}` },
+                `${ref.kind} · ${ref.id}${ref.step === undefined ? "" : ` · step ${String(ref.step)}`}`
               )
             )
           )
     ),
-    coverageDetails
+    React.createElement(
+      NavigationLink,
+      {
+        href: playtestingEpisodeHref(scope, review.episodeId),
+        className: "text-sm text-accent hover:underline",
+        dataAttributes: { "data-review-detail-session": review.reviewId }
+      },
+      "Open the session this review came from"
+    )
   );
 }
 
@@ -669,6 +840,11 @@ function analystHypotheses(
   reviewTotal: number,
   scope: PlaytestingScope
 ): React.JSX.Element {
+  const selected =
+    scope.selectedReviewId === null
+      ? null
+      : (reviews.find((review) => review.reviewId === scope.selectedReviewId) ??
+        null);
   const columns: readonly ColumnDef<ControlApiPlaytestingReview>[] = [
     {
       id: "hypothesis",
@@ -685,8 +861,12 @@ function analystHypotheses(
             "data-review-row": review.reviewId
           },
           React.createElement(
-            "p",
-            { className: "font-medium text-fg" },
+            NavigationLink,
+            {
+              href: playtestingReviewHref(scope, review.reviewId),
+              className: "font-medium text-fg hover:underline",
+              dataAttributes: { "data-review-open": review.reviewId }
+            },
             review.headline.length > 0
               ? review.headline
               : "The analyst recorded no written conclusion for this session."
@@ -755,7 +935,11 @@ function analystHypotheses(
       noun: "analyst reviews",
       nextCursor: null,
       scope
-    })
+    }),
+    // The open review's detail, rendered under the list it belongs to. A
+    // selection that names a review on another page opens nothing rather than
+    // opening the wrong review.
+    selected === null ? null : analystReviewDetail(selected, scope)
   );
 }
 

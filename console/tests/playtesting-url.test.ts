@@ -312,3 +312,38 @@ test("view changes and replay selection stay fast on a saturated filter set", ()
     `Per-iteration cost grew ${growth.toFixed(2)}x when the run grew 4x; linear is ~1x and quadratic ~4x.`
   );
 });
+
+test("an open analyst review is address state, and it belongs to the Findings view", () => {
+  const scope = parsePlaytestingScope({
+    view: "findings",
+    workspaceId: WORKSPACE,
+    review: "discovery-review-abc123"
+  });
+  assert.equal(scope.selectedReviewId, "discovery-review-abc123");
+
+  // The Findings view keeps the open review in its own address.
+  const findings = playtestingViewHref(scope, "findings");
+  assert.match(findings, /review=discovery-review-abc123/u);
+
+  // Another view cannot show a review, so it must not carry the selection.
+  const sessions = playtestingViewHref(scope, "sessions");
+  assert.doesNotMatch(sessions, /review=/u);
+  assert.equal(
+    parsePlaytestingScope({
+      view: "sessions",
+      workspaceId: WORKSPACE
+    }).selectedReviewId,
+    null
+  );
+});
+
+test("a malformed review id is rejected rather than carried into the address", () => {
+  const scope = parsePlaytestingScope({
+    view: "findings",
+    workspaceId: WORKSPACE,
+    review: "not a valid id"
+  });
+  assert.equal(scope.selectedReviewId, null);
+  assert.equal(scope.invalidQuery, true);
+  assert.doesNotMatch(playtestingListHref(scope), /review=/u);
+});

@@ -12,6 +12,8 @@ import {
   gameOutcomeLabel,
   limitTerminationReason,
   missingReasonLabel,
+  playtestingSessionFailureHint,
+  playtestingSessionFailureTitle,
   policyLabel
 } from "../src/features/playtesting/playtesting-labels.ts";
 import { parsePlaytestingScope } from "../src/features/playtesting/playtesting-url.ts";
@@ -37,7 +39,7 @@ function review(
     interpretationCount: 2,
     findingCount: 0,
     headline: "The fast-forward label moves from 1x to 2x across the captures.",
-    summary: "Four frames were reviewed against the player's intent.",
+    summary: "Four frames were reviewed against the recorded player intent.",
     evidenceRefs: [{ kind: "episode", id: "episode-17" }],
     ...overrides
   };
@@ -168,4 +170,94 @@ test("the Overview counts analyst reviews and never claims an absence of anomali
   // nothing, which was false whenever hypotheses existed.
   assert.doesNotMatch(html, /No anomalies detected/u);
   assert.doesNotMatch(html, /AI CRITIC FINDINGS/u);
+});
+
+test("a session id the workspace never recorded is not described as a server fault", () => {
+  const notFound = {
+    code: "autodev_control_playtesting_episode_not_found",
+    message: "The requested episode was not found.",
+    notFound: true
+  };
+  assert.equal(playtestingSessionFailureTitle(notFound), "Session not found");
+  assert.equal(
+    playtestingSessionFailureHint(notFound),
+    "This workspace has no playtest session with this id. Open a session from the Playtesting list for this workspace."
+  );
+
+  // Any other failure keeps the shared shell's own hint, which is about a
+  // missing server-side integration and is true for that case.
+  const other = {
+    code: "autodev_control_api_unreachable",
+    message: "The Control API did not answer.",
+    notFound: false
+  };
+  assert.equal(
+    playtestingSessionFailureTitle(other),
+    "Playtesting episode could not be loaded"
+  );
+  assert.equal(playtestingSessionFailureHint(other), null);
+});
+
+test("an analyst review opens as an addressable detail under the Findings list", () => {
+  const selected = parsePlaytestingScope({
+    view: "findings",
+    workspaceId: WORKSPACE,
+    review: "review-1"
+  });
+  assert.equal(selected.selectedReviewId, "review-1");
+
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: selected,
+      workspaces: [
+        { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
+      ],
+      list: {
+        resource: "findings",
+        rows: [],
+        total: 0,
+        nextCursor: null,
+        reviews: [review()],
+        reviewTotal: 1
+      }
+    })
+  );
+
+  // The drawer carries the review the operator asked for, with the whole
+  // conclusion readable rather than clamped into a table cell.
+  assert.match(html, /data-review-detail="review-1"/u);
+  assert.match(
+    html,
+    /Four frames were reviewed against the recorded player intent\./u
+  );
+  assert.match(html, /Close review detail/u);
+  // The session it came from stays one click away.
+  assert.match(html, /Open the session this review came from/u);
+  // The list row is the way in, and it is a plain link.
+  assert.match(html, /data-review-open="review-1"/u);
+});
+
+test("a review selection for a review this page does not show opens nothing", () => {
+  const selected = parsePlaytestingScope({
+    view: "findings",
+    workspaceId: WORKSPACE,
+    review: "review-not-on-this-page"
+  });
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: selected,
+      workspaces: [
+        { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
+      ],
+      list: {
+        resource: "findings",
+        rows: [],
+        total: 0,
+        nextCursor: null,
+        reviews: [review()],
+        reviewTotal: 1
+      }
+    })
+  );
+  assert.doesNotMatch(html, /data-review-detail=/u);
 });

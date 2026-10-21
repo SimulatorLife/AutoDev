@@ -24,6 +24,8 @@ import type {
   PlaytestMissingReason
 } from "@simulatorlife/autodev-core";
 
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+
 /** The badge tones the Console's status component understands. */
 export type PlaytestingLabelTone =
   "valid" | "pending" | "invalid" | "unavailable";
@@ -43,6 +45,41 @@ const LIMIT_TERMINATION_REASONS = {
 
 export type PlaytestingLimitTerminationReason =
   keyof typeof LIMIT_TERMINATION_REASONS;
+
+/**
+ * What a label says about a value it does not recognise.
+ *
+ * The stored codes are closed unions, so this branch is unreachable through
+ * the type system. It exists so that a value that arrives from the wire
+ * anyway produces an honest word rather than `undefined` rendering as an
+ * empty cell.
+ */
+/**
+ * The episode state that means a limit cut the episode short.
+ *
+ * The same code appears in the episode state machine and in the list of
+ * reasons a piece of evidence can be missing, so it is named once here.
+ */
+const BUDGET_TRUNCATED = "budget-truncated";
+
+/**
+ * What a label says about a value it does not recognise.
+ *
+ * The stored codes are closed unions, so this branch is unreachable through
+ * the type system. It exists so that a value which arrives from the wire
+ * anyway produces the Console's one word for missing evidence rather than
+ * `undefined` rendering as an empty cell.
+ */
+const UNRECOGNISED_LABEL = NOT_OBSERVED_LABEL;
+
+/**
+ * The tone for a state that is known but not a success.
+ *
+ * A crash, a cancellation, a truncated episode and a state the Console does
+ * not recognise all mean the same thing to a reader: this run did not
+ * produce a result to trust.
+ */
+const GAP_TONE: PlaytestingLabelTone = "unavailable";
 
 /** The termination reason, when it names a limit that cut an episode short. */
 export function limitTerminationReason(
@@ -64,23 +101,32 @@ export function executionStateLabel(
   terminationReason?: string | null
 ): string {
   switch (status) {
-    case "assigned":
+    case "assigned": {
       return "Queued";
-    case "started":
+    }
+    case "started": {
       return "Running";
-    case "completed":
+    }
+    case "completed": {
       return "Completed";
-    case "crashed":
+    }
+    case "crashed": {
       return "Crashed";
-    case "infrastructure-failed":
+    }
+    case "infrastructure-failed": {
       return "Failed (infrastructure)";
-    case "cancelled":
+    }
+    case "cancelled": {
       return "Cancelled";
-    case "budget-truncated": {
+    }
+    case BUDGET_TRUNCATED: {
       const limit = limitTerminationReason(terminationReason);
       return limit === null
         ? "Limit reached"
         : LIMIT_TERMINATION_REASONS[limit];
+    }
+    default: {
+      return UNRECOGNISED_LABEL;
     }
   }
 }
@@ -91,16 +137,23 @@ export function executionStateTone(
 ): PlaytestingLabelTone {
   switch (status) {
     case "assigned":
-    case "started":
+    case "started": {
       return "pending";
-    case "completed":
+    }
+    case "completed": {
       return "valid";
-    case "crashed":
+    }
+    case "crashed": {
       return "invalid";
+    }
     case "infrastructure-failed":
     case "cancelled":
-    case "budget-truncated":
-      return "unavailable";
+    case BUDGET_TRUNCATED: {
+      return GAP_TONE;
+    }
+    default: {
+      return GAP_TONE;
+    }
   }
 }
 
@@ -115,78 +168,114 @@ export function executionStateExplanation(
   status: PlaytestEpisode["status"],
   terminationReason?: string | null
 ): string | null {
-  if (status !== "budget-truncated") return null;
+  if (status !== BUDGET_TRUNCATED) return null;
   const limit = limitTerminationReason(terminationReason);
   if (limit === null) {
     return "The episode was cut short by an approved limit.";
   }
   switch (limit) {
-    case "usage-budget":
+    case "usage-budget": {
       return "The approved per-episode usage budget ran out before the step cap was reached.";
-    case "step-limit":
+    }
+    case "step-limit": {
       return "The approved per-episode step cap was reached before the usage budget ran out.";
-    case "wall-time-limit":
+    }
+    case "wall-time-limit": {
       return "The approved per-episode wall-time limit was reached before the episode finished.";
+    }
+    default: {
+      return null;
+    }
   }
 }
 
 /** The operator-facing label for a game's own outcome. */
 export function gameOutcomeLabel(value: PlaytestGameOutcomeKind): string {
   switch (value) {
-    case "win":
+    case "win": {
       return "Win";
-    case "loss":
+    }
+    case "loss": {
       return "Loss";
-    case "dnf":
+    }
+    case "dnf": {
       return "Did not finish";
-    case "other":
+    }
+    case "other": {
       return "Other outcome";
-    case "unknown":
+    }
+    case "unknown": {
       return "Not observed";
+    }
+    default: {
+      return UNRECOGNISED_LABEL;
+    }
   }
 }
 
 /** The operator-facing label for a reason a piece of evidence is missing. */
 export function missingReasonLabel(reason: PlaytestMissingReason): string {
   switch (reason) {
-    case "no-consent":
+    case "no-consent": {
       return "No consent recorded";
-    case "withdrawn":
+    }
+    case "withdrawn": {
       return "Withdrawn";
-    case "missing-ENJ":
+    }
+    case "missing-ENJ": {
       return "No event journal recorded";
-    case "missing-before-action-probe":
+    }
+    case "missing-before-action-probe": {
       return "No probe before the action";
-    case "missing-feedback":
+    }
+    case "missing-feedback": {
       return "No feedback recorded";
-    case "missing-action-or-revision-events":
+    }
+    case "missing-action-or-revision-events": {
       return "No action or revision events";
-    case "stochastic-outcome-without-probability-target":
+    }
+    case "stochastic-outcome-without-probability-target": {
       return "Stochastic outcome without a probability target";
-    case "fork-unsupported":
+    }
+    case "fork-unsupported": {
       return "Fork not supported";
-    case "partial-alternatives":
+    }
+    case "partial-alternatives": {
       return "Only some alternatives were run";
-    case "reward-or-continuation-contract-mismatch":
+    }
+    case "reward-or-continuation-contract-mismatch": {
       return "Reward or continuation contract mismatch";
-    case "unsupported-evaluator":
+    }
+    case "unsupported-evaluator": {
       return "Evaluator not supported";
-    case "unsupported-modality":
+    }
+    case "unsupported-modality": {
       return "Modality not supported";
-    case "wrong-instrument":
+    }
+    case "wrong-instrument": {
       return "Wrong instrument";
-    case "outside-window":
+    }
+    case "outside-window": {
       return "Outside the measurement window";
-    case "unobserved":
+    }
+    case "unobserved": {
       return "Not observed";
-    case "infrastructure-failed":
+    }
+    case "infrastructure-failed": {
       return "Infrastructure failure";
-    case "budget-truncated":
+    }
+    case BUDGET_TRUNCATED: {
       return "A limit cut the episode short";
-    case "cancelled":
+    }
+    case "cancelled": {
       return "Cancelled";
-    case "revoked":
+    }
+    case "revoked": {
       return "Permission revoked";
+    }
+    default: {
+      return UNRECOGNISED_LABEL;
+    }
   }
 }
 
@@ -215,18 +304,24 @@ export function buildLabel(
  */
 export function policyLabel(policyId: string): string {
   switch (policyId) {
-    case "smart-direct":
+    case "smart-direct": {
       return "Smart-directed";
-    case "onejev-local":
+    }
+    case "onejev-local": {
       return "OneJev (local)";
-    case "random":
+    }
+    case "random": {
       return "Random legal action";
-    case "first-legal":
+    }
+    case "first-legal": {
       return "First legal action";
-    case "scored":
+    }
+    case "scored": {
       return "Scored policy";
-    default:
+    }
+    default: {
       return policyId;
+    }
   }
 }
 
@@ -235,14 +330,21 @@ export function executionModeLabel(
   mode: PlaytestExecutionProvenance["mode"]
 ): string {
   switch (mode) {
-    case "autonomous-visual":
+    case "autonomous-visual": {
       return "Autonomous visual";
-    case "adapter-accelerated":
+    }
+    case "adapter-accelerated": {
       return "Adapter-accelerated";
-    case "scripted-regression":
+    }
+    case "scripted-regression": {
       return "Scripted regression";
-    case "legacy-unknown":
+    }
+    case "legacy-unknown": {
       return "Legacy mode unknown";
+    }
+    default: {
+      return "Mode not observed";
+    }
   }
 }
 
@@ -256,20 +358,27 @@ export function executionModeLabel(
  */
 export function batchStateLabel(status: string): string {
   switch (status) {
-    case "queued":
+    case "queued": {
       return "Queued";
-    case "running":
+    }
+    case "running": {
       return "Running";
-    case "completed":
+    }
+    case "completed": {
       return "Completed";
-    case "failed":
+    }
+    case "failed": {
       return "Failed";
-    case "cancelled":
+    }
+    case "cancelled": {
       return "Cancelled";
-    case "truncated":
+    }
+    case "truncated": {
       return "Cut short by a limit";
-    default:
+    }
+    default: {
       return status;
+    }
   }
 }
 
@@ -292,14 +401,21 @@ export function findingSeverityLabel(
   severity: "catastrophic" | "major" | "minor" | "informational"
 ): string {
   switch (severity) {
-    case "catastrophic":
+    case "catastrophic": {
       return "Catastrophic";
-    case "major":
+    }
+    case "major": {
       return "Major";
-    case "minor":
+    }
+    case "minor": {
       return "Minor";
-    case "informational":
+    }
+    case "informational": {
       return "Informational";
+    }
+    default: {
+      return UNRECOGNISED_LABEL;
+    }
   }
 }
 
@@ -308,16 +424,24 @@ export function findingStatusLabel(
   status: "open" | "fixed" | "regressed" | "withdrawn" | "stale"
 ): string {
   switch (status) {
-    case "open":
+    case "open": {
       return "Open";
-    case "fixed":
+    }
+    case "fixed": {
       return "Fixed";
-    case "regressed":
+    }
+    case "regressed": {
       return "Regressed";
-    case "withdrawn":
+    }
+    case "withdrawn": {
       return "Withdrawn";
-    case "stale":
+    }
+    case "stale": {
       return "Stale";
+    }
+    default: {
+      return UNRECOGNISED_LABEL;
+    }
   }
 }
 
@@ -336,16 +460,24 @@ export function verificationStageLabel(
     | "insufficient-evidence"
 ): string {
   switch (stage) {
-    case "not-yet-validated":
+    case "not-yet-validated": {
       return "Not yet validated";
-    case "fixed-on-reproduced-case":
+    }
+    case "fixed-on-reproduced-case": {
       return "Fixed on the reproduced case";
-    case "sustained-improvement":
+    }
+    case "sustained-improvement": {
       return "Sustained improvement";
-    case "regressed-elsewhere":
+    }
+    case "regressed-elsewhere": {
       return "Regressed elsewhere";
-    case "insufficient-evidence":
+    }
+    case "insufficient-evidence": {
       return "Insufficient evidence";
+    }
+    default: {
+      return UNRECOGNISED_LABEL;
+    }
   }
 }
 
@@ -359,14 +491,21 @@ export function evidenceStatusLabel(
   status: "verified" | "corroborated" | "hypothesis" | "not observed"
 ): string {
   switch (status) {
-    case "verified":
+    case "verified": {
       return "Verified";
-    case "corroborated":
+    }
+    case "corroborated": {
       return "Corroborated";
-    case "hypothesis":
+    }
+    case "hypothesis": {
       return "Hypothesis";
-    case "not observed":
+    }
+    case "not observed": {
       return "Not observed";
+    }
+    default: {
+      return UNRECOGNISED_LABEL;
+    }
   }
 }
 
@@ -378,23 +517,70 @@ export function evidenceStatusLabel(
  */
 export function evidenceKindLabel(kind: string): string {
   switch (kind) {
-    case "episode":
+    case "episode": {
       return "Episode";
-    case "event":
+    }
+    case "event": {
       return "Event";
-    case "frame":
+    }
+    case "frame": {
       return "Frame";
-    case "replay-segment":
+    }
+    case "replay-segment": {
       return "Replay segment";
-    case "review":
+    }
+    case "review": {
       return "Review";
-    case "finding":
+    }
+    case "finding": {
       return "Finding";
-    case "comparison":
+    }
+    case "comparison": {
       return "Comparison";
-    case "policy-validity":
+    }
+    case "policy-validity": {
       return "Policy validity";
-    default:
+    }
+    default: {
       return kind;
+    }
   }
+}
+
+/**
+ * What went wrong when a session could not be opened.
+ *
+ * `notFound` means the workspace holds no playtest session under that id.
+ * That is a fact about the URL, not a fault in the server, so it must not be
+ * described with the shared failure shell's default hint — which tells the
+ * operator to configure a server-side integration and restart the Console, and
+ * sends them to repair something that is not broken.
+ */
+export interface PlaytestingSessionFailure {
+  readonly code: string;
+  readonly message: string;
+  readonly notFound: boolean;
+}
+
+/** The heading for a session that could not be opened. */
+export function playtestingSessionFailureTitle(
+  failure: PlaytestingSessionFailure
+): string {
+  return failure.notFound
+    ? "Session not found"
+    : "Playtesting episode could not be loaded";
+}
+
+/**
+ * The operator's next step, or null when the shared shell's own hint applies.
+ *
+ * A missing session has an obvious next step — open one the workspace actually
+ * recorded — so the hint says that instead of blaming the deployment.
+ */
+export function playtestingSessionFailureHint(
+  failure: PlaytestingSessionFailure
+): string | null {
+  return failure.notFound
+    ? "This workspace has no playtest session with this id. Open a session from the Playtesting list for this workspace."
+    : null;
 }

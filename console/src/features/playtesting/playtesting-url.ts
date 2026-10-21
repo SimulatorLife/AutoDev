@@ -112,6 +112,8 @@ export interface PlaytestingScope {
   readonly step: number | null;
   /** Finding to restore focus to when the inspector returns to its source list. */
   readonly returnFindingId: string | null;
+  /** The analyst review whose detail is open in the Findings view. */
+  readonly selectedReviewId: string | null;
   /** Focused batch in the live view; bounded so it stays shareable. */
   readonly liveBatchId: string | null;
   /** Explicit analysis selection; bounded by the same limit Runtime enforces. */
@@ -127,6 +129,8 @@ const HASH_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const POSITIVE_INTEGER_PATTERN = /^[1-9]\d{0,2}$/u;
 const STEP_PATTERN = /^(0|[1-9]\d{0,5})$/u;
 const FINDING_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+/** Review ids are bounded so the Findings view's address state stays shareable. */
+const REVIEW_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 /** Batch ids are bounded so the live view's address state stays shareable. */
 const BATCH_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
@@ -265,6 +269,7 @@ export function parsePlaytestingScope(
   const rawCursor = singleValue(input.cursor);
   const rawStep = singleValue(input.step);
   const rawReturnFinding = singleValue(input.returnFinding);
+  const rawReview = singleValue(input.review);
   const rawLiveBatch = singleValue(input.liveBatch);
   const rawSelection = singleValue(input.sessions);
   const view = isView(rawView) ? rawView : "overview";
@@ -281,6 +286,12 @@ export function parsePlaytestingScope(
     candidateFindingId && FINDING_ID_PATTERN.test(candidateFindingId)
       ? candidateFindingId
       : null;
+  const candidateReviewId = rawReview?.trim() || null;
+  const selectedReviewId =
+    candidateReviewId && REVIEW_ID_PATTERN.test(candidateReviewId)
+      ? candidateReviewId
+      : null;
+  const reviewInvalid = candidateReviewId !== null && selectedReviewId === null;
   const candidateLiveBatchId = rawLiveBatch?.trim() || null;
   const liveBatchId =
     candidateLiveBatchId && BATCH_ID_PATTERN.test(candidateLiveBatchId)
@@ -308,6 +319,7 @@ export function parsePlaytestingScope(
     step: parsedStep.step,
     returnFindingId,
     liveBatchId,
+    selectedReviewId,
     selectedEpisodeIds: selection.episodeIds,
     invalidSelection: selectionInvalid,
     invalidQuery:
@@ -320,6 +332,7 @@ export function parsePlaytestingScope(
       hasRepeatedValues(input.cursor) ||
       hasRepeatedValues(input.step) ||
       hasRepeatedValues(input.returnFinding) ||
+      hasRepeatedValues(input.review) ||
       hasRepeatedValues(input.liveBatch) ||
       selectionInvalid ||
       parsedFilters.invalid ||
@@ -328,6 +341,7 @@ export function parsePlaytestingScope(
       workspaceInvalid ||
       cursorInvalid ||
       findingInvalid ||
+      reviewInvalid ||
       liveBatchInvalid
   };
 }
@@ -359,6 +373,12 @@ function paramsForScope(
   // The focused live batch is address state, so a refresh or Back returns the
   // operator to the batch they were watching rather than a bare list.
   if (scope.liveBatchId) params.set("liveBatch", scope.liveBatchId);
+  // The open review is address state too: a shared link, a refresh or Back
+  // returns to the same analyst hypothesis rather than a closed list. It only
+  // means something in the view that shows reviews.
+  if (scope.selectedReviewId && scope.view === "findings") {
+    params.set("review", scope.selectedReviewId);
+  }
   // The selection is address state so a shared link, a refresh or Back
   // reproduces the same set of sessions.
   if (scope.selectedEpisodeIds.length > 0) {
@@ -393,7 +413,10 @@ export function playtestingViewHref(
     view,
     filters,
     cursor: null,
-    step: null
+    step: null,
+    // A review detail belongs to the Findings view; leaving it behind keeps the
+    // other views' addresses free of a selection they cannot show.
+    selectedReviewId: view === "findings" ? scope.selectedReviewId : null
   };
   return withQuery(
     PLAYTESTING_ROUTE,
@@ -422,6 +445,41 @@ export function playtestingAnalyzeEpisodeHref(
   return playtestingViewHref(
     { ...scope, selectedEpisodeIds: [episodeId] },
     "sessions"
+  );
+}
+
+/**
+ * The Findings view with one analyst review's detail open.
+ *
+ * The detail is address state, so the link is shareable and Back returns to
+ * the list with the same review open rather than closing it.
+ */
+export function playtestingReviewHref(
+  scope: PlaytestingScope,
+  reviewId: string
+): string {
+  if (!REVIEW_ID_PATTERN.test(reviewId)) {
+    return playtestingViewHref(scope, "findings");
+  }
+  const next: PlaytestingScope = {
+    ...scope,
+    view: "findings",
+    selectedReviewId: reviewId,
+    cursor: null,
+    step: null
+  };
+  return withQuery(
+    PLAYTESTING_ROUTE,
+    paramsForScope(next, { includeCursor: false, includeStep: false })
+  );
+}
+
+/** The Findings view with the review detail closed and the filters unchanged. */
+export function playtestingReviewCloseHref(scope: PlaytestingScope): string {
+  const next: PlaytestingScope = { ...scope, selectedReviewId: null };
+  return withQuery(
+    PLAYTESTING_ROUTE,
+    paramsForScope(next, { includeCursor: false, includeStep: false })
   );
 }
 
