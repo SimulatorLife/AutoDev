@@ -5,7 +5,8 @@ import {
   clippedContent,
   DETAIL_ROUTES,
   documentStructure,
-  routeHeading
+  routeHeading,
+  waitForPageContent
 } from "./acceptance-helpers.ts";
 
 /**
@@ -28,18 +29,6 @@ const WIDTHS: readonly number[] = [390, 768, 1280];
  * width it is read at.
  */
 const SURFACES = [...CANONICAL_ROUTES, ...DETAIL_ROUTES];
-
-/**
- * Wait until the page's own content has replaced its loading shell.
- *
- * The Console streams a page: the shell and its loading state arrive first and
- * the resource's own content is swapped in afterwards. Measuring the shell
- * would measure the placeholder rather than the page.
- */
-async function waitForPageContent(page: Page): Promise<void> {
-  await expect(page.locator("[data-feature]").first()).toBeVisible();
-  await expect(page.locator("[data-console-loading]")).toHaveCount(0);
-}
 
 /**
  * What is wrong with one page at one width, said in a sentence.

@@ -1,4 +1,4 @@
-import type { Locator, Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 /**
  * One canonical resource route and the resource it answers with.
@@ -10,6 +10,18 @@ export interface CanonicalRoute {
   readonly section: string;
   /** The heading the route answers with. */
   readonly heading: string;
+}
+
+/**
+ * Wait until the page's own content has replaced its loading shell.
+ *
+ * The Console streams a page: the shell and its loading state arrive first
+ * and the resource's own content is swapped in afterwards. Measuring the
+ * shell would measure the placeholder rather than the page.
+ */
+export async function waitForPageContent(page: Page): Promise<void> {
+  await expect(page.locator("[data-feature]").first()).toBeVisible();
+  await expect(page.locator("[data-console-loading]")).toHaveCount(0);
 }
 
 /**
