@@ -99,6 +99,31 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure"
   },
+  // The Playtesting acceptance runs last.
+  //
+  // Its twenty-eight specs drive the heaviest pages in the product -- each
+  // one fans five reads out at the Control API -- and they leave the machine
+  // carrying that work. The Console's own specs measure how long a navigation
+  // takes, and a measurement taken on a machine that is still busy with the
+  // previous spec's reads is a measurement of the machine: the same spec
+  // failed twice in a row with its navigation arriving after the assertion
+  // had already given up, while the server logged nothing wrong and the page
+  // carried the right content a moment later.
+  //
+  // Two projects, in this order, so the order is a property of the
+  // configuration rather than of the alphabet: a new spec file joins the
+  // Console project by default, and only the Playtesting acceptance is
+  // named here.
+  projects: [
+    {
+      name: "console",
+      testIgnore: "**/playtesting-usability.spec.ts"
+    },
+    {
+      name: "playtesting",
+      testMatch: "**/playtesting-usability.spec.ts"
+    }
+  ],
   webServer: [
     {
       command: `AUTODEV_PLAYTEST_FIXTURE_PORT=${fixturePort} node e2e/playtesting-control-api-fixture.ts`,
