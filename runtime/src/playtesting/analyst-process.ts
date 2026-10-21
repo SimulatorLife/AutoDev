@@ -137,6 +137,11 @@ export function launchPlaytestAnalystProcess(
   const environment = options.environment ?? process.env;
   const spawnProcess = options.spawnProcess ?? spawn;
   const repositoryRoot = resolveRuntimeSourceRoot(import.meta.dirname);
+  // The service that dispatches the analyst knows the authoritative checkout;
+  // the Runtime source root is the materialized tree the child actually runs
+  // from.
+  const configurationRoot =
+    environment.AUTODEV_REPO_ROOT?.trim() || repositoryRoot;
   const providerAgent = resolveRuntimeSourcePath(
     repositoryRoot,
     "cli/provider-agent.ts"
@@ -194,6 +199,10 @@ export function launchPlaytestAnalystProcess(
     AUTODEV_PLAYTEST_ANALYST_SOURCE_HOME: sourceHome,
     AUTODEV_PLAYTEST_ANALYST_SOURCE_CODEX_HOME: sourceCodexHome,
     AUTODEV_REPO_ROOT: repositoryRoot,
+    // AutoDev's managed configuration -- the model catalog and the analysis
+    // skill -- lives in the authoritative checkout, not in the materialized
+    // Runtime tree. The analyst child may read it, and only it.
+    AUTODEV_CONFIGURATION_ROOT: configurationRoot,
     AUTODEV_PLAYTEST_WORKSPACE_ID: input.workspaceId,
     AUTODEV_PLAYTEST_ROLE: ANALYST_ROLE,
     AUTODEV_PLAYTEST_ACTOR_ID: input.actor,

@@ -660,6 +660,79 @@ test("playtest analyst materializes a trusted symlinked Codex model catalog", as
   }
 });
 
+test("the analyst trusts AutoDev's configuration root when the Runtime runs from its materialized tree", async () => {
+  const f = fixture();
+  try {
+    const sourceCodexHome = join(f.root, ".codex");
+    const sourceRole = join(sourceCodexHome, "agents", "playtest-analyst.toml");
+    const sourceCatalog = join(
+      repositoryRoot,
+      "config",
+      "catalogs",
+      "codex-model-catalog.json"
+    );
+    writeFileSync(
+      sourceRole,
+      [
+        'name = "playtest-analyst"',
+        'sandbox_mode = "read-only"',
+        "[mcp_servers.playtest]",
+        "enabled = true",
+        'enabled_tools = ["playtest.prepareReview", "playtest.submitReview"]',
+        'env_vars = ["AUTODEV_PLAYTEST_ROLE", "AUTODEV_PLAYTEST_ANALYSIS_ID"]'
+      ].join("\n") + "\n"
+    );
+    writeFileSync(join(sourceCodexHome, "config.toml"), "[model]\n");
+    symlinkSync(
+      sourceCatalog,
+      join(sourceCodexHome, "codex-model-catalog.json")
+    );
+    const isolatedHome = join(f.root, "analyst-home");
+    const isolatedCodexHome = join(isolatedHome, ".codex");
+    const materializedRoot = join(f.root, "materialized-runtime");
+    mkdirSync(materializedRoot, { recursive: true });
+    const environment: NodeJS.ProcessEnv = {
+      ...f.env,
+      // The materialized Runtime tree the analyst child actually runs from,
+      // and the checkout that owns AutoDev's managed configuration.
+      AUTODEV_REPO_ROOT: materializedRoot,
+      AUTODEV_CONFIGURATION_ROOT: repositoryRoot,
+      AUTODEV_PLAYTEST_ANALYSIS_MODE: "1",
+      AUTODEV_PLAYTEST_ANALYST_HOME: isolatedHome,
+      AUTODEV_PLAYTEST_ANALYST_CODEX_HOME: isolatedCodexHome,
+      AUTODEV_PLAYTEST_ANALYST_SOURCE_HOME: f.root,
+      AUTODEV_PLAYTEST_ANALYST_SOURCE_CODEX_HOME: sourceCodexHome
+    };
+    const dependencies: ProviderAgentDeps = {
+      ensureRouter: async () => undefined,
+      runCodex: (_binary, _args, childEnvironment) => {
+        const materialized = join(
+          childEnvironment.CODEX_HOME!,
+          "codex-model-catalog.json"
+        );
+        assert.equal(lstatSync(materialized).isFile(), true);
+        assert.equal(lstatSync(materialized).isSymbolicLink(), false);
+        return 0;
+      }
+    };
+    const result = await runProviderAgent(
+      [
+        "--role",
+        "playtest-analyst",
+        "--cwd",
+        join(f.root, "workspace"),
+        "--prompt",
+        "inspect a bounded packet"
+      ],
+      environment,
+      dependencies
+    );
+    assert.equal(result, 0);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("playtest analyst process excludes every Control API credential", async () => {
   const f = fixture();
   try {

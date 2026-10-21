@@ -360,9 +360,15 @@ function copyAnalystSkill(
 function prepareAnalystCodexHome(
   environment: NodeJS.ProcessEnv
 ): NodeJS.ProcessEnv {
+  // The runtime source root and AutoDev's managed configuration live in
+  // different trees once the Runtime is materialized into CODEX_HOME: the
+  // Runtime runs from the installed copy, while the model catalog and the
+  // analysis skill are the checkout's. Both are trusted, and the launcher's
+  // configuration root names the second one.
   const trustedRepositoryRoot = resolveRuntimeSourceRoot(
     import.meta.dirname,
-    environment.AUTODEV_REPO_ROOT
+    environment.AUTODEV_CONFIGURATION_ROOT?.trim() ||
+      environment.AUTODEV_REPO_ROOT
   );
   const homes = resolveAnalystCodexHomes(environment);
   mkdirSync(path.join(homes.codexHome, "agents"), {

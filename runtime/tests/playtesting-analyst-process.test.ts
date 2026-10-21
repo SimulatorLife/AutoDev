@@ -79,6 +79,7 @@ test("analyst dispatch uses the existing provider-agent role with a read-only sc
     },
     {
       environment: {
+        AUTODEV_REPO_ROOT: "/checkout",
         AUTODEV_CONTROL_API_BASE_URL: "http://127.0.0.1:4101",
         AUTODEV_CONTROL_API_LISTEN_HOST: "127.0.0.1",
         AUTODEV_CONTROL_API_LISTEN_PORT: "4101",
@@ -174,6 +175,11 @@ test("analyst dispatch uses the existing provider-agent role with a read-only sc
     "the child's own output is captured, not inherited into the service's streams"
   );
   assert.equal(childEnvironment.AUTODEV_PLAYTEST_ROLE, "playtest-analyst");
+  assert.equal(
+    childEnvironment.AUTODEV_CONFIGURATION_ROOT,
+    "/checkout",
+    "the analyst child is told where AutoDev's managed configuration lives"
+  );
   assert.equal(childEnvironment.AUTODEV_PLAYTEST_ANALYSIS_ID, "analysis-123");
   assert.equal(
     childEnvironment.AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS,
