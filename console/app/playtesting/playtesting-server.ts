@@ -126,16 +126,16 @@ export async function fetchPlaytestingReadiness(
   const path = `${options.retry ? CONTROL_API_PATHS.playtestingInitialization : CONTROL_API_PATHS.playtestingReadiness}?workspaceId=${encodeURIComponent(workspaceId)}`;
   const result = options.retry
     ? await postControlApi<unknown>(
-      path,
-      undefined,
-      config,
-      playtestingControlApiOptions(options)
-    )
+        path,
+        undefined,
+        config,
+        playtestingControlApiOptions(options)
+      )
     : await fetchControlApi<unknown>(
-    path,
-    config,
-    playtestingControlApiOptions(options)
-  );
+        path,
+        config,
+        playtestingControlApiOptions(options)
+      );
   if (result.kind !== "ok") return result;
   const value = result.data;
   return isRecord(value) &&

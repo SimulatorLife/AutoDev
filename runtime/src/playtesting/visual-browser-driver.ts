@@ -318,7 +318,9 @@ export class PlaytestVisualBrowserDriverError extends Error {
  * source being unavailable, which is what the driver can honestly say about
  * a page it could not open.
  */
-function openFailureCode(error: unknown): PlaytestVisualBrowserDriverError["code"] {
+function openFailureCode(
+  error: unknown
+): PlaytestVisualBrowserDriverError["code"] {
   if (error instanceof PlaytestVisualBrowserDriverError) return error.code;
   // Playwright's own timeout is named; it is the only timeout the driver sees
   // from the browser side.
@@ -345,7 +347,9 @@ async function closeWithinDeadline(
   let timer: NodeJS.Timeout | undefined;
   try {
     await Promise.race([
-      Promise.all(pending.map((closeable) => closeable.close().catch(() => undefined))),
+      Promise.all(
+        pending.map((closeable) => closeable.close().catch(() => undefined))
+      ),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, BROWSER_CLOSE_TIMEOUT_MS);
         timer.unref?.();
@@ -893,8 +897,7 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
     // open runs under it.
     const now = options.now ?? Date.now;
     const openDeadlineAt = now() + options.target.limits.wallTimeMs;
-    const openTimeoutMs = (): number =>
-      Math.max(1, openDeadlineAt - now());
+    const openTimeoutMs = (): number => Math.max(1, openDeadlineAt - now());
     try {
       browserProfileRoot = mkdtempSync(
         path.join(tmpdir(), "autodev-visual-browser-")

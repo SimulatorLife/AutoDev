@@ -7,7 +7,7 @@ import path from "node:path";
 import test from "node:test";
 
 import type { WorkspaceVisualPlaytestTargetApproval } from "@simulatorlife/autodev-core";
-import { type Browser,chromium } from "playwright-core";
+import { type Browser, chromium } from "playwright-core";
 
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
 import {
@@ -15,7 +15,8 @@ import {
   PlaytestVisualBrowserDriver,
   PlaytestVisualBrowserDriverError,
   type PlaytestVisualBrowserDriverOptions,
-  resetPlaytestVisualBrowserDriverAvailabilityCache} from "../src/playtesting/visual-browser-driver.ts";
+  resetPlaytestVisualBrowserDriverAvailabilityCache
+} from "../src/playtesting/visual-browser-driver.ts";
 
 const WORKSPACE = "fixture/visual-game";
 const EPISODE_ID = "visual-episode-1";
@@ -620,45 +621,51 @@ test("visual driver availability is cached per process and never relaunches a br
   resetPlaytestVisualBrowserDriverAvailabilityCache();
 });
 
-test("the open is bounded by the approved episode budget", { timeout: 60_000 }, async () => {
-  // A browser that never answers used to hold the episode open for as long
-  // as the browser cared to stay silent. The approved wall-time budget is
-  // the only bound that covers the whole open, so the open runs under it.
-  const source = await listen(() => "<!doctype html><html><body></body></html>");
-  const { store, root } = artifacts();
-  const browserType = {
-    executablePath: () => chromium.executablePath(),
-    launch: () => new Promise<never>(() => undefined)
-  } satisfies NonNullable<PlaytestVisualBrowserDriverOptions["browserType"]>;
-  const startedAt = Date.now();
-  try {
-    await assert.rejects(
-      openDriver({
-        source,
-        store,
-        browserType,
-        wallTimeMs: 1000,
-        actionTimeoutMs: 1000
-      }),
-      (error: unknown) => {
-        assert.ok(
-          error instanceof PlaytestVisualBrowserDriverError,
-          `the open must fail with a driver error, got ${String(error)}`
-        );
-        assert.equal(error.code, "browser-open-timeout");
-        return true;
-      }
+test(
+  "the open is bounded by the approved episode budget",
+  { timeout: 60_000 },
+  async () => {
+    // A browser that never answers used to hold the episode open for as long
+    // as the browser cared to stay silent. The approved wall-time budget is
+    // the only bound that covers the whole open, so the open runs under it.
+    const source = await listen(
+      () => "<!doctype html><html><body></body></html>"
     );
-    const elapsed = Date.now() - startedAt;
-    assert.ok(
-      elapsed < 30_000,
-      `the open must not outlive the approved budget (took ${String(elapsed)} ms)`
-    );
-  } finally {
-    await source.close();
-    rmSync(root, { recursive: true, force: true });
+    const { store, root } = artifacts();
+    const browserType = {
+      executablePath: () => chromium.executablePath(),
+      launch: () => new Promise<never>(() => undefined)
+    } satisfies NonNullable<PlaytestVisualBrowserDriverOptions["browserType"]>;
+    const startedAt = Date.now();
+    try {
+      await assert.rejects(
+        openDriver({
+          source,
+          store,
+          browserType,
+          wallTimeMs: 1000,
+          actionTimeoutMs: 1000
+        }),
+        (error: unknown) => {
+          assert.ok(
+            error instanceof PlaytestVisualBrowserDriverError,
+            `the open must fail with a driver error, got ${String(error)}`
+          );
+          assert.equal(error.code, "browser-open-timeout");
+          return true;
+        }
+      );
+      const elapsed = Date.now() - startedAt;
+      assert.ok(
+        elapsed < 30_000,
+        `the open must not outlive the approved budget (took ${String(elapsed)} ms)`
+      );
+    } finally {
+      await source.close();
+      rmSync(root, { recursive: true, force: true });
+    }
   }
-});
+);
 
 test("the open does not wait for the page's load event", async () => {
   // A game that is still being built keeps a request pending, and the load
@@ -671,7 +678,7 @@ test("the open does not wait for the page's load event", async () => {
     }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(
-      "<!doctype html><html><body><img src=\"/pending.png\"><button>Race</button></body></html>"
+      '<!doctype html><html><body><img src="/pending.png"><button>Race</button></body></html>'
     );
   });
   pending.listen(0, "127.0.0.1");
@@ -696,45 +703,51 @@ test("the open does not wait for the page's load event", async () => {
   }
 });
 
-test("a browser that cannot be closed does not hold the episode", { timeout: 60_000 }, async () => {
-  // The failure path has to give the browser back and finish: an episode
-  // that cannot report its own failure is worse than one that reports it
-  // late.
-  const source = await listen(() => "<!doctype html><html><body></body></html>");
-  const { store, root } = artifacts();
-  const wedged = {
-    newContext: async () => {
-      throw new Error("the browser never answered");
-    },
-    close: () => new Promise<never>(() => undefined)
-  } as unknown as Browser;
-  const browserType = {
-    executablePath: () => chromium.executablePath(),
-    launch: async () => wedged
-  } satisfies NonNullable<PlaytestVisualBrowserDriverOptions["browserType"]>;
-  const startedAt = Date.now();
-  try {
-    await assert.rejects(
-      openDriver({
-        source,
-        store,
-        browserType,
-        wallTimeMs: 2000,
-        actionTimeoutMs: 2000
-      }),
-      (error: unknown) => {
-        assert.ok(error instanceof PlaytestVisualBrowserDriverError);
-        assert.equal(error.code, "source-unavailable");
-        return true;
-      }
+test(
+  "a browser that cannot be closed does not hold the episode",
+  { timeout: 60_000 },
+  async () => {
+    // The failure path has to give the browser back and finish: an episode
+    // that cannot report its own failure is worse than one that reports it
+    // late.
+    const source = await listen(
+      () => "<!doctype html><html><body></body></html>"
     );
-    const elapsed = Date.now() - startedAt;
-    assert.ok(
-      elapsed < 30_000,
-      `a browser that cannot be closed must not hold the episode (took ${String(elapsed)} ms)`
-    );
-  } finally {
-    await source.close();
-    rmSync(root, { recursive: true, force: true });
+    const { store, root } = artifacts();
+    const wedged = {
+      newContext: async () => {
+        throw new Error("the browser never answered");
+      },
+      close: () => new Promise<never>(() => undefined)
+    } as unknown as Browser;
+    const browserType = {
+      executablePath: () => chromium.executablePath(),
+      launch: async () => wedged
+    } satisfies NonNullable<PlaytestVisualBrowserDriverOptions["browserType"]>;
+    const startedAt = Date.now();
+    try {
+      await assert.rejects(
+        openDriver({
+          source,
+          store,
+          browserType,
+          wallTimeMs: 2000,
+          actionTimeoutMs: 2000
+        }),
+        (error: unknown) => {
+          assert.ok(error instanceof PlaytestVisualBrowserDriverError);
+          assert.equal(error.code, "source-unavailable");
+          return true;
+        }
+      );
+      const elapsed = Date.now() - startedAt;
+      assert.ok(
+        elapsed < 30_000,
+        `a browser that cannot be closed must not hold the episode (took ${String(elapsed)} ms)`
+      );
+    } finally {
+      await source.close();
+      rmSync(root, { recursive: true, force: true });
+    }
   }
-});
+);

@@ -311,10 +311,7 @@ export async function isSmartDirectVisualPolicyAvailable(
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
-    Math.max(
-      100,
-      options.timeoutMs ?? SMART_DIRECT_AVAILABILITY_TIMEOUT_MS
-    )
+    Math.max(100, options.timeoutMs ?? SMART_DIRECT_AVAILABILITY_TIMEOUT_MS)
   );
   timeout.unref?.();
   let available = false;
