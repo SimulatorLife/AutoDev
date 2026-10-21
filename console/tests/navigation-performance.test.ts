@@ -34,27 +34,38 @@ test("view tabs use Next links while retaining URL-addressable tab state", () =>
   assert.match(tabsSource, /tabHref\(basePath, tab\.id, tabParam\)/u);
 });
 
-test("resource navigation does not prefetch the destination it is about to route to", () => {
-  // A pointer, touch or keyboard intent on a link used to warm the
-  // destination with `router.prefetch`, so that the dashboard did not start a
-  // request for every visible resource when it opened. The warm-up cost the
-  // navigation it was meant to help: a prefetch of a dynamic route carries
-  // the loading state rather than the page, the router can join that partial
-  // answer when the navigation starts, and the navigation then waits for a
-  // payload that was never going to arrive. The browser acceptance measured
-  // it -- the server answered the navigation request in sixteen milliseconds
-  // with a complete response, and the Console stayed where it was.
+test("resource navigation warms the destination it is about to route to, in full", () => {
+  // A pointer, touch or keyboard intent on a link warms the destination with
+  // `router.prefetch`, so that the dashboard does not start a request for every
+  // visible resource when it opens.
   //
-  // Nothing is lost by dropping it: every Console route is rendered for the
-  // visit, so a cached answer would have been thrown away, and the request
-  // the prefetch saved is one the page has to make anyway.
+  // The warm-up has to be a *full* prefetch. A partial prefetch answers with
+  // the route's loading state rather than with the page; the navigation then
+  // finds that answer waiting for it, applies the loading state, and waits for
+  // a page that is never going to arrive. The browser acceptance measured it --
+  // the server answered the navigation request in sixteen milliseconds with a
+  // complete response, and the Console stayed where it was.
+  //
+  // Nothing is lost by the warm-up being full: every Console route is rendered
+  // for the visit, so a partial answer would have been thrown away, and the
+  // request the prefetch saves is one the page has to make anyway.
   assert.match(navigationLinkSource, /prefetch:\s*false/u);
-  assert.doesNotMatch(navigationLinkSource, /router\.prefetch\s*\(/u);
-  assert.doesNotMatch(navigationLinkSource, /useRouter\s*\(/u);
-  assert.doesNotMatch(navigationLinkSource, /navigationIntentHandlers\s*\(/u);
-  // The link holds no hook and no event handler, so it is not a client
-  // boundary. `next/link` is a client component on its own.
-  assert.doesNotMatch(navigationLinkSource, /^\s*(["'])use client\1/mu);
+  assert.match(
+    navigationLinkSource,
+    /router\.prefetch\(\s*destination,\s*\{\s*kind:\s*FULL_PREFETCH_KIND\s*\}\s*\)/u
+  );
+  assert.match(
+    navigationLinkSource,
+    /FULL_PREFETCH_KIND\s*=\s*"full"/u,
+    "the warm-up must ask for the full page, not a partial answer"
+  );
+  assert.match(navigationLinkSource, /navigationIntentHandlers\s*\(/u);
+  // The warm-up is authorized by a pointer, touch or keyboard intent only, so
+  // that opening a page does not start a request for every visible resource.
+  assert.match(
+    navigationLinkSource,
+    /onMouseEnter:\s*onIntent,\s*onTouchStart:\s*onIntent,\s*onFocus:\s*onIntent/u
+  );
 });
 
 const rootLayoutSource = readFileSync(

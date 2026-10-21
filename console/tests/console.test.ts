@@ -20163,6 +20163,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Keeps the shared Console frame and active section visible while route data streams."
     ],
     [
+      join("src", "components", "navigation", "NavigationLink.ts"),
+      "Warms the destination it is about to route to with a full prefetch, on user intent only."
+    ],
+    [
       join("src", "features", "workspaces", "WorkspaceDetailView.ts"),
       "Submits checkout approval and revocation through same-origin routes in place, then renders only the server-confirmed approval state."
     ],
