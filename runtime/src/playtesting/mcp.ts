@@ -605,7 +605,24 @@ export interface PlaytestRunControlOptions {
   readonly launchAnalystProcess?: PlaytestAnalystProcessLauncher;
   /** Opens the browser for one visual episode; overridable so the episode loop is testable. */
   readonly openVisualDriver?: PlaytestVisualDriverOpener;
+  /**
+   * Builds the policy one visual episode asks for its next action;
+   * overridable so the episode loop is testable without a live router.
+   */
+  readonly createVisualPolicy?: PlaytestVisualPolicyFactory;
 }
+
+/** The visual policy surface the episode loop depends on. */
+export type PlaytestVisualPolicy = Pick<
+  SmartDirectVisualPolicy,
+  "decide" | "usage"
+>;
+
+/** Builds the policy for one approved visual episode. */
+export type PlaytestVisualPolicyFactory = (input: {
+  readonly target: WorkspaceVisualPlaytestTargetApproval;
+  readonly workspacePath: string;
+}) => PlaytestVisualPolicy;
 
 export interface PlaytestMcpOptions extends PlaytestRunControlOptions {
   readonly sessionProvider: PlaytestMcpSessionProvider;
@@ -4269,6 +4286,7 @@ interface ExecuteVisualBatchInput {
   readonly activeRuns: Map<string, ActivePlaytestRun>;
   readonly assignmentLocks: Map<string, Promise<void>>;
   readonly openVisualDriver: PlaytestVisualDriverOpener;
+  readonly createVisualPolicy: PlaytestVisualPolicyFactory;
   readonly onRegistered: (
     batchId: string,
     createdAt: string,
@@ -4601,6 +4619,24 @@ function isDecisionDeadlineFailure(err: unknown): boolean {
   return (
     err instanceof SmartDirectPolicyError &&
     err.code === "decision-deadline-exceeded"
+  );
+}
+
+/**
+ * Whether a Smart-direct failure is an approved budget running out.
+ *
+ * The request count, the token budget and the per-response usage are approved
+ * ceilings, and an episode that reaches one of them was cut short by its
+ * approval rather than lost to a runtime failure. The two must not be
+ * reported the same way: the first is a truncation the operator can read in
+ * the episode, the second is infrastructure loss.
+ */
+function isSmartDirectBudgetExhaustion(err: unknown): boolean {
+  return (
+    err instanceof SmartDirectPolicyError &&
+    (err.code === "request-budget-exhausted" ||
+      err.code === "token-budget-exhausted" ||
+      err.code === "response-usage-exceeds-budget")
   );
 }
 
@@ -4993,7 +5029,8 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
         simulationWallMs: 0
       });
 
-      const policy = new SmartDirectVisualPolicy(sessionTarget, {
+      const policy = input.createVisualPolicy({
+        target: sessionTarget,
         workspacePath: policyWorkspace.workspacePath
       });
       const history: { step: number; action: string; observation: string }[] =
@@ -5092,7 +5129,9 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
           exit =
             isDecisionDeadlineFailure(err) && driver.remainingWallTimeMs() <= 0
               ? { kind: "wall-time-limit", step }
-              : { kind: "infrastructure-failure", code, step };
+              : isSmartDirectBudgetExhaustion(err)
+                ? { kind: "step-limit", step }
+                : { kind: "infrastructure-failure", code, step };
           break;
         }
 
@@ -6233,7 +6272,9 @@ export function createPlaytestRunControl(
     launchSandboxHandler,
     prepareSandboxHandler = preparePlaytestSandbox,
     readWorkspaceCatalog = () => new ConfigRepository().readWorkspaceCatalog(),
-    launchAnalystProcess
+    launchAnalystProcess,
+    createVisualPolicy = ({ target, workspacePath }) =>
+      new SmartDirectVisualPolicy(target, { workspacePath })
   } = options;
   const activeRuns = new Map<string, ActivePlaytestRun>();
   const analystReviewRuns = new Map<string, PlaytestAnalystReviewRun>();
@@ -6730,6 +6771,7 @@ export function createPlaytestRunControl(
               options.openVisualDriver ??
               ((driverOptions) =>
                 PlaytestVisualBrowserDriver.open(driverOptions)),
+            createVisualPolicy,
             onRegistered(batchId, createdAt, assignmentIds, sessions) {
               registeredBatchId = batchId;
               resolveStarted({ batchId, createdAt, assignmentIds, sessions });
