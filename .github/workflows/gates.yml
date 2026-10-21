@@ -37,17 +37,25 @@ jobs:
 
       # The four gates, in the order that fails fastest. Formatting first
       # because it is a second, and the slowest gate is the test suite.
+      #
+      # Every gate runs even when an earlier one has failed. This workflow is
+      # the evidence the migration gate is read against, and evidence that
+      # stops at the first failure is evidence about one gate.
       - name: Check formatting
+        if: always()
         run: pnpm format:check
 
       - name: Lint
+        if: always()
         run: pnpm lint:ci
 
       - name: Typecheck
+        if: always()
         run: pnpm typecheck
 
       # The root suite and every workspace suite. `--workspace-concurrency=1`
       # is the repository's own choice: the suites share temporary roots, and
       # running them at once has them collide.
       - name: Test
+        if: always()
         run: pnpm test
