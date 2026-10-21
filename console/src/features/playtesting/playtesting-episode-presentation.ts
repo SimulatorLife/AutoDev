@@ -9,37 +9,27 @@ import {
   NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
+import {
+  buildLabel,
+  cohortLabel,
+  executionModeLabel,
+  executionStateLabel,
+  executionStateTone,
+  gameOutcomeLabel,
+  policyLabel
+} from "./playtesting-labels.ts";
 
 const LOOP_GUARD_STOP_REASON = "loop-guard" as const;
 
-export function executionModeLabel(
-  mode: PlaytestExecutionProvenance["mode"]
-): string {
-  switch (mode) {
-    case "autonomous-visual":
-      return "Autonomous visual";
-    case "adapter-accelerated":
-      return "Adapter-accelerated";
-    case "scripted-regression":
-      return "Scripted regression";
-    case "legacy-unknown":
-      return "Legacy mode unknown";
-  }
-}
+export { executionModeLabel };
 
 export function executionSourceSummary(
   provenance: PlaytestExecutionProvenance
 ): string {
   const { source } = provenance;
-  const revision =
-    source.revisionConfidence === "verified" && source.revision !== null
-      ? `Verified ${source.revision.slice(0, 12)}`
-      : source.kind === "URL-only"
-        ? "Commit not applicable"
-        : "Build unknown";
   const repository = source.repository ? ` · ${source.repository}` : "";
   const target = source.targetOrigin ? ` · ${source.targetOrigin}` : "";
-  return `${source.kind}${repository}${target} · ${revision}`;
+  return `${source.kind}${repository}${target} · ${buildLabel(source)}`;
 }
 
 /** Render an absent engine scenario honestly for URL-driven visual episodes. */
@@ -56,28 +46,23 @@ export function episodeScenarioLabel(
 export function episodeBuildLabel(
   episode: Pick<PlaytestEpisode, "identity" | "executionProvenance">
 ): string {
-  const { source } = episode.executionProvenance;
-  if (source.revisionConfidence === "verified" && source.revision !== null) {
-    return `Verified ${source.revision.slice(0, 12)}`;
-  }
-  return source.kind === "URL-only" ? "Commit not applicable" : "Build unknown";
+  return buildLabel(episode.executionProvenance.source);
 }
 
-/** Execution disposition and the game's outcome remain separate dimensions. */
+/**
+ * Execution disposition and the game's outcome remain separate dimensions.
+ *
+ * The termination reason is part of the badge because the episode state
+ * alone cannot say which limit cut a truncated episode short.
+ */
 export function executionStatusBadge(
-  status: PlaytestEpisode["status"]
+  status: PlaytestEpisode["status"],
+  terminationReason?: string | null
 ): React.JSX.Element {
-  const mapping = {
-    assigned: ["pending", "Assigned"],
-    started: ["pending", "Started"],
-    completed: ["valid", "Completed"],
-    crashed: ["invalid", "Crashed"],
-    "infrastructure-failed": ["unavailable", "Infrastructure failed"],
-    cancelled: ["unavailable", "Cancelled"],
-    "budget-truncated": ["unavailable", "Budget truncated"]
-  } as const;
-  const [variant, label] = mapping[status];
-  return React.createElement(StatusBadge, { status: variant, label });
+  return React.createElement(StatusBadge, {
+    status: executionStateTone(status),
+    label: executionStateLabel(status, terminationReason)
+  });
 }
 
 export function gameOutcomeBadge(
@@ -91,9 +76,32 @@ export function gameOutcomeBadge(
         : "unavailable";
   return React.createElement(StatusBadge, {
     status: variant,
-    label: value === "unknown" ? "Not observed" : value.toUpperCase(),
+    label: gameOutcomeLabel(value),
     title: "Game outcome is separate from playtest execution status."
   });
+}
+
+/**
+ * The metadata line under a session row.
+ *
+ * The fields here are the ones that tell one session from another: the
+ * execution mode, the decision backend, how much of the episode ran, the
+ * persona, and the build the session actually ran against.
+ */
+export function sessionMetaLine(
+  episode: Pick<
+    PlaytestEpisode,
+    "identity" | "executionProvenance" | "policyCohort" | "stepCount"
+  >
+): string {
+  const steps = `${String(episode.stepCount)} ${episode.stepCount === 1 ? "step" : "steps"}`;
+  return [
+    executionModeLabel(episode.executionProvenance.mode),
+    policyLabel(episode.identity.policyId),
+    cohortLabel(episode.policyCohort),
+    steps,
+    executionSourceSummary(episode.executionProvenance)
+  ].join(" · ");
 }
 
 /** Prefer the decision that stopped an incomplete episode over its first step. */

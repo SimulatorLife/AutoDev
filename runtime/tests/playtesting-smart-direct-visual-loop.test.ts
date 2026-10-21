@@ -10,6 +10,7 @@ import test from "node:test";
 import type { WorkspaceVisualPlaytestTargetApproval } from "@simulatorlife/autodev-core";
 
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
+import { buildVisualCandidates } from "../src/playtesting/visual-candidates.ts";
 import { SmartDirectVisualPolicy } from "../src/playtesting/smart-direct-policy.ts";
 import { PlaytestVisualBrowserDriver } from "../src/playtesting/visual-browser-driver.ts";
 
@@ -132,7 +133,8 @@ test("a Smart-direct response drives one admitted action through the isolated vi
       frameBytes,
       areasOfFocus: "Inspect the first game screen.",
       history: [],
-      deadlineMonotonicMs: performance.now() + 5000
+      deadlineMonotonicMs: performance.now() + 5000,
+      candidates: buildVisualCandidates(first.observation)
     });
     assert.equal(decision.status, "act");
     if (decision.status !== "act") return;

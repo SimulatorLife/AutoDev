@@ -1,0 +1,171 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import type { ControlApiPlaytestingReview } from "@simulatorlife/autodev-core";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import {
+  cohortLabel,
+  executionStateExplanation,
+  executionStateLabel,
+  gameOutcomeLabel,
+  limitTerminationReason,
+  missingReasonLabel,
+  policyLabel
+} from "../src/features/playtesting/playtesting-labels.ts";
+import { parsePlaytestingScope } from "../src/features/playtesting/playtesting-url.ts";
+import { PlaytestingView } from "../src/features/playtesting/PlaytestingView.ts";
+
+const WORKSPACE = "owner/game";
+
+function scope(view: "findings" | "overview" | "sessions") {
+  return parsePlaytestingScope({ view, workspaceId: WORKSPACE });
+}
+
+function review(
+  overrides: Partial<ControlApiPlaytestingReview> = {}
+): ControlApiPlaytestingReview {
+  return {
+    reviewId: "review-1",
+    episodeId: "episode-17",
+    workspaceId: WORKSPACE,
+    kind: "discovery",
+    status: "hypothesis",
+    createdAt: "2026-10-21T12:00:00.000Z",
+    observationCount: 4,
+    interpretationCount: 2,
+    findingCount: 0,
+    headline: "The fast-forward label moves from 1x to 2x across the captures.",
+    summary: "Four frames were reviewed against the player's intent.",
+    evidenceRefs: [{ kind: "episode", id: "episode-17" }],
+    ...overrides
+  };
+}
+
+test("a truncated episode says which limit cut it short", () => {
+  assert.equal(
+    executionStateLabel("budget-truncated", "usage-budget"),
+    "Budget exhausted"
+  );
+  assert.equal(
+    executionStateLabel("budget-truncated", "step-limit"),
+    "Step limit reached"
+  );
+  assert.equal(executionStateLabel("budget-truncated", null), "Limit reached");
+  assert.equal(
+    executionStateExplanation("budget-truncated", "usage-budget"),
+    "The approved per-episode usage budget ran out before the step cap was reached."
+  );
+  assert.equal(executionStateExplanation("completed", "usage-budget"), null);
+  assert.equal(limitTerminationReason("not-a-limit"), null);
+});
+
+test("a game outcome reads as a word, not a token", () => {
+  assert.equal(gameOutcomeLabel("win"), "Win");
+  assert.equal(gameOutcomeLabel("loss"), "Loss");
+  assert.equal(gameOutcomeLabel("dnf"), "Did not finish");
+  assert.equal(gameOutcomeLabel("unknown"), "Not observed");
+});
+
+test("the decision backend is named the way an operator names it", () => {
+  assert.equal(policyLabel("smart-direct"), "Smart-directed");
+  assert.equal(policyLabel("onejev-local"), "OneJev (local)");
+  assert.equal(policyLabel("weak-bot"), "weak-bot");
+});
+
+test("an unassigned cohort says so instead of implying a persona", () => {
+  assert.equal(cohortLabel(null), "No cohort assigned");
+  assert.equal(cohortLabel(""), "No cohort assigned");
+  assert.equal(cohortLabel("novice"), "novice");
+});
+
+test("a missing reason reads as a reason", () => {
+  assert.equal(
+    missingReasonLabel("budget-truncated"),
+    "A limit cut the episode short"
+  );
+  assert.equal(
+    missingReasonLabel("infrastructure-failed"),
+    "Infrastructure failure"
+  );
+  assert.equal(missingReasonLabel("unobserved"), "Not observed");
+});
+
+test("the Findings view shows the analyst's hypotheses, not only verified findings", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: scope("findings"),
+      workspaces: [
+        { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
+      ],
+      list: {
+        resource: "findings",
+        rows: [],
+        total: 0,
+        nextCursor: null,
+        reviews: [review()],
+        reviewTotal: 1
+      }
+    })
+  );
+  assert.match(html, /Analyst Hypotheses/u);
+  assert.match(html, /Verified Findings/u);
+  assert.match(
+    html,
+    /The fast-forward label moves from 1x to 2x across the captures\./u
+  );
+  // A hypothesis is a hypothesis: the view must not present it as a defect.
+  assert.match(html, /These are hypotheses, not defects/u);
+  assert.match(html, /1 shown · 1 matching analyst reviews/u);
+  // The link goes to the session the analyst looked at.
+  assert.match(html, /data-review-session="review-1"/u);
+  assert.match(html, /\/playtesting\/sessions\/episode-17/u);
+});
+
+test("the Findings view says plainly when nothing has been analysed", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: scope("findings"),
+      workspaces: [
+        { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
+      ],
+      list: {
+        resource: "findings",
+        rows: [],
+        total: 0,
+        nextCursor: null,
+        reviews: [],
+        reviewTotal: 0
+      }
+    })
+  );
+  assert.match(html, /No analysis has been recorded for this workspace yet/u);
+  assert.match(html, /No finding has been verified for this workspace/u);
+});
+
+test("the Overview counts analyst reviews and never claims an absence of anomalies", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: scope("overview"),
+      workspaces: [
+        { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
+      ],
+      overview: {
+        batches: [],
+        batchCount: 3,
+        episodeCount: 46,
+        findingCount: 0,
+        reviewCount: 14,
+        latestEpisodes: []
+      }
+    })
+  );
+  assert.match(html, /Analyst Reviews/u);
+  assert.match(html, /Verified Findings/u);
+  assert.match(html, /14/u);
+  // "No anomalies detected" was a claim that a search had run and found
+  // nothing, which was false whenever hypotheses existed.
+  assert.doesNotMatch(html, /No anomalies detected/u);
+  assert.doesNotMatch(html, /AI CRITIC FINDINGS/u);
+});

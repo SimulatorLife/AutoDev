@@ -12,6 +12,7 @@ import {
   assertPlaytestDiscoverySessionReview,
   assertPlaytestEpisodeIdentityForMode,
   assertPlaytestEpisodeModeFacts,
+  assertPlaytestEvidenceLocator,
   assertPlaytestExecutionProvenance,
   assertPlaytestExperiment,
   assertPlaytestNumericResults,
@@ -37,6 +38,7 @@ import {
   type PlaytestCrossSessionSynthesis,
   type PlaytestDiscoverySessionReview,
   type PlaytestEpisode,
+  type PlaytestEvidenceLocator,
   type PlaytestEvidencePacketReference,
   type PlaytestExperiment,
   playtestExperimentHashInput,
@@ -87,7 +89,10 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import { PlaytestSourceUnavailableError } from "./errors.ts";
-import type { PlaytestHumanAggregateRecord } from "./types.ts";
+import type {
+  PlaytestHumanAggregateRecord,
+  PlaytestReviewSummary
+} from "./types.ts";
 
 /** Keep indexed records bounded; bulk trace/frame bytes belong to Runtime artifacts. */
 export const MAX_PLAYTEST_PAYLOAD_BYTES = 512 * 1024;
@@ -2165,6 +2170,184 @@ export function decodeReview(
   assertIndexMatches(row, "review_id", artifact.reviewId);
   assertIndexMatches(row, "version", artifact.version);
   return artifact;
+}
+
+/** Review list rows surface bounded text; the archive keeps the full payload. */
+export const MAX_PLAYTEST_REVIEW_HEADLINE_CHARS = 240;
+export const MAX_PLAYTEST_REVIEW_SUMMARY_CHARS = 600;
+export const MAX_PLAYTEST_REVIEW_EVIDENCE_REFS = 8;
+
+/**
+ * Bound a free-text field to the length a list row may carry. This is the
+ * one bounded-text helper the Playtesting codecs use; a longer value is
+ * truncated rather than dropped so the row still says something.
+ */
+export function boundPlaytestText(value: string, max: number): string {
+  return value.length > max ? value.slice(0, max) : value;
+}
+
+/**
+ * Read a ClickHouse `DateTime64(3)` column value as an ISO-8601 timestamp.
+ * The inverse of {@link toClickHouseDateTime}; an unreadable value yields an
+ * empty string so the caller's own validation decides what that means.
+ */
+export function clickHouseDateTimeAsIso(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const isoValue = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+  const date = new Date(isoValue);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+/** The claim text of a review entry, tolerating the plain-string legacy shape. */
+function reviewClaimText(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (isRecord(value) && typeof value.text === "string") {
+    return value.text.trim();
+  }
+  return "";
+}
+
+/** The text of the first entry of a claim array, or an empty string. */
+function firstReviewClaimText(value: unknown): string {
+  if (!Array.isArray(value) || value.length === 0) return "";
+  return reviewClaimText(value[0]);
+}
+
+/** The length of a claim array, counting an absent array as no claims. */
+function reviewClaimCount(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+/** The workspace a review payload claims, wherever that payload keeps it. */
+function reviewPayloadWorkspaceId(
+  payload: Readonly<Record<string, unknown>>
+): string | null {
+  if (typeof payload.workspaceId === "string") return payload.workspaceId;
+  const provenance = payload.provenance;
+  if (isRecord(provenance) && typeof provenance.workspaceId === "string") {
+    return provenance.workspaceId;
+  }
+  return null;
+}
+
+/**
+ * Decode the evidence a review cites. Locators are deduplicated and capped,
+ * because a list row may not carry a review's whole citation ledger. A
+ * malformed locator is a real defect and stays loud.
+ */
+function decodeReviewEvidenceRefs(
+  value: unknown
+): readonly PlaytestEvidenceLocator[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse review payload has a malformed evidenceRefs array"
+    );
+  }
+  const refs: PlaytestEvidenceLocator[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    try {
+      assertPlaytestEvidenceLocator(entry);
+    } catch (error) {
+      throw new PlaytestSourceUnavailableError(
+        "ClickHouse review payload has a malformed evidence locator",
+        error
+      );
+    }
+    const key = [
+      entry.kind,
+      entry.id,
+      entry.step ?? "",
+      entry.revision ?? "",
+      entry.frameIndex ?? "",
+      entry.phaseId ?? ""
+    ].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    refs.push(entry);
+    if (refs.length === MAX_PLAYTEST_REVIEW_EVIDENCE_REFS) break;
+  }
+  return refs;
+}
+
+/**
+ * Project one persisted review row into the summary a list may show.
+ *
+ * The derivation is shape-tolerant on purpose: discovery and confirmatory
+ * reviews keep their claims in different shapes, and a payload that lacks a
+ * key degrades to an empty or zero value instead of failing the read. Only
+ * a genuinely broken payload -- unparsable JSON, a missing identity, a
+ * malformed locator -- raises.
+ */
+export function decodeReviewSummary(
+  row: Record<string, unknown>
+): PlaytestReviewSummary {
+  const payload = decodePayload<Readonly<Record<string, unknown>>>(
+    row,
+    "reviewId",
+    "version"
+  );
+  const { workspace_id: workspaceId, episode_id: episodeId } = row;
+  const reviewId = row.review_id;
+  if (
+    typeof workspaceId !== "string" ||
+    typeof episodeId !== "string" ||
+    typeof reviewId !== "string"
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse review row is missing its indexed identity columns"
+    );
+  }
+  const payloadWorkspaceId = reviewPayloadWorkspaceId(payload);
+  if (payloadWorkspaceId !== null) {
+    assertIndexMatches(row, "workspace_id", payloadWorkspaceId);
+  }
+  const payloadEpisodeId = payload.episodeId;
+  const payloadReviewId = payload.reviewId;
+  const payloadVersion = payload.version;
+  if (
+    typeof payloadEpisodeId !== "string" ||
+    typeof payloadReviewId !== "string" ||
+    typeof payloadVersion !== "number"
+  ) {
+    throw new PlaytestSourceUnavailableError(
+      "ClickHouse review payload is missing its identity"
+    );
+  }
+  assertIndexMatches(row, "episode_id", payloadEpisodeId);
+  assertIndexMatches(row, "review_id", payloadReviewId);
+  assertIndexMatches(row, "version", payloadVersion);
+
+  const summary = boundPlaytestText(
+    typeof payload.chronologicalSummary === "string"
+      ? payload.chronologicalSummary.trim()
+      : "",
+    MAX_PLAYTEST_REVIEW_SUMMARY_CHARS
+  );
+  const headline = boundPlaytestText(
+    firstReviewClaimText(payload.interpretations) ||
+      firstReviewClaimText(payload.observations) ||
+      summary,
+    MAX_PLAYTEST_REVIEW_HEADLINE_CHARS
+  );
+  return {
+    reviewId,
+    episodeId,
+    workspaceId,
+    kind:
+      payload.schema === PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA
+        ? "discovery"
+        : "confirmatory",
+    createdAt: clickHouseDateTimeAsIso(row.created_at),
+    status: typeof payload.status === "string" ? payload.status : "",
+    observationCount: reviewClaimCount(payload.observations),
+    interpretationCount: reviewClaimCount(payload.interpretations),
+    findingCount: reviewClaimCount(payload.findings),
+    headline,
+    summary,
+    evidenceRefs: decodeReviewEvidenceRefs(payload.evidenceRefs)
+  };
 }
 
 function migrateLegacyReviewClaims(

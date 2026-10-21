@@ -10,7 +10,8 @@
 import {
   type ControlApiPlaytestingRunRecord,
   type ControlApiPlaytestingRunStartedResponse,
-  PLAYTEST_LAUNCH_REQUEST_SCHEMA
+  PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+  type PlaytestVisualPolicyId
 } from "@simulatorlife/autodev-core";
 import { useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -26,6 +27,7 @@ import {
   cancellationAvailability,
   isTerminal
 } from "./playtesting-active-runs.ts";
+import { policyLabel } from "./playtesting-labels.ts";
 import type { PlaytestingScope } from "./playtesting-url.ts";
 import { PlaytestingLiveRuns } from "./PlaytestingLiveRuns.ts";
 import {
@@ -282,6 +284,8 @@ function VisualPlaytestLaunchCockpit({
   const [areasOfFocus, setAreasOfFocus] = useState<string>(
     VISUAL_FOCUS_PRESETS[0].prompt
   );
+  const [selectedPolicyId, setSelectedPolicyId] =
+    useState<PlaytestVisualPolicyId>("smart-direct");
   const [selectedEpisodes, setSelectedEpisodes] = useState<number>(1);
   const [selectedSteps, setSelectedSteps] = useState<number>(approvedMaxSteps);
 
@@ -291,6 +295,14 @@ function VisualPlaytestLaunchCockpit({
     VISUAL_FOCUS_PRESETS.find((preset) => preset.prompt === areasOfFocus)
       ?.title ?? (areasOfFocus.trim().length > 0 ? "Custom focus" : "No focus");
 
+  // The decision backends this mode offers, with each one's own readiness.
+  // A backend that cannot be reached is offered but cannot be chosen.
+  const policyOptions = readiness?.policies ?? [];
+  const selectedPolicy = policyOptions.find(
+    (policy) => policy.policyId === selectedPolicyId
+  );
+  const selectedPolicyAvailable = selectedPolicy?.status === "ready";
+
   const canSubmit = Boolean(
     !launchRecovery.pending &&
     launchRecovery.recoveryReady &&
@@ -298,7 +310,8 @@ function VisualPlaytestLaunchCockpit({
     areasOfFocus.trim().length <= 2000 &&
     workspaceId &&
     primaryTarget &&
-    isReady
+    isReady &&
+    selectedPolicyAvailable
   );
 
   const handleLaunch = (): void => {
@@ -315,7 +328,7 @@ function VisualPlaytestLaunchCockpit({
       workspaceId,
       capabilityRevision: setup.capabilities.capabilityRevision,
       targetId: primaryTarget.targetId,
-      policyId: "smart-direct",
+      policyId: selectedPolicyId,
       areasOfFocus: areasOfFocus.trim() || null,
       limits: {
         episodeCount: Math.min(
@@ -451,6 +464,56 @@ function VisualPlaytestLaunchCockpit({
                   String(entry.target.revision)
               )
             )
+          )
+        )
+      : null,
+    policyOptions.length > 0
+      ? React.createElement(
+          "div",
+          { className: "grid gap-1.5" },
+          React.createElement(
+            "label",
+            {
+              htmlFor: "visual-policy-select",
+              className:
+                "text-xs font-semibold uppercase tracking-wider text-fg-muted"
+            },
+            "Decision backend"
+          ),
+          React.createElement(
+            "select",
+            {
+              id: "visual-policy-select",
+              value: selectedPolicyId,
+              disabled: launchRecovery.pendingLaunch !== null,
+              onChange: (e: React.ChangeEvent<HTMLSelectElement>) =>
+                setSelectedPolicyId(e.target.value as PlaytestVisualPolicyId),
+              className:
+                "w-full rounded-lg border border-border bg-surface px-3.5 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent",
+              "data-testid": "visual-policy-select"
+            },
+            ...policyOptions.map((policy) =>
+              React.createElement(
+                "option",
+                {
+                  key: policy.policyId,
+                  value: policy.policyId,
+                  disabled: policy.status !== "ready"
+                },
+                policyLabel(policy.policyId) +
+                  (policy.status === "ready"
+                    ? ""
+                    : " · unavailable: " +
+                      (policy.reasons[0]?.message ?? "not reachable"))
+              )
+            )
+          ),
+          React.createElement(
+            "p",
+            { className: `text-xs ${MUTED_TEXT_CLASS}` },
+            selectedPolicyAvailable
+              ? "The backend that chooses each action. Its own readiness is reported above."
+              : "The selected decision backend is not reachable, so no run can start with it."
           )
         )
       : null,

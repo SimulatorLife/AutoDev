@@ -1,5 +1,6 @@
 import type {
   ControlApiPlaytestingHumanValidationResponse,
+  ControlApiPlaytestingReview,
   PlaytestBatch,
   PlaytestComparison,
   PlaytestEpisode,
@@ -39,11 +40,12 @@ import {
 } from "../../components/ui/text-classes.ts";
 import { PlaytestComparisonDecisionForm } from "./PlaytestComparisonDecisionForm.ts";
 import {
-  episodeBuildLabel,
   episodeScenarioLabel,
   executionStatusBadge,
-  gameOutcomeBadge
+  gameOutcomeBadge,
+  sessionMetaLine
 } from "./playtesting-episode-presentation.ts";
+import { batchStateLabel } from "./playtesting-labels.ts";
 import {
   PLAYTESTING_FILTER_KEYS,
   PLAYTESTING_PAGE_SIZES,
@@ -68,7 +70,8 @@ export interface PlaytestingOverviewData {
   readonly batchCount: number;
   readonly episodeCount: number;
   readonly findingCount: number;
-  readonly comparisonCount: number;
+  /** Persisted analyst reviews; the record that survives a Runtime restart. */
+  readonly reviewCount: number;
   readonly latestEpisodes: readonly PlaytestEpisode[];
 }
 
@@ -97,6 +100,9 @@ export type PlaytestingListData =
       readonly rows: readonly PlaytestFinding[];
       readonly total: number;
       readonly nextCursor: string | null;
+      /** The analyst's persisted hypotheses about these sessions. */
+      readonly reviews?: readonly ControlApiPlaytestingReview[] | undefined;
+      readonly reviewTotal?: number | undefined;
     }
   | {
       readonly resource: "comparisons";
@@ -419,27 +425,30 @@ function overview(
     StatGrid,
     { columns: 4 },
     React.createElement(StatCard, {
-      title: "Total Sessions",
+      title: "Sessions",
       value: data.episodeCount,
       subtitle: "Across all test scenarios"
     }),
     React.createElement(StatCard, {
-      title: "Evaluation Batches",
+      title: "Runs",
       value: data.batchCount,
-      subtitle: "Automated runs executed"
+      subtitle: "Playtest batches executed"
     }),
     React.createElement(StatCard, {
-      title: "AI Critic Findings",
+      title: "Analyst Reviews",
+      value: data.reviewCount,
+      subtitle:
+        data.reviewCount === 0
+          ? "No analysis run yet"
+          : "Hypotheses the analyst recorded"
+    }),
+    React.createElement(StatCard, {
+      title: "Verified Findings",
       value: data.findingCount,
       subtitle:
         data.findingCount === 0
-          ? "No anomalies detected"
-          : "Issues surfaced by critic"
-    }),
-    React.createElement(StatCard, {
-      title: "A/B Comparisons",
-      value: data.comparisonCount,
-      subtitle: "Regression checks recorded"
+          ? "None verified yet"
+          : "Claims backed by reproduced evidence"
     })
   );
 
@@ -483,7 +492,7 @@ function overview(
                             latest.status === "queued"
                           ? "pending"
                           : "unavailable",
-                    label: latest.status
+                    label: batchStateLabel(latest.status)
                   }),
                   React.createElement(
                     "span",
@@ -601,7 +610,10 @@ function overview(
                       { className: "font-medium" },
                       episodeScenarioLabel(episode)
                     ),
-                    executionStatusBadge(episode.status),
+                    executionStatusBadge(
+                      episode.status,
+                      episode.termination.reason
+                    ),
                     gameOutcomeBadge(episode.outcome)
                   ),
                   React.createElement(
@@ -615,7 +627,7 @@ function overview(
                   React.createElement(
                     "p",
                     { className: MUTED_META_CLASS },
-                    `${episode.identity.policyId} · ${episode.policyCohort ?? "No cohort assigned"} · ${String(episode.stepCount)} steps · ${episodeBuildLabel(episode)}`
+                    sessionMetaLine(episode)
                   )
                 ),
                 React.createElement(
@@ -644,11 +656,116 @@ function overview(
   );
 }
 
+/**
+ * The analyst's hypotheses about this workspace's sessions.
+ *
+ * A discovery review is an unscored hypothesis set about what the analyst
+ * saw on screen. It is the analyst's own conclusion, it is persisted, and
+ * it is the thing a reader comes to this view for — so it is shown as
+ * what it is: a hypothesis, not a defect.
+ */
+function analystHypotheses(
+  reviews: readonly ControlApiPlaytestingReview[],
+  reviewTotal: number,
+  scope: PlaytestingScope
+): React.JSX.Element {
+  const columns: readonly ColumnDef<ControlApiPlaytestingReview>[] = [
+    {
+      id: "hypothesis",
+      header: "Analyst hypothesis",
+      weight: 320,
+      align: "prose",
+      clampLines: 3,
+      cell: (review) =>
+        React.createElement(
+          "div",
+          {
+            id: `review-${review.reviewId}`,
+            tabIndex: -1,
+            "data-review-row": review.reviewId
+          },
+          React.createElement(
+            "p",
+            { className: "font-medium text-fg" },
+            review.headline.length > 0
+              ? review.headline
+              : "The analyst recorded no written conclusion for this session."
+          ),
+          React.createElement(
+            "p",
+            { className: MUTED_META_CLASS },
+            `${review.kind === "discovery" ? "Discovery" : "Confirmatory"} review · ${String(review.interpretationCount)} ${review.interpretationCount === 1 ? "hypothesis" : "hypotheses"} · ${String(review.observationCount)} ${review.observationCount === 1 ? "observation" : "observations"}`
+          )
+        )
+    },
+    {
+      id: "session",
+      header: "Session",
+      weight: 200,
+      cell: (review) =>
+        React.createElement(
+          NavigationLink,
+          {
+            href: playtestingEpisodeHref(scope, review.episodeId),
+            className: "text-accent hover:underline",
+            dataAttributes: { "data-review-session": review.reviewId }
+          },
+          "Open session"
+        )
+    },
+    {
+      id: "recorded",
+      header: "Recorded",
+      weight: 140,
+      cell: (review) =>
+        React.createElement(
+          "span",
+          { title: review.createdAt },
+          new Date(review.createdAt).toISOString().slice(0, 10)
+        )
+    }
+  ];
+  return React.createElement(
+    "section",
+    {
+      className: LIST_PANEL_CLASS,
+      "aria-labelledby": "playtesting-hypotheses-heading"
+    },
+    sectionHeading("playtesting-hypotheses-heading", "Analyst Hypotheses"),
+    React.createElement(
+      "p",
+      { className: `mb-3 text-sm ${MUTED_META_CLASS}` },
+      "What the analyst concluded from the recorded frames. These are hypotheses, not defects: nothing here has been reproduced or verified."
+    ),
+    React.createElement<DataTableProps<ControlApiPlaytestingReview>>(
+      DataTable,
+      {
+        data: reviews,
+        columns,
+        keyExtractor: (review) => review.reviewId,
+        emptyMessage:
+          reviewTotal === 0
+            ? "No analysis has been recorded for this workspace yet. Run “Analyze this session” on a session and the analyst's conclusions will appear here."
+            : "No hypotheses appear on this page; check the active cursor and filters."
+      }
+    ),
+    React.createElement(PageSummary, {
+      total: reviewTotal,
+      visible: reviews.length,
+      noun: "analyst reviews",
+      nextCursor: null,
+      scope
+    })
+  );
+}
+
 function findingsTable(
   rows: readonly PlaytestFinding[],
   total: number,
   scope: PlaytestingScope,
-  nextCursor: string | null
+  nextCursor: string | null,
+  reviews: readonly ControlApiPlaytestingReview[] = [],
+  reviewTotal: number = 0
 ): React.JSX.Element {
   const columns: readonly ColumnDef<PlaytestFinding>[] = [
     {
@@ -736,28 +853,38 @@ function findingsTable(
     }
   ];
   return React.createElement(
-    "section",
-    {
-      className: LIST_PANEL_CLASS,
-      "aria-labelledby": "playtesting-findings-heading"
-    },
-    sectionHeading("playtesting-findings-heading", "Findings"),
-    React.createElement<DataTableProps<PlaytestFinding>>(DataTable, {
-      data: rows,
-      columns,
-      keyExtractor: (finding) => `${finding.findingId}:${finding.version}`,
-      emptyMessage:
-        total === 0
-          ? "No findings are recorded for this workspace and filter set. A session win or loss is not itself a finding; findings require a separate evidence-based investigation."
-          : "No findings appear on this page; check the active cursor and filters."
-    }),
-    React.createElement(PageSummary, {
-      total,
-      visible: rows.length,
-      noun: "findings",
-      nextCursor,
-      scope
-    })
+    "div",
+    { className: "flex flex-col gap-4" },
+    analystHypotheses(reviews, reviewTotal, scope),
+    React.createElement(
+      "section",
+      {
+        className: LIST_PANEL_CLASS,
+        "aria-labelledby": "playtesting-findings-heading"
+      },
+      sectionHeading("playtesting-findings-heading", "Verified Findings"),
+      React.createElement(
+        "p",
+        { className: `mb-3 text-sm ${MUTED_META_CLASS}` },
+        "Claims that have been reproduced against a build. A session win or loss is not itself a finding; a finding requires a separate evidence-based investigation."
+      ),
+      React.createElement<DataTableProps<PlaytestFinding>>(DataTable, {
+        data: rows,
+        columns,
+        keyExtractor: (finding) => `${finding.findingId}:${finding.version}`,
+        emptyMessage:
+          total === 0
+            ? "No finding has been verified for this workspace. The analyst's hypotheses are listed above."
+            : "No findings appear on this page; check the active cursor and filters."
+      }),
+      React.createElement(PageSummary, {
+        total,
+        visible: rows.length,
+        noun: "findings",
+        nextCursor,
+        scope
+      })
+    )
   );
 }
 
@@ -1196,7 +1323,14 @@ function activeList(
         });
   }
   if (data.resource === "findings") {
-    return findingsTable(data.rows, data.total, scope, data.nextCursor);
+    return findingsTable(
+      data.rows,
+      data.total,
+      scope,
+      data.nextCursor,
+      data.reviews ?? [],
+      data.reviewTotal ?? 0
+    );
   }
   return comparisonsTable(
     data.rows,
@@ -1208,11 +1342,30 @@ function activeList(
   );
 }
 
+/**
+ * The filters that are actually narrowing this list.
+ *
+ * A collapsed filter panel that says only "Filters" tells the reader
+ * nothing about whether the list in front of them is the whole workspace
+ * or a narrow slice of it. Saying how many filters are active answers
+ * that at a glance, which is the question the reader actually has.
+ */
+function activeFilterCount(
+  scope: PlaytestingScope,
+  fields: ReturnType<typeof filterFields>
+): number {
+  return fields.editable.filter((key) => {
+    const value = scope.filters[key];
+    return typeof value === "string" && value.trim().length > 0;
+  }).length;
+}
+
 function workspaceControls(
   scope: PlaytestingScope,
   fields: ReturnType<typeof filterFields>
 ): React.ReactNode {
   if (scope.view === "overview") return null;
+  const active = activeFilterCount(scope, fields);
   return React.createElement(
     "details",
     { className: "rounded-lg border border-border bg-surface p-4" },
@@ -1220,11 +1373,11 @@ function workspaceControls(
       "summary",
       { className: "cursor-pointer text-sm font-medium" },
       "Filters",
-      scope.workspaceId
+      active > 0
         ? React.createElement(
             "span",
             { className: `ml-2 ${MUTED_META_CLASS}` },
-            `Workspace: ${scope.workspaceId}`
+            `${String(active)} active`
           )
         : null
     ),

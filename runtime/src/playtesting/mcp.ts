@@ -128,6 +128,9 @@ import {
   PLAYTEST_VISUAL_OBSERVATION_SCHEMA,
   type PlaytestVisualAction,
   type PlaytestVisualObservation,
+  type PlaytestVisualDecision,
+  type PlaytestVisualPolicyId,
+  type PlaytestVisualPolicy as CorePlaytestVisualPolicy,
   type WorkspacePlaytestApproval,
   type WorkspacePlaytestBuild,
   type WorkspaceVisualPlaytestLimits,
@@ -190,6 +193,11 @@ import {
 } from "./policies.ts";
 import { derivePlaytestPolicyValidity } from "./policy-validity-run.ts";
 import { preparePlaytestDiscoveryEvidencePacket } from "./discovery-review.ts";
+import { buildVisualCandidates } from "./visual-candidates.ts";
+import {
+  ONEJEV_LOCAL_POLICY_VERSION,
+  OneJevLocalVisualPolicy
+} from "./onejev-local-policy.ts";
 import {
   SmartDirectPolicyError,
   SMART_DIRECT_POLICY_VERSION,
@@ -614,15 +622,14 @@ export interface PlaytestRunControlOptions {
 }
 
 /** The visual policy surface the episode loop depends on. */
-export type PlaytestVisualPolicy = Pick<
-  SmartDirectVisualPolicy,
-  "decide" | "usage"
->;
+export type PlaytestVisualPolicy = CorePlaytestVisualPolicy;
 
 /** Builds the policy for one approved visual episode. */
 export type PlaytestVisualPolicyFactory = (input: {
   readonly target: WorkspaceVisualPlaytestTargetApproval;
   readonly workspacePath: string;
+  /** The decision backend the launch asked for. */
+  readonly policyId: PlaytestVisualPolicyId;
 }) => PlaytestVisualPolicy;
 
 export interface PlaytestMcpOptions extends PlaytestRunControlOptions {
@@ -4353,6 +4360,19 @@ function playerEvidenceReferenceForStep(
   };
 }
 
+/**
+ * The recorded version of a visual decision backend.
+ *
+ * The version is part of the frozen manifest, so it names the contract
+ * the episode was run under — not a model's weight revision, which the
+ * backend reports per decision.
+ */
+function visualPolicyVersion(policyId: PlaytestVisualPolicyId): string {
+  return policyId === "onejev-local"
+    ? ONEJEV_LOCAL_POLICY_VERSION
+    : SMART_DIRECT_POLICY_VERSION;
+}
+
 function playerDebriefSource(modelId: string | null) {
   if (modelId === null) return null;
   return {
@@ -4368,11 +4388,22 @@ function playerDebriefCheckpoint(
   step: number,
   decision: {
     readonly modelId: string | null;
-    readonly intention: string;
-    readonly predictedVisibleEffect: string;
+    readonly intention: string | null;
+    readonly predictedVisibleEffect: string | null;
   },
   capturedFrames: readonly PlaytestArtifactReference[]
 ): PlaytestPlayerDebriefV1 {
+  // A checkpoint is the player's own account of the step it is about to
+  // take. A decision backend that reports no intention has no such
+  // account, and the honest record is that the debrief does not apply --
+  // not an empty intention.
+  if (decision.intention === null) {
+    return {
+      schema: PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
+      status: "not-applicable",
+      reason: "non-reflective-policy"
+    };
+  }
   const source = playerDebriefSource(decision.modelId);
   if (source === null) {
     return {
@@ -4397,7 +4428,7 @@ function playerDebriefCheckpoint(
     checkpoint: {
       schema: "autodev-playtest-player-checkpoint-v1",
       intention: decision.intention,
-      predictedVisibleEffect: decision.predictedVisibleEffect,
+      predictedVisibleEffect: decision.predictedVisibleEffect ?? "",
       evidence
     }
   };
@@ -4407,11 +4438,17 @@ function completePlayerDebrief(input: {
   readonly requestedFocus: string | null;
   readonly traceSteps: readonly PlaytestEvidenceTraceStep[];
   readonly capturedFrames: readonly PlaytestArtifactReference[];
-  readonly decision: Extract<
-    Awaited<ReturnType<SmartDirectVisualPolicy["decide"]>>,
-    { readonly status: "stop" }
-  >;
+  readonly decision: PlaytestVisualDecision;
 }): PlaytestPlayerDebriefV1 {
+  // A complete debrief is the player's reflective account of the episode.
+  // A backend that produces no self-report has none to give.
+  if (input.decision.selfReport === null) {
+    return {
+      schema: PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
+      status: "not-applicable",
+      reason: "non-reflective-policy"
+    };
+  }
   const source = playerDebriefSource(input.decision.modelId);
   if (source === null) {
     return {
@@ -4420,7 +4457,7 @@ function completePlayerDebrief(input: {
       reason: "model-response-invalid"
     };
   }
-  const evidence = input.decision.focusReport.evidenceSteps.map((step) => {
+  const evidence = input.decision.selfReport.evidenceSteps.map((step) => {
     const recordedStep = input.traceSteps.find((entry) => entry.step === step);
     const frameRef = recordedStep?.frameRefs.find(
       (reference) => reference.kind === "frame"
@@ -4450,18 +4487,18 @@ function completePlayerDebrief(input: {
     focusInterpretation: {
       schema: "autodev-playtest-focus-interpretation-v1",
       requestedFocus: input.requestedFocus,
-      objective: input.decision.focusReport.objective,
-      inScope: input.decision.focusReport.inScope,
-      forbiddenScope: input.decision.focusReport.forbiddenScope,
-      stopCriteria: input.decision.focusReport.stopCriteria,
-      outcome: input.decision.focusReport.outcome,
+      objective: input.decision.selfReport.objective,
+      inScope: input.decision.selfReport.inScope,
+      forbiddenScope: input.decision.selfReport.forbiddenScope,
+      stopCriteria: input.decision.selfReport.stopCriteria,
+      outcome: input.decision.selfReport.outcome,
       assessmentSource: "smart-direct-self-report",
       evidence: evidence.filter(
         (reference): reference is PlaytestPlayerEvidenceReference =>
           reference !== null
       )
     },
-    summary: input.decision.focusReport.summary
+    summary: input.decision.selfReport.summary
   };
 }
 
@@ -4723,8 +4760,8 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
     targetApprovalId: input.target.approvalId,
     targetRevision: input.target.revision,
     targetOrigin,
-    policyId: "smart-direct",
-    policyVersion: SMART_DIRECT_POLICY_VERSION,
+    policyId: input.request.policyId,
+    policyVersion: visualPolicyVersion(input.request.policyId),
     cohortId: null,
     areasOfFocus,
     limits: input.request.limits,
@@ -4747,7 +4784,7 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
     revision: 1,
     workspaceId: input.workspaceId,
     measurementVersion: PLAYTESTS_MEASUREMENT_VERSION,
-    policyIds: ["smart-direct"],
+    policyIds: [input.request.policyId],
     cohortIds: [],
     scenarioIds: [],
     // A frozen assignment inventory with no terminal no-episode outcomes
@@ -4897,8 +4934,8 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
         configHash: null,
         seed: null,
         protocolVersion: null,
-        policyId: "smart-direct",
-        policyVersion: SMART_DIRECT_POLICY_VERSION,
+        policyId: input.request.policyId,
+        policyVersion: visualPolicyVersion(input.request.policyId),
         modelId: "autodev/smart",
         modelRevision: null,
         observationSchemaHash: createHash("sha256")
@@ -5059,7 +5096,8 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
 
       const policy = input.createVisualPolicy({
         target: sessionTarget,
-        workspacePath: policyWorkspace.workspacePath
+        workspacePath: policyWorkspace.workspacePath,
+        policyId: input.request.policyId
       });
       const history: { step: number; action: string; observation: string }[] =
         [];
@@ -5110,6 +5148,10 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
             frameBytes,
             areasOfFocus,
             history,
+            // The candidate set is what a finite-choice backend chooses
+            // from. It is derived from the observation, so every action a
+            // backend can return is one the Runtime proposed.
+            candidates: buildVisualCandidates(obsResult.observation),
             // The approved per-episode wall-time budget owns the decision
             // deadline. The driver enforces that same ceiling before every
             // observation and every action, so a decision may not outlive it;
@@ -5190,12 +5232,12 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
               .map((control) => control.controlId),
             selectedActionId: null,
             preActionPrediction: {
-              intention: decision.intention,
-              predictedVisibleEffect: decision.predictedVisibleEffect,
+              intention: decision.intention ?? "",
+              predictedVisibleEffect: decision.predictedVisibleEffect ?? "",
               reasonCode: decision.reasonCode
             },
             authoritativeOutcome: {
-              stopReason: decision.stopReason
+              stopReason: decision.stopReason ?? ""
             },
             events: [],
             frameRefs: [
@@ -5215,10 +5257,15 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
           break;
         }
 
-        const receipt = await driver.act(decision.action);
+        const chosenAction = decision.action;
+        if (chosenAction === null) {
+          exit = { kind: "policy-stop", step };
+          break;
+        }
+        const receipt = await driver.act(chosenAction);
         history.push({
           step,
-          action: JSON.stringify(decision.action),
+          action: JSON.stringify(chosenAction),
           observation: JSON.stringify({
             phase: obsResult.observation.phaseEvidence,
             controls: obsResult.observation.controls.map((c) => c.name)
@@ -5249,30 +5296,30 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
             .filter((control) => control.enabled)
             .map((control) => control.controlId),
           selectedActionId:
-            decision.action.kind === "activate-control"
-              ? decision.action.controlId
+            chosenAction.kind === "activate-control"
+              ? chosenAction.controlId
               : null,
           preActionPrediction: {
-            intention: decision.intention,
-            predictedVisibleEffect: decision.predictedVisibleEffect,
+            intention: decision.intention ?? "",
+            predictedVisibleEffect: decision.predictedVisibleEffect ?? "",
             reasonCode: decision.reasonCode
           },
           authoritativeOutcome: {
             status: receipt.status,
-            actionKind: decision.action.kind,
-            observationId: decision.action.observationId,
+            actionKind: chosenAction.kind,
+            observationId: chosenAction.observationId,
             actionDetail:
-              decision.action.kind === "activate-control"
-                ? { controlId: decision.action.controlId }
-                : decision.action.kind === "pointer-click"
+              chosenAction.kind === "activate-control"
+                ? { controlId: chosenAction.controlId }
+                : chosenAction.kind === "pointer-click"
                   ? {
-                      frameArtifactId: decision.action.frameArtifactId,
-                      x: decision.action.x,
-                      y: decision.action.y
+                      frameArtifactId: chosenAction.frameArtifactId,
+                      x: chosenAction.x,
+                      y: chosenAction.y
                     }
-                  : decision.action.kind === "key-press"
-                    ? { key: decision.action.key }
-                    : { button: decision.action.button },
+                  : chosenAction.kind === "key-press"
+                    ? { key: chosenAction.key }
+                    : { button: chosenAction.button },
             dispatchedAt:
               receipt.status === "dispatched" ? receipt.dispatchedAt : null,
             receiptAt: new Date().toISOString(),
@@ -6301,8 +6348,17 @@ export function createPlaytestRunControl(
     prepareSandboxHandler = preparePlaytestSandbox,
     readWorkspaceCatalog = () => new ConfigRepository().readWorkspaceCatalog(),
     launchAnalystProcess,
-    createVisualPolicy = ({ target, workspacePath }) =>
-      new SmartDirectVisualPolicy(target, { workspacePath })
+    createVisualPolicy = ({ target, workspacePath, policyId }) =>
+      policyId === "onejev-local"
+        ? new OneJevLocalVisualPolicy(target, {
+            ...(process.env.AUTODEV_ONEJEV_ENDPOINT === undefined
+              ? {}
+              : { endpoint: process.env.AUTODEV_ONEJEV_ENDPOINT }),
+            ...(process.env.AUTODEV_ONEJEV_MODEL === undefined
+              ? {}
+              : { model: process.env.AUTODEV_ONEJEV_MODEL })
+          })
+        : new SmartDirectVisualPolicy(target, { workspacePath })
   } = options;
   const activeRuns = new Map<string, ActivePlaytestRun>();
   const analystReviewRuns = new Map<string, PlaytestAnalystReviewRun>();

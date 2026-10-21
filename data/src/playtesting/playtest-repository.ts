@@ -65,6 +65,7 @@ import {
   decodeHumanStudy,
   decodeHumanSummary,
   decodeReview,
+  decodeReviewSummary,
   decodeDiscoveryReview,
   encodeBatch,
   encodeBenchmark,
@@ -79,6 +80,7 @@ import {
   encodeDiscoveryReview,
   isRecord,
   migrateLegacyEpisodeForStorage,
+  clickHouseDateTimeAsIso,
   toClickHouseDateTime
 } from "./row-codec.ts";
 import {
@@ -107,7 +109,9 @@ import type {
   PlaytestHumanStudyFilter,
   PlaytestHumanValidationSummary,
   PlaytestLaunchIntent,
-  PlaytestPage
+  PlaytestPage,
+  PlaytestReviewListFilter,
+  PlaytestReviewSummary
 } from "./types.ts";
 
 /** The most rows one list read will return, whatever the caller asks for. */
@@ -204,13 +208,6 @@ function assertPlaytestLaunchIntent(intent: PlaytestLaunchIntent): void {
   }
 }
 
-function clickHouseDateTimeAsIso(value: unknown): string {
-  if (typeof value !== "string") return "";
-  const isoValue = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
-  const date = new Date(isoValue);
-  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
-}
-
 function decodeLaunchIntent(
   row: Readonly<Record<string, unknown>>
 ): PlaytestLaunchIntent {
@@ -241,6 +238,46 @@ function decodeLaunchIntent(
     );
   }
   return intent;
+}
+
+/**
+ * Fixed-fragment WHERE clauses for the persisted-review list.
+ *
+ * Discovery and confirmatory reviews share one table, so the kind filter is
+ * a payload-schema predicate. It is applied inside the version fold so that
+ * "latest version" is resolved within one kind; the episode filter is
+ * applied after the fold, exactly like every other Playtesting list.
+ */
+interface ReviewWhereClause {
+  readonly innerClauses: readonly string[];
+  readonly outerClauses: readonly string[];
+  readonly params: Record<string, ClickHouseParamValue>;
+}
+
+function buildReviewWhereClause(
+  filter: PlaytestReviewListFilter
+): ReviewWhereClause {
+  if (filter.workspaceId.trim().length === 0) {
+    throw new TypeError("workspaceId is required for every Playtesting query");
+  }
+  const params: Record<string, ClickHouseParamValue> = {
+    workspaceId: filter.workspaceId
+  };
+  const innerClauses: string[] = [WORKSPACE_ID_PREDICATE];
+  const outerClauses: string[] = [];
+  if (filter.episodeId !== undefined) {
+    outerClauses.push("episode_id = {episodeId:String}");
+    params.episodeId = filter.episodeId;
+  }
+  if (filter.kind !== undefined) {
+    innerClauses.push(
+      filter.kind === "discovery"
+        ? "JSONExtractString(payload_json, 'schema') = {discoverySchema:String}"
+        : "JSONExtractString(payload_json, 'schema') != {discoverySchema:String}"
+    );
+    params.discoverySchema = PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA;
+  }
+  return { innerClauses, outerClauses, params };
 }
 
 /**
@@ -806,7 +843,7 @@ export class PlaytestRepository {
     return parseTotalCount(await this.execute(countQuery, where.params));
   }
 
-  // ---- Reviews (latest read only; no pagination requirement) ---------------
+  // ---- Reviews ---------------------------------------------------------------
 
   async insertReview(record: PlaytestSessionReview): Promise<void> {
     const row = encodeReview(record.provenance.workspaceId, record);
@@ -897,6 +934,78 @@ export class PlaytestRepository {
     );
     const rows = parseNdjsonLines(text);
     return rows.length > 0 ? decodeDiscoveryReview(rows[0]!) : null;
+  }
+
+  /**
+   * List the persisted analyst reviews of one workspace, newest first.
+   *
+   * Every filter is applied at ClickHouse before pagination and the count
+   * is the full matching population, not the loaded page. Only the latest
+   * version of each review is listed: a review is append-only, and a
+   * superseded version is not what the analyst concluded.
+   */
+  async listReviews(
+    filter: PlaytestReviewListFilter,
+    listOptions: PlaytestListOptions = {}
+  ): Promise<PlaytestPage<PlaytestReviewSummary>> {
+    const limit = clampLimit(listOptions.limit);
+    const cursor = decodePlaytestCursor(listOptions.cursor);
+    const where = buildReviewWhereClause(filter);
+    const innerWhere = where.innerClauses.join(" AND ");
+    const restClauses = where.outerClauses;
+
+    const outerWhere = appendCursorClause(
+      {
+        clauses: ["rn = 1", ...restClauses],
+        params: where.params
+      },
+      cursor,
+      "created_at",
+      "review_id"
+    );
+
+    const selectQuery =
+      `SELECT workspace_id, episode_id, review_id, version, created_at, payload_json FROM (` +
+      `SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id, review_id ORDER BY version DESC, cityHash64(payload_json) DESC, payload_json DESC) AS rn ` +
+      `FROM ${PLAYTEST_REVIEWS_TABLE} WHERE ${innerWhere}) ` +
+      `WHERE ${joinWhereClauses(outerWhere)} ORDER BY created_at DESC, review_id DESC ` +
+      `LIMIT {limit:UInt32} FORMAT JSONEachRow`;
+
+    const countQuery =
+      `SELECT count() AS total FROM (` +
+      `SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id, review_id ORDER BY version DESC, cityHash64(payload_json) DESC, payload_json DESC) AS rn ` +
+      `FROM ${PLAYTEST_REVIEWS_TABLE} WHERE ${innerWhere}) WHERE rn = 1 AND ` +
+      `${restClauses.length > 0 ? restClauses.join(" AND ") : "1 = 1"} ` +
+      `FORMAT JSONEachRow`;
+
+    const [rowsText, countText] = await Promise.all([
+      this.execute(selectQuery, { ...outerWhere.params, limit }),
+      this.execute(countQuery, where.params)
+    ]);
+
+    const rawRows = parseNdjsonLines(rowsText);
+    const rows = rawRows.map(decodeReviewSummary);
+    const total = parseTotalCount(countText);
+    const nextCursor =
+      rows.length === limit && rows.length > 0
+        ? encodePlaytestCursor({
+            orderedAt: String(rawRows.at(-1)!.created_at),
+            tiebreakId: rows.at(-1)!.reviewId
+          })
+        : null;
+    return { rows, total, nextCursor };
+  }
+
+  /** The number of persisted reviews matching a filter, before pagination. */
+  async countReviews(filter: PlaytestReviewListFilter): Promise<number> {
+    const where = buildReviewWhereClause(filter);
+    const countQuery = `SELECT count() AS total FROM (
+        SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id, review_id ORDER BY version DESC, cityHash64(payload_json) DESC, payload_json DESC) AS rn
+        FROM ${PLAYTEST_REVIEWS_TABLE}
+        WHERE ${where.innerClauses.join(" AND ")}
+      ) WHERE rn = 1 AND ${where.outerClauses.join(" AND ") || "1 = 1"}
+      FORMAT JSONEachRow`;
+    return parseTotalCount(await this.execute(countQuery, where.params));
   }
 
   // ---- Cross-session synthesis --------------------------------------------

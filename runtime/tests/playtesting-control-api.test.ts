@@ -40,7 +40,7 @@ import {
 } from "../src/control-api/index.ts";
 import {
   handlePlaytestingControlApiRequest,
-  type PlaytestingReadRepository
+  type PlaytestingControlRepository
 } from "../src/control-api/playtesting.ts";
 import type { PlaytestingHumanStudyRepository } from "../src/control-api/playtesting-human-studies.ts";
 import {
@@ -156,8 +156,8 @@ function catalog() {
 }
 
 function readRepository(
-  overrides: Partial<PlaytestingReadRepository> = {}
-): PlaytestingReadRepository {
+  overrides: Partial<PlaytestingControlRepository> = {}
+): PlaytestingControlRepository {
   const empty = async () => ({ rows: [], total: 0, nextCursor: null });
   return {
     listBatches: empty,
@@ -167,12 +167,14 @@ function readRepository(
     listBenchmarks: empty,
     listExperiments: empty,
     listHumanStudies: empty,
+    listReviews: empty,
+    countReviews: async () => 0,
     getEpisode: async () => null,
     getBatch: async () => null,
     getLatestReviewForEpisode: async () => null,
     getLatestDiscoveryReviewForEpisode: async () => null,
     ...overrides
-  } as unknown as PlaytestingReadRepository;
+  } as unknown as PlaytestingControlRepository;
 }
 
 async function call(

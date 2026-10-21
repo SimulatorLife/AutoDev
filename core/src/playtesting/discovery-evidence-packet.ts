@@ -55,6 +55,10 @@ import {
 } from "./evidence-trace-selection.ts";
 import { assertPlaytestVisualEpisode } from "./execution-provenance.ts";
 import {
+  isPlaytestVisualPolicyId,
+  type PlaytestVisualPolicyId
+} from "./visual-decision.ts";
+import {
   assertPlaytestPlayerDebrief,
   type PlaytestPlayerDebriefV1
 } from "./player-debrief.ts";
@@ -322,7 +326,7 @@ export interface PlaytestDiscoveryEvidencePacketV1 {
     readonly targetOrigin: string;
   };
   readonly policy: {
-    readonly policyId: "smart-direct";
+    readonly policyId: PlaytestVisualPolicyId;
     readonly policyVersion: string;
     readonly cohortId: string | null;
   };
@@ -452,7 +456,6 @@ export interface BuildPlaytestDiscoveryEvidencePacketInput {
 }
 
 const VISUAL_MODE = "autonomous-visual" as const;
-const SMART_DIRECT_POLICY_ID = "smart-direct" as const;
 const TARGET_REASON_REDACTED = "redacted" as const;
 
 function assertVisualBatchContract(input: {
@@ -471,9 +474,9 @@ function assertVisualBatchContract(input: {
       "Discovery packets require a frozen autonomous-visual batch inventory."
     );
   }
-  if (manifest.policyId !== SMART_DIRECT_POLICY_ID) {
+  if (!isPlaytestVisualPolicyId(manifest.policyId)) {
     throw new TypeError(
-      "Discovery packets are bound to the smart-direct visual policy."
+      "Discovery packets require a known visual policy identity."
     );
   }
 }
@@ -679,7 +682,7 @@ function buildDiscoveryPacketValue(input: {
       targetOrigin: manifest.targetOrigin
     },
     policy: {
-      policyId: SMART_DIRECT_POLICY_ID,
+      policyId: manifest.policyId,
       policyVersion: manifest.policyVersion,
       cohortId: manifest.cohortId
     },
@@ -1352,7 +1355,7 @@ function assertPolicy(
     Object.keys(value).some(
       (key) => !["policyId", "policyVersion", "cohortId"].includes(key)
     ) ||
-    value.policyId !== SMART_DIRECT_POLICY_ID ||
+    !isPlaytestVisualPolicyId(value.policyId) ||
     !isText(value.policyVersion) ||
     (value.cohortId !== null && !isText(value.cohortId))
   ) {

@@ -11,9 +11,13 @@ import {
   PLAYTEST_PLAYER_FOCUS_OUTCOMES,
   PLAYTEST_VISUAL_ACTION_SCHEMA,
   PLAYTEST_VISUAL_SAFE_KEYS,
-  type PlaytestPlayerFocusOutcome,
   type PlaytestVisualAction,
+  type PlaytestVisualCandidate,
+  type PlaytestVisualDecisionCapabilities,
+  type PlaytestVisualDecisionCounters,
+  type PlaytestVisualDecisionSelfReport,
   type PlaytestVisualObservation,
+  type PlaytestVisualPolicy,
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
 
@@ -60,6 +64,20 @@ const CONTROL_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const RESPONSE_INVALID_CODE = "response-invalid" as const;
 const DECISION_DEADLINE_EXCEEDED = "decision-deadline-exceeded" as const;
 
+/**
+ * What the Smart-directed backend reports about itself.
+ *
+ * The Router returns an intention, a predicted visible effect and a reflective
+ * self-report, but no calibrated confidence for the action it chose, so
+ * `confidence` on the decision stays null rather than a made-up number.
+ */
+const SMART_DIRECT_CAPABILITIES: PlaytestVisualDecisionCapabilities = {
+  emitsIntent: true,
+  emitsPrediction: true,
+  reflective: true,
+  reportsConfidence: false
+};
+
 export type SmartDirectPolicyErrorCode =
   | "target-unavailable"
   | "request-budget-exhausted"
@@ -92,17 +110,13 @@ export interface SmartDirectHistoryEntry {
   readonly observation: string;
 }
 
-/** Bounded model self-report returned only when Smart-direct stops. */
-export interface SmartDirectFocusReport {
-  readonly objective: string | null;
-  readonly inScope: readonly string[];
-  readonly forbiddenScope: readonly string[];
-  readonly stopCriteria: readonly string[];
-  readonly outcome: PlaytestPlayerFocusOutcome;
-  readonly summary: string;
-  /** Recent player-visible trace steps; Runtime resolves them to stored frames. */
-  readonly evidenceSteps: readonly number[];
-}
+/**
+ * Bounded model self-report returned only when Smart-direct stops.
+ *
+ * The Core decision contract owns the shape; this is the Runtime's name for
+ * it.
+ */
+export type SmartDirectFocusReport = PlaytestVisualDecisionSelfReport;
 
 export interface SmartDirectDecisionInput {
   readonly target: WorkspaceVisualPlaytestTargetApproval;
@@ -112,6 +126,14 @@ export interface SmartDirectDecisionInput {
   readonly areasOfFocus: string | null;
   readonly history: readonly SmartDirectHistoryEntry[];
   /**
+   * The actions the Runtime offers for this observation.
+   *
+   * Smart-direct grounds its own answer against the observation and does not
+   * choose from this set; the field is here so both backends receive the same
+   * request shape.
+   */
+  readonly candidates: readonly PlaytestVisualCandidate[];
+  /**
    * Monotonic deadline owned by the visual batch/session runner. It encodes the
    * approved per-episode wall-time budget, and it is the operative bound on a
    * decision: the policy never lets a request outlast it.
@@ -119,39 +141,59 @@ export interface SmartDirectDecisionInput {
   readonly deadlineMonotonicMs: number;
 }
 
+/** The fields every Smart-direct decision carries, whatever it decided. */
+export interface SmartDirectDecisionCommon {
+  readonly intention: string;
+  readonly predictedVisibleEffect: string;
+  readonly reasonCode: string;
+  readonly modelId: string | null;
+  /** The Router reports no model revision for a decision. */
+  readonly modelRevision: string | null;
+  readonly backendId: "smart-direct";
+  readonly fallback: false;
+  readonly fallbackReason: null;
+  /** The Router returns no calibrated confidence for the decision. */
+  readonly confidence: null;
+  readonly capabilities: PlaytestVisualDecisionCapabilities;
+  readonly counters: PlaytestVisualDecisionCounters;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly totalTokens: number;
+  readonly latencyMs: number;
+}
+
 export type SmartDirectDecision =
-  | {
+  | (SmartDirectDecisionCommon & {
       readonly status: "act";
       readonly action: PlaytestVisualAction;
-      readonly intention: string;
-      readonly predictedVisibleEffect: string;
-      readonly reasonCode: string;
-      readonly modelId: string | null;
-      readonly focusReport: null;
-      readonly inputTokens: number;
-      readonly outputTokens: number;
-      readonly totalTokens: number;
-      readonly latencyMs: number;
-    }
-  | {
+      readonly stopReason: null;
+      /** An action is not a self-report. */
+      readonly selfReport: null;
+    })
+  | (SmartDirectDecisionCommon & {
       readonly status: "stop";
+      readonly action: null;
       readonly stopReason: string;
-      readonly intention: string;
-      readonly predictedVisibleEffect: string;
-      readonly reasonCode: string;
-      readonly modelId: string | null;
-      readonly focusReport: SmartDirectFocusReport;
-      readonly inputTokens: number;
-      readonly outputTokens: number;
-      readonly totalTokens: number;
-      readonly latencyMs: number;
-    };
+      readonly selfReport: SmartDirectFocusReport;
+    });
 
+/**
+ * The policy's running counters.
+ *
+ * The Core decision contract reports the same counters; `requestsAttempted` is
+ * the Runtime's existing name for the logical request count and stays for the
+ * callers that already read it.
+ */
 export interface SmartDirectPolicyUsage {
   readonly requestsAttempted: number;
+  readonly logicalRequests: number;
+  readonly providerAttempts: number;
   readonly decisionsReturned: number;
   readonly tokensUsed: number;
   readonly tokenUsageComplete: boolean;
+  /** Proposed actions the policy refused because they were not grounded. */
+  readonly groundingRejections: number;
+  /** Null until the policy has made a decision; zero is a real latency. */
   readonly lastLatencyMs: number | null;
 }
 
@@ -817,7 +859,8 @@ function turnMetadataForWorkspace(workspacePath: string): string {
   return JSON.stringify({ workspaces: { [workspacePath]: {} } });
 }
 
-export class SmartDirectVisualPolicy {
+export class SmartDirectVisualPolicy implements PlaytestVisualPolicy {
+  readonly backendId: "smart-direct" = "smart-direct";
   private readonly target: WorkspaceVisualPlaytestTargetApproval;
   private readonly endpoint: string;
   private readonly authToken: string | undefined;
@@ -830,9 +873,11 @@ export class SmartDirectVisualPolicy {
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
   private requestsAttempted = 0;
+  private providerAttempts = 0;
   private decisionsReturned = 0;
   private tokensUsed = 0;
   private tokenUsageComplete = true;
+  private groundingRejections = 0;
   private lastLatencyMs: number | null = null;
 
   constructor(
@@ -866,9 +911,12 @@ export class SmartDirectVisualPolicy {
   usage(): SmartDirectPolicyUsage {
     return {
       requestsAttempted: this.requestsAttempted,
+      logicalRequests: this.requestsAttempted,
+      providerAttempts: this.providerAttempts,
       decisionsReturned: this.decisionsReturned,
       tokensUsed: this.tokensUsed,
       tokenUsageComplete: this.tokenUsageComplete,
+      groundingRejections: this.groundingRejections,
       lastLatencyMs: this.lastLatencyMs
     };
   }
@@ -995,6 +1043,9 @@ export class SmartDirectVisualPolicy {
     const timer = setTimeout(() => controller.abort(), request.timeoutMs);
     let usageRecorded = false;
     try {
+      // One logical decision costs one call to the Router: the policy does not
+      // retry, so a provider attempt and a logical request are the same count.
+      this.providerAttempts += 1;
       const response = await this.postRequest(request.body, controller.signal);
       if (!response.ok) {
         throw new SmartDirectPolicyError(
@@ -1119,11 +1170,18 @@ export class SmartDirectVisualPolicy {
     latencyMs: number
   ): SmartDirectDecision {
     const { parsed, modelId, usage } = routed;
-    const common = {
+    const common: SmartDirectDecisionCommon = {
       intention: parsed.intention,
       predictedVisibleEffect: parsed.prediction,
       reasonCode: parsed.reasonCode,
       modelId,
+      modelRevision: null,
+      backendId: this.backendId,
+      fallback: false,
+      fallbackReason: null,
+      confidence: null,
+      capabilities: SMART_DIRECT_CAPABILITIES,
+      counters: this.counters(),
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
       totalTokens: usage.totalTokens,
@@ -1168,8 +1226,9 @@ export class SmartDirectVisualPolicy {
       return {
         status: "stop",
         ...common,
+        action: null,
         stopReason: parsed.stopReason,
-        focusReport: parsed.focusReport
+        selfReport: parsed.focusReport
       };
     }
     if (parsed.action === null) {
@@ -1181,7 +1240,8 @@ export class SmartDirectVisualPolicy {
     return {
       status: "act",
       ...common,
-      focusReport: null,
+      stopReason: null,
+      selfReport: null,
       action: this.actionFor(input, parsed.action)
     };
   }
@@ -1209,8 +1269,7 @@ export class SmartDirectVisualPolicy {
           control.inputKind !== "none" ||
           !this.target.inputCapabilities.includes("pointer")
         ) {
-          throw new SmartDirectPolicyError(
-            "action-not-grounded",
+          this.rejectGrounding(
             "Smart-direct selected a control that is not an enabled visible pointer target."
           );
         }
@@ -1222,8 +1281,7 @@ export class SmartDirectVisualPolicy {
       }
       case "pointer-click": {
         if (!this.target.inputCapabilities.includes("pointer")) {
-          throw new SmartDirectPolicyError(
-            "action-not-grounded",
+          this.rejectGrounding(
             "Smart-direct selected pointer input that is not approved for this target."
           );
         }
@@ -1237,8 +1295,7 @@ export class SmartDirectVisualPolicy {
       }
       case "key-press": {
         if (!this.target.inputCapabilities.includes("keyboard")) {
-          throw new SmartDirectPolicyError(
-            "action-not-grounded",
+          this.rejectGrounding(
             "Smart-direct selected keyboard input that is not approved for this target."
           );
         }
@@ -1255,5 +1312,28 @@ export class SmartDirectVisualPolicy {
         );
       }
     }
+  }
+
+  /**
+   * Refuse an action the policy could not ground in the observation.
+   *
+   * The refusal is behaviour the policy already had; the count is what the
+   * decision contract reports, so it is recorded where the refusal happens.
+   */
+  private rejectGrounding(message: string): never {
+    this.groundingRejections += 1;
+    throw new SmartDirectPolicyError("action-not-grounded", message);
+  }
+
+  /** The policy's running counters, as the decision contract reports them. */
+  private counters(): PlaytestVisualDecisionCounters {
+    return {
+      logicalRequests: this.requestsAttempted,
+      providerAttempts: this.providerAttempts,
+      decisionsReturned: this.decisionsReturned,
+      tokensUsed: this.tokensUsed,
+      tokenUsageComplete: this.tokenUsageComplete,
+      groundingRejections: this.groundingRejections
+    };
   }
 }

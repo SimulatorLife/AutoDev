@@ -213,12 +213,13 @@ test("Smart-direct sends only the redacted observation to the local Smart route 
     frameBytes: FRAME_BYTES,
     areasOfFocus: "Explore the first race screen.",
     history: [],
+    candidates: [],
     deadlineMonotonicMs: performance.now() + 5000
   });
 
   assert.equal(decision.status, "act");
   if (decision.status !== "act") return;
-  assert.equal(decision.focusReport, null);
+  assert.equal(decision.selfReport, null);
   assert.deepEqual(decision.action, {
     schema: "autodev-playtest-visual-action-v1",
     workspaceId: WORKSPACE_ID,
@@ -275,6 +276,7 @@ test("Smart-direct binds its Router request to the private workspace it was give
     frameBytes: FRAME_BYTES,
     areasOfFocus: "Explore the first race screen.",
     history: [],
+    candidates: [],
     deadlineMonotonicMs: performance.now() + 5000
   });
 
@@ -305,6 +307,7 @@ test("Smart-direct refuses to decide without a private workspace instead of send
       frameBytes: FRAME_BYTES,
       areasOfFocus: "Explore the first race screen.",
       history: [],
+      candidates: [],
       deadlineMonotonicMs: performance.now() + 5000
     }),
     (error: unknown) => {
@@ -331,6 +334,7 @@ test("Smart-direct states the action vocabulary the Runtime parses", async () =>
     frameBytes: FRAME_BYTES,
     areasOfFocus: "Explore the first race screen.",
     history: [],
+    candidates: [],
     deadlineMonotonicMs: performance.now() + 5000
   });
 
@@ -384,12 +388,13 @@ test("Smart-direct stop returns a bounded self-report in the existing request an
     frameBytes: FRAME_BYTES,
     areasOfFocus: "Inspect the setup menu and stop before starting a race.",
     history: [],
+    candidates: [],
     deadlineMonotonicMs: performance.now() + 5000
   });
 
   assert.equal(decision.status, "stop");
   if (decision.status !== "stop") return;
-  assert.deepEqual(decision.focusReport, focusReport);
+  assert.deepEqual(decision.selfReport, focusReport);
   assert.equal(policy.usage().requestsAttempted, 1);
   assert.equal(requestCount, 1);
 });
@@ -415,12 +420,13 @@ test("Smart-direct no-focus stop remains unattempted and cites only the current 
     frameBytes: FRAME_BYTES,
     areasOfFocus: null,
     history: [],
+    candidates: [],
     deadlineMonotonicMs: performance.now() + 5000
   });
   assert.equal(decision.status, "stop");
   if (decision.status !== "stop") return;
-  assert.equal(decision.focusReport.outcome, "unattempted");
-  assert.deepEqual(decision.focusReport.evidenceSteps, [0]);
+  assert.equal(decision.selfReport.outcome, "unattempted");
+  assert.deepEqual(decision.selfReport.evidenceSteps, [0]);
 });
 
 test("Smart-direct rejects a focus report that cites a step outside the visible history", async () => {
@@ -446,6 +452,7 @@ test("Smart-direct rejects a focus report that cites a step outside the visible 
       frameBytes: FRAME_BYTES,
       areasOfFocus: "Inspect the setup menu.",
       history: [],
+      candidates: [],
       deadlineMonotonicMs: performance.now() + 5000
     }),
     (error: unknown) =>
@@ -497,6 +504,7 @@ test("Smart-direct rejects ungrounded and sensitive controls; ActionAdmission re
         frameBytes: FRAME_BYTES,
         areasOfFocus: null,
         history: [],
+        candidates: [],
         deadlineMonotonicMs: performance.now() + 5000
       }),
       SmartDirectPolicyError
@@ -504,6 +512,8 @@ test("Smart-direct rejects ungrounded and sensitive controls; ActionAdmission re
     assert.equal(policy.usage().requestsAttempted, 1);
     assert.equal(policy.usage().tokensUsed, 340);
     assert.equal(policy.usage().decisionsReturned, 1);
+    // The refusal the policy already made is now counted, and nothing else.
+    assert.equal(policy.usage().groundingRejections, 1);
   }
   const coordinatePolicy = createPolicy({
     fetchImpl: async () =>
@@ -516,6 +526,7 @@ test("Smart-direct rejects ungrounded and sensitive controls; ActionAdmission re
     frameBytes: FRAME_BYTES,
     areasOfFocus: null,
     history: [],
+    candidates: [],
     deadlineMonotonicMs: performance.now() + 5000
   });
   assert.equal(proposal.status, "act");
@@ -554,6 +565,7 @@ test("Smart-direct enforces request/token/deadline budgets without silent fallba
       frameBytes: FRAME_BYTES,
       areasOfFocus: null,
       history: [],
+      candidates: [],
       deadlineMonotonicMs: performance.now() + 5000
     }),
     (error: unknown) =>
@@ -579,6 +591,7 @@ test("Smart-direct enforces request/token/deadline budgets without silent fallba
       frameBytes: FRAME_BYTES,
       areasOfFocus: null,
       history: [],
+      candidates: [],
       deadlineMonotonicMs: performance.now() + 5000
     }),
     (error: unknown) =>
@@ -599,6 +612,7 @@ test("Smart-direct fails closed when usage is absent or target/frame identity ch
       frameBytes: FRAME_BYTES,
       areasOfFocus: null,
       history: [],
+      candidates: [],
       deadlineMonotonicMs: performance.now() + 5000
     }),
     (error: unknown) =>
@@ -617,6 +631,7 @@ test("Smart-direct fails closed when usage is absent or target/frame identity ch
       frameBytes: FRAME_BYTES,
       areasOfFocus: null,
       history: [],
+      candidates: [],
       deadlineMonotonicMs: performance.now() + 5000
     }),
     (error: unknown) =>
@@ -630,6 +645,7 @@ test("Smart-direct fails closed when usage is absent or target/frame identity ch
       frameBytes: new TextEncoder().encode("wrong frame bytes"),
       areasOfFocus: null,
       history: [],
+      candidates: [],
       deadlineMonotonicMs: performance.now() + 5000
     }),
     (error: unknown) =>
@@ -760,4 +776,48 @@ test("Smart-direct refuses non-local model endpoints before sending game evidenc
       }),
     /credential-free local AutoDev model router/u
   );
+});
+
+test("Smart-direct reports the decision contract: its backend, no fallback, no confidence, honest counters", async () => {
+  const policy = createPolicy({
+    fetchImpl: async () => response(actDecision())
+  });
+
+  const decision = await policy.decide({
+    target: target(),
+    observation: observation(),
+    frameBytes: FRAME_BYTES,
+    areasOfFocus: "Explore the first race screen.",
+    history: [],
+    candidates: [],
+    deadlineMonotonicMs: performance.now() + 5000
+  });
+
+  assert.equal(decision.backendId, "smart-direct");
+  assert.equal(decision.fallback, false);
+  assert.equal(decision.fallbackReason, null);
+  // The Router reports no calibrated confidence, so the decision reports none.
+  assert.equal(decision.confidence, null);
+  assert.deepEqual(decision.capabilities, {
+    emitsIntent: true,
+    emitsPrediction: true,
+    reflective: true,
+    reportsConfidence: false
+  });
+  assert.deepEqual(decision.counters, {
+    logicalRequests: 1,
+    providerAttempts: 1,
+    decisionsReturned: 1,
+    tokensUsed: 340,
+    tokenUsageComplete: true,
+    groundingRejections: 0
+  });
+  const usage = policy.usage();
+  assert.equal(usage.requestsAttempted, 1);
+  assert.equal(usage.logicalRequests, 1);
+  assert.equal(usage.providerAttempts, 1);
+  assert.equal(usage.decisionsReturned, 1);
+  assert.equal(usage.tokensUsed, 340);
+  assert.equal(usage.tokenUsageComplete, true);
+  assert.equal(usage.groundingRejections, 0);
 });

@@ -1,4 +1,5 @@
 import type { WorkspaceVisualPlaytestLimits } from "../workspaces/visual-playtesting.ts";
+import type { PlaytestVisualPolicyId } from "./visual-decision.ts";
 
 /** Versioned, game-neutral request accepted by the single Runtime launch owner. */
 export const PLAYTEST_LAUNCH_REQUEST_SCHEMA =
@@ -61,7 +62,7 @@ export type PlaytestLaunchRequest =
       readonly requestId: string;
       readonly capabilityRevision: string;
       readonly targetId: string;
-      readonly policyId: "smart-direct";
+      readonly policyId: PlaytestVisualPolicyId;
       readonly areasOfFocus: string | null;
       readonly limits: WorkspaceVisualPlaytestLimits;
     }

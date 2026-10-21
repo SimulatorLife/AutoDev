@@ -131,7 +131,7 @@ import { readControlApiJsonObject } from "./body.ts";
 import { handleMemoryControlApiRequest } from "./memory.ts";
 import {
   handlePlaytestingControlApiRequest,
-  type PlaytestingReadRepository
+  type PlaytestingControlRepository
 } from "./playtesting.ts";
 import {
   handlePlaytestingHumanStudyControlApiRequest,
@@ -376,7 +376,7 @@ export interface ControlApiRequestOptions {
   readonly repositoryRoot?: string;
   readonly codexHome?: string;
   /** Test seams for Data-owned readers; never supplied by a request. */
-  readonly playtestingRepository?: PlaytestingReadRepository;
+  readonly playtestingRepository?: PlaytestingControlRepository;
   readonly playtestingHumanStudyRepository?: PlaytestingHumanStudyRepository;
   readonly restrictedHumanResponseRepository?: RestrictedHumanResponseRepository;
   /** Must be the same Runtime run-control instance exposed by the MCP facade. */

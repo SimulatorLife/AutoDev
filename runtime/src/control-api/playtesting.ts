@@ -7,6 +7,7 @@ import {
   type ControlApiPlaytestingEpisodeDetailResponse,
   type ControlApiPlaytestingPageResponse,
   type ControlApiPlaytestingResource,
+  type ControlApiPlaytestingReviewsResponse,
   type ControlApiPlaytestingVisualAssignment,
   type ControlApiPlaytestingWindowResponse,
   type PlaytestBatch,
@@ -58,7 +59,7 @@ const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 500;
 const COMMON_FILTERS = ["workspaceId", "limit", "cursor"] as const;
 const RESOURCE_FILTERS: Readonly<
-  Record<ControlApiPlaytestingResource, readonly string[]>
+  Record<PlaytestingReadResource, readonly string[]>
 > = {
   batches: ["buildSha", "status"],
   episodes: [
@@ -77,9 +78,12 @@ const RESOURCE_FILTERS: Readonly<
   comparisons: ["benchmarkId", "experimentId", "decision"],
   benchmarks: ["referenceBuildSha", "measurementVersion"],
   experiments: ["benchmarkId", "state"],
-  "human-studies": ["benchmarkId", "instrument", "approved"]
+  "human-studies": ["benchmarkId", "instrument", "approved"],
+  reviews: ["episodeId", "kind"]
 };
 const REVIEW_STATUSES = ["reviewed", "unreviewed"] as const;
+/** The two analyst review contracts; told apart by the schema they carry. */
+const REVIEW_KINDS = ["discovery", "confirmatory"] as const;
 const WORKSPACE_ID_REQUIRED =
   "A valid workspaceId query parameter is required.";
 const FINDING_EVIDENCE_STATUSES = [
@@ -134,8 +138,16 @@ function getDefaultPlaytestingRepository(): Promise<PlaytestRepository> {
   return warmupDefaultPlaytestingRepository();
 }
 
-type FilterName =
-  (typeof RESOURCE_FILTERS)[ControlApiPlaytestingResource][number];
+type FilterName = (typeof RESOURCE_FILTERS)[PlaytestingReadResource][number];
+
+/**
+ * The resources this Control API can read.
+ *
+ * `reviews` is not one of the paginated entity resources: a review is not
+ * an entity the Console selects and edits, it is the analyst's durable
+ * record about an episode. It has its own response envelope.
+ */
+type PlaytestingReadResource = ControlApiPlaytestingResource | "reviews";
 
 export type PlaytestingReadRepository = Pick<
   PlaytestRepository,
@@ -152,9 +164,26 @@ export type PlaytestingReadRepository = Pick<
   | "getLatestDiscoveryReviewForEpisode"
 >;
 
+/**
+ * The persisted-review read.
+ *
+ * It is separate from the entity reads because the MCP has no use for it:
+ * the analyst dispatches a review by episode, it does not list the
+ * workspace's reviews. Only the Control API answers "what has the analyst
+ * concluded so far", and only that answer has to survive a restart.
+ */
+export type PlaytestingReviewRepository = Pick<
+  PlaytestRepository,
+  "listReviews" | "countReviews"
+>;
+
+/** Everything the Control API reads from the Playtesting store. */
+export type PlaytestingControlRepository = PlaytestingReadRepository &
+  PlaytestingReviewRepository;
+
 export interface PlaytestingControlApiOptions {
   readonly repositoryRoot?: string;
-  readonly repository?: PlaytestingReadRepository;
+  readonly repository?: PlaytestingControlRepository;
   readonly readWorkspaceCatalog?: () => ReturnType<
     ConfigRepository["readWorkspaceCatalog"]
   >;
@@ -169,7 +198,7 @@ export interface PlaytestingControlActor {
 }
 
 interface ParsedRoute {
-  readonly resource: ControlApiPlaytestingResource;
+  readonly resource: PlaytestingReadResource;
   readonly id: string | null;
   readonly windowId: string | null;
   readonly mediaId: string | null;
@@ -217,6 +246,14 @@ function routeFor(pathname: string): ParsedRoute | null {
   const parts = pathname.slice(CONTROL_PATH.length).split("/");
   if (parts.length === 1 && parts[0]) {
     const resource = parts[0];
+    if (resource === "reviews") {
+      return {
+        resource: "reviews",
+        id: null,
+        windowId: null,
+        mediaId: null
+      };
+    }
     if (
       !(CONTROL_API_PLAYTESTING_RESOURCES as readonly string[]).includes(
         resource
@@ -283,7 +320,7 @@ function oneValue(
 }
 
 function allowedFilterValues(
-  resource: ControlApiPlaytestingResource,
+  resource: PlaytestingReadResource,
   name: string
 ): readonly string[] | undefined {
   if (name === "status") {
@@ -299,13 +336,14 @@ function allowedFilterValues(
     evidenceStatus: FINDING_EVIDENCE_STATUSES,
     decision: PLAYTESTS_DECISION_STATUSES,
     state: PLAYTESTS_EXPERIMENT_STATES,
-    instrument: PLAYTESTS_HUMAN_INSTRUMENTS
+    instrument: PLAYTESTS_HUMAN_INSTRUMENTS,
+    kind: REVIEW_KINDS
   };
   return domains[name];
 }
 
 function validateFilters(
-  resource: ControlApiPlaytestingResource,
+  resource: PlaytestingReadResource,
   filters: Readonly<Partial<Record<FilterName, string>>>
 ): void {
   for (const [name, value] of Object.entries(filters)) {
@@ -343,7 +381,7 @@ function validateFilters(
 
 function pageRequest(
   params: URLSearchParams,
-  resource: ControlApiPlaytestingResource
+  resource: PlaytestingReadResource
 ): PageRequest {
   const permitted = new Set<string>([
     ...COMMON_FILTERS,
@@ -994,8 +1032,44 @@ function sendFrame(
   response.end(Buffer.from(frame.bytes));
 }
 
+/**
+ * The workspace's persisted analyst reviews.
+ *
+ * The analyst-run envelope the Console also reads lives in the Runtime
+ * process, so it is lost on restart. A review is persisted, so this read
+ * is what lets a reader see what the analyst concluded after the Runtime
+ * that produced it has been replaced.
+ */
+async function readReviews(
+  repository: PlaytestingControlRepository,
+  query: PageRequest
+): Promise<ControlApiPlaytestingReviewsResponse> {
+  const f = query.filters;
+  const kind = f.kind;
+  const page = await repository.listReviews(
+    {
+      workspaceId: query.workspaceId,
+      ...(f.episodeId === undefined ? {} : { episodeId: f.episodeId }),
+      ...(kind === undefined
+        ? {}
+        : { kind: kind as "discovery" | "confirmatory" })
+    },
+    {
+      limit: query.limit,
+      ...(query.cursor === undefined ? {} : { cursor: query.cursor })
+    }
+  );
+  return {
+    schema: "autodev-control-playtesting-reviews-v1",
+    workspaceId: query.workspaceId,
+    total: page.total,
+    rows: page.rows,
+    nextCursor: page.nextCursor
+  };
+}
+
 function readDataResponse(
-  repository: PlaytestingReadRepository,
+  repository: PlaytestingControlRepository,
   route: ParsedRoute,
   query: PageRequest | WindowRequest,
   artifactStoreForWorkspace: (workspaceId: string) => PlaytestArtifactStore
@@ -1003,8 +1077,14 @@ function readDataResponse(
   | ControlApiPlaytestingPageResponse<unknown>
   | ControlApiPlaytestingEpisodeDetailResponse
   | ControlApiPlaytestingWindowResponse
+  | ControlApiPlaytestingReviewsResponse
   | null
 > {
+  if (route.resource === "reviews") {
+    return "limit" in query
+      ? readReviews(repository, query)
+      : Promise.resolve(null);
+  }
   if (route.windowId !== null && "startStep" in query) {
     return readEpisodeWindow(
       repository,

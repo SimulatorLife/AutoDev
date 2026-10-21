@@ -53,3 +53,4 @@ export * from "./scoring.ts";
 export * from "./triage.ts";
 export * from "./types.ts";
 export * from "./visual-control.ts";
+export * from "./visual-decision.ts";

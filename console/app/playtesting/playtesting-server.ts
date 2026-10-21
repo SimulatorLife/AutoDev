@@ -8,6 +8,8 @@ import {
   CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
   type ControlApiPlaytestingActiveRunsResponse,
   type ControlApiPlaytestingAnalysesResponse,
+  type ControlApiPlaytestingReview,
+  type ControlApiPlaytestingReviewsResponse,
   type ControlApiPlaytestingAnalysisDispatchResponse,
   type ControlApiPlaytestingAnalystRun,
   type ControlApiPlaytestingCapabilitiesResponse,
@@ -1174,6 +1176,75 @@ export async function listPlaytestingAnalyses(
   return {
     kind: "ok",
     data: data as unknown as ControlApiPlaytestingAnalysesResponse
+  };
+}
+
+function isPlaytestingReview(
+  value: unknown,
+  workspaceId: string
+): value is ControlApiPlaytestingReview {
+  if (!isRecord(value)) return false;
+  return (
+    isNonEmptyString(value.reviewId) &&
+    isNonEmptyString(value.episodeId) &&
+    value.workspaceId === workspaceId &&
+    (value.kind === "discovery" || value.kind === "confirmatory") &&
+    isNonEmptyString(value.status) &&
+    isNonEmptyString(value.createdAt) &&
+    isCount(value.observationCount) &&
+    isCount(value.interpretationCount) &&
+    isCount(value.findingCount) &&
+    typeof value.headline === "string" &&
+    typeof value.summary === "string" &&
+    Array.isArray(value.evidenceRefs)
+  );
+}
+
+/**
+ * The workspace's persisted analyst reviews.
+ *
+ * The reviews are the analyst's durable record: they are stored, so they
+ * outlive the Runtime process that produced them. The analyst-run envelope
+ * the Console also reads is held in that process and is lost on restart,
+ * which is why a reader who ran an analysis and came back to a restarted
+ * Console used to find nothing at all.
+ */
+export async function fetchPlaytestingReviews(
+  workspaceId: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiPlaytestingReviewsResponse>> {
+  if (!WORKSPACE_ID_PATTERN.test(workspaceId)) {
+    return invalidResponse(
+      "Playtesting reviews",
+      CANONICAL_WORKSPACE_REQUIREMENT
+    );
+  }
+  const params = new URLSearchParams({ workspaceId });
+  const result = await fetchControlApi(
+    `${CONTROL_API_PATHS.playtesting}/reviews?${params}`,
+    config,
+    playtestingControlApiOptions(options)
+  );
+  if (result.kind !== "ok") return result;
+  const data = result.data;
+  if (
+    !isRecord(data) ||
+    data.schema !== "autodev-control-playtesting-reviews-v1" ||
+    data.workspaceId !== workspaceId ||
+    !isCount(data.total) ||
+    !Array.isArray(data.rows) ||
+    !data.rows.every((row) => isPlaytestingReview(row, workspaceId)) ||
+    (data.nextCursor !== null && !isNonEmptyString(data.nextCursor))
+  ) {
+    return invalidResponse(
+      "Playtesting reviews",
+      "autodev-control-playtesting-reviews-v1"
+    );
+  }
+  return {
+    kind: "ok",
+    data: data as unknown as ControlApiPlaytestingReviewsResponse
   };
 }
 

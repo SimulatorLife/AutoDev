@@ -41,8 +41,10 @@ import type {
   PlaytestArtifactReference,
   PlaytestJsonValue
 } from "../playtesting/protocol-types.ts";
+import type { PlaytestVisualPolicyId } from "../playtesting/visual-decision.ts";
 import type {
   PlaytestComparison,
+  PlaytestEvidenceLocator,
   PlaytestFinding,
   PlaytestNumericInterval,
   PlaytestSessionReference
@@ -1234,6 +1236,13 @@ export interface ControlApiPlaytestingCapabilityReason {
   readonly severity: "check-required" | "unavailable";
 }
 
+/** One decision backend's readiness, inside a mode's readiness. */
+export interface ControlApiPlaytestingPolicyReadiness {
+  readonly policyId: PlaytestVisualPolicyId;
+  readonly status: ControlApiPlaytestingCapabilityStatus;
+  readonly reasons: readonly ControlApiPlaytestingCapabilityReason[];
+}
+
 export interface ControlApiPlaytestingModeReadiness {
   readonly status: ControlApiPlaytestingCapabilityStatus;
   readonly reasons: readonly ControlApiPlaytestingCapabilityReason[];
@@ -1260,6 +1269,15 @@ export interface ControlApiPlaytestingCapabilitiesResponse {
     readonly "autonomous-visual": ControlApiPlaytestingModeReadiness & {
       readonly targetStore: "available" | "unavailable";
       readonly targets: readonly ControlApiPlaytestingVisualTargetReadiness[];
+      /**
+       * Each decision backend the mode offers, with its own readiness.
+       *
+       * A mode being ready says the browser can be driven; it does not say
+       * that every backend can be reached. The local OneJev route needs a
+       * model server the operator runs, and that is a separate fact from
+       * the Smart-directed route's model router.
+       */
+      readonly policies: readonly ControlApiPlaytestingPolicyReadiness[];
     };
     readonly "scripted-regression": ControlApiPlaytestingModeReadiness;
   };
@@ -1474,6 +1492,52 @@ export interface ControlApiPlaytestingAnalysesResponse {
   readonly runs: readonly ControlApiPlaytestingAnalystRun[];
   /** Persisted independently so aggregate results survive Runtime restarts. */
   readonly syntheses: readonly PlaytestCrossSessionSynthesis[];
+}
+
+/**
+ * One persisted analyst review, as the Console reads it.
+ *
+ * The review is the analyst's durable record about an episode: what it
+ * observed, what it concluded, and what evidence each conclusion rests
+ * on. It is persisted, so it outlives the Runtime process that produced
+ * it — which is the reason this read exists at all.
+ */
+export interface ControlApiPlaytestingReview {
+  readonly reviewId: string;
+  readonly episodeId: string;
+  readonly workspaceId: string;
+  /** Which review contract the analyst ran under. */
+  readonly kind: "discovery" | "confirmatory";
+  /** The review's own status, verbatim from the stored payload. */
+  readonly status: string;
+  readonly createdAt: string;
+  /** How many observations the analyst recorded. */
+  readonly observationCount: number;
+  /** How many interpretations — the analyst's hypotheses — the review holds. */
+  readonly interpretationCount: number;
+  /** How many findings the review carries. */
+  readonly findingCount: number;
+  /** A one-line statement of what the analyst concluded. */
+  readonly headline: string;
+  /** The review's chronological summary, bounded for display. */
+  readonly summary: string;
+  /** The evidence the review cites. */
+  readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
+}
+
+/**
+ * The workspace's persisted analyst reviews.
+ *
+ * This is the durable counterpart to the analyst-run envelope, which lives
+ * in the Runtime process and is therefore lost on restart. A reader who
+ * ran an analysis and came back after a restart must still see it.
+ */
+export interface ControlApiPlaytestingReviewsResponse {
+  readonly schema: "autodev-control-playtesting-reviews-v1";
+  readonly workspaceId: string;
+  readonly total: number;
+  readonly rows: readonly ControlApiPlaytestingReview[];
+  readonly nextCursor: string | null;
 }
 
 /** Confirmation that the operator is cancelling a currently running assignment. */

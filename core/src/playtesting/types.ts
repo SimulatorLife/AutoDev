@@ -17,6 +17,7 @@
 import type { AgentRole } from "../agents/types.ts";
 import type { WorkspaceVisualPlaytestLimits } from "../workspaces/visual-playtesting.ts";
 import type { PlaytestFindingIdentity } from "./finding-identity.ts";
+import type { PlaytestVisualPolicyId } from "./visual-decision.ts";
 import type {
   PlaytestArtifactReference,
   PlaytestCheckpointDigest
@@ -795,7 +796,7 @@ export interface PlaytestVisualAssignmentManifest {
   readonly targetApprovalId: string;
   readonly targetRevision: number;
   readonly targetOrigin: string;
-  readonly policyId: "smart-direct";
+  readonly policyId: PlaytestVisualPolicyId;
   readonly policyVersion: string;
   /** Null until a validated player persona/cohort is explicitly assigned. */
   readonly cohortId: string | null;

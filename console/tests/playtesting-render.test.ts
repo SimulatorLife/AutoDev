@@ -289,7 +289,7 @@ test("overview renders visual batches without fabricating a source commit", () =
         batchCount: 1,
         episodeCount: 1,
         findingCount: 0,
-        comparisonCount: 0,
+        reviewCount: 0,
         latestEpisodes: []
       }
     })
@@ -411,7 +411,9 @@ test("session rows own analyst selection and link directly to diagnosis", () => 
   assert.match(visualHtml, /No cohort assigned/u);
   assert.match(visualHtml, /http:\/\/racing\.local/u);
   assert.doesNotMatch(visualHtml, /Verified aaaaaaaaaaaa/u);
-  assert.match(gridHtml, /Recorded game outcome: loss/u);
+  // The row leads with the outcome in words; the exact stored token stays
+  // in the session page's own disclosure rather than in every list row.
+  assert.match(gridHtml, /Game outcome: Loss/u);
 });
 
 test("finding witness links open the exact cited step while execution and outcome remain distinct", () => {
@@ -506,7 +508,7 @@ test("inspector renders only recorded structured evidence and labels missing fra
   assert.match(html, /Adapter-accelerated/u);
   assert.match(html, /Verified aaaaaaaaaaaa/u);
   assert.match(html, /Completed/u);
-  assert.match(html, /LOSS/u);
+  assert.match(html, /Loss/u);
   assert.match(html, /No frame was recorded/u);
   assert.match(html, /No analyst review is recorded/u);
   assert.match(html, /Back to sessions/u);
@@ -892,7 +894,7 @@ test("session status strip stays scannable and keeps exact tokens in a disclosur
   assert.match(html, /sessions=episode-17/u);
   // The first scan is human-readable; exact stored values remain available in
   // one collapsed disclosure rather than being repeated beside every badge.
-  assert.match(html, /Game outcome<\/dt>[^]*?LOSS/u);
+  assert.match(html, /Game outcome<\/dt>[^]*?Loss/u);
   assert.match(html, /Execution status<\/dt>[^]*?Completed/u);
   assert.match(html, /Replay integrity<\/dt>[^]*?Trace replayable/u);
   assert.match(html, /Evidence completeness<\/dt>[^]*?Complete/u);

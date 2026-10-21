@@ -197,6 +197,7 @@ test("a visual episode that exhausts an approved budget is truncated, not a runt
       readWorkspaceCatalog: enabledWorkspaceCatalog(),
       openVisualDriver: observedDriver(artifacts),
       createVisualPolicy: () => ({
+        backendId: "smart-direct",
         async decide() {
           throw new SmartDirectPolicyError(
             "response-usage-exceeds-budget",
@@ -204,10 +205,12 @@ test("a visual episode that exhausts an approved budget is truncated, not a runt
           );
         },
         usage: () => ({
-          requestsAttempted: 1,
+          logicalRequests: 1,
+          providerAttempts: 1,
           decisionsReturned: 0,
           tokensUsed: 21_000,
           tokenUsageComplete: true,
+          groundingRejections: 0,
           lastLatencyMs: 10
         })
       })

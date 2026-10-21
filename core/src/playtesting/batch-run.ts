@@ -14,6 +14,7 @@ import type {
   PlaytestGameOutcomeKind
 } from "./artifacts.ts";
 import { assertPlaytestAssignmentBranch } from "./branching.ts";
+import { isPlaytestVisualPolicyId } from "./visual-decision.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
 import {
   groupByStratum,
@@ -312,7 +313,7 @@ function assertVisualAssignmentManifest(
     !Number.isSafeInteger(manifest.targetRevision) ||
     (manifest.targetRevision as number) < 1 ||
     origin !== manifest.targetOrigin ||
-    manifest.policyId !== "smart-direct" ||
+    !isPlaytestVisualPolicyId(manifest.policyId) ||
     !isText(manifest.policyVersion) ||
     (manifest.cohortId !== null && !isText(manifest.cohortId)) ||
     (manifest.areasOfFocus !== null && !isText(manifest.areasOfFocus, 2000)) ||

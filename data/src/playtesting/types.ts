@@ -9,6 +9,7 @@ import type {
   PlaytestComparison,
   PlaytestEpisode,
   PlaytestEpisodeState,
+  PlaytestEvidenceLocator,
   PlaytestExperiment,
   PlaytestExperimentState,
   PlaytestFinding
@@ -62,6 +63,44 @@ export interface PlaytestFindingFilter {
   readonly status?: PlaytestFinding["status"];
   readonly verificationStage?: PlaytestFinding["verificationStage"];
   readonly evidenceStatus?: PlaytestFinding["evidenceStatus"];
+}
+
+/**
+ * Filters accepted by the persisted-review list. Workspace scope is
+ * mandatory; discovery and confirmatory reviews share one table and are
+ * told apart by the schema their payload carries.
+ */
+export interface PlaytestReviewListFilter {
+  readonly workspaceId: string;
+  /** Restrict to one episode. */
+  readonly episodeId?: string;
+  /** Restrict to one review kind. */
+  readonly kind?: "discovery" | "confirmatory";
+}
+
+/**
+ * One persisted analyst review, projected down to what a list row can hold.
+ * The full canonical payload stays in the archive; this is the durable
+ * record of what the analyst concluded about an episode.
+ */
+export interface PlaytestReviewSummary {
+  readonly reviewId: string;
+  readonly episodeId: string;
+  readonly workspaceId: string;
+  readonly kind: "discovery" | "confirmatory";
+  /** ISO timestamp. */
+  readonly createdAt: string;
+  /** The review's own status, verbatim from the payload. */
+  readonly status: string;
+  readonly observationCount: number;
+  readonly interpretationCount: number;
+  readonly findingCount: number;
+  /** A one-line, human-readable statement of what the analyst concluded. */
+  readonly headline: string;
+  /** The review's chronological summary, bounded. */
+  readonly summary: string;
+  /** The evidence the review cites, deduplicated and bounded. */
+  readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
 }
 
 export interface PlaytestComparisonFilter {

@@ -2,7 +2,8 @@
 import {
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
   type PlaytestLaunchRequest,
-  PLAYTESTS_MAX_BATCH_ASSIGNMENTS
+  PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
+  PLAYTESTS_VISUAL_POLICY_IDS
 } from "@simulatorlife/autodev-core";
 import { z } from "zod/v4";
 
@@ -69,7 +70,7 @@ export const playtestLaunchRequestSchema = z.discriminatedUnion("mode", [
     requestId: requestIdSchema,
     capabilityRevision: z.string().regex(/^[a-f\d]{64}$/u),
     targetId: z.string().min(1).max(128),
-    policyId: z.literal("smart-direct"),
+    policyId: z.enum(PLAYTESTS_VISUAL_POLICY_IDS),
     areasOfFocus: z.string().max(2000).nullable(),
     limits: visualLimitsSchema
   }),

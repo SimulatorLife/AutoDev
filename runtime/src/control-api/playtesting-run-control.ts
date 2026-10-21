@@ -9,6 +9,7 @@ import {
   type ControlApiPlaytestingCancellationReason,
   type ControlApiPlaytestingCapabilitiesResponse,
   type ControlApiPlaytestingCapabilityReason,
+  type ControlApiPlaytestingPolicyReadiness,
   type ControlApiPlaytestingComparisonDecisionRequest,
   type ControlApiPlaytestingComparisonDecisionResponse,
   type ControlApiPlaytestingModeReadiness,
@@ -17,6 +18,7 @@ import {
   type ControlApiPlaytestingRunRequestLookupResponse,
   type ControlApiPlaytestingRunStartedResponse,
   type ControlApiPlaytestingRunStatusResponse,
+  type PlaytestVisualPolicyId,
   type ControlApiPlaytestingVisualTargetReadiness,
   type PlaytestJsonValue,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
@@ -32,6 +34,7 @@ import {
   PlaytestSandboxUnavailableError
 } from "../playtesting/docker-sandbox.ts";
 import { playtestLaunchRequestSchema } from "../playtesting/launch-request-schema.ts";
+import { isOneJevLocalVisualPolicyAvailable } from "../playtesting/onejev-local-policy.ts";
 import { isSmartDirectVisualPolicyAvailable } from "../playtesting/smart-direct-policy.ts";
 import { isPlaytestVisualBrowserDriverAvailable } from "../playtesting/visual-browser-driver.ts";
 import {
@@ -152,6 +155,8 @@ export interface PlaytestingRunControlApiOptions {
   readonly visualReadinessProbes?: {
     readonly visualDriverAvailable?: () => boolean;
     readonly smartDirectPolicyAvailable?: () => Promise<boolean>;
+    /** Whether the operator's own local OneJev server is reachable. */
+    readonly oneJevLocalPolicyAvailable?: () => Promise<boolean>;
   };
   readonly readWorkspaceCatalog?: () => ReturnType<
     ConfigRepository["readWorkspaceCatalog"]
@@ -1089,7 +1094,7 @@ function visualModeReadiness(input: {
   readonly targetStore: "available" | "unavailable";
   readonly targets: readonly VisualTargetApproval[];
   readonly visualDriverAvailable: boolean;
-  readonly smartDirectPolicyAvailable: boolean;
+  readonly policies: readonly ControlApiPlaytestingPolicyReadiness[];
 }): ControlApiPlaytestingCapabilitiesResponse["modeReadiness"]["autonomous-visual"] {
   const reasons: ControlApiPlaytestingCapabilityReason[] = [];
   if (!input.visualDriverAvailable) {
@@ -1098,15 +1103,6 @@ function visualModeReadiness(input: {
       label: "Visual browser driver unavailable",
       message:
         "Runtime could not resolve a Playwright Chromium executable for the visual browser driver.",
-      severity: UNAVAILABLE_STATUS
-    });
-  }
-  if (!input.smartDirectPolicyAvailable) {
-    addCapabilityReason(reasons, {
-      code: "smart-direct-policy-unavailable",
-      label: "Smart-direct route unavailable",
-      message:
-        "The authenticated local AutoDev model router Smart-direct requires is not reachable.",
       severity: UNAVAILABLE_STATUS
     });
   }
@@ -1176,10 +1172,49 @@ function visualModeReadiness(input: {
       severity: UNAVAILABLE_STATUS
     });
   }
+  // The mode can run when at least one decision backend can be reached.
+  // A backend that is down is a fact about that backend, and it is reported
+  // on the backend's own readiness rather than as a reason against the mode.
+  const availablePolicies = input.policies.filter(
+    (policy) => policy.status === "ready"
+  );
+  if (input.policies.length > 0 && availablePolicies.length === 0) {
+    addCapabilityReason(reasons, {
+      code: "visual-policy-unavailable",
+      label: "No decision backend available",
+      message:
+        "None of the decision backends this mode offers can be reached: the local model router and the local OneJev server are both unavailable.",
+      severity: UNAVAILABLE_STATUS
+    });
+  }
   return {
     ...readinessFromReasons(reasons),
     targetStore: input.targetStore,
-    targets
+    targets,
+    policies: input.policies
+  };
+}
+
+/**
+ * One decision backend's readiness.
+ *
+ * The Smart-directed route needs the authenticated local model router; the
+ * local OneJev route needs the operator's own model server. They are
+ * different services with different reasons to be down, and a reader
+ * choosing a backend needs to know which one is missing.
+ */
+function visualPolicyReadiness(input: {
+  readonly policyId: PlaytestVisualPolicyId;
+  readonly available: boolean;
+  readonly unavailableReason: ControlApiPlaytestingCapabilityReason;
+}): ControlApiPlaytestingPolicyReadiness {
+  if (input.available) {
+    return { policyId: input.policyId, status: "ready", reasons: [] };
+  }
+  return {
+    policyId: input.policyId,
+    status: "unavailable",
+    reasons: [input.unavailableReason]
   };
 }
 
@@ -1253,9 +1288,34 @@ async function capabilitiesForLaunchRequest(input: {
         visualDriverAvailable:
           probes?.visualDriverAvailable?.() ??
           isPlaytestVisualBrowserDriverAvailable(),
-        smartDirectPolicyAvailable:
-          (await (probes?.smartDirectPolicyAvailable?.() ??
-            isSmartDirectVisualPolicyAvailable())) === true,
+        policies: [
+          visualPolicyReadiness({
+            policyId: "smart-direct",
+            available:
+              (await (probes?.smartDirectPolicyAvailable?.() ??
+                isSmartDirectVisualPolicyAvailable())) === true,
+            unavailableReason: {
+              code: "smart-direct-policy-unavailable",
+              label: "Smart-direct route unavailable",
+              message:
+                "The authenticated local AutoDev model router Smart-direct requires is not reachable.",
+              severity: UNAVAILABLE_STATUS
+            }
+          }),
+          visualPolicyReadiness({
+            policyId: "onejev-local",
+            available:
+              (await (probes?.oneJevLocalPolicyAvailable?.() ??
+                isOneJevLocalVisualPolicyAvailable())) === true,
+            unavailableReason: {
+              code: "onejev-local-policy-unavailable",
+              label: "Local OneJev server unavailable",
+              message:
+                "The local OneJev model server is not reachable. Start it with `qev serve` on the approved local endpoint, or choose the Smart-directed route.",
+              severity: UNAVAILABLE_STATUS
+            }
+          })
+        ],
         ...visualTargets
       }),
       "scripted-regression": scriptedModeReadiness(operatorActionsAvailable)

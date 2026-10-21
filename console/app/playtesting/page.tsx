@@ -39,6 +39,7 @@ import {
 import {
   fetchPlaytestingHumanValidation,
   fetchPlaytestingPage,
+  fetchPlaytestingReviews,
   fetchPlaytestingReadiness,
   fetchPlaytestingRunCapabilities,
   type PlaytestingPageRequest,
@@ -152,7 +153,7 @@ async function loadOverview(
 ): Promise<ViewLoadResult> {
   const readiness = await waitForPlaytestingReadiness(scope, config);
   if (readiness !== null) return readiness;
-  const [batches, episodes, findings, comparisons, capabilities] =
+  const [batches, episodes, findings, reviews, capabilities] =
     await Promise.all([
       fetchPlaytestingPage("batches", pageRequest(scope, "batches", 5), config),
       fetchPlaytestingPage(
@@ -165,20 +166,16 @@ async function loadOverview(
         pageRequest(scope, "findings", 1),
         config
       ),
-      fetchPlaytestingPage(
-        "comparisons",
-        pageRequest(scope, "comparisons", 1),
-        config
-      ),
+      fetchPlaytestingReviews(scope.workspaceId!, config),
       fetchPlaytestingRunCapabilities(scope.workspaceId!, config)
     ]);
-  const failure = firstFailure([batches, episodes, findings, comparisons]);
+  const failure = firstFailure([batches, episodes, findings, reviews]);
   if (failure !== null) return failure;
   if (
     batches.kind !== "ok" ||
     episodes.kind !== "ok" ||
     findings.kind !== "ok" ||
-    comparisons.kind !== "ok"
+    reviews.kind !== "ok"
   ) {
     return {
       kind: "unavailable",
@@ -197,7 +194,7 @@ async function loadOverview(
       batchCount: batches.data.page.total,
       episodeCount: episodes.data.page.total,
       findingCount: findings.data.page.total,
-      comparisonCount: comparisons.data.page.total,
+      reviewCount: reviews.data.total,
       latestEpisodes: episodes.data.page.rows
     },
     runSetup: runSetupFrom(capabilities)
@@ -297,11 +294,13 @@ async function loadList(
     };
   }
   if (scope.view === "findings") {
-    const [result, capabilities] = await Promise.all([
+    const [result, reviews, capabilities] = await Promise.all([
       fetchPlaytestingPage("findings", pageRequest(scope, "findings"), config),
+      fetchPlaytestingReviews(scope.workspaceId!, config),
       fetchPlaytestingRunCapabilities(scope.workspaceId!, config)
     ]);
     if (result.kind !== "ok") return { kind: "unavailable", result };
+    if (reviews.kind !== "ok") return { kind: "unavailable", result: reviews };
     return {
       kind: "list",
       runSetup: runSetupFrom(capabilities),
@@ -309,7 +308,9 @@ async function loadList(
         resource: "findings",
         rows: result.data.page.rows,
         total: result.data.page.total,
-        nextCursor: result.data.page.nextCursor
+        nextCursor: result.data.page.nextCursor,
+        reviews: reviews.data.rows,
+        reviewTotal: reviews.data.total
       }
     };
   }

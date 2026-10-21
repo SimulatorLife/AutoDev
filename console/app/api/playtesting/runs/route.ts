@@ -1,7 +1,9 @@
 /** Server-only, typed Playtesting batch request; Runtime owns approval and execution. */
 import {
   assertWorkspaceVisualPlaytestLimits,
+  isPlaytestVisualPolicyId,
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+  type PlaytestVisualPolicyId,
   type WorkspaceVisualPlaytestLimits,
   type PlaytestLaunchAssignment,
   type PlaytestLaunchRequest,
@@ -63,7 +65,7 @@ function parseVisualLaunchRequest(
     Object.keys(record).some((key) => !ALLOWED_VISUAL_RECORD_KEYS.has(key)) ||
     typeof record.targetId !== "string" ||
     !TARGET_ID_PATTERN.test(record.targetId) ||
-    record.policyId !== "smart-direct"
+    !isPlaytestVisualPolicyId(record.policyId)
   ) {
     return null;
   }
@@ -84,7 +86,7 @@ function parseVisualLaunchRequest(
     requestId: record.requestId as string,
     capabilityRevision: record.capabilityRevision as string,
     targetId: record.targetId,
-    policyId: "smart-direct",
+    policyId: record.policyId as PlaytestVisualPolicyId,
     areasOfFocus: record.areasOfFocus,
     limits
   };

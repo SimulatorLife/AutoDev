@@ -13,11 +13,11 @@ import { FIELD_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 import {
   episodeScenarioLabel,
-  executionModeLabel,
-  executionSourceSummary,
   executionStatusBadge,
-  gameOutcomeBadge
+  gameOutcomeBadge,
+  sessionMetaLine
 } from "./playtesting-episode-presentation.ts";
+import { gameOutcomeLabel } from "./playtesting-labels.ts";
 import {
   parsePlaytestingScope,
   playtestingEpisodeHref,
@@ -229,8 +229,18 @@ export function PlaytestingSessionsWorkspace({
                       { className: "font-medium" },
                       episodeScenarioLabel(episode)
                     ),
-                    executionStatusBadge(episode.status),
+                    executionStatusBadge(
+                      episode.status,
+                      episode.termination.reason
+                    ),
                     gameOutcomeBadge(episode.outcome)
+                  ),
+                  React.createElement(
+                    "p",
+                    { className: "mt-2 text-sm font-medium" },
+                    episode.outcome === "unknown"
+                      ? "No game outcome observed"
+                      : `Game outcome: ${gameOutcomeLabel(episode.outcome)}`
                   ),
                   React.createElement(
                     "p",
@@ -243,15 +253,8 @@ export function PlaytestingSessionsWorkspace({
                   ),
                   React.createElement(
                     "p",
-                    { className: "mt-2 text-sm font-medium" },
-                    episode.outcome === "unknown"
-                      ? "No game outcome observed"
-                      : `Recorded game outcome: ${episode.outcome}`
-                  ),
-                  React.createElement(
-                    "p",
                     { className: MUTED_META_CLASS },
-                    `${executionModeLabel(episode.executionProvenance.mode)} · ${episode.identity.policyId} · ${episode.policyCohort ?? "No cohort assigned"} · ${String(episode.stepCount)} steps · ${executionSourceSummary(episode.executionProvenance)}`
+                    sessionMetaLine(episode)
                   )
                 ),
                 React.createElement(
