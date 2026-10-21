@@ -279,7 +279,7 @@ test("the Console is not bootstrapped before the Model Router is serving", async
   assert.equal(status, 0);
   assert.ok(readinessProbes > 1, "the Router was waited for");
   const consoleIndex = order.indexOf(consolePlist);
-  assert.ok(servingIndex >= 0 && consoleIndex >= 0);
+  assert.ok(servingIndex !== -1 && consoleIndex !== -1);
   assert.ok(
     servingIndex < consoleIndex,
     "the Console is bootstrapped only after the Router is serving"
