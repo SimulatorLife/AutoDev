@@ -62,6 +62,16 @@ process.env.AUTODEV_CONSOLE_PORT = String(consolePort);
 process.env.AUTODEV_OPENLIT_USAGE_FIXTURE_PORT = String(usageFixturePort);
 process.env.AUTODEV_STATE_PROXY_PORT = String(stateProxyPort);
 const e2eDistDir = `.next-staging-e2e-${process.pid}-${consolePort}`;
+/**
+ * Where the Console server's own output is kept.
+ *
+ * The acceptance's failures are browser-side observations -- a page that never
+ * moved, a field that never took the value -- and the server's output is
+ * where the reason for them is. The file is written outside the Playwright
+ * output directory, which the runner empties when it starts, and is published
+ * with the failure evidence so one artifact carries both.
+ */
+const serverLogPath = "acceptance-logs/console-server.log";
 const serviceToken =
   "playtesting-browser-fixture-token-0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -112,7 +122,12 @@ export default defineConfig({
       timeout: 30_000
     },
     {
-      command: `AUTODEV_CONSOLE_BUILD_DIST_DIR=${e2eDistDir} pnpm build && AUTODEV_CONSOLE_SERVE_DIST_DIR=${e2eDistDir} AUTODEV_CONSOLE_PORT=${consolePort} AUTODEV_CONTROL_API_BASE_URL=http://127.0.0.1:${stateProxyPort} AUTODEV_CONTROL_API_TOKEN=${serviceToken} AUTODEV_OPENLIT_USAGE_URL=http://127.0.0.1:${usageFixturePort} AUTODEV_OPENLIT_USAGE_TOKEN=${serviceToken} AUTODEV_CONTROL_VIEWERS= AUTODEV_CONTROL_OPERATORS=autodev-local pnpm start`,
+      // The Console's own output is kept, not just the test runner's. A
+      // failure that the browser reports as "the page never moved" is a
+      // failure the server can explain -- an exception in a render truncates
+      // the response -- and the explanation is in the server's output, which
+      // the runner otherwise keeps to itself.
+      command: `mkdir -p acceptance-logs && AUTODEV_CONSOLE_BUILD_DIST_DIR=${e2eDistDir} pnpm build && AUTODEV_CONSOLE_SERVE_DIST_DIR=${e2eDistDir} AUTODEV_CONSOLE_PORT=${consolePort} AUTODEV_CONTROL_API_BASE_URL=http://127.0.0.1:${stateProxyPort} AUTODEV_CONTROL_API_TOKEN=${serviceToken} AUTODEV_OPENLIT_USAGE_URL=http://127.0.0.1:${usageFixturePort} AUTODEV_OPENLIT_USAGE_TOKEN=${serviceToken} AUTODEV_CONTROL_VIEWERS= AUTODEV_CONTROL_OPERATORS=autodev-local pnpm start 2>&1 | tee ${serverLogPath}`,
       // The readiness check waits on a Console-owned route. Waiting on the
       // Playtesting surface instead would make the whole acceptance depend on
       // a page this work does not own: a surface that is being changed

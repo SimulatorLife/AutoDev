@@ -61,12 +61,16 @@ jobs:
       # into `test-results/`, and the runner throws that directory away with
       # the job: without this step the only record of a failure is the
       # assertion text, which says what the page looked like and not how it
-      # got there.
+      # got there. The Console's own output is published with it, because a
+      # failure the browser reports as "the page never moved" is a failure the
+      # server can explain.
       - name: Upload the acceptance evidence
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: console-acceptance-evidence-${{ github.run_id }}
-          path: console/test-results/
+          path: |
+            console/test-results/
+            console/acceptance-logs/
           retention-days: 14
           if-no-files-found: ignore
