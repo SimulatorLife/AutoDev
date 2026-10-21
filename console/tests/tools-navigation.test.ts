@@ -305,9 +305,9 @@ test("no same-origin link in ToolsView is rendered through a raw anchor element"
 });
 
 test("ToolsView imports the shared NavigationLink rather than reaching into next/link directly", () => {
-  // The dynamic-route prefetch, intent handlers and `dataAttributes` contract
-  // all live on the shared NavigationLink; bypassing it loses every one of
-  // those and reintroduces the full-document navigation this guard is about.
+  // The shared NavigationLink owns the in-place routing contract for internal
+  // destinations; bypassing it loses that contract and reintroduces the
+  // full-document navigation this guard is about.
   const source = readFileSync(
     new URL("../src/features/tools/ToolsView.ts", import.meta.url),
     "utf8"
