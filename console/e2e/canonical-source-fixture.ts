@@ -26,7 +26,8 @@ import {
   RuleSyncRepository,
   RuleSyncSkillConflictError,
   type RuleSyncSkillSource,
-  RuleSyncSkillValidationError} from "@simulatorlife/autodev-data";
+  RuleSyncSkillValidationError
+} from "@simulatorlife/autodev-data";
 
 /** The two canonical sources the Console edits. */
 export type CanonicalSourceKind = "prompt" | "skill";
