@@ -569,52 +569,6 @@ const PROVIDER_USAGE_COUNT_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0
 });
 
-export function ProviderUsagePendingPanel({
-  provider
-}: {
-  readonly provider: ControlApiProviderRecord;
-}): React.JSX.Element {
-  return React.createElement(
-    "section",
-    {
-      className: DETAIL_PANEL_CLASS,
-      "data-section": "provider-usage",
-      "data-provider-usage-status": "pending",
-      "aria-busy": true
-    },
-    React.createElement(
-      "div",
-      { className: "mb-3 flex flex-wrap items-center justify-between gap-3" },
-      React.createElement(
-        "div",
-        { className: "flex flex-wrap items-center gap-2" },
-        React.createElement(
-          "h3",
-          { className: SECTION_HEADING_CLASS },
-          "Usage · last 7 days"
-        ),
-        React.createElement(StatusBadge, {
-          status: "pending",
-          label: "Loading"
-        })
-      ),
-      React.createElement(
-        NavigationLink,
-        {
-          href: providerUsagePath(provider.id),
-          className: "text-xs text-accent underline underline-offset-2"
-        },
-        "Open scoped Usage →"
-      )
-    ),
-    React.createElement(
-      "p",
-      { className: MUTED_BODY_CLASS, role: "status", "aria-live": "polite" },
-      "Loading source-confirmed provider-attempt telemetry…"
-    )
-  );
-}
-
 export function ProviderUsagePanel({
   provider,
   summary

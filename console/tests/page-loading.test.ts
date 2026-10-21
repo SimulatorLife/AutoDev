@@ -90,6 +90,17 @@ test("no route segment owns the pending state", () => {
       /=\s*(?:fetch[A-Z][A-Za-z]*|load[A-Z][A-Za-z]*)\(/u,
       `${route} starts a read it does not await; the page's answer would arrive in two pieces`
     );
+    // A boundary inside the segment is the same split from the other side. The
+    // server answers the segment's shell first and the content behind the
+    // boundary later, so the navigation to that segment waits on a chunk the
+    // browser has not read, and its commit -- the commit that moves the address
+    // bar -- never happens. The page awaits its read instead, and the layout's
+    // boundary is the only one the Console owns.
+    assert.doesNotMatch(
+      source,
+      /React\.Suspense|<Suspense\b/u,
+      `${route} owns a boundary; the page's answer would arrive in two pieces`
+    );
   }
 });
 

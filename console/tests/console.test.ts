@@ -117,10 +117,7 @@ import {
   unreadWindow
 } from "../src/features/evaluations/evaluations-url.ts";
 import type { ProviderModelDiscoveryState } from "../src/features/providers/provider-model-discovery.ts";
-import {
-  ProviderUsagePanel,
-  ProviderUsagePendingPanel
-} from "../src/features/providers/ProviderDetailView.ts";
+import { ProviderUsagePanel } from "../src/features/providers/ProviderDetailView.ts";
 import { ProviderLimitsControls } from "../src/features/providers/ProviderLimitsControls.ts";
 import { ProviderRoleControls } from "../src/features/providers/ProviderRoleControls.ts";
 import { saveOutcomeForConvergence } from "../src/features/skills/SkillRoleAssignment.ts";
@@ -13976,12 +13973,6 @@ test("ProviderDetailView keeps the provider's role and model toggles on its page
   assert.match(markup, /Physical attempts · last 7 days/u);
   assert.match(markup, /Failed attempts · last 7 days/u);
   assert.match(markup, /href="\/usage\?range=7D&amp;provider=claude"/u);
-  const pendingUsage = renderToStaticMarkup(
-    React.createElement(ProviderUsagePendingPanel, { provider: claude })
-  );
-  assert.match(pendingUsage, /data-provider-usage-status="pending"/u);
-  assert.match(pendingUsage, /aria-busy="true"/u);
-  assert.match(pendingUsage, /role="status"[^>]*aria-live="polite"/u);
   // The provider's own pages come from its record and open outside the Console.
   for (const [kind, href] of Object.entries(claude.links)) {
     assert.match(

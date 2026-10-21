@@ -1,4 +1,3 @@
-import type { ControlApiProviderRecord } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
@@ -9,8 +8,7 @@ import {
 } from "../../../src/features/providers/provider-usage.ts";
 import {
   ProviderDetailView,
-  ProviderUsagePanel,
-  ProviderUsagePendingPanel
+  ProviderUsagePanel
 } from "../../../src/features/providers/ProviderDetailView.ts";
 import { isControlFailure } from "../../../src/lib/control-failure.ts";
 import {
@@ -45,35 +43,37 @@ export async function generateMetadata({
   return { title: `${id} · Providers` };
 }
 
-async function ProviderUsageSummarySection({
-  provider
-}: {
-  readonly provider: ControlApiProviderRecord;
-}): Promise<React.JSX.Element> {
-  let source: ProviderUsageSource;
+/**
+ * The page's own usage read.
+ *
+ * The page awaits this read instead of handing it to a content component. A
+ * read the page awaits answers in one piece: the page's model and the content
+ * that read confirmed arrive together, so a navigation to this page has a
+ * whole page to apply. A read handed to a content component behind a boundary
+ * answers in two pieces -- the page's model now, its content later -- and the
+ * navigation's commit waits on the second piece, so the address bar stays
+ * where it was.
+ */
+async function readProviderUsage(
+  providerId: string
+): Promise<ProviderUsageSource> {
   try {
     const result = await loadOpenLITUsage({
       range: "7D",
-      values: { provider: [provider.id] }
+      values: { provider: [providerId] }
     });
-    source =
-      result.kind === "not-configured"
-        ? { kind: "not-configured" }
-        : result.kind === "ok"
-          ? {
-              kind: "available",
-              attemptsByProvider: result.data.metrics.attemptsByProvider,
-              attemptErrorsByProvider:
-                result.data.metrics.attemptErrorsByProvider
-            }
-          : { kind: "unavailable" };
+    if (result.kind === "not-configured") return { kind: "not-configured" };
+    if (result.kind === "ok") {
+      return {
+        kind: "available",
+        attemptsByProvider: result.data.metrics.attemptsByProvider,
+        attemptErrorsByProvider: result.data.metrics.attemptErrorsByProvider
+      };
+    }
+    return { kind: "unavailable" };
   } catch {
-    source = { kind: "unavailable" };
+    return { kind: "unavailable" };
   }
-  return React.createElement(ProviderUsagePanel, {
-    provider,
-    summary: summarizeProviderUsage(source, provider.id)
-  });
 }
 
 export default async function ProviderDetailPage({
@@ -95,13 +95,19 @@ export default async function ProviderDetailPage({
     );
   }
   const query = (await searchParams) ?? {};
-  const [providersResult, modelsResult, discoveryResult, runtimeResult] =
-    await Promise.all([
-      fetchProviders(config),
-      fetchModels(config),
-      fetchProviderModelDiscovery(config),
-      fetchRuntime(config)
-    ]);
+  const [
+    providersResult,
+    modelsResult,
+    discoveryResult,
+    runtimeResult,
+    usageSource
+  ] = await Promise.all([
+    fetchProviders(config),
+    fetchModels(config),
+    fetchProviderModelDiscovery(config),
+    fetchRuntime(config),
+    readProviderUsage(id)
+  ]);
   if (providersResult.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
@@ -138,13 +144,10 @@ export default async function ProviderDetailPage({
         discoveryResult.kind === "ok"
           ? { status: "available", data: discoveryResult.data }
           : { status: "unavailable", message: discoveryResult.message },
-      usagePanel: React.createElement(
-        React.Suspense,
-        {
-          fallback: React.createElement(ProviderUsagePendingPanel, { provider })
-        },
-        React.createElement(ProviderUsageSummarySection, { provider })
-      ),
+      usagePanel: React.createElement(ProviderUsagePanel, {
+        provider,
+        summary: summarizeProviderUsage(usageSource, provider.id)
+      }),
       runtime: runtimeResult.kind === "ok" ? runtimeResult.data : undefined,
       controlFailed: isControlFailure(query.control)
     })
