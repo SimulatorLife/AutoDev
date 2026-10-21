@@ -105,9 +105,16 @@ export default defineConfig({
     },
     {
       command: `AUTODEV_CONSOLE_BUILD_DIST_DIR=${e2eDistDir} pnpm build && AUTODEV_CONSOLE_SERVE_DIST_DIR=${e2eDistDir} AUTODEV_CONSOLE_PORT=${consolePort} AUTODEV_CONTROL_API_BASE_URL=http://127.0.0.1:${stateProxyPort} AUTODEV_CONTROL_API_TOKEN=${serviceToken} AUTODEV_OPENLIT_USAGE_URL=http://127.0.0.1:${usageFixturePort} AUTODEV_OPENLIT_USAGE_TOKEN=${serviceToken} AUTODEV_CONTROL_VIEWERS= AUTODEV_CONTROL_OPERATORS=autodev-local pnpm start`,
-      url: `http://localhost:${consolePort}/playtesting`,
+      // The readiness check waits on a Console-owned route. Waiting on the
+      // Playtesting surface instead would make the whole acceptance depend on
+      // a page this work does not own: a surface that is being changed
+      // elsewhere would fail every spec here, not only its own.
+      url: `http://localhost:${consolePort}/providers`,
       reuseExistingServer: false,
-      timeout: 120_000
+      // The acceptance measures a production build, and a production build
+      // takes minutes rather than seconds. A timeout that is shorter than the
+      // build would fail the acceptance for the length of the build.
+      timeout: 600_000
     }
   ]
 });

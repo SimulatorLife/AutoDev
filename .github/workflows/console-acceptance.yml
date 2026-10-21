@@ -1,0 +1,57 @@
+name: "Console acceptance"
+
+# The Console's browser acceptance, run where the product runs.
+#
+# The target state asks for browser and visual regression acceptance over the
+# shared shell and representative list, detail, form and observability pages.
+# Every acceptance measurement for the Console so far has been a local one: a
+# build, a server and a browser, run by hand, on one machine. A workflow that
+# runs the same acceptance on every push to main makes the claim checkable by
+# anyone who reads the branch, and it fails the same way for everybody.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    # The Console is a macOS product and its acceptance runs against a
+    # production build served by the repository's own configuration, which
+    # builds the Console, starts the Control API fixture and the usage fixture,
+    # and serves the staged build the specs read.
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install AutoDev dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the acceptance browser
+        working-directory: console
+        run: pnpm exec playwright install --with-deps chromium
+
+      # The repository's own Playwright configuration: it reserves the ports,
+      # starts the Control API fixture, the state proxy and the usage fixture,
+      # builds the staged Console, and serves it. The acceptance therefore
+      # measures the same build an operator would run, not a development
+      # server.
+      - name: Run the Console acceptance
+        working-directory: console
+        run: pnpm exec playwright test --config playwright.config.ts
