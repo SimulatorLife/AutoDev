@@ -122,11 +122,47 @@ export function NavigationLink({
     }
   }, [href, router]);
 
+  /**
+   * Ask for the destination's whole page, ignoring the warm-up's cooldown.
+   *
+   * The warm-up is an intent, and an intent is not guaranteed: a pointer that
+   * is already over the link when the operator clicks never enters it, a
+   * keyboard activation never enters it, and a destination the warm-up has
+   * already visited has its answer aged out of the router's prefetch cache
+   * while the cooldown still holds it back.
+   *
+   * A navigation that has to answer for itself is the one that strands: the
+   * answer it asks for is the page's own segment, and the segment does not
+   * fill the page the browser is holding, so the navigation waits for an
+   * answer that never arrives and the address bar stays where it was. The
+   * whole page does fill it. Asking here is free when the warm-up has already
+   * left that answer in the router's cache -- the prefetch is then the answer
+   * the warm-up left, not a second request.
+   */
+  const ensureWholePage = React.useCallback((): void => {
+    if (!router) return;
+    const destination = toHrefString(href);
+    if (destination) {
+      router.prefetch(destination, { kind: FULL_PREFETCH_KIND });
+    }
+  }, [href, router]);
+
+  const { onClick } = props;
+  const handleClick = React.useCallback(
+    (event: React.MouseEvent<HTMLAnchorElement>): void => {
+      onClick?.(event);
+      if (event.defaultPrevented) return;
+      ensureWholePage();
+    },
+    [ensureWholePage, onClick]
+  );
+
   return React.createElement(Link, {
     ...props,
     href,
     ...dataAttributes,
     prefetch: false,
+    onClick: handleClick,
     ...navigationIntentHandlers(prefetch)
   });
 }

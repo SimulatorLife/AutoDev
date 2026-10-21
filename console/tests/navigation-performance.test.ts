@@ -68,6 +68,35 @@ test("resource navigation warms the destination it is about to route to, in full
   );
 });
 
+test("a click asks for the whole destination page, whether or not an intent warmed it", () => {
+  // The warm-up is an intent, and an intent is not guaranteed: a pointer that
+  // is already over the link when the operator clicks never enters it, and a
+  // keyboard activation never enters it. A navigation that has to answer for
+  // itself is the one that strands, because the answer it asks for is the
+  // page's own segment and the segment does not fill the page the browser is
+  // holding. The whole page does fill it.
+  //
+  // So the click asks for the whole page too, and it does not wait for the
+  // warm-up's cooldown: the cooldown is there to keep the warm-up from asking
+  // twice, and the click's ask is the answer the navigation is about to use.
+  assert.match(navigationLinkSource, /onClick:\s*handleClick/u);
+  assert.match(
+    navigationLinkSource,
+    /const ensureWholePage = React\.useCallback\(/u,
+    "the click has to ask for the destination's whole page"
+  );
+  assert.match(
+    navigationLinkSource,
+    /router\.prefetch\(destination,\s*\{\s*kind:\s*FULL_PREFETCH_KIND\s*\}\)/u,
+    "the click's ask has to be a full prefetch, like the warm-up's"
+  );
+  assert.doesNotMatch(
+    navigationLinkSource,
+    /ensureWholePage[\s\S]{0,400}shouldPrefetch\(/u,
+    "the click's ask must not be held back by the warm-up's cooldown"
+  );
+});
+
 const rootLayoutSource = readFileSync(
   new URL("../app/layout.tsx", import.meta.url),
   "utf8"
