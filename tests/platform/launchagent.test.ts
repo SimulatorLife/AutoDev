@@ -35,16 +35,17 @@ test("launchagent rendering replaces placeholders without replacement-string int
       home: "/tmp/home&safe",
       repositoryRoot: String.raw`/tmp/repo\path`,
       nodeBin: "/tmp/node$&/bin/node",
+      codexBin: "/tmp/codex $value/bin/codex",
       consolePort: "3300"
     };
     writeFileSync(
       template,
-      "<string>__CODEX_HOME__</string>\n<string>__HOME__</string>\n<string>__AUTODEV_REPO_ROOT__</string>\n<string>__AUTODEV_NODE_BIN__</string>\n<string>__AUTODEV_CONSOLE_PORT__</string>\n"
+      "<string>__CODEX_HOME__</string>\n<string>__HOME__</string>\n<string>__AUTODEV_REPO_ROOT__</string>\n<string>__AUTODEV_NODE_BIN__</string>\n<string>__CODEX_BIN__</string>\n<string>__AUTODEV_CONSOLE_PORT__</string>\n"
     );
     renderLaunchAgent(template, target, values);
     assert.equal(
       readFileSync(target, "utf8"),
-      "<string>/tmp/codex/$value</string>\n<string>/tmp/home&safe</string>\n<string>/tmp/repo\\path</string>\n<string>/tmp/node$&/bin/node</string>\n<string>3300</string>\n"
+      "<string>/tmp/codex/$value</string>\n<string>/tmp/home&safe</string>\n<string>/tmp/repo\\path</string>\n<string>/tmp/node$&/bin/node</string>\n<string>/tmp/codex $value/bin/codex</string>\n<string>3300</string>\n"
     );
     assert.equal(launchAgentMatches(template, target, values), true);
   }));
@@ -59,6 +60,7 @@ test("launchagent drift check detects changed rendered output", () =>
       home: "/home",
       repositoryRoot: "/repo",
       nodeBin: "/node",
+      codexBin: "/codex-bin",
       consolePort: "3300"
     };
     renderLaunchAgent(template, target, values);
@@ -104,11 +106,27 @@ test("model router LaunchAgent resolves canonical configuration from the checkou
   );
 });
 
+test("the model router LaunchAgent pins the Codex CLI its role dispatch runs on", () => {
+  const template = readFileSync(
+    new URL(
+      "../../config/launchagents/com.codex.model-router.plist",
+      import.meta.url
+    ),
+    "utf8"
+  );
+  assert.match(
+    template,
+    /<key>CODEX_BIN<\/key>\s*<string>__CODEX_BIN__<\/string>/u,
+    "launchd's PATH would otherwise pick an old Codex CLI that rejects the role bridge's flags"
+  );
+});
+
 const RENDERED_VALUES = {
   codexHome: "/codex",
   home: "/home",
   repositoryRoot: "/repo",
   nodeBin: "/node",
+  codexBin: "/codex-bin",
   consolePort: "3300"
 };
 

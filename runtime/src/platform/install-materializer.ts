@@ -112,6 +112,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/shared/provider-model-ids.ts",
   "runtime/src/shared/output.ts",
   "runtime/src/shared/error-message.ts",
+  "runtime/src/shared/executables.ts",
   "runtime/src/shared/runtime-secrets.ts",
   "runtime/src/shared/runtime-source-root.ts",
   "runtime/vendor/jev-playtest-lab/src/core.js",

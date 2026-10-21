@@ -9,6 +9,8 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { findExecutable } from "../shared/executables.ts";
+
 export type HostArch = "arm64" | "amd64";
 export type ExecutableArch = HostArch | "universal";
 
@@ -20,6 +22,7 @@ const ELF_MAGIC = 0x7f_45_4c_46;
 const ELF_MACHINE_X86_64 = 0x3e;
 const ELF_MACHINE_AARCH64 = 0xb7;
 const NODE_VERSION_PATTERN = /^v(\d+)\.(\d+)\.(\d+)$/u;
+const CODEX_VERSION_PATTERN = /(\d+)\.(\d+)\.(\d+)/u;
 
 /**
  * The machine's architecture, not this process's: a Node running under
@@ -141,4 +144,83 @@ export function resolveServiceNode(
     usable[0] ??
     process.execPath
   );
+}
+
+/** The version a Codex CLI reports, or null when it does not report one. */
+export function codexCliVersion(
+  binary: string,
+  run: (file: string, args: readonly string[]) => string = (file, args) =>
+    execFileSync(file, [...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000
+    })
+): string | null {
+  let output: string;
+  try {
+    output = run(binary, ["--version"]);
+  } catch {
+    return null;
+  }
+  return CODEX_VERSION_PATTERN.exec(output)?.[0] ?? null;
+}
+
+function compareVersions(left: string | null, right: string | null): number {
+  if (left === null) return right === null ? 0 : -1;
+  if (right === null) return 1;
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    const difference = (rightParts[index] ?? 0) - (leftParts[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+/**
+ * The Codex CLI launchd services should run on.
+ *
+ * The services dispatch roles through the Codex CLI, and the CLI has to be
+ * the one the operator's own session runs: launchd's pinned PATH finds
+ * `/usr/local/bin/codex` first, which on many machines is an old CLI that
+ * rejects the flags the role bridge passes. The newest CLI the machine has
+ * wins, so a stale copy on the default PATH cannot shadow the current one.
+ */
+export function resolveServiceCodex(
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+  versionOf: (binary: string) => string | null = codexCliVersion
+): string | null {
+  const configured = env.CODEX_BIN?.trim();
+  if (configured) {
+    if (isExecutable(configured)) return configured;
+    throw new Error(`Codex CLI is not executable: ${configured}`);
+  }
+  const candidates = [
+    path.join(home, ".local/bin/codex"),
+    findExecutable("codex", env.PATH),
+    ...nvmCodexBinaries(home)
+  ].filter(
+    (candidate): candidate is string =>
+      candidate !== null && isExecutable(candidate)
+  );
+  if (candidates.length === 0) return null;
+  const ranked = candidates
+    .map((candidate) => ({ candidate, version: versionOf(candidate) }))
+    .sort((left, right) => compareVersions(left.version, right.version));
+  return ranked[0]?.candidate ?? null;
+}
+
+function nvmCodexBinaries(home: string): readonly string[] {
+  const versions = path.join(home, ".nvm", "versions", "node");
+  let entries: string[];
+  try {
+    entries = readdirSync(versions);
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => NODE_VERSION_PATTERN.test(entry))
+    .sort()
+    .map((entry) => path.join(versions, entry, "bin", "codex"));
 }

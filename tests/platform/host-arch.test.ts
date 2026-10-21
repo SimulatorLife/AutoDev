@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
+  codexCliVersion,
   executableArch,
   hostArch,
+  resolveServiceCodex,
   resolveServiceNode,
   runsNatively
 } from "@simulatorlife/autodev-runtime/platform/host-arch";
@@ -117,4 +125,41 @@ test("services run on the first native Node, not the first one on PATH", () =>
       intel,
       "with no native Node, a usable one still beats none"
     );
+  }));
+
+test("services run on the newest Codex CLI, not an old one on PATH", () =>
+  withTempDir((directory) => {
+    const home = join(directory, "home");
+    mkdirSync(join(home, ".local/bin"), { recursive: true });
+    const current = join(home, ".local/bin/codex");
+    writeFileSync(current, "#!/bin/sh\necho 'codex-cli 0.154.0'\n");
+    chmodSync(current, 0o755);
+    const stale = join(directory, "usr-local-bin");
+    mkdirSync(stale, { recursive: true });
+    const staleCodex = join(stale, "codex");
+    writeFileSync(staleCodex, "#!/bin/sh\necho 'codex-cli 0.42.0'\n");
+    chmodSync(staleCodex, 0o755);
+
+    assert.equal(
+      resolveServiceCodex(home, { PATH: stale }),
+      current,
+      "a stale CLI on the default PATH must not shadow the current one"
+    );
+    assert.equal(
+      resolveServiceCodex(home, {
+        PATH: stale,
+        CODEX_BIN: staleCodex
+      }),
+      staleCodex,
+      "an explicitly configured CLI is the operator's decision and wins"
+    );
+  }));
+
+test("the Codex CLI version is read from the binary itself", () =>
+  withTempDir((directory) => {
+    const binary = join(directory, "codex");
+    writeFileSync(binary, "#!/bin/sh\necho 'codex-cli 0.154.0'\n");
+    chmodSync(binary, 0o755);
+    assert.equal(codexCliVersion(binary), "0.154.0");
+    assert.equal(codexCliVersion(join(directory, "missing")), null);
   }));

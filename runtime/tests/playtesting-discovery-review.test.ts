@@ -564,7 +564,8 @@ test("visual discovery dispatch prepares one packet and stores only hypothesis r
       exitCode: 0,
       signal: null,
       timedOut: false,
-      launchFailed: false
+      launchFailed: false,
+      diagnostic: null
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
     const status = await runControl.listAnalystReviewRuns(

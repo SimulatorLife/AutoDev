@@ -13,7 +13,7 @@ import path from "node:path";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { resolveConsolePort } from "../console-ensure.ts";
-import { resolveServiceNode } from "../host-arch.ts";
+import { resolveServiceCodex, resolveServiceNode } from "../host-arch.ts";
 
 /** The install-wide paths every service LaunchAgent template is rendered against. */
 export interface LaunchAgentPaths {
@@ -28,6 +28,8 @@ export interface LaunchAgentValues {
   readonly repositoryRoot: string;
   /** The Node binary services run on; see resolveServiceNode. */
   readonly nodeBin: string;
+  /** The Codex CLI services run on; see resolveServiceCodex. */
+  readonly codexBin: string;
   /** The loopback port the Console binds; see resolveConsolePort. */
   readonly consolePort: string;
 }
@@ -48,6 +50,7 @@ export function resolveLaunchAgentValues(
     home: paths.home,
     repositoryRoot: paths.repositoryRoot,
     nodeBin: resolveServiceNode(paths.home),
+    codexBin: resolveServiceCodex(paths.home, env) ?? "",
     consolePort: String(resolveConsolePort(env.AUTODEV_CONSOLE_PORT))
   };
 }
@@ -62,6 +65,7 @@ function renderedTemplate(
     .replaceAll("__HOME__", () => values.home)
     .replaceAll("__AUTODEV_REPO_ROOT__", () => values.repositoryRoot)
     .replaceAll("__AUTODEV_NODE_BIN__", () => values.nodeBin)
+    .replaceAll("__CODEX_BIN__", () => values.codexBin)
     .replaceAll("__AUTODEV_CONSOLE_PORT__", () => values.consolePort);
   const unresolved = rendered.match(PLACEHOLDER_PATTERN);
   // An unrendered placeholder is not a cosmetic defect: it ships verbatim into
@@ -127,17 +131,26 @@ export function launchAgentMatches(
 }
 
 const USAGE =
-  "usage: launchagent render|check <template> <target> <codex-home> <home> <repository-root> <node-bin> <console-port>";
+  "usage: launchagent render|check <template> <target> <codex-home> <home> <repository-root> <node-bin> <codex-bin> <console-port>";
 
 function parseLaunchAgentValues(argv: string[]): LaunchAgentValues {
-  const [codexHome, home, repositoryRoot, nodeBin, consolePort] = argv;
-  if (!codexHome || !home || !repositoryRoot || !nodeBin || !consolePort)
+  const [codexHome, home, repositoryRoot, nodeBin, codexBin, consolePort] =
+    argv;
+  if (
+    !codexHome ||
+    !home ||
+    !repositoryRoot ||
+    !nodeBin ||
+    !codexBin ||
+    !consolePort
+  )
     throw new Error(USAGE);
   return {
     codexHome,
     home,
     repositoryRoot,
     nodeBin,
+    codexBin,
     consolePort: String(resolveConsolePort(consolePort))
   };
 }

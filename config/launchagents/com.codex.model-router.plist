@@ -47,6 +47,11 @@
          first, an Intel build on many Apple Silicon Macs (run under Rosetta). -->
     <key>AUTODEV_NODE_BIN</key>
     <string>__AUTODEV_NODE_BIN__</string>
+    <!-- The Codex CLI the operator's session runs: PATH alone finds
+         /usr/local/bin/codex first, which is often an old CLI that rejects the
+         flags the role bridge passes. -->
+    <key>CODEX_BIN</key>
+    <string>__CODEX_BIN__</string>
     <key>CODEX_HOME</key>
     <string>__CODEX_HOME__</string>
     <key>HOME</key>

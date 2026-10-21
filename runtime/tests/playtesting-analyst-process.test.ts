@@ -168,7 +168,11 @@ test("analyst dispatch uses the existing provider-agent role with a read-only sc
     /Omit findings for this analyst hypothesis review/u
   );
   assert.doesNotMatch(call.args.join(" "), /analyst-secret|runner-secret/u);
-  assert.equal(spawnOptions.stdio, "ignore");
+  assert.deepEqual(
+    spawnOptions.stdio,
+    ["ignore", "pipe", "pipe"],
+    "the child's own output is captured, not inherited into the service's streams"
+  );
   assert.equal(childEnvironment.AUTODEV_PLAYTEST_ROLE, "playtest-analyst");
   assert.equal(childEnvironment.AUTODEV_PLAYTEST_ANALYSIS_ID, "analysis-123");
   assert.equal(
@@ -212,7 +216,8 @@ test("analyst dispatch uses the existing provider-agent role with a read-only sc
     exitCode: 0,
     signal: null,
     timedOut: false,
-    launchFailed: false
+    launchFailed: false,
+    diagnostic: null
   });
 });
 
@@ -259,8 +264,62 @@ test("analyst dispatch needs no unused Control API credential", async () => {
     exitCode: 0,
     signal: null,
     timedOut: false,
-    launchFailed: false
+    launchFailed: false,
+    diagnostic: null
   });
+});
+
+test("a failed analyst reports what the child said, bounded", async () => {
+  const eventHandlers = new Map<string, (...args: unknown[]) => void>();
+  const streamHandlers = new Map<string, (...args: unknown[]) => void>();
+  const stream = {
+    on(event: string, handler: (...args: unknown[]) => void) {
+      streamHandlers.set(event, handler);
+      return stream;
+    }
+  };
+  const child = {
+    once(event: string, handler: (...args: unknown[]) => void) {
+      eventHandlers.set(event, handler);
+      return child;
+    },
+    stdout: stream,
+    stderr: stream,
+    kill: () => true,
+    emitForTest(event: string, ...args: unknown[]) {
+      eventHandlers.get(event)?.(...args);
+    }
+  } as unknown as ChildProcess;
+  const spawnProcess = ((
+    _command: string,
+    _args: string[],
+    _options: SpawnOptions
+  ) => child) as unknown as typeof spawn;
+  const processHandle = launchPlaytestAnalystProcess(
+    {
+      analysisId: "analysis-123",
+      workspaceId: "owner/RacingGame",
+      actor: "control-api:abcd",
+      episodeIds: ["episode-1"],
+      analysisKind: "confirmatory",
+      metricAggregation: aggregationFor(["episode-1"])
+    },
+    {
+      environment: {},
+      spawnProcess
+    }
+  );
+  streamHandlers.get("data")?.(
+    Buffer.from("error: unexpected argument '--strict-config' found\n")
+  );
+  eventHandlers.get("close")?.(2, null);
+  const result = await processHandle.completion;
+  assert.equal(result.exitCode, 2);
+  assert.equal(
+    result.diagnostic,
+    "error: unexpected argument '--strict-config' found",
+    "a failed analyst must say why it stopped"
+  );
 });
 
 test("discovery analyst dispatch has no metric aggregation and receives a hypothesis-only prompt", async () => {
@@ -328,6 +387,60 @@ test("discovery analyst dispatch has no metric aggregation and receives a hypoth
     exitCode: 0,
     signal: null,
     timedOut: false,
-    launchFailed: false
+    launchFailed: false,
+    diagnostic: null
   });
+});
+
+test("a failed analyst reports what the child said, bounded", async () => {
+  const eventHandlers = new Map<string, (...args: unknown[]) => void>();
+  const streamHandlers = new Map<string, (...args: unknown[]) => void>();
+  const stream = {
+    on(event: string, handler: (...args: unknown[]) => void) {
+      streamHandlers.set(event, handler);
+      return stream;
+    }
+  };
+  const child = {
+    once(event: string, handler: (...args: unknown[]) => void) {
+      eventHandlers.set(event, handler);
+      return child;
+    },
+    stdout: stream,
+    stderr: stream,
+    kill: () => true,
+    emitForTest(event: string, ...args: unknown[]) {
+      eventHandlers.get(event)?.(...args);
+    }
+  } as unknown as ChildProcess;
+  const spawnProcess = ((
+    _command: string,
+    _args: string[],
+    _options: SpawnOptions
+  ) => child) as unknown as typeof spawn;
+  const processHandle = launchPlaytestAnalystProcess(
+    {
+      analysisId: "analysis-123",
+      workspaceId: "owner/RacingGame",
+      actor: "control-api:abcd",
+      episodeIds: ["episode-1"],
+      analysisKind: "confirmatory",
+      metricAggregation: aggregationFor(["episode-1"])
+    },
+    {
+      environment: {},
+      spawnProcess
+    }
+  );
+  streamHandlers.get("data")?.(
+    Buffer.from("error: unexpected argument '--strict-config' found\n")
+  );
+  eventHandlers.get("close")?.(2, null);
+  const result = await processHandle.completion;
+  assert.equal(result.exitCode, 2);
+  assert.equal(
+    result.diagnostic,
+    "error: unexpected argument '--strict-config' found",
+    "a failed analyst must say why it stopped"
+  );
 });

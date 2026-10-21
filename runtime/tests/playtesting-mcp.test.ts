@@ -1215,7 +1215,8 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
               exitCode: null,
               signal: "SIGTERM",
               timedOut: false,
-              launchFailed: false
+              launchFailed: false,
+              diagnostic: null
             });
           }
         } satisfies PlaytestAnalystProcess;
@@ -1841,7 +1842,8 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       exitCode: 0,
       signal: null,
       timedOut: false,
-      launchFailed: false
+      launchFailed: false,
+      diagnostic: null
     });
     let completedAnalysis = (
       await analystOwner.listAnalystReviewRuns(operatorSession, WORKSPACE_ID)

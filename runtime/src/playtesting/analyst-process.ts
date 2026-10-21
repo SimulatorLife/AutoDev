@@ -24,6 +24,8 @@ import {
 const ANALYST_ROLE = "playtest-analyst" as const;
 const ANALYST_TIMEOUT_MS = 10 * 60 * 1000;
 const TERMINATION_GRACE_MS = 2000;
+/** How much of the analyst child's own output a failure report may carry. */
+const ANALYST_DIAGNOSTIC_MAX_CHARS = 2000;
 
 function removeIsolatedWorkspace(workspace: string): void {
   try {
@@ -47,6 +49,11 @@ export interface PlaytestAnalystProcessResult {
   readonly signal: NodeJS.Signals | null;
   readonly timedOut: boolean;
   readonly launchFailed: boolean;
+  /**
+   * What the analyst child said before it ended, bounded. A failed analyst
+   * must be diagnosable: the child is the only one who knows why it stopped.
+   */
+  readonly diagnostic: string | null;
 }
 
 export interface PlaytestAnalystProcess {
@@ -235,7 +242,7 @@ export function launchPlaytestAnalystProcess(
       {
         cwd: canonicalWorkspace,
         env: childEnvironment,
-        stdio: "ignore",
+        stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true
       }
     );
@@ -268,8 +275,35 @@ export function launchPlaytestAnalystProcess(
     if (timeout) clearTimeout(timeout);
     if (forceKill) clearTimeout(forceKill);
     removeIsolatedWorkspace(canonicalIsolatedRoot);
-    resolveCompletion({ exitCode, signal, timedOut, launchFailed });
+    resolveCompletion({
+      exitCode,
+      signal,
+      timedOut,
+      launchFailed,
+      diagnostic: analystDiagnostic()
+    });
   };
+  const childOutput: string[] = [];
+  const recordOutput = (chunk: Buffer | string): void => {
+    const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    if (text.trim().length === 0) return;
+    childOutput.push(text);
+    while (
+      childOutput.length > 1 &&
+      childOutput.join("").length > ANALYST_DIAGNOSTIC_MAX_CHARS
+    ) {
+      childOutput.shift();
+    }
+  };
+  const analystDiagnostic = (): string | null => {
+    const text = childOutput.join("").trim();
+    if (text.length === 0) return null;
+    return text.length > ANALYST_DIAGNOSTIC_MAX_CHARS
+      ? text.slice(text.length - ANALYST_DIAGNOSTIC_MAX_CHARS)
+      : text;
+  };
+  child.stdout?.on("data", recordOutput);
+  child.stderr?.on("data", recordOutput);
   child.once("error", () => {
     launchFailed = true;
     finish(null, null);

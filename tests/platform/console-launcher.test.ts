@@ -115,6 +115,7 @@ test("console LaunchAgent rendering replaces all placeholders without interpolat
       home: "/tmp/home&safe",
       repositoryRoot: String.raw`/tmp/autodev\repo`,
       nodeBin: "/opt/homebrew/bin/node",
+      codexBin: "/opt/homebrew/bin/codex",
       consolePort: "4400"
     };
 

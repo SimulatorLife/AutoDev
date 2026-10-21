@@ -763,6 +763,12 @@ function analystReviewRunStatus(input: {
   return input.reviews.length > 0 ? "partial" : "failed";
 }
 
+/** The analyst's own words, bounded, so a failure report can name the cause. */
+function boundedAnalystDiagnostic(diagnostic: string): string {
+  const collapsed = diagnostic.replaceAll(/\s+/gu, " ").trim();
+  return collapsed.length > 600 ? `${collapsed.slice(0, 600)}…` : collapsed;
+}
+
 function analystReviewRunError(input: {
   readonly status: PlaytestAnalystReviewRun["status"];
   readonly run: PlaytestAnalystReviewRun;
@@ -789,7 +795,8 @@ function analystReviewRunError(input: {
     return "The Runtime could not start the analyst process.";
   }
   if (input.result.exitCode !== 0) {
-    return `The analyst process ended without completing all reviews (exit ${String(input.result.exitCode)}${input.result.signal ? `, ${input.result.signal}` : ""}).`;
+    const diagnostic = input.result.diagnostic?.trim();
+    return `The analyst process ended without completing all reviews (exit ${String(input.result.exitCode)}${input.result.signal ? `, ${input.result.signal}` : ""}).${diagnostic ? ` The analyst reported: ${boundedAnalystDiagnostic(diagnostic)}` : ""}`;
   }
   return `The analyst submitted ${String(input.reviews.length)} of ${String(input.run.packets.length)} selected reviews.`;
 }
@@ -7498,7 +7505,8 @@ export function createPlaytestRunControl(
                   exitCode: null,
                   signal: null,
                   timedOut: false,
-                  launchFailed: true
+                  launchFailed: true,
+                  diagnostic: null
                 })
             );
             pruneAnalystReviewHistory();
@@ -7715,7 +7723,8 @@ export function createPlaytestRunControl(
                 exitCode: null,
                 signal: null,
                 timedOut: false,
-                launchFailed: true
+                launchFailed: true,
+                diagnostic: null
               })
           );
           pruneAnalystReviewHistory();
