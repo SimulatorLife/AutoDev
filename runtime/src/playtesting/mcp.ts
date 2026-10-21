@@ -4555,6 +4555,41 @@ function visualRuntimeFailureCode(err: unknown): string {
 }
 
 /**
+ * Report a visual episode that could not start.
+ *
+ * The episode failed before it produced any evidence, so the episode record
+ * only says "infrastructure-failed" and the batch says it was recovered. The
+ * reason a playtest could not run is invisible without this line: the same
+ * episode looks the same whether the browser could not start, the game could
+ * not be reached, or the Runtime was too busy to answer. The failure code is
+ * the same typed tag the episode uses for runtime failures, and the message
+ * is bounded.
+ */
+function reportVisualDriverOpenFailure(input: {
+  readonly batchId: string;
+  readonly episodeId: string;
+  readonly assignmentId: string;
+  readonly error: unknown;
+}): void {
+  const message =
+    input.error instanceof Error ? input.error.message : String(input.error);
+  writeErrorLine(
+    JSON.stringify({
+      schema: "autodev-playtest-runtime-event-v1",
+      timestamp: new Date().toISOString(),
+      event: "visual_driver_open_failed",
+      batchId: input.batchId,
+      episodeId: input.episodeId,
+      assignmentId: input.assignmentId,
+      failureCode: visualRuntimeFailureCode(input.error),
+      errorName:
+        input.error instanceof Error ? input.error.name : "unknown-runtime-failure",
+      message: message.slice(0, 300)
+    })
+  );
+}
+
+/**
  * Whether a Smart-direct failure is the decision deadline running out.
  *
  * The deadline encodes the approved per-episode wall-time budget, so this
@@ -4908,6 +4943,12 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
           maxSteps: assignment.maxSteps
         });
       } catch (err) {
+        reportVisualDriverOpenFailure({
+          batchId,
+          episodeId,
+          assignmentId: assignment.assignmentId,
+          error: err
+        });
         playerDebrief = {
           schema: PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
           status: "unavailable",

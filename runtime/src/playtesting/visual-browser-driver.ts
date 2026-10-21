@@ -132,6 +132,14 @@ const RENDER_WAIT_POLL_MS = 250;
  * only this much.
  */
 const DEFAULT_RENDER_WAIT_MS = 10_000;
+/**
+ * How long the driver waits for a browser it has to abandon to go away.
+ *
+ * A browser that cannot be closed must not hold the episode: the open has
+ * already failed, and the episode still has to report that failure. The wait
+ * is bounded so a wedged browser costs the episode this much and no more.
+ */
+const BROWSER_CLOSE_TIMEOUT_MS = 5000;
 const VISUAL_EVENT_SCHEMA = "autodev-playtest-visual-event-v1" as const;
 
 interface RawControl {
@@ -290,6 +298,7 @@ export class PlaytestVisualBrowserDriverError extends Error {
     | "driver-unavailable"
     | "target-not-runnable"
     | "source-unavailable"
+    | "browser-open-timeout"
     | "origin-escape"
     | "browser-profile-cleanup-failed"
     | "visual-step-budget-invalid";
@@ -298,6 +307,94 @@ export class PlaytestVisualBrowserDriverError extends Error {
     super(message);
     this.name = "PlaytestVisualBrowserDriverError";
     this.code = code;
+  }
+}
+
+/**
+ * The failure a failed open reports.
+ *
+ * An open that ran out of time is not a missing game: the browser did not
+ * answer inside the approved budget. Every other failure is reported as the
+ * source being unavailable, which is what the driver can honestly say about
+ * a page it could not open.
+ */
+function openFailureCode(error: unknown): PlaytestVisualBrowserDriverError["code"] {
+  if (error instanceof PlaytestVisualBrowserDriverError) return error.code;
+  // Playwright's own timeout is named; it is the only timeout the driver sees
+  // from the browser side.
+  if (error instanceof Error && error.name === "TimeoutError") {
+    return "browser-open-timeout";
+  }
+  return "source-unavailable";
+}
+
+/**
+ * Give a browser and its context back without waiting for them indefinitely.
+ *
+ * The failure path has to finish: an episode that cannot report its own
+ * failure is worse than one that reports a failure late. Both closes share one
+ * deadline, so a wedged browser costs the episode this much and no more.
+ */
+async function closeWithinDeadline(
+  closeables: readonly ({ close(): Promise<unknown> } | null | undefined)[]
+): Promise<void> {
+  const pending = closeables.filter(
+    (closeable): closeable is { close(): Promise<unknown> } => closeable != null
+  );
+  if (pending.length === 0) return;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      Promise.all(pending.map((closeable) => closeable.close().catch(() => undefined))),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, BROWSER_CLOSE_TIMEOUT_MS);
+        timer.unref?.();
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Run one step of the open under the approved episode budget.
+ *
+ * The open touches a browser, a context and a page, and each of those steps
+ * has its own timeout or none at all. Only the approved wall-time budget
+ * covers the whole open, so every step runs under the same absolute deadline:
+ * a browser that never answers costs the episode its budget and not one
+ * millisecond more.
+ */
+async function withinOpenBudget<T>(
+  operation: Promise<T>,
+  deadlineAt: number,
+  now: () => number
+): Promise<T> {
+  const remainingMs = deadlineAt - now();
+  if (remainingMs <= 0) {
+    throw new PlaytestVisualBrowserDriverError(
+      "browser-open-timeout",
+      "The approved episode budget was spent before the visual browser opened."
+    );
+  }
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new PlaytestVisualBrowserDriverError(
+              "browser-open-timeout",
+              "The approved episode budget was spent before the visual browser opened."
+            )
+          );
+        }, remainingMs);
+        timer.unref?.();
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -790,6 +887,14 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
     let driver: PlaytestVisualBrowserDriver | null = null;
     let browserProfileRoot: string | null = null;
     let earlyBlockedRequests = 0;
+    // The approved episode budget bounds the open as well as the steps that
+    // follow it. The browser, the context and the page each have their own
+    // timeout or none at all; only the budget covers the whole open, so the
+    // open runs under it.
+    const now = options.now ?? Date.now;
+    const openDeadlineAt = now() + options.target.limits.wallTimeMs;
+    const openTimeoutMs = (): number =>
+      Math.max(1, openDeadlineAt - now());
     try {
       browserProfileRoot = mkdtempSync(
         path.join(tmpdir(), "autodev-visual-browser-")
@@ -803,21 +908,30 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
         recursive: true,
         mode: 0o700
       });
-      browser = await browserType.launch({
-        executablePath: executable,
-        headless: true,
-        env: browserProcessEnvironment(browserProfileRoot)
-      });
-      context = await browser.newContext({
-        viewport: {
-          width: options.viewport.width,
-          height: options.viewport.height
-        },
-        deviceScaleFactor: options.viewport.deviceScaleFactor,
-        acceptDownloads: false,
-        serviceWorkers: "block",
-        permissions: []
-      });
+      browser = await withinOpenBudget(
+        browserType.launch({
+          executablePath: executable,
+          headless: true,
+          env: browserProcessEnvironment(browserProfileRoot),
+          timeout: openTimeoutMs()
+        }),
+        openDeadlineAt,
+        now
+      );
+      context = await withinOpenBudget(
+        browser.newContext({
+          viewport: {
+            width: options.viewport.width,
+            height: options.viewport.height
+          },
+          deviceScaleFactor: options.viewport.deviceScaleFactor,
+          acceptDownloads: false,
+          serviceWorkers: "block",
+          permissions: []
+        }),
+        openDeadlineAt,
+        now
+      );
       let page: Page | null = null;
       await context.route("**/*", async (route) => {
         const request = route.request();
@@ -849,7 +963,11 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
           reason: "Target origin is not approved."
         });
       });
-      const mainPage = await context.newPage();
+      const mainPage = await withinOpenBudget(
+        context.newPage(),
+        openDeadlineAt,
+        now
+      );
       page = mainPage;
       mainPage.setDefaultTimeout(options.actionTimeoutMs);
       mainPage.setDefaultNavigationTimeout(options.actionTimeoutMs);
@@ -877,10 +995,20 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
         // A new page has to show the game again before it is observed.
         if (driver) driver.rendered = false;
       });
-      await mainPage.goto(options.target.entryUrl, {
-        waitUntil: "load",
-        timeout: options.actionTimeoutMs
-      });
+      await withinOpenBudget(
+        mainPage.goto(options.target.entryUrl, {
+          // The document is what navigation owes the driver. Whether the game
+          // has painted is the observation's business, and the driver answers
+          // that from the page itself (see waitForRenderedGame). Waiting for
+          // the load event instead would make the open depend on every
+          // subresource of a game that is still being built: one pending
+          // request is enough to fail an open that was never in trouble.
+          waitUntil: "domcontentloaded",
+          timeout: openTimeoutMs()
+        }),
+        openDeadlineAt,
+        now
+      );
       // The document is ready; whether the game has painted is not the
       // navigation's business but the observation's, and the driver answers
       // that from the page itself (see waitForRenderedGame). Settling the
@@ -899,8 +1027,10 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
       driver.entryLoaded = true;
       return driver;
     } catch (error) {
-      await context?.close().catch(() => undefined);
-      await browser?.close().catch(() => undefined);
+      // The browser has to be given back, and the episode has to be able to
+      // report its own failure: a browser that cannot be closed is bounded
+      // here rather than allowed to hold the episode open.
+      await closeWithinDeadline([context, browser]);
       if (browserProfileRoot !== null) {
         try {
           rmSync(browserProfileRoot, { recursive: true, force: true });
@@ -919,7 +1049,7 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
         );
       }
       throw new PlaytestVisualBrowserDriverError(
-        "source-unavailable",
+        openFailureCode(error),
         "Runtime could not open the approved visual game target."
       );
     }
