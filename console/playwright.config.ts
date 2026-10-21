@@ -52,9 +52,15 @@ const usageFixturePort =
     process.env.AUTODEV_OPENLIT_USAGE_FIXTURE_PORT,
     "AUTODEV_OPENLIT_USAGE_FIXTURE_PORT"
   ) ?? (await availablePort());
+const stateProxyPort =
+  configuredPort(
+    process.env.AUTODEV_STATE_PROXY_PORT,
+    "AUTODEV_STATE_PROXY_PORT"
+  ) ?? (await availablePort());
 process.env.AUTODEV_PLAYTEST_FIXTURE_PORT = String(fixturePort);
 process.env.AUTODEV_CONSOLE_PORT = String(consolePort);
 process.env.AUTODEV_OPENLIT_USAGE_FIXTURE_PORT = String(usageFixturePort);
+process.env.AUTODEV_STATE_PROXY_PORT = String(stateProxyPort);
 const e2eDistDir = `.next-staging-e2e-${process.pid}-${consolePort}`;
 const serviceToken =
   "playtesting-browser-fixture-token-0000000000000000000000000000000000000000000000000000000000000000";
@@ -89,7 +95,16 @@ export default defineConfig({
       timeout: 30_000
     },
     {
-      command: `AUTODEV_CONSOLE_BUILD_DIST_DIR=${e2eDistDir} pnpm build && AUTODEV_CONSOLE_SERVE_DIST_DIR=${e2eDistDir} AUTODEV_CONSOLE_PORT=${consolePort} AUTODEV_CONTROL_API_BASE_URL=http://127.0.0.1:${fixturePort} AUTODEV_CONTROL_API_TOKEN=${serviceToken} AUTODEV_OPENLIT_USAGE_URL=http://127.0.0.1:${usageFixturePort} AUTODEV_OPENLIT_USAGE_TOKEN=${serviceToken} AUTODEV_CONTROL_VIEWERS= AUTODEV_CONTROL_OPERATORS=autodev-local pnpm start`,
+      // The Console reads the Control API through the state proxy, so a spec
+      // can put the service into a state it cannot be in otherwise -- down,
+      // refusing, failing -- and measure what the Console says about it.
+      command: `AUTODEV_STATE_PROXY_PORT=${stateProxyPort} AUTODEV_STATE_PROXY_UPSTREAM=http://127.0.0.1:${fixturePort} node e2e/control-api-state-proxy.ts`,
+      url: `http://127.0.0.1:${stateProxyPort}/__state`,
+      reuseExistingServer: false,
+      timeout: 30_000
+    },
+    {
+      command: `AUTODEV_CONSOLE_BUILD_DIST_DIR=${e2eDistDir} pnpm build && AUTODEV_CONSOLE_SERVE_DIST_DIR=${e2eDistDir} AUTODEV_CONSOLE_PORT=${consolePort} AUTODEV_CONTROL_API_BASE_URL=http://127.0.0.1:${stateProxyPort} AUTODEV_CONTROL_API_TOKEN=${serviceToken} AUTODEV_OPENLIT_USAGE_URL=http://127.0.0.1:${usageFixturePort} AUTODEV_OPENLIT_USAGE_TOKEN=${serviceToken} AUTODEV_CONTROL_VIEWERS= AUTODEV_CONTROL_OPERATORS=autodev-local pnpm start`,
       url: `http://localhost:${consolePort}/playtesting`,
       reuseExistingServer: false,
       timeout: 120_000
