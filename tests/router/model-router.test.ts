@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { type AddressInfo, connect } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, resolve as resolvePath } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   AGENT_ACTIVITY_STATES,
@@ -193,6 +195,31 @@ function assertNoLeakedPaths(value: any, path = "$") {
 // would arm the auth gate and every request-level test below -- none of which
 // send an Authorization header -- would 401 on a correctly configured machine.
 setRouterAuthTokenForTests("");
+
+// The codex route authenticates with the local Codex auth file. A host without
+// a Codex account -- a CI runner, a fresh checkout -- has none, so the route
+// answers 401 and every codex-route assertion below would measure the missing
+// credential instead of the route. Point the router at the committed fixture so
+// the suite never depends on the accounts of the machine it runs on.
+process.env.CODEX_ROUTER_AUTH_FILE = fileURLToPath(
+  new URL("../fixtures/codex-auth.json", import.meta.url)
+);
+
+// The router identifies a workspace by the name of the directory it resolved,
+// not by its absolute path, so the expectation is derived from the checkout
+// this suite runs in rather than from one machine's home directory.
+const REPOSITORY_ROOT = resolvePath(
+  fileURLToPath(new URL("../../", import.meta.url))
+);
+const WORKSPACE_LABEL = basename(REPOSITORY_ROOT);
+const WORKSPACE_ID = `ws_${createHash("sha256")
+  .update(WORKSPACE_LABEL)
+  .digest("hex")
+  .slice(0, 12)}`;
+
+// The per-session subagent cap the operator configures. It is pinned here so
+// the admission cap is exercised on hosts whose Codex config does not set one.
+const PER_SESSION_LIMIT = 2;
 
 test("router auth is opt-in and validates bearer tokens without exposing the token", () => {
   assert.equal(routerAuthorizationValid({ headers: {} } as any), true);
@@ -3395,7 +3422,7 @@ test("forwards x-codex-turn-metadata to the upstream provider bridge without lea
     // forward that exact JSON shape verbatim, with no reformatting.
     const turnMetadata = JSON.stringify({
       workspaces: {
-        "/Users/henrykirk/AutoDev": { git: { branch: "main", sha: "abc123" } }
+        [REPOSITORY_ROOT]: { git: { branch: "main", sha: "abc123" } }
       }
     });
     const response = await originalFetch(
@@ -3418,7 +3445,7 @@ test("forwards x-codex-turn-metadata to the upstream provider bridge without lea
       forwardedMetadata.workspaces,
       JSON.parse(turnMetadata).workspaces
     );
-    assert.equal(forwardedMetadata.workspace_id, "ws_fe80d628d784");
+    assert.equal(forwardedMetadata.workspace_id, WORKSPACE_ID);
     assert.notEqual(
       upstreamHeaders.authorization,
       "Bearer client-supplied-secret"
@@ -3459,7 +3486,7 @@ test("relays the canonical workspaces-map-keyed turn metadata even when it arriv
     // under client_metadata["x-codex-turn-metadata"]; the router must
     // normalize that back into the canonical header before forwarding.
     const canonical = {
-      workspaces: { "/Users/henrykirk/AutoDev": { git: { branch: "main" } } }
+      workspaces: { [REPOSITORY_ROOT]: { git: { branch: "main" } } }
     };
     const response = await originalFetch(
       `http://127.0.0.1:${address.port}/v1/responses`,
@@ -3476,7 +3503,7 @@ test("relays the canonical workspaces-map-keyed turn metadata even when it arriv
     assert.equal(response.status, 200);
     assert.equal(
       upstreamHeaders["x-codex-turn-metadata"],
-      JSON.stringify({ ...canonical, workspace_id: "ws_fe80d628d784" })
+      JSON.stringify({ ...canonical, workspace_id: WORKSPACE_ID })
     );
   } finally {
     await closeServer(server);
@@ -3594,7 +3621,7 @@ test("sends the router's own headers to the Antigravity adapter and discards the
   try {
     const address = server.address() as AddressInfo;
     const turnMetadata = JSON.stringify({
-      workspaces: { "/Users/henrykirk/AutoDev": { git: { branch: "main" } } }
+      workspaces: { [REPOSITORY_ROOT]: { git: { branch: "main" } } }
     });
     const response = await originalFetch(
       `http://127.0.0.1:${address.port}/v1/responses`,
@@ -3626,7 +3653,7 @@ test("sends the router's own headers to the Antigravity adapter and discards the
       forwardedMetadata.workspaces,
       JSON.parse(turnMetadata).workspaces
     );
-    assert.equal(forwardedMetadata.workspace_id, "ws_fe80d628d784");
+    assert.equal(forwardedMetadata.workspace_id, WORKSPACE_ID);
     assert.equal(
       upstreamHeaders["x-autodev-subagent-spawn-tools"],
       "invoke_subagent"
@@ -7218,7 +7245,13 @@ test("requestSession derives identity from caller-supplied headers and payload f
 });
 
 test("per-session slot limit gives distinct identified sessions independent capacity while capping a shared or missing identity", () => {
-  getDefaultConcurrencyManager().resetConcurrencyTelemetry();
+  const manager = getDefaultConcurrencyManager();
+  manager.resetConcurrencyTelemetry();
+  // The cap the router enforces comes from the operator's Codex config, which a
+  // test host need not have -- without one the limit is null and the
+  // enforcement below would never be measured. Pin the limit the operator
+  // sets, so the cap is exercised on every host.
+  manager.setMaxConcurrentThreadsPerSession(PER_SESSION_LIMIT);
   try {
     // Two distinct identified sessions each get their own slot at the same limit.
     assert.equal(
@@ -7242,6 +7275,7 @@ test("per-session slot limit gives distinct identified sessions independent capa
     const configuredLimit =
       getDefaultConcurrencyManager().concurrencyStatus()
         .effectivePerSessionLimit;
+    assert.equal(configuredLimit, PER_SESSION_LIMIT);
     for (let slot = 1; slot < configuredLimit!; slot += 1)
       assert.equal(
         getDefaultConcurrencyManager().tryAcquireSubagentSlot("session-a"),
@@ -7298,7 +7332,8 @@ test("per-session slot limit gives distinct identified sessions independent capa
       false
     );
   } finally {
-    getDefaultConcurrencyManager().resetConcurrencyTelemetry();
+    manager.clearStoredLimit();
+    manager.resetConcurrencyTelemetry();
   }
 });
 
@@ -10674,7 +10709,18 @@ test("router status includes sanitized routing and limits metadata", () => {
   assert.equal(typeof status.limits.concreteStatusMaxAttempts, "number");
   assert.equal(typeof status.limits.upstreamTransportMaxAttempts, "number");
   assert.equal(typeof status.limits.shutdownDrainTimeoutMs, "number");
-  assert.equal(typeof status.limits.maxConcurrentThreadsPerSession, "number");
+  // The per-session cap is operator-configured: with no cap the router reports
+  // "unlimited", so the published limit is null rather than a number.
+  const perSessionLimit = status.limits.maxConcurrentThreadsPerSession;
+  assert.ok(
+    perSessionLimit === null ||
+      (Number.isInteger(perSessionLimit) && perSessionLimit > 0),
+    "per-session concurrency limit must be null (unlimited) or a positive integer"
+  );
+  assert.equal(
+    perSessionLimit,
+    getDefaultConcurrencyManager().concurrencyStatus().effectivePerSessionLimit
+  );
 
   // Per-provider enabled property and status
   assert.ok(status.providers, "status must contain providers");

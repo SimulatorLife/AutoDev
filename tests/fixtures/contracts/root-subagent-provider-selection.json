@@ -49,12 +49,20 @@
       "claude"
     ],
     "browser-tester": [
-      "claude",
-      "minimax",
       "antigravity",
-      "copilot",
-      "codex"
+      "copilot"
     ]
+  },
+  "roleScopedMcp": {
+    "browser-tester": {
+      "scopedMcp": [
+        "playwright"
+      ],
+      "eligibleProviders": [
+        "antigravity",
+        "copilot"
+      ]
+    }
   },
   "subagentCandidates": {
     "default": [
@@ -103,20 +111,8 @@
         "model": "gemini-3.8-flash-medium"
       },
       {
-        "provider": "minimax",
-        "model": "MiniMax-M3"
-      },
-      {
-        "provider": "claude",
-        "model": "sonnet"
-      },
-      {
         "provider": "copilot",
         "model": "copilot"
-      },
-      {
-        "provider": "codex",
-        "model": "gpt-6-luna"
       }
     ]
   },

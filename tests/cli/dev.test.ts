@@ -7,7 +7,7 @@ import {
   rmSync,
   writeFileSync
 } from "node:fs";
-import type { Server } from "node:http";
+import { createServer as createHttpServer, type Server } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -512,12 +512,28 @@ test("dev Control API probe passes against the in-tree authenticated listener", 
   const previous = {
     token: process.env.AUTODEV_CONTROL_API_TOKEN,
     viewers: process.env.AUTODEV_CONTROL_VIEWERS,
-    operators: process.env.AUTODEV_CONTROL_OPERATORS
+    operators: process.env.AUTODEV_CONTROL_OPERATORS,
+    clickhouseUrl: process.env.CLICKHOUSE_URL
   };
   const serviceToken = "dev-control-api-integration-test-token-0123456789";
   process.env.AUTODEV_CONTROL_API_TOKEN = serviceToken;
   process.env.AUTODEV_CONTROL_VIEWERS = "";
   process.env.AUTODEV_CONTROL_OPERATORS = "";
+  // The compatibility probe refuses a Control API whose evaluations route
+  // cannot answer, so the telemetry store behind that route has to answer
+  // too. A stub store keeps the probe measured against the Control API
+  // instead of against whether a telemetry stack happens to be running.
+  const telemetry = createHttpServer((request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    // ClickHouse answers a count with one row and a read with the rows
+    // themselves; an empty table is one counted row and no evaluation rows.
+    response.end(request.url?.includes("COUNT(*)") ? '{"total":"0"}\n' : "");
+  });
+  telemetry.listen(0, "127.0.0.1");
+  await once(telemetry, "listening");
+  const telemetryAddress = telemetry.address();
+  assert.ok(telemetryAddress && typeof telemetryAddress !== "string");
+  process.env.CLICKHOUSE_URL = `http://127.0.0.1:${telemetryAddress.port}`;
   let server: Server | undefined;
   try {
     const { createControlApiServer } =
@@ -537,10 +553,14 @@ test("dev Control API probe passes against the in-tree authenticated listener", 
       server.close();
       await closed;
     }
+    const telemetryClosed = once(telemetry, "close");
+    telemetry.close();
+    await telemetryClosed;
     for (const [name, value] of Object.entries({
       AUTODEV_CONTROL_API_TOKEN: previous.token,
       AUTODEV_CONTROL_VIEWERS: previous.viewers,
-      AUTODEV_CONTROL_OPERATORS: previous.operators
+      AUTODEV_CONTROL_OPERATORS: previous.operators,
+      CLICKHOUSE_URL: previous.clickhouseUrl
     })) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;

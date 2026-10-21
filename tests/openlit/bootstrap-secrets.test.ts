@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -225,7 +226,13 @@ test("OpenLIT bootstrap with non-canonical secret-file does not touch repository
   );
   const secretFile = join(secretDirectory, "isolated-secrets.env");
   const repoConsoleEnv = join(repositoryRoot, "console", ".env.local");
-  const previousContent = readFileSync(repoConsoleEnv, "utf8");
+  // The repository's Console environment file is a local, gitignored artifact:
+  // a checkout without it has nothing to compare, and the claim under test is
+  // that the bootstrap leaves it exactly as it found it.
+  const existedBefore = existsSync(repoConsoleEnv);
+  const previousContent = existedBefore
+    ? readFileSync(repoConsoleEnv, "utf8")
+    : null;
   try {
     const result = spawnSync(
       "bash",
@@ -241,7 +248,13 @@ test("OpenLIT bootstrap with non-canonical secret-file does not touch repository
       }
     );
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(readFileSync(repoConsoleEnv, "utf8"), previousContent);
+    assert.equal(
+      existsSync(repoConsoleEnv),
+      existedBefore,
+      "the bootstrap must not create the repository console/.env.local"
+    );
+    if (previousContent !== null)
+      assert.equal(readFileSync(repoConsoleEnv, "utf8"), previousContent);
   } finally {
     rmSync(secretDirectory, { recursive: true, force: true });
   }

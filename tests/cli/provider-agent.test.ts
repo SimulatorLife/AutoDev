@@ -192,6 +192,11 @@ function fixture(): {
       ...process.env,
       HOME: root,
       CODEX_HOME: codexHome,
+      // The launcher publishes the router credential into the maintainer's
+      // shell, and the environment wins over the credential file. A host that
+      // carries one would answer these assertions with its own token instead
+      // of the fixture's, so the fixture starts without it.
+      CODEX_ROUTER_AUTH_TOKEN: undefined,
       AUTODEV_REPO_ROOT: repositoryRoot,
       AUTODEV_MEMORY_DATABASE_URL:
         "postgresql://memory-user:secret@127.0.0.1/memory",

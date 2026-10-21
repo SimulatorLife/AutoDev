@@ -16,7 +16,11 @@ permissions:
 
 jobs:
   gates:
-    runs-on: ubuntu-latest
+    # AutoDev is a macOS product: its services are launchd jobs, its installer
+    # writes LaunchAgents, and the platform suite asserts that supervision
+    # contract. The gate runs where the product runs, so those assertions are
+    # measured instead of skipped.
+    runs-on: macos-latest
     timeout-minutes: 45
     steps:
       - name: Checkout code

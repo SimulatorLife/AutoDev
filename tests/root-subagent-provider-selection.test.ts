@@ -3,6 +3,10 @@ import { describe, test } from "node:test";
 
 import { payloadForCandidate } from "@simulatorlife/autodev-runtime/router/proxy";
 import { ROUTING_POLICY as routing } from "@simulatorlife/autodev-runtime/router/routing";
+import {
+  providerInjectsRoleMcp,
+  roleScopedMcp
+} from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
 type JsonRecord = Record<string, any>;
 
@@ -99,6 +103,17 @@ describe("root versus subagent provider selection", () => {
       browserTesterProviders,
       new Set(contract.tiers["browser-tester"])
     );
+    assert.deepEqual(
+      roleScopedMcp("browser-tester"),
+      contract.roleScopedMcp["browser-tester"].scopedMcp,
+      "browser-tester must keep the per-role Playwright MCP contract that narrows its providers"
+    );
+    for (const provider of contract.roleScopedMcp["browser-tester"]
+      .eligibleProviders)
+      assert.ok(
+        providerInjectsRoleMcp(provider),
+        `${provider} must inject the role-scoped MCP that browser-tester declares`
+      );
     assert.ok(
       browserTesterProviders.has("antigravity"),
       "Antigravity must honor browser-tester's per-role Playwright MCP contract"

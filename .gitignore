@@ -38,6 +38,10 @@ tmp/
 *.tmp.cjs
 *.bak
 *.lock
+# The Playtesting statistics environment is pinned by a tracked uv.lock: the
+# installer materializes it and the Runtime refuses to analyze with a drifted
+# one, so a repository that does not carry it can neither install nor run.
+!runtime/src/playtesting/statistics/uv.lock
 .probe/
 
 # Next.js output: production build (.next), dev server (.next-dev), staged
