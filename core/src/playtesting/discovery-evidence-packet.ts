@@ -42,6 +42,7 @@ import {
   EVIDENCE_SHA256_PATTERN,
   type EvidenceWindowLimits,
   isCount,
+  isJson,
   isPlaytestEvidencePacketId,
   isRecord,
   isText,
@@ -64,6 +65,7 @@ import {
   type PlaytestMissingReason,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V3,
   PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EPISODE_STATES,
@@ -76,6 +78,25 @@ import {
 
 export const PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MAX_TOKENS = 32_768;
 const MAX_SUMMARY_TEXT = 4096;
+/**
+ * Maximum length of a visible control's accessible name in the packet.
+ *
+ * A game puts a sentence into every control's accessible name, and the
+ * player's visible state is the analyst's evidence. The name is capped so
+ * that one game's verbose names cannot decide how many steps of a session
+ * the analyst can read; a capped name ends in an ellipsis and the step
+ * records how many names were capped.
+ */
+export const PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH = 120;
+/**
+ * Maximum number of visible controls the packet carries for one step.
+ *
+ * The game decides how many controls it shows; the packet decides how many
+ * it can carry. A step that shows more controls than this keeps the control
+ * the player acted on plus the first controls in their recorded order, and
+ * the step records how many controls it did not carry.
+ */
+export const PLAYTESTS_DISCOVERY_MAX_CONTROLS_PER_STEP = 32;
 /**
  * Upper bound (in UTF-16 code units) for the operator-requested focus
  * context copied from the frozen visual assignment manifest. Mirrors the
@@ -98,7 +119,8 @@ export const PLAYTESTS_DISCOVERY_OMISSION_REASONS = [
   "invalid-reference",
   "unsupported-media",
   "redacted",
-  "capture-budget-exhausted"
+  "capture-budget-exhausted",
+  "step-not-selected"
 ] as const;
 
 export type PlaytestDiscoveryOmissionReason =
@@ -157,7 +179,72 @@ export interface PlaytestDiscoveryEvidenceFrame {
   readonly redactedSurfaces: readonly string[];
 }
 
+/**
+ * One visible affordance, in the bounded form the packet carries.
+ *
+ * The control keeps its identity, its role, its enabled state and the
+ * accessible name the player saw. The on-screen geometry is not carried:
+ * the captured frame is the record of where the control was.
+ */
+export interface PlaytestDiscoveryVisibleControl {
+  readonly controlId: string;
+  readonly role: string;
+  readonly name: string;
+  readonly enabled: boolean;
+}
+
+/**
+ * The player's visible state for one step, in bounded form.
+ *
+ * This is a projection of the recorded observation, never the recording
+ * itself: the trace artifact stays the full record. The projection is
+ * explicit about what it condensed -- how many controls the player saw,
+ * how many the packet did not carry and how many names it capped -- so an
+ * analyst never reads a bounded state as the whole screen.
+ */
+export interface PlaytestDiscoveryVisibleState {
+  readonly capturedAt: string;
+  readonly viewport: {
+    readonly width: number;
+    readonly height: number;
+    readonly deviceScaleFactor: number;
+  } | null;
+  readonly privacyState: "clear" | "redacted";
+  readonly phase: string | null;
+  readonly progress: unknown;
+  readonly warnings: readonly string[];
+  readonly controls: readonly PlaytestDiscoveryVisibleControl[];
+  /** How many controls the player actually saw. */
+  readonly observedControlCount: number;
+  /** How many of those controls the packet did not carry. */
+  readonly omittedControlCount: number;
+  /** How many carried names the packet capped. */
+  readonly truncatedNameCount: number;
+}
+
 export interface PlaytestDiscoveryStepEvidence {
+  readonly step: number;
+  readonly phaseId: string | null;
+  readonly observationVisibility: "structured" | "visual-only";
+  readonly visibleObservation: PlaytestDiscoveryVisibleState;
+  readonly selectedActionId: string | null;
+  readonly legalActionIds: readonly string[];
+  readonly preActionPrediction: {
+    readonly intention: string;
+    readonly predictedVisibleEffect: string;
+  } | null;
+  readonly authoritativeOutcome: unknown;
+  readonly actionReceipt: PlaytestDiscoveryActionReceipt | null;
+  readonly observationNotes: readonly PlaytestDiscoveryObservationNote[];
+  readonly frameIds: readonly string[];
+}
+
+/**
+ * The v1/v2 step record: the recorded visible observation as it was, plus
+ * the per-control affordance index. Historical packets keep this shape and
+ * stay readable; a builder no longer emits it.
+ */
+export interface PlaytestDiscoveryStepEvidenceV2 {
   readonly step: number;
   readonly phaseId: string | null;
   readonly observationVisibility: "structured" | "visual-only";
@@ -255,7 +342,7 @@ export interface PlaytestDiscoveryEvidencePacketV1 {
   readonly sessionContext: PlaytestDiscoveryEvidenceSessionContext;
   readonly chronologicalSummary: string;
   readonly traceArtifactId: string;
-  readonly stepEvidence: readonly PlaytestDiscoveryStepEvidence[];
+  readonly stepEvidence: readonly PlaytestDiscoveryStepEvidenceV2[];
   readonly frames: readonly PlaytestDiscoveryEvidenceFrame[];
   readonly omittedFrames: readonly {
     readonly frameId: string;
@@ -286,10 +373,26 @@ export interface PlaytestDiscoveryEvidencePacketV2 extends Omit<
   readonly playerSelfReport: PlaytestPlayerDebriefV1;
 }
 
+/**
+ * v3 of the discovery evidence packet.
+ *
+ * v3 carries the bounded visible state and the selected steps; the top-level
+ * fields are unchanged from v2, so a v3 packet differs from a v2 packet in
+ * what it says about the session, not in what it is about.
+ */
+export interface PlaytestDiscoveryEvidencePacketV3 extends Omit<
+  PlaytestDiscoveryEvidencePacketV2,
+  "schema" | "stepEvidence"
+> {
+  readonly schema: typeof PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V3;
+  readonly stepEvidence: readonly PlaytestDiscoveryStepEvidence[];
+}
+
 export type PlaytestDiscoveryEvidencePacket =
   | PlaytestDiscoveryEvidencePacketV1Historical
   | PlaytestDiscoveryEvidencePacketV1
-  | PlaytestDiscoveryEvidencePacketV2;
+  | PlaytestDiscoveryEvidencePacketV2
+  | PlaytestDiscoveryEvidencePacketV3;
 
 export interface PlaytestDiscoveryHypothesis {
   readonly hypothesisId: string;
@@ -429,8 +532,7 @@ function assertDiscoveryEpisodeBinding(input: {
   }
 }
 
-function assertFrameBinding(input: {
-  readonly stepEvidence: readonly PlaytestDiscoveryStepEvidence[];
+function assertFrameHashBinding(input: {
   readonly frames: readonly PlaytestDiscoveryEvidenceFrame[];
   readonly frameHashes: Readonly<Record<string, string>>;
 }): void {
@@ -458,18 +560,23 @@ function assertFrameBinding(input: {
       );
     }
   }
+}
+
+/**
+ * The packet's frames and the packet's step records must describe the same
+ * evidence: every carried frame is cited by a step record, and every frame a
+ * step record cites is carried.
+ */
+function assertFrameCitationBinding(input: {
+  readonly stepEvidence: readonly PlaytestDiscoveryStepEvidence[];
+  readonly frames: readonly PlaytestDiscoveryEvidenceFrame[];
+}): void {
+  const frameIds = new Set<string>();
+  for (const frame of input.frames) {
+    frameIds.add(frame.frameId);
+  }
   const stepFrameIds = new Set<string>();
   for (const step of input.stepEvidence) {
-    if (
-      !isCount(step.step) ||
-      !["structured", "visual-only"].includes(
-        step.observationVisibility as string
-      )
-    ) {
-      throw new TypeError(
-        "Discovery packet step evidence is malformed or not player-visible."
-      );
-    }
     for (const frameId of step.frameIds) {
       if (!frameIds.has(frameId)) {
         throw new TypeError(
@@ -535,7 +642,15 @@ function buildDiscoveryPacketValue(input: {
   readonly omitted: readonly PlaytestOmittedEvidenceWindow[];
   readonly suppliedArtifacts: readonly PlaytestEvidenceSuppliedArtifact[];
   readonly traceArtifactId: string;
-}): PlaytestDiscoveryEvidencePacketV2 {
+  readonly stepEvidence: readonly PlaytestDiscoveryStepEvidence[];
+  readonly frames: readonly PlaytestDiscoveryEvidenceFrame[];
+  readonly omittedFrames: readonly {
+    readonly frameId: string;
+    readonly step: number;
+    readonly reason: PlaytestDiscoveryOmissionReason;
+  }[];
+  readonly omittedArtifacts: readonly PlaytestEvidenceOmittedArtifact[];
+}): PlaytestDiscoveryEvidencePacketV3 {
   const { data, packetHash, windows, omitted, suppliedArtifacts } = input;
   const manifest = data.visualBatch.assignmentManifest;
   const assignment = manifest.assignments[0];
@@ -546,7 +661,7 @@ function buildDiscoveryPacketValue(input: {
   }
   assertPlaytestVisualEpisode(data.episode);
   return {
-    schema: PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2,
+    schema: PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V3,
     packetId: data.packetId,
     packetHash,
     analysisKind: "discovery",
@@ -592,12 +707,12 @@ function buildDiscoveryPacketValue(input: {
     },
     chronologicalSummary: data.chronologicalSummary.trim(),
     traceArtifactId: input.traceArtifactId,
-    stepEvidence: data.stepEvidence,
-    frames: data.frames,
-    omittedFrames: data.omittedFrames ?? [],
+    stepEvidence: input.stepEvidence,
+    frames: input.frames,
+    omittedFrames: input.omittedFrames,
     selectedWindows: windows.map(discoveryWindowValue),
     omittedWindows: omitted,
-    omittedArtifacts: data.omittedArtifacts ?? [],
+    omittedArtifacts: input.omittedArtifacts,
     suppliedArtifacts,
     visibleEvidenceOnly: true,
     measurementVersion: data.measurementVersion,
@@ -674,7 +789,7 @@ function assertDiscoveryEpisodeIdentity(episode: PlaytestEpisode): void {
 
 export function buildPlaytestDiscoveryEvidencePacket(
   input: BuildPlaytestDiscoveryEvidencePacketInput
-): PlaytestDiscoveryEvidencePacketV2 {
+): PlaytestDiscoveryEvidencePacketV3 {
   const limits = resolveDiscoveryWindowLimits(input);
   assertDiscoveryEpisodeIdentity(input.episode);
   assertVisualBatchContract({
@@ -727,9 +842,9 @@ export function buildPlaytestDiscoveryEvidencePacket(
     if (step.phaseId !== null && !isText(step.phaseId)) {
       throw new TypeError("Discovery packet step evidence phaseId is invalid.");
     }
+    assertPlaytestDiscoveryVisibleState(step.visibleObservation);
   }
-  assertFrameBinding({
-    stepEvidence: input.stepEvidence,
+  assertFrameHashBinding({
     frames: input.frames,
     frameHashes: input.frameHashes
   });
@@ -785,6 +900,22 @@ export function buildPlaytestDiscoveryEvidencePacket(
     packetByteBudget,
     tokenBudget: input.tokenBudget,
     buildValue: (windows, omitted) => {
+      const selectedSteps = new Set<number>();
+      for (const window of windows) {
+        for (const step of window.steps) selectedSteps.add(step.step);
+      }
+      // The packet carries the steps it selected, not every persisted step:
+      // the selection is what its windows cite, and it is what lets the
+      // packet's byte budget shed ordinary-sample steps instead of failing.
+      const stepEvidence = input.stepEvidence.filter((step) =>
+        selectedSteps.has(step.step)
+      );
+      const frames = input.frames.filter((frame) =>
+        selectedSteps.has(frame.step)
+      );
+      const unselectedFrames = input.frames.filter(
+        (frame) => !selectedSteps.has(frame.step)
+      );
       const suppliedArtifacts = suppliedArtifactsFor({
         windows,
         hashes: input.frameHashes,
@@ -799,7 +930,26 @@ export function buildPlaytestDiscoveryEvidencePacket(
         omitted,
         suppliedArtifacts,
         traceArtifactId:
-          input.episode.trace?.id ?? "discovery-trace-" + input.packetId
+          input.episode.trace?.id ?? "discovery-trace-" + input.packetId,
+        stepEvidence,
+        frames,
+        omittedFrames: [
+          ...(input.omittedFrames ?? []),
+          ...unselectedFrames.map((frame) => ({
+            frameId: frame.frameId,
+            step: frame.step,
+            reason: "step-not-selected" as const
+          }))
+        ],
+        omittedArtifacts: [
+          ...(input.omittedArtifacts ?? []),
+          ...unselectedFrames.map((frame) => ({
+            kind: "frame" as const,
+            artifactId: frame.frameId,
+            step: frame.step,
+            reason: "step-not-selected" as const
+          }))
+        ]
       });
     }
   });
@@ -812,7 +962,7 @@ export function buildPlaytestDiscoveryEvidencePacket(
   const finalPacket = {
     ...provisional,
     packetHash: provisionalHash
-  } as PlaytestDiscoveryEvidencePacketV2;
+  } as PlaytestDiscoveryEvidencePacketV3;
   const finalBytes = packetContentBytes(finalPacket);
   if (
     finalBytes > Math.min(input.tokenBudget, 262_144) ||
@@ -880,18 +1030,24 @@ const DISCOVERY_PACKET_V2_KEYS = new Set([
 export function assertPlaytestDiscoveryEvidencePacket(
   value: unknown
 ): asserts value is PlaytestDiscoveryEvidencePacket {
+  const isV3 =
+    isRecord(value) &&
+    value.schema === PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V3;
   const isV2 =
     isRecord(value) &&
     value.schema === PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2;
   const hasAreasOfFocus = isRecord(value) && "areasOfFocus" in value;
-  const packetKeys = isV2
-    ? DISCOVERY_PACKET_V2_KEYS
-    : hasAreasOfFocus
-      ? DISCOVERY_PACKET_V1_KEYS
-      : DISCOVERY_PACKET_V1_HISTORICAL_KEYS;
+  const packetKeys =
+    isV3 || isV2
+      ? DISCOVERY_PACKET_V2_KEYS
+      : hasAreasOfFocus
+        ? DISCOVERY_PACKET_V1_KEYS
+        : DISCOVERY_PACKET_V1_HISTORICAL_KEYS;
   if (
     !isRecord(value) ||
-    (value.schema !== PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA && !isV2) ||
+    (value.schema !== PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA &&
+      !isV2 &&
+      !isV3) ||
     Object.keys(value).length !== packetKeys.size ||
     Object.keys(value).some((key) => !packetKeys.has(key))
   ) {
@@ -954,7 +1110,7 @@ export function assertPlaytestDiscoveryEvidencePacket(
       "Discovery evidence packet identity or budget is invalid."
     );
   }
-  if (isV2) {
+  if (isV2 || isV3) {
     assertPlaytestPlayerDebrief(value.playerSelfReport);
     assertPlayerSelfReportFrameReferences(
       value.playerSelfReport as PlaytestPlayerDebriefV1,
@@ -986,7 +1142,11 @@ export function assertPlaytestDiscoveryEvidencePacket(
   }
   const stepIds = new Set<number>();
   for (const step of value.stepEvidence) {
-    assertStepEvidence(step);
+    if (isV3) {
+      assertStepEvidence(step);
+    } else {
+      assertStepEvidenceV2(step);
+    }
     if (stepIds.has(step.step)) {
       throw new TypeError(
         "Discovery evidence packet step evidence contains a duplicate step ordinal."
@@ -994,7 +1154,7 @@ export function assertPlaytestDiscoveryEvidencePacket(
     }
     stepIds.add(step.step);
   }
-  if (value.stepEvidence.length !== value.sourceStepCount) {
+  if (!isV3 && value.stepEvidence.length !== value.sourceStepCount) {
     throw new RangeError(
       "Discovery evidence packet step record count does not equal sourceStepCount."
     );
@@ -1034,6 +1194,13 @@ export function assertPlaytestDiscoveryEvidencePacket(
   assertOmittedPacketArtifacts(
     value as unknown as PlaytestEvidencePacketOmittedArtifactView
   );
+  if (isV3) {
+    assertFrameCitationBinding({
+      stepEvidence:
+        value.stepEvidence as readonly PlaytestDiscoveryStepEvidence[],
+      frames: value.frames as readonly PlaytestDiscoveryEvidenceFrame[]
+    });
+  }
   if (
     !Array.isArray(value.selectedWindows) ||
     !Array.isArray(value.omittedWindows)
@@ -1094,6 +1261,23 @@ export function assertPlaytestDiscoveryEvidencePacket(
     throw new TypeError(
       "Discovery evidence packet leaves source steps unaccounted."
     );
+  }
+  if (isV3) {
+    // A v3 packet carries the steps it selected: the step records and the
+    // windows cite the same evidence, and the steps the packet left out stay
+    // recorded in the omitted windows.
+    const selectedSteps = selectedWindows.flatMap((window) =>
+      window.steps.map((step) => step.step)
+    );
+    const recordedSteps = value.stepEvidence.map((step) => step.step);
+    if (
+      recordedSteps.length !== selectedSteps.length ||
+      recordedSteps.some((step, index) => step !== selectedSteps[index])
+    ) {
+      throw new TypeError(
+        "Discovery evidence packet step records do not match the selected windows."
+      );
+    }
   }
   assertUniqueSelectedEventIds(selectedWindows);
   const finalBytes = packetContentBytes(value);
@@ -1319,9 +1503,10 @@ function assertDiscoveryWindowStep(
   }
 }
 
-function assertStepEvidence(
+/** The v1/v2 step record: the recorded observation plus the affordance index. */
+function assertStepEvidenceV2(
   value: unknown
-): asserts value is PlaytestDiscoveryStepEvidence {
+): asserts value is PlaytestDiscoveryStepEvidenceV2 {
   if (
     !isRecord(value) ||
     !isCount(value.step) ||
@@ -1395,6 +1580,158 @@ function assertStepEvidence(
     ) {
       throw new TypeError("Discovery packet affordance note is malformed.");
     }
+  }
+}
+
+/**
+ * The v3 step record: the bounded visible state, the action the player took
+ * and the evidence around it. There is no affordance index any more: the
+ * visible state indexes the affordances by control id, and the note ids were
+ * never citable.
+ */
+function assertStepEvidence(
+  value: unknown
+): asserts value is PlaytestDiscoveryStepEvidence {
+  if (
+    !isRecord(value) ||
+    !isCount(value.step) ||
+    !["structured", "visual-only"].includes(
+      value.observationVisibility as string
+    ) ||
+    (value.phaseId !== null && !isText(value.phaseId)) ||
+    !Array.isArray(value.legalActionIds) ||
+    value.legalActionIds.some((id: unknown) => !isText(id)) ||
+    (value.selectedActionId !== null && !isText(value.selectedActionId)) ||
+    !Array.isArray(value.frameIds) ||
+    value.frameIds.some((id: unknown) => !isText(id))
+  ) {
+    throw new TypeError(
+      "Discovery evidence packet step evidence is malformed."
+    );
+  }
+  if (
+    value.selectedActionId !== null &&
+    !value.legalActionIds.includes(value.selectedActionId)
+  ) {
+    throw new TypeError(
+      "Discovery packet selected action must belong to the legal action set."
+    );
+  }
+  if (
+    value.preActionPrediction !== null &&
+    (!isRecord(value.preActionPrediction) ||
+      !isText(
+        (value.preActionPrediction as Record<string, unknown>).intention
+      ) ||
+      !isText(
+        (value.preActionPrediction as Record<string, unknown>)
+          .predictedVisibleEffect
+      ))
+  ) {
+    throw new TypeError(
+      "Discovery packet pre-action prediction must carry intention and predictedVisibleEffect."
+    );
+  }
+  if (value.actionReceipt !== null) {
+    assertActionReceipt(value.actionReceipt);
+  }
+  if (!Array.isArray(value.observationNotes)) {
+    throw new TypeError(
+      "Discovery packet observation notes array is malformed."
+    );
+  }
+  for (const note of value.observationNotes) {
+    if (
+      !isRecord(note) ||
+      !isText(note.noteId) ||
+      !isCount(note.step) ||
+      !isText(note.label) ||
+      !isText(note.detail, MAX_SUMMARY_TEXT)
+    ) {
+      throw new TypeError("Discovery packet observation note is malformed.");
+    }
+  }
+  assertPlaytestDiscoveryVisibleState(value.visibleObservation);
+}
+
+/**
+ * The bounded visible state of one step.
+ *
+ * The bounds are the contract: a capped name, a capped control count and an
+ * explicit record of what the projection condensed. A state that carries
+ * more than the contract allows is refused rather than silently shipped.
+ */
+export function assertPlaytestDiscoveryVisibleState(
+  value: unknown
+): asserts value is PlaytestDiscoveryVisibleState {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 10 ||
+    Object.keys(value).some(
+      (key) =>
+        ![
+          "capturedAt",
+          "viewport",
+          "privacyState",
+          "phase",
+          "progress",
+          "warnings",
+          "controls",
+          "observedControlCount",
+          "omittedControlCount",
+          "truncatedNameCount"
+        ].includes(key)
+    ) ||
+    !isText(value.capturedAt) ||
+    !Number.isFinite(Date.parse(String(value.capturedAt))) ||
+    (value.viewport !== null &&
+      (!isRecord(value.viewport) ||
+        Object.keys(value.viewport).length !== 3 ||
+        !isCount(value.viewport.width) ||
+        !isCount(value.viewport.height) ||
+        !isCount(value.viewport.deviceScaleFactor) ||
+        value.viewport.width <= 0 ||
+        value.viewport.height <= 0 ||
+        value.viewport.deviceScaleFactor <= 0)) ||
+    !["clear", "redacted"].includes(value.privacyState as string) ||
+    (value.phase !== null && !isText(value.phase)) ||
+    !isJson(value.progress) ||
+    !Array.isArray(value.warnings) ||
+    value.warnings.some((warning: unknown) => !isText(warning)) ||
+    !Array.isArray(value.controls) ||
+    value.controls.length > PLAYTESTS_DISCOVERY_MAX_CONTROLS_PER_STEP ||
+    !isCount(value.observedControlCount) ||
+    !isCount(value.omittedControlCount) ||
+    !isCount(value.truncatedNameCount)
+  ) {
+    throw new TypeError(
+      "Discovery packet visible state is malformed or outside its bounded contract."
+    );
+  }
+  for (const control of value.controls) {
+    if (
+      !isRecord(control) ||
+      Object.keys(control).length !== 4 ||
+      Object.keys(control).some(
+        (key) => !["controlId", "role", "name", "enabled"].includes(key)
+      ) ||
+      !isText(control.controlId) ||
+      !isText(control.role) ||
+      !isText(control.name, PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH) ||
+      typeof control.enabled !== "boolean"
+    ) {
+      throw new TypeError(
+        "Discovery packet visible control is malformed or outside its bounded contract."
+      );
+    }
+  }
+  if (
+    value.observedControlCount !==
+    value.controls.length + value.omittedControlCount
+  ) {
+    throw new TypeError(
+      "Discovery packet visible state does not account for every observed control."
+    );
   }
 }
 

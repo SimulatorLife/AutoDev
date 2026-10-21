@@ -12,10 +12,15 @@ import {
   canonicalPlaytestJson,
   playtestAssignmentManifestHashInput,
   type PlaytestDiscoveryEvidencePacket,
-  type PlaytestDiscoveryEvidencePacketV2,
+  type PlaytestDiscoveryEvidencePacketV3,
+  type PlaytestDiscoveryVisibleControl,
+  type PlaytestDiscoveryVisibleState,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MAX_TOKENS,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2,
+  PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V3,
+  PLAYTESTS_DISCOVERY_MAX_CONTROLS_PER_STEP,
   playtestDiscoveryEvidencePacketHashInput,
   type PlaytestEpisode,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
@@ -169,6 +174,29 @@ function frame(frameId: string, step: number, sha256: string) {
   };
 }
 
+function visibleState(
+  step: number,
+  controls: readonly {
+    readonly controlId: string;
+    readonly role: string;
+    readonly name: string;
+    readonly enabled: boolean;
+  }[]
+): PlaytestDiscoveryVisibleState {
+  return {
+    capturedAt: "2026-10-17T12:00:0" + String(step + 1) + ".000Z",
+    viewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+    privacyState: "clear",
+    phase: "race-setup",
+    progress: null,
+    warnings: [],
+    controls,
+    observedControlCount: controls.length,
+    omittedControlCount: 0,
+    truncatedNameCount: 0
+  };
+}
+
 function stepEvidence(step: number, frameId: string) {
   const controlId = "control-" + String(step + 1);
   const intention = "Inspect visible stage " + String(step + 1) + ".";
@@ -178,17 +206,14 @@ function stepEvidence(step: number, frameId: string) {
     step,
     phaseId: "race-setup",
     observationVisibility: "visual-only" as const,
-    visibleObservation: {
-      phase: "race-setup",
-      controls: [
-        {
-          controlId,
-          role: "button",
-          name: "Stage " + String(step + 1),
-          enabled: true
-        }
-      ]
-    },
+    visibleObservation: visibleState(step, [
+      {
+        controlId,
+        role: "button",
+        name: "Stage " + String(step + 1),
+        enabled: true
+      }
+    ]),
     selectedActionId: controlId,
     legalActionIds: [controlId],
     preActionPrediction: { intention, predictedVisibleEffect: prediction },
@@ -210,7 +235,6 @@ function stepEvidence(step: number, frameId: string) {
       receivedAt: "2026-10-17T12:00:0" + String(step + 1) + ".000Z"
     },
     observationNotes: [],
-    affordanceNotes: [],
     frameIds: [frameId]
   };
 }
@@ -219,7 +243,7 @@ function buildPacket(
   overrides: Partial<
     Parameters<typeof buildPlaytestDiscoveryEvidencePacket>[0]
   > = {}
-): PlaytestDiscoveryEvidencePacketV2 {
+): PlaytestDiscoveryEvidencePacketV3 {
   const manifest = visualManifest();
   const episode = visualEpisode(manifest);
   const frames = [
@@ -255,11 +279,25 @@ function buildPacket(
   });
 }
 
-test("discovery packet v2 persists exact self-report and keeps v1 artifacts readable", () => {
+test("discovery packet v3 bounds the visible state and keeps v1/v2 artifacts readable", () => {
   const packet = buildPacket();
-  assert.equal(packet.schema, PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2);
+  assert.equal(packet.schema, PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V3);
   assert.deepEqual(packet.playerSelfReport, visualEpisode().playerDebrief);
-  const { playerSelfReport: _selfReport, ...historical } = packet;
+  // A v1/v2 artifact carries the recorded observation and the affordance
+  // index; the historical readers still accept it.
+  const legacyStepEvidence = packet.stepEvidence.map((step) => ({
+    ...step,
+    visibleObservation: {
+      phase: step.phaseId,
+      controls: step.visibleObservation.controls
+    },
+    affordanceNotes: []
+  }));
+  const legacy = {
+    ...packet,
+    stepEvidence: legacyStepEvidence
+  };
+  const { playerSelfReport: _selfReport, ...historical } = legacy;
   const v1 = {
     ...historical,
     schema: PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA
@@ -270,6 +308,12 @@ test("discovery packet v2 persists exact self-report and keeps v1 artifacts read
     assertPlaytestDiscoveryEvidencePacket({
       ...immutableV1,
       schema: PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA
+    })
+  );
+  assert.doesNotThrow(() =>
+    assertPlaytestDiscoveryEvidencePacket({
+      ...legacy,
+      schema: PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2
     })
   );
   assert.throws(
@@ -284,7 +328,7 @@ test("discovery packet v2 persists exact self-report and keeps v1 artifacts read
 
 test("v2 hash covers playerSelfReport and validates report states and frame receipts", () => {
   const packet = buildPacket();
-  const hash = (value: PlaytestDiscoveryEvidencePacketV2) =>
+  const hash = (value: PlaytestDiscoveryEvidencePacketV3) =>
     createHash("sha256")
       .update(playtestDiscoveryEvidencePacketHashInput(value))
       .digest("hex");
@@ -446,18 +490,19 @@ test("the packet carries a step's visible evidence once, so a real session fits 
     "Racer " + String(step) + "-" + String(index) + " - Position 1 - Lap 1";
   const bulky = (step: number, frameId: string) => ({
     ...stepEvidence(step, frameId),
-    visibleObservation: {
-      phase: "race-setup",
-      controls: Array.from({ length: 20 }, (_, index) => ({
+    visibleObservation: visibleState(
+      step,
+      Array.from({ length: 20 }, (_, index) => ({
         controlId: "control-" + String(step) + "-" + String(index),
         role: "button",
-        name:
+        name: (
           marker(step, index) +
           ", 99% of the lap - Delta gap unavailable before race start - " +
-          "mechanically healthy - Tire age 0 laps",
+          "mechanically healthy - Tire age 0 laps"
+        ).slice(0, PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH),
         enabled: true
       }))
-    }
+    )
   });
   const packet = buildPacket({
     tokenBudget: PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MAX_TOKENS,
@@ -480,6 +525,77 @@ test("the packet carries a step's visible evidence once, so a real session fits 
     canonicalPlaytestJson(packet).split(marker(1, 7)).length - 1,
     1,
     "the visible state of a step is in the packet exactly once"
+  );
+});
+
+test("the packet refuses a visible state outside its bounded contract", () => {
+  const tooLong = "n".repeat(PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH + 1);
+  const base = stepEvidence(0, "frame-visual-0");
+  const withControls = (
+    controls: readonly PlaytestDiscoveryVisibleControl[]
+  ) => ({
+    ...base,
+    visibleObservation: {
+      ...base.visibleObservation,
+      controls
+    }
+  });
+  const second = stepEvidence(1, "frame-visual-1");
+  // A name longer than the contract allows.
+  assert.throws(
+    () =>
+      buildPacket({
+        stepEvidence: [
+          withControls([
+            {
+              controlId: "control-1",
+              role: "button",
+              name: tooLong,
+              enabled: true
+            }
+          ]),
+          second
+        ]
+      }),
+    /visible (state|control) is malformed or outside its bounded contract/u
+  );
+  // More controls than the contract allows.
+  assert.throws(
+    () =>
+      buildPacket({
+        stepEvidence: [
+          withControls(
+            Array.from(
+              { length: PLAYTESTS_DISCOVERY_MAX_CONTROLS_PER_STEP + 1 },
+              (_, index) => ({
+                controlId: "control-" + String(index),
+                role: "button",
+                name: "Stage",
+                enabled: true
+              })
+            )
+          ),
+          second
+        ]
+      }),
+    /visible (state|control) is malformed or outside its bounded contract/u
+  );
+  // A visible state that does not account for every observed control.
+  assert.throws(
+    () =>
+      buildPacket({
+        stepEvidence: [
+          {
+            ...base,
+            visibleObservation: {
+              ...base.visibleObservation,
+              observedControlCount: 7
+            }
+          },
+          second
+        ]
+      }),
+    /does not account for every observed control/u
   );
 });
 

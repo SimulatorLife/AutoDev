@@ -10,7 +10,8 @@ import {
   canonicalPlaytestJson,
   type PlaytestArtifactReference,
   playtestAssignmentManifestHashInput,
-  type PlaytestDiscoveryEvidencePacketV2,
+  PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH,
+  type PlaytestDiscoveryEvidencePacketV3,
   type PlaytestDiscoverySessionReview,
   type PlaytestEpisode,
   PLAYTESTS_BATCH_SCHEMA,
@@ -419,7 +420,7 @@ test("visual discovery dispatch prepares one packet and stores only hypothesis r
     ].handler({ episodeId: episode.episodeId });
     const prepared = mcpResult(prepare) as {
       readonly analysisKind: string;
-      readonly packet: PlaytestDiscoveryEvidencePacketV2;
+      readonly packet: PlaytestDiscoveryEvidencePacketV3;
       readonly packetArtifact: PlaytestArtifactReference;
     };
     assert.equal(prepared.analysisKind, "discovery");
@@ -578,10 +579,26 @@ test("visual discovery dispatch prepares one packet and stores only hypothesis r
   }
 });
 
+function cappedControlName(step: number, index: number): string {
+  const name =
+    "Velocity Motors - #" +
+    String(index) +
+    " at step " +
+    String(step) +
+    " - Position 1 - Lap 1, 99% of the lap - Delta gap unavailable before " +
+    "race start - mechanically healthy - Tire age 0 laps - 0 of 1 required " +
+    "pit stops completed - 1% of the lap to the finish line";
+  return (
+    name.slice(0, PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH - 1) + "\u2026"
+  );
+}
+
 test("a real game's visible state produces one packet that fits the analyst budget", () => {
   // A game puts every visible control's name into the screen, and those
-  // names are long. The packet carries the visible state once, so a session
-  // of a real game fits the analyst's byte budget.
+  // names are long. The packet carries the visible state once per step, in
+  // bounded form, so a session of a real game fits the analyst's byte
+  // budget -- and the four-step session the Runtime actually recorded fits
+  // whole, not as a truncated prefix.
   const root = mkdtempSync(path.join(tmpdir(), "playtest-discovery-budget-"));
   try {
     const artifacts = new PlaytestArtifactStore({
@@ -605,7 +622,7 @@ test("a real game's visible state produces one packet that fits the analyst budg
         enabled: true,
         focused: false
       }));
-    const frameRefs = [0, 1].map(
+    const frameRefs = [0, 1, 2, 3].map(
       (step) =>
         artifacts.writeArtifact({
           artifactId: "frame-racing-" + String(step),
@@ -615,7 +632,7 @@ test("a real game's visible state produces one packet that fits the analyst budg
     );
     const trace = artifacts.writeWindow({
       artifactId: "trace-racing-budget",
-      entries: [0, 1].map((step) => ({
+      entries: [0, 1, 2, 3].map((step) => ({
         step,
         phaseId: "race-setup",
         revisionBefore: step,
@@ -659,7 +676,7 @@ test("a real game's visible state produces one packet that fits the analyst budg
     }).reference;
     const episode = {
       ...visualEpisode(trace.artifactId, frameRefs[0]!.artifactId),
-      stepCount: 2,
+      stepCount: 4,
       frames: frameRefs.map((reference, step) => ({
         kind: "frame" as const,
         id: reference.artifactId,
@@ -675,9 +692,48 @@ test("a real game's visible state produces one packet that fits the analyst budg
     });
     const serialized = canonicalPlaytestJson(prepared.packet);
     assert.equal(
-      serialized.split(controlName(1, 7)).length - 1,
+      prepared.packet.stepEvidence.length,
+      4,
+      "the packet carries every step of the session"
+    );
+    assert.equal(
+      prepared.packet.sourceStepCount,
+      4,
+      "the packet still records the session's real step count"
+    );
+    assert.equal(
+      serialized.split(cappedControlName(1, 7)).length - 1,
       1,
       "the visible state of a control is in the packet once"
+    );
+    assert.equal(
+      serialized.includes("bounds"),
+      false,
+      "the packet does not carry the on-screen geometry of every control"
+    );
+    const step = prepared.packet.stepEvidence[1];
+    assert.ok(step);
+    assert.equal(
+      step.visibleObservation.observedControlCount,
+      23,
+      "the step records how many controls the player saw"
+    );
+    assert.equal(
+      step.visibleObservation.omittedControlCount,
+      0,
+      "a step that shows fewer controls than the bound carries them all"
+    );
+    assert.equal(
+      step.visibleObservation.truncatedNameCount,
+      23,
+      "the step records how many accessible names it capped"
+    );
+    assert.ok(
+      step.visibleObservation.controls.every(
+        (control) =>
+          control.name.length <= PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH
+      ),
+      "every carried name stays inside the packet's bound"
     );
     assert.ok(
       serialized.length < 32_768,
@@ -791,7 +847,7 @@ test("runtime-prepared discovery packet keeps a null operator focus null and bin
       hashInput,
       "Runtime-prepared packet hash must remain reproducible from the packet value, including areasOfFocus."
     );
-    const tamperedNull: PlaytestDiscoveryEvidencePacketV2 = {
+    const tamperedNull: PlaytestDiscoveryEvidencePacketV3 = {
       ...prepared.packet,
       areasOfFocus: "Inspect race setup choices."
     };

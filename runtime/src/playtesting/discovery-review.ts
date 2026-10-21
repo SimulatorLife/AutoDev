@@ -4,16 +4,19 @@ import {
   assertPlaytestDiscoveryEvidencePacket,
   buildPlaytestDiscoveryEvidencePacket,
   canonicalPlaytestJson,
+  type PlaytestArtifactReference,
   type PlaytestDiscoveryEvidenceFrame,
-  type PlaytestDiscoveryEvidencePacketV2,
+  type PlaytestDiscoveryEvidencePacketV3,
   type PlaytestDiscoveryOmissionReason,
   type PlaytestDiscoveryStepEvidence,
-  type PlaytestArtifactReference,
+  type PlaytestDiscoveryVisibleState,
   type PlaytestEpisode,
   type PlaytestEvidenceOmittedArtifact,
-  type PlaytestVisualBatch,
+  PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH,
+  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MAX_TOKENS,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
-  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MAX_TOKENS
+  PLAYTESTS_DISCOVERY_MAX_CONTROLS_PER_STEP,
+  type PlaytestVisualBatch
 } from "@simulatorlife/autodev-core";
 
 import {
@@ -22,7 +25,7 @@ import {
 } from "./artifact-store.ts";
 
 export interface PreparedPlaytestDiscoveryPacket {
-  readonly packet: PlaytestDiscoveryEvidencePacketV2;
+  readonly packet: PlaytestDiscoveryEvidencePacketV3;
   readonly artifact: PlaytestArtifactReference;
 }
 
@@ -32,20 +35,6 @@ interface TraceRow extends Record<string, unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function omissionReason(value: string): PlaytestDiscoveryOmissionReason {
-  switch (value) {
-    case "expired":
-      return "expired";
-    case "unsupported-media":
-      return "unsupported-media";
-    case "missing":
-      return "missing";
-    case "invalid-reference":
-    default:
-      return "invalid-reference";
-  }
 }
 
 function isPng(bytes: Uint8Array): boolean {
@@ -112,6 +101,93 @@ function readTrace(input: {
   return { reference: read.reference, rows };
 }
 
+/**
+ * The bounded visible state of one step.
+ *
+ * The recorded observation is the trace's full record; the analyst's packet
+ * carries a bounded projection of it. Every visible control keeps its
+ * identity, its role, its enabled state and its accessible name (capped),
+ * the on-screen geometry is not carried -- the captured frame is the record
+ * of the layout -- and the projection records what it condensed.
+ */
+function boundedVisibleState(input: {
+  readonly observation: Record<string, unknown>;
+  readonly selectedActionId: string | null;
+}): PlaytestDiscoveryVisibleState {
+  const observation = input.observation;
+  const capturedAt = observation.capturedAt;
+  if (typeof capturedAt !== "string" || capturedAt.length === 0) {
+    throw new TypeError(
+      "Visual discovery trace step has no recorded visible observation timestamp."
+    );
+  }
+  const rawViewport = observation.viewport;
+  const viewport =
+    isRecord(rawViewport) &&
+    typeof rawViewport.width === "number" &&
+    typeof rawViewport.height === "number" &&
+    typeof rawViewport.deviceScaleFactor === "number"
+      ? {
+          width: rawViewport.width,
+          height: rawViewport.height,
+          deviceScaleFactor: rawViewport.deviceScaleFactor
+        }
+      : null;
+  const warnings = Array.isArray(observation.warnings)
+    ? observation.warnings.filter(
+        (warning): warning is string => typeof warning === "string"
+      )
+    : [];
+  const recordedControls = Array.isArray(observation.controls)
+    ? observation.controls
+    : [];
+  const wellFormed = recordedControls.filter(
+    (control): control is Record<string, unknown> =>
+      isRecord(control) &&
+      typeof control.controlId === "string" &&
+      typeof control.role === "string" &&
+      typeof control.name === "string" &&
+      typeof control.enabled === "boolean"
+  );
+  // The control the player acted on is the one the analyst cannot do without:
+  // it leads, and the rest follow in the order the page recorded them.
+  const selected = input.selectedActionId;
+  const ordered = selected
+    ? [
+        ...wellFormed.filter((control) => control.controlId === selected),
+        ...wellFormed.filter((control) => control.controlId !== selected)
+      ]
+    : wellFormed;
+  const carried = ordered.slice(0, PLAYTESTS_DISCOVERY_MAX_CONTROLS_PER_STEP);
+  let truncatedNameCount = 0;
+  const controls = carried.map((control) => {
+    const name = control.name as string;
+    const truncated = name.length > PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH;
+    if (truncated) truncatedNameCount += 1;
+    return {
+      controlId: control.controlId as string,
+      role: control.role as string,
+      name: truncated
+        ? name.slice(0, PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH - 1) + "…"
+        : name,
+      enabled: control.enabled as boolean
+    };
+  });
+  return {
+    capturedAt,
+    viewport,
+    privacyState:
+      observation.privacyState === "redacted" ? "redacted" : "clear",
+    phase: typeof observation.phase === "string" ? observation.phase : null,
+    progress: observation.progress ?? null,
+    warnings,
+    controls,
+    observedControlCount: recordedControls.length,
+    omittedControlCount: recordedControls.length - controls.length,
+    truncatedNameCount
+  };
+}
+
 function makeStepEvidence(input: {
   readonly episode: PlaytestEpisode;
   readonly rows: readonly TraceRow[];
@@ -151,9 +227,6 @@ function makeStepEvidence(input: {
       ? visibleObservation.warnings.filter(
           (value): value is string => typeof value === "string"
         )
-      : [];
-    const controls = Array.isArray(visibleObservation.controls)
-      ? visibleObservation.controls.filter(isRecord)
       : [];
     const step = row.step;
     const outcome = isRecord(row.authoritativeOutcome)
@@ -235,39 +308,6 @@ function makeStepEvidence(input: {
         receivedAt
       };
     }
-    const viewport = isRecord(visibleObservation.viewport)
-      ? visibleObservation.viewport
-      : null;
-    const privacyState =
-      visibleObservation.privacyState === "redacted" ? "redacted" : "clear";
-    const affordanceNotes = controls.flatMap((control, index) => {
-      if (
-        typeof control.controlId !== "string" ||
-        typeof control.role !== "string" ||
-        typeof control.name !== "string" ||
-        typeof control.enabled !== "boolean"
-      ) {
-        return [];
-      }
-      // The note indexes the visible affordance; the control's name, role
-      // and enabled state live in the visible observation under the same
-      // control id. Repeating them here would put the visible state of
-      // every step into the packet a second time, and a session of a real
-      // game does not fit the analyst's packet budget when it is counted
-      // twice.
-      return [
-        {
-          noteId:
-            input.episode.episodeId +
-            ":affordance-" +
-            String(step) +
-            "-" +
-            String(index),
-          step,
-          controlId: control.controlId
-        }
-      ];
-    });
     const observationNotes = warnings.map((warning, index) => ({
       noteId:
         input.episode.episodeId +
@@ -284,14 +324,16 @@ function makeStepEvidence(input: {
       step,
       phaseId,
       observationVisibility: "visual-only",
-      visibleObservation,
+      visibleObservation: boundedVisibleState({
+        observation: visibleObservation,
+        selectedActionId: actionId
+      }),
       selectedActionId: actionId,
       legalActionIds,
       preActionPrediction: prediction,
       authoritativeOutcome: row.authoritativeOutcome ?? null,
       actionReceipt,
       observationNotes,
-      affordanceNotes,
       frameIds: visibleFrames
     };
   });
@@ -352,10 +394,8 @@ export function preparePlaytestDiscoveryEvidencePacket(input: {
     if (!reference) {
       omitReason = "missing";
     } else if (
-      !["image/png", "image/jpeg", "image/webp"].includes(reference.mediaType)
+      ["image/png", "image/jpeg", "image/webp"].includes(reference.mediaType)
     ) {
-      omitReason = "unsupported-media";
-    } else {
       try {
         bytes = artifacts.readArtifact(reference).bytes;
         if (reference.mediaType === "image/png" && !isPng(bytes)) {
@@ -365,6 +405,8 @@ export function preparePlaytestDiscoveryEvidencePacket(input: {
       } catch {
         omitReason = "invalid-reference";
       }
+    } else {
+      omitReason = "unsupported-media";
     }
     const traceRow = traceRowsByStep.get(episodeFrame.step);
     const visibleObservation =

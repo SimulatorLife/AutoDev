@@ -99,6 +99,30 @@ export const PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA =
  */
 export const PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2 =
   "autodev-playtest-discovery-evidence-packet-v2" as const;
+/**
+ * v3 of the discovery evidence packet. v3 is the only version a Core
+ * builder may emit.
+ *
+ * v3 fixes the packet's two unbounded carriers, so that a session of a real
+ * game fits the analyst's byte budget instead of being refused:
+ *
+ * - The per-step visible state is a bounded projection: every visible
+ *   control keeps its identity, role, enabled state and accessible name
+ *   (capped), the on-screen geometry is not carried (the captured frame is
+ *   the record of the layout), and the number of controls carried per step
+ *   is capped. The projection records what it condensed.
+ * - The step records cover the *selected* steps -- the steps the packet's
+ *   windows cite -- instead of every persisted step, so the packet's own
+ *   byte budget can shed ordinary-sample steps instead of failing. The
+ *   steps left out stay recorded in the packet's omitted windows.
+ *
+ * The redundant per-control affordance notes are gone: the visible state
+ * already indexes the affordances by control id, and the note ids were
+ * never citable. v1 and v2 packets remain valid and readable for historical
+ * artifacts and are never silently upgraded.
+ */
+export const PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V3 =
+  "autodev-playtest-discovery-evidence-packet-v3" as const;
 
 /** Identifier for the v2 comparison contract with attributable owner decisions. */
 export const PLAYTESTS_COMPARISON_SCHEMA =

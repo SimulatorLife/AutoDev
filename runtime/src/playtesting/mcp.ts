@@ -56,7 +56,7 @@ import {
   playtestCrossSessionInventoryHashInput,
   type PlaytestCrossSessionMetricAggregation,
   type PlaytestCrossSessionSynthesis,
-  type PlaytestDiscoveryEvidencePacketV2,
+  type PlaytestDiscoveryEvidencePacketV3,
   type PlaytestDiscoverySessionReview,
   type PlaytestDiscoveryReviewDraft,
   type PlaytestDimensionAnchor,
@@ -4601,7 +4601,9 @@ function reportVisualDriverOpenFailure(input: {
       assignmentId: input.assignmentId,
       failureCode: visualRuntimeFailureCode(input.error),
       errorName:
-        input.error instanceof Error ? input.error.name : "unknown-runtime-failure",
+        input.error instanceof Error
+          ? input.error.name
+          : "unknown-runtime-failure",
       message: message.slice(0, 300)
     })
   );
@@ -7816,7 +7818,7 @@ export interface PlaytestCrossSessionReceipt {
 export interface PlaytestCrossSessionPacket {
   readonly episodeId: string;
   readonly batchId: string;
-  readonly packet: PlaytestEvidencePacket | PlaytestDiscoveryEvidencePacketV2;
+  readonly packet: PlaytestEvidencePacket | PlaytestDiscoveryEvidencePacketV3;
   readonly artifact: PlaytestArtifactReference;
 }
 
@@ -7909,7 +7911,7 @@ async function readPreparedReviewPacket(input: {
     }
   | {
       readonly analysisKind: "discovery";
-      readonly packet: PlaytestDiscoveryEvidencePacketV2;
+      readonly packet: PlaytestDiscoveryEvidencePacketV3;
       readonly artifact: PlaytestArtifactReference;
     }
 > {

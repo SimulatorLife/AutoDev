@@ -540,7 +540,11 @@ export interface PlaytestEvidenceOmittedArtifact {
   readonly artifactId: string;
   readonly step: number;
   readonly reason:
-    "missing" | "expired" | "invalid-reference" | "unsupported-media";
+    | "missing"
+    | "expired"
+    | "invalid-reference"
+    | "unsupported-media"
+    | "step-not-selected";
 }
 
 /** Target-owned metric semantics supplied with the exact session evidence. */

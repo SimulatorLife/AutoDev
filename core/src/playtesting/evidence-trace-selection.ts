@@ -295,16 +295,14 @@ export function initiallySelectedRanges(
       "ordinary-sample",
       false
     );
-    if (
-      selected.some(
-        (range) =>
-          ordinaryRange.startStep <= range.endStep &&
-          ordinaryRange.endStep >= range.startStep
-      )
-    ) {
-      continue;
-    }
-    const proposed = mergeRanges([...selected, ordinaryRange]);
+    // A sample whose context touches the mandatory selection still
+    // contributes the steps it adds. Dropping it entirely would silently
+    // lose the session's earlier steps: a three-step session would keep
+    // only the terminal window and the analyst would never see how the
+    // session started.
+    const contributed = uncoveredRanges(ordinaryRange, selected);
+    if (contributed.length === 0) continue;
+    const proposed = mergeRanges([...selected, ...contributed]);
     if (
       proposed.length <= limits.maxWindows &&
       rangeStepCount(proposed) <= limits.maxSteps
@@ -313,6 +311,41 @@ export function initiallySelectedRanges(
     }
   }
   return selected;
+}
+
+/**
+ * The steps of one range that the current selection does not cover, grouped
+ * into contiguous ranges.
+ */
+function uncoveredRanges(
+  range: SelectionRange,
+  selected: readonly SelectionRange[]
+): readonly SelectionRange[] {
+  const covered = new Set<number>();
+  for (const entry of selected) {
+    for (let step = entry.startStep; step <= entry.endStep; step += 1) {
+      covered.add(step);
+    }
+  }
+  const ranges: SelectionRange[] = [];
+  for (let step = range.startStep; step <= range.endStep; step += 1) {
+    if (covered.has(step)) continue;
+    const last = ranges.at(-1);
+    if (last && last.endStep + 1 === step) {
+      ranges[ranges.length - 1] = {
+        ...last,
+        endStep: step
+      };
+      continue;
+    }
+    ranges.push({
+      startStep: step,
+      endStep: step,
+      reasons: new Set(["ordinary-sample"]),
+      mandatory: false
+    });
+  }
+  return ranges;
 }
 
 export function omittedWindowsFor(input: {
@@ -785,7 +818,8 @@ export function assertOmittedPacketArtifacts(
         "missing",
         "expired",
         "invalid-reference",
-        "unsupported-media"
+        "unsupported-media",
+        "step-not-selected"
       ].includes(artifact.reason) ||
       suppliedFrameIds.has(artifact.artifactId) ||
       omittedIds.has(artifact.artifactId)
