@@ -34,6 +34,12 @@ const COMPACT_WIDTH = 390;
 const RAIL_WIDTH = 56;
 /** The width at which the navigation is a column beside the page. */
 const WIDE_WIDTH = 1280;
+/** The attribute that carries the navigation's own state. */
+const EXPANDED_ATTRIBUTE = "aria-expanded";
+/** The state the control carries when the navigation is the compact rail. */
+const COLLAPSED_STATE = "false";
+/** The state the control carries when the navigation is a column. */
+const EXPANDED_STATE = "true";
 /** The URL of the Agents route. */
 const AGENTS_URL = /\/agents$/u;
 /** The URL of the Usage route. */
@@ -76,17 +82,50 @@ function navigationWidth(page: Page): Promise<number> {
 
 /**
  * Open the navigation and wait until it is open.
+ *
+ * The navigation is the rail at the narrow width these tests use, so the
+ * control opens the rail into the panel that overlays the page.
  */
 async function expandNavigation(page: Page): Promise<void> {
+  // The click is taken against the state the operator is looking at, so the
+  // navigation's own default has to have settled first: a click taken before
+  // the sidebar applied its default would collapse the navigation rather than
+  // expand it.
+  await waitForNavigationDefault(page);
   await page.locator(TOGGLE).click();
-  await expect(page.locator(TOGGLE)).toHaveAttribute("aria-expanded", "true");
+  await expectNavigationState(page, "expanded");
 }
 
 /**
- * Whether the navigation is the compact rail.
+ * Waits for the navigation to reach a state.
+ *
+ * The server renders the navigation expanded, because it does not know the
+ * viewport, and the sidebar applies its own default once it has measured the
+ * window. A one-shot read of the control's state measures whichever of the
+ * two the page happened to be in -- at a narrow width the rail is applied a
+ * moment after the page arrives, not in its first paint -- so the read waits
+ * for the state, and fails when the navigation never reaches it.
  */
-async function isCollapsed(page: Page): Promise<boolean> {
-  return (await page.locator(TOGGLE).getAttribute("aria-expanded")) === "false";
+async function expectNavigationState(
+  page: Page,
+  expected: "collapsed" | "expanded"
+): Promise<void> {
+  await expect(page.locator(TOGGLE)).toHaveAttribute(
+    EXPANDED_ATTRIBUTE,
+    expected === "collapsed" ? COLLAPSED_STATE : EXPANDED_STATE
+  );
+}
+
+/**
+ * Waits until the navigation has settled into the default its width implies.
+ *
+ * The rail is the default below the wide width, so the state the navigation
+ * settles into is the one the viewport calls for.
+ */
+async function waitForNavigationDefault(page: Page): Promise<void> {
+  const viewport = page.viewportSize();
+  const narrow = viewport !== null && viewport.width < WIDE_WIDTH;
+  await expectNavigationState(page, narrow ? "collapsed" : "expanded");
 }
 
 test("a narrow screen opens with the navigation as the compact rail", async ({
@@ -96,7 +135,7 @@ test("a narrow screen opens with the navigation as the compact rail", async ({
   await openConsole(page, "/agents");
 
   // The rail is the default at a narrow width, and the control says so.
-  expect(await isCollapsed(page)).toBe(true);
+  await expectNavigationState(page, "collapsed");
   await expect(
     page.getByRole("button", { name: "Expand sidebar" })
   ).toBeVisible();
@@ -116,6 +155,7 @@ test("expanding the navigation overlays the page instead of squeezing it", async
 
   // The rail is in the flow beside the page, so the page's content is the
   // window less the rail.
+  await expectNavigationState(page, "collapsed");
   const contentBefore = await mainWidth(page);
   expect(contentBefore).toBe(COMPACT_WIDTH - RAIL_WIDTH);
 
@@ -142,7 +182,7 @@ test("selecting a destination collapses the expanded navigation", async ({
   await expect(page).toHaveURL(USAGE_URL);
   // The operator is on the resource they chose, and the navigation is back
   // to the rail rather than covering the page they are reading.
-  expect(await isCollapsed(page)).toBe(true);
+  await expectNavigationState(page, "collapsed");
 });
 
 test("Escape collapses the expanded navigation", async ({ page }) => {
@@ -157,7 +197,7 @@ test("Escape collapses the expanded navigation", async ({ page }) => {
   await expect(item).toBeFocused();
   await page.keyboard.press("Escape");
 
-  expect(await isCollapsed(page)).toBe(true);
+  await expectNavigationState(page, "collapsed");
   // The page the operator was on is still the page they are on.
   await expect(page).toHaveURL(AGENTS_URL);
 });
@@ -193,7 +233,7 @@ test("a modified link-open gesture leaves the current view state alone", async (
   // The operator asked for a new tab, not for this page to change, so the
   // page is where they left it and the navigation is where they left it.
   await expect(page).toHaveURL(AGENTS_URL);
-  expect(await isCollapsed(page)).toBe(false);
+  await expectNavigationState(page, "expanded");
 });
 
 test("a wide screen keeps the navigation as a column beside the page", async ({
@@ -204,7 +244,7 @@ test("a wide screen keeps the navigation as a column beside the page", async ({
 
   // At a wide width the navigation is expanded and beside the page, so the
   // page's content is narrower than the window.
-  expect(await isCollapsed(page)).toBe(false);
+  await expectNavigationState(page, "expanded");
   const contentWidth = await mainWidth(page);
   expect(contentWidth).toBeLessThan(WIDE_WIDTH);
   expect(await navigationWidth(page)).toBeGreaterThan(200);
