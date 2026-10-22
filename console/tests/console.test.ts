@@ -5121,6 +5121,10 @@ test("McpDetailView shows the applied MCP configuration and the runtime's verdic
   assert.match(markup, /Applied configuration/);
   assert.match(markup, /https:\/\/mcp.context7.com\/mcp/);
   assert.match(markup, /CONTEXT7_API_KEY/);
+  // The applied fields are labelled as applied ones, because the declaration
+  // panel above labels its own fields with the same names.
+  assert.match(markup, /Applied endpoint URL/);
+  assert.match(markup, /Applied bearer token environment variable/);
   // And the verdict on the comparison is the Runtime's, rendered by the shared
   // reconciliation panel.
   assert.match(markup, /data-feature="reconciliation"/);
