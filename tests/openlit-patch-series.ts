@@ -76,7 +76,8 @@ export const OPENLIT_PATCH_NAMES = [
   "59-autodev-usage-requests-by-workspace",
   "60-remove-dead-client-modules",
   "61-remove-provider-model-administration",
-  "62-fix-stale-fork-test-assertions"
+  "62-fix-stale-fork-test-assertions",
+  "63-autodev-collector-budget-and-codex-filter"
 ] as const;
 
 /** Strips the `.patch` suffix a directory listing carries. */
