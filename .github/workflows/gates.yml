@@ -39,6 +39,21 @@ jobs:
       - name: Install AutoDev dependencies
         run: pnpm install --frozen-lockfile
 
+      # The playtesting statistics worker is a Python program the Runtime
+      # starts through `uv`. The repository pins its lockfile and the Runtime
+      # refuses to analyze with a drifted one, so a runner without `uv` is a
+      # runner that cannot run the product's own analysis at all.
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v10
+
+      # The visual browser driver drives a Playwright Chromium. Without one the
+      # driver reports itself unavailable, and the suites that measure it
+      # measure a machine that has no browser rather than a product that
+      # works.
+      - name: Install the browser the visual driver needs
+        working-directory: runtime
+        run: pnpm exec playwright-core install --with-deps chromium
+
       # The four gates, in the order that fails fastest. Formatting first
       # because it is a second, and the slowest gate is the test suite.
       #
@@ -63,3 +78,35 @@ jobs:
       - name: Test
         if: always()
         run: pnpm test
+
+  sandbox:
+    # The playtesting sandbox runs an approved container, and a container needs
+    # a daemon. A macOS runner has no Docker daemon, so the sandbox contract
+    # cannot be measured there: the suite fails on the missing socket rather
+    # than on the sandbox. It is measured here, where a daemon exists, rather
+    # than skipped where one does not.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install AutoDev dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test the container sandbox
+        working-directory: runtime
+        run: >-
+          node --test
+          tests/playtesting-docker-sandbox.test.ts
+          tests/playtesting-generic-adapter-episode.test.ts
