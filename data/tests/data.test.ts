@@ -17,6 +17,7 @@ import test from "node:test";
 import {
   ClickHouseTelemetryClient,
   ConfigRepository,
+  parseRuleSyncCommand,
   RuleSyncCommandConflictError,
   RuleSyncCommandHistoryUnavailableError,
   RuleSyncCommandValidationError,
@@ -29,6 +30,26 @@ import {
 function git(repositoryRoot: string, args: readonly string[]): void {
   execFileSync("git", ["-C", repositoryRoot, ...args], { stdio: "ignore" });
 }
+
+test("the canonical parser answers what a command's source says", () => {
+  // The parser is what reads a command's front matter, and it is exported
+  // because a reader that has not written the source yet still has to ask the
+  // same question of the same text. A second front-matter reader in that
+  // reader would be a second answer to the same question.
+  const parsed = parseRuleSyncCommand(
+    "dry",
+    "---\ntargets: [codexcli]\ndescription: Review source.\n---\n\n# Audit\n\nUse a dry run.\n"
+  );
+  assert.equal(parsed.name, "dry");
+  assert.equal(parsed.prompt, "# Audit\n\nUse a dry run.");
+  assert.equal(parsed.description, "Review source.");
+  assert.deepEqual(parsed.targets, ["codexcli"]);
+
+  assert.throws(
+    () => parseRuleSyncCommand("dry", "# Audit\n\nNo frontmatter.\n"),
+    RuleSyncCommandValidationError
+  );
+});
 
 test("RuleSyncRepository loads canonical RuleSync sources", () => {
   const repo = new RuleSyncRepository();

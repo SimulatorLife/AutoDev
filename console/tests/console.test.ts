@@ -20278,6 +20278,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Submits the complete role set immediately through the existing same-origin Skills mutation route."
     ],
     [
+      join("src", "features", "prompts", "prompt-source-preview.ts"),
+      "Asks the Console's own server what the unsaved canonical source would render as, and renders that answer beside the editor; the page's reads and the save stay server-owned."
+    ],
+    [
       join("src", "components", "navigation", "AppNav.ts"),
       "Persists the interactive sidebar preference without moving page data client-side."
     ],

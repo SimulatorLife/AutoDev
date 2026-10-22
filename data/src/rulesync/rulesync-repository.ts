@@ -1182,7 +1182,20 @@ function describeFileSystemError(error: unknown): string {
   }
 }
 
-function parseRuleSyncCommand(name: string, content: string): RuleSyncCommand {
+/**
+ * Parses a canonical RuleSync command from its source.
+ *
+ * This is the canonical parser: the front matter is read here and nowhere
+ * else, so a reader of the command's body and a writer of the command agree
+ * on what the command says. It is exported because a reader that has not
+ * written the source yet -- the Console previewing an edit -- still has to
+ * ask the same question of the same text, and a second front-matter reader
+ * in the reader would be a second answer.
+ */
+export function parseRuleSyncCommand(
+  name: string,
+  content: string
+): RuleSyncCommand {
   const frontmatter = content.match(COMMAND_FRONTMATTER_PATTERN);
   if (!frontmatter) {
     throw new RuleSyncCommandValidationError(

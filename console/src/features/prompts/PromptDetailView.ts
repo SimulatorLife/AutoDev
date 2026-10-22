@@ -4,13 +4,8 @@ import type {
   PromptDocument
 } from "@simulatorlife/autodev-core";
 import React from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
 
-import {
-  CODE_SNIPPET_CLASS,
-  CodeBlock,
-  CodeEditor
-} from "../../components/code/CodeBlock.ts";
+import { CodeBlock, CodeEditor } from "../../components/code/CodeBlock.ts";
 import { Button } from "../../components/forms/Button.ts";
 import {
   CALLOUT_ERROR_CLASS,
@@ -31,7 +26,6 @@ import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { gridRowClass } from "../../components/panels/DetailGrid.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
-import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import {
   ACTION_LINK_CLASS,
   MONO_META_CLASS,
@@ -41,6 +35,16 @@ import {
   SECTION_LABEL_CLASS
 } from "../../components/ui/text-classes.ts";
 import type { PromptHistoryState } from "./history-state.ts";
+import { PromptMarkdown } from "./prompt-markdown.ts";
+import { PromptSourcePreview } from "./prompt-source-preview.ts";
+
+/**
+ * The id of the canonical source editor.
+ *
+ * The preview island reads the editor's unsaved text out of the document, so
+ * the two have to name the same control.
+ */
+const PROMPT_EDITOR_ID = "prompt-content";
 
 export type PromptSaveOutcome =
   "conflict" | "validation" | "apply-failed" | "failed";
@@ -123,11 +127,11 @@ function renderPromptSource(
       }),
       React.createElement(
         "label",
-        { htmlFor: "prompt-content", className: "sr-only" },
+        { htmlFor: PROMPT_EDITOR_ID, className: "sr-only" },
         "Canonical Markdown source"
       ),
       React.createElement(CodeEditor, {
-        id: "prompt-content",
+        id: PROMPT_EDITOR_ID,
         name: "content",
         defaultValue: prompt.content,
         ariaLabel: "Canonical Markdown source",
@@ -135,6 +139,10 @@ function renderPromptSource(
           "data-prompt-content":
             prompt.content.length === 0 ? "empty" : "observed"
         }
+      }),
+      React.createElement(PromptSourcePreview, {
+        name: prompt.name,
+        editorId: PROMPT_EDITOR_ID
       }),
       React.createElement(
         "div",
@@ -175,96 +183,6 @@ function renderPromptSource(
   });
 }
 
-/**
- * Renderer for the prompt author's own Markdown, shown as a preview inside the
- * page.
- *
- * The prompt body is content *within* this page, not a page of its own, so its
- * headings are demoted three levels past the Console's own body sections. A
- * prompt that opens with an `# H1` used to inject a second page-level heading
- * halfway down the outline — below Console sections and above the shell's
- * `h1` — which is what a document outline is supposed to rule out.
- */
-const PROMPT_MARKDOWN_COMPONENTS: Components = {
-  h1: ({ children }) =>
-    React.createElement(
-      "h4",
-      { className: "mb-3 text-xl font-semibold text-fg" },
-      children
-    ),
-  h2: ({ children }) =>
-    React.createElement(
-      "h5",
-      { className: "mb-2 mt-4 text-lg font-semibold text-fg" },
-      children
-    ),
-  h3: ({ children }) =>
-    React.createElement(
-      "h6",
-      { className: "mb-2 mt-3 text-base font-semibold text-fg" },
-      children
-    ),
-  p: ({ children }) =>
-    React.createElement(
-      "p",
-      { className: "mb-3 text-sm text-fg-secondary" },
-      children
-    ),
-  ul: ({ children }) =>
-    React.createElement(
-      "ul",
-      { className: "mb-3 list-disc space-y-1 pl-6 text-sm text-fg-secondary" },
-      children
-    ),
-  ol: ({ children }) =>
-    React.createElement(
-      "ol",
-      {
-        className: "mb-3 list-decimal space-y-1 pl-6 text-sm text-fg-secondary"
-      },
-      children
-    ),
-  li: ({ children }) => React.createElement("li", null, children),
-  blockquote: ({ children }) =>
-    React.createElement(
-      "blockquote",
-      {
-        className: `mb-3 border-l-2 border-border-strong pl-4 ${MUTED_BODY_CLASS}`
-      },
-      children
-    ),
-  pre: ({ children }) =>
-    React.createElement(
-      "pre",
-      { className: `${CODE_SNIPPET_CLASS} mb-3` },
-      children
-    ),
-  code: ({ children }) =>
-    // Markdown inline code, so the content is whatever the prompt author wrote
-    // and can be any length. An inline element, so it cannot be a Tag; it
-    // titles itself instead.
-    React.createElement(
-      "code",
-      {
-        title: children,
-        className: `${TAG_SHAPE} border-transparent bg-input font-mono text-fg-secondary`
-      },
-      children
-    ),
-  a: ({ href, children }) =>
-    React.createElement(
-      "a",
-      {
-        href,
-        target: "_blank",
-        rel: "noreferrer",
-        className: "text-accent underline underline-offset-2"
-      },
-      children
-    ),
-  hr: () => React.createElement("hr", { className: "my-4 border-border" })
-};
-
 function renderPromptPreview(prompt: PromptDocument): React.ReactNode {
   return React.createElement(
     "details",
@@ -283,10 +201,7 @@ function renderPromptPreview(prompt: PromptDocument): React.ReactNode {
       ? React.createElement(
           "div",
           { className: "mt-4", "data-prompt-preview-body": "observed" },
-          React.createElement(ReactMarkdown, {
-            components: PROMPT_MARKDOWN_COMPONENTS,
-            children: prompt.preview
-          })
+          React.createElement(PromptMarkdown, { body: prompt.preview })
         )
       : React.createElement(
           "p",
