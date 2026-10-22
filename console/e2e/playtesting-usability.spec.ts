@@ -65,6 +65,7 @@ const REVIEW_OBSERVATIONS_LABEL = "Observations";
 const REVIEW_RECORDED_HEADING = "What the analyst recorded";
 const REVIEW_EVIDENCE_HEADING = "Evidence cited";
 const REVIEW_SELECTION_URL_PATTERN = /review=review-fixture-1/u;
+const REVIEW_DETAIL_SELECTOR = "[data-review-detail]";
 
 async function openNewPlaytest(page: Page): Promise<Locator> {
   await page.locator('[data-playtesting-open-dialog="true"]').click();
@@ -1137,7 +1138,7 @@ test("approved run start, automatic status watching, and cancellation stay in th
     name: "Assignment outcomes"
   });
   await expect(assignmentOutcomes).toContainText("Execution state: completed");
-  await expect(assignmentOutcomes).toContainText("Game outcome: Unclassified");
+  await expect(assignmentOutcomes).toContainText("Game outcome: Not observed");
   await expect(
     assignmentOutcomes.getByRole("link", {
       name: `Open session ${completedBatchId}.a-0001`
@@ -1795,7 +1796,7 @@ test("an analyst hypothesis opens its review as addressable detail under the lis
   await expect(page).toHaveURL(REVIEW_SELECTION_URL_PATTERN, {
     timeout: 20_000
   });
-  const detail = page.locator("[data-review-detail]");
+  const detail = page.locator(REVIEW_DETAIL_SELECTOR);
   await expect(detail).toBeVisible();
   // The detail leads the page: the panel a row opens is on screen, not four
   // thousand pixels under the row that opened it.
@@ -1817,7 +1818,7 @@ test("an analyst hypothesis opens its review as addressable detail under the lis
   // A refresh keeps the review open: the selection is in the address, not in
   // a piece of client state that a reload would lose.
   await page.reload();
-  await expect(page.locator("[data-review-detail]")).toBeVisible({
+  await expect(page.locator(REVIEW_DETAIL_SELECTOR)).toBeVisible({
     timeout: 20_000
   });
 
@@ -1826,6 +1827,48 @@ test("an analyst hypothesis opens its review as addressable detail under the lis
   await expect(page).not.toHaveURL(REVIEW_SELECTION_URL_PATTERN, {
     timeout: 20_000
   });
-  await expect(page.locator("[data-review-detail]")).toHaveCount(0);
+  await expect(page.locator(REVIEW_DETAIL_SELECTOR)).toHaveCount(0);
   await expect(page.locator("[data-review-open]").first()).toBeVisible();
+});
+
+test("the overview shows what the analyst concluded, and opens it", async ({
+  page
+}) => {
+  await page.goto("/playtesting?view=overview&workspaceId=fixture%2Fgame");
+  await page.waitForLoadState("networkidle");
+
+  // The overview counted the conclusions and showed none of them. The
+  // conclusion is the reason an operator comes to this view, so it is here.
+  const conclusions = page.locator("[data-overview-conclusion]");
+  await expect(conclusions.first()).toBeVisible();
+  await expect(conclusions.first()).toHaveText(REVIEW_HYPOTHESIS_TEXT);
+
+  // It is a link, and it opens the review's own detail rather than a copy of
+  // it somewhere else.
+  await conclusions.first().click();
+  await expect(page).toHaveURL(REVIEW_SELECTION_URL_PATTERN, {
+    timeout: 20_000
+  });
+  await expect(page.locator(REVIEW_DETAIL_SELECTOR)).toBeVisible();
+  await expect(page.locator(REVIEW_DETAIL_SELECTOR)).toContainText(
+    REVIEW_HYPOTHESIS_TEXT
+  );
+});
+
+test("a hypothesis row keeps its counts and says how to read the review", async ({
+  page
+}) => {
+  await page.goto("/playtesting?view=findings&workspaceId=fixture%2Fgame");
+  await page.waitForLoadState("networkidle");
+
+  const row = page.locator("[data-review-row]").first();
+  await expect(row).toBeVisible();
+  // The counts are how a reader tells one hypothesis from six, so they are
+  // on every row and not only on the rows whose conclusion was short.
+  await expect(row).toContainText("Discovery review");
+  await expect(row).toContainText("hypothesis");
+  // The way into the review is stated.
+  await expect(
+    page.locator("[data-review-read]").first()
+  ).toBeVisible();
 });

@@ -290,6 +290,7 @@ test("overview renders visual batches without fabricating a source commit", () =
         episodeCount: 1,
         findingCount: 0,
         reviewCount: 0,
+        latestReviews: [],
         latestEpisodes: []
       }
     })
@@ -411,9 +412,9 @@ test("session rows own analyst selection and link directly to diagnosis", () => 
   assert.match(visualHtml, /No cohort assigned/u);
   assert.match(visualHtml, /http:\/\/racing\.local/u);
   assert.doesNotMatch(visualHtml, /Verified aaaaaaaaaaaa/u);
-  // The row leads with the outcome in words; the exact stored token stays
-  // in the session page's own disclosure rather than in every list row.
-  assert.match(gridHtml, /Game outcome: Loss/u);
+  // The row leads with the outcome; the exact stored token stays in the
+  // session page's own disclosure rather than in every list row.
+  assert.match(gridHtml, />Loss</u);
 });
 
 test("finding witness links open the exact cited step while execution and outcome remain distinct", () => {
@@ -725,7 +726,7 @@ test("a loop-guard stop explains the repeated decision and opens its stop step b
     html,
     /<details(?=[^>]*data-playtest-step-details="2")(?=[^>]*open="")[^>]*>/u
   );
-  assert.match(html, /Game outcome<\/dt>[^]*?Not observed[^]*?unknown/u);
+  assert.match(html, /Game outcome<\/dt>[^]*?No game outcome[^]*?unknown/u);
   assert.doesNotMatch(explanation, /Game lost|Player lost/u);
 });
 

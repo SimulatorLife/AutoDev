@@ -9,6 +9,7 @@ import {
   cohortLabel,
   executionStateExplanation,
   executionStateLabel,
+  gameOutcomeBadgeLabel,
   gameOutcomeLabel,
   limitTerminationReason,
   missingReasonLabel,
@@ -76,6 +77,15 @@ test("a game outcome reads as a word, not a token", () => {
   assert.equal(gameOutcomeLabel("loss"), "Loss");
   assert.equal(gameOutcomeLabel("dnf"), "Did not finish");
   assert.equal(gameOutcomeLabel("unknown"), "Not observed");
+});
+
+test("an outcome badge names what it did not observe", () => {
+  // A badge stands on its own: "Not observed" beside an execution-status
+  // badge says which of the two was not observed only to a reader who
+  // already knows.
+  assert.equal(gameOutcomeBadgeLabel("unknown"), "No game outcome");
+  assert.equal(gameOutcomeBadgeLabel("win"), "Win");
+  assert.equal(gameOutcomeBadgeLabel("dnf"), "Did not finish");
 });
 
 test("the decision backend is named the way an operator names it", () => {
@@ -167,6 +177,7 @@ test("the Overview counts analyst reviews and never claims an absence of anomali
         episodeCount: 46,
         findingCount: 0,
         reviewCount: 14,
+        latestReviews: [],
         latestEpisodes: []
       }
     })
@@ -178,6 +189,97 @@ test("the Overview counts analyst reviews and never claims an absence of anomali
   // nothing, which was false whenever hypotheses existed.
   assert.doesNotMatch(html, /No anomalies detected/u);
   assert.doesNotMatch(html, /AI CRITIC FINDINGS/u);
+});
+
+test("the Overview shows the analyst's conclusions, not only how many there are", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: scope("overview"),
+      workspaces: [
+        { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
+      ],
+      overview: {
+        batches: [],
+        batchCount: 3,
+        episodeCount: 46,
+        findingCount: 0,
+        reviewCount: 14,
+        latestReviews: [review()],
+        latestEpisodes: []
+      }
+    })
+  );
+  // The conclusion is on the page, not only the count of conclusions.
+  assert.match(html, /Latest analyst conclusions/u);
+  assert.match(
+    html,
+    /The fast-forward label moves from 1x to 2x across the captures/u
+  );
+  assert.match(html, /Discovery review · 2 hypotheses · 4 observations/u);
+  // The way into it is a link that opens the review's own detail.
+  assert.match(html, /data-overview-conclusion="review-1"/u);
+  assert.match(html, /view=findings[^"]*review=review-1/u);
+  // The rest of the list is one click away, and says how much is in it.
+  assert.match(html, /See all 14 analyst reviews/u);
+});
+
+test("the Overview says when the analyst has concluded nothing yet", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: scope("overview"),
+      workspaces: [
+        { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
+      ],
+      overview: {
+        batches: [],
+        batchCount: 3,
+        episodeCount: 46,
+        findingCount: 0,
+        reviewCount: 0,
+        latestReviews: [],
+        latestEpisodes: []
+      }
+    })
+  );
+  assert.match(
+    html,
+    /No analysis has been recorded for this workspace yet/u
+  );
+  assert.doesNotMatch(html, /See all 0 analyst reviews/u);
+});
+
+test("a conclusion that fills its lines does not take the counts with it", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: scope("findings"),
+      workspaces: [
+        { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
+      ],
+      list: {
+        resource: "findings",
+        rows: [],
+        total: 0,
+        nextCursor: null,
+        reviews: [
+          review({
+            headline:
+              "Because the car labels stay at Lap 1 while playback went 1x to 2x to 4x, the fast-forward button may have no visible effect on race progress in this pre-race state."
+          })
+        ],
+        reviewTotal: 1
+      }
+    })
+  );
+  // The clamp is on the conclusion alone.
+  assert.match(html, /line-clamp-3/u);
+  const clampStart = html.indexOf("line-clamp-3");
+  const clampEnd = html.indexOf("</div>", clampStart);
+  const counts = html.indexOf("Discovery review · 2 hypotheses · 4 observations");
+  assert.ok(counts > clampEnd, "the counts are written outside the clamp");
+  // The way into the review is stated, not implied by a paragraph of body
+  // text that only happens to be a link.
+  assert.match(html, /data-review-read="review-1"/u);
+  assert.match(html, /Open review/u);
 });
 
 test("a session id the workspace never recorded is not described as a server fault", () => {

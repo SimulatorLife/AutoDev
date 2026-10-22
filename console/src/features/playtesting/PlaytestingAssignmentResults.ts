@@ -13,6 +13,7 @@ import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
+import { gameOutcomeLabel } from "./playtesting-labels.ts";
 import {
   playtestingEpisodeHref,
   type PlaytestingScope
@@ -79,7 +80,7 @@ export function PlaytestingAssignmentResults({
                 React.createElement(
                   "p",
                   { className: MUTED_BODY_CLASS },
-                  `Game outcome: ${gameOutcomeLabel(outcome.gameOutcome)}`
+                  `Game outcome: ${outcome.gameOutcome === null ? NOT_OBSERVED_LABEL : gameOutcomeLabel(outcome.gameOutcome)}`
                 ),
                 React.createElement(
                   "p",
@@ -209,11 +210,4 @@ export function PlaytestingAssignmentResults({
       content
     )
   );
-}
-
-function gameOutcomeLabel(outcome: string | null): string {
-  if (outcome === null) return NOT_OBSERVED_LABEL;
-  if (outcome === "dnf") return "DNF";
-  if (outcome === "unknown") return "Unclassified";
-  return outcome[0]!.toUpperCase() + outcome.slice(1);
 }

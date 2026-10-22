@@ -1257,7 +1257,8 @@ function isPlaytestingReview(
 export async function fetchPlaytestingReviews(
   workspaceId: string,
   config: ControlApiConfig,
-  options: FetchControlApiOptions = {}
+  options: FetchControlApiOptions = {},
+  limit?: number
 ): Promise<ControlApiResult<ControlApiPlaytestingReviewsResponse>> {
   if (!WORKSPACE_ID_PATTERN.test(workspaceId)) {
     return invalidResponse(
@@ -1266,6 +1267,10 @@ export async function fetchPlaytestingReviews(
     );
   }
   const params = new URLSearchParams({ workspaceId });
+  // A reader that only counts the reviews does not need all of them: the
+  // overview shows the newest few, and downloading every review's claims and
+  // evidence to count them is a read the workspace does not need to answer.
+  if (limit !== undefined) params.set("limit", String(limit));
   const result = await fetchControlApi(
     `${CONTROL_API_PATHS.playtesting}/reviews?${params}`,
     config,

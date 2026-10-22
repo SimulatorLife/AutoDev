@@ -56,6 +56,14 @@ interface PlaytestingPageProps {
 
 const HUMAN_NOT_COLLECTED = "not-collected" as const;
 const IMMUTABLE_BUILD_SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
+/**
+ * How many analyst conclusions the overview shows.
+ *
+ * The overview answers "what did the analyst conclude", so it shows the
+ * newest few rather than only their number; the rest of the list is one click
+ * away in the Findings view.
+ */
+const OVERVIEW_REVIEW_LIMIT = 3;
 
 export const metadata: Metadata = {
   title: "Playtesting"
@@ -166,7 +174,12 @@ async function loadOverview(
         pageRequest(scope, "findings", 1),
         config
       ),
-      fetchPlaytestingReviews(scope.workspaceId!, config),
+      fetchPlaytestingReviews(
+        scope.workspaceId!,
+        config,
+        {},
+        OVERVIEW_REVIEW_LIMIT
+      ),
       fetchPlaytestingRunCapabilities(scope.workspaceId!, config)
     ]);
   const failure = firstFailure([batches, episodes, findings, reviews]);
@@ -195,6 +208,7 @@ async function loadOverview(
       episodeCount: episodes.data.page.total,
       findingCount: findings.data.page.total,
       reviewCount: reviews.data.total,
+      latestReviews: reviews.data.rows,
       latestEpisodes: episodes.data.page.rows
     },
     runSetup: runSetupFrom(capabilities)

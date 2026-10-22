@@ -25,7 +25,6 @@ import {
   sessionAnalysisLine,
   sessionMetaLine
 } from "./playtesting-episode-presentation.ts";
-import { gameOutcomeLabel } from "./playtesting-labels.ts";
 import {
   parsePlaytestingScope,
   playtestingEpisodeHref,
@@ -338,13 +337,11 @@ export function PlaytestingSessionsWorkspace({
                     ),
                     gameOutcomeBadge(episode.outcome)
                   ),
-                  React.createElement(
-                    "p",
-                    { className: "mt-2 text-sm font-medium" },
-                    episode.outcome === "unknown"
-                      ? "No game outcome observed"
-                      : `Game outcome: ${gameOutcomeLabel(episode.outcome)}`
-                  ),
+                  // The game's outcome is the badge above. It used to be stated
+                  // a second time in a line of its own, so every row said the
+                  // same thing twice: "Not observed" beside "No game outcome
+                  // observed". One statement per row, and the badge says
+                  // which observation it is about.
                   React.createElement(
                     "p",
                     {

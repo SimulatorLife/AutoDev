@@ -15,7 +15,7 @@ import {
   executionModeLabel,
   executionStateLabel,
   executionStateTone,
-  gameOutcomeLabel,
+  gameOutcomeBadgeLabel,
   policyLabel
 } from "./playtesting-labels.ts";
 
@@ -74,7 +74,7 @@ export function gameOutcomeBadge(
         : "unavailable";
   return React.createElement(StatusBadge, {
     status: variant,
-    label: gameOutcomeLabel(value),
+    label: gameOutcomeBadgeLabel(value),
     title: "Game outcome is separate from playtest execution status."
   });
 }

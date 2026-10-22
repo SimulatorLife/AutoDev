@@ -59,6 +59,10 @@ import {
   reviewClaimStatusLabel
 } from "./playtesting-labels.ts";
 import {
+  reviewHeadlineText,
+  reviewSummaryLine
+} from "./playtesting-review-presentation.ts";
+import {
   PLAYTESTING_PAGE_SIZES,
   PLAYTESTING_REVIEW_DETAIL_ANCHOR_ID,
   playtestingEpisodeHref,
@@ -96,6 +100,14 @@ export interface PlaytestingOverviewData {
   readonly findingCount: number;
   /** Persisted analyst reviews; the record that survives a Runtime restart. */
   readonly reviewCount: number;
+  /**
+   * The newest analyst conclusions.
+   *
+   * The overview counts the reviews and used to stop there, so the number of
+   * conclusions was on the page and none of the conclusions were. These are
+   * the rows the overview shows; the rest of the list is one click away.
+   */
+  readonly latestReviews: readonly ControlApiPlaytestingReview[];
   readonly latestEpisodes: readonly PlaytestEpisode[];
 }
 
@@ -600,6 +612,92 @@ function recentSessionsSection(
   );
 }
 
+/**
+ * The analyst's newest conclusions, on the overview.
+ *
+ * The overview is the page an operator opens first, and the question it is
+ * read for is "what did the analyst conclude". It counted the reviews and
+ * showed none of them, so the answer was one tab away with no path to it --
+ * and the number of conclusions was on the page while the conclusions were
+ * not. Each conclusion here opens the review's own detail, which is where
+ * the whole conclusion is readable.
+ */
+function latestConclusions(
+  reviews: readonly ControlApiPlaytestingReview[],
+  reviewCount: number,
+  scope: PlaytestingScope
+): React.JSX.Element {
+  return React.createElement(
+    "section",
+    {
+      className: LIST_PANEL_CLASS,
+      "aria-labelledby": "playtesting-conclusions-heading"
+    },
+    sectionHeading("playtesting-conclusions-heading", "Latest analyst conclusions"),
+    React.createElement(
+      "p",
+      { className: `mb-3 text-sm ${MUTED_META_CLASS}` },
+      "What the analyst concluded from the recorded frames. These are hypotheses, not defects: nothing here has been reproduced or verified."
+    ),
+    reviews.length === 0
+      ? React.createElement(
+          "p",
+          { className: `text-sm ${MUTED_META_CLASS}` },
+          "No analysis has been recorded for this workspace yet. Run “Analyze this session” on a session and the analyst's conclusions will appear here."
+        )
+      : React.createElement(
+          "ul",
+          {
+            className: "flex flex-col gap-3",
+            "data-overview-conclusions": String(reviews.length)
+          },
+          reviews.map((review) =>
+            React.createElement(
+              "li",
+              {
+                key: review.reviewId,
+                className: "flex min-w-0 flex-col gap-1"
+              },
+              // The conclusion is a sentence, so the list clamps it and the
+              // detail carries it whole. The link is the whole of the clamped
+              // text: the conclusion is the thing the reader came for.
+              React.createElement(
+                "div",
+                { className: "line-clamp-2" },
+                React.createElement(
+                  NavigationLink,
+                  {
+                    href: playtestingReviewHref(scope, review.reviewId),
+                    className: "font-medium text-accent hover:underline",
+                    dataAttributes: {
+                      "data-overview-conclusion": review.reviewId
+                    }
+                  },
+                  reviewHeadlineText(review)
+                )
+              ),
+              React.createElement(
+                "p",
+                { className: MUTED_META_CLASS },
+                `${reviewSummaryLine(review)} · ${new Date(review.createdAt).toISOString().slice(0, 10)}`
+              )
+            )
+          )
+        ),
+    reviewCount > reviews.length
+      ? React.createElement(
+          NavigationLink,
+          {
+            href: playtestingViewHref(scope, "findings"),
+            className: "mt-3 text-sm text-accent hover:underline",
+            dataAttributes: { "data-overview-all-conclusions": String(reviewCount) }
+          },
+          `See all ${String(reviewCount)} analyst reviews`
+        )
+      : null
+  );
+}
+
 function overview(
   data: PlaytestingOverviewData,
   scope: PlaytestingScope,
@@ -715,6 +813,7 @@ function overview(
     React.Fragment,
     null,
     summaryMetrics,
+    latestConclusions(data.latestReviews, data.reviewCount, scope),
     latestResultSection(latest, latestSourceLabel, currentBuildSha, scope),
     recentSessionsSection(
       recentEpisodes,
@@ -747,10 +846,7 @@ function analystReviewDetail(
   return React.createElement(
     DetailDrawer,
     {
-      title:
-        review.headline.length > 0
-          ? review.headline
-          : "The analyst recorded no written conclusion for this session.",
+      title: reviewHeadlineText(review),
       titleMono: false,
       badges: React.createElement(StatusBadge, {
         status: "pending",
@@ -951,7 +1047,11 @@ function analystHypotheses(
       header: "Analyst hypothesis",
       weight: 320,
       align: "prose",
-      clampLines: 3,
+      // The clamp belongs to the conclusion alone. The table's own clamp
+      // wraps the whole cell, so a conclusion that filled its three lines
+      // took the count line under it with it -- and the count line is how a
+      // reader tells one hypothesis from six. The conclusion is clamped
+      // here instead, where it can be clamped without taking anything else.
       cell: (review) =>
         React.createElement(
           "div",
@@ -961,24 +1061,41 @@ function analystHypotheses(
             "data-review-row": review.reviewId
           },
           React.createElement(
-            NavigationLink,
-            {
-              href: playtestingReviewHref(scope, review.reviewId),
-              // The headline is the way into the review, so the whole of it is
-              // the target: an inline link's box is the union of its line
-              // boxes, and the middle of that union can be a gap between two
-              // lines where the click lands on the row instead of the link.
-              className: "block font-medium text-fg hover:underline",
-              dataAttributes: { "data-review-open": review.reviewId }
-            },
-            review.headline.length > 0
-              ? review.headline
-              : "The analyst recorded no written conclusion for this session."
+            "div",
+            { className: "line-clamp-3" },
+            React.createElement(
+              NavigationLink,
+              {
+                href: playtestingReviewHref(scope, review.reviewId),
+                // The conclusion is the way into the review, so the whole of
+                // it is the target: an inline link's box is the union of its
+                // line boxes, and the middle of that union can be a gap
+                // between two lines where the click lands on the row instead
+                // of the link.
+                className: "block font-medium text-fg hover:underline",
+                dataAttributes: { "data-review-open": review.reviewId }
+              },
+              reviewHeadlineText(review)
+            )
           ),
           React.createElement(
             "p",
-            { className: MUTED_META_CLASS },
-            `${review.kind === "discovery" ? "Discovery" : "Confirmatory"} review · ${String(review.interpretationCount)} ${review.interpretationCount === 1 ? "hypothesis" : "hypotheses"} · ${String(review.observationCount)} ${review.observationCount === 1 ? "observation" : "observations"}`
+            { className: `mt-1 ${MUTED_META_CLASS}` },
+            reviewSummaryLine(review),
+            // The way into the review is stated, not implied. The conclusion
+            // above is a link, but it reads as a paragraph of body text, and
+            // a reader looking at a list of conclusions had no way to tell
+            // that clicking one of them was the way to read it.
+            " · ",
+            React.createElement(
+              NavigationLink,
+              {
+                href: playtestingReviewHref(scope, review.reviewId),
+                className: "text-accent hover:underline",
+                dataAttributes: { "data-review-read": review.reviewId }
+              },
+              "Open review"
+            )
           )
         )
     },

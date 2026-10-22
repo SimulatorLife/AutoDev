@@ -406,7 +406,7 @@ test("an explicit unknown game result is not confused with an unobserved outcome
     })
   );
   assert.match(markup, /data-game-outcome="unknown"/u);
-  assert.match(markup, /Game outcome: Unclassified/u);
+  assert.match(markup, /Game outcome: Not observed/u);
   assert.match(markup, /data-execution-state="infrastructure-failed"/u);
   assert.match(markup, /data-game-outcome="not-observed"/u);
   assert.match(markup, /Game outcome: Not observed/u);

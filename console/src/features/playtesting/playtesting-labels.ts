@@ -213,6 +213,20 @@ export function gameOutcomeLabel(value: PlaytestGameOutcomeKind): string {
   }
 }
 
+/**
+ * The badge label for a game's outcome.
+ *
+ * A badge stands on its own: "Not observed" beside an execution-status badge
+ * says which of the two was not observed only to a reader who already knows,
+ * so the badge names what is missing. The sentence form elsewhere says "Not
+ * observed", because the sentence names what it is about.
+ */
+export function gameOutcomeBadgeLabel(
+  value: PlaytestGameOutcomeKind
+): string {
+  return value === "unknown" ? "No game outcome" : gameOutcomeLabel(value);
+}
+
 /** The operator-facing label for a reason a piece of evidence is missing. */
 export function missingReasonLabel(reason: PlaytestMissingReason): string {
   switch (reason) {
