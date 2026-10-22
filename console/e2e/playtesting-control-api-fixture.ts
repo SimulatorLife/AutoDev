@@ -3851,6 +3851,47 @@ function handleCatalogResourceRead(
     });
     return true;
   }
+  if (url.pathname === "/control/mcp-runtime") {
+    // The Runtime's observation of the MCP servers it has seen. It is a
+    // separate read from the catalog, and it carries only the servers the
+    // Runtime actually reached -- the catalog's other two servers have never
+    // been seen, and the page has to say so rather than borrow this verdict.
+    sendJson(response, {
+      schema: "autodev-control-mcp-runtime-v1",
+      source: "runtime.telemetry",
+      observedServers: 1,
+      health: {
+        ready: 1,
+        error: 0,
+        stale: 0,
+        configured: 0,
+        observed: 0
+      },
+      servers: [
+        {
+          name: "openaiDeveloperDocs",
+          health: "ready",
+          lastSeenAt: "2026-10-22T12:00:00.000Z",
+          lastStatus: "ready",
+          initAttempts: 2,
+          toolDiscoveryAttempts: 1,
+          failures: 0,
+          toolCalls: 6,
+          averageDurationMs: 128,
+          roles: [
+            {
+              role: "orchestrator",
+              health: "ready",
+              lastSeenAt: "2026-10-22T12:00:00.000Z",
+              lastStatus: "ready"
+            }
+          ],
+          tools: [{ name: "search_docs", count: 6, errors: 0 }]
+        }
+      ]
+    });
+    return true;
+  }
   if (url.pathname === "/control/agents") {
     // Two agents: one whose enablement the Runtime reported and one whose
     // enablement it could not report. The second is the state the Console

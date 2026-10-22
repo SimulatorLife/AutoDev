@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 
+import type {
+  ControlApiMcpRuntimeHealth,
+  ControlApiMcpRuntimeServer
+} from "@simulatorlife/autodev-core";
+
 import { safeMetricLabel } from "./metric-label.ts";
 import {
   autodevEnrichOtlpPayload,
@@ -6110,6 +6115,89 @@ export function codexTelemetryStatus(
   now: number = Date.now()
 ): CodexTelemetryStatus {
   return defaultOtelTracker.codexTelemetryStatus(now);
+}
+
+/**
+ * The Runtime's health verdict for an MCP server, in the Control API's
+ * vocabulary.
+ *
+ * The telemetry records a free-form status; the contract publishes the five
+ * words the Runtime actually uses. Anything else is reported as `stale`: an
+ * unrecognized verdict is not a readiness claim.
+ */
+function mcpHealthVerdict(value: string): ControlApiMcpRuntimeHealth {
+  if (
+    value === "ready" ||
+    value === "error" ||
+    value === "configured" ||
+    value === "observed"
+  ) {
+    return value;
+  }
+  return "stale";
+}
+
+/** Sorts the observed role and tool names the same way every read does. */
+const MCP_OBSERVATION_COLLATOR = new Intl.Collator();
+
+/**
+ * What the Runtime has observed of each MCP server.
+ *
+ * The telemetry already tracks every MCP server the Runtime has seen: the
+ * initialization and tool-discovery attempts, the failures, the call
+ * durations, the roles the server was used from, and the tools it was observed
+ * calling. This projects that per-server view into the shape the Control API
+ * publishes, so the page can show the Runtime's own evidence next to the
+ * canonical declaration instead of a placeholder.
+ *
+ * A server the Runtime has never observed has no evidence at all, which is a
+ * distinct state from a server it observed and counted zero: the first means
+ * "nothing has been seen", the second would mean "something was seen and it
+ * did nothing". The projection therefore carries only the servers the Runtime
+ * actually saw.
+ */
+export function mcpServerObservations(): ControlApiMcpRuntimeServer[] {
+  const telemetry = codexTelemetryStatus();
+  const toolsByServer = new Map<string, ToolResultsRowView[]>();
+  for (const tool of telemetry.tools.byTool) {
+    if (!tool.server) continue;
+    const entries = toolsByServer.get(tool.server) ?? [];
+    entries.push(tool);
+    toolsByServer.set(tool.server, entries);
+  }
+  return telemetry.mcpServers.map((server) => {
+    const tools = toolsByServer.get(server.name) ?? [];
+    return {
+      name: server.name,
+      health: mcpHealthVerdict(server.health),
+      lastSeenAt: server.lastSeenAt,
+      lastStatus: server.lastStatus,
+      initAttempts: server.initAttempts,
+      toolDiscoveryAttempts: server.toolDiscoveryAttempts,
+      failures: server.failures,
+      toolCalls: tools.reduce((total, tool) => total + tool.count, 0),
+      averageDurationMs: server.averageDurationMs,
+      roles: Object.entries(server.byRole)
+        .map(([role, bucket]) => ({
+          role,
+          health: mcpHealthVerdict(bucket.health ?? "stale"),
+          lastSeenAt: bucket.lastSeenAt,
+          lastStatus: bucket.lastStatus
+        }))
+        .sort((left, right) =>
+          MCP_OBSERVATION_COLLATOR.compare(left.role, right.role)
+        ),
+      tools: tools
+        .map((tool) => ({
+          name: tool.tool,
+          count: tool.count,
+          errors: tool.byStatus.error ?? 0
+        }))
+        .sort((left, right) =>
+          MCP_OBSERVATION_COLLATOR.compare(left.name, right.name)
+        )
+    };
+  });
 }
 
 export function otelPersistenceSnapshot(): OtelPersistenceSnapshot {

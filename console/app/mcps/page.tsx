@@ -4,6 +4,7 @@ import React from "react";
 import { McpsView } from "../../src/features/mcps/McpsView.ts";
 import {
   controlApiFailureCode,
+  fetchMcpRuntime,
   fetchMcps
 } from "../../src/lib/server/control-api.ts";
 import {
@@ -28,7 +29,13 @@ export default async function McpsPage(): Promise<React.JSX.Element> {
       controlApiCredentialUnavailable("MCP server configuration")
     );
   }
-  const result = await fetchMcps(config);
+  // Two reads, fetched together. The catalog is the configuration read and
+  // the runtime read is the observation; the page composes them, and neither
+  // read has to carry the other's claim.
+  const [result, runtimeResult] = await Promise.all([
+    fetchMcps(config),
+    fetchMcpRuntime(config)
+  ]);
   if (result.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
@@ -41,6 +48,9 @@ export default async function McpsPage(): Promise<React.JSX.Element> {
     );
   }
   const servers = result.data.servers;
+  // An unreadable observation read is not an empty observation. The page
+  // reports the evidence as unavailable rather than reporting no servers.
+  const runtime = runtimeResult.kind === "ok" ? runtimeResult.data : null;
   return React.createElement(
     ConsolePageShell,
     {
@@ -51,6 +61,7 @@ export default async function McpsPage(): Promise<React.JSX.Element> {
     },
     React.createElement(McpsView, {
       servers,
+      runtime,
       sourceValidity: result.data.valid,
       validationIssues: result.data.issues
     })

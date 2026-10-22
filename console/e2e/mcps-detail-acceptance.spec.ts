@@ -95,6 +95,28 @@ async function assertConnectionIsUnobserved(
   const row = serverRow(page, server);
   const cell = await cellInRow(page, row, CONNECTION_COLUMN);
   await expect(cell).toHaveText(NOT_OBSERVED);
+  await expect(cell.locator("[data-mcp-connection-observed]")).toHaveAttribute(
+    "data-mcp-connection-observed",
+    "false"
+  );
+}
+
+/**
+ * One row whose connection the Runtime has observed, with the health it
+ * reported. The claim is the Runtime's, and the row says which.
+ */
+async function assertConnectionIsObserved(
+  page: Page,
+  server: string,
+  health: string
+): Promise<void> {
+  const row = serverRow(page, server);
+  const cell = await cellInRow(page, row, CONNECTION_COLUMN);
+  await expect(cell).toHaveText(`Runtime health: ${health}`);
+  await expect(cell.locator("[data-mcp-connection-observed]")).toHaveAttribute(
+    "data-mcp-connection-observed",
+    "true"
+  );
 }
 
 /**
@@ -118,7 +140,7 @@ async function assertFitsViewport(page: Page, width: number): Promise<void> {
   expect(await documentFitsViewport(page)).toBe(true);
 }
 
-test("MCPs keeps the declared default state, the missing declaration and the unobserved connection apart", async ({
+test("MCPs keeps the declared default state, the missing declaration and the connection states apart", async ({
   page
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -129,13 +151,24 @@ test("MCPs keeps the declared default state, the missing declaration and the uno
     "data-mcp-source-validity",
     "true"
   );
-  // The connection was not observed, and the page says so instead of
-  // rendering an unobserved connection as a connected one.
-  await expect(page.locator("[data-mcp-connection-observed]")).toHaveAttribute(
-    "data-mcp-connection-observed",
-    "false"
-  );
+  // The connection claim belongs to a server, not to the page: each row says
+  // whether the Runtime has observed that server.
+  await expect(page.locator("[data-mcp-connection-observed]")).toHaveCount(3);
   await expect(page.getByText("Configured MCPs")).toBeVisible();
+  // The summary counts what the Runtime reported, in the Runtime's own
+  // numbers: one server observed, and one of them ready. The card titles are
+  // matched exactly, because "Runtime Health" is also the start of the
+  // per-row connection badge.
+  const observedSummary = page
+    .locator("[data-stat-grid]")
+    .locator("dl")
+    .filter({ has: page.getByText("Observed Servers", { exact: true }) });
+  await expect(observedSummary).toContainText("1");
+  const healthSummary = page
+    .locator("[data-stat-grid]")
+    .locator("dl")
+    .filter({ has: page.getByText("Runtime Health", { exact: true }) });
+  await expect(healthSummary).toContainText("1 ready");
 
   const lsp = serverRow(page, LSP_SERVER);
   await expect(
@@ -191,14 +224,14 @@ test("MCPs keeps the declared default state, the missing declaration and the uno
   await expect(docsTransport).toHaveText("HTTP");
   const docsOverrides = await cellInRow(page, docs, OVERRIDES_COLUMN);
   await expect(docsOverrides).toHaveText("None");
-  await assertConnectionIsUnobserved(page, DOCS_SERVER);
+  // This one the Runtime has observed, so its row reports the health the
+  // Runtime reported rather than the unobserved default.
+  await assertConnectionIsObserved(page, DOCS_SERVER, "ready");
 
-  // Not one row claims a connection: the Connection column is the same
-  // unobserved state on every row.
+  // A row claims a connection only where the Runtime reported one.
   await expect(page.locator("tbody tr")).toHaveCount(3);
   await assertConnectionIsUnobserved(page, LSP_SERVER);
   await assertConnectionIsUnobserved(page, ANTIGRAVITY_SERVER);
-  await assertConnectionIsUnobserved(page, DOCS_SERVER);
   await expect(page.getByText(CONNECTED_CLAIM)).toHaveCount(0);
 });
 
@@ -283,16 +316,18 @@ test("the MCP configuration tab shows the declaration's own fields and no others
   await expect(page.getByText("No explicit target overrides.")).toBeVisible();
 });
 
-test("the MCP tabs that need a live session say that they have not observed one", async ({
+test("the MCP tabs that need a live session or runtime evidence say that they have not observed one", async ({
   page
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
 
+  // This server has never been seen in a session, so the Runtime has no
+  // evidence for it and the tabs say so instead of inventing a connection.
   await assertTabIsUnobserved(
     page,
     LSP_SERVER,
     "connection-health",
-    "Probe status: Not observed"
+    "Runtime evidence: Not observed"
   );
   await assertTabIsUnobserved(
     page,
@@ -310,13 +345,13 @@ test("the MCP tabs that need a live session say that they have not observed one"
     page,
     LSP_SERVER,
     "activity",
-    "Activity: Not observed"
+    "Runtime evidence: Not observed"
   );
   await assertTabIsUnobserved(
     page,
     LSP_SERVER,
     "errors-logs",
-    "Error logs: Not observed"
+    "Runtime evidence: Not observed"
   );
 
   // The Tools tab projects an allowlist, never a live inventory, and the
@@ -416,4 +451,48 @@ test("the MCP detail fits narrow and desktop widths", async ({ page }) => {
   await assertFitsViewport(page, 390);
   await assertFitsViewport(page, 768);
   await assertFitsViewport(page, 1280);
+});
+
+test("the MCP detail reports the runtime's evidence for a server it has observed", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+
+  // The Runtime has seen this server in a session, so the page reports the
+  // evidence the Runtime reported -- it does not derive a verdict from the
+  // declaration.
+  await page.goto(`/mcps/${DOCS_SERVER}?tab=connection-health`);
+  await expect(
+    page.locator('[data-section="mcp-connection-health"]')
+  ).toBeVisible();
+  await expect(page.getByText("Runtime health: ready")).toBeVisible();
+  await expect(page.getByText("2026-10-22T12:00:00.000Z")).toBeVisible();
+  await expect(page.getByText("Initialization attempts")).toBeVisible();
+  await expect(page.getByText("Runtime evidence: Not observed")).toHaveCount(0);
+
+  // The activity is the Runtime's own count of what it saw.
+  await page.goto(`/mcps/${DOCS_SERVER}?tab=activity`);
+  await expect(page.locator('[data-section="mcp-activity"]')).toBeVisible();
+  await expect(page.getByText("Observed calls")).toBeVisible();
+  // The role the server was seen in, both as the summary and as its own row.
+  await expect(
+    page
+      .locator('[data-section="mcp-activity"]')
+      .locator("dd", { hasText: "orchestrator" })
+  ).toBeVisible();
+  await expect(
+    page
+      .locator('[data-section="mcp-activity"]')
+      .locator("dt", { hasText: "orchestrator" })
+  ).toBeVisible();
+
+  // The tools the Runtime saw called are listed as what was seen in use, and
+  // the page keeps them apart from the configured allowlist.
+  await page.goto(`/mcps/${DOCS_SERVER}?tab=tools`);
+  await expect(page.locator('[data-section="mcp-tools"]')).toBeVisible();
+  await expect(page.getByText("Observed tool calls")).toBeVisible();
+  await expect(page.getByText("search_docs")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Configured tool allowlist" })
+  ).toBeVisible();
 });

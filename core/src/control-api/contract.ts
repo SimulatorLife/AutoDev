@@ -21,11 +21,15 @@
  * generation the runtime has observed, and the bounded operation history --
  * so the provider page can show convergence instead of leaving the operator to
  * assume that a saved configuration is a served one.
+ * v12: the Runtime's MCP observations are published on their own read path
+ * (`GET /control/mcp-runtime`) rather than folded into the MCP catalog. The
+ * catalog stays a configuration read, and the MCP page composes the
+ * observation onto the declaration rather than blurring the two.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 11
+  version: 12
 } as const;
 
 export type ControlApiContractResponse = {

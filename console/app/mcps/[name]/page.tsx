@@ -5,6 +5,7 @@ import React from "react";
 import { McpDetailView } from "../../../src/features/mcps/McpDetailView.ts";
 import {
   controlApiFailureCode,
+  fetchMcpRuntime,
   fetchMcps,
   fetchTools
 } from "../../../src/lib/server/control-api.ts";
@@ -62,8 +63,9 @@ export default async function McpDetailPage({
     );
   }
 
-  const [result, toolsResult] = await Promise.all([
+  const [result, runtimeResult, toolsResult] = await Promise.all([
     fetchMcps(config),
+    fetchMcpRuntime(config),
     activeTab === "tools" ? fetchTools(config) : Promise.resolve(null)
   ]);
   if (result.kind !== "ok") {
@@ -81,12 +83,17 @@ export default async function McpDetailPage({
   if (!result.data.valid) notFound();
   const server = result.data.servers.find((entry) => entry.name === name);
   if (!server) notFound();
+  // The whole observation read is handed to the view, which joins it by name:
+  // a server the Runtime has never seen has no record in it, and an
+  // unreadable read is a different state again.
+  const runtime = runtimeResult.kind === "ok" ? runtimeResult.data : null;
 
   return React.createElement(
     ConsolePageShell,
     { section, counts: { MCPs: result.data.servers.length } },
     React.createElement(McpDetailView, {
       server,
+      runtime,
       sourceValidity: result.data.valid,
       configuredTools:
         toolsResult?.kind === "ok" && toolsResult.data.coverage === "partial"

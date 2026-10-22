@@ -1,4 +1,6 @@
 import type {
+  ControlApiMcpRuntimeResponse,
+  ControlApiMcpRuntimeServer,
   McpServerResource,
   ToolCatalogItem
 } from "@simulatorlife/autodev-core";
@@ -37,6 +39,11 @@ import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
+import {
+  McpConnectionBadge,
+  McpObservedTools,
+  McpRuntimeEvidence
+} from "./runtime-evidence.ts";
 
 const CONFIGURED_STATUS = "configured" as const;
 const FLEX_COLUMN_DETAILS_CLASS = "flex flex-col gap-2";
@@ -78,6 +85,15 @@ const DEFAULT_MCP_DETAIL_TAB = "overview";
 
 export interface McpDetailViewProps {
   readonly server: McpServerResource;
+  /**
+   * What the Runtime has observed of the MCP servers it has seen.
+   *
+   * `null` covers the state where the observation read could not be read at
+   * all, and a read that carried no record for this server covers the state
+   * where the Runtime has simply never seen it. Neither is a verdict, so
+   * neither is rendered as one, and the page says which of the two it is.
+   */
+  readonly runtime: ControlApiMcpRuntimeResponse | null;
   readonly sourceValidity: boolean;
   /**
    * Partial projection of explicitly enumerated role MCP/plugin allowlist
@@ -229,8 +245,122 @@ function ConfiguredToolAllowlist({
   );
 }
 
+/**
+ * The activity the Runtime has observed on one server.
+ *
+ * Every count here is the Runtime's own. A server the Runtime has not
+ * observed reports no activity at all rather than reporting zeroes.
+ */
+function ObservedActivity({
+  observation,
+  observationAvailable
+}: {
+  readonly observation: ControlApiMcpRuntimeServer | null;
+  readonly observationAvailable: boolean;
+}): React.JSX.Element {
+  if (!observation) {
+    return React.createElement(McpRuntimeEvidence, {
+      evidence: null,
+      observationAvailable
+    });
+  }
+  return React.createElement(
+    "div",
+    { className: FLEX_COLUMN_DETAILS_CLASS },
+    React.createElement(
+      "dl",
+      { className: "grid grid-cols-1 gap-2 sm:grid-cols-2" },
+      React.createElement(
+        FieldBox,
+        { label: "Observed calls" },
+        String(observation.toolCalls)
+      ),
+      React.createElement(
+        FieldBox,
+        { label: "Average call duration" },
+        `${String(Math.round(observation.averageDurationMs))} ms`
+      ),
+      React.createElement(
+        FieldBox,
+        { label: "Roles observed" },
+        observation.roles.length === 0
+          ? NOT_OBSERVED_LABEL
+          : observation.roles.map((role) => role.role).join(", ")
+      )
+    ),
+    observation.roles.length === 0
+      ? null
+      : React.createElement(
+          "dl",
+          { className: "grid grid-cols-1 gap-2 sm:grid-cols-2" },
+          ...observation.roles.map((role) =>
+            React.createElement(
+              FieldBox,
+              { label: role.role, valueClassName: "text-sm text-fg" },
+              `${role.health}${
+                role.lastSeenAt ? `, last seen ${role.lastSeenAt}` : ""
+              }`
+            )
+          )
+        )
+  );
+}
+
+/**
+ * The failures the Runtime has observed on one server.
+ *
+ * The failure count is the Runtime's own, and a server it has never observed
+ * reports no failures because nothing has been observed, not because nothing
+ * has failed.
+ */
+function ObservedFailures({
+  observation,
+  observationAvailable
+}: {
+  readonly observation: ControlApiMcpRuntimeServer | null;
+  readonly observationAvailable: boolean;
+}): React.JSX.Element {
+  if (!observation) {
+    return React.createElement(McpRuntimeEvidence, {
+      evidence: null,
+      observationAvailable
+    });
+  }
+  return React.createElement(
+    "div",
+    { className: FLEX_COLUMN_DETAILS_CLASS },
+    React.createElement(StatusBadge, {
+      status: observation.failures > 0 ? "error" : "ready",
+      label:
+        observation.failures > 0
+          ? `Failures: ${String(observation.failures)}`
+          : "No failures observed"
+    }),
+    React.createElement(
+      "dl",
+      { className: "grid grid-cols-1 gap-2 sm:grid-cols-2" },
+      React.createElement(
+        FieldBox,
+        { label: "Failed attempts" },
+        String(observation.failures)
+      ),
+      React.createElement(
+        FieldBox,
+        { label: "Last status" },
+        observation.lastStatus
+      )
+    ),
+    React.createElement(
+      "p",
+      { className: MUTED_META_CLASS },
+      "Failure states are reported when the MCP process exits non-zero or returns JSON-RPC protocol error envelopes."
+    )
+  );
+}
+
 export function McpDetailView({
   server,
+  runtime,
   sourceValidity,
   configuredTools,
   activeTab
@@ -241,6 +371,12 @@ export function McpDetailView({
     DEFAULT_MCP_DETAIL_TAB
   );
   const basePath = `/mcps/${encodeURIComponent(server.name)}`;
+  // The observation is joined by name, not assumed: a server the Runtime has
+  // never seen has no observation, and the page says so rather than showing an
+  // empty verdict.
+  const observation =
+    runtime?.servers.find((entry) => entry.name === server.name) ?? null;
+  const observationAvailable = runtime !== null;
 
   const targetOverrides =
     server.targetOverrides.length === 0
@@ -309,13 +445,13 @@ export function McpDetailView({
           { className: SECTION_HEADING_CLASS },
           "Runtime connection"
         ),
-        React.createElement(StatusBadge, {
-          status: NOT_OBSERVED_STATUS
-        }),
+        React.createElement(McpConnectionBadge, { evidence: observation }),
         React.createElement(
           "p",
           { className: `mt-2 ${MUTED_META_CLASS}` },
-          "A canonical declaration does not prove that a server is connected or healthy."
+          observation
+            ? "The Runtime has observed this server; its own verdict and timings are on the Connection / Health tab."
+            : "A canonical declaration does not prove that a server is connected or healthy."
         )
       ),
       React.createElement(
@@ -418,19 +554,10 @@ export function McpDetailView({
         { className: SECTION_HEADING_CLASS },
         "Connection & Health"
       ),
-      React.createElement(
-        "div",
-        { className: FLEX_COLUMN_DETAILS_CLASS },
-        React.createElement(StatusBadge, {
-          status: NOT_OBSERVED_STATUS,
-          label: "Probe status: Not observed"
-        }),
-        React.createElement(
-          "p",
-          { className: MUTED_META_CLASS },
-          "Ping round trip and process health are unprobed in the static configuration. Connection requires an active runtime session."
-        )
-      )
+      React.createElement(McpRuntimeEvidence, {
+        evidence: observation,
+        observationAvailable
+      })
     ),
     tools: React.createElement(
       "section",
@@ -450,7 +577,8 @@ export function McpDetailView({
         { className: `mb-3 ${MUTED_META_CLASS}` },
         "Partial projection of explicitly enumerated role MCP/plugin allowlist tools joined from the Tools capability catalog. Does not imply the remote server is connected or that these are its full live tool inventory."
       ),
-      React.createElement(ConfiguredToolAllowlist, { configuredTools })
+      React.createElement(ConfiguredToolAllowlist, { configuredTools }),
+      React.createElement(McpObservedTools, { evidence: observation })
     ),
     resources: React.createElement(
       "section",
@@ -549,19 +677,10 @@ export function McpDetailView({
         { className: SECTION_HEADING_CLASS },
         "Activity & Telemetry"
       ),
-      React.createElement(
-        "div",
-        { className: FLEX_COLUMN_DETAILS_CLASS },
-        React.createElement(StatusBadge, {
-          status: NOT_OBSERVED_STATUS,
-          label: "Activity: Not observed"
-        }),
-        React.createElement(
-          "p",
-          { className: MUTED_META_CLASS },
-          "Tools, resources, prompts, and activity round-trips are observed by the Codex-tools MCP shim span. No telemetry traces observed for this server."
-        )
-      )
+      React.createElement(ObservedActivity, {
+        observation,
+        observationAvailable
+      })
     ),
     "errors-logs": React.createElement(
       "section",
@@ -575,19 +694,10 @@ export function McpDetailView({
         { className: SECTION_HEADING_CLASS },
         "Errors & Logs"
       ),
-      React.createElement(
-        "div",
-        { className: FLEX_COLUMN_DETAILS_CLASS },
-        React.createElement(StatusBadge, {
-          status: NOT_OBSERVED_STATUS,
-          label: "Error logs: Not observed"
-        }),
-        React.createElement(
-          "p",
-          { className: MUTED_META_CLASS },
-          "No errors observed. Failure states are reported when the MCP process exits non-zero or returns JSON-RPC protocol error envelopes."
-        )
-      )
+      React.createElement(ObservedFailures, {
+        observation,
+        observationAvailable
+      })
     )
   };
 

@@ -33,6 +33,7 @@ import {
   type ControlApiEvaluationsResponse,
   type ControlApiGithubResponse,
   type ControlApiHooksResponse,
+  type ControlApiMcpRuntimeResponse,
   type ControlApiMcpsResponse,
   type ControlApiMemoryCohortsResponse,
   type ControlApiMemoryExperienceDetailResponse,
@@ -751,6 +752,7 @@ export const CONTROL_API_PATHS = {
   providerModels: "/control/provider-models",
   models: "/control/models",
   mcps: "/control/mcps",
+  mcpRuntime: "/control/mcp-runtime",
   tools: "/control/tools",
   skills: "/control/skills",
   hooks: "/control/hooks",
@@ -2077,6 +2079,23 @@ function isMcpTargetOverride(value: unknown): boolean {
 }
 
 /**
+ * Narrows the Runtime's health verdict for a server.
+ *
+ * The verdict is the Runtime's own vocabulary, and the Console publishes the
+ * five words it uses. A verdict outside them is not a readiness claim, and
+ * letting it through would render a status the Console cannot interpret.
+ */
+function isMcpHealthVerdict(value: unknown): boolean {
+  return (
+    value === "configured" ||
+    value === "ready" ||
+    value === "error" ||
+    value === "observed" ||
+    value === "stale"
+  );
+}
+
+/**
  * Narrows one MCP server row. The catalog row is the join of the canonical
  * declaration and the generated role projection, and the view reads every
  * required member of that join: `transport.toUpperCase()` and
@@ -2115,6 +2134,83 @@ function isControlApiMcpsResponse(
     isValidationIssueList(value.issues) &&
     Array.isArray(value.servers) &&
     value.servers.every(isMcpServerRow)
+  );
+}
+
+/**
+ * Narrows one observed MCP server.
+ *
+ * The observation is what the page's Connection/Health, Tools, and Activity
+ * panels render, so every field they read has to be present and typed. A
+ * missing `health` or `lastSeenAt` would render a confident verdict out of
+ * unreadable evidence -- the same failure the server-row guard describes.
+ */
+function isMcpRuntimeServer(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.name === "string" &&
+    isMcpHealthVerdict(value.health) &&
+    (value.lastSeenAt === null || typeof value.lastSeenAt === "string") &&
+    typeof value.lastStatus === "string" &&
+    isNumber(value.initAttempts) &&
+    isNumber(value.toolDiscoveryAttempts) &&
+    isNumber(value.failures) &&
+    isNumber(value.toolCalls) &&
+    isNumber(value.averageDurationMs) &&
+    Array.isArray(value.roles) &&
+    value.roles.every(
+      (role) =>
+        isRecord(role) &&
+        typeof role.role === "string" &&
+        isMcpHealthVerdict(role.health) &&
+        (role.lastSeenAt === null || typeof role.lastSeenAt === "string") &&
+        typeof role.lastStatus === "string"
+    ) &&
+    Array.isArray(value.tools) &&
+    value.tools.every(
+      (tool) =>
+        isRecord(tool) &&
+        typeof tool.name === "string" &&
+        isNumber(tool.count) &&
+        isNumber(tool.errors)
+    )
+  );
+}
+
+/**
+ * Narrows the health counts the Runtime publishes.
+ *
+ * The counts are what the list page's summary reads, so they are checked
+ * rather than assumed: a summary that rendered "0 ready" from a payload the
+ * Console could not read would be a claim the evidence does not support.
+ *
+ * `null` is the Runtime's own word for "the division is unknown" -- a Control
+ * API with no router attached has not been asked -- and it is kept apart from
+ * a set of zero counts, which says the Runtime looked and saw nothing ready.
+ */
+function isMcpRuntimeHealthCounts(value: unknown): boolean {
+  return (
+    value === null ||
+    (isRecord(value) &&
+      isNumber(value.ready) &&
+      isNumber(value.error) &&
+      isNumber(value.stale) &&
+      isNumber(value.configured) &&
+      isNumber(value.observed))
+  );
+}
+
+function isControlApiMcpRuntimeResponse(
+  value: unknown
+): value is ControlApiMcpRuntimeResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-mcp-runtime-v1" &&
+    typeof value.source === "string" &&
+    isNullableNumber(value.observedServers) &&
+    isMcpRuntimeHealthCounts(value.health) &&
+    Array.isArray(value.servers) &&
+    value.servers.every(isMcpRuntimeServer)
   );
 }
 
@@ -2386,6 +2482,28 @@ export async function fetchMcps(
     : invalidResponse("Mcps", "autodev-control-mcps-v1");
 }
 
+/**
+ * Reads the Runtime's observation of the MCP servers it has seen.
+ *
+ * This is a second read, not a wider one: the catalog stays the configuration
+ * read, and the observation arrives on its own path so that a page can compose
+ * the two without the contract claiming that a declared server was reached.
+ */
+export async function fetchMcpRuntime(
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiMcpRuntimeResponse>> {
+  const result = await fetchControlApi<unknown>(
+    CONTROL_API_PATHS.mcpRuntime,
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  return isControlApiMcpRuntimeResponse(result.data)
+    ? { kind: "ok", data: result.data }
+    : invalidResponse("McpRuntime", "autodev-control-mcp-runtime-v1");
+}
+
 export async function fetchTools(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
@@ -2412,6 +2530,14 @@ function isNullableString(value: unknown): value is string | null {
 /** A count the Runtime may legitimately not know, as opposed to counting zero. */
 function isNullableNumber(value: unknown): value is number | null {
   return value === null || typeof value === "number";
+}
+
+/**
+ * Narrows a finite number. A `NaN` or an infinite value would render as a
+ * measurement the Runtime never made.
+ */
+function isNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 /**

@@ -17,6 +17,9 @@ import {
   type ControlApiGithubResponse,
   type ControlApiHooksResponse,
   type ControlApiLiveAgentCounts,
+  type ControlApiMcpRuntimeHealth,
+  type ControlApiMcpRuntimeHealthCounts,
+  type ControlApiMcpRuntimeServer,
   type ControlApiMcpsResponse,
   type ControlApiModelPatchResponse,
   type ControlApiModelsResponse,
@@ -155,6 +158,7 @@ export const CONTROL_API_PATHS = {
   providerModels: "/control/provider-models",
   models: "/control/models",
   mcps: "/control/mcps",
+  mcpRuntime: "/control/mcp-runtime",
   tools: "/control/tools",
   skills: "/control/skills",
   hooks: "/control/hooks",
@@ -373,6 +377,14 @@ const MD_EXTENSION_PATTERN = /\.md$/u;
 const CONTROL_VARY_HEADER = "Authorization, X-AutoDev-Actor";
 const GITHUB_CONTROL_API_SCHEMA = "autodev-control-github-v1";
 const GITHUB_WORKFLOW_YAML_SOURCE = ".github/workflows";
+/**
+ * Where the MCP runtime observations come from.
+ *
+ * Named so the reader can tell an observation apart from a declaration: the
+ * MCP catalog's source is `.rulesync/mcp.jsonc`, and this is the Runtime's own
+ * telemetry of the servers it has seen.
+ */
+const MCP_RUNTIME_EVIDENCE_SOURCE = "runtime.telemetry";
 
 export type ControlApiRole = "viewer" | "operator";
 
@@ -648,8 +660,19 @@ export type ControlApiLiveAgentCountsSource = (
   now: number
 ) => ControlApiLiveAgentCounts;
 
+/**
+ * The Runtime's observation of the MCP servers it has seen.
+ *
+ * Registered by the router, like the live agent counts: a Control API that
+ * runs without a router has no live evidence to publish, and it says so
+ * rather than reporting an empty observation as a fact.
+ */
+export type ControlApiMcpObservationsSource =
+  () => readonly ControlApiMcpRuntimeServer[];
+
 let providerHealthSource: ControlApiProviderHealthSource | null = null;
 let liveAgentCountsSource: ControlApiLiveAgentCountsSource | null = null;
+let mcpObservationsSource: ControlApiMcpObservationsSource | null = null;
 let providerModelDiscoverySource:
   (() => ControlApiProviderModelsResponse) | null = null;
 
@@ -672,6 +695,17 @@ export function setControlApiLiveAgentCountsSource(
   source: ControlApiLiveAgentCountsSource | null
 ): void {
   liveAgentCountsSource = source;
+}
+
+/**
+ * The router registers its observation of the MCP servers it has seen here.
+ * Without a registered source the MCP runtime read reports the evidence as
+ * unavailable rather than reporting an empty observation.
+ */
+export function setControlApiMcpObservationsSource(
+  source: ControlApiMcpObservationsSource | null
+): void {
+  mcpObservationsSource = source;
 }
 
 /** Register the Runtime-owned provider model discovery snapshot. */
@@ -1006,6 +1040,57 @@ function assignableRoles(): string[] {
   return Object.keys(roles).sort((left, right) =>
     CONTROL_API_COLLATOR.compare(left, right)
   );
+}
+
+/**
+ * The Runtime's observation of the MCP servers it has seen.
+ *
+ * This is published on its own path rather than folded into the MCP catalog.
+ * The catalog answers "what is declared"; this answers "what has the Runtime
+ * actually reached". A page composes the two, and the contract keeps them
+ * apart so that a server's presence in the catalog never reads as evidence
+ * that the server was reached.
+ *
+ * The observations arrive through a registered source rather than through a
+ * direct call into the router's telemetry, for the same reason the live agent
+ * counts do: a Control API with no router attached has no live evidence, and
+ * it says so rather than reporting an empty observation as a fact.
+ */
+function mcpRuntimeView(): Record<string, unknown> {
+  // `null` means no observation source is attached: the Runtime could not be
+  // asked, which is a different fact from having observed no server at all.
+  const observed = mcpObservationsSource?.() ?? null;
+  const servers = observed ?? [];
+  // Accumulated in a mutable local and frozen into the published shape: the
+  // contract's counts are readonly, so they are built rather than incremented
+  // in place.
+  const counts: Record<ControlApiMcpRuntimeHealth, number> = {
+    ready: 0,
+    error: 0,
+    stale: 0,
+    configured: 0,
+    observed: 0
+  };
+  for (const server of servers) {
+    counts[server.health] += 1;
+  }
+  const health: ControlApiMcpRuntimeHealthCounts | null =
+    observed === null
+      ? null
+      : {
+          ready: counts.ready,
+          error: counts.error,
+          stale: counts.stale,
+          configured: counts.configured,
+          observed: counts.observed
+        };
+  return {
+    schema: "autodev-control-mcp-runtime-v1",
+    source: MCP_RUNTIME_EVIDENCE_SOURCE,
+    observedServers: observed === null ? null : servers.length,
+    health,
+    servers
+  };
 }
 
 function mcpsView(): Record<string, unknown> {
@@ -3932,6 +4017,7 @@ const READ_ONLY_COLLECTIONS: ReadonlyMap<string, ReadOnlyCollectionRenderer> =
     [CONTROL_API_PATHS.providerModels, () => providerModelsView()],
     [CONTROL_API_PATHS.models, () => modelsView()],
     [CONTROL_API_PATHS.mcps, () => mcpsView()],
+    [CONTROL_API_PATHS.mcpRuntime, () => mcpRuntimeView()],
     [CONTROL_API_PATHS.tools, () => toolsView()],
     [CONTROL_API_PATHS.skills, (_actor, root) => skillsView(root)],
     [CONTROL_API_PATHS.hooks, (_actor, root) => hooksView(root)],

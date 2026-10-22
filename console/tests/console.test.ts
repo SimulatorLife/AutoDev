@@ -17,6 +17,7 @@ import {
   CANONICAL_NAVIGATION,
   type CanonicalNavSection,
   type ControlApiAgentDetailResponse,
+  type ControlApiMcpRuntimeResponse,
   type ControlApiMemoryWhyResponse,
   type ControlApiModelsResponse,
   type ControlApiPromptDetailResponse,
@@ -225,6 +226,7 @@ import {
   fetchEvaluations,
   fetchGithubWorkflows,
   fetchHooks,
+  fetchMcpRuntime,
   fetchMcps,
   fetchMemoryCohorts,
   fetchMemoryExperienceOutcomes,
@@ -360,6 +362,23 @@ const UNOBSERVED_GIT_CHANGES = {
   commitsByProvider: null,
   commitsByAgent: null
 } satisfies UsageGitChangeMetrics;
+
+/**
+ * The Runtime's MCP observation read, answered: the Runtime was asked and has
+ * seen no MCP server.
+ *
+ * This is a finding, not a gap, and the page renders it differently from an
+ * unreadable read (`runtime: null`). Most MCP renders want it: a server the
+ * Runtime has never reached is the interesting case, and it is the one that
+ * has to read `Not observed` rather than blank.
+ */
+const NO_MCP_OBSERVATIONS: ControlApiMcpRuntimeResponse = {
+  schema: "autodev-control-mcp-runtime-v1",
+  source: "runtime.telemetry",
+  observedServers: 0,
+  health: { ready: 0, error: 0, stale: 0, configured: 0, observed: 0 },
+  servers: []
+};
 
 /**
  * Desired-vs-actual evidence for an agent. The detail response guard treats this
@@ -531,9 +550,14 @@ test("missing evidence is reported in one word, from one constant", () => {
 
   // And the constant is what the pages actually render, so the guard above
   // cannot pass against a word that nothing ships.
+  //
+  // The MCP page's missing evidence is the observation read the Runtime could
+  // not answer. A read it answered with nothing is a finding, not a gap, and
+  // the page reports that instead of borrowing the missing-evidence word.
   const unobserved = renderToStaticMarkup(
     React.createElement(McpsView, {
       servers: [],
+      runtime: null,
       sourceValidity: true,
       validationIssues: []
     })
@@ -3574,6 +3598,7 @@ test("no column is narrower than its own header", () => {
             roles: ["docs-researcher"]
           }
         ],
+        runtime: NO_MCP_OBSERVATIONS,
         sourceValidity: true,
         validationIssues: []
       })
@@ -4769,6 +4794,7 @@ test("McpsView never reports 'Connected' or '100%' without runtime evidence", ()
           targetOverrides: [{ target: "codexcli", enabled: false }]
         }
       ],
+      runtime: NO_MCP_OBSERVATIONS,
       sourceValidity: true,
       validationIssues: []
     })
@@ -4785,6 +4811,118 @@ test("McpsView never reports 'Connected' or '100%' without runtime evidence", ()
   assert.match(markup, /href="\/mcps\/playwright"/);
 });
 
+test("McpsView reports the runtime's connection per server rather than for the page", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(McpsView, {
+      servers: [
+        {
+          name: "lsp",
+          enabled: true,
+          transport: "stdio",
+          declared: true,
+          roles: ["orchestrator"],
+          targetOverrides: []
+        },
+        {
+          name: "playwright",
+          enabled: false,
+          transport: "stdio",
+          declared: true,
+          roles: ["browser-tester"],
+          targetOverrides: []
+        }
+      ],
+      runtime: {
+        schema: "autodev-control-mcp-runtime-v1",
+        source: "runtime.telemetry",
+        observedServers: 1,
+        health: {
+          ready: 1,
+          error: 0,
+          stale: 0,
+          configured: 0,
+          observed: 0
+        },
+        servers: [
+          {
+            name: "lsp",
+            health: "ready",
+            lastSeenAt: "2026-10-22T12:00:00.000Z",
+            lastStatus: "ready",
+            initAttempts: 1,
+            toolDiscoveryAttempts: 1,
+            failures: 0,
+            toolCalls: 4,
+            averageDurationMs: 42,
+            roles: [],
+            tools: []
+          }
+        ]
+      },
+      sourceValidity: true,
+      validationIssues: []
+    })
+  );
+  // The server the Runtime has observed says so, in its own row.
+  assert.match(markup, /data-mcp-connection-observed="true"/);
+  assert.match(markup, /data-mcp-runtime-health="ready"/);
+  assert.match(markup, /Runtime health: ready/);
+  // The server it has never seen stays unobserved, and the two claims are not
+  // merged into one for the page.
+  assert.match(markup, /data-mcp-connection-observed="false"/);
+  assert.equal(markup.includes("Connected"), false);
+});
+
+test("McpsView reports an unavailable observation read as unavailable, not as an empty observation", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(McpsView, {
+      servers: [
+        {
+          name: "lsp",
+          enabled: true,
+          transport: "stdio",
+          declared: true,
+          roles: ["orchestrator"],
+          targetOverrides: []
+        }
+      ],
+      runtime: null,
+      sourceValidity: true,
+      validationIssues: []
+    })
+  );
+  // An unreadable read is not a read of nothing. The summary says the evidence
+  // is unavailable rather than reporting zero observed servers.
+  assert.match(markup, /Observed Servers/);
+  assert.match(markup, /Runtime observation unavailable/);
+  assert.match(markup, /data-mcp-connection-observed="false"/);
+});
+
+test("McpsView reports an observation of nothing as nothing, not as an unavailable read", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(McpsView, {
+      servers: [
+        {
+          name: "lsp",
+          enabled: true,
+          transport: "stdio",
+          declared: true,
+          roles: ["orchestrator"],
+          targetOverrides: []
+        }
+      ],
+      runtime: NO_MCP_OBSERVATIONS,
+      sourceValidity: true,
+      validationIssues: []
+    })
+  );
+  // The Runtime was asked and has seen no MCP server. That is a finding, and
+  // the page says so instead of calling the evidence unavailable.
+  assert.match(markup, /Observed Servers/);
+  assert.doesNotMatch(markup, /Runtime observation unavailable/);
+  assert.match(markup, />0</);
+});
+
 test("McpDetailView combines canonical desired state with unknown runtime health", () => {
   const server: McpServerResource = {
     name: "context7",
@@ -4797,6 +4935,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
   const overviewMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools: null,
       server,
       activeTab: "overview"
@@ -4811,6 +4950,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
   const configurationMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools: null,
       server,
       activeTab: "configuration"
@@ -4821,6 +4961,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
   const roleAccessMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools: null,
       server,
       activeTab: "role-access"
@@ -4831,6 +4972,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
   const toolsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools: null,
       server,
       activeTab: "tools"
@@ -4844,12 +4986,14 @@ test("McpDetailView combines canonical desired state with unknown runtime health
   const activityMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools: null,
       server,
       activeTab: "activity"
     })
   );
-  assert.match(activityMarkup, /Tools, resources, prompts, and activity/);
+  assert.match(activityMarkup, /Runtime evidence: Not observed/);
+  assert.match(activityMarkup, /A declaration is not a reached server/);
 });
 
 test("McpDetailView renders populated configured tool allowlist from the Tools capability projection", () => {
@@ -4882,6 +5026,7 @@ test("McpDetailView renders populated configured tool allowlist from the Tools c
   const toolsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools,
       server,
       activeTab: "tools"
@@ -4900,13 +5045,117 @@ test("McpDetailView renders populated configured tool allowlist from the Tools c
   const activityMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools,
       server,
       activeTab: "activity"
     })
   );
   assert.match(activityMarkup, /Not observed/);
-  assert.match(activityMarkup, /Tools, resources, prompts, and activity/);
+  assert.match(activityMarkup, /Runtime evidence: Not observed/);
+  assert.match(activityMarkup, /A declaration is not a reached server/);
+});
+
+test("McpDetailView renders the runtime's own evidence for a server it has observed", () => {
+  const server: McpServerResource = {
+    name: "context7",
+    enabled: true,
+    transport: "http",
+    targetOverrides: [],
+    declared: true,
+    roles: ["docs-researcher"]
+  };
+  const runtime: ControlApiMcpRuntimeResponse = {
+    schema: "autodev-control-mcp-runtime-v1",
+    source: "runtime.telemetry",
+    observedServers: 1,
+    health: {
+      ready: 1,
+      error: 0,
+      stale: 0,
+      configured: 0,
+      observed: 0
+    },
+    servers: [
+      {
+        name: "context7",
+        health: "ready",
+        lastSeenAt: "2026-10-22T12:00:00.000Z",
+        lastStatus: "ready",
+        initAttempts: 2,
+        toolDiscoveryAttempts: 1,
+        failures: 0,
+        toolCalls: 7,
+        averageDurationMs: 128.4,
+        roles: [
+          {
+            role: "docs-researcher",
+            health: "ready",
+            lastSeenAt: "2026-10-22T12:00:00.000Z",
+            lastStatus: "ready"
+          }
+        ],
+        tools: [{ name: "resolve-library-id", count: 5, errors: 0 }]
+      }
+    ]
+  };
+
+  const connectionHealthMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      runtime,
+      configuredTools: null,
+      server,
+      activeTab: "connection-health"
+    })
+  );
+  // The verdict is the Runtime's, and the page shows it as reported.
+  assert.match(connectionHealthMarkup, /Runtime health: ready/);
+  assert.match(connectionHealthMarkup, /2026-10-22T12:00:00.000Z/);
+  assert.match(connectionHealthMarkup, /Initialization attempts/);
+  assert.match(connectionHealthMarkup, /Tool discovery attempts/);
+  assert.doesNotMatch(connectionHealthMarkup, /Runtime evidence: Not observed/);
+
+  const overviewMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      runtime,
+      configuredTools: null,
+      server,
+      activeTab: "overview"
+    })
+  );
+  // The overview's connection panel carries the same claim as the row list.
+  assert.match(overviewMarkup, /Runtime health: ready/);
+
+  const activityMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      runtime,
+      configuredTools: null,
+      server,
+      activeTab: "activity"
+    })
+  );
+  assert.match(activityMarkup, /Observed calls/);
+  assert.match(activityMarkup, /docs-researcher/);
+  assert.match(activityMarkup, /Average call duration/);
+
+  const toolsMarkup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      runtime,
+      configuredTools: null,
+      server,
+      activeTab: "tools"
+    })
+  );
+  // The observed calls are listed as what was seen in use, and the page keeps
+  // them apart from the configured allowlist above them.
+  assert.match(toolsMarkup, /Observed tool calls/);
+  assert.match(toolsMarkup, /resolve-library-id/);
+  assert.match(toolsMarkup, /what was seen in use/);
+  assert.match(toolsMarkup, /Configured tool allowlist/);
 });
 
 test("McpDetailView distinguishes no enumerated allowlist entries from an empty live inventory", () => {
@@ -4921,6 +5170,7 @@ test("McpDetailView distinguishes no enumerated allowlist entries from an empty 
   const toolsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools: [],
       server,
       activeTab: "tools"
@@ -4938,6 +5188,7 @@ test("McpDetailView distinguishes no enumerated allowlist entries from an empty 
   const overviewMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools: [],
       server,
       activeTab: "overview"
@@ -4958,6 +5209,7 @@ test("McpDetailView distinguishes an unavailable tool source from an empty allow
   const toolsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools: null,
       server,
       activeTab: "tools"
@@ -4974,12 +5226,14 @@ test("McpDetailView distinguishes an unavailable tool source from an empty allow
   const activityMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools: null,
       server,
       activeTab: "activity"
     })
   );
-  assert.match(activityMarkup, /Tools, resources, prompts, and activity/);
+  assert.match(activityMarkup, /Runtime evidence: Not observed/);
+  assert.match(activityMarkup, /A declaration is not a reached server/);
   assert.match(activityMarkup, /Not observed/);
 });
 
@@ -5018,6 +5272,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
   const configurationMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools,
       server,
       activeTab: "configuration"
@@ -5034,6 +5289,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
   const connectionHealthMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools,
       server,
       activeTab: "connection-health"
@@ -5041,11 +5297,12 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
   );
   assert.match(connectionHealthMarkup, /data-section="mcp-connection-health"/);
   assert.match(connectionHealthMarkup, /Connection &amp; Health/);
-  assert.match(connectionHealthMarkup, /Probe status: Not observed/);
+  assert.match(connectionHealthMarkup, /Runtime evidence: Not observed/);
 
   const roleAccessMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools,
       server,
       activeTab: "role-access"
@@ -5056,6 +5313,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
   const toolsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools,
       server,
       activeTab: "tools"
@@ -5066,6 +5324,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
   const resourcesMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools,
       server,
       activeTab: "resources"
@@ -5077,6 +5336,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
   const promptsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools,
       server,
       activeTab: "prompts"
@@ -5088,24 +5348,26 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
   const activityMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools,
       server,
       activeTab: "activity"
     })
   );
   assert.match(activityMarkup, /data-section="mcp-activity"/);
-  assert.match(activityMarkup, /Activity: Not observed/);
+  assert.match(activityMarkup, /Runtime evidence: Not observed/);
 
   const errorsLogsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools,
       server,
       activeTab: "errors-logs"
     })
   );
   assert.match(errorsLogsMarkup, /data-section="mcp-errors-logs"/);
-  assert.match(errorsLogsMarkup, /Error logs: Not observed/);
+  assert.match(errorsLogsMarkup, /Runtime evidence: Not observed/);
 });
 
 test("MCP_DETAIL_TABS declares the exact target-state tab order and count", () => {
@@ -5152,6 +5414,7 @@ test("McpDetailView tab navigation renders all nine tabs as deterministic, URL-a
   const markup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools: null,
       server,
       activeTab: "resources"
@@ -5190,6 +5453,7 @@ test("McpDetailView falls back to the Overview tab for an unknown or missing ?ta
   const unknownTabMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools: null,
       server,
       activeTab: "not-a-real-tab"
@@ -5206,6 +5470,7 @@ test("McpDetailView falls back to the Overview tab for an unknown or missing ?ta
   const missingTabMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools: null,
       server
     })
@@ -5244,6 +5509,7 @@ test("McpDetailView renders exactly one data-section panel per tab with no conte
     const markup = renderToStaticMarkup(
       React.createElement(McpDetailView, {
         sourceValidity: true,
+        runtime: NO_MCP_OBSERVATIONS,
         configuredTools,
         server,
         activeTab: tab.id
@@ -5316,6 +5582,7 @@ test("McpDetailView labels execution-contract role assignments as configured acc
   const markup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
       configuredTools: [],
       server,
       activeTab: "role-access"
@@ -5339,6 +5606,7 @@ test("McpsView renders an explicit empty configured-role scope", () => {
           targetOverrides: []
         }
       ],
+      runtime: NO_MCP_OBSERVATIONS,
       sourceValidity: true,
       validationIssues: []
     })
@@ -5351,6 +5619,7 @@ test("McpsView distinguishes invalid canonical configuration from an empty list"
   const markup = renderToStaticMarkup(
     React.createElement(McpsView, {
       servers: [],
+      runtime: NO_MCP_OBSERVATIONS,
       sourceValidity: false,
       validationIssues: []
     })
@@ -5360,7 +5629,17 @@ test("McpsView distinguishes invalid canonical configuration from an empty list"
   assert.match(markup, /Configured MCPs/);
   assert.match(markup, />Invalid</);
   assert.match(markup, /no MCP configuration was projected/);
-  assert.doesNotMatch(markup, /Configured MCPs[\s\S]*?>0</);
+  // The configured-count card must not report a count of zero: the source
+  // declares servers that could not be applied, so zero would be a claim the
+  // evidence does not support. Scoped to that card, because the observation
+  // summary beside it may legitimately report a count of its own.
+  const configuredCard = markup.slice(markup.indexOf("Configured MCPs"));
+  assert.ok(configuredCard.length > 0);
+  assert.doesNotMatch(
+    configuredCard.slice(0, configuredCard.indexOf("</dl>")),
+    />0</,
+    "an invalid source must not report a count of configured servers"
+  );
 });
 
 test("SkillsView never reports 'Active' or 'Recorded' without OTel evidence", () => {
@@ -13103,6 +13382,72 @@ test("Catalog collections fail closed on unreadable responses", async () => {
     "invalid-response"
   );
 
+  // The runtime observation read fails closed the same way. Its verdict is
+  // what the page shows as the server's health, so an unreadable verdict must
+  // not reach the page as a default.
+  const mcpRuntime = {
+    schema: "autodev-control-mcp-runtime-v1",
+    source: "runtime.telemetry",
+    observedServers: 1,
+    health: {
+      ready: 1,
+      error: 0,
+      stale: 0,
+      configured: 0,
+      observed: 0
+    },
+    servers: [
+      {
+        name: "lsp",
+        health: "ready",
+        lastSeenAt: "2026-10-22T12:00:00.000Z",
+        lastStatus: "ready",
+        initAttempts: 1,
+        toolDiscoveryAttempts: 1,
+        failures: 0,
+        toolCalls: 4,
+        averageDurationMs: 42,
+        roles: [],
+        tools: []
+      }
+    ]
+  };
+  assert.equal((await fetchMcpRuntime(config, serve(mcpRuntime))).kind, "ok");
+  for (const broken of [
+    { ...mcpRuntime, schema: "autodev-control-mcp-runtime-v0" },
+    { ...mcpRuntime, observedServers: "1" },
+    { ...mcpRuntime, health: { ...mcpRuntime.health, ready: "1" } },
+    { ...mcpRuntime, servers: {} },
+    // A verdict outside the Runtime's vocabulary is not a readiness claim, so
+    // it must not be rendered as one.
+    {
+      ...mcpRuntime,
+      servers: [{ ...mcpRuntime.servers[0], health: "healthy" }]
+    },
+    {
+      ...mcpRuntime,
+      servers: [{ ...mcpRuntime.servers[0], lastSeenAt: 17 }]
+    },
+    {
+      ...mcpRuntime,
+      servers: [{ ...mcpRuntime.servers[0], toolCalls: "4" }]
+    },
+    {
+      ...mcpRuntime,
+      servers: [{ ...mcpRuntime.servers[0], tools: [{ name: "x" }] }]
+    },
+    {
+      ...mcpRuntime,
+      servers: [{ ...mcpRuntime.servers[0], roles: [{ role: "x" }] }]
+    }
+  ]) {
+    assert.equal(
+      (await fetchMcpRuntime(config, serve(broken))).kind,
+      "invalid-response",
+      JSON.stringify(broken)
+    );
+  }
+
   const tools = {
     schema: "autodev-control-tools-v2",
     source: "catalog",
@@ -15517,6 +15862,7 @@ test("every detail view titles its resource with the one canonical entity title"
       "context7",
       React.createElement(McpDetailView, {
         sourceValidity: true,
+        runtime: NO_MCP_OBSERVATIONS,
         configuredTools: null,
         server: {
           name: "context7",
@@ -18346,6 +18692,7 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     renderToStaticMarkup(
       React.createElement(McpsView, {
         servers: [mcpRow as never],
+        runtime: NO_MCP_OBSERVATIONS,
         sourceValidity: true,
         validationIssues: []
       })
@@ -21106,6 +21453,7 @@ test("an invalid MCP source names the declaration it could not apply, like every
   const markup = renderToStaticMarkup(
     React.createElement(McpsView, {
       servers: [],
+      runtime: NO_MCP_OBSERVATIONS,
       sourceValidity: false,
       validationIssues: [
         {
@@ -21131,6 +21479,7 @@ test("a valid MCP source renders no validation panel", () => {
   const markup = renderToStaticMarkup(
     React.createElement(McpsView, {
       servers: [],
+      runtime: NO_MCP_OBSERVATIONS,
       sourceValidity: true,
       validationIssues: []
     })

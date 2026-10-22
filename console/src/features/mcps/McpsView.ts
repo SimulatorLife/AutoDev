@@ -1,4 +1,5 @@
 import type {
+  ControlApiMcpRuntimeResponse,
   McpServerResource,
   RuleSyncValidationIssue
 } from "@simulatorlife/autodev-core";
@@ -22,18 +23,30 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { MONO_ID_LINK_CLASS } from "../../components/ui/text-classes.ts";
+import { McpConnectionBadge } from "./runtime-evidence.ts";
 
 /**
  * MCP servers resource view.
  *
- * This view combines canonical RuleSync declarations with configured role
- * assignments, but connection state remains unobserved until a Runtime probe
- * reports it. Only explicit target overrides are shown; missing entries are
- * not inferred.
+ * This view composes two reads that stay separate on purpose. The catalog
+ * says what each server *is* -- the canonical RuleSync declaration and the
+ * generated role projection. The Runtime's observation says what it has
+ * *reached*. A server the Runtime has never seen says "Not observed", and a
+ * declared server is never presented as a connected one.
  */
 
 export interface McpsViewProps {
   readonly servers: readonly McpServerResource[];
+  /**
+   * What the Runtime has observed of the MCP servers it has seen.
+   *
+   * `null` means the observation read was unavailable, which is a different
+   * state from an observation of nothing: the first says the evidence could
+   * not be read, the second says the Runtime has seen no MCP server at all.
+   * The Runtime's own summary carries the same distinction in its nullable
+   * counts, so the page never has to infer one from the other.
+   */
+  readonly runtime: ControlApiMcpRuntimeResponse | null;
   readonly sourceValidity: boolean | null;
   /**
    * Why the source is invalid.
@@ -48,9 +61,13 @@ export interface McpsViewProps {
 
 export function McpsView({
   servers,
+  runtime,
   validationIssues,
   sourceValidity
 }: McpsViewProps): React.JSX.Element {
+  const observations = new Map(
+    (runtime?.servers ?? []).map((server) => [server.name, server] as const)
+  );
   const columns: ColumnDef<McpServerResource>[] = [
     {
       id: "name",
@@ -190,19 +207,39 @@ export function McpsView({
       // Carries the same "Not observed" badge as Default State, so it needs the
       // same 128px of badge.
       weight: 190,
-      cell: () =>
-        React.createElement(StatusBadge, {
-          status: NOT_OBSERVED_STATUS
-        })
+      // The connection claim is the Runtime's, and it is per server: a server
+      // the Runtime has observed reports the health it reported, and a server
+      // it has never seen stays "Not observed". The cell carries the flag so
+      // the claim is readable per row rather than once for the page.
+      cell: (server) => {
+        const observation = observations.get(server.name);
+        return React.createElement(
+          "span",
+          {
+            "data-mcp-connection-observed": observation ? "true" : "false",
+            ...(observation
+              ? { "data-mcp-runtime-health": observation.health }
+              : {})
+          },
+          React.createElement(McpConnectionBadge, {
+            evidence: observation ?? null
+          })
+        );
+      }
     }
   ];
+
+  const observedServers = runtime?.observedServers ?? null;
+  const readyServers = runtime?.health?.ready ?? null;
 
   return React.createElement(
     PageBody,
     {
       feature: "mcps",
       attributes: {
-        "data-mcp-connection-observed": "false",
+        // The connection claim moved to the rows. The page used to carry one
+        // flag for the whole list, which could not say which server the
+        // observation belonged to; the cell carries it now, per server.
         "data-mcp-source-validity":
           sourceValidity === null ? NOT_OBSERVED_STATUS : String(sourceValidity)
       }
@@ -226,14 +263,25 @@ export function McpsView({
         subtitle: "RuleSync declaration"
       }),
       React.createElement(StatCard, {
-        title: "Active Shims",
-        value: NOT_OBSERVED_LABEL,
-        subtitle: "Awaiting runtime probe"
+        title: "Observed Servers",
+        value: observedServers ?? NOT_OBSERVED_LABEL,
+        subtitle:
+          observedServers === null
+            ? "Runtime observation unavailable"
+            : "Reached by the Runtime"
       }),
       React.createElement(StatCard, {
-        title: "Health",
-        value: NOT_OBSERVED_LABEL,
-        subtitle: "No runtime probe yet"
+        title: "Runtime Health",
+        value:
+          readyServers === null
+            ? NOT_OBSERVED_LABEL
+            : readyServers === 0
+              ? "None ready"
+              : `${String(readyServers)} ready`,
+        subtitle:
+          readyServers === null
+            ? "No runtime observation"
+            : "Runtime's own verdict"
       })
     ),
     React.createElement(

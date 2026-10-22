@@ -88,6 +88,7 @@ import {
 import {
   handleControlApiRequest,
   setControlApiLiveAgentCountsSource,
+  setControlApiMcpObservationsSource,
   setControlApiProviderHealthSource
 } from "../control-api/index.ts";
 import {
@@ -100,6 +101,7 @@ import {
   codexTelemetryStatus,
   getDefaultOtelTracker,
   ingestOtelSignal,
+  mcpServerObservations,
   OTEL_HEALTH_TTL_MS,
   otelPersistenceSnapshot,
   otelTelemetry,
@@ -1359,6 +1361,10 @@ function controlApiProviderHealth(
 }
 setControlApiProviderHealthSource(controlApiProviderHealth);
 setControlApiLiveAgentCountsSource(controlApiLiveAgentCounts);
+// The MCP observations are the router's own telemetry of the MCP servers it
+// has reached, so the Control API publishes them rather than reaching into
+// the tracker itself.
+setControlApiMcpObservationsSource(mcpServerObservations);
 
 function buildRouterStatus(
   now = Date.now(),

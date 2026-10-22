@@ -444,7 +444,137 @@ export interface ControlApiMcpsResponse {
    * server, it could not apply.
    */
   readonly issues: readonly RuleSyncValidationIssue[];
+  /**
+   * The canonical declaration of every MCP server, and nothing else.
+   *
+   * This is a configuration read. It says what each server *is*; it says
+   * nothing about whether the Runtime has reached it, and a server listed
+   * here has not thereby been observed. The Runtime's observations live on
+   * their own read path (`ControlApiMcpRuntimeResponse`) so that the
+   * configuration stays a configuration read.
+   */
   readonly servers: readonly McpServerResource[];
+}
+
+/**
+ * The Runtime's health vocabulary for an MCP server.
+ *
+ * `ready` and `error` are verdicts. `configured` means the Runtime saw the
+ * server named in a session but never exercised it, and `observed` means it
+ * saw a span that carried no readiness signal -- neither is a correctness
+ * claim. `stale` means the Runtime saw the server, but not recently enough to
+ * call it ready.
+ */
+export type ControlApiMcpRuntimeHealth =
+  "configured" | "ready" | "error" | "observed" | "stale";
+
+/**
+ * What the Runtime has observed of one MCP server.
+ *
+ * The declaration in `.rulesync/mcp.jsonc` says what the server *is*; this is
+ * what the Runtime has *seen* of it. The two are different questions, and the
+ * page has to keep them apart: a declared server is not a reached server, and
+ * a server the Runtime has not observed is not a broken one.
+ *
+ * Every field is an observation the Runtime recorded, not a conclusion drawn
+ * from the declaration.
+ */
+export interface ControlApiMcpRuntimeEvidence {
+  /** The Runtime's health verdict for the server. */
+  readonly health: ControlApiMcpRuntimeHealth;
+  /** When the Runtime last saw the server. */
+  readonly lastSeenAt: string | null;
+  /** The status of the last observation, as the Runtime recorded it. */
+  readonly lastStatus: string;
+  /** How many times the Runtime has tried to initialize the server. */
+  readonly initAttempts: number;
+  /** How many times the Runtime has tried to discover the server's tools. */
+  readonly toolDiscoveryAttempts: number;
+  /** How many of the Runtime's attempts on this server failed. */
+  readonly failures: number;
+  /**
+   * How many tool calls the Runtime has observed on this server.
+   *
+   * The count is of calls the Runtime saw, not of tools the server offers: a
+   * server that was initialized but never called has no calls here.
+   */
+  readonly toolCalls: number;
+  /** The mean duration of the server's observed calls, in milliseconds. */
+  readonly averageDurationMs: number;
+  /** The roles the Runtime has observed this server used from. */
+  readonly roles: readonly {
+    readonly role: string;
+    readonly health: ControlApiMcpRuntimeHealth;
+    readonly lastSeenAt: string | null;
+    readonly lastStatus: string;
+  }[];
+  /**
+   * The tools the Runtime has observed being called on this server.
+   *
+   * This is the set of tools that were *seen in use*, not the server's tool
+   * inventory: a tool the server offers but nothing has called is absent, and
+   * a tool the server no longer offers may still be listed. The page says so
+   * rather than presenting the list as the server's live inventory.
+   */
+  readonly tools: readonly {
+    readonly name: string;
+    readonly count: number;
+    readonly errors: number;
+  }[];
+}
+
+/**
+ * One MCP server as the Runtime has observed it.
+ *
+ * The observation carries the server's name so that the read can be joined
+ * against the canonical declaration without the two paths having to be merged
+ * into one payload.
+ */
+export interface ControlApiMcpRuntimeServer extends ControlApiMcpRuntimeEvidence {
+  readonly name: string;
+}
+
+/**
+ * How many observed servers sit in each health verdict.
+ *
+ * The Runtime owns this vocabulary and these counts, so the Console renders
+ * them rather than counting the servers itself and arriving at a health
+ * summary of its own.
+ */
+export interface ControlApiMcpRuntimeHealthCounts {
+  readonly ready: number;
+  readonly error: number;
+  readonly stale: number;
+  readonly configured: number;
+  readonly observed: number;
+}
+
+/**
+ * The Runtime's observation of the MCP servers it has seen.
+ *
+ * This is published on its own path rather than folded into the MCP catalog,
+ * because the two answer different questions and the catalog is a
+ * configuration read. A page composes them; the contract keeps them apart.
+ */
+export interface ControlApiMcpRuntimeResponse {
+  readonly schema: "autodev-control-mcp-runtime-v1";
+  /** Where the observations come from. */
+  readonly source: string;
+  /**
+   * How many MCP servers the Runtime has observed.
+   *
+   * `null` when no live observation source is attached: the Runtime could not
+   * be asked, which is a different fact from having observed no server at all.
+   */
+  readonly observedServers: number | null;
+  /**
+   * How the observed servers divide across the health vocabulary.
+   *
+   * `null` for the same reason as `observedServers`: the division is unknown
+   * until the Runtime has been asked.
+   */
+  readonly health: ControlApiMcpRuntimeHealthCounts | null;
+  readonly servers: readonly ControlApiMcpRuntimeServer[];
 }
 
 export interface ControlApiToolsResponse {

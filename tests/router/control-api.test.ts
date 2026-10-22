@@ -31,6 +31,7 @@ import {
   githubWorkflowsView,
   handleControlApiRequest,
   setControlApiLiveAgentCountsSource,
+  setControlApiMcpObservationsSource,
   setControlApiProviderHealthSource,
   setControlApiProviderModelDiscoverySource,
   setGithubActionsAdapterForTests
@@ -448,6 +449,27 @@ test("viewer reads control resources; MCP and Skills views contain configuration
     assert.equal(canonicalLsp.declared, true);
     assert.deepEqual(canonicalLsp.roles, []);
     assert.equal("mcpSummary" in mcps.body, false);
+    // The catalog is a configuration read, so no row carries the Runtime's
+    // observation of that server either.
+    assert.equal(
+      mcps.body.servers.every(
+        (server: { runtime?: unknown }) => !("runtime" in server)
+      ),
+      true
+    );
+
+    // The Runtime's observations live on their own read path, so the catalog
+    // stays a configuration read and the two are composed by the page. With
+    // no router attached there is no live evidence to publish, and the read
+    // says so rather than reporting an empty observation as a fact.
+    const mcpRuntime = await call("GET", CONTROL_API_PATHS.mcpRuntime, {
+      actor: "viewer-a"
+    });
+    assert.equal(mcpRuntime.response.statusCode, 200);
+    assert.equal(mcpRuntime.body.schema, "autodev-control-mcp-runtime-v1");
+    assert.equal(mcpRuntime.body.observedServers, null);
+    assert.equal(mcpRuntime.body.health, null);
+    assert.deepEqual(mcpRuntime.body.servers, []);
 
     const skills = await call("GET", CONTROL_API_PATHS.skills, {
       actor: "viewer-a"
@@ -493,6 +515,59 @@ test("viewer reads control resources; MCP and Skills views contain configuration
     );
   } finally {
     setExecutionContractForTests(priorContract);
+    restoreEnv(saved);
+  }
+});
+
+test("Control API publishes the Runtime's MCP observations on their own read path", async () => {
+  const saved = saveEnv();
+  const observation = {
+    name: "lsp",
+    health: "ready" as const,
+    lastSeenAt: "2026-10-22T12:00:00.000Z",
+    lastStatus: "ready",
+    initAttempts: 1,
+    toolDiscoveryAttempts: 1,
+    failures: 0,
+    toolCalls: 3,
+    averageDurationMs: 42,
+    roles: [],
+    tools: [{ name: "lsp_goto_definition", count: 3, errors: 0 }]
+  };
+  try {
+    configure();
+    setControlApiMcpObservationsSource(() => [observation]);
+    const read = await call("GET", CONTROL_API_PATHS.mcpRuntime, {
+      actor: "viewer-a"
+    });
+    assert.equal(read.response.statusCode, 200);
+    assert.equal(read.body.schema, "autodev-control-mcp-runtime-v1");
+    // The Runtime's own record, published as it was reported: the read does
+    // not derive a verdict of its own.
+    assert.deepEqual(read.body.servers, [observation]);
+    assert.equal(read.body.observedServers, 1);
+    assert.deepEqual(read.body.health, {
+      ready: 1,
+      error: 0,
+      stale: 0,
+      configured: 0,
+      observed: 0
+    });
+
+    // The catalog beside it stays a configuration read, so the observation
+    // does not leak into the declaration.
+    const mcps = await call("GET", CONTROL_API_PATHS.mcps, {
+      actor: "viewer-a"
+    });
+    assert.equal(mcps.response.statusCode, 200);
+    assert.equal(
+      mcps.body.servers.every(
+        (server: { runtime?: unknown }) => !("runtime" in server)
+      ),
+      true
+    );
+  } finally {
+    setControlApiMcpObservationsSource(null);
     restoreEnv(saved);
   }
 });
