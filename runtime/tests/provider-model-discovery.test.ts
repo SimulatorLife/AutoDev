@@ -1,12 +1,6 @@
 import assert from "node:assert/strict";
 import type { spawn } from "node:child_process";
-import {
-  chmodSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync
-} from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -215,105 +209,141 @@ test("MiniMax model discovery refuses malformed and oversized listings", async (
   );
 });
 
-/**
- * Codex discovery asks the Codex CLI for its version before it queries the
- * account, so a test that exercises the discovery itself has to answer that
- * question. A host without a Codex installation cannot, and a test that waits
- * for one measures the host rather than the discovery.
- */
-async function withFakeCodexBinary<T>(callback: () => Promise<T>): Promise<T> {
-  const directory = mkdtempSync(join(tmpdir(), "autodev-codex-model-list-"));
-  const binary = join(directory, "codex");
-  const previousCodexBin = process.env.CODEX_BIN;
-  writeFileSync(binary, "#!/bin/sh\nprintf 'codex-cli 0.154.0\\n'\n");
-  chmodSync(binary, 0o755);
-  process.env.CODEX_BIN = binary;
-  try {
-    return await callback();
-  } finally {
-    if (previousCodexBin === undefined) delete process.env.CODEX_BIN;
-    else process.env.CODEX_BIN = previousCodexBin;
-    rmSync(directory, { recursive: true, force: true });
-  }
-}
-
 test("Codex discovery queries the authenticated account model endpoint", async () => {
-  await withFakeCodexBinary(async () => {
-    const requests: Array<{
-      url: string;
-      authorization: string | null;
-      accountId: string | null;
-    }> = [];
-    const models = await discoverCodexModels(
-      async (input, init) => {
-        const headers = new Headers(init?.headers);
-        requests.push({
-          url: String(input),
-          authorization: headers.get("authorization"),
-          accountId: headers.get("chatgpt-account-id")
-        });
-        return Response.json({
-          models: [
-            { slug: "gpt-6-luna", display_name: "GPT-6 Luna" },
-            { slug: "codex-new-account-model", display_name: "New Model" }
-          ]
-        });
-      },
-      async () => ({
-        token: "fixture-account-token",
-        accountId: "fixture-account"
-      })
-    );
+  const requests: Array<{
+    url: string;
+    authorization: string | null;
+    accountId: string | null;
+  }> = [];
+  const models = await discoverCodexModels(
+    async (input, init) => {
+      const headers = new Headers(init?.headers);
+      requests.push({
+        url: String(input),
+        authorization: headers.get("authorization"),
+        accountId: headers.get("chatgpt-account-id")
+      });
+      return Response.json({
+        models: [
+          {
+            slug: "gpt-6-luna",
+            display_name: "GPT-6 Luna",
+            visibility: "list",
+            supported_in_api: true
+          },
+          {
+            slug: "codex-new-account-model",
+            display_name: "New Model",
+            visibility: "list",
+            supported_in_api: true
+          }
+        ]
+      });
+    },
+    async () => ({
+      token: "fixture-account-token",
+      accountId: "fixture-account"
+    })
+  );
 
-    assert.deepEqual(models, [
-      { id: "gpt-6-luna", displayName: "GPT-6 Luna" },
-      { id: "codex-new-account-model", displayName: "New Model" }
-    ]);
-    assert.deepEqual(requests, [
-      {
-        url: "https://chatgpt.com/backend-api/codex/models?client_version=0.154.0",
-        authorization: "Bearer fixture-account-token",
-        accountId: "fixture-account"
-      }
-    ]);
-    assert.deepEqual(
-      parseCodexModelList({ models: [] }),
-      [],
-      "an empty successful account listing is an observation"
-    );
-  });
+  assert.deepEqual(models, [
+    { id: "gpt-6-luna", displayName: "GPT-6 Luna" },
+    { id: "codex-new-account-model", displayName: "New Model" }
+  ]);
+  assert.deepEqual(requests, [
+    {
+      url: "https://chatgpt.com/backend-api/codex/models?client_version=0.999.0",
+      authorization: "Bearer fixture-account-token",
+      accountId: "fixture-account"
+    }
+  ]);
+  assert.deepEqual(
+    parseCodexModelList({ models: [] }),
+    [],
+    "an empty successful account listing is an observation"
+  );
+});
+
+/**
+ * The account model list is filtered by the client version the caller
+ * declares. The Runtime drives the Codex backend directly, so the installed
+ * CLI's release is not a bound on what the Runtime can use: declaring it
+ * hid the models the Runtime's own routing configuration selects, while the
+ * Runtime drove them successfully all the same.
+ */
+test("Codex discovery does not narrow the account list by the installed CLI version", async () => {
+  const requested: string[] = [];
+  await discoverCodexModels(
+    async (input) => {
+      requested.push(
+        new URL(String(input)).searchParams.get("client_version") ?? ""
+      );
+      return Response.json({ models: [] });
+    },
+    async () => ({
+      token: "fixture-account-token",
+      accountId: "fixture-account"
+    })
+  );
+  assert.deepEqual(requested, ["0.999.0"]);
+});
+
+/**
+ * The account keeps platform-internal models out of a model picker and marks
+ * the ones it does not serve through the API. Offering them as role
+ * assignments would offer a choice the provider itself does not offer.
+ */
+test("Codex discovery offers only the models the account lists for a picker", () => {
+  assert.deepEqual(
+    parseCodexModelList({
+      models: [
+        { slug: "gpt-6-luna", display_name: "GPT-6 Luna", visibility: "list" },
+        { slug: "gpt-reserve", visibility: "hide" },
+        {
+          slug: "codex-auto-review",
+          visibility: "hide",
+          supported_in_api: true
+        },
+        {
+          slug: "gpt-5.6-sol",
+          display_name: "GPT-5.6 Sol",
+          visibility: "list",
+          supported_in_api: false
+        }
+      ]
+    }),
+    [{ id: "gpt-6-luna", displayName: "GPT-6 Luna" }]
+  );
 });
 
 test("Codex discovery rejects malformed account listings without leaking auth", async () => {
-  await withFakeCodexBinary(async () => {
-    await assert.rejects(
-      discoverCodexModels(
-        async () => Response.json({ models: [{ slug: "invalid/model" }] }),
-        async () => ({ token: "fixture-secret", accountId: "fixture-account" })
-      ),
-      /invalid or duplicate model ID/u
-    );
-    await assert.rejects(
-      discoverCodexModels(
-        async () => {
-          throw new Error("network error");
-        },
-        async () => {
-          throw new Error(
-            "invalid auth at /private/path with secret fixture-secret"
-          );
-        }
-      ),
-      (error: Error) => {
-        assert.equal(
-          error.message,
-          "Codex account authentication is unavailable for model discovery."
+  await assert.rejects(
+    discoverCodexModels(
+      async () => Response.json({ models: [{ slug: "invalid/model" }] }),
+      async () => ({ token: "fixture-secret", accountId: "fixture-account" })
+    ),
+    /invalid or duplicate model ID/u
+  );
+  await assert.rejects(
+    discoverCodexModels(
+      async () => {
+        throw new Error("network error");
+      },
+      async () => {
+        throw new Error(
+          "invalid auth at /private/path with secret fixture-secret"
         );
-        assert.doesNotMatch(error.message, /fixture-secret|private\/path/u);
-        return true;
       }
-    );
-  });
+    ),
+    (error: Error) => {
+      assert.equal(
+        error.message,
+        "Codex account authentication is unavailable for model discovery."
+      );
+      assert.doesNotMatch(error.message, /fixture-secret|private\/path/u);
+      return true;
+    }
+  );
 });
 
 test("discovery snapshots distinguish observed-empty, unavailable, and unsupported routes", async () => {

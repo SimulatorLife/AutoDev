@@ -88,6 +88,8 @@ test("the Codex model list tolerates an account-sized metadata payload", () => {
     models: Array.from({ length: 6 }, (_, index) => ({
       slug: `gpt-6-model-${index}`,
       display_name: `GPT 6 Model ${index}`,
+      visibility: "list",
+      supported_in_api: true,
       base_instructions: filler,
       model_messages: filler
     }))

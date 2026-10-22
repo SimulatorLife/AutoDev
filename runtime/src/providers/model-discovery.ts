@@ -8,7 +8,6 @@ import type {
   ControlApiProviderModelDiscovery,
   ControlApiProviderModelsResponse
 } from "@simulatorlife/autodev-core";
-import { resolveCodexBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import { providerQuotaPool } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 import { loadCodexAuth } from "../router/proxy.ts";
@@ -35,12 +34,27 @@ const ANTHROPIC_API_VERSION = "2023-06-01";
 const ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20";
 const CODEX_BACKEND_BASE_URL = "https://chatgpt.com/backend-api/codex";
 const CODEX_MODEL_LIST_URL = `${CODEX_BACKEND_BASE_URL}/models`;
+/**
+ * The client version the Runtime declares to the Codex account model list.
+ *
+ * The endpoint filters the account's models by the client version the caller
+ * declares, so a client that is not the Codex CLI has to declare a version of
+ * its own. The Runtime drives the Codex backend directly: it does not spawn
+ * the Codex CLI, and it sends no client version with inference requests, so
+ * the installed CLI's release is not a bound on what the Runtime can use.
+ * Declaring the installed CLI's version hid the models the Runtime's own
+ * routing configuration selects -- `gpt-6-sol` and `gpt-6-luna` need a
+ * client at 0.155.0 -- while the Runtime drove them successfully all the
+ * same. The Runtime declares a version above every client release, so the
+ * listing is the account's own model set: the set an operator may assign to
+ * a role.
+ */
+const CODEX_ACCOUNT_CLIENT_VERSION = "0.999.0";
 const MAX_DISCOVERED_MODELS = 512;
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const PROVIDER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const DISPLAY_NAME_LIMIT = 256;
 const MODEL_LIST_LINE_SPLIT = /\r?\n/u;
-const CODEX_CLI_VERSION_PATTERN = /^codex-cli\s+(\d+\.\d+\.\d+)$/u;
 const TRAILING_SLASH_PATTERN = /\/+$/u;
 const MODEL_DISCOVERY_COLLATOR = new Intl.Collator();
 const DISCOVERY_PERSISTENCE_SCHEMA =
@@ -524,7 +538,7 @@ export function parseCodexModelList(
     );
   }
   const seen = new Set<string>();
-  return payload.models.map((entry) => {
+  return payload.models.flatMap((entry) => {
     if (!isRecord(entry)) {
       throw new Error("Codex model-list response contained an invalid entry.");
     }
@@ -543,93 +557,19 @@ export function parseCodexModelList(
       );
     }
     seen.add(id);
-    return {
-      id,
-      displayName: typeof displayName === "string" ? displayName : null
-    };
-  });
-}
-
-function codexClientVersion(
-  env: NodeJS.ProcessEnv,
-  signal: AbortSignal
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new Error("Codex model discovery was cancelled."));
-      return;
-    }
-
-    let binary: string;
-    try {
-      binary = resolveCodexBinary(env);
-    } catch {
-      reject(
-        new Error("Codex CLI version is unavailable for model discovery.")
-      );
-      return;
-    }
-
-    const child = spawn(binary, ["--version"], {
-      cwd: env.HOME?.trim() || homedir(),
-      env,
-      stdio: ["ignore", "pipe", "ignore"]
-    });
-    const chunks: Buffer[] = [];
-    let byteLength = 0;
-    let settled = false;
-    let forceKill: ReturnType<typeof setTimeout> | null = null;
-    const terminate = (): void => {
-      child.kill("SIGTERM");
-      if (forceKill !== null) return;
-      forceKill = setTimeout(() => child.kill("SIGKILL"), 250);
-      forceKill.unref();
-    };
-    const finish = (error?: Error, version?: string): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal.removeEventListener("abort", abort);
-      if (error) reject(error);
-      else resolve(version ?? "");
-    };
-    const abort = (): void => {
-      terminate();
-      finish(new Error("Codex model discovery was cancelled."));
-    };
-    const timer = setTimeout(() => {
-      terminate();
-      finish(new Error("Codex CLI version lookup timed out."));
-    }, 2000);
-    timer.unref();
-    signal.addEventListener("abort", abort, { once: true });
-    child.stdout.on("data", (chunk: Buffer) => {
-      byteLength += chunk.length;
-      if (byteLength > 1024) {
-        terminate();
-        finish(new Error("Codex CLI version output exceeded its bound."));
-        return;
+    // The account marks the models it keeps out of a model picker
+    // (`visibility: "hide"`) and the ones it does not serve through the
+    // API. Those are platform-internal models -- a reserved capacity pool,
+    // the automatic reviewer -- and offering them as role assignments would
+    // be offering a choice the provider itself does not offer.
+    if (entry.visibility !== "list" || entry.supported_in_api === false)
+      return [];
+    return [
+      {
+        id,
+        displayName: typeof displayName === "string" ? displayName : null
       }
-      chunks.push(chunk);
-    });
-    child.once("error", () => {
-      finish(new Error("Codex CLI version lookup could not be started."));
-    });
-    child.once("close", (code) => {
-      if (forceKill !== null) clearTimeout(forceKill);
-      if (settled) return;
-      if (code !== 0) {
-        finish(new Error("Codex CLI version lookup failed."));
-        return;
-      }
-      const output = Buffer.concat(chunks).toString("utf8").trim();
-      const match = CODEX_CLI_VERSION_PATTERN.exec(output);
-      if (!match?.[1]) {
-        finish(new Error("Codex CLI returned an unrecognized version."));
-        return;
-      }
-      finish(undefined, match[1]);
-    });
+    ];
   });
 }
 
@@ -652,8 +592,6 @@ function codexRouteUsesAccountBackend(): boolean {
 export async function discoverCodexModels(
   fetchImpl: typeof fetch = globalThis.fetch,
   loadAuth: typeof loadCodexAuth = loadCodexAuth,
-  getClientVersion: (signal: AbortSignal) => Promise<string> = (signal) =>
-    codexClientVersion(process.env, signal),
   parentSignal?: AbortSignal
 ): Promise<readonly ProviderModelDiscoveryItem[]> {
   if (!codexRouteUsesAccountBackend()) {
@@ -677,9 +615,8 @@ export async function discoverCodexModels(
   if (signal.aborted) {
     throw new Error("Codex model discovery was cancelled.");
   }
-  const clientVersion = await getClientVersion(signal);
   const url = new URL(CODEX_MODEL_LIST_URL);
-  url.searchParams.set("client_version", clientVersion);
+  url.searchParams.set("client_version", CODEX_ACCOUNT_CLIENT_VERSION);
 
   const response = await fetchImpl(url, {
     method: "GET",
@@ -708,18 +645,11 @@ export async function discoverCodexModels(
 }
 
 function codexModelAdapter(
-  env: NodeJS.ProcessEnv = process.env,
   fetchImpl: typeof fetch = globalThis.fetch
 ): ProviderModelDiscoveryAdapter {
   return {
     source: "Codex account GET /backend-api/codex/models",
-    discover: (signal) =>
-      discoverCodexModels(
-        fetchImpl,
-        loadCodexAuth,
-        (parentSignal) => codexClientVersion(env, parentSignal),
-        signal
-      )
+    discover: (signal) => discoverCodexModels(fetchImpl, loadCodexAuth, signal)
   };
 }
 
