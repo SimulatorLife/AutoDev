@@ -1532,16 +1532,23 @@ export class RuleSyncRepository {
     }
     if (!changedPaths.split("\n").includes(command.path)) return null;
 
+    const updatedAt = tryGit(
+      git,
+      ["show", "--no-patch", "--format=%cI", versionHash],
+      1024
+    );
+    if (updatedAt === null) {
+      throw new RuleSyncCommandHistoryUnavailableError(
+        "The selected command version could not be read."
+      );
+    }
+    if (!Number.isFinite(Date.parse(updatedAt))) {
+      throw new RuleSyncCommandHistoryUnavailableError(
+        "Git returned malformed command version metadata."
+      );
+    }
+
     try {
-      const updatedAt = git(
-        ["show", "--no-patch", "--format=%cI", versionHash],
-        1024
-      ).trim();
-      if (!updatedAt || !Number.isFinite(Date.parse(updatedAt))) {
-        throw new RuleSyncCommandHistoryUnavailableError(
-          "Git returned malformed command version metadata."
-        );
-      }
       const content = git(
         ["show", `${versionHash}:${command.path}`],
         COMMAND_CONTENT_MAX_BYTES
