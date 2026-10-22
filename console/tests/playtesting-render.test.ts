@@ -1619,9 +1619,34 @@ test("a session row says when only part of the workspace's reviews was read", ()
 });
 
 test("the session list offers a search that the server applies", () => {
+  const searched = scope({ view: "sessions", q: "ep-b141d962" });
   const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionsWorkspace, {
+      scope: searched,
+      rows: [],
+      total: 0,
+      nextCursor: null
+    })
+  );
+  // The search is a form that carries the rest of the scope, so it reaches
+  // the server rather than filtering the page in the browser.
+  assert.match(html, /aria-label="Session search"/u);
+  assert.match(html, /name="q"/u);
+  assert.match(html, /value="ep-b141d962"/u);
+  // The field keeps an accessible name of its own.
+  assert.match(html, /for="filter-q"/u);
+  assert.match(html, /Search sessions/u);
+  // It carries the workspace and the view with it, so a search does not drop
+  // the operator out of the scope they are in.
+  assert.match(html, /name="workspaceId" value="owner\/game"/u);
+  assert.match(html, /name="view" value="sessions"/u);
+
+  // And it is the only search: the Filters panel carries the other filters,
+  // not a second copy of this one. It does carry the term, so applying a
+  // filter does not quietly drop the search.
+  const view = renderToStaticMarkup(
     React.createElement(PlaytestingView, {
-      scope: scope({ view: "sessions", q: "ep-b141d962" }),
+      scope: searched,
       workspaces: [
         { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
       ],
@@ -1633,10 +1658,6 @@ test("the session list offers a search that the server applies", () => {
       }
     })
   );
-  // The search is a field of the filter form, so it is submitted with the
-  // rest of the filters and reaches the server rather than filtering the
-  // page in the browser.
-  assert.match(html, /name="q"/u);
-  assert.match(html, /Search sessions/u);
-  assert.match(html, /value="ep-b141d962"/u);
+  assert.doesNotMatch(view, /type="search"/u);
+  assert.match(view, /name="q" value="ep-b141d962"/u);
 });

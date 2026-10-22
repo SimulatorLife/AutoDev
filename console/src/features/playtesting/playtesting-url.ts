@@ -552,3 +552,30 @@ export function playtestingFilterHref(
     filters
   });
 }
+
+/**
+ * The scope a form must carry so that submitting it does not quietly undo
+ * what the operator has already chosen.
+ *
+ * A GET form rebuilds the query string from its own controls, so anything the
+ * form does not represent is lost when it is submitted. `except` names the
+ * filters the form owns: they are carried by the form's own controls, and
+ * carrying them a second time would submit the same name twice.
+ */
+export function playtestingPreservedFields(
+  scope: PlaytestingScope,
+  except: readonly PlaytestingFilterKey[]
+): readonly { readonly name: string; readonly value: string }[] {
+  const preserved: { name: string; value: string }[] = [];
+  if (scope.view !== "overview")
+    preserved.push({ name: "view", value: scope.view });
+  if (scope.workspaceId)
+    preserved.push({ name: "workspaceId", value: scope.workspaceId });
+  preserved.push({ name: "layout", value: scope.layout });
+  for (const key of PLAYTESTING_FILTER_KEYS) {
+    if (except.includes(key)) continue;
+    const value = scope.filters[key];
+    if (value) preserved.push({ name: key, value });
+  }
+  return preserved;
+}

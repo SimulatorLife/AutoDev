@@ -59,13 +59,13 @@ import {
   reviewClaimStatusLabel
 } from "./playtesting-labels.ts";
 import {
-  PLAYTESTING_FILTER_KEYS,
   PLAYTESTING_PAGE_SIZES,
   PLAYTESTING_REVIEW_DETAIL_ANCHOR_ID,
   playtestingEpisodeHref,
   playtestingFilterHref,
   type PlaytestingFilterKey,
   playtestingPageHref,
+  playtestingPreservedFields,
   playtestingReviewCloseHref,
   playtestingReviewHref,
   type PlaytestingScope,
@@ -159,23 +159,6 @@ export interface PlaytestingViewProps {
   readonly sessionsWorkspace?: React.ReactNode | undefined;
 }
 
-function preserveForFilterForm(
-  scope: PlaytestingScope,
-  editable: readonly PlaytestingFilterKey[]
-): readonly { readonly name: string; readonly value: string }[] {
-  const preserved: { name: string; value: string }[] = [];
-  if (scope.view !== "overview")
-    preserved.push({ name: "view", value: scope.view });
-  if (scope.workspaceId)
-    preserved.push({ name: "workspaceId", value: scope.workspaceId });
-  for (const key of PLAYTESTING_FILTER_KEYS) {
-    if (editable.includes(key)) continue;
-    const value = scope.filters[key];
-    if (value) preserved.push({ name: key, value });
-  }
-  return preserved;
-}
-
 function textFilter(
   label: string,
   name: PlaytestingFilterKey,
@@ -225,7 +208,6 @@ function filterFields(scope: PlaytestingScope): {
   const editable: PlaytestingFilterKey[] = [];
   if (scope.view === "sessions") {
     editable.push(
-      "q",
       "buildSha",
       "scenario",
       "policy",
@@ -234,7 +216,6 @@ function filterFields(scope: PlaytestingScope): {
       "gameOutcome"
     );
     children.push(
-      textFilter("Search sessions", "q", scope.filters.q),
       textFilter("Build SHA", "buildSha", scope.filters.buildSha),
       textFilter("Scenario", "scenario", scope.filters.scenario),
       textFilter("Policy", "policy", scope.filters.policy),
@@ -813,7 +794,7 @@ function analystReviewDetail(
       React.createElement(
         "h3",
         { className: SECTION_HEADING_CLASS },
-        `What the analyst concluded (${String(review.hypotheses.length)})`
+        `The analyst's conclusions (${String(review.hypotheses.length)})`
       ),
       review.hypotheses.length === 0
         ? React.createElement(
@@ -1705,7 +1686,7 @@ function workspaceControls(
       React.createElement(FilterBar, {
         label: "Playtesting filters",
         action: "/playtesting",
-        preserved: preserveForFilterForm(scope, fields.editable),
+        preserved: playtestingPreservedFields(scope, fields.editable),
         summary: scope.workspaceId
           ? `Workspace: ${scope.workspaceId}`
           : "Choose a workspace to read playtest data.",

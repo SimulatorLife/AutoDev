@@ -7,6 +7,10 @@ import {
 } from "@simulatorlife/autodev-core";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 
+import {
+  FilterBar,
+  FilterSearchField
+} from "../../components/filters/FilterBar.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
@@ -28,6 +32,7 @@ import {
   type PlaytestingLayout,
   playtestingListHref,
   playtestingPageHref,
+  playtestingPreservedFields,
   type PlaytestingScope
 } from "./playtesting-url.ts";
 import { PlaytestingSelectionPanel } from "./PlaytestingSelectionPanel.ts";
@@ -51,6 +56,35 @@ function selectionFromLocation(): {
     rejected: scope.invalidSelection,
     layout: scope.layout
   };
+}
+
+/**
+ * The session search, above the list it narrows.
+ *
+ * The search is a server-side filter -- the whole archive, not the page on
+ * screen -- so it is a GET form that carries the rest of the scope, not a
+ * control that filters what has already been loaded.
+ *
+ * It sits above the list rather than inside the Filters panel because that is
+ * where a reader looks for it: a search hidden behind a disclosure is a
+ * search most readers never find.
+ */
+function sessionSearchBar(scope: PlaytestingScope): React.JSX.Element {
+  return React.createElement(FilterBar, {
+    label: "Session search",
+    action: "/playtesting",
+    preserved: playtestingPreservedFields(scope, ["q"]),
+    submitLabel: "Search",
+    submitTestId: "playtesting-session-search",
+    dataAttributes: { "data-session-search": "true" },
+    children: React.createElement(FilterSearchField, {
+      name: "q",
+      defaultValue: scope.filters.q ?? "",
+      label: "Search sessions",
+      placeholder: "Session id, batch, scenario",
+      testId: "playtesting-session-query"
+    })
+  });
 }
 
 export function PlaytestingSessionsWorkspace({
@@ -173,6 +207,7 @@ export function PlaytestingSessionsWorkspace({
   return React.createElement(
     React.Fragment,
     null,
+    sessionSearchBar(scope),
     React.createElement(
       "section",
       {
