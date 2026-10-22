@@ -303,6 +303,9 @@ function VisualPlaytestLaunchCockpit({
   );
   const selectedPolicyAvailable = selectedPolicy?.status === "ready";
 
+  const launching = Boolean(
+    launchRecovery.pending || launchRecovery.pendingLaunch
+  );
   const canSubmit = Boolean(
     !launchRecovery.pending &&
     launchRecovery.recoveryReady &&
@@ -407,7 +410,11 @@ function VisualPlaytestLaunchCockpit({
       {
         type: "button",
         variant: "primary",
-        disabled: !canSubmit,
+        // A launch in flight is a working control, not an unavailable one: the
+        // operator keeps their focus on the action they started. Everything
+        // that makes a launch impossible stays a disabled control.
+        disabled: !canSubmit && !launching,
+        busy: launching,
         onClick: handleLaunch,
         className:
           "inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-6 py-3.5 text-base font-semibold shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
