@@ -201,7 +201,8 @@ test("an unrecognised code still falls through rather than guessing", async () =
   const markup = renderToStaticMarkup(
     React.createElement(ControlFailureNotice, { refusal: "runtime_refused" })
   );
-  const detail = /<span class="[^"]*">([^<]+)</u.exec(markup)?.[1] ?? "";
+  const detail =
+    /data-control-refusal-detail[^>]*>([^<]+)/u.exec(markup)?.[1] ?? "";
   assert.doesNotMatch(
     detail,
     /citing|citation|scope|conflict|stale|not permitted|unreachable/u,
@@ -257,7 +258,8 @@ test("every refusal the route can emit has a sentence of its own", async () => {
     const markup = renderToStaticMarkup(
       React.createElement(ControlFailureNotice, { refusal: reason })
     );
-    const detail = /<span class="[^"]*">([^<]+)</u.exec(markup)?.[1] ?? "";
+    const detail =
+      /data-control-refusal-detail[^>]*>([^<]+)/u.exec(markup)?.[1] ?? "";
     assert.ok(
       detail.length > 30,
       `${reason} must render a real explanation, got: ${JSON.stringify(detail)}`

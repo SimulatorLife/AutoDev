@@ -19469,7 +19469,7 @@ test("the failure notice adds a reason only when the route observed one", () => 
   );
   assert.doesNotMatch(
     plain,
-    /<span/u,
+    /data-control-refusal-detail/u,
     "the shared notice must not grow a detail line it has no reason for"
   );
 
@@ -19488,7 +19488,8 @@ test("the failure notice adds a reason only when the route observed one", () => 
       `${refusal} must be recorded for assertions`
     );
     // The detail must say something, or the line is decoration.
-    const detail = /<span class="[^"]*">([^<]+)</u.exec(markup)?.[1] ?? "";
+    const detail =
+      /data-control-refusal-detail[^>]*>([^<]+)</u.exec(markup)?.[1] ?? "";
     assert.ok(
       detail.length > 30,
       `${refusal} must render a real explanation, got: ${JSON.stringify(detail)}`

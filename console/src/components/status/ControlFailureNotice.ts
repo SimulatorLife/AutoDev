@@ -78,6 +78,13 @@ const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
  * It carries the shared warning callout rather than its own geometry, so a
  * mutation that could not be confirmed looks like every other warning the
  * Console shows.
+ *
+ * It stays. The root feedback owner is what ends a result: it announces the
+ * outcome, counts the five seconds down and sends the operator here for the
+ * reason -- "The server could not save these changes. Review the notice on
+ * this page." A notice that left on its own would leave that pointer aimed at
+ * nothing, and the reason is the one thing the operator has to act on. The
+ * countdown lives in one place, so there is one set of words for it.
  */
 export function ControlFailureNotice({
   refusal
@@ -95,6 +102,13 @@ export function ControlFailureNotice({
     "The change could not be confirmed. Check the current state before retrying.",
     detail === undefined
       ? null
-      : React.createElement("span", { className: "mt-1 block" }, detail)
+      : React.createElement(
+          "span",
+          {
+            className: "mt-1 block",
+            "data-control-refusal-detail": "true"
+          },
+          detail
+        )
   );
 }
