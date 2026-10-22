@@ -118,6 +118,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 import {
+  installedSkillMatches,
   materializeCommands,
   materializeRuleSyncSkillProjections
 } from "../platform/install-materializer.ts";
@@ -378,6 +379,11 @@ export type ControlApiRole = "viewer" | "operator";
 export interface ControlApiRequestOptions {
   readonly repositoryRoot?: string;
   readonly codexHome?: string;
+  /**
+   * The user's home directory, which is where the runtime's skills are
+   * installed. The host owns it; a request never chooses it.
+   */
+  readonly home?: string;
   /** Test seams for Data-owned readers; never supplied by a request. */
   readonly playtestingRepository?: PlaytestingControlRepository;
   readonly playtestingHumanStudyRepository?: PlaytestingHumanStudyRepository;
@@ -2338,6 +2344,59 @@ function promptReconciliationView(args: {
   });
 }
 
+/**
+ * The reconciliation view for one canonical RuleSync skill.
+ *
+ * A skill reaches the runtime differently from a command: the installer links
+ * the canonical source into the user's skills directory, so the runtime reads
+ * the canonical source itself rather than a copy of it. The observation is
+ * therefore a live fact -- the runtime's installed skill is this source, or it
+ * is not -- and not an apply that has to be refreshed.
+ *
+ * So the observed generation is the canonical revision whenever the installed
+ * link holds this source, and `null` when it does not. A skill that was never
+ * written through the Console is still observed, because the runtime reads the
+ * same file the operator is editing; a skill whose link is missing or points
+ * somewhere else is not observed at all, and the Console says so rather than
+ * claiming the two agree.
+ */
+function skillReconciliationView(args: {
+  readonly name: string;
+  readonly repositoryRoot: string;
+  readonly home: string;
+  readonly desiredRevision: string;
+}): {
+  readonly status: ReconciliationStatus;
+  readonly history: readonly OperationHistoryEntry[];
+} {
+  const resource = `${CONTROL_API_PATHS.skills}/${args.name}/content`;
+  const desiredGeneration = promptGeneration(args.desiredRevision);
+  const latest = findLatestAuditFor(resource);
+  const installed = installedSkillMatches({
+    repositoryRoot: args.repositoryRoot,
+    home: args.home,
+    name: args.name
+  });
+  const observedGeneration = installed ? desiredGeneration : null;
+  const evidence: ReconciliationEvidence = {
+    desiredGeneration,
+    observedGeneration,
+    lastApplyAt: latest?.timestamp ?? null,
+    // The observation is the link, and the link is read now, so the time of
+    // the observation is the time of this read rather than the time of an
+    // apply that refreshed a copy.
+    lastObservationAt:
+      observedGeneration === null ? null : new Date().toISOString(),
+    lastError: boundReconciliationError(latest?.reason ?? null)
+  };
+  return buildReconciliationView({
+    evidence,
+    history: historyForResource(resource),
+    hasObservation: installed,
+    restartRequired: false
+  });
+}
+
 function promptDiffSummary(args: {
   readonly name: string;
   readonly codexHome: string;
@@ -2361,8 +2420,12 @@ function promptDiffSummary(args: {
   });
 }
 
+function defaultHomeForReconciliation(): string {
+  return process.env.HOME?.trim() || homedir();
+}
+
 function defaultCodexHomeForReconciliation(): string {
-  const home = process.env.HOME?.trim() || homedir();
+  const home = defaultHomeForReconciliation();
   return process.env.CODEX_HOME?.trim() || path.join(home, ".codex");
 }
 
@@ -4619,7 +4682,9 @@ function skillContentReadError(error: unknown): SkillContentError | null {
 function readSkillContent(
   response: ServerResponse,
   name: string,
-  repository: RuleSyncRepository
+  repository: RuleSyncRepository,
+  repositoryRoot: string,
+  home: string
 ): void {
   try {
     const source = repository.readSkillSource(name);
@@ -4627,11 +4692,17 @@ function readSkillContent(
       response,
       200,
       {
-        schema: "autodev-control-skill-content-v1",
+        schema: "autodev-control-skill-content-v2",
         name: source.name,
         path: source.path,
         content: source.content,
-        revision: source.revision
+        revision: source.revision,
+        reconciliation: skillReconciliationView({
+          name,
+          repositoryRoot,
+          home,
+          desiredRevision: source.revision
+        })
       } satisfies ControlApiSkillContentResponse,
       { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
     );
@@ -4917,9 +4988,10 @@ async function skillContentRoute(
 ): Promise<boolean> {
   const repositoryRoot = options.repositoryRoot ?? DEFAULT_REPO_ROOT;
   const repository = new RuleSyncRepository(repositoryRoot);
+  const home = options.home ?? defaultHomeForReconciliation();
   const resource = `${CONTROL_API_PATHS.skills}/${name}/content`;
   if (method === "GET") {
-    readSkillContent(response, name, repository);
+    readSkillContent(response, name, repository, repositoryRoot, home);
     return true;
   }
   if (method === "PATCH") {

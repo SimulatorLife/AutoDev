@@ -49,7 +49,8 @@ import {
   materializeRuntimeFile,
   resolveCommandOnPath,
   runRulesyncGenerate,
-  runtimeTarget
+  runtimeTarget,
+  skillLinkMatches
 } from "./runtime-files.ts";
 import {
   readRuntimePackageManifest,
@@ -1125,6 +1126,31 @@ function replaceSkillSymlinks(
     }
     linkSkillSource(path.join(skillsRoot, name), path.join(userSkills, name));
   }
+}
+
+/**
+ * Whether the runtime has this skill installed from this canonical source.
+ *
+ * A skill is not projected into the runtime the way a command is: the
+ * installer links the canonical source into the user's skills directory, so
+ * the runtime reads the canonical source itself rather than a copy of it.
+ * That makes the link the runtime's observation of the skill -- when the link
+ * holds this source, the runtime is running exactly this canonical source,
+ * and when it does not, the runtime's skill is something else or is not
+ * installed at all.
+ *
+ * The layout of the user's skills directory is this module's to answer, so the
+ * Control API asks it rather than repeating the path.
+ */
+export function installedSkillMatches(args: {
+  readonly repositoryRoot: string;
+  readonly home: string;
+  readonly name: string;
+}): boolean {
+  return skillLinkMatches(
+    path.join(args.repositoryRoot, ".rulesync", "skills", args.name),
+    path.join(args.home, ".agents", "skills", args.name)
+  );
 }
 
 function materializeRenderedAgents(

@@ -521,13 +521,22 @@ export interface ControlApiSkillRolesPatchResponse {
 
 /** Canonical RuleSync source for one existing skill. */
 export interface ControlApiSkillContentResponse {
-  readonly schema: "autodev-control-skill-content-v1";
+  readonly schema: "autodev-control-skill-content-v2";
   readonly name: string;
   readonly path: string;
   /** Exact `.rulesync/skills/<name>/SKILL.md` text. */
   readonly content: string;
   /** SHA-256 of the exact source text; used for compare-and-swap writes. */
   readonly revision: string;
+  /**
+   * Reusable reconciliation view shared with every other mutable resource.
+   *
+   * A skill is linked into the runtime rather than projected into it, so the
+   * observed generation is the canonical revision whenever the runtime is
+   * running this very source. The Console renders this view rather than
+   * deriving its own, so the skill page cannot drift from the shared contract.
+   */
+  readonly reconciliation: ReconciliationView;
 }
 
 /** Replaces one existing skill source against the revision the editor loaded. */

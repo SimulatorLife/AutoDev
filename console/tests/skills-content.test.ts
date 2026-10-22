@@ -3,7 +3,8 @@ import test from "node:test";
 
 import {
   type ControlApiSkillContentResponse,
-  LOCAL_CONTROL_API_ACTOR
+  LOCAL_CONTROL_API_ACTOR,
+  type ReconciliationView
 } from "@simulatorlife/autodev-core";
 import { NextRequest } from "next/server.js";
 import React from "react";
@@ -27,14 +28,7 @@ const REVISION = "a".repeat(64);
 const UPDATED_REVISION = "b".repeat(64);
 const SOURCE =
   "---\nname: release-checklist\ndescription: Release steps.\n---\n\n# Release\n";
-const DETAIL_SOURCE: ControlApiSkillContentResponse = {
-  schema: "autodev-control-skill-content-v1",
-  name: NAME,
-  path: PATH,
-  content: SOURCE,
-  revision: REVISION
-};
-const RECONCILIATION = {
+const RECONCILIATION: ReconciliationView = {
   status: {
     convergence: "converged",
     desiredGeneration: UPDATED_REVISION,
@@ -46,14 +40,23 @@ const RECONCILIATION = {
   },
   history: []
 };
+const DETAIL_SOURCE: ControlApiSkillContentResponse = {
+  schema: "autodev-control-skill-content-v2",
+  name: NAME,
+  path: PATH,
+  content: SOURCE,
+  revision: REVISION,
+  reconciliation: RECONCILIATION
+};
 
 function sourceResponse(overrides: Record<string, unknown> = {}) {
   return {
-    schema: "autodev-control-skill-content-v1",
+    schema: "autodev-control-skill-content-v2",
     name: NAME,
     path: PATH,
     content: SOURCE,
     revision: REVISION,
+    reconciliation: RECONCILIATION,
     ...overrides
   };
 }

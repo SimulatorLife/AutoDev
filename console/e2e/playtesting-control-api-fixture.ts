@@ -3939,11 +3939,28 @@ function handleCatalogResourceRead(
       return true;
     }
     sendJson(response, {
-      schema: "autodev-control-skill-content-v1",
+      schema: "autodev-control-skill-content-v2",
       name: source.name,
       path: source.path,
       content: source.content,
-      revision: source.revision
+      revision: source.revision,
+      // The skill reaches the runtime as a link to this very source, so the
+      // observed generation is the canonical revision whenever the link holds
+      // it. The Console renders this view rather than deriving its own, so the
+      // skill page cannot drift from the shared reconciliation contract.
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: source.revision,
+          observedGeneration: source.revision,
+          lastApplyAt: FIXTURE_APPLIED_AT,
+          lastObservationAt: FIXTURE_APPLIED_AT,
+          lastError: null,
+          explanation:
+            "The runtime has observed the latest desired generation; convergence is recorded."
+        },
+        history: []
+      }
     });
     return true;
   }

@@ -2648,12 +2648,13 @@ function isControlApiSkillContentResponse(
 ): value is ControlApiSkillContentResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-skill-content-v1" &&
+    value.schema === "autodev-control-skill-content-v2" &&
     value.name === name &&
     value.path === `.rulesync/skills/${name}/SKILL.md` &&
     typeof value.content === "string" &&
     typeof value.revision === "string" &&
-    CONTROL_API_REVISION_PATTERN.test(value.revision)
+    CONTROL_API_REVISION_PATTERN.test(value.revision) &&
+    isReconciliationBundle(value.reconciliation)
   );
 }
 
@@ -2676,7 +2677,7 @@ export async function fetchSkillContent(
     kind: INVALID_RESPONSE_KIND,
     code: "autodev_control_api_invalid_skill_content_response",
     message:
-      "AutoDev Control API returned an incompatible canonical skill source; the Console cannot safely edit it."
+      "AutoDev Control API returned an incompatible canonical skill source; the Console requires the v2 reconciliation contract and cannot safely edit it."
   };
 }
 
