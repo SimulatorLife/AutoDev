@@ -150,8 +150,17 @@ export async function POST(
   if (result.kind === "ok") {
     return NextResponse.json({ ok: true, data: result.data });
   }
+  // The Runtime's own verdict is forwarded as it was given: a conflict stays a
+  // conflict and a refusal stays a refusal. Answering a refusal with a
+  // gateway error would tell the operator the Console could not reach the
+  // Runtime when the Runtime was the one that said no.
   return NextResponse.json(
     { error: result.message },
-    { status: result.kind === "http-error" ? result.status : 502 }
+    {
+      status:
+        result.kind === "http-error" || result.kind === "unauthorized"
+          ? result.status
+          : 502
+    }
   );
 }

@@ -53,6 +53,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { ResourceUnavailable } from "../app/_console.ts";
+import * as mcpServerRoute from "../app/api/mcps/[name]/route.ts";
 import * as memoryRoute from "../app/api/memory/route.ts";
 import * as modelRoute from "../app/api/models/[model]/route.ts";
 import * as promptMutationRoute from "../app/api/prompts/[name]/route.ts";
@@ -15344,6 +15345,26 @@ function sameOriginFormRequest(
   });
 }
 
+function sameOriginJsonRequest(
+  path: string,
+  body: unknown,
+  overrides: {
+    readonly origin?: string;
+    readonly fetchSite?: string;
+  } = {}
+): NextRequest {
+  return new NextRequest("http://console.test" + path, {
+    method: "POST",
+    headers: {
+      origin: overrides.origin ?? "http://console.test",
+      host: "console.test",
+      "sec-fetch-site": overrides.fetchSite ?? "same-origin",
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+}
+
 test("every provider mutation addresses its canonical Control API path", async () => {
   // The limits path was built as `/control/providers/claudelimits` — the suffix
   // carried no separator. `claudelimits` is a legal provider id, so the request
@@ -22024,4 +22045,178 @@ test("a Runtime response with no concurrency limit is readable, and says so", as
     renderDetail(undefined),
     /Session concurrency limit[\s\S]*?Not observed/u
   );
+});
+
+test("the MCP declaration route writes the server's launch configuration through the Runtime", async () => {
+  // The Console does not own the declaration, so the route is a pass-through:
+  // it names the Runtime's own MCP path and hands over the revision the
+  // catalog published. A route that addressed anything else would let the
+  // Console answer for a declaration it does not hold.
+  const requests: { url: string; method: string; body: string }[] = [];
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      body: String(init?.body ?? "")
+    });
+    return Response.json({
+      schema: "autodev-control-mcp-server-patch-v1",
+      name: "openaiDeveloperDocs",
+      target: "codexcli",
+      revision: "b".repeat(64),
+      changed: true,
+      launch: {
+        name: "openaiDeveloperDocs",
+        command: null,
+        args: [],
+        cwd: null,
+        url: "https://developers.openai.com/edited-mcp",
+        bearerTokenEnvVar: null,
+        httpHeaders: {}
+      },
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: "c".repeat(64),
+          observedGeneration: "c".repeat(64),
+          lastApplyAt: "2026-10-22T12:00:00.000Z",
+          lastObservationAt: "2026-10-22T12:00:00.000Z",
+          lastError: null,
+          explanation: "The runtime has observed the latest desired generation."
+        },
+        history: []
+      }
+    });
+  }) as typeof fetch;
+
+  await withControlRouteEnvironment(
+    "mcp-declaration-token",
+    fetchImpl,
+    async () => {
+      const response = await mcpServerRoute.POST(
+        sameOriginJsonRequest("/api/mcps/openaiDeveloperDocs", {
+          expectedRevision: "a".repeat(64),
+          launch: {
+            command: null,
+            args: null,
+            cwd: null,
+            url: "https://developers.openai.com/edited-mcp",
+            bearerTokenEnvVar: null
+          }
+        }),
+        { params: Promise.resolve({ name: "openaiDeveloperDocs" }) }
+      );
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as {
+        ok: boolean;
+        data: { changed: boolean };
+      };
+      assert.equal(body.ok, true);
+      assert.equal(body.data.changed, true);
+    }
+  );
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.method, "PATCH");
+  assert.equal(
+    requests[0]?.url,
+    "http://127.0.0.1:4101/control/mcps/openaiDeveloperDocs"
+  );
+  const sent = JSON.parse(requests[0]?.body ?? "{}") as {
+    expectedRevision: string;
+    launch: { url: string };
+  };
+  assert.equal(sent.expectedRevision, "a".repeat(64));
+  assert.equal(sent.launch.url, "https://developers.openai.com/edited-mcp");
+});
+
+test("the MCP declaration route forwards the Runtime's refusal instead of a gateway error", async () => {
+  // The Runtime's verdict is the answer the operator needs: a conflict means
+  // the declaration moved, and a refusal means the actor is not an operator.
+  // Answering either with a gateway error would tell the operator the Console
+  // could not reach the Runtime when the Runtime was the one that said no.
+  for (const refusal of [
+    {
+      status: 409,
+      code: "autodev_control_mcp_revision_conflict",
+      message: "The MCP declaration moved since it was read."
+    },
+    {
+      status: 403,
+      code: "autodev_control_api_operator_required",
+      message: "An operator actor is required."
+    }
+  ]) {
+    const fetchImpl = (async () =>
+      Response.json(
+        {
+          error: {
+            code: refusal.code,
+            message: refusal.message,
+            status: refusal.status
+          }
+        },
+        { status: refusal.status }
+      )) as typeof fetch;
+    await withControlRouteEnvironment(
+      "mcp-declaration-token",
+      fetchImpl,
+      async () => {
+        const response = await mcpServerRoute.POST(
+          sameOriginJsonRequest("/api/mcps/openaiDeveloperDocs", {
+            expectedRevision: "a".repeat(64),
+            launch: {
+              command: null,
+              args: null,
+              cwd: null,
+              url: "https://developers.openai.com/edited-mcp",
+              bearerTokenEnvVar: null
+            }
+          }),
+          { params: Promise.resolve({ name: "openaiDeveloperDocs" }) }
+        );
+        assert.equal(response.status, refusal.status);
+        const body = (await response.json()) as { error: string };
+        assert.equal(body.error, refusal.message);
+      }
+    );
+  }
+});
+
+test("the MCP declaration route refuses a request that is not same-origin before it reaches the Runtime", async () => {
+  // The route writes the canonical declaration. A request that did not come
+  // from this Console must not be able to make it write one, so the refusal
+  // happens before the Runtime is asked anything.
+  let asked = 0;
+  const fetchImpl = (async () => {
+    asked += 1;
+    return Response.json({});
+  }) as typeof fetch;
+  await withControlRouteEnvironment(
+    "mcp-declaration-token",
+    fetchImpl,
+    async () => {
+      const response = await mcpServerRoute.POST(
+        sameOriginJsonRequest(
+          "/api/mcps/openaiDeveloperDocs",
+          {
+            expectedRevision: "a".repeat(64),
+            launch: {
+              command: null,
+              args: null,
+              cwd: null,
+              url: "https://developers.openai.com/edited-mcp",
+              bearerTokenEnvVar: null
+            }
+          },
+          { fetchSite: "cross-site" }
+        ),
+        { params: Promise.resolve({ name: "openaiDeveloperDocs" }) }
+      );
+      assert.equal(response.status, 403);
+      const body = (await response.json()) as { error: string };
+      assert.match(body.error, /same-origin/u);
+    }
+  );
+  assert.equal(asked, 0);
 });
