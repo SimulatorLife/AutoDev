@@ -16,8 +16,12 @@ import { readClaudeOAuthToken } from "./claude-credential.ts";
 
 const DEFAULT_REFRESH_INTERVAL_MS = 15 * 60_000;
 // `agy models` performs its own remote listing and runs off the request/routing
-// path, so give this CLI source an independent, still-bounded deadline.
-const ANTIGRAVITY_CLI_TIMEOUT_MS = 12_000;
+// path, so give this CLI source an independent, still-bounded deadline. The
+// listing is a provider-side remote call: it measured 3.0-9.0 seconds on an
+// idle machine on 2026-10-22 and exceeded twelve seconds while the machine
+// was busy, which turned a valid listing into a stale one and left the
+// Antigravity models unselectable.
+const ANTIGRAVITY_CLI_TIMEOUT_MS = 30_000;
 const PROVIDER_API_DISCOVERY_TIMEOUT_MS = 8000;
 const MAX_AGY_OUTPUT_BYTES = 64 * 1024;
 const MAX_HTTP_RESPONSE_BYTES = 256 * 1024;

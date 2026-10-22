@@ -117,7 +117,7 @@ test("Antigravity discovery remains bounded when the CLI stalls", async (t) => {
       () => null,
       (error: unknown) => error
     );
-    t.mock.timers.tick(12_000);
+    t.mock.timers.tick(30_000);
     const error = await outcome;
     assert.ok(error instanceof Error);
     assert.match(error.message, /agy model discovery timed out/u);
