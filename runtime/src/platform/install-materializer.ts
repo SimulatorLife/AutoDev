@@ -103,6 +103,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/playtesting/onejev-local-policy.ts",
   "runtime/src/playtesting/visual-browser-driver.ts",
   "runtime/src/playtesting/visual-candidates.ts",
+  "runtime/src/playtesting/recorded-text.ts",
   "runtime/src/playtesting/visible-observation.ts",
   "runtime/src/playtesting/statistics/analysis.ts",
   "runtime/src/playtesting/statistics/environment.ts",

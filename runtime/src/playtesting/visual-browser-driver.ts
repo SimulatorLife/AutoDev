@@ -35,6 +35,7 @@ import {
   type PlaytestArtifactStore,
   PLAYTESTS_ARTIFACT_MAX_BYTES
 } from "./artifact-store.ts";
+import { withoutControlCharacters } from "./recorded-text.ts";
 
 function resolveChromiumExecutablePath(
   browserType: Pick<typeof chromium, "executablePath">
@@ -120,7 +121,21 @@ const CONTROL_SELECTOR =
 const MASK_SELECTOR =
   'input,textarea,[contenteditable="true"],[data-sensitive="true"],[autocomplete^="cc-"]';
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu;
-const PAYMENT_CARD_PATTERN = /(?:\d[ -]*?){13,19}/gu;
+/**
+ * The same address, read without the global flag.
+ *
+ * A detection asks whether the text holds an address at all, and a global
+ * pattern would carry the position of its last match into the next read.
+ */
+const SENSITIVE_EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/iu;
+/** The fewest digits that read as one card number. */
+const CARD_NUMBER_MIN_DIGITS = 13;
+/** The most digits that read as one card number. */
+const CARD_NUMBER_MAX_DIGITS = 19;
+/** The whitespace the words of an attribute are separated by. */
+const WHITESPACE_PATTERN = /\s+/u;
+/** The autocomplete values that mark a field as a password field. */
+const PASSWORD_AUTOCOMPLETE_PATTERN = /(?:current|new)-password/iu;
 const SUPPORTED_INPUTS = ["keyboard", "pointer"] as const;
 /** How often the driver checks whether the game has painted. */
 const RENDER_WAIT_POLL_MS = 250;
@@ -159,11 +174,16 @@ interface RawControl {
   };
 }
 
-interface RawPageRead {
+/** What the page itself reports when the driver reads it. */
+interface RawPageReport {
   readonly controls: readonly RawControl[];
   readonly passwordVisible: boolean;
-  readonly sensitiveTextVisible: boolean;
   readonly truncatedControls: boolean;
+}
+
+/** What the driver reads from the page, with its own verdict on the text. */
+interface RawPageRead extends RawPageReport {
+  readonly sensitiveTextVisible: boolean;
 }
 
 export type PlaytestVisualObservationBlockReason =
@@ -173,6 +193,17 @@ export type PlaytestVisualObservationBlockReason =
   | "event-budget-exhausted"
   | "wall-time-limit"
   | "origin-escape";
+
+/** The game left the origin the operator approved. */
+const ORIGIN_ESCAPE = "origin-escape";
+/** The episode spent the wall time the operator approved. */
+const WALL_TIME_LIMIT = "wall-time-limit";
+/** The episode spent the event window the operator approved. */
+const EVENT_BUDGET_EXHAUSTED = "event-budget-exhausted";
+/** The screen holds something the Runtime cannot redact. */
+const SENSITIVE_VISUAL_UNREDACTABLE = "sensitive-visual-unredactable";
+/** The action would take the game outside the approved origin. */
+const ORIGIN_NOT_APPROVED = "origin-not-approved";
 
 export type PlaytestVisualObservationResult =
   | {
@@ -424,11 +455,95 @@ function websocketOrigin(value: string): string | null {
   }
 }
 
+/** A span of text, from its first character to the one after its last. */
+interface TextSpan {
+  readonly start: number;
+  readonly end: number;
+}
+
+/** Whether the code is an ASCII digit. */
+function isDigitCharacter(code: number): boolean {
+  return code >= 0x30 && code <= 0x39;
+}
+
+/** Whether the code separates the digits of a card-like chain. */
+function isCardSeparator(code: number): boolean {
+  return code === 0x20 || code === 0x2d;
+}
+
+/**
+ * The card-like digit chains in a text.
+ *
+ * A chain is the run of digits a reader would read as one card number: the
+ * digits themselves and the spaces and dashes between them. It holds at
+ * least thirteen digits and at most nineteen, and the separator run after
+ * its last digit belongs to whatever follows the chain rather than to the
+ * chain itself.
+ *
+ * The scan walks the text once. A chain too short to be a card number ends
+ * the walk over it instead of restarting it from every digit in it, so the
+ * scan stays linear in the length of the text.
+ */
+function cardNumberSpans(text: string): readonly TextSpan[] {
+  const spans: TextSpan[] = [];
+  let index = 0;
+  while (index < text.length) {
+    if (!isDigitCharacter(text.charCodeAt(index))) {
+      index += 1;
+      continue;
+    }
+    const start = index;
+    let digits = 1;
+    let cursor = index + 1;
+    while (digits < CARD_NUMBER_MAX_DIGITS) {
+      let next = cursor;
+      while (next < text.length && isCardSeparator(text.charCodeAt(next))) {
+        next += 1;
+      }
+      if (next >= text.length || !isDigitCharacter(text.charCodeAt(next))) {
+        break;
+      }
+      digits += 1;
+      cursor = next + 1;
+    }
+    if (digits >= CARD_NUMBER_MIN_DIGITS) spans.push({ start, end: cursor });
+    index = cursor;
+  }
+  return spans;
+}
+
+/**
+ * The text with its card-like digit chains redacted.
+ *
+ * The chain is replaced whole, so no part of a card number survives the
+ * redaction.
+ */
+function redactCardNumbers(text: string): string {
+  const spans = cardNumberSpans(text);
+  if (spans.length === 0) return text;
+  let redacted = "";
+  let cursor = 0;
+  for (const span of spans) {
+    redacted += text.slice(cursor, span.start) + "[redacted]";
+    cursor = span.end;
+  }
+  return redacted + text.slice(cursor);
+}
+
+/**
+ * Whether the text on the screen holds something the Runtime must not record.
+ *
+ * The page says what is on the screen and the Runtime says what it may
+ * record, and both have to read an address and a card number the same way.
+ */
+function containsSensitiveText(text: string): boolean {
+  return SENSITIVE_EMAIL_PATTERN.test(text) || cardNumberSpans(text).length > 0;
+}
+
 function redactName(value: string): string {
-  return value
-    .replaceAll(EMAIL_PATTERN, "[redacted]")
-    .replaceAll(PAYMENT_CARD_PATTERN, "[redacted]")
-    .replaceAll(/[\u0000-\u001F\u007F]/gu, " ")
+  return withoutControlCharacters(
+    redactCardNumbers(value.replaceAll(EMAIL_PATTERN, "[redacted]"))
+  )
     .trim()
     .slice(0, 256);
 }
@@ -532,7 +647,25 @@ function pageHasRenderedInBrowser(): Promise<boolean> {
   });
 }
 
-function pageReadInBrowser(): RawPageRead {
+/**
+ * The patterns the page read needs, handed to the page itself.
+ *
+ * The page read runs inside the browser, where the Runtime's module scope
+ * does not exist, so the patterns it needs travel with it.
+ */
+interface PageReadPatterns {
+  /** The whitespace the words of an attribute are separated by. */
+  readonly whitespace: RegExp;
+  /** The autocomplete values that mark a field as a password field. */
+  readonly passwordAutocomplete: RegExp;
+}
+
+const PAGE_READ_PATTERNS: PageReadPatterns = {
+  whitespace: WHITESPACE_PATTERN,
+  passwordAutocomplete: PASSWORD_AUTOCOMPLETE_PATTERN
+};
+
+function pageReadInBrowser(patterns: PageReadPatterns): RawPageReport {
   const selector =
     'button,a[href],input,textarea,select,[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[role="tab"],[role="menuitem"],[role="option"],[role="textbox"],[role="combobox"]';
   const allowedRoles = new Set([
@@ -547,6 +680,9 @@ function pageReadInBrowser(): RawPageRead {
     "textbox",
     "combobox"
   ]);
+  // The page cannot change while this read runs, so the viewport is the
+  // one the read started with.
+  const viewport = { width: window.innerWidth, height: window.innerHeight };
   const visible = (element: Element): boolean => {
     const rect = element.getBoundingClientRect();
     const style = getComputedStyle(element);
@@ -555,8 +691,8 @@ function pageReadInBrowser(): RawPageRead {
       rect.height > 0 &&
       rect.left >= 0 &&
       rect.top >= 0 &&
-      rect.right <= window.innerWidth &&
-      rect.bottom <= window.innerHeight &&
+      rect.right <= viewport.width &&
+      rect.bottom <= viewport.height &&
       style.display !== "none" &&
       style.visibility !== "hidden" &&
       style.opacity !== "0"
@@ -568,8 +704,12 @@ function pageReadInBrowser(): RawPageRead {
     const labelledBy = element.getAttribute("aria-labelledby");
     if (labelledBy) {
       const text = labelledBy
-        .split(/\s+/u)
-        .map((id) => document.getElementById(id)?.textContent ?? "")
+        .split(patterns.whitespace)
+        .map((id) => {
+          const label =
+            id === "" ? null : document.querySelector(`#${CSS.escape(id)}`);
+          return label?.textContent ?? "";
+        })
         .join(" ")
         .trim();
       if (text) return text.slice(0, 512);
@@ -587,9 +727,15 @@ function pageReadInBrowser(): RawPageRead {
     if (tag === "input" || tag === "textarea" || tag === "select") return "";
     return (element.textContent ?? "").trim().slice(0, 512);
   };
-  const roleFor = (element: Element): string | null => {
+  /**
+   * The role an element claims, or the one its tag implies.
+   *
+   * The role the element states wins over the one its tag implies, and an
+   * element that claims nothing and implies nothing has no role.
+   */
+  const claimedRole = (element: Element): string | null => {
     const explicit = element.getAttribute("role");
-    if (explicit) return explicit.split(/\s+/u)[0] ?? null;
+    if (explicit) return explicit.split(patterns.whitespace)[0] ?? null;
     const tag = element.tagName.toLowerCase();
     if (tag === "button") return "button";
     if (tag === "a" && element.hasAttribute("href")) return "link";
@@ -604,13 +750,23 @@ function pageReadInBrowser(): RawPageRead {
     }
     return null;
   };
+  /**
+   * The role the Runtime offers for an element, or null when it offers none.
+   *
+   * A role the Runtime does not act on is no role at all: the observation
+   * only carries the roles the Runtime can dispatch to.
+   */
+  const roleFor = (element: Element): string | null => {
+    const role = claimedRole(element);
+    return role !== null && allowedRoles.has(role) ? role : null;
+  };
   const inputKindFor = (element: Element): RawControl["inputKind"] => {
     const tag = element.tagName.toLowerCase();
     const type = (element.getAttribute("type") ?? "text").toLowerCase();
     const autocomplete = element.getAttribute("autocomplete") ?? "";
     if (
       (tag === "input" && type === "password") ||
-      /(?:current|new)-password/iu.test(autocomplete)
+      patterns.passwordAutocomplete.test(autocomplete)
     ) {
       return "password";
     }
@@ -635,7 +791,7 @@ function pageReadInBrowser(): RawPageRead {
     visibleControlCount += 1;
     if (controls.length >= 257) continue;
     const role = roleFor(element);
-    if (!role || !allowedRoles.has(role)) continue;
+    if (!role) continue;
     const inputKind = inputKindFor(element);
     if (inputKind === "password") passwordVisible = true;
     const rect = element.getBoundingClientRect();
@@ -675,13 +831,9 @@ function pageReadInBrowser(): RawPageRead {
       }
     });
   }
-  const visibleText = document.body?.innerText ?? "";
   return {
     controls: controls.slice(0, 256),
     passwordVisible,
-    sensitiveTextVisible:
-      /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/iu.test(visibleText) ||
-      /(?:\d[ -]*?){13,19}/u.test(visibleText),
     truncatedControls: visibleControlCount > 256
   };
 }
@@ -1028,7 +1180,7 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
       if (!origin || !options.target.allowedOrigins.includes(origin)) {
         driver.blockForOriginEscape();
         throw new PlaytestVisualBrowserDriverError(
-          "origin-escape",
+          ORIGIN_ESCAPE,
           "The game navigated outside its approved origin."
         );
       }
@@ -1052,7 +1204,7 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
       if (error instanceof PlaytestVisualBrowserDriverError) throw error;
       if (driver?.originEscape) {
         throw new PlaytestVisualBrowserDriverError(
-          "origin-escape",
+          ORIGIN_ESCAPE,
           "The game redirected outside its approved origin."
         );
       }
@@ -1091,10 +1243,10 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
   private noteOriginEscape(): void {
     if (this.originEscape) return;
     this.originEscape = true;
-    this.terminalBlock = "origin-escape";
+    this.terminalBlock = ORIGIN_ESCAPE;
     this.recordEvent({
       type: "cross-origin-blocked",
-      refusalReason: "origin-escape"
+      refusalReason: ORIGIN_ESCAPE
     });
   }
 
@@ -1114,8 +1266,29 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
     return { status: "blocked", reason };
   }
 
+  /**
+   * The page as the driver reads it: what the page reports about itself,
+   * and the driver's own verdict on the text the player can see.
+   *
+   * The rendered text is read through the browser's own text of the body
+   * rather than through the page's markup: the markup also holds the text
+   * the player cannot see, and a hidden address is not a thing on the
+   * screen. A page without a body shows nothing, which is not a reason to
+   * fail the read.
+   */
   private async readPage(): Promise<RawPageRead> {
-    return this.page.evaluate(pageReadInBrowser);
+    const [report, visibleText] = await Promise.all([
+      this.page.evaluate(pageReadInBrowser, PAGE_READ_PATTERNS),
+      this.page
+        .locator("body")
+        // eslint-disable-next-line unicorn/prefer-dom-node-text-content -- Playwright reads the text the browser laid out, and textContent would count the text the player cannot see
+        .innerText()
+        .catch(() => "")
+    ]);
+    return {
+      ...report,
+      sensitiveTextVisible: containsSensitiveText(visibleText)
+    };
   }
 
   /**
@@ -1171,13 +1344,13 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
       return { status: "blocked", reason: this.terminalBlock };
     }
     if (this.originEscape || this.closed) {
-      return this.blockObservation("origin-escape");
+      return this.blockObservation(ORIGIN_ESCAPE);
     }
     if (this.elapsedMs() >= this.target.limits.wallTimeMs) {
-      return this.blockObservation("wall-time-limit");
+      return this.blockObservation(WALL_TIME_LIMIT);
     }
     if (this.events.length >= PLAYESTS_ARTIFACT_MAX_WINDOW_STEPS - 1) {
-      return this.blockObservation("event-budget-exhausted");
+      return this.blockObservation(EVENT_BUDGET_EXHAUSTED);
     }
     if (this.captureCount >= this.target.limits.screenshotCountPerEpisode) {
       return this.blockObservation("capture-budget-exhausted");
@@ -1185,7 +1358,7 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
     const origin = this.currentOrigin();
     if (!origin || !this.target.allowedOrigins.includes(origin)) {
       this.blockForOriginEscape();
-      return this.blockObservation("origin-escape");
+      return this.blockObservation(ORIGIN_ESCAPE);
     }
     let pageRead: RawPageRead;
     let png: Uint8Array;
@@ -1196,11 +1369,11 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
         return this.blockObservation("auth-or-setup-required");
       }
       if (pageRead.sensitiveTextVisible) {
-        return this.blockObservation("sensitive-visual-unredactable");
+        return this.blockObservation(SENSITIVE_VISUAL_UNREDACTABLE);
       }
       png = await this.capturePng();
     } catch {
-      return this.blockObservation("sensitive-visual-unredactable");
+      return this.blockObservation(SENSITIVE_VISUAL_UNREDACTABLE);
     }
     if (
       png.byteLength > PLAYTESTS_ARTIFACT_MAX_BYTES ||
@@ -1277,7 +1450,7 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
       this.artifacts.remove(frame);
       this.captureCount -= 1;
       this.capturedBytes -= png.byteLength;
-      return this.blockObservation("sensitive-visual-unredactable");
+      return this.blockObservation(SENSITIVE_VISUAL_UNREDACTABLE);
     }
     this.lastObservation = observation;
     this.recordEvent({
@@ -1303,22 +1476,22 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
     this.inputAttempts += 1;
     const step = this.inputAttempts - 1;
     if (this.events.length >= PLAYESTS_ARTIFACT_MAX_WINDOW_STEPS - 1) {
-      this.terminalBlock = "event-budget-exhausted";
+      this.terminalBlock = EVENT_BUDGET_EXHAUSTED;
       this.captureIncomplete = true;
-      return this.refuseAction(action, step, "event-budget-exhausted");
+      return this.refuseAction(action, step, EVENT_BUDGET_EXHAUSTED);
     }
     if (this.inputAttempts > this.maxSteps) {
       return this.refuseAction(action, step, "action-budget-exhausted");
     }
     if (this.elapsedMs() >= this.target.limits.wallTimeMs) {
-      return this.refuseAction(action, step, "wall-time-limit");
+      return this.refuseAction(action, step, WALL_TIME_LIMIT);
     }
     if (this.closed || this.originEscape || this.lastObservation === null) {
       return this.refuseAction(action, step, "driver-state-unavailable");
     }
     const origin = this.currentOrigin();
     if (!origin) {
-      return this.refuseAction(action, step, "origin-not-approved");
+      return this.refuseAction(action, step, ORIGIN_NOT_APPROVED);
     }
     const admission = admitPlaytestVisualAction({
       target: this.target,
@@ -1346,9 +1519,9 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
     try {
       latest = await this.readPage();
     } catch {
-      this.terminalBlock = "sensitive-visual-unredactable";
+      this.terminalBlock = SENSITIVE_VISUAL_UNREDACTABLE;
       this.captureIncomplete = true;
-      return this.refuseAction(action, step, "sensitive-visual-unredactable");
+      return this.refuseAction(action, step, SENSITIVE_VISUAL_UNREDACTABLE);
     }
     if (latest.passwordVisible) {
       this.terminalBlock = "auth-or-setup-required";
@@ -1356,10 +1529,53 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
       return this.refuseAction(action, step, "auth-or-setup-required");
     }
     if (latest.sensitiveTextVisible) {
-      this.terminalBlock = "sensitive-visual-unredactable";
+      this.terminalBlock = SENSITIVE_VISUAL_UNREDACTABLE;
       this.captureIncomplete = true;
-      return this.refuseAction(action, step, "sensitive-visual-unredactable");
+      return this.refuseAction(action, step, SENSITIVE_VISUAL_UNREDACTABLE);
     }
+    const refusal = await this.dispatchInput(
+      action,
+      step,
+      latest,
+      this.lastObservation
+    );
+    if (refusal !== null) {
+      return refusal;
+    }
+    this.inputDispatched += 1;
+    const receipt: PlaytestVisualActionReceipt = {
+      status: "dispatched",
+      step,
+      observationId: action.observationId,
+      actionKind: action.kind,
+      dispatchedAt: new Date(this.now()).toISOString(),
+      driverDurationMs: Math.max(0, this.now() - startedAt),
+      gameAcknowledgement: "not-observed"
+    };
+    this.recordEvent({
+      type: "input-dispatched",
+      step,
+      observationId: action.observationId,
+      frameArtifactId: this.lastObservation.frame.artifactId,
+      actionKind: action.kind
+    });
+    return receipt;
+  }
+
+  /**
+   * Dispatch the input the action names, against the page as it is now.
+   *
+   * The observation promised a control; the page is read again before the
+   * input is dispatched, so the control may have moved, changed or become
+   * sensitive since. The refusal is returned when the page no longer offers
+   * what the observation promised, and null when the input was dispatched.
+   */
+  private async dispatchInput(
+    action: PlaytestVisualAction,
+    step: number,
+    latest: RawPageRead,
+    observation: PlaytestVisualObservation
+  ): Promise<PlaytestVisualActionReceipt | null> {
     try {
       switch (action.kind) {
         case "activate-control": {
@@ -1385,7 +1601,7 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
               !this.target.allowedOrigins.includes(current.navigationOrigin))
           ) {
             this.blockForOriginEscape();
-            return this.refuseAction(action, step, "origin-not-approved");
+            return this.refuseAction(action, step, ORIGIN_NOT_APPROVED);
           }
           await this.page
             .locator(CONTROL_SELECTOR)
@@ -1395,7 +1611,7 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
         }
         case "pointer-click": {
           const currentFrame = await this.capturePng();
-          if (sha256(currentFrame) !== this.lastObservation.frame.sha256) {
+          if (sha256(currentFrame) !== observation.frame.sha256) {
             return this.refuseAction(action, step, "stale-observation");
           }
           await this.page.mouse.click(action.x, action.y);
@@ -1417,27 +1633,10 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
       return this.refuseAction(
         action,
         step,
-        this.originEscape ? "origin-not-approved" : "control-changed"
+        this.originEscape ? ORIGIN_NOT_APPROVED : "control-changed"
       );
     }
-    this.inputDispatched += 1;
-    const receipt: PlaytestVisualActionReceipt = {
-      status: "dispatched",
-      step,
-      observationId: action.observationId,
-      actionKind: action.kind,
-      dispatchedAt: new Date(this.now()).toISOString(),
-      driverDurationMs: Math.max(0, this.now() - startedAt),
-      gameAcknowledgement: "not-observed"
-    };
-    this.recordEvent({
-      type: "input-dispatched",
-      step,
-      observationId: action.observationId,
-      frameArtifactId: this.lastObservation.frame.artifactId,
-      actionKind: action.kind
-    });
-    return receipt;
+    return null;
   }
 
   private refuseAction(
@@ -1458,14 +1657,14 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
 
   private actionRefusalForBlock(): ActionRefusalReason {
     switch (this.terminalBlock) {
-      case "origin-escape": {
-        return "origin-not-approved";
+      case ORIGIN_ESCAPE: {
+        return ORIGIN_NOT_APPROVED;
       }
-      case "wall-time-limit": {
-        return "wall-time-limit";
+      case WALL_TIME_LIMIT: {
+        return WALL_TIME_LIMIT;
       }
-      case "event-budget-exhausted": {
-        return "event-budget-exhausted";
+      case EVENT_BUDGET_EXHAUSTED: {
+        return EVENT_BUDGET_EXHAUSTED;
       }
       default: {
         return "driver-state-unavailable";

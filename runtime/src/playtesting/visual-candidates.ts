@@ -15,6 +15,8 @@ import {
   type PlaytestVisualObservation
 } from "@simulatorlife/autodev-core";
 
+import { withoutControlCharacters } from "./recorded-text.ts";
+
 /**
  * How many candidates one observation may offer.
  *
@@ -174,10 +176,7 @@ function describeControl(control: PlaytestVisualControl): string {
  * double quote of its own, and no surrounding whitespace.
  */
 function readableName(name: string): string {
-  return name
-    .replaceAll(/[\u0000-\u001F\u007F]/gu, " ")
-    .replaceAll('"', "'")
-    .trim();
+  return withoutControlCharacters(name).replaceAll('"', "'").trim();
 }
 
 /** The activation of one control, citing the observation it was seen in. */
@@ -221,6 +220,14 @@ function sameAction(
     }
     case "gamepad-press": {
       return right.kind === "gamepad-press" && left.button === right.button;
+    }
+    default: {
+      // Every action kind is a case above, so this is unreachable with the
+      // kinds the Runtime knows. It is here because a kind that grows later
+      // must be reported rather than fall out of the function with no
+      // answer at all.
+      const exhaustive: never = left;
+      return exhaustive;
     }
   }
 }
