@@ -203,7 +203,7 @@ export function WorkspacePlaytestApprovalForm({
           ariaLabel: pending
             ? `Approving playtesting for ${workspaceId}`
             : `Approve playtesting for ${workspaceId}`,
-          disabled: pending,
+          busy: pending,
           dataAttributes: { "data-workspace-approve-submit": workspaceId }
         },
         pending

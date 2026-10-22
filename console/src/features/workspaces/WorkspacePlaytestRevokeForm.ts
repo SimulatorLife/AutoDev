@@ -79,7 +79,7 @@ export function WorkspacePlaytestRevokeForm({
         ariaLabel: pending
           ? `Revoking playtesting approval for ${workspaceId}`
           : `Revoke playtesting approval for ${workspaceId}`,
-        disabled: pending,
+        busy: pending,
         dataAttributes: { "data-workspace-revoke-submit": workspaceId }
       },
       pending ? "Revoking…" : "Revoke approval"

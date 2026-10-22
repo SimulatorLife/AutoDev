@@ -29,20 +29,32 @@ const BUTTON_POINTER_CLASS = "cursor-pointer";
 const DEFAULT_BUTTON_SIZE_CLASS = "px-3 py-1.5 text-sm font-medium";
 const COMPACT_BUTTON_SIZE_CLASS = "px-2 py-1 text-xs font-medium";
 
+/**
+ * What a control that is working looks like.
+ *
+ * A disabled control is dropped out of the page's focus order the moment it is
+ * disabled, so the operator who pressed it loses their place in the document
+ * and the next Tab starts from the top of the page. A control that is working
+ * is not unavailable -- it is busy -- so it wears the unavailable chrome
+ * without the unavailable focus behaviour.
+ */
+const BUSY_AFTER_CLASS =
+  "aria-disabled:cursor-not-allowed aria-disabled:opacity-60";
+
 /** The one primary action in a group: applying, saving, confirming. */
 const PRIMARY_BUTTON_BEFORE_SIZE_CLASS =
   "rounded border border-transparent bg-accent";
-const PRIMARY_BUTTON_AFTER_SIZE_CLASS = `text-fg-inverse transition-colors hover:brightness-110 ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60`;
+const PRIMARY_BUTTON_AFTER_SIZE_CLASS = `text-fg-inverse transition-colors hover:brightness-110 ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60 ${BUSY_AFTER_CLASS}`;
 export const PRIMARY_BUTTON_CLASS = `${PRIMARY_BUTTON_BEFORE_SIZE_CLASS} ${DEFAULT_BUTTON_SIZE_CLASS} ${PRIMARY_BUTTON_AFTER_SIZE_CLASS}`;
 
 /** A supporting action: secondary filters, cancel, and inline toggles. */
 const SECONDARY_BUTTON_BEFORE_SIZE_CLASS =
   "rounded border border-border-strong bg-surface-raised";
-const SECONDARY_BUTTON_AFTER_SIZE_CLASS = `text-fg transition-colors hover:bg-hover ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60`;
+const SECONDARY_BUTTON_AFTER_SIZE_CLASS = `text-fg transition-colors hover:bg-hover ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60 ${BUSY_AFTER_CLASS}`;
 export const SECONDARY_BUTTON_CLASS = `${SECONDARY_BUTTON_BEFORE_SIZE_CLASS} ${DEFAULT_BUTTON_SIZE_CLASS} ${SECONDARY_BUTTON_AFTER_SIZE_CLASS}`;
 
 /** A compact outlined control such as the sidebar collapse toggle. */
-const OUTLINE_BUTTON_CHROME_CLASS = `rounded-full border border-border-strong bg-surface text-fg shadow-sm transition-colors hover:bg-hover ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60`;
+const OUTLINE_BUTTON_CHROME_CLASS = `rounded-full border border-border-strong bg-surface text-fg shadow-sm transition-colors hover:bg-hover ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60 ${BUSY_AFTER_CLASS}`;
 export const OUTLINE_BUTTON_CLASS = OUTLINE_BUTTON_CHROME_CLASS;
 
 const ICON_BUTTON_SIZE_CLASS = "h-6 w-6 p-0 text-sm font-medium";
@@ -54,7 +66,7 @@ const ICON_BUTTON_SIZE_CLASS = "h-6 w-6 p-0 text-sm font-medium";
  */
 const DESTRUCTIVE_BUTTON_BEFORE_SIZE_CLASS =
   "rounded border border-error/60 bg-error/15";
-const DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS = `text-error transition-colors hover:bg-error/25 ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60`;
+const DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS = `text-error transition-colors hover:bg-error/25 ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60 ${BUSY_AFTER_CLASS}`;
 export const DESTRUCTIVE_BUTTON_CLASS = `${DESTRUCTIVE_BUTTON_BEFORE_SIZE_CLASS} ${DEFAULT_BUTTON_SIZE_CLASS} ${DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS}`;
 
 export interface ButtonProps {
@@ -65,6 +77,20 @@ export interface ButtonProps {
     "primary" | "secondary" | "destructive" | "outline" | undefined;
   readonly size?: "default" | "compact" | "icon" | undefined;
   readonly disabled?: boolean | undefined;
+  /**
+   * The control is working.
+   *
+   * A disabled control is dropped out of the page's focus order the moment it
+   * is disabled, so the operator who pressed it loses their place in the
+   * document. A control that is working is not unavailable -- it is busy --
+   * and it says so: `aria-disabled` keeps it announced as unavailable while it
+   * stays focusable, and the visible label carries the state. The Console's own
+   * form owner publishes its pending state the same way, for the same reason.
+   *
+   * A busy control is still a button: it still takes the click, and the owner
+   * of the request is the one that refuses a second one.
+   */
+  readonly busy?: boolean | undefined;
   readonly className?: string | undefined;
   readonly title?: string | undefined;
   readonly onClick?: (() => void) | undefined;
@@ -118,6 +144,7 @@ export function Button({
   variant = "secondary",
   size = "default",
   disabled,
+  busy,
   className,
   title,
   onClick,
@@ -135,6 +162,9 @@ export function Button({
       type,
       onClick,
       ...(disabled === undefined ? {} : { disabled }),
+      ...(busy === true
+        ? { "aria-disabled": "true", "data-submitting": "true" }
+        : {}),
       ...(title === undefined ? {} : { title }),
       ...(name === undefined ? {} : { name }),
       ...(value === undefined ? {} : { value }),

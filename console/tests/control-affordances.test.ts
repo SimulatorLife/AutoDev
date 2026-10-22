@@ -69,6 +69,68 @@ test("a disabled button keeps the not-allowed cursor", () => {
   }
 });
 
+/**
+ * A control that is working is not an unavailable control.
+ *
+ * A disabled control is dropped out of the page's focus order the moment it is
+ * disabled, so the operator who pressed it loses their place in the document
+ * and the next Tab starts from the top of the page. That is exactly what the
+ * prompt preview did: its control was disabled while the request was in
+ * flight, and the browser moved the focus to the document the moment it was.
+ *
+ * The shared vocabulary says "busy" for that state, so a control that is
+ * working keeps its place in the page and says it is unavailable while it is.
+ */
+test("a busy button is working, not unavailable", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(Button, { busy: true }, "Approving…")
+  );
+
+  assert.doesNotMatch(
+    markup,
+    /\sdisabled(?:="|[\s>])/u,
+    "a busy control keeps its place in the page's focus order"
+  );
+  assert.match(
+    markup,
+    /aria-disabled="true"/u,
+    "the control has to say it is unavailable while it works"
+  );
+  assert.match(
+    markup,
+    /data-submitting="true"/u,
+    "the busy state is published the way the Console's own form owner publishes it"
+  );
+});
+
+test("a disabled button is still disabled", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(Button, { disabled: true }, "Approve")
+  );
+
+  assert.match(markup, /\sdisabled(?:="|[\s>])/u);
+  assert.doesNotMatch(
+    markup,
+    /aria-disabled="true"/u,
+    "an unavailable control is not a control that is working"
+  );
+});
+
+test("every button variant dims a busy control the way it dims a disabled one", () => {
+  for (const variantClass of BUTTON_VARIANT_CLASSES) {
+    assert.match(
+      variantClass,
+      /aria-disabled:opacity-60/u,
+      "a busy control wears the unavailable chrome"
+    );
+    assert.match(
+      variantClass,
+      /aria-disabled:cursor-not-allowed/u,
+      "a busy control is still a target, and says the action is not available"
+    );
+  }
+});
+
 test("the rendered button carries the pointer and its own variant's class", () => {
   for (const [variant, variantClass] of [
     ["primary", PRIMARY_BUTTON_CLASS],

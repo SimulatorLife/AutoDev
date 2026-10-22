@@ -64,7 +64,11 @@ test("the idle preview control is neither busy nor disabled", () => {
     })
   );
 
-  assert.doesNotMatch(markup, /aria-disabled/u);
+  assert.doesNotMatch(
+    markup,
+    /aria-disabled="true"/u,
+    "an idle control is not working"
+  );
   assert.doesNotMatch(markup, /data-submitting/u);
   assert.match(markup, /Preview unsaved changes/u);
 });

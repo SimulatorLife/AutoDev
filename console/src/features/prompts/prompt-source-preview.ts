@@ -71,9 +71,7 @@ export function PromptPreviewControl({
       type: "button",
       variant: "secondary",
       onClick: onPreview,
-      dataAttributes: pending
-        ? { "aria-disabled": "true", "data-submitting": "true" }
-        : {},
+      busy: pending,
       testId: "prompt-preview"
     },
     pending ? "Previewing…" : "Preview unsaved changes"
