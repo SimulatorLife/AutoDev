@@ -13,12 +13,13 @@ import {
   SECONDARY_BUTTON_CLASS
 } from "../src/components/forms/Button.ts";
 import { AppNav } from "../src/components/navigation/AppNav.ts";
-import { PromptsView } from "../src/features/prompts/PromptsView.ts";
-import { ToolsView } from "../src/features/tools/ToolsView.ts";
 import {
   STATE_PILL_BUTTON_CLASS,
   STATE_PILL_TONE_CLASS
 } from "../src/components/ui/state-pill.ts";
+import { mcpDetailTabs } from "../src/features/mcps/McpDetailView.ts";
+import { PromptsView } from "../src/features/prompts/PromptsView.ts";
+import { ToolsView } from "../src/features/tools/ToolsView.ts";
 
 /**
  * The Console's control affordances.
@@ -289,5 +290,29 @@ test("a repeated link names the row it belongs to", () => {
   assert.match(
     tools,
     /aria-label="Filter tools exposed to smart for analyze_code_relationships"/u
+  );
+});
+
+/**
+ * A tab and a top-level page can share a label.
+ *
+ * The "Tools" tab on an MCP server and the Tools catalog are two different
+ * destinations, and the navigation carries both on every page. A links list
+ * then shows "Tools" twice with nothing to tell the entries apart, so the tab
+ * says which server's tools it opens. The visible label does not change, and
+ * the name still contains it.
+ */
+test("a tab that shares a label with a page says which page it belongs to", () => {
+  const tabs = mcpDetailTabs("cocoindex-code");
+  const tools = tabs.find((tab) => tab.id === "tools");
+  const prompts = tabs.find((tab) => tab.id === "prompts");
+  const overview = tabs.find((tab) => tab.id === "overview");
+  assert.equal(tools?.label, "Tools", "the visible label does not change");
+  assert.equal(tools?.ariaLabel, "Tools for cocoindex-code");
+  assert.equal(prompts?.ariaLabel, "Prompts for cocoindex-code");
+  assert.equal(
+    overview?.ariaLabel,
+    undefined,
+    "a tab that shares no label with a page needs no name of its own"
   );
 });

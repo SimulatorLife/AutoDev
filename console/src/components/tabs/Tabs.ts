@@ -5,6 +5,17 @@ import { NavigationLink } from "../navigation/NavigationLink.ts";
 export interface TabDefinition {
   readonly id: string;
   readonly label: string;
+  /**
+   * Accessible name, when the visible label would name two different things.
+   *
+   * A tab and a top-level page can share a label -- the "Tools" tab on an MCP
+   * server and the Tools catalog, the "Prompts" tab and the Prompts catalog.
+   * The links are correct, but a links list then shows the same name twice with
+   * two destinations, and nothing tells the entries apart. A caller that knows
+   * which page its tabs belong to names them here; the visible label does not
+   * change, and the name still contains it.
+   */
+  readonly ariaLabel?: string | undefined;
 }
 
 export interface TabNavProps {
@@ -23,6 +34,7 @@ export interface TabNavProps {
 const DEFAULT_TAB_PARAM = "tab";
 type TabLinkProps = React.ComponentProps<typeof NavigationLink> & {
   readonly "data-tab-item": string;
+  readonly "aria-label"?: string | undefined;
 };
 
 /**
@@ -93,6 +105,9 @@ export function TabNav({
           href: hrefFor ? hrefFor(tab.id) : tabHref(basePath, tab.id, tabParam),
           "aria-current": isActive ? "page" : undefined,
           "data-tab-item": tab.id,
+          ...(tab.ariaLabel === undefined
+            ? {}
+            : { "aria-label": tab.ariaLabel }),
           className: `inline-block px-4 py-2.5 text-sm font-medium border-b-2 transition-colors no-underline  ${
             isActive
               ? "border-accent text-accent bg-surface/40"

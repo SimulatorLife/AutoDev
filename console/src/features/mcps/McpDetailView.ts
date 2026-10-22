@@ -57,6 +57,23 @@ export const MCP_DETAIL_TABS: readonly TabDefinition[] = [
   { id: "errors-logs", label: "Errors / Logs" }
 ];
 
+/**
+ * The tabs of one MCP server, named for that server.
+ *
+ * "Tools" and "Prompts" are also top-level page names, and the navigation
+ * carries both on every page. A tab named "Tools" and the Tools catalog are
+ * two different destinations under one name, so the tab says which server's
+ * tools it opens. The visible label does not change, and the name still
+ * contains it.
+ */
+export function mcpDetailTabs(serverName: string): readonly TabDefinition[] {
+  return MCP_DETAIL_TABS.map((tab) =>
+    tab.id === "tools" || tab.id === "prompts"
+      ? { ...tab, ariaLabel: `${tab.label} for ${serverName}` }
+      : tab
+  );
+}
+
 const DEFAULT_MCP_DETAIL_TAB = "overview";
 
 export interface McpDetailViewProps {
@@ -610,7 +627,7 @@ export function McpDetailView({
     React.createElement(TabNav, {
       navLabel: `${server.name} detail sections`,
       basePath,
-      tabs: MCP_DETAIL_TABS,
+      tabs: mcpDetailTabs(server.name),
       activeTabId
     }),
     panelsByTabId[activeTabId]
