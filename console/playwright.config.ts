@@ -95,6 +95,17 @@ export default defineConfig({
   },
   use: {
     ...devices["Desktop Chrome"],
+    ...(process.env.AUTODEV_ACCEPTANCE_SINGLE_PROCESS === "1"
+      ? {
+          // A sandbox that cannot register a Mach port cannot start the
+          // browser's multi-process rendezvous, and the launch dies before the
+          // first page. One process is the way past it. It is opt-in because
+          // it is a workaround for a constrained machine and not the way the
+          // acceptance is meant to run, and because a single-process browser
+          // is not stable across specs -- run one spec at a time with it.
+          launchOptions: { args: ["--single-process", "--no-sandbox"] }
+        }
+      : {}),
     baseURL: `http://localhost:${consolePort}`,
     trace: "retain-on-failure",
     screenshot: "only-on-failure"
