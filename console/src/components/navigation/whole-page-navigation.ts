@@ -160,10 +160,7 @@ function resolveWaiters(key: string): void {
  * The ask is recorded before it is made, so the answer that arrives for it is
  * the answer the owner waits for.
  */
-export function warmUpWholePage(
-  router: WholePageRouter,
-  href: string
-): void {
+export function warmUpWholePage(router: WholePageRouter, href: string): void {
   if (!router || !isLocalDestination(href)) return;
   const key = answerKey(href);
   if (!ASKED.has(key)) ASKED.set(key, ++order);

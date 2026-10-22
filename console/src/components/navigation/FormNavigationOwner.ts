@@ -920,7 +920,13 @@ export function handleFormSubmission(
   const params = extractFormData(form, submitter);
 
   if (method === "GET") {
-    return handleGetSubmission(actionUrl, params, currentBase, options, snapshot);
+    return handleGetSubmission(
+      actionUrl,
+      params,
+      currentBase,
+      options,
+      snapshot
+    );
   }
 
   return handlePostSubmission(

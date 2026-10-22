@@ -104,11 +104,7 @@ test("a newer navigation replaces the one that is waiting", async () => {
   deliverWholePageAnswer("/providers/claude");
   deliverWholePageAnswer("/agents/default");
   await Promise.all([first, second]);
-  assert.deepEqual(
-    pushes,
-    [],
-    "the replaced navigation must not leave"
-  );
+  assert.deepEqual(pushes, [], "the replaced navigation must not leave");
   assert.deepEqual(
     replacements,
     [{ href: "/agents/default", scroll: false }],
@@ -191,7 +187,8 @@ test("the answer still arrives when the page's clock and timers are held still",
   Date.now = () => 1_700_000_000_000;
   performance.now = () => 1_000;
   globalThis.setTimeout = (() => 0) as unknown as typeof globalThis.setTimeout;
-  globalThis.setInterval = (() => 0) as unknown as typeof globalThis.setInterval;
+  globalThis.setInterval = (() =>
+    0) as unknown as typeof globalThis.setInterval;
   try {
     const navigation = navigateToWholePage(router, "/providers/claude", "push");
     await settle();
