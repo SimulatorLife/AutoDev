@@ -59,6 +59,10 @@ import {
   type PlaytestRunControl
 } from "../src/playtesting/mcp.ts";
 import {
+  isOneJevLocalVisualPolicyAvailable,
+  resetOneJevLocalPolicyAvailabilityCache
+} from "../src/playtesting/onejev-local-policy.ts";
+import {
   isSmartDirectVisualPolicyAvailable,
   isSmartDirectVisualPolicyConfigured,
   resetSmartDirectVisualPolicyAvailabilityCache
@@ -757,6 +761,11 @@ test("capabilities expose approved visual targets without claiming an uninstalle
         readonly eligibility: string;
         readonly reasons: readonly { readonly code: string }[];
       }[];
+      readonly policies: readonly {
+        readonly policyId: string;
+        readonly status: string;
+        readonly reasons: readonly { readonly code: string }[];
+      }[];
       readonly reasons: readonly { readonly code: string }[];
     };
   };
@@ -764,9 +773,16 @@ test("capabilities expose approved visual targets without claiming an uninstalle
   assert.equal(modes["autonomous-visual"].targetStore, "available");
   const visualDriverAvailable = isPlaytestVisualBrowserDriverAvailable();
   const smartDirectConfigured = isSmartDirectVisualPolicyConfigured();
+  resetOneJevLocalPolicyAvailabilityCache();
+  const oneJevAvailable = await isOneJevLocalVisualPolicyAvailable();
+  // The mode can run when at least one decision backend can be reached, so
+  // the mode's own status follows the driver and the backends as a group. A
+  // backend that is down is a fact about that backend, and it is reported on
+  // the backend's own readiness rather than as a reason against the mode.
+  const aBackendIsReachable = smartDirectAvailable || oneJevAvailable;
   assert.equal(
     modes["autonomous-visual"].status,
-    visualDriverAvailable && smartDirectAvailable
+    visualDriverAvailable && aBackendIsReachable
       ? "check-required"
       : "unavailable"
   );
@@ -778,9 +794,23 @@ test("capabilities expose approved visual targets without claiming an uninstalle
   );
   assert.equal(
     modes["autonomous-visual"].reasons.some(
+      (reason) => reason.code === "visual-policy-unavailable"
+    ),
+    !aBackendIsReachable
+  );
+  const smartDirectPolicy = modes["autonomous-visual"].policies.find(
+    (policy) => policy.policyId === "smart-direct"
+  );
+  assert.ok(smartDirectPolicy, "the mode must report the Smart-direct route");
+  assert.equal(
+    smartDirectPolicy.reasons.some(
       (reason) => reason.code === "smart-direct-policy-unavailable"
     ),
     !smartDirectConfigured || !smartDirectAvailable
+  );
+  assert.equal(
+    smartDirectPolicy.status,
+    smartDirectAvailable ? "ready" : "unavailable"
   );
   assert.deepEqual(
     modes["autonomous-visual"].targets.map((entry) => entry.target.targetId),
@@ -1118,10 +1148,16 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
     };
   };
   assert.equal(readiness["adapter-accelerated"].status, "check-required");
+  // The mode can run when the driver can be resolved and at least one
+  // decision backend can be reached, so its status follows both probes and
+  // not the Smart-directed route alone.
+  resetOneJevLocalPolicyAvailabilityCache();
+  const aBackendIsReachable =
+    (await isSmartDirectVisualPolicyAvailable()) ||
+    (await isOneJevLocalVisualPolicyAvailable());
   assert.equal(
     readiness["autonomous-visual"].status,
-    isPlaytestVisualBrowserDriverAvailable() &&
-      (await isSmartDirectVisualPolicyAvailable())
+    isPlaytestVisualBrowserDriverAvailable() && aBackendIsReachable
       ? "check-required"
       : "unavailable"
   );
@@ -1137,10 +1173,15 @@ test("Control API run, status, list, and cancel delegate to the shared Runtime r
       (reason) => reason.code === "visual-target-required"
     )
   );
-  assert.ok(
-    !readiness["autonomous-visual"].reasons.some(
+  // The driver reason follows the driver the Runtime can actually resolve.
+  // A machine with no Playwright Chromium is a machine whose mode is
+  // unavailable, and saying so is the contract; asserting that the driver
+  // is present would assert the machine instead of the product.
+  assert.equal(
+    readiness["autonomous-visual"].reasons.some(
       (reason) => reason.code === "visual-driver-unavailable"
-    )
+    ),
+    !isPlaytestVisualBrowserDriverAvailable()
   );
 
   const operatorCapabilities = await callRunControl(

@@ -249,6 +249,11 @@ export async function isOneJevLocalVisualPolicyAvailable(
   return available;
 }
 
+/** Test seam to isolate readiness probe cache lifetimes. */
+export function resetOneJevLocalPolicyAvailabilityCache(): void {
+  oneJevAvailabilityCache.clear();
+}
+
 /** The upstream answer, after it has been checked against what was asked. */
 interface OneJevAnswer {
   readonly model: string;
