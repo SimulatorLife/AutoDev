@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -266,9 +266,15 @@ async function runVisualEpisode(options: {
   readonly routerDelayMs: number;
   readonly limits?: WorkspaceVisualPlaytestTargetApproval["limits"];
 }): Promise<EpisodeRun> {
-  const visualRoot = mkdtempSync(path.join(tmpdir(), "visual-budget-target-"));
-  const artifactRoot = mkdtempSync(
-    path.join(tmpdir(), "visual-budget-artifacts-")
+  // The approval repository refuses a root that resolves through a symlink,
+  // and the operating system's temporary directory is one on macOS. The
+  // root is resolved first so the repository is given the directory it will
+  // actually use, as the other visual suites do.
+  const visualRoot = realpathSync(
+    mkdtempSync(path.join(tmpdir(), "visual-budget-target-"))
+  );
+  const artifactRoot = realpathSync(
+    mkdtempSync(path.join(tmpdir(), "visual-budget-artifacts-"))
   );
   const router = await startFakeRouter(options.decision, options.routerDelayMs);
   const previousPort = process.env.CODEX_MODEL_ROUTER_PORT;

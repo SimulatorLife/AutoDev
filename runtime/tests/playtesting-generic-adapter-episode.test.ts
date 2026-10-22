@@ -46,6 +46,7 @@ import {
   PLAYTESTS_ADAPTER_CHECKOUT_ROOT_ENV
 } from "../src/playtesting/generic-adapter-main.ts";
 import { withObservationSchemaHash } from "../src/playtesting/hash-chain.ts";
+import { withLocalSocket } from "./support/local-socket.ts";
 
 const GAME_OBSERVATION_SCHEMA = {
   type: "object",
@@ -439,36 +440,43 @@ test("an unbound method is refused by name over the real transport", async () =>
     fixture.cleanup();
   }
 });
-test("the mount the sandbox builds is the path the adapter resolves against", () => {
+test("the mount the sandbox builds is the path the adapter resolves against", async () => {
   // These two are a pair: the sandbox mounts the checkout at one path and the
   // adapter looks for the binding under another. If they drift, the adapter
   // searches outside the read-only mount for a binding that is present, and the
   // game fails onboarding with a file it can see in its own checkout.
-  const containerArgs = buildDockerRunArguments(
-    preparedFor(PLAYTESTS_GENERIC_ADAPTER_COMMAND),
-    "run-paired-paths",
-    realpathSync(tmpdir()),
-    undefined
-  );
-  assert.ok(
-    containerArgs.includes("AUTODEV_PLAYTEST_ENGINE_BUILD=fixture-engine-v1"),
-    "the generic adapter must receive the exact approved game-build identity"
-  );
-  const mounted = containerArgs.find((arg) => arg.startsWith("type=bind,"));
-  assert.ok(
-    mounted?.includes(`target=${PLAYTESTS_ADAPTER_CHECKOUT_ROOT},readonly`),
-    `the checkout must be mounted where the adapter looks: ${String(mounted)}`
-  );
-  assert.equal(
-    integrationDirFrom(["--integration-dir", PLAYTESTS_INTEGRATION_DIR]),
-    `${PLAYTESTS_ADAPTER_CHECKOUT_ROOT}/${PLAYTESTS_INTEGRATION_DIR}`
-  );
-  // The integration directory is checkout-root relative, never working
-  // directory relative: the game's own directory is not where it keeps this.
-  assert.equal(
-    integrationDirFrom([], "/some/other/game/dir"),
-    `/some/other/game/dir/${PLAYTESTS_INTEGRATION_DIR}`
-  );
+  //
+  // The builder refuses a socket that is not a socket, and this file stands in
+  // for the container's streams precisely because a Docker socket is not
+  // available here. The subject is the mount the arguments carry, so a local
+  // socket is stood up for the builder to accept.
+  await withLocalSocket(async (socket) => {
+    const containerArgs = buildDockerRunArguments(
+      preparedFor(PLAYTESTS_GENERIC_ADAPTER_COMMAND),
+      "run-paired-paths",
+      realpathSync(tmpdir()),
+      socket
+    );
+    assert.ok(
+      containerArgs.includes("AUTODEV_PLAYTEST_ENGINE_BUILD=fixture-engine-v1"),
+      "the generic adapter must receive the exact approved game-build identity"
+    );
+    const mounted = containerArgs.find((arg) => arg.startsWith("type=bind,"));
+    assert.ok(
+      mounted?.includes(`target=${PLAYTESTS_ADAPTER_CHECKOUT_ROOT},readonly`),
+      `the checkout must be mounted where the adapter looks: ${String(mounted)}`
+    );
+    assert.equal(
+      integrationDirFrom(["--integration-dir", PLAYTESTS_INTEGRATION_DIR]),
+      `${PLAYTESTS_ADAPTER_CHECKOUT_ROOT}/${PLAYTESTS_INTEGRATION_DIR}`
+    );
+    // The integration directory is checkout-root relative, never working
+    // directory relative: the game's own directory is not where it keeps this.
+    assert.equal(
+      integrationDirFrom([], "/some/other/game/dir"),
+      `/some/other/game/dir/${PLAYTESTS_INTEGRATION_DIR}`
+    );
+  });
 });
 
 /**

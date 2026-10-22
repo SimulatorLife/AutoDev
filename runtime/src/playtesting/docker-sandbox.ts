@@ -654,12 +654,7 @@ export function buildDockerRunArguments(
       "Isolated Docker config directory must be an absolute path."
     );
   }
-  accessSync(socket, constants.R_OK | constants.W_OK);
-  if (!statSync(socket).isSocket()) {
-    throw new PlaytestSandboxUnavailableError(
-      "Local Docker Engine socket is unavailable."
-    );
-  }
+  assertLocalDockerAvailable(socket);
   const containerName = getPlaytestContainerName(runId);
   if (
     !Number.isSafeInteger(outputArtifactBytes) ||
