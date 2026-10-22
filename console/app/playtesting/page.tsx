@@ -277,8 +277,9 @@ async function loadList(
   const readiness = await waitForPlaytestingReadiness(scope, config);
   if (readiness !== null) return readiness;
   if (scope.view === "sessions") {
-    const [result, capabilities] = await Promise.all([
+    const [result, reviews, capabilities] = await Promise.all([
       fetchPlaytestingPage("episodes", pageRequest(scope, "episodes"), config),
+      fetchPlaytestingReviews(scope.workspaceId!, config),
       fetchPlaytestingRunCapabilities(scope.workspaceId!, config)
     ]);
     if (result.kind !== "ok") return { kind: "unavailable", result };
@@ -289,7 +290,12 @@ async function loadList(
         resource: "episodes",
         rows: result.data.page.rows,
         total: result.data.page.total,
-        nextCursor: result.data.page.nextCursor
+        nextCursor: result.data.page.nextCursor,
+        // The review read enriches the rows; it does not decide them. A
+        // failed read leaves the session list intact and the rows without an
+        // analysis line, rather than taking the list down with it.
+        reviews: reviews.kind === "ok" ? reviews.data.rows : null,
+        reviewTotal: reviews.kind === "ok" ? reviews.data.total : null
       }
     };
   }
@@ -391,7 +397,9 @@ function pageResult(
             scope,
             rows: loaded.data.rows,
             total: loaded.data.total,
-            nextCursor: loaded.data.nextCursor
+            nextCursor: loaded.data.nextCursor,
+            reviews: loaded.data.reviews ?? null,
+            reviewTotal: loaded.data.reviewTotal ?? null
           })
         : undefined;
     content = React.createElement(PlaytestingView, {

@@ -1532,3 +1532,88 @@ test("the session page names the limit that cut a truncated episode short", () =
   assert.match(html, /Execution status<\/dt>[^]*?Budget exhausted/u);
   assert.doesNotMatch(html, /Execution status<\/dt>[^]*?Limit reached/u);
 });
+
+test("a session row says what the analyst recorded about that session", () => {
+  const current = episode();
+  const review = {
+    reviewId: "review-episode-17",
+    episodeId: current.episodeId,
+    workspaceId: WORKSPACE,
+    kind: "discovery" as const,
+    status: "hypothesis",
+    createdAt: "2026-10-21T12:00:00.000Z",
+    observationCount: 10,
+    interpretationCount: 5,
+    findingCount: 2,
+    headline: "The fast-forward button may have no visible effect.",
+    summary: "Ten observations were recorded against the four captured frames.",
+    hypotheses: [
+      {
+        hypothesisId: "int-1",
+        text: "The fast-forward button may have no visible effect.",
+        status: "hypothesis" as const
+      }
+    ],
+    findings: [],
+    evidenceRefs: []
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionsWorkspace, {
+      scope: scope({ view: "sessions" }),
+      rows: [current],
+      total: 1,
+      nextCursor: null,
+      reviews: [review],
+      reviewTotal: 1
+    })
+  );
+  assert.match(html, /Analysed · 5 hypotheses · 10 observations · 2 findings/u);
+  assert.match(html, /data-session-analysis="episode-17"/u);
+  // Every review was read, so a session with none of its own says so.
+  const withoutReview = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionsWorkspace, {
+      scope: scope({ view: "sessions" }),
+      rows: [current],
+      total: 1,
+      nextCursor: null,
+      reviews: [],
+      reviewTotal: 0
+    })
+  );
+  assert.match(withoutReview, /No analyst review recorded/u);
+});
+
+test("a session row claims no analysis when the review read did not answer", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionsWorkspace, {
+      scope: scope({ view: "sessions" }),
+      rows: [episode()],
+      total: 1,
+      nextCursor: null,
+      reviews: null,
+      reviewTotal: null
+    })
+  );
+  // A failed read is not evidence that no review exists.
+  assert.doesNotMatch(html, /No analyst review recorded/u);
+  assert.doesNotMatch(html, /Analysed ·/u);
+});
+
+test("a session row says when only part of the workspace's reviews was read", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionsWorkspace, {
+      scope: scope({ view: "sessions" }),
+      rows: [episode()],
+      total: 1,
+      nextCursor: null,
+      reviews: [],
+      reviewTotal: 120
+    })
+  );
+  assert.match(
+    html,
+    /Analysis counts are shown for the 0 most recent of 120 analyst reviews\./u
+  );
+  // A review this page never saw is not the same as no review at all.
+  assert.doesNotMatch(html, /No analyst review recorded/u);
+});

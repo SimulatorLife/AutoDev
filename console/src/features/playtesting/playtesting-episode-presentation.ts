@@ -21,8 +21,6 @@ import {
 
 const LOOP_GUARD_STOP_REASON = "loop-guard" as const;
 
-export { executionModeLabel };
-
 export function executionSourceSummary(
   provenance: PlaytestExecutionProvenance
 ): string {
@@ -104,6 +102,45 @@ export function sessionMetaLine(
   ].join(" · ");
 }
 
+/**
+ * What the analyst recorded about one session.
+ *
+ * A session row that cannot say whether the analyst looked at it forces the
+ * reader to open every one of them to find out. The counts are the review's
+ * own: how many claims the analyst asserted, how many observations it made,
+ * and how many findings it raised.
+ */
+export interface SessionAnalysis {
+  readonly hypotheses: number;
+  readonly observations: number;
+  readonly findings: number;
+}
+
+/**
+ * The analysis line under a session row.
+ *
+ * Null when the workspace's reviews could not be read: a row must not say
+ * "no analyst review" when nobody looked.
+ */
+export function sessionAnalysisLine(
+  analysis: SessionAnalysis | null
+): string | null {
+  if (analysis === null) return null;
+  const hypotheses = `${String(analysis.hypotheses)} ${analysis.hypotheses === 1 ? "hypothesis" : "hypotheses"}`;
+  const observations = `${String(analysis.observations)} ${analysis.observations === 1 ? "observation" : "observations"}`;
+  const findings = `${String(analysis.findings)} ${analysis.findings === 1 ? "finding" : "findings"}`;
+  return `Analysed · ${hypotheses} · ${observations} · ${findings}`;
+}
+
+/**
+ * The line a session with no analyst review of its own shows.
+ *
+ * It is only true when every review in the workspace was read. A review that
+ * exists but was outside the read is a different fact, and saying "no
+ * analyst review" there would be wrong.
+ */
+export const NO_ANALYSIS_LABEL = "No analyst review recorded";
+
 /** Prefer the decision that stopped an incomplete episode over its first step. */
 export function defaultEpisodeInspectionStep(
   episode: Pick<PlaytestEpisode, "status" | "stepCount" | "termination">
@@ -171,3 +208,5 @@ export function planEpisodeTraceWindow(
     endStep: Math.max(startStep, Math.min(lastStep, requestedStep + 5))
   };
 }
+
+export {executionModeLabel} from "./playtesting-labels.ts";

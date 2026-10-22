@@ -31,11 +31,11 @@ import {
 } from "../../components/ui/text-classes.ts";
 import {
   defaultEpisodeInspectionStep,
-  executionModeLabel,
   executionSourceSummary,
   executionStatusBadge,
   gameOutcomeBadge
 } from "./playtesting-episode-presentation.ts";
+import { executionModeLabel } from "./playtesting-labels.ts";
 import {
   playtestingAnalyzeEpisodeHref,
   playtestingEpisodeHref,

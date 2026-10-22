@@ -1,10 +1,11 @@
 "use client";
 
 import {
+  type ControlApiPlaytestingReview,
   type PlaytestEpisode,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS
 } from "@simulatorlife/autodev-core";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
@@ -15,6 +16,9 @@ import {
   episodeScenarioLabel,
   executionStatusBadge,
   gameOutcomeBadge,
+  NO_ANALYSIS_LABEL,
+  type SessionAnalysis,
+  sessionAnalysisLine,
   sessionMetaLine
 } from "./playtesting-episode-presentation.ts";
 import { gameOutcomeLabel } from "./playtesting-labels.ts";
@@ -53,12 +57,24 @@ export function PlaytestingSessionsWorkspace({
   scope,
   rows,
   total,
-  nextCursor
+  nextCursor,
+  reviews = null,
+  reviewTotal = null
 }: {
   readonly scope: PlaytestingScope;
   readonly rows: readonly PlaytestEpisode[];
   readonly total: number;
   readonly nextCursor: string | null;
+  /**
+   * The workspace's analyst reviews, when they could be read.
+   *
+   * Null means they could not: the rows then carry no analysis line, because
+   * a row that said "no analyst review" when the review read failed would be
+   * claiming something nobody observed.
+   */
+  readonly reviews?: readonly ControlApiPlaytestingReview[] | null | undefined;
+  /** How many reviews the workspace holds in all. */
+  readonly reviewTotal?: number | null | undefined;
 }): React.JSX.Element {
   const [selectedEpisodeIds, setSelectedEpisodeIds] = useState(
     scope.selectedEpisodeIds
@@ -67,6 +83,45 @@ export function PlaytestingSessionsWorkspace({
     scope.invalidSelection
   );
   const [layout, setLayout] = useState<PlaytestingLayout>(scope.layout);
+
+  /**
+   * What the analyst recorded about each session.
+   *
+   * A session can carry more than one review -- a discovery review and a
+   * confirmatory one -- so the counts add up.
+   */
+  const analysisByEpisode = useMemo(() => {
+    const byEpisode = new Map<string, SessionAnalysis>();
+    if (reviews === null) return byEpisode;
+    for (const review of reviews) {
+      const current = byEpisode.get(review.episodeId);
+      byEpisode.set(
+        review.episodeId,
+        current === undefined
+          ? {
+              hypotheses: review.interpretationCount,
+              observations: review.observationCount,
+              findings: review.findingCount
+            }
+          : {
+              hypotheses: current.hypotheses + review.interpretationCount,
+              observations: current.observations + review.observationCount,
+              findings: current.findings + review.findingCount
+            }
+      );
+    }
+    return byEpisode;
+  }, [reviews]);
+
+  /**
+   * Whether every review in the workspace was read.
+   *
+   * Only then can a session with no review say so. A workspace with more
+   * reviews than the read returned has reviews this page never saw, and
+   * "no analyst review recorded" would be a claim about a gap in the read.
+   */
+  const everyReviewRead =
+    reviews !== null && (reviewTotal === null || reviewTotal <= reviews.length);
 
   const changeSelection = useCallback((nextIds: readonly string[]) => {
     setSelectedEpisodeIds(nextIds);
@@ -181,6 +236,19 @@ export function PlaytestingSessionsWorkspace({
           )
         )
       ),
+      // The read is a window. A workspace with more reviews than the read
+      // returned has reviews this page never saw, so the list says which
+      // window it is showing rather than implying it is showing all of them.
+      reviews !== null && !everyReviewRead
+        ? React.createElement(
+            "p",
+            {
+              className: `mt-3 text-sm ${MUTED_META_CLASS}`,
+              "data-session-analysis-note": "true"
+            },
+            `Analysis counts are shown for the ${String(reviews.length)} most recent of ${String(reviewTotal ?? reviews.length)} analyst reviews.`
+          )
+        : null,
       rows.length === 0
         ? React.createElement(EmptyState, {
             variant: "inline",
@@ -255,6 +323,16 @@ export function PlaytestingSessionsWorkspace({
                     "p",
                     { className: MUTED_META_CLASS },
                     sessionMetaLine(episode)
+                  ),
+                  React.createElement(
+                    "p",
+                    {
+                      className: MUTED_META_CLASS,
+                      "data-session-analysis": episode.episodeId
+                    },
+                    sessionAnalysisLine(
+                      analysisByEpisode.get(episode.episodeId) ?? null
+                    ) ?? (everyReviewRead ? NO_ANALYSIS_LABEL : "")
                   )
                 ),
                 React.createElement(

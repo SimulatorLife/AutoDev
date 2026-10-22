@@ -118,6 +118,17 @@ export type PlaytestingListData =
       readonly rows: readonly PlaytestEpisode[];
       readonly total: number;
       readonly nextCursor: string | null;
+      /**
+       * The analyst's persisted reviews for this workspace.
+       *
+       * Null when the review read failed: the session list is still the
+       * session list without it, and a row must not claim that a session was
+       * never analysed just because the counts could not be read.
+       */
+      readonly reviews?:
+        readonly ControlApiPlaytestingReview[] | null | undefined;
+      /** How many reviews the workspace holds in all. */
+      readonly reviewTotal?: number | null | undefined;
     }
   | {
       readonly resource: "findings";
