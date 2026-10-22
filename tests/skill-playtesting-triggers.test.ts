@@ -90,7 +90,11 @@ test("negative trigger: 'fix this code' matches neither skill", () => {
 
 test("game-playtesting explicitly excludes analysis and issue publication from its scope", () => {
   assert.match(gamePlaytestingDescription, /[Nn]ot for analyzing, scoring/);
-  assert.match(gamePlaytestingBody, /## Non-goals/);
+  // The scope is stated where routing reads it: the skill's own list of what
+  // it does not do. The section that carries it has been renamed as the skill
+  // gained its mode separation, so the check is on the scope it states rather
+  // than on a heading name.
+  assert.match(gamePlaytestingBody, /Do not use this skill for/i);
   assert.match(gamePlaytestingBody, /playtest-analysis/);
   assert.match(gamePlaytestingBody, /GitHub issue/);
 });

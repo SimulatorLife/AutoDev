@@ -1,6 +1,6 @@
 ---
 name: game-playtesting
-description: Trigger only when asked to execute, play, run, or simulate a game. Covers mode-specific adapter/visual authorization, capability preflight, launch idempotency, bounded execution, and factual evidence handoff. Not for ordinary code changes or analyzing/scoring/comparing/publishing recorded sessions; use playtest-analysis for analysis.
+description: Trigger only when asked to execute, play, run, or simulate a game (e.g. "play ten episodes", "run a playtest batch", "simulate this scenario"). Covers mode-specific adapter/visual authorization, capability preflight, launch idempotency, bounded execution, and factual evidence handoff. Not for analyzing, scoring, comparing, or publishing recorded sessions; use playtest-analysis for analysis, and not for ordinary code changes.
 targets: []
 ---
 
