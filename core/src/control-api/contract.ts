@@ -25,11 +25,15 @@
  * (`GET /control/mcp-runtime`) rather than folded into the MCP catalog. The
  * catalog stays a configuration read, and the MCP page composes the
  * observation onto the declaration rather than blurring the two.
+ * v13: the MCP configuration the Runtime published is published on its own
+ * read path (`GET /control/mcp-applied`) and reconciled against the canonical
+ * declaration through the shared reconciliation contract, so the MCP page can
+ * say whether what the operator declared is what the Runtime applied.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 12
+  version: 13
 } as const;
 
 export type ControlApiContractResponse = {

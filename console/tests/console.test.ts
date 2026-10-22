@@ -17,6 +17,7 @@ import {
   CANONICAL_NAVIGATION,
   type CanonicalNavSection,
   type ControlApiAgentDetailResponse,
+  type ControlApiMcpAppliedResponse,
   type ControlApiMcpRuntimeResponse,
   type ControlApiMemoryWhyResponse,
   type ControlApiModelsResponse,
@@ -226,6 +227,7 @@ import {
   fetchEvaluations,
   fetchGithubWorkflows,
   fetchHooks,
+  fetchMcpApplied,
   fetchMcpRuntime,
   fetchMcps,
   fetchMemoryCohorts,
@@ -4936,6 +4938,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools: null,
       server,
       activeTab: "overview"
@@ -4951,6 +4954,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools: null,
       server,
       activeTab: "configuration"
@@ -4962,6 +4966,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools: null,
       server,
       activeTab: "role-access"
@@ -4973,6 +4978,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools: null,
       server,
       activeTab: "tools"
@@ -4987,6 +4993,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools: null,
       server,
       activeTab: "activity"
@@ -5027,6 +5034,7 @@ test("McpDetailView renders populated configured tool allowlist from the Tools c
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools,
       server,
       activeTab: "tools"
@@ -5046,6 +5054,7 @@ test("McpDetailView renders populated configured tool allowlist from the Tools c
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools,
       server,
       activeTab: "activity"
@@ -5054,6 +5063,96 @@ test("McpDetailView renders populated configured tool allowlist from the Tools c
   assert.match(activityMarkup, /Not observed/);
   assert.match(activityMarkup, /Runtime evidence: Not observed/);
   assert.match(activityMarkup, /A declaration is not a reached server/);
+});
+
+test("McpDetailView shows the applied MCP configuration and the runtime's verdict on it", () => {
+  const server: McpServerResource = {
+    name: "context7",
+    enabled: true,
+    transport: "http",
+    targetOverrides: [],
+    declared: true,
+    roles: ["docs-researcher"]
+  };
+  const applied: ControlApiMcpAppliedResponse = {
+    schema: "autodev-control-mcp-applied-v1",
+    source: "/codex/provider-runtime/mcp-servers.json",
+    declarationSource: ".rulesync/mcp.jsonc",
+    target: "codexcli",
+    available: true,
+    servers: [
+      {
+        name: "context7",
+        command: null,
+        args: [],
+        cwd: null,
+        url: "https://mcp.context7.com/mcp",
+        bearerTokenEnvVar: "CONTEXT7_API_KEY",
+        httpHeaders: {}
+      }
+    ],
+    reconciliation: {
+      status: {
+        convergence: "converged",
+        desiredGeneration: "a".repeat(64),
+        observedGeneration: "a".repeat(64),
+        lastApplyAt: null,
+        lastObservationAt: "2026-10-22T12:00:00.000Z",
+        lastError: null,
+        explanation:
+          "The runtime has observed the latest desired generation; convergence is recorded."
+      },
+      history: []
+    }
+  };
+
+  const markup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
+      applied,
+      configuredTools: null,
+      server,
+      activeTab: "configuration"
+    })
+  );
+  // The applied launch configuration is the Runtime's own, rendered next to
+  // the declaration rather than in place of it.
+  assert.match(markup, /Applied configuration/);
+  assert.match(markup, /https:\/\/mcp.context7.com\/mcp/);
+  assert.match(markup, /CONTEXT7_API_KEY/);
+  // And the verdict on the comparison is the Runtime's, rendered by the shared
+  // reconciliation panel.
+  assert.match(markup, /data-feature="reconciliation"/);
+  assert.match(markup, /Desired generation/);
+  assert.match(markup, /Observed generation/);
+  assert.match(markup, /convergence is recorded/);
+});
+
+test("McpDetailView reports an unreadable applied configuration as unobserved", () => {
+  const server: McpServerResource = {
+    name: "context7",
+    enabled: true,
+    transport: "http",
+    targetOverrides: [],
+    declared: true,
+    roles: ["docs-researcher"]
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
+      configuredTools: null,
+      server,
+      activeTab: "configuration"
+    })
+  );
+  // An unreadable applied read is not an applied configuration with nothing in
+  // it, so nothing is claimed about what the Runtime published.
+  assert.match(markup, /Applied configuration: Not observed/);
+  assert.match(markup, /could not be read/);
+  assert.doesNotMatch(markup, /data-feature="reconciliation"/);
 });
 
 test("McpDetailView renders the runtime's own evidence for a server it has observed", () => {
@@ -5104,6 +5203,7 @@ test("McpDetailView renders the runtime's own evidence for a server it has obser
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime,
+      applied: null,
       configuredTools: null,
       server,
       activeTab: "connection-health"
@@ -5120,6 +5220,7 @@ test("McpDetailView renders the runtime's own evidence for a server it has obser
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime,
+      applied: null,
       configuredTools: null,
       server,
       activeTab: "overview"
@@ -5132,6 +5233,7 @@ test("McpDetailView renders the runtime's own evidence for a server it has obser
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime,
+      applied: null,
       configuredTools: null,
       server,
       activeTab: "activity"
@@ -5145,6 +5247,7 @@ test("McpDetailView renders the runtime's own evidence for a server it has obser
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime,
+      applied: null,
       configuredTools: null,
       server,
       activeTab: "tools"
@@ -5171,6 +5274,7 @@ test("McpDetailView distinguishes no enumerated allowlist entries from an empty 
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools: [],
       server,
       activeTab: "tools"
@@ -5189,6 +5293,7 @@ test("McpDetailView distinguishes no enumerated allowlist entries from an empty 
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools: [],
       server,
       activeTab: "overview"
@@ -5210,6 +5315,7 @@ test("McpDetailView distinguishes an unavailable tool source from an empty allow
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools: null,
       server,
       activeTab: "tools"
@@ -5227,6 +5333,7 @@ test("McpDetailView distinguishes an unavailable tool source from an empty allow
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools: null,
       server,
       activeTab: "activity"
@@ -5273,6 +5380,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools,
       server,
       activeTab: "configuration"
@@ -5290,6 +5398,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools,
       server,
       activeTab: "connection-health"
@@ -5303,6 +5412,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools,
       server,
       activeTab: "role-access"
@@ -5314,6 +5424,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools,
       server,
       activeTab: "tools"
@@ -5325,6 +5436,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools,
       server,
       activeTab: "resources"
@@ -5337,6 +5449,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools,
       server,
       activeTab: "prompts"
@@ -5349,6 +5462,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools,
       server,
       activeTab: "activity"
@@ -5361,6 +5475,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools,
       server,
       activeTab: "errors-logs"
@@ -5415,6 +5530,7 @@ test("McpDetailView tab navigation renders all nine tabs as deterministic, URL-a
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools: null,
       server,
       activeTab: "resources"
@@ -5454,6 +5570,7 @@ test("McpDetailView falls back to the Overview tab for an unknown or missing ?ta
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools: null,
       server,
       activeTab: "not-a-real-tab"
@@ -5471,6 +5588,7 @@ test("McpDetailView falls back to the Overview tab for an unknown or missing ?ta
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools: null,
       server
     })
@@ -5510,6 +5628,7 @@ test("McpDetailView renders exactly one data-section panel per tab with no conte
       React.createElement(McpDetailView, {
         sourceValidity: true,
         runtime: NO_MCP_OBSERVATIONS,
+        applied: null,
         configuredTools,
         server,
         activeTab: tab.id
@@ -5583,6 +5702,7 @@ test("McpDetailView labels execution-contract role assignments as configured acc
     React.createElement(McpDetailView, {
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
       configuredTools: [],
       server,
       activeTab: "role-access"
@@ -13448,6 +13568,68 @@ test("Catalog collections fail closed on unreadable responses", async () => {
     );
   }
 
+  // The applied read fails closed the same way: its launch keys and its
+  // reconciliation are what the page compares the declaration against, so a
+  // payload the Console cannot read must not reach the page.
+  const mcpApplied = {
+    schema: "autodev-control-mcp-applied-v1",
+    source: "/codex/provider-runtime/mcp-servers.json",
+    declarationSource: ".rulesync/mcp.jsonc",
+    target: "codexcli",
+    available: true,
+    servers: [
+      {
+        name: "lsp",
+        command: "bash",
+        args: ["-lc", "exec lsp"],
+        cwd: null,
+        url: null,
+        bearerTokenEnvVar: null,
+        httpHeaders: {}
+      }
+    ],
+    reconciliation: {
+      status: {
+        convergence: "converged",
+        desiredGeneration: "a".repeat(64),
+        observedGeneration: "a".repeat(64),
+        lastApplyAt: null,
+        lastObservationAt: "2026-10-22T12:00:00.000Z",
+        lastError: null,
+        explanation: "The runtime has observed the latest desired generation."
+      },
+      history: []
+    }
+  };
+  assert.equal((await fetchMcpApplied(config, serve(mcpApplied))).kind, "ok");
+  for (const broken of [
+    { ...mcpApplied, schema: "autodev-control-mcp-applied-v0" },
+    { ...mcpApplied, available: "true" },
+    { ...mcpApplied, target: 17 },
+    // The reconciliation is the Runtime's own verdict; a payload without one
+    // cannot be rendered as a verdict.
+    { ...mcpApplied, reconciliation: undefined },
+    { ...mcpApplied, servers: {} },
+    {
+      ...mcpApplied,
+      servers: [{ ...mcpApplied.servers[0], command: 7 }]
+    },
+    {
+      ...mcpApplied,
+      servers: [{ ...mcpApplied.servers[0], args: "exec lsp" }]
+    },
+    {
+      ...mcpApplied,
+      servers: [{ ...mcpApplied.servers[0], httpHeaders: { a: 7 } }]
+    }
+  ]) {
+    assert.equal(
+      (await fetchMcpApplied(config, serve(broken))).kind,
+      "invalid-response",
+      JSON.stringify(broken)
+    );
+  }
+
   const tools = {
     schema: "autodev-control-tools-v2",
     source: "catalog",
@@ -15863,6 +16045,7 @@ test("every detail view titles its resource with the one canonical entity title"
       React.createElement(McpDetailView, {
         sourceValidity: true,
         runtime: NO_MCP_OBSERVATIONS,
+        applied: null,
         configuredTools: null,
         server: {
           name: "context7",

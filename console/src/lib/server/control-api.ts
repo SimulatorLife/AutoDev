@@ -33,6 +33,7 @@ import {
   type ControlApiEvaluationsResponse,
   type ControlApiGithubResponse,
   type ControlApiHooksResponse,
+  type ControlApiMcpAppliedResponse,
   type ControlApiMcpRuntimeResponse,
   type ControlApiMcpsResponse,
   type ControlApiMemoryCohortsResponse,
@@ -753,6 +754,7 @@ export const CONTROL_API_PATHS = {
   models: "/control/models",
   mcps: "/control/mcps",
   mcpRuntime: "/control/mcp-runtime",
+  mcpApplied: "/control/mcp-applied",
   tools: "/control/tools",
   skills: "/control/skills",
   hooks: "/control/hooks",
@@ -2215,6 +2217,45 @@ function isControlApiMcpRuntimeResponse(
 }
 
 /**
+ * Narrows one applied MCP server.
+ *
+ * The applied configuration is what the page compares the declaration
+ * against, so every launch key it renders has to be present and typed. A
+ * launch key that is not a string would render as a configuration the
+ * Runtime never published.
+ */
+function isMcpAppliedServer(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.name === "string" &&
+    (value.command === null || typeof value.command === "string") &&
+    Array.isArray(value.args) &&
+    value.args.every((arg) => typeof arg === "string") &&
+    (value.cwd === null || typeof value.cwd === "string") &&
+    (value.url === null || typeof value.url === "string") &&
+    (value.bearerTokenEnvVar === null ||
+      typeof value.bearerTokenEnvVar === "string") &&
+    isStringRecord(value.httpHeaders)
+  );
+}
+
+function isControlApiMcpAppliedResponse(
+  value: unknown
+): value is ControlApiMcpAppliedResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-mcp-applied-v1" &&
+    typeof value.source === "string" &&
+    value.declarationSource === ".rulesync/mcp.jsonc" &&
+    typeof value.target === "string" &&
+    typeof value.available === "boolean" &&
+    Array.isArray(value.servers) &&
+    value.servers.every(isMcpAppliedServer) &&
+    isReconciliationBundle(value.reconciliation)
+  );
+}
+
+/**
  * Narrows one tool catalog row. Tools is the one catalog whose views read
  * several fields off every row -- role exposure drives both the role filter
  * (`exposedRoles.includes`) and the role chips (`exposedRoles.length`), and the
@@ -2504,6 +2545,30 @@ export async function fetchMcpRuntime(
     : invalidResponse("McpRuntime", "autodev-control-mcp-runtime-v1");
 }
 
+/**
+ * Reads the MCP configuration the Runtime applied, against the canonical
+ * declaration.
+ *
+ * The third MCP read, and the third question: the catalog says what is
+ * declared, the runtime read says what the Runtime has reached, and this one
+ * says what the Runtime actually applied. The page composes them; the
+ * contract keeps them apart.
+ */
+export async function fetchMcpApplied(
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiMcpAppliedResponse>> {
+  const result = await fetchControlApi<unknown>(
+    CONTROL_API_PATHS.mcpApplied,
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  return isControlApiMcpAppliedResponse(result.data)
+    ? { kind: "ok", data: result.data }
+    : invalidResponse("McpApplied", "autodev-control-mcp-applied-v1");
+}
+
 export async function fetchTools(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
@@ -2557,6 +2622,23 @@ function isConvergenceStatus(value: unknown): value is ConvergenceStatus {
 function isStringList(value: unknown): value is readonly string[] {
   return (
     Array.isArray(value) && value.every((entry) => typeof entry === "string")
+  );
+}
+
+/**
+ * Narrows a record whose every value is a string.
+ *
+ * The applied MCP catalogue's HTTP headers are the one free-form map the
+ * contract carries, so they are checked rather than trusted: a header value
+ * that is not a string would render as a configuration the Runtime never
+ * published.
+ */
+function isStringRecord(
+  value: unknown
+): value is Readonly<Record<string, string>> {
+  return (
+    isRecord(value) &&
+    Object.values(value).every((entry) => typeof entry === "string")
   );
 }
 

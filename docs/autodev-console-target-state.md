@@ -863,6 +863,8 @@ Target resource families include:
 /control/provider-models   # provider-owned availability snapshots, not routing assignments
 /control/models
 /control/mcps
+/control/mcp-runtime   # the Runtime's observations of the MCP servers it has reached
+/control/mcp-applied   # the MCP configuration the Runtime published, against the canonical declaration
 /control/skills
 /control/hooks
 /control/permissions

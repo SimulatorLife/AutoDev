@@ -496,3 +496,42 @@ test("the MCP detail reports the runtime's evidence for a server it has observed
     page.getByRole("heading", { name: "Configured tool allowlist" })
   ).toBeVisible();
 });
+
+test("the MCP detail shows the applied configuration and the runtime's verdict on it", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+
+  // The applied configuration is the Runtime's own publication, rendered next
+  // to the declaration rather than in place of it.
+  await page.goto(`/mcps/${DOCS_SERVER}?tab=configuration`);
+  await expect(
+    page.locator('[data-section="mcp-configuration"]')
+  ).toBeVisible();
+  await expect(page.getByText("Applied configuration")).toBeVisible();
+  await expect(
+    page.getByText("https://developers.openai.com/mcp")
+  ).toBeVisible();
+  // The verdict on the comparison is the Runtime's, rendered by the shared
+  // reconciliation panel, with both generations on it. The labels are matched
+  // exactly, because the panel's explanation names the desired generation too.
+  await expect(page.locator('[data-feature="reconciliation"]')).toBeVisible();
+  await expect(
+    page.getByText("Desired generation", { exact: true })
+  ).toBeVisible();
+  await expect(
+    page.getByText("Observed generation", { exact: true })
+  ).toBeVisible();
+
+  // A server the Runtime did not publish says so, rather than borrowing the
+  // configuration of the server that was published.
+  await page.goto("/mcps/lsp?tab=configuration");
+  await expect(
+    page.locator('[data-section="mcp-configuration"]')
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "This server is not in the configuration the Runtime published."
+    )
+  ).toBeVisible();
+});

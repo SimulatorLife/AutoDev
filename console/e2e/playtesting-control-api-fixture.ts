@@ -3851,6 +3851,46 @@ function handleCatalogResourceRead(
     });
     return true;
   }
+  if (url.pathname === "/control/mcp-applied") {
+    // The MCP configuration the Runtime published, against the canonical
+    // declaration. The docs server is in the applied configuration and the
+    // other two are not, so the page can tell an applied server from one that
+    // was never applied -- and the verdict is the Runtime's own.
+    sendJson(response, {
+      schema: "autodev-control-mcp-applied-v1",
+      source: "/codex/provider-runtime/mcp-servers.json",
+      declarationSource: ".rulesync/mcp.jsonc",
+      target: "codexcli",
+      available: true,
+      servers: [
+        {
+          name: "openaiDeveloperDocs",
+          command: null,
+          args: [],
+          cwd: null,
+          url: "https://developers.openai.com/mcp",
+          bearerTokenEnvVar: null,
+          httpHeaders: {}
+        }
+      ],
+      reconciliation: {
+        status: {
+          convergence: "pending",
+          desiredGeneration:
+            "3f1c0d9a8b7e6d5c4b3a29180f7e6d5c4b3a29180f7e6d5c4b3a29180f7e6d5c",
+          observedGeneration:
+            "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b",
+          lastApplyAt: null,
+          lastObservationAt: "2026-10-22T12:00:00.000Z",
+          lastError: null,
+          explanation:
+            "Apply wrote the latest desired generation, but the running runtime has not observed it yet. Restart the affected process or wait for the observation hook to refresh."
+        },
+        history: []
+      }
+    });
+    return true;
+  }
   if (url.pathname === "/control/mcp-runtime") {
     // The Runtime's observation of the MCP servers it has seen. It is a
     // separate read from the catalog, and it carries only the servers the

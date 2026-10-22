@@ -1,4 +1,5 @@
 import type {
+  ControlApiMcpAppliedResponse,
   ControlApiMcpRuntimeResponse,
   ControlApiMcpRuntimeServer,
   McpServerResource,
@@ -39,6 +40,7 @@ import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
+import { McpAppliedConfiguration } from "./applied-configuration.ts";
 import {
   McpConnectionBadge,
   McpObservedTools,
@@ -94,6 +96,14 @@ export interface McpDetailViewProps {
    * neither is rendered as one, and the page says which of the two it is.
    */
   readonly runtime: ControlApiMcpRuntimeResponse | null;
+  /**
+   * The MCP configuration the Runtime applied, against the canonical
+   * declaration.
+   *
+   * `null` means the applied read could not be read at all, which is a
+   * different state from an applied configuration that holds no servers.
+   */
+  readonly applied: ControlApiMcpAppliedResponse | null;
   readonly sourceValidity: boolean;
   /**
    * Partial projection of explicitly enumerated role MCP/plugin allowlist
@@ -361,6 +371,7 @@ function ObservedFailures({
 export function McpDetailView({
   server,
   runtime,
+  applied,
   sourceValidity,
   configuredTools,
   activeTab
@@ -540,6 +551,14 @@ export function McpDetailView({
           "Target overrides"
         ),
         targetOverrides
+      ),
+      React.createElement(
+        "div",
+        { className: "mt-4" },
+        React.createElement(McpAppliedConfiguration, {
+          applied,
+          serverName: server.name
+        })
       )
     ),
     "connection-health": React.createElement(

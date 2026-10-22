@@ -5,6 +5,7 @@ import React from "react";
 import { McpDetailView } from "../../../src/features/mcps/McpDetailView.ts";
 import {
   controlApiFailureCode,
+  fetchMcpApplied,
   fetchMcpRuntime,
   fetchMcps,
   fetchTools
@@ -63,11 +64,17 @@ export default async function McpDetailPage({
     );
   }
 
-  const [result, runtimeResult, toolsResult] = await Promise.all([
-    fetchMcps(config),
-    fetchMcpRuntime(config),
-    activeTab === "tools" ? fetchTools(config) : Promise.resolve(null)
-  ]);
+  // Three MCP reads, fetched together: the declaration, what the Runtime has
+  // reached, and what the Runtime applied. Each answers a different question
+  // and the page composes them.
+  const [result, runtimeResult, appliedResult, toolsResult] = await Promise.all(
+    [
+      fetchMcps(config),
+      fetchMcpRuntime(config),
+      fetchMcpApplied(config),
+      activeTab === "tools" ? fetchTools(config) : Promise.resolve(null)
+    ]
+  );
   if (result.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
@@ -87,6 +94,9 @@ export default async function McpDetailPage({
   // a server the Runtime has never seen has no record in it, and an
   // unreadable read is a different state again.
   const runtime = runtimeResult.kind === "ok" ? runtimeResult.data : null;
+  // An unreadable applied read is not an applied configuration with nothing in
+  // it, and the page says which of the two it is.
+  const applied = appliedResult.kind === "ok" ? appliedResult.data : null;
 
   return React.createElement(
     ConsolePageShell,
@@ -94,6 +104,7 @@ export default async function McpDetailPage({
     React.createElement(McpDetailView, {
       server,
       runtime,
+      applied,
       sourceValidity: result.data.valid,
       configuredTools:
         toolsResult?.kind === "ok" && toolsResult.data.coverage === "partial"
