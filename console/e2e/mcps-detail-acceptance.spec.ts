@@ -1,4 +1,10 @@
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import {
+  type APIRequestContext,
+  expect,
+  type Locator,
+  type Page,
+  test
+} from "@playwright/test";
 
 import { documentFitsViewport } from "./acceptance-helpers.ts";
 
@@ -6,6 +12,7 @@ const MOUNTED_DOCUMENT_TOKEN = "mounted-document-1";
 const LSP_SERVER = "lsp";
 const ANTIGRAVITY_SERVER = "antigravity-cli";
 const DOCS_SERVER = "openaiDeveloperDocs";
+const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const NOT_OBSERVED = "Not observed";
 const CONNECTED_CLAIM = /^Connected$/u;
 
@@ -20,6 +27,7 @@ const CONNECTED_CLAIM = /^Connected$/u;
 const DECLARED_DOCS_URL = "https://docs.example.test/mcp";
 const PUBLISHED_DOCS_URL = "https://developers.openai.com/mcp";
 const EDITED_DOCS_URL = "https://developers.openai.com/edited-mcp";
+const MOVED_DOCS_URL = "https://moved.example.test/openaiDeveloperDocs";
 
 /**
  * The tab set the target state mandates for MCP detail, in the order it
@@ -151,6 +159,26 @@ async function assertFitsViewport(page: Page, width: number): Promise<void> {
   await page.goto(`/mcps/${LSP_SERVER}`);
   expect(await documentFitsViewport(page)).toBe(true);
 }
+
+/**
+ * Puts the canonical MCP declaration back the way the fixture declares it.
+ *
+ * The write is real, so the declaration a spec leaves behind is the
+ * declaration the next spec would load. Resetting it keeps a spec that fails
+ * halfway from deciding what the next one measures.
+ */
+async function resetMcpDeclaration(request: APIRequestContext): Promise<void> {
+  const response = await request.post(`${FIXTURE_BASE_URL}/fixture/mcp/reset`);
+  expect(response.ok()).toBe(true);
+}
+
+test.beforeEach(async ({ request }) => {
+  await resetMcpDeclaration(request);
+});
+
+test.afterEach(async ({ request }) => {
+  await resetMcpDeclaration(request);
+});
 
 test("MCPs keeps the declared default state, the missing declaration and the connection states apart", async ({
   page
@@ -568,16 +596,54 @@ test("the MCP configuration tab edits the canonical declaration and reports what
   await url.fill(EDITED_DOCS_URL);
   await editor.getByRole("button", { name: "Save and apply" }).click();
 
-  // The write went through the Runtime, which applied the projection and
-  // reported what it published: the page says so, and the applied
-  // configuration is the new one.
-  await expect(
-    page.locator('[data-mcp-declaration-saved="true"]')
-  ).toBeVisible();
+  // The write answers with a redirect back to the page, so the page that
+  // answers it is the evidence of what the write did: the Runtime applied the
+  // projection and reported what it published.
   await expect(page.getByText(EDITED_DOCS_URL)).toBeVisible();
-  // And the Runtime's own verdict is on the comparison.
   await expect(page.locator('[data-feature="reconciliation"]')).toBeVisible();
   await expect(
     page.getByText("Desired generation", { exact: true })
   ).toBeVisible();
+});
+
+test("the MCP configuration tab refuses a write against a declaration that moved under it", async ({
+  page,
+  request
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+
+  await page.goto(`/mcps/${DOCS_SERVER}?tab=configuration`);
+  const editor = page.locator('[data-mcp-declaration-editor="true"]');
+  const url = editor.locator("#mcp-url-openaiDeveloperDocs");
+  await expect(url).toHaveValue(DECLARED_DOCS_URL);
+  const revision = await editor
+    .locator('input[name="expectedRevision"]')
+    .inputValue();
+  await url.fill(EDITED_DOCS_URL);
+
+  // The declaration moves while the page holds the revision it loaded.
+  const moved = await request.post(`${FIXTURE_BASE_URL}/fixture/mcp/move`);
+  expect(moved.ok()).toBe(true);
+
+  await editor.getByRole("button", { name: "Save and apply" }).click();
+
+  // The conflict is the Runtime's verdict, and the page says which one it is
+  // rather than reporting a generic failure.
+  const outcome = page.locator('[data-mcp-declaration-save="conflict"]');
+  await expect(outcome).toBeVisible();
+  await expect(outcome).toContainText("your edit was not saved");
+  // The write still carries the revision the edit was written for, so saving
+  // again cannot write that edit over the change that moved the declaration.
+  await expect(editor.locator('input[name="expectedRevision"]')).toHaveValue(
+    revision
+  );
+  // And the declaration kept the change that moved it: the refused write
+  // changed nothing.
+  const applied = await request.get(`${FIXTURE_BASE_URL}/control/mcp-applied`);
+  expect(applied.ok()).toBe(true);
+  const declared = (await applied.json()) as {
+    declaredServers: { url: string | null }[];
+  };
+  expect(declared.declaredServers[0]?.url).toBe(MOVED_DOCS_URL);
+  expect(declared.declaredServers[0]?.url).not.toBe(EDITED_DOCS_URL);
 });

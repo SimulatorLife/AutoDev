@@ -8,6 +8,10 @@ import type {
 import React from "react";
 
 import {
+  CALLOUT_ERROR_CLASS,
+  CALLOUT_WARNING_CLASS
+} from "../../components/layout/Callout.ts";
+import {
   ENTITY_EYEBROW_CLASS,
   EntityTitle,
   SECTION_HEADING_CLASS
@@ -47,6 +51,16 @@ import {
   McpObservedTools,
   McpRuntimeEvidence
 } from "./runtime-evidence.ts";
+
+/**
+ * How a write to the canonical MCP declaration ended.
+ *
+ * A conflict and a refused declaration are different facts, and so is a write
+ * whose result could not be confirmed: the page says which one happened rather
+ * than reporting one generic failure for all of them.
+ */
+export type McpDeclarationSaveOutcome =
+  "conflict" | "validation" | "apply-failed" | "failed";
 
 const CONFIGURED_STATUS = "configured" as const;
 const FLEX_COLUMN_DETAILS_CLASS = "flex flex-col gap-2";
@@ -114,6 +128,23 @@ export interface McpDetailViewProps {
    * that has nothing to compare.
    */
   readonly revision: string | null;
+  /**
+   * The revision the editor's fields are based on.
+   *
+   * A write is compared against the revision it was read at, so a refused write
+   * keeps the editor on the revision the operator's edit was written for rather
+   * than moving it to the revision the declaration has reached. It is the
+   * declaration's own revision unless a refused write named the one the edit
+   * was written against.
+   */
+  readonly editorRevision?: string | null | undefined;
+  /**
+   * How the last write ended, when the page was redirected back by one.
+   *
+   * A conflict and a refused declaration are different facts, and the page
+   * says which one happened rather than reporting one generic failure.
+   */
+  readonly saveOutcome?: McpDeclarationSaveOutcome | undefined;
   readonly sourceValidity: boolean;
   /**
    * Partial projection of explicitly enumerated role MCP/plugin allowlist
@@ -378,11 +409,78 @@ function ObservedFailures({
   );
 }
 
+/**
+ * How the last write ended, when the page was redirected back by one.
+ *
+ * A conflict is a warning and not an error: the operator's edit was not lost,
+ * and the declaration moved under it. A refused declaration is an error, and
+ * so is a write whose result could not be confirmed.
+ */
+function saveNotice(
+  outcome: McpDeclarationSaveOutcome | undefined
+): React.JSX.Element | null {
+  if (outcome === undefined) return null;
+  const warning = outcome === "conflict" || outcome === "validation";
+  const message = {
+    conflict:
+      "The canonical MCP declaration changed after the editor was filled, so your edit was not saved. The edit is still here; reload the editor to start from the current declaration before saving again.",
+    validation:
+      "The Runtime refused the submitted launch configuration, so the canonical declaration was not changed. Review the fields and try again.",
+    "apply-failed":
+      "The canonical declaration was updated, but the Runtime could not apply the projection. The declaration is shown as it now stands; do not assume the applied configuration matches it.",
+    failed:
+      "The write and its result could not be confirmed. Reload the canonical declaration before retrying."
+  }[outcome];
+  return React.createElement(
+    "p",
+    {
+      className: warning ? CALLOUT_WARNING_CLASS : CALLOUT_ERROR_CLASS,
+      role: warning ? "status" : "alert",
+      "data-mcp-declaration-save": outcome
+    },
+    message
+  );
+}
+
+/**
+ * The canonical declaration's edit surface, or the reason there is none.
+ *
+ * An unreadable declaration has no revision to compare a write against and no
+ * fields to fill the editor from, so there is nothing to offer. The control
+ * stays in place and says why, rather than the tab quietly losing the edit
+ * surface it had.
+ */
+function declarationEditor(
+  serverName: string,
+  applied: ControlApiMcpAppliedResponse | null,
+  revision: string | null
+): React.JSX.Element {
+  const declared =
+    applied?.declaredServers.find((entry) => entry.name === serverName) ?? null;
+  if (declared === null || revision === null) {
+    return React.createElement(
+      "p",
+      {
+        className: MUTED_META_CLASS,
+        "data-mcp-declaration-editor": "unavailable"
+      },
+      "The canonical declaration could not be read, so there is nothing to edit here."
+    );
+  }
+  return React.createElement(McpDeclarationEditor, {
+    name: serverName,
+    declared,
+    revision
+  });
+}
+
 export function McpDetailView({
   server,
   runtime,
   applied,
   revision,
+  editorRevision,
+  saveOutcome,
   sourceValidity,
   configuredTools,
   activeTab
@@ -574,15 +672,13 @@ export function McpDetailView({
       React.createElement(
         "div",
         { className: "mt-4" },
-        React.createElement(McpDeclarationEditor, {
-          name: server.name,
-          target: applied?.target ?? "codexcli",
-          revision,
-          declared:
-            applied?.declaredServers.find(
-              (entry) => entry.name === server.name
-            ) ?? null
-        })
+        React.createElement(
+          "h4",
+          { className: SECTION_HEADING_CLASS },
+          `Declared configuration for the ${applied?.target ?? "codexcli"} target`
+        ),
+        saveNotice(saveOutcome),
+        declarationEditor(server.name, applied, editorRevision ?? revision)
       )
     ),
     "connection-health": React.createElement(

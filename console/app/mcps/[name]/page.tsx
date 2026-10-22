@@ -2,7 +2,11 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
 
-import { McpDetailView } from "../../../src/features/mcps/McpDetailView.ts";
+import {
+  type McpDeclarationSaveOutcome,
+  McpDetailView
+} from "../../../src/features/mcps/McpDetailView.ts";
+import { editorBaseRevisionFromQuery } from "../../../src/lib/server/canonical-source.ts";
 import {
   controlApiFailureCode,
   fetchMcpApplied,
@@ -23,6 +27,24 @@ function firstSearchParam(
   raw: string | string[] | undefined
 ): string | undefined {
   return Array.isArray(raw) ? raw[0] : raw;
+}
+
+/**
+ * The outcome the last write ended in, when the redirect named one.
+ *
+ * A query value that is not an outcome is not an outcome: it is ignored, and
+ * the page reports no write at all rather than a write it did not measure.
+ */
+function mcpSaveOutcome(
+  value: string | string[] | undefined
+): McpDeclarationSaveOutcome | undefined {
+  const outcome = firstSearchParam(value);
+  return outcome === "conflict" ||
+    outcome === "validation" ||
+    outcome === "apply-failed" ||
+    outcome === "failed"
+    ? outcome
+    : undefined;
 }
 
 /**
@@ -98,6 +120,15 @@ export default async function McpDetailPage({
   // it, and the page says which of the two it is.
   const applied = appliedResult.kind === "ok" ? appliedResult.data : null;
 
+  const saveOutcome = mcpSaveOutcome(resolvedSearchParams.save);
+  // The editor writes against the revision it was filled from. A refused write
+  // leaves the browser holding the operator's edit, so the page keeps the
+  // revision that edit was written for rather than the revision the
+  // declaration has moved to.
+  const editorRevision =
+    editorBaseRevisionFromQuery(resolvedSearchParams.based) ??
+    result.data.revision;
+
   return React.createElement(
     ConsolePageShell,
     { section, counts: { MCPs: result.data.servers.length } },
@@ -106,12 +137,14 @@ export default async function McpDetailPage({
       runtime,
       applied,
       revision: result.data.revision,
+      editorRevision,
       sourceValidity: result.data.valid,
       configuredTools:
         toolsResult?.kind === "ok" && toolsResult.data.coverage === "partial"
           ? toolsResult.data.tools.filter((tool) => tool.server === server.name)
           : null,
-      activeTab
+      activeTab,
+      ...(saveOutcome ? { saveOutcome } : {})
     })
   );
 }

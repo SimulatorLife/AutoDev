@@ -5241,6 +5241,15 @@ test("McpDetailView offers the canonical MCP declaration as the edit surface", (
   assert.match(markup, /https:\/\/mcp\.context7\.com\/mcp/);
   assert.match(markup, /CONTEXT7_API_KEY/);
   assert.match(markup, /Save and apply/);
+  // The edit surface is a plain form, because the Console's navigation owner
+  // is the only thing that may drive its router. A feature that refreshes the
+  // page itself renders the destination without committing it, and the page
+  // keeps the state it had before the write.
+  assert.match(markup, /<form[^>]*method="POST"/u);
+  assert.match(markup, /<form[^>]*action="\/api\/mcps\/context7"/u);
+  // The write is a compare-and-swap, so the form carries the revision the
+  // editor was filled from.
+  assert.match(markup, /name="expectedRevision"[^>]*value="c{64}"/u);
 });
 
 test("McpDetailView leaves the MCP edit surface disabled when the declaration was not read", () => {
@@ -5265,10 +5274,38 @@ test("McpDetailView leaves the MCP edit surface disabled when the declaration wa
       activeTab: "configuration"
     })
   );
-  // The control stays in place, disabled, with the reason.
-  assert.match(markup, /data-mcp-declaration-editor="true"/);
+  // The surface stays in place, with the reason it has no form.
+  assert.match(markup, /data-mcp-declaration-editor="unavailable"/);
   assert.match(markup, /could not be read/);
-  assert.match(markup, /disabled/);
+  assert.doesNotMatch(markup, /<form[^>]*action="\/api\/mcps\/context7"/u);
+});
+
+test("McpDetailView says how the last write to the declaration ended", () => {
+  const server: McpServerResource = {
+    name: "context7",
+    enabled: true,
+    transport: "http",
+    targetOverrides: [],
+    declared: true,
+    roles: ["docs-researcher"]
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      revision: "c".repeat(64),
+      editorRevision: "c".repeat(64),
+      saveOutcome: "conflict",
+      sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
+      configuredTools: null,
+      server,
+      activeTab: "configuration"
+    })
+  );
+  // A conflict is not a failure: the edit was not lost, and the declaration
+  // moved under it. The page says so rather than reporting a generic failure.
+  assert.match(markup, /data-mcp-declaration-save="conflict"/);
+  assert.match(markup, /your edit was not saved/);
 });
 
 test("McpDetailView renders the runtime's own evidence for a server it has observed", () => {
@@ -15345,26 +15382,6 @@ function sameOriginFormRequest(
   });
 }
 
-function sameOriginJsonRequest(
-  path: string,
-  body: unknown,
-  overrides: {
-    readonly origin?: string;
-    readonly fetchSite?: string;
-  } = {}
-): NextRequest {
-  return new NextRequest("http://console.test" + path, {
-    method: "POST",
-    headers: {
-      origin: overrides.origin ?? "http://console.test",
-      host: "console.test",
-      "sec-fetch-site": overrides.fetchSite ?? "same-origin",
-      "content-type": "application/json"
-    },
-    body: JSON.stringify(body)
-  });
-}
-
 test("every provider mutation addresses its canonical Control API path", async () => {
   // The limits path was built as `/control/providers/claudelimits` — the suffix
   // carried no separator. `claudelimits` is a legal provider id, so the request
@@ -21013,10 +21030,6 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Asks the Console's own server what the unsaved canonical source would render as, and renders that answer beside the editor; the page's reads and the save stay server-owned."
     ],
     [
-      join("src", "features", "mcps", "declaration-editor.ts"),
-      "Holds the operator's MCP launch edit across a refused write and asks the Console's own server to write the canonical declaration; the Runtime owns the write, the projection and the verdict."
-    ],
-    [
       join("src", "components", "navigation", "AppNav.ts"),
       "Persists the interactive sidebar preference without moving page data client-side."
     ],
@@ -22046,7 +22059,6 @@ test("a Runtime response with no concurrency limit is readable, and says so", as
     /Session concurrency limit[\s\S]*?Not observed/u
   );
 });
-
 test("the MCP declaration route writes the server's launch configuration through the Runtime", async () => {
   // The Console does not own the declaration, so the route is a pass-through:
   // it names the Runtime's own MCP path and hands over the revision the
@@ -22094,25 +22106,28 @@ test("the MCP declaration route writes the server's launch configuration through
     fetchImpl,
     async () => {
       const response = await mcpServerRoute.POST(
-        sameOriginJsonRequest("/api/mcps/openaiDeveloperDocs", {
-          expectedRevision: "a".repeat(64),
-          launch: {
-            command: null,
-            args: null,
-            cwd: null,
+        sameOriginFormRequest(
+          "/api/mcps/openaiDeveloperDocs",
+          new URLSearchParams({
+            expectedRevision: "a".repeat(64),
+            command: "",
+            args: "",
+            cwd: "",
             url: "https://developers.openai.com/edited-mcp",
-            bearerTokenEnvVar: null
-          }
-        }),
+            bearerTokenEnvVar: ""
+          }).toString()
+        ),
         { params: Promise.resolve({ name: "openaiDeveloperDocs" }) }
       );
-      assert.equal(response.status, 200);
-      const body = (await response.json()) as {
-        ok: boolean;
-        data: { changed: boolean };
-      };
-      assert.equal(body.ok, true);
-      assert.equal(body.data.changed, true);
+      // The route answers with a redirect, because the Console's navigation
+      // owner moves the page and the page renders the outcome. A route that
+      // answered with a body would leave the page holding the state it had
+      // before the write.
+      assert.equal(response.status, 303);
+      assert.equal(
+        response.headers.get("location"),
+        "/mcps/openaiDeveloperDocs?tab=configuration"
+      );
     }
   );
 
@@ -22124,27 +22139,33 @@ test("the MCP declaration route writes the server's launch configuration through
   );
   const sent = JSON.parse(requests[0]?.body ?? "{}") as {
     expectedRevision: string;
-    launch: { url: string };
+    launch: {
+      command: string | null;
+      args: readonly string[] | null;
+      url: string | null;
+    };
   };
   assert.equal(sent.expectedRevision, "a".repeat(64));
   assert.equal(sent.launch.url, "https://developers.openai.com/edited-mcp");
+  // A field the operator cleared removes that key from the declaration.
+  assert.equal(sent.launch.command, null);
+  assert.equal(sent.launch.args, null);
 });
 
-test("the MCP declaration route forwards the Runtime's refusal instead of a gateway error", async () => {
+test("the MCP declaration route reports the Runtime's refusal as the outcome it was", async () => {
   // The Runtime's verdict is the answer the operator needs: a conflict means
   // the declaration moved, and a refusal means the actor is not an operator.
-  // Answering either with a gateway error would tell the operator the Console
-  // could not reach the Runtime when the Runtime was the one that said no.
+  // The redirect carries that verdict, so the page can say which one happened.
   for (const refusal of [
     {
       status: 409,
       code: "autodev_control_mcp_revision_conflict",
-      message: "The MCP declaration moved since it was read."
+      outcome: "conflict"
     },
     {
       status: 403,
-      code: "autodev_control_api_operator_required",
-      message: "An operator actor is required."
+      code: "autodev_control_api_forbidden",
+      outcome: "failed"
     }
   ]) {
     const fetchImpl = (async () =>
@@ -22152,7 +22173,7 @@ test("the MCP declaration route forwards the Runtime's refusal instead of a gate
         {
           error: {
             code: refusal.code,
-            message: refusal.message,
+            message: "The Runtime refused the write.",
             status: refusal.status
           }
         },
@@ -22163,21 +22184,33 @@ test("the MCP declaration route forwards the Runtime's refusal instead of a gate
       fetchImpl,
       async () => {
         const response = await mcpServerRoute.POST(
-          sameOriginJsonRequest("/api/mcps/openaiDeveloperDocs", {
-            expectedRevision: "a".repeat(64),
-            launch: {
-              command: null,
-              args: null,
-              cwd: null,
+          sameOriginFormRequest(
+            "/api/mcps/openaiDeveloperDocs",
+            new URLSearchParams({
+              expectedRevision: "a".repeat(64),
+              command: "",
+              args: "",
+              cwd: "",
               url: "https://developers.openai.com/edited-mcp",
-              bearerTokenEnvVar: null
-            }
-          }),
+              bearerTokenEnvVar: ""
+            }).toString()
+          ),
           { params: Promise.resolve({ name: "openaiDeveloperDocs" }) }
         );
-        assert.equal(response.status, refusal.status);
-        const body = (await response.json()) as { error: string };
-        assert.equal(body.error, refusal.message);
+        assert.equal(response.status, 303);
+        const location = new URL(
+          response.headers.get("location") ?? "",
+          "http://console.test"
+        );
+        assert.equal(location.pathname, "/mcps/openaiDeveloperDocs");
+        assert.equal(location.searchParams.get("tab"), "configuration");
+        assert.equal(location.searchParams.get("save"), refusal.outcome);
+        // A refused write leaves the browser holding the operator's edit, so
+        // the page keeps the revision that edit was written for rather than
+        // the revision the declaration has moved to.
+        if (refusal.outcome === "conflict") {
+          assert.equal(location.searchParams.get("based"), "a".repeat(64));
+        }
       }
     );
   }
@@ -22197,25 +22230,26 @@ test("the MCP declaration route refuses a request that is not same-origin before
     fetchImpl,
     async () => {
       const response = await mcpServerRoute.POST(
-        sameOriginJsonRequest(
+        sameOriginFormRequest(
           "/api/mcps/openaiDeveloperDocs",
-          {
+          new URLSearchParams({
             expectedRevision: "a".repeat(64),
-            launch: {
-              command: null,
-              args: null,
-              cwd: null,
-              url: "https://developers.openai.com/edited-mcp",
-              bearerTokenEnvVar: null
-            }
-          },
+            command: "",
+            args: "",
+            cwd: "",
+            url: "https://developers.openai.com/edited-mcp",
+            bearerTokenEnvVar: ""
+          }).toString(),
           { fetchSite: "cross-site" }
         ),
         { params: Promise.resolve({ name: "openaiDeveloperDocs" }) }
       );
-      assert.equal(response.status, 403);
-      const body = (await response.json()) as { error: string };
-      assert.match(body.error, /same-origin/u);
+      assert.equal(response.status, 303);
+      const location = new URL(
+        response.headers.get("location") ?? "",
+        "http://console.test"
+      );
+      assert.equal(location.searchParams.get("save"), "failed");
     }
   );
   assert.equal(asked, 0);

@@ -885,6 +885,8 @@ const MCP_DECLARED_DOCS: McpLaunchServer = {
  * pending verdict over two identical generations, which says the runtime has
  * not caught up while showing that it has.
  */
+const MCP_MOVED_SERVER = "openaiDeveloperDocs";
+
 const MCP_PUBLISHED_DOCS: McpLaunchServer = {
   ...MCP_DECLARED_DOCS,
   url: "https://developers.openai.com/mcp"
@@ -3327,6 +3329,57 @@ function configureSkillFixture(
 }
 
 /**
+ * Moves the canonical MCP declaration without the Console knowing.
+ *
+ * The page that has the declaration open holds the revision it was rendered
+ * with, so moving the declaration here is what makes its next write a conflict
+ * rather than a silent overwrite of somebody else's edit.
+ *
+ * `/fixture/mcp/reset` puts it back the way the fixture declares it, so one
+ * spec's write is not the next spec's starting state.
+ */
+function configureMcpFixture(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (
+    url.pathname !== "/fixture/mcp/move" &&
+    url.pathname !== "/fixture/mcp/reset"
+  ) {
+    return false;
+  }
+  if (request.method !== "POST") {
+    response.writeHead(405).end();
+    return true;
+  }
+  if (url.pathname === "/fixture/mcp/reset") {
+    mcpDeclaration = initialMcpDeclaration();
+    sendJson(response, { revision: mcpDeclaration.revision });
+    return true;
+  }
+  const declaredServers = mcpDeclaration.declaredServers.map((entry) =>
+    entry.name === MCP_MOVED_SERVER
+      ? { ...entry, url: `https://moved.example.test/${entry.name}` }
+      : entry
+  );
+  const revision = createHash("sha256")
+    .update(`${mcpDeclaration.revision}:moved`, "utf8")
+    .digest("hex");
+  const desiredGeneration = mcpGeneration(declaredServers);
+  mcpDeclaration = {
+    revision,
+    declaredServers,
+    appliedServers: declaredServers,
+    desiredGeneration,
+    observedGeneration: desiredGeneration,
+    converged: true
+  };
+  sendJson(response, { revision });
+  return true;
+}
+
+/**
  * The Runtime's live projection, as this fixture reports it.
  *
  * `liveAgents` is null on purpose. The Runtime registered no live-agent
@@ -4588,6 +4641,7 @@ function handleFixtureCatalogRoutes(
   url: URL
 ): boolean {
   if (configureSkillFixture(request, response, url)) return true;
+  if (configureMcpFixture(request, response, url)) return true;
   if (configureCanonicalSourceFixture(request, response, url)) return true;
   if (handleRuntimeFixture(request, response, url)) return true;
   if (handleGithubRead(request, response, url)) return true;
