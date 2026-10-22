@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ControlApiProviderRecord } from "@simulatorlife/autodev-core";
+import type {
+  ControlApiProviderRecord,
+  ReconciliationView
+} from "@simulatorlife/autodev-core";
 import { NextRequest } from "next/server.js";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -54,6 +57,25 @@ const mockDiscovery: ProviderModelDiscoveryState = {
   }
 };
 
+/**
+ * The provider-level reconciliation the Runtime reports on the providers read.
+ *
+ * These fixtures exercise the role controls, so the provider's own view is a
+ * fixed converged state: the role panels carry their own per-role convergence.
+ */
+const providerReconciliation: ReconciliationView = {
+  status: {
+    convergence: "converged",
+    desiredGeneration: "provider:claude",
+    observedGeneration: "provider:claude",
+    lastApplyAt: "2026-10-16T12:00:00.000Z",
+    lastObservationAt: "2026-10-16T12:00:00.000Z",
+    lastError: null,
+    explanation: "Converged."
+  },
+  history: []
+};
+
 const mockClaudeProvider: ControlApiProviderRecord = {
   id: "claude",
   links: { usage: null, documentation: null },
@@ -65,6 +87,7 @@ const mockClaudeProvider: ControlApiProviderRecord = {
   priorities: [],
   orchestratorReasoningEffort: null,
   health: null,
+  reconciliation: providerReconciliation,
   roles: {
     default: {
       priority: 1,
@@ -152,6 +175,7 @@ const mockAgyProvider: ControlApiProviderRecord = {
   priorities: [],
   orchestratorReasoningEffort: null,
   health: null,
+  reconciliation: providerReconciliation,
   roles: {
     default: {
       priority: 1,

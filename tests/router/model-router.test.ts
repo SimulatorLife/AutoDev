@@ -10801,7 +10801,7 @@ test("authenticated Control API provider role mutation validates, persists, and 
     assert.equal(viewerRead.status, 200);
     assert.equal(
       (await viewerRead.json()).schema,
-      "autodev-control-providers-v2"
+      "autodev-control-providers-v3"
     );
 
     const wrongMethod = await originalFetch(endpoint, {

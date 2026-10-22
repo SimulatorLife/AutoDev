@@ -16,11 +16,16 @@
  * \`POST /control/providers/reset\` operation that clears provider Runtime
  * overrides (role assignments, provider disables, model disables, and
  * provider agent limits) to their static-config defaults.
+ * v11: the Providers response carries each provider's reconciliation view --
+ * the desired generation of the provider's routing configuration, the
+ * generation the runtime has observed, and the bounded operation history --
+ * so the provider page can show convergence instead of leaving the operator to
+ * assume that a saved configuration is a served one.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 10
+  version: 11
 } as const;
 
 export type ControlApiContractResponse = {

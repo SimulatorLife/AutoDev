@@ -4305,10 +4305,31 @@ const server = createServer(
         models: model === null ? [] : [{ tier: "default", model }],
         priorities: groups,
         orchestratorReasoningEffort: null,
-        health: null
+        health: null,
+        // The provider's own view. The fixture's runtime has never applied
+        // anything to a provider, so the observation is missing rather than
+        // empty: the page must say the convergence is unknown instead of
+        // claiming one. The desired generation is the identity of the
+        // provider's configured routing state, which the runtime reports even
+        // before anything is applied.
+        reconciliation: {
+          status: {
+            convergence: NOT_OBSERVED_CONVERGENCE,
+            desiredGeneration: createHash("sha256")
+              .update(`provider:${id}`, "utf8")
+              .digest("hex"),
+            observedGeneration: null,
+            lastApplyAt: null,
+            lastObservationAt: null,
+            lastError: null,
+            explanation:
+              "The runtime has not yet reported observed state for this resource; convergence is unknown."
+          },
+          history: []
+        }
       });
       sendJson(response, {
-        schema: "autodev-control-providers-v2",
+        schema: "autodev-control-providers-v3",
         orchestratorTier: "orchestrator",
         tiers: [
           { tier: "default", groups: [["claude"], ["codex"]] },

@@ -58,6 +58,7 @@ import {
   type ReconciliationDiff,
   type ReconciliationEvidence,
   type ReconciliationStatus,
+  type ReconciliationView,
   type ToolCatalogItem,
   type ToolCatalogView,
   workspaceConfigurationHealth,
@@ -717,6 +718,115 @@ function providerRoleConvergence(
 }
 
 /**
+ * The provider's own audit resources: the provider path itself (its global
+ * enablement), its agent limits, and its role assignments.
+ *
+ * `getOperationHistory` matches by prefix, so the provider path `claude` would
+ * also match the history of a provider named `claude-code`. A provider's
+ * resources are therefore matched exactly here: the provider path itself, or
+ * anything under it.
+ */
+function isProviderResource(provider: string, resource: string): boolean {
+  const base = `${CONTROL_API_PATHS.providers}/${provider}`.toLowerCase();
+  const candidate = resource.toLowerCase();
+  return candidate === base || candidate.startsWith(`${base}/`);
+}
+
+/**
+ * The audit envelopes recorded for one provider's own resources.
+ *
+ * The provider path is recorded with the id as it was typed, so the comparison
+ * ignores case.
+ */
+function providerAuditEnvelopes(
+  provider: string
+): readonly Record<string, unknown>[] {
+  return getOperationHistory().filter(
+    (entry) =>
+      typeof entry.resource === "string" &&
+      isProviderResource(provider, entry.resource)
+  );
+}
+
+function historyForProvider(
+  provider: string
+): readonly OperationHistoryEntry[] {
+  return auditEnvelopesToHistory(providerAuditEnvelopes(provider));
+}
+
+/**
+ * The identity of one provider's configured routing state.
+ *
+ * The state covered here is the part of the routing policy the operator can
+ * change through the Control API: whether the provider is disabled, its agent
+ * limits, and its assignment in each provider role. The digest is taken over a
+ * canonical serialization of that state, so it changes exactly when the
+ * provider's configuration changes and is the same for two providers in the
+ * same state.
+ *
+ * The role assignments are recorded as the operator set them. An assignment
+ * that was never made reads as `unset` rather than as the default priority,
+ * because "the operator chose this" and "nobody has touched this" are
+ * different histories for the same served configuration.
+ */
+function providerConfigurationGeneration(provider: string): string {
+  const limits = ROUTING_POLICY.limitsFor(provider);
+  const roles = PROVIDER_ROLES.map((role) => {
+    const assignment = ROUTING_POLICY.assignmentFor(provider, role);
+    return [
+      role,
+      assignment?.priority ?? "unset",
+      assignment?.model ?? "unset",
+      assignment?.reasoningEffort ?? "unset"
+    ].join(":");
+  }).join(",");
+  const serialized = [
+    `enabled=${ROUTING_POLICY.isProviderEnabled(provider) ? "true" : "false"}`,
+    `limits=${
+      limits
+        ? `${limits.perSession ?? "unlimited"}/${limits.acrossSessions ?? "unlimited"}`
+        : "unlimited"
+    }`,
+    `roles=${roles}`
+  ].join(";");
+  return createHash("sha256").update(serialized, "utf8").digest("hex");
+}
+
+/**
+ * The reconciliation view for one provider.
+ *
+ * A provider's routing configuration is Runtime-owned: the router consults the
+ * live routing policy for every request, so there is no separate projection to
+ * refresh and nothing to restart between an apply and its effect. The desired
+ * generation is therefore the provider's configured routing state, and the
+ * observed generation is that same state read back from the policy the router
+ * serves.
+ *
+ * The two cannot drift apart on their own, so what the view really reports is
+ * *whether an apply has been observed*: a provider nobody has written through
+ * the Control API stays `not-observed`, and a provider whose last write failed
+ * reports that error. Both generations are still reported, because "what the
+ * operator asked for" and "what the runtime has observed" are two separate
+ * statements and the panel shows both.
+ */
+function providerReconciliationView(provider: string): ReconciliationView {
+  const desiredGeneration = providerConfigurationGeneration(provider);
+  const latest = latestAuditEvidence(providerAuditEnvelopes(provider));
+  const observed = latest !== null;
+  return buildReconciliationView({
+    evidence: {
+      desiredGeneration,
+      observedGeneration: observed ? desiredGeneration : null,
+      lastApplyAt: latest?.timestamp ?? null,
+      lastObservationAt: latest?.timestamp ?? null,
+      lastError: boundReconciliationError(latest?.reason ?? null)
+    },
+    history: historyForProvider(provider),
+    hasObservation: observed
+  });
+}
+
+/**
  * Desired-vs-actual verdict for one model's enablement.
  *
  * Model enablement is the same kind of mutable resource as a provider role: the
@@ -844,11 +954,12 @@ function providersView(now: number): Record<string, unknown> {
       ).map(([tier, model]) => ({ tier, model: model.trim() })),
       priorities: providerTierPriorities(provider),
       orchestratorReasoningEffort: reasoningEffort?.[provider] ?? null,
-      health: health?.[provider] ?? null
+      health: health?.[provider] ?? null,
+      reconciliation: providerReconciliationView(provider)
     };
   });
   return {
-    schema: "autodev-control-providers-v2",
+    schema: "autodev-control-providers-v3",
     orchestratorTier: ROUTING_POLICY.config.orchestrator.tier,
     tiers: Object.entries(ROUTING_POLICY.config.providerGroups).map(
       ([tier, groups]) => ({ tier, groups })
@@ -2243,13 +2354,6 @@ function hashString(value: string | null | undefined): string | null {
  * extract its bounded fields. Returns `null` when no audit entry exists
  * yet, so callers can render `not-observed` rather than fabricating a
  * last-apply timestamp.
- *
- * A `denied` envelope is skipped. A refusal is not an apply: nothing was
- * attempted and nothing changed, so treating it as the latest evidence would
- * stamp the resource with a last-apply time and a `lastError` describing a
- * request that was correctly rejected — reporting a failed apply for a resource
- * that is still perfectly converged. Validation and persistence failures are
- * `error`, not `denied`, and remain evidence.
  */
 function findLatestAuditFor(resourceFilter: string): {
   readonly timestamp: string;
@@ -2258,7 +2362,26 @@ function findLatestAuditFor(resourceFilter: string): {
   readonly restartRequired: boolean;
   readonly reason: string | null;
 } | null {
-  const envelopes = getOperationHistory(resourceFilter);
+  return latestAuditEvidence(getOperationHistory(resourceFilter));
+}
+
+/**
+ * The most recent non-denied apply recorded in a list of audit envelopes.
+ *
+ * A `denied` envelope is skipped. A refusal is not an apply: nothing was
+ * attempted and nothing changed, so treating it as the latest evidence would
+ * stamp the resource with a last-apply time and a `lastError` describing a
+ * request that was correctly rejected — reporting a failed apply for a resource
+ * that is still perfectly converged. Validation and persistence failures are
+ * `error`, not `denied`, and remain evidence.
+ */
+function latestAuditEvidence(envelopes: readonly Record<string, unknown>[]): {
+  readonly timestamp: string;
+  readonly desiredGeneration: string | null;
+  readonly observedGeneration: string | null;
+  readonly restartRequired: boolean;
+  readonly reason: string | null;
+} | null {
   for (const envelope of envelopes) {
     if (
       typeof envelope.timestamp === "string" &&

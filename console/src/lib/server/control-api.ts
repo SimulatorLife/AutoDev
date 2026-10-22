@@ -1128,7 +1128,7 @@ function isControlApiProvidersResponse(
 ): value is ControlApiProvidersResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-providers-v2" &&
+    value.schema === "autodev-control-providers-v3" &&
     typeof value.orchestratorTier === "string" &&
     Array.isArray(value.tiers) &&
     value.tiers.every(
@@ -1152,6 +1152,11 @@ function isControlApiProvidersResponse(
         typeof provider.credential.configured === "boolean" &&
         Array.isArray(provider.models) &&
         Array.isArray(provider.priorities) &&
+        // The provider's own reconciliation view is required, not optional: a
+        // provider row that arrives without it cannot say whether its routing
+        // configuration has been observed, and the page would have to invent
+        // that answer.
+        isReconciliationBundle(provider.reconciliation) &&
         // Health drives the readiness badge, which reads `cooldown.failureClass`
         // and `lastFailure.failureClass`.
         (provider.health === null || isProviderHealth(provider.health))
@@ -1176,7 +1181,7 @@ export async function fetchProviders(
     kind: INVALID_RESPONSE_KIND,
     code: "autodev_control_api_invalid_providers_response",
     message:
-      "AutoDev Control API returned an incompatible Providers response; the Console requires the v2 provider contract."
+      "AutoDev Control API returned an incompatible Providers response; the Console requires the v3 provider contract."
   };
 }
 

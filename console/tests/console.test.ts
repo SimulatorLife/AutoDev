@@ -3905,7 +3905,7 @@ test("server Control API client uses only its configured token and fixed local a
       headers: new Headers(init?.headers)
     });
     return Response.json({
-      schema: "autodev-control-providers-v2",
+      schema: "autodev-control-providers-v3",
       orchestratorTier: "orchestrator",
       tiers: [],
       providers: []
@@ -10515,7 +10515,7 @@ test("the metric chips wrap between items instead of clipping each to its prefix
 });
 
 const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
-  schema: "autodev-control-providers-v2",
+  schema: "autodev-control-providers-v3",
   orchestratorTier: "orchestrator",
   tiers: [
     { tier: "default", groups: [["claude"], ["codex"]] },
@@ -10624,6 +10624,18 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
           failureClass: "session_limit",
           status: 429
         }
+      },
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: "provider:claude",
+          observedGeneration: "provider:claude",
+          lastApplyAt: "2026-10-05T15:00:00.000Z",
+          lastObservationAt: "2026-10-05T15:00:00.000Z",
+          lastError: null,
+          explanation: "Converged."
+        },
+        history: []
       }
     },
     {
@@ -10705,7 +10717,19 @@ const PROVIDERS_FIXTURE: ControlApiProvidersResponse = {
         { tier: "orchestrator", group: 1 }
       ],
       orchestratorReasoningEffort: null,
-      health: null
+      health: null,
+      reconciliation: {
+        status: {
+          convergence: "not-observed",
+          desiredGeneration: "provider:codex",
+          observedGeneration: null,
+          lastApplyAt: null,
+          lastObservationAt: null,
+          lastError: null,
+          explanation: "Not observed."
+        },
+        history: []
+      }
     }
   ]
 };
@@ -17963,10 +17987,14 @@ test("a catalog row missing the fields its view reads fails closed instead of th
       failures: 0,
       lastSuccessAt: null,
       lastFailure: null
+    },
+    reconciliation: {
+      status: reconciliation,
+      history: []
     }
   };
   const providersEnvelope = (providers: unknown[]) => ({
-    schema: "autodev-control-providers-v2",
+    schema: "autodev-control-providers-v3",
     orchestratorTier: "orchestrator",
     tiers: [{ tier: "orchestrator", groups: [["anthropic"]] }],
     providers
@@ -17984,7 +18012,8 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     "priorities",
     "roles",
     "disabled",
-    "agentLimits"
+    "agentLimits",
+    "reconciliation"
   ]) {
     const incomplete = await fetchProviders(
       config,

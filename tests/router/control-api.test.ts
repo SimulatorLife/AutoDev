@@ -411,7 +411,7 @@ test("viewer reads control resources; MCP and Skills views contain configuration
       actor: "viewer-a"
     });
     assert.equal(providers.response.statusCode, 200);
-    assert.equal(providers.body.schema, "autodev-control-providers-v2");
+    assert.equal(providers.body.schema, "autodev-control-providers-v3");
     // Each provider's external links are its routing config's, unchanged.
     for (const provider of providers.body.providers as Array<{
       id: string;
@@ -2406,7 +2406,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(providers.response.statusCode, 200);
-    assert.equal(providers.body.schema, "autodev-control-providers-v2");
+    assert.equal(providers.body.schema, "autodev-control-providers-v3");
 
     // 3. Models
     const models = await call("GET", CONTROL_API_PATHS.models, {

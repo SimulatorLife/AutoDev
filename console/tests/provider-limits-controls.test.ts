@@ -93,6 +93,18 @@ function createMockProvider(
     ],
     orchestratorReasoningEffort: null,
     health: null,
+    reconciliation: {
+      status: {
+        convergence: "converged",
+        desiredGeneration: "provider:anthropic",
+        observedGeneration: "provider:anthropic",
+        lastApplyAt: "2026-10-07T00:00:00.000Z",
+        lastObservationAt: "2026-10-07T00:00:00.000Z",
+        lastError: null,
+        explanation: "Converged."
+      },
+      history: []
+    },
     ...overrides
   };
 }

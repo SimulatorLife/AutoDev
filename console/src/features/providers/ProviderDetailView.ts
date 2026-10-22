@@ -19,6 +19,7 @@ import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.t
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
+import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import {
   NOT_OBSERVED_LABEL,
   NOT_OBSERVED_STATUS,
@@ -69,6 +70,40 @@ export interface ProviderDetailViewProps {
   readonly usagePanel: React.ReactNode;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
   readonly controlFailed?: boolean | undefined;
+}
+
+/**
+ * The provider's own desired-vs-actual state.
+ *
+ * The Runtime owns this view: it reports whether the routing configuration the
+ * operator set -- the provider's enablement, its agent limits, and its role
+ * assignments together -- has been applied and observed, and it carries the
+ * bounded operation history for the provider's own resources. The Console
+ * renders the Runtime's verdict rather than deriving one, so the page cannot
+ * claim a convergence the runtime never reported.
+ */
+function ProviderReconciliationPanel({
+  provider
+}: {
+  readonly provider: ControlApiProviderRecord;
+}): React.JSX.Element {
+  return React.createElement(
+    "section",
+    {
+      className: DETAIL_PANEL_CLASS,
+      "aria-label": "Reconciliation state",
+      "data-section": "provider-reconciliation"
+    },
+    React.createElement(
+      "h3",
+      { className: SECTION_HEADING_CLASS },
+      "Reconciliation"
+    ),
+    React.createElement(ReconciliationPanel, {
+      status: provider.reconciliation.status,
+      history: provider.reconciliation.history
+    })
+  );
 }
 
 /**
@@ -727,6 +762,7 @@ export function ProviderDetailView({
       )
     ),
     controlFailed ? React.createElement(ControlFailureNotice) : null,
+    React.createElement(ProviderReconciliationPanel, { provider }),
     React.createElement(RolesPanel, {
       provider,
       modelDiscovery,

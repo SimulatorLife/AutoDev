@@ -33,7 +33,7 @@ test("control-only listener exposes only authenticated Control API routes", asyn
     });
     assert.equal(allowed.status, 200);
     const body = (await allowed.json()) as { schema?: string };
-    assert.equal(body.schema, "autodev-control-providers-v2");
+    assert.equal(body.schema, "autodev-control-providers-v3");
     const nonControl = await fetch(`${baseUrl}/v1/responses`);
     assert.equal(nonControl.status, 404);
   } finally {

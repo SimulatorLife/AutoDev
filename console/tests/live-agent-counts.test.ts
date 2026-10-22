@@ -85,6 +85,10 @@ const PROVIDER: ControlApiProviderRecord = {
     failures: 0,
     lastSuccessAt: null,
     lastFailure: null
+  },
+  reconciliation: {
+    status: NO_CONVERGENCE,
+    history: []
   }
 };
 
@@ -205,7 +209,7 @@ test("agent, provider, and model views render counts from one Runtime projection
     }
   };
   const providers: ControlApiProvidersResponse = {
-    schema: "autodev-control-providers-v2",
+    schema: "autodev-control-providers-v3",
     orchestratorTier: "root",
     tiers: [],
     providers: [PROVIDER]

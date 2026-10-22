@@ -42,7 +42,7 @@ function isControlApiContractResponse(value: unknown): boolean {
 }
 
 function isControlApiProvidersResponse(value: unknown): value is {
-  readonly schema: "autodev-control-providers-v2";
+  readonly schema: "autodev-control-providers-v3";
   readonly providers: readonly {
     readonly id: string;
     readonly links: {
@@ -53,7 +53,7 @@ function isControlApiProvidersResponse(value: unknown): value is {
 } {
   if (
     !isRecord(value) ||
-    value.schema !== "autodev-control-providers-v2" ||
+    value.schema !== "autodev-control-providers-v3" ||
     !Array.isArray(value.providers)
   ) {
     return false;
@@ -422,7 +422,7 @@ async function verifyControlApiCompatibilityOnce(
   }
   const providerData = providers.body;
   if (!providers.response.ok || !isControlApiProvidersResponse(providerData)) {
-    throw startupError("the current Providers v2 response contract is missing");
+    throw startupError("the current Providers v3 response contract is missing");
   }
 
   const providerIds = new Set(providerData.providers.map(({ id }) => id));

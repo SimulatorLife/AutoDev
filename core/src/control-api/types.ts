@@ -287,10 +287,22 @@ export interface ControlApiProviderRecord {
   }[];
   readonly orchestratorReasoningEffort: string | null;
   readonly health: ControlApiProviderHealth | null;
+  /**
+   * Desired-vs-actual state for the provider as a whole, alongside the
+   * per-role convergence above.
+   *
+   * The per-role convergence answers "has this role's assignment been
+   * observed". This answers the provider's own question: whether the routing
+   * configuration the operator set -- the provider's enablement, its agent
+   * limits, and its role assignments together -- has been applied and observed
+   * as one state. The Runtime derives it, so the Console renders the Runtime's
+   * view rather than re-deriving a verdict of its own.
+   */
+  readonly reconciliation: ReconciliationView;
 }
 
 export interface ControlApiProvidersResponse {
-  readonly schema: "autodev-control-providers-v2";
+  readonly schema: "autodev-control-providers-v3";
   readonly orchestratorTier: string;
   /** Ordered priority/fallback groups per capability tier. */
   readonly tiers: readonly {

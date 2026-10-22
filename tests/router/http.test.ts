@@ -171,7 +171,7 @@ test("HTTP endpoint routing keeps health, status, models, control, and response 
     await handleRequest(providerRequest as any, providerResponse);
     assert.equal(providerResponse.statusCode, 200);
     const providerBody = JSON.parse(providerResponse.body);
-    assert.equal(providerBody.schema, "autodev-control-providers-v2");
+    assert.equal(providerBody.schema, "autodev-control-providers-v3");
     // The router registers its live provider evidence with the Control API.
     for (const provider of providerBody.providers) {
       if (provider.route === null) continue;
