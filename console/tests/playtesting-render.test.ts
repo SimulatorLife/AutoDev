@@ -1512,3 +1512,23 @@ test("visual spectator surfaces the Follow live jump link when the operator navi
   assert.match(html, /data-testid="jump-to-live"/u);
   assert.doesNotMatch(html, /Following live/u);
 });
+
+test("the session page names the limit that cut a truncated episode short", () => {
+  const truncated = {
+    ...episode(),
+    status: "budget-truncated",
+    termination: { reason: "usage-budget", step: 3 }
+  } as PlaytestEpisode;
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail(truncated),
+      scope: scope({ view: "sessions", step: "1" }),
+      window: traceWindow()
+    })
+  );
+  // The episode state cannot say which limit; the termination reason can, and
+  // the page has to read it, or the badge falls back to saying only that a
+  // limit happened.
+  assert.match(html, /Execution status<\/dt>[^]*?Budget exhausted/u);
+  assert.doesNotMatch(html, /Execution status<\/dt>[^]*?Limit reached/u);
+});

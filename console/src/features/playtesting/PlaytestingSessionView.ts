@@ -2349,7 +2349,10 @@ export function PlaytestingSessionView({
         statusTile(
           "Execution status",
           "execution-status",
-          executionStatusBadge(episode.status)
+          // The termination reason names the limit that cut a truncated
+          // episode short. Without it the badge can only say that *a* limit
+          // did, which is the vagueness this badge exists to remove.
+          executionStatusBadge(episode.status, episode.termination.reason)
         ),
         statusTile(
           "Replay integrity",
