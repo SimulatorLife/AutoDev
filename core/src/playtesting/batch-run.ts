@@ -191,13 +191,19 @@ export function playtestEpisodeRecordId(
   return batchId + "." + assignmentId;
 }
 
+/** The prefix every batch id carries, which an episode id does not repeat. */
+const BATCH_ID_PREFIX_PATTERN = /^batch-/u;
+
 /** Stable visual episode ID shared by Runtime execution and live Watch links. */
 export function playtestVisualEpisodeRecordId(
   batchId: string,
   assignmentId: string
 ): string {
   return (
-    "ep-" + batchId.replace(/^batch-/u, "").slice(0, 16) + "-" + assignmentId
+    "ep-" +
+    batchId.replace(BATCH_ID_PREFIX_PATTERN, "").slice(0, 16) +
+    "-" +
+    assignmentId
   );
 }
 

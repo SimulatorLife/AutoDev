@@ -289,7 +289,25 @@ interface SmartDirectAvailabilityCache {
   readonly available: boolean;
 }
 
-let smartDirectAvailabilityCache: SmartDirectAvailabilityCache | null = null;
+/**
+ * The cached reachability answer, per endpoint and credential.
+ *
+ * The cache is keyed so that a probe for one Router never reads another's
+ * answer, and so that a probe which overlaps another probe writes its own
+ * entry rather than reassigning a shared binding.
+ */
+const smartDirectAvailabilityCache = new Map<
+  string,
+  SmartDirectAvailabilityCache
+>();
+
+/** The key one probe's answer is cached under. */
+function smartDirectAvailabilityKey(
+  endpoint: string,
+  authFingerprint: string
+): string {
+  return `${endpoint}\u0000${authFingerprint}`;
+}
 
 /**
  * The reachability probe has to tell an unreachable Router from a busy one.
@@ -338,7 +356,9 @@ export async function isSmartDirectVisualPolicyAvailable(
     .digest("hex");
   const now = options.now ?? Date.now;
   const current = now();
-  const cached = smartDirectAvailabilityCache;
+  const cached = smartDirectAvailabilityCache.get(
+    smartDirectAvailabilityKey(endpoint, authFingerprint)
+  );
   if (
     cached &&
     cached.endpoint === endpoint &&
@@ -387,18 +407,21 @@ export async function isSmartDirectVisualPolicyAvailable(
   } finally {
     clearTimeout(timeout);
   }
-  smartDirectAvailabilityCache = {
-    endpoint,
-    authFingerprint,
-    expiresAt: current + Math.max(0, options.cacheMs ?? 1500),
-    available
-  };
+  smartDirectAvailabilityCache.set(
+    smartDirectAvailabilityKey(endpoint, authFingerprint),
+    {
+      endpoint,
+      authFingerprint,
+      expiresAt: current + Math.max(0, options.cacheMs ?? 1500),
+      available
+    }
+  );
   return available;
 }
 
 /** Test seam to isolate readiness probe cache lifetimes. */
 export function resetSmartDirectVisualPolicyAvailabilityCache(): void {
-  smartDirectAvailabilityCache = null;
+  smartDirectAvailabilityCache.clear();
 }
 
 function assertLocalRouterEndpoint(value: string): void {
@@ -859,7 +882,7 @@ function turnMetadataForWorkspace(workspacePath: string): string {
 }
 
 export class SmartDirectVisualPolicy implements PlaytestVisualPolicy {
-  readonly backendId: "smart-direct" = "smart-direct";
+  readonly backendId = "smart-direct" as const;
   private readonly target: WorkspaceVisualPlaytestTargetApproval;
   private readonly endpoint: string;
   private readonly authToken: string | undefined;

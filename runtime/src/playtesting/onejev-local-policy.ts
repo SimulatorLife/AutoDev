@@ -166,14 +166,33 @@ export interface OneJevLocalAvailabilityProbeOptions {
   readonly timeoutMs?: number;
 }
 
+/**
+ * The failure codes this policy raises more than once.
+ *
+ * A code is the machine-readable half of a failure, so the same failure must
+ * always carry the same code; spelling it out at each throw is how two
+ * failures drift apart.
+ */
+const ONEJEV_INVALID_REQUEST_CODE = "onejev-invalid-request";
+const ONEJEV_PROTOCOL_ERROR_CODE = "onejev-protocol-error";
+
 const ONEJEV_AVAILABILITY_TIMEOUT_MS = 2000;
 const ONEJEV_AVAILABILITY_CACHE_MS = 5000;
 
-let oneJevAvailabilityCache: {
-  readonly endpoint: string;
-  readonly available: boolean;
-  readonly expiresAt: number;
-} | null = null;
+/**
+ * The cached reachability answer, per endpoint.
+ *
+ * The cache is keyed by the endpoint it answers for, so a probe for one
+ * server never reads another's answer, and a probe that overlaps another
+ * probe writes its own entry rather than reassigning a shared binding.
+ */
+const oneJevAvailabilityCache = new Map<
+  string,
+  {
+    readonly available: boolean;
+    readonly expiresAt: number;
+  }
+>();
 
 /**
  * Whether the local OneJev server can be reached right now.
@@ -194,8 +213,8 @@ export async function isOneJevLocalVisualPolicyAvailable(
   }
   const now = options.now ?? Date.now;
   const current = now();
-  const cached = oneJevAvailabilityCache;
-  if (cached && cached.endpoint === endpoint && cached.expiresAt > current) {
+  const cached = oneJevAvailabilityCache.get(endpoint);
+  if (cached && cached.expiresAt > current) {
     return cached.available;
   }
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
@@ -223,11 +242,10 @@ export async function isOneJevLocalVisualPolicyAvailable(
   } finally {
     clearTimeout(timer);
   }
-  oneJevAvailabilityCache = {
-    endpoint,
+  oneJevAvailabilityCache.set(endpoint, {
     available,
     expiresAt: current + (options.cacheMs ?? ONEJEV_AVAILABILITY_CACHE_MS)
-  };
+  });
   return available;
 }
 
@@ -448,7 +466,7 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
       !isBoundedText(request.areasOfFocus, MAX_FOCUS_LENGTH)
     ) {
       throw new OneJevLocalPolicyError(
-        "onejev-invalid-request",
+        ONEJEV_INVALID_REQUEST_CODE,
         "The visual focus is outside its bounded text contract."
       );
     }
@@ -474,7 +492,7 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
     const body = JSON.stringify(this.buildRequestBody(request, candidates));
     if (new TextEncoder().encode(body).byteLength > this.maxRequestBytes) {
       throw new OneJevLocalPolicyError(
-        "onejev-invalid-request",
+        ONEJEV_INVALID_REQUEST_CODE,
         "The bounded OneJev request exceeded its Runtime input size limit."
       );
     }
@@ -496,7 +514,7 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
         candidate.id.trim() !== candidate.id
       ) {
         throw new OneJevLocalPolicyError(
-          "onejev-invalid-request",
+          ONEJEV_INVALID_REQUEST_CODE,
           "A OneJev candidate id is outside its bounded text contract."
         );
       }
@@ -511,7 +529,7 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
         !isBoundedText(candidate.description, MAX_CANDIDATE_DESCRIPTION_LENGTH)
       ) {
         throw new OneJevLocalPolicyError(
-          "onejev-invalid-request",
+          ONEJEV_INVALID_REQUEST_CODE,
           "A OneJev candidate description is outside its bounded text contract."
         );
       }
@@ -519,7 +537,7 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
         assertPlaytestVisualAction(candidate.action);
       } catch {
         throw new OneJevLocalPolicyError(
-          "onejev-invalid-request",
+          ONEJEV_INVALID_REQUEST_CODE,
           "A OneJev candidate carries a malformed action."
         );
       }
@@ -583,6 +601,7 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
       this.providerAttempts += 1;
       let response: Response;
       try {
+        // eslint-disable-next-line no-await-in-loop -- each attempt waits for the one before it: a retry must not race the request it is replacing
         response = await this.postRequest(
           plan.body,
           requestId,
@@ -602,6 +621,7 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
         RETRYABLE_STATUS_CODES.has(response.status) &&
         attempt < MAX_PROVIDER_ATTEMPTS
       ) {
+        // eslint-disable-next-line no-await-in-loop -- the body is drained before the next attempt, so the connection is not reused while it is still open
         await response.body?.cancel().catch(() => undefined);
         continue;
       }
@@ -611,6 +631,7 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
           `The local OneJev server rejected the decision with status ${String(response.status)}.`
         );
       }
+      // eslint-disable-next-line no-await-in-loop -- the answer is read from the response that this attempt got, not from any other
       const body = await this.readBody(response);
       this.accountUsage(body);
       return this.parseAnswer(body, plan.candidates);
@@ -662,7 +683,7 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
     const stream = response.body;
     if (!stream) {
       throw new OneJevLocalPolicyError(
-        "onejev-protocol-error",
+        ONEJEV_PROTOCOL_ERROR_CODE,
         "The OneJev server returned no response body."
       );
     }
@@ -686,7 +707,7 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
       );
     } catch {
       throw new OneJevLocalPolicyError(
-        "onejev-protocol-error",
+        ONEJEV_PROTOCOL_ERROR_CODE,
         "The OneJev server returned invalid JSON."
       );
     }
@@ -726,13 +747,13 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
   ): OneJevAnswer {
     if (!isRecord(body)) {
       throw new OneJevLocalPolicyError(
-        "onejev-protocol-error",
+        ONEJEV_PROTOCOL_ERROR_CODE,
         "The OneJev server returned an unsupported response body."
       );
     }
     if (typeof body.model !== "string" || body.model.trim().length === 0) {
       throw new OneJevLocalPolicyError(
-        "onejev-protocol-error",
+        ONEJEV_PROTOCOL_ERROR_CODE,
         "The OneJev response did not identify the model that answered."
       );
     }
@@ -764,7 +785,7 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
       confidence > 1
     ) {
       throw new OneJevLocalPolicyError(
-        "onejev-protocol-error",
+        ONEJEV_PROTOCOL_ERROR_CODE,
         "The OneJev response did not report a calibrated confidence."
       );
     }
@@ -847,6 +868,15 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
           );
         }
         return action;
+      }
+      default: {
+        // Every action kind is a case above, so this is unreachable with the
+        // kinds this policy knows. It is here because a policy that grows a
+        // kind must refuse the action it does not implement rather than fall
+        // out of the function with nothing to return.
+        return this.rejectGrounding(
+          "OneJev selected an action kind this policy does not implement."
+        );
       }
     }
   }
