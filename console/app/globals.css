@@ -110,6 +110,32 @@ body {
   height: 100%;
 }
 
+/*
+ * Scroll regions say that they scroll.
+ *
+ * A table's declared widths are a content budget: the sum of its column
+ * weights is what the columns need to hold their contents without
+ * compressing them, and when the viewport cannot provide that budget the
+ * table keeps its proportions and its region scrolls. That is the contract,
+ * and it is the right one -- but macOS hides overlay scrollbars until you
+ * scroll, so the region gave the operator nothing to act on. A table whose
+ * last column was cut in half read as a rendering fault rather than as more
+ * content to the right, and the page column scrolled for the same reason
+ * with the same silence.
+ *
+ * `scrollbar-width` and `scrollbar-color` also take the region out of the
+ * overlay behaviour, so the scrollbar is painted rather than revealed. The
+ * thumb is the Console's own border token, so the cue belongs to the theme
+ * rather than to the platform.
+ *
+ * `:where` keeps this at zero specificity, so a component that needs a
+ * different scrollbar can still declare one.
+ */
+:where(.overflow-x-auto, .overflow-y-auto, .overflow-auto) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
 body {
   font-family:
     ui-sans-serif,

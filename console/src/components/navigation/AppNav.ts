@@ -211,8 +211,22 @@ function renderGroup(
     React.createElement(
       "section",
       { ...groupSectionProps, "aria-labelledby": headingId },
+      // The group label is a label, not a heading.
+      //
+      // The sidebar is chrome: it is on every page, and it sits before the
+      // shell header in the document, so its labels came first in every
+      // page's heading outline -- three navigation headings ahead of the page's
+      // own title, and at the same level as the page's body sections. An
+      // operator navigating by heading met "Configure", "Observe" and
+      // "Operate" before they met the page they were on.
+      //
+      // The group is still a labelled region: `aria-labelledby` names it from
+      // this element, and a labelled region does not need a heading for that.
+      // The element keeps the id, the visible label and its treatment, so the
+      // group reads exactly as it did -- it just stops being a heading of the
+      // page.
       React.createElement(
-        "h2",
+        "div",
         {
           id: headingId,
           className:

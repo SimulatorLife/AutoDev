@@ -12,6 +12,7 @@ import {
   PRIMARY_BUTTON_CLASS,
   SECONDARY_BUTTON_CLASS
 } from "../src/components/forms/Button.ts";
+import { AppNav } from "../src/components/navigation/AppNav.ts";
 import {
   STATE_PILL_BUTTON_CLASS,
   STATE_PILL_TONE_CLASS
@@ -162,5 +163,69 @@ test("a column help marker is bound to its label rather than floating after it",
     source,
     /shrink-0/u,
     "the marker must not be the part that shrinks"
+  );
+});
+
+/**
+ * The page's outline starts with the page.
+ *
+ * The sidebar is chrome: it is on every page and it sits before the shell
+ * header in the document, so its group labels came first in every page's
+ * heading outline -- three navigation headings ahead of the page's own title,
+ * and at the same level as the page's body sections. An operator navigating
+ * by heading met "Configure", "Observe" and "Operate" before they met the
+ * page they were on.
+ *
+ * The group is still a labelled region: `aria-labelledby` names it from its
+ * label element, and a labelled region does not need a heading for that.
+ */
+test("the navigation's group labels are labels, not headings of the page", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(AppNav, {
+      activeSection: "Agents",
+      counts: { Agents: 8, MCPs: 5 }
+    })
+  );
+  assert.doesNotMatch(
+    markup,
+    /<h[1-6][^>]*>/u,
+    "the navigation must not add headings to the page's outline"
+  );
+  for (const groupId of ["Configure", "Observe", "Operate"]) {
+    const labelId = `autodev-nav-group-${groupId.toLowerCase()}`;
+    assert.ok(
+      markup.includes(`id="${labelId}"`),
+      `the ${groupId} group must keep its label element`
+    );
+    assert.ok(
+      markup.includes(`aria-labelledby="${labelId}"`),
+      `the ${groupId} group must stay a labelled region`
+    );
+  }
+});
+
+/**
+ * A scroll region has to say that it scrolls.
+ *
+ * A table's declared widths are a content budget, and the region scrolls when
+ * the viewport cannot provide it -- by design. macOS hides overlay scrollbars
+ * until you scroll, so the region gave the operator nothing to act on: a
+ * table whose last column was cut in half read as a rendering fault rather
+ * than as more content to the right.
+ */
+test("the Console's scroll regions are visible", () => {
+  const css = readFileSync(
+    new URL("../app/globals.css", import.meta.url),
+    "utf8"
+  );
+  assert.match(
+    css,
+    /scrollbar-width:\s*thin/u,
+    "a scroll region must show that it scrolls"
+  );
+  assert.match(
+    css,
+    /scrollbar-color:[^;]*var\(--color-border-strong\)/u,
+    "the scrollbar must wear the Console's own token"
   );
 });
