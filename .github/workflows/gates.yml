@@ -44,7 +44,7 @@ jobs:
       # refuses to analyze with a drifted one, so a runner without `uv` is a
       # runner that cannot run the product's own analysis at all.
       - name: Setup uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.3.2
 
       # The visual browser driver drives a Playwright Chromium. Without one the
       # driver reports itself unavailable, and the suites that measure it
