@@ -33,9 +33,19 @@ const SKILL_REVISION = "[data-skill-revision]";
 const EXPECTED_REVISION = 'input[name="expectedRevision"]';
 const SKILL_SAVE = '[data-button="skill-content-save"]';
 const PROMPT_SAVE = '[data-button="prompt-save"]';
+const PROMPT_PREVIEW = '[data-button="prompt-preview"]';
+const PROMPT_PREVIEW_PANEL = "[data-prompt-unsaved-preview]";
+const PROMPT_PREVIEW_BODY = "[data-prompt-unsaved-preview-body]";
 const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const SKILL_SOURCE = `---\nname: ${SKILL_NAME}\ndescription: Review a diff for defects.\n---\n\nReview a diff for defects.\n`;
 const PROMPT_SOURCE = `---\nname: ${PROMPT_NAME}\ndescription: Review the pending diff and report what changed.\n---\n\nReview the pending diff and report what changed.\n`;
+/** The body the canonical source carries, and the one the saved source carries. */
+const SAVED_BODY = "Review the pending diff and report what changed.";
+/** The body an unsaved edit carries, which no saved source carries. */
+const UNSAVED_BODY = "A body the operator has not saved yet.";
+const UNSAVED_SOURCE = `---\nname: ${PROMPT_NAME}\ndescription: An edit that has not been saved.\n---\n\n${UNSAVED_BODY}\n`;
+/** The sentence the canonical RuleSync parser refuses a source with. */
+const FRONTMATTER_REFUSAL = /must have valid YAML frontmatter/u;
 /** The sentence the fixture appends when a source moves behind the Console. */
 const MOVED_MARKER = /Moved by another editor\./u;
 /** The sentence an edit that lost the race carries. */
@@ -312,4 +322,63 @@ test("the prompt editor reports a failed apply instead of claiming the projectio
   // The source was saved, so the page's editor holds what was written.
   const stored = await storedCanonicalSource(request, "prompt", PROMPT_NAME);
   expect(stored).toContain("A change whose projection fails.");
+});
+
+test("the prompt editor previews the unsaved source without saving it", async ({
+  page,
+  request
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(PROMPT_ROUTE);
+  await waitForPageContent(page);
+
+  const editor = page.locator(PROMPT_EDITOR);
+  await expect(editor).toHaveValue(PROMPT_SOURCE);
+
+  // The editor holds the edit, and the edit has not been saved: the preview is
+  // the only thing that has happened.
+  await editor.fill(UNSAVED_SOURCE);
+  await page.locator(PROMPT_PREVIEW).click();
+
+  const preview = page.locator(PROMPT_PREVIEW_PANEL);
+  await expect(preview).toHaveAttribute(
+    "data-prompt-unsaved-preview",
+    "observed"
+  );
+  const body = page.locator(PROMPT_PREVIEW_BODY);
+  await expect(body).toContainText(UNSAVED_BODY);
+  // The preview shows the body the unsaved source carries, not the body the
+  // saved source carries.
+  await expect(body).not.toContainText(SAVED_BODY);
+
+  // A preview writes nothing. The canonical source is what it was, so the edit
+  // the operator looked at is still only in the editor.
+  const stored = await storedCanonicalSource(request, "prompt", PROMPT_NAME);
+  expect(stored).toContain(SAVED_BODY);
+  expect(stored).not.toContain(UNSAVED_BODY);
+});
+
+test("the prompt editor reports the parser's refusal for a source the parser refuses", async ({
+  page,
+  request
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(PROMPT_ROUTE);
+  await waitForPageContent(page);
+
+  const editor = page.locator(PROMPT_EDITOR);
+  await editor.fill("A source with no front matter.\n");
+  await page.locator(PROMPT_PREVIEW).click();
+
+  await expect(page.locator(PROMPT_PREVIEW_PANEL)).toHaveAttribute(
+    "data-prompt-unsaved-preview",
+    "invalid"
+  );
+  // The refusal is the parser's own reason, not the page's opinion of it.
+  await expect(page.locator(PROMPT_PREVIEW_BODY)).toContainText(
+    FRONTMATTER_REFUSAL
+  );
+  // A refused preview is still a preview: nothing was written.
+  const stored = await storedCanonicalSource(request, "prompt", PROMPT_NAME);
+  expect(stored).not.toContain("A source with no front matter.");
 });
