@@ -45,7 +45,23 @@ const tsImportResolver = createTypeScriptImportResolver({
 });
 
 const typeScriptPlugin = { "@typescript-eslint": tseslint.plugin };
-const TEST_FILES = ["**/tests/**/*.ts", "**/tests/**/*.tsx"];
+/**
+ * The files that are tests.
+ *
+ * A test states its fixtures, so a literal repeated across a fixture and a
+ * regex built inside an assertion are the shape of a test rather than a smell
+ * in it. The acceptance specs are tests by every other measure -- they drive
+ * the product in a browser and assert what it did -- so they belong to the same
+ * bar, and the acceptance directory was simply not covered by the glob that
+ * carries it. The acceptance's *fixture* is not a test: it stands in for the
+ * Control API, so it keeps the Runtime's bar.
+ */
+const TEST_FILES = [
+  "**/tests/**/*.ts",
+  "**/tests/**/*.tsx",
+  "**/e2e/**/*.spec.ts",
+  "**/e2e/**/*.spec.tsx"
+];
 
 const baseIgnorePatterns = [
   "**/*.d.ts",
