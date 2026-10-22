@@ -872,6 +872,44 @@ included. The launchd-managed Console path does not depend on
 secret file via an exact-key parser and exports only the two tokens
 needed by the Next.js server.
 
+### Running a live visual playtest
+
+The visual mode needs two things the operator provides: a target approved for
+the workspace, and the game reachable at that target's approved origin. The
+Console's Playtesting view reads both from the Runtime's own readiness, so a
+run that is refused says which of the two is missing — the target store, the
+browser, or the decision backend — instead of failing inside the episode.
+
+**Playtesting → Play** starts the run: pick the approved target, the decision
+backend, the areas of focus, and the episode and step counts. The request is a
+versioned launch request, and the Runtime owns the approval, the budgets and
+the mode; the Console never substitutes another mode when the Runtime refuses
+one. **Sessions** lists what ran, and a session page carries the four recorded
+dimensions side by side — the game outcome, the execution status, the replay
+integrity and the evidence completeness — because a run that produced no
+outcome is not a run that failed.
+
+The binding budget is the per-episode Smart token budget, not the step cap: a
+vision decision costs several thousand tokens, so the approved 20 000 tokens
+pay for about four decisions and the episode then ends `budget-truncated` with
+the reason `usage-budget`. Raising that ceiling is the operator's call.
+
+The session page's spectator shows what each step did: the frame the decision
+was taken from, the action that was selected, and whether the action reached
+the game. A refused action is recorded with the reason it was refused. When the
+refusal says the page moved under the observation, the episode observes again
+and decides with that refusal in its history, bounded by the approved budgets;
+when the refusal is final — the action was not allowed, the game needs setup,
+or the episode is out of budget — the episode ends with the termination reason
+`action-refused`, which the badge reads as "Action refused" rather than as a
+crash.
+
+**Analyze this session** runs the analyst over the recorded frames. What it
+records are hypotheses and observations, not defects: nothing the analyst
+produces is reproduced or verified on its own, so the Findings view says so,
+and a verified finding needs the confirmatory pass that no run has produced
+yet.
+
 ### GitHub Actions runtime facts
 
 The Console GitHub page always shows the workflow definitions parsed from
