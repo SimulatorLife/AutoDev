@@ -241,10 +241,7 @@ test("the Overview says when the analyst has concluded nothing yet", () => {
       }
     })
   );
-  assert.match(
-    html,
-    /No analysis has been recorded for this workspace yet/u
-  );
+  assert.match(html, /No analysis has been recorded for this workspace yet/u);
   assert.doesNotMatch(html, /See all 0 analyst reviews/u);
 });
 
@@ -274,7 +271,9 @@ test("a conclusion that fills its lines does not take the counts with it", () =>
   assert.match(html, /line-clamp-3/u);
   const clampStart = html.indexOf("line-clamp-3");
   const clampEnd = html.indexOf("</div>", clampStart);
-  const counts = html.indexOf("Discovery review · 2 hypotheses · 4 observations");
+  const counts = html.indexOf(
+    "Discovery review · 2 hypotheses · 4 observations"
+  );
   assert.ok(counts > clampEnd, "the counts are written outside the clamp");
   // The way into the review is stated, not implied by a paragraph of body
   // text that only happens to be a link.

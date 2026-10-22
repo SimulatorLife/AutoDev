@@ -221,9 +221,7 @@ export function gameOutcomeLabel(value: PlaytestGameOutcomeKind): string {
  * so the badge names what is missing. The sentence form elsewhere says "Not
  * observed", because the sentence names what it is about.
  */
-export function gameOutcomeBadgeLabel(
-  value: PlaytestGameOutcomeKind
-): string {
+export function gameOutcomeBadgeLabel(value: PlaytestGameOutcomeKind): string {
   return value === "unknown" ? "No game outcome" : gameOutcomeLabel(value);
 }
 

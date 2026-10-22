@@ -633,7 +633,10 @@ function latestConclusions(
       className: LIST_PANEL_CLASS,
       "aria-labelledby": "playtesting-conclusions-heading"
     },
-    sectionHeading("playtesting-conclusions-heading", "Latest analyst conclusions"),
+    sectionHeading(
+      "playtesting-conclusions-heading",
+      "Latest analyst conclusions"
+    ),
     React.createElement(
       "p",
       { className: `mb-3 text-sm ${MUTED_META_CLASS}` },
@@ -690,7 +693,9 @@ function latestConclusions(
           {
             href: playtestingViewHref(scope, "findings"),
             className: "mt-3 text-sm text-accent hover:underline",
-            dataAttributes: { "data-overview-all-conclusions": String(reviewCount) }
+            dataAttributes: {
+              "data-overview-all-conclusions": String(reviewCount)
+            }
           },
           `See all ${String(reviewCount)} analyst reviews`
         )

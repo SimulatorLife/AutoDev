@@ -12,7 +12,9 @@ export const NO_CONCLUSION_LABEL =
   "The analyst recorded no written conclusion for this session.";
 
 /** The review's conclusion, or the sentence that stands in for one. */
-export function reviewHeadlineText(review: ControlApiPlaytestingReview): string {
+export function reviewHeadlineText(
+  review: ControlApiPlaytestingReview
+): string {
   return review.headline.length > 0 ? review.headline : NO_CONCLUSION_LABEL;
 }
 

@@ -45,6 +45,21 @@ import {
 import { PlaytestingSessionLiveWatch } from "./PlaytestingSessionLiveWatch.ts";
 import { PlaytestingSpectatorAnalystButton } from "./PlaytestingSpectatorAnalystButton.ts";
 
+/**
+ * The surfaces the spectator renders.
+ *
+ * They are repeated across the step controls and the panels around them, and
+ * a control that is styled one way in one place and another way in the next
+ * is a control the operator cannot read.
+ */
+const DISABLED_STEP_BUTTON_CLASS =
+  "rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted/40 cursor-not-allowed";
+const STEP_BUTTON_CLASS =
+  "rounded-md border border-border bg-surface-raised px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface hover:text-accent transition";
+const RAISED_PANEL_CLASS =
+  "rounded-lg border border-border bg-surface-raised p-3";
+const SURFACE_PANEL_CLASS = "rounded-lg border border-border bg-surface p-3";
+
 const EVIDENCE_LINK_CLASS = "text-xs text-accent hover:underline";
 
 /** A JSON object read off a recorded trace line. */
@@ -1085,6 +1100,36 @@ function completenessBadge(
   });
 }
 
+/**
+ * The step the spectator is on when the address does not name one.
+ *
+ * The last recorded frame is the latest evidence of where the episode got
+ * to, so that is where the spectator starts.
+ */
+function spectatorLatestStep(
+  totalSteps: number,
+  lastFrame: PlaytestEpisode["frames"][number] | undefined
+): number {
+  const last = Math.max(totalSteps - 1, 0);
+  if (lastFrame === undefined) return last;
+  return lastFrame.step ?? lastFrame.frameIndex ?? last;
+}
+
+/**
+ * The steps the spectator can move between.
+ *
+ * A recorded window names its own steps; an episode with no window yet has
+ * only the steps it has run.
+ */
+function spectatorAvailableSteps(
+  window: ControlApiPlaytestingWindowResponse | null,
+  totalSteps: number
+): readonly number[] {
+  const windowSteps = window ? windowStepList(window) : [];
+  if (windowSteps.length > 0) return windowSteps;
+  return Array.from({ length: Math.max(totalSteps, 1) }, (_, index) => index);
+}
+
 function visualGameSpectatorStage(
   episode: PlaytestEpisode,
   traceScope: PlaytestingScope,
@@ -1096,10 +1141,7 @@ function visualGameSpectatorStage(
   const totalSteps = episode.stepCount;
   const lastFrame =
     episode.frames.length > 0 ? episode.frames.at(-1) : undefined;
-  const latestStep =
-    lastFrame === undefined
-      ? Math.max(totalSteps - 1, 0)
-      : (lastFrame.step ?? lastFrame.frameIndex ?? Math.max(totalSteps - 1, 0));
+  const latestStep = spectatorLatestStep(totalSteps, lastFrame);
   const isFollowingLive =
     traceScope.step === null || traceScope.step === latestStep;
   const currentStep = traceScope.step ?? latestStep;
@@ -1122,11 +1164,7 @@ function visualGameSpectatorStage(
     (episode.frames[currentStep] ? episode.frames[currentStep].id : null);
 
   // Scrubber step targets
-  const windowSteps = window ? windowStepList(window) : [];
-  const availableSteps =
-    windowSteps.length > 0
-      ? windowSteps
-      : Array.from({ length: Math.max(totalSteps, 1) }, (_, i) => i);
+  const availableSteps = spectatorAvailableSteps(window, totalSteps);
   const firstStep = availableSteps[0] ?? 0;
   const lastStep = availableSteps.at(-1) ?? 0;
   const prevStep = availableSteps.findLast((s) => s < currentStep) ?? null;
@@ -1343,8 +1381,7 @@ function visualGameSpectatorStage(
             ? React.createElement(
                 "span",
                 {
-                  className:
-                    "rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted/40 cursor-not-allowed",
+                  className: DISABLED_STEP_BUTTON_CLASS,
                   "aria-disabled": "true"
                 },
                 "⏮ Step 0"
@@ -1357,8 +1394,7 @@ function visualGameSpectatorStage(
                     episode.episodeId,
                     firstStep
                   ),
-                  className:
-                    "rounded-md border border-border bg-surface-raised px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface hover:text-accent transition"
+                  className: STEP_BUTTON_CLASS
                 },
                 "⏮ Step 0"
               ),
@@ -1366,8 +1402,7 @@ function visualGameSpectatorStage(
             ? React.createElement(
                 "span",
                 {
-                  className:
-                    "rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted/40 cursor-not-allowed",
+                  className: DISABLED_STEP_BUTTON_CLASS,
                   "aria-disabled": "true"
                 },
                 "◀ Prev Step"
@@ -1380,8 +1415,7 @@ function visualGameSpectatorStage(
                     episode.episodeId,
                     prevStep
                   ),
-                  className:
-                    "rounded-md border border-border bg-surface-raised px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface hover:text-accent transition"
+                  className: STEP_BUTTON_CLASS
                 },
                 "◀ Prev Step"
               )
@@ -1401,8 +1435,7 @@ function visualGameSpectatorStage(
             ? React.createElement(
                 "span",
                 {
-                  className:
-                    "rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted/40 cursor-not-allowed",
+                  className: DISABLED_STEP_BUTTON_CLASS,
                   "aria-disabled": "true"
                 },
                 "Next Step ▶"
@@ -1415,8 +1448,7 @@ function visualGameSpectatorStage(
                     episode.episodeId,
                     nextStep
                   ),
-                  className:
-                    "rounded-md border border-border bg-surface-raised px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface hover:text-accent transition"
+                  className: STEP_BUTTON_CLASS
                 },
                 "Next Step ▶"
               ),
@@ -1424,8 +1456,7 @@ function visualGameSpectatorStage(
             ? React.createElement(
                 "span",
                 {
-                  className:
-                    "rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted/40 cursor-not-allowed",
+                  className: DISABLED_STEP_BUTTON_CLASS,
                   "aria-disabled": "true"
                 },
                 "⏭ Last Step"
@@ -1438,8 +1469,7 @@ function visualGameSpectatorStage(
                     episode.episodeId,
                     lastStep
                   ),
-                  className:
-                    "rounded-md border border-border bg-surface-raised px-2.5 py-1 text-xs font-medium text-fg hover:bg-surface hover:text-accent transition"
+                  className: STEP_BUTTON_CLASS
                 },
                 "⏭ Last Step"
               )
@@ -1482,7 +1512,7 @@ function visualGameSpectatorStage(
         React.createElement(
           "div",
           {
-            className: "rounded-lg border border-border bg-surface-raised p-3"
+            className: RAISED_PANEL_CLASS
           },
           React.createElement(
             "p",
@@ -1502,7 +1532,7 @@ function visualGameSpectatorStage(
         React.createElement(
           "div",
           {
-            className: "rounded-lg border border-border bg-surface-raised p-3"
+            className: RAISED_PANEL_CLASS
           },
           React.createElement(
             "p",
@@ -1522,7 +1552,7 @@ function visualGameSpectatorStage(
         React.createElement(
           "div",
           {
-            className: "rounded-lg border border-border bg-surface-raised p-3"
+            className: RAISED_PANEL_CLASS
           },
           React.createElement(
             "p",
@@ -1544,7 +1574,7 @@ function visualGameSpectatorStage(
         React.createElement(
           "div",
           {
-            className: "rounded-lg border border-border bg-surface-raised p-3"
+            className: RAISED_PANEL_CLASS
           },
           React.createElement(
             "p",
@@ -1583,7 +1613,7 @@ function visualGameSpectatorStage(
       { className: "grid grid-cols-2 gap-3 sm:grid-cols-4" },
       React.createElement(
         "div",
-        { className: "rounded-lg border border-border bg-surface p-3" },
+        { className: SURFACE_PANEL_CLASS },
         React.createElement(
           "p",
           { className: SECTION_LABEL_CLASS },
@@ -1601,7 +1631,7 @@ function visualGameSpectatorStage(
       ),
       React.createElement(
         "div",
-        { className: "rounded-lg border border-border bg-surface p-3" },
+        { className: SURFACE_PANEL_CLASS },
         React.createElement(
           "p",
           { className: SECTION_LABEL_CLASS },
@@ -1618,7 +1648,7 @@ function visualGameSpectatorStage(
       ),
       React.createElement(
         "div",
-        { className: "rounded-lg border border-border bg-surface p-3" },
+        { className: SURFACE_PANEL_CLASS },
         React.createElement(
           "p",
           { className: SECTION_LABEL_CLASS },
@@ -1632,7 +1662,7 @@ function visualGameSpectatorStage(
       ),
       React.createElement(
         "div",
-        { className: "rounded-lg border border-border bg-surface p-3" },
+        { className: SURFACE_PANEL_CLASS },
         React.createElement(
           "p",
           { className: SECTION_LABEL_CLASS },

@@ -44,6 +44,23 @@ import {
   resetCanonicalSources
 } from "./canonical-source-fixture.ts";
 
+/**
+ * The vocabulary the fixture speaks in.
+ *
+ * The fixture is a stand-in for the Control API, so the values it writes are
+ * the API's values; naming them once keeps the fixture from spelling the
+ * same mode or policy two ways.
+ */
+const FIXTURE_NOT_APPLICABLE = "not-applicable";
+const FIXTURE_SMART_DIRECT_POLICY = "smart-direct";
+const FIXTURE_AUTONOMOUS_VISUAL_MODE = "autonomous-visual";
+const FIXTURE_RUN_STARTED_SCHEMA = "autodev-control-playtesting-run-started-v3";
+const FIXTURE_BATCH_ID_PREFIX = /^batch-/u;
+const FIXTURE_CAPABILITY_REVISION = "e".repeat(64);
+const FIXTURE_LOCAL_WORKSPACE = "autodev-local";
+const FIXTURE_REVIEW_TIMESTAMP = "2026-02-11T09:40:00.000Z";
+const FIXTURE_EARLIER_TIMESTAMP = "2026-02-11T08:22:00.000Z";
+
 const PORT = Number(process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? 4311);
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const SYNTHETIC_VISUAL_LAUNCH_KEYS = new Set([
@@ -165,7 +182,7 @@ const episode = {
   },
   playerDebrief: {
     schema: "autodev-playtest-player-debrief-v1",
-    status: "not-applicable",
+    status: FIXTURE_NOT_APPLICABLE,
     reason: "non-reflective-policy"
   },
   identity: {
@@ -254,7 +271,7 @@ const visualEpisode = {
     status: "complete",
     source: {
       authorRole: "player",
-      policyId: "smart-direct",
+      policyId: FIXTURE_SMART_DIRECT_POLICY,
       policyVersion: "1",
       modelId: "synthetic-fixture-model",
       modelVersion: null
@@ -274,13 +291,13 @@ const visualEpisode = {
       "Synthetic fixture report: the setup menu was inspected without starting a race."
   },
   executionProvenance: {
-    mode: "autonomous-visual",
+    mode: FIXTURE_AUTONOMOUS_VISUAL_MODE,
     source: {
       kind: "URL-only",
       repository: null,
       revision: null,
-      revisionConfidence: "not-applicable",
-      checkoutState: "not-applicable",
+      revisionConfidence: FIXTURE_NOT_APPLICABLE,
+      checkoutState: FIXTURE_NOT_APPLICABLE,
       artifactFingerprint: null,
       targetId: "visual-fixture-target",
       targetOrigin: "http://127.0.0.1:5173"
@@ -300,7 +317,7 @@ const visualEpisode = {
     rngInitialStateHash: null,
     rngAlgorithm: null,
     rngVersion: null,
-    policyId: "smart-direct",
+    policyId: FIXTURE_SMART_DIRECT_POLICY,
     policyVersion: "1",
     modelId: null,
     modelRevision: null,
@@ -313,7 +330,7 @@ const visualEpisode = {
   },
   scenarioFamily: null,
   policyCohort: null,
-  strategy: "smart-direct",
+  strategy: FIXTURE_SMART_DIRECT_POLICY,
   status: "completed",
   termination: { reason: "unknown", step: null },
   outcome: "unknown",
@@ -775,7 +792,7 @@ const initialComparison: PlaytestComparison = {
           independentUnit: "episode"
         }
       },
-      guardrailStatus: "not-applicable",
+      guardrailStatus: FIXTURE_NOT_APPLICABLE,
       notes: "Synthetic UI fixture only."
     }
   ],
@@ -854,7 +871,7 @@ type SyntheticRunAssignment = {
 };
 type SyntheticRun = {
   readonly workspaceId: string;
-  readonly mode: "adapter-accelerated" | "autonomous-visual";
+  readonly mode: "adapter-accelerated" | FIXTURE_AUTONOMOUS_VISUAL_MODE;
   readonly createdAt: string;
   readonly assignmentCount: number;
   readonly assignments: readonly SyntheticRunAssignment[];
@@ -875,7 +892,7 @@ function syntheticSessionReferences(
   return assignments.map((assignment) => ({
     assignmentId: assignment.assignmentId,
     episodeId:
-      mode === "autonomous-visual"
+      mode === FIXTURE_AUTONOMOUS_VISUAL_MODE
         ? playtestVisualEpisodeRecordId(batchId, assignment.assignmentId)
         : playtestEpisodeRecordId(batchId, assignment.assignmentId)
   }));
@@ -1486,6 +1503,264 @@ async function handleSyntheticComparisonMutation(
   return false;
 }
 
+/**
+ * Whether a visual launch request is the one the fixture serves.
+ *
+ * The fixture answers for the Runtime, so it accepts a request only when the
+ * request is exactly the shape the Console sends for an approved target --
+ * no extra keys, no missing ones, and the capability revision the readiness
+ * read reported.
+ */
+function syntheticVisualLaunchShapeIsValid(
+  launch: Record<string, unknown>,
+  limits: unknown
+): boolean {
+  if (!syntheticVisualReadinessEnabled) return false;
+  if (Object.keys(launch).length !== SYNTHETIC_VISUAL_LAUNCH_KEYS.size) {
+    return false;
+  }
+  if (
+    Object.keys(launch).some((key) => !SYNTHETIC_VISUAL_LAUNCH_KEYS.has(key))
+  ) {
+    return false;
+  }
+  if (launch.schema !== PLAYTEST_LAUNCH_REQUEST_SCHEMA) return false;
+  if (launch.workspaceId !== WORKSPACE_ID) return false;
+  if (launch.targetId !== SYNTHETIC_VISUAL_TARGET.targetId) return false;
+  if (launch.policyId !== FIXTURE_SMART_DIRECT_POLICY) return false;
+  if (launch.capabilityRevision !== FIXTURE_CAPABILITY_REVISION) return false;
+  if (typeof launch.requestId !== "string") return false;
+  if (!REQUEST_ID_PATTERN.test(launch.requestId)) return false;
+  if (!limits || typeof limits !== "object" || Array.isArray(limits)) {
+    return false;
+  }
+  const limitKeys = Object.keys(limits);
+  if (limitKeys.length !== SYNTHETIC_VISUAL_LIMIT_KEYS.size) return false;
+  return !limitKeys.some((key) => !SYNTHETIC_VISUAL_LIMIT_KEYS.has(key));
+}
+
+/**
+ * Whether the requested budget is inside the approved target's budget.
+ *
+ * The approved target is the ceiling: a launch may ask for less than the
+ * approval allows and never for more.
+ */
+function syntheticVisualLimitsWithinApproval(
+  launch: Record<string, unknown>,
+  limits: Record<string, unknown>
+): boolean {
+  const approved = SYNTHETIC_VISUAL_TARGET.limits;
+  const episodes = Number(limits.episodeCount);
+  if (!Number.isSafeInteger(limits.episodeCount) || episodes < 1) return false;
+  if (episodes > approved.episodeCount) return false;
+  const steps = Number(limits.maxStepsPerEpisode);
+  if (!Number.isSafeInteger(limits.maxStepsPerEpisode) || steps < 1) {
+    return false;
+  }
+  if (steps > approved.maxStepsPerEpisode) return false;
+  if (limits.wallTimeMs !== approved.wallTimeMs) return false;
+  if (limits.smartRequestsPerEpisode !== approved.smartRequestsPerEpisode) {
+    return false;
+  }
+  if (limits.smartTokensPerEpisode !== approved.smartTokensPerEpisode) {
+    return false;
+  }
+  if (limits.screenshotCountPerEpisode !== approved.screenshotCountPerEpisode) {
+    return false;
+  }
+  if (limits.artifactBytesPerEpisode !== approved.artifactBytesPerEpisode) {
+    return false;
+  }
+  if (launch.areasOfFocus === null) return true;
+  if (typeof launch.areasOfFocus !== "string") return false;
+  return launch.areasOfFocus.length <= 2000;
+}
+
+/**
+ * The fixture's answer to a visual launch.
+ *
+ * A visual launch is a different request from an adapter launch: it names an
+ * approved target, a budget inside that target, and a focus. It is handled
+ * on its own so the two launches cannot be confused for one another.
+ */
+function handleSyntheticVisualLaunch(
+  launch: Record<string, unknown>,
+  request: IncomingMessage,
+  response: ServerResponse
+): boolean {
+  const limits = launch.limits;
+  if (!syntheticVisualLaunchShapeIsValid(launch, limits)) {
+    sendJson(
+      response,
+      {
+        error: {
+          code: "synthetic_visual_launch_invalid",
+          message: "Synthetic visual launch request was invalid."
+        }
+      },
+      400
+    );
+    return true;
+  }
+  const requestedLimits = limits as Record<string, unknown>;
+  if (!syntheticVisualLimitsWithinApproval(launch, requestedLimits)) {
+    sendJson(
+      response,
+      {
+        error: {
+          code: "synthetic_visual_launch_out_of_bounds",
+          message:
+            "Synthetic visual budget exceeded the approved fixture limits."
+        }
+      },
+      409
+    );
+    return true;
+  }
+  if (!syntheticVisualRunEnabled) {
+    sendJson(
+      response,
+      {
+        error: {
+          code: "synthetic_visual_launch_refused",
+          message:
+            "Synthetic launch request captured; no browser or game was started."
+        }
+      },
+      409
+    );
+    return true;
+  }
+  const launchIntentHash = createHash("sha256")
+    .update(JSON.stringify(launch))
+    .digest("hex");
+  const actorId = actorIdFromRequest(request);
+  const requestKey = syntheticLaunchIntentKey(
+    actorId,
+    launch.requestId as string
+  );
+  const priorIntent = syntheticLaunchIntents.get(requestKey);
+  if (priorIntent) {
+    if (priorIntent.launchIntentHash !== launchIntentHash) {
+      sendJson(
+        response,
+        {
+          error: {
+            code: "autodev_control_playtesting_request_id_conflict",
+            message: "This requestId is already bound to another payload."
+          }
+        },
+        409
+      );
+      return true;
+    }
+    sendJson(
+      response,
+      {
+        schema: FIXTURE_RUN_STARTED_SCHEMA,
+        workspaceId: WORKSPACE_ID,
+        batchId: priorIntent.batchId,
+        assignmentCount: priorIntent.assignmentCount,
+        assignmentIds: priorIntent.assignmentIds,
+        sessions: priorIntent.sessions,
+        createdAt: priorIntent.createdAt,
+        status: syntheticRuns.get(priorIntent.batchId)?.status ?? "running"
+      },
+      202
+    );
+    return true;
+  }
+  const batchId = `batch-visual-live-${String(nextRunId++).padStart(3, "0")}`;
+  const visualAssignments: SyntheticRunAssignment[] = Array.from(
+    { length: Number(requestedLimits.episodeCount) },
+    (_, index) => ({
+      assignmentId:
+        "vis-assign-" +
+        batchId.replace(FIXTURE_BATCH_ID_PREFIX, "") +
+        "-" +
+        String(index),
+      scenario: "visual-exploration",
+      policy: FIXTURE_SMART_DIRECT_POLICY,
+      // The synthetic run remains pending until the test fixture is reset.
+      seed: "hold-visual-" + String(index),
+      maxSteps: Number(requestedLimits.maxStepsPerEpisode)
+    })
+  );
+  const sessions = syntheticSessionReferences(
+    FIXTURE_AUTONOMOUS_VISUAL_MODE,
+    batchId,
+    visualAssignments
+  );
+  const createdAt = FIXTURE_TIMESTAMP;
+  const manifestHash = createHash("sha256")
+    .update(JSON.stringify({ batchId, sessions, createdAt }))
+    .digest("hex");
+  const launchedRunReviewSelection = selectPlaytestBatchReviews({
+    inventoryHash: manifestHash,
+    maxReviewedSessions: 0,
+    critiqueBudget: 0,
+    surveillanceSessions: 0,
+    discoverySessions: 0,
+    discoverySignal: null,
+    candidates: [],
+    unreviewableAssignments: 0,
+    selectedAt: createdAt
+  });
+  syntheticRuns.set(batchId, {
+    workspaceId: WORKSPACE_ID,
+    mode: FIXTURE_AUTONOMOUS_VISUAL_MODE,
+    createdAt,
+    assignments: visualAssignments,
+    assignmentCount: visualAssignments.length,
+    manifestHash,
+    reviewSelection: launchedRunReviewSelection,
+    episodes: [],
+    status: "running",
+    cancellationRequested: false
+  });
+  const intent = {
+    launchIntentHash,
+    batchId,
+    assignmentCount: visualAssignments.length,
+    assignmentIds: visualAssignments.map(
+      (assignment) => assignment.assignmentId
+    ),
+    sessions,
+    createdAt
+  };
+  syntheticLaunchIntents.set(requestKey, intent);
+  if (failNextRunAcknowledgement) {
+    failNextRunAcknowledgement = false;
+    sendJson(
+      response,
+      {
+        error: {
+          code: "synthetic_ack_lost",
+          message:
+            "The fixture persisted the visual launch but lost its acknowledgement."
+        }
+      },
+      503
+    );
+    return true;
+  }
+  sendJson(
+    response,
+    {
+      schema: FIXTURE_RUN_STARTED_SCHEMA,
+      workspaceId: WORKSPACE_ID,
+      batchId,
+      assignmentCount: visualAssignments.length,
+      assignmentIds: intent.assignmentIds,
+      sessions,
+      createdAt,
+      status: "running"
+    },
+    202
+  );
+  return true;
+}
+
 async function handleSyntheticLaunchMutation(
   request: IncomingMessage,
   response: ServerResponse,
@@ -1499,215 +1774,8 @@ async function handleSyntheticLaunchMutation(
   }
 
   const launch = await readJsonBody(request);
-  if (launch?.mode === "autonomous-visual") {
-    const limits = launch.limits;
-    if (
-      !syntheticVisualReadinessEnabled ||
-      Object.keys(launch).length !== SYNTHETIC_VISUAL_LAUNCH_KEYS.size ||
-      Object.keys(launch).some(
-        (key) => !SYNTHETIC_VISUAL_LAUNCH_KEYS.has(key)
-      ) ||
-      launch.schema !== PLAYTEST_LAUNCH_REQUEST_SCHEMA ||
-      launch.workspaceId !== WORKSPACE_ID ||
-      launch.targetId !== SYNTHETIC_VISUAL_TARGET.targetId ||
-      launch.policyId !== "smart-direct" ||
-      launch.capabilityRevision !== "e".repeat(64) ||
-      typeof launch.requestId !== "string" ||
-      !REQUEST_ID_PATTERN.test(launch.requestId) ||
-      !limits ||
-      typeof limits !== "object" ||
-      Array.isArray(limits) ||
-      Object.keys(limits).length !== SYNTHETIC_VISUAL_LIMIT_KEYS.size ||
-      Object.keys(limits).some((key) => !SYNTHETIC_VISUAL_LIMIT_KEYS.has(key))
-    ) {
-      sendJson(
-        response,
-        {
-          error: {
-            code: "synthetic_visual_launch_invalid",
-            message: "Synthetic visual launch request was invalid."
-          }
-        },
-        400
-      );
-      return true;
-    }
-    const requestedLimits = limits as Record<string, unknown>;
-    if (
-      !Number.isSafeInteger(requestedLimits.episodeCount) ||
-      Number(requestedLimits.episodeCount) < 1 ||
-      Number(requestedLimits.episodeCount) >
-        SYNTHETIC_VISUAL_TARGET.limits.episodeCount ||
-      !Number.isSafeInteger(requestedLimits.maxStepsPerEpisode) ||
-      Number(requestedLimits.maxStepsPerEpisode) < 1 ||
-      Number(requestedLimits.maxStepsPerEpisode) >
-        SYNTHETIC_VISUAL_TARGET.limits.maxStepsPerEpisode ||
-      requestedLimits.wallTimeMs !==
-        SYNTHETIC_VISUAL_TARGET.limits.wallTimeMs ||
-      requestedLimits.smartRequestsPerEpisode !==
-        SYNTHETIC_VISUAL_TARGET.limits.smartRequestsPerEpisode ||
-      requestedLimits.smartTokensPerEpisode !==
-        SYNTHETIC_VISUAL_TARGET.limits.smartTokensPerEpisode ||
-      requestedLimits.screenshotCountPerEpisode !==
-        SYNTHETIC_VISUAL_TARGET.limits.screenshotCountPerEpisode ||
-      requestedLimits.artifactBytesPerEpisode !==
-        SYNTHETIC_VISUAL_TARGET.limits.artifactBytesPerEpisode ||
-      (launch.areasOfFocus !== null &&
-        (typeof launch.areasOfFocus !== "string" ||
-          launch.areasOfFocus.length > 2000))
-    ) {
-      sendJson(
-        response,
-        {
-          error: {
-            code: "synthetic_visual_launch_out_of_bounds",
-            message:
-              "Synthetic visual budget exceeded the approved fixture limits."
-          }
-        },
-        409
-      );
-      return true;
-    }
-    if (!syntheticVisualRunEnabled) {
-      sendJson(
-        response,
-        {
-          error: {
-            code: "synthetic_visual_launch_refused",
-            message:
-              "Synthetic launch request captured; no browser or game was started."
-          }
-        },
-        409
-      );
-      return true;
-    }
-    const launchIntentHash = createHash("sha256")
-      .update(JSON.stringify(launch))
-      .digest("hex");
-    const actorId = actorIdFromRequest(request);
-    const requestKey = syntheticLaunchIntentKey(
-      actorId,
-      launch.requestId as string
-    );
-    const priorIntent = syntheticLaunchIntents.get(requestKey);
-    if (priorIntent) {
-      if (priorIntent.launchIntentHash !== launchIntentHash) {
-        sendJson(
-          response,
-          {
-            error: {
-              code: "autodev_control_playtesting_request_id_conflict",
-              message: "This requestId is already bound to another payload."
-            }
-          },
-          409
-        );
-        return true;
-      }
-      sendJson(
-        response,
-        {
-          schema: "autodev-control-playtesting-run-started-v3",
-          workspaceId: WORKSPACE_ID,
-          batchId: priorIntent.batchId,
-          assignmentCount: priorIntent.assignmentCount,
-          assignmentIds: priorIntent.assignmentIds,
-          sessions: priorIntent.sessions,
-          createdAt: priorIntent.createdAt,
-          status: syntheticRuns.get(priorIntent.batchId)?.status ?? "running"
-        },
-        202
-      );
-      return true;
-    }
-    const batchId = `batch-visual-live-${String(nextRunId++).padStart(3, "0")}`;
-    const visualAssignments: SyntheticRunAssignment[] = Array.from(
-      { length: Number(requestedLimits.episodeCount) },
-      (_, index) => ({
-        assignmentId:
-          "vis-assign-" + batchId.replace(/^batch-/u, "") + "-" + String(index),
-        scenario: "visual-exploration",
-        policy: "smart-direct",
-        // The synthetic run remains pending until the test fixture is reset.
-        seed: "hold-visual-" + String(index),
-        maxSteps: Number(requestedLimits.maxStepsPerEpisode)
-      })
-    );
-    const sessions = syntheticSessionReferences(
-      "autonomous-visual",
-      batchId,
-      visualAssignments
-    );
-    const createdAt = FIXTURE_TIMESTAMP;
-    const manifestHash = createHash("sha256")
-      .update(JSON.stringify({ batchId, sessions, createdAt }))
-      .digest("hex");
-    const reviewSelection = selectPlaytestBatchReviews({
-      inventoryHash: manifestHash,
-      maxReviewedSessions: 0,
-      critiqueBudget: 0,
-      surveillanceSessions: 0,
-      discoverySessions: 0,
-      discoverySignal: null,
-      candidates: [],
-      unreviewableAssignments: 0,
-      selectedAt: createdAt
-    });
-    syntheticRuns.set(batchId, {
-      workspaceId: WORKSPACE_ID,
-      mode: "autonomous-visual",
-      createdAt,
-      assignments: visualAssignments,
-      assignmentCount: visualAssignments.length,
-      manifestHash,
-      reviewSelection,
-      episodes: [],
-      status: "running",
-      cancellationRequested: false
-    });
-    const intent = {
-      launchIntentHash,
-      batchId,
-      assignmentCount: visualAssignments.length,
-      assignmentIds: visualAssignments.map(
-        (assignment) => assignment.assignmentId
-      ),
-      sessions,
-      createdAt
-    };
-    syntheticLaunchIntents.set(requestKey, intent);
-    if (failNextRunAcknowledgement) {
-      failNextRunAcknowledgement = false;
-      sendJson(
-        response,
-        {
-          error: {
-            code: "synthetic_ack_lost",
-            message:
-              "The fixture persisted the visual launch but lost its acknowledgement."
-          }
-        },
-        503
-      );
-      return true;
-    }
-    sendJson(
-      response,
-      {
-        schema: "autodev-control-playtesting-run-started-v3",
-        workspaceId: WORKSPACE_ID,
-        batchId,
-        assignmentCount: visualAssignments.length,
-        assignmentIds: intent.assignmentIds,
-        sessions,
-        createdAt,
-        status: "running"
-      },
-      202
-    );
-    return true;
+  if (launch?.mode === FIXTURE_AUTONOMOUS_VISUAL_MODE) {
+    return handleSyntheticVisualLaunch(launch, request, response);
   }
   const runRequest = activeSyntheticRunRequest(launch);
   if (!runRequest) {
@@ -1739,7 +1807,7 @@ async function handleSyntheticLaunchMutation(
     sendJson(
       response,
       {
-        schema: "autodev-control-playtesting-run-started-v3",
+        schema: FIXTURE_RUN_STARTED_SCHEMA,
         workspaceId: WORKSPACE_ID,
         batchId: priorIntent.batchId,
         assignmentCount: priorIntent.assignmentCount,
@@ -1851,7 +1919,7 @@ async function handleSyntheticLaunchMutation(
   sendJson(
     response,
     {
-      schema: "autodev-control-playtesting-run-started-v3",
+      schema: FIXTURE_RUN_STARTED_SCHEMA,
       workspaceId: WORKSPACE_ID,
       batchId,
       assignmentCount: runRequest.assignments.length,
@@ -2005,7 +2073,7 @@ function syntheticModeReadiness(
 function syntheticVisualPolicyReadiness() {
   return [
     {
-      policyId: "smart-direct" as const,
+      policyId: FIXTURE_SMART_DIRECT_POLICY as const,
       status: "ready" as const,
       reasons: []
     },
@@ -2226,6 +2294,104 @@ function sendSyntheticRunStatus(
   return true;
 }
 
+/**
+ * The fixture's answer to a request for the run a request id started.
+ */
+function respondSyntheticRunByRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): boolean {
+  const requestId = url.searchParams.get("requestId") ?? "";
+  const intent = syntheticLaunchIntents.get(
+    syntheticLaunchIntentKey(actorIdFromRequest(request), requestId)
+  );
+  // A one-shot transient: the prior Visual POST was persisted, but this
+  // single by-request recovery must temporarily report the canonical
+  // not-found envelope so the Console can re-POST the saved payload.
+  const transientNotFound = failNextRunByRequestLookup;
+  if (transientNotFound) failNextRunByRequestLookup = false;
+  if (!intent || transientNotFound) {
+    sendJson(response, {
+      schema: "autodev-control-playtesting-run-request-v2",
+      workspaceId: WORKSPACE_ID,
+      requestId,
+      state: "not-found",
+      batchId: null,
+      assignmentCount: null,
+      assignmentIds: [],
+      sessions: [],
+      createdAt: null,
+      status: null
+    });
+    return true;
+  }
+  const run = syntheticRuns.get(intent.batchId);
+  if (run) completeSyntheticRunIfReady(run);
+  sendJson(response, {
+    schema: "autodev-control-playtesting-run-request-v2",
+    workspaceId: WORKSPACE_ID,
+    requestId,
+    state: run ? "accepted" : "pending",
+    batchId: intent.batchId,
+    assignmentCount: intent.assignmentCount,
+    assignmentIds: run ? intent.assignmentIds : [],
+    sessions: run ? intent.sessions : [],
+    createdAt: intent.createdAt,
+    status: run ? run.status : null
+  });
+  return true;
+}
+
+/**
+ * The fixture's answer to a request for every run in the workspace.
+ */
+function respondSyntheticRunList(response: ServerResponse): boolean {
+  // Like the Runtime, a batch progresses regardless of which read observes
+  // it; the active list then omits it once it is terminal.
+  for (const run of syntheticRuns.values()) completeSyntheticRunIfReady(run);
+  const runs = [...syntheticRuns.entries()]
+    .filter(
+      ([, run]) => run.workspaceId === WORKSPACE_ID && run.status === "running"
+    )
+    .map(([batchId, run]) => ({
+      batchId,
+      assignmentCount: run.assignmentCount,
+      createdAt: run.createdAt,
+      sessions: syntheticSessionReferences(run.mode, batchId, run.assignments),
+      // The same owner record the single-batch status route returns, so one
+      // workspace read renders every live batch.
+      status: {
+        batchId,
+        status: "running",
+        cancellationReason: null,
+        result: syntheticRunResult(batchId, run),
+        error: null
+      }
+    }));
+  if (syntheticRunsReadFails) {
+    // A deliberately unreadable read: the Console must show an explicit
+    // unavailable state rather than freezing the last good frame.
+    sendJson(
+      response,
+      {
+        error: {
+          code: "synthetic_unavailable",
+          message: "Synthetic run store is offline."
+        }
+      },
+      503
+    );
+    return true;
+  }
+  sendJson(response, {
+    schema: "autodev-control-playtesting-runs-v2",
+    workspaceId: WORKSPACE_ID,
+    runs
+  });
+  return true;
+}
+
 function handleSyntheticRunRead(
   request: IncomingMessage,
   response: ServerResponse,
@@ -2236,95 +2402,10 @@ function handleSyntheticRunRead(
     return true;
   }
   if (url.pathname === "/control/playtesting/runs/by-request") {
-    const requestId = url.searchParams.get("requestId") ?? "";
-    const intent = syntheticLaunchIntents.get(
-      syntheticLaunchIntentKey(actorIdFromRequest(request), requestId)
-    );
-    // A one-shot transient: the prior Visual POST was persisted, but this
-    // single by-request recovery must temporarily report the canonical
-    // not-found envelope so the Console can re-POST the saved payload.
-    const transientNotFound = failNextRunByRequestLookup;
-    if (transientNotFound) failNextRunByRequestLookup = false;
-    if (!intent || transientNotFound) {
-      sendJson(response, {
-        schema: "autodev-control-playtesting-run-request-v2",
-        workspaceId: WORKSPACE_ID,
-        requestId,
-        state: "not-found",
-        batchId: null,
-        assignmentCount: null,
-        assignmentIds: [],
-        sessions: [],
-        createdAt: null,
-        status: null
-      });
-      return true;
-    }
-    const run = syntheticRuns.get(intent.batchId);
-    if (run) completeSyntheticRunIfReady(run);
-    sendJson(response, {
-      schema: "autodev-control-playtesting-run-request-v2",
-      workspaceId: WORKSPACE_ID,
-      requestId,
-      state: run ? "accepted" : "pending",
-      batchId: intent.batchId,
-      assignmentCount: intent.assignmentCount,
-      assignmentIds: run ? intent.assignmentIds : [],
-      sessions: run ? intent.sessions : [],
-      createdAt: intent.createdAt,
-      status: run ? run.status : null
-    });
-    return true;
+    return respondSyntheticRunByRequest(request, response, url);
   }
   if (url.pathname === "/control/playtesting/runs") {
-    // Like the Runtime, a batch progresses regardless of which read observes
-    // it; the active list then omits it once it is terminal.
-    for (const run of syntheticRuns.values()) completeSyntheticRunIfReady(run);
-    const runs = [...syntheticRuns.entries()]
-      .filter(
-        ([, run]) =>
-          run.workspaceId === WORKSPACE_ID && run.status === "running"
-      )
-      .map(([batchId, run]) => ({
-        batchId,
-        assignmentCount: run.assignmentCount,
-        createdAt: run.createdAt,
-        sessions: syntheticSessionReferences(
-          run.mode,
-          batchId,
-          run.assignments
-        ),
-        // The same owner record the single-batch status route returns, so one
-        // workspace read renders every live batch.
-        status: {
-          batchId,
-          status: "running",
-          cancellationReason: null,
-          result: syntheticRunResult(batchId, run),
-          error: null
-        }
-      }));
-    if (syntheticRunsReadFails) {
-      // A deliberately unreadable read: the Console must show an explicit
-      // unavailable state rather than freezing the last good frame.
-      sendJson(
-        response,
-        {
-          error: {
-            code: "synthetic_unavailable",
-            message: "Synthetic run store is offline."
-          }
-        },
-        503
-      );
-      return true;
-    }
-    sendJson(response, {
-      schema: "autodev-control-playtesting-runs-v2",
-      workspaceId: WORKSPACE_ID,
-      runs
-    });
-    return true;
+    return respondSyntheticRunList(response);
   }
   const match = url.pathname.match(STATUS_RUN_ROUTE);
   return match
@@ -2393,33 +2474,13 @@ function syntheticEpisodeFor(episodeId: string) {
   return syntheticRunEpisodes.get(episodeId);
 }
 
-function handleSyntheticPlaytestingRead(
+/**
+ * The fixture's answer to a request for one episode.
+ */
+function respondSyntheticEpisodeDetail(
   response: ServerResponse,
   url: URL
 ): boolean {
-  if (respondSyntheticReadiness(response, url)) return true;
-  if (respondSyntheticPlaytestingDataReadiness(response)) return true;
-  if (url.pathname === "/control/playtesting/batches") {
-    sendJson(response, page("batches", [batch], 1));
-    return true;
-  }
-  if (url.pathname === "/control/playtesting/episodes") {
-    const episodes = [episode, ...syntheticRunEpisodes.values()];
-    sendJson(response, page("episodes", episodes, episodes.length));
-    return true;
-  }
-  if (url.pathname === "/control/playtesting/findings") {
-    sendJson(response, page("findings", [finding], 1));
-    return true;
-  }
-  if (url.pathname === "/control/playtesting/reviews") {
-    respondPlaytestingReviews(response);
-    return true;
-  }
-  if (url.pathname === "/control/playtesting/comparisons") {
-    sendJson(response, page("comparisons", [comparison], 1));
-    return true;
-  }
   const episodeMatch = url.pathname.match(PLAYTEST_EPISODE_DETAIL_ROUTE);
   if (episodeMatch) {
     const episodeId = decodeURIComponent(episodeMatch[1]!);
@@ -2452,6 +2513,16 @@ function handleSyntheticPlaytestingRead(
     });
     return true;
   }
+  return false;
+}
+
+/**
+ * The fixture's answer to a request for one episode's evidence window.
+ */
+function respondSyntheticEpisodeWindow(
+  response: ServerResponse,
+  url: URL
+): boolean {
   const windowMatch = url.pathname.match(PLAYTEST_EPISODE_WINDOW_ROUTE);
   if (windowMatch) {
     const episodeId = decodeURIComponent(windowMatch[1]!);
@@ -2540,6 +2611,42 @@ function handleSyntheticPlaytestingRead(
       entries
     });
     return true;
+  }
+  return false;
+}
+
+function handleSyntheticPlaytestingRead(
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (respondSyntheticReadiness(response, url)) return true;
+  if (respondSyntheticPlaytestingDataReadiness(response)) return true;
+  if (url.pathname === "/control/playtesting/batches") {
+    sendJson(response, page("batches", [batch], 1));
+    return true;
+  }
+  if (url.pathname === "/control/playtesting/episodes") {
+    const episodes = [episode, ...syntheticRunEpisodes.values()];
+    sendJson(response, page("episodes", episodes, episodes.length));
+    return true;
+  }
+  if (url.pathname === "/control/playtesting/findings") {
+    sendJson(response, page("findings", [finding], 1));
+    return true;
+  }
+  if (url.pathname === "/control/playtesting/reviews") {
+    respondPlaytestingReviews(response);
+    return true;
+  }
+  if (url.pathname === "/control/playtesting/comparisons") {
+    sendJson(response, page("comparisons", [comparison], 1));
+    return true;
+  }
+  if (PLAYTEST_EPISODE_DETAIL_ROUTE.test(url.pathname)) {
+    return respondSyntheticEpisodeDetail(response, url);
+  }
+  if (PLAYTEST_EPISODE_WINDOW_ROUTE.test(url.pathname)) {
+    return respondSyntheticEpisodeWindow(response, url);
   }
   if (
     url.pathname ===
@@ -3087,7 +3194,7 @@ function memoryRecords(): readonly Record<string, unknown>[] {
             revision: "00b76b4d"
           }
         ],
-        createdBy: "autodev-local",
+        createdBy: FIXTURE_LOCAL_WORKSPACE,
         createdAt: "2026-02-11T09:12:00.000Z",
         verificationSource: "console/e2e/breadcrumbs-acceptance.spec.ts",
         lastVerifiedAt: "2026-02-11T10:02:00.000Z"
@@ -3119,18 +3226,18 @@ function memoryRecords(): readonly Record<string, unknown>[] {
           {
             kind: "trace",
             uri: "a1a1a1a100000000",
-            observedAt: "2026-02-11T09:40:00.000Z"
+            observedAt: FIXTURE_REVIEW_TIMESTAMP
           }
         ],
-        createdBy: "autodev-local",
-        createdAt: "2026-02-11T09:40:00.000Z"
+        createdBy: FIXTURE_LOCAL_WORKSPACE,
+        createdAt: FIXTURE_REVIEW_TIMESTAMP
       },
       validity: {
         state: "unverified",
         evidence: []
       },
-      createdAt: "2026-02-11T09:40:00.000Z",
-      updatedAt: "2026-02-11T09:40:00.000Z"
+      createdAt: FIXTURE_REVIEW_TIMESTAMP,
+      updatedAt: FIXTURE_REVIEW_TIMESTAMP
     },
     {
       id: "mem-0003",
@@ -3146,7 +3253,7 @@ function memoryRecords(): readonly Record<string, unknown>[] {
       provenance: {
         experienceIds: ["exp-0003"],
         evidence: [{ kind: "commit", uri: "79767fb8" }],
-        createdBy: "autodev-local",
+        createdBy: FIXTURE_LOCAL_WORKSPACE,
         createdAt: "2026-02-10T16:04:00.000Z"
       },
       validity: {
@@ -3155,7 +3262,7 @@ function memoryRecords(): readonly Record<string, unknown>[] {
       },
       supersededBy: ["mem-0004"],
       createdAt: "2026-02-10T16:04:00.000Z",
-      updatedAt: "2026-02-11T08:22:00.000Z"
+      updatedAt: FIXTURE_EARLIER_TIMESTAMP
     },
     {
       id: "mem-0004",
@@ -3170,14 +3277,14 @@ function memoryRecords(): readonly Record<string, unknown>[] {
       provenance: {
         experienceIds: ["exp-0004"],
         evidence: [{ kind: "commit", uri: "79767fb8" }],
-        createdBy: "autodev-local",
-        createdAt: "2026-02-11T08:22:00.000Z",
+        createdBy: FIXTURE_LOCAL_WORKSPACE,
+        createdAt: FIXTURE_EARLIER_TIMESTAMP,
         verificationSource: "console/tests/duration-format.test.ts",
         lastVerifiedAt: "2026-02-11T08:31:00.000Z"
       },
       validity: {
         state: "verified",
-        validFrom: "2026-02-11T08:22:00.000Z",
+        validFrom: FIXTURE_EARLIER_TIMESTAMP,
         checkedAt: "2026-02-11T08:31:00.000Z",
         verificationSource: "console/tests/duration-format.test.ts",
         evidence: [
@@ -3185,7 +3292,7 @@ function memoryRecords(): readonly Record<string, unknown>[] {
         ]
       },
       supersedes: ["mem-0003"],
-      createdAt: "2026-02-11T08:22:00.000Z",
+      createdAt: FIXTURE_EARLIER_TIMESTAMP,
       updatedAt: "2026-02-11T08:31:00.000Z"
     },
     {
@@ -3197,7 +3304,7 @@ function memoryRecords(): readonly Record<string, unknown>[] {
       provenance: {
         experienceIds: ["exp-0005"],
         evidence: [{ kind: "commit", uri: "8ea55f37" }],
-        createdBy: "autodev-local",
+        createdBy: FIXTURE_LOCAL_WORKSPACE,
         createdAt: "2026-02-09T11:00:00.000Z"
       },
       validity: {

@@ -93,6 +93,18 @@ function playtestingControlApiOptions(
   };
 }
 
+/**
+ * The readiness vocabulary the Control API reports.
+ *
+ * A readiness state is one of three things -- ready, a check the operator has
+ * to make, or nothing available -- and the Console branches on all three in
+ * more than one place. They are named once here so the branches cannot
+ * disagree about what the API said.
+ */
+const READINESS_READY = "ready";
+const READINESS_CHECK_REQUIRED = "check-required";
+const READINESS_UNAVAILABLE = "unavailable";
+
 const RESOURCE_SCHEMAS: Readonly<
   Record<ControlApiPlaytestingResource, string>
 > = {
@@ -176,7 +188,7 @@ export function playtestingReadinessFailure(
     status:
       code === "autodev_control_playtesting_source_initializing"
         ? "initializing"
-        : "unavailable",
+        : READINESS_UNAVAILABLE,
     code,
     message: result.message
   };
@@ -651,9 +663,9 @@ export async function fetchPlaytestingWindow(
 function isPlaytestingModeReadiness(value: unknown): boolean {
   if (
     !isRecord(value) ||
-    (value.status !== "ready" &&
-      value.status !== "check-required" &&
-      value.status !== "unavailable") ||
+    (value.status !== READINESS_READY &&
+      value.status !== READINESS_CHECK_REQUIRED &&
+      value.status !== READINESS_UNAVAILABLE) ||
     !Array.isArray(value.reasons)
   ) {
     return false;
@@ -666,18 +678,18 @@ function isPlaytestingModeReadiness(value: unknown): boolean {
         isNonEmptyString(reason.code) &&
         isNonEmptyString(reason.label) &&
         isNonEmptyString(reason.message) &&
-        (reason.severity === "check-required" ||
-          reason.severity === "unavailable")
+        (reason.severity === READINESS_CHECK_REQUIRED ||
+          reason.severity === READINESS_UNAVAILABLE)
     )
   ) {
     return false;
   }
   const expectedStatus = reasons.some(
-    (reason) => isRecord(reason) && reason.severity === "unavailable"
+    (reason) => isRecord(reason) && reason.severity === READINESS_UNAVAILABLE
   )
-    ? "unavailable"
+    ? READINESS_UNAVAILABLE
     : reasons.length > 0
-      ? "check-required"
+      ? READINESS_CHECK_REQUIRED
       : "ready";
   return value.status === expectedStatus;
 }
@@ -687,7 +699,7 @@ function isVisualModeReadiness(value: unknown, workspaceId: string): boolean {
     !isPlaytestingModeReadiness(value) ||
     !isRecord(value) ||
     (value.targetStore !== "available" &&
-      value.targetStore !== "unavailable") ||
+      value.targetStore !== READINESS_UNAVAILABLE) ||
     !Array.isArray(value.targets)
   ) {
     return false;
@@ -706,8 +718,8 @@ function isVisualModeReadiness(value: unknown, workspaceId: string): boolean {
             isNonEmptyString(reason.code) &&
             isNonEmptyString(reason.label) &&
             isNonEmptyString(reason.message) &&
-            (reason.severity === "check-required" ||
-              reason.severity === "unavailable")
+            (reason.severity === READINESS_CHECK_REQUIRED ||
+              reason.severity === READINESS_UNAVAILABLE)
         )
       ) {
         return false;
@@ -726,7 +738,9 @@ function isVisualModeReadiness(value: unknown, workspaceId: string): boolean {
   } catch {
     return false;
   }
-  return value.targetStore !== "unavailable" || value.targets.length === 0;
+  return (
+    value.targetStore !== READINESS_UNAVAILABLE || value.targets.length === 0
+  );
 }
 
 function isPlaytestingCapabilitiesResponse(

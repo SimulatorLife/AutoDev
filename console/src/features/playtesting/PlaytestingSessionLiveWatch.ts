@@ -18,11 +18,17 @@ export function PlaytestingSessionLiveWatch({
   }
 
   useEffect(() => {
-    if (!isLive || !router) return;
+    if (!isLive || !router) {
+      // Both paths return a cleanup, so the effect's return type does not
+      // depend on whether the watch is live.
+      return () => undefined;
+    }
     const timer = setInterval(() => {
       router.refresh();
     }, intervalMs);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+    };
   }, [isLive, intervalMs, router]);
 
   if (!isLive) return null;

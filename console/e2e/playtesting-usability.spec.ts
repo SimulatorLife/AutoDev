@@ -66,6 +66,18 @@ const REVIEW_RECORDED_HEADING = "What the analyst recorded";
 const REVIEW_EVIDENCE_HEADING = "Evidence cited";
 const REVIEW_SELECTION_URL_PATTERN = /review=review-fixture-1/u;
 const REVIEW_DETAIL_SELECTOR = "[data-review-detail]";
+const MODE_STATUS_ATTRIBUTE = "data-mode-status";
+const VISUAL_LAUNCH_TEST_ID = "playtesting-visual-launch";
+const VISUAL_SUBMIT_SELECTOR = '[data-playtesting-visual-submit="true"]';
+const VISUAL_FOCUS_PLACEHOLDER_PATTERN =
+  /visible controls.*do not assume hidden goals/u;
+const VISUAL_TARGET_NAME = "visual-fixture-target";
+const RUNS_ENDPOINT_PATH = "/api/playtesting/runs";
+const LIVE_SESSION_LINKS_TEST_ID = "playtesting-live-session-links";
+const WATCH_SESSION_LINK_NAME = "Watch session";
+const PENDING_REQUEST_REGION_NAME = "Pending playtest request";
+const REQUEST_ID_ATTRIBUTE = "data-request-id";
+const VISUAL_LIVE_BATCH_URL_PATTERN = /liveBatch=batch-visual-live-001/u;
 
 async function openNewPlaytest(page: Page): Promise<Locator> {
   await page.locator('[data-playtesting-open-dialog="true"]').click();
@@ -169,7 +181,7 @@ test("workspace overview distinguishes batches, episodes, findings, and comparis
     VISUAL_DRIVER_UNAVAILABLE_LABEL
   );
   await expect(dialog.locator(ADAPTER_MODE_SELECTOR)).toHaveAttribute(
-    "data-mode-status",
+    MODE_STATUS_ATTRIBUTE,
     "check-required"
   );
   await expect(dialog.locator(ADAPTER_MODE_SELECTOR)).toContainText(
@@ -214,8 +226,8 @@ test("mobile Play dialog keeps the visual launch action visible and blocked with
   const dialog = await openNewPlaytest(page);
   await dialog.locator('[data-playtesting-tab="autonomous-visual"]').click();
   const launch = dialog
-    .getByTestId("playtesting-visual-launch")
-    .locator('[data-playtesting-visual-submit="true"]');
+    .getByTestId(VISUAL_LAUNCH_TEST_ID)
+    .locator(VISUAL_SUBMIT_SELECTOR);
   await expect(launch).toBeInViewport();
   const launchBox = await launch.boundingBox();
   expect(launchBox).not.toBeNull();
@@ -239,8 +251,8 @@ test("mobile approved Visual Play keeps the bounded launch action visible", asyn
   await page.goto(PLAYTESTING_OVERVIEW_URL);
   const dialog = await openNewPlaytest(page);
   await dialog.locator(VISUAL_MODE_SELECTOR).click();
-  const visual = dialog.getByTestId("playtesting-visual-launch");
-  const launch = visual.locator('[data-playtesting-visual-submit="true"]');
+  const visual = dialog.getByTestId(VISUAL_LAUNCH_TEST_ID);
+  const launch = visual.locator(VISUAL_SUBMIT_SELECTOR);
   await expect(launch).toBeEnabled();
   await expect(launch).toBeInViewport();
   const launchBox = await launch.boundingBox();
@@ -261,13 +273,13 @@ test("visual Play submits the approved focus and budget without starting a game 
   expect(readiness.ok()).toBe(true);
   await page.goto(PLAYTESTING_OVERVIEW_URL);
   const dialog = await openNewPlaytest(page);
-  const visual = dialog.getByTestId("playtesting-visual-launch");
+  const visual = dialog.getByTestId(VISUAL_LAUNCH_TEST_ID);
   await expect(dialog.locator(VISUAL_MODE_SELECTOR)).toHaveAttribute(
-    "data-mode-status",
+    MODE_STATUS_ATTRIBUTE,
     "ready"
   );
   await expect(visual.locator("#visual-focus-textarea")).toHaveValue(
-    /visible controls.*do not assume hidden goals/u
+    VISUAL_FOCUS_PLACEHOLDER_PATTERN
   );
   await expect(visual).toContainText("Explore the Game");
   const readinessDetails = dialog.getByTestId("visual-readiness-details");
@@ -275,12 +287,12 @@ test("visual Play submits the approved focus and budget without starting a game 
   const approvedTargets = readinessDetails.getByRole("list", {
     name: "Approved visual targets"
   });
-  await expect(approvedTargets).toContainText("visual-fixture-target");
+  await expect(approvedTargets).toContainText(VISUAL_TARGET_NAME);
   await expect(approvedTargets).toContainText(
     "revision 1 · approval visual-fixture-approval"
   );
   await expect(visual.getByTestId("visual-target-identity")).toContainText(
-    "visual-fixture-target"
+    VISUAL_TARGET_NAME
   );
   await expect(visual.getByTestId("visual-target-identity")).toContainText(
     "revision 1"
@@ -303,11 +315,11 @@ test("visual Play submits the approved focus and budget without starting a game 
     .fill("Inspect the setup menu; do not begin a race.");
   await visual.getByRole("button", { name: "2 episodes" }).click();
   await visual.getByRole("button", { name: "10 steps" }).click();
-  const launch = visual.locator('[data-playtesting-visual-submit="true"]');
+  const launch = visual.locator(VISUAL_SUBMIT_SELECTOR);
   await expect(launch).toBeEnabled();
   const submittedRequest = page.waitForRequest(
     (candidate) =>
-      candidate.url().includes("/api/playtesting/runs") &&
+      candidate.url().includes(RUNS_ENDPOINT_PATH) &&
       candidate.method() === "POST"
   );
   await launch.click();
@@ -322,7 +334,7 @@ test("visual Play submits the approved focus and budget without starting a game 
   expect(launchRequest).toMatchObject({
     mode: "autonomous-visual",
     workspaceId: FIXTURE_WORKSPACE_ID,
-    targetId: "visual-fixture-target",
+    targetId: VISUAL_TARGET_NAME,
     policyId: "smart-direct",
     areasOfFocus: "Inspect the setup menu; do not begin a race.",
     capabilityRevision: "e".repeat(64),
@@ -352,21 +364,23 @@ test("visual Play can Watch its exact pending session after a refreshed active-r
   await page.goto(PLAYTESTING_OVERVIEW_URL);
   const dialog = await openNewPlaytest(page);
   await expect(dialog.locator(VISUAL_MODE_SELECTOR)).toHaveAttribute(
-    "data-mode-status",
+    MODE_STATUS_ATTRIBUTE,
     "ready"
   );
   const readinessDetails = dialog.getByTestId("visual-readiness-details");
   await readinessDetails.locator("summary").click();
-  await expect(readinessDetails).toContainText("visual-fixture-target");
+  await expect(readinessDetails).toContainText(VISUAL_TARGET_NAME);
   await expect(readinessDetails).toContainText(
     "approval visual-fixture-approval"
   );
-  const visual = dialog.getByTestId("playtesting-visual-launch");
-  await visual.locator('[data-playtesting-visual-submit="true"]').click();
+  const visual = dialog.getByTestId(VISUAL_LAUNCH_TEST_ID);
+  await visual.locator(VISUAL_SUBMIT_SELECTOR).click();
 
   const expectedEpisodeId = "ep-visual-live-001-vis-assign-visual-live-001-0";
-  const liveLinks = page.getByTestId("playtesting-live-session-links");
-  const watchLink = liveLinks.getByRole("link", { name: "Watch session" });
+  const liveLinks = page.getByTestId(LIVE_SESSION_LINKS_TEST_ID);
+  const watchLink = liveLinks.getByRole("link", {
+    name: WATCH_SESSION_LINK_NAME
+  });
   await expect(watchLink).toBeVisible();
   const exactHref = await watchLink.getAttribute("href");
   expect(exactHref).not.toBeNull();
@@ -384,8 +398,8 @@ test("visual Play can Watch its exact pending session after a refreshed active-r
   // reappear from the workspace-scoped active-runs response alone.
   await page.reload();
   const refreshedLink = page
-    .getByTestId("playtesting-live-session-links")
-    .getByRole("link", { name: "Watch session" });
+    .getByTestId(LIVE_SESSION_LINKS_TEST_ID)
+    .getByRole("link", { name: WATCH_SESSION_LINK_NAME });
   await expect(refreshedLink).toBeVisible();
   await expect(refreshedLink).toHaveAttribute("href", exactHref!);
   await refreshedLink.click();
@@ -410,7 +424,7 @@ test("visual session debrief shows frozen focus and target without claiming obje
   await expect(debrief).toContainText(
     "Explore the setup menu without starting a race."
   );
-  await expect(debrief).toContainText("visual-fixture-target");
+  await expect(debrief).toContainText(VISUAL_TARGET_NAME);
   await expect(debrief).toContainText("visual-fixture-approval");
   await expect(debrief).toContainText("revision 1");
   await expect(debrief).toContainText("Browser build identity");
@@ -880,7 +894,7 @@ test("batch composer generates and submits the full bounded 1,000-assignment inv
     "new commits do not need separate approval"
   );
   await expect(dialog.locator(ADAPTER_MODE_SELECTOR)).toHaveAttribute(
-    "data-mode-status",
+    MODE_STATUS_ATTRIBUTE,
     "ready"
   );
   await expect(dialog.locator(ADAPTER_MODE_SELECTOR)).toContainText(
@@ -1032,7 +1046,7 @@ test("approved run start, automatic status watching, and cancellation stay in th
   ).toBeEnabled();
   const startRequest = page.waitForRequest(
     (candidate) =>
-      candidate.url().includes("/api/playtesting/runs") &&
+      candidate.url().includes(RUNS_ENDPOINT_PATH) &&
       candidate.method() === "POST"
   );
   await form.getByRole("button", { name: RUN_TWO_ASSIGNMENTS_LABEL }).click();
@@ -1170,24 +1184,30 @@ test("a lost start acknowledgement recovers the same requestId without creating 
   const dialog = await openNewPlaytest(page);
   await dialog.getByRole("button", { name: START_SINGLE_RUN_LABEL }).click();
   const pending = page.getByRole("region", {
-    name: "Pending playtest request"
+    name: PENDING_REQUEST_REGION_NAME
   });
   await expect(pending).toBeVisible();
-  const requestId = await pending.getAttribute("data-request-id");
+  const requestId = await pending.getAttribute(REQUEST_ID_ATTRIBUTE);
   expect(requestId).toMatch(REQUEST_ID_PATTERN);
   const recoveryTab = await page.context().newPage();
   await recoveryTab.goto(PLAYTESTING_OVERVIEW_URL);
   await openNewPlaytest(recoveryTab);
   let restoredPending = recoveryTab.getByRole("region", {
-    name: "Pending playtest request"
+    name: PENDING_REQUEST_REGION_NAME
   });
-  await expect(restoredPending).toHaveAttribute("data-request-id", requestId!);
+  await expect(restoredPending).toHaveAttribute(
+    REQUEST_ID_ATTRIBUTE,
+    requestId!
+  );
   await recoveryTab.reload();
   await openNewPlaytest(recoveryTab);
   restoredPending = recoveryTab.getByRole("region", {
-    name: "Pending playtest request"
+    name: PENDING_REQUEST_REGION_NAME
   });
-  await expect(restoredPending).toHaveAttribute("data-request-id", requestId!);
+  await expect(restoredPending).toHaveAttribute(
+    REQUEST_ID_ATTRIBUTE,
+    requestId!
+  );
   const firstCountResponse = await request.get(
     `${FIXTURE_BASE_URL}/fixture/run-count`
   );
@@ -1231,24 +1251,24 @@ test("a Visual retry after a transient not-found reuses the exact request and re
   await page.goto(PLAYTESTING_OVERVIEW_URL);
   const dialog = await openNewPlaytest(page);
   await expect(dialog.locator(VISUAL_MODE_SELECTOR)).toHaveAttribute(
-    "data-mode-status",
+    MODE_STATUS_ATTRIBUTE,
     "ready"
   );
-  const visual = dialog.getByTestId("playtesting-visual-launch");
+  const visual = dialog.getByTestId(VISUAL_LAUNCH_TEST_ID);
   const postStart = page.waitForRequest(
     (candidate) =>
-      candidate.url().includes("/api/playtesting/runs") &&
+      candidate.url().includes(RUNS_ENDPOINT_PATH) &&
       candidate.method() === "POST"
   );
-  await visual.locator('[data-playtesting-visual-submit="true"]').click();
+  await visual.locator(VISUAL_SUBMIT_SELECTOR).click();
   const submitted = await postStart;
   const submittedPayload = new URLSearchParams(submitted.postData() ?? "").get(
     "launchRequest"
   );
 
-  let pending = page.getByRole("region", { name: "Pending playtest request" });
+  let pending = page.getByRole("region", { name: PENDING_REQUEST_REGION_NAME });
   await expect(pending).toBeVisible();
-  const requestId = await pending.getAttribute("data-request-id");
+  const requestId = await pending.getAttribute(REQUEST_ID_ATTRIBUTE);
   expect(requestId).toMatch(REQUEST_ID_PATTERN);
   const firstLaunch = JSON.parse(submittedPayload ?? "null") as Record<
     string,
@@ -1265,24 +1285,26 @@ test("a Visual retry after a transient not-found reuses the exact request and re
   await page.reload();
   const restoredDialog = await openNewPlaytest(page);
   pending = restoredDialog.getByRole("region", {
-    name: "Pending playtest request"
+    name: PENDING_REQUEST_REGION_NAME
   });
-  await expect(pending).toHaveAttribute("data-request-id", requestId!);
+  await expect(pending).toHaveAttribute(REQUEST_ID_ATTRIBUTE, requestId!);
   const lookupRequest = page.waitForRequest(
     (candidate) =>
       candidate.url().includes("/api/playtesting/runs/by-request") &&
       candidate.method() === "GET"
   );
   await pending.getByRole("button", { name: "Check request status" }).click();
-  expect(
-    new URL((await lookupRequest).url()).searchParams.get("requestId")
-  ).toBe(requestId);
+  const lookupResponse = await lookupRequest;
+  const lookupResponseUrl = lookupResponse.url();
+  expect(new URL(lookupResponseUrl).searchParams.get("requestId")).toBe(
+    requestId
+  );
   await expect(page.getByRole("status")).toContainText(
     "Runtime has no receipt for this requestId. Retrying the exact saved payload is safe."
   );
   const retryPost = page.waitForRequest(
     (candidate) =>
-      candidate.url().includes("/api/playtesting/runs") &&
+      candidate.url().includes(RUNS_ENDPOINT_PATH) &&
       candidate.method() === "POST"
   );
   await pending.getByRole("button", { name: "Retry same request" }).click();
@@ -1299,14 +1321,14 @@ test("a Visual retry after a transient not-found reuses the exact request and re
 
   const expectedEpisodeId = "ep-visual-live-001-vis-assign-visual-live-001-0";
   const watchLink = page
-    .getByTestId("playtesting-live-session-links")
-    .getByRole("link", { name: "Watch session" });
+    .getByTestId(LIVE_SESSION_LINKS_TEST_ID)
+    .getByRole("link", { name: WATCH_SESSION_LINK_NAME });
   await expect(watchLink).toBeVisible();
   await expect(watchLink).toHaveAttribute(
     "href",
     new RegExp(String.raw`/playtesting/sessions/${expectedEpisodeId}\?`, "u")
   );
-  await expect(page).toHaveURL(/liveBatch=batch-visual-live-001/u);
+  await expect(page).toHaveURL(VISUAL_LIVE_BATCH_URL_PATTERN);
   const recoveredCount = await request.get(
     `${FIXTURE_BASE_URL}/fixture/run-count`
   );
@@ -1329,53 +1351,55 @@ test("a lost Visual Play acknowledgement recovers an accepted request and Watch 
   await page.goto(PLAYTESTING_OVERVIEW_URL);
   const dialog = await openNewPlaytest(page);
   await expect(dialog.locator(VISUAL_MODE_SELECTOR)).toHaveAttribute(
-    "data-mode-status",
+    MODE_STATUS_ATTRIBUTE,
     "ready"
   );
-  const visual = dialog.getByTestId("playtesting-visual-launch");
+  const visual = dialog.getByTestId(VISUAL_LAUNCH_TEST_ID);
   const postStart = page.waitForRequest(
     (candidate) =>
-      candidate.url().includes("/api/playtesting/runs") &&
+      candidate.url().includes(RUNS_ENDPOINT_PATH) &&
       candidate.method() === "POST"
   );
-  await visual.locator('[data-playtesting-visual-submit="true"]').click();
+  await visual.locator(VISUAL_SUBMIT_SELECTOR).click();
   const submitted = await postStart;
   const submittedPayload = new URLSearchParams(submitted.postData() ?? "").get(
     "launchRequest"
   );
   const requestId = JSON.parse(submittedPayload ?? "null").requestId as string;
 
-  let pending = page.getByRole("region", { name: "Pending playtest request" });
-  await expect(pending).toHaveAttribute("data-request-id", requestId);
+  let pending = page.getByRole("region", { name: PENDING_REQUEST_REGION_NAME });
+  await expect(pending).toHaveAttribute(REQUEST_ID_ATTRIBUTE, requestId);
   const firstCount = await request.get(`${FIXTURE_BASE_URL}/fixture/run-count`);
   expect(await firstCount.json()).toEqual({ count: 1 });
 
   await page.reload();
   const restoredDialog = await openNewPlaytest(page);
   pending = restoredDialog.getByRole("region", {
-    name: "Pending playtest request"
+    name: PENDING_REQUEST_REGION_NAME
   });
-  await expect(pending).toHaveAttribute("data-request-id", requestId);
+  await expect(pending).toHaveAttribute(REQUEST_ID_ATTRIBUTE, requestId);
   const lookupRequest = page.waitForRequest(
     (candidate) =>
       candidate.url().includes("/api/playtesting/runs/by-request") &&
       candidate.method() === "GET"
   );
   await pending.getByRole("button", { name: "Check request status" }).click();
-  expect(
-    new URL((await lookupRequest).url()).searchParams.get("requestId")
-  ).toBe(requestId);
+  const lookupResponse = await lookupRequest;
+  const lookupResponseUrl = lookupResponse.url();
+  expect(new URL(lookupResponseUrl).searchParams.get("requestId")).toBe(
+    requestId
+  );
 
   const expectedEpisodeId = "ep-visual-live-001-vis-assign-visual-live-001-0";
   const watchLink = page
-    .getByTestId("playtesting-live-session-links")
-    .getByRole("link", { name: "Watch session" });
+    .getByTestId(LIVE_SESSION_LINKS_TEST_ID)
+    .getByRole("link", { name: WATCH_SESSION_LINK_NAME });
   await expect(watchLink).toBeVisible();
   await expect(watchLink).toHaveAttribute(
     "href",
     new RegExp(String.raw`/playtesting/sessions/${expectedEpisodeId}\?`, "u")
   );
-  await expect(page).toHaveURL(/liveBatch=batch-visual-live-001/u);
+  await expect(page).toHaveURL(VISUAL_LIVE_BATCH_URL_PATTERN);
   const recoveredCount = await request.get(
     `${FIXTURE_BASE_URL}/fixture/run-count`
   );
@@ -1868,7 +1892,5 @@ test("a hypothesis row keeps its counts and says how to read the review", async 
   await expect(row).toContainText("Discovery review");
   await expect(row).toContainText("hypothesis");
   // The way into the review is stated.
-  await expect(
-    page.locator("[data-review-read]").first()
-  ).toBeVisible();
+  await expect(page.locator("[data-review-read]").first()).toBeVisible();
 });

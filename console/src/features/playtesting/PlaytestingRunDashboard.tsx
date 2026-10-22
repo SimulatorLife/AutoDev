@@ -8,10 +8,12 @@
  * A terminal transition refreshes the server-rendered evidence and recent result.
  */
 import {
+  type ControlApiPlaytestingPolicyReadiness,
   type ControlApiPlaytestingRunRecord,
   type ControlApiPlaytestingRunStartedResponse,
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
-  type PlaytestVisualPolicyId
+  type PlaytestVisualPolicyId,
+  type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
 import { useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -43,7 +45,7 @@ function adapterReadinessStatus(
   setup: PlaytestingRunSetup
 ): "ready" | "check-required" | "unavailable" {
   return setup.kind === "available"
-    ? setup.capabilities.modeReadiness["adapter-accelerated"].status
+    ? setup.capabilities.modeReadiness[ADAPTER_ACCELERATED_MODE].status
     : "unavailable";
 }
 
@@ -53,7 +55,7 @@ function visualModeReadinessCard(
 ): React.JSX.Element {
   const readiness =
     setup.kind === "available"
-      ? setup.capabilities.modeReadiness["autonomous-visual"]
+      ? setup.capabilities.modeReadiness[AUTONOMOUS_VISUAL_MODE]
       : null;
   return React.createElement(
     "section",
@@ -62,7 +64,7 @@ function visualModeReadinessCard(
         "rounded-lg border border-border bg-background/50 p-4" +
         (readiness?.status === "ready" ? "" : " opacity-75"),
       "aria-label": "Autonomous visual mode readiness",
-      "data-playtesting-mode": "autonomous-visual",
+      "data-playtesting-mode": AUTONOMOUS_VISUAL_MODE,
       "data-mode-status": readiness?.status ?? "unavailable"
     },
     React.createElement(
@@ -178,7 +180,7 @@ function adapterModeReadinessCard(
         ? "rounded-lg border border-border bg-background/50 p-4"
         : "rounded-lg border border-accent/60 bg-accent/5 p-4",
       "aria-label": "Adapter-accelerated mode",
-      "data-playtesting-mode": "adapter-accelerated",
+      "data-playtesting-mode": ADAPTER_ACCELERATED_MODE,
       "data-mode-status": adapterReadinessStatus(setup)
     },
     React.createElement(
@@ -198,6 +200,23 @@ function adapterModeReadinessCard(
     )
   );
 }
+
+/**
+ * The playtest modes the dashboard offers.
+ *
+ * They are named once because the dashboard reads the same mode in more than
+ * one place -- the readiness it asks for, the mode it records, the tab it
+ * marks as selected -- and a mode spelled two ways in two places is a mode
+ * whose readiness is read from one vocabulary and written to another.
+ */
+const TARGET_GRID_CLASS = "grid gap-1.5";
+const FORM_LABEL_CLASS =
+  "text-xs font-semibold uppercase tracking-wider text-fg-muted";
+
+const AUTONOMOUS_VISUAL_MODE = "autonomous-visual";
+const ADAPTER_ACCELERATED_MODE = "adapter-accelerated";
+type PlaytestingDashboardMode =
+  typeof AUTONOMOUS_VISUAL_MODE | typeof ADAPTER_ACCELERATED_MODE;
 
 const VISUAL_FOCUS_PRESETS = [
   {
@@ -229,6 +248,114 @@ const VISUAL_FOCUS_PRESETS = [
   }
 ] as const;
 
+/**
+ * Every reason the launch may not start, in one place.
+ *
+ * The button's enabled state and the launch itself have to agree about this,
+ * so the conditions are one function rather than two readings of the same
+ * state.
+ */
+function visualLaunchMayStart({
+  pending,
+  recoveryReady,
+  pendingLaunch,
+  focus,
+  workspaceId,
+  hasTarget,
+  modeReady,
+  policyAvailable
+}: {
+  readonly pending: boolean;
+  readonly recoveryReady: boolean;
+  readonly pendingLaunch: unknown;
+  readonly focus: string;
+  readonly workspaceId: string | null;
+  readonly hasTarget: boolean;
+  readonly modeReady: boolean;
+  readonly policyAvailable: boolean;
+}): boolean {
+  return (
+    !pending &&
+    recoveryReady &&
+    pendingLaunch === null &&
+    focus.trim().length <= 2000 &&
+    Boolean(workspaceId) &&
+    hasTarget &&
+    modeReady &&
+    policyAvailable
+  );
+}
+
+/**
+ * The launch request the cockpit sends, or null when there is nothing to
+ * launch.
+ *
+ * The budget in the request is the smaller of what the operator asked for and
+ * what the approved target allows, so the request can never ask for more
+ * than the target was approved for.
+ */
+function visualLaunchPayload({
+  workspaceId,
+  capabilityRevision,
+  target,
+  policyId,
+  focus,
+  episodes,
+  steps
+}: {
+  readonly workspaceId: string | null;
+  readonly capabilityRevision: string | null;
+  readonly target: WorkspaceVisualPlaytestTargetApproval | null;
+  readonly policyId: PlaytestVisualPolicyId;
+  readonly focus: string;
+  readonly episodes: number;
+  readonly steps: number;
+}): PlaytestLaunchRequestDraft | null {
+  if (!workspaceId || !capabilityRevision || !target) {
+    return null;
+  }
+  return {
+    schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
+    mode: AUTONOMOUS_VISUAL_MODE,
+    workspaceId,
+    capabilityRevision,
+    targetId: target.targetId,
+    policyId,
+    areasOfFocus: focus.trim() || null,
+    limits: {
+      episodeCount: Math.min(episodes, target.limits.episodeCount),
+      maxStepsPerEpisode: Math.min(steps, target.limits.maxStepsPerEpisode),
+      wallTimeMs: target.limits.wallTimeMs,
+      smartRequestsPerEpisode: target.limits.smartRequestsPerEpisode,
+      smartTokensPerEpisode: target.limits.smartTokensPerEpisode,
+      screenshotCountPerEpisode: target.limits.screenshotCountPerEpisode,
+      artifactBytesPerEpisode: target.limits.artifactBytesPerEpisode
+    }
+  };
+}
+
+/**
+ * The name the operator gave the area of focus, or what it is when they have
+ * not named one.
+ */
+function visualFocusLabel(focus: string): string {
+  const preset = VISUAL_FOCUS_PRESETS.find(
+    (candidate) => candidate.prompt === focus
+  );
+  if (preset !== undefined) return preset.title;
+  return focus.trim().length > 0 ? "Custom focus" : "No focus";
+}
+
+/**
+ * The decision backend the operator chose, if this mode offers it.
+ */
+function visualSelectedPolicy(
+  policies: readonly ControlApiPlaytestingPolicyReadiness[],
+  policyId: string
+): ControlApiPlaytestingPolicyReadiness | undefined {
+  return policies.find((policy) => policy.policyId === policyId);
+}
+
 function VisualPlaytestLaunchCockpit({
   setup,
   workspaceId,
@@ -247,7 +374,7 @@ function VisualPlaytestLaunchCockpit({
   });
   const readiness =
     setup.kind === "available"
-      ? setup.capabilities.modeReadiness["autonomous-visual"]
+      ? setup.capabilities.modeReadiness[AUTONOMOUS_VISUAL_MODE]
       : null;
   const isReady = readiness?.status === "ready";
   const supportedTargets =
@@ -291,65 +418,43 @@ function VisualPlaytestLaunchCockpit({
 
   const effectiveEpisodes = Math.min(selectedEpisodes, approvedMaxEpisodes);
   const effectiveSteps = Math.min(selectedSteps, approvedMaxSteps);
-  const focusLabel =
-    VISUAL_FOCUS_PRESETS.find((preset) => preset.prompt === areasOfFocus)
-      ?.title ?? (areasOfFocus.trim().length > 0 ? "Custom focus" : "No focus");
+  const focusLabel = visualFocusLabel(areasOfFocus);
 
   // The decision backends this mode offers, with each one's own readiness.
   // A backend that cannot be reached is offered but cannot be chosen.
   const policyOptions = readiness?.policies ?? [];
-  const selectedPolicy = policyOptions.find(
-    (policy) => policy.policyId === selectedPolicyId
-  );
-  const selectedPolicyAvailable = selectedPolicy?.status === "ready";
+  const selectedPolicyAvailable =
+    visualSelectedPolicy(policyOptions, selectedPolicyId)?.status === "ready";
 
   const launching = Boolean(
     launchRecovery.pending || launchRecovery.pendingLaunch
   );
-  const canSubmit = Boolean(
-    !launchRecovery.pending &&
-    launchRecovery.recoveryReady &&
-    !launchRecovery.pendingLaunch &&
-    areasOfFocus.trim().length <= 2000 &&
-    workspaceId &&
-    primaryTarget &&
-    isReady &&
-    selectedPolicyAvailable
-  );
+  const canSubmit = visualLaunchMayStart({
+    pending: launchRecovery.pending,
+    recoveryReady: launchRecovery.recoveryReady,
+    pendingLaunch: launchRecovery.pendingLaunch,
+    focus: areasOfFocus,
+    workspaceId,
+    hasTarget: primaryTarget !== null,
+    modeReady: isReady,
+    policyAvailable: selectedPolicyAvailable
+  });
 
   const handleLaunch = (): void => {
-    if (
-      !canSubmit ||
-      !workspaceId ||
-      !primaryTarget ||
-      setup.kind !== "available"
-    )
-      return;
-    const launchPayload: PlaytestLaunchRequestDraft = {
-      schema: PLAYTEST_LAUNCH_REQUEST_SCHEMA,
-      mode: "autonomous-visual",
+    if (!canSubmit) return;
+    const launchPayload = visualLaunchPayload({
       workspaceId,
-      capabilityRevision: setup.capabilities.capabilityRevision,
-      targetId: primaryTarget.targetId,
+      capabilityRevision:
+        setup.kind === "available"
+          ? setup.capabilities.capabilityRevision
+          : null,
+      target: primaryTarget,
       policyId: selectedPolicyId,
-      areasOfFocus: areasOfFocus.trim() || null,
-      limits: {
-        episodeCount: Math.min(
-          effectiveEpisodes,
-          primaryTarget.limits.episodeCount
-        ),
-        maxStepsPerEpisode: Math.min(
-          effectiveSteps,
-          primaryTarget.limits.maxStepsPerEpisode
-        ),
-        wallTimeMs: primaryTarget.limits.wallTimeMs,
-        smartRequestsPerEpisode: primaryTarget.limits.smartRequestsPerEpisode,
-        smartTokensPerEpisode: primaryTarget.limits.smartTokensPerEpisode,
-        screenshotCountPerEpisode:
-          primaryTarget.limits.screenshotCountPerEpisode,
-        artifactBytesPerEpisode: primaryTarget.limits.artifactBytesPerEpisode
-      }
-    };
+      focus: areasOfFocus,
+      episodes: effectiveEpisodes,
+      steps: effectiveSteps
+    });
+    if (launchPayload === null) return;
     void launchRecovery.startLaunch(launchPayload);
   };
 
@@ -436,13 +541,12 @@ function VisualPlaytestLaunchCockpit({
     supportedTargets.length > 1
       ? React.createElement(
           "div",
-          { className: "grid gap-1.5" },
+          { className: TARGET_GRID_CLASS },
           React.createElement(
             "label",
             {
               htmlFor: "visual-target-select",
-              className:
-                "text-xs font-semibold uppercase tracking-wider text-fg-muted"
+              className: FORM_LABEL_CLASS
             },
             "Target Selector"
           ),
@@ -480,13 +584,12 @@ function VisualPlaytestLaunchCockpit({
     policyOptions.length > 0
       ? React.createElement(
           "div",
-          { className: "grid gap-1.5" },
+          { className: TARGET_GRID_CLASS },
           React.createElement(
             "label",
             {
               htmlFor: "visual-policy-select",
-              className:
-                "text-xs font-semibold uppercase tracking-wider text-fg-muted"
+              className: FORM_LABEL_CLASS
             },
             "Decision backend"
           ),
@@ -720,8 +823,7 @@ function VisualPlaytestLaunchCockpit({
       React.createElement(
         "label",
         {
-          className:
-            "text-xs font-semibold uppercase tracking-wider text-fg-muted"
+          className: FORM_LABEL_CLASS
         },
         "1. Focus Presets"
       ),
@@ -759,13 +861,12 @@ function VisualPlaytestLaunchCockpit({
     ),
     React.createElement(
       "div",
-      { className: "grid gap-1.5" },
+      { className: TARGET_GRID_CLASS },
       React.createElement(
         "label",
         {
           htmlFor: "visual-focus-textarea",
-          className:
-            "text-xs font-semibold uppercase tracking-wider text-fg-muted"
+          className: FORM_LABEL_CLASS
         },
         "2. Areas of Focus & Objectives"
       ),
@@ -785,12 +886,11 @@ function VisualPlaytestLaunchCockpit({
     ),
     React.createElement(
       "div",
-      { className: "grid gap-1.5" },
+      { className: TARGET_GRID_CLASS },
       React.createElement(
         "label",
         {
-          className:
-            "text-xs font-semibold uppercase tracking-wider text-fg-muted"
+          className: FORM_LABEL_CLASS
         },
         "3. Episode Count (max " + String(approvedMaxEpisodes) + ")"
       ),
@@ -821,12 +921,11 @@ function VisualPlaytestLaunchCockpit({
     ),
     React.createElement(
       "div",
-      { className: "grid gap-1.5" },
+      { className: TARGET_GRID_CLASS },
       React.createElement(
         "label",
         {
-          className:
-            "text-xs font-semibold uppercase tracking-wider text-fg-muted"
+          className: FORM_LABEL_CLASS
         },
         "4. Step Cap (max " + String(approvedMaxSteps) + ")"
       ),
@@ -878,6 +977,45 @@ function PlaytestingModeReadinessCards({
   );
 }
 
+/**
+ * Keeps the browser's own dialog open or closed with the page's state.
+ *
+ * The dialog is the browser's: it traps focus and closes on Escape. The
+ * page's state says whether it should be open and the browser's own state
+ * says whether it is, and the two have to agree.
+ */
+function syncPlaytestDialog(
+  dialog: HTMLDialogElement | null,
+  open: boolean
+): void {
+  if (!dialog) return;
+  if (open && !dialog.open) {
+    dialog.showModal();
+    return;
+  }
+  if (!open && dialog.open) dialog.close();
+}
+
+/**
+ * What the live-run disclosure says while it is closed.
+ *
+ * A disclosure that says "Live run status" when a run is active hides the
+ * one thing the operator opened it for.
+ */
+function liveRunStatusLabel(activeCount: number, totalCount: number): string {
+  if (activeCount > 0) {
+    return `${String(activeCount)} active ${activeCount === 1 ? "run" : "runs"} · view live status`;
+  }
+  return totalCount > 0 ? "Most recent run status" : "Live run status";
+}
+
+/** The tab's own styling: the selected tab is the accent one. */
+function modeTabClass(selected: boolean): string {
+  return selected
+    ? "border-accent text-accent"
+    : "border-transparent text-fg-muted hover:text-fg";
+}
+
 export function PlaytestingRunDashboard({
   setup,
   scope,
@@ -896,12 +1034,12 @@ export function PlaytestingRunDashboard({
   const [focusedBatchId, setFocusedBatchId] = useState(scope.liveBatchId);
   const visualReadiness =
     setup.kind === "available"
-      ? setup.capabilities.modeReadiness["autonomous-visual"]
+      ? setup.capabilities.modeReadiness[AUTONOMOUS_VISUAL_MODE]
       : null;
   const visualReady = visualReadiness?.status === "ready";
-  const [selectedMode, setSelectedMode] = useState<
-    "autonomous-visual" | "adapter-accelerated"
-  >(visualReady ? "autonomous-visual" : "adapter-accelerated");
+  const [selectedMode, setSelectedMode] = useState<PlaytestingDashboardMode>(
+    visualReady ? AUTONOMOUS_VISUAL_MODE : ADAPTER_ACCELERATED_MODE
+  );
 
   const onRunStarted = useCallback(
     (started: ControlApiPlaytestingRunStartedResponse) => {
@@ -941,10 +1079,7 @@ export function PlaytestingRunDashboard({
     if (terminalBatches) router.refresh();
   }, [router, terminalBatches]);
   useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (playDialogOpen && !dialog.open) dialog.showModal();
-    else if (!playDialogOpen && dialog.open) dialog.close();
+    syncPlaytestDialog(dialogRef.current, playDialogOpen);
   }, [playDialogOpen]);
 
   const activeCount = live.state.runs.filter(
@@ -1040,11 +1175,9 @@ export function PlaytestingRunDashboard({
                   type: "button",
                   className:
                     "flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold transition " +
-                    (selectedMode === "autonomous-visual"
-                      ? "border-accent text-accent"
-                      : "border-transparent text-fg-muted hover:text-fg"),
-                  onClick: () => setSelectedMode("autonomous-visual"),
-                  "data-playtesting-tab": "autonomous-visual"
+                    modeTabClass(selectedMode === AUTONOMOUS_VISUAL_MODE),
+                  onClick: () => setSelectedMode(AUTONOMOUS_VISUAL_MODE),
+                  "data-playtesting-tab": AUTONOMOUS_VISUAL_MODE
                 },
                 React.createElement("span", null, "🌐"),
                 React.createElement(
@@ -1069,11 +1202,9 @@ export function PlaytestingRunDashboard({
                   type: "button",
                   className:
                     "flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold transition " +
-                    (selectedMode === "adapter-accelerated"
-                      ? "border-accent text-accent"
-                      : "border-transparent text-fg-muted hover:text-fg"),
-                  onClick: () => setSelectedMode("adapter-accelerated"),
-                  "data-playtesting-tab": "adapter-accelerated"
+                    modeTabClass(selectedMode === ADAPTER_ACCELERATED_MODE),
+                  onClick: () => setSelectedMode(ADAPTER_ACCELERATED_MODE),
+                  "data-playtesting-tab": ADAPTER_ACCELERATED_MODE
                 },
                 React.createElement("span", null, "⚡"),
                 React.createElement("span", null, "Adapter Simulation")
@@ -1082,7 +1213,7 @@ export function PlaytestingRunDashboard({
             React.createElement(
               "div",
               { className: "p-5 sm:p-6" },
-              selectedMode === "autonomous-visual"
+              selectedMode === AUTONOMOUS_VISUAL_MODE
                 ? React.createElement(VisualPlaytestLaunchCockpit, {
                     setup,
                     workspaceId: scope.workspaceId,
@@ -1137,11 +1268,7 @@ export function PlaytestingRunDashboard({
               className:
                 "cursor-pointer list-none px-4 py-3 text-sm font-medium"
             },
-            activeCount > 0
-              ? `${String(activeCount)} active ${activeCount === 1 ? "run" : "runs"} · view live status`
-              : live.state.runs.length > 0
-                ? "Most recent run status"
-                : "Live run status"
+            liveRunStatusLabel(activeCount, live.state.runs.length)
           ),
           React.createElement(
             "div",
