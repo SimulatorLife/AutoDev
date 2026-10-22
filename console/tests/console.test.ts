@@ -91,7 +91,6 @@ import {
   pageRangeLabel,
   Pagination
 } from "../src/components/navigation/Pagination.ts";
-import { setWholePageAnswerProbeForTests } from "../src/components/navigation/whole-page-navigation.ts";
 import { ControlFailureNotice } from "../src/components/status/ControlFailureNotice.ts";
 import {
   MONO_ID_CLASS,
@@ -265,10 +264,15 @@ import {
   unresolvedSkillAssignmentsFromControlApi,
   workspacesFromControlApi
 } from "../src/lib/server/views.ts";
+import {
+  deliverWholePageAnswer,
+  installWholePageAnswerObserver
+} from "./support/whole-page-answer.ts";
 
-// A unit test has no request to wait for, so the whole-page owner is told
-// that the answer has already arrived.
-setWholePageAnswerProbeForTests(() => true);
+// The whole-page owner waits for the destination's answer, which in a browser
+// is the request that carries it. A unit test has no request, so it reports
+// one.
+installWholePageAnswerObserver();
 
 /** Find one rendered anchor by destination without depending on prop order. */
 function anchorMarkupForHref(markup: string, href: string): string {
@@ -18401,7 +18405,7 @@ test("GET FilterBar submit cancels native document navigation", async () => {
   const result = await handleFormSubmission(submitEvent, {
     currentUrl: "http://console.test/usage?old=1",
     router: {
-      prefetch: () => {},
+      prefetch: (href) => deliverWholePageAnswer(href),
       push: (href) => pushes.push(href),
       replace: () => assert.fail("a filter uses push, not replace"),
       refresh: () => refreshes++
@@ -18495,7 +18499,7 @@ test("POST mutation submit cancels native navigation and preserves FormData", as
     currentUrl: "http://console.test/skills",
     fetch: fetchImpl,
     router: {
-      prefetch: () => {},
+      prefetch: (href) => deliverWholePageAnswer(href),
       push: () => assert.fail("a mutation return uses replace, not push"),
       replace: (href) => replacements.push(href),
       refresh: () => refreshes++

@@ -14,6 +14,15 @@ import {
   SkillsView,
   type SkillsViewProps
 } from "../src/features/skills/SkillsView.ts";
+import {
+  deliverWholePageAnswer,
+  installWholePageAnswerObserver
+} from "./support/whole-page-answer.ts";
+
+// The whole-page owner waits for the destination's answer, which in a browser
+// is the request that carries it. A unit test has no request, so it reports
+// one.
+installWholePageAnswerObserver();
 
 /** Helper to extract all forms and inputs for any skill name without hardcoding fixture names. */
 function parseSkillAssignmentForm(markup: string, skillName: string) {
@@ -288,7 +297,7 @@ test("FormNavigationOwner canonical path intercepts skill autosave form POSTs an
 
   const result = await handleFormSubmission(submitEvent, {
     router: {
-      prefetch: () => {},
+      prefetch: (href) => deliverWholePageAnswer(href),
       push: () => {},
       replace: () => {},
       refresh: () => {
@@ -347,7 +356,12 @@ test("clearing all checkboxes unassigns the skill and submits empty roles set", 
   };
 
   const result = await handleFormSubmission(submitEvent, {
-    router: { prefetch: () => {}, push: () => {}, replace: () => {}, refresh: () => {} },
+    router: {
+      prefetch: (href) => deliverWholePageAnswer(href),
+      push: () => {},
+      replace: () => {},
+      refresh: () => {}
+    },
     fetch: mockFetch,
     currentUrl: "http://localhost:3300/skills"
   });

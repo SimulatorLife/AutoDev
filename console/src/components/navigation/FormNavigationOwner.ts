@@ -16,6 +16,13 @@ export type FormNavigationStatus =
   "idle" | "submitting" | "completed" | "error";
 
 export interface FormNavigationRouter {
+  /**
+   * Ask for the destination's whole page.
+   *
+   * Asking with no kind is asking for the full page: Next.js's prefetch
+   * answers with the full page unless it is told otherwise, and a partial
+   * answer is the route's loading state rather than the page.
+   */
   readonly prefetch: (href: string) => void;
   readonly push: (
     href: string,

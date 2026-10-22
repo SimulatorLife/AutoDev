@@ -105,8 +105,20 @@ test("a click navigates only once the destination's whole page has arrived", () 
   );
   assert.match(
     wholePageNavigationSource,
-    /await waitForWholePageAnswer\(\s*href,\s*since,\s*token/u,
+    /await answer;/u,
     "the navigation has to wait for the answer before it leaves"
+  );
+  assert.match(
+    wholePageNavigationSource,
+    /new PerformanceObserver\(/u,
+    "the answer arrives as an event the owner watches for, not as a question"
+  );
+  assert.doesNotMatch(
+    wholePageNavigationSource,
+    /setTimeout|setInterval|performance\.now|Date\.now/u,
+    "the wait must not run on the page's clock: the acceptance holds that " +
+      "clock still on purpose, and a navigation that waits on a timer stops " +
+      "with it"
   );
   assert.match(
     wholePageNavigationSource,

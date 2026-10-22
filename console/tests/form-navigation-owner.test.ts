@@ -17,11 +17,15 @@ import {
   registerFormNavigation,
   scheduleFeedbackDismissal
 } from "../src/components/navigation/FormNavigationOwner.ts";
-import { setWholePageAnswerProbeForTests } from "../src/components/navigation/whole-page-navigation.ts";
+import {
+  deliverWholePageAnswer,
+  installWholePageAnswerObserver
+} from "./support/whole-page-answer.ts";
 
-// A unit test has no request to wait for, so the whole-page owner is told
-// that the answer has already arrived.
-setWholePageAnswerProbeForTests(() => true);
+// The whole-page owner waits for the destination's answer, which in a browser
+// is the request that carries it. A unit test has no request, so it reports
+// one.
+installWholePageAnswerObserver();
 
 /**
  * The whole-page owner navigates once the answer is in hand, which is not by
@@ -93,6 +97,8 @@ function createMockRouter(overrides?: Partial<FormNavigationRouter>): {
   const router: FormNavigationRouter = {
     prefetch: (href) => {
       overrides?.prefetch?.(href);
+      // The answer to the request the router made for this destination.
+      deliverWholePageAnswer(href);
     },
     push: (href, options) => {
       pushes.push(options ? { href, options } : { href });
