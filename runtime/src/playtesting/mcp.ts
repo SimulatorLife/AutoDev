@@ -142,7 +142,8 @@ import {
 } from "@simulatorlife/autodev-data/playtesting";
 import {
   type WorkspacePlaytestApprovalRepository,
-  WorkspaceVisualPlaytestTargetRepository} from "@simulatorlife/autodev-data/workspaces";
+  WorkspaceVisualPlaytestTargetRepository
+} from "@simulatorlife/autodev-data/workspaces";
 import { z } from "zod/v4";
 
 import type { PlaytestingReadRepository } from "../control-api/playtesting.ts";
@@ -194,7 +195,8 @@ import { derivePlaytestPolicyValidity } from "./policy-validity-run.ts";
 import {
   createPlaytestPolicyWorkspace,
   type PlaytestPolicyWorkspace,
-  removePlaytestPolicyWorkspace} from "./policy-workspace.ts";
+  removePlaytestPolicyWorkspace
+} from "./policy-workspace.ts";
 import {
   SMART_DIRECT_POLICY_VERSION,
   SmartDirectPolicyError,
@@ -5198,7 +5200,8 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
             ]
           });
           exit =
-            isDecisionDeadlineFailure(error) && driver.remainingWallTimeMs() <= 0
+            isDecisionDeadlineFailure(error) &&
+            driver.remainingWallTimeMs() <= 0
               ? { kind: "wall-time-limit", step }
               : isSmartDirectBudgetExhaustion(error)
                 ? { kind: USAGE_BUDGET, step }

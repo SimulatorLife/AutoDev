@@ -193,7 +193,7 @@ test("focus interpretation rejects out-of-vocabulary outcomes and over-budget co
         ...completeReport(),
         focusInterpretation: {
           ...focusInterpretation,
-          inScope: Array.from({length: 4}).fill("item")
+          inScope: Array.from({ length: 4 }).fill("item")
         }
       }),
     /in-scope items is invalid/u

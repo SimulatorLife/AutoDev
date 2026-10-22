@@ -33,7 +33,8 @@ import {
 import {
   PLAYESTS_ARTIFACT_MAX_WINDOW_STEPS,
   type PlaytestArtifactStore,
-  PLAYTESTS_ARTIFACT_MAX_BYTES} from "./artifact-store.ts";
+  PLAYTESTS_ARTIFACT_MAX_BYTES
+} from "./artifact-store.ts";
 
 function resolveChromiumExecutablePath(
   browserType: Pick<typeof chromium, "executablePath">

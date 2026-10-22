@@ -31,7 +31,8 @@ import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
 import {
   createPlaytestRunControl,
   type PlaytestingRepositoryOps,
-  type PlaytestMcpSession} from "../src/playtesting/mcp.ts";
+  type PlaytestMcpSession
+} from "../src/playtesting/mcp.ts";
 import type {
   PlaytestVisualDriverOpener,
   PlaytestVisualEpisodeDriver

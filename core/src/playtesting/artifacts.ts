@@ -6,8 +6,6 @@ import type {
   PlaytestCheckpointDigest,
   PlaytestJsonValue
 } from "./protocol-types.ts";
-import type {
-  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA} from "./types.ts";
 import {
   type PlaytestAdapterAssignmentManifest,
   type PlaytestAssignmentBranch,
@@ -34,6 +32,7 @@ import {
   type PLAYTESTS_BATCH_SCHEMA,
   type PLAYTESTS_COVERAGE_MANIFEST_SCHEMA,
   type PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
+  type PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   type PLAYTESTS_EPISODE_SCHEMA,
   type PLAYTESTS_EVIDENCE_PACKET_SCHEMA,
   type PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1,
