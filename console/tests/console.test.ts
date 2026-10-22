@@ -3013,7 +3013,7 @@ test("DataTable wraps column headers instead of truncating them", () => {
   // the label is not the cell's only child any more.
   assert.match(
     markup,
-    /<th [^>]*class="[^"]*break-words[^"]*"[^>]*>[\s\S]*?<span data-column-label="[^"]*">Convergence<\/span>/
+    /<th [^>]*class="[^"]*break-words[^"]*"[^>]*>[\s\S]*?<span[^>]*data-column-label="[^"]*"[^>]*>Convergence<\/span>/
   );
   assert.doesNotMatch(markup, /<th [^>]*class="[^"]*truncate[^"]*"/);
   // `break-all` would also satisfy "breaks rather than hides", but it splits a
@@ -3357,7 +3357,9 @@ test("no column is narrower than its own header", () => {
         // part of the label a width has to fit.
         const inner = th[2] ?? "";
         const labelled =
-          /<span data-column-label="[^"]*">([\s\S]*?)<\/span>/.exec(inner);
+          /<span[^>]*data-column-label="[^"]*"[^>]*>([\s\S]*?)<\/span>/.exec(
+            inner
+          );
         const header = (labelled?.[1] ?? inner)
           .replaceAll(/<[^>]*>/g, "")
           .trim();
@@ -13413,9 +13415,10 @@ test("ProvidersView renders configuration columns and live provider counts", () 
   const headers = Array.from(
     markup.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gu),
     (match) => {
-      const label = /<span data-column-label="[^"]*">([\s\S]*?)<\/span>/u.exec(
-        match[1] ?? ""
-      );
+      const label =
+        /<span[^>]*data-column-label="[^"]*"[^>]*>([\s\S]*?)<\/span>/u.exec(
+          match[1] ?? ""
+        );
       return (label?.[1] ?? "").replaceAll(/<[^>]*>/g, "").trim();
     }
   );

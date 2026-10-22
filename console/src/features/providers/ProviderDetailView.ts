@@ -210,6 +210,11 @@ function ModelsPanel({
     {
       id: "availability",
       header: "Availability",
+      // "Availability" is one long word, and a column's weight has to be
+      // large enough for its own header. The workspaces table declares the
+      // same header at the same weight, and the acceptance measures it
+      // fitting at 390px there.
+      weight: 160,
       cell: (model) =>
         React.createElement(ProviderModelAvailabilityBadge, {
           availability: model.availability

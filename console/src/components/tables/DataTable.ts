@@ -362,7 +362,30 @@ export function DataTable<T>({
                 },
                 React.createElement(
                   "span",
-                  { "data-column-label": col.id },
+                  {
+                    // The label has to be allowed to shrink below its own
+                    // min-content width, or the flex row cannot narrow with
+                    // its column.
+                    //
+                    // A flex item's automatic minimum size is its min-content
+                    // size, and `overflow-wrap: break-word` -- which is what
+                    // the header's `break-words` sets -- does not reduce that
+                    // size: only `overflow-wrap: anywhere` does. So a header
+                    // that is one long word ("AVAILABILITY") cannot shrink at
+                    // all, and a column too narrow for it clips the word
+                    // instead of breaking it. That is the one case the
+                    // acceptance measures: the provider detail's model table
+                    // clipped its availability header by 23px at 390px.
+                    //
+                    // `min-w-0` makes the label shrinkable, so the inherited
+                    // `break-words` can break the word and the header wraps --
+                    // the same thing it did when the label was the header's
+                    // own text. The marker beside it already carries
+                    // `shrink-0`, so it keeps its size while the label takes
+                    // what is left.
+                    className: "min-w-0",
+                    "data-column-label": col.id
+                  },
                   col.header
                 ),
                 col.headerHelp === undefined
