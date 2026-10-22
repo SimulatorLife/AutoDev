@@ -185,7 +185,7 @@ test("the answer still arrives when the page's clock and timers are held still",
     setInterval: globalThis.setInterval
   };
   Date.now = () => 1_700_000_000_000;
-  performance.now = () => 1_000;
+  performance.now = () => 1000;
   globalThis.setTimeout = (() => 0) as unknown as typeof globalThis.setTimeout;
   globalThis.setInterval = (() =>
     0) as unknown as typeof globalThis.setInterval;
