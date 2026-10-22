@@ -252,7 +252,13 @@ function targetCard(
                   {
                     type: "submit",
                     variant: "destructive",
-                    disabled: pendingTargetId !== null
+                    // The revocation in flight is a working control, and the
+                    // ones waiting for it are unavailable ones: the operator
+                    // keeps their focus on the control they pressed.
+                    disabled:
+                      pendingTargetId !== null &&
+                      pendingTargetId !== target.targetId,
+                    busy: pendingTargetId === target.targetId
                   },
                   pendingTargetId === target.targetId
                     ? "Revoking…"

@@ -116,6 +116,24 @@ test("a disabled button is still disabled", () => {
   );
 });
 
+test("a busy button does not act", () => {
+  // The action a busy button stands for is already happening, so the second
+  // press is refused by the vocabulary rather than by the caller's handler.
+  // That is what makes the busy state a safe replacement for a control that
+  // used to be disabled while it worked: the operator keeps their place in the
+  // page and the request happens once.
+  const press = (): void => {};
+  const busy = Button({ busy: true, onClick: press, children: "Approving…" });
+  assert.equal(
+    busy.props.onClick,
+    undefined,
+    "a busy control must not act on a second press"
+  );
+
+  const idle = Button({ onClick: press, children: "Approve" });
+  assert.equal(idle.props.onClick, press, "an idle control acts");
+});
+
 test("every button variant dims a busy control the way it dims a disabled one", () => {
   for (const variantClass of BUTTON_VARIANT_CLASSES) {
     assert.match(

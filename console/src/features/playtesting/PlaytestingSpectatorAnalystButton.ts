@@ -66,7 +66,10 @@ export function PlaytestingSpectatorAnalystButton({
         type: "submit",
         variant: "primary",
         size: "compact",
-        disabled: pending || !workspaceId,
+        // No workspace is an unavailable control; a dispatch in flight is a
+        // working one.
+        disabled: !workspaceId,
+        busy: pending,
         className: "inline-flex items-center gap-1.5 rounded-lg shadow-sm",
         dataAttributes: { "data-playtesting-spectator-analyze": episodeId }
       },

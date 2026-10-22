@@ -87,8 +87,11 @@ export interface ButtonProps {
    * stays focusable, and the visible label carries the state. The Console's own
    * form owner publishes its pending state the same way, for the same reason.
    *
-   * A busy control is still a button: it still takes the click, and the owner
-   * of the request is the one that refuses a second one.
+   * A busy control does not act: the action it stands for is already
+   * happening, so a second press is swallowed by the vocabulary rather than
+   * reaching the caller's handler. That is what makes the busy state a safe
+   * replacement for a control that used to be disabled while it worked -- the
+   * operator keeps their place in the page and the request happens once.
    */
   readonly busy?: boolean | undefined;
   readonly className?: string | undefined;
@@ -160,11 +163,16 @@ export function Button({
     "button",
     {
       type,
-      onClick,
-      ...(disabled === undefined ? {} : { disabled }),
+      // A busy control does not act. It is announced as unavailable and it
+      // keeps its place in the page's focus order, but the action it stands
+      // for is already happening, so a second press is swallowed here rather
+      // than reaching the caller's handler. That is what makes the busy state
+      // a safe replacement for a control that was disabled while it worked:
+      // the caller keeps the focus and loses the double action.
       ...(busy === true
         ? { "aria-disabled": "true", "data-submitting": "true" }
-        : {}),
+        : { onClick }),
+      ...(disabled === undefined ? {} : { disabled }),
       ...(title === undefined ? {} : { title }),
       ...(name === undefined ? {} : { name }),
       ...(value === undefined ? {} : { value }),

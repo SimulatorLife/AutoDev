@@ -167,7 +167,11 @@ export function PlaytestComparisonDecisionForm({
               type: "submit",
               variant: "secondary",
               size: "compact",
-              disabled: pending || reason.trim().length === 0
+              // The reason has to be there for the decision to be reviewable;
+              // the request being in flight is a different state, and it is
+              // the one that keeps the operator's focus.
+              disabled: reason.trim().length === 0,
+              busy: pending
             },
             pending
               ? "Recording…"
@@ -182,7 +186,7 @@ export function PlaytestComparisonDecisionForm({
                   type: "button",
                   variant: "outline",
                   size: "compact",
-                  disabled: pending,
+                  busy: pending,
                   onClick: () => {
                     setConfirming(false);
                     setMessage(null);
