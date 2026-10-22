@@ -72,6 +72,16 @@ export interface DataTableProps<T> {
    * knowledge is, and the typecheck refuses a list view that skips it.
    */
   readonly emptyMessage: string;
+  /**
+   * The name of the region the table scrolls in.
+   *
+   * Optional, because the table's own column headers already name it, and a
+   * view that knows a better name than its columns gives it. What the name is
+   * not optional about is that the region has one: a scrollable region is a
+   * landmark, and a landmark an operator cannot name is a landmark they cannot
+   * jump to.
+   */
+  readonly label?: string | undefined;
 }
 
 /**
@@ -266,7 +276,8 @@ export function DataTable<T>({
   data,
   columns,
   keyExtractor,
-  emptyMessage
+  emptyMessage,
+  label
 }: DataTableProps<T>): React.JSX.Element {
   if (data.length === 0) {
     return React.createElement(EmptyState, {
@@ -282,7 +293,22 @@ export function DataTable<T>({
     "div",
     {
       className:
-        "overflow-x-auto rounded-lg border border-border bg-surface/60 shadow"
+        "overflow-x-auto rounded-lg border border-border bg-surface/60 shadow",
+      // The region scrolls sideways when the viewport cannot hold the table's
+      // content budget, and a region that scrolls has to be reachable by
+      // keyboard. The permission matrix was the case that needed it: its cells
+      // hold no links and no controls, so nothing inside could be focused,
+      // the region was not focusable either, and its right-hand columns were
+      // reachable by a pointer and by nothing else. The region is focusable
+      // and named, so the arrow keys scroll it and a screen reader says which
+      // table it is.
+      role: "region",
+      "aria-label":
+        label ??
+        (columns as readonly ColumnDef<never>[])
+          .map((col) => col.header)
+          .join(", "),
+      tabIndex: 0
     },
     React.createElement(
       "table",

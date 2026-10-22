@@ -139,7 +139,12 @@ export function PermissionsView({
         // read fails, so reaching here means the Control API returned a policy
         // with no roles behind it. Wording follows the matrix it replaces
         // rather than a generic "nothing to show".
-        emptyMessage: "No role capability matrices were observed."
+        emptyMessage: "No role capability matrices were observed.",
+        // The heading above already names the matrix; the region says so too,
+        // because the matrix is the one table on this page whose cells hold
+        // nothing focusable, and a named, focusable region is the only way a
+        // keyboard operator reaches its right-hand columns.
+        label: "Effective role capability matrix"
       })
     ),
     // Below the matrix rather than as a fifth column: a role's tool grants run
