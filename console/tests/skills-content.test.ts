@@ -195,6 +195,27 @@ test("Skills rows link to one canonical source editor and editor posts the exact
   assert.doesNotMatch(detail, /Skill content is active/u);
 });
 
+test("the skill detail renders the reconciliation the Runtime reported", () => {
+  const detail = renderToStaticMarkup(
+    React.createElement(SkillDetailView, {
+      source: DETAIL_SOURCE
+    })
+  );
+  assert.match(detail, /data-section="skill-reconciliation"/u);
+  assert.match(detail, /Converged/u);
+  // The generations behind the verdict are the Runtime's, rendered as it
+  // reported them rather than derived by the page.
+  assert.match(
+    detail,
+    new RegExp(`data-field="desired-generation">${UPDATED_REVISION}<`, "u")
+  );
+  assert.match(
+    detail,
+    new RegExp(`data-field="observed-generation">${UPDATED_REVISION}<`, "u")
+  );
+  assert.match(detail, /No recorded operations for this resource\./u);
+});
+
 test("same-origin skill editor form keeps the Runtime credential server-side and redirects to confirmed source", async () => {
   const previousFetch = globalThis.fetch;
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;

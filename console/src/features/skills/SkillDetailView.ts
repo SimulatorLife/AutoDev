@@ -12,7 +12,9 @@ import {
   SECTION_HEADING_CLASS
 } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
+import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import {
   MONO_META_CLASS,
   MUTED_META_CLASS
@@ -99,6 +101,23 @@ export function SkillDetailView({
       source.path
     ),
     saveNotice(saveOutcome),
+    React.createElement(
+      "section",
+      {
+        className: DETAIL_PANEL_CLASS,
+        "aria-label": "Reconciliation state",
+        "data-section": "skill-reconciliation"
+      },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Reconciliation"
+      ),
+      React.createElement(ReconciliationPanel, {
+        status: source.reconciliation.status,
+        history: source.reconciliation.history
+      })
+    ),
     React.createElement(
       "section",
       { className: "flex flex-col gap-3" },

@@ -16,7 +16,10 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 
-import { handleControlApiRequest } from "../src/control-api/index.ts";
+import {
+  handleControlApiRequest,
+  resetOperationHistoryForTests
+} from "../src/control-api/index.ts";
 import { reloadExecutionContract } from "../src/router/subagents.ts";
 import { responseRecorder } from "./support/control-api-harness.ts";
 
@@ -29,6 +32,7 @@ const ORIGINAL_SOURCE =
 
 interface Harness {
   readonly repositoryRoot: string;
+  readonly home: string;
   readonly skillPath: string;
   readonly restore: () => void;
   readonly call: (
@@ -63,12 +67,22 @@ function request(
   }) as IncomingMessage;
 }
 
-function harness(): Harness {
+function harness(options: { readonly installed?: boolean } = {}): Harness {
   const root = mkdtempSync(path.join(tmpdir(), "autodev-skill-content-"));
   const repositoryRoot = path.join(root, "repo");
+  const home = path.join(root, "home");
   const skillPath = path.join(repositoryRoot, SKILL_PATH);
   mkdirSync(path.dirname(skillPath), { recursive: true });
   writeFileSync(skillPath, ORIGINAL_SOURCE, "utf8");
+  // The installer links the canonical source into the user's skills
+  // directory, so the runtime reads the canonical source itself. That link is
+  // the runtime's observation of the skill, so the harness has to be able to
+  // leave it out as well as lay it down.
+  if (options.installed !== false) {
+    const installed = path.join(home, ".agents", "skills", SKILL_NAME);
+    mkdirSync(path.dirname(installed), { recursive: true });
+    symlinkSync(path.dirname(skillPath), installed, "dir");
+  }
   cpSync(
     path.resolve(import.meta.dirname, "../../rulesync.jsonc"),
     path.join(repositoryRoot, "rulesync.jsonc")
@@ -113,6 +127,7 @@ function harness(): Harness {
 
   return {
     repositoryRoot,
+    home,
     skillPath,
     restore: () => {
       restoreEnv("CODEX_EXECUTION_CONTRACT_FILE", previousContract);
@@ -128,7 +143,7 @@ function harness(): Harness {
         request(method, pathname, body, role),
         response,
         pathname,
-        { repositoryRoot }
+        { repositoryRoot, home }
       );
       let parsed: Record<string, unknown> | null = null;
       if (response.body) {
@@ -155,7 +170,7 @@ test("skill source PATCH validates, applies, and verifies the RuleSync skill pro
   try {
     const read = await h.call("GET", sourceUrl);
     assert.equal(read.status, 200);
-    assert.equal(read.body?.schema, "autodev-control-skill-content-v1");
+    assert.equal(read.body?.schema, "autodev-control-skill-content-v2");
     assert.equal(read.body?.path, SKILL_PATH);
     assert.equal(read.body?.content, ORIGINAL_SOURCE);
     const revision = read.body?.revision;
@@ -216,6 +231,57 @@ test("skill source PATCH validates, applies, and verifies the RuleSync skill pro
     assert.equal(readFileSync(h.skillPath, "utf8"), updatedSource);
   } finally {
     h.restore();
+  }
+});
+
+test("the skill read reports the runtime's observation of the canonical source", async () => {
+  const sourceUrl = `/control/skills/${SKILL_NAME}/content`;
+  // The audit ring is process-wide, so an earlier spec's failure for the same
+  // resource would otherwise decide what this one observes.
+  resetOperationHistoryForTests();
+  const installed = harness();
+  try {
+    const read = await installed.call("GET", sourceUrl);
+    assert.equal(read.status, 200);
+    const status = (
+      read.body?.reconciliation as {
+        status?: {
+          convergence?: string;
+          desiredGeneration?: string | null;
+          observedGeneration?: string | null;
+        };
+      }
+    )?.status;
+    // The runtime reads the canonical source itself, so it has observed this
+    // very source: the two generations are the same revision.
+    assert.equal(status?.convergence, "converged");
+    assert.equal(status?.desiredGeneration, read.body?.revision);
+    assert.equal(status?.observedGeneration, read.body?.revision);
+  } finally {
+    installed.restore();
+  }
+
+  const missing = harness({ installed: false });
+  try {
+    const read = await missing.call("GET", sourceUrl);
+    assert.equal(read.status, 200);
+    const status = (
+      read.body?.reconciliation as {
+        status?: {
+          convergence?: string;
+          desiredGeneration?: string | null;
+          observedGeneration?: string | null;
+        };
+      }
+    )?.status;
+    // Without the installed link the runtime is running something else, so
+    // the read says the observation is unknown rather than claiming the two
+    // agree.
+    assert.equal(status?.convergence, "not-observed");
+    assert.equal(status?.desiredGeneration, read.body?.revision);
+    assert.equal(status?.observedGeneration, null);
+  } finally {
+    missing.restore();
   }
 });
 
