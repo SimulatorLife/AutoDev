@@ -170,6 +170,7 @@ export type PlaytestVisualActionAdmission =
 
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
+const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const FRAME_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const TEXT_CONTROL_ROLES = new Set<PlaytestVisualControlRole>([
   "textbox",
@@ -383,7 +384,7 @@ export function assertPlaytestVisualAction(
   }
   if (
     typeof value.workspaceId !== "string" ||
-    !/^[^/\s]+\/[^/\s]+$/u.test(value.workspaceId) ||
+    !WORKSPACE_ID_PATTERN.test(value.workspaceId) ||
     typeof value.targetId !== "string" ||
     !ID_PATTERN.test(value.targetId) ||
     !isText(value.episodeId, 128) ||
@@ -521,6 +522,21 @@ export function admitPlaytestVisualAction(
   assertWorkspaceVisualPlaytestTargetApproval(input.target);
   assertPlaytestVisualObservation(input.observation, input.target);
   assertPlaytestVisualAction(input.action);
+  assertValidFreshnessBudget(input);
+  assertValidRuntimeInputCapabilities(input);
+  const reason =
+    targetGateReason(input) ??
+    inputCapabilityReason(input) ??
+    actionKindReason(input.action, input.observation);
+  if (reason !== null) {
+    return { admitted: false, reason };
+  }
+  return { admitted: true };
+}
+
+function assertValidFreshnessBudget(
+  input: PlaytestVisualActionAdmissionInput
+): void {
   if (
     !Number.isSafeInteger(input.nowMs) ||
     !Number.isSafeInteger(input.maxObservationAgeMs) ||
@@ -529,6 +545,11 @@ export function admitPlaytestVisualAction(
   ) {
     throw new TypeError("Visual action freshness budget is invalid.");
   }
+}
+
+function assertValidRuntimeInputCapabilities(
+  input: PlaytestVisualActionAdmissionInput
+): void {
   if (
     !Array.isArray(input.runtimeSupportedInputs) ||
     input.runtimeSupportedInputs.some(
@@ -542,14 +563,20 @@ export function admitPlaytestVisualAction(
   ) {
     throw new TypeError("Runtime visual input capabilities are invalid.");
   }
+}
+
+/** Target, session, origin, freshness and viewport gates, in admission order. */
+function targetGateReason(
+  input: PlaytestVisualActionAdmissionInput
+): PlaytestVisualActionAdmissionReason | null {
   if (input.target.revokedAt !== null) {
-    return { admitted: false, reason: "target-revoked" };
+    return "target-revoked";
   }
   if (
     input.target.entryRequirements !== "none" ||
     input.target.controlTimingClass === "continuous"
   ) {
-    return { admitted: false, reason: "unsupported-target" };
+    return "unsupported-target";
   }
   if (
     input.action.workspaceId !== input.observation.workspaceId ||
@@ -558,91 +585,126 @@ export function admitPlaytestVisualAction(
     input.target.workspaceId !== input.observation.workspaceId ||
     input.target.targetId !== input.observation.targetId
   ) {
-    return { admitted: false, reason: "session-mismatch" };
+    return "session-mismatch";
   }
   if (!input.target.allowedOrigins.includes(input.currentOrigin)) {
-    return { admitted: false, reason: "origin-not-approved" };
+    return "origin-not-approved";
   }
   if (input.currentOrigin !== input.observation.origin) {
-    return { admitted: false, reason: "stale-observation" };
+    return "stale-observation";
   }
   if (input.action.observationId !== input.observation.observationId) {
-    return { admitted: false, reason: "stale-observation" };
+    return "stale-observation";
   }
   const age = input.nowMs - Date.parse(input.observation.capturedAt);
   if (age < 0 || age > input.maxObservationAgeMs) {
-    return { admitted: false, reason: "stale-observation" };
+    return "stale-observation";
   }
   if (!sameViewport(input.currentViewport, input.observation.viewport)) {
-    return { admitted: false, reason: "viewport-changed" };
+    return "viewport-changed";
   }
-  if (!input.target.inputCapabilities.includes(actionInput(input.action))) {
-    return { admitted: false, reason: "input-not-approved" };
-  }
-  if (!input.runtimeSupportedInputs.includes(actionInput(input.action))) {
-    return { admitted: false, reason: "input-unsupported" };
-  }
-  if (input.action.kind === "activate-control") {
-    const activateAction = input.action;
-    const control = input.observation.controls.find(
-      ({ controlId }) => controlId === activateAction.controlId
-    );
-    if (!control || !control.enabled) {
-      return { admitted: false, reason: "control-unavailable" };
-    }
-    if (control.inputKind !== "none" || TEXT_CONTROL_ROLES.has(control.role)) {
-      return { admitted: false, reason: "sensitive-control" };
-    }
-  }
-  if (input.action.kind === "pointer-click") {
-    if (input.action.frameArtifactId !== input.observation.frame.artifactId) {
-      return { admitted: false, reason: "frame-mismatch" };
-    }
-    if (
-      input.action.x < 0 ||
-      input.action.y < 0 ||
-      input.action.x >= input.observation.viewport.width ||
-      input.action.y >= input.observation.viewport.height
-    ) {
-      return { admitted: false, reason: "coordinate-out-of-bounds" };
-    }
-    const control = controlAt(
-      input.observation,
-      input.action.x,
-      input.action.y
-    );
-    if (control && !control.enabled) {
-      return { admitted: false, reason: "control-unavailable" };
-    }
-    if (control?.inputKind !== undefined && control.inputKind !== "none") {
-      return { admitted: false, reason: "sensitive-control" };
-    }
-  }
-  if (input.action.kind === "key-press") {
-    const focused = input.observation.controls.find(({ focused }) => focused);
-    if (
-      focused?.inputKind === "password" ||
-      focused?.inputKind === "text-entry"
-    ) {
-      return { admitted: false, reason: "text-entry-not-supported" };
-    }
-  }
-  return { admitted: true };
+  return null;
 }
+
+/** Granted-input gates: the target grant first, then the live driver support. */
+function inputCapabilityReason(
+  input: PlaytestVisualActionAdmissionInput
+): PlaytestVisualActionAdmissionReason | null {
+  const requiredInput = actionInput(input.action);
+  if (!input.target.inputCapabilities.includes(requiredInput)) {
+    return "input-not-approved";
+  }
+  if (!input.runtimeSupportedInputs.includes(requiredInput)) {
+    return "input-unsupported";
+  }
+  return null;
+}
+
+/** Action-kind gates; each kind owns its own control, frame and focus checks. */
+function actionKindReason(
+  action: PlaytestVisualAction,
+  observation: PlaytestVisualObservation
+): PlaytestVisualActionAdmissionReason | null {
+  if (action.kind === "activate-control") {
+    return activateControlReason(action, observation);
+  }
+  if (action.kind === "pointer-click") {
+    return pointerClickReason(action, observation);
+  }
+  if (action.kind === "key-press") {
+    return keyPressReason(observation);
+  }
+  return null;
+}
+
+function activateControlReason(
+  action: Extract<PlaytestVisualAction, { readonly kind: "activate-control" }>,
+  observation: PlaytestVisualObservation
+): PlaytestVisualActionAdmissionReason | null {
+  const control = observation.controls.find(
+    ({ controlId }) => controlId === action.controlId
+  );
+  if (!control || !control.enabled) {
+    return "control-unavailable";
+  }
+  if (control.inputKind !== "none" || TEXT_CONTROL_ROLES.has(control.role)) {
+    return "sensitive-control";
+  }
+  return null;
+}
+
+function pointerClickReason(
+  action: Extract<PlaytestVisualAction, { readonly kind: "pointer-click" }>,
+  observation: PlaytestVisualObservation
+): PlaytestVisualActionAdmissionReason | null {
+  if (action.frameArtifactId !== observation.frame.artifactId) {
+    return "frame-mismatch";
+  }
+  if (
+    action.x < 0 ||
+    action.y < 0 ||
+    action.x >= observation.viewport.width ||
+    action.y >= observation.viewport.height
+  ) {
+    return "coordinate-out-of-bounds";
+  }
+  const control = controlAt(observation, action.x, action.y);
+  if (control && !control.enabled) {
+    return "control-unavailable";
+  }
+  if (control?.inputKind !== undefined && control.inputKind !== "none") {
+    return "sensitive-control";
+  }
+  return null;
+}
+
+function keyPressReason(
+  observation: PlaytestVisualObservation
+): PlaytestVisualActionAdmissionReason | null {
+  const focusedControl = observation.controls.find(
+    ({ focused: isFocused }) => isFocused
+  );
+  if (
+    focusedControl?.inputKind === "password" ||
+    focusedControl?.inputKind === "text-entry"
+  ) {
+    return "text-entry-not-supported";
+  }
+  return null;
+}
+
+/** The input device each action kind needs, so grants can name one. */
+const ACTION_INPUT_BY_KIND: Readonly<
+  Record<PlaytestVisualAction["kind"], "keyboard" | "pointer" | "gamepad">
+> = {
+  "activate-control": "pointer",
+  "pointer-click": "pointer",
+  "key-press": "keyboard",
+  "gamepad-press": "gamepad"
+};
 
 function actionInput(
   action: PlaytestVisualAction
 ): "keyboard" | "pointer" | "gamepad" {
-  switch (action.kind) {
-    case "activate-control":
-    case "pointer-click": {
-      return "pointer";
-    }
-    case "key-press": {
-      return "keyboard";
-    }
-    case "gamepad-press": {
-      return "gamepad";
-    }
-  }
+  return ACTION_INPUT_BY_KIND[action.kind];
 }

@@ -23,6 +23,10 @@ function rotr(n: number, x: number): number {
   return (x >>> n) | (x << (32 - n));
 }
 
+function hex(value: number): string {
+  return value.toString(16).padStart(8, "0");
+}
+
 export function sha256Hex(input: string | Uint8Array): string {
   const bytes =
     typeof input === "string" ? new TextEncoder().encode(input) : input;
@@ -102,6 +106,5 @@ export function sha256Hex(input: string | Uint8Array): string {
     h7 = (h7 + h) >>> 0;
   }
 
-  const hex = (val: number): string => val.toString(16).padStart(8, "0");
   return `${hex(h0)}${hex(h1)}${hex(h2)}${hex(h3)}${hex(h4)}${hex(h5)}${hex(h6)}${hex(h7)}`;
 }

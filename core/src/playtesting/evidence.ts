@@ -326,13 +326,20 @@ const REVIEW_GROUNDING_STOP_WORDS = new Set([
   "words"
 ]);
 
+const GROUNDING_WORD_SEPARATOR = /[^a-z\d]+/u;
+/**
+ * A 40- or 64-hex value is a hash the packet already carries, not a word a
+ * review can be grounded in.
+ */
+const HASH_LIKE_VALUE_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
+
 function groundingWords(value: string): Set<string> {
   return new Set(
     value
       .normalize("NFKD")
       .toLowerCase()
       .replaceAll(/[\u0300-\u036F]/gu, "")
-      .split(/[^a-z\d]+/u)
+      .split(GROUNDING_WORD_SEPARATOR)
       .filter(
         (word) => word.length >= 3 && !REVIEW_GROUNDING_STOP_WORDS.has(word)
       )
@@ -341,10 +348,7 @@ function groundingWords(value: string): Set<string> {
 
 function addGroundingWords(target: Set<string>, value: unknown): void {
   if (typeof value !== "string" && typeof value !== "number") return;
-  if (
-    typeof value === "string" &&
-    /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu.test(value)
-  ) {
+  if (typeof value === "string" && HASH_LIKE_VALUE_PATTERN.test(value)) {
     return;
   }
   for (const word of groundingWords(String(value))) target.add(word);
@@ -460,13 +464,10 @@ function groundingWordsForLocators(
     for (const window of packet.selectedWindows) {
       for (const step of window.steps) {
         if (
-          locator.kind === "event" &&
-          step.events.some((event) => event.eventId === locator.id)
-        ) {
-          stepGroundingWords(words, step);
-        } else if (
-          locator.kind === "frame" &&
-          step.frameRefs.some((frame) => frame.id === locator.id)
+          (locator.kind === "event" &&
+            step.events.some((event) => event.eventId === locator.id)) ||
+          (locator.kind === "frame" &&
+            step.frameRefs.some((frame) => frame.id === locator.id))
         ) {
           stepGroundingWords(words, step);
         }

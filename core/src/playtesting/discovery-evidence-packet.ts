@@ -291,13 +291,21 @@ export interface PlaytestDiscoveryEvidenceWindow {
   readonly steps: readonly PlaytestDiscoveryEvidenceWindowStep[];
 }
 
+/**
+ * The session context every discovery packet carries.
+ *
+ * A discovery session reviews one session rather than one analyst review, so
+ * the packet states that scope once instead of naming a review selection.
+ */
+const VISUAL_DISCOVERY_SESSION_LEVEL = "visual-discovery-session-level";
+
 export interface PlaytestDiscoveryEvidenceSessionContext {
-  readonly status: "visual-discovery-session-level";
-  readonly reason: "visual-discovery-session-level";
+  readonly status: typeof VISUAL_DISCOVERY_SESSION_LEVEL;
+  readonly reason: typeof VISUAL_DISCOVERY_SESSION_LEVEL;
   readonly batchId: string;
   readonly reviewSelection: {
     readonly status: "unavailable";
-    readonly reason: "visual-discovery-session-level";
+    readonly reason: typeof VISUAL_DISCOVERY_SESSION_LEVEL;
   };
 }
 
@@ -700,12 +708,12 @@ function buildDiscoveryPacketValue(input: {
     missingReasons: data.episode.missingReasons,
     sourceStepCount: data.episode.stepCount,
     sessionContext: {
-      status: "visual-discovery-session-level",
-      reason: "visual-discovery-session-level",
+      status: VISUAL_DISCOVERY_SESSION_LEVEL,
+      reason: VISUAL_DISCOVERY_SESSION_LEVEL,
       batchId: manifest.batchId,
       reviewSelection: {
         status: "unavailable",
-        reason: "visual-discovery-session-level"
+        reason: VISUAL_DISCOVERY_SESSION_LEVEL
       }
     },
     chronologicalSummary: data.chronologicalSummary.trim(),
@@ -1033,41 +1041,20 @@ const DISCOVERY_PACKET_V2_KEYS = new Set([
 export function assertPlaytestDiscoveryEvidencePacket(
   value: unknown
 ): asserts value is PlaytestDiscoveryEvidencePacket {
-  const isV3 =
-    isRecord(value) &&
-    value.schema === PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V3;
-  const isV2 =
-    isRecord(value) &&
-    value.schema === PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2;
-  const hasAreasOfFocus = isRecord(value) && "areasOfFocus" in value;
-  const packetKeys =
-    isV3 || isV2
-      ? DISCOVERY_PACKET_V2_KEYS
-      : hasAreasOfFocus
-        ? DISCOVERY_PACKET_V1_KEYS
-        : DISCOVERY_PACKET_V1_HISTORICAL_KEYS;
+  const flags = discoveryPacketFlags(value);
   if (
     !isRecord(value) ||
     (value.schema !== PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA &&
-      !isV2 &&
-      !isV3) ||
-    Object.keys(value).length !== packetKeys.size ||
-    Object.keys(value).some((key) => !packetKeys.has(key))
+      !flags.isV2 &&
+      !flags.isV3) ||
+    Object.keys(value).length !== flags.packetKeys.size ||
+    Object.keys(value).some((key) => !flags.packetKeys.has(key))
   ) {
     throw new TypeError(
       "Discovery evidence packet has unknown or missing fields."
     );
   }
-  if (value.analysisKind !== "discovery") {
-    throw new TypeError(
-      'Discovery evidence packet must declare analysisKind="discovery".'
-    );
-  }
-  if (value.visibleEvidenceOnly !== true) {
-    throw new TypeError(
-      "Discovery evidence packet must keep player-visible evidence only."
-    );
-  }
+  assertDiscoveryPacketKind(value);
   if (
     !isPlaytestEvidencePacketId(value.packetId) ||
     !isText(value.packetHash) ||
@@ -1113,7 +1100,7 @@ export function assertPlaytestDiscoveryEvidencePacket(
       "Discovery evidence packet identity or budget is invalid."
     );
   }
-  if (isV2 || isV3) {
+  if (flags.isV2 || flags.isV3) {
     assertPlaytestPlayerDebrief(value.playerSelfReport);
     assertPlayerSelfReportFrameReferences(
       value.playerSelfReport as PlaytestPlayerDebriefV1,
@@ -1125,15 +1112,7 @@ export function assertPlaytestDiscoveryEvidencePacket(
   assertPolicy(value.policy);
   assertModel(value.model);
   assertSessionContext(value.sessionContext, value.batchId);
-  if (
-    "areasOfFocus" in value &&
-    value.areasOfFocus !== null &&
-    !isText(value.areasOfFocus, PLAYTESTS_DISCOVERY_AREAS_OF_FOCUS_MAX_LENGTH)
-  ) {
-    throw new TypeError(
-      "Discovery evidence packet areasOfFocus is outside its bounded focus contract."
-    );
-  }
+  assertDiscoveryPacketAreasOfFocus(value);
   if (
     !Array.isArray(value.stepEvidence) ||
     !Array.isArray(value.frames) ||
@@ -1143,61 +1122,22 @@ export function assertPlaytestDiscoveryEvidencePacket(
       "Discovery evidence packet step/frame/omitted arrays are malformed."
     );
   }
-  const stepIds = new Set<number>();
-  for (const step of value.stepEvidence) {
-    if (isV3) {
-      assertStepEvidence(step);
-    } else {
-      assertStepEvidenceV2(step);
-    }
-    if (stepIds.has(step.step)) {
-      throw new TypeError(
-        "Discovery evidence packet step evidence contains a duplicate step ordinal."
-      );
-    }
-    stepIds.add(step.step);
-  }
-  if (!isV3 && value.stepEvidence.length !== value.sourceStepCount) {
-    throw new RangeError(
-      "Discovery evidence packet step record count does not equal sourceStepCount."
-    );
-  }
-  const frameIds = new Set<string>();
-  for (const frame of value.frames) {
-    assertFrame(frame);
-    if (frameIds.has(frame.frameId)) {
-      throw new TypeError(
-        "Discovery evidence packet frames contain a duplicate frameId."
-      );
-    }
-    frameIds.add(frame.frameId);
-  }
-  for (const omitted of value.omittedFrames) {
-    if (
-      !isRecord(omitted) ||
-      Object.keys(omitted).length !== 3 ||
-      Object.keys(omitted).some(
-        (key) => !["frameId", "step", "reason"].includes(key)
-      ) ||
-      !isText(omitted.frameId) ||
-      !isCount(omitted.step) ||
-      !PLAYTESTS_DISCOVERY_OMISSION_REASONS.includes(
-        omitted.reason as PlaytestDiscoveryOmissionReason
-      ) ||
-      frameIds.has(omitted.frameId)
-    ) {
-      throw new TypeError(
-        "Discovery evidence packet omitted-frame record is malformed."
-      );
-    }
-  }
+  assertDiscoveryPacketStepRecords(
+    value.stepEvidence as readonly { readonly step: number }[],
+    flags.isV3,
+    value.sourceStepCount
+  );
+  const frameIds = assertDiscoveryPacketFrameRecords(
+    value.frames as readonly PlaytestDiscoveryEvidenceFrame[]
+  );
+  assertDiscoveryPacketOmittedFrameRecords(value.omittedFrames, frameIds);
   assertPacketArtifactProvenance(
     value as unknown as PlaytestEvidencePacketArtifactView
   );
   assertOmittedPacketArtifacts(
     value as unknown as PlaytestEvidencePacketOmittedArtifactView
   );
-  if (isV3) {
+  if (flags.isV3) {
     assertFrameCitationBinding({
       stepEvidence:
         value.stepEvidence as readonly PlaytestDiscoveryStepEvidence[],
@@ -1216,10 +1156,161 @@ export function assertPlaytestDiscoveryEvidencePacket(
     value.selectedWindows as readonly PlaytestDiscoveryEvidenceWindow[];
   const omittedWindows =
     value.omittedWindows as readonly PlaytestOmittedEvidenceWindow[];
-  for (const window of selectedWindows) {
+  assertDiscoveryPacketSelectedWindows(selectedWindows);
+  assertDiscoveryPacketOmittedWindows(omittedWindows);
+  assertDiscoveryPacketWindowPartition(
+    selectedWindows,
+    omittedWindows,
+    value.sourceStepCount
+  );
+  if (flags.isV3) {
+    // A v3 packet carries the steps it selected: the step records and the
+    // windows cite the same evidence, and the steps the packet left out stay
+    // recorded in the omitted windows.
+    assertDiscoveryPacketStepWindowMatch(
+      selectedWindows,
+      value.stepEvidence as readonly { readonly step: number }[]
+    );
+  }
+  assertUniqueSelectedEventIds(selectedWindows);
+  const finalBytes = packetContentBytes(value);
+  if (finalBytes > Math.min(value.tokenBudget, 262_144)) {
+    throw new RangeError(
+      "Discovery evidence packet exceeds its window/token budget."
+    );
+  }
+}
+
+/** Which packet schema a value claims, and the field set that schema allows. */
+interface DiscoveryPacketFlags {
+  readonly isV2: boolean;
+  readonly isV3: boolean;
+  readonly packetKeys: ReadonlySet<string>;
+}
+
+function discoveryPacketFlags(value: unknown): DiscoveryPacketFlags {
+  const isV3 =
+    isRecord(value) &&
+    value.schema === PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V3;
+  const isV2 =
+    isRecord(value) &&
+    value.schema === PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2;
+  const hasAreasOfFocus = isRecord(value) && "areasOfFocus" in value;
+  const packetKeys =
+    isV3 || isV2
+      ? DISCOVERY_PACKET_V2_KEYS
+      : hasAreasOfFocus
+        ? DISCOVERY_PACKET_V1_KEYS
+        : DISCOVERY_PACKET_V1_HISTORICAL_KEYS;
+  return { isV2, isV3, packetKeys };
+}
+
+function assertDiscoveryPacketKind(value: Record<string, unknown>): void {
+  if (value.analysisKind !== "discovery") {
+    throw new TypeError(
+      'Discovery evidence packet must declare analysisKind="discovery".'
+    );
+  }
+  if (value.visibleEvidenceOnly !== true) {
+    throw new TypeError(
+      "Discovery evidence packet must keep player-visible evidence only."
+    );
+  }
+}
+
+function assertDiscoveryPacketAreasOfFocus(
+  value: Record<string, unknown>
+): void {
+  if (
+    "areasOfFocus" in value &&
+    value.areasOfFocus !== null &&
+    !isText(value.areasOfFocus, PLAYTESTS_DISCOVERY_AREAS_OF_FOCUS_MAX_LENGTH)
+  ) {
+    throw new TypeError(
+      "Discovery evidence packet areasOfFocus is outside its bounded focus contract."
+    );
+  }
+}
+
+function assertDiscoveryPacketStepRecords(
+  steps: readonly { readonly step: number }[],
+  isV3: boolean,
+  sourceStepCount: number
+): void {
+  const stepIds = new Set<number>();
+  for (const step of steps) {
+    if (isV3) {
+      assertStepEvidence(step);
+    } else {
+      assertStepEvidenceV2(step);
+    }
+    if (stepIds.has(step.step)) {
+      throw new TypeError(
+        "Discovery evidence packet step evidence contains a duplicate step ordinal."
+      );
+    }
+    stepIds.add(step.step);
+  }
+  if (!isV3 && steps.length !== sourceStepCount) {
+    throw new RangeError(
+      "Discovery evidence packet step record count does not equal sourceStepCount."
+    );
+  }
+}
+
+function assertDiscoveryPacketFrameRecords(
+  frames: readonly PlaytestDiscoveryEvidenceFrame[]
+): Set<string> {
+  const frameIds = new Set<string>();
+  for (const frame of frames) {
+    assertFrame(frame);
+    if (frameIds.has(frame.frameId)) {
+      throw new TypeError(
+        "Discovery evidence packet frames contain a duplicate frameId."
+      );
+    }
+    frameIds.add(frame.frameId);
+  }
+  return frameIds;
+}
+
+function assertDiscoveryPacketOmittedFrameRecords(
+  omittedFrames: readonly unknown[],
+  frameIds: ReadonlySet<string>
+): void {
+  for (const omitted of omittedFrames) {
+    if (
+      !isRecord(omitted) ||
+      Object.keys(omitted).length !== 3 ||
+      Object.keys(omitted).some(
+        (key) => !["frameId", "step", "reason"].includes(key)
+      ) ||
+      !isText(omitted.frameId) ||
+      !isCount(omitted.step) ||
+      !PLAYTESTS_DISCOVERY_OMISSION_REASONS.includes(
+        omitted.reason as PlaytestDiscoveryOmissionReason
+      ) ||
+      frameIds.has(omitted.frameId)
+    ) {
+      throw new TypeError(
+        "Discovery evidence packet omitted-frame record is malformed."
+      );
+    }
+  }
+}
+
+function assertDiscoveryPacketSelectedWindows(
+  windows: readonly PlaytestDiscoveryEvidenceWindow[]
+): void {
+  for (const window of windows) {
     assertSelectedWindow(window);
   }
-  for (const window of omittedWindows) {
+}
+
+function assertDiscoveryPacketOmittedWindows(
+  windows: readonly unknown[]
+): void {
+  for (const window of windows) {
     if (
       !isRecord(window) ||
       Object.keys(window).length !== 3 ||
@@ -1236,6 +1327,13 @@ export function assertPlaytestDiscoveryEvidencePacket(
       );
     }
   }
+}
+
+function assertDiscoveryPacketWindowPartition(
+  selectedWindows: readonly PlaytestDiscoveryEvidenceWindow[],
+  omittedWindows: readonly PlaytestOmittedEvidenceWindow[],
+  sourceStepCount: number
+): void {
   const partition = [
     ...selectedWindows.map((window) => ({
       kind: "selected" as const,
@@ -1250,43 +1348,34 @@ export function assertPlaytestDiscoveryEvidencePacket(
   ].sort((left, right) => left.startStep - right.startStep);
   let cursor = 0;
   for (const range of partition) {
-    if (
-      range.startStep !== cursor ||
-      range.endStep >= (value.sourceStepCount as number)
-    ) {
+    if (range.startStep !== cursor || range.endStep >= sourceStepCount) {
       throw new TypeError(
         "Discovery evidence packet selected and omitted windows do not partition the source trace."
       );
     }
     cursor = range.endStep + 1;
   }
-  if (cursor !== value.sourceStepCount) {
+  if (cursor !== sourceStepCount) {
     throw new TypeError(
       "Discovery evidence packet leaves source steps unaccounted."
     );
   }
-  if (isV3) {
-    // A v3 packet carries the steps it selected: the step records and the
-    // windows cite the same evidence, and the steps the packet left out stay
-    // recorded in the omitted windows.
-    const selectedSteps = selectedWindows.flatMap((window) =>
-      window.steps.map((step) => step.step)
-    );
-    const recordedSteps = value.stepEvidence.map((step) => step.step);
-    if (
-      recordedSteps.length !== selectedSteps.length ||
-      recordedSteps.some((step, index) => step !== selectedSteps[index])
-    ) {
-      throw new TypeError(
-        "Discovery evidence packet step records do not match the selected windows."
-      );
-    }
-  }
-  assertUniqueSelectedEventIds(selectedWindows);
-  const finalBytes = packetContentBytes(value);
-  if (finalBytes > Math.min(value.tokenBudget, 262_144)) {
-    throw new RangeError(
-      "Discovery evidence packet exceeds its window/token budget."
+}
+
+function assertDiscoveryPacketStepWindowMatch(
+  selectedWindows: readonly PlaytestDiscoveryEvidenceWindow[],
+  stepEvidence: readonly { readonly step: number }[]
+): void {
+  const selectedSteps = selectedWindows.flatMap((window) =>
+    window.steps.map((step) => step.step)
+  );
+  const recordedSteps = stepEvidence.map((step) => step.step);
+  if (
+    recordedSteps.length !== selectedSteps.length ||
+    recordedSteps.some((step, index) => step !== selectedSteps[index])
+  ) {
+    throw new TypeError(
+      "Discovery evidence packet step records do not match the selected windows."
     );
   }
 }
@@ -1396,8 +1485,8 @@ function assertSessionContext(
     Object.keys(value).some(
       (key) => !["status", "reason", "batchId", "reviewSelection"].includes(key)
     ) ||
-    value.status !== "visual-discovery-session-level" ||
-    value.reason !== "visual-discovery-session-level" ||
+    value.status !== VISUAL_DISCOVERY_SESSION_LEVEL ||
+    value.reason !== VISUAL_DISCOVERY_SESSION_LEVEL ||
     value.batchId !== expectedBatchId
   ) {
     throw new TypeError(
@@ -1409,7 +1498,7 @@ function assertSessionContext(
     !isRecord(review) ||
     Object.keys(review).length !== 2 ||
     review.status !== "unavailable" ||
-    review.reason !== "visual-discovery-session-level"
+    review.reason !== VISUAL_DISCOVERY_SESSION_LEVEL
   ) {
     throw new TypeError(
       "Discovery evidence packet review selection is malformed."
