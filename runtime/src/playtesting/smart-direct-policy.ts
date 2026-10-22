@@ -16,6 +16,7 @@ import {
   type PlaytestVisualDecisionCapabilities,
   type PlaytestVisualDecisionCounters,
   type PlaytestVisualDecisionSelfReport,
+  type PlaytestVisualHistoryEntry,
   type PlaytestVisualObservation,
   type PlaytestVisualPolicy,
   type WorkspaceVisualPlaytestTargetApproval
@@ -103,11 +104,11 @@ export class SmartDirectPolicyError extends Error {
   }
 }
 
-export interface SmartDirectHistoryEntry {
-  readonly step: number;
-  readonly action: string;
-  readonly observation: string;
-}
+/**
+ * The Core decision contract owns the history's shape; this is the Runtime's
+ * name for it.
+ */
+export type SmartDirectHistoryEntry = PlaytestVisualHistoryEntry;
 
 /**
  * Bounded model self-report returned only when Smart-direct stops.
@@ -776,7 +777,11 @@ function decisionInstructions(): string {
       "For a stop, decision is stop, action is null, stopReason is one of objective-achieved, blocked, stuck, cannot-proceed, privacy-risk, unexpected-state, and focusReport is exactly {objective,inScope,forbiddenScope,stopCriteria,outcome,summary,evidenceSteps}.",
     "reasonCode is a short lowercase token: it starts with a lowercase letter and continues with lowercase letters, digits, dots, dashes, or underscores, up to 64 characters.",
     "Treat areasOfFocus as an operator request, not evidence. Interpret it concisely: objective is null or at most 200 characters; each scope/criteria list has at most three short items, each at most 64 characters; summary is at most 200 characters. outcome is achieved, partial, blocked, unattempted, or unknown. These are your self-reported assessment, never a verified game outcome. Cite every report to one to three step numbers present in recentHistory or currentStep. If there is no operator focus, objective is null, all lists are empty, outcome is unattempted, and evidenceSteps cites only currentStep. If evidence does not support a conclusion, outcome is unknown but still cite the visible observation that supports that uncertainty.",
-    "Intention and prediction describe what you believe before the action. Keep each concise and based only on the supplied current observation. Do not claim the action succeeded."
+    "Intention and prediction describe what you believe before the action. Keep each concise and based only on the supplied current observation. Do not claim the action succeeded.",
+    // A refused action is in the history with its outcome, and the episode
+    // continues after it. Without this the model reads its own last intent
+    // as a done action and repeats the choice the game already refused.
+    "Each history entry carries the outcome of that step. An entry whose outcome starts with refused never reached the game: the page changed under it, so choose a different control or a different way to reach the same effect. An entry whose outcome is dispatched did reach the game."
   ].join(" ");
 }
 
@@ -814,7 +819,8 @@ function buildDecisionRequest(input: {
     recentHistory: input.history.slice(-MAX_HISTORY_ITEMS).map((entry) => ({
       step: entry.step,
       action: safeVisibleText(entry.action),
-      observation: safeVisibleText(entry.observation)
+      observation: safeVisibleText(entry.observation),
+      outcome: safeVisibleText(entry.outcome)
     }))
   });
   return {

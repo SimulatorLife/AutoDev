@@ -31,6 +31,7 @@ import {
   PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
   PLAYTEST_VISUAL_ACTION_SCHEMA,
   PLAYTEST_VISUAL_OBSERVATION_SCHEMA,
+  playtestActionRefusalMeansPageMoved,
   type PlaytestAdapterAssignmentManifest,
   type PlaytestAdapterBatch,
   type PlaytestAdapterBranchOperation,
@@ -121,6 +122,7 @@ import {
   type PlaytestVisualBatchAssignment,
   type PlaytestVisualDecision,
   playtestVisualEpisodeRecordId,
+  type PlaytestVisualHistoryEntry,
   type PlaytestVisualObservation,
   type PlaytestVisualPolicy as CorePlaytestVisualPolicy,
   type PlaytestVisualPolicyId,
@@ -4714,7 +4716,7 @@ function visualEpisodeDisposition(exit: VisualEpisodeExit): {
     case PLAYTEST_VISUAL_ACTION_REFUSED_KIND: {
       return {
         status: "crashed",
-        termination: { reason: "unknown", step: exit.step },
+        termination: { reason: "action-refused", step: exit.step },
         missingReason: "unobserved"
       };
     }
@@ -4973,6 +4975,142 @@ function visualStopExit(
 }
 
 /**
+ * What the episode did with one action.
+ *
+ * "dispatched" is the action that reached the game, "page-moved" is the
+ * refusal that says the page no longer offers what the observation promised,
+ * and "refused" is the refusal that is final.
+ */
+type VisualActOutcome =
+  | { readonly status: "dispatched" }
+  | { readonly status: "page-moved" }
+  | { readonly status: "refused"; readonly exit: VisualEpisodeExit };
+
+/**
+ * Dispatches one action and records what it did.
+ *
+ * The refusal is the interesting part. A refusal that says the page moved is
+ * not the end of the episode: the player looks again and chooses with the
+ * refusal in its history. Every other refusal is final, and the episode ends
+ * with the reason it was refused. What bounds the retries is the budgets the
+ * operator approved -- the per-episode step cap, the request and token
+ * budgets, and the wall-time budget -- and not a retry count of the
+ * Runtime's own.
+ */
+async function actVisualStep(input: {
+  readonly step: number;
+  readonly decision: PlaytestVisualDecision;
+  readonly action: PlaytestVisualAction;
+  readonly observation: PlaytestVisualObservation;
+  readonly driver: PlaytestVisualEpisodeDriver;
+  readonly policy: PlaytestVisualPolicy;
+  readonly artifacts: PlaytestArtifactStore;
+  readonly episodeId: string;
+  readonly episodeStartedAt: string;
+  readonly persistedRevision: number;
+  readonly history: PlaytestVisualHistoryEntry[];
+  readonly traceSteps: PlaytestEvidenceTraceStep[];
+  readonly capturedFrames: readonly PlaytestArtifactReference[];
+  readonly persistRevision: (
+    overrides: VisualEpisodeRevisionOverrides,
+    view: VisualEpisodeView
+  ) => Promise<PlaytestEpisode>;
+}): Promise<{
+  readonly outcome: VisualActOutcome;
+  readonly playerDebrief: PlaytestPlayerDebriefV1;
+  readonly stepCount: number;
+}> {
+  const receipt = await input.driver.act(input.action);
+  input.history.push({
+    step: input.step,
+    action: JSON.stringify(input.action),
+    observation: JSON.stringify({
+      phase: input.observation.phaseEvidence,
+      controls: input.observation.controls.map((control) => control.name)
+    }),
+    outcome:
+      receipt.status === "dispatched"
+        ? "dispatched"
+        : "refused: " + receipt.reason
+  });
+  input.traceSteps.push({
+    step: input.step,
+    phaseId: input.observation.phaseEvidence,
+    revisionBefore: input.step,
+    revisionAfter: input.step + 1,
+    observationVisibility: "visual-only",
+    visibleObservation: visualVisibleObservation(input.observation),
+    legalActionIds: visualLegalActionIds(input.observation),
+    selectedActionId: visualSelectedActionId(input.action),
+    preActionPrediction: {
+      intention: input.decision.intention ?? "",
+      predictedVisibleEffect: input.decision.predictedVisibleEffect ?? "",
+      reasonCode: input.decision.reasonCode
+    },
+    authoritativeOutcome: {
+      status: receipt.status,
+      actionKind: input.action.kind,
+      observationId: input.action.observationId,
+      actionDetail: visualActionDetail(input.action),
+      dispatchedAt:
+        receipt.status === "dispatched" ? receipt.dispatchedAt : null,
+      receiptAt: new Date().toISOString(),
+      refusalReason: receipt.status === "refused" ? receipt.reason : null
+    },
+    events: [],
+    frameRefs: [{ id: input.observation.frame.artifactId, kind: "frame" }]
+  });
+  const playerDebrief = playerDebriefCheckpoint(
+    input.step,
+    input.decision,
+    input.capturedFrames
+  );
+  const stepCount = input.traceSteps.length;
+  const progressArtifact = input.artifacts.writeWindow({
+    // The trace window is named for the revision the episode writes next,
+    // so the windows are named in the order the episode wrote them.
+    artifactId:
+      "trace-" + input.episodeId + "-r" + String(input.persistedRevision + 1),
+    entries: input.traceSteps
+  }).reference;
+  await input.persistRevision(
+    {
+      status: "started",
+      termination: { reason: "unknown", step: null },
+      completionCounts: visualCompletionCounts("started", true),
+      trace: {
+        id: progressArtifact.artifactId,
+        kind: PLAYTEST_REPLAY_SEGMENT_KIND
+      },
+      completedAt: null,
+      completeness: "unknown",
+      missingReasons: [],
+      policyInferenceMs: input.policy.usage().lastLatencyMs ?? 0,
+      simulationWallMs: Date.now() - Date.parse(input.episodeStartedAt)
+    },
+    { playerDebrief, stepCount }
+  );
+  if (receipt.status === "dispatched") {
+    return { outcome: { status: "dispatched" }, playerDebrief, stepCount };
+  }
+  if (playtestActionRefusalMeansPageMoved(receipt.reason)) {
+    return { outcome: { status: "page-moved" }, playerDebrief, stepCount };
+  }
+  return {
+    outcome: {
+      status: "refused",
+      exit: {
+        kind: PLAYTEST_VISUAL_ACTION_REFUSED_KIND,
+        reason: receipt.reason,
+        step: input.step
+      }
+    },
+    playerDebrief,
+    stepCount
+  };
+}
+
+/**
  * Run one visual episode's step loop.
  *
  * The steps are deliberately sequential. Each step observes the game as the
@@ -4998,7 +5136,7 @@ async function runVisualEpisodeSteps(input: {
     view: VisualEpisodeView
   ) => Promise<PlaytestEpisode>;
 }): Promise<VisualEpisodeStepOutcome> {
-  const history: { step: number; action: string; observation: string }[] = [];
+  const history: PlaytestVisualHistoryEntry[] = [];
   let exit: VisualEpisodeExit = {
     kind: PLAYTEST_VISUAL_STEP_LIMIT_KIND,
     step: null
@@ -5136,82 +5274,35 @@ async function runVisualEpisodeSteps(input: {
       break;
     }
     // eslint-disable-next-line no-await-in-loop -- the action must reach the game before the next step observes it.
-    const receipt = await input.driver.act(chosenAction);
-    history.push({
-      step,
-      action: JSON.stringify(chosenAction),
-      observation: JSON.stringify({
-        phase: obsResult.observation.phaseEvidence,
-        controls: obsResult.observation.controls.map((control) => control.name)
-      })
-    });
-    input.traceSteps.push({
-      step,
-      phaseId: obsResult.observation.phaseEvidence,
-      revisionBefore: step,
-      revisionAfter: step + 1,
-      observationVisibility: "visual-only",
-      visibleObservation: visualVisibleObservation(obsResult.observation),
-      legalActionIds: visualLegalActionIds(obsResult.observation),
-      selectedActionId: visualSelectedActionId(chosenAction),
-      preActionPrediction: {
-        intention: decision.intention ?? "",
-        predictedVisibleEffect: decision.predictedVisibleEffect ?? "",
-        reasonCode: decision.reasonCode
-      },
-      authoritativeOutcome: {
-        status: receipt.status,
-        actionKind: chosenAction.kind,
-        observationId: chosenAction.observationId,
-        actionDetail: visualActionDetail(chosenAction),
-        dispatchedAt:
-          receipt.status === "dispatched" ? receipt.dispatchedAt : null,
-        receiptAt: new Date().toISOString(),
-        refusalReason: receipt.status === "refused" ? receipt.reason : null
-      },
-      events: [],
-      frameRefs: [{ id: obsResult.observation.frame.artifactId, kind: "frame" }]
-    });
-    playerDebrief = playerDebriefCheckpoint(
+    const act = await actVisualStep({
       step,
       decision,
-      input.capturedFrames
-    );
-    if (receipt.status !== "dispatched") {
-      exit = {
-        kind: PLAYTEST_VISUAL_ACTION_REFUSED_KIND,
-        reason: receipt.reason,
-        step
-      };
+      action: chosenAction,
+      observation: obsResult.observation,
+      driver: input.driver,
+      policy: input.policy,
+      artifacts: input.artifacts,
+      episodeId: input.episodeId,
+      episodeStartedAt: input.episodeStartedAt,
+      persistedRevision: persisted.revision,
+      history,
+      traceSteps: input.traceSteps,
+      capturedFrames: input.capturedFrames,
+      persistRevision: input.persistRevision
+    });
+    playerDebrief = act.playerDebrief;
+    stepCount = act.stepCount;
+    if (act.outcome.status === "refused") {
+      exit = act.outcome.exit;
       break;
     }
-
-    stepCount = input.traceSteps.length;
-    const progressArtifact = input.artifacts.writeWindow({
-      // The trace window is named for the revision the episode writes next,
-      // so the windows are named in the order the episode wrote them.
-      artifactId:
-        "trace-" + input.episodeId + "-r" + String(persisted.revision + 1),
-      entries: input.traceSteps
-    }).reference;
-    // eslint-disable-next-line no-await-in-loop -- the revision must be persisted before the next step observes the game again.
-    await input.persistRevision(
-      {
-        status: "started",
-        termination: { reason: "unknown", step: null },
-        completionCounts: visualCompletionCounts("started", true),
-        trace: {
-          id: progressArtifact.artifactId,
-          kind: PLAYTEST_REPLAY_SEGMENT_KIND
-        },
-        completedAt: null,
-        completeness: "unknown",
-        missingReasons: [],
-        policyInferenceMs: input.policy.usage().lastLatencyMs ?? 0,
-        simulationWallMs: Date.now() - Date.parse(input.episodeStartedAt)
-      },
-      { playerDebrief, stepCount }
-    );
+    if (act.outcome.status === "page-moved") {
+      // The page moved under the observation: the driver refused to act on a
+      // control the game no longer offers as the observation promised. The
+      // episode is not over -- the player looks again and chooses with the
+      // refusal in its history.
+      continue;
+    }
   }
   return { exit, playerDebrief };
 }

@@ -83,6 +83,14 @@ export interface PlaytestVisualHistoryEntry {
   readonly action: string;
   /** A bounded summary of what the episode saw. */
   readonly observation: string;
+  /**
+   * What the episode's input did, when the action reached the page.
+   *
+   * A refused action is part of what the episode did, and a decision backend
+   * reads it to know that its last choice never reached the game: without it
+   * the backend sees only its own intent and repeats it.
+   */
+  readonly outcome: string;
 }
 
 /** One decision request, as handed to a decision backend. */

@@ -1534,6 +1534,31 @@ test("the session page names the limit that cut a truncated episode short", () =
   assert.doesNotMatch(html, /Execution status<\/dt>[^]*?Limit reached/u);
 });
 
+test("the session page says the runtime refused the action", () => {
+  const refused = {
+    ...episode(),
+    status: "crashed",
+    termination: { reason: "action-refused", step: 2 }
+  } as PlaytestEpisode;
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail(refused),
+      scope: scope({ view: "sessions", step: "2" }),
+      window: traceWindow()
+    })
+  );
+  // The episode state alone says "crashed", which is not what happened: the
+  // runtime declined to act. The badge reads the termination reason.
+  assert.match(html, /Execution status<\/dt>[^]*?Action refused/u);
+  assert.doesNotMatch(html, /Execution status<\/dt>[^]*?>Crashed</u);
+  // The page says what the refusal means and where the refused step is.
+  assert.match(html, /The runtime refused the episode/u);
+  assert.match(html, /action and ended the episode\./u);
+  assert.match(html, /data-playtesting-refused-step="2"/u);
+  // No game outcome was observed, and none is inferred.
+  assert.match(html, /no win or loss is inferred/u);
+});
+
 test("a session row says what the analyst recorded about that session", () => {
   const current = episode();
   const review = {

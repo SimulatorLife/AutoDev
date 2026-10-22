@@ -146,12 +146,29 @@ export type PlaytestVisualAction =
       readonly button: PlaytestVisualGamepadButton;
     });
 
+/**
+ * The refusal that says the observation no longer describes the page.
+ *
+ * The observation aged out, or the page moved under it: the origin, the
+ * viewport, the frame or the session is not the one the decision was taken
+ * from.
+ */
+export const PLAYTESTS_STALE_OBSERVATION_REFUSAL = "stale-observation" as const;
+
+/**
+ * The refusal that says the page no longer offers the control the
+ * observation promised.
+ *
+ * The control is gone, disabled, or no longer the same control.
+ */
+export const PLAYTESTS_CONTROL_CHANGED_REFUSAL = "control-changed" as const;
+
 export type PlaytestVisualActionAdmissionReason =
   | "unsupported-target"
   | "target-revoked"
   | "session-mismatch"
   | "origin-not-approved"
-  | "stale-observation"
+  | typeof PLAYTESTS_STALE_OBSERVATION_REFUSAL
   | "viewport-changed"
   | "input-not-approved"
   | "input-unsupported"
@@ -167,6 +184,49 @@ export type PlaytestVisualActionAdmission =
       readonly admitted: false;
       readonly reason: PlaytestVisualActionAdmissionReason;
     };
+
+/**
+ * Why the Runtime refused to dispatch an action.
+ *
+ * The admission rules above answer for the action that was asked for, and the
+ * browser driver answers for the game as it is now: the control is gone, the
+ * page needs setup before it can be played, the screen holds something the
+ * Runtime cannot redact, or the episode has spent a budget. Both owners share
+ * one vocabulary, because the episode's next move depends on which of these
+ * it is.
+ */
+export type PlaytestVisualActionRefusalReason =
+  | PlaytestVisualActionAdmissionReason
+  | "auth-or-setup-required"
+  | "sensitive-visual-unredactable"
+  | "action-budget-exhausted"
+  | "wall-time-limit"
+  | "driver-state-unavailable"
+  | typeof PLAYTESTS_CONTROL_CHANGED_REFUSAL
+  | "event-budget-exhausted";
+
+/**
+ * Whether a refusal says the page moved under the observation.
+ *
+ * Two owners answer with a refusal: the admission rules above, and the
+ * browser driver, which refuses a control that the page no longer offers as
+ * the observation promised. Both say the same thing about the episode -- the
+ * thing the policy looked at is not what the page offers now -- and both are
+ * answered by looking again: the control may still be there, somewhere else,
+ * or in a different state.
+ *
+ * Every other refusal is terminal. A refusal that says the action was not
+ * allowed, that the game needs setup, or that the episode is out of budget
+ * does not change because the page was read again.
+ */
+export function playtestActionRefusalMeansPageMoved(
+  reason: PlaytestVisualActionRefusalReason
+): boolean {
+  return (
+    reason === PLAYTESTS_CONTROL_CHANGED_REFUSAL ||
+    reason === PLAYTESTS_STALE_OBSERVATION_REFUSAL
+  );
+}
 
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
@@ -591,14 +651,14 @@ function targetGateReason(
     return "origin-not-approved";
   }
   if (input.currentOrigin !== input.observation.origin) {
-    return "stale-observation";
+    return PLAYTESTS_STALE_OBSERVATION_REFUSAL;
   }
   if (input.action.observationId !== input.observation.observationId) {
-    return "stale-observation";
+    return PLAYTESTS_STALE_OBSERVATION_REFUSAL;
   }
   const age = input.nowMs - Date.parse(input.observation.capturedAt);
   if (age < 0 || age > input.maxObservationAgeMs) {
-    return "stale-observation";
+    return PLAYTESTS_STALE_OBSERVATION_REFUSAL;
   }
   if (!sameViewport(input.currentViewport, input.observation.viewport)) {
     return "viewport-changed";

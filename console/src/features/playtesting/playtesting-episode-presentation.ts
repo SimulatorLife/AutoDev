@@ -51,14 +51,15 @@ export function episodeBuildLabel(
  * Execution disposition and the game's outcome remain separate dimensions.
  *
  * The termination reason is part of the badge because the episode state
- * alone cannot say which limit cut a truncated episode short.
+ * alone cannot say which limit cut a truncated episode short, nor that the
+ * runtime refused the episode's action.
  */
 export function executionStatusBadge(
   status: PlaytestEpisode["status"],
   terminationReason?: string | null
 ): React.JSX.Element {
   return React.createElement(StatusBadge, {
-    status: executionStateTone(status),
+    status: executionStateTone(status, terminationReason),
     label: executionStateLabel(status, terminationReason)
   });
 }

@@ -10,6 +10,7 @@ import {
   cohortLabel,
   executionStateExplanation,
   executionStateLabel,
+  executionStateTone,
   gameOutcomeBadgeLabel,
   gameOutcomeLabel,
   limitTerminationReason,
@@ -72,6 +73,25 @@ test("a truncated episode says which limit cut it short", () => {
   );
   assert.equal(executionStateExplanation("completed", "usage-budget"), null);
   assert.equal(limitTerminationReason("not-a-limit"), null);
+});
+
+test("an episode the runtime ended on a refusal does not read as a crash", () => {
+  // The runtime declined to act and said why. The episode state alone cannot
+  // say that, so the label reads the termination reason rather than calling
+  // the episode a crash.
+  assert.equal(
+    executionStateLabel("crashed", "action-refused"),
+    "Action refused"
+  );
+  assert.equal(executionStateLabel("crashed", "unknown"), "Crashed");
+  // A refusal is a known gap in what the run observed, not a broken run.
+  assert.equal(executionStateTone("crashed", "action-refused"), "unavailable");
+  assert.equal(executionStateTone("crashed", "unknown"), "invalid");
+  assert.equal(
+    executionStateExplanation("crashed", "action-refused"),
+    "The runtime refused the episode's action and ended the episode. No terminal game outcome was observed; no win or loss is inferred."
+  );
+  assert.equal(executionStateExplanation("crashed", "unknown"), null);
 });
 
 test("a game outcome reads as a word, not a token", () => {

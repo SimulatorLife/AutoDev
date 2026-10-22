@@ -7,7 +7,9 @@ import {
   assertPlaytestVisualObservation,
   PLAYTEST_VISUAL_ACTION_SCHEMA,
   PLAYTEST_VISUAL_OBSERVATION_SCHEMA,
+  playtestActionRefusalMeansPageMoved,
   type PlaytestVisualAction,
+  type PlaytestVisualActionRefusalReason,
   type PlaytestVisualObservation,
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
@@ -200,6 +202,35 @@ test("admission rejects stale captures, origin changes, and viewport changes", (
     }),
     { admitted: false, reason: "viewport-changed" }
   );
+});
+
+test("only a refusal that says the page moved is recoverable", () => {
+  // The two owners of a refusal both say the same thing when the page no
+  // longer offers what the observation promised, and the episode answers that
+  // by looking again.
+  assert.equal(playtestActionRefusalMeansPageMoved("control-changed"), true);
+  assert.equal(playtestActionRefusalMeansPageMoved("stale-observation"), true);
+  // Every other refusal is final: the action was not allowed, the game needs
+  // setup, or the episode is out of budget, and none of those changes because
+  // the page was read again.
+  const finalRefusals: readonly PlaytestVisualActionRefusalReason[] = [
+    "control-unavailable",
+    "auth-or-setup-required",
+    "sensitive-visual-unredactable",
+    "action-budget-exhausted",
+    "wall-time-limit",
+    "driver-state-unavailable",
+    "event-budget-exhausted",
+    "origin-not-approved",
+    "input-not-approved"
+  ];
+  for (const reason of finalRefusals) {
+    assert.equal(
+      playtestActionRefusalMeansPageMoved(reason),
+      false,
+      `${reason} must not send the episode back to observe`
+    );
+  }
 });
 
 test("semantic and coordinate inputs cannot target text-entry surfaces or stale frames", () => {

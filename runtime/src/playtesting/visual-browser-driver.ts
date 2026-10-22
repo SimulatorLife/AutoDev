@@ -16,8 +16,10 @@ import {
   assertPlaytestVisualObservation,
   assertWorkspaceVisualPlaytestTargetApproval,
   PLAYTEST_VISUAL_OBSERVATION_SCHEMA,
+  PLAYTESTS_CONTROL_CHANGED_REFUSAL,
+  PLAYTESTS_STALE_OBSERVATION_REFUSAL,
   type PlaytestVisualAction,
-  type PlaytestVisualActionAdmissionReason,
+  type PlaytestVisualActionRefusalReason,
   type PlaytestVisualControl,
   type PlaytestVisualObservation,
   type PlaytestVisualViewport,
@@ -229,13 +231,7 @@ export type PlaytestVisualActionReceipt =
   | {
       readonly status: "refused";
       readonly step: number;
-      readonly reason:
-        | PlaytestVisualActionAdmissionReason
-        | "action-budget-exhausted"
-        | "wall-time-limit"
-        | "driver-state-unavailable"
-        | "control-changed"
-        | "event-budget-exhausted";
+      readonly reason: PlaytestVisualActionRefusalReason;
     };
 
 export interface PlaytestVisualBrowserDriverOptions {
@@ -314,15 +310,12 @@ export interface PlaytestVisualBrowserEvent {
   readonly blockedRequestCount: number;
 }
 
-type ActionRefusalReason =
-  | PlaytestVisualActionAdmissionReason
-  | "auth-or-setup-required"
-  | "sensitive-visual-unredactable"
-  | "action-budget-exhausted"
-  | "wall-time-limit"
-  | "driver-state-unavailable"
-  | "control-changed"
-  | "event-budget-exhausted";
+/**
+ * The refusal reasons the driver answers with are Core's vocabulary, because
+ * the episode's next move depends on which refusal it is: a refusal that says
+ * the page moved is answered by looking again, and every other refusal is
+ * final.
+ */
 
 export class PlaytestVisualBrowserDriverError extends Error {
   readonly code:
@@ -1598,7 +1591,11 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
         case "activate-control": {
           const promised = this.controlIndexes.get(action.controlId);
           if (promised === undefined) {
-            return this.refuseAction(action, step, "control-changed");
+            return this.refuseAction(
+              action,
+              step,
+              PLAYTESTS_CONTROL_CHANGED_REFUSAL
+            );
           }
           // The page is read again before the input is dispatched, so the
           // control the observation promised may have moved. It is the same
@@ -1610,7 +1607,11 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
           );
           const current = matches[promised.ordinal];
           if (!current || !current.enabled || current.inputKind !== "none") {
-            return this.refuseAction(action, step, "control-changed");
+            return this.refuseAction(
+              action,
+              step,
+              PLAYTESTS_CONTROL_CHANGED_REFUSAL
+            );
           }
           const capturedDestination = this.controlNavigationOrigins.get(
             action.controlId
@@ -1633,7 +1634,11 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
         case "pointer-click": {
           const currentFrame = await this.capturePng();
           if (sha256(currentFrame) !== observation.frame.sha256) {
-            return this.refuseAction(action, step, "stale-observation");
+            return this.refuseAction(
+              action,
+              step,
+              PLAYTESTS_STALE_OBSERVATION_REFUSAL
+            );
           }
           await this.page.mouse.click(action.x, action.y);
           break;
@@ -1654,7 +1659,9 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
       return this.refuseAction(
         action,
         step,
-        this.originEscape ? ORIGIN_NOT_APPROVED : "control-changed"
+        this.originEscape
+          ? ORIGIN_NOT_APPROVED
+          : PLAYTESTS_CONTROL_CHANGED_REFUSAL
       );
     }
     return null;
@@ -1663,7 +1670,7 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
   private refuseAction(
     action: PlaytestVisualAction,
     step: number,
-    reason: ActionRefusalReason
+    reason: PlaytestVisualActionRefusalReason
   ): PlaytestVisualActionReceipt {
     this.inputRejected += 1;
     this.recordEvent({
@@ -1673,10 +1680,10 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
       actionKind: action.kind,
       refusalReason: reason
     });
-    return { status: "refused", step, reason } as PlaytestVisualActionReceipt;
+    return { status: "refused", step, reason };
   }
 
-  private actionRefusalForBlock(): ActionRefusalReason {
+  private actionRefusalForBlock(): PlaytestVisualActionRefusalReason {
     switch (this.terminalBlock) {
       case ORIGIN_ESCAPE: {
         return ORIGIN_NOT_APPROVED;

@@ -165,6 +165,7 @@ export const PLAYTESTS_EPISODE_TERMINATION_REASONS = [
   "loop-guard",
   "cancelled",
   "approval-revoked",
+  "action-refused",
   "runtime-failure",
   "unknown"
 ] as const;

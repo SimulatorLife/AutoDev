@@ -73,6 +73,17 @@ const BUDGET_TRUNCATED = "budget-truncated";
 const UNRECOGNISED_LABEL = NOT_OBSERVED_LABEL;
 
 /**
+ * The termination reason that says the runtime refused the episode's action.
+ *
+ * A refusal is not a crash. The runtime declined to act and said why, and the
+ * episode ended without a game outcome. The episode state has no bucket for
+ * that fact, so the state stays what it is and the termination reason carries
+ * the truth -- which is the same arrangement the limit reasons use, and the
+ * reason a label that only reads the state would say something false.
+ */
+const ACTION_REFUSED_TERMINATION_REASON = "action-refused";
+
+/**
  * The tone for a state that is known but not a success.
  *
  * A crash, a cancellation, a truncated episode and a state the Console does
@@ -94,7 +105,10 @@ export function limitTerminationReason(
 /**
  * The operator-facing label for an episode's execution state.
  *
- * When the episode was cut short by a limit, the label names the limit.
+ * When the episode was cut short by a limit, the label names the limit. When
+ * the runtime refused the episode's action, the label names the refusal: the
+ * episode state alone cannot say that the run stopped because the runtime
+ * declined to act rather than because the run broke.
  */
 export function executionStateLabel(
   status: PlaytestEpisode["status"],
@@ -111,7 +125,9 @@ export function executionStateLabel(
       return "Completed";
     }
     case "crashed": {
-      return "Crashed";
+      return terminationReason === ACTION_REFUSED_TERMINATION_REASON
+        ? "Action refused"
+        : "Crashed";
     }
     case "infrastructure-failed": {
       return "Failed (infrastructure)";
@@ -131,9 +147,15 @@ export function executionStateLabel(
   }
 }
 
-/** The tone an execution state should be shown with. */
+/**
+ * The tone an execution state should be shown with.
+ *
+ * A refused action is not a broken run: the runtime declined to act and said
+ * why, so it is the known-gap tone rather than the error tone a crash earns.
+ */
 export function executionStateTone(
-  status: PlaytestEpisode["status"]
+  status: PlaytestEpisode["status"],
+  terminationReason?: string | null
 ): PlaytestingLabelTone {
   switch (status) {
     case "assigned":
@@ -144,7 +166,9 @@ export function executionStateTone(
       return "valid";
     }
     case "crashed": {
-      return "invalid";
+      return terminationReason === ACTION_REFUSED_TERMINATION_REASON
+        ? GAP_TONE
+        : "invalid";
     }
     case "infrastructure-failed":
     case "cancelled":
@@ -163,11 +187,19 @@ export function executionStateTone(
  * A truncated episode that ran out of tokens and one that hit the step cap
  * are both "budget truncated" to the state machine and are not the same
  * fact for the operator, so the reason is spelled out rather than implied.
+ *
+ * An episode the runtime ended because it refused the action is spelled out
+ * for the same reason: the reader is told the run stopped on a refusal, and
+ * that no game outcome was observed, rather than being left to infer a
+ * crash from the state.
  */
 export function executionStateExplanation(
   status: PlaytestEpisode["status"],
   terminationReason?: string | null
 ): string | null {
+  if (terminationReason === ACTION_REFUSED_TERMINATION_REASON) {
+    return "The runtime refused the episode's action and ended the episode. No terminal game outcome was observed; no win or loss is inferred.";
+  }
   if (status !== BUDGET_TRUNCATED) return null;
   const limit = limitTerminationReason(terminationReason);
   if (limit === null) {

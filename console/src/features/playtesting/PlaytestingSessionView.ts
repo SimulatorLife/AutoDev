@@ -35,7 +35,10 @@ import {
   executionStatusBadge,
   gameOutcomeBadge
 } from "./playtesting-episode-presentation.ts";
-import { executionModeLabel } from "./playtesting-labels.ts";
+import {
+  executionModeLabel,
+  executionStateExplanation
+} from "./playtesting-labels.ts";
 import {
   playtestingAnalyzeEpisodeHref,
   playtestingEpisodeHref,
@@ -981,6 +984,53 @@ function truncationExplanation(
             }
           },
           `Inspect stop at step ${loopStep}`
+        )
+  );
+}
+
+/**
+ * The notice for an episode the runtime ended because it refused the action.
+ *
+ * A refusal that says the page moved is recovered from: the episode observes
+ * the game again and continues, bounded by the approved budgets. An episode
+ * ends on a refusal only when the refusal is final -- the action was not
+ * allowed, the game needs setup, or the episode is out of budget -- so the
+ * notice says that the run stopped on a refusal, at which step, and that no
+ * game outcome was observed.
+ */
+function refusalExplanation(
+  episode: ControlApiPlaytestingEpisodeDetailResponse["record"],
+  scope: PlaytestingScope
+): React.ReactNode {
+  if (episode.termination.reason !== "action-refused") return null;
+  const explanation = executionStateExplanation(
+    episode.status,
+    episode.termination.reason
+  );
+  if (explanation === null) return null;
+  const step = episode.termination.step;
+  return React.createElement(
+    "p",
+    {
+      className:
+        "rounded-md border border-warning/40 bg-surface-raised px-3 py-2 text-sm text-fg-muted",
+      role: "status",
+      "data-testid": "playtesting-refusal-explanation"
+    },
+    explanation,
+    step === null ? null : " ",
+    step === null
+      ? null
+      : React.createElement(
+          NavigationLink,
+          {
+            href: playtestingEpisodeHref(scope, episode.episodeId, step),
+            className: "font-medium text-accent hover:underline",
+            dataAttributes: {
+              "data-playtesting-refused-step": String(step)
+            }
+          },
+          `Inspect the refused step ${String(step)}`
         )
   );
 }
@@ -2402,6 +2452,7 @@ export function PlaytestingSessionView({
       ),
       recordedStatusValues(episode),
       truncationExplanation(episode, scope),
+      refusalExplanation(episode, scope),
       episode.missingReasons.length === 0
         ? null
         : React.createElement(
