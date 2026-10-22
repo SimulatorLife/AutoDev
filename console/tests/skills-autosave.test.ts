@@ -288,6 +288,7 @@ test("FormNavigationOwner canonical path intercepts skill autosave form POSTs an
 
   const result = await handleFormSubmission(submitEvent, {
     router: {
+      prefetch: () => {},
       push: () => {},
       replace: () => {},
       refresh: () => {
@@ -346,7 +347,7 @@ test("clearing all checkboxes unassigns the skill and submits empty roles set", 
   };
 
   const result = await handleFormSubmission(submitEvent, {
-    router: { push: () => {}, replace: () => {}, refresh: () => {} },
+    router: { prefetch: () => {}, push: () => {}, replace: () => {}, refresh: () => {} },
     fetch: mockFetch,
     currentUrl: "http://localhost:3300/skills"
   });

@@ -4,6 +4,12 @@ import Link from "next/link.js";
 import { useRouter } from "next/navigation.js";
 import React from "react";
 
+import {
+  isLocalWholePageDestination,
+  navigateToWholePage,
+  warmUpWholePage
+} from "./whole-page-navigation.ts";
+
 type NavigationLinkProps = Omit<
   React.ComponentProps<typeof Link>,
   "onFocus" | "onMouseEnter" | "onTouchStart" | "prefetch"
@@ -11,19 +17,24 @@ type NavigationLinkProps = Omit<
   readonly dataAttributes?: Readonly<Record<`data-${string}`, string>>;
 };
 
-type PrefetchOptions = NonNullable<
-  Parameters<ReturnType<typeof useRouter>["prefetch"]>[1]
->;
-
 /**
- * The full prefetch kind.
+ * Whether the click is the Console's to navigate.
  *
- * `next/navigation` does not export Next's `PrefetchKind` enum, so the kind is
- * named here and asserted once. It is the only kind the Console uses: a
- * partial prefetch answers with the route's loading state rather than with the
- * page, and a navigation that finds that answer waiting for it never commits.
+ * A modified click belongs to the browser: a command click opens the
+ * destination in a new tab, a middle click opens it in a background tab, and a
+ * link that carries a download attribute downloads. The Console leaves those
+ * alone and only takes over the plain click.
  */
-const FULL_PREFETCH_KIND = "full" as PrefetchOptions["kind"];
+function isPlainNavigationClick(
+  event: React.MouseEvent<HTMLAnchorElement>
+): boolean {
+  const target = event.currentTarget.getAttribute("target");
+  if (target !== null && target !== "_self") return false;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return false;
+  }
+  return event.button === 0;
+}
 
 /** Intent events that authorize one dynamic-route prefetch. */
 export interface NavigationIntentHandlers {
@@ -114,36 +125,16 @@ export function NavigationLink({
     // In environments without AppRouterContext (such as SSR or unit tests)
   }
 
+  /**
+   * The Console asks for the destination's whole page on intent, and the
+   * navigation waits for that answer before it leaves. See
+   * `whole-page-navigation.ts` for why the wait is the whole point.
+   */
   const prefetch = React.useCallback((): void => {
     if (!router) return;
     const destination = toHrefString(href);
     if (destination && shouldPrefetch(destination)) {
-      router.prefetch(destination, { kind: FULL_PREFETCH_KIND });
-    }
-  }, [href, router]);
-
-  /**
-   * Ask for the destination's whole page, ignoring the warm-up's cooldown.
-   *
-   * The warm-up is an intent, and an intent is not guaranteed: a pointer that
-   * is already over the link when the operator clicks never enters it, a
-   * keyboard activation never enters it, and a destination the warm-up has
-   * already visited has its answer aged out of the router's prefetch cache
-   * while the cooldown still holds it back.
-   *
-   * A navigation that has to answer for itself is the one that strands: the
-   * answer it asks for is the page's own segment, and the segment does not
-   * fill the page the browser is holding, so the navigation waits for an
-   * answer that never arrives and the address bar stays where it was. The
-   * whole page does fill it. Asking here is free when the warm-up has already
-   * left that answer in the router's cache -- the prefetch is then the answer
-   * the warm-up left, not a second request.
-   */
-  const ensureWholePage = React.useCallback((): void => {
-    if (!router) return;
-    const destination = toHrefString(href);
-    if (destination) {
-      router.prefetch(destination, { kind: FULL_PREFETCH_KIND });
+      warmUpWholePage(router, destination);
     }
   }, [href, router]);
 
@@ -152,9 +143,19 @@ export function NavigationLink({
     (event: React.MouseEvent<HTMLAnchorElement>): void => {
       onClick?.(event);
       if (event.defaultPrevented) return;
-      ensureWholePage();
+      if (!router) return;
+      const destination = toHrefString(href);
+      if (!destination) return;
+      if (!isLocalWholePageDestination(destination)) return;
+      if (!isPlainNavigationClick(event)) return;
+      // The Console owns this navigation: it waits for the destination's whole
+      // page and then navigates in place. Next's own handler would dispatch the
+      // navigation straight away, and a navigation that dispatches before the
+      // answer is in hand is the one that does not commit.
+      event.preventDefault();
+      void navigateToWholePage(router, destination, "push", { scroll: true });
     },
-    [ensureWholePage, onClick]
+    [href, onClick, router]
   );
 
   return React.createElement(Link, {

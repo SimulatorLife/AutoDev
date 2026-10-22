@@ -17,6 +17,21 @@ import {
   registerFormNavigation,
   scheduleFeedbackDismissal
 } from "../src/components/navigation/FormNavigationOwner.ts";
+import { setWholePageAnswerProbeForTests } from "../src/components/navigation/whole-page-navigation.ts";
+
+// A unit test has no request to wait for, so the whole-page owner is told
+// that the answer has already arrived.
+setWholePageAnswerProbeForTests(() => true);
+
+/**
+ * The whole-page owner navigates once the answer is in hand, which is not by
+ * the time the submit handler returns.
+ */
+async function flushNavigation(): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
 
 interface MockSubmitter extends FormElementLike {
   readonly tagName?: string;
@@ -76,6 +91,9 @@ function createMockRouter(overrides?: Partial<FormNavigationRouter>): {
   let refreshes = 0;
 
   const router: FormNavigationRouter = {
+    prefetch: (href) => {
+      overrides?.prefetch?.(href);
+    },
     push: (href, options) => {
       pushes.push(options ? { href, options } : { href });
       overrides?.push?.(href, options);
@@ -302,6 +320,9 @@ test("registerFormNavigation intercepts submit events fired through EventTarget 
   assert.deepEqual(statuses, ["submitting"]);
 
   assert.equal(nativeEvent.defaultPrevented, true);
+  // The navigation waits for the destination's whole page before it leaves, so
+  // it is not dispatched by the time the event handler returns.
+  await flushNavigation();
   assert.deepEqual(pushes, [
     { href: "/usage?tab=activity&filter=active", options: { scroll: false } }
   ]);
@@ -678,7 +699,11 @@ test("POST submission sends application/x-www-form-urlencoded with same-origin c
       options: { scroll: false }
     }
   ]);
-  assert.equal(refreshes, 1);
+  assert.equal(
+    refreshes,
+    0,
+    "the write's destination carries the result; a second round trip would race it"
+  );
   assert.equal(result.intercepted, true);
   assert.equal(result.status, "completed");
   assert.deepEqual(statuses, [
@@ -773,7 +798,11 @@ test("POST followed redirects surface provider, model, skill, and prompt failure
     assert.deepEqual(replacements, [
       { href: redirectPath, options: { scroll: false } }
     ]);
-    assert.equal(mockRouter.refreshes, 1);
+    assert.equal(
+      mockRouter.refreshes,
+      0,
+      "the write's destination carries the result; a second round trip would race it"
+    );
     assert.deepEqual(statuses, [
       { status: "submitting", message: "Submitting changes..." },
       {

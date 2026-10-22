@@ -14,6 +14,13 @@ const navigationLinkSource = readFileSync(
   new URL("../src/components/navigation/NavigationLink.ts", import.meta.url),
   "utf8"
 );
+const wholePageNavigationSource = readFileSync(
+  new URL(
+    "../src/components/navigation/whole-page-navigation.ts",
+    import.meta.url
+  ),
+  "utf8"
+);
 
 test("resource navigation uses Next links instead of full-document anchors", () => {
   assert.match(
@@ -36,7 +43,7 @@ test("view tabs use Next links while retaining URL-addressable tab state", () =>
 
 test("resource navigation warms the destination it is about to route to, in full", () => {
   // A pointer, touch or keyboard intent on a link warms the destination with
-  // `router.prefetch`, so that the dashboard does not start a request for every
+  // the whole page, so that the dashboard does not start a request for every
   // visible resource when it opens.
   //
   // The warm-up has to be a *full* prefetch. A partial prefetch answers with
@@ -52,12 +59,18 @@ test("resource navigation warms the destination it is about to route to, in full
   assert.match(navigationLinkSource, /prefetch:\s*false/u);
   assert.match(
     navigationLinkSource,
-    /router\.prefetch\(\s*destination,\s*\{\s*kind:\s*FULL_PREFETCH_KIND\s*\}\s*\)/u
+    /warmUpWholePage\(\s*router,\s*destination\s*\)/u,
+    "the warm-up has to ask for the destination's whole page"
   );
   assert.match(
-    navigationLinkSource,
-    /FULL_PREFETCH_KIND\s*=\s*"full"/u,
-    "the warm-up must ask for the full page, not a partial answer"
+    wholePageNavigationSource,
+    /router\.prefetch\(href\)/u,
+    "the whole-page owner asks for the page Next.js prefetches by default"
+  );
+  assert.doesNotMatch(
+    wholePageNavigationSource,
+    /kind:\s*["']auto["']/u,
+    "the warm-up must never ask for a partial answer"
   );
   assert.match(navigationLinkSource, /navigationIntentHandlers\s*\(/u);
   // The warm-up is authorized by a pointer, touch or keyboard intent only, so
@@ -68,32 +81,37 @@ test("resource navigation warms the destination it is about to route to, in full
   );
 });
 
-test("a click asks for the whole destination page, whether or not an intent warmed it", () => {
+test("a click navigates only once the destination's whole page has arrived", () => {
   // The warm-up is an intent, and an intent is not guaranteed: a pointer that
   // is already over the link when the operator clicks never enters it, and a
-  // keyboard activation never enters it. A navigation that has to answer for
-  // itself is the one that strands, because the answer it asks for is the
-  // page's own segment and the segment does not fill the page the browser is
-  // holding. The whole page does fill it.
+  // keyboard activation never enters it. So the click asks for the whole page
+  // too.
   //
-  // So the click asks for the whole page too, and it does not wait for the
-  // warm-up's cooldown: the cooldown is there to keep the warm-up from asking
-  // twice, and the click's ask is the answer the navigation is about to use.
+  // And the click does not navigate straight away. A navigation that dispatches
+  // before the answer is in hand is the one that strands: the browser
+  // acceptance measured that the address bar stayed where it was and the page
+  // did not move, while the same navigation with the answer already in hand
+  // committed every time. The owner waits for the answer, and then navigates.
   assert.match(navigationLinkSource, /onClick:\s*handleClick/u);
   assert.match(
     navigationLinkSource,
-    /const ensureWholePage = React\.useCallback\(/u,
-    "the click has to ask for the destination's whole page"
+    /navigateToWholePage\(\s*router,\s*destination,\s*"push"/u,
+    "the click has to navigate through the whole-page owner"
   );
   assert.match(
     navigationLinkSource,
-    /router\.prefetch\(destination,\s*\{\s*kind:\s*FULL_PREFETCH_KIND\s*\}\)/u,
-    "the click's ask has to be a full prefetch, like the warm-up's"
+    /event\.preventDefault\(\)/u,
+    "the Console owns the navigation, so Next's own handler must not also run"
   );
-  assert.doesNotMatch(
-    navigationLinkSource,
-    /ensureWholePage[\s\S]{0,400}shouldPrefetch\(/u,
-    "the click's ask must not be held back by the warm-up's cooldown"
+  assert.match(
+    wholePageNavigationSource,
+    /await waitForWholePageAnswer\(\s*href,\s*since,\s*token/u,
+    "the navigation has to wait for the answer before it leaves"
+  );
+  assert.match(
+    wholePageNavigationSource,
+    /router\.push\(href/u,
+    "the owner navigates in place once the answer is in hand"
   );
 });
 

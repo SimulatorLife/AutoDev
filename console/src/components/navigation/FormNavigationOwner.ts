@@ -10,11 +10,13 @@ import {
   SUCCESS_TONE_CLASS
 } from "../ui/tones.ts";
 import { registerLiveCountRefresh } from "./live-count-refresh.ts";
+import { navigateToWholePage } from "./whole-page-navigation.ts";
 
 export type FormNavigationStatus =
   "idle" | "submitting" | "completed" | "error";
 
 export interface FormNavigationRouter {
+  readonly prefetch: (href: string) => void;
   readonly push: (
     href: string,
     options?: { readonly scroll?: boolean }
@@ -608,13 +610,13 @@ function restoreScrollAndFocus(snapshot: ScrollAndFocusSnapshot): void {
   }
 }
 
-function handleGetSubmission(
+async function handleGetSubmission(
   actionUrl: URL,
   params: URLSearchParams,
   currentBase: string,
   options: HandleFormSubmissionOptions,
   snapshot: ScrollAndFocusSnapshot
-): FormSubmissionResult {
+): Promise<FormSubmissionResult> {
   options.onStatusChange?.("submitting", "Applying filters...");
   const destUrl = new URL(actionUrl.pathname, actionUrl.origin);
   const finalParams = new URLSearchParams(actionUrl.search);
@@ -639,7 +641,11 @@ function handleGetSubmission(
   if (destHref === currentPathAndQuery) {
     options.router.refresh();
   } else {
-    options.router.push(destHref, { scroll: false });
+    // The navigation waits for the destination's whole page before it leaves,
+    // so that the address bar and the page move together.
+    await navigateToWholePage(options.router, destHref, "push", {
+      scroll: false
+    });
   }
 
   restoreScrollAndFocus(snapshot);
@@ -741,8 +747,13 @@ async function handlePostSubmission(
     if (destPathAndQuery === currentPathAndQuery) {
       options.router.refresh();
     } else {
-      options.router.replace(destPathAndQuery, { scroll: false });
-      options.router.refresh();
+      // The destination is rendered by the server after the write, so it
+      // carries the write's result. A second round trip here would race the
+      // navigation that is already on its way, and the page that lands would
+      // be the one that lost the race.
+      await navigateToWholePage(options.router, destPathAndQuery, "replace", {
+        scroll: false
+      });
     }
 
     const rejected = isKnownFailureDestination(destUrl);
@@ -902,9 +913,7 @@ export function handleFormSubmission(
   const params = extractFormData(form, submitter);
 
   if (method === "GET") {
-    return Promise.resolve(
-      handleGetSubmission(actionUrl, params, currentBase, options, snapshot)
-    );
+    return handleGetSubmission(actionUrl, params, currentBase, options, snapshot);
   }
 
   return handlePostSubmission(
@@ -1078,6 +1087,7 @@ export function FormNavigationOwner({
     () =>
       router
         ? {
+            prefetch: (href) => router.prefetch(href),
             push: (href, options) =>
               startTransition(() => router.push(href, options)),
             replace: (href, options) =>
