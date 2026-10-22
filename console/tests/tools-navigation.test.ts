@@ -120,6 +120,25 @@ function anchorsWith(
   return out;
 }
 
+/**
+ * Every link's accessible name, the way a browser computes it: the
+ * `aria-label` when the anchor carries one, otherwise the text it renders.
+ */
+function linkNames(markup: string): { name: string; href: string }[] {
+  const out: { name: string; href: string }[] = [];
+  for (const m of markup.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gu)) {
+    const attributes = m[1] ?? "";
+    const href = /href="([^"]*)"/u.exec(attributes)?.[1] ?? "";
+    const ariaLabel = /aria-label="([^"]*)"/u.exec(attributes)?.[1];
+    const text = (m[2] ?? "")
+      .replaceAll(/<[^>]+>/gu, "")
+      .replaceAll(/\s+/gu, " ")
+      .trim();
+    out.push({ name: ariaLabel ?? text, href });
+  }
+  return out;
+}
+
 test("the source filter keeps the active role and resets to /tools when 'all' is chosen", () => {
   const markup = renderTools({ source: "mcp", role: "worker" });
 
@@ -220,6 +239,31 @@ test("the tool detail links point at the encoded wire id for each row", () => {
     assert.ok(expected.has(link.value), `unexpected detail link ${link.value}`);
     const wireId = expected.get(link.value)!;
     assert.match(markup, new RegExp(`title="${escapeForRegex(wireId)}"`));
+  }
+});
+
+test("a tool's own name addresses exactly one link", () => {
+  // A row's role chips are named after the tool they filter -- "Filter tools
+  // exposed to worker for read_file" -- so the tool's name is a substring of
+  // names that point somewhere else. The browser acceptance addresses the
+  // row's detail link by the tool's own name, and a locator that resolves to
+  // three links cannot say which one it meant.
+  const markup = renderTools({ source: "all", role: "" });
+  for (const tool of TOOLS) {
+    const wireId = tool.server
+      ? `mcp__${tool.server}__${tool.name}`
+      : tool.name;
+    const named = linkNames(markup).filter((link) => link.name === tool.name);
+    assert.equal(
+      named.length,
+      1,
+      `expected one link named ${tool.name}, got: ${named.map((link) => link.href).join(", ")}`
+    );
+    assert.equal(
+      named[0]?.href,
+      `/tools/${encodeURIComponent(wireId)}`,
+      `the link named ${tool.name} is the row's own detail link`
+    );
   }
 });
 

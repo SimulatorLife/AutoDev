@@ -82,9 +82,15 @@ test("Tools source/role filters and resource/tab links navigate in place without
   await page.goto("/tools");
 
   await expect(page.getByText("Showing 2 of 2 tool entries")).toBeVisible();
-  await expect(page.getByRole("link", { name: "read_file" })).toBeVisible();
+  // The exact name, because a role chip in the same row is named after the
+  // tool it filters ("Filter tools exposed to worker for read_file"). A
+  // substring match reaches the chip as well as the row's own link, and a
+  // locator that resolves to three links cannot say which one it meant.
   await expect(
-    page.getByRole("link", { name: "lsp_goto_definition" })
+    page.getByRole("link", { name: "read_file", exact: true })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "lsp_goto_definition", exact: true })
   ).toBeVisible();
 
   await page.evaluate((token) => {
@@ -108,9 +114,11 @@ test("Tools source/role filters and resource/tab links navigate in place without
   await expect(page).toHaveURL(TOOLS_SOURCE_MCP_URL);
   await expect(page.getByText("Showing 1 of 2 tool entries")).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "lsp_goto_definition" })
+    page.getByRole("link", { name: "lsp_goto_definition", exact: true })
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "read_file" })).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "read_file", exact: true })
+  ).toHaveCount(0);
   expect(await readMountToken()).toBe(MOUNTED_DOCUMENT_TOKEN);
 
   await page.locator('[data-role-filter="orchestrator"]').click();
@@ -124,7 +132,9 @@ test("Tools source/role filters and resource/tab links navigate in place without
   await page.locator('[data-source-filter="all"]').click();
   await expect(page).toHaveURL(TOOLS_ROLE_ORCHESTRATOR_URL);
   await expect(page.getByText("Showing 1 of 2 tool entries")).toBeVisible();
-  await expect(page.getByRole("link", { name: "read_file" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "read_file", exact: true })
+  ).toBeVisible();
   expect(await readMountToken()).toBe(MOUNTED_DOCUMENT_TOKEN);
 
   await page
