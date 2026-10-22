@@ -16,6 +16,82 @@ import type { WorkspaceResolutionError } from "./resolve-workspace.ts";
  * bridge. It is owned here instead, once.
  */
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The typed refusal a bridge answers when the request carries content the
+ * bridge cannot carry.
+ *
+ * A CLI-backed bridge turns a turn into a text prompt for its CLI, so it
+ * cannot show the model an image. Claude's transcript renderer substitutes
+ * the literal text `[image]`; the other bridges drop the part or inline its
+ * base64 payload as text. Every one of those answers a question the model was
+ * never asked, and the caller reads it as an answer. A refusal names the
+ * limit instead, and the router's fallback chain moves on to a route that can
+ * serve the request.
+ */
+export const PROVIDER_REQUEST_UNSUPPORTED_TYPE =
+  "provider_request_unsupported" as const;
+
+/**
+ * Whether the request's own conversation carries image content.
+ *
+ * Only message content is inspected. A tool *output* that carries an image
+ * travels the bridges' image-aware tool path, and must not refuse the turn
+ * that carries it.
+ */
+export function requestCarriesImageContent(input: unknown): boolean {
+  if (!Array.isArray(input)) return false;
+  return input.some((item) => {
+    if (!isRecord(item)) return false;
+    const content = item.content;
+    if (!Array.isArray(content)) return false;
+    return content.some((part) => {
+      if (!isRecord(part)) return false;
+      if (part.type === "input_image" || part.type === "image") return true;
+      return part.image_url !== undefined && part.image_url !== null;
+    });
+  });
+}
+
+/**
+ * Fail closed on a request this bridge cannot serve.
+ *
+ * The refusal is typed so the router can tell "this route cannot serve this
+ * request" apart from "this provider is broken": the first moves to the next
+ * candidate, the second is a provider failure.
+ */
+export function sendUnsupportedRequestFailure(
+  response: ServerResponse,
+  provider: string,
+  message: string
+): void {
+  writeErrorLine(`${provider} cannot serve this request: ${message}`);
+  sendJson(response, 400, {
+    error: { type: PROVIDER_REQUEST_UNSUPPORTED_TYPE, message }
+  });
+}
+
+/**
+ * Whether an upstream body is the typed refusal a bridge answered.
+ *
+ * The router reads this to tell "this route cannot serve this request" apart
+ * from "this provider is broken": the first moves to the next candidate and
+ * leaves the provider healthy, the second is a provider failure.
+ */
+export function providerRequestUnsupported(body: unknown): boolean {
+  if (typeof body !== "string") return false;
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (!isRecord(parsed) || !isRecord(parsed.error)) return false;
+    return parsed.error.type === PROVIDER_REQUEST_UNSUPPORTED_TYPE;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Write one JSON body and close the response.
  *

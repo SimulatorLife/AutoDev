@@ -1,6 +1,6 @@
 {
   "schema": "autodev-claude-responses-contract-v1",
-  "description": "Offline stream-json inputs and expected boundary invariants for the Claude Responses bridge. Each case feeds a fake Claude CLI subprocess whose stdout is the JSONL event sequence; the bridge is exercised through its real HTTP server and a local telemetry collector, so Anthropic is never contacted and no real OAuth credentials are required. Cases cover: plain streamed text, a thinking block finished as its own reasoning item before the answer, native web research recorded as a finished step, a rejected attempt at a tool the CLI does not have left unrecorded, a rate-limit event ending the response incomplete with the classified limit after the streamed text, a rate-limit event reporting an allowed warning (not a rejection) that must complete the response normally, a model the CLI rejects (unknown, or too new for the installed CLI) answered as a non-retryable 400 invalid_model, missing-bearer 401 from the gateway auth check, and missing-Claude-OAuth 502 from the bridge's environment guard. The Codex-tool loop, where every other action runs, is covered by tests/claude-codex-tool-loop.test.ts. Expected IDs are normalized before assertion, and the prompt content used by every case is asserted absent from both the SSE body and the telemetry channel.",
+  "description": "Offline stream-json inputs and expected boundary invariants for the Claude Responses bridge. Each case feeds a fake Claude CLI subprocess whose stdout is the JSONL event sequence; the bridge is exercised through its real HTTP server and a local telemetry collector, so Anthropic is never contacted and no real OAuth credentials are required. Cases cover: plain streamed text, a thinking block finished as its own reasoning item before the answer, native web research recorded as a finished step, a rejected attempt at a tool the CLI does not have left unrecorded, a rate-limit event ending the response incomplete with the classified limit after the streamed text, a rate-limit event reporting an allowed warning (not a rejection) that must complete the response normally, a model the CLI rejects (unknown, or too new for the installed CLI) answered as a non-retryable 400 invalid_model, missing-bearer 401 from the gateway auth check, and missing-Claude-OAuth 502 from the bridge's environment guard. The Codex-tool loop, where every other action runs, is covered by tests/claude-codex-tool-loop.test.ts. Expected IDs are normalized before assertion, and the prompt content used by every case is asserted absent from both the SSE body and the telemetry channel. The fixture also pins the request a bridge cannot serve: a turn that carries a frame is refused with the typed provider_request_unsupported error before the CLI is started, because a text prompt cannot show the model a picture.",
   "cases": {
     "normal_stream": {
       "request": {
@@ -834,6 +834,35 @@
         "status": 502,
         "errorType": "upstream_error",
         "errorMessageContains": "CLAUDE_CODE_OAUTH_TOKEN"
+      }
+    },
+    "image_content_refused": {
+      "request": {
+        "stream": false,
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "contract task"
+              },
+              {
+                "type": "input_image",
+                "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+              }
+            ]
+          }
+        ]
+      },
+      "cli": {
+        "events": []
+      },
+      "expected": {
+        "status": 400,
+        "errorType": "provider_request_unsupported",
+        "errorMessageContains": "cannot carry image content"
       }
     }
   }

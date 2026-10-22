@@ -1,6 +1,6 @@
 {
   "schema": "autodev-antigravity-responses-contract-v1",
-  "description": "Offline stream-json inputs and expected boundary invariants for the Antigravity Responses bridge.",
+  "description": "Offline stream-json inputs and expected boundary invariants for the Antigravity Responses bridge. The fixture also pins the request a bridge cannot serve: a turn that carries a frame is refused with the typed provider_request_unsupported error before the CLI is started, because a text prompt cannot show the model a picture.",
   "cases": {
     "normal_stream": {
       "request": {
@@ -504,6 +504,35 @@
         ],
         "tool": "run_command",
         "privacyToken": "contract task"
+      }
+    },
+    "image_content_refused": {
+      "request": {
+        "stream": false,
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "contract task"
+              },
+              {
+                "type": "input_image",
+                "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+              }
+            ]
+          }
+        ]
+      },
+      "cli": {
+        "events": []
+      },
+      "expected": {
+        "status": 400,
+        "errorType": "provider_request_unsupported",
+        "errorMessageContains": "cannot carry image content"
       }
     }
   }

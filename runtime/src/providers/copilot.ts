@@ -31,7 +31,9 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
+  requestCarriesImageContent,
   sendJson,
+  sendUnsupportedRequestFailure,
   sendWorkspaceResolutionFailure
 } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
@@ -1862,6 +1864,14 @@ async function handleResponsesRoute(
     error: { message: "invalid JSON", type: "invalid_request_error" }
   });
   if (!payload) return;
+  if (requestCarriesImageContent(payload.input)) {
+    sendUnsupportedRequestFailure(
+      response,
+      "copilot",
+      "This bridge turns a turn into a text prompt for the Copilot CLI and cannot carry image content. Serve the request on a route that supports vision."
+    );
+    return;
+  }
   const context = prepareCopilotRequest(request, response, payload);
   if (!context) return;
   if (payload.stream === false) {

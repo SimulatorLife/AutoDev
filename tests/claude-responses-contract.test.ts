@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { existsSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -225,7 +226,9 @@ async function stop(child: any): Promise<void> {
  */
 function buildFakeCliSource(): string {
   return String.raw`#!/usr/bin/env node
+const fs = require("node:fs");
 const fixture = JSON.parse(process.env.CLAUDE_CONTRACT_CASE || "{}");
+if (fixture.marker) fs.writeFileSync(fixture.marker, "started");
 for (const event of fixture.events || []) process.stdout.write(JSON.stringify(event) + "\n");
 if (fixture.stderr) process.stderr.write(fixture.stderr);
 process.exitCode = fixture.exitCode || 0;
@@ -620,6 +623,75 @@ async function runRejectedModelCase(
   }
 }
 
+/**
+ * A request the bridge cannot serve must be refused, and refused before the
+ * CLI is started.
+ *
+ * The bridge turns a turn into a text prompt for the Claude CLI, so it cannot
+ * show the model a frame. Answering anyway — with the literal text
+ * "[image]" in place of the picture — returns a well-formed response to a
+ * question the model was never asked, and the caller reads it as an answer.
+ * The refusal is typed so the router can move on to a route that serves
+ * vision.
+ */
+async function runUnsupportedRequestCase(
+  name: string,
+  rawCase: ContractCase
+): Promise<void> {
+  const item = replaceTokens(rawCase);
+  const temp = await mkdtemp(join(tmpdir(), "autodev-claude-contract-"));
+  const fakeCli = join(temp, "fake-claude.py");
+  const marker = join(temp, "cli-started");
+  const proxyPort = await freePort();
+  await writeFile(fakeCli, buildFakeCliSource(), "utf8");
+  await chmod(fakeCli, 0o755);
+  const cli = { ...item.cli, marker };
+  const child = await startBridge({
+    proxyPort,
+    bearerToken: "",
+    fakeCli,
+    contractCase: cli
+  });
+  try {
+    await waitForHealth(proxyPort);
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-autodev-agent-role": BRIDGE_ROLE,
+        "x-autodev-request-id": `claude-contract-${name}`
+      },
+      body: JSON.stringify({
+        model: "claude-subscription",
+        cwd: REPO_ROOT,
+        stream: false,
+        ...item.request
+      })
+    });
+    assert.equal(response.status, item.expected.status, `${name}: HTTP status`);
+    const payload = JSON.parse(await response.text());
+    assert.equal(payload.error?.type, item.expected.errorType, `${name}: type`);
+    assert.match(
+      payload.error?.message ?? "",
+      new RegExp(item.expected.errorMessageContains),
+      `${name}: the refusal names the limit`
+    );
+    assert.equal(
+      existsSync(marker),
+      false,
+      `${name}: the CLI must not be started for a request it cannot serve`
+    );
+    assert.doesNotMatch(
+      JSON.stringify(payload),
+      new RegExp(PRIVACY_TOKEN),
+      `${name}: prompt content must not be in error body`
+    );
+  } finally {
+    await stop(child);
+    await rm(temp, { recursive: true, force: true });
+  }
+}
+
 test(
   "Claude Responses contract fixture is exercised through the offline proxy boundary",
   // Every case starts a bridge process and waits on it. Without a bound, one
@@ -656,6 +728,12 @@ test(
         await runRejectedModelCase(name, entry);
       }
       await runOauthMissingCase("oauth_token_missing", oauthMissingCase);
+      const unsupportedCase = contract.cases.image_content_refused;
+      assert.ok(
+        unsupportedCase,
+        "the request a bridge cannot serve must have a contract case"
+      );
+      await runUnsupportedRequestCase("image_content_refused", unsupportedCase);
     } finally {
       await new Promise((resolve) => telemetry.server.close(resolve));
     }

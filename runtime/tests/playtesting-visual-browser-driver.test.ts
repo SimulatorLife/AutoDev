@@ -491,6 +491,80 @@ test("visual browser stops before further input when a password gate appears mid
   }
 });
 
+test("visual browser dispatches a control that moved after the observation", async () => {
+  // A game that re-renders its layout moves a button without changing what
+  // the button is. The observation promised that button, so the action must
+  // still reach it: the page is read again before the input is dispatched,
+  // and a control that is the same control wherever it now sits is still
+  // dispatched.
+  let shiftRequested = false;
+  let shiftedAcknowledged = 0;
+  const source = await listen((requestPath) => {
+    if (requestPath === "/shift") {
+      return shiftRequested ? "shift" : "hold";
+    }
+    if (requestPath === "/shifted") {
+      shiftedAcknowledged += 1;
+      return "shifted";
+    }
+    return `<!doctype html><html><body>
+    <button id="start">Start race</button>
+    <button id="other">Other control</button>
+    <script>
+      const poll = () => {
+        fetch('/shift').then((response) => response.text()).then((answer) => {
+          if (answer === 'shift') {
+            const inserted = document.createElement('button');
+            inserted.id = 'inserted';
+            inserted.textContent = 'Inserted control';
+            document.body.insertBefore(inserted, document.getElementById('start'));
+            fetch('/shifted');
+            return;
+          }
+          setTimeout(poll, 25);
+        });
+      };
+      setTimeout(poll, 0);
+    </script>
+    </body></html>`;
+  });
+  const { store, root } = artifacts();
+  let driver: PlaytestVisualBrowserDriver | null = null;
+  try {
+    driver = await openDriver({ source, store });
+    const captured = await driver.observe();
+    assert.equal(captured.status, "observed");
+    if (captured.status !== "observed") return;
+    const start = captured.observation.controls.find(
+      (control) => control.name === "Start race"
+    );
+    assert.ok(start, "the observation offered the button the action names");
+    shiftRequested = true;
+    assert.ok(
+      await waitFor(() => shiftedAcknowledged >= 1, 10_000),
+      "the page was asked to move its layout and said it had"
+    );
+    const receipt = await driver.act({
+      schema: "autodev-playtest-visual-action-v1",
+      workspaceId: WORKSPACE,
+      targetId: "visual-target-1",
+      episodeId: EPISODE_ID,
+      observationId: captured.observation.observationId,
+      kind: "activate-control",
+      controlId: start.controlId
+    });
+    assert.equal(
+      receipt.status,
+      "dispatched",
+      "a control that moved is still the control the observation promised"
+    );
+  } finally {
+    await driver?.close();
+    await source.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("visual browser refuses coordinate input when the captured canvas frame changes", async () => {
   // The frame has to change after the observation and before the action.
   // The test asks the page to change and waits for the page to say it did,

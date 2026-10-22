@@ -33,6 +33,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/agent-context-headers";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { resolveSandboxMode } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { providerRequestUnsupported } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_TIMEOUT,
@@ -634,7 +635,40 @@ export function fallbackable(status: number, body: unknown): boolean {
   if ([401, 408, 429, 500, 502, 503, 504].includes(status)) return true;
   if (status === 400 && INVALID_MODEL_PATTERN.test(String(body ?? "")))
     return true;
+  // A route that says it cannot serve this request is not a broken provider:
+  // the next candidate may serve it, so the chain moves on.
+  if (providerRequestUnsupported(body)) return true;
   return FALLBACKABLE_BODY_REGEX.test(String(body ?? ""));
+}
+
+export interface CandidateFailureDecision {
+  /** Whether the chain moves on to the next candidate or answers the client. */
+  readonly outcome: "terminal" | "fallback";
+  /**
+   * Whether the provider is cooled down. A provider that cannot serve this
+   * request is healthy: cooling it would push unrelated traffic away from a
+   * working route.
+   */
+  readonly coolDown: boolean;
+}
+
+/**
+ * What a candidate's failure means for the request.
+ *
+ * A route that refuses with the typed "cannot serve this request" refusal has
+ * not failed: the next candidate may serve the request, so the chain moves on
+ * and the provider stays available.
+ */
+export function decideCandidateFailure(
+  status: number,
+  body: string | null
+): CandidateFailureDecision {
+  if (!fallbackable(status, body))
+    return { outcome: "terminal", coolDown: false };
+  return {
+    outcome: "fallback",
+    coolDown: !providerRequestUnsupported(body)
+  };
 }
 
 export async function providerAvailable(
@@ -3539,7 +3573,8 @@ function handleCandidateUpstreamFailure(
     elapsedMs: Date.now() - attemptStartedAt,
     selection
   });
-  if (!fallbackable(result.status ?? 500, result.body)) {
+  const decision = decideCandidateFailure(result.status ?? 500, result.body);
+  if (decision.outcome === "terminal") {
     ctx.response.writeHead(result.status ?? 500, {
       "content-type": "application/json",
       "x-autodev-provider": route.provider,
@@ -3555,16 +3590,18 @@ function handleCandidateUpstreamFailure(
     });
     return "terminal";
   }
-  COOLDOWNS.cooldownProvider(
-    route.provider,
-    cooldownFor(
-      failureClass,
-      result.limit,
-      route.model,
-      result.body ?? null,
-      route.provider
-    )
-  );
+  if (decision.coolDown) {
+    COOLDOWNS.cooldownProvider(
+      route.provider,
+      cooldownFor(
+        failureClass,
+        result.limit,
+        route.model,
+        result.body ?? null,
+        route.provider
+      )
+    );
+  }
   return "fallback";
 }
 

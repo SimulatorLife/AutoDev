@@ -1,4 +1,5 @@
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import { providerRequestUnsupported } from "@simulatorlife/autodev-runtime/shared/provider-http";
 
 export type ProviderFailureClass =
   | "session_limit"
@@ -9,6 +10,7 @@ export type ProviderFailureClass =
   | "unavailable"
   | "invalid_model"
   | "authentication"
+  | "unsupported_request"
   | "upstream_error"
   | "request_error";
 
@@ -95,6 +97,9 @@ export function classifyProviderFailure(
   body: unknown = ""
 ): ProviderFailureClass {
   const text = String(body ?? "");
+  // A route that cannot serve this request is not a broken provider: the
+  // router moves to the next candidate and leaves the provider healthy.
+  if (providerRequestUnsupported(text)) return "unsupported_request";
   // A model the provider rejects is the most specific diagnosis: its message
   // may still mention quotas or availability in passing.
   if (INVALID_MODEL_PATTERN.test(text)) return "invalid_model";

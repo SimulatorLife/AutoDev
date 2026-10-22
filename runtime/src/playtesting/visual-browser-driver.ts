@@ -838,19 +838,29 @@ function pageReadInBrowser(patterns: PageReadPatterns): RawPageReport {
   };
 }
 
-function controlId(control: RawControl, index: number): string {
+/**
+ * What makes a control the same control.
+ *
+ * The identity is the control's own content, never its position: a game that
+ * re-renders its layout moves a button without changing what the button is,
+ * and an action promised against that button must still be dispatched to it.
+ * The ordinal distinguishes controls that share a content, so two identical
+ * buttons keep separate identities.
+ */
+function controlIdentity(control: RawControl): string {
+  return JSON.stringify([
+    control.role,
+    redactName(control.name),
+    control.inputKind
+  ]);
+}
+
+function controlId(identity: string, ordinal: number): string {
   const digest = createHash("sha256")
-    .update(
-      JSON.stringify([
-        index,
-        control.role,
-        redactName(control.name),
-        control.inputKind
-      ])
-    )
+    .update(JSON.stringify([identity, ordinal]))
     .digest("hex")
     .slice(0, 16);
-  return `c-${index}-${digest}`;
+  return `c-${digest}`;
 }
 
 function validViewport(viewport: PlaytestVisualViewport): boolean {
@@ -931,7 +941,10 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
   private readonly startedAt: number;
   private readonly events: PlaytestVisualBrowserEvent[] = [];
   private lastObservation: PlaytestVisualObservation | null = null;
-  private controlIndexes = new Map<string, number>();
+  private controlIndexes = new Map<
+    string,
+    { readonly identity: string; readonly ordinal: number }
+  >();
   private controlNavigationOrigins = new Map<string, string | null>();
   private inputAttempts = 0;
   private inputValidated = 0;
@@ -1396,10 +1409,14 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
     const observationId = this.id();
     this.controlIndexes.clear();
     this.controlNavigationOrigins.clear();
+    const ordinals = new Map<string, number>();
     const controls: PlaytestVisualControl[] = pageRead.controls.map(
       (control) => {
-        const id = controlId(control, control.index);
-        this.controlIndexes.set(id, control.index);
+        const identity = controlIdentity(control);
+        const ordinal = ordinals.get(identity) ?? 0;
+        ordinals.set(identity, ordinal + 1);
+        const id = controlId(identity, ordinal);
+        this.controlIndexes.set(id, { identity, ordinal });
         this.controlNavigationOrigins.set(id, control.navigationOrigin);
         return {
           controlId: id,
@@ -1579,15 +1596,19 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
     try {
       switch (action.kind) {
         case "activate-control": {
-          const index = this.controlIndexes.get(action.controlId);
-          if (index === undefined) {
+          const promised = this.controlIndexes.get(action.controlId);
+          if (promised === undefined) {
             return this.refuseAction(action, step, "control-changed");
           }
-          const current = latest.controls.find(
-            (control) =>
-              control.index === index &&
-              controlId(control, control.index) === action.controlId
+          // The page is read again before the input is dispatched, so the
+          // control the observation promised may have moved. It is the same
+          // control when the page still offers a control with that identity,
+          // wherever it now sits; only a control that is gone, or no longer
+          // offers what the observation promised, is a refusal.
+          const matches = latest.controls.filter(
+            (control) => controlIdentity(control) === promised.identity
           );
+          const current = matches[promised.ordinal];
           if (!current || !current.enabled || current.inputKind !== "none") {
             return this.refuseAction(action, step, "control-changed");
           }
@@ -1605,7 +1626,7 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
           }
           await this.page
             .locator(CONTROL_SELECTOR)
-            .nth(index)
+            .nth(current.index)
             .click({ timeout: this.actionTimeoutMs });
           break;
         }

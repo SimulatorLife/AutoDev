@@ -39,7 +39,9 @@ import { codexToolsMcpServer } from "@simulatorlife/autodev-runtime/mcp/codex-to
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
+  requestCarriesImageContent,
   sendJson,
+  sendUnsupportedRequestFailure,
   sendWorkspaceResolutionFailure
 } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
@@ -1145,6 +1147,14 @@ async function handle(
     sendJson(response, 400, {
       error: { type: "invalid_request_error", message: "invalid JSON" }
     });
+    return;
+  }
+  if (requestCarriesImageContent(payload.input)) {
+    sendUnsupportedRequestFailure(
+      response,
+      "claude",
+      "This bridge turns a turn into a text prompt for the Claude CLI and cannot carry image content. Serve the request on a route that supports vision."
+    );
     return;
   }
   startResponsesTurn(request, response, payload);

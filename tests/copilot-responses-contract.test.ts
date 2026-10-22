@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -463,11 +464,92 @@ console.log(JSON.stringify({ type: "result", exitCode: 0 }));
   }
 });
 
+/**
+ * A turn that carries a frame is refused before the CLI is started.
+ *
+ * The bridge turns a turn into a text prompt for the Copilot CLI, so it
+ * cannot show the model a picture. Answering anyway would return a
+ * well-formed response to a question the model was never asked.
+ */
+async function runUnsupportedRequestCase(
+  name: string,
+  rawCase: ContractCase
+): Promise<void> {
+  const item = replaceTokens(rawCase);
+  const temp = await mkdtemp(join(tmpdir(), "autodev-copilot-contract-"));
+  const fakeCli = join(temp, "fake-copilot.mjs");
+  const marker = join(temp, "cli-started");
+  const proxyPort = await freePort();
+  const fakeSource = `
+import { writeFileSync } from "node:fs";
+const fixture = JSON.parse(process.env.COPILOT_CONTRACT_CASE);
+if (fixture.marker) writeFileSync(fixture.marker, "started");
+`;
+  await writeFile(fakeCli, `#!/usr/bin/env node\n${fakeSource}`, "utf8");
+  await chmod(fakeCli, 0o755);
+  const child = spawn(process.execPath, [PROXY], {
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      AUTODEV_REPO_ROOT: REPO_ROOT,
+      CODEX_PROJECT_ROOT: REPO_ROOT,
+      COPILOT_BIN: fakeCli,
+      COPILOT_PROXY_HOST: "127.0.0.1",
+      COPILOT_PROXY_PORT: String(proxyPort),
+      COPILOT_PROXY_TIMEOUT_MS: "5000",
+      COPILOT_CONTRACT_CASE: JSON.stringify({ ...item.cli, marker })
+    },
+    stdio: ["ignore", "ignore", "pipe"]
+  });
+  try {
+    await waitForListening(child);
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-autodev-request-id": `copilot-contract-${name}`
+      },
+      body: JSON.stringify({
+        model: "copilot",
+        cwd: REPO_ROOT,
+        stream: false,
+        ...item.request
+      })
+    });
+    assert.equal(response.status, item.expected.status, `${name}: HTTP status`);
+    const payload = JSON.parse(await response.text());
+    assert.equal(payload.error?.type, item.expected.errorType, `${name}: type`);
+    assert.match(
+      payload.error?.message ?? "",
+      new RegExp(item.expected.errorMessageContains),
+      `${name}: the refusal names the limit`
+    );
+    assert.equal(
+      existsSync(marker),
+      false,
+      `${name}: the CLI must not be started for a request it cannot serve`
+    );
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise((resolve) => child.once("exit", resolve));
+    await rm(temp, { recursive: true, force: true });
+  }
+}
+
 test("Copilot Responses contract fixture is exercised through the offline proxy boundary", async () => {
   const before = await readFile(CONTRACT_PATH);
   const telemetry = await startTelemetryServer();
   try {
-    for (const [name, item] of cases) await runCase(name, item, telemetry);
+    for (const [name, item] of cases) {
+      if (name === "image_content_refused") continue;
+      await runCase(name, item, telemetry);
+    }
+    const unsupportedCase = contract.cases.image_content_refused;
+    assert.ok(
+      unsupportedCase,
+      "the request a bridge cannot serve must have a contract case"
+    );
+    await runUnsupportedRequestCase("image_content_refused", unsupportedCase);
   } finally {
     await new Promise<void>((resolve) =>
       telemetry.server.close(() => resolve())

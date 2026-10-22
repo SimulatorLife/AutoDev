@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { existsSync } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -196,7 +197,9 @@ async function runCase(
   const fakeAgy = join(temp, "fake-agy.mjs");
   const proxyPort = await freePort();
   const fakeSource = String.raw`
+import { writeFileSync } from "node:fs";
 const fixture = JSON.parse(process.env.AGY_CONTRACT_CASE);
+if (fixture.marker) writeFileSync(fixture.marker, "started");
 for (const event of fixture.events ?? []) process.stdout.write(JSON.stringify(event) + "\n");
 if (fixture.stderr) process.stderr.write(fixture.stderr);
 process.exitCode = fixture.exitCode ?? 0;
@@ -401,13 +404,96 @@ process.exitCode = fixture.exitCode ?? 0;
   }
 }
 
+/**
+ * A turn that carries a frame is refused before the CLI is started.
+ *
+ * agy turns a turn into a text prompt for its CLI, so it cannot show the
+ * model a picture. Answering anyway would return a well-formed response to a
+ * question the model was never asked.
+ */
+async function runUnsupportedRequestCase(
+  name: string,
+  rawCase: ContractCase
+): Promise<void> {
+  const item = replaceTokens(rawCase);
+  const temp = await mkdtemp(join(tmpdir(), "autodev-antigravity-contract-"));
+  const fakeAgy = join(temp, "fake-agy.mjs");
+  const marker = join(temp, "cli-started");
+  const proxyPort = await freePort();
+  const fakeSource = String.raw`
+import { writeFileSync } from "node:fs";
+const fixture = JSON.parse(process.env.AGY_CONTRACT_CASE);
+if (fixture.marker) writeFileSync(fixture.marker, "started");
+for (const event of fixture.events ?? []) process.stdout.write(JSON.stringify(event) + "\n");
+`;
+  await writeFile(fakeAgy, `#!/usr/bin/env node\n${fakeSource}`, "utf8");
+  await chmod(fakeAgy, 0o755);
+  const child = spawn(process.execPath, [PROXY], {
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      HOME: isolatedUserHome,
+      CODEX_HOME: isolatedCodexHome,
+      AUTODEV_REPO_ROOT: REPO_ROOT,
+      CODEX_PROJECT_ROOT: REPO_ROOT,
+      AGY_CLI_PATH: fakeAgy,
+      AGY_PROXY_HOST: "127.0.0.1",
+      AGY_PROXY_PORT: String(proxyPort),
+      AGY_PRINT_TIMEOUT: "5s",
+      LITELLM_API_KEY: "",
+      AGY_CONTRACT_CASE: JSON.stringify({ ...item.cli, marker })
+    },
+    stdio: ["ignore", "ignore", "pipe"]
+  });
+  try {
+    await waitForListening(child);
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-autodev-request-id": `antigravity-contract-${name}`
+      },
+      body: JSON.stringify({
+        model: "antigravity-subscription",
+        cwd: REPO_ROOT,
+        stream: false,
+        ...item.request
+      })
+    });
+    assert.equal(response.status, item.expected.status, `${name}: HTTP status`);
+    const payload = JSON.parse(await response.text());
+    assert.equal(payload.error?.type, item.expected.errorType, `${name}: type`);
+    assert.match(
+      payload.error?.message ?? "",
+      new RegExp(item.expected.errorMessageContains),
+      `${name}: the refusal names the limit`
+    );
+    assert.equal(
+      existsSync(marker),
+      false,
+      `${name}: the CLI must not be started for a request it cannot serve`
+    );
+  } finally {
+    await stop(child);
+    await rm(temp, { recursive: true, force: true });
+  }
+}
+
 test("Antigravity Responses contract fixture is exercised through the offline proxy boundary", async () => {
   assert.equal(contract.schema, "autodev-antigravity-responses-contract-v1");
   const before = await readFile(CONTRACT_PATH);
   const telemetry = await startTelemetryServer();
   try {
-    for (const [name, item] of Object.entries(contract.cases))
+    for (const [name, item] of Object.entries(contract.cases)) {
+      if (name === "image_content_refused") continue;
       await runCase(name, item, telemetry);
+    }
+    const unsupportedCase = contract.cases.image_content_refused;
+    assert.ok(
+      unsupportedCase,
+      "the request a bridge cannot serve must have a contract case"
+    );
+    await runUnsupportedRequestCase("image_content_refused", unsupportedCase);
   } finally {
     await new Promise((resolve) => telemetry.server.close(resolve));
   }

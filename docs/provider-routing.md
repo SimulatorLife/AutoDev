@@ -494,7 +494,7 @@ the kind as `cooldownKind`, with `cooldownFailureClass`, `cooldownResetsAt` and
 | `probe`     | a local bridge that did not answer its health check                         | 5s doubling to 30s                                         | yes                               | no                  |
 | `config`    | `authentication`, and `invalid_model` for the rejected **model only**       | fixed 30s, never escalates                                 | no                                | no                  |
 
-Five rules are load-bearing:
+Six rules are load-bearing:
 
 - **A client leaving is not a provider failing.** A stream that stops because
   the client disconnected (Codex Desktop archiving a thread mid-turn, a
@@ -546,6 +546,19 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   pattern could not read; both the class and the duration are parsed now, so
   `/status` and the 503 body report the window the provider actually named.
 
+- **A route that cannot serve a request is not a provider failure.** A
+  CLI-backed bridge turns a turn into a text prompt for its CLI, so it cannot
+  carry an image: the Claude bridge renders an image part as the literal text
+  `[image]`, and the request's own `instructions` never reach the turn. It used
+  to answer anyway -- HTTP 200, a well-formed response, a question the model
+  was never asked -- and the caller read it as an answer. The bridges now refuse
+  a request whose conversation carries an image, before the CLI is started, with
+  the typed error `provider_request_unsupported`. The router reads that refusal
+  as a fallback: the next candidate may serve the request, so the chain moves on
+  and the provider stays healthy (a refusal cools nothing down and is recorded
+  as the failure class `unsupported_request`, not as an outage). A concrete
+  request for a model on such a route is the client's answer and gets the typed
+  refusal as it stands.
 - **Probe failures ride their own ladder.** A local bridge restarting says
   nothing about the provider behind it, and escalating the provider's own backoff
   for it was how a one-minute outage became a ten-minute one.
