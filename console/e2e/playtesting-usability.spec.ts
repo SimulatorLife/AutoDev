@@ -56,6 +56,16 @@ const START_ANALYST_REVIEW_LABEL = "Start analyst review";
 const ANALYST_RUN_TEST_ID = "playtesting-analysis-run";
 const PRESSED_ATTRIBUTE = "aria-pressed";
 const PRESSED_VALUE = "true";
+const FINDINGS_HEADING_NAME = "Findings";
+const REVIEW_HYPOTHESIS_TEXT =
+  "This legacy interpretation has no claim-level citation.";
+const REVIEW_SUMMARY_TEXT =
+  "Synthetic reviewed session for UI usability only.";
+const REVIEW_HYPOTHESES_LABEL = "Hypotheses";
+const REVIEW_OBSERVATIONS_LABEL = "Observations";
+const REVIEW_RECORDED_HEADING = "What the analyst recorded";
+const REVIEW_EVIDENCE_HEADING = "Evidence cited";
+const REVIEW_SELECTION_URL_PATTERN = /review=review-fixture-1/u;
 
 async function openNewPlaytest(page: Page): Promise<Locator> {
   await page.locator('[data-playtesting-open-dialog="true"]').click();
@@ -697,7 +707,10 @@ test("finding witness opens its exact replay step, then Back restores filtered l
     page.getByText("Execution status", { exact: true })
   ).toBeVisible();
   await expect(page.getByText("Game outcome", { exact: true })).toBeVisible();
-  await expect(page.getByText("LOSS", { exact: true })).toBeVisible();
+  // The outcome badge reads the word, not the stored token: "Loss", not
+  // "LOSS". Every other badge in the Console is sentence case, and the
+  // vocabulary layer owns this one too.
+  await expect(page.getByText("Loss", { exact: true })).toBeVisible();
   await expect(
     page.locator('pre[aria-label="Recorded data for step 2"]')
   ).toContainText("event-2");
@@ -1758,4 +1771,54 @@ test("an oversized shared analyst selection is refused without truncation", asyn
   await expect(
     panel.getByRole("button", { name: START_ANALYST_REVIEW_LABEL })
   ).toBeDisabled();
+});
+
+test("an analyst hypothesis opens its review as addressable detail under the list", async ({
+  page
+}) => {
+  await page.goto("/playtesting?view=findings&workspaceId=fixture%2Fgame");
+  await expect(page.getByRole("heading", { name: FINDINGS_HEADING_NAME })).toBeVisible();
+  await page.waitForLoadState("networkidle");
+
+  // The list shows the analyst's own conclusion, clamped for scanning.
+  const hypothesis = page.locator("[data-review-open]").first();
+  await expect(hypothesis).toBeVisible();
+  await expect(hypothesis).toHaveText(
+    REVIEW_HYPOTHESIS_TEXT
+  );
+
+  await hypothesis.hover();
+  await page.waitForTimeout(250);
+  await hypothesis.click();
+
+  // The open review is address state: the link is shareable and Back returns
+  // to it still open.
+  await expect(page).toHaveURL(REVIEW_SELECTION_URL_PATTERN, { timeout: 20_000 });
+  const detail = page.locator("[data-review-detail]");
+  await expect(detail).toBeVisible();
+  await expect(detail).toContainText(
+    REVIEW_HYPOTHESIS_TEXT
+  );
+  await expect(detail).toContainText(REVIEW_HYPOTHESES_LABEL);
+  await expect(detail).toContainText(REVIEW_OBSERVATIONS_LABEL);
+  await expect(detail).toContainText(REVIEW_RECORDED_HEADING);
+  await expect(detail).toContainText(
+    REVIEW_SUMMARY_TEXT
+  );
+  await expect(detail).toContainText(REVIEW_EVIDENCE_HEADING);
+
+  // A refresh keeps the review open: the selection is in the address, not in
+  // a piece of client state that a reload would lose.
+  await page.reload();
+  await expect(page.locator("[data-review-detail]")).toBeVisible({
+    timeout: 20_000
+  });
+
+  // And the close control returns to the list with the selection dropped.
+  await page.getByRole("link", { name: "Close review detail" }).click();
+  await expect(page).not.toHaveURL(REVIEW_SELECTION_URL_PATTERN, {
+    timeout: 20_000
+  });
+  await expect(page.locator("[data-review-detail]")).toHaveCount(0);
+  await expect(page.locator("[data-review-open]").first()).toBeVisible();
 });

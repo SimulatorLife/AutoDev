@@ -372,7 +372,10 @@ function VisualPlaytestLaunchCockpit({
       React.createElement(
         "p",
         { className: "mt-1 text-sm text-fg-muted" },
-        "Smart-directed exploration of your approved browser game with vision and keyboard/pointer input."
+        // The decision backend is the operator's choice, so the sentence does
+        // not name one. It also has to fit a phone: the launch action below it
+        // must stay above the fold.
+        "Explores your approved browser game with vision and keyboard/pointer input."
       )
     ),
     React.createElement(

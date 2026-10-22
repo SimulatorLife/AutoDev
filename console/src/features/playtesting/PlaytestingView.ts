@@ -864,7 +864,11 @@ function analystHypotheses(
             NavigationLink,
             {
               href: playtestingReviewHref(scope, review.reviewId),
-              className: "font-medium text-fg hover:underline",
+              // The headline is the way into the review, so the whole of it is
+              // the target: an inline link's box is the union of its line
+              // boxes, and the middle of that union can be a gap between two
+              // lines where the click lands on the row instead of the link.
+              className: "block font-medium text-fg hover:underline",
               dataAttributes: { "data-review-open": review.reviewId }
             },
             review.headline.length > 0

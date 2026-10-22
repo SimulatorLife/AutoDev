@@ -457,6 +457,71 @@ const latestReview = {
   notes: "Synthetic fixture only; not game or human evidence."
 } as const;
 
+/**
+ * The persisted reviews, in the summary shape the Control API serves.
+ *
+ * The Console reads the analyst's durable record through this route, and a
+ * fixture that serves only the in-process analyst envelope leaves the
+ * Findings view with nothing to show — so the review a session carries is
+ * projected into the shape the reader validates.
+ */
+function reviewSummaryRow(
+  review: {
+    readonly reviewId: string;
+    readonly episodeId: string;
+    readonly status: string;
+    readonly createdAt: string;
+    readonly observations: readonly { readonly text: string }[];
+    readonly interpretations: readonly { readonly text: string }[];
+    readonly findings: readonly unknown[];
+    readonly chronologicalSummary: string;
+    readonly evidenceRefs: readonly unknown[];
+  }
+) {
+  return {
+    reviewId: review.reviewId,
+    episodeId: review.episodeId,
+    workspaceId: WORKSPACE_ID,
+    kind: "discovery" as const,
+    status: review.status,
+    createdAt: review.createdAt,
+    observationCount: review.observations.length,
+    interpretationCount: review.interpretations.length,
+    findingCount: review.findings.length,
+    headline:
+      review.interpretations[0]?.text ??
+      "The analyst recorded no written conclusion for this session.",
+    summary: review.chronologicalSummary,
+    evidenceRefs: review.evidenceRefs
+  };
+}
+
+/** The reviews a reader sees before any analysis has been run. */
+const persistedReviewRows = [reviewSummaryRow(latestReview)];
+
+/**
+ * The reviews a reader sees.
+ *
+ * They are the persisted ones plus any review an analyst run in this fixture
+ * has just produced, so a reader who runs an analysis and comes back to the
+ * Findings view finds the analysis there.
+ */
+function respondPlaytestingReviews(response: ServerResponse): void {
+  const fromRuns = Array.from(
+    syntheticRunReviews.values(),
+    (review) =>
+      reviewSummaryRow(review as unknown as Parameters<typeof reviewSummaryRow>[0])
+  );
+  const rows = [...persistedReviewRows, ...fromRuns];
+  sendJson(response, {
+    schema: "autodev-control-playtesting-reviews-v1",
+    workspaceId: WORKSPACE_ID,
+    total: rows.length,
+    rows,
+    nextCursor: null
+  });
+}
+
 function syntheticReviewForPacket(
   packet: { readonly episodeId: string; readonly packetId: string },
   analysisId: string
@@ -1860,7 +1925,8 @@ function syntheticModeReadiness(
               eligibility: "supported",
               reasons: []
             }
-          ]
+          ],
+          policies: syntheticVisualPolicyReadiness()
         }
       : {
           status: "unavailable",
@@ -1888,7 +1954,8 @@ function syntheticModeReadiness(
             }
           ],
           targetStore: "available",
-          targets: []
+          targets: [],
+          policies: []
         },
     "scripted-regression": {
       status: "unavailable",
@@ -1903,6 +1970,37 @@ function syntheticModeReadiness(
       ]
     }
   } as const;
+}
+
+/**
+ * Each decision backend the visual mode offers, with its own readiness.
+ *
+ * A mode being ready says the browser can be driven; it does not say that
+ * every backend can be reached. The launch form refuses to start a run
+ * against a backend that cannot be reached, so a fixture that offered only
+ * the mode's readiness would leave the form disabled for no stated reason.
+ */
+function syntheticVisualPolicyReadiness() {
+  return [
+    {
+      policyId: "smart-direct" as const,
+      status: "ready" as const,
+      reasons: []
+    },
+    {
+      policyId: "onejev-local" as const,
+      status: "unavailable" as const,
+      reasons: [
+        {
+          code: "onejev-local-policy-unavailable",
+          label: "Local OneJev server unavailable",
+          message:
+            "The local OneJev model server is not reachable. Start it with `qev serve` on the approved local endpoint, or choose the Smart-directed route.",
+          severity: "unavailable" as const
+        }
+      ]
+    }
+  ];
 }
 
 function handleSyntheticReadFailureConfiguration(
@@ -2290,6 +2388,10 @@ function handleSyntheticPlaytestingRead(
   }
   if (url.pathname === "/control/playtesting/findings") {
     sendJson(response, page("findings", [finding], 1));
+    return true;
+  }
+  if (url.pathname === "/control/playtesting/reviews") {
+    respondPlaytestingReviews(response);
     return true;
   }
   if (url.pathname === "/control/playtesting/comparisons") {
