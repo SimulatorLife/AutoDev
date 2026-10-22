@@ -11,6 +11,30 @@ import {
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
+import {
+  admitPlaytestVisualAction,
+  assertPlaytestVisualObservation,
+  assertWorkspaceVisualPlaytestTargetApproval,
+  PLAYTEST_VISUAL_OBSERVATION_SCHEMA,
+  type PlaytestVisualAction,
+  type PlaytestVisualActionAdmissionReason,
+  type PlaytestVisualControl,
+  type PlaytestVisualObservation,
+  type PlaytestVisualViewport,
+  type WorkspaceVisualPlaytestTargetApproval
+} from "@simulatorlife/autodev-core";
+import {
+  type Browser,
+  type BrowserContext,
+  chromium,
+  type Page
+} from "playwright-core";
+
+import {
+  PLAYESTS_ARTIFACT_MAX_WINDOW_STEPS,
+  type PlaytestArtifactStore,
+  PLAYTESTS_ARTIFACT_MAX_BYTES} from "./artifact-store.ts";
+
 function resolveChromiumExecutablePath(
   browserType: Pick<typeof chromium, "executablePath">
 ): string | null {
@@ -64,31 +88,6 @@ function resolveChromiumExecutablePath(
   }
   return null;
 }
-
-import {
-  admitPlaytestVisualAction,
-  assertPlaytestVisualObservation,
-  assertWorkspaceVisualPlaytestTargetApproval,
-  PLAYTEST_VISUAL_OBSERVATION_SCHEMA,
-  type PlaytestVisualAction,
-  type PlaytestVisualActionAdmissionReason,
-  type PlaytestVisualControl,
-  type PlaytestVisualObservation,
-  type PlaytestVisualViewport,
-  type WorkspaceVisualPlaytestTargetApproval
-} from "@simulatorlife/autodev-core";
-import {
-  chromium,
-  type Browser,
-  type BrowserContext,
-  type Page
-} from "playwright-core";
-
-import {
-  PLAYESTS_ARTIFACT_MAX_WINDOW_STEPS,
-  PLAYTESTS_ARTIFACT_MAX_BYTES,
-  type PlaytestArtifactStore
-} from "./artifact-store.ts";
 
 let cachedChromiumAvailability: boolean | null = null;
 
@@ -426,9 +425,9 @@ function websocketOrigin(value: string): string | null {
 
 function redactName(value: string): string {
   return value
-    .replace(EMAIL_PATTERN, "[redacted]")
-    .replace(PAYMENT_CARD_PATTERN, "[redacted]")
-    .replace(/[\u0000-\u001f\u007f]/gu, " ")
+    .replaceAll(EMAIL_PATTERN, "[redacted]")
+    .replaceAll(PAYMENT_CARD_PATTERN, "[redacted]")
+    .replaceAll(/[\u0000-\u001F\u007F]/gu, " ")
     .trim()
     .slice(0, 256);
 }
@@ -725,16 +724,21 @@ function inputKindForCurrentFocus(
 
 function keyForBrowser(key: string): string {
   switch (key) {
-    case "KeyW":
+    case "KeyW": {
       return "w";
-    case "KeyA":
+    }
+    case "KeyA": {
       return "a";
-    case "KeyS":
+    }
+    case "KeyS": {
       return "s";
-    case "KeyD":
+    }
+    case "KeyD": {
       return "d";
-    default:
+    }
+    default: {
       return key;
+    }
   }
 }
 
@@ -742,7 +746,7 @@ function keyForBrowser(key: string): string {
 function browserProcessEnvironment(profileRoot: string): NodeJS.ProcessEnv {
   const systemPath =
     process.platform === "win32"
-      ? "C:\\Windows\\System32;C:\\Windows"
+      ? String.raw`C:\Windows\System32;C:\Windows`
       : "/usr/bin:/bin:/usr/sbin:/sbin";
   return {
     PATH: systemPath,
@@ -1404,8 +1408,9 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
           await this.page.keyboard.press(keyForBrowser(action.key));
           break;
         }
-        case "gamepad-press":
+        case "gamepad-press": {
           return this.refuseAction(action, step, "input-unsupported");
+        }
       }
     } catch {
       return this.refuseAction(
@@ -1452,14 +1457,18 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
 
   private actionRefusalForBlock(): ActionRefusalReason {
     switch (this.terminalBlock) {
-      case "origin-escape":
+      case "origin-escape": {
         return "origin-not-approved";
-      case "wall-time-limit":
+      }
+      case "wall-time-limit": {
         return "wall-time-limit";
-      case "event-budget-exhausted":
+      }
+      case "event-budget-exhausted": {
         return "event-budget-exhausted";
-      default:
+      }
+      default: {
         return "driver-state-unavailable";
+      }
     }
   }
 

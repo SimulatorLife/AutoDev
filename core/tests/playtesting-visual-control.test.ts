@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  admitPlaytestVisualAction,
   assertPlaytestVisualAction,
   assertPlaytestVisualObservation,
-  admitPlaytestVisualAction,
   PLAYTEST_VISUAL_ACTION_SCHEMA,
   PLAYTEST_VISUAL_OBSERVATION_SCHEMA,
   type PlaytestVisualAction,

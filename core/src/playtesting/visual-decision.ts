@@ -18,8 +18,8 @@
  * filesystem.
  */
 
-import type { PlaytestPlayerFocusOutcome } from "./player-debrief.ts";
 import type { WorkspaceVisualPlaytestTargetApproval } from "../workspaces/visual-playtesting.ts";
+import type { PlaytestPlayerFocusOutcome } from "./player-debrief.ts";
 import type {
   PlaytestVisualAction,
   PlaytestVisualObservation

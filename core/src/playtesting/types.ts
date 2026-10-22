@@ -17,11 +17,11 @@
 import type { AgentRole } from "../agents/types.ts";
 import type { WorkspaceVisualPlaytestLimits } from "../workspaces/visual-playtesting.ts";
 import type { PlaytestFindingIdentity } from "./finding-identity.ts";
-import type { PlaytestVisualPolicyId } from "./visual-decision.ts";
 import type {
   PlaytestArtifactReference,
   PlaytestCheckpointDigest
 } from "./protocol-types.ts";
+import type { PlaytestVisualPolicyId } from "./visual-decision.ts";
 
 /** Current Core schema version for the playtesting artifact family. */
 export const PLAYTESTS_SCHEMA_VERSION = 1 as const;

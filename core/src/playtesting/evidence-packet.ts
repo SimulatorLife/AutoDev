@@ -21,8 +21,6 @@ import {
 import { canonicalPlaytestJson } from "./canonical-json.ts";
 import { assertPlaytestCoverageManifest } from "./coverage.ts";
 import {
-  type PlaytestEvidencePacketArtifactView,
-  type PlaytestEvidencePacketOmittedArtifactView,
   assertOmittedPacketArtifacts,
   assertPacketArtifactProvenance,
   assertTraceStep,
@@ -35,10 +33,12 @@ import {
   isPlaytestEvidencePacketId,
   isRecord,
   isText,
-  packetContentBytes,
   MAX_EVIDENCE_PACKET_BYTES,
   MAX_EVIDENCE_PACKET_STEPS,
   MAX_EVIDENCE_PACKET_WINDOWS,
+  packetContentBytes,
+  type PlaytestEvidencePacketArtifactView,
+  type PlaytestEvidencePacketOmittedArtifactView,
   resolveEvidenceWindowLimits,
   suppliedArtifactsFor
 } from "./evidence-trace-selection.ts";

@@ -697,7 +697,7 @@ test("Smart-direct availability probes the authenticated local health endpoint a
       portValue: "4321",
       authToken: "test-router-token",
       fetchImpl,
-      now: () => 1_000,
+      now: () => 1000,
       cacheMs: 500
     }),
     true
@@ -707,7 +707,7 @@ test("Smart-direct availability probes the authenticated local health endpoint a
       portValue: "4321",
       authToken: "test-router-token",
       fetchImpl,
-      now: () => 1_100,
+      now: () => 1100,
       cacheMs: 500
     }),
     true
@@ -720,7 +720,7 @@ test("Smart-direct availability probes the authenticated local health endpoint a
       authToken: "test-router-token",
       fetchImpl: async () =>
         Response.json({ status: "ok", router: "different-service" }),
-      now: () => 2_000
+      now: () => 2000
     }),
     false
   );
@@ -745,7 +745,7 @@ test("a busy Router is available: the probe waits for a slow health answer", asy
       const timer = setTimeout(() => {
         signal?.removeEventListener("abort", abort);
         resolve(Response.json({ status: "ok", router: "codex-model-router" }));
-      }, 2_000);
+      }, 2000);
       const abort = () => {
         clearTimeout(timer);
         reject(new DOMException("Request aborted", "AbortError"));
@@ -757,7 +757,7 @@ test("a busy Router is available: the probe waits for a slow health answer", asy
       portValue: "4321",
       authToken: "test-router-token",
       fetchImpl,
-      now: () => 1_000,
+      now: () => 1000,
       cacheMs: 500
     }),
     true

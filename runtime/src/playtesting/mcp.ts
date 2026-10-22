@@ -14,6 +14,9 @@ import {
   assertPlaytestCoveragePlanCoversAssignments,
   assertPlaytestCrossSessionMetricAggregation,
   assertPlaytestCrossSessionSynthesis,
+  assertPlaytestDiscoveryReviewDraft,
+  assertPlaytestDiscoveryReviewGroundedInPacket,
+  assertPlaytestDiscoverySessionReview,
   assertPlaytestEvidenceLocatorsWithinPacket,
   assertPlaytestEvidencePacket,
   assertPlaytestFindingEvidenceStatusConsistent,
@@ -25,14 +28,16 @@ import {
   buildPlaytestFindingIdentity,
   buildPlaytestIssueDrafts,
   canonicalPlaytestJson,
+  PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
+  PLAYTEST_VISUAL_ACTION_SCHEMA,
+  PLAYTEST_VISUAL_OBSERVATION_SCHEMA,
   type PlaytestAdapterAssignmentManifest,
   type PlaytestAdapterBatch,
   type PlaytestAdapterBranchOperation,
   type PlaytestArtifactReference,
   type PlaytestAssignmentBranch,
+  type PlaytestAssignmentManifestDraft,
   playtestAssignmentManifestHashInput,
-  playtestEpisodeRecordId,
-  playtestVisualEpisodeRecordId,
   type PlaytestAssignmentOutcome,
   type PlaytestAssignmentTerminalState,
   type PlaytestBatch,
@@ -56,11 +61,12 @@ import {
   playtestCrossSessionInventoryHashInput,
   type PlaytestCrossSessionMetricAggregation,
   type PlaytestCrossSessionSynthesis,
-  type PlaytestDiscoveryEvidencePacketV3,
-  type PlaytestDiscoverySessionReview,
-  type PlaytestDiscoveryReviewDraft,
   type PlaytestDimensionAnchor,
+  type PlaytestDiscoveryEvidencePacketV3,
+  type PlaytestDiscoveryReviewDraft,
+  type PlaytestDiscoverySessionReview,
   type PlaytestEpisode,
+  playtestEpisodeRecordId,
   type PlaytestEpisodeState,
   type PlaytestEvidenceLocator,
   type PlaytestEvidenceOmittedArtifact,
@@ -68,17 +74,18 @@ import {
   type PlaytestEvidenceTraceStep,
   type PlaytestFinding,
   type PlaytestFindingIdentity,
-  type PlaytestPlayerDebriefV1,
-  type PlaytestPlayerEvidenceReference,
   playtestFindingIdentityHashInput,
   playtestFindingIdFromFingerprint,
   type PlaytestIssueDraft,
   playtestIssueReportingRefusal,
+  type PlaytestJsonValue,
   type PlaytestKnownEvidenceIndex,
   type PlaytestLaunchAssignment,
   type PlaytestLaunchRequest,
   type PlaytestMissingReason,
   type PlaytestOwnerDisposition,
+  type PlaytestPlayerDebriefV1,
+  type PlaytestPlayerEvidenceReference,
   type PlaytestReviewCandidate,
   type PlaytestReviewCompleteness,
   playtestReviewOutcomeKey,
@@ -86,17 +93,14 @@ import {
   type PlaytestReviewPacketReceipt,
   type PlaytestReviewReceipt,
   type PlaytestRunAssignmentOutcome,
-  type PlaytestSessionReference,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
   PLAYTESTS_BATCH_SCHEMA,
   PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA,
+  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA,
   PLAYTESTS_EPISODE_STATES,
   PLAYTESTS_EVIDENCE_PACKET_MAX_TOKENS,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
-  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
-  PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MAX_TOKENS,
-  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_FINDING_STATUSES,
   PLAYTESTS_GAME_OUTCOMES,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
@@ -104,33 +108,24 @@ import {
   PLAYTESTS_MAX_BATCH_REVIEW_SESSIONS,
   PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS,
   PLAYTESTS_MEASUREMENT_VERSION,
-  PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
   PLAYTESTS_RNG_POLICY_VERSION,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_SEVERITIES,
   PLAYTESTS_VERIFICATION_STAGES,
+  PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
+  type PlaytestSessionReference,
   type PlaytestSessionReview,
-  assertPlaytestDiscoveryEvidencePacket,
-  assertPlaytestDiscoveryReviewDraft,
-  assertPlaytestDiscoveryReviewGroundedInPacket,
-  assertPlaytestDiscoverySessionReview,
+  type PlaytestVisualAssignmentManifest,
+  type PlaytestVisualBatch,
+  type PlaytestVisualBatchAssignment,
+  type PlaytestVisualDecision,
+  playtestVisualEpisodeRecordId,
+  type PlaytestVisualPolicy as CorePlaytestVisualPolicy,
+  type PlaytestVisualPolicyId,
   recordPlaytestOwnerDecision,
   scorePlaytestDimensionAnchor,
   selectPlaytestBatchReviews,
   triagePlaytestFindings,
-  type PlaytestAssignmentManifestDraft,
-  type PlaytestJsonValue,
-  PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
-  type PlaytestVisualAssignmentManifest,
-  type PlaytestVisualBatch,
-  type PlaytestVisualBatchAssignment,
-  PLAYTEST_VISUAL_ACTION_SCHEMA,
-  PLAYTEST_VISUAL_OBSERVATION_SCHEMA,
-  type PlaytestVisualAction,
-  type PlaytestVisualObservation,
-  type PlaytestVisualDecision,
-  type PlaytestVisualPolicyId,
-  type PlaytestVisualPolicy as CorePlaytestVisualPolicy,
   type WorkspacePlaytestApproval,
   type WorkspacePlaytestBuild,
   type WorkspaceVisualPlaytestLimits,
@@ -146,9 +141,8 @@ import {
   PlaytestSourceUnavailableError
 } from "@simulatorlife/autodev-data/playtesting";
 import {
-  WorkspaceVisualPlaytestTargetRepository,
-  type WorkspacePlaytestApprovalRepository
-} from "@simulatorlife/autodev-data/workspaces";
+  type WorkspacePlaytestApprovalRepository,
+  WorkspaceVisualPlaytestTargetRepository} from "@simulatorlife/autodev-data/workspaces";
 import { z } from "zod/v4";
 
 import type { PlaytestingReadRepository } from "../control-api/playtesting.ts";
@@ -166,6 +160,7 @@ import {
   PLAYTESTS_ARTIFACT_WINDOW_MEDIA_TYPE
 } from "./artifact-store.ts";
 import { standardizePlaytestCohorts } from "./cohort-standardization-run.ts";
+import { preparePlaytestDiscoveryEvidencePacket } from "./discovery-review.ts";
 import {
   launchPlaytestSandbox,
   PlaytestSandboxApprovalError,
@@ -187,27 +182,24 @@ import {
   playtestLaunchRequestSchema
 } from "./launch-request-schema.ts";
 import {
+  ONEJEV_LOCAL_POLICY_VERSION,
+  OneJevLocalVisualPolicy
+} from "./onejev-local-policy.ts";
+import {
   createBuiltinPlaytestPolicy,
   type PlaytestPolicy,
   PLAYTESTS_BUILTIN_POLICY_IDS
 } from "./policies.ts";
 import { derivePlaytestPolicyValidity } from "./policy-validity-run.ts";
-import { preparePlaytestDiscoveryEvidencePacket } from "./discovery-review.ts";
-import { buildVisualCandidates } from "./visual-candidates.ts";
-import {
-  ONEJEV_LOCAL_POLICY_VERSION,
-  OneJevLocalVisualPolicy
-} from "./onejev-local-policy.ts";
-import {
-  SmartDirectPolicyError,
-  SMART_DIRECT_POLICY_VERSION,
-  SmartDirectVisualPolicy
-} from "./smart-direct-policy.ts";
 import {
   createPlaytestPolicyWorkspace,
-  removePlaytestPolicyWorkspace,
-  type PlaytestPolicyWorkspace
-} from "./policy-workspace.ts";
+  type PlaytestPolicyWorkspace,
+  removePlaytestPolicyWorkspace} from "./policy-workspace.ts";
+import {
+  SMART_DIRECT_POLICY_VERSION,
+  SmartDirectPolicyError,
+  SmartDirectVisualPolicy
+} from "./smart-direct-policy.ts";
 import {
   PlaytestVisualBrowserDriver,
   PlaytestVisualBrowserDriverError,
@@ -215,6 +207,7 @@ import {
   type PlaytestVisualEpisodeDriver,
   type PlaytestVisualObservationBlockReason
 } from "./visual-browser-driver.ts";
+import { buildVisualCandidates } from "./visual-candidates.ts";
 
 export class PlaytestMcpAuthorizationError extends Error {
   constructor(message: string) {
@@ -4559,18 +4552,20 @@ function visualEpisodeDisposition(exit: VisualEpisodeExit): {
   readonly missingReason: PlaytestMissingReason | null;
 } {
   switch (exit.kind) {
-    case "cancelled":
+    case "cancelled": {
       return {
         status: "cancelled",
         termination: { reason: "cancelled", step: exit.step },
         missingReason: "cancelled"
       };
-    case "step-limit":
+    }
+    case "step-limit": {
       return {
         status: "budget-truncated",
         termination: { reason: "step-limit", step: exit.step },
         missingReason: "budget-truncated"
       };
+    }
     case USAGE_BUDGET: {
       return {
         status: "budget-truncated",
@@ -4578,19 +4573,21 @@ function visualEpisodeDisposition(exit: VisualEpisodeExit): {
         missingReason: "budget-truncated"
       };
     }
-    case "loop-guard":
+    case "loop-guard": {
       return {
         status: "budget-truncated",
         termination: { reason: "loop-guard", step: exit.step },
         missingReason: "budget-truncated"
       };
-    case "infrastructure-failure":
+    }
+    case "infrastructure-failure": {
       return {
         status: "infrastructure-failed",
         termination: { reason: "runtime-failure", step: exit.step },
         missingReason: "infrastructure-failed"
       };
-    case "driver-blocked":
+    }
+    case "driver-blocked": {
       return VISUAL_BUDGET_BLOCK_REASONS.has(exit.reason)
         ? {
             status: "budget-truncated",
@@ -4602,24 +4599,28 @@ function visualEpisodeDisposition(exit: VisualEpisodeExit): {
             termination: { reason: "unknown", step: exit.step },
             missingReason: "unobserved"
           };
-    case "action-refused":
+    }
+    case "action-refused": {
       return {
         status: "crashed",
         termination: { reason: "unknown", step: exit.step },
         missingReason: "unobserved"
       };
-    case "wall-time-limit":
+    }
+    case "wall-time-limit": {
       return {
         status: "budget-truncated",
         termination: { reason: "step-limit", step: exit.step },
         missingReason: "budget-truncated"
       };
-    case "policy-stop":
+    }
+    case "policy-stop": {
       return {
         status: "completed",
         termination: { reason: "unknown", step: exit.step },
         missingReason: null
       };
+    }
   }
 }
 
@@ -5043,12 +5044,12 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
           actionTimeoutMs: Math.min(10_000, sessionTarget.limits.wallTimeMs),
           maxSteps: assignment.maxSteps
         });
-      } catch (err) {
+      } catch (error) {
         reportVisualDriverOpenFailure({
           batchId,
           episodeId,
           assignmentId: assignment.assignmentId,
-          error: err
+          error: error
         });
         playerDebrief = {
           schema: PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
@@ -5112,10 +5113,10 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
         let obsResult;
         try {
           obsResult = await driver.observe();
-        } catch (err) {
+        } catch (error) {
           exit = {
             kind: "infrastructure-failure",
-            code: visualRuntimeFailureCode(err),
+            code: visualRuntimeFailureCode(error),
             step
           };
           break;
@@ -5160,8 +5161,8 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
             deadlineMonotonicMs:
               performance.now() + driver.remainingWallTimeMs()
           });
-        } catch (err) {
-          const code = visualRuntimeFailureCode(err);
+        } catch (error) {
+          const code = visualRuntimeFailureCode(error);
           traceSteps.push({
             step,
             phaseId: obsResult.observation.phaseEvidence,
@@ -5197,9 +5198,9 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
             ]
           });
           exit =
-            isDecisionDeadlineFailure(err) && driver.remainingWallTimeMs() <= 0
+            isDecisionDeadlineFailure(error) && driver.remainingWallTimeMs() <= 0
               ? { kind: "wall-time-limit", step }
-              : isSmartDirectBudgetExhaustion(err)
+              : isSmartDirectBudgetExhaustion(error)
                 ? { kind: USAGE_BUDGET, step }
                 : { kind: "infrastructure-failure", code, step };
           break;
@@ -7473,7 +7474,7 @@ export function createPlaytestRunControl(
                 (assignment) => assignment.assignmentId === episode.assignmentId
               );
             const existingReview =
-              currentAssignmentIndex < 0
+              currentAssignmentIndex === -1
                 ? null
                 : (priorDiscoveryReviews[currentAssignmentIndex] ?? null);
             if (existingReview !== null) {

@@ -9,17 +9,17 @@ import {
   type PlaytestAssignmentManifest,
   playtestAssignmentManifestHashInput,
   playtestAssignmentStrataLowerBound,
-  playtestEpisodeRecordId,
-  playtestVisualEpisodeRecordId,
   type PlaytestBatchAssignment,
   playtestBatchCountsFromAssignments,
   playtestBatchTerminalState,
   type PlaytestDiscoverySignal,
+  playtestEpisodeRecordId,
   type PlaytestReviewCandidate,
   playtestReviewSelectionSeed,
   PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
+  playtestVisualEpisodeRecordId,
   selectPlaytestBatchReviews
 } from "../src/playtesting/index.ts";
 

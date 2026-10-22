@@ -1,11 +1,13 @@
 import type { PlaytestExecutionProvenance } from "./execution-provenance.ts";
+import type { PlaytestPlayerDebriefV1 } from "./player-debrief.ts";
 import type {
   GameRngCheckpoint,
   PlaytestArtifactReference,
   PlaytestCheckpointDigest,
   PlaytestJsonValue
 } from "./protocol-types.ts";
-import type { PlaytestPlayerDebriefV1 } from "./player-debrief.ts";
+import type {
+  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA} from "./types.ts";
 import {
   type PlaytestAdapterAssignmentManifest,
   type PlaytestAssignmentBranch,
@@ -27,7 +29,6 @@ import {
   type PlaytestProvenance,
   type PlaytestReviewClaim,
   type PlaytestReviewCompleteness,
-  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   type PlaytestReviewPacketReceipt,
   type PlaytestReviewReceipt,
   type PLAYTESTS_BATCH_SCHEMA,

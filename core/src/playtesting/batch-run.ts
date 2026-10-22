@@ -14,7 +14,6 @@ import type {
   PlaytestGameOutcomeKind
 } from "./artifacts.ts";
 import { assertPlaytestAssignmentBranch } from "./branching.ts";
-import { isPlaytestVisualPolicyId } from "./visual-decision.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
 import {
   groupByStratum,
@@ -39,6 +38,7 @@ import {
   type PlaytestSelectedReviewSession,
   type PlaytestSurveillanceSelection
 } from "./types.ts";
+import { isPlaytestVisualPolicyId } from "./visual-decision.ts";
 
 /** First-milestone bound: one batch freezes at most 1,000 assignments. */
 export const PLAYTESTS_MAX_BATCH_ASSIGNMENTS = 1000;

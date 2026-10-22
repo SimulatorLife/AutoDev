@@ -3,13 +3,12 @@ import {
   assertWorkspaceVisualPlaytestLimits,
   isPlaytestVisualPolicyId,
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
-  type PlaytestVisualPolicyId,
-  type WorkspaceVisualPlaytestLimits,
   type PlaytestLaunchAssignment,
   type PlaytestLaunchRequest,
   PLAYTESTS_MAX_ASSIGNMENT_MANIFEST_BYTES,
-  PLAYTESTS_MAX_BATCH_ASSIGNMENTS
-} from "@simulatorlife/autodev-core";
+  PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
+  type PlaytestVisualPolicyId,
+  type WorkspaceVisualPlaytestLimits} from "@simulatorlife/autodev-core";
 import { type NextRequest, NextResponse } from "next/server.js";
 
 import {

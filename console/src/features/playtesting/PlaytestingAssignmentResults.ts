@@ -132,7 +132,7 @@ export function PlaytestingAssignmentResults({
               : null
           );
   const outcomeAssignments = new Set(
-    outcomes?.map((outcome) => outcome.assignmentId) ?? []
+    outcomes?.map((outcome) => outcome.assignmentId)
   );
   const pendingSessions = sessions.filter(
     (session) => !outcomeAssignments.has(session.assignmentId)

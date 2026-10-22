@@ -55,10 +55,6 @@ import {
 } from "./evidence-trace-selection.ts";
 import { assertPlaytestVisualEpisode } from "./execution-provenance.ts";
 import {
-  isPlaytestVisualPolicyId,
-  type PlaytestVisualPolicyId
-} from "./visual-decision.ts";
-import {
   assertPlaytestPlayerDebrief,
   type PlaytestPlayerDebriefV1
 } from "./player-debrief.ts";
@@ -79,6 +75,10 @@ import {
   PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
   type PlaytestVisualAssignmentManifest
 } from "./types.ts";
+import {
+  isPlaytestVisualPolicyId,
+  type PlaytestVisualPolicyId
+} from "./visual-decision.ts";
 
 export const PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MAX_TOKENS = 32_768;
 const MAX_SUMMARY_TEXT = 4096;

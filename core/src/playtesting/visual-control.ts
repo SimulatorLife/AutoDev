@@ -393,7 +393,7 @@ export function assertPlaytestVisualAction(
     throw new TypeError("Visual action must cite an observation.");
   }
   switch (value.kind) {
-    case "activate-control":
+    case "activate-control": {
       if (
         !hasOnlyKeys(value, [
           "schema",
@@ -410,7 +410,8 @@ export function assertPlaytestVisualAction(
         throw new TypeError("Semantic visual action is malformed.");
       }
       return;
-    case "pointer-click":
+    }
+    case "pointer-click": {
       if (
         !hasOnlyKeys(value, [
           "schema",
@@ -431,7 +432,8 @@ export function assertPlaytestVisualAction(
         throw new TypeError("Coordinate visual action is malformed.");
       }
       return;
-    case "key-press":
+    }
+    case "key-press": {
       if (
         !hasOnlyKeys(value, [
           "schema",
@@ -447,7 +449,8 @@ export function assertPlaytestVisualAction(
         throw new TypeError("Visual key action is malformed.");
       }
       return;
-    case "gamepad-press":
+    }
+    case "gamepad-press": {
       if (
         !hasOnlyKeys(value, [
           "schema",
@@ -465,8 +468,10 @@ export function assertPlaytestVisualAction(
         throw new TypeError("Visual gamepad action is malformed.");
       }
       return;
-    default:
+    }
+    default: {
       throw new TypeError("Visual action kind is unsupported.");
+    }
   }
 }
 
@@ -630,11 +635,14 @@ function actionInput(
 ): "keyboard" | "pointer" | "gamepad" {
   switch (action.kind) {
     case "activate-control":
-    case "pointer-click":
+    case "pointer-click": {
       return "pointer";
-    case "key-press":
+    }
+    case "key-press": {
       return "keyboard";
-    case "gamepad-press":
+    }
+    case "gamepad-press": {
       return "gamepad";
+    }
   }
 }

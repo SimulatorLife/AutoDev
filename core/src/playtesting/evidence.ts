@@ -331,7 +331,7 @@ function groundingWords(value: string): Set<string> {
     value
       .normalize("NFKD")
       .toLowerCase()
-      .replaceAll(/[\u0300-\u036f]/gu, "")
+      .replaceAll(/[\u0300-\u036F]/gu, "")
       .split(/[^a-z\d]+/u)
       .filter(
         (word) => word.length >= 3 && !REVIEW_GROUNDING_STOP_WORDS.has(word)

@@ -30,9 +30,8 @@ import { WorkspaceVisualPlaytestTargetRepository } from "@simulatorlife/autodev-
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
 import {
   createPlaytestRunControl,
-  type PlaytestMcpSession,
-  type PlaytestingRepositoryOps
-} from "../src/playtesting/mcp.ts";
+  type PlaytestingRepositoryOps,
+  type PlaytestMcpSession} from "../src/playtesting/mcp.ts";
 import type {
   PlaytestVisualDriverOpener,
   PlaytestVisualEpisodeDriver
@@ -75,7 +74,7 @@ function targetLimits(
   return {
     episodeCount: 1,
     maxStepsPerEpisode: 3,
-    wallTimeMs: 5_000,
+    wallTimeMs: 5000,
     smartRequestsPerEpisode: 5,
     smartTokensPerEpisode: 20_000,
     screenshotCountPerEpisode: 10,
@@ -349,9 +348,9 @@ async function runVisualEpisode(options: {
     };
     const receipt = await control.startRun(session(), request);
     await control.waitForRun(session(), WORKSPACE_ID, receipt.batchId, 20_000);
-    assert.ok(episodes.length >= 1);
+    assert.ok(episodes.length > 0);
     assert.ok(driver);
-    const episode = episodes[episodes.length - 1];
+    const episode = episodes.at(-1);
     assert.ok(episode);
     return {
       // Every revision of the one episode is persisted; the last one is final.

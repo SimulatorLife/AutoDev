@@ -39,8 +39,8 @@ import {
 import {
   fetchPlaytestingHumanValidation,
   fetchPlaytestingPage,
-  fetchPlaytestingReviews,
   fetchPlaytestingReadiness,
+  fetchPlaytestingReviews,
   fetchPlaytestingRunCapabilities,
   type PlaytestingPageRequest,
   playtestingReadinessFailure

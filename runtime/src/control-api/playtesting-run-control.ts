@@ -9,21 +9,20 @@ import {
   type ControlApiPlaytestingCancellationReason,
   type ControlApiPlaytestingCapabilitiesResponse,
   type ControlApiPlaytestingCapabilityReason,
-  type ControlApiPlaytestingPolicyReadiness,
   type ControlApiPlaytestingComparisonDecisionRequest,
   type ControlApiPlaytestingComparisonDecisionResponse,
   type ControlApiPlaytestingModeReadiness,
+  type ControlApiPlaytestingPolicyReadiness,
   type ControlApiPlaytestingRunCancellationResponse,
   type ControlApiPlaytestingRunRecord,
   type ControlApiPlaytestingRunRequestLookupResponse,
   type ControlApiPlaytestingRunStartedResponse,
   type ControlApiPlaytestingRunStatusResponse,
-  type PlaytestVisualPolicyId,
   type ControlApiPlaytestingVisualTargetReadiness,
   type PlaytestJsonValue,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
-  PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS
-} from "@simulatorlife/autodev-core";
+  PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS,
+  type PlaytestVisualPolicyId} from "@simulatorlife/autodev-core";
 import { ConfigRepository } from "@simulatorlife/autodev-data";
 import { PlaytestSourceUnavailableError } from "@simulatorlife/autodev-data/playtesting";
 import { WorkspaceVisualPlaytestTargetRepository } from "@simulatorlife/autodev-data/workspaces";
@@ -34,9 +33,6 @@ import {
   PlaytestSandboxUnavailableError
 } from "../playtesting/docker-sandbox.ts";
 import { playtestLaunchRequestSchema } from "../playtesting/launch-request-schema.ts";
-import { isOneJevLocalVisualPolicyAvailable } from "../playtesting/onejev-local-policy.ts";
-import { isSmartDirectVisualPolicyAvailable } from "../playtesting/smart-direct-policy.ts";
-import { isPlaytestVisualBrowserDriverAvailable } from "../playtesting/visual-browser-driver.ts";
 import {
   type PlaytestAnalystReviewDispatch,
   PlaytestMcpAuthorizationError,
@@ -46,6 +42,9 @@ import {
   PlaytestMcpValidationError,
   type PlaytestRunControl
 } from "../playtesting/mcp.ts";
+import { isOneJevLocalVisualPolicyAvailable } from "../playtesting/onejev-local-policy.ts";
+import { isSmartDirectVisualPolicyAvailable } from "../playtesting/smart-direct-policy.ts";
+import { isPlaytestVisualBrowserDriverAvailable } from "../playtesting/visual-browser-driver.ts";
 import { errorBody, sendJson } from "../router/proxy.ts";
 import { writeErrorLine } from "../shared/output.ts";
 import { readControlApiJsonObject } from "./body.ts";
@@ -1675,7 +1674,7 @@ export function formatControlApiInternalErrorDiagnostic(
           .map((line) =>
             line
               .trim()
-              .replace(/[\r\n?][^\s)]*/gu, "")
+              .replaceAll(/[\r\n?][^\s)]*/gu, "")
               .slice(0, 192)
           )
       : [];

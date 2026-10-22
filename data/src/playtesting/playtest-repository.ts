@@ -17,18 +17,18 @@
  */
 
 import {
-  PLAYTESTS_EPISODE_SCHEMA,
   type HumanPlaytestStudy,
   type PlaytestArtifactReference,
   type PlaytestBatch,
   type PlaytestBenchmark,
   type PlaytestComparison,
   type PlaytestCrossSessionSynthesis,
-  type PlaytestEpisode,
   type PlaytestDiscoverySessionReview,
-  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
+  type PlaytestEpisode,
   type PlaytestExperiment,
   type PlaytestFinding,
+  PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
+  PLAYTESTS_EPISODE_SCHEMA,
   type PlaytestSessionReview
 } from "@simulatorlife/autodev-core";
 
@@ -55,10 +55,12 @@ import {
   joinWhereClauses
 } from "./query-filters.ts";
 import {
+  clickHouseDateTimeAsIso,
   decodeBatch,
   decodeBenchmark,
   decodeComparison,
   decodeCrossSessionSynthesis,
+  decodeDiscoveryReview,
   decodeEpisode,
   decodeExperiment,
   decodeFinding,
@@ -66,21 +68,19 @@ import {
   decodeHumanSummary,
   decodeReview,
   decodeReviewSummary,
-  decodeDiscoveryReview,
   encodeBatch,
   encodeBenchmark,
   encodeComparison,
   encodeCrossSessionSynthesis,
+  encodeDiscoveryReview,
   encodeEpisode,
   encodeExperiment,
   encodeFinding,
   encodeHumanStudy,
   encodeHumanSummary,
   encodeReview,
-  encodeDiscoveryReview,
   isRecord,
   migrateLegacyEpisodeForStorage,
-  clickHouseDateTimeAsIso,
   toClickHouseDateTime
 } from "./row-codec.ts";
 import {

@@ -137,7 +137,7 @@ export function describeVisualCandidateChoice(
 function candidateId(controlId: string, taken: ReadonlySet<string>): string {
   const base =
     controlId
-      .replace(UNSAFE_ID_CHARACTERS, "-")
+      .replaceAll(UNSAFE_ID_CHARACTERS, "-")
       .slice(0, MAX_CANDIDATE_ID_LENGTH) || "control";
   let id = base;
   let attempt = 2;
@@ -175,7 +175,7 @@ function describeControl(control: PlaytestVisualControl): string {
  */
 function readableName(name: string): string {
   return name
-    .replace(/[\u0000-\u001f\u007f]/gu, " ")
+    .replaceAll(/[\u0000-\u001F\u007F]/gu, " ")
     .replaceAll('"', "'")
     .trim();
 }
@@ -203,20 +203,24 @@ function sameAction(
 ): boolean {
   if (left.kind !== right.kind) return false;
   switch (left.kind) {
-    case "activate-control":
+    case "activate-control": {
       return (
         right.kind === "activate-control" && left.controlId === right.controlId
       );
-    case "pointer-click":
+    }
+    case "pointer-click": {
       return (
         right.kind === "pointer-click" &&
         left.frameArtifactId === right.frameArtifactId &&
         left.x === right.x &&
         left.y === right.y
       );
-    case "key-press":
+    }
+    case "key-press": {
       return right.kind === "key-press" && left.key === right.key;
-    case "gamepad-press":
+    }
+    case "gamepad-press": {
       return right.kind === "gamepad-press" && left.button === right.button;
+    }
   }
 }

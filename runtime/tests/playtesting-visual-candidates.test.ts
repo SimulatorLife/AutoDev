@@ -11,8 +11,8 @@ import {
 
 import { OneJevLocalVisualPolicy } from "../src/playtesting/onejev-local-policy.ts";
 import {
-  buildVisualCandidateSet,
   buildVisualCandidates,
+  buildVisualCandidateSet,
   describeVisualCandidateChoice,
   MAX_VISUAL_CANDIDATES
 } from "../src/playtesting/visual-candidates.ts";

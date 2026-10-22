@@ -10,9 +10,9 @@ import test from "node:test";
 import type { WorkspaceVisualPlaytestTargetApproval } from "@simulatorlife/autodev-core";
 
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
-import { buildVisualCandidates } from "../src/playtesting/visual-candidates.ts";
 import { SmartDirectVisualPolicy } from "../src/playtesting/smart-direct-policy.ts";
 import { PlaytestVisualBrowserDriver } from "../src/playtesting/visual-browser-driver.ts";
+import { buildVisualCandidates } from "../src/playtesting/visual-candidates.ts";
 
 const WORKSPACE_ID = "fixture/visual-game";
 const EPISODE_ID = "visual-smart-episode";

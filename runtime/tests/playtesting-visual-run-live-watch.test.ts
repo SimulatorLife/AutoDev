@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import { createServer, type ServerResponse } from "node:http";
-import { Readable } from "node:stream";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -15,18 +14,18 @@ import {
 } from "@simulatorlife/autodev-core";
 import type { WorkspaceCatalogRead } from "@simulatorlife/autodev-data";
 
+import { handlePlaytestingControlApiRequest } from "../src/control-api/playtesting.ts";
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
 import {
   createPlaytestRunControl,
   type PlaytestingRepositoryOps
 } from "../src/playtesting/mcp.ts";
-import { handlePlaytestingControlApiRequest } from "../src/control-api/playtesting.ts";
-import { inMemoryPlaytestLaunchIntentRepository } from "./support/playtesting-launch-intents.ts";
 import {
   makeRequest,
   responseBody,
   responseRecorder
 } from "./support/control-api-harness.ts";
+import { inMemoryPlaytestLaunchIntentRepository } from "./support/playtesting-launch-intents.ts";
 
 const WORKSPACE = "SimulatorLife/RacingGame";
 const PNG = Buffer.from(

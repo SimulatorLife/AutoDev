@@ -32,7 +32,6 @@ import {
   type PlaytestVisualDecisionCapabilities,
   type PlaytestVisualDecisionCounters,
   type PlaytestVisualDecisionRequest,
-  type PlaytestVisualObservation,
   type PlaytestVisualPolicy,
   type PlaytestVisualPolicyUsage,
   type WorkspaceVisualPlaytestTargetApproval
@@ -167,8 +166,8 @@ export interface OneJevLocalAvailabilityProbeOptions {
   readonly timeoutMs?: number;
 }
 
-const ONEJEV_AVAILABILITY_TIMEOUT_MS = 2_000;
-const ONEJEV_AVAILABILITY_CACHE_MS = 5_000;
+const ONEJEV_AVAILABILITY_TIMEOUT_MS = 2000;
+const ONEJEV_AVAILABILITY_CACHE_MS = 5000;
 
 let oneJevAvailabilityCache: {
   readonly endpoint: string;
