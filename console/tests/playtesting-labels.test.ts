@@ -3,9 +3,9 @@ import test from "node:test";
 
 import type { ControlApiPlaytestingReview } from "@simulatorlife/autodev-core";
 import React from "react";
-import { NOT_OBSERVED_LABEL } from "../src/components/status/StatusBadge.ts";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { NOT_OBSERVED_LABEL } from "../src/components/status/StatusBadge.ts";
 import {
   cohortLabel,
   executionStateExplanation,

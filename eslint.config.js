@@ -9,7 +9,7 @@
 // RacingGame this is syntax-aware rather than type-checked TypeScript linting.
 
 import pluginE18e from "@e18e/eslint-plugin";
-import { fixupPluginRules } from "@eslint/compat";
+import { fixupPluginRules, includeIgnoreFile } from "@eslint/compat";
 import js from "@eslint/js";
 import eslintConfigPrettier from "eslint-config-prettier";
 import { createTypeScriptImportResolver } from "eslint-import-resolver-typescript";
@@ -32,6 +32,7 @@ import { fileURLToPath } from "node:url";
 import tseslint from "typescript-eslint";
 
 const REPOSITORY_ROOT = path.dirname(fileURLToPath(import.meta.url));
+const GIT_IGNORE_FILE = path.join(REPOSITORY_ROOT, ".gitignore");
 const workspaceTypeScriptProjects = [
   "./tsconfig.json",
   "./core/tsconfig.json",
@@ -525,6 +526,13 @@ const tsConfig = defineConfig({
 
 export default defineConfig([
   { ignores: baseIgnorePatterns },
+
+  /* Lint the repository the way git sees it. A scratch directory, a build
+     output or a captured artifact is not repository content, so it must not
+     decide whether the lint gate passes -- `prettier --ignore-path .gitignore`
+     already works this way, and the two gates have to agree on what "the
+     repository" means. */
+  includeIgnoreFile(GIT_IGNORE_FILE),
 
   /* Lint the lint tooling itself rather than leaving JS config unchecked. */
   {
