@@ -879,6 +879,8 @@ Target resource families include:
 /control/github
 ```
 
+The operator-only `PATCH /control/mcps/{name}` writes one MCP server's launch configuration for the target the Runtime applies. It changes canonical RuleSync input -- that target's own declaration -- and then executes generation/apply, so the Runtime publishes the projection and reports what it observed. The write is a compare-and-swap on the canonical document's revision, which the MCP catalog publishes, and a stale revision is returned as a conflict rather than applied. It owns the launch keys only: the declaration's governance keys and its comments are preserved, and the shared declaration is left alone.
+
 Canonical skill source reads and edits use `GET/PATCH /control/skills/:name/content`; the existing `PATCH /control/skills/:name` remains exclusively the complete desired role-assignment operation.
 
 The skill-assignment mutation response reports its complete `desiredRoles` separately from `actualRoles`. `actualRoles: []` is an observed unassignment; `actualRoles: null` means the Runtime could not confirm the readback and must never be converted to empty. The versioned response includes the shared reconciliation view and a bounded diff. The Console accepts `converged` only when the confirmed actual set matches the requested set; pending, error, and not-observed outcomes remain explicit.

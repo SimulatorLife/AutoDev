@@ -35,6 +35,8 @@ import {
   type ControlApiHooksResponse,
   type ControlApiMcpAppliedResponse,
   type ControlApiMcpRuntimeResponse,
+  type ControlApiMcpServerPatchRequest,
+  type ControlApiMcpServerPatchResponse,
   type ControlApiMcpsResponse,
   type ControlApiMemoryCohortsResponse,
   type ControlApiMemoryExperienceDetailResponse,
@@ -410,6 +412,10 @@ export async function fetchControlApi<T>(
             "X-AutoDev-Actor": LOCAL_CONTROL_API_ACTOR,
             Accept: "application/json"
           },
+          // The Control API reads live runtime state, so a read is never a
+          // cached one: a page that re-reads after a write has to see what
+          // the write produced.
+          cache: "no-store",
           signal
         });
 
@@ -2125,8 +2131,12 @@ function isControlApiMcpsResponse(
 ): value is ControlApiMcpsResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-mcps-v1" &&
+    value.schema === "autodev-control-mcps-v2" &&
     typeof value.source === "string" &&
+    // The revision is the handle a write is compared against, so the Console
+    // refuses a catalog it cannot name rather than sending a write that has
+    // nothing to compare.
+    (value.revision === null || typeof value.revision === "string") &&
     typeof value.readOnly === "boolean" &&
     (value.valid === null || typeof value.valid === "boolean") &&
     // Required, not optional. `valid: false` with no issues renders as "the
@@ -2244,11 +2254,16 @@ function isControlApiMcpAppliedResponse(
 ): value is ControlApiMcpAppliedResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-mcp-applied-v1" &&
+    value.schema === "autodev-control-mcp-applied-v2" &&
     typeof value.source === "string" &&
     value.declarationSource === ".rulesync/mcp.jsonc" &&
     typeof value.target === "string" &&
     typeof value.available === "boolean" &&
+    // The declared side of the comparison is what the page edits, so it is
+    // checked rather than assumed: an edit form filled from an unreadable
+    // declaration would write a configuration nobody declared.
+    Array.isArray(value.declaredServers) &&
+    value.declaredServers.every(isMcpAppliedServer) &&
     Array.isArray(value.servers) &&
     value.servers.every(isMcpAppliedServer) &&
     isReconciliationBundle(value.reconciliation)
@@ -2520,7 +2535,7 @@ export async function fetchMcps(
   if (result.kind !== "ok") return result;
   return isControlApiMcpsResponse(result.data)
     ? { kind: "ok", data: result.data }
-    : invalidResponse("Mcps", "autodev-control-mcps-v1");
+    : invalidResponse("Mcps", "autodev-control-mcps-v2");
 }
 
 /**
@@ -2566,7 +2581,7 @@ export async function fetchMcpApplied(
   if (result.kind !== "ok") return result;
   return isControlApiMcpAppliedResponse(result.data)
     ? { kind: "ok", data: result.data }
-    : invalidResponse("McpApplied", "autodev-control-mcp-applied-v1");
+    : invalidResponse("McpApplied", "autodev-control-mcp-applied-v2");
 }
 
 export async function fetchTools(
@@ -3386,6 +3401,29 @@ export function patchPromptCommand(
   return mutateControlApi<ControlApiPromptCommandPatchResponse>(
     "PATCH",
     `${CONTROL_API_PATHS.prompts}/${encodeURIComponent(name)}`,
+    payload,
+    config,
+    options
+  );
+}
+
+/**
+ * Server-only typed PATCH writing one MCP server's launch configuration to
+ * the canonical declaration.
+ *
+ * The write is a compare-and-swap on the declaration's revision, so the
+ * Console sends the revision it read and the Runtime refuses a write decided
+ * on an older declaration.
+ */
+export function patchMcpServer(
+  name: string,
+  payload: ControlApiMcpServerPatchRequest,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiMcpServerPatchResponse>> {
+  return mutateControlApi<ControlApiMcpServerPatchResponse>(
+    "PATCH",
+    `${CONTROL_API_PATHS.mcps}/${encodeURIComponent(name)}`,
     payload,
     config,
     options

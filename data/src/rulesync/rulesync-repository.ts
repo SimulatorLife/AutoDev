@@ -35,7 +35,15 @@ import type {
   RuleSyncValidationIssue,
   SkillDefinition
 } from "@simulatorlife/autodev-core";
-import { parse, type ParseError, printParseErrorCode } from "jsonc-parser";
+import {
+  applyEdits,
+  type EditResult,
+  type FormattingOptions,
+  modify,
+  parse,
+  type ParseError,
+  printParseErrorCode
+} from "jsonc-parser";
 import { parse as parseYaml } from "yaml";
 
 import {
@@ -48,6 +56,14 @@ import {
 
 const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const COLLATOR = new Intl.Collator();
+
+/**
+ * The canonical MCP declaration's path, in the repository.
+ *
+ * One spelling of it: the declaration is read, written and digested under
+ * this name, and a second spelling would be a second file to keep in step.
+ */
+const MCP_SOURCE = ".rulesync/mcp.jsonc" as const;
 const MD_EXTENSION_PATTERN = /\.md$/u;
 const COMMAND_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const COMMAND_CONTENT_MAX_BYTES = 48_000;
@@ -561,6 +577,64 @@ export class RuleSyncSkillSourceUnavailableError extends Error {
   }
 }
 
+/**
+ * The canonical MCP declaration changed since it was loaded.
+ *
+ * A conflict is not a failure of the write: it means another writer changed
+ * the declaration first, and the caller has to load it again to see what it
+ * now says.
+ */
+export class RuleSyncMcpConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RuleSyncMcpConflictError";
+  }
+}
+
+/** The requested MCP declaration change cannot be expressed. */
+export class RuleSyncMcpValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RuleSyncMcpValidationError";
+  }
+}
+
+/**
+ * The launch configuration one write sets.
+ *
+ * A key that is absent is left as the declaration has it; a key that is `null`
+ * is removed. The write owns these keys and nothing else, so the target's own
+ * enablement, approval mode and tool allowlist survive it.
+ */
+export interface RuleSyncMcpLaunchUpdate {
+  readonly command?: string | null;
+  readonly args?: readonly string[] | null;
+  readonly cwd?: string | null;
+  readonly url?: string | null;
+  readonly bearerTokenEnvVar?: string | null;
+  readonly httpHeaders?: Readonly<Record<string, string>> | null;
+}
+
+export interface RuleSyncMcpLaunchUpdateInput {
+  /** The server whose launch configuration is written. */
+  readonly name: string;
+  /** The target whose own declaration is written. */
+  readonly target: string;
+  readonly launch: RuleSyncMcpLaunchUpdate;
+  /** The revision of the canonical declaration the caller loaded. */
+  readonly expectedRevision: string;
+}
+
+export interface RuleSyncMcpLaunchUpdateResult {
+  readonly source: ".rulesync/mcp.jsonc";
+  readonly name: string;
+  readonly target: string;
+  /** The revision of the declaration after the write. */
+  readonly revision: string;
+  /** The launch configuration the target now declares. */
+  readonly launch: McpServerLaunchConfiguration;
+}
+
 function mcpTransport(config: Record<string, unknown>): McpServerTransport {
   const hasCommand =
     typeof config.command === "string" && config.command.trim().length > 0;
@@ -759,7 +833,7 @@ function projectMcpDefinitions(
 }
 
 function parseMcpState(content: string): RuleSyncMcpState | null {
-  const source = ".rulesync/mcp.jsonc" as const;
+  const source = MCP_SOURCE;
   const errors: ParseError[] = [];
   const document: unknown = parse(content, errors, {
     allowTrailingComma: true
@@ -853,13 +927,17 @@ function parseMcpState(content: string): RuleSyncMcpState | null {
  * server is *governed*, not how it is started, and the applied launch
  * configuration does not carry it.
  */
-const MCP_LAUNCH_KEYS = [
-  "command",
-  "args",
-  "cwd",
-  "url",
-  "bearer_token_env_var",
-  "http_headers"
+/**
+ * The keys that say how a target governs a server rather than how it starts.
+ *
+ * A write owns the launch keys and leaves these alone: the enablement, the
+ * approval mode and the tool allowlist are the target's own settings, and a
+ * launch edit has no business changing them.
+ */
+const MCP_GOVERNANCE_KEYS = [
+  "disabled",
+  "default_tools_approval_mode",
+  "enabled_tools"
 ] as const;
 
 type McpLaunchKeys = {
@@ -871,6 +949,25 @@ type McpLaunchKeys = {
   http_headers?: Record<string, string>;
 };
 
+/**
+ * Whether a server is started as a subprocess rather than reached over HTTP.
+ *
+ * RuleSync drops the canonical `headers` key for a subprocess server, because
+ * Codex accepts HTTP headers only on a URL server. Reading the same rule here
+ * keeps the declared launch configuration equal to the projected one.
+ */
+function mcpServerIsStdio(config: Record<string, unknown>): boolean {
+  return typeof config.command === "string";
+}
+
+/**
+ * The launch configuration one declaration entry carries.
+ *
+ * The keys are the ones the Codex projection keeps. RuleSync spells HTTP
+ * headers `headers` and writes them to Codex as `http_headers`; both spellings
+ * are read here so the declared configuration matches the projected one
+ * whichever one the declaration uses.
+ */
 function mcpLaunchKeys(config: Record<string, unknown>): McpLaunchKeys {
   const keys: McpLaunchKeys = {};
   if (typeof config.command === "string") keys.command = config.command;
@@ -884,44 +981,299 @@ function mcpLaunchKeys(config: Record<string, unknown>): McpLaunchKeys {
   if (typeof config.url === "string") keys.url = config.url;
   if (typeof config.bearer_token_env_var === "string")
     keys.bearer_token_env_var = config.bearer_token_env_var;
+  const headers = config.http_headers ?? config.headers;
   if (
-    isRecord(config.http_headers) &&
-    Object.values(config.http_headers).every(
-      (value) => typeof value === "string"
-    )
+    isRecord(headers) &&
+    Object.values(headers).every((value) => typeof value === "string") &&
+    (config.http_headers !== undefined || !mcpServerIsStdio(config))
   ) {
     keys.http_headers = Object.fromEntries(
-      Object.entries(config.http_headers).map(([name, value]) => [
-        name,
-        value as string
-      ])
+      Object.entries(headers).map(([name, value]) => [name, value as string])
     );
   }
   return keys;
 }
 
 /**
- * One server's launch configuration for one target.
+ * One server's effective declaration for one target.
  *
- * The target's own declaration wins over the base declaration for the same
- * key, so a target that changes one launch key without repeating the others
- * still receives the others.
+ * RuleSync's rule is wholesale: a target's own entry *replaces* the shared
+ * entry for that server, key for key, rather than merging with it. A server
+ * the target does not mention keeps the shared entry; an entry the target
+ * sets to `null` is not declared for that target at all.
+ *
+ * The per-key merge this replaces reported a launch configuration RuleSync
+ * would never generate -- a target that overrides one key of a server was
+ * read as keeping the shared entry's other keys, while the generator drops
+ * them -- so a comparison against the applied projection could report drift
+ * that was not there.
  */
-function mergeMcpLaunchKeys(
-  base: McpLaunchKeys,
-  override: McpLaunchKeys | null
-): McpLaunchKeys {
-  if (override === null) return { ...base };
-  const merged: McpLaunchKeys = { ...base };
-  for (const key of MCP_LAUNCH_KEYS) {
-    const value = override[key];
-    if (value === undefined) continue;
-    if (key === "args") merged.args = value as readonly string[];
-    else if (key === "http_headers")
-      merged.http_headers = value as Record<string, string>;
-    else merged[key] = value as string;
+function effectiveMcpEntry(
+  base: Record<string, unknown> | undefined,
+  override: unknown
+): Record<string, unknown> | null {
+  if (override === null) return null;
+  if (isRecord(override)) return override;
+  return base ?? null;
+}
+
+/** The keys a declaration spells a launch key with, in either spelling. */
+const MCP_LAUNCH_FILE_KEYS = [
+  "command",
+  "args",
+  "cwd",
+  "url",
+  "bearer_token_env_var",
+  "http_headers",
+  "headers"
+] as const;
+
+const MCP_SERVER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const MCP_TARGET_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+
+/**
+ * How the canonical declaration is written back.
+ *
+ * The library formats the edited region rather than the whole document, so
+ * the comments and the layout outside the edited server entry survive.
+ */
+const MCP_JSONC_FORMATTING: FormattingOptions = {
+  insertSpaces: true,
+  tabSize: 2,
+  eol: "\n"
+};
+
+/**
+ * The normalized launch keys one write sets.
+ *
+ * `null` means the key is removed. A key the update does not mention is left
+ * as the declaration has it.
+ */
+type NormalizedMcpLaunchUpdate = Readonly<
+  Record<string, string | readonly string[] | Record<string, string> | null>
+>;
+
+/**
+ * One launch key's value in a write.
+ *
+ * `absent` is a key the write does not mention, `remove` is a key the write
+ * takes away, and `invalid` is a value this write does not accept.
+ */
+type McpLaunchKeyValue =
+  | { readonly kind: "absent" }
+  | { readonly kind: "remove" }
+  | { readonly kind: "set"; readonly value: string }
+  | { readonly kind: "invalid" };
+
+function mcpLaunchTextValue(raw: unknown): McpLaunchKeyValue {
+  if (raw === undefined) return { kind: "absent" };
+  if (raw === null) return { kind: "remove" };
+  if (typeof raw !== "string" || raw.length === 0) return { kind: "invalid" };
+  return { kind: "set", value: raw };
+}
+
+function mcpLaunchArgsValue(
+  raw: unknown
+):
+  | { readonly kind: "absent" }
+  | { readonly kind: "remove" }
+  | { readonly kind: "set"; readonly value: readonly string[] }
+  | { readonly kind: "invalid" } {
+  if (raw === undefined) return { kind: "absent" };
+  if (raw === null) return { kind: "remove" };
+  if (!Array.isArray(raw) || !raw.every((arg) => typeof arg === "string"))
+    return { kind: "invalid" };
+  return { kind: "set", value: raw as string[] };
+}
+
+function mcpLaunchHeadersValue(
+  raw: unknown
+):
+  | { readonly kind: "absent" }
+  | { readonly kind: "remove" }
+  | { readonly kind: "set"; readonly value: Record<string, string> }
+  | { readonly kind: "invalid" } {
+  if (raw === undefined) return { kind: "absent" };
+  if (raw === null) return { kind: "remove" };
+  if (!isRecord(raw)) return { kind: "invalid" };
+  const headers: Record<string, string> = {};
+  for (const [name, header] of Object.entries(raw)) {
+    if (typeof header !== "string") return { kind: "invalid" };
+    headers[name] = header;
   }
-  return merged;
+  return { kind: "set", value: headers };
+}
+
+function mcpLaunchUpdate(
+  update: RuleSyncMcpLaunchUpdate
+): NormalizedMcpLaunchUpdate | null {
+  const normalized: Record<
+    string,
+    string | readonly string[] | Record<string, string> | null
+  > = {};
+  const strings: readonly (readonly [string, unknown])[] = [
+    ["command", update.command],
+    ["cwd", update.cwd],
+    ["url", update.url],
+    ["bearer_token_env_var", update.bearerTokenEnvVar]
+  ];
+  for (const [key, raw] of strings) {
+    const text = mcpLaunchTextValue(raw);
+    if (text.kind === "invalid") return null;
+    if (text.kind === "absent") continue;
+    normalized[key] = text.kind === "remove" ? null : text.value;
+  }
+  const args = mcpLaunchArgsValue(update.args);
+  if (args.kind === "invalid") return null;
+  if (args.kind !== "absent") {
+    normalized.args = args.kind === "remove" ? null : args.value;
+  }
+  const headers = mcpLaunchHeadersValue(update.httpHeaders);
+  if (headers.kind === "invalid") return null;
+  if (headers.kind !== "absent") {
+    normalized.http_headers = headers.kind === "remove" ? null : headers.value;
+  }
+  return normalized;
+}
+
+/**
+ * The key the declaration spells HTTP headers with.
+ *
+ * RuleSync's canonical spelling is `headers` and Codex's is `http_headers`;
+ * a declaration that already uses one of them keeps it, so a write does not
+ * leave two spellings of the same header table behind.
+ */
+function mcpHttpHeadersKey(effective: Record<string, unknown>): string {
+  return Object.hasOwn(effective, "headers") &&
+    !Object.hasOwn(effective, "http_headers")
+    ? "headers"
+    : "http_headers";
+}
+
+/**
+ * The entry a target that does not declare the server receives.
+ *
+ * RuleSync replaces a server wholesale for the target that declares one, so
+ * the entry is written complete: the shared entry's launch configuration and
+ * the target's own governance keys are carried over, and the write's own keys
+ * are applied on top.
+ */
+function mcpCreatedEntry(
+  effective: Record<string, unknown>,
+  update: NormalizedMcpLaunchUpdate
+): Record<string, unknown> {
+  const entry: Record<string, unknown> = {};
+  for (const key of MCP_LAUNCH_FILE_KEYS) {
+    const value = effective[key];
+    if (value !== undefined) entry[key] = value;
+  }
+  for (const key of MCP_GOVERNANCE_KEYS) {
+    const value = effective[key];
+    if (value !== undefined) entry[key] = value;
+  }
+  for (const [key, value] of Object.entries(update)) {
+    const fileKey = key === "http_headers" ? mcpHttpHeadersKey(entry) : key;
+    if (value === null) delete entry[fileKey];
+    else entry[fileKey] = value;
+  }
+  return entry;
+}
+
+/**
+ * The edits that write one server's launch configuration.
+ *
+ * A target that already declares the server gets its launch keys edited one
+ * by one, so the rest of the entry -- its enablement, its approval mode, its
+ * tool allowlist, and any comment inside it -- is left as it is. A target
+ * that does not declare the server gets a complete entry: RuleSync replaces
+ * a server wholesale for the target that declares one, so an entry carrying
+ * only the changed key would take the server's launch configuration with it.
+ */
+function mcpLaunchEdits(
+  content: string,
+  input: {
+    readonly target: string;
+    readonly name: string;
+    readonly effective: Record<string, unknown>;
+    readonly hasOwnEntry: boolean;
+    readonly update: NormalizedMcpLaunchUpdate;
+  }
+): EditResult {
+  const entryPath = [input.target, "mcpServers", input.name];
+  const options = { formattingOptions: MCP_JSONC_FORMATTING };
+  if (!input.hasOwnEntry) {
+    return modify(
+      content,
+      entryPath,
+      mcpCreatedEntry(input.effective, input.update),
+      options
+    );
+  }
+  const edits: EditResult = [];
+  for (const [key, value] of Object.entries(input.update)) {
+    const fileKey =
+      key === "http_headers" ? mcpHttpHeadersKey(input.effective) : key;
+    if (value === null) {
+      edits.push(
+        ...modify(content, [...entryPath, fileKey], undefined, options)
+      );
+      continue;
+    }
+    edits.push(...modify(content, [...entryPath, fileKey], value, options));
+  }
+  return edits;
+}
+
+/**
+ * The launch configuration one server declares for one target, read from a
+ * document's text.
+ *
+ * Used to report what a write produced: the answer comes from the written
+ * document rather than from what the write intended, so a write that did not
+ * land says so.
+ */
+function mcpLaunchConfiguration(
+  name: string,
+  content: string,
+  target: string
+): McpServerLaunchConfiguration {
+  const errors: ParseError[] = [];
+  const document: unknown = parse(content, errors, {
+    allowTrailingComma: true
+  });
+  if (errors.length > 0 || !isRecord(document)) return { name };
+  const base = isRecord(document.mcpServers) ? document.mcpServers : {};
+  const targetBlock = isRecord(document[target]) ? document[target] : null;
+  const targetServers =
+    targetBlock !== null && isRecord(targetBlock.mcpServers)
+      ? targetBlock.mcpServers
+      : null;
+  const entry = effectiveMcpEntry(
+    isRecord(base[name]) ? base[name] : undefined,
+    targetServers !== null && Object.hasOwn(targetServers, name)
+      ? targetServers[name]
+      : undefined
+  );
+  if (entry === null) return { name };
+  const launch = mcpLaunchKeys(entry);
+  const published: {
+    name: string;
+    command?: string;
+    args?: readonly string[];
+    cwd?: string;
+    url?: string;
+    bearerTokenEnvVar?: string;
+    httpHeaders?: Record<string, string>;
+  } = { name };
+  if (launch.command !== undefined) published.command = launch.command;
+  if (launch.args !== undefined) published.args = launch.args;
+  if (launch.cwd !== undefined) published.cwd = launch.cwd;
+  if (launch.url !== undefined) published.url = launch.url;
+  if (launch.bearer_token_env_var !== undefined)
+    published.bearerTokenEnvVar = launch.bearer_token_env_var;
+  if (launch.http_headers !== undefined)
+    published.httpHeaders = launch.http_headers;
+  return published;
 }
 
 function isHookEvent(value: string): value is HookEvent {
@@ -1767,7 +2119,7 @@ export class RuleSyncRepository {
   }
 
   loadMcpState(): RuleSyncMcpState {
-    const source = ".rulesync/mcp.jsonc" as const;
+    const source = MCP_SOURCE;
     const mcpPath = path.join(this.repositoryRoot, source);
     if (!existsSync(mcpPath))
       return { source, valid: null, issues: [], servers: [] };
@@ -1812,7 +2164,7 @@ export class RuleSyncRepository {
    * be applied. Neither ever produces a server list.
    */
   loadMcpLaunchState(target: string): RuleSyncMcpLaunchState {
-    const source = ".rulesync/mcp.jsonc" as const;
+    const source = MCP_SOURCE;
     const mcpPath = path.join(this.repositoryRoot, source);
     if (!existsSync(mcpPath))
       return { source, valid: null, issues: [], target, servers: [] };
@@ -1871,18 +2223,25 @@ export class RuleSyncRepository {
     const servers: McpServerLaunchConfiguration[] = [...names]
       .sort(COLLATOR.compare)
       .map((name) => {
-        const baseConfig = isRecord(base[name]) ? base[name] : {};
-        const overrideConfig = isRecord(targetOverrides[name])
-          ? targetOverrides[name]
-          : null;
-        const merged = mergeMcpLaunchKeys(
-          mcpLaunchKeys(baseConfig),
-          overrideConfig === null ? null : mcpLaunchKeys(overrideConfig)
+        const baseConfig = isRecord(base[name]) ? base[name] : undefined;
+        const entry = effectiveMcpEntry(
+          baseConfig,
+          Object.hasOwn(targetOverrides, name)
+            ? targetOverrides[name]
+            : undefined
         );
+        if (entry === null) return null;
+        const launch = mcpLaunchKeys(entry);
+        // A server the projection would drop is not part of the declared
+        // configuration: RuleSync writes a server that has no launch
+        // configuration and is not disabled as nothing at all, so declaring it
+        // here would report a difference the projection never had.
+        if (Object.keys(launch).length === 0 && entry.disabled !== true)
+          return null;
         // The launch keys are published under their contract names, and a key
         // the declaration does not carry is absent rather than empty: an
         // absent key and an empty one are different configurations.
-        const launch: {
+        const published: {
           name: string;
           command?: string;
           args?: readonly string[];
@@ -1891,17 +2250,207 @@ export class RuleSyncRepository {
           bearerTokenEnvVar?: string;
           httpHeaders?: Record<string, string>;
         } = { name };
-        if (merged.command !== undefined) launch.command = merged.command;
-        if (merged.args !== undefined) launch.args = merged.args;
-        if (merged.cwd !== undefined) launch.cwd = merged.cwd;
-        if (merged.url !== undefined) launch.url = merged.url;
-        if (merged.bearer_token_env_var !== undefined)
-          launch.bearerTokenEnvVar = merged.bearer_token_env_var;
-        if (merged.http_headers !== undefined)
-          launch.httpHeaders = merged.http_headers;
-        return launch;
-      });
+        if (launch.command !== undefined) published.command = launch.command;
+        if (launch.args !== undefined) published.args = launch.args;
+        if (launch.cwd !== undefined) published.cwd = launch.cwd;
+        if (launch.url !== undefined) published.url = launch.url;
+        if (launch.bearer_token_env_var !== undefined)
+          published.bearerTokenEnvVar = launch.bearer_token_env_var;
+        if (launch.http_headers !== undefined)
+          published.httpHeaders = launch.http_headers;
+        return published;
+      })
+      .filter(
+        (server): server is McpServerLaunchConfiguration => server !== null
+      );
     return { source, valid: true, issues: [], target, servers };
+  }
+
+  /**
+   * The revision of the canonical MCP declaration.
+   *
+   * The revision is the digest of the whole document, so it changes when any
+   * part of the declaration changes -- including a part this write does not
+   * own. That is the point: it is the handle a caller compares against to
+   * know that the declaration it read is still the declaration on disk.
+   */
+  loadMcpRevision(): {
+    readonly source: ".rulesync/mcp.jsonc";
+    readonly revision: string | null;
+    readonly valid: boolean | null;
+  } {
+    const source = MCP_SOURCE;
+    const mcpPath = path.join(this.repositoryRoot, source);
+    if (!existsSync(mcpPath)) return { source, revision: null, valid: null };
+    let content: string;
+    try {
+      content = readFileSync(mcpPath, "utf8");
+    } catch {
+      return { source, revision: null, valid: null };
+    }
+    const errors: ParseError[] = [];
+    const document: unknown = parse(content, errors, {
+      allowTrailingComma: true
+    });
+    return {
+      source,
+      revision: createHash("sha256").update(content, "utf8").digest("hex"),
+      valid: errors.length === 0 && isRecord(document) ? true : false
+    };
+  }
+
+  /**
+   * Write one server's launch configuration for one target.
+   *
+   * The write owns the launch keys of the target's own declaration and nothing
+   * else: the target's enablement, approval mode and tool allowlist stay as
+   * they are, and the shared declaration is left alone. RuleSync replaces a
+   * server wholesale for a target that declares one, so the target's entry is
+   * written complete -- when the target had no entry for the server, the
+   * shared entry's launch configuration and governance keys are carried over
+   * first, because an entry that carried only the changed key would take the
+   * server's launch configuration with it.
+   *
+   * The write is a compare-and-swap on the document's revision, and it edits
+   * the document in place: the comments and the formatting outside the edited
+   * server entry are preserved.
+   */
+  updateMcpLaunch(
+    input: RuleSyncMcpLaunchUpdateInput
+  ): Promise<RuleSyncMcpLaunchUpdateResult> {
+    const { name, target, expectedRevision } = input;
+    if (!MCP_SERVER_NAME_PATTERN.test(name)) {
+      return Promise.reject(
+        new RuleSyncMcpValidationError(
+          "MCP server name must be a non-empty name of letters, digits, dots, dashes or underscores."
+        )
+      );
+    }
+    if (!MCP_TARGET_NAME_PATTERN.test(target)) {
+      return Promise.reject(
+        new RuleSyncMcpValidationError(
+          "MCP target name must be a non-empty name of letters, digits, dots, dashes or underscores."
+        )
+      );
+    }
+    if (!COMMAND_REVISION_PATTERN.test(expectedRevision)) {
+      return Promise.reject(
+        new RuleSyncMcpValidationError("Expected MCP revision is invalid.")
+      );
+    }
+    const update = mcpLaunchUpdate(input.launch);
+    if (update === null) {
+      return Promise.reject(
+        new RuleSyncMcpValidationError(
+          "The MCP launch configuration carries a value that is not a launch key."
+        )
+      );
+    }
+
+    const source = MCP_SOURCE;
+    const mcpPath = path.join(this.repositoryRoot, source);
+    if (!existsSync(mcpPath)) {
+      return Promise.reject(
+        new RuleSyncMcpConflictError(
+          "The canonical MCP declaration does not exist."
+        )
+      );
+    }
+
+    return withSourceUpdateLock(mcpPath, async () => {
+      let content: string;
+      try {
+        content = await readFile(mcpPath, "utf8");
+      } catch {
+        throw new RuleSyncMcpConflictError(
+          "The canonical MCP declaration could not be read."
+        );
+      }
+      const revision = createHash("sha256")
+        .update(content, "utf8")
+        .digest("hex");
+      if (revision !== expectedRevision) {
+        throw new RuleSyncMcpConflictError(
+          "The canonical MCP declaration changed since it was loaded."
+        );
+      }
+      const errors: ParseError[] = [];
+      const document: unknown = parse(content, errors, {
+        allowTrailingComma: true
+      });
+      if (errors.length > 0 || !isRecord(document)) {
+        throw new RuleSyncMcpValidationError(
+          "The canonical MCP declaration could not be applied."
+        );
+      }
+
+      const base = isRecord(document.mcpServers) ? document.mcpServers : {};
+      const targetBlock = isRecord(document[target]) ? document[target] : null;
+      const targetServers =
+        targetBlock !== null && isRecord(targetBlock.mcpServers)
+          ? targetBlock.mcpServers
+          : null;
+      const hasOwnEntry =
+        targetServers !== null && Object.hasOwn(targetServers, name);
+      const effective = effectiveMcpEntry(
+        isRecord(base[name]) ? base[name] : undefined,
+        hasOwnEntry ? targetServers![name] : undefined
+      );
+      if (effective === null) {
+        throw new RuleSyncMcpValidationError(
+          `MCP server "${name}" is not declared for the target "${target}".`
+        );
+      }
+
+      const edits = mcpLaunchEdits(content, {
+        target,
+        name,
+        effective,
+        hasOwnEntry: hasOwnEntry && targetServers !== null,
+        update
+      });
+      const updated = applyEdits(content, edits);
+      if (updated === content) {
+        // The declaration already says this, so there is nothing to write.
+        // A write that changes nothing is a successful write, not a conflict.
+        return {
+          source,
+          name,
+          target,
+          revision,
+          launch: mcpLaunchConfiguration(name, content, target)
+        };
+      }
+
+      const temporaryPath = path.join(
+        this.repositoryRoot,
+        `.mcp.${randomUUID()}.tmp`
+      );
+      try {
+        await writeFile(temporaryPath, updated, {
+          encoding: "utf8",
+          flag: "wx",
+          mode: 0o644
+        });
+        await rename(temporaryPath, mcpPath);
+      } finally {
+        await unlink(temporaryPath).catch(() => undefined);
+      }
+      const persisted = await readFile(mcpPath, "utf8");
+      if (persisted !== updated) {
+        throw new RuleSyncMcpConflictError(
+          "The canonical MCP declaration changed during the update."
+        );
+      }
+
+      return {
+        source,
+        name,
+        target,
+        revision: createHash("sha256").update(persisted, "utf8").digest("hex"),
+        launch: mcpLaunchConfiguration(name, persisted, target)
+      };
+    });
   }
 
   async createSkill(

@@ -29,13 +29,13 @@ import {
   antigravitySkillsStatus,
   missingAntigravityPermissions
 } from "./antigravity-settings.ts";
+import { createCodexMcpSource } from "./codex-mcp-source.ts";
 import {
   checkCocoIndex,
   checkCodeGraphContext,
   checkPythonLanguageServer,
   resolveDependencyOptions
 } from "./dependencies.ts";
-import { createCodexMcpSource } from "./install-command.ts";
 import {
   CATALOGS,
   checkHookTrust,

@@ -36,6 +36,8 @@ import {
   updateAntigravityPermissions,
   updateAntigravitySkills
 } from "./antigravity-settings.ts";
+import { createCodexMcpSource } from "./codex-mcp-source.ts";
+import { readOtelIngressMode } from "./install-state.ts";
 import {
   type LaunchAgentPaths,
   renderLaunchAgent,
@@ -234,6 +236,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/install-materializer.ts",
   "runtime/src/platform/install-command.ts",
   "runtime/src/platform/install-check.ts",
+  "runtime/src/platform/codex-mcp-source.ts",
   "runtime/src/hooks/root-delegation.ts",
   "runtime/src/hooks/block-ccc-cli.ts",
   ".rulesync/skills/orchestration/SKILL.md"
@@ -1181,6 +1184,77 @@ function materializeRenderedAgents(
   }
 }
 
+/**
+ * Apply the canonical MCP declaration to the runtime's applied state.
+ *
+ * Three artifacts carry the MCP configuration the runtime applies: the bridge
+ * catalogue the MCP bridge reads, the role contracts that say which server a
+ * role may use, and the composed user configuration Codex reads. They are
+ * written from one projection, so the applied state cannot be one file that
+ * was updated and another that was not.
+ *
+ * The composed configuration keeps the user's own MCP servers, because it is
+ * composed with the configuration that is already there rather than over it.
+ */
+export function materializeMcpConfiguration(options: {
+  readonly repositoryRoot: string;
+  readonly codexHome: string;
+  readonly codexMcpSource: string;
+  readonly otelMode: string;
+}): void {
+  materializeRenderedAgents(
+    options.repositoryRoot,
+    path.join(options.codexHome, "agents"),
+    options.codexMcpSource
+  );
+  runBridgeMcpCatalogue(
+    options.codexMcpSource,
+    path.join(options.codexHome, "provider-runtime", "mcp-servers.json")
+  );
+  const configPath = path.join(options.codexHome, CONFIG_TOML_FILE);
+  if (isSymlink(configPath))
+    throw new Error(`refusing-symlinked-user-config ${configPath}`);
+  runCompose(
+    path.join(options.repositoryRoot, "config/config.autodev.toml"),
+    options.codexMcpSource,
+    path.join(options.repositoryRoot, "agents/roles/orchestrator.toml"),
+    configPath,
+    configPath,
+    false,
+    options.otelMode
+  );
+}
+
+/**
+ * Apply the canonical MCP declaration, projected from the declaration as it
+ * is now.
+ *
+ * The projection is generated from the canonical source rather than taken from
+ * the install, so a declaration that changed since the last install is applied
+ * as it stands.
+ */
+export function materializeCurrentMcpConfiguration(options: {
+  readonly repositoryRoot: string;
+  readonly codexHome: string;
+}): void {
+  const projection = createCodexMcpSource(options.repositoryRoot);
+  try {
+    materializeMcpConfiguration({
+      repositoryRoot: options.repositoryRoot,
+      codexHome: options.codexHome,
+      codexMcpSource: projection.source,
+      // The persisted ingress is the one the install check compares the
+      // composed configuration against, so composing with it keeps the two
+      // owners of the user configuration in agreement.
+      otelMode: readOtelIngressMode(
+        path.join(options.codexHome, "otel-ingress.mode")
+      )
+    });
+  } finally {
+    rmSync(projection.root, { recursive: true, force: true });
+  }
+}
+
 function sameContent(source: string, target: string): boolean {
   try {
     return readFileSync(source).equals(readFileSync(target));
@@ -1304,15 +1378,6 @@ function composeAndLinkConfigs(
   options: MaterializeOptions,
   source: FileTarget
 ): void {
-  runCompose(
-    source("config/config.autodev.toml"),
-    options.codexMcpSource,
-    source("agents/roles/orchestrator.toml"),
-    path.join(options.codexHome, CONFIG_TOML_FILE),
-    path.join(options.codexHome, CONFIG_TOML_FILE),
-    false,
-    options.otelMode
-  );
   if (isSymlink(path.join(options.codexHome, "config.toml")))
     throw new Error(
       `refusing-symlinked-user-config ${path.join(options.codexHome, "config.toml")}`
@@ -1635,7 +1700,6 @@ export function ensureCodexAppMcpServerEnabled(codexHome: string): void {
 
 export function materializeInstallation(options: MaterializeOptions): void {
   const hooks = path.join(options.codexHome, "hooks"),
-    agents = path.join(options.codexHome, "agents"),
     rules = path.join(options.codexHome, "rules"),
     prompts = path.join(options.codexHome, "prompts"),
     userSkills = path.join(options.home, ".agents", "skills"),
@@ -1658,15 +1722,12 @@ export function materializeInstallation(options: MaterializeOptions): void {
   );
   linkRuntimeConfigs(options.codexHome, source, rules);
   replaceSkillSymlinks(options.codexHome, skillsRoot, userSkills);
-  materializeRenderedAgents(
-    options.repositoryRoot,
-    agents,
-    options.codexMcpSource
-  );
-  runBridgeMcpCatalogue(
-    options.codexMcpSource,
-    path.join(options.codexHome, "provider-runtime", "mcp-servers.json")
-  );
+  materializeMcpConfiguration({
+    repositoryRoot: options.repositoryRoot,
+    codexHome: options.codexHome,
+    codexMcpSource: options.codexMcpSource,
+    otelMode: options.otelMode
+  });
   runRulesyncGenerate(options.repositoryRoot, {
     configPath: path.join(options.repositoryRoot, "rulesync.jsonc"),
     silent: true

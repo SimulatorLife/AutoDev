@@ -2496,7 +2496,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(mcps.response.statusCode, 200);
-    assert.equal(mcps.body.schema, "autodev-control-mcps-v1");
+    assert.equal(mcps.body.schema, "autodev-control-mcps-v2");
     assert.equal(mcps.body.source, ".rulesync/mcp.jsonc");
     assert.equal(mcps.body.valid, true);
     assert.ok(

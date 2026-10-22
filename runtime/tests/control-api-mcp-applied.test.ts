@@ -140,7 +140,7 @@ async function readApplied(options: {
 test("the applied MCP read converges when the applied catalogue matches the declaration", async () => {
   const options = fixture(APPLIED);
   const body = await readApplied(options);
-  assert.equal(body.schema, "autodev-control-mcp-applied-v1");
+  assert.equal(body.schema, "autodev-control-mcp-applied-v2");
   assert.equal(body.declarationSource, ".rulesync/mcp.jsonc");
   assert.equal(body.target, "codexcli");
   assert.equal(body.available, true);

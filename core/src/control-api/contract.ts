@@ -29,11 +29,16 @@
  * read path (`GET /control/mcp-applied`) and reconciled against the canonical
  * declaration through the shared reconciliation contract, so the MCP page can
  * say whether what the operator declared is what the Runtime applied.
+ * v14: the canonical MCP declaration carries a revision the Console compares
+ * against before it writes, the applied read publishes the declared launch
+ * configuration the comparison is made against, and the canonical declaration
+ * is written through `PATCH /control/mcps/{name}`, which applies the projection
+ * and reports the reconciliation.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 13
+  version: 14
 } as const;
 
 export type ControlApiContractResponse = {

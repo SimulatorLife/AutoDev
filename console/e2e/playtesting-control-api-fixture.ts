@@ -826,6 +826,218 @@ function sendJson(
   response.end(body);
 }
 
+/** The path of one MCP server's canonical declaration. */
+const MCP_SERVER_ROUTE = /^\/control\/mcps\/([^/]+)$/u;
+
+/** The moment the fixture's synthetic applied state was observed. */
+const MCP_OBSERVED_AT = "2026-10-22T12:00:00.000Z";
+
+/**
+ * The canonical MCP declaration, and what the Runtime published from it.
+ *
+ * The fixture keeps the two apart the way the Runtime does: the declaration
+ * says what the operator asked for, the applied configuration says what the
+ * Runtime published, and the reconciliation between them is the Runtime's own
+ * verdict. A write moves the declaration, applies it, and the verdict follows.
+ */
+interface McpLaunchServer {
+  readonly name: string;
+  readonly command: string | null;
+  readonly args: readonly string[];
+  readonly cwd: string | null;
+  readonly url: string | null;
+  readonly bearerTokenEnvVar: string | null;
+  readonly httpHeaders: Readonly<Record<string, string>>;
+}
+
+interface McpDeclarationState {
+  readonly revision: string;
+  readonly declaredServers: readonly McpLaunchServer[];
+  readonly appliedServers: readonly McpLaunchServer[];
+  readonly desiredGeneration: string;
+  readonly observedGeneration: string;
+  readonly converged: boolean;
+}
+
+/**
+ * What the canonical declaration says for the `codexcli` target.
+ *
+ * The target has no override of its own, so it inherits the shared server
+ * whole, and the declared side of the reconciliation is the shared
+ * declaration's own endpoint.
+ */
+const MCP_DECLARED_DOCS: McpLaunchServer = {
+  name: "openaiDeveloperDocs",
+  command: null,
+  args: [],
+  cwd: null,
+  url: "https://docs.example.test/mcp",
+  bearerTokenEnvVar: null,
+  httpHeaders: {}
+};
+
+/**
+ * What the Runtime published, before it has observed the declaration.
+ *
+ * The runtime is behind the declaration here, so the two sides of the
+ * reconciliation differ and the verdict is a pending one that is true. A
+ * fixture whose declared and published sides were the same would render a
+ * pending verdict over two identical generations, which says the runtime has
+ * not caught up while showing that it has.
+ */
+const MCP_PUBLISHED_DOCS: McpLaunchServer = {
+  ...MCP_DECLARED_DOCS,
+  url: "https://developers.openai.com/mcp"
+};
+
+function mcpGeneration(servers: readonly McpLaunchServer[]): string {
+  return createHash("sha256")
+    .update(JSON.stringify(servers), "utf8")
+    .digest("hex");
+}
+
+/**
+ * The declaration, and what the Runtime published from it, as they start.
+ *
+ * A reset puts them back to this, so one spec's write is not the next spec's
+ * starting state.
+ */
+function initialMcpDeclaration(): McpDeclarationState {
+  return {
+    revision: createHash("sha256")
+      .update("mcp-declaration", "utf8")
+      .digest("hex"),
+    declaredServers: [MCP_DECLARED_DOCS],
+    appliedServers: [MCP_PUBLISHED_DOCS],
+    desiredGeneration: mcpGeneration([MCP_DECLARED_DOCS]),
+    observedGeneration: mcpGeneration([MCP_PUBLISHED_DOCS]),
+    converged: false
+  };
+}
+
+let mcpDeclaration: McpDeclarationState = initialMcpDeclaration();
+
+/**
+ * The write of one MCP server's launch configuration.
+ *
+ * The write is a compare-and-swap on the declaration's revision, so a write
+ * decided on an older declaration is refused. A write that lands moves the
+ * declaration, applies it, and the Runtime's verdict follows.
+ */
+async function applyMcpDeclarationWrite(
+  response: ServerResponse,
+  request: IncomingMessage,
+  url: URL
+): Promise<boolean> {
+  const match = url.pathname.match(MCP_SERVER_ROUTE);
+  if (match === null) return false;
+  if (request.method !== "PATCH") return false;
+  const server = decodeURIComponent(match[1] ?? "");
+  const body = await readJsonBody(request);
+  const expectedRevision = body?.expectedRevision;
+  const launch = body?.launch;
+  if (
+    typeof expectedRevision !== "string" ||
+    typeof launch !== "object" ||
+    launch === null
+  ) {
+    sendCanonicalSourceError(
+      response,
+      400,
+      "autodev_control_api_invalid_body",
+      "MCP declaration updates require exactly the expected revision and a launch configuration."
+    );
+    return true;
+  }
+  if (expectedRevision !== mcpDeclaration.revision) {
+    sendCanonicalSourceError(
+      response,
+      409,
+      "autodev_control_mcp_revision_conflict",
+      "The canonical MCP declaration changed since it was loaded."
+    );
+    return true;
+  }
+  const current = mcpDeclaration.declaredServers.find(
+    (entry) => entry.name === server
+  );
+  if (current === undefined) {
+    sendCanonicalSourceError(
+      response,
+      400,
+      "autodev_control_mcp_invalid_declaration",
+      `MCP server "${server}" is not declared for the target "codexcli".`
+    );
+    return true;
+  }
+  const written: McpLaunchServer = {
+    name: server,
+    command: readLaunchText(launch.command, current.command),
+    args: readLaunchArgs(launch.args, current.args),
+    cwd: readLaunchText(launch.cwd, current.cwd),
+    url: readLaunchText(launch.url, current.url),
+    bearerTokenEnvVar: readLaunchText(
+      launch.bearerTokenEnvVar,
+      current.bearerTokenEnvVar
+    ),
+    httpHeaders: current.httpHeaders
+  };
+  const declaredServers = mcpDeclaration.declaredServers.map((entry) =>
+    entry.name === server ? written : entry
+  );
+  const revision = createHash("sha256")
+    .update(`${mcpDeclaration.revision}:${server}`, "utf8")
+    .digest("hex");
+  const desiredGeneration = mcpGeneration(declaredServers);
+  mcpDeclaration = {
+    revision,
+    declaredServers,
+    appliedServers: declaredServers,
+    desiredGeneration,
+    observedGeneration: desiredGeneration,
+    converged: true
+  };
+  sendJson(response, {
+    schema: "autodev-control-mcp-server-patch-v1",
+    name: server,
+    target: "codexcli",
+    revision,
+    changed: true,
+    launch: written,
+    reconciliation: {
+      status: {
+        convergence: "converged",
+        desiredGeneration,
+        observedGeneration: desiredGeneration,
+        lastApplyAt: MCP_OBSERVED_AT,
+        lastObservationAt: MCP_OBSERVED_AT,
+        lastError: null,
+        explanation:
+          "The runtime has observed the latest desired generation; convergence is recorded."
+      },
+      history: []
+    }
+  });
+  return true;
+}
+
+function readLaunchText(raw: unknown, current: string | null): string | null {
+  if (raw === null) return null;
+  if (typeof raw === "string") return raw;
+  return current;
+}
+
+function readLaunchArgs(
+  raw: unknown,
+  current: readonly string[]
+): readonly string[] {
+  if (raw === null) return [];
+  if (Array.isArray(raw) && raw.every((arg) => typeof arg === "string")) {
+    return raw as string[];
+  }
+  return current;
+}
+
 /**
  * A refusal, in the shape the Runtime refuses a request in.
  *
@@ -2699,6 +2911,7 @@ function resetSyntheticFixture(
   skillAssignmentRevision = INITIAL_SKILL_ASSIGNMENT_REVISION;
   skillRoles["code-review"] = [...INITIAL_SKILL_ROLES];
   runtimeUnavailable = false;
+  mcpDeclaration = initialMcpDeclaration();
   sendJson(response, { reset: true });
   return true;
 }
@@ -3802,9 +4015,10 @@ function handleCatalogResourceRead(
     // target projection (so its default state is not observed), and a
     // declared http server with no target overrides at all.
     sendJson(response, {
-      schema: "autodev-control-mcps-v1",
+      schema: "autodev-control-mcps-v2",
       source: ".rulesync/mcp.jsonc",
-      readOnly: true,
+      revision: mcpDeclaration.revision,
+      readOnly: false,
       valid: true,
       issues: [],
       servers: [
@@ -3857,34 +4071,24 @@ function handleCatalogResourceRead(
     // other two are not, so the page can tell an applied server from one that
     // was never applied -- and the verdict is the Runtime's own.
     sendJson(response, {
-      schema: "autodev-control-mcp-applied-v1",
+      schema: "autodev-control-mcp-applied-v2",
       source: "/codex/provider-runtime/mcp-servers.json",
       declarationSource: ".rulesync/mcp.jsonc",
       target: "codexcli",
       available: true,
-      servers: [
-        {
-          name: "openaiDeveloperDocs",
-          command: null,
-          args: [],
-          cwd: null,
-          url: "https://developers.openai.com/mcp",
-          bearerTokenEnvVar: null,
-          httpHeaders: {}
-        }
-      ],
+      declaredServers: mcpDeclaration.declaredServers,
+      servers: mcpDeclaration.appliedServers,
       reconciliation: {
         status: {
-          convergence: "pending",
-          desiredGeneration:
-            "3f1c0d9a8b7e6d5c4b3a29180f7e6d5c4b3a29180f7e6d5c4b3a29180f7e6d5c",
-          observedGeneration:
-            "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b",
+          convergence: mcpDeclaration.converged ? "converged" : "pending",
+          desiredGeneration: mcpDeclaration.desiredGeneration,
+          observedGeneration: mcpDeclaration.observedGeneration,
           lastApplyAt: null,
-          lastObservationAt: "2026-10-22T12:00:00.000Z",
+          lastObservationAt: MCP_OBSERVED_AT,
           lastError: null,
-          explanation:
-            "Apply wrote the latest desired generation, but the running runtime has not observed it yet. Restart the affected process or wait for the observation hook to refresh."
+          explanation: mcpDeclaration.converged
+            ? "The runtime has observed the latest desired generation; convergence is recorded."
+            : "Apply wrote the latest desired generation, but the running runtime has not observed it yet. Restart the affected process or wait for the observation hook to refresh."
         },
         history: []
       }
@@ -4417,6 +4621,9 @@ async function handleSyntheticMutationRoutes(
     return true;
   if (await handleAgentEnablementMutation(request, response, url)) return true;
   if (await handleCanonicalSourceMutation(request, response, url)) return true;
+  if (await applyMcpDeclarationWrite(response, request, url)) {
+    return true;
+  }
   return configureAgentEnablementFixture(request, response, url);
 }
 

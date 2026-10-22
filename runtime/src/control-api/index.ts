@@ -17,9 +17,12 @@ import {
   type ControlApiGithubResponse,
   type ControlApiHooksResponse,
   type ControlApiLiveAgentCounts,
+  type ControlApiMcpAppliedServer,
+  type ControlApiMcpDeclaredServer,
   type ControlApiMcpRuntimeHealth,
   type ControlApiMcpRuntimeHealthCounts,
   type ControlApiMcpRuntimeServer,
+  type ControlApiMcpServerPatchResponse,
   type ControlApiMcpsResponse,
   type ControlApiModelPatchResponse,
   type ControlApiModelsResponse,
@@ -91,6 +94,8 @@ import {
   type RuleSyncCommandHistoryPage,
   RuleSyncCommandHistoryUnavailableError,
   RuleSyncCommandValidationError,
+  RuleSyncMcpConflictError,
+  RuleSyncMcpValidationError,
   RuleSyncRepository,
   RuleSyncSkillConflictError,
   RuleSyncSkillSourceUnavailableError,
@@ -124,6 +129,7 @@ import {
 import {
   installedSkillMatches,
   materializeCommands,
+  materializeCurrentMcpConfiguration,
   materializeRuleSyncSkillProjections
 } from "../platform/install-materializer.ts";
 import type { PlaytestRunControl } from "../playtesting/mcp.ts";
@@ -317,6 +323,8 @@ function isAgentLimitBody(value: unknown): boolean {
 const MODEL_PATH = /^\/control\/models\/([a-zA-Z0-9._-]+)$/u;
 const AGENT_DETAIL_PATH = /^\/control\/agents\/([a-zA-Z0-9._-]+)$/u;
 const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
+const MCP_SERVER_PATH =
+  /^\/control\/mcps\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/u;
 const SKILL_ROLES_PATH = /^\/control\/skills\/([a-zA-Z0-9._-]+)$/u;
 const SKILL_CONTENT_PATH = /^\/control\/skills\/([a-z0-9-]{1,64})\/content$/u;
 const SKILL_CONTENT_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
@@ -1288,27 +1296,34 @@ function readAppliedMcpCatalogue(codexHome: string): {
  * applied catalogue has not observed anything, and says so rather than
  * reporting a converged empty configuration.
  */
-function mcpAppliedView(
+function mcpAppliedState(
   repositoryRoot: string = DEFAULT_REPO_ROOT,
   codexHome: string | undefined = defaultCodexHomeForReconciliation()
-): Record<string, unknown> {
+): {
+  readonly available: boolean;
+  readonly declaredServers: readonly ControlApiMcpDeclaredServer[];
+  readonly servers: readonly ControlApiMcpAppliedServer[];
+  readonly desiredGeneration: string | null;
+  readonly observedGeneration: string | null;
+  readonly reconciliation: ReconciliationView;
+} {
   const declaration = new RuleSyncRepository(repositoryRoot).loadMcpLaunchState(
     MCP_APPLIED_TARGET
   );
   const applied = readAppliedMcpCatalogue(codexHome);
+  const declaredServers: ControlApiMcpDeclaredServer[] =
+    declaration.servers.map((server) => ({
+      name: server.name,
+      command: server.command ?? null,
+      args: server.args ?? [],
+      cwd: server.cwd ?? null,
+      url: server.url ?? null,
+      bearerTokenEnvVar: server.bearerTokenEnvVar ?? null,
+      httpHeaders: server.httpHeaders ?? {}
+    }));
   const desiredGeneration =
-    declaration.valid === true && declaration.servers.length > 0
-      ? mcpLaunchGeneration(
-          declaration.servers.map((server) => ({
-            name: server.name,
-            command: server.command ?? null,
-            args: server.args ?? [],
-            cwd: server.cwd ?? null,
-            url: server.url ?? null,
-            bearerTokenEnvVar: server.bearerTokenEnvVar ?? null,
-            httpHeaders: server.httpHeaders ?? {}
-          }))
-        )
+    declaration.valid === true && declaredServers.length > 0
+      ? mcpLaunchGeneration(declaredServers)
       : null;
   const observedGeneration =
     applied.available && applied.servers.length > 0
@@ -1323,39 +1338,51 @@ function mcpAppliedView(
     lastObservationAt: applied.observedAt,
     lastError: applied.error
   };
-  const reconciliation = buildReconciliationView({
-    evidence,
-    history: [],
-    hasObservation: applied.available
-  });
   return {
-    schema: "autodev-control-mcp-applied-v1",
+    available: applied.available,
+    declaredServers,
+    servers: applied.servers,
+    desiredGeneration,
+    observedGeneration,
+    reconciliation: buildReconciliationView({
+      evidence,
+      history: [],
+      hasObservation: applied.available
+    })
+  };
+}
+
+function mcpAppliedView(
+  repositoryRoot: string = DEFAULT_REPO_ROOT,
+  codexHome: string | undefined = defaultCodexHomeForReconciliation()
+): Record<string, unknown> {
+  const state = mcpAppliedState(repositoryRoot, codexHome);
+  return {
+    schema: "autodev-control-mcp-applied-v2",
     source: path.join(codexHome, "provider-runtime", "mcp-servers.json"),
     declarationSource: ".rulesync/mcp.jsonc",
     target: MCP_APPLIED_TARGET,
-    available: applied.available,
-    servers: applied.servers.map((server) => ({
-      name: server.name,
-      command: server.command,
-      args: server.args,
-      cwd: server.cwd,
-      url: server.url,
-      bearerTokenEnvVar: server.bearerTokenEnvVar,
-      httpHeaders: server.httpHeaders
-    })),
-    reconciliation
+    available: state.available,
+    declaredServers: state.declaredServers,
+    servers: state.servers,
+    reconciliation: state.reconciliation
   };
 }
 
 function mcpsView(
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
-  const state = new RuleSyncRepository(repositoryRoot).loadMcpState();
+  const repository = new RuleSyncRepository(repositoryRoot);
+  const state = repository.loadMcpState();
+  // The revision is the handle a write compares against, so it is read with
+  // the declaration it belongs to rather than on its own.
+  const revision = repository.loadMcpRevision().revision;
   if (state.valid !== true) {
     return {
-      schema: "autodev-control-mcps-v1",
+      schema: "autodev-control-mcps-v2",
       source: state.source,
-      readOnly: true,
+      revision,
+      readOnly: false,
       valid: state.valid,
       // Carried on the failure branch too: "no servers" and "these servers
       // could not be applied" are different states, and the second one is only
@@ -1390,9 +1417,10 @@ function mcpsView(
       roles
     }));
   return {
-    schema: "autodev-control-mcps-v1",
+    schema: "autodev-control-mcps-v2",
     source: state.source,
-    readOnly: true,
+    revision,
+    readOnly: false,
     valid: state.valid,
     // A valid source has none. Carried explicitly rather than omitted so the
     // field means the same thing on both branches of the projection.
@@ -4656,6 +4684,306 @@ async function patchPromptCommand(
   );
 }
 
+/**
+ * The launch configuration one request sets.
+ *
+ * A key the request does not mention is left as the declaration has it; a key
+ * it sets to `null` is removed. The request owns the launch keys and nothing
+ * else: the target's enablement, approval mode and tool allowlist are not
+ * part of it.
+ */
+/**
+ * One launch key's value in a request.
+ *
+ * `absent` is a key the request does not mention, `remove` is a key the
+ * request takes away, and `invalid` is a value the request does not carry in
+ * a shape this route accepts.
+ */
+type McpLaunchBodyValue =
+  | { readonly kind: "absent" }
+  | { readonly kind: "remove" }
+  | { readonly kind: "set"; readonly value: string }
+  | { readonly kind: "invalid" };
+
+function mcpBodyTextValue(raw: unknown): McpLaunchBodyValue {
+  if (raw === undefined) return { kind: "absent" };
+  if (raw === null) return { kind: "remove" };
+  if (typeof raw !== "string" || raw.length === 0) return { kind: "invalid" };
+  return { kind: "set", value: raw };
+}
+
+function mcpBodyArgsValue(
+  raw: unknown
+):
+  | { readonly kind: "absent" }
+  | { readonly kind: "remove" }
+  | { readonly kind: "set"; readonly value: readonly string[] }
+  | { readonly kind: "invalid" } {
+  if (raw === undefined) return { kind: "absent" };
+  if (raw === null) return { kind: "remove" };
+  if (!Array.isArray(raw) || !raw.every((arg) => typeof arg === "string"))
+    return { kind: "invalid" };
+  return { kind: "set", value: raw as string[] };
+}
+
+function mcpBodyHeadersValue(
+  raw: unknown
+):
+  | { readonly kind: "absent" }
+  | { readonly kind: "remove" }
+  | { readonly kind: "set"; readonly value: Record<string, string> }
+  | { readonly kind: "invalid" } {
+  if (raw === undefined) return { kind: "absent" };
+  if (raw === null) return { kind: "remove" };
+  if (!isPlainRecord(raw)) return { kind: "invalid" };
+  const headers: Record<string, string> = {};
+  for (const [name, headerValue] of Object.entries(raw)) {
+    if (typeof headerValue !== "string") return { kind: "invalid" };
+    headers[name] = headerValue;
+  }
+  return { kind: "set", value: headers };
+}
+
+function mcpLaunchUpdateFromBody(value: unknown): {
+  command?: string | null;
+  args?: readonly string[] | null;
+  cwd?: string | null;
+  url?: string | null;
+  bearerTokenEnvVar?: string | null;
+  httpHeaders?: Record<string, string> | null;
+} | null {
+  if (!isPlainRecord(value)) return null;
+  const update: {
+    command?: string | null;
+    args?: readonly string[] | null;
+    cwd?: string | null;
+    url?: string | null;
+    bearerTokenEnvVar?: string | null;
+    httpHeaders?: Record<string, string> | null;
+  } = {};
+  const strings: readonly (readonly [
+    "command" | "cwd" | "url" | "bearerTokenEnvVar",
+    unknown
+  ])[] = [
+    ["command", value.command],
+    ["cwd", value.cwd],
+    ["url", value.url],
+    ["bearerTokenEnvVar", value.bearerTokenEnvVar]
+  ];
+  for (const [key, raw] of strings) {
+    const text = mcpBodyTextValue(raw);
+    if (text.kind === "invalid") return null;
+    if (text.kind === "absent") continue;
+    update[key] = text.kind === "remove" ? null : text.value;
+  }
+  const args = mcpBodyArgsValue(value.args);
+  if (args.kind === "invalid") return null;
+  if (args.kind !== "absent") {
+    update.args = args.kind === "remove" ? null : args.value;
+  }
+  const headers = mcpBodyHeadersValue(value.httpHeaders);
+  if (headers.kind === "invalid") return null;
+  if (headers.kind !== "absent") {
+    update.httpHeaders = headers.kind === "remove" ? null : headers.value;
+  }
+  return update;
+}
+
+/**
+ * The refusal of a canonical MCP declaration write.
+ *
+ * A conflict and a refused declaration are different facts: the first says
+ * the declaration moved under the write, the second says the write could not
+ * be expressed. They get different codes, and the reason is the Runtime's.
+ */
+function sendMcpWriteFailure(
+  response: ServerResponse,
+  actor: ControlApiActor,
+  resource: string,
+  error: unknown
+): void {
+  const conflict = error instanceof RuleSyncMcpConflictError;
+  const validation = error instanceof RuleSyncMcpValidationError;
+  if (!conflict && !validation) throw error;
+  const status = conflict ? 409 : 400;
+  const code = conflict
+    ? "autodev_control_mcp_revision_conflict"
+    : "autodev_control_mcp_invalid_declaration";
+  const message =
+    error instanceof Error
+      ? error.message
+      : "The canonical MCP declaration is invalid.";
+  auditMutation({
+    actor: actor.actor,
+    actorVerified: true,
+    role: actor.role,
+    action: "update_rule_sync_mcp_declaration",
+    resource,
+    outcome: "error",
+    changes: null,
+    reason: conflict ? "revision_conflict" : "invalid_declaration"
+  });
+  sendControlError(response, status, code, message);
+}
+
+/**
+ * Write one MCP server's launch configuration to the canonical declaration.
+ *
+ * The write is a compare-and-swap on the declaration's revision, so a write
+ * decided on an older declaration is refused rather than applied over a newer
+ * one. The projection is applied afterwards and the applied state is read
+ * again, so the response says what the Runtime published rather than what the
+ * write asked for.
+ */
+async function patchMcpServer(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  name: string,
+  repositoryRoot: string,
+  codexHome: string
+): Promise<void> {
+  const resource = `${CONTROL_API_PATHS.mcps}/${name}`;
+  if (actor.role !== "operator") {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_mcp_declaration",
+      resource,
+      outcome: "denied",
+      changes: null,
+      reason: "operator_required"
+    });
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_forbidden",
+      "Updating the canonical MCP declaration requires an operator."
+    );
+    return;
+  }
+  const parsed = await readControlApiJsonObject(request);
+  if (!parsed.ok) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_mcp_declaration",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: parsed.code
+    });
+    sendControlError(response, parsed.status, parsed.code, parsed.message);
+    return;
+  }
+  const { body } = parsed;
+  const launch = mcpLaunchUpdateFromBody(body.launch);
+  if (
+    Object.keys(body).length !== 2 ||
+    typeof body.expectedRevision !== "string" ||
+    launch === null
+  ) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_mcp_declaration",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: "invalid_body"
+    });
+    sendControlError(
+      response,
+      400,
+      "autodev_control_api_invalid_body",
+      "MCP declaration updates require exactly the expected revision and a launch configuration."
+    );
+    return;
+  }
+
+  let updated;
+  try {
+    updated = await new RuleSyncRepository(repositoryRoot).updateMcpLaunch({
+      name,
+      target: MCP_APPLIED_TARGET,
+      launch,
+      expectedRevision: body.expectedRevision
+    });
+  } catch (error) {
+    sendMcpWriteFailure(response, actor, resource, error);
+    return;
+  }
+
+  try {
+    materializeCurrentMcpConfiguration({ repositoryRoot, codexHome });
+  } catch {
+    // The declaration was written, so this is not a failed write: the
+    // applied state is older than the declaration, and the response says so.
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_mcp_declaration",
+      resource,
+      outcome: "error",
+      changes: { name, revision: updated.revision },
+      reason: "projection_apply_failed"
+    });
+    sendControlError(
+      response,
+      503,
+      "autodev_control_mcp_apply_failed",
+      "Canonical declaration was updated, but the MCP projection could not be applied. Reload the MCP server before retrying."
+    );
+    return;
+  }
+
+  const applied = mcpAppliedState(repositoryRoot, codexHome);
+  const reconciliation = applied.reconciliation;
+  const desiredGeneration = applied.desiredGeneration;
+  const observedGeneration = applied.observedGeneration;
+  auditMutation({
+    actor: actor.actor,
+    actorVerified: true,
+    role: actor.role,
+    action: "update_rule_sync_mcp_declaration",
+    resource,
+    outcome: "ok",
+    changes: {
+      name,
+      revision: updated.revision,
+      target: MCP_APPLIED_TARGET
+    },
+    desiredGeneration,
+    observedGeneration
+  });
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-control-mcp-server-patch-v1",
+      name,
+      target: MCP_APPLIED_TARGET,
+      revision: updated.revision,
+      changed: updated.revision !== body.expectedRevision,
+      launch: {
+        name,
+        command: updated.launch.command ?? null,
+        args: updated.launch.args ?? [],
+        cwd: updated.launch.cwd ?? null,
+        url: updated.launch.url ?? null,
+        bearerTokenEnvVar: updated.launch.bearerTokenEnvVar ?? null,
+        httpHeaders: updated.launch.httpHeaders ?? {}
+      },
+      reconciliation
+    } satisfies ControlApiMcpServerPatchResponse,
+    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+  );
+}
+
 function promptVersionsPath(
   pathname: string
 ): { readonly name: string; readonly versionHash?: string } | null {
@@ -5618,6 +5946,50 @@ async function promptDetailRoute(
   return true;
 }
 
+/**
+ * One MCP server's canonical declaration.
+ *
+ * The declaration is read through the MCP catalog, which carries every
+ * server; the per-server path is the write, which is the only operation that
+ * changes the canonical source.
+ */
+async function mcpServerRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  pathname: string,
+  name: string,
+  options: ControlApiRequestOptions
+): Promise<boolean> {
+  if (method === "PATCH") {
+    const home = process.env.HOME?.trim() || homedir();
+    const codexHome =
+      options.codexHome?.trim() ||
+      process.env.CODEX_HOME?.trim() ||
+      path.join(home, ".codex");
+    await patchMcpServer(
+      request,
+      response,
+      actor,
+      name,
+      options.repositoryRoot ?? DEFAULT_REPO_ROOT,
+      codexHome
+    );
+    return true;
+  }
+
+  auditRejectedRequest(request, method, pathname, "method_not_allowed", actor);
+  response.setHeader("allow", "PATCH");
+  sendControlError(
+    response,
+    405,
+    "autodev_control_api_method_not_allowed",
+    "MCP servers are read through the MCP catalog, and the canonical declaration is written via PATCH."
+  );
+  return true;
+}
+
 function workspacePlaytestingApprovalRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -6149,6 +6521,17 @@ export async function handleControlApiRequest(
       method,
       pathname,
       promptMatch[1]!,
+      options
+    );
+  const mcpServerMatch = pathname.match(MCP_SERVER_PATH);
+  if (mcpServerMatch)
+    return mcpServerRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
+      mcpServerMatch[1]!,
       options
     );
   if (await readOnlyCollection(pathname, method, response, actor, options))

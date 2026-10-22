@@ -41,6 +41,7 @@ import {
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
 import { McpAppliedConfiguration } from "./applied-configuration.ts";
+import { McpDeclarationEditor } from "./declaration-editor.ts";
 import {
   McpConnectionBadge,
   McpObservedTools,
@@ -104,6 +105,15 @@ export interface McpDetailViewProps {
    * different state from an applied configuration that holds no servers.
    */
   readonly applied: ControlApiMcpAppliedResponse | null;
+  /**
+   * The revision of the canonical MCP declaration.
+   *
+   * A write is compared against it, so the editor has to be filled from the
+   * revision it was read at. `null` means the declaration could not be read,
+   * and the editor stays disabled with the reason rather than offering a write
+   * that has nothing to compare.
+   */
+  readonly revision: string | null;
   readonly sourceValidity: boolean;
   /**
    * Partial projection of explicitly enumerated role MCP/plugin allowlist
@@ -372,6 +382,7 @@ export function McpDetailView({
   server,
   runtime,
   applied,
+  revision,
   sourceValidity,
   configuredTools,
   activeTab
@@ -558,6 +569,19 @@ export function McpDetailView({
         React.createElement(McpAppliedConfiguration, {
           applied,
           serverName: server.name
+        })
+      ),
+      React.createElement(
+        "div",
+        { className: "mt-4" },
+        React.createElement(McpDeclarationEditor, {
+          name: server.name,
+          target: applied?.target ?? "codexcli",
+          revision,
+          declared:
+            applied?.declaredServers.find(
+              (entry) => entry.name === server.name
+            ) ?? null
         })
       )
     ),

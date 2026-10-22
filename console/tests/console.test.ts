@@ -4936,6 +4936,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
   };
   const overviewMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -4952,6 +4953,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
 
   const configurationMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -4964,6 +4966,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
 
   const roleAccessMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -4976,6 +4979,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
 
   const toolsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -4991,6 +4995,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
 
   const activityMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5032,6 +5037,7 @@ test("McpDetailView renders populated configured tool allowlist from the Tools c
   ];
   const toolsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5052,6 +5058,7 @@ test("McpDetailView renders populated configured tool allowlist from the Tools c
 
   const activityMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5075,11 +5082,22 @@ test("McpDetailView shows the applied MCP configuration and the runtime's verdic
     roles: ["docs-researcher"]
   };
   const applied: ControlApiMcpAppliedResponse = {
-    schema: "autodev-control-mcp-applied-v1",
+    schema: "autodev-control-mcp-applied-v2",
     source: "/codex/provider-runtime/mcp-servers.json",
     declarationSource: ".rulesync/mcp.jsonc",
     target: "codexcli",
     available: true,
+    declaredServers: [
+      {
+        name: "context7",
+        command: null,
+        args: [],
+        cwd: null,
+        url: "https://mcp.context7.com/mcp",
+        bearerTokenEnvVar: "CONTEXT7_API_KEY",
+        httpHeaders: {}
+      }
+    ],
     servers: [
       {
         name: "context7",
@@ -5108,6 +5126,7 @@ test("McpDetailView shows the applied MCP configuration and the runtime's verdic
 
   const markup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied,
@@ -5144,6 +5163,7 @@ test("McpDetailView reports an unreadable applied configuration as unobserved", 
   };
   const markup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5157,6 +5177,97 @@ test("McpDetailView reports an unreadable applied configuration as unobserved", 
   assert.match(markup, /Applied configuration: Not observed/);
   assert.match(markup, /could not be read/);
   assert.doesNotMatch(markup, /data-feature="reconciliation"/);
+});
+
+test("McpDetailView offers the canonical MCP declaration as the edit surface", () => {
+  const server: McpServerResource = {
+    name: "context7",
+    enabled: true,
+    transport: "http",
+    targetOverrides: [],
+    declared: true,
+    roles: ["docs-researcher"]
+  };
+  const applied: ControlApiMcpAppliedResponse = {
+    schema: "autodev-control-mcp-applied-v2",
+    source: "/codex/provider-runtime/mcp-servers.json",
+    declarationSource: ".rulesync/mcp.jsonc",
+    target: "codexcli",
+    available: true,
+    declaredServers: [
+      {
+        name: "context7",
+        command: null,
+        args: [],
+        cwd: null,
+        url: "https://mcp.context7.com/mcp",
+        bearerTokenEnvVar: "CONTEXT7_API_KEY",
+        httpHeaders: {}
+      }
+    ],
+    servers: [],
+    reconciliation: {
+      status: {
+        convergence: "pending",
+        desiredGeneration: "a".repeat(64),
+        observedGeneration: "b".repeat(64),
+        lastApplyAt: null,
+        lastObservationAt: "2026-10-22T12:00:00.000Z",
+        lastError: null,
+        explanation:
+          "The runtime has not observed the latest desired generation yet."
+      },
+      history: []
+    }
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      revision: "c".repeat(64),
+      sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
+      applied,
+      configuredTools: null,
+      server,
+      activeTab: "configuration"
+    })
+  );
+  // The declaration is the canonical source, so the edit surface is on the
+  // configuration tab and names the target whose declaration it writes.
+  assert.match(markup, /data-mcp-declaration-editor="true"/);
+  assert.match(markup, /Declared configuration for the codexcli target/);
+  // It is filled from what the declaration declares, not from what the Runtime
+  // published: the two are different readings.
+  assert.match(markup, /https:\/\/mcp\.context7\.com\/mcp/);
+  assert.match(markup, /CONTEXT7_API_KEY/);
+  assert.match(markup, /Save and apply/);
+});
+
+test("McpDetailView leaves the MCP edit surface disabled when the declaration was not read", () => {
+  const server: McpServerResource = {
+    name: "context7",
+    enabled: true,
+    transport: "http",
+    targetOverrides: [],
+    declared: true,
+    roles: ["docs-researcher"]
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      // No revision means the declaration could not be read, and a write has
+      // nothing to compare against.
+      revision: null,
+      sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
+      configuredTools: null,
+      server,
+      activeTab: "configuration"
+    })
+  );
+  // The control stays in place, disabled, with the reason.
+  assert.match(markup, /data-mcp-declaration-editor="true"/);
+  assert.match(markup, /could not be read/);
+  assert.match(markup, /disabled/);
 });
 
 test("McpDetailView renders the runtime's own evidence for a server it has observed", () => {
@@ -5205,6 +5316,7 @@ test("McpDetailView renders the runtime's own evidence for a server it has obser
 
   const connectionHealthMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime,
       applied: null,
@@ -5222,6 +5334,7 @@ test("McpDetailView renders the runtime's own evidence for a server it has obser
 
   const overviewMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime,
       applied: null,
@@ -5235,6 +5348,7 @@ test("McpDetailView renders the runtime's own evidence for a server it has obser
 
   const activityMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime,
       applied: null,
@@ -5249,6 +5363,7 @@ test("McpDetailView renders the runtime's own evidence for a server it has obser
 
   const toolsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime,
       applied: null,
@@ -5276,6 +5391,7 @@ test("McpDetailView distinguishes no enumerated allowlist entries from an empty 
   };
   const toolsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5295,6 +5411,7 @@ test("McpDetailView distinguishes no enumerated allowlist entries from an empty 
 
   const overviewMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5317,6 +5434,7 @@ test("McpDetailView distinguishes an unavailable tool source from an empty allow
   };
   const toolsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5335,6 +5453,7 @@ test("McpDetailView distinguishes an unavailable tool source from an empty allow
 
   const activityMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5382,6 +5501,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
 
   const configurationMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5400,6 +5520,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
 
   const connectionHealthMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5414,6 +5535,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
 
   const roleAccessMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5426,6 +5548,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
 
   const toolsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5438,6 +5561,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
 
   const resourcesMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5451,6 +5575,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
 
   const promptsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5464,6 +5589,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
 
   const activityMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5477,6 +5603,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
 
   const errorsLogsMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5532,6 +5659,7 @@ test("McpDetailView tab navigation renders all nine tabs as deterministic, URL-a
   };
   const markup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5572,6 +5700,7 @@ test("McpDetailView falls back to the Overview tab for an unknown or missing ?ta
   };
   const unknownTabMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5590,6 +5719,7 @@ test("McpDetailView falls back to the Overview tab for an unknown or missing ?ta
 
   const missingTabMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -5630,6 +5760,7 @@ test("McpDetailView renders exactly one data-section panel per tab with no conte
   for (const tab of MCP_DETAIL_TABS) {
     const markup = renderToStaticMarkup(
       React.createElement(McpDetailView, {
+        revision: "b".repeat(64),
         sourceValidity: true,
         runtime: NO_MCP_OBSERVATIONS,
         applied: null,
@@ -5704,6 +5835,7 @@ test("McpDetailView labels execution-contract role assignments as configured acc
   };
   const markup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
       sourceValidity: true,
       runtime: NO_MCP_OBSERVATIONS,
       applied: null,
@@ -13464,9 +13596,10 @@ test("Catalog collections fail closed on unreadable responses", async () => {
   // payload reached the view and threw instead of failing closed. See "a catalog
   // row missing the fields its view reads fails closed instead of throwing".
   const mcps = {
-    schema: "autodev-control-mcps-v1",
+    schema: "autodev-control-mcps-v2",
     source: ".rulesync/mcp.jsonc",
-    readOnly: true,
+    revision: "b".repeat(64),
+    readOnly: false,
     valid: true,
     issues: [],
     servers: [
@@ -13576,11 +13709,22 @@ test("Catalog collections fail closed on unreadable responses", async () => {
   // reconciliation are what the page compares the declaration against, so a
   // payload the Console cannot read must not reach the page.
   const mcpApplied = {
-    schema: "autodev-control-mcp-applied-v1",
+    schema: "autodev-control-mcp-applied-v2",
     source: "/codex/provider-runtime/mcp-servers.json",
     declarationSource: ".rulesync/mcp.jsonc",
     target: "codexcli",
     available: true,
+    declaredServers: [
+      {
+        name: "context7",
+        command: null,
+        args: [],
+        cwd: null,
+        url: "https://mcp.context7.com/mcp",
+        bearerTokenEnvVar: "CONTEXT7_API_KEY",
+        httpHeaders: {}
+      }
+    ],
     servers: [
       {
         name: "lsp",
@@ -16047,6 +16191,7 @@ test("every detail view titles its resource with the one canonical entity title"
       "McpDetailView",
       "context7",
       React.createElement(McpDetailView, {
+        revision: "b".repeat(64),
         sourceValidity: true,
         runtime: NO_MCP_OBSERVATIONS,
         applied: null,
@@ -18454,9 +18599,10 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     roles: ["orchestrator"]
   };
   const mcpEnvelope = (servers: unknown[]) => ({
-    schema: "autodev-control-mcps-v1",
+    schema: "autodev-control-mcps-v2",
     source: ".rulesync/mcp.jsonc",
-    readOnly: true,
+    revision: "b".repeat(64),
+    readOnly: false,
     valid: true,
     issues: [],
     servers
@@ -20844,6 +20990,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
     [
       join("src", "features", "prompts", "prompt-source-preview.ts"),
       "Asks the Console's own server what the unsaved canonical source would render as, and renders that answer beside the editor; the page's reads and the save stay server-owned."
+    ],
+    [
+      join("src", "features", "mcps", "declaration-editor.ts"),
+      "Holds the operator's MCP launch edit across a refused write and asks the Console's own server to write the canonical declaration; the Runtime owns the write, the projection and the verdict."
     ],
     [
       join("src", "components", "navigation", "AppNav.ts"),

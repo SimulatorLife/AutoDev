@@ -432,8 +432,17 @@ export interface ControlApiModelPatchResponse {
 }
 
 export interface ControlApiMcpsResponse {
-  readonly schema: "autodev-control-mcps-v1";
+  readonly schema: "autodev-control-mcps-v2";
   readonly source: ".rulesync/mcp.jsonc";
+  /**
+   * The revision of the canonical declaration.
+   *
+   * The digest of the whole document, so it changes when any part of the
+   * declaration changes. A write compares against it, so a write that was
+   * decided on an older declaration is refused rather than applied over a
+   * newer one. `null` when the declaration could not be read at all.
+   */
+  readonly revision: string | null;
   readonly readOnly: boolean;
   readonly valid: boolean | null;
   /**
@@ -595,6 +604,24 @@ export interface ControlApiMcpAppliedServer {
 }
 
 /**
+ * The launch configuration the canonical declaration gives one server.
+ *
+ * This is the desired side of the comparison, for the target the Runtime
+ * applies: what the declaration says the server is launched with, after the
+ * target's own declaration has replaced the shared one. The applied side is
+ * `ControlApiMcpAppliedServer`, and the two are compared key for key.
+ */
+export interface ControlApiMcpDeclaredServer {
+  readonly name: string;
+  readonly command: string | null;
+  readonly args: readonly string[];
+  readonly cwd: string | null;
+  readonly url: string | null;
+  readonly bearerTokenEnvVar: string | null;
+  readonly httpHeaders: Readonly<Record<string, string>>;
+}
+
+/**
  * The MCP configuration the Runtime applied, against the canonical
  * declaration.
  *
@@ -604,7 +631,7 @@ export interface ControlApiMcpAppliedServer {
  * is the Runtime's, and the Console renders it.
  */
 export interface ControlApiMcpAppliedResponse {
-  readonly schema: "autodev-control-mcp-applied-v1";
+  readonly schema: "autodev-control-mcp-applied-v2";
   /** Where the applied configuration was read from. */
   readonly source: string;
   /** The canonical declaration the applied configuration is compared against. */
@@ -618,10 +645,61 @@ export interface ControlApiMcpAppliedResponse {
    * from an applied configuration that holds no servers.
    */
   readonly available: boolean;
+  /**
+   * The launch configuration the canonical declaration gives the target.
+   *
+   * The declared side of the comparison. It is published so the page can show
+   * what was declared next to what was applied, and so a write has the
+   * configuration to edit.
+   */
+  readonly declaredServers: readonly ControlApiMcpDeclaredServer[];
   /** The servers the Runtime published. */
   readonly servers: readonly ControlApiMcpAppliedServer[];
   /** The shared reconciliation view of the declaration against the applied state. */
   readonly reconciliation: ReconciliationView;
+}
+
+/**
+ * The result of a canonical MCP declaration write.
+ *
+ * The write is a compare-and-swap on the declaration's revision, so the
+ * response carries the revision the declaration now has, what the target
+ * declares after the write, and the reconciliation the Runtime observed once
+ * the projection was applied.
+ */
+export interface ControlApiMcpServerPatchResponse {
+  readonly schema: "autodev-control-mcp-server-patch-v1";
+  /** The server whose launch configuration was written. */
+  readonly name: string;
+  /** The target whose declaration was written. */
+  readonly target: string;
+  /** The revision of the canonical declaration after the write. */
+  readonly revision: string;
+  /** Whether the declaration's content changed. */
+  readonly changed: boolean;
+  /** The launch configuration the target declares after the write. */
+  readonly launch: ControlApiMcpDeclaredServer;
+  /** The shared reconciliation view of the declaration against the applied state. */
+  readonly reconciliation: ReconciliationView;
+}
+
+/**
+ * A canonical MCP declaration write.
+ *
+ * The write owns the launch keys of one server: a key that is absent is left
+ * as the declaration has it and a key that is `null` is removed. The target's
+ * enablement, approval mode and tool allowlist are not part of it.
+ */
+export interface ControlApiMcpServerPatchRequest {
+  readonly expectedRevision: string;
+  readonly launch: {
+    readonly command?: string | null;
+    readonly args?: readonly string[] | null;
+    readonly cwd?: string | null;
+    readonly url?: string | null;
+    readonly bearerTokenEnvVar?: string | null;
+    readonly httpHeaders?: Readonly<Record<string, string>> | null;
+  };
 }
 
 export interface ControlApiToolsResponse {

@@ -105,6 +105,7 @@ export default async function McpDetailPage({
       server,
       runtime,
       applied,
+      revision: result.data.revision,
       sourceValidity: result.data.valid,
       configuredTools:
         toolsResult?.kind === "ok" && toolsResult.data.coverage === "partial"

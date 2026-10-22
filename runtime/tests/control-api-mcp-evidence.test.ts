@@ -177,7 +177,7 @@ test("the MCP catalog stays a configuration read and carries no runtime evidence
   try {
     const read = await h.call("GET", "/control/mcps");
     assert.equal(read.status, 200);
-    assert.equal(read.body?.schema, "autodev-control-mcps-v1");
+    assert.equal(read.body?.schema, "autodev-control-mcps-v2");
     const servers = await readCatalog(h.call);
     assert.ok(servers.length > 0);
     // A declared server is not a reached server. The catalog says what each

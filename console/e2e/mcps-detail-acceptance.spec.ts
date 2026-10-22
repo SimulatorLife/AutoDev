@@ -10,6 +10,18 @@ const NOT_OBSERVED = "Not observed";
 const CONNECTED_CLAIM = /^Connected$/u;
 
 /**
+ * The endpoint the canonical declaration gives the `codexcli` target, and the
+ * one the Runtime published before it had observed that declaration.
+ *
+ * They differ on purpose: the Runtime is behind the declaration here, so the
+ * edit surface can only be showing the declaration if the two are not the
+ * same string.
+ */
+const DECLARED_DOCS_URL = "https://docs.example.test/mcp";
+const PUBLISHED_DOCS_URL = "https://developers.openai.com/mcp";
+const EDITED_DOCS_URL = "https://developers.openai.com/edited-mcp";
+
+/**
  * The tab set the target state mandates for MCP detail, in the order it
  * mandates. The detail page is the only place these nine appear, so the
  * order is part of what the page promises.
@@ -308,9 +320,7 @@ test("the MCP configuration tab shows the declaration's own fields and no others
   // A server declared over HTTP has an endpoint and no command, and the tab
   // does not render an empty box for the fields it does not have.
   await page.goto(`/mcps/${DOCS_SERVER}?tab=configuration`);
-  await expect(fieldValue(page, "Endpoint URL")).toHaveText(
-    "https://docs.example.test/mcp"
-  );
+  await expect(fieldValue(page, "Endpoint URL")).toHaveText(DECLARED_DOCS_URL);
   await expect(page.locator('dt:text-is("Command")')).toHaveCount(0);
   await expect(page.locator('dt:text-is("Working directory")')).toHaveCount(0);
   await expect(page.getByText("No explicit target overrides.")).toBeVisible();
@@ -509,9 +519,7 @@ test("the MCP detail shows the applied configuration and the runtime's verdict o
     page.locator('[data-section="mcp-configuration"]')
   ).toBeVisible();
   await expect(page.getByText("Applied configuration")).toBeVisible();
-  await expect(
-    page.getByText("https://developers.openai.com/mcp")
-  ).toBeVisible();
+  await expect(page.getByText(PUBLISHED_DOCS_URL)).toBeVisible();
   // The verdict on the comparison is the Runtime's, rendered by the shared
   // reconciliation panel, with both generations on it. The labels are matched
   // exactly, because the panel's explanation names the desired generation too.
@@ -533,5 +541,43 @@ test("the MCP detail shows the applied configuration and the runtime's verdict o
     page.getByText(
       "This server is not in the configuration the Runtime published."
     )
+  ).toBeVisible();
+});
+
+test("the MCP configuration tab edits the canonical declaration and reports what the runtime published", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+
+  await page.goto(`/mcps/${DOCS_SERVER}?tab=configuration`);
+  const editor = page.locator('[data-mcp-declaration-editor="true"]');
+  await expect(editor).toBeVisible();
+  // The edit surface names the target whose declaration it writes, so the
+  // operator knows which declaration the write lands on.
+  await expect(
+    page.getByText("Declared configuration for the codexcli target")
+  ).toBeVisible();
+
+  // It is filled from what the declaration declares, not from what the
+  // Runtime published. The two differ here -- the Runtime is behind the
+  // declaration -- so the field can only be showing one of them.
+  const url = editor.locator("#mcp-url-openaiDeveloperDocs");
+  await expect(url).toHaveValue(DECLARED_DOCS_URL);
+  await expect(page.getByText(PUBLISHED_DOCS_URL)).toBeVisible();
+
+  await url.fill(EDITED_DOCS_URL);
+  await editor.getByRole("button", { name: "Save and apply" }).click();
+
+  // The write went through the Runtime, which applied the projection and
+  // reported what it published: the page says so, and the applied
+  // configuration is the new one.
+  await expect(
+    page.locator('[data-mcp-declaration-saved="true"]')
+  ).toBeVisible();
+  await expect(page.getByText(EDITED_DOCS_URL)).toBeVisible();
+  // And the Runtime's own verdict is on the comparison.
+  await expect(page.locator('[data-feature="reconciliation"]')).toBeVisible();
+  await expect(
+    page.getByText("Desired generation", { exact: true })
   ).toBeVisible();
 });

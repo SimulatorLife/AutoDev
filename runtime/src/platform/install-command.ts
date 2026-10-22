@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -11,6 +11,7 @@ import {
   resolveRuntimeSourceRoot
 } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
+import { createCodexMcpSource } from "./codex-mcp-source.ts";
 import {
   installCocoIndex,
   installCodeGraphContext,
@@ -25,7 +26,6 @@ import {
   readOtelIngressMode,
   writeOtelIngressMode
 } from "./install-state.ts";
-import { runRulesyncGenerate } from "./runtime-files.ts";
 
 export interface InstallCommandOptions {
   readonly repositoryRoot?: string;
@@ -86,46 +86,6 @@ function runNodeModule(
     });
   } catch (error) {
     throw new ConfigError(`${modulePath} failed: ${errorMessage(error)}`);
-  }
-}
-
-export function createCodexMcpSource(repositoryRoot: string): {
-  root: string;
-  source: string;
-} {
-  const root = mkdtempSync(
-    path.join(process.env.TMPDIR ?? "/tmp", "autodev-codex-mcp-")
-  );
-  try {
-    const rulesync = path.join(
-      repositoryRoot,
-      "node_modules",
-      ".bin",
-      "rulesync"
-    );
-    if (!existsSync(rulesync))
-      throw new ConfigError(
-        `missing-rulesync ${rulesync}; run pnpm install --frozen-lockfile`
-      );
-    runRulesyncGenerate(repositoryRoot, {
-      inputRoots: [path.join(repositoryRoot, ".rulesync")],
-      targets: ["codexcli"],
-      features: ["mcp"],
-      outputRoots: [root],
-      silent: true
-    });
-    const source = path.join(root, ".codex", "config.toml");
-    if (!existsSync(source))
-      throw new ConfigError(
-        `Rulesync did not generate Codex MCP source: ${source}`
-      );
-    return { root, source };
-  } catch (error) {
-    rmSync(root, { recursive: true, force: true });
-    if (error instanceof ConfigError) throw error;
-    throw new ConfigError(
-      `could not generate Codex MCP projection: ${errorMessage(error)}`
-    );
   }
 }
 
