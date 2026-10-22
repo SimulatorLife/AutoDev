@@ -2874,10 +2874,12 @@ test("Control API exposes bounded Git prompt history and selected-version diff a
       options
     );
     assert.equal(list.response.statusCode, 200);
-    assert.equal(list.body.schema, "autodev-control-prompt-versions-v1");
+    assert.equal(list.body.schema, "autodev-control-prompt-versions-v2");
     assert.equal(list.body.name, "audit");
     assert.equal(list.body.status, "available");
     assert.equal(list.body.hasMore, false);
+    assert.equal(list.body.offset, 0);
+    assert.equal(list.body.limit, 20);
     assert.equal(list.body.versions.length, 1);
     const revision = list.body.versions[0].versionHash as string;
 
@@ -2929,6 +2931,128 @@ test("Control API exposes bounded Git prompt history and selected-version diff a
       assert.deepEqual(unavailable.body.versions, []);
     } finally {
       rmSync(unavailableRepository, { recursive: true, force: true });
+    }
+  } finally {
+    restoreEnv(saved);
+    rmSync(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("Control API pages prompt history and opens a revision from an older page", async () => {
+  // The history is one ordered list, so the page is a window onto it. A
+  // revision the operator reached by paging back is older than the newest
+  // page, and it has to open: the page is how the operator found it, not a
+  // limit on which revisions exist.
+  const saved = saveEnv();
+  const repositoryRoot = mkdtempSync(
+    join(tmpdir(), "autodev-prompt-history-page-control-")
+  );
+  try {
+    configure();
+    const commandsDir = join(repositoryRoot, ".rulesync", "commands");
+    mkdirSync(commandsDir, { recursive: true });
+    const commandPath = join(commandsDir, "audit.md");
+    execFileSync("git", ["-C", repositoryRoot, "init", "-q"]);
+    execFileSync("git", ["-C", repositoryRoot, "config", "user.name", "Tests"]);
+    execFileSync("git", [
+      "-C",
+      repositoryRoot,
+      "config",
+      "user.email",
+      "tests@example.invalid"
+    ]);
+
+    const revisions: string[] = [];
+    for (let revision = 0; revision < 25; revision += 1) {
+      writeFileSync(
+        commandPath,
+        `---\ntargets: [codexcli]\ndescription: Audit revision ${revision}.\n---\n\n# Audit\n\nRevision ${revision}.\n`
+      );
+      execFileSync("git", [
+        "-C",
+        repositoryRoot,
+        "add",
+        ".rulesync/commands/audit.md"
+      ]);
+      execFileSync("git", [
+        "-C",
+        repositoryRoot,
+        "commit",
+        "-q",
+        "-m",
+        `Command revision ${revision}`
+      ]);
+      revisions.push(
+        execFileSync("git", ["-C", repositoryRoot, "rev-parse", "HEAD"], {
+          encoding: "utf8"
+        }).trim()
+      );
+    }
+
+    const options = { repositoryRoot };
+    const newest = await call(
+      "GET",
+      `${CONTROL_API_PATHS.prompts}/audit/versions`,
+      { actor: "viewer-a" },
+      options
+    );
+    assert.equal(newest.response.statusCode, 200);
+    assert.equal(newest.body.hasMore, true);
+    assert.equal(newest.body.offset, 0);
+    assert.equal(newest.body.limit, 20);
+    assert.equal(newest.body.versions.length, 20);
+    assert.equal(newest.body.versions[0].versionHash, revisions[24]);
+
+    const older = await call(
+      "GET",
+      `${CONTROL_API_PATHS.prompts}/audit/versions?offset=20`,
+      { actor: "viewer-a" },
+      options
+    );
+    assert.equal(older.response.statusCode, 200);
+    assert.equal(older.body.hasMore, false);
+    assert.equal(older.body.offset, 20);
+    assert.equal(older.body.limit, 20);
+    assert.equal(older.body.versions.length, 5);
+    assert.equal(older.body.versions[0].versionHash, revisions[4]);
+
+    // A revision from the older page opens like any other.
+    const oldest = revisions[0];
+    assert.ok(oldest);
+    const version = await call(
+      "GET",
+      `${CONTROL_API_PATHS.prompts}/audit/versions/${oldest}`,
+      { actor: "viewer-a" },
+      options
+    );
+    assert.equal(version.response.statusCode, 200);
+    assert.equal(version.body.versionHash, oldest);
+    assert.match(version.body.content, /Revision 0\./u);
+
+    // A page the repository cannot answer is refused rather than clamped.
+    for (const query of [
+      "offset=-1",
+      "offset=1.5",
+      "offset=abc",
+      "limit=0",
+      "limit=101",
+      "page=2"
+    ]) {
+      const refused = await call(
+        "GET",
+        `${CONTROL_API_PATHS.prompts}/audit/versions?${query}`,
+        { actor: "viewer-a" },
+        options
+      );
+      assert.equal(
+        refused.response.statusCode,
+        400,
+        `expected ${query} to be refused`
+      );
+      assert.equal(
+        refused.body.error.code,
+        "autodev_control_api_prompt_history_page_invalid"
+      );
     }
   } finally {
     restoreEnv(saved);

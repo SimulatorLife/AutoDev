@@ -1,6 +1,5 @@
 import type {
   ControlApiPromptDetailResponse,
-  ControlApiPromptVersionReference,
   ControlApiPromptVersionResponse,
   PromptDocument
 } from "@simulatorlife/autodev-core";
@@ -41,17 +40,10 @@ import {
   MUTED_TEXT_CLASS,
   SECTION_LABEL_CLASS
 } from "../../components/ui/text-classes.ts";
+import type { PromptHistoryState } from "./history-state.ts";
 
 export type PromptSaveOutcome =
   "conflict" | "validation" | "apply-failed" | "failed";
-
-export type PromptHistoryState =
-  | {
-      readonly status: "available";
-      readonly versions: readonly ControlApiPromptVersionReference[];
-      readonly hasMore: boolean;
-    }
-  | { readonly status: "unavailable"; readonly message: string };
 
 export interface PromptDetailViewProps {
   readonly prompt: PromptDocument;
@@ -307,6 +299,71 @@ function renderPromptPreview(prompt: PromptDocument): React.ReactNode {
   );
 }
 
+/**
+ * The ends of the committed history, as links into the same page.
+ *
+ * The history is one ordered list of committed revisions, and a page of it is
+ * a window: the operator who needs an older revision walks back a page at a
+ * time instead of being told to go and read Git. The page it names is in the
+ * URL, so the walk is addressable and a reload keeps the operator where they
+ * were.
+ */
+function renderPromptHistoryPages(
+  promptUrl: string,
+  history: Extract<PromptHistoryState, { readonly status: "available" }>
+): React.ReactNode {
+  const newerOffset = history.offset - history.limit;
+  return React.createElement(
+    "nav",
+    {
+      "aria-label": "Prompt version history pages",
+      className: "mb-4 flex flex-wrap items-center justify-between gap-3",
+      "data-feature": "prompt-history-pager",
+      "data-prompt-history-offset": String(history.offset),
+      "data-prompt-history-limit": String(history.limit)
+    },
+    React.createElement(
+      "p",
+      {
+        className: MUTED_META_CLASS,
+        "data-prompt-history-range": "true"
+      },
+      history.offset === 0
+        ? `Showing the newest ${history.versions.length} committed versions.`
+        : `Showing versions ${history.offset + 1}-${history.offset + history.versions.length} of the committed history.`
+    ),
+    React.createElement(
+      "div",
+      { className: "flex items-center gap-2" },
+      history.offset > 0
+        ? React.createElement(
+            NavigationLink,
+            {
+              href:
+                newerOffset > 0
+                  ? `${promptUrl}?historyOffset=${newerOffset}`
+                  : promptUrl,
+              className: "text-xs font-medium",
+              dataAttributes: { "data-prompt-history-newer": "true" }
+            },
+            "Show newer versions"
+          )
+        : null,
+      history.hasMore
+        ? React.createElement(
+            NavigationLink,
+            {
+              href: `${promptUrl}?historyOffset=${history.offset + history.limit}`,
+              className: "text-xs font-medium",
+              dataAttributes: { "data-prompt-history-older": "true" }
+            },
+            "Show older versions"
+          )
+        : null
+    )
+  );
+}
+
 function renderPromptHistory(
   prompt: PromptDocument,
   history: PromptHistoryState,
@@ -376,13 +433,21 @@ function renderPromptHistory(
             ...history.versions.map((version) => {
               const selected =
                 selectedVersion?.versionHash === version.versionHash;
+              // The revision is opened together with the page it was found on,
+              // so a reload shows the operator the list they chose it from.
+              const revisionQuery = new URLSearchParams({
+                revision: version.versionHash
+              });
+              if (history.offset > 0) {
+                revisionQuery.set("historyOffset", String(history.offset));
+              }
               return React.createElement(
                 "li",
                 { key: version.versionHash },
                 React.createElement(
                   NavigationLink,
                   {
-                    href: `${promptUrl}?revision=${encodeURIComponent(version.versionHash)}`,
+                    href: `${promptUrl}?${revisionQuery.toString()}`,
                     ...(selected ? { "aria-current": "page" as const } : {}),
                     className:
                       "flex flex-wrap items-center gap-2 rounded border border-border px-3 py-2 text-xs hover:bg-hover ",
@@ -414,15 +479,8 @@ function renderPromptHistory(
               );
             })
           ),
-    history.status === "available" && history.hasMore
-      ? React.createElement(
-          "p",
-          {
-            className: `mb-4 ${MUTED_META_CLASS}`,
-            "data-prompt-history-truncated": "true"
-          },
-          "Showing the newest 20 committed versions. Older history remains available in Git."
-        )
+    history.status === "available" && (history.offset > 0 || history.hasMore)
+      ? renderPromptHistoryPages(promptUrl, history)
       : null,
     versionSelectionError
       ? React.createElement(

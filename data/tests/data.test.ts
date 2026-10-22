@@ -171,6 +171,130 @@ test("RuleSyncRepository bounds command history and reports older revisions", as
   }
 });
 
+test("RuleSyncRepository pages a command's committed history and opens a revision from an older page", async () => {
+  // The history is one ordered list, so a page is a window onto it: the first
+  // page answers "what are the newest revisions", the second "what comes
+  // after them", and the last says there is nothing after it. A revision an
+  // operator reached by paging back is older than the newest page, so it has
+  // to be openable even though no single page lists it and the first.
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-rulesync-command-history-page-")
+  );
+  try {
+    const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
+    await mkdir(commandsDir, { recursive: true });
+    const commandPath = path.join(commandsDir, "audit.md");
+    git(repositoryRoot, ["init", "-q"]);
+    git(repositoryRoot, ["config", "user.name", "AutoDev Tests"]);
+    git(repositoryRoot, [
+      "config",
+      "user.email",
+      "autodev-tests@example.invalid"
+    ]);
+
+    const revisions: string[] = [];
+    for (let revision = 0; revision < 25; revision += 1) {
+      await writeFile(
+        commandPath,
+        `---\ntargets: [codexcli]\ndescription: Audit revision ${revision}.\n---\n\n# Audit\n\nRevision ${revision}.\n`
+      );
+      git(repositoryRoot, ["add", ".rulesync/commands/audit.md"]);
+      git(repositoryRoot, [
+        "commit",
+        "-q",
+        "-m",
+        `Command revision ${revision}`
+      ]);
+      revisions.push(
+        execFileSync("git", ["-C", repositoryRoot, "rev-parse", "HEAD"], {
+          encoding: "utf8"
+        }).trim()
+      );
+    }
+
+    const repo = new RuleSyncRepository(repositoryRoot);
+    const newest = repo.loadCommandHistory("audit");
+    assert.ok(newest);
+    assert.equal(newest.status, "available");
+    assert.equal(newest.versions.length, 20);
+    assert.equal(newest.hasMore, true);
+    assert.equal(newest.versions[0]?.versionHash, revisions[24]);
+
+    const older = repo.loadCommandHistory("audit", { offset: 20, limit: 20 });
+    assert.ok(older);
+    assert.equal(older.status, "available");
+    assert.equal(older.versions.length, 5);
+    assert.equal(older.hasMore, false);
+    assert.equal(older.versions[0]?.versionHash, revisions[4]);
+
+    // The oldest revision is on the second page only, and it still opens.
+    const oldest = revisions[0];
+    assert.ok(oldest);
+    const version = repo.loadCommandVersion("audit", oldest);
+    assert.ok(version);
+    assert.equal(version.versionHash, oldest);
+    assert.match(version.content, /Revision 0\./u);
+
+    // A page that is not a window onto the history is refused rather than
+    // clamped: a clamped page would answer a different question.
+    assert.throws(
+      () => repo.loadCommandHistory("audit", { offset: -1, limit: 20 }),
+      RuleSyncCommandValidationError
+    );
+    assert.throws(
+      () => repo.loadCommandHistory("audit", { offset: 0, limit: 0 }),
+      RuleSyncCommandValidationError
+    );
+    assert.throws(
+      () => repo.loadCommandHistory("audit", { offset: 0, limit: 101 }),
+      RuleSyncCommandValidationError
+    );
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("RuleSyncRepository does not offer a commit that never changed the command as a version of it", async () => {
+  // A commit hash is well formed and the file exists at that commit, but the
+  // commit never touched the command -- so it is not a version of the
+  // command, and offering it would show an operator a "revision" that never
+  // changed the prompt.
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-rulesync-command-untouched-commit-")
+  );
+  try {
+    const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
+    await mkdir(commandsDir, { recursive: true });
+    const commandPath = path.join(commandsDir, "audit.md");
+    git(repositoryRoot, ["init", "-q"]);
+    git(repositoryRoot, ["config", "user.name", "AutoDev Tests"]);
+    git(repositoryRoot, [
+      "config",
+      "user.email",
+      "autodev-tests@example.invalid"
+    ]);
+    await writeFile(
+      commandPath,
+      "---\ndescription: Audit source.\n---\n\n# Audit\n\nRevision 0.\n"
+    );
+    git(repositoryRoot, ["add", ".rulesync/commands/audit.md"]);
+    git(repositoryRoot, ["commit", "-q", "-m", "Command revision 0"]);
+    await writeFile(path.join(repositoryRoot, "README.md"), "# Repo\n");
+    git(repositoryRoot, ["add", "README.md"]);
+    git(repositoryRoot, ["commit", "-q", "-m", "An unrelated commit"]);
+    const unrelated = execFileSync(
+      "git",
+      ["-C", repositoryRoot, "rev-parse", "HEAD"],
+      { encoding: "utf8" }
+    ).trim();
+
+    const repo = new RuleSyncRepository(repositoryRoot);
+    assert.equal(repo.loadCommandVersion("audit", unrelated), null);
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
 test("RuleSyncRepository distinguishes unavailable Git history from an empty command history", async () => {
   const repositoryRoot = await mkdtemp(
     path.join(tmpdir(), "autodev-rulesync-command-no-git-")

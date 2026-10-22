@@ -1,11 +1,13 @@
-import type { ControlApiPromptVersionResponse } from "@simulatorlife/autodev-core";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
 
 import {
-  PromptDetailView,
   type PromptHistoryState,
+  promptHistoryState
+} from "../../../src/features/prompts/history-state.ts";
+import {
+  PromptDetailView,
   type PromptSaveOutcome
 } from "../../../src/features/prompts/PromptDetailView.ts";
 import { editorBaseRevisionFromQuery } from "../../../src/lib/server/canonical-source.ts";
@@ -15,6 +17,10 @@ import {
   fetchPromptVersion,
   fetchPromptVersions
 } from "../../../src/lib/server/control-api.ts";
+import {
+  historyOffsetFromQuery,
+  promptVersionSelection
+} from "../../../src/lib/server/prompt-history.ts";
 import { promptDocumentFromControlApi } from "../../../src/lib/server/views.ts";
 import {
   ConsolePageShell,
@@ -31,71 +37,6 @@ const UNAVAILABLE_PROMPT_HISTORY: PromptHistoryState = {
   status: "unavailable",
   message: "Committed version history is only available for RuleSync commands."
 };
-
-function promptHistoryState(
-  result: Awaited<ReturnType<typeof fetchPromptVersions>>
-): PromptHistoryState {
-  if (result.kind !== "ok") {
-    return {
-      status: "unavailable",
-      message:
-        "Committed version history could not be loaded; the canonical working-tree source remains available."
-    };
-  }
-  if (result.data.status === "unavailable") {
-    return {
-      status: "unavailable",
-      message:
-        "Git history is unavailable for this repository; the canonical working-tree source remains available."
-    };
-  }
-  return {
-    status: "available",
-    versions: result.data.versions,
-    hasMore: result.data.hasMore
-  };
-}
-
-function promptVersionSelection(
-  name: string,
-  requestedRevision: string | readonly string[] | undefined,
-  history: PromptHistoryState,
-  versionResult: Awaited<ReturnType<typeof fetchPromptVersion>> | null
-): {
-  readonly selectedVersion?: ControlApiPromptVersionResponse;
-  readonly error?: string;
-} {
-  if (requestedRevision === undefined) return {};
-  if (
-    typeof requestedRevision !== "string" ||
-    !GIT_REVISION_PATTERN.test(requestedRevision)
-  ) {
-    return { error: "Select one valid committed prompt revision." };
-  }
-  if (
-    history.status !== "available" ||
-    !history.versions.some(
-      (version) => version.versionHash === requestedRevision
-    )
-  ) {
-    return {
-      error:
-        "That revision is not in the available recent history for this command."
-    };
-  }
-
-  if (
-    versionResult?.kind === "ok" &&
-    versionResult.data.name === name &&
-    versionResult.data.versionHash === requestedRevision
-  ) {
-    return { selectedVersion: versionResult.data };
-  }
-  return {
-    error:
-      "The selected committed version could not be loaded; the current source is unchanged."
-  };
-}
 
 function promptSaveOutcome(
   value: string | readonly string[] | undefined
@@ -172,7 +113,12 @@ export default async function PromptDetailPage({
     GIT_REVISION_PATTERN.test(requestedRevision);
   const [versionsResult, versionResult] = await Promise.all([
     prompt.kind === "command"
-      ? fetchPromptVersions(prompt.name, config)
+      ? fetchPromptVersions(
+          prompt.name,
+          config,
+          {},
+          historyOffsetFromQuery(query.historyOffset)
+        )
       : Promise.resolve(null),
     shouldFetchVersion
       ? fetchPromptVersion(prompt.name, requestedRevision, config)
@@ -180,16 +126,13 @@ export default async function PromptDetailPage({
   ]);
   const history =
     prompt.kind === "command" && versionsResult !== null
-      ? promptHistoryState(versionsResult)
+      ? promptHistoryState(
+          versionsResult.kind === "ok" ? versionsResult.data : null
+        )
       : UNAVAILABLE_PROMPT_HISTORY;
   const selection =
     prompt.kind === "command"
-      ? promptVersionSelection(
-          prompt.name,
-          requestedRevision,
-          history,
-          versionResult
-        )
+      ? promptVersionSelection(prompt.name, requestedRevision, versionResult)
       : {};
   return React.createElement(
     ConsolePageShell,

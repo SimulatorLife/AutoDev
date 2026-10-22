@@ -3064,10 +3064,14 @@ function isControlApiPromptVersionsResponse(
 ): value is ControlApiPromptVersionsResponse {
   if (
     !isRecord(value) ||
-    value.schema !== "autodev-control-prompt-versions-v1" ||
+    value.schema !== "autodev-control-prompt-versions-v2" ||
     typeof value.name !== "string" ||
     (value.status !== "available" && value.status !== "unavailable") ||
     typeof value.hasMore !== "boolean" ||
+    !Number.isInteger(value.offset) ||
+    (value.offset as number) < 0 ||
+    !Number.isInteger(value.limit) ||
+    (value.limit as number) < 1 ||
     !Array.isArray(value.versions) ||
     !value.versions.every(
       (version) =>
@@ -3086,12 +3090,20 @@ function isControlApiPromptVersionsResponse(
   );
 }
 
+/**
+ * Reads one page of a prompt's committed history.
+ *
+ * The page size is the Control API's to choose, so the Console asks for an
+ * offset and reads the size back from the answer. Asking for a size here
+ * would put two places in charge of how much history a page carries.
+ */
 export async function fetchPromptVersions(
   name: string,
   config: ControlApiConfig,
-  options: FetchControlApiOptions = {}
+  options: FetchControlApiOptions = {},
+  offset = 0
 ): Promise<ControlApiResult<ControlApiPromptVersionsResponse>> {
-  const path = `${CONTROL_API_PATHS.prompts}/${encodeURIComponent(name)}/versions`;
+  const path = `${CONTROL_API_PATHS.prompts}/${encodeURIComponent(name)}/versions?offset=${offset}`;
   const result = await fetchControlApi<unknown>(path, config, options);
   if (result.kind !== "ok") return result;
   if (

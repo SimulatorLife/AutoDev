@@ -662,11 +662,20 @@ export interface ControlApiPromptVersionReference {
 }
 
 export interface ControlApiPromptVersionsResponse {
-  readonly schema: "autodev-control-prompt-versions-v1";
+  readonly schema: "autodev-control-prompt-versions-v2";
   readonly name: string;
   readonly status: "available" | "unavailable";
   readonly versions: readonly ControlApiPromptVersionReference[];
+  /** Whether a version exists after this page. */
   readonly hasMore: boolean;
+  /**
+   * The page this response carries: how many versions were passed over before
+   * it, and how many it asked for. A caller walks the history by asking for
+   * the next offset, so the page has to be part of the answer rather than
+   * something the caller has to remember.
+   */
+  readonly offset: number;
+  readonly limit: number;
 }
 
 export interface ControlApiPromptVersionResponse {

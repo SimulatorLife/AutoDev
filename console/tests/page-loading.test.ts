@@ -21,7 +21,7 @@ const DATA_READING_ROUTES = [
   "mcps/page.tsx",
   "memory/page.ts",
   "permissions/page.tsx",
-  "prompts/[name]/page.tsx",
+  "prompts/[name]/page.ts",
   "prompts/page.tsx",
   "providers/[id]/models/[model]/page.tsx",
   "providers/[id]/page.tsx",

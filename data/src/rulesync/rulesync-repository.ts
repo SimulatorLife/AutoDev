@@ -47,8 +47,20 @@ const SKILL_SOURCE_MAX_BYTES = 48_000;
 const SKILL_SOURCE_UNSAFE_MESSAGE =
   "Canonical RuleSync skill source could not be accessed safely.";
 const COMMAND_DIFF_MAX_BYTES = 196_608;
-const COMMAND_HISTORY_LIMIT = 20;
-const COMMAND_HISTORY_FETCH_LIMIT = COMMAND_HISTORY_LIMIT + 1;
+/**
+ * How many committed versions one page of a command's history carries when a
+ * request names no size, and the largest page a request may ask for. Both are
+ * part of the contract the Control API answers with, so they are exported
+ * rather than kept private to this file.
+ */
+export const RULE_SYNC_COMMAND_HISTORY_PAGE_SIZE = 20;
+export const RULE_SYNC_COMMAND_HISTORY_MAX_PAGE_SIZE = 100;
+
+/** The page a request that names no page gets: the newest history. */
+const FIRST_COMMAND_HISTORY_PAGE: RuleSyncCommandHistoryPage = {
+  offset: 0,
+  limit: RULE_SYNC_COMMAND_HISTORY_PAGE_SIZE
+};
 const COMMAND_HISTORY_LINE_SPLIT_PATTERN = /\r?\n/u;
 const COMMAND_GIT_TIMEOUT_MS = 3000;
 const COMMAND_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
@@ -342,6 +354,19 @@ export interface RuleSyncCommandVersionReference {
   readonly updatedAt: string;
 }
 
+/**
+ * Which slice of a command's committed history to read.
+ *
+ * `offset` counts the versions already passed over and `limit` says how many
+ * this page asks for. The slice is a window onto one ordered history, so
+ * `hasMore` on a page answers "is there a version after this page", not "is
+ * this the end of the history".
+ */
+export interface RuleSyncCommandHistoryPage {
+  readonly offset: number;
+  readonly limit: number;
+}
+
 export type RuleSyncCommandHistory =
   | {
       readonly status: "available";
@@ -372,6 +397,43 @@ const UNAVAILABLE_COMMAND_HISTORY: RuleSyncCommandHistory = {
   versions: [],
   hasMore: false
 };
+
+/**
+ * Whether a requested page is one this repository can answer.
+ *
+ * The page is a transport-level window, so a page that is not a whole offset
+ * of zero or more, or a limit outside the bounded range, is refused rather
+ * than clamped: a clamped page would answer a different question than the one
+ * that was asked.
+ */
+function isCommandHistoryPage(page: RuleSyncCommandHistoryPage): boolean {
+  return (
+    Number.isInteger(page.offset) &&
+    page.offset >= 0 &&
+    Number.isInteger(page.limit) &&
+    page.limit >= 1 &&
+    page.limit <= RULE_SYNC_COMMAND_HISTORY_MAX_PAGE_SIZE
+  );
+}
+
+/**
+ * A reader for this repository's Git.
+ *
+ * Every Git answer in this file is bounded and time-limited the same way, so
+ * the runner is written once: a reader that forgot the timeout would let one
+ * hung command hold a request open.
+ */
+function gitRunner(
+  repositoryRoot: string
+): (args: readonly string[], maxBuffer: number) => string {
+  return (args, maxBuffer) =>
+    execFileSync("git", ["-C", repositoryRoot, ...args], {
+      encoding: "utf8",
+      maxBuffer,
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: COMMAND_GIT_TIMEOUT_MS
+    });
+}
 
 /** Runs `git`, or reports that it could not answer. */
 function tryGit(
@@ -1309,9 +1371,25 @@ export class RuleSyncRepository {
     }
   }
 
-  loadCommandHistory(name: string): RuleSyncCommandHistory | null {
+  /**
+   * Reads one page of a command's committed history.
+   *
+   * The page is a window onto one ordered history: `offset` versions are
+   * passed over and `limit` versions are read. `hasMore` on the result
+   * answers "is there a version after this page", so a caller can walk back
+   * through the history one page at a time.
+   */
+  loadCommandHistory(
+    name: string,
+    page: RuleSyncCommandHistoryPage = FIRST_COMMAND_HISTORY_PAGE
+  ): RuleSyncCommandHistory | null {
     if (!COMMAND_NAME_PATTERN.test(name)) return null;
-    const cacheKey = `${this.repositoryRoot}:${name}`;
+    if (!isCommandHistoryPage(page)) {
+      throw new RuleSyncCommandValidationError(
+        "Command history page must be a whole offset of zero or more and a limit between 1 and 100."
+      );
+    }
+    const cacheKey = `${this.repositoryRoot}:${name}:${page.offset}:${page.limit}`;
     const cached = COMMAND_HISTORY_CACHE.get(cacheKey);
     const now = Date.now();
     if (cached && now - cached.timestamp < COMMAND_HISTORY_CACHE_TTL_MS) {
@@ -1331,13 +1409,7 @@ export class RuleSyncRepository {
     } catch {
       return UNAVAILABLE_COMMAND_HISTORY;
     }
-    const git = (args: readonly string[], maxBuffer: number): string =>
-      execFileSync("git", ["-C", repositoryRoot, ...args], {
-        encoding: "utf8",
-        maxBuffer,
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: COMMAND_GIT_TIMEOUT_MS
-      });
+    const git = gitRunner(repositoryRoot);
 
     let output: string;
     try {
@@ -1345,7 +1417,8 @@ export class RuleSyncRepository {
         [
           "log",
           "--format=%H%x00%cI",
-          `--max-count=${COMMAND_HISTORY_FETCH_LIMIT}`,
+          `--max-count=${page.limit + 1}`,
+          `--skip=${page.offset}`,
           "--",
           `${COMMANDS_SOURCE}/${name}.md`
         ],
@@ -1382,8 +1455,8 @@ export class RuleSyncRepository {
         });
       const result: RuleSyncCommandHistory = {
         status: "available",
-        versions: entries.slice(0, COMMAND_HISTORY_LIMIT),
-        hasMore: entries.length > COMMAND_HISTORY_LIMIT
+        versions: entries.slice(0, page.limit),
+        hasMore: entries.length > page.limit
       };
       COMMAND_HISTORY_CACHE.set(cacheKey, { timestamp: now, history: result });
       return result;
@@ -1392,6 +1465,17 @@ export class RuleSyncRepository {
     }
   }
 
+  /**
+   * Reads one committed revision of a command.
+   *
+   * The revision is resolved from Git itself rather than from a page of
+   * history, because a revision the operator reached by paging back is older
+   * than the newest page and would otherwise be refused as "not in the
+   * history". Git answers three separate questions here: whether the
+   * repository can answer at all, whether the revision is a commit, and
+   * whether that commit changed *this* command -- a commit that never touched
+   * the command file is not a version of it, however well-formed its hash is.
+   */
   loadCommandVersion(
     name: string,
     versionHash: string
@@ -1409,32 +1493,61 @@ export class RuleSyncRepository {
         : undefined;
     if (!command) return null;
 
-    const history = this.loadCommandHistory(name);
-    if (history === null || history.status === "unavailable") {
+    let repositoryRoot: string;
+    try {
+      repositoryRoot = realpathSync(this.repositoryRoot);
+    } catch {
       throw new RuleSyncCommandHistoryUnavailableError();
     }
-    const version = history.versions.find(
-      (item) => item.versionHash === versionHash
+    const git = gitRunner(repositoryRoot);
+
+    if (tryGit(git, ["rev-parse", "--is-inside-work-tree"], 1024) !== "true") {
+      throw new RuleSyncCommandHistoryUnavailableError();
+    }
+    // A revision nobody committed is an unknown version, not an unavailable
+    // history: the repository answered, and its answer was "no such commit".
+    if (
+      tryGit(git, ["cat-file", "-e", `${versionHash}^{commit}`], 1024) === null
+    ) {
+      return null;
+    }
+    const changedPaths = tryGit(
+      git,
+      [
+        "diff-tree",
+        "--root",
+        "--no-commit-id",
+        "--name-only",
+        "-r",
+        versionHash,
+        "--",
+        command.path
+      ],
+      8192
     );
-    if (!version) return null;
+    if (changedPaths === null) {
+      throw new RuleSyncCommandHistoryUnavailableError(
+        "The selected command version could not be read."
+      );
+    }
+    if (!changedPaths.split("\n").includes(command.path)) return null;
 
     try {
-      const repositoryRoot = realpathSync(this.repositoryRoot);
-      const content = execFileSync(
-        "git",
-        ["-C", repositoryRoot, "show", `${versionHash}:${command.path}`],
-        {
-          encoding: "utf8",
-          maxBuffer: COMMAND_CONTENT_MAX_BYTES,
-          stdio: ["ignore", "pipe", "ignore"],
-          timeout: COMMAND_GIT_TIMEOUT_MS
-        }
+      const updatedAt = git(
+        ["show", "--no-patch", "--format=%cI", versionHash],
+        1024
+      ).trim();
+      if (!updatedAt || !Number.isFinite(Date.parse(updatedAt))) {
+        throw new RuleSyncCommandHistoryUnavailableError(
+          "Git returned malformed command version metadata."
+        );
+      }
+      const content = git(
+        ["show", `${versionHash}:${command.path}`],
+        COMMAND_CONTENT_MAX_BYTES
       );
-      const diff = execFileSync(
-        "git",
+      const diff = git(
         [
-          "-C",
-          repositoryRoot,
           "diff",
           "--no-ext-diff",
           "--no-textconv",
@@ -1445,17 +1558,12 @@ export class RuleSyncRepository {
           "--",
           command.path
         ],
-        {
-          encoding: "utf8",
-          maxBuffer: COMMAND_DIFF_MAX_BYTES,
-          stdio: ["ignore", "pipe", "ignore"],
-          timeout: COMMAND_GIT_TIMEOUT_MS
-        }
+        COMMAND_DIFF_MAX_BYTES
       );
       return {
         name,
         versionHash,
-        updatedAt: version.updatedAt,
+        updatedAt,
         content,
         diff
       };

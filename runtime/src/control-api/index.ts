@@ -81,7 +81,10 @@ import {
   PlaytestRepository,
   reconcileDiffSummary,
   reconcileDiffWithIdentifier,
+  RULE_SYNC_COMMAND_HISTORY_MAX_PAGE_SIZE,
+  RULE_SYNC_COMMAND_HISTORY_PAGE_SIZE,
   RuleSyncCommandConflictError,
+  type RuleSyncCommandHistoryPage,
   RuleSyncCommandHistoryUnavailableError,
   RuleSyncCommandValidationError,
   RuleSyncRepository,
@@ -2431,18 +2434,22 @@ function promptDetailView(
 
 function promptVersionsView(
   name: string,
+  page: RuleSyncCommandHistoryPage,
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> | null {
   const history = new RuleSyncRepository(repositoryRoot).loadCommandHistory(
-    name
+    name,
+    page
   );
   if (!history) return null;
   return {
-    schema: "autodev-control-prompt-versions-v1",
+    schema: "autodev-control-prompt-versions-v2",
     name,
     status: history.status,
     versions: history.versions,
-    hasMore: history.hasMore
+    hasMore: history.hasMore,
+    offset: page.offset,
+    limit: page.limit
   } satisfies ControlApiPromptVersionsResponse;
 }
 
@@ -4132,6 +4139,51 @@ function promptVersionsPath(
     : null;
 }
 
+/** A whole number, with no sign and no fraction. */
+const WHOLE_NUMBER_PATTERN = /^\d+$/u;
+
+/**
+ * The page of a command's committed history a request asks for.
+ *
+ * The page is a transport-level window onto one ordered history, so a request
+ * that names a page the repository cannot answer is refused rather than
+ * clamped: a clamped page would answer a different question than the one that
+ * was asked, and the caller would not know it.
+ */
+function promptHistoryPageFromQuery(
+  request: IncomingMessage,
+  pathname: string
+): RuleSyncCommandHistoryPage | null {
+  const url = new URL(request.url ?? pathname, "http://127.0.0.1");
+  for (const key of url.searchParams.keys()) {
+    if (key !== "offset" && key !== "limit") return null;
+  }
+  const offset = promptHistoryPageNumber(url.searchParams.get("offset"), 0);
+  const limit = promptHistoryPageNumber(
+    url.searchParams.get("limit"),
+    RULE_SYNC_COMMAND_HISTORY_PAGE_SIZE
+  );
+  if (
+    offset === null ||
+    limit === null ||
+    limit < 1 ||
+    limit > RULE_SYNC_COMMAND_HISTORY_MAX_PAGE_SIZE
+  ) {
+    return null;
+  }
+  return { offset, limit };
+}
+
+/** A whole number from a query parameter, or the default when it is absent. */
+function promptHistoryPageNumber(
+  raw: string | null,
+  fallback: number
+): number | null {
+  if (raw === null) return fallback;
+  if (!WHOLE_NUMBER_PATTERN.test(raw)) return null;
+  return Number(raw);
+}
+
 function promptVersionsRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -4142,6 +4194,32 @@ function promptVersionsRoute(
   versionHash: string | undefined,
   options: ControlApiRequestOptions
 ): boolean {
+  let page: RuleSyncCommandHistoryPage = {
+    offset: 0,
+    limit: RULE_SYNC_COMMAND_HISTORY_PAGE_SIZE
+  };
+  // The page belongs to the list route: a single revision is addressed by its
+  // hash, so there is nothing for a page to say there.
+  if (versionHash === undefined && method === "GET") {
+    const requested = promptHistoryPageFromQuery(request, pathname);
+    if (requested === null) {
+      auditRejectedRequest(
+        request,
+        method,
+        pathname,
+        "invalid_history_page",
+        actor
+      );
+      sendControlError(
+        response,
+        400,
+        "autodev_control_api_prompt_history_page_invalid",
+        `Prompt history page must be a whole offset of zero or more and a limit between 1 and ${RULE_SYNC_COMMAND_HISTORY_MAX_PAGE_SIZE}.`
+      );
+      return true;
+    }
+    page = requested;
+  }
   const route: ReadOnlyDetailRoute = {
     action: versionHash ? "Prompt version" : "Prompt versions",
     unknownReason: versionHash ? "unknown_prompt_version" : "unknown_prompt",
@@ -4158,7 +4236,11 @@ function promptVersionsRoute(
             versionHash,
             options.repositoryRoot ?? DEFAULT_REPO_ROOT
           )
-        : promptVersionsView(name, options.repositoryRoot ?? DEFAULT_REPO_ROOT)
+        : promptVersionsView(
+            name,
+            page,
+            options.repositoryRoot ?? DEFAULT_REPO_ROOT
+          )
   };
   try {
     return readOnlyDetailRoute(

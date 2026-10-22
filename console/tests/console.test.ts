@@ -2677,6 +2677,106 @@ test("Prompt detail reports an empty operation history instead of implying one",
   assert.match(markup, /No recorded operations for this resource\./);
 });
 
+test("Prompt version history pages as a window onto the committed history", () => {
+  // The history is one ordered list, so an operator who needs an older
+  // revision walks back a page at a time instead of being told to go and read
+  // Git. The page it names is in the URL, so the walk is addressable and a
+  // reload shows the operator the list they chose a revision from.
+  const prompt = promptDocumentFromControlApi({
+    schema: "autodev-control-prompt-detail-v4",
+    name: "dry",
+    type: "command",
+    source: ".rulesync/commands/dry.md",
+    content: "# /dry\n\nUse a dry run.",
+    preview: "## Rendered Prompt\n\n**Use a dry run.**",
+    revision: "a".repeat(64),
+    diff: {
+      summary: "Canonical RuleSync command.",
+      identifier: "a".repeat(64)
+    },
+    reconciliation: unobservedPromptReconciliation
+  });
+  const versionHash = "c".repeat(40);
+  const oldestHash = "d".repeat(40);
+
+  const newestPage = renderToStaticMarkup(
+    React.createElement(PromptDetailView, {
+      reconciliation: unobservedPromptReconciliation,
+      prompt,
+      history: {
+        status: "available",
+        versions: [{ versionHash, updatedAt: "2026-01-02T03:04:05Z" }],
+        hasMore: true,
+        offset: 0,
+        limit: 20
+      }
+    })
+  );
+  assert.match(newestPage, /data-feature="prompt-history-pager"/);
+  assert.match(newestPage, /Showing the newest 1 committed versions\./);
+  assert.match(newestPage, /data-prompt-history-older="true"/);
+  assert.match(newestPage, /historyOffset=20/);
+  // The newest page has nothing before it.
+  assert.doesNotMatch(newestPage, /data-prompt-history-newer="true"/);
+
+  const olderPage = renderToStaticMarkup(
+    React.createElement(PromptDetailView, {
+      reconciliation: unobservedPromptReconciliation,
+      prompt,
+      history: {
+        status: "available",
+        versions: [
+          { versionHash: oldestHash, updatedAt: "2026-01-02T03:04:05Z" }
+        ],
+        hasMore: false,
+        offset: 20,
+        limit: 20
+      }
+    })
+  );
+  assert.match(olderPage, /Showing versions 21-21 of the committed history\./);
+  assert.match(olderPage, /data-prompt-history-newer="true"/);
+  // The last page has nothing after it.
+  assert.doesNotMatch(olderPage, /data-prompt-history-older="true"/);
+  // A revision is opened together with the page it was found on.
+  assert.match(olderPage, /historyOffset=20/);
+
+  const lastPage = renderToStaticMarkup(
+    React.createElement(PromptDetailView, {
+      reconciliation: unobservedPromptReconciliation,
+      prompt,
+      history: {
+        status: "available",
+        versions: [
+          { versionHash: oldestHash, updatedAt: "2026-01-02T03:04:05Z" }
+        ],
+        hasMore: false,
+        offset: 20,
+        limit: 20
+      }
+    })
+  );
+  // One page before the last one is the newest page, which the URL names
+  // without an offset rather than with an offset of zero.
+  assert.match(lastPage, /href="\/prompts\/dry\?revision=/);
+
+  const onlyPage = renderToStaticMarkup(
+    React.createElement(PromptDetailView, {
+      reconciliation: unobservedPromptReconciliation,
+      prompt,
+      history: {
+        status: "available",
+        versions: [{ versionHash, updatedAt: "2026-01-02T03:04:05Z" }],
+        hasMore: false,
+        offset: 0,
+        limit: 20
+      }
+    })
+  );
+  // One page of history needs no pager at all.
+  assert.doesNotMatch(onlyPage, /data-feature="prompt-history-pager"/);
+});
+
 test("Prompt detail renders canonical text and reports an actually empty source", () => {
   const source = "# /dry\n\nUse a dry run.";
   const prompt = promptDocumentFromControlApi({
@@ -2750,7 +2850,9 @@ test("Prompt detail renders canonical text and reports an actually empty source"
       history: {
         status: "available",
         versions: [{ versionHash, updatedAt: "2026-01-02T03:04:05Z" }],
-        hasMore: false
+        hasMore: false,
+        offset: 0,
+        limit: 20
       },
       selectedVersion: {
         schema: "autodev-control-prompt-version-v1",
@@ -3920,11 +4022,13 @@ test("Prompt version fetchers validate recent history and selected revision iden
   const urls: string[] = [];
   const payloads: unknown[] = [
     {
-      schema: "autodev-control-prompt-versions-v1",
+      schema: "autodev-control-prompt-versions-v2",
       name: "audit",
       status: "available",
       versions: [{ versionHash, updatedAt: "2026-01-02T03:04:05Z" }],
-      hasMore: false
+      hasMore: false,
+      offset: 0,
+      limit: 20
     },
     {
       schema: "autodev-control-prompt-version-v1",
@@ -3947,7 +4051,7 @@ test("Prompt version fetchers validate recent history and selected revision iden
   assert.equal(versions.kind, "ok");
   assert.equal(version.kind, "ok");
   assert.deepEqual(urls, [
-    "http://127.0.0.1:4101/control/prompts/audit/versions",
+    "http://127.0.0.1:4101/control/prompts/audit/versions?offset=0",
     `http://127.0.0.1:4101/control/prompts/audit/versions/${versionHash}`
   ]);
 
@@ -3972,11 +4076,13 @@ test("Prompt version fetchers validate recent history and selected revision iden
   const mismatchedHistory = await fetchPromptVersions("audit", config, {
     fetchImpl: async () =>
       Response.json({
-        schema: "autodev-control-prompt-versions-v1",
+        schema: "autodev-control-prompt-versions-v2",
         name: "other-command",
         status: "available",
         versions: [],
-        hasMore: false
+        hasMore: false,
+        offset: 0,
+        limit: 20
       })
   });
   assert.equal(mismatchedHistory.kind, "invalid-response");
@@ -3984,11 +4090,13 @@ test("Prompt version fetchers validate recent history and selected revision iden
   const malformedUnavailable = await fetchPromptVersions("audit", config, {
     fetchImpl: async () =>
       Response.json({
-        schema: "autodev-control-prompt-versions-v1",
+        schema: "autodev-control-prompt-versions-v2",
         name: "audit",
         status: "unavailable",
         versions: [{ versionHash, updatedAt: "2026-01-02T03:04:05Z" }],
-        hasMore: false
+        hasMore: false,
+        offset: 0,
+        limit: 20
       })
   });
   assert.equal(malformedUnavailable.kind, "invalid-response");
