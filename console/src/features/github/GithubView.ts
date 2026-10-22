@@ -261,6 +261,9 @@ export function GithubView({
                   href: workflow.lastRunHtmlUrl,
                   target: "_blank",
                   rel: "noopener noreferrer",
+                  // The name has to say which run the link opens: every
+                  // workflow row carried a link named "View ↗".
+                  "aria-label": `View the last ${workflow.name} run`,
                   className: `text-xs font-mono ${ACTION_LINK_CLASS}`
                 },
                 "View ↗"

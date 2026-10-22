@@ -275,7 +275,10 @@ test("role filter chips preserve their role href and accessibility label", () =>
       `/tools?source=mcp&role=${entry.value}`,
       `chip ${entry.value} href`
     );
-    const label = `Filter tools exposed to ${entry.value}`;
+    // The name carries the tool as well as the filter: every tool an MCP
+    // server serves repeated the same server name, so a links list showed
+    // "Filter tools exposed to smart" once per tool that used it.
+    const label = `Filter tools exposed to ${entry.value} for do_thing`;
     // aria-label and title both echo the same description, so a screen
     // reader and a truncated chip agree on what the link does.
     assert.match(markup, new RegExp(`aria-label="${escapeForRegex(label)}"`));

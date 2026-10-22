@@ -211,7 +211,9 @@ export function AgentsView({
                 Chip,
                 {
                   href: "/skills/" + encodeURIComponent(skill.name),
-                  label: skill.name,
+                  // The name has to say which agent the chip belongs to: the
+                  // same skill is offered to many agents.
+                  label: `${skill.name} for the ${agent.id} role`,
                   className: "font-mono"
                 },
                 skill.name
@@ -255,7 +257,10 @@ export function AgentsView({
                 Chip,
                 {
                   href: "/mcps/" + encodeURIComponent(mcp),
-                  label: mcp,
+                  // The name has to say which agent the chip belongs to. The
+                  // same MCP server is served to many agents, so a links list
+                  // showed the same entry once per agent.
+                  label: `${mcp} for the ${agent.id} role`,
                   className: "font-mono"
                 },
                 mcp

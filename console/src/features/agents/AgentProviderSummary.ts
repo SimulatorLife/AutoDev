@@ -72,7 +72,10 @@ export function AgentProviderSummary({
           stateLabel: state,
           label: provider,
           href: providerPath(provider),
-          title: `${provider}: ${state.toLowerCase()}`
+          // The name has to say which agent the chip belongs to. Ten agents
+          // each link to the same five providers, so "codex: p1" named ten
+          // different links and a links list showed the same entry ten times.
+          title: `${provider}: ${state.toLowerCase()} for the ${agent.id} role`
         })
       );
     })

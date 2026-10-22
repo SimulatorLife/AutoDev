@@ -209,19 +209,27 @@ function editSurfaceTarget(
 }
 
 function EditSurfaceLink({
-  surface
+  surface,
+  toolName
 }: {
   readonly surface: NonNullable<ToolCatalogItem["canonicalEditSurface"]>;
+  readonly toolName: string;
 }): React.JSX.Element {
   const target = editSurfaceTarget(surface);
+  const label = surface.label ?? target.fallbackLabel;
   return React.createElement(
     NavigationLink,
     {
       href: target.href,
       className: EDIT_SURFACE_LINK_CLASS,
+      // The name has to say which tool the link belongs to. Every tool an MCP
+      // server serves repeated the same server name, so a links list showed
+      // "MCP playwright" once per tool that used it.
+      "aria-label": `Edit ${label} for ${toolName}`,
+      title: `Edit ${label} for ${toolName}`,
       dataAttributes: { "data-edit-surface": surface.section }
     },
-    surface.label ?? target.fallbackLabel
+    label
   );
 }
 
@@ -387,7 +395,10 @@ export function ToolsView({
             emptyLabel: "No roles assigned",
             testId: "tool-roles",
             renderItem: (role) => {
-              const label = `Filter tools exposed to ${role}`;
+              // The name has to say which tool the chip belongs to. Every tool
+              // that exposes a role repeated the same filter link, so a links
+              // list showed "Filter tools exposed to smart" once per tool.
+              const label = `Filter tools exposed to ${role} for ${tool.name}`;
               return React.createElement(
                 NavigationLink,
                 {
@@ -416,7 +427,8 @@ export function ToolsView({
       cell: (tool) =>
         tool.canonicalEditSurface
           ? React.createElement(EditSurfaceLink, {
-              surface: tool.canonicalEditSurface
+              surface: tool.canonicalEditSurface,
+              toolName: tool.name
             })
           : React.createElement(
               "span",

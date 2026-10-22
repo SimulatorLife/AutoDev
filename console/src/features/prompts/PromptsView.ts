@@ -175,7 +175,10 @@ export function PromptsView({
                 Chip,
                 {
                   href: `/agents/${encodeURIComponent(prompt.name)}`,
-                  className: "text-accent"
+                  className: "text-accent",
+                  // The chip's visible text is the same in every row, so its
+                  // accessible name has to carry the row it belongs to.
+                  label: `Agent profile for ${prompt.name}`
                 },
                 "Agent profile"
               )
@@ -184,7 +187,11 @@ export function PromptsView({
             Chip,
             {
               href: `/evaluations?prompt=${encodeURIComponent(prompt.name)}`,
-              className: MUTED_TEXT_CLASS
+              className: MUTED_TEXT_CLASS,
+              // Seventy-six prompts each carried an "Evaluations" link with
+              // this same name, so a links list showed the same entry
+              // seventy-six times.
+              label: `Evaluations for ${prompt.name}`
             },
             "Evaluations"
           )

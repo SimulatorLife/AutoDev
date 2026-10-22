@@ -13,6 +13,8 @@ import {
   SECONDARY_BUTTON_CLASS
 } from "../src/components/forms/Button.ts";
 import { AppNav } from "../src/components/navigation/AppNav.ts";
+import { PromptsView } from "../src/features/prompts/PromptsView.ts";
+import { ToolsView } from "../src/features/tools/ToolsView.ts";
 import {
   STATE_PILL_BUTTON_CLASS,
   STATE_PILL_TONE_CLASS
@@ -227,5 +229,65 @@ test("the Console's scroll regions are visible", () => {
     css,
     /scrollbar-color:[^;]*var\(--color-border-strong\)/u,
     "the scrollbar must wear the Console's own token"
+  );
+});
+
+/**
+ * A link's name has to say what it points at.
+ *
+ * Three tables repeated one name per row: every prompt carried an
+ * "Evaluations" link, every tool repeated a filter link per exposed role, and
+ * every agent repeated a provider link. The links were correct -- each one
+ * pointed at its own row -- but a links list, which is how a screen reader
+ * user scans a page, showed "Evaluations" seventy-six times and
+ * "Filter tools exposed to smart" twenty-four times, with nothing to tell
+ * the entries apart.
+ *
+ * The visible text stays short -- a chip says "Evaluations" -- and the
+ * accessible name carries the row. The name still contains the visible text,
+ * which is what keeps a voice-control user able to say what they see.
+ */
+test("a repeated link names the row it belongs to", () => {
+  const prompts = renderToStaticMarkup(
+    React.createElement(PromptsView, {
+      commands: [
+        {
+          name: "dry",
+          path: ".rulesync/commands/dry.md",
+          description: "Dry-run command"
+        },
+        {
+          name: "wet",
+          path: ".rulesync/commands/wet.md",
+          description: "Wet-run command"
+        }
+      ],
+      validationIssues: [],
+      commandSourceValidity: true
+    })
+  );
+  assert.match(prompts, /aria-label="Evaluations for dry"/u);
+  assert.match(prompts, /aria-label="Evaluations for wet"/u);
+
+  const tools = renderToStaticMarkup(
+    React.createElement(ToolsView, {
+      tools: [
+        {
+          id: "analyze_code_relationships",
+          name: "analyze_code_relationships",
+          description: "Analyze code relationships",
+          source: "mcp",
+          exposedRoles: ["smart"]
+        }
+      ],
+      coverage: { schema: "x", source: "y" } as never,
+      validity: "valid",
+      usageLink: "/usage",
+      filters: { source: "", role: "" }
+    } as unknown as React.ComponentProps<typeof ToolsView>)
+  );
+  assert.match(
+    tools,
+    /aria-label="Filter tools exposed to smart for analyze_code_relationships"/u
   );
 });
