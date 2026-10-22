@@ -309,6 +309,7 @@ export class PlaytestRepository {
   private async migrateLegacyEpisodeSchemas(): Promise<void> {
     for (;;) {
       const rows = parseNdjsonLines(
+        // eslint-disable-next-line no-await-in-loop -- the legacy rows are read before they are rewritten; the next read must observe the rows this migration writes.
         await this.execute(
           `SELECT * FROM (
             SELECT *, row_number() OVER (PARTITION BY workspace_id, episode_id ORDER BY revision DESC, ${CURRENT_EPISODE_SCHEMA_PRIORITY}, cityHash64(payload_json) DESC, payload_json DESC) AS rn
@@ -326,6 +327,7 @@ export class PlaytestRepository {
       const migratedRows = rows.map((row) =>
         encodeEpisode(migrateLegacyEpisodeForStorage(row))
       );
+      // eslint-disable-next-line no-await-in-loop -- the rewritten rows are written before the next read, so a concurrent read cannot re-select the same legacy rows.
       await this.execute(
         `INSERT INTO ${PLAYTEST_EPISODES_TABLE} FORMAT JSONEachRow`,
         {},

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { createServer, type ServerResponse } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -28,10 +28,6 @@ import {
 import { inMemoryPlaytestLaunchIntentRepository } from "./support/playtesting-launch-intents.ts";
 
 const WORKSPACE = "SimulatorLife/RacingGame";
-const PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jr0sAAAAASUVORK5CYII=",
-  "base64"
-);
 
 function workspaceCatalog(): WorkspaceCatalogRead {
   return {
@@ -104,52 +100,174 @@ async function closeServer(
   });
 }
 
+/** A gate the fixture router opens when the expected decision request arrives. */
+interface FixtureRequestSignal {
+  readonly requested: Promise<void>;
+  readonly release: () => void;
+}
+
+function createRequestSignal(): FixtureRequestSignal {
+  let release: (() => void) | null = null;
+  const requested = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    requested,
+    release: () => {
+      release?.();
+    }
+  };
+}
+
+/** Wait for the expected request, and fail the wait when it never arrives. */
+function withTimeout<T>(
+  requested: Promise<T>,
+  message: string,
+  timeoutMs: number
+): Promise<T> {
+  return Promise.race([
+    requested,
+    new Promise<never>((_resolve, reject) => {
+      setTimeout(() => {
+        reject(new Error(message));
+      }, timeoutMs);
+    })
+  ]);
+}
+
+/** The fixture game page the visual run drives. */
+function createGameFixtureServer(): Server {
+  return createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/html" });
+    response.end(
+      "<!doctype html><html><body><main><h1>Race setup</h1><button>Start race</button></main></body></html>"
+    );
+  });
+}
+
+/** The fixture model router that answers the Smart-direct decision requests. */
+interface FixtureRouter {
+  readonly server: Server;
+  readonly responses: ServerResponse[];
+  readonly bodies: Record<string, unknown>[];
+}
+
+function createFixtureRouter(
+  onRequest: (index: number) => void
+): FixtureRouter {
+  const responses: ServerResponse[] = [];
+  const bodies: Record<string, unknown>[] = [];
+  const server = createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      assert.equal(request.url, "/v1/responses");
+      assert.equal(
+        request.headers.authorization,
+        "Bearer fixture-router-token"
+      );
+      bodies.push(
+        JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<
+          string,
+          unknown
+        >
+      );
+      responses.push(response);
+      onRequest(responses.length);
+    });
+  });
+  return { server, responses, bodies };
+}
+
+/** Wait until the persisted episode satisfies the fixture's expectation. */
+async function waitForEpisode(
+  episodeRows: ReadonlyMap<string, PlaytestEpisode>,
+  episodeId: string,
+  isReady: (episode: PlaytestEpisode) => boolean
+): Promise<PlaytestEpisode | null> {
+  let observed: PlaytestEpisode | null = null;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    observed = episodeRows.get(episodeId) ?? null;
+    if (observed && isReady(observed)) break;
+    await new Promise((resolve) => {
+      setTimeout(resolve, 20);
+    });
+  }
+  return observed;
+}
+
+/** The control id the decision request offered to the model. */
+function readFirstVisibleControlId(
+  request: Record<string, unknown>
+): string | undefined {
+  const input = request.input as readonly {
+    readonly content: readonly { readonly text?: string }[];
+  }[];
+  const visibleState = JSON.parse(String(input[0]?.content[0]?.text)) as {
+    readonly controls: readonly { readonly controlId: string }[];
+  };
+  return visibleState.controls[0]?.controlId;
+}
+
+/** Answer every router response the fixture still holds open. */
+function releaseHeldRouterResponses(
+  responses: readonly ServerResponse[]
+): void {
+  for (const heldRouterResponse of responses) {
+    if (heldRouterResponse.writableEnded) continue;
+    heldRouterResponse.writeHead(200, {
+      "content-type": "application/json"
+    });
+    heldRouterResponse.end(
+      JSON.stringify({
+        model: "fixture-smart-model",
+        output_text: JSON.stringify({
+          decision: "stop",
+          intention: "Stop because the fixture is cleaning up.",
+          prediction: "No further action is expected.",
+          reasonCode: "fixture-cleanup",
+          action: null,
+          stopReason: "cannot-proceed",
+          focusReport: {
+            objective: null,
+            inScope: [],
+            forbiddenScope: [],
+            stopCriteria: [],
+            outcome: "unknown",
+            summary: "The fixture ended without an objective assessment.",
+            evidenceSteps: []
+          }
+        }),
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
+      })
+    );
+  }
+}
+
+/** Put one environment variable back the way the test found it. */
+function restoreEnvironment(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
+
 test(
   "visual reports persist checkpoints and cold-owner recovery preserves partial or unavailable state",
   { timeout: 60_000 },
   async () => {
-    const gameServer = createServer((_request, response) => {
-      response.writeHead(200, { "content-type": "text/html" });
-      response.end(
-        "<!doctype html><html><body><main><h1>Race setup</h1><button>Start race</button></main></body></html>"
-      );
-    });
+    const gameServer = createGameFixtureServer();
     const gamePort = await listen(gameServer);
 
-    const routerResponses: ServerResponse[] = [];
-    const routerBodies: Record<string, unknown>[] = [];
-    let releasePolicy: (() => void) | null = null;
-    const policyRequested = new Promise<void>((resolve) => {
-      releasePolicy = resolve;
-    });
-    let releaseSecondPolicy: (() => void) | null = null;
-    const secondPolicyRequested = new Promise<void>((resolve) => {
-      releaseSecondPolicy = resolve;
-    });
-    let releaseThirdPolicy: (() => void) | null = null;
-    const thirdPolicyRequested = new Promise<void>((resolve) => {
-      releaseThirdPolicy = resolve;
-    });
-    const routerServer = createServer((request, response) => {
-      const chunks: Buffer[] = [];
-      request.on("data", (chunk: Buffer) => chunks.push(chunk));
-      request.on("end", () => {
-        assert.equal(request.url, "/v1/responses");
-        assert.equal(
-          request.headers.authorization,
-          "Bearer fixture-router-token"
-        );
-        routerBodies.push(
-          JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<
-            string,
-            unknown
-          >
-        );
-        routerResponses.push(response);
-        if (routerResponses.length === 1) releasePolicy?.();
-        if (routerResponses.length === 2) releaseSecondPolicy?.();
-        if (routerResponses.length === 3) releaseThirdPolicy?.();
-      });
+    const policySignal = createRequestSignal();
+    const secondPolicySignal = createRequestSignal();
+    const thirdPolicySignal = createRequestSignal();
+    const {
+      server: routerServer,
+      responses: routerResponses,
+      bodies: routerBodies
+    } = createFixtureRouter((index) => {
+      if (index === 1) policySignal.release();
+      if (index === 2) secondPolicySignal.release();
+      if (index === 3) thirdPolicySignal.release();
     });
     const routerPort = await listen(routerServer);
     const previousPort = process.env.CODEX_MODEL_ROUTER_PORT;
@@ -241,28 +359,22 @@ test(
       assert.equal(started.status, "running");
       assert.ok(started.batchId);
 
-      await Promise.race([
-        policyRequested,
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("Smart-direct was not called.")),
-            20_000
-          )
-        )
-      ]);
+      await withTimeout(
+        policySignal.requested,
+        "Smart-direct was not called.",
+        20_000
+      );
       const episodeId =
         "ep-" +
         started.batchId.replace(/^batch-/u, "").slice(0, 16) +
         "-vis-assign-" +
         started.batchId.replace(/^batch-/u, "").slice(0, 12) +
         "-0";
-      let liveEpisode: PlaytestEpisode | null = null;
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        liveEpisode = episodeRows.get(episodeId) ?? null;
-        if (liveEpisode?.status === "started" && liveEpisode.frames.length > 0)
-          break;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      const liveEpisode = await waitForEpisode(
+        episodeRows,
+        episodeId,
+        (episode) => episode.status === "started" && episode.frames.length > 0
+      );
       assert.ok(liveEpisode);
       assert.equal(liveEpisode.status, "started");
       assert.equal(liveEpisode.stepCount, 0);
@@ -314,15 +426,7 @@ test(
         500,
         "Smart-direct must use the request's reduced token budget, not the larger target ceiling."
       );
-      const firstInput = firstRequest.input as readonly {
-        readonly content: readonly { readonly text?: string }[];
-      }[];
-      const firstVisibleState = JSON.parse(
-        String(firstInput[0]?.content[0]?.text)
-      ) as {
-        readonly controls: readonly { readonly controlId: string }[];
-      };
-      const startControlId = firstVisibleState.controls[0]?.controlId;
+      const startControlId = readFirstVisibleControlId(firstRequest);
       assert.ok(startControlId);
       firstRouterResponse.writeHead(200, {
         "content-type": "application/json"
@@ -347,29 +451,21 @@ test(
         })
       );
 
-      await Promise.race([
-        secondPolicyRequested,
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () =>
-              reject(
-                new Error("The second Smart-direct decision was not called.")
-              ),
-            20_000
-          )
-        )
-      ]);
+      await withTimeout(
+        secondPolicySignal.requested,
+        "The second Smart-direct decision was not called.",
+        20_000
+      );
       assert.equal(
         routerBodies[1]?.max_output_tokens,
         380,
         "Smart-direct must subtract the first response usage from the reduced per-episode token budget."
       );
-      let checkpointEpisode: PlaytestEpisode | null = null;
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        checkpointEpisode = episodeRows.get(episodeId) ?? null;
-        if (checkpointEpisode?.playerDebrief.status === "partial") break;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      const checkpointEpisode = await waitForEpisode(
+        episodeRows,
+        episodeId,
+        (episode) => episode.playerDebrief.status === "partial"
+      );
       assert.equal(checkpointEpisode?.playerDebrief.status, "partial");
       if (checkpointEpisode?.playerDebrief.status !== "partial") return;
       assert.equal(
@@ -524,18 +620,11 @@ test(
         areasOfFocus: "Inspect the race setup screen.",
         limits: target.limits
       });
-      await Promise.race([
-        thirdPolicyRequested,
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () =>
-              reject(
-                new Error("The failure-injection Smart request was not called.")
-              ),
-            20_000
-          )
-        )
-      ]);
+      await withTimeout(
+        thirdPolicySignal.requested,
+        "The failure-injection Smart request was not called.",
+        20_000
+      );
       const failedPolicyResponse = routerResponses[2];
       assert.ok(failedPolicyResponse);
       failedPolicyResponse.writeHead(503, {
@@ -735,42 +824,9 @@ test(
       });
       assert.equal(batchRows.get(interruptedRun.batchId)?.status, "failed");
     } finally {
-      for (const heldRouterResponse of routerResponses) {
-        if (!heldRouterResponse.writableEnded) {
-          heldRouterResponse.writeHead(200, {
-            "content-type": "application/json"
-          });
-          heldRouterResponse.end(
-            JSON.stringify({
-              model: "fixture-smart-model",
-              output_text: JSON.stringify({
-                decision: "stop",
-                intention: "Stop because the fixture is cleaning up.",
-                prediction: "No further action is expected.",
-                reasonCode: "fixture-cleanup",
-                action: null,
-                stopReason: "cannot-proceed",
-                focusReport: {
-                  objective: null,
-                  inScope: [],
-                  forbiddenScope: [],
-                  stopCriteria: [],
-                  outcome: "unknown",
-                  summary: "The fixture ended without an objective assessment.",
-                  evidenceSteps: []
-                }
-              }),
-              usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
-            })
-          );
-        }
-      }
-      if (previousPort === undefined)
-        delete process.env.CODEX_MODEL_ROUTER_PORT;
-      else process.env.CODEX_MODEL_ROUTER_PORT = previousPort;
-      if (previousToken === undefined)
-        delete process.env.CODEX_ROUTER_AUTH_TOKEN;
-      else process.env.CODEX_ROUTER_AUTH_TOKEN = previousToken;
+      releaseHeldRouterResponses(routerResponses);
+      restoreEnvironment("CODEX_MODEL_ROUTER_PORT", previousPort);
+      restoreEnvironment("CODEX_ROUTER_AUTH_TOKEN", previousToken);
       await runControl.shutdown();
       await restartedRunControl?.shutdown();
       await closeServer(gameServer);

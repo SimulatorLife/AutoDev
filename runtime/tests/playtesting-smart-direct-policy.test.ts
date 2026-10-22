@@ -740,7 +740,7 @@ test("a busy Router is available: the probe waits for a slow health answer", asy
   // A Router that is mid-turn answers the same loopback health read seconds
   // later. It is reachable, so the probe must not report it as unavailable.
   const fetchImpl: typeof fetch = async (_input, init) =>
-    await new Promise<Response>((resolve, reject) => {
+    new Promise<Response>((resolve, reject) => {
       const signal = init?.signal;
       const timer = setTimeout(() => {
         signal?.removeEventListener("abort", abort);

@@ -238,10 +238,7 @@ test("candidate ids are unique, stable across builds, and safe as JSON object ke
     assert.equal(candidate.id.trim(), candidate.id);
     // The id travels as a JSON object key and comes back unchanged.
     const criteria = { [candidate.id]: candidate.description };
-    const roundTripped = JSON.parse(JSON.stringify(criteria)) as Record<
-      string,
-      string
-    >;
+    const roundTripped = structuredClone(criteria) as Record<string, string>;
     assert.deepEqual(Object.keys(roundTripped), [candidate.id]);
     assert.equal(roundTripped[candidate.id], candidate.description);
   }

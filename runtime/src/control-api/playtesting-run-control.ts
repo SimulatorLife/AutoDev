@@ -1644,6 +1644,7 @@ async function cancelRun(
 
 const INTERNAL_ERROR_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
 const INTERNAL_ERROR_CODE_PATTERN = /^[A-Za-z0-9_:-]{1,64}$/u;
+const INTERNAL_ERROR_STACK_FRAME_PATTERN = /^\s*at\s/u;
 
 /**
  * Keep internal failure logs useful without serializing exception messages,
@@ -1670,7 +1671,7 @@ export function formatControlApiInternalErrorDiagnostic(
       ? error.stack
           .split("\n")
           .slice(1)
-          .filter((line) => /^\s*at\s/u.test(line))
+          .filter((line) => INTERNAL_ERROR_STACK_FRAME_PATTERN.test(line))
           .slice(0, 3)
           .map((line) =>
             line
