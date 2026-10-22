@@ -59,8 +59,7 @@ const PRESSED_VALUE = "true";
 const FINDINGS_HEADING_NAME = "Findings";
 const REVIEW_HYPOTHESIS_TEXT =
   "This legacy interpretation has no claim-level citation.";
-const REVIEW_SUMMARY_TEXT =
-  "Synthetic reviewed session for UI usability only.";
+const REVIEW_SUMMARY_TEXT = "Synthetic reviewed session for UI usability only.";
 const REVIEW_HYPOTHESES_LABEL = "Hypotheses";
 const REVIEW_OBSERVATIONS_LABEL = "Observations";
 const REVIEW_RECORDED_HEADING = "What the analyst recorded";
@@ -1777,15 +1776,15 @@ test("an analyst hypothesis opens its review as addressable detail under the lis
   page
 }) => {
   await page.goto("/playtesting?view=findings&workspaceId=fixture%2Fgame");
-  await expect(page.getByRole("heading", { name: FINDINGS_HEADING_NAME })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: FINDINGS_HEADING_NAME })
+  ).toBeVisible();
   await page.waitForLoadState("networkidle");
 
   // The list shows the analyst's own conclusion, clamped for scanning.
   const hypothesis = page.locator("[data-review-open]").first();
   await expect(hypothesis).toBeVisible();
-  await expect(hypothesis).toHaveText(
-    REVIEW_HYPOTHESIS_TEXT
-  );
+  await expect(hypothesis).toHaveText(REVIEW_HYPOTHESIS_TEXT);
 
   await hypothesis.hover();
   await page.waitForTimeout(250);
@@ -1793,28 +1792,26 @@ test("an analyst hypothesis opens its review as addressable detail under the lis
 
   // The open review is address state: the link is shareable and Back returns
   // to it still open.
-  await expect(page).toHaveURL(REVIEW_SELECTION_URL_PATTERN, { timeout: 20_000 });
+  await expect(page).toHaveURL(REVIEW_SELECTION_URL_PATTERN, {
+    timeout: 20_000
+  });
   const detail = page.locator("[data-review-detail]");
   await expect(detail).toBeVisible();
   // The detail leads the page: the panel a row opens is on screen, not four
   // thousand pixels under the row that opened it.
   const detailBox = await detail.boundingBox();
   const tableBox = await page
-    .locator('[data-review-open]')
+    .locator("[data-review-open]")
     .first()
     .boundingBox();
   expect(detailBox).not.toBeNull();
   expect(tableBox).not.toBeNull();
   expect(detailBox!.y).toBeLessThan(tableBox!.y);
-  await expect(detail).toContainText(
-    REVIEW_HYPOTHESIS_TEXT
-  );
+  await expect(detail).toContainText(REVIEW_HYPOTHESIS_TEXT);
   await expect(detail).toContainText(REVIEW_HYPOTHESES_LABEL);
   await expect(detail).toContainText(REVIEW_OBSERVATIONS_LABEL);
   await expect(detail).toContainText(REVIEW_RECORDED_HEADING);
-  await expect(detail).toContainText(
-    REVIEW_SUMMARY_TEXT
-  );
+  await expect(detail).toContainText(REVIEW_SUMMARY_TEXT);
   await expect(detail).toContainText(REVIEW_EVIDENCE_HEADING);
 
   // A refresh keeps the review open: the selection is in the address, not in

@@ -208,5 +208,3 @@ export function planEpisodeTraceWindow(
     endStep: Math.max(startStep, Math.min(lastStep, requestedStep + 5))
   };
 }
-
-export {executionModeLabel} from "./playtesting-labels.ts";
