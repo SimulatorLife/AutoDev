@@ -60,6 +60,44 @@ export interface McpServerResource extends McpServerDefinition {
 }
 
 /**
+ * The launch configuration of one MCP server, as the declaration states it.
+ *
+ * These are the keys that say how a server is started or where it is reached,
+ * and they are the whole of the configuration the applied projection carries.
+ * A target's own override wins over the base declaration for the same key, so
+ * this is what one target would receive for one server.
+ *
+ * The shape is deliberately lossless about the launch keys: an applied
+ * projection is compared against this configuration key by key, and a
+ * comparison that cannot see a key cannot see it drift.
+ */
+export interface McpServerLaunchConfiguration {
+  readonly name: string;
+  readonly command?: string;
+  readonly args?: readonly string[];
+  readonly cwd?: string;
+  readonly url?: string;
+  readonly bearerTokenEnvVar?: string;
+  readonly httpHeaders?: Readonly<Record<string, string>>;
+}
+
+/**
+ * The canonical launch configuration for one target.
+ *
+ * `valid: null` means the canonical source was not read at all, which is a
+ * different fact from `valid: false`, which means it was read and could not be
+ * applied. Neither ever produces a server list.
+ */
+export interface RuleSyncMcpLaunchState {
+  readonly source: ".rulesync/mcp.jsonc";
+  readonly valid: boolean | null;
+  readonly issues: readonly RuleSyncValidationIssue[];
+  /** The target whose configuration this is. */
+  readonly target: string;
+  readonly servers: readonly McpServerLaunchConfiguration[];
+}
+
+/**
  * One reason a canonical source cannot be applied.
  *
  * `location` names the part of the document at fault in the same terms the

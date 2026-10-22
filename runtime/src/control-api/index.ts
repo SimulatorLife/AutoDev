@@ -159,6 +159,7 @@ export const CONTROL_API_PATHS = {
   models: "/control/models",
   mcps: "/control/mcps",
   mcpRuntime: "/control/mcp-runtime",
+  mcpApplied: "/control/mcp-applied",
   tools: "/control/tools",
   skills: "/control/skills",
   hooks: "/control/hooks",
@@ -1093,8 +1094,263 @@ function mcpRuntimeView(): Record<string, unknown> {
   };
 }
 
-function mcpsView(): Record<string, unknown> {
-  const state = new RuleSyncRepository(DEFAULT_REPO_ROOT).loadMcpState();
+/**
+ * The target whose MCP configuration the applied catalogue holds.
+ *
+ * The bridge catalogue is rendered from the Codex target's projection, so it
+ * carries that target's launch configuration rather than a merge of every
+ * target's.
+ */
+const MCP_APPLIED_TARGET = "codexcli";
+
+/**
+ * The applied MCP configuration the Runtime published, in the shape the
+ * contract publishes.
+ */
+interface McpLaunchEntry {
+  readonly name: string;
+  readonly command: string | null;
+  readonly args: readonly string[];
+  readonly cwd: string | null;
+  readonly url: string | null;
+  readonly bearerTokenEnvVar: string | null;
+  readonly httpHeaders: Readonly<Record<string, string>>;
+}
+
+/**
+ * The digest of one side of the MCP configuration.
+ *
+ * Both sides are serialized through this one function, so the two digests are
+ * comparable: the desired side is the canonical declaration's launch
+ * configuration and the observed side is the applied projection's, and a
+ * difference in any launch key changes the digest.
+ */
+function mcpLaunchGeneration(entries: readonly McpLaunchEntry[]): string {
+  const serialized = JSON.stringify(
+    entries.map((entry) => ({
+      name: entry.name,
+      command: entry.command,
+      args: entry.args,
+      cwd: entry.cwd,
+      url: entry.url,
+      bearerTokenEnvVar: entry.bearerTokenEnvVar,
+      httpHeaders: Object.fromEntries(
+        Object.entries(entry.httpHeaders).sort(([left], [right]) =>
+          left < right ? -1 : left > right ? 1 : 0
+        )
+      )
+    }))
+  );
+  return createHash("sha256").update(serialized, "utf8").digest("hex");
+}
+
+/**
+ * Whether a value is a plain object rather than an array or null.
+ *
+ * The applied catalogue is untrusted input: it is a file on disk that
+ * anything can write, and every field the reconciliation reads comes out of
+ * it.
+ */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A launch key's value, or `null` when the key is absent or is not a string.
+ *
+ * The applied catalogue is untrusted input, so a key that is present but is
+ * not the type the configuration uses is treated as absent rather than
+ * guessed at.
+ */
+function launchString(candidate: unknown): string | null {
+  return typeof candidate === "string" ? candidate : null;
+}
+
+/**
+ * The launch configuration of one applied catalogue entry.
+ *
+ * A catalogue entry that is not an object, or whose launch keys are not the
+ * types the configuration uses, is refused rather than guessed at: a half-read
+ * entry would compare as a difference the operator cannot act on.
+ */
+function mcpAppliedEntry(name: string, value: unknown): McpLaunchEntry | null {
+  if (!isPlainRecord(value)) return null;
+  const args = value.args;
+  if (
+    args !== undefined &&
+    (!Array.isArray(args) || !args.every((arg) => typeof arg === "string"))
+  )
+    return null;
+  const headers = value.http_headers;
+  if (
+    headers !== undefined &&
+    (!isPlainRecord(headers) ||
+      !Object.values(headers).every((entry) => typeof entry === "string"))
+  )
+    return null;
+  return {
+    name,
+    command: launchString(value.command),
+    args: (args as string[] | undefined) ?? [],
+    cwd: launchString(value.cwd),
+    url: launchString(value.url),
+    bearerTokenEnvVar: launchString(value.bearer_token_env_var),
+    httpHeaders: (headers as Record<string, string> | undefined) ?? {}
+  };
+}
+
+/**
+ * The MCP launch configuration the Runtime published.
+ *
+ * Read from the bridge catalogue the installer renders from the canonical
+ * declaration's projection. A catalogue that is not there means the Runtime
+ * has published no MCP configuration, which is a finding and not a failure;
+ * a catalogue that cannot be read is a failure and is reported as one.
+ */
+function readAppliedMcpCatalogue(codexHome: string): {
+  readonly available: boolean;
+  readonly servers: readonly McpLaunchEntry[];
+  readonly observedAt: string | null;
+  readonly error: string | null;
+} {
+  const cataloguePath = path.join(
+    codexHome,
+    "provider-runtime",
+    "mcp-servers.json"
+  );
+  if (!existsSync(cataloguePath))
+    return {
+      available: false,
+      servers: [],
+      observedAt: null,
+      error: null
+    };
+  let content: string;
+  try {
+    content = readFileSync(cataloguePath, "utf8");
+  } catch (error) {
+    return {
+      available: false,
+      servers: [],
+      observedAt: null,
+      error: `The applied MCP catalogue could not be read: ${error instanceof Error ? error.message : "unknown error"}`
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (error) {
+    return {
+      available: false,
+      servers: [],
+      observedAt: null,
+      error: `The applied MCP catalogue is not valid JSON: ${error instanceof Error ? error.message : "unknown error"}`
+    };
+  }
+  if (!isPlainRecord(parsed)) {
+    return {
+      available: false,
+      servers: [],
+      observedAt: null,
+      error: "The applied MCP catalogue is not an object."
+    };
+  }
+  const servers: McpLaunchEntry[] = [];
+  for (const name of Object.keys(parsed).sort(CONTROL_API_COLLATOR.compare)) {
+    const entry = mcpAppliedEntry(name, parsed[name]);
+    if (entry === null) {
+      return {
+        available: false,
+        servers: [],
+        observedAt: null,
+        error: `The applied MCP catalogue entry "${name}" is not a usable launch configuration.`
+      };
+    }
+    servers.push(entry);
+  }
+  let observedAt: string | null = null;
+  try {
+    observedAt = statSync(cataloguePath).mtime.toISOString();
+  } catch {
+    // The catalogue was read; the moment it was written is a nicety, and its
+    // absence does not change what the configuration is.
+  }
+  return { available: true, servers, observedAt, error: null };
+}
+
+/**
+ * The MCP configuration the Runtime applied, against the canonical
+ * declaration.
+ *
+ * The two sides are compared through the shared reconciliation contract: the
+ * desired generation is the declaration's launch configuration and the
+ * observed generation is the applied projection's. A Control API with no
+ * applied catalogue has not observed anything, and says so rather than
+ * reporting a converged empty configuration.
+ */
+function mcpAppliedView(
+  repositoryRoot: string = DEFAULT_REPO_ROOT,
+  codexHome: string | undefined = defaultCodexHomeForReconciliation()
+): Record<string, unknown> {
+  const declaration = new RuleSyncRepository(repositoryRoot).loadMcpLaunchState(
+    MCP_APPLIED_TARGET
+  );
+  const applied = readAppliedMcpCatalogue(codexHome);
+  const desiredGeneration =
+    declaration.valid === true && declaration.servers.length > 0
+      ? mcpLaunchGeneration(
+          declaration.servers.map((server) => ({
+            name: server.name,
+            command: server.command ?? null,
+            args: server.args ?? [],
+            cwd: server.cwd ?? null,
+            url: server.url ?? null,
+            bearerTokenEnvVar: server.bearerTokenEnvVar ?? null,
+            httpHeaders: server.httpHeaders ?? {}
+          }))
+        )
+      : null;
+  const observedGeneration =
+    applied.available && applied.servers.length > 0
+      ? mcpLaunchGeneration(applied.servers)
+      : null;
+  const evidence: ReconciliationEvidence = {
+    desiredGeneration,
+    observedGeneration,
+    // No Control API operation applies an MCP configuration, so there is no
+    // apply to date. The observation is the applied catalogue's own moment.
+    lastApplyAt: null,
+    lastObservationAt: applied.observedAt,
+    lastError: applied.error
+  };
+  const reconciliation = buildReconciliationView({
+    evidence,
+    history: [],
+    hasObservation: applied.available
+  });
+  return {
+    schema: "autodev-control-mcp-applied-v1",
+    source: path.join(codexHome, "provider-runtime", "mcp-servers.json"),
+    declarationSource: ".rulesync/mcp.jsonc",
+    target: MCP_APPLIED_TARGET,
+    available: applied.available,
+    servers: applied.servers.map((server) => ({
+      name: server.name,
+      command: server.command,
+      args: server.args,
+      cwd: server.cwd,
+      url: server.url,
+      bearerTokenEnvVar: server.bearerTokenEnvVar,
+      httpHeaders: server.httpHeaders
+    })),
+    reconciliation
+  };
+}
+
+function mcpsView(
+  repositoryRoot: string = DEFAULT_REPO_ROOT
+): Record<string, unknown> {
+  const state = new RuleSyncRepository(repositoryRoot).loadMcpState();
   if (state.valid !== true) {
     return {
       schema: "autodev-control-mcps-v1",
@@ -3999,7 +4255,8 @@ function authorizeRequest(
  */
 type ReadOnlyCollectionRenderer = (
   actor: ControlApiActor,
-  repositoryRoot: string | undefined
+  repositoryRoot: string | undefined,
+  codexHome: string | undefined
 ) => object | Promise<object>;
 
 const READ_ONLY_COLLECTIONS: ReadonlyMap<string, ReadOnlyCollectionRenderer> =
@@ -4016,8 +4273,12 @@ const READ_ONLY_COLLECTIONS: ReadonlyMap<string, ReadOnlyCollectionRenderer> =
     [CONTROL_API_PATHS.providers, () => providersView(Date.now())],
     [CONTROL_API_PATHS.providerModels, () => providerModelsView()],
     [CONTROL_API_PATHS.models, () => modelsView()],
-    [CONTROL_API_PATHS.mcps, () => mcpsView()],
+    [CONTROL_API_PATHS.mcps, (_actor, root) => mcpsView(root)],
     [CONTROL_API_PATHS.mcpRuntime, () => mcpRuntimeView()],
+    [
+      CONTROL_API_PATHS.mcpApplied,
+      (_actor, root, codexHome) => mcpAppliedView(root, codexHome)
+    ],
     [CONTROL_API_PATHS.tools, () => toolsView()],
     [CONTROL_API_PATHS.skills, (_actor, root) => skillsView(root)],
     [CONTROL_API_PATHS.hooks, (_actor, root) => hooksView(root)],
@@ -4064,7 +4325,11 @@ async function readOnlyCollection(
   }
   let body: object;
   try {
-    body = await renderCollection(actor, options.repositoryRoot);
+    body = await renderCollection(
+      actor,
+      options.repositoryRoot,
+      options.codexHome
+    );
   } catch (error) {
     if (!(error instanceof EvaluationSourceUnavailableError)) throw error;
     sendControlError(

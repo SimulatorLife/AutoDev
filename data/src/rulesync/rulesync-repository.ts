@@ -26,9 +26,11 @@ import type {
   HookDefinition,
   HookEvent,
   McpServerDefinition,
+  McpServerLaunchConfiguration,
   McpServerTransport,
   McpTargetOverride,
   PromptVersion,
+  RuleSyncMcpLaunchState,
   RuleSyncMcpState,
   RuleSyncValidationIssue,
   SkillDefinition
@@ -840,6 +842,86 @@ function parseMcpState(content: string): RuleSyncMcpState | null {
     issues: [],
     servers: projectMcpDefinitions(servers)
   };
+}
+
+/**
+ * The launch keys one MCP declaration carries.
+ *
+ * These are the keys the applied projection keeps, so a projection can be
+ * compared against the declaration key by key. A key that is not a launch key
+ * -- `disabled`, `default_tools_approval_mode`, `enabled_tools` -- says how a
+ * server is *governed*, not how it is started, and the applied launch
+ * configuration does not carry it.
+ */
+const MCP_LAUNCH_KEYS = [
+  "command",
+  "args",
+  "cwd",
+  "url",
+  "bearer_token_env_var",
+  "http_headers"
+] as const;
+
+type McpLaunchKeys = {
+  command?: string;
+  args?: readonly string[];
+  cwd?: string;
+  url?: string;
+  bearer_token_env_var?: string;
+  http_headers?: Record<string, string>;
+};
+
+function mcpLaunchKeys(config: Record<string, unknown>): McpLaunchKeys {
+  const keys: McpLaunchKeys = {};
+  if (typeof config.command === "string") keys.command = config.command;
+  if (
+    Array.isArray(config.args) &&
+    config.args.every((arg) => typeof arg === "string")
+  ) {
+    keys.args = config.args as string[];
+  }
+  if (typeof config.cwd === "string") keys.cwd = config.cwd;
+  if (typeof config.url === "string") keys.url = config.url;
+  if (typeof config.bearer_token_env_var === "string")
+    keys.bearer_token_env_var = config.bearer_token_env_var;
+  if (
+    isRecord(config.http_headers) &&
+    Object.values(config.http_headers).every(
+      (value) => typeof value === "string"
+    )
+  ) {
+    keys.http_headers = Object.fromEntries(
+      Object.entries(config.http_headers).map(([name, value]) => [
+        name,
+        value as string
+      ])
+    );
+  }
+  return keys;
+}
+
+/**
+ * One server's launch configuration for one target.
+ *
+ * The target's own declaration wins over the base declaration for the same
+ * key, so a target that changes one launch key without repeating the others
+ * still receives the others.
+ */
+function mergeMcpLaunchKeys(
+  base: McpLaunchKeys,
+  override: McpLaunchKeys | null
+): McpLaunchKeys {
+  if (override === null) return { ...base };
+  const merged: McpLaunchKeys = { ...base };
+  for (const key of MCP_LAUNCH_KEYS) {
+    const value = override[key];
+    if (value === undefined) continue;
+    if (key === "args") merged.args = value as readonly string[];
+    else if (key === "http_headers")
+      merged.http_headers = value as Record<string, string>;
+    else merged[key] = value as string;
+  }
+  return merged;
 }
 
 function isHookEvent(value: string): value is HookEvent {
@@ -1714,6 +1796,112 @@ export class RuleSyncRepository {
         servers: []
       }
     );
+  }
+
+  /**
+   * The canonical launch configuration one target would receive.
+   *
+   * This is the declaration side of the MCP reconciliation: the applied
+   * projection is compared against it key by key, so it has to carry the
+   * launch keys losslessly rather than the summary the server list publishes.
+   * A target's own declaration wins over the base declaration for the same
+   * key.
+   *
+   * `valid: null` means the canonical source was not read at all, which is a
+   * different fact from `valid: false`, which means it was read and could not
+   * be applied. Neither ever produces a server list.
+   */
+  loadMcpLaunchState(target: string): RuleSyncMcpLaunchState {
+    const source = ".rulesync/mcp.jsonc" as const;
+    const mcpPath = path.join(this.repositoryRoot, source);
+    if (!existsSync(mcpPath))
+      return { source, valid: null, issues: [], target, servers: [] };
+
+    let content: string;
+    try {
+      content = readFileSync(mcpPath, "utf8");
+    } catch {
+      // Unreadable is not invalid. The file is present and nothing about its
+      // contents has been read, so no fault may be attributed to it and no
+      // server may be projected from a guess.
+      return { source, valid: null, issues: [], target, servers: [] };
+    }
+
+    const errors: ParseError[] = [];
+    const document: unknown = parse(content, errors, {
+      allowTrailingComma: true
+    });
+    if (errors.length > 0) {
+      return {
+        source,
+        valid: false,
+        issues: errors.map((error) => jsoncParseIssue(content, error)),
+        target,
+        servers: []
+      };
+    }
+    if (!isRecord(document)) {
+      return {
+        source,
+        valid: false,
+        issues: [
+          { location: source, message: "The MCP source must be a JSON object." }
+        ],
+        target,
+        servers: []
+      };
+    }
+
+    const base = isRecord(document.mcpServers) ? document.mcpServers : {};
+    const overrides: Record<string, unknown> = {};
+    for (const [name, value] of Object.entries(document)) {
+      if (name === "$schema" || name === "mcpServers") continue;
+      if (!isRecord(value)) continue;
+      if (!isRecord(value.mcpServers)) continue;
+      overrides[name] = value.mcpServers;
+    }
+    const targetOverrides = isRecord(overrides[target])
+      ? overrides[target]
+      : {};
+
+    const names = new Set([
+      ...Object.keys(base),
+      ...Object.keys(targetOverrides)
+    ]);
+    const servers: McpServerLaunchConfiguration[] = [...names]
+      .sort(COLLATOR.compare)
+      .map((name) => {
+        const baseConfig = isRecord(base[name]) ? base[name] : {};
+        const overrideConfig = isRecord(targetOverrides[name])
+          ? targetOverrides[name]
+          : null;
+        const merged = mergeMcpLaunchKeys(
+          mcpLaunchKeys(baseConfig),
+          overrideConfig === null ? null : mcpLaunchKeys(overrideConfig)
+        );
+        // The launch keys are published under their contract names, and a key
+        // the declaration does not carry is absent rather than empty: an
+        // absent key and an empty one are different configurations.
+        const launch: {
+          name: string;
+          command?: string;
+          args?: readonly string[];
+          cwd?: string;
+          url?: string;
+          bearerTokenEnvVar?: string;
+          httpHeaders?: Record<string, string>;
+        } = { name };
+        if (merged.command !== undefined) launch.command = merged.command;
+        if (merged.args !== undefined) launch.args = merged.args;
+        if (merged.cwd !== undefined) launch.cwd = merged.cwd;
+        if (merged.url !== undefined) launch.url = merged.url;
+        if (merged.bearer_token_env_var !== undefined)
+          launch.bearerTokenEnvVar = merged.bearer_token_env_var;
+        if (merged.http_headers !== undefined)
+          launch.httpHeaders = merged.http_headers;
+        return launch;
+      });
+    return { source, valid: true, issues: [], target, servers };
   }
 
   async createSkill(

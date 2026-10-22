@@ -577,6 +577,53 @@ export interface ControlApiMcpRuntimeResponse {
   readonly servers: readonly ControlApiMcpRuntimeServer[];
 }
 
+/**
+ * The MCP launch configuration the Runtime published for one server.
+ *
+ * These are the keys that say how a server is started or where it is
+ * reached: the whole of what the applied projection carries. They are the
+ * configuration, not evidence that the server works.
+ */
+export interface ControlApiMcpAppliedServer {
+  readonly name: string;
+  readonly command: string | null;
+  readonly args: readonly string[];
+  readonly cwd: string | null;
+  readonly url: string | null;
+  readonly bearerTokenEnvVar: string | null;
+  readonly httpHeaders: Readonly<Record<string, string>>;
+}
+
+/**
+ * The MCP configuration the Runtime applied, against the canonical
+ * declaration.
+ *
+ * The canonical RuleSync source is authoritative and the applied projection
+ * is generated from it, so the two are worth comparing: a server that is
+ * declared but not applied is a gap the operator can act on. The comparison
+ * is the Runtime's, and the Console renders it.
+ */
+export interface ControlApiMcpAppliedResponse {
+  readonly schema: "autodev-control-mcp-applied-v1";
+  /** Where the applied configuration was read from. */
+  readonly source: string;
+  /** The canonical declaration the applied configuration is compared against. */
+  readonly declarationSource: ".rulesync/mcp.jsonc";
+  /** The target whose configuration the applied projection holds. */
+  readonly target: string;
+  /**
+   * Whether the applied configuration could be read at all.
+   *
+   * `false` means the Runtime could not be asked, which is a different fact
+   * from an applied configuration that holds no servers.
+   */
+  readonly available: boolean;
+  /** The servers the Runtime published. */
+  readonly servers: readonly ControlApiMcpAppliedServer[];
+  /** The shared reconciliation view of the declaration against the applied state. */
+  readonly reconciliation: ReconciliationView;
+}
+
 export interface ControlApiToolsResponse {
   readonly schema: "autodev-control-tools-v2";
   readonly source: string;
