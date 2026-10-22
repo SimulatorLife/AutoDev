@@ -14,7 +14,6 @@ import {
   type PlaytestEpisode,
   type PlaytestFinding,
   type PlaytestJsonValue,
-  playtestVisualEpisodeRecordId,
   PLAYTESTS_BATCH_STATES,
   PLAYTESTS_DECISION_STATUSES,
   PLAYTESTS_EPISODE_STATES,
@@ -23,8 +22,8 @@ import {
   PLAYTESTS_GAME_OUTCOMES,
   PLAYTESTS_HUMAN_INSTRUMENTS,
   PLAYTESTS_SEVERITIES,
-  PLAYTESTS_VERIFICATION_STAGES
-} from "@simulatorlife/autodev-core";
+  PLAYTESTS_VERIFICATION_STAGES,
+  playtestVisualEpisodeRecordId} from "@simulatorlife/autodev-core";
 import { ConfigRepository } from "@simulatorlife/autodev-data";
 import {
   PlaytestInvalidCursorError,
@@ -1060,7 +1059,7 @@ async function readReviews(
     }
   );
   return {
-    schema: "autodev-control-playtesting-reviews-v1",
+    schema: "autodev-control-playtesting-reviews-v2",
     workspaceId: query.workspaceId,
     total: page.total,
     rows: page.rows,

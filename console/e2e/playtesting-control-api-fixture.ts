@@ -465,19 +465,17 @@ const latestReview = {
  * Findings view with nothing to show — so the review a session carries is
  * projected into the shape the reader validates.
  */
-function reviewSummaryRow(
-  review: {
-    readonly reviewId: string;
-    readonly episodeId: string;
-    readonly status: string;
-    readonly createdAt: string;
-    readonly observations: readonly { readonly text: string }[];
-    readonly interpretations: readonly { readonly text: string }[];
-    readonly findings: readonly unknown[];
-    readonly chronologicalSummary: string;
-    readonly evidenceRefs: readonly unknown[];
-  }
-) {
+function reviewSummaryRow(review: {
+  readonly reviewId: string;
+  readonly episodeId: string;
+  readonly status: string;
+  readonly createdAt: string;
+  readonly observations: readonly { readonly text: string }[];
+  readonly interpretations: readonly { readonly text: string }[];
+  readonly findings: readonly unknown[];
+  readonly chronologicalSummary: string;
+  readonly evidenceRefs: readonly unknown[];
+}) {
   return {
     reviewId: review.reviewId,
     episodeId: review.episodeId,
@@ -492,6 +490,30 @@ function reviewSummaryRow(
       review.interpretations[0]?.text ??
       "The analyst recorded no written conclusion for this session.",
     summary: review.chronologicalSummary,
+    // The claims themselves, not only how many there are: a reader who sees
+    // "1 hypothesis" still cannot read what the analyst claimed.
+    hypotheses: review.interpretations.map((claim) => ({
+      hypothesisId: `hyp-${String(review.interpretations.indexOf(claim) + 1)}`,
+      text: claim.text,
+      status: "hypothesis" as const
+    })),
+    findings: review.findings.map((finding) => {
+      const record = finding as {
+        readonly findingId?: unknown;
+        readonly title?: unknown;
+        readonly evidenceStatus?: unknown;
+      };
+      return {
+        findingId: typeof record.findingId === "string" ? record.findingId : "",
+        title: typeof record.title === "string" ? record.title : "",
+        evidenceStatus:
+          record.evidenceStatus === "verified" ||
+          record.evidenceStatus === "corroborated" ||
+          record.evidenceStatus === "hypothesis"
+            ? record.evidenceStatus
+            : "not observed"
+      };
+    }),
     evidenceRefs: review.evidenceRefs
   };
 }
@@ -507,14 +529,14 @@ const persistedReviewRows = [reviewSummaryRow(latestReview)];
  * Findings view finds the analysis there.
  */
 function respondPlaytestingReviews(response: ServerResponse): void {
-  const fromRuns = Array.from(
-    syntheticRunReviews.values(),
-    (review) =>
-      reviewSummaryRow(review as unknown as Parameters<typeof reviewSummaryRow>[0])
+  const fromRuns = Array.from(syntheticRunReviews.values(), (review) =>
+    reviewSummaryRow(
+      review as unknown as Parameters<typeof reviewSummaryRow>[0]
+    )
   );
   const rows = [...persistedReviewRows, ...fromRuns];
   sendJson(response, {
-    schema: "autodev-control-playtesting-reviews-v1",
+    schema: "autodev-control-playtesting-reviews-v2",
     workspaceId: WORKSPACE_ID,
     total: rows.length,
     rows,

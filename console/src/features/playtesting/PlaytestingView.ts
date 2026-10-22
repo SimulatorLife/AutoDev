@@ -51,7 +51,13 @@ import {
   gameOutcomeBadge,
   sessionMetaLine
 } from "./playtesting-episode-presentation.ts";
-import { batchStateLabel } from "./playtesting-labels.ts";
+import {
+  batchStateLabel,
+  evidenceStatusLabel,
+  findingSeverityLabel,
+  findingStatusLabel,
+  reviewClaimStatusLabel
+} from "./playtesting-labels.ts";
 import {
   PLAYTESTING_FILTER_KEYS,
   PLAYTESTING_PAGE_SIZES,
@@ -66,6 +72,15 @@ import {
   type PlaytestingView as PlaytestingViewTab,
   playtestingViewHref
 } from "./playtesting-url.ts";
+
+/**
+ * The stack a drawer's sections are laid out in.
+ *
+ * The drawer's body is a run of labelled sections, and every one of them
+ * needs the same vertical rhythm. Spelling it inline in each section is how
+ * two adjacent sections end up a pixel apart.
+ */
+const SECTION_STACK_CLASS = "flex flex-col gap-2";
 
 const VIEW_TABS = [
   { id: "overview", label: "Overview" },
@@ -725,6 +740,11 @@ function overview(
  * reason an operator comes to this view. The drawer is where the whole
  * conclusion is readable, and it is address state, so one review can be
  * linked to and a Back returns to it still open.
+ *
+ * The title is the conclusion and the review id is the subtitle. The id is a
+ * hash of the review's identity: it says which record this is and nothing
+ * about what was found, so a panel whose loudest element is the id is
+ * answering a question the operator did not ask.
  */
 function analystReviewDetail(
   review: ControlApiPlaytestingReview,
@@ -733,7 +753,11 @@ function analystReviewDetail(
   return React.createElement(
     DetailDrawer,
     {
-      title: review.reviewId,
+      title:
+        review.headline.length > 0
+          ? review.headline
+          : "The analyst recorded no written conclusion for this session.",
+      titleMono: false,
       badges: React.createElement(StatusBadge, {
         status: "pending",
         label:
@@ -741,19 +765,12 @@ function analystReviewDetail(
             ? "Discovery review"
             : "Confirmatory review"
       }),
-      subtitle: `Recorded ${new Date(review.createdAt).toISOString()}`,
+      subtitle: `${review.reviewId} · Recorded ${new Date(review.createdAt).toISOString()}`,
       closeHref: playtestingReviewCloseHref(scope),
       closeLabel: "Close review detail",
       anchorId: PLAYTESTING_REVIEW_DETAIL_ANCHOR_ID,
       dataAttributes: { "data-review-detail": review.reviewId }
     },
-    React.createElement(
-      "p",
-      { className: "text-sm text-fg leading-relaxed" },
-      review.headline.length > 0
-        ? review.headline
-        : "The analyst recorded no written conclusion for this session."
-    ),
     React.createElement(
       DetailGrid,
       null,
@@ -771,12 +788,100 @@ function analystReviewDetail(
       }),
       React.createElement(DetailValue, {
         label: "Status",
-        children: review.status
+        children: reviewClaimStatusLabel(review.status)
       })
+    ),
+    // The claims themselves, not only how many there are. A count told the
+    // reader that five hypotheses exist and left them unable to read any of
+    // them, which is the whole content of the review.
+    React.createElement(
+      "div",
+      { className: SECTION_STACK_CLASS },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        `What the analyst concluded (${String(review.hypotheses.length)})`
+      ),
+      review.hypotheses.length === 0
+        ? React.createElement(
+            "p",
+            { className: `text-sm ${MUTED_META_CLASS}` },
+            "This review records no written conclusions."
+          )
+        : React.createElement(
+            "ol",
+            {
+              className:
+                "flex list-decimal flex-col gap-2 pl-5 text-sm leading-relaxed text-fg-secondary",
+              "data-review-claims": String(review.hypotheses.length)
+            },
+            review.hypotheses.map((claim) =>
+              React.createElement(
+                "li",
+                {
+                  key: claim.hypothesisId,
+                  "data-review-claim": claim.hypothesisId
+                },
+                claim.text,
+                claim.status === "hypothesis"
+                  ? null
+                  : React.createElement(StatusBadge, {
+                      status: NOT_OBSERVED_STATUS,
+                      label: reviewClaimStatusLabel(claim.status)
+                    })
+              )
+            )
+          )
     ),
     React.createElement(
       "div",
-      { className: "flex flex-col gap-2" },
+      { className: SECTION_STACK_CLASS },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        `Findings this review raised (${String(review.findings.length)})`
+      ),
+      review.findings.length === 0
+        ? React.createElement(
+            "p",
+            { className: `text-sm ${MUTED_META_CLASS}` },
+            "This review raised no findings. A hypothesis that was never reproduced stays a hypothesis."
+          )
+        : React.createElement(
+            "ul",
+            { className: "flex flex-col gap-2 text-sm text-fg-secondary" },
+            review.findings.map((finding) =>
+              React.createElement(
+                "li",
+                {
+                  key: finding.findingId,
+                  className: "flex flex-wrap items-center gap-2"
+                },
+                React.createElement(
+                  "span",
+                  { className: "font-medium text-fg" },
+                  finding.title.length > 0
+                    ? finding.title
+                    : "This finding carries no title."
+                ),
+                React.createElement(StatusBadge, {
+                  status:
+                    finding.evidenceStatus === "verified"
+                      ? "valid"
+                      : finding.evidenceStatus === "corroborated"
+                        ? "ready"
+                        : finding.evidenceStatus === "hypothesis"
+                          ? "pending"
+                          : NOT_OBSERVED_STATUS,
+                  label: evidenceStatusLabel(finding.evidenceStatus)
+                })
+              )
+            )
+          )
+    ),
+    React.createElement(
+      "div",
+      { className: SECTION_STACK_CLASS },
       React.createElement(
         "h3",
         { className: SECTION_HEADING_CLASS },
@@ -792,7 +897,7 @@ function analystReviewDetail(
     ),
     React.createElement(
       "div",
-      { className: "flex flex-col gap-2" },
+      { className: SECTION_STACK_CLASS },
       React.createElement(
         "h3",
         { className: SECTION_HEADING_CLASS },
@@ -998,19 +1103,19 @@ function findingsTable(
       id: "severity",
       header: "Severity",
       weight: 100,
-      cell: (finding) => finding.severity
+      cell: (finding) => findingSeverityLabel(finding.severity)
     },
     {
       id: "status",
       header: "Status",
       weight: 100,
-      cell: (finding) => finding.status
+      cell: (finding) => findingStatusLabel(finding.status)
     },
     {
       id: "evidence",
       header: "Evidence",
       weight: 160,
-      cell: (finding) => finding.evidenceStatus
+      cell: (finding) => evidenceStatusLabel(finding.evidenceStatus)
     },
     {
       id: "exposure",

@@ -510,6 +510,29 @@ export function evidenceStatusLabel(
 }
 
 /**
+ * The operator-facing label for a claim the analyst recorded.
+ *
+ * A review records two kinds of claim: what the analyst asserts, and what it
+ * explicitly could not confirm. Reading the second as the first would turn an
+ * explicit null into a conclusion, so the status gets its own word.
+ *
+ * The review's own status uses the same words for the same reason.
+ */
+export function reviewClaimStatusLabel(status: string): string {
+  switch (status) {
+    case "hypothesis": {
+      return "Hypothesis";
+    }
+    case "not observed": {
+      return NOT_OBSERVED_LABEL;
+    }
+    default: {
+      return UNRECOGNISED_LABEL;
+    }
+  }
+}
+
+/**
  * How a piece of evidence is labelled by kind.
  *
  * The kind is the citation's type, so the label says what the citation

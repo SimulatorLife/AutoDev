@@ -79,6 +79,34 @@ export interface PlaytestReviewListFilter {
 }
 
 /**
+ * One finding the analyst recorded, with the evidence status it carries.
+ *
+ * The status is the part an operator needs: a finding whose evidence was never
+ * reproduced is still a candidate, and a reader has to be able to tell a
+ * candidate from a verified defect without opening the archive.
+ */
+export interface PlaytestReviewFindingSummary {
+  readonly findingId: string;
+  readonly title: string;
+  readonly evidenceStatus: PlaytestFinding["evidenceStatus"];
+}
+
+/**
+ * One claim the analyst recorded, with the status it carries.
+ *
+ * A review claims two kinds of thing: something the analyst asserts, and
+ * something the analyst explicitly could not confirm. The payload records the
+ * second kind as a claim with the `not observed` status, so it would be wrong
+ * to read every recorded claim as an asserted conclusion.
+ */
+export interface PlaytestReviewClaimSummary {
+  readonly hypothesisId: string;
+  readonly text: string;
+  /** "hypothesis" for an asserted claim, "not observed" for an explicit null. */
+  readonly status: "hypothesis" | "not observed";
+}
+
+/**
  * One persisted analyst review, projected down to what a list row can hold.
  * The full canonical payload stays in the archive; this is the durable
  * record of what the analyst concluded about an episode.
@@ -99,6 +127,15 @@ export interface PlaytestReviewSummary {
   readonly headline: string;
   /** The review's chronological summary, bounded. */
   readonly summary: string;
+  /**
+   * The analyst's interpretations, in the order the review recorded them.
+   *
+   * The count alone was not enough: a reader who sees "5 hypotheses" still
+   * cannot read what the analyst claimed, and the claims are the review.
+   */
+  readonly hypotheses: readonly PlaytestReviewClaimSummary[];
+  /** The findings the review carries, with each one's evidence status. */
+  readonly findings: readonly PlaytestReviewFindingSummary[];
   /** The evidence the review cites, deduplicated and bounded. */
   readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
 }

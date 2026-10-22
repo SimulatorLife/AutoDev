@@ -22,6 +22,7 @@ import {
   isPlaytestFindingId,
   legacyPlaytestExecutionProvenance,
   migratePlaytestCrossSessionSynthesisV1,
+  PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
   PLAYTEST_REVIEW_SECTION_NOT_RECORDED,
   type PlaytestAdapterAssignmentManifest,
   type PlaytestAdapterBatch,
@@ -71,7 +72,6 @@ import {
   PLAYTESTS_EPISODE_SCHEMA_V6,
   PLAYTESTS_EPISODE_SCHEMA_V7,
   PLAYTESTS_EPISODE_TERMINATION_REASONS,
-  PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
@@ -91,6 +91,8 @@ import {
 import { PlaytestSourceUnavailableError } from "./errors.ts";
 import type {
   PlaytestHumanAggregateRecord,
+  PlaytestReviewClaimSummary,
+  PlaytestReviewFindingSummary,
   PlaytestReviewSummary
 } from "./types.ts";
 
@@ -2176,14 +2178,30 @@ export function decodeReview(
 export const MAX_PLAYTEST_REVIEW_HEADLINE_CHARS = 240;
 export const MAX_PLAYTEST_REVIEW_SUMMARY_CHARS = 600;
 export const MAX_PLAYTEST_REVIEW_EVIDENCE_REFS = 8;
+/** One claim is a sentence the analyst wrote; the drawer shows it whole. */
+export const MAX_PLAYTEST_REVIEW_CLAIM_CHARS = 600;
+/** How many claims one review row carries. */
+export const MAX_PLAYTEST_REVIEW_CLAIMS = 50;
 
 /**
  * Bound a free-text field to the length a list row may carry. This is the
  * one bounded-text helper the Playtesting codecs use; a longer value is
  * truncated rather than dropped so the row still says something.
+ *
+ * The cut lands on a word boundary and is marked. A raw `slice` cut the
+ * review's conclusion in the middle of a word -- "The step 1 pred" -- which
+ * reads as a corrupted record rather than a shortened one, and left the
+ * reader unable to tell a truncation from a mistake.
+ *
+ * The ellipsis is inside the bound: the result is never longer than `max`.
  */
 export function boundPlaytestText(value: string, max: number): string {
-  return value.length > max ? value.slice(0, max) : value;
+  if (value.length <= max) return value;
+  if (max <= 1) return value.slice(0, max);
+  const cut = value.slice(0, max - 1);
+  const lastSpace = cut.lastIndexOf(" ");
+  const head = lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
+  return `${head.trimEnd()}…`;
 }
 
 /**
@@ -2216,6 +2234,107 @@ function firstReviewClaimText(value: unknown): string {
 /** The length of a claim array, counting an absent array as no claims. */
 function reviewClaimCount(value: unknown): number {
   return Array.isArray(value) ? value.length : 0;
+}
+
+/**
+ * The status a claim or a finding carries when nothing was confirmed.
+ *
+ * It is the honest reading of a payload that says nothing: not "verified",
+ * and not "there was no finding".
+ */
+const REVIEW_NOT_OBSERVED = "not observed";
+
+/**
+ * The evidence statuses a finding may carry.
+ *
+ * A status outside this set is not a status the product knows, and it is
+ * read as "not observed" rather than as anything stronger: an unknown label
+ * must never upgrade a finding into a verified defect.
+ */
+const REVIEW_FINDING_EVIDENCE_STATUSES = new Set<
+  PlaytestFinding["evidenceStatus"]
+>(["verified", "corroborated", "hypothesis", REVIEW_NOT_OBSERVED]);
+
+/**
+ * The findings the review carries, with the evidence status each one holds.
+ *
+ * The status is read from the payload rather than assumed: a finding with no
+ * readable status is a candidate, not a verified defect.
+ */
+function decodeReviewFindings(
+  value: unknown
+): readonly PlaytestReviewFindingSummary[] {
+  if (!Array.isArray(value)) return [];
+  const findings: PlaytestReviewFindingSummary[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const findingId =
+      typeof entry.findingId === "string" ? entry.findingId : "";
+    const title = typeof entry.title === "string" ? entry.title.trim() : "";
+    if (findingId === "" && title === "") continue;
+    const rawStatus = entry.evidenceStatus;
+    const evidenceStatus =
+      typeof rawStatus === "string" &&
+      REVIEW_FINDING_EVIDENCE_STATUSES.has(
+        rawStatus as PlaytestFinding["evidenceStatus"]
+      )
+        ? (rawStatus as PlaytestFinding["evidenceStatus"])
+        : REVIEW_NOT_OBSERVED;
+    findings.push({ findingId, title, evidenceStatus });
+  }
+  return findings;
+}
+
+/**
+ * The analyst's claims, in the order the review recorded them.
+ *
+ * The payload keeps them as claims -- an id, a status and the text -- and
+ * this projects them to the three fields a reader needs. The status is kept
+ * because a review also records what the analyst could *not* confirm, and
+ * reading that as an asserted conclusion would turn an explicit null into a
+ * finding.
+ *
+ * A claim with no text contributes nothing to read and is skipped; the
+ * payload's own count of claims is not changed by this projection.
+ */
+function decodeReviewClaims(
+  value: unknown
+): readonly PlaytestReviewClaimSummary[] {
+  if (!Array.isArray(value)) return [];
+  const claims: PlaytestReviewClaimSummary[] = [];
+  for (const claim of value) {
+    const text = reviewClaimText(claim);
+    if (text.length === 0) continue;
+    const record = isRecord(claim) ? claim : {};
+    const hypothesisId =
+      typeof record.hypothesisId === "string" ? record.hypothesisId : "";
+    const rawStatus = record.status;
+    const status: PlaytestReviewClaimSummary["status"] =
+      rawStatus === REVIEW_NOT_OBSERVED || rawStatus === "not-observed"
+        ? REVIEW_NOT_OBSERVED
+        : "hypothesis";
+    claims.push({
+      hypothesisId,
+      text: boundPlaytestText(text, MAX_PLAYTEST_REVIEW_CLAIM_CHARS),
+      status
+    });
+    if (claims.length >= MAX_PLAYTEST_REVIEW_CLAIMS) break;
+  }
+  return claims;
+}
+
+/**
+ * The headline: the first claim the analyst asserted.
+ *
+ * The first *asserted* claim, not simply the first one. A review records
+ * what it could not confirm alongside what it claims, and a headline that
+ * leads with an explicit null would state the opposite of what the analyst
+ * concluded.
+ */
+function firstAssertedReviewClaimText(value: unknown): string {
+  const claims = decodeReviewClaims(value);
+  const asserted = claims.find((claim) => claim.status === "hypothesis");
+  return asserted?.text ?? claims[0]?.text ?? "";
 }
 
 /** The workspace a review payload claims, wherever that payload keeps it. */
@@ -2326,7 +2445,7 @@ export function decodeReviewSummary(
     MAX_PLAYTEST_REVIEW_SUMMARY_CHARS
   );
   const headline = boundPlaytestText(
-    firstReviewClaimText(payload.interpretations) ||
+    firstAssertedReviewClaimText(payload.interpretations) ||
       firstReviewClaimText(payload.observations) ||
       summary,
     MAX_PLAYTEST_REVIEW_HEADLINE_CHARS
@@ -2346,6 +2465,8 @@ export function decodeReviewSummary(
     findingCount: reviewClaimCount(payload.findings),
     headline,
     summary,
+    hypotheses: decodeReviewClaims(payload.interpretations),
+    findings: decodeReviewFindings(payload.findings),
     evidenceRefs: decodeReviewEvidenceRefs(payload.evidenceRefs)
   };
 }

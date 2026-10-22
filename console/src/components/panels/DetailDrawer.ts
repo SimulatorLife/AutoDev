@@ -80,6 +80,18 @@ export interface DetailDrawerProps {
   /** The entity id, rendered as the drawer's title. */
   readonly title: string;
   /**
+   * Render the title monospaced.
+   *
+   * An identifier reads as an identifier in a fixed pitch: its separators and
+   * character set say "this is a key", not "this is a name". A human-facing
+   * title -- the analyst's conclusion, say -- is a sentence, and a sentence
+   * set in a fixed pitch reads as a hash that happens to have spaces in it.
+   *
+   * On by default because every drawer titles with an id, and an id is the
+   * thing the fixed pitch is for.
+   */
+  readonly titleMono?: boolean | undefined;
+  /**
    * Tag and status affordances beside the title. They belong to the entity,
    * so the feature supplies them rather than the drawer guessing a vocabulary.
    */
@@ -120,6 +132,7 @@ export interface DetailDrawerProps {
 
 export function DetailDrawer({
   title,
+  titleMono = true,
   badges,
   subtitle,
   closeHref,
@@ -144,7 +157,7 @@ export function DetailDrawer({
         React.createElement(
           "div",
           { className: DETAIL_DRAWER_TITLE_ROW_CLASS },
-          React.createElement(EntityTitle, { mono: true }, title),
+          React.createElement(EntityTitle, { mono: titleMono }, title),
           badges
         ),
         subtitle === undefined

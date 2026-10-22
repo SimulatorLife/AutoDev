@@ -40,6 +40,14 @@ function review(
     findingCount: 0,
     headline: "The fast-forward label moves from 1x to 2x across the captures.",
     summary: "Four frames were reviewed against the recorded player intent.",
+    hypotheses: [
+      {
+        hypothesisId: "int-speed-toggle",
+        text: "The fast-forward button may have no visible effect before the race starts.",
+        status: "hypothesis"
+      }
+    ],
+    findings: [],
     evidenceRefs: [{ kind: "episode", id: "episode-17" }],
     ...overrides
   };
@@ -260,4 +268,99 @@ test("a review selection for a review this page does not show opens nothing", ()
     })
   );
   assert.doesNotMatch(html, /data-review-detail=/u);
+});
+
+test("the review detail reads the analyst's claims, not only how many there are", () => {
+  const selected = parsePlaytestingScope({
+    view: "findings",
+    workspaceId: WORKSPACE,
+    review: "review-1"
+  });
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: selected,
+      workspaces: [
+        { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
+      ],
+      list: {
+        resource: "findings",
+        rows: [],
+        total: 0,
+        nextCursor: null,
+        reviews: [
+          review({
+            hypotheses: [
+              {
+                hypothesisId: "int-1",
+                text: "The fast-forward button may have no visible effect.",
+                status: "hypothesis"
+              },
+              {
+                hypothesisId: "int-2",
+                text: "The run button gating was not observed.",
+                status: "not observed"
+              }
+            ],
+            findings: [
+              {
+                findingId: "finding-1",
+                title: "The speed toggle does not advance the race.",
+                evidenceStatus: "hypothesis"
+              }
+            ]
+          })
+        ],
+        reviewTotal: 1
+      }
+    })
+  );
+
+  // The claims themselves are readable, each one addressed by its own id.
+  assert.match(html, /data-review-claim="int-1"/u);
+  assert.match(html, /The fast-forward button may have no visible effect\./u);
+  assert.match(html, /data-review-claim="int-2"/u);
+  assert.match(html, /The run button gating was not observed\./u);
+  // A claim the analyst could not confirm says so rather than reading as a
+  // conclusion.
+  assert.match(html, /Not observed/u);
+  // A finding the review raised carries its evidence status.
+  assert.match(html, /The speed toggle does not advance the race\./u);
+});
+
+test("the review detail is titled with the conclusion, not with the review id", () => {
+  const selected = parsePlaytestingScope({
+    view: "findings",
+    workspaceId: WORKSPACE,
+    review: "review-1"
+  });
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: selected,
+      workspaces: [
+        { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
+      ],
+      list: {
+        resource: "findings",
+        rows: [],
+        total: 0,
+        nextCursor: null,
+        reviews: [review()],
+        reviewTotal: 1
+      }
+    })
+  );
+
+  // The title is the analyst's conclusion...
+  assert.match(
+    html,
+    /<h2[^>]*>The fast-forward label moves from 1x to 2x across the captures\.<\/h2>/u
+  );
+  // ...and it is a sentence, so it is not set in the fixed pitch that marks
+  // an identifier.
+  const titleTag =
+    html.match(/<h2[^>]*>The fast-forward label moves/u)?.[0] ?? "";
+  assert.doesNotMatch(titleTag, /font-mono/u);
+  // The review id is still on the panel, as the machine-readable subtitle.
+  assert.match(html, /review-1/u);
+  assert.doesNotMatch(html, /<h2[^>]*>review-1<\/h2>/u);
 });

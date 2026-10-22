@@ -2,17 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  type PlaytestDiscoverySessionReview,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
-  type PlaytestDiscoverySessionReview,
   type PlaytestSessionReview
 } from "@simulatorlife/autodev-core";
 
 import {
-  PlaytestRepository,
   type PlaytestListOptions,
+  PlaytestRepository,
   type PlaytestReviewSummary
 } from "../../src/playtesting/index.ts";
 
@@ -786,4 +786,156 @@ test("a persisted confirmatory and discovery review are listed from their canoni
     ["2026-10-02T00:00:00.000Z", "2026-10-01T00:00:00.000Z"]
   );
   assert.deepEqual(summaries[0]!.evidenceRefs, [episodeEvidence]);
+});
+
+test("the headline leads with a claim the analyst asserted, not one they could not confirm", async () => {
+  const fake = makeReviewClickHouseFetch([
+    storedRow({
+      episodeId: EPISODE_A,
+      reviewId: "review-mixed-claims",
+      createdAt: "2026-10-01 00:00:00.000",
+      payload: confirmatoryPayload({
+        reviewId: "review-mixed-claims",
+        episodeId: EPISODE_A,
+        interpretations: [
+          {
+            hypothesisId: "int-not-observed",
+            status: "not observed",
+            text: "The effect of the selected stage was not observed.",
+            evidenceRefs: [{ kind: "episode", id: EPISODE_A }]
+          },
+          {
+            hypothesisId: "int-asserted",
+            status: "hypothesis",
+            text: "The stage selection may not have been applied.",
+            evidenceRefs: [{ kind: "episode", id: EPISODE_A }]
+          }
+        ]
+      })
+    })
+  ]);
+  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+
+  const page = await repo.listReviews({ workspaceId: WORKSPACE_A });
+
+  assert.equal(
+    page.rows[0]!.headline,
+    "The stage selection may not have been applied."
+  );
+});
+
+test("the review carries the analyst's claims with the status each one holds", async () => {
+  const fake = makeReviewClickHouseFetch([
+    storedRow({
+      episodeId: EPISODE_A,
+      reviewId: "review-with-claims",
+      createdAt: "2026-10-01 00:00:00.000",
+      payload: confirmatoryPayload({
+        reviewId: "review-with-claims",
+        episodeId: EPISODE_A,
+        interpretations: [
+          {
+            hypothesisId: "int-1",
+            status: "hypothesis",
+            text: "The first claim the analyst asserted.",
+            evidenceRefs: [{ kind: "episode", id: EPISODE_A }]
+          },
+          {
+            hypothesisId: "int-2",
+            status: "not observed",
+            text: "The second claim the analyst could not confirm.",
+            evidenceRefs: [{ kind: "episode", id: EPISODE_A }]
+          }
+        ]
+      })
+    })
+  ]);
+  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+
+  const page = await repo.listReviews({ workspaceId: WORKSPACE_A });
+
+  assert.deepEqual(page.rows[0]!.hypotheses, [
+    {
+      hypothesisId: "int-1",
+      text: "The first claim the analyst asserted.",
+      status: "hypothesis"
+    },
+    {
+      hypothesisId: "int-2",
+      text: "The second claim the analyst could not confirm.",
+      status: "not observed"
+    }
+  ]);
+});
+
+test("a finding's evidence status is read from the payload, not assumed", async () => {
+  const fake = makeReviewClickHouseFetch([
+    storedRow({
+      episodeId: EPISODE_A,
+      reviewId: "review-with-findings",
+      createdAt: "2026-10-01 00:00:00.000",
+      payload: confirmatoryPayload({
+        reviewId: "review-with-findings",
+        episodeId: EPISODE_A,
+        interpretations: [claim("An interpretation")],
+        findings: [
+          {
+            findingId: "finding-verified",
+            title: "The verified defect",
+            evidenceStatus: "verified"
+          },
+          {
+            findingId: "finding-unreadable",
+            title: "The finding with an unreadable status",
+            evidenceStatus: "not a status the product knows"
+          }
+        ]
+      })
+    })
+  ]);
+  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+
+  const page = await repo.listReviews({ workspaceId: WORKSPACE_A });
+
+  assert.deepEqual(page.rows[0]!.findings, [
+    {
+      findingId: "finding-verified",
+      title: "The verified defect",
+      evidenceStatus: "verified"
+    },
+    {
+      findingId: "finding-unreadable",
+      title: "The finding with an unreadable status",
+      evidenceStatus: "not observed"
+    }
+  ]);
+});
+
+test("bounded review text is cut on a word boundary, not mid-word", async () => {
+  const long = `${"a".repeat(230)} the sentence continues past the bound`;
+  const veryLong = `${"b".repeat(600)} the summary continues past its bound`;
+  const fake = makeReviewClickHouseFetch([
+    storedRow({
+      episodeId: EPISODE_A,
+      reviewId: "review-long-text",
+      createdAt: "2026-10-01 00:00:00.000",
+      payload: confirmatoryPayload({
+        reviewId: "review-long-text",
+        episodeId: EPISODE_A,
+        interpretations: [claim(long)],
+        chronologicalSummary: veryLong
+      })
+    })
+  ]);
+  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+
+  const page = await repo.listReviews({ workspaceId: WORKSPACE_A });
+  const row = page.rows[0]!;
+
+  // The cut lands after a whole word: "the" is the last complete word
+  // before the bound, and "sentence" is not half-written.
+  assert.equal(row.headline, `${"a".repeat(230)} the…`);
+  assert.equal(row.summary, `${"b".repeat(599)}…`);
+  assert.ok(row.headline.length <= 240);
+  assert.ok(row.summary.length <= 600);
 });

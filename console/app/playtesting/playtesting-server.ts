@@ -8,8 +8,6 @@ import {
   CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
   type ControlApiPlaytestingActiveRunsResponse,
   type ControlApiPlaytestingAnalysesResponse,
-  type ControlApiPlaytestingReview,
-  type ControlApiPlaytestingReviewsResponse,
   type ControlApiPlaytestingAnalysisDispatchResponse,
   type ControlApiPlaytestingAnalystRun,
   type ControlApiPlaytestingCapabilitiesResponse,
@@ -21,6 +19,10 @@ import {
   type ControlApiPlaytestingPageResponse,
   type ControlApiPlaytestingReadinessResponse,
   type ControlApiPlaytestingResource,
+  type ControlApiPlaytestingReview,
+  type ControlApiPlaytestingReviewClaim,
+  type ControlApiPlaytestingReviewFinding,
+  type ControlApiPlaytestingReviewsResponse,
   type ControlApiPlaytestingRunCancellationResponse,
   type ControlApiPlaytestingRunRecord,
   type ControlApiPlaytestingRunRequestLookupResponse,
@@ -38,7 +40,6 @@ import {
   type PlaytestFinding,
   type PlaytestJsonValue,
   type PlaytestLaunchRequest,
-  type PlaytestSessionReference,
   PLAYTESTS_BATCH_SCHEMA,
   PLAYTESTS_BATCH_SCHEMA_V1,
   PLAYTESTS_BATCH_SCHEMA_V2,
@@ -55,6 +56,7 @@ import {
   PLAYTESTS_MAX_ANALYSIS_SESSIONS,
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
+  type PlaytestSessionReference,
   type PlaytestSessionReview
 } from "@simulatorlife/autodev-core";
 
@@ -1179,6 +1181,45 @@ export async function listPlaytestingAnalyses(
   };
 }
 
+/**
+ * One claim the analyst recorded.
+ *
+ * The status is checked against the two the product knows, because a claim
+ * the analyst could not confirm is not an asserted conclusion and the
+ * Console must not present it as one.
+ */
+function isPlaytestingReviewClaim(
+  value: unknown
+): value is ControlApiPlaytestingReviewClaim {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.hypothesisId === "string" &&
+    typeof value.text === "string" &&
+    (value.status === "hypothesis" || value.status === "not observed")
+  );
+}
+
+/**
+ * One finding the review carries.
+ *
+ * The evidence status is checked against the four the product knows, because
+ * an unreadable status is not a verified defect and the Console must not
+ * render one as though it were.
+ */
+function isPlaytestingReviewFinding(
+  value: unknown
+): value is ControlApiPlaytestingReviewFinding {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.findingId === "string" &&
+    typeof value.title === "string" &&
+    (value.evidenceStatus === "verified" ||
+      value.evidenceStatus === "corroborated" ||
+      value.evidenceStatus === "hypothesis" ||
+      value.evidenceStatus === "not observed")
+  );
+}
+
 function isPlaytestingReview(
   value: unknown,
   workspaceId: string
@@ -1196,6 +1237,10 @@ function isPlaytestingReview(
     isCount(value.findingCount) &&
     typeof value.headline === "string" &&
     typeof value.summary === "string" &&
+    Array.isArray(value.hypotheses) &&
+    value.hypotheses.every(isPlaytestingReviewClaim) &&
+    Array.isArray(value.findings) &&
+    value.findings.every(isPlaytestingReviewFinding) &&
     Array.isArray(value.evidenceRefs)
   );
 }
@@ -1230,7 +1275,7 @@ export async function fetchPlaytestingReviews(
   const data = result.data;
   if (
     !isRecord(data) ||
-    data.schema !== "autodev-control-playtesting-reviews-v1" ||
+    data.schema !== "autodev-control-playtesting-reviews-v2" ||
     data.workspaceId !== workspaceId ||
     !isCount(data.total) ||
     !Array.isArray(data.rows) ||
@@ -1239,7 +1284,7 @@ export async function fetchPlaytestingReviews(
   ) {
     return invalidResponse(
       "Playtesting reviews",
-      "autodev-control-playtesting-reviews-v1"
+      "autodev-control-playtesting-reviews-v2"
     );
   }
   return {

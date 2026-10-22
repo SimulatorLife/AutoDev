@@ -41,7 +41,6 @@ import type {
   PlaytestArtifactReference,
   PlaytestJsonValue
 } from "../playtesting/protocol-types.ts";
-import type { PlaytestVisualPolicyId } from "../playtesting/visual-decision.ts";
 import type {
   PlaytestComparison,
   PlaytestEvidenceLocator,
@@ -49,6 +48,7 @@ import type {
   PlaytestNumericInterval,
   PlaytestSessionReference
 } from "../playtesting/types.ts";
+import type { PlaytestVisualPolicyId } from "../playtesting/visual-decision.ts";
 import type {
   OperationHistoryEntry,
   ReconciliationDiff,
@@ -1495,6 +1495,34 @@ export interface ControlApiPlaytestingAnalysesResponse {
 }
 
 /**
+ * One claim the analyst recorded, with the status it carries.
+ *
+ * A review claims two kinds of thing: something the analyst asserts, and
+ * something the analyst explicitly could not confirm. The payload records the
+ * second kind as a claim with the `not observed` status, so it would be wrong
+ * to read every recorded claim as an asserted conclusion.
+ */
+export interface ControlApiPlaytestingReviewClaim {
+  readonly hypothesisId: string;
+  readonly text: string;
+  /** "hypothesis" for an asserted claim, "not observed" for an explicit null. */
+  readonly status: "hypothesis" | "not observed";
+}
+
+/**
+ * One finding the analyst recorded, with the evidence status it carries.
+ *
+ * The status is the part a reader needs: a finding whose evidence was never
+ * reproduced is still a candidate, and the Console has to be able to tell a
+ * candidate from a verified defect.
+ */
+export interface ControlApiPlaytestingReviewFinding {
+  readonly findingId: string;
+  readonly title: string;
+  readonly evidenceStatus: PlaytestFinding["evidenceStatus"];
+}
+
+/**
  * One persisted analyst review, as the Console reads it.
  *
  * The review is the analyst's durable record about an episode: what it
@@ -1521,6 +1549,15 @@ export interface ControlApiPlaytestingReview {
   readonly headline: string;
   /** The review's chronological summary, bounded for display. */
   readonly summary: string;
+  /**
+   * The analyst's interpretations, in the order the review recorded them.
+   *
+   * The count alone was not enough: a reader who sees "5 hypotheses" still
+   * cannot read what the analyst claimed, and the claims are the review.
+   */
+  readonly hypotheses: readonly ControlApiPlaytestingReviewClaim[];
+  /** The findings the review carries, with each one's evidence status. */
+  readonly findings: readonly ControlApiPlaytestingReviewFinding[];
   /** The evidence the review cites. */
   readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
 }
@@ -1533,7 +1570,7 @@ export interface ControlApiPlaytestingReview {
  * ran an analysis and came back after a restart must still see it.
  */
 export interface ControlApiPlaytestingReviewsResponse {
-  readonly schema: "autodev-control-playtesting-reviews-v1";
+  readonly schema: "autodev-control-playtesting-reviews-v2";
   readonly workspaceId: string;
   readonly total: number;
   readonly rows: readonly ControlApiPlaytestingReview[];
