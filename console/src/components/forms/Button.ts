@@ -8,26 +8,41 @@ import React from "react";
  * form submission and focus behaviour stay correct; only the chrome is shared.
  */
 
+/**
+ * Every control in the button vocabulary is a pointer target.
+ *
+ * The cursor is the primary signal that a thing is clickable, and the Console
+ * had none of it. Every button -- "Apply filters", "Reset to defaults", the
+ * per-session steppers, the provider row's limit buttons -- rendered with the
+ * default arrow while looking like a button and behaving like one, so the
+ * pointer contradicted the chrome. The Console's own newer surfaces spelled
+ * `cursor-pointer` inline instead, which left the same role with two
+ * spellings and the shared vocabulary with none.
+ *
+ * It lives in the "after" class of every variant because that is the piece
+ * each variant's full, compact and icon forms share, and because the disabled
+ * cursor already lived there: a disabled button keeps `not-allowed`, which
+ * says "this is a target, and it is off" rather than pretending it is not one.
+ */
+const BUTTON_POINTER_CLASS = "cursor-pointer";
+
 const DEFAULT_BUTTON_SIZE_CLASS = "px-3 py-1.5 text-sm font-medium";
 const COMPACT_BUTTON_SIZE_CLASS = "px-2 py-1 text-xs font-medium";
 
 /** The one primary action in a group: applying, saving, confirming. */
 const PRIMARY_BUTTON_BEFORE_SIZE_CLASS =
   "rounded border border-transparent bg-accent";
-const PRIMARY_BUTTON_AFTER_SIZE_CLASS =
-  "text-fg-inverse transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60";
+const PRIMARY_BUTTON_AFTER_SIZE_CLASS = `text-fg-inverse transition-colors hover:brightness-110 ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60`;
 export const PRIMARY_BUTTON_CLASS = `${PRIMARY_BUTTON_BEFORE_SIZE_CLASS} ${DEFAULT_BUTTON_SIZE_CLASS} ${PRIMARY_BUTTON_AFTER_SIZE_CLASS}`;
 
 /** A supporting action: secondary filters, cancel, and inline toggles. */
 const SECONDARY_BUTTON_BEFORE_SIZE_CLASS =
   "rounded border border-border-strong bg-surface-raised";
-const SECONDARY_BUTTON_AFTER_SIZE_CLASS =
-  "text-fg transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60";
+const SECONDARY_BUTTON_AFTER_SIZE_CLASS = `text-fg transition-colors hover:bg-hover ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60`;
 export const SECONDARY_BUTTON_CLASS = `${SECONDARY_BUTTON_BEFORE_SIZE_CLASS} ${DEFAULT_BUTTON_SIZE_CLASS} ${SECONDARY_BUTTON_AFTER_SIZE_CLASS}`;
 
 /** A compact outlined control such as the sidebar collapse toggle. */
-const OUTLINE_BUTTON_CHROME_CLASS =
-  "rounded-full border border-border-strong bg-surface text-fg shadow-sm transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60";
+const OUTLINE_BUTTON_CHROME_CLASS = `rounded-full border border-border-strong bg-surface text-fg shadow-sm transition-colors hover:bg-hover ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60`;
 export const OUTLINE_BUTTON_CLASS = OUTLINE_BUTTON_CHROME_CLASS;
 
 const ICON_BUTTON_SIZE_CLASS = "h-6 w-6 p-0 text-sm font-medium";
@@ -39,8 +54,7 @@ const ICON_BUTTON_SIZE_CLASS = "h-6 w-6 p-0 text-sm font-medium";
  */
 const DESTRUCTIVE_BUTTON_BEFORE_SIZE_CLASS =
   "rounded border border-error/60 bg-error/15";
-const DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS =
-  "text-error transition-colors hover:bg-error/25 disabled:cursor-not-allowed disabled:opacity-60";
+const DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS = `text-error transition-colors hover:bg-error/25 ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60`;
 export const DESTRUCTIVE_BUTTON_CLASS = `${DESTRUCTIVE_BUTTON_BEFORE_SIZE_CLASS} ${DEFAULT_BUTTON_SIZE_CLASS} ${DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS}`;
 
 export interface ButtonProps {

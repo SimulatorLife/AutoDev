@@ -339,24 +339,46 @@ export function DataTable<T>({
                   "px-4 py-2.5 text-xs uppercase leading-tight tracking-wider break-words",
                 style: { width: widths[index] }
               },
+              // The label and its help marker are one group.
+              //
+              // They were two inline spans, so the only break between them was
+              // the line break: when the column was a few pixels too narrow the
+              // marker dropped onto a line of its own, under the label it
+              // explains. A reader met a bare "?" with nothing to attach it to,
+              // and the header row grew a line to carry it -- so the same table
+              // header measured 35.5px on twelve pages and 50.5px on the two
+              // that carry a marker.
+              //
+              // A flex row keeps them together: the label is a flex item that
+              // still wraps at word boundaries inside itself, and the marker is
+              // pinned beside it. The width is still the real fix -- "A column's
+              // weight must be large enough for its own header" -- and the two
+              // views whose headers did not fit now declare one.
               React.createElement(
                 "span",
-                { "data-column-label": col.id },
-                col.header
-              ),
-              col.headerHelp === undefined
-                ? null
-                : React.createElement(
-                    "span",
-                    {
-                      className:
-                        "ml-1.5 inline-flex cursor-help align-middle justify-center rounded-full border border-border-strong px-1 text-micro normal-case leading-none text-fg-muted",
-                      title: col.headerHelp,
-                      "aria-label": `${col.header}: ${col.headerHelp}`,
-                      "data-column-help": col.id
-                    },
-                    "?"
-                  )
+                {
+                  className: "flex items-start gap-1.5",
+                  "data-column-header": col.id
+                },
+                React.createElement(
+                  "span",
+                  { "data-column-label": col.id },
+                  col.header
+                ),
+                col.headerHelp === undefined
+                  ? null
+                  : React.createElement(
+                      "span",
+                      {
+                        className:
+                          "inline-flex shrink-0 cursor-help items-center justify-center rounded-full border border-border-strong px-1 text-micro normal-case leading-none text-fg-muted",
+                        title: col.headerHelp,
+                        "aria-label": `${col.header}: ${col.headerHelp}`,
+                        "data-column-help": col.id
+                      },
+                      "?"
+                    )
+              )
             )
           )
         )

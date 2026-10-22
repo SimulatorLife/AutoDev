@@ -2,6 +2,10 @@ import type { ControlApiEnablement } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+import {
+  STATE_PILL_BUTTON_CLASS,
+  STATE_PILL_TONE_CLASS
+} from "../../components/ui/state-pill.ts";
 
 const NOT_OBSERVED_REASON =
   "Current state is not observed, so it cannot be changed here.";
@@ -13,22 +17,7 @@ const IMMUTABLE_REASON =
  * activation applies the opposite, so one control carries both. Showing a
  * status badge next to a separate "Enable"/"Disable" button repeated the same
  * fact twice and forced every Providers row to wrap.
- *
- * `warning/10` is deliberately not `WARNING_TONE_CLASS`'s `/15`: the hover
- * state here strengthens the border instead of tinting the fill, because a
- * heavier translucent background pulls the status text below the WCAG AA
- * contrast floor, and a pill that becomes unreadable on hover is not a hover
- * state. See the family note in `components/ui/tones.ts`.
  */
-const PILL_CLASS = {
-  // Hover strengthens the border instead of tinting the fill: a heavier
-  // translucent background pulls the status text below the WCAG AA contrast
-  // floor, and a pill that becomes unreadable on hover is not a hover state.
-  on: "bg-success/15 text-success border-success/60 hover:border-success/70",
-  off: "bg-warning/10 text-warning border-warning/60 hover:border-warning/70",
-  unknown: "bg-neutral/15 text-fg-muted border-neutral/60"
-} as const;
-
 /**
  * The one enable/disable control for a model. It renders wherever a model
  * appears -- its own Models row, its detail view, or the model list inside a
@@ -112,7 +101,7 @@ export function ModelToggle({
         ...(unavailableReason === null
           ? {}
           : { "data-enablement-unavailable": "true" }),
-        className: `whitespace-nowrap rounded border px-2 py-0.5 text-xs font-medium transition-colors disabled:cursor-not-allowed ${PILL_CLASS[state]}`
+        className: `${STATE_PILL_BUTTON_CLASS} ${STATE_PILL_TONE_CLASS[state]}`
       },
       stateLabel
     )

@@ -6,6 +6,10 @@ import {
   NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
+import {
+  STATE_PILL_BUTTON_CLASS,
+  STATE_PILL_TONE_CLASS
+} from "../../components/ui/state-pill.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
 const UNAVAILABLE_LABEL = "Runtime did not report this agent's enablement.";
@@ -17,22 +21,7 @@ const UNAVAILABLE_LABEL = "Runtime did not report this agent's enablement.";
  * opposite, so one control carries both. Showing a status badge next to a
  * separate "Enable"/"Disable" button would repeat the same fact twice and force
  * every Agents row to wrap.
- *
- * `warning/10` is deliberately not `WARNING_TONE_CLASS`'s `/15`: the hover
- * state here strengthens the border instead of tinting the fill, because a
- * heavier translucent background pulls the status text below the WCAG AA
- * contrast floor, and a pill that becomes unreadable on hover is not a hover
- * state. See the family note in `components/ui/tones.ts`.
  */
-const PILL_CLASS = {
-  // Hover strengthens the border instead of tinting the fill: a heavier
-  // translucent background pulls the status text below the WCAG AA contrast
-  // floor, and a pill that becomes unreadable on hover is not a hover state.
-  on: "bg-success/15 text-success border-success/60 hover:border-success/70",
-  off: "bg-warning/10 text-warning border-warning/60 hover:border-warning/70",
-  unknown: "bg-neutral/15 text-fg-muted border-neutral/60"
-} as const;
-
 type AgentEnablementVisualState = "on" | "off" | "unknown";
 
 function presentationFor(enablement: AgentEnablementState): {
@@ -161,7 +150,7 @@ export function AgentEnablementControl({
           ...(presentation.reason === null
             ? {}
             : { "data-enablement-unavailable": "true" }),
-          className: `whitespace-nowrap rounded border px-2 py-0.5 text-xs font-medium transition-colors disabled:cursor-not-allowed ${PILL_CLASS[presentation.state]}`
+          className: `${STATE_PILL_BUTTON_CLASS} ${STATE_PILL_TONE_CLASS[presentation.state]}`
         },
         presentation.stateLabel
       )

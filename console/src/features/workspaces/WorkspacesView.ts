@@ -214,7 +214,12 @@ export function WorkspacesView({
       header: "Requests",
       headerHelp:
         "Logical routed requests attributed to this workspace in the last 24 hours. A request that carried no workspace attribution is not counted in any workspace, so these counts do not have to add up to the total.",
-      weight: 118,
+      // The label needs 71px and its help marker 16px more, and the cell adds
+      // 32px of shared inset, so 125px is the floor. At 118 the marker fell to
+      // a line of its own under the label it explains, and the header row grew
+      // 15px -- the same header measuring 35.5px on every other page and
+      // 50.5px here.
+      weight: 128,
       cell: (ws) => workspaceRequestValue(requests.get(ws.id))
     }
   ];

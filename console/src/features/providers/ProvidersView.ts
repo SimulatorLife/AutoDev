@@ -240,7 +240,14 @@ function providerColumns(
     {
       id: "activeAgents",
       header: "Active Agents",
-      weight: 118,
+      // The header needs 106px on one line, and the cell adds 32px of shared
+      // inset, so 138px is the floor. At 118 the header wrapped to two lines,
+      // which made this table's header row 15px taller than every other table
+      // in the Console -- the one header whose own width was too small for its
+      // own name, which the shared table contract forbids. The margin over
+      // the floor matches the other columns', so a system font with different
+      // metrics does not put the header back on two lines.
+      weight: 146,
       cell: (provider) =>
         React.createElement(
           "span",

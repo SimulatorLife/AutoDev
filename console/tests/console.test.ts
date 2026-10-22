@@ -3008,9 +3008,12 @@ test("DataTable wraps column headers instead of truncating them", () => {
   // the split as the preferred outcome to the alternative, so the two disagreed
   // and the spec wins. No header on any route currently needs to break (measured
   // at 1440/1024/768/390), so this decides a future column rather than today's.
+  // The label is read by its own attribute rather than by its position in the
+  // cell: the header groups the label with the help affordance beside it, so
+  // the label is not the cell's only child any more.
   assert.match(
     markup,
-    /<th [^>]*class="[^"]*break-words[^"]*"[^>]*><span data-column-label="[^"]*">Convergence<\/span><\/th>/
+    /<th [^>]*class="[^"]*break-words[^"]*"[^>]*>[\s\S]*?<span data-column-label="[^"]*">Convergence<\/span>/
   );
   assert.doesNotMatch(markup, /<th [^>]*class="[^"]*truncate[^"]*"/);
   // `break-all` would also satisfy "breaks rather than hides", but it splits a
@@ -13408,10 +13411,13 @@ test("ProvidersView renders configuration columns and live provider counts", () 
   // element: two of them carry a help affordance beside the label, and that
   // affordance is not part of the column's name.
   const headers = Array.from(
-    markup.matchAll(
-      /<th[^>]*>(?:<span data-column-label="[^"]*">([\s\S]*?)<\/span>|([\s\S]*?)<\/th>)/gu
-    ),
-    (match) => (match[1] ?? match[2] ?? "").replaceAll(/<[^>]*>/g, "").trim()
+    markup.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gu),
+    (match) => {
+      const label = /<span data-column-label="[^"]*">([\s\S]*?)<\/span>/u.exec(
+        match[1] ?? ""
+      );
+      return (label?.[1] ?? "").replaceAll(/<[^>]*>/g, "").trim();
+    }
   );
   assert.deepEqual(headers, [
     "Provider",
