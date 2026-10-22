@@ -45,6 +45,30 @@ export interface UnavailableProps {
   readonly hint?: string;
 }
 
+/**
+ * The machine code a read abandoned at the Console's own deadline carries.
+ *
+ * The Control API answers this code when the service held the connection open
+ * and did not answer in time -- it is reachable, and slow.
+ */
+const CONTROL_API_TIMEOUT_CODE = "autodev_control_api_timeout";
+
+/**
+ * What to do when the service answered too slowly.
+ *
+ * The default advice -- configure the server-side integration -- is right for
+ * a missing credential and wrong for a slow query, and it sends the operator
+ * to reconfigure a credential that is working. Measured against a Control API
+ * fixture that accepted the request and never answered, the page settled on
+ * "unreachable" and told the operator to fix an integration that was fine.
+ *
+ * `/evaluations` already draws this distinction for itself. The code is the
+ * same on every route, so the shell can carry it once instead of each of the
+ * twenty routes that read the Control API having to remember it.
+ */
+const CONTROL_API_TIMEOUT_HINT =
+  "The Control API accepted the read and did not answer before the Console gave up. Check whether the query is slow against the telemetry store.";
+
 /** Trailing sentence punctuation, which a heading may omit and a message may not. */
 const TRAILING_PUNCTUATION = /[.!?:;]+$/;
 
@@ -170,7 +194,9 @@ export function ResourceUnavailable({
       "p",
       { className: MUTED_META_CLASS },
       hint ??
-        "Configure the required server-side integration and restart the Console."
+        (code === CONTROL_API_TIMEOUT_CODE
+          ? CONTROL_API_TIMEOUT_HINT
+          : "Configure the required server-side integration and restart the Console.")
     )
   );
 }
