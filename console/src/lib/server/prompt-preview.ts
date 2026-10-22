@@ -1,7 +1,7 @@
 import {
   parseRuleSyncCommand,
   RuleSyncCommandValidationError
-} from "@simulatorlife/autodev-data";
+} from "@simulatorlife/autodev-data/rulesync-parser";
 
 /**
  * How a canonical prompt source would render, before it is saved.

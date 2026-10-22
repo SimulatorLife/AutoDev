@@ -28,7 +28,6 @@ import type {
   McpServerDefinition,
   McpServerTransport,
   McpTargetOverride,
-  PromptAsset,
   PromptVersion,
   RuleSyncMcpState,
   RuleSyncValidationIssue,
@@ -37,10 +36,17 @@ import type {
 import { parse, type ParseError, printParseErrorCode } from "jsonc-parser";
 import { parse as parseYaml } from "yaml";
 
+import {
+  COMMANDS_SOURCE,
+  isRecord,
+  parseRuleSyncCommand,
+  type RuleSyncCommand,
+  RuleSyncCommandValidationError
+} from "./command-parser.ts";
+
 const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const COLLATOR = new Intl.Collator();
 const MD_EXTENSION_PATTERN = /\.md$/u;
-const COMMANDS_SOURCE = ".rulesync/commands" as const;
 const COMMAND_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const COMMAND_CONTENT_MAX_BYTES = 48_000;
 const SKILL_SOURCE_MAX_BYTES = 48_000;
@@ -65,8 +71,6 @@ const COMMAND_HISTORY_LINE_SPLIT_PATTERN = /\r?\n/u;
 const COMMAND_GIT_TIMEOUT_MS = 3000;
 const COMMAND_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const GIT_REVISION_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
-const COMMAND_FRONTMATTER_PATTERN =
-  /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/u;
 const SKILLS_SOURCE = ".rulesync/skills" as const;
 const SKILL_FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u;
 const SKILL_NAME_PATTERN = /^[a-z0-9-]{1,64}$/u;
@@ -133,16 +137,6 @@ export interface RuleSyncHooksState {
    */
   readonly issues: readonly RuleSyncValidationIssue[];
   readonly hooks: readonly HookDefinition[];
-}
-
-export interface RuleSyncCommand extends PromptAsset {
-  readonly name: string;
-  readonly path: string;
-  readonly kind: "command";
-  readonly content: string;
-  readonly prompt: string;
-  readonly targets: readonly string[];
-  readonly revision: string;
 }
 
 /**
@@ -510,13 +504,6 @@ export class RuleSyncCommandConflictError extends Error {
   }
 }
 
-export class RuleSyncCommandValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "RuleSyncCommandValidationError";
-  }
-}
-
 export interface RuleSyncSkillsState {
   readonly source: typeof SKILLS_SOURCE;
   readonly valid: boolean | null;
@@ -570,10 +557,6 @@ export class RuleSyncSkillSourceUnavailableError extends Error {
     super(message);
     this.name = "RuleSyncSkillSourceUnavailableError";
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function mcpTransport(config: Record<string, unknown>): McpServerTransport {
@@ -1180,63 +1163,6 @@ function describeFileSystemError(error: unknown): string {
       return error.code ?? "unknown error";
     }
   }
-}
-
-/**
- * Parses a canonical RuleSync command from its source.
- *
- * This is the canonical parser: the front matter is read here and nowhere
- * else, so a reader of the command's body and a writer of the command agree
- * on what the command says. It is exported because a reader that has not
- * written the source yet -- the Console previewing an edit -- still has to
- * ask the same question of the same text, and a second front-matter reader
- * in the reader would be a second answer.
- */
-export function parseRuleSyncCommand(
-  name: string,
-  content: string
-): RuleSyncCommand {
-  const frontmatter = content.match(COMMAND_FRONTMATTER_PATTERN);
-  if (!frontmatter) {
-    throw new RuleSyncCommandValidationError(
-      `Command "${name}" must have valid YAML frontmatter.`
-    );
-  }
-  let metadata: unknown;
-  try {
-    metadata = parseYaml(frontmatter[1]!);
-  } catch {
-    throw new RuleSyncCommandValidationError(
-      `Command "${name}" frontmatter is invalid YAML.`
-    );
-  }
-  if (!isRecord(metadata)) {
-    throw new RuleSyncCommandValidationError(
-      `Command "${name}" frontmatter must be a mapping.`
-    );
-  }
-  const description = metadata.description;
-  const targets = metadata.targets ?? ["*"];
-  if (
-    (description !== undefined && typeof description !== "string") ||
-    !Array.isArray(targets) ||
-    !targets.every((target) => typeof target === "string") ||
-    (metadata.name !== undefined && metadata.name !== name)
-  ) {
-    throw new RuleSyncCommandValidationError(
-      `Command "${name}" frontmatter metadata is invalid.`
-    );
-  }
-  return {
-    name,
-    path: `${COMMANDS_SOURCE}/${name}.md`,
-    kind: "command",
-    content,
-    prompt: frontmatter[2]?.trim() ?? "",
-    targets,
-    revision: createHash("sha256").update(content, "utf8").digest("hex"),
-    ...(description === undefined ? {} : { description })
-  };
 }
 
 function parseCachedRuleSyncCommand(
