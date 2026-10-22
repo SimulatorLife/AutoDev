@@ -1796,6 +1796,16 @@ test("an analyst hypothesis opens its review as addressable detail under the lis
   await expect(page).toHaveURL(REVIEW_SELECTION_URL_PATTERN, { timeout: 20_000 });
   const detail = page.locator("[data-review-detail]");
   await expect(detail).toBeVisible();
+  // The detail leads the page: the panel a row opens is on screen, not four
+  // thousand pixels under the row that opened it.
+  const detailBox = await detail.boundingBox();
+  const tableBox = await page
+    .locator('[data-review-open]')
+    .first()
+    .boundingBox();
+  expect(detailBox).not.toBeNull();
+  expect(tableBox).not.toBeNull();
+  expect(detailBox!.y).toBeLessThan(tableBox!.y);
   await expect(detail).toContainText(
     REVIEW_HYPOTHESIS_TEXT
   );

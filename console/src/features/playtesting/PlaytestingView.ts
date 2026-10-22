@@ -55,6 +55,7 @@ import { batchStateLabel } from "./playtesting-labels.ts";
 import {
   PLAYTESTING_FILTER_KEYS,
   PLAYTESTING_PAGE_SIZES,
+  PLAYTESTING_REVIEW_DETAIL_ANCHOR_ID,
   playtestingEpisodeHref,
   playtestingFilterHref,
   type PlaytestingFilterKey,
@@ -743,7 +744,7 @@ function analystReviewDetail(
       subtitle: `Recorded ${new Date(review.createdAt).toISOString()}`,
       closeHref: playtestingReviewCloseHref(scope),
       closeLabel: "Close review detail",
-      anchorId: `review-detail-${review.reviewId}`,
+      anchorId: PLAYTESTING_REVIEW_DETAIL_ANCHOR_ID,
       dataAttributes: { "data-review-detail": review.reviewId }
     },
     React.createElement(
@@ -921,6 +922,21 @@ function analystHypotheses(
       { className: `mb-3 text-sm ${MUTED_META_CLASS}` },
       "What the analyst concluded from the recorded frames. These are hypotheses, not defects: nothing here has been reproduced or verified."
     ),
+    // The open review's detail leads the page. The list is fifteen rows long,
+    // so a panel under it would be thousands of pixels below the row that
+    // opened it, and the operator would not see the conclusion they asked
+    // for. The link that opens it names this anchor, so the arrival is the
+    // panel and not the top of the document.
+    //
+    // A selection that names a review on another page opens nothing rather
+    // than opening the wrong review.
+    selected === null
+      ? null
+      : React.createElement(
+          "div",
+          { className: "mb-4" },
+          analystReviewDetail(selected, scope)
+        ),
     React.createElement<DataTableProps<ControlApiPlaytestingReview>>(
       DataTable,
       {
@@ -939,11 +955,7 @@ function analystHypotheses(
       noun: "analyst reviews",
       nextCursor: null,
       scope
-    }),
-    // The open review's detail, rendered under the list it belongs to. A
-    // selection that names a review on another page opens nothing rather than
-    // opening the wrong review.
-    selected === null ? null : analystReviewDetail(selected, scope)
+    })
   );
 }
 

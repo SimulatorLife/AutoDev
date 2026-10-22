@@ -449,6 +449,14 @@ export function playtestingAnalyzeEpisodeHref(
 }
 
 /**
+ * The arrival anchor for an open analyst review.
+ *
+ * The link that opens a review names it, so the browser lands on the panel
+ * rather than at the top of a document whose list is fifteen rows long.
+ */
+export const PLAYTESTING_REVIEW_DETAIL_ANCHOR_ID = "playtesting-review-detail";
+
+/**
  * The Findings view with one analyst review's detail open.
  *
  * The detail is address state, so the link is shareable and Back returns to
@@ -468,9 +476,11 @@ export function playtestingReviewHref(
     cursor: null,
     step: null
   };
-  return withQuery(
-    PLAYTESTING_ROUTE,
-    paramsForScope(next, { includeCursor: false, includeStep: false })
+  return (
+    withQuery(
+      PLAYTESTING_ROUTE,
+      paramsForScope(next, { includeCursor: false, includeStep: false })
+    ) + `#${PLAYTESTING_REVIEW_DETAIL_ANCHOR_ID}`
   );
 }
 
