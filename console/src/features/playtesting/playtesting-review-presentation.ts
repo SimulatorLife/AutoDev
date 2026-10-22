@@ -1,6 +1,8 @@
 /** How the Console presents an analyst review's own words. */
 import type { ControlApiPlaytestingReview } from "@simulatorlife/autodev-core";
 
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+
 /**
  * What the analyst wrote when it wrote nothing.
  *
@@ -16,6 +18,20 @@ export function reviewHeadlineText(
   review: ControlApiPlaytestingReview
 ): string {
   return review.headline.length > 0 ? review.headline : NO_CONCLUSION_LABEL;
+}
+
+/**
+ * The day a review was recorded.
+ *
+ * A timestamp that cannot be read is not a date, and a page that throws
+ * because one row's timestamp is malformed has lost every row that was
+ * readable. The unreadable one says so, in the Console's word for a value it
+ * did not observe.
+ */
+export function reviewRecordedDay(createdAt: string): string {
+  const recorded = new Date(createdAt);
+  if (Number.isNaN(recorded.getTime())) return NOT_OBSERVED_LABEL;
+  return recorded.toISOString().slice(0, 10);
 }
 
 /**

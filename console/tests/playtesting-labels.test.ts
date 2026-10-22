@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { ControlApiPlaytestingReview } from "@simulatorlife/autodev-core";
 import React from "react";
+import { NOT_OBSERVED_LABEL } from "../src/components/status/StatusBadge.ts";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
@@ -17,6 +18,7 @@ import {
   playtestingSessionFailureTitle,
   policyLabel
 } from "../src/features/playtesting/playtesting-labels.ts";
+import { reviewRecordedDay } from "../src/features/playtesting/playtesting-review-presentation.ts";
 import { parsePlaytestingScope } from "../src/features/playtesting/playtesting-url.ts";
 import { PlaytestingView } from "../src/features/playtesting/PlaytestingView.ts";
 
@@ -86,6 +88,14 @@ test("an outcome badge names what it did not observe", () => {
   assert.equal(gameOutcomeBadgeLabel("unknown"), "No game outcome");
   assert.equal(gameOutcomeBadgeLabel("win"), "Win");
   assert.equal(gameOutcomeBadgeLabel("dnf"), "Did not finish");
+});
+
+test("a recorded day that cannot be read does not take the page with it", () => {
+  assert.equal(reviewRecordedDay("2026-10-21T22:07:57.293Z"), "2026-10-21");
+  // A page that throws because one row's timestamp is malformed has lost
+  // every row that was readable.
+  assert.equal(reviewRecordedDay("not a date"), NOT_OBSERVED_LABEL);
+  assert.equal(reviewRecordedDay(""), NOT_OBSERVED_LABEL);
 });
 
 test("the decision backend is named the way an operator names it", () => {

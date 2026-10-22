@@ -60,6 +60,7 @@ import {
 } from "./playtesting-labels.ts";
 import {
   reviewHeadlineText,
+  reviewRecordedDay,
   reviewSummaryLine
 } from "./playtesting-review-presentation.ts";
 import {
@@ -682,7 +683,7 @@ function latestConclusions(
               React.createElement(
                 "p",
                 { className: MUTED_META_CLASS },
-                `${reviewSummaryLine(review)} · ${new Date(review.createdAt).toISOString().slice(0, 10)}`
+                `${reviewSummaryLine(review)} · ${reviewRecordedDay(review.createdAt)}`
               )
             )
           )
@@ -1127,7 +1128,7 @@ function analystHypotheses(
         React.createElement(
           "span",
           { title: review.createdAt },
-          new Date(review.createdAt).toISOString().slice(0, 10)
+          reviewRecordedDay(review.createdAt)
         )
     }
   ];
