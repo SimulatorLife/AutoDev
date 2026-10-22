@@ -225,6 +225,7 @@ function filterFields(scope: PlaytestingScope): {
   const editable: PlaytestingFilterKey[] = [];
   if (scope.view === "sessions") {
     editable.push(
+      "q",
       "buildSha",
       "scenario",
       "policy",
@@ -233,6 +234,7 @@ function filterFields(scope: PlaytestingScope): {
       "gameOutcome"
     );
     children.push(
+      textFilter("Search sessions", "q", scope.filters.q),
       textFilter("Build SHA", "buildSha", scope.filters.buildSha),
       textFilter("Scenario", "scenario", scope.filters.scenario),
       textFilter("Policy", "policy", scope.filters.policy),

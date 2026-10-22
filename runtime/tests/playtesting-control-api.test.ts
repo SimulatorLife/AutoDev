@@ -21,10 +21,10 @@ import {
   type PlaytestComparison,
   type PlaytestEpisode,
   type PlaytestLaunchRequest,
-  playtestVisualEpisodeRecordId,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
   PLAYTESTS_EPISODE_SCHEMA,
+  playtestVisualEpisodeRecordId,
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
 import {
@@ -3469,4 +3469,24 @@ test("cross-session analysis delegates to the owner and bounds the selection", a
     options
   );
   assert.equal(wrongMethod.status, 405);
+});
+
+test("Playtesting episodes API forwards a free-text session search to Data", async () => {
+  let received: unknown;
+  const repository = readRepository({
+    listEpisodes: async (filter, page) => {
+      received = { filter, page };
+      return { rows: [], total: 0, nextCursor: null };
+    }
+  });
+  const response = await call(
+    "GET",
+    `/control/playtesting/episodes?workspaceId=${encodeURIComponent(WORKSPACE)}&q=${encodeURIComponent("ep-b141d962")}`,
+    { repository }
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(received, {
+    filter: { workspaceId: WORKSPACE, query: "ep-b141d962" },
+    page: { limit: 50 }
+  });
 });

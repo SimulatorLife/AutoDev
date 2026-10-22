@@ -347,3 +347,38 @@ test("a malformed review id is rejected rather than carried into the address", (
   assert.equal(scope.invalidQuery, true);
   assert.doesNotMatch(playtestingListHref(scope), /review=/u);
 });
+
+test("a session search is part of the addressable scope and survives paging", () => {
+  const scope = parsePlaytestingScope({
+    view: "sessions",
+    workspaceId: WORKSPACE,
+    q: "ep-b141d962"
+  });
+  assert.equal(scope.filters.q, "ep-b141d962");
+
+  // The search is in the URL the operator shares and in the link to the
+  // next page, so paging does not silently drop it.
+  const paged = new URL(
+    playtestingPageHref(scope, "opaque-page-2"),
+    "http://console.test"
+  );
+  assert.equal(paged.searchParams.get("q"), "ep-b141d962");
+  assert.equal(paged.searchParams.get("cursor"), "opaque-page-2");
+
+  // It belongs to the session list alone.
+  const findings = new URL(
+    playtestingViewHref(scope, "findings"),
+    "http://console.test"
+  );
+  assert.equal(findings.searchParams.has("q"), false);
+});
+
+test("a session search that the server cannot honour is reported, not applied", () => {
+  const scope = parsePlaytestingScope({
+    view: "sessions",
+    workspaceId: WORKSPACE,
+    q: "x".repeat(257)
+  });
+  assert.equal(scope.filters.q, undefined);
+  assert.equal(scope.invalidQuery, true);
+});

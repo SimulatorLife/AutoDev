@@ -1617,3 +1617,26 @@ test("a session row says when only part of the workspace's reviews was read", ()
   // A review this page never saw is not the same as no review at all.
   assert.doesNotMatch(html, /No analyst review recorded/u);
 });
+
+test("the session list offers a search that the server applies", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: scope({ view: "sessions", q: "ep-b141d962" }),
+      workspaces: [
+        { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
+      ],
+      list: {
+        resource: "episodes",
+        rows: [],
+        total: 0,
+        nextCursor: null
+      }
+    })
+  );
+  // The search is a field of the filter form, so it is submitted with the
+  // rest of the filters and reaches the server rather than filtering the
+  // page in the browser.
+  assert.match(html, /name="q"/u);
+  assert.match(html, /Search sessions/u);
+  assert.match(html, /value="ep-b141d962"/u);
+});

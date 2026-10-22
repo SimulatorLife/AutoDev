@@ -8,6 +8,7 @@ import {
   buildPlaytestCoverageManifestDraft,
   buildPlaytestFindingIdentity,
   type HumanPlaytestStudy,
+  PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
   type PlaytestAdapterBatch,
   type PlaytestAssignmentManifestDraft,
   playtestAssignmentManifestHashInput,
@@ -49,7 +50,6 @@ import {
   PLAYTESTS_EPISODE_SCHEMA_V5,
   PLAYTESTS_EPISODE_SCHEMA_V6,
   PLAYTESTS_EPISODE_SCHEMA_V7,
-  PLAYTEST_PLAYER_DEBRIEF_SCHEMA,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
@@ -3951,4 +3951,31 @@ test("unavailable and malformed ClickHouse failures never appear as empty collec
       PlaytestSourceUnavailableError
     );
   }
+});
+
+test("a free-text session search is bound as a parameter and matches the session's own identity", async () => {
+  const fake = makeClickHouseFetch();
+  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  await repo.listEpisodes({
+    workspaceId: "workspace-a/game",
+    query: "ep-b141d962"
+  });
+  const call = fake.calls[0]!;
+  const query = call.searchParams.get("query") ?? "";
+  // The search term is bound, never interpolated into the statement.
+  assert.equal(call.searchParams.get("param_query"), "ep-b141d962");
+  assert.doesNotMatch(query, /ep-b141d962/u);
+  // It matches the columns that identify a session.
+  assert.match(query, /positionCaseInsensitive\(episode_id/u);
+  assert.match(query, /positionCaseInsensitive\(batch_id/u);
+  // The count query narrows the same way, so "N matching sessions" agrees
+  // with the rows on the page.
+  const countCall = fake.calls.find((candidate) =>
+    (candidate.searchParams.get("query") ?? "").includes("count() AS total")
+  );
+  assert.ok(countCall);
+  assert.match(
+    countCall.searchParams.get("query") ?? "",
+    /positionCaseInsensitive\(episode_id/u
+  );
 });

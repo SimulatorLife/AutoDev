@@ -23,7 +23,8 @@ import {
   PLAYTESTS_HUMAN_INSTRUMENTS,
   PLAYTESTS_SEVERITIES,
   PLAYTESTS_VERIFICATION_STAGES,
-  playtestVisualEpisodeRecordId} from "@simulatorlife/autodev-core";
+  playtestVisualEpisodeRecordId
+} from "@simulatorlife/autodev-core";
 import { ConfigRepository } from "@simulatorlife/autodev-data";
 import {
   PlaytestInvalidCursorError,
@@ -62,6 +63,7 @@ const RESOURCE_FILTERS: Readonly<
 > = {
   batches: ["buildSha", "status"],
   episodes: [
+    "q",
     "batchId",
     "buildSha",
     "scenario",
@@ -534,6 +536,7 @@ function readEpisodePage(
   return repository.listEpisodes(
     {
       workspaceId: query.workspaceId,
+      ...(f.q === undefined ? {} : { query: f.q }),
       ...(f.batchId === undefined ? {} : { batchId: f.batchId }),
       ...(f.buildSha === undefined ? {} : { buildSha: f.buildSha }),
       ...(f.scenario === undefined ? {} : { scenario: f.scenario }),

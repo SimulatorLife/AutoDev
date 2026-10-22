@@ -45,6 +45,20 @@ export function buildEpisodeWhereClause(
   const clauses = [...base.clauses];
   const params: Record<string, ClickHouseParamValue> = { ...base.params };
 
+  if (filter.query !== undefined) {
+    // The search is a substring match over the columns that identify the
+    // session, so a reader can paste the id they were given. The match is
+    // case-insensitive because an id typed from a terminal is often typed
+    // in the wrong case.
+    clauses.push(
+      "(positionCaseInsensitive(episode_id, {query:String}) > 0 OR " +
+        "positionCaseInsensitive(batch_id, {query:String}) > 0 OR " +
+        "positionCaseInsensitive(scenario, {query:String}) > 0 OR " +
+        "positionCaseInsensitive(policy, {query:String}) > 0 OR " +
+        "positionCaseInsensitive(cohort, {query:String}) > 0)"
+    );
+    params.query = filter.query;
+  }
   if (filter.batchId !== undefined) {
     clauses.push("batch_id = {batchId:String}");
     params.batchId = filter.batchId;

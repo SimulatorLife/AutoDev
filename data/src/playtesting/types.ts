@@ -44,6 +44,14 @@ export interface PlaytestLaunchIntent {
 
 export interface PlaytestEpisodeFilter {
   readonly workspaceId: string;
+  /**
+   * Free-text search over the session's own identity.
+   *
+   * The session id, the batch it belongs to, its scenario, its policy and
+   * its cohort: the facts a reader already has when they are looking for
+   * one particular session.
+   */
+  readonly query?: string;
   readonly batchId?: string;
   readonly buildSha?: string;
   readonly scenario?: string;

@@ -34,7 +34,8 @@ export const PLAYTESTING_FILTER_KEYS = [
   "measurementVersion",
   "state",
   "instrument",
-  "approved"
+  "approved",
+  "q"
 ] as const;
 
 const FILTERS_BY_VIEW: Readonly<
@@ -42,6 +43,7 @@ const FILTERS_BY_VIEW: Readonly<
 > = {
   overview: new Set<PlaytestingFilterKey>(),
   sessions: new Set<PlaytestingFilterKey>([
+    "q",
     "buildSha",
     "scenario",
     "policy",
@@ -81,6 +83,7 @@ function orderedPresentFilterKeys(source: object): PlaytestingFilterKey[] {
 export const PLAYTESTING_FILTERS_BY_RESOURCE = {
   batches: ["buildSha", "status"],
   episodes: [
+    "q",
     "batchId",
     "buildSha",
     "scenario",
