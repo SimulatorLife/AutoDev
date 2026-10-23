@@ -12,6 +12,12 @@ import {
   buildReconciliationView,
   CONTROL_API_CONTRACT,
   CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
+  type ControlApiHookDeclaration,
+  type ControlApiHookEvent,
+  type ControlApiHookEventPatchResponse,
+  type ControlApiHooksAppliedResponse,
+  type ControlApiHooksResponse,
+  isHookEvent,
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
   playtestAssignmentManifestHashInput,
   type PlaytestComparison,
@@ -31,6 +37,7 @@ import {
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   playtestVisualEpisodeRecordId,
+  type ReconciliationView,
   recordPlaytestOwnerDecision,
   selectPlaytestBatchReviews
 } from "@simulatorlife/autodev-core";
@@ -60,6 +67,15 @@ const FIXTURE_CAPABILITY_REVISION = "e".repeat(64);
 const FIXTURE_LOCAL_WORKSPACE = "autodev-local";
 const FIXTURE_REVIEW_TIMESTAMP = "2026-02-11T09:40:00.000Z";
 const FIXTURE_EARLIER_TIMESTAMP = "2026-02-11T08:22:00.000Z";
+
+/**
+ * The explanation the Runtime gives for a converged surface.
+ *
+ * It is the same sentence wherever it appears, so the wording cannot drift
+ * between the surfaces that publish it.
+ */
+const FIXTURE_CONVERGED_EXPLANATION =
+  "The runtime has observed the latest desired generation; convergence is recorded.";
 
 const PORT = Number(process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? 4311);
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
@@ -832,11 +848,6 @@ const HOOK_EVENT_ROUTE = /^\/control\/hooks\/([a-z][A-Za-z]{0,63})$/u;
 
 /** The moment the fixture's synthetic applied state was observed. */
 const MCP_OBSERVED_AT = "2026-10-22T12:00:00.000Z";
-/**
- * The explanation the fixture gives a declaration the Runtime has converged.
- */
-const MCP_CONVERGED_EXPLANATION =
-  "The runtime has observed the latest desired generation; convergence is recorded.";
 
 /**
  * The canonical MCP declaration, and what the Runtime published from it.
@@ -926,27 +937,24 @@ function initialMcpDeclaration(): McpDeclarationState {
 let mcpDeclaration: McpDeclarationState = initialMcpDeclaration();
 
 /**
- * One hook event, as the canonical declaration gives it for the target.
+ * The fixture's hook state, in the contract's own shapes.
  *
- * The origin is part of the fixture because the page has to show it: it is the
- * difference between an edit that reaches every target and an edit that
- * reaches one.
+ * The published events are the contract's `ControlApiHookEvent` and the
+ * declared ones are the contract's `ControlApiHookDeclaration`, so the fixture
+ * cannot publish a shape the Runtime would not: an applied event that carried a
+ * declaration origin would not compile here.
+ *
+ * That matters because a fixture which invents a shape is how a reader and a
+ * publisher come to disagree about what the Runtime said. It happened once --
+ * the fixture's applied events carried an origin the Runtime never publishes,
+ * the Console's reader was written to accept exactly that, and the two agreed
+ * with each other and disagreed with the Runtime on every real read. Pinning
+ * the fixture to the contract's types makes that failure impossible to write.
  */
-interface FixtureHookEvent {
-  readonly event: string;
-  readonly origin: "shared" | "target";
-  readonly actions: readonly {
-    readonly type: "command";
-    readonly command: string;
-    readonly matcher?: string;
-    readonly statusMessage?: string;
-  }[];
-}
-
 interface FixtureHookDeclaration {
   readonly revision: string;
-  readonly events: readonly FixtureHookEvent[];
-  readonly appliedEvents: readonly FixtureHookEvent[];
+  readonly events: readonly ControlApiHookDeclaration[];
+  readonly appliedEvents: readonly ControlApiHookEvent[];
   readonly desiredGeneration: string;
   readonly observedGeneration: string;
   readonly converged: boolean;
@@ -958,7 +966,7 @@ interface FixtureHookDeclaration {
  * One event every target inherits and one event the target declares alone, so
  * the page shows both origins rather than one.
  */
-const FIXTURE_SHARED_HOOK: FixtureHookEvent = {
+const FIXTURE_SHARED_HOOK: ControlApiHookDeclaration = {
   event: "preToolUse",
   origin: "shared",
   actions: [
@@ -971,16 +979,57 @@ const FIXTURE_SHARED_HOOK: FixtureHookEvent = {
   ]
 };
 
-const FIXTURE_TARGET_HOOK: FixtureHookEvent = {
+const FIXTURE_TARGET_HOOK: ControlApiHookDeclaration = {
   event: "sessionEnd",
   origin: "target",
   actions: [{ type: "command", command: "echo session-end" }]
 };
 
-function hookGeneration(events: readonly FixtureHookEvent[]): string {
-  return createHash("sha256")
-    .update(JSON.stringify(events), "utf8")
-    .digest("hex");
+/**
+ * The collator the Runtime's own hook comparison uses.
+ *
+ * The fixture compares the two sides the way the Runtime compares them, so a
+ * verdict here means what the same two sides would mean there.
+ */
+const HOOK_COLLATOR = new Intl.Collator();
+
+/**
+ * The generation one side of the hook comparison holds.
+ *
+ * The origin is left out, because the Runtime's comparison leaves it out too:
+ * the projection the Runtime published carries no declaration origin, and a
+ * generation that counted it would report drift between a declaration and the
+ * very projection it produced.
+ *
+ * The events and the actions are compared as sets, for the Runtime's reason:
+ * the projection groups the actions by matcher, so the order across matchers
+ * follows the grouping rather than the declaration, and comparing the lists in
+ * order would report drift where there is none.
+ */
+function hookGeneration(events: readonly ControlApiHookEvent[]): string {
+  const serialized = JSON.stringify(
+    events
+      .map((event) => ({
+        event: event.event,
+        actions: event.actions.map((action) => ({
+          type: action.type,
+          command: action.command,
+          matcher: action.matcher ?? null,
+          statusMessage: action.statusMessage ?? null
+        }))
+      }))
+      .sort((left, right) => HOOK_COLLATOR.compare(left.event, right.event))
+      .map((event) => ({
+        event: event.event,
+        actions: event.actions.sort((left, right) =>
+          HOOK_COLLATOR.compare(
+            `${left.matcher ?? ""}\u0000${left.command}\u0000${left.statusMessage ?? ""}`,
+            `${right.matcher ?? ""}\u0000${right.command}\u0000${right.statusMessage ?? ""}`
+          )
+        )
+      }))
+  );
+  return createHash("sha256").update(serialized, "utf8").digest("hex");
 }
 
 /**
@@ -994,12 +1043,14 @@ function hookGeneration(events: readonly FixtureHookEvent[]): string {
  */
 function initialHookDeclaration(): FixtureHookDeclaration {
   const events = [FIXTURE_SHARED_HOOK, FIXTURE_TARGET_HOOK];
-  const appliedEvents: FixtureHookEvent[] = [
+  // The published side carries no declaration origin, because the projection
+  // the Runtime published does not carry it either.
+  const appliedEvents: ControlApiHookEvent[] = [
     {
-      ...FIXTURE_SHARED_HOOK,
+      event: FIXTURE_SHARED_HOOK.event,
       actions: [{ type: "command", command: "echo guarded", matcher: "Bash" }]
     },
-    FIXTURE_TARGET_HOOK
+    { event: FIXTURE_TARGET_HOOK.event, actions: FIXTURE_TARGET_HOOK.actions }
   ];
   return {
     revision: createHash("sha256")
@@ -1031,6 +1082,19 @@ async function applyHookDeclarationWrite(
   if (match === null) return false;
   if (request.method !== "PATCH") return false;
   const event = decodeURIComponent(match[1] ?? "");
+  // The Runtime refuses an event outside the vocabulary it runs before it looks
+  // at the body, so the fixture refuses it the same way and for the same reason:
+  // an event the Codex runtime does not run is not a declaration that can be
+  // written, and it is not an event the page can describe.
+  if (!isHookEvent(event)) {
+    sendCanonicalSourceError(
+      response,
+      400,
+      "autodev_control_hook_unknown_event",
+      `"${event}" is not a hook event the Codex runtime runs.`
+    );
+    return true;
+  }
   const body = await readJsonBody(request);
   const expectedRevision = body?.expectedRevision;
   const actions = body?.actions;
@@ -1073,7 +1137,7 @@ async function applyHookDeclarationWrite(
         : {})
     };
   });
-  const written: FixtureHookEvent = {
+  const written: ControlApiHookDeclaration = {
     event,
     origin: current.origin,
     actions: writtenActions
@@ -1088,12 +1152,15 @@ async function applyHookDeclarationWrite(
   hookDeclaration = {
     revision,
     events,
-    appliedEvents: events,
+    appliedEvents: events.map((entry) => ({
+      event: entry.event,
+      actions: entry.actions
+    })),
     desiredGeneration: generation,
     observedGeneration: generation,
     converged: true
   };
-  sendJson(response, {
+  const patch: ControlApiHookEventPatchResponse = {
     schema: "autodev-control-hook-event-patch-v1",
     event,
     target: "codexcli",
@@ -1101,7 +1168,8 @@ async function applyHookDeclarationWrite(
     changed: true,
     actions: writtenActions,
     reconciliation: hookReconciliation()
-  });
+  };
+  sendJson(response, patch);
   return true;
 }
 
@@ -1110,20 +1178,10 @@ async function applyHookDeclarationWrite(
  *
  * The verdict is the Runtime's own: the fixture says what it published and
  * the shared reconciliation contract says whether that matches the
- * declaration.
+ * declaration. The verdict is the contract's own type, so the fixture cannot
+ * publish a convergence the Runtime's vocabulary does not have.
  */
-function hookReconciliation(): {
-  readonly status: {
-    readonly convergence: string;
-    readonly desiredGeneration: string;
-    readonly observedGeneration: string;
-    readonly lastApplyAt: string | null;
-    readonly lastObservationAt: string | null;
-    readonly lastError: string | null;
-    readonly explanation: string;
-  };
-  readonly history: readonly [];
-} {
+function hookReconciliation(): ReconciliationView {
   return {
     status: {
       convergence: hookDeclaration.converged ? "converged" : "pending",
@@ -1133,7 +1191,7 @@ function hookReconciliation(): {
       lastObservationAt: MCP_OBSERVED_AT,
       lastError: null,
       explanation: hookDeclaration.converged
-        ? MCP_CONVERGED_EXPLANATION
+        ? FIXTURE_CONVERGED_EXPLANATION
         : "Apply wrote the latest desired generation, but the running runtime has not observed it yet. Restart the affected process or wait for the observation hook to refresh."
     },
     history: []
@@ -1235,7 +1293,7 @@ async function applyMcpDeclarationWrite(
         lastApplyAt: MCP_OBSERVED_AT,
         lastObservationAt: MCP_OBSERVED_AT,
         lastError: null,
-        explanation: MCP_CONVERGED_EXPLANATION
+        explanation: FIXTURE_CONVERGED_EXPLANATION
       },
       history: []
     }
@@ -4304,222 +4362,54 @@ function handleEvaluationsRead(url: URL, response: ServerResponse): boolean {
 }
 
 /**
- * The MCP catalog the Configure group reads.
+ * The hook reads the Configure group publishes.
  *
- * Three servers that keep the three states apart: a declared and enabled
- * stdio server with a target override, a server that is only present in a
- * target projection (so its default state is not observed), and a
- * declared http server with no target overrides at all.
+ * The declaration and the projection the Runtime published are two different
+ * questions, so they are two different reads. The fixture publishes both from
+ * the contract's own types, so a published event cannot carry a field the
+ * Runtime would not send it.
  */
-function sendMcpCatalog(response: ServerResponse): void {
-  // Three servers that keep the three states apart: a declared and enabled
-  // stdio server with a target override, a server that is only present in a
-  // target projection (so its default state is not observed), and a
-  // declared http server with no target overrides at all.
-  sendJson(response, {
-    schema: "autodev-control-mcps-v2",
-    source: ".rulesync/mcp.jsonc",
-    revision: mcpDeclaration.revision,
-    readOnly: false,
-    valid: true,
-    issues: [],
-    servers: [
-      {
-        name: "lsp",
-        enabled: true,
-        transport: "stdio",
-        targetOverrides: [
-          {
-            target: "codex",
-            enabled: true,
-            defaultToolsApprovalMode: "never",
-            enabledTools: ["lsp_goto_definition"]
-          }
-        ],
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-lsp"],
-        envKeys: ["LSP_ROOT"],
-        cwd: "/workspace",
-        defaultToolsApprovalMode: "on-request",
-        declared: true,
-        roles: ["worker", "orchestrator"]
-      },
-      {
-        name: "antigravity-cli",
-        enabled: false,
-        transport: "stdio",
-        targetOverrides: [{ target: "codex", enabled: false }],
-        command: "antigravity",
-        args: ["mcp"],
-        declared: false,
-        roles: []
-      },
-      {
-        name: "openaiDeveloperDocs",
-        enabled: null,
-        transport: "http",
-        targetOverrides: [],
-        url: "https://docs.example.test/mcp",
-        declared: true,
-        roles: ["orchestrator"]
-      }
-    ]
-  });
-}
-
-/**
- * The /control/prompts response the Configure group reads.
- */
-function sendPromptCatalog(response: ServerResponse): void {
-  sendJson(response, {
-    schema: "autodev-control-prompts-v2",
-    source: ".rulesync/prompts",
-    readOnly: true,
-    valid: true,
-    issues: [],
-    totalCommands: 1,
-    commands: [
-      {
-        name: "review",
-        path: ".rulesync/prompts/review.md",
-        description: "Review the pending diff."
-      }
-    ],
-    rolePrompts: [{ role: "default", path: ".rulesync/prompts/default.md" }]
-  });
-}
-
-/**
- * The detail routes the Configure group reads.
- *
- * The agent, skill and prompt details are their own routes rather than
- * part of a list, and each one answers with the canonical source it owns.
- */
-function handleCatalogDetailRead(url: URL, response: ServerResponse): boolean {
-  const agentDetail = url.pathname.match(AGENT_DETAIL_ROUTE);
-  if (agentDetail !== null) {
-    sendJson(response, {
-      schema: "autodev-control-agent-detail-v3",
-      id: decodeURIComponent(agentDetail[1]),
-      role: decodeURIComponent(agentDetail[1]),
-      kind: "orchestrator",
+function handleHookCatalogRead(url: URL, response: ServerResponse): boolean {
+  if (url.pathname === "/control/hooks") {
+    const body: ControlApiHooksResponse = {
+      schema: "autodev-control-hooks-v2",
+      source: ".rulesync/hooks.jsonc",
       readOnly: false,
-      configured: true,
       valid: true,
-      status: "idle",
-      convergence: "converged",
-      enablement: agentEnablementFor(decodeURIComponent(agentDetail[1])),
-      primaryModel: "claude",
-      allowedProviders: ["claude"],
-      mcps: ["lsp"],
-      skills: [],
-      hasPrompt: true,
-      promptPath: "agents/prompts/default.md",
-      systemPrompt: "You are the AutoDev orchestrator.",
-      reconciliation: {
-        status: {
-          convergence: "converged",
-          desiredGeneration: "agent-default",
-          observedGeneration: "agent-default",
-          lastApplyAt: FIXTURE_APPLIED_AT,
-          lastObservationAt: FIXTURE_APPLIED_AT,
-          lastError: null,
-          explanation: "The agent matches the canonical source."
-        },
-        history: []
-      }
-    });
+      issues: [],
+      revision: hookDeclaration.revision,
+      target: "codexcli",
+      events: hookDeclaration.events
+    };
+    sendJson(response, body);
+    return true;
+    // The hook paths are the ones this read owns; anything else belongs to a
+    // different read, and saying so is how the caller knows to keep looking.
+    return false;
+  }
+  if (url.pathname === "/control/hooks-applied") {
+    // The hook configuration the Runtime published, against the canonical
+    // declaration. The published side carries an older command, so the page
+    // can tell a declared hook from one the Runtime has caught up with -- and
+    // the verdict is the Runtime's own.
+    //
+    // The response is the contract's own type, so the published side cannot
+    // carry a declaration origin: the projection the Runtime published has no
+    // declaration site, and a fixture that gave it one would teach the
+    // Console to expect a field the Runtime never sends.
+    const body: ControlApiHooksAppliedResponse = {
+      schema: "autodev-control-hooks-applied-v1",
+      source: "/codex/hooks.json",
+      declarationSource: ".rulesync/hooks.jsonc",
+      target: "codexcli",
+      available: true,
+      declaredEvents: hookDeclaration.events,
+      events: hookDeclaration.appliedEvents,
+      reconciliation: hookReconciliation()
+    };
+    sendJson(response, body);
     return true;
   }
-  const skillContent = url.pathname.match(SKILL_CONTENT_ROUTE);
-  if (skillContent !== null) {
-    const name = decodeURIComponent(skillContent[1] ?? "");
-    const source = canonicalSource("skill", name);
-    if (source === null) {
-      sendJson(
-        response,
-        {
-          error: {
-            message: `The skill "${name}" does not exist.`,
-            type: "autodev_control_api_error",
-            code: "autodev_control_skill_not_found"
-          }
-        },
-        404
-      );
-      return true;
-    }
-    sendJson(response, {
-      schema: "autodev-control-skill-content-v2",
-      name: source.name,
-      path: source.path,
-      content: source.content,
-      revision: source.revision,
-      // The skill reaches the runtime as a link to this very source, so the
-      // observed generation is the canonical revision whenever the link holds
-      // it. The Console renders this view rather than deriving its own, so the
-      // skill page cannot drift from the shared reconciliation contract.
-      reconciliation: {
-        status: {
-          convergence: "converged",
-          desiredGeneration: source.revision,
-          observedGeneration: source.revision,
-          lastApplyAt: FIXTURE_APPLIED_AT,
-          lastObservationAt: FIXTURE_APPLIED_AT,
-          lastError: null,
-          explanation: MCP_CONVERGED_EXPLANATION
-        },
-        history: []
-      }
-    });
-    return true;
-  }
-  const promptDetail = url.pathname.match(PROMPT_DETAIL_ROUTE);
-  if (promptDetail !== null) {
-    const name = decodeURIComponent(promptDetail[1] ?? "");
-    const source = canonicalSource("prompt", name);
-    if (source === null) {
-      sendJson(
-        response,
-        {
-          error: {
-            message: `The command "${name}" does not exist.`,
-            type: "autodev_control_api_error",
-            code: "autodev_control_api_unknown_path"
-          }
-        },
-        404
-      );
-      return true;
-    }
-    sendJson(response, {
-      schema: "autodev-control-prompt-detail-v4",
-      name: source.name,
-      type: "command",
-      source: source.path,
-      content: source.content,
-      preview: source.preview ?? source.content,
-      revision: source.revision,
-      diff: {
-        summary: "The canonical command source.",
-        identifier: `prompt-${source.name}-1`
-      },
-      reconciliation: {
-        status: {
-          convergence: "converged",
-          desiredGeneration: `prompt-${source.name}-1`,
-          observedGeneration: `prompt-${source.name}-1`,
-          lastApplyAt: FIXTURE_APPLIED_AT,
-          lastObservationAt: FIXTURE_APPLIED_AT,
-          lastError: null,
-          explanation: "The command matches the canonical source."
-        },
-        history: []
-      }
-    });
-    return true;
-  }
-  return false;
 }
 
 /**
@@ -4544,7 +4434,59 @@ function handleCatalogResourceRead(
     return true;
   }
   if (url.pathname === "/control/mcps") {
-    sendMcpCatalog(response);
+    // Three servers that keep the three states apart: a declared and enabled
+    // stdio server with a target override, a server that is only present in a
+    // target projection (so its default state is not observed), and a
+    // declared http server with no target overrides at all.
+    sendJson(response, {
+      schema: "autodev-control-mcps-v2",
+      source: ".rulesync/mcp.jsonc",
+      revision: mcpDeclaration.revision,
+      readOnly: false,
+      valid: true,
+      issues: [],
+      servers: [
+        {
+          name: "lsp",
+          enabled: true,
+          transport: "stdio",
+          targetOverrides: [
+            {
+              target: "codex",
+              enabled: true,
+              defaultToolsApprovalMode: "never",
+              enabledTools: ["lsp_goto_definition"]
+            }
+          ],
+          command: "npx",
+          args: ["-y", "@modelcontextprotocol/server-lsp"],
+          envKeys: ["LSP_ROOT"],
+          cwd: "/workspace",
+          defaultToolsApprovalMode: "on-request",
+          declared: true,
+          roles: ["worker", "orchestrator"]
+        },
+        {
+          name: "antigravity-cli",
+          enabled: false,
+          transport: "stdio",
+          targetOverrides: [{ target: "codex", enabled: false }],
+          command: "antigravity",
+          args: ["mcp"],
+          declared: false,
+          roles: []
+        },
+        {
+          name: "openaiDeveloperDocs",
+          enabled: null,
+          transport: "http",
+          targetOverrides: [],
+          url: "https://docs.example.test/mcp",
+          declared: true,
+          roles: ["orchestrator"]
+        }
+      ]
+    });
     return true;
   }
   if (url.pathname === "/control/mcp-applied") {
@@ -4569,7 +4511,7 @@ function handleCatalogResourceRead(
           lastObservationAt: MCP_OBSERVED_AT,
           lastError: null,
           explanation: mcpDeclaration.converged
-            ? MCP_CONVERGED_EXPLANATION
+            ? FIXTURE_CONVERGED_EXPLANATION
             : "Apply wrote the latest desired generation, but the running runtime has not observed it yet. Restart the affected process or wait for the observation hook to refresh."
         },
         history: []
@@ -4685,38 +4627,24 @@ function handleCatalogResourceRead(
     });
     return true;
   }
-  if (url.pathname === "/control/hooks") {
+  if (handleHookCatalogRead(url, response)) return true;
+  if (url.pathname === "/control/prompts") {
     sendJson(response, {
-      schema: "autodev-control-hooks-v2",
-      source: ".rulesync/hooks.jsonc",
-      readOnly: false,
+      schema: "autodev-control-prompts-v2",
+      source: ".rulesync/prompts",
+      readOnly: true,
       valid: true,
       issues: [],
-      revision: hookDeclaration.revision,
-      target: "codexcli",
-      events: hookDeclaration.events
+      totalCommands: 1,
+      commands: [
+        {
+          name: "review",
+          path: ".rulesync/prompts/review.md",
+          description: "Review the pending diff."
+        }
+      ],
+      rolePrompts: [{ role: "default", path: ".rulesync/prompts/default.md" }]
     });
-    return true;
-  }
-  if (url.pathname === "/control/hooks-applied") {
-    // The hook configuration the Runtime published, against the canonical
-    // declaration. The published side carries an older command, so the page
-    // can tell a declared hook from one the Runtime has caught up with -- and
-    // the verdict is the Runtime's own.
-    sendJson(response, {
-      schema: "autodev-control-hooks-applied-v1",
-      source: "/codex/hooks.json",
-      declarationSource: ".rulesync/hooks.jsonc",
-      target: "codexcli",
-      available: true,
-      declaredEvents: hookDeclaration.events,
-      events: hookDeclaration.appliedEvents,
-      reconciliation: hookReconciliation()
-    });
-    return true;
-  }
-  if (url.pathname === "/control/prompts") {
-    sendPromptCatalog(response);
     return true;
   }
   if (url.pathname === "/control/permissions") {
@@ -4755,7 +4683,127 @@ function handleCatalogResourceRead(
     });
     return true;
   }
-  if (handleCatalogDetailRead(url, response)) {
+  const agentDetail = url.pathname.match(AGENT_DETAIL_ROUTE);
+  if (agentDetail !== null) {
+    sendJson(response, {
+      schema: "autodev-control-agent-detail-v3",
+      id: decodeURIComponent(agentDetail[1]),
+      role: decodeURIComponent(agentDetail[1]),
+      kind: "orchestrator",
+      readOnly: false,
+      configured: true,
+      valid: true,
+      status: "idle",
+      convergence: "converged",
+      enablement: agentEnablementFor(decodeURIComponent(agentDetail[1])),
+      primaryModel: "claude",
+      allowedProviders: ["claude"],
+      mcps: ["lsp"],
+      skills: [],
+      hasPrompt: true,
+      promptPath: "agents/prompts/default.md",
+      systemPrompt: "You are the AutoDev orchestrator.",
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: "agent-default",
+          observedGeneration: "agent-default",
+          lastApplyAt: FIXTURE_APPLIED_AT,
+          lastObservationAt: FIXTURE_APPLIED_AT,
+          lastError: null,
+          explanation: "The agent matches the canonical source."
+        },
+        history: []
+      }
+    });
+    return true;
+  }
+  const skillContent = url.pathname.match(SKILL_CONTENT_ROUTE);
+  if (skillContent !== null) {
+    const name = decodeURIComponent(skillContent[1] ?? "");
+    const source = canonicalSource("skill", name);
+    if (source === null) {
+      sendJson(
+        response,
+        {
+          error: {
+            message: `The skill "${name}" does not exist.`,
+            type: "autodev_control_api_error",
+            code: "autodev_control_skill_not_found"
+          }
+        },
+        404
+      );
+      return true;
+    }
+    sendJson(response, {
+      schema: "autodev-control-skill-content-v2",
+      name: source.name,
+      path: source.path,
+      content: source.content,
+      revision: source.revision,
+      // The skill reaches the runtime as a link to this very source, so the
+      // observed generation is the canonical revision whenever the link holds
+      // it. The Console renders this view rather than deriving its own, so the
+      // skill page cannot drift from the shared reconciliation contract.
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: source.revision,
+          observedGeneration: source.revision,
+          lastApplyAt: FIXTURE_APPLIED_AT,
+          lastObservationAt: FIXTURE_APPLIED_AT,
+          lastError: null,
+          explanation: FIXTURE_CONVERGED_EXPLANATION
+        },
+        history: []
+      }
+    });
+    return true;
+  }
+  const promptDetail = url.pathname.match(PROMPT_DETAIL_ROUTE);
+  if (promptDetail !== null) {
+    const name = decodeURIComponent(promptDetail[1] ?? "");
+    const source = canonicalSource("prompt", name);
+    if (source === null) {
+      sendJson(
+        response,
+        {
+          error: {
+            message: `The command "${name}" does not exist.`,
+            type: "autodev_control_api_error",
+            code: "autodev_control_api_unknown_path"
+          }
+        },
+        404
+      );
+      return true;
+    }
+    sendJson(response, {
+      schema: "autodev-control-prompt-detail-v4",
+      name: source.name,
+      type: "command",
+      source: source.path,
+      content: source.content,
+      preview: source.preview ?? source.content,
+      revision: source.revision,
+      diff: {
+        summary: "The canonical command source.",
+        identifier: `prompt-${source.name}-1`
+      },
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: `prompt-${source.name}-1`,
+          observedGeneration: `prompt-${source.name}-1`,
+          lastApplyAt: FIXTURE_APPLIED_AT,
+          lastObservationAt: FIXTURE_APPLIED_AT,
+          lastError: null,
+          explanation: "The command matches the canonical source."
+        },
+        history: []
+      }
+    });
     return true;
   }
   return false;
