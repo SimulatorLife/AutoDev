@@ -31,7 +31,9 @@ import {
   type PlaytestVisualDecision,
   type PlaytestVisualDecisionCapabilities,
   type PlaytestVisualDecisionCounters,
+  type PlaytestVisualDecisionProgress,
   type PlaytestVisualDecisionRequest,
+  type PlaytestVisualHistoryEntry,
   type PlaytestVisualPolicy,
   type PlaytestVisualPolicyUsage,
   type WorkspaceVisualPlaytestTargetApproval
@@ -58,6 +60,15 @@ const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 const MAX_FOCUS_LENGTH = 2000;
 const MAX_CANDIDATE_ID_LENGTH = 128;
 const MAX_CANDIDATE_DESCRIPTION_LENGTH = 512;
+/**
+ * How many past decisions the local server is told about.
+ *
+ * A small local model spends its context on what it is asked about, and the
+ * decisions that bear on the next choice are the last few.
+ */
+const MAX_RECENT_ACTIONS = 4;
+/** The bound on one past decision's summary. */
+const MAX_RECENT_ACTION_LENGTH = 200;
 /**
  * One logical decision may be attempted twice. A retry is another attempt at
  * the same decision, so it is counted as a provider attempt and never as a
@@ -320,6 +331,106 @@ function assertLocalOneJevEndpoint(value: string): void {
   }
 }
 
+/**
+ * The Runtime's progress reading as the local server reads it.
+ *
+ * The upstream takes its state as a flat map of strings, so the reading is
+ * written in the words the Runtime measured it in. A backend that is told the
+ * game has not advanced can choose differently; a backend that is not told
+ * cannot, and keeps proposing the action that does nothing.
+ */
+function progressState(progress: PlaytestVisualDecisionProgress): string {
+  const limit =
+    progress.policy === null
+      ? "no limit set"
+      : `${String(progress.policy.maxUnchangedDecisions)} decisions or ${String(
+          progress.policy.maxUnchangedMs
+        )} ms without an advance`;
+  return [
+    `advanced=${String(progress.advanced)}`,
+    `loading=${String(progress.loading)}`,
+    `unchangedSteps=${String(progress.unchangedSteps)}`,
+    `unchangedMs=${String(progress.unchangedMs)}`,
+    `limit=${limit}`
+  ].join(" ");
+}
+
+/**
+ * The decisions the episode already took, as the local server reads them.
+ *
+ * The reading is only actionable when the backend can see what it already
+ * did: told that the game did not advance and given nothing else, the model
+ * picks the same control again. Each entry says what was attempted and what
+ * became of it, not the whole action.
+ */
+function recentActionsState(
+  history: readonly PlaytestVisualHistoryEntry[]
+): string {
+  return history
+    .slice(-MAX_RECENT_ACTIONS)
+    .map(
+      (entry) =>
+        `step ${String(entry.step)}: ${describeAction(entry.action)} (${entry.outcome.trim()})`
+    )
+    .join(" | ");
+}
+
+/**
+ * One past action, in the fewest words that still identify it.
+ *
+ * The action is stored as the JSON the Runtime dispatched, and that JSON is
+ * mostly identifiers the model cannot use: truncated at the control id, it
+ * names nothing. The kind and the control it acted on are what a model needs
+ * in order not to repeat itself.
+ */
+function describeAction(action: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(action);
+  } catch {
+    return boundedSummary(action);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return boundedSummary(action);
+  }
+  const record = parsed as Record<string, unknown>;
+  const kind = typeof record.kind === "string" ? record.kind : "action";
+  const identifier =
+    typeof record.controlId === "string"
+      ? record.controlId
+      : typeof record.key === "string"
+        ? record.key
+        : null;
+  return boundedSummary(identifier === null ? kind : `${kind} ${identifier}`);
+}
+
+/**
+ * One summary, bounded so a long value cannot crowd out the rest of the
+ * state.
+ */
+function boundedSummary(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.length <= MAX_RECENT_ACTION_LENGTH
+    ? trimmed
+    : `${trimmed.slice(0, MAX_RECENT_ACTION_LENGTH - 3)}...`;
+}
+
+/**
+ * The instructions the action question is asked under.
+ *
+ * The reading's meaning lives here and its values live in the state, the same
+ * split the Smart-directed route uses: the upstream passes both to the model,
+ * and a number the model cannot interpret is a number it ignores.
+ */
+function actionQuestionInstructions(): string {
+  return [
+    "Which action should the player take next?",
+    "The state carries the runtime's progress reading. advanced is false when the game has shown the player exactly what it showed before. loading is true when the page reports that it is still loading: the game has not had the chance to advance yet, so an unchanged screen behind it is not the game refusing to respond, and your approach should not change to it.",
+    "When advanced is false and loading is false, the game is not responding to what you did: choose a different control or a different way to reach the same effect, and do not repeat an action that recentActions shows as already dispatched against an unchanged screen.",
+    "The limit in the reading is the operator's own, and it says how many attempts remain before the episode ends and reports that the game did not advance."
+  ].join(" ");
+}
+
 export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
   readonly backendId = "onejev-local";
   private readonly target: WorkspaceVisualPlaytestTargetApproval;
@@ -562,6 +673,15 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
     if (request.areasOfFocus !== null) {
       state.focus = request.areasOfFocus;
     }
+    // What the Runtime measured, and what the episode already tried. The
+    // reading is the fact that lets the local backend answer differently when
+    // the game is not advancing; the decisions are what make that answer a
+    // different one rather than the same one again.
+    state.progress = progressState(request.progress);
+    const recentActions = recentActionsState(request.history);
+    if (recentActions.length > 0) {
+      state.recentActions = recentActions;
+    }
     return {
       model: this.model,
       state,
@@ -574,7 +694,7 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
       questions: {
         [ACTION_QUESTION_ID]: {
           type: "choice",
-          instructions: "Which action should the player take next?",
+          instructions: actionQuestionInstructions(),
           criteria
         }
       }

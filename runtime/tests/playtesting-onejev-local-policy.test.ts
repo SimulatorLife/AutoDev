@@ -266,7 +266,11 @@ test("OneJev-local sends the frame inline as a PNG data URI and the candidates a
     true
   );
   assert.equal(request.body.model, "jev-latest");
-  assert.deepEqual(request.body.state, { screen: "<image:1>" });
+  assert.deepEqual(request.body.state, {
+    screen: "<image:1>",
+    progress:
+      "advanced=true loading=false unchangedSteps=0 unchangedMs=0 limit=no limit set"
+  });
   assert.equal(request.body.media.length, 1);
   assert.equal(request.body.media[0]!.type, "image");
   assert.ok(request.body.media[0]!.data.startsWith(DATA_URI_PREFIX));
@@ -280,10 +284,10 @@ test("OneJev-local sends the frame inline as a PNG data URI and the candidates a
   const question = request.body.questions.action;
   assert.ok(question);
   assert.equal(question.type, "choice");
-  assert.equal(
-    question.instructions,
-    "Which action should the player take next?"
+  assert.ok(
+    question.instructions.includes("Which action should the player take next?")
   );
+  assert.ok(question.instructions.includes("progress reading"));
   assert.deepEqual(Object.keys(question.criteria), [
     "candidate-start",
     "candidate-left"
@@ -295,6 +299,109 @@ test("OneJev-local sends the frame inline as a PNG data URI and the candidates a
   assert.equal(
     question.criteria["candidate-left"],
     "Steer the car to the left."
+  );
+});
+
+test("OneJev-local carries the runtime's progress reading and the decisions already taken", async () => {
+  const captured: CapturedRequest[] = [];
+  const { policy, makeRequest } = scenario({
+    fetchImpl: async (input, init) => {
+      captured.push({
+        url: String(input),
+        method: init?.method ?? "",
+        headers: (init?.headers ?? {}) as Record<string, string>,
+        body: JSON.parse(String(init?.body)) as CapturedRequest["body"]
+      });
+      return systemOneResponse();
+    }
+  });
+
+  const decision = await policy.decide(
+    makeRequest({
+      progress: {
+        version: PLAYTESTS_VISUAL_PROGRESS_VERSION,
+        stuckPolicyVersion: PLAYTESTS_VISUAL_STUCK_POLICY_VERSION,
+        advanced: false,
+        loading: false,
+        unchangedSteps: 2,
+        unchangedMs: 15_672,
+        policy: { maxUnchangedDecisions: 2, maxUnchangedMs: 20_000 }
+      },
+      history: [
+        {
+          step: 1,
+          action: JSON.stringify(activateControl("control-start")),
+          observation: "phase null",
+          outcome: "dispatched"
+        }
+      ]
+    })
+  );
+
+  assert.equal(decision.status, "act");
+  const request = captured[0]!;
+  // A backend that is told the game has not advanced can choose differently;
+  // one that is not told keeps proposing the action that does nothing.
+  assert.equal(
+    request.body.state.progress,
+    "advanced=false loading=false unchangedSteps=2 unchangedMs=15672 limit=2 decisions or 20000 ms without an advance"
+  );
+  // The decisions already taken are what make a different choice a different
+  // one rather than the same one again.
+  assert.equal(
+    request.body.state.recentActions,
+    "step 1: activate-control control-start (dispatched)"
+  );
+  const question = request.body.questions.action;
+  assert.ok(question);
+  assert.ok(question.instructions.includes("advanced is false"));
+  assert.ok(
+    question.instructions.includes(
+      "do not repeat an action that recentActions shows as already dispatched"
+    )
+  );
+});
+
+test("OneJev-local tells a loading page apart from a game that did not advance", async () => {
+  const captured: CapturedRequest[] = [];
+  const { policy, makeRequest } = scenario({
+    fetchImpl: async (input, init) => {
+      captured.push({
+        url: String(input),
+        method: init?.method ?? "",
+        headers: (init?.headers ?? {}) as Record<string, string>,
+        body: JSON.parse(String(init?.body)) as CapturedRequest["body"]
+      });
+      return systemOneResponse();
+    }
+  });
+
+  const decision = await policy.decide(
+    makeRequest({
+      progress: {
+        version: PLAYTESTS_VISUAL_PROGRESS_VERSION,
+        stuckPolicyVersion: PLAYTESTS_VISUAL_STUCK_POLICY_VERSION,
+        advanced: false,
+        loading: true,
+        unchangedSteps: 0,
+        unchangedMs: 0,
+        policy: null
+      }
+    })
+  );
+
+  assert.equal(decision.status, "act");
+  const request = captured[0]!;
+  // A page that is still loading has not had the chance to advance, so the
+  // reading says so rather than reporting an unchanged screen.
+  assert.equal(
+    request.body.state.progress,
+    "advanced=false loading=true unchangedSteps=0 unchangedMs=0 limit=no limit set"
+  );
+  const question = request.body.questions.action;
+  assert.ok(question);
+  assert.ok(
+    question.instructions.includes("your approach should not change to it")
   );
 });
 
