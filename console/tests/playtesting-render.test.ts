@@ -730,6 +730,35 @@ test("a loop-guard stop explains the repeated decision and opens its stop step b
   assert.doesNotMatch(explanation, /Game lost|Player lost/u);
 });
 
+test("a no-progress stop says the game stopped advancing and opens its stop step", () => {
+  const partialEpisode: PlaytestEpisode = {
+    ...episode(),
+    status: "budget-truncated",
+    termination: { reason: "no-progress", step: 2 },
+    outcome: "unknown",
+    completeness: "partial",
+    missingReasons: ["budget-truncated"]
+  };
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: detail(partialEpisode),
+      scope: scope({ view: "sessions" }),
+      window: traceWindow()
+    })
+  );
+  const explanation =
+    /data-testid="playtesting-truncation-explanation"[^>]*>([^<]*)/u.exec(
+      html
+    )?.[1] ?? "";
+  // The reader is told the game stopped advancing, not that a budget ran out.
+  assert.match(explanation, /game showed the player nothing new/u);
+  assert.match(explanation, /no win or loss is inferred/u);
+  assert.doesNotMatch(explanation, /Token budget reached/u);
+  // The step the game was showing when it stopped is one click away.
+  assert.match(html, /data-playtesting-stop-step="2"/u);
+  assert.match(html, /href="[^"]*step=2"[^>]*>Inspect stop at step 2/u);
+});
+
 test("a step-limit stop says how many decisions ran without inventing a game outcome", () => {
   const partialEpisode: PlaytestEpisode = {
     ...episode(),

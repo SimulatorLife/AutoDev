@@ -27,7 +27,10 @@ import type {
   PlaytestVisualAction,
   PlaytestVisualObservation
 } from "./visual-control.ts";
-import type { PLAYTESTS_VISUAL_PROGRESS_VERSION } from "./visual-progress.ts";
+import type {
+  PLAYTESTS_VISUAL_PROGRESS_VERSION,
+  PLAYTESTS_VISUAL_STUCK_POLICY_VERSION
+} from "./visual-progress.ts";
 
 /** The decision backends a visual episode may be launched with. */
 export const PLAYTESTS_VISUAL_POLICY_IDS = [
@@ -139,18 +142,47 @@ export interface PlaytestVisualDecisionRequest {
 export interface PlaytestVisualDecisionProgress {
   readonly version: typeof PLAYTESTS_VISUAL_PROGRESS_VERSION;
   /**
+   * The version of the rule that ends an episode whose game stopped
+   * advancing.
+   *
+   * The detector says what the game did; this says what the Runtime does
+   * about it, and the two change for different reasons.
+   */
+  readonly stuckPolicyVersion: typeof PLAYTESTS_VISUAL_STUCK_POLICY_VERSION;
+  /**
    * Whether the game advanced since the previous observation.
    *
    * The first observation of an episode counts as an advance: the run has
    * started.
    */
   readonly advanced: boolean;
+  /**
+   * Whether the page reported that it was still loading.
+   *
+   * A loading page has not had the chance to advance, so an unchanged screen
+   * behind it is not a game that is refusing to respond. The backend needs to
+   * know the difference: told only that the game did not advance, it would
+   * change its approach to a game that is still starting up.
+   */
+  readonly loading: boolean;
   /** Consecutive decisions whose observation showed no advance. */
   readonly unchangedSteps: number;
-  /** Milliseconds since the game last advanced. */
+  /**
+   * Milliseconds spent observing a screen that did not change.
+   *
+   * The time a page spent loading is not counted: the game had not had the
+   * chance to advance then, and a backend told the game had been idle for the
+   * whole of a load would change its approach to a game that was still
+   * starting up.
+   */
   readonly unchangedMs: number;
-  /** The thresholds this episode is measured against. */
-  readonly policy: WorkspaceVisualPlaytestProgressPolicy;
+  /**
+   * The thresholds this episode is measured against.
+   *
+   * `null` means the operator set none: the run is measured and reported, but
+   * it is not cut short for not advancing.
+   */
+  readonly policy: WorkspaceVisualPlaytestProgressPolicy | null;
 }
 
 /**

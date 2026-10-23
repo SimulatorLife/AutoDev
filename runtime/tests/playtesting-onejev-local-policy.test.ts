@@ -3,12 +3,13 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
-  PLAYTESTS_VISUAL_PROGRESS_VERSION,
   PLAYTEST_VISUAL_ACTION_SCHEMA,
-  playtestVisualProgressPolicy,
+  PLAYTESTS_VISUAL_PROGRESS_VERSION,
+  PLAYTESTS_VISUAL_STUCK_POLICY_VERSION,
   type PlaytestVisualCandidate,
   type PlaytestVisualDecisionRequest,
   type PlaytestVisualObservation,
+  playtestVisualProgressPolicy,
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
 
@@ -222,7 +223,9 @@ function scenario(options: {
     candidates: candidates(),
     progress: {
       version: PLAYTESTS_VISUAL_PROGRESS_VERSION,
+      stuckPolicyVersion: PLAYTESTS_VISUAL_STUCK_POLICY_VERSION,
       advanced: true,
+      loading: false,
       unchangedSteps: 0,
       unchangedMs: 0,
       policy: playtestVisualProgressPolicy(approved)

@@ -5,9 +5,10 @@ import test from "node:test";
 import {
   admitPlaytestVisualAction,
   PLAYTESTS_VISUAL_PROGRESS_VERSION,
-  playtestVisualProgressPolicy,
+  PLAYTESTS_VISUAL_STUCK_POLICY_VERSION,
   type PlaytestVisualControl,
   type PlaytestVisualObservation,
+  playtestVisualProgressPolicy,
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
 
@@ -353,7 +354,9 @@ test("the OneJev backend accepts the built candidates and answers with one of th
     candidates,
     progress: {
       version: PLAYTESTS_VISUAL_PROGRESS_VERSION,
+      stuckPolicyVersion: PLAYTESTS_VISUAL_STUCK_POLICY_VERSION,
       advanced: true,
+      loading: false,
       unchangedSteps: 0,
       unchangedMs: 0,
       policy: playtestVisualProgressPolicy(approved)

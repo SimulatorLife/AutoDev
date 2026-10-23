@@ -6,7 +6,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import type { WorkspaceVisualPlaytestTargetApproval } from "@simulatorlife/autodev-core";
+import {
+  PLAYTESTS_VISUAL_LOADING_WARNING,
+  type WorkspaceVisualPlaytestTargetApproval
+} from "@simulatorlife/autodev-core";
 import { type Browser, chromium } from "playwright-core";
 
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
@@ -216,6 +219,76 @@ test("visual browser uses transient context, redacts text fields, stores real fr
     assert.equal(
       store.referenceForId(captured.observation.frame.artifactId)?.sha256,
       captured.observation.frame.sha256
+    );
+  } finally {
+    await driver?.close();
+    await source.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the observation says which screen the game is on, what it read out, and that it is loading", async () => {
+  // The progress detector compares what the player sees now with what they
+  // saw before. The page has to say which screen it is on, what it has read
+  // out, and whether it is still loading, or the comparison has nothing to
+  // compare.
+  const source = await listen(
+    () => `<!doctype html><html><head><title>Race Briefing</title></head><body>
+    <h1>Simulation Active</h1>
+    <progress id="loading" max="100"></progress>
+    <button id="start">Start race</button>
+  </body></html>`
+  );
+  const { store, root } = artifacts();
+  let driver: PlaytestVisualBrowserDriver | null = null;
+  try {
+    driver = await openDriver({ source, store });
+    const captured = await driver.observe();
+    assert.equal(captured.status, "observed");
+    if (captured.status !== "observed") return;
+    // The game's own heading names the screen; the document title is the
+    // fallback for a page that has no heading.
+    assert.equal(captured.observation.phaseEvidence, "Simulation Active");
+    // A progress element with no value yet is a loading indicator, not a
+    // measurement: the episode must not read the game's progress as a
+    // measurement of "NaN", and it must not count the step against the
+    // game's progress either.
+    assert.equal(captured.observation.progressEvidence, null);
+    assert.ok(
+      captured.observation.visibleWarnings.includes(
+        PLAYTESTS_VISUAL_LOADING_WARNING
+      )
+    );
+  } finally {
+    await driver?.close();
+    await source.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the observation reads the progress the page reports", async () => {
+  const source = await listen(
+    () => `<!doctype html><html><head><title>Race Briefing</title></head><body>
+    <progress id="loading" max="100" value="42"></progress>
+    <button id="start">Start race</button>
+  </body></html>`
+  );
+  const { store, root } = artifacts();
+  let driver: PlaytestVisualBrowserDriver | null = null;
+  try {
+    driver = await openDriver({ source, store });
+    const captured = await driver.observe();
+    assert.equal(captured.status, "observed");
+    if (captured.status !== "observed") return;
+    // A page with no heading falls back to the document title.
+    assert.equal(captured.observation.phaseEvidence, "Race Briefing");
+    assert.equal(captured.observation.progressEvidence, "42");
+    assert.equal(
+      captured.observation.visibleWarnings.includes(
+        PLAYTESTS_VISUAL_LOADING_WARNING
+      ),
+      false,
+      "a page that reports a value is not loading"
     );
   } finally {
     await driver?.close();

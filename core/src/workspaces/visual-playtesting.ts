@@ -46,37 +46,31 @@ export interface WorkspaceVisualPlaytestLimits {
  * These are the operator's thresholds, because the operator knows whether
  * their game advances slowly or not at all. The Runtime measures the run
  * against them; it does not decide on its own that a game is stuck.
+ *
+ * An approval that carries no policy of its own carries no thresholds: the
+ * Runtime measures the run either way and tells the decision backend what it
+ * measured, but it does not end a run for not advancing unless the operator
+ * asked it to.
  */
 export interface WorkspaceVisualPlaytestProgressPolicy {
   /**
    * Consecutive decisions that may pass without the game advancing.
    *
    * The episode counts the decisions whose observation showed the player
-   * exactly what the previous one showed.
+   * exactly what the previous one showed. A page that reports that it is
+   * still loading is not one of them: the game has not had the chance to
+   * advance.
    */
   readonly maxUnchangedDecisions: number;
   /**
    * Milliseconds the game may go without advancing.
    *
-   * The episode counts from the moment the game last advanced.
+   * The episode counts the time it spent observing a screen that did not
+   * change. The time a page spent loading is not counted: a game that was
+   * still starting up had not had the chance to advance.
    */
   readonly maxUnchangedMs: number;
 }
-
-/**
- * The thresholds an approval that carries no policy of its own is measured
- * against.
- *
- * The defaults are deliberately conservative: they never end an episode
- * earlier than the approved step cap or the approved wall-time budget would
- * end it, so an approval that says nothing about progress behaves exactly as
- * it did before the thresholds existed. An operator who wants a run to be cut
- * short when their game stops responding says so in the approval.
- */
-export const PLAYTESTS_VISUAL_PROGRESS_POLICY_DEFAULTS = {
-  maxUnchangedDecisions: 5,
-  maxUnchangedMs: 60_000
-} as const;
 
 /**
  * Operator-authored authorization for a single browser game entry point.
@@ -282,30 +276,25 @@ function assertVisualPlaytestProgressPolicy(
 /**
  * The no-progress thresholds an approval is measured against.
  *
- * An approval that carries no policy of its own is measured against the
- * defaults, clamped so that the thresholds never end an episode earlier than
- * the approved step cap or the approved wall-time budget would end it.
+ * An approval that carries no policy of its own carries no thresholds: the
+ * Runtime measures the run either way and tells the decision backend what it
+ * measured, but it does not end a run for not advancing unless the operator
+ * asked it to. Such an approval therefore behaves exactly as it did before the
+ * thresholds existed.
+ *
+ * A configured policy is used as the operator wrote it. The episode's budgets
+ * still bound the run: a threshold the episode can never reach simply never
+ * fires, and the episode ends on the budget that did.
  */
-export function playtestVisualProgressPolicy(  approval: WorkspaceVisualPlaytestTargetApproval
-): WorkspaceVisualPlaytestProgressPolicy {
+export function playtestVisualProgressPolicy(
+  approval: WorkspaceVisualPlaytestTargetApproval
+): WorkspaceVisualPlaytestProgressPolicy | null {
   const configured = approval.progressPolicy;
-  const maxUnchangedDecisions = Math.min(
-    Math.max(
-      configured?.maxUnchangedDecisions ??
-        PLAYTESTS_VISUAL_PROGRESS_POLICY_DEFAULTS.maxUnchangedDecisions,
-      1
-    ),
-    approval.limits.maxStepsPerEpisode
-  );
-  const maxUnchangedMs = Math.min(
-    Math.max(
-      configured?.maxUnchangedMs ??
-        PLAYTESTS_VISUAL_PROGRESS_POLICY_DEFAULTS.maxUnchangedMs,
-      1
-    ),
-    approval.limits.wallTimeMs
-  );
-  return { maxUnchangedDecisions, maxUnchangedMs };
+  if (configured === undefined) return null;
+  return {
+    maxUnchangedDecisions: configured.maxUnchangedDecisions,
+    maxUnchangedMs: configured.maxUnchangedMs
+  };
 }
 
 function assertRevocation(

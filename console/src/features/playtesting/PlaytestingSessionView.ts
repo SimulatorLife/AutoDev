@@ -945,23 +945,48 @@ function reviewPanel(
   );
 }
 
+/**
+ * The sentence that says which guard cut a truncated episode short.
+ *
+ * Each limit and each guard is a different fact with a different consequence
+ * for the operator, so each one is spelled out rather than summarised.
+ */
+function budgetTruncationSentence(
+  episode: ControlApiPlaytestingEpisodeDetailResponse["record"],
+  stopStep: number | null
+): string {
+  if (stopStep !== null && episode.termination.reason === "loop-guard") {
+    return `Runtime's loop guard stopped at step ${stopStep} after the same player-visible state and action repeated. That action was not executed. No terminal game outcome was observed; no win or loss is inferred.`;
+  }
+  switch (episode.termination.reason) {
+    case "step-limit": {
+      return `Runtime reached the episode step limit after ${episode.stepCount} executed decisions. No terminal game outcome was observed; no win or loss is inferred.`;
+    }
+    case "usage-budget": {
+      return `The approved per-episode usage budget ran out after ${episode.stepCount} executed decisions, before the step cap was reached. No terminal game outcome was observed; no win or loss is inferred.`;
+    }
+    case "no-progress": {
+      return `Runtime measured that the game showed the player nothing new for as long as the approved no-progress limit allowed, and ended the episode there. No terminal game outcome was observed; no win or loss is inferred.`;
+    }
+    default: {
+      return "No terminal game outcome was observed. Runtime marked this episode budget-truncated; no win or loss is inferred. Inspect the last recorded steps to diagnose the stop.";
+    }
+  }
+}
+
 function truncationExplanation(
   episode: ControlApiPlaytestingEpisodeDetailResponse["record"],
   scope: PlaytestingScope
 ): React.ReactNode {
   if (episode.status !== "budget-truncated") return null;
-  const loopStep =
-    episode.termination.reason === "loop-guard"
+  // The guards that stop at a step are worth a link to it: the operator
+  // reads the last recorded steps to see what the game was showing.
+  const stopStep =
+    episode.termination.reason === "loop-guard" ||
+    episode.termination.reason === "no-progress"
       ? episode.termination.step
       : null;
-  const explanation =
-    loopStep === null
-      ? episode.termination.reason === "step-limit"
-        ? `Runtime reached the episode step limit after ${episode.stepCount} executed decisions. No terminal game outcome was observed; no win or loss is inferred.`
-        : episode.termination.reason === "usage-budget"
-          ? `The approved per-episode usage budget ran out after ${episode.stepCount} executed decisions, before the step cap was reached. No terminal game outcome was observed; no win or loss is inferred.`
-          : "No terminal game outcome was observed. Runtime marked this episode budget-truncated; no win or loss is inferred. Inspect the last recorded steps to diagnose the stop."
-      : `Runtime's loop guard stopped at step ${loopStep} after the same player-visible state and action repeated. That action was not executed. No terminal game outcome was observed; no win or loss is inferred.`;
+  const explanation = budgetTruncationSentence(episode, stopStep);
   return React.createElement(
     "p",
     {
@@ -971,19 +996,19 @@ function truncationExplanation(
       "data-testid": "playtesting-truncation-explanation"
     },
     explanation,
-    loopStep === null ? null : " ",
-    loopStep === null
+    stopStep === null ? null : " ",
+    stopStep === null
       ? null
       : React.createElement(
           NavigationLink,
           {
-            href: playtestingEpisodeHref(scope, episode.episodeId, loopStep),
+            href: playtestingEpisodeHref(scope, episode.episodeId, stopStep),
             className: "font-medium text-accent hover:underline",
             dataAttributes: {
-              "data-playtesting-stop-step": String(loopStep)
+              "data-playtesting-stop-step": String(stopStep)
             }
           },
-          `Inspect stop at step ${loopStep}`
+          `Inspect stop at step ${stopStep}`
         )
   );
 }

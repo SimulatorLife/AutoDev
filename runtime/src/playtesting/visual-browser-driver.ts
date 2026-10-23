@@ -797,7 +797,7 @@ function pageReadInBrowser(patterns: PageReadPatterns): RawPageReport {
       heading !== null && visible(heading)
         ? (heading.textContent ?? "")
         : (document.title ?? "");
-    const trimmed = text.replace(patterns.whitespace, " ").trim();
+    const trimmed = text.split(patterns.whitespace).join(" ").trim();
     return trimmed.length > 0 ? trimmed.slice(0, 128) : null;
   };
   /**
@@ -811,20 +811,25 @@ function pageReadInBrowser(patterns: PageReadPatterns): RawPageReport {
     readonly progress: string | null;
     readonly loading: boolean;
   } => {
-    const element = document.querySelector(
-      '[role="progressbar"],progress'
-    );
+    const element = document.querySelector('[role="progressbar"],progress');
     const busy =
       document.body?.getAttribute("aria-busy") === "true" ||
       document.documentElement?.getAttribute("aria-busy") === "true";
     if (element === null) {
       return { progress: null, loading: busy };
     }
+    // A native progress element that has no value yet is an indeterminate
+    // element: it reports a value of zero rather than a measurement, and it
+    // is a loading indicator rather than the game's progress. The attribute
+    // is what says so, because a browser that does not implement the
+    // `indeterminate` property still leaves the value attribute off.
     const value =
       element.getAttribute("aria-valuetext") ??
       element.getAttribute("aria-valuenow") ??
       (element instanceof HTMLProgressElement
-        ? String(element.value)
+        ? element.hasAttribute("value")
+          ? String(element.value)
+          : null
         : null);
     if (value === null || value.trim().length === 0) {
       return {

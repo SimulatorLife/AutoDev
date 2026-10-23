@@ -15,9 +15,9 @@ import {
   type PlaytestVisualCandidate,
   type PlaytestVisualDecisionCapabilities,
   type PlaytestVisualDecisionCounters,
+  type PlaytestVisualDecisionProgress,
   type PlaytestVisualDecisionSelfReport,
   type PlaytestVisualHistoryEntry,
-  type PlaytestVisualDecisionProgress,
   type PlaytestVisualObservation,
   type PlaytestVisualPolicy,
   type WorkspaceVisualPlaytestTargetApproval
@@ -793,7 +793,7 @@ function decisionInstructions(): string {
     // The Runtime measures whether the game is advancing and tells the
     // backend. Without this the backend keeps proposing the action that
     // does nothing, and the episode burns its budget on a frozen game.
-    "The request carries a progress reading. advanced is false when the game has shown the player exactly what it showed before. When advanced is false, the game is not responding to what you did: choose a different control or a different way to reach the same effect, and do not repeat an action that recentHistory already shows as dispatched against an unchanged screen. When the reading says the game has not advanced for many steps or a long time, the episode ends and reports that the game did not advance, so say what you observed in your intention rather than claiming progress."
+    "The request carries a progress reading. advanced is false when the game has shown the player exactly what it showed before. loading is true when the page reports that it is still loading: the game has not had the chance to advance yet, so an unchanged screen behind it is not the game refusing to respond, and do not change your approach to it. When advanced is false and loading is false, the game is not responding to what you did: choose a different control or a different way to reach the same effect, and do not repeat an action that recentHistory already shows as dispatched against an unchanged screen. maxUnchangedDecisions and maxUnchangedMs are the thresholds the operator set; they are null when the operator set none, and then the episode is not cut short for not advancing, but the reading is still what the runtime saw. When the reading says the game has not advanced for many steps or a long time, the episode ends and reports that the game did not advance, so say what you observed in your intention rather than claiming progress."
   ].join(" ");
 }
 
@@ -833,11 +833,14 @@ function buildDecisionRequest(input: {
     // can tell a screen that never changed from one it has not looked at.
     progress: {
       version: input.progress.version,
+      stuckPolicyVersion: input.progress.stuckPolicyVersion,
       advanced: input.progress.advanced,
+      loading: input.progress.loading,
       unchangedSteps: input.progress.unchangedSteps,
       unchangedMs: input.progress.unchangedMs,
-      maxUnchangedDecisions: input.progress.policy.maxUnchangedDecisions,
-      maxUnchangedMs: input.progress.policy.maxUnchangedMs
+      maxUnchangedDecisions:
+        input.progress.policy?.maxUnchangedDecisions ?? null,
+      maxUnchangedMs: input.progress.policy?.maxUnchangedMs ?? null
     },
     recentHistory: input.history.slice(-MAX_HISTORY_ITEMS).map((entry) => ({
       step: entry.step,

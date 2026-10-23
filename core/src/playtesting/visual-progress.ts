@@ -31,6 +31,16 @@ export const PLAYTESTS_VISUAL_PROGRESS_VERSION =
   "playtest-visual-progress-v1" as const;
 
 /**
+ * The version of the rule that ends an episode whose game stopped advancing.
+ *
+ * The detector says what the game did; this says what the Runtime does about
+ * it. The two change for different reasons — a new signal changes the first,
+ * a new response changes the second — so they are recorded apart.
+ */
+export const PLAYTESTS_VISUAL_STUCK_POLICY_VERSION =
+  "playtest-visual-stuck-policy-v1" as const;
+
+/**
  * The warning a page carries while it is still loading.
  *
  * A loading page is not a stuck page: the game has not had the chance to
@@ -68,9 +78,7 @@ export interface PlaytestVisualProgressState {
  * game not being ready to be judged yet.
  */
 export type PlaytestVisualProgressOutcome =
-  | "advanced"
-  | "unchanged"
-  | "loading";
+  "advanced" | "unchanged" | "loading";
 
 /**
  * The progress state one observation reports.
@@ -91,7 +99,6 @@ export function playtestVisualProgressState(
     controls: observation.controls
       .filter((control) => control.enabled)
       .map((control) => control.controlId)
-      .slice()
       .sort(),
     loading: observation.visibleWarnings.includes(
       PLAYTESTS_VISUAL_LOADING_WARNING
@@ -125,12 +132,18 @@ export function playtestVisualProgressOutcome(
  * An episode that has not advanced for that long is not going to advance on
  * its own: the episode ends and says so, instead of spending the rest of its
  * budget on a game that is not responding.
+ *
+ * An approval that carries no thresholds carries no policy here, and an
+ * episode without a policy is never cut short for not advancing: the Runtime
+ * still measures the run and still tells the decision backend what it
+ * measured, but it does not decide on its own that a game is stuck.
  */
 export function playtestVisualProgressStuck(input: {
   readonly unchangedSteps: number;
   readonly unchangedMs: number;
-  readonly policy: WorkspaceVisualPlaytestProgressPolicy;
+  readonly policy: WorkspaceVisualPlaytestProgressPolicy | null;
 }): boolean {
+  if (input.policy === null) return false;
   return (
     input.unchangedSteps >= input.policy.maxUnchangedDecisions ||
     input.unchangedMs >= input.policy.maxUnchangedMs

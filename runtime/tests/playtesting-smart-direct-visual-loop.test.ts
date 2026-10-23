@@ -7,7 +7,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import type { WorkspaceVisualPlaytestTargetApproval } from "@simulatorlife/autodev-core";
+import {
+  PLAYTESTS_VISUAL_PROGRESS_VERSION,
+  PLAYTESTS_VISUAL_STUCK_POLICY_VERSION,
+  playtestVisualProgressPolicy,
+  type WorkspaceVisualPlaytestTargetApproval
+} from "@simulatorlife/autodev-core";
 
 import { PlaytestArtifactStore } from "../src/playtesting/artifact-store.ts";
 import { SmartDirectVisualPolicy } from "../src/playtesting/smart-direct-policy.ts";
@@ -134,7 +139,16 @@ test("a Smart-direct response drives one admitted action through the isolated vi
       areasOfFocus: "Inspect the first game screen.",
       history: [],
       deadlineMonotonicMs: performance.now() + 5000,
-      candidates: buildVisualCandidates(first.observation)
+      candidates: buildVisualCandidates(first.observation),
+      progress: {
+        version: PLAYTESTS_VISUAL_PROGRESS_VERSION,
+        stuckPolicyVersion: PLAYTESTS_VISUAL_STUCK_POLICY_VERSION,
+        advanced: true,
+        loading: false,
+        unchangedSteps: 0,
+        unchangedMs: 0,
+        policy: playtestVisualProgressPolicy(target)
+      }
     });
     assert.equal(decision.status, "act");
     if (decision.status !== "act") return;

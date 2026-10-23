@@ -894,6 +894,21 @@ vision decision costs several thousand tokens, so the approved 20 000 tokens
 pay for about four decisions and the episode then ends `budget-truncated` with
 the reason `usage-budget`. Raising that ceiling is the operator's call.
 
+A target's approval carries two more thresholds, under **No-progress
+thresholds**: how many consecutive decisions may pass without the game
+advancing, and how long it may go without advancing. The Runtime compares
+what the player sees now with what they saw before — the screen, the progress
+the page reports, and the controls it offers — and a page that is still
+loading does not count against either number. When the game has not advanced
+for as long as the thresholds allow, the episode ends with the reason
+`no-progress` rather than spending the rest of its budget, and the decision
+backend is told what the Runtime measured so it can choose differently
+instead of proposing the same action again. Leave the fields blank and the
+run is never cut short for not advancing: the Runtime still measures the run
+and still reports what it measured, but it does not end a run for not
+advancing unless the operator asked it to, and a run ends on its own budgets
+instead.
+
 The session page's spectator shows what each step did: the frame the decision
 was taken from, the action that was selected, and whether the action reached
 the game. A refused action is recorded with the reason it was refused. When the

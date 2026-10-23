@@ -94,6 +94,24 @@ test("an episode the runtime ended on a refusal does not read as a crash", () =>
   assert.equal(executionStateExplanation("crashed", "unknown"), null);
 });
 
+test("an episode the runtime ended because the game did not advance says so", () => {
+  // "Limit reached" would be true but useless: the limit was the operator's
+  // no-progress threshold, and the operator needs to know the game stopped
+  // advancing rather than that some budget ran out.
+  assert.equal(
+    executionStateLabel("budget-truncated", "no-progress"),
+    "Game not advancing"
+  );
+  assert.equal(
+    executionStateLabel("budget-truncated", "usage-budget"),
+    "Budget exhausted"
+  );
+  assert.equal(
+    executionStateExplanation("budget-truncated", "no-progress"),
+    "The game showed the player nothing new for as long as the approved no-progress limit allowed, and the episode ended there. No terminal game outcome was observed; no win or loss is inferred."
+  );
+});
+
 test("a game outcome reads as a word, not a token", () => {
   assert.equal(gameOutcomeLabel("win"), "Win");
   assert.equal(gameOutcomeLabel("loss"), "Loss");

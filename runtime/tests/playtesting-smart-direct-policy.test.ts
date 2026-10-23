@@ -9,6 +9,7 @@ import test from "node:test";
 import {
   admitPlaytestVisualAction,
   PLAYTESTS_VISUAL_PROGRESS_VERSION,
+  PLAYTESTS_VISUAL_STUCK_POLICY_VERSION,
   type PlaytestVisualDecisionProgress,
   type PlaytestVisualObservation,
   type WorkspaceVisualPlaytestTargetApproval
@@ -73,8 +74,30 @@ function target(
   };
 }
 
+/**
+ * The progress reading a decision request carries.
+ *
+ * A request that says the game advanced is the ordinary one; the tests that
+ * care about the reading pass their own.
+ */
+function progressReading(
+  overrides: Partial<PlaytestVisualDecisionProgress> = {}
+): PlaytestVisualDecisionProgress {
+  return {
+    version: PLAYTESTS_VISUAL_PROGRESS_VERSION,
+    stuckPolicyVersion: PLAYTESTS_VISUAL_STUCK_POLICY_VERSION,
+    advanced: true,
+    loading: false,
+    unchangedSteps: 0,
+    unchangedMs: 0,
+    policy: { maxUnchangedDecisions: 5, maxUnchangedMs: 60_000 },
+    ...overrides
+  };
+}
+
 function observation(
-  overrides: Partial<PlaytestVisualObservation> = {}): PlaytestVisualObservation {
+  overrides: Partial<PlaytestVisualObservation> = {}
+): PlaytestVisualObservation {
   return {
     schema: "autodev-playtest-visual-observation-v1",
     observationId: "observation-1",
@@ -215,7 +238,8 @@ test("Smart-direct sends only the redacted observation to the local Smart route 
     areasOfFocus: "Explore the first race screen.",
     history: [],
     candidates: [],
-    deadlineMonotonicMs: performance.now() + 5000
+    deadlineMonotonicMs: performance.now() + 5000,
+    progress: progressReading()
   });
 
   assert.equal(decision.status, "act");
@@ -278,7 +302,8 @@ test("Smart-direct binds its Router request to the private workspace it was give
     areasOfFocus: "Explore the first race screen.",
     history: [],
     candidates: [],
-    deadlineMonotonicMs: performance.now() + 5000
+    deadlineMonotonicMs: performance.now() + 5000,
+    progress: progressReading()
   });
 
   assert.equal(requests.length, 1);
@@ -309,7 +334,8 @@ test("Smart-direct refuses to decide without a private workspace instead of send
       areasOfFocus: "Explore the first race screen.",
       history: [],
       candidates: [],
-      deadlineMonotonicMs: performance.now() + 5000
+      deadlineMonotonicMs: performance.now() + 5000,
+      progress: progressReading()
     }),
     (error: unknown) => {
       assert.ok(error instanceof SmartDirectPolicyError);
@@ -336,7 +362,8 @@ test("Smart-direct states the action vocabulary the Runtime parses", async () =>
     areasOfFocus: "Explore the first race screen.",
     history: [],
     candidates: [],
-    deadlineMonotonicMs: performance.now() + 5000
+    deadlineMonotonicMs: performance.now() + 5000,
+    progress: progressReading()
   });
 
   const body = JSON.parse(String(requests[0]?.init.body)) as {
@@ -390,7 +417,8 @@ test("Smart-direct stop returns a bounded self-report in the existing request an
     areasOfFocus: "Inspect the setup menu and stop before starting a race.",
     history: [],
     candidates: [],
-    deadlineMonotonicMs: performance.now() + 5000
+    deadlineMonotonicMs: performance.now() + 5000,
+    progress: progressReading()
   });
 
   assert.equal(decision.status, "stop");
@@ -422,7 +450,8 @@ test("Smart-direct no-focus stop remains unattempted and cites only the current 
     areasOfFocus: null,
     history: [],
     candidates: [],
-    deadlineMonotonicMs: performance.now() + 5000
+    deadlineMonotonicMs: performance.now() + 5000,
+    progress: progressReading()
   });
   assert.equal(decision.status, "stop");
   if (decision.status !== "stop") return;
@@ -454,7 +483,8 @@ test("Smart-direct rejects a focus report that cites a step outside the visible 
       areasOfFocus: "Inspect the setup menu.",
       history: [],
       candidates: [],
-      deadlineMonotonicMs: performance.now() + 5000
+      deadlineMonotonicMs: performance.now() + 5000,
+      progress: progressReading()
     }),
     (error: unknown) =>
       error instanceof SmartDirectPolicyError &&
@@ -506,7 +536,8 @@ test("Smart-direct rejects ungrounded and sensitive controls; ActionAdmission re
         areasOfFocus: null,
         history: [],
         candidates: [],
-        deadlineMonotonicMs: performance.now() + 5000
+        deadlineMonotonicMs: performance.now() + 5000,
+        progress: progressReading()
       }),
       SmartDirectPolicyError
     );
@@ -528,7 +559,8 @@ test("Smart-direct rejects ungrounded and sensitive controls; ActionAdmission re
     areasOfFocus: null,
     history: [],
     candidates: [],
-    deadlineMonotonicMs: performance.now() + 5000
+    deadlineMonotonicMs: performance.now() + 5000,
+    progress: progressReading()
   });
   assert.equal(proposal.status, "act");
   if (proposal.status !== "act") return;
@@ -567,7 +599,8 @@ test("Smart-direct enforces request/token/deadline budgets without silent fallba
       areasOfFocus: null,
       history: [],
       candidates: [],
-      deadlineMonotonicMs: performance.now() + 5000
+      deadlineMonotonicMs: performance.now() + 5000,
+      progress: progressReading()
     }),
     (error: unknown) =>
       error instanceof SmartDirectPolicyError &&
@@ -593,7 +626,8 @@ test("Smart-direct enforces request/token/deadline budgets without silent fallba
       areasOfFocus: null,
       history: [],
       candidates: [],
-      deadlineMonotonicMs: performance.now() + 5000
+      deadlineMonotonicMs: performance.now() + 5000,
+      progress: progressReading()
     }),
     (error: unknown) =>
       error instanceof SmartDirectPolicyError &&
@@ -614,7 +648,8 @@ test("Smart-direct fails closed when usage is absent or target/frame identity ch
       areasOfFocus: null,
       history: [],
       candidates: [],
-      deadlineMonotonicMs: performance.now() + 5000
+      deadlineMonotonicMs: performance.now() + 5000,
+      progress: progressReading()
     }),
     (error: unknown) =>
       error instanceof SmartDirectPolicyError &&
@@ -633,7 +668,8 @@ test("Smart-direct fails closed when usage is absent or target/frame identity ch
       areasOfFocus: null,
       history: [],
       candidates: [],
-      deadlineMonotonicMs: performance.now() + 5000
+      deadlineMonotonicMs: performance.now() + 5000,
+      progress: progressReading()
     }),
     (error: unknown) =>
       error instanceof SmartDirectPolicyError &&
@@ -647,7 +683,8 @@ test("Smart-direct fails closed when usage is absent or target/frame identity ch
       areasOfFocus: null,
       history: [],
       candidates: [],
-      deadlineMonotonicMs: performance.now() + 5000
+      deadlineMonotonicMs: performance.now() + 5000,
+      progress: progressReading()
     }),
     (error: unknown) =>
       error instanceof SmartDirectPolicyError &&
@@ -791,7 +828,8 @@ test("Smart-direct reports the decision contract: its backend, no fallback, no c
     areasOfFocus: "Explore the first race screen.",
     history: [],
     candidates: [],
-    deadlineMonotonicMs: performance.now() + 5000
+    deadlineMonotonicMs: performance.now() + 5000,
+    progress: progressReading()
   });
 
   assert.equal(decision.backendId, "smart-direct");

@@ -3,12 +3,17 @@
 import {
   assertWorkspaceVisualPlaytestTargetApproval,
   type ControlApiWorkspaceVisualPlaytestTargetsResponse,
+  playtestVisualProgressPolicy,
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
 import React, { useEffect, useState } from "react";
 
 import { Button } from "../../components/forms/Button.ts";
 import { CheckboxField } from "../../components/forms/CheckboxField.ts";
+import {
+  SELECT_CONTROL_BLOCK_WRAPPER_CLASS,
+  SelectChevron
+} from "../../components/forms/SelectChevron.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import {
   DETAIL_PANEL_CLASS,
@@ -87,6 +92,25 @@ function targetsFromMutationResponse(
     return workspaceTargetsFromResponse(payload.currentTargets, workspaceId);
   }
   return null;
+}
+
+/**
+ * The no-progress thresholds in force for a target, as the operator reads them.
+ *
+ * The numbers are the effective ones — the approval's own — so the reader
+ * sees what the Runtime will measure against rather than what was typed into
+ * a form. A target that carries no thresholds is never cut short for not
+ * advancing, and the reader is told that rather than shown a number that
+ * would never be reached.
+ */
+function noProgressLimitLabel(
+  target: WorkspaceVisualPlaytestTargetApproval
+): string {
+  const effective = playtestVisualProgressPolicy(target);
+  if (effective === null) {
+    return "Not set: the run ends on its own budgets";
+  }
+  return `${effective.maxUnchangedDecisions} decisions · ${Math.round(effective.maxUnchangedMs / 1000)}s`;
 }
 
 function targetIdFromName(name: string): string {
@@ -199,6 +223,11 @@ function targetCard(
         DetailValue,
         { label: "Budget", valueClassName: MUTED_BODY_CLASS },
         `${target.limits.episodeCount} episode · ${target.limits.maxStepsPerEpisode} steps · ${Math.round(target.limits.wallTimeMs / 1000)}s · ${target.limits.screenshotCountPerEpisode} frames`
+      ),
+      React.createElement(
+        DetailValue,
+        { label: "No-progress limit", valueClassName: MUTED_BODY_CLASS },
+        noProgressLimitLabel(target)
       ),
       React.createElement(
         DetailValue,
@@ -611,16 +640,21 @@ export function WorkspaceVisualPlaytestTargetManager({
             { className: `flex flex-col gap-1 ${MUTED_META_CLASS}` },
             "Control timing",
             React.createElement(
-              "select",
-              {
-                className: SELECT_CONTROL_CLASS,
-                name: "controlTimingClass",
-                defaultValue: "turn-based"
-              },
-              ...(["turn-based", "pausable", "continuous"] as const).map(
-                (value) =>
-                  React.createElement("option", { key: value, value }, value)
-              )
+              "span",
+              { className: SELECT_CONTROL_BLOCK_WRAPPER_CLASS },
+              React.createElement(
+                "select",
+                {
+                  className: `${SELECT_CONTROL_CLASS} w-full`,
+                  name: "controlTimingClass",
+                  defaultValue: "turn-based"
+                },
+                ...(["turn-based", "pausable", "continuous"] as const).map(
+                  (value) =>
+                    React.createElement("option", { key: value, value }, value)
+                )
+              ),
+              React.createElement(SelectChevron)
             )
           ),
           React.createElement(
@@ -628,22 +662,27 @@ export function WorkspaceVisualPlaytestTargetManager({
             { className: `flex flex-col gap-1 ${MUTED_META_CLASS}` },
             "Entry requirement",
             React.createElement(
-              "select",
-              {
-                className: TEXT_CONTROL_CLASS,
-                name: "entryRequirements",
-                defaultValue: "none"
-              },
-              ...(
-                [
-                  "none",
-                  "consent-or-age-screen",
-                  "local-account",
-                  "credentialed"
-                ] as const
-              ).map((value) =>
-                React.createElement("option", { key: value, value }, value)
-              )
+              "span",
+              { className: SELECT_CONTROL_BLOCK_WRAPPER_CLASS },
+              React.createElement(
+                "select",
+                {
+                  className: `${SELECT_CONTROL_CLASS} w-full`,
+                  name: "entryRequirements",
+                  defaultValue: "none"
+                },
+                ...(
+                  [
+                    "none",
+                    "consent-or-age-screen",
+                    "local-account",
+                    "credentialed"
+                  ] as const
+                ).map((value) =>
+                  React.createElement("option", { key: value, value }, value)
+                )
+              ),
+              React.createElement(SelectChevron)
             )
           )
         ),
@@ -719,6 +758,36 @@ export function WorkspaceVisualPlaytestTargetManager({
                 max: Number(max)
               })
             )
+          )
+        ),
+        React.createElement(
+          "details",
+          { className: "rounded-lg border border-border p-3" },
+          React.createElement(
+            "summary",
+            {
+              className: `cursor-pointer ${MUTED_BODY_CLASS} font-medium`
+            },
+            "No-progress thresholds"
+          ),
+          React.createElement(
+            "p",
+            { className: `${MUTED_META_CLASS} mt-2` },
+            "How long the game may show the player nothing new before the episode ends and reports that the game did not advance. Leave both blank and the run is never cut short for not advancing: it ends on its own budgets, and the runtime still reports what it measured."
+          ),
+          React.createElement(
+            "div",
+            { className: "mt-3 grid gap-3 sm:grid-cols-2" },
+            textField("Decisions without progress", "maxUnchangedDecisions", {
+              type: "number",
+              min: 1,
+              max: 10_000
+            }),
+            textField("Milliseconds without progress", "maxUnchangedMs", {
+              type: "number",
+              min: 1,
+              max: 3_600_000
+            })
           )
         ),
         failure

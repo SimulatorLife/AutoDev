@@ -32,11 +32,6 @@ import {
   PLAYTEST_VISUAL_ACTION_SCHEMA,
   PLAYTEST_VISUAL_OBSERVATION_SCHEMA,
   playtestActionRefusalMeansPageMoved,
-  playtestVisualProgressOutcome,
-  playtestVisualProgressPolicy,
-  playtestVisualProgressState,
-  playtestVisualProgressStuck,
-  PLAYTESTS_VISUAL_PROGRESS_VERSION,
   type PlaytestAdapterAssignmentManifest,
   type PlaytestAdapterBatch,
   type PlaytestAdapterBranchOperation,
@@ -119,6 +114,8 @@ import {
   PLAYTESTS_SEVERITIES,
   PLAYTESTS_VERIFICATION_STAGES,
   PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA,
+  PLAYTESTS_VISUAL_PROGRESS_VERSION,
+  PLAYTESTS_VISUAL_STUCK_POLICY_VERSION,
   type PlaytestSessionReference,
   type PlaytestSessionReview,
   type PlaytestVisualAction,
@@ -126,13 +123,18 @@ import {
   type PlaytestVisualBatch,
   type PlaytestVisualBatchAssignment,
   type PlaytestVisualDecision,
+  type PlaytestVisualDecisionProgress,
   playtestVisualEpisodeRecordId,
   type PlaytestVisualHistoryEntry,
-  type PlaytestVisualDecisionProgress,
-  type PlaytestVisualProgressState,
   type PlaytestVisualObservation,
   type PlaytestVisualPolicy as CorePlaytestVisualPolicy,
   type PlaytestVisualPolicyId,
+  type PlaytestVisualProgressOutcome,
+  playtestVisualProgressOutcome,
+  playtestVisualProgressPolicy,
+  type PlaytestVisualProgressState,
+  playtestVisualProgressState,
+  playtestVisualProgressStuck,
   recordPlaytestOwnerDecision,
   scorePlaytestDimensionAnchor,
   selectPlaytestBatchReviews,
@@ -4639,6 +4641,7 @@ function playerDebriefAfterExit(
         : exit.kind === PLAYTEST_VISUAL_STEP_LIMIT_KIND ||
             exit.kind === USAGE_BUDGET ||
             exit.kind === PLAYTEST_VISUAL_LOOP_GUARD_KIND ||
+            exit.kind === PLAYTEST_VISUAL_NO_PROGRESS_KIND ||
             exit.kind === PLAYTEST_VISUAL_WALL_TIME_LIMIT_KIND ||
             (exit.kind === "driver-blocked" &&
               VISUAL_BUDGET_BLOCK_REASONS.has(exit.reason))
@@ -5072,7 +5075,7 @@ async function actVisualStep(input: {
     phaseId: input.observation.phaseEvidence,
     revisionBefore: input.step,
     revisionAfter: input.step + 1,
-    observationVisibility: "visual-only",
+    observationVisibility: VISUAL_OBSERVATION_VISIBILITY,
     visibleObservation: visualVisibleObservation(input.observation),
     legalActionIds: visualLegalActionIds(input.observation),
     selectedActionId: visualSelectedActionId(input.action),
@@ -5159,13 +5162,76 @@ function visualProgressJson(
 ): PlaytestJsonValue {
   return {
     version: progress.version,
+    stuckPolicyVersion: progress.stuckPolicyVersion,
     advanced: progress.advanced,
+    loading: progress.loading,
     unchangedSteps: progress.unchangedSteps,
     unchangedMs: progress.unchangedMs,
-    policy: {
-      maxUnchangedDecisions: progress.policy.maxUnchangedDecisions,
-      maxUnchangedMs: progress.policy.maxUnchangedMs
-    }
+    policy:
+      progress.policy === null
+        ? null
+        : {
+            maxUnchangedDecisions: progress.policy.maxUnchangedDecisions,
+            maxUnchangedMs: progress.policy.maxUnchangedMs
+          }
+  };
+}
+
+/**
+ * How much of the episode the player could see.
+ *
+ * A visual episode has no text the player reads, so every trace step says
+ * what it saw rather than what it inferred.
+ */
+const VISUAL_OBSERVATION_VISIBILITY = "visual-only";
+
+/**
+ * The Runtime's measurement of one step.
+ *
+ * What the game did since the previous observation, and the counters the
+ * operator's thresholds are measured against. A page that is still loading
+ * moves neither the count nor the clock: the game has not had the chance to
+ * advance, and a game that is still starting up must not be cut short.
+ */
+function measureVisualProgress(input: {
+  readonly observation: PlaytestVisualObservation;
+  readonly previous: PlaytestVisualProgressState | null;
+  readonly unchangedSteps: number;
+  readonly unchangedMs: number;
+  readonly elapsedMs: number;
+}): {
+  readonly state: PlaytestVisualProgressState;
+  readonly outcome: PlaytestVisualProgressOutcome;
+  readonly advanced: boolean;
+  readonly unchangedSteps: number;
+  readonly unchangedMs: number;
+} {
+  const state = playtestVisualProgressState(input.observation);
+  const outcome = playtestVisualProgressOutcome(input.previous, state);
+  if (outcome === "advanced") {
+    return {
+      state,
+      outcome,
+      advanced: true,
+      unchangedSteps: 0,
+      unchangedMs: 0
+    };
+  }
+  if (outcome === "unchanged") {
+    return {
+      state,
+      outcome,
+      advanced: false,
+      unchangedSteps: input.unchangedSteps + 1,
+      unchangedMs: input.unchangedMs + input.elapsedMs
+    };
+  }
+  return {
+    state,
+    outcome,
+    advanced: false,
+    unchangedSteps: input.unchangedSteps,
+    unchangedMs: input.unchangedMs
   };
 }
 
@@ -5233,30 +5299,30 @@ async function runVisualEpisodeSteps(input: {
     }
 
     const measuredAtMs = Date.now();
-    const progressState = playtestVisualProgressState(obsResult.observation);
-    const progressOutcome = playtestVisualProgressOutcome(
-      previousProgress,
-      progressState
-    );
-    previousProgress = progressState;
-    if (progressOutcome === "advanced") {
-      unchangedSteps = 0;
-      unchangedMs = 0;
-    } else if (progressOutcome === "unchanged") {
-      // The step took time, and the game did not advance in it: both the
-      // count and the clock move. A loading page moves neither -- the game
-      // has not had the chance to advance yet.
-      unchangedSteps += 1;
-      unchangedMs += Math.max(0, measuredAtMs - lastMeasuredAtMs);
-    }
+    const measurement = measureVisualProgress({
+      observation: obsResult.observation,
+      previous: previousProgress,
+      unchangedSteps,
+      unchangedMs,
+      elapsedMs: Math.max(0, measuredAtMs - lastMeasuredAtMs)
+    });
+    previousProgress = measurement.state;
+    unchangedSteps = measurement.unchangedSteps;
+    unchangedMs = measurement.unchangedMs;
     lastMeasuredAtMs = measuredAtMs;
     const progress: PlaytestVisualDecisionProgress = {
       version: PLAYTESTS_VISUAL_PROGRESS_VERSION,
-      advanced: progressOutcome === "advanced",
+      stuckPolicyVersion: PLAYTESTS_VISUAL_STUCK_POLICY_VERSION,
+      advanced: measurement.advanced,
+      loading: measurement.state.loading,
       unchangedSteps,
       unchangedMs,
       policy: progressPolicy
     };
+    // The frame the player was looking at when the game stopped advancing is
+    // part of the evidence, so it is captured before the guard can end the
+    // episode.
+    input.capturedFrames.push(obsResult.observation.frame);
     if (
       playtestVisualProgressStuck({
         unchangedSteps,
@@ -5266,12 +5332,32 @@ async function runVisualEpisodeSteps(input: {
     ) {
       // The game has not advanced for as long as the operator allowed. The
       // episode stops here and says so, instead of spending the rest of its
-      // budget on a game that is not responding.
+      // budget on a game that is not responding. The step that showed it is
+      // recorded, so the operator can see the screen the game was showing
+      // when it stopped.
+      input.traceSteps.push({
+        step,
+        phaseId: obsResult.observation.phaseEvidence,
+        revisionBefore: step,
+        revisionAfter: step,
+        observationVisibility: VISUAL_OBSERVATION_VISIBILITY,
+        visibleObservation: visualVisibleObservation(obsResult.observation),
+        legalActionIds: visualLegalActionIds(obsResult.observation),
+        selectedActionId: null,
+        preActionPrediction: null,
+        authoritativeOutcome: {
+          stopReason: PLAYTEST_VISUAL_NO_PROGRESS_KIND,
+          progress: visualProgressJson(progress)
+        },
+        events: [],
+        frameRefs: [
+          { id: obsResult.observation.frame.artifactId, kind: "frame" }
+        ]
+      });
       exit = { kind: PLAYTEST_VISUAL_NO_PROGRESS_KIND, step };
       break;
     }
 
-    input.capturedFrames.push(obsResult.observation.frame);
     // eslint-disable-next-line no-await-in-loop -- the revision must be persisted before the decision that reads the frame it captured.
     const persisted = await input.persistRevision(
       {
@@ -5322,7 +5408,7 @@ async function runVisualEpisodeSteps(input: {
         phaseId: obsResult.observation.phaseEvidence,
         revisionBefore: step,
         revisionAfter: step,
-        observationVisibility: "visual-only",
+        observationVisibility: VISUAL_OBSERVATION_VISIBILITY,
         visibleObservation: visualVisibleObservation(obsResult.observation),
         legalActionIds: visualLegalActionIds(obsResult.observation),
         selectedActionId: null,
@@ -5351,7 +5437,7 @@ async function runVisualEpisodeSteps(input: {
         phaseId: obsResult.observation.phaseEvidence,
         revisionBefore: step,
         revisionAfter: step,
-        observationVisibility: "visual-only",
+        observationVisibility: VISUAL_OBSERVATION_VISIBILITY,
         visibleObservation: visualVisibleObservation(obsResult.observation),
         legalActionIds: visualLegalActionIds(obsResult.observation),
         selectedActionId: null,

@@ -4,7 +4,8 @@ import {
   WORKSPACE_VISUAL_PLAYTEST_ENTRY_REQUIREMENTS,
   WORKSPACE_VISUAL_PLAYTEST_INPUTS,
   WORKSPACE_VISUAL_PLAYTEST_TIMING_CLASSES,
-  type WorkspaceVisualPlaytestLimits
+  type WorkspaceVisualPlaytestLimits,
+  type WorkspaceVisualPlaytestProgressPolicy
 } from "@simulatorlife/autodev-core";
 import { type NextRequest, NextResponse } from "next/server.js";
 
@@ -53,7 +54,9 @@ const FORM_KEYS = new Set([
   "smartRequestsPerEpisode",
   "smartTokensPerEpisode",
   "screenshotCountPerEpisode",
-  "artifactBytesPerEpisode"
+  "artifactBytesPerEpisode",
+  "maxUnchangedDecisions",
+  "maxUnchangedMs"
 ]);
 
 interface TargetSubmission {
@@ -66,6 +69,7 @@ interface TargetSubmission {
   readonly controlTimingClass: string;
   readonly entryRequirements: string;
   readonly limits: WorkspaceVisualPlaytestLimits;
+  readonly progressPolicy: WorkspaceVisualPlaytestProgressPolicy | undefined;
 }
 
 function redirectTo(location: string): NextResponse {
@@ -148,6 +152,41 @@ function parseLimits(
   }
 }
 
+/**
+ * The no-progress thresholds the operator wrote, or why there are none.
+ *
+ * Both fields blank means the operator wants no thresholds, so the approval
+ * carries no policy of its own. One field set and the other blank is a
+ * half-written threshold, and the submission is refused rather than guessed.
+ */
+type ProgressPolicyForm =
+  | { readonly kind: "none" }
+  | { readonly kind: "invalid" }
+  | {
+      readonly kind: "policy";
+      readonly policy: WorkspaceVisualPlaytestProgressPolicy;
+    };
+
+function parseProgressPolicy(form: URLSearchParams): ProgressPolicyForm {
+  const decisions = form.get("maxUnchangedDecisions");
+  const milliseconds = form.get("maxUnchangedMs");
+  if (
+    (decisions === null || decisions === "") &&
+    (milliseconds === null || milliseconds === "")
+  ) {
+    return { kind: "none" };
+  }
+  const maxUnchangedDecisions = boundedInteger(decisions);
+  const maxUnchangedMs = boundedInteger(milliseconds);
+  if (maxUnchangedDecisions === null || maxUnchangedMs === null) {
+    return { kind: "invalid" };
+  }
+  return {
+    kind: "policy",
+    policy: { maxUnchangedDecisions, maxUnchangedMs }
+  };
+}
+
 function parseSubmission(
   form: URLSearchParams,
   workspaceId: string
@@ -170,6 +209,7 @@ function parseSubmission(
   const controlTimingClass = form.get("controlTimingClass") ?? "";
   const entryRequirements = form.get("entryRequirements") ?? "";
   const limits = parseLimits(form);
+  const progressPolicy = parseProgressPolicy(form);
   if (
     expectedRevision === undefined ||
     !TARGET_ID_PATTERN.test(targetId) ||
@@ -189,7 +229,8 @@ function parseSubmission(
     !(
       WORKSPACE_VISUAL_PLAYTEST_ENTRY_REQUIREMENTS as readonly string[]
     ).includes(entryRequirements) ||
-    limits === null
+    limits === null ||
+    progressPolicy.kind === "invalid"
   ) {
     return null;
   }
@@ -209,7 +250,9 @@ function parseSubmission(
     inputCapabilities,
     controlTimingClass,
     entryRequirements,
-    limits
+    limits,
+    progressPolicy:
+      progressPolicy.kind === "policy" ? progressPolicy.policy : undefined
   };
 }
 

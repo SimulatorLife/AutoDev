@@ -84,6 +84,17 @@ const UNRECOGNISED_LABEL = NOT_OBSERVED_LABEL;
 const ACTION_REFUSED_TERMINATION_REASON = "action-refused";
 
 /**
+ * The termination reason that says the game stopped advancing.
+ *
+ * The Runtime measured that the game showed the player exactly what it had
+ * shown before, for as long as the operator allowed, and ended the episode
+ * there. That is not a limit the run spent and not a crash: it is the run
+ * finding a game that was not responding, and the operator needs to read it
+ * as that.
+ */
+const NO_PROGRESS_TERMINATION_REASON = "no-progress";
+
+/**
  * The tone for a state that is known but not a success.
  *
  * A crash, a cancellation, a truncated episode and a state the Console does
@@ -136,6 +147,9 @@ export function executionStateLabel(
       return "Cancelled";
     }
     case BUDGET_TRUNCATED: {
+      if (terminationReason === NO_PROGRESS_TERMINATION_REASON) {
+        return "Game not advancing";
+      }
       const limit = limitTerminationReason(terminationReason);
       return limit === null
         ? "Limit reached"
@@ -199,6 +213,9 @@ export function executionStateExplanation(
 ): string | null {
   if (terminationReason === ACTION_REFUSED_TERMINATION_REASON) {
     return "The runtime refused the episode's action and ended the episode. No terminal game outcome was observed; no win or loss is inferred.";
+  }
+  if (terminationReason === NO_PROGRESS_TERMINATION_REASON) {
+    return "The game showed the player nothing new for as long as the approved no-progress limit allowed, and the episode ended there. No terminal game outcome was observed; no win or loss is inferred.";
   }
   if (status !== BUDGET_TRUNCATED) return null;
   const limit = limitTerminationReason(terminationReason);

@@ -30,7 +30,8 @@ const APPROVAL_BODY_KEYS = [
   "inputCapabilities",
   "controlTimingClass",
   "entryRequirements",
-  "limits"
+  "limits",
+  "progressPolicy"
 ] as const;
 const REVOCATION_BODY_KEYS = [
   "expectedRevision",
@@ -332,6 +333,11 @@ async function approveTarget(
     sandboxProfile: "transient-browser-profile",
     capturePolicy: "screenshots-only-redact-or-refuse",
     limits: parsed.body.limits,
+    // The no-progress thresholds, when the operator set them. An approval
+    // without them is measured against the defaults.
+    ...(parsed.body.progressPolicy === undefined
+      ? {}
+      : { progressPolicy: parsed.body.progressPolicy }),
     approvedAt: now.toISOString(),
     approvedBy: actor.actor,
     revokedAt: null,
@@ -359,6 +365,7 @@ async function approveTarget(
       controlTimingClass: saved.controlTimingClass,
       entryRequirements: saved.entryRequirements,
       limits: saved.limits,
+      progressPolicy: saved.progressPolicy ?? null,
       revision: saved.revision
     });
     sendJson(
