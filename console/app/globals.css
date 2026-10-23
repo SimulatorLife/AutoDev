@@ -147,3 +147,66 @@ body {
     Arial,
     sans-serif;
 }
+
+/*
+ * The navigation's narrow-viewport default.
+ *
+ * The sidebar's default depends on the viewport: a rail on a narrow screen, the
+ * full navigation on a wide one. That default was decided in a post-hydration
+ * effect, so the server-rendered page painted the *expanded* navigation first.
+ * Measured in Chromium at 390x844, that first paint is 256px of opaque panel
+ * over a 390px viewport -- 66% of the screen -- with the page's own `h1` at
+ * x=175, underneath it. The stat cards were cut in half, and without
+ * JavaScript the panel stayed: 134px of page visible, and the page's title
+ * unreachable.
+ *
+ * The default is a stylesheet decision now, and JavaScript carries only the
+ * operator's explicit choice. `data-nav-preference` is that choice: "auto" means
+ * the viewport decides, and the CSS below decides it at first paint, with no
+ * flash and nothing to correct. "collapsed" and "expanded" are what the
+ * operator asked for and apply at every width.
+ *
+ * These rules are unlayered, so they beat the Tailwind utilities they are
+ * correcting: the expanded navigation's own class list declares an absolute
+ * overlay, and the rail's own class list declares the width and padding.
+ */
+@media (max-width: 1279px) {
+  /*
+   * The rail, in flow. `inset: auto` releases the overlay's own offsets --
+   * `inset-y-0` on a relatively positioned element would otherwise shift the
+   * navigation down by the viewport's height -- and `z-index` and the shadow
+   * are the overlay's, not the rail's.
+   */
+  nav[data-nav-preference="auto"] {
+    position: relative;
+    inset: auto;
+    z-index: auto;
+    width: 3.5rem;
+    padding: 0.5rem;
+    box-shadow: none;
+  }
+
+  /* The rail shows icons; the labels belong to the expanded navigation. */
+  nav[data-nav-preference="auto"] [data-nav-label] {
+    display: none;
+  }
+
+  /* ...and the brand's short mark belongs to the rail, not to the full name. */
+  nav[data-nav-preference="auto"] [data-nav-rail-only] {
+    display: inline;
+  }
+
+  /*
+   * With the group labels hidden, the separators are what tells one group of
+   * icons from the next. The expanded navigation needs them not at all.
+   */
+  nav[data-nav-preference="auto"] [data-nav-group]:not([data-nav-group-first]) {
+    border-top: 1px solid var(--color-border);
+    padding-top: 0.75rem;
+  }
+
+  /* The brand mark is centred in the rail, as the expanded one is left-aligned. */
+  nav[data-nav-preference="auto"] [data-nav-brand-row] {
+    justify-content: center;
+  }
+}

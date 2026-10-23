@@ -28,6 +28,8 @@ type NavigationLinkProps = React.ComponentProps<typeof NavigationLink> & {
 
 type GroupSectionProps = React.HTMLAttributes<HTMLElement> & {
   readonly "data-nav-group"?: CanonicalNavGroupId;
+  /** The first group has no separator above it, in either state. */
+  readonly "data-nav-group-first"?: string;
 };
 
 /**
@@ -37,23 +39,36 @@ type GroupSectionProps = React.HTMLAttributes<HTMLElement> & {
  * expanding there overlays the page instead of squeezing its content, and a
  * resource selection or Escape returns it to the rail. Icon-only links retain
  * their accessible names and titles.
+ *
+ * The *default* for a narrow viewport is a stylesheet decision, not one this
+ * component makes after hydration: the server-rendered page painted the
+ * expanded navigation first, which on a 390px phone covered 66% of the
+ * viewport and hid the page's own title underneath it. `data-nav-preference`
+ * therefore carries only the operator's explicit choice, and the stylesheet
+ * decides the rest at first paint.
  */
 export function AppNav({
   activeSection,
   counts
 }: AppNavProps): React.JSX.Element {
   const [isCollapsed, setIsCollapsed] = React.useState(false);
+  const [hasExplicitPreference, setHasExplicitPreference] = React.useState(
+    false
+  );
 
   React.useEffect(() => {
     try {
       const storedPreference = globalThis.localStorage.getItem(
         SIDEBAR_COLLAPSED_STORAGE_KEY
       );
-      setIsCollapsed(
-        storedPreference === null
-          ? globalThis.matchMedia(SIDEBAR_COMPACT_QUERY).matches
-          : storedPreference === "true"
-      );
+      if (storedPreference === null) {
+        // No stored choice: the viewport decides, and the stylesheet has
+        // already applied that decision to the first paint.
+        setIsCollapsed(globalThis.matchMedia(SIDEBAR_COMPACT_QUERY).matches);
+      } else {
+        setHasExplicitPreference(true);
+        setIsCollapsed(storedPreference === "true");
+      }
     } catch {
       // Keep the narrow-screen rail as the default when storage is unavailable.
       setIsCollapsed(globalThis.matchMedia(SIDEBAR_COMPACT_QUERY).matches);
@@ -81,6 +96,7 @@ export function AppNav({
   const toggleSidebar = (): void => {
     const nextIsCollapsed = !isCollapsed;
     setIsCollapsed(nextIsCollapsed);
+    setHasExplicitPreference(true);
     persistSidebarPreference(nextIsCollapsed);
   };
   const expandedLabelClass = isCollapsed ? "hidden" : "inline";
@@ -96,6 +112,18 @@ export function AppNav({
     {
       id: "autodev-console-navigation",
       "aria-label": "AutoDev Console Navigation",
+      // "auto" means the viewport decides, which the stylesheet does at first
+      // paint. The other two are the operator's explicit choice, and they apply
+      // at every width.
+      "data-nav-preference": hasExplicitPreference
+        ? isCollapsed
+          ? "collapsed"
+          : "expanded"
+        : "auto",
+      // What the component itself believes, which is not always what the
+      // stylesheet shows: under the "auto" preference a narrow viewport is the
+      // rail before this component has read the viewport at all.
+      "data-nav-collapsed": isCollapsed ? "true" : "false",
       onKeyDown: (event: React.KeyboardEvent<HTMLElement>): void => {
         if (
           !isCollapsed &&
@@ -125,7 +153,8 @@ export function AppNav({
       {
         className:
           "mb-6 flex items-center px-2 " +
-          (isCollapsed ? "justify-center" : "justify-start")
+          (isCollapsed ? "justify-center" : "justify-start"),
+        "data-nav-brand-row": "true"
       },
       React.createElement(
         NavigationLink,
@@ -136,13 +165,17 @@ export function AppNav({
             className:
               "font-semibold text-base tracking-tight xl:text-lg " +
               expandedLabelClass +
-              " whitespace-nowrap"
+              " whitespace-nowrap",
+            "data-nav-label": "true"
           },
           "AutoDev Console"
         ),
         React.createElement(
           "span",
-          { className: isCollapsed ? "" : "hidden" },
+          {
+            className: isCollapsed ? "" : "hidden",
+            "data-nav-rail-only": "true"
+          },
           "AC"
         )
       )
@@ -202,7 +235,8 @@ function renderGroup(
   const groupSectionProps: GroupSectionProps = {
     // The separators distinguish groups when their headings are hidden.
     className: "flex flex-col gap-1 " + groupSpacingClass,
-    "data-nav-group": group.id
+    "data-nav-group": group.id,
+    ...(isFirst ? { "data-nav-group-first": "true" } : {})
   };
   const headingId = "autodev-nav-group-" + group.id.toLowerCase();
   return React.createElement(
@@ -231,7 +265,8 @@ function renderGroup(
           id: headingId,
           className:
             (isCollapsed ? "hidden" : "block") +
-            " px-3 text-meta font-semibold uppercase tracking-wider text-fg-muted"
+            " px-3 text-meta font-semibold uppercase tracking-wider text-fg-muted",
+          "data-nav-label": "true"
         },
         group.id
       ),
@@ -299,7 +334,8 @@ function renderNavItem(
         "span",
         {
           className: expandedOnlyClass(isCollapsed) + " flex-1 truncate",
-          title: section
+          title: section,
+          "data-nav-label": "true"
         },
         section
       ),
@@ -310,7 +346,8 @@ function renderNavItem(
             {
               className:
                 expandedOnlyClass(isCollapsed) +
-                " text-xs bg-surface-raised px-2 py-0.5 rounded-full text-fg-muted border border-border-strong tabular-nums"
+                " text-xs bg-surface-raised px-2 py-0.5 rounded-full text-fg-muted border border-border-strong tabular-nums",
+              "data-nav-label": "true"
             },
             count
           )
