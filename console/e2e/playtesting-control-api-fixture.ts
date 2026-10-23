@@ -832,6 +832,10 @@ const HOOK_EVENT_ROUTE = /^\/control\/hooks\/([a-z][A-Za-z]{0,63})$/u;
 
 /** The moment the fixture's synthetic applied state was observed. */
 const MCP_OBSERVED_AT = "2026-10-22T12:00:00.000Z";
+/**
+ * The explanation the fixture gives a declaration the Runtime has converged.
+ */
+const MCP_CONVERGED_EXPLANATION = MCP_CONVERGED_EXPLANATION;
 
 /**
  * The canonical MCP declaration, and what the Runtime published from it.
@@ -1128,7 +1132,7 @@ function hookReconciliation(): {
       lastObservationAt: MCP_OBSERVED_AT,
       lastError: null,
       explanation: hookDeclaration.converged
-        ? "The runtime has observed the latest desired generation; convergence is recorded."
+        ? MCP_CONVERGED_EXPLANATION
         : "Apply wrote the latest desired generation, but the running runtime has not observed it yet. Restart the affected process or wait for the observation hook to refresh."
     },
     history: []
@@ -1230,8 +1234,7 @@ async function applyMcpDeclarationWrite(
         lastApplyAt: MCP_OBSERVED_AT,
         lastObservationAt: MCP_OBSERVED_AT,
         lastError: null,
-        explanation:
-          "The runtime has observed the latest desired generation; convergence is recorded."
+        explanation: MCP_CONVERGED_EXPLANATION
       },
       history: []
     }
@@ -4300,6 +4303,225 @@ function handleEvaluationsRead(url: URL, response: ServerResponse): boolean {
 }
 
 /**
+ * The MCP catalog the Configure group reads.
+ *
+ * Three servers that keep the three states apart: a declared and enabled
+ * stdio server with a target override, a server that is only present in a
+ * target projection (so its default state is not observed), and a
+ * declared http server with no target overrides at all.
+ */
+function sendMcpCatalog(response: ServerResponse): void {
+  // Three servers that keep the three states apart: a declared and enabled
+  // stdio server with a target override, a server that is only present in a
+  // target projection (so its default state is not observed), and a
+  // declared http server with no target overrides at all.
+  sendJson(response, {
+    schema: "autodev-control-mcps-v2",
+    source: ".rulesync/mcp.jsonc",
+    revision: mcpDeclaration.revision,
+    readOnly: false,
+    valid: true,
+    issues: [],
+    servers: [
+      {
+        name: "lsp",
+        enabled: true,
+        transport: "stdio",
+        targetOverrides: [
+          {
+            target: "codex",
+            enabled: true,
+            defaultToolsApprovalMode: "never",
+            enabledTools: ["lsp_goto_definition"]
+          }
+        ],
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-lsp"],
+        envKeys: ["LSP_ROOT"],
+        cwd: "/workspace",
+        defaultToolsApprovalMode: "on-request",
+        declared: true,
+        roles: ["worker", "orchestrator"]
+      },
+      {
+        name: "antigravity-cli",
+        enabled: false,
+        transport: "stdio",
+        targetOverrides: [{ target: "codex", enabled: false }],
+        command: "antigravity",
+        args: ["mcp"],
+        declared: false,
+        roles: []
+      },
+      {
+        name: "openaiDeveloperDocs",
+        enabled: null,
+        transport: "http",
+        targetOverrides: [],
+        url: "https://docs.example.test/mcp",
+        declared: true,
+        roles: ["orchestrator"]
+      }
+    ]
+  });
+}
+
+/**
+ * The /control/prompts response the Configure group reads.
+ */
+function sendPromptCatalog(response: ServerResponse): void {
+  sendJson(response, {
+    schema: "autodev-control-prompts-v2",
+    source: ".rulesync/prompts",
+    readOnly: true,
+    valid: true,
+    issues: [],
+    totalCommands: 1,
+    commands: [
+      {
+        name: "review",
+        path: ".rulesync/prompts/review.md",
+        description: "Review the pending diff."
+      }
+    ],
+    rolePrompts: [{ role: "default", path: ".rulesync/prompts/default.md" }]
+  });
+}
+
+/**
+ * The detail routes the Configure group reads.
+ *
+ * The agent, skill and prompt details are their own routes rather than
+ * part of a list, and each one answers with the canonical source it owns.
+ */
+function handleCatalogDetailRead(url: URL, response: ServerResponse): boolean {
+  const agentDetail = url.pathname.match(AGENT_DETAIL_ROUTE);
+  if (agentDetail !== null) {
+    sendJson(response, {
+      schema: "autodev-control-agent-detail-v3",
+      id: decodeURIComponent(agentDetail[1]),
+      role: decodeURIComponent(agentDetail[1]),
+      kind: "orchestrator",
+      readOnly: false,
+      configured: true,
+      valid: true,
+      status: "idle",
+      convergence: "converged",
+      enablement: agentEnablementFor(decodeURIComponent(agentDetail[1])),
+      primaryModel: "claude",
+      allowedProviders: ["claude"],
+      mcps: ["lsp"],
+      skills: [],
+      hasPrompt: true,
+      promptPath: "agents/prompts/default.md",
+      systemPrompt: "You are the AutoDev orchestrator.",
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: "agent-default",
+          observedGeneration: "agent-default",
+          lastApplyAt: FIXTURE_APPLIED_AT,
+          lastObservationAt: FIXTURE_APPLIED_AT,
+          lastError: null,
+          explanation: "The agent matches the canonical source."
+        },
+        history: []
+      }
+    });
+    return true;
+  }
+  const skillContent = url.pathname.match(SKILL_CONTENT_ROUTE);
+  if (skillContent !== null) {
+    const name = decodeURIComponent(skillContent[1] ?? "");
+    const source = canonicalSource("skill", name);
+    if (source === null) {
+      sendJson(
+        response,
+        {
+          error: {
+            message: `The skill "${name}" does not exist.`,
+            type: "autodev_control_api_error",
+            code: "autodev_control_skill_not_found"
+          }
+        },
+        404
+      );
+      return true;
+    }
+    sendJson(response, {
+      schema: "autodev-control-skill-content-v2",
+      name: source.name,
+      path: source.path,
+      content: source.content,
+      revision: source.revision,
+      // The skill reaches the runtime as a link to this very source, so the
+      // observed generation is the canonical revision whenever the link holds
+      // it. The Console renders this view rather than deriving its own, so the
+      // skill page cannot drift from the shared reconciliation contract.
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: source.revision,
+          observedGeneration: source.revision,
+          lastApplyAt: FIXTURE_APPLIED_AT,
+          lastObservationAt: FIXTURE_APPLIED_AT,
+          lastError: null,
+          explanation: MCP_CONVERGED_EXPLANATION
+        },
+        history: []
+      }
+    });
+    return true;
+  }
+  const promptDetail = url.pathname.match(PROMPT_DETAIL_ROUTE);
+  if (promptDetail !== null) {
+    const name = decodeURIComponent(promptDetail[1] ?? "");
+    const source = canonicalSource("prompt", name);
+    if (source === null) {
+      sendJson(
+        response,
+        {
+          error: {
+            message: `The command "${name}" does not exist.`,
+            type: "autodev_control_api_error",
+            code: "autodev_control_api_unknown_path"
+          }
+        },
+        404
+      );
+      return true;
+    }
+    sendJson(response, {
+      schema: "autodev-control-prompt-detail-v4",
+      name: source.name,
+      type: "command",
+      source: source.path,
+      content: source.content,
+      preview: source.preview ?? source.content,
+      revision: source.revision,
+      diff: {
+        summary: "The canonical command source.",
+        identifier: `prompt-${source.name}-1`
+      },
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: `prompt-${source.name}-1`,
+          observedGeneration: `prompt-${source.name}-1`,
+          lastApplyAt: FIXTURE_APPLIED_AT,
+          lastObservationAt: FIXTURE_APPLIED_AT,
+          lastError: null,
+          explanation: "The command matches the canonical source."
+        },
+        history: []
+      }
+    });
+    return true;
+  }
+  return false;
+}
+
+/**
  * The catalog resources the Console reads: the MCP catalog and the Configure
  * group's agents, skills, hooks, prompts and permissions.
  *
@@ -4321,59 +4543,7 @@ function handleCatalogResourceRead(
     return true;
   }
   if (url.pathname === "/control/mcps") {
-    // Three servers that keep the three states apart: a declared and enabled
-    // stdio server with a target override, a server that is only present in a
-    // target projection (so its default state is not observed), and a
-    // declared http server with no target overrides at all.
-    sendJson(response, {
-      schema: "autodev-control-mcps-v2",
-      source: ".rulesync/mcp.jsonc",
-      revision: mcpDeclaration.revision,
-      readOnly: false,
-      valid: true,
-      issues: [],
-      servers: [
-        {
-          name: "lsp",
-          enabled: true,
-          transport: "stdio",
-          targetOverrides: [
-            {
-              target: "codex",
-              enabled: true,
-              defaultToolsApprovalMode: "never",
-              enabledTools: ["lsp_goto_definition"]
-            }
-          ],
-          command: "npx",
-          args: ["-y", "@modelcontextprotocol/server-lsp"],
-          envKeys: ["LSP_ROOT"],
-          cwd: "/workspace",
-          defaultToolsApprovalMode: "on-request",
-          declared: true,
-          roles: ["worker", "orchestrator"]
-        },
-        {
-          name: "antigravity-cli",
-          enabled: false,
-          transport: "stdio",
-          targetOverrides: [{ target: "codex", enabled: false }],
-          command: "antigravity",
-          args: ["mcp"],
-          declared: false,
-          roles: []
-        },
-        {
-          name: "openaiDeveloperDocs",
-          enabled: null,
-          transport: "http",
-          targetOverrides: [],
-          url: "https://docs.example.test/mcp",
-          declared: true,
-          roles: ["orchestrator"]
-        }
-      ]
-    });
+    sendMcpCatalog(response);
     return true;
   }
   if (url.pathname === "/control/mcp-applied") {
@@ -4398,7 +4568,7 @@ function handleCatalogResourceRead(
           lastObservationAt: MCP_OBSERVED_AT,
           lastError: null,
           explanation: mcpDeclaration.converged
-            ? "The runtime has observed the latest desired generation; convergence is recorded."
+            ? MCP_CONVERGED_EXPLANATION
             : "Apply wrote the latest desired generation, but the running runtime has not observed it yet. Restart the affected process or wait for the observation hook to refresh."
         },
         history: []
@@ -4545,22 +4715,7 @@ function handleCatalogResourceRead(
     return true;
   }
   if (url.pathname === "/control/prompts") {
-    sendJson(response, {
-      schema: "autodev-control-prompts-v2",
-      source: ".rulesync/prompts",
-      readOnly: true,
-      valid: true,
-      issues: [],
-      totalCommands: 1,
-      commands: [
-        {
-          name: "review",
-          path: ".rulesync/prompts/review.md",
-          description: "Review the pending diff."
-        }
-      ],
-      rolePrompts: [{ role: "default", path: ".rulesync/prompts/default.md" }]
-    });
+    sendPromptCatalog(response);
     return true;
   }
   if (url.pathname === "/control/permissions") {
@@ -4599,128 +4754,7 @@ function handleCatalogResourceRead(
     });
     return true;
   }
-  const agentDetail = url.pathname.match(AGENT_DETAIL_ROUTE);
-  if (agentDetail !== null) {
-    sendJson(response, {
-      schema: "autodev-control-agent-detail-v3",
-      id: decodeURIComponent(agentDetail[1]),
-      role: decodeURIComponent(agentDetail[1]),
-      kind: "orchestrator",
-      readOnly: false,
-      configured: true,
-      valid: true,
-      status: "idle",
-      convergence: "converged",
-      enablement: agentEnablementFor(decodeURIComponent(agentDetail[1])),
-      primaryModel: "claude",
-      allowedProviders: ["claude"],
-      mcps: ["lsp"],
-      skills: [],
-      hasPrompt: true,
-      promptPath: "agents/prompts/default.md",
-      systemPrompt: "You are the AutoDev orchestrator.",
-      reconciliation: {
-        status: {
-          convergence: "converged",
-          desiredGeneration: "agent-default",
-          observedGeneration: "agent-default",
-          lastApplyAt: FIXTURE_APPLIED_AT,
-          lastObservationAt: FIXTURE_APPLIED_AT,
-          lastError: null,
-          explanation: "The agent matches the canonical source."
-        },
-        history: []
-      }
-    });
-    return true;
-  }
-  const skillContent = url.pathname.match(SKILL_CONTENT_ROUTE);
-  if (skillContent !== null) {
-    const name = decodeURIComponent(skillContent[1] ?? "");
-    const source = canonicalSource("skill", name);
-    if (source === null) {
-      sendJson(
-        response,
-        {
-          error: {
-            message: `The skill "${name}" does not exist.`,
-            type: "autodev_control_api_error",
-            code: "autodev_control_skill_not_found"
-          }
-        },
-        404
-      );
-      return true;
-    }
-    sendJson(response, {
-      schema: "autodev-control-skill-content-v2",
-      name: source.name,
-      path: source.path,
-      content: source.content,
-      revision: source.revision,
-      // The skill reaches the runtime as a link to this very source, so the
-      // observed generation is the canonical revision whenever the link holds
-      // it. The Console renders this view rather than deriving its own, so the
-      // skill page cannot drift from the shared reconciliation contract.
-      reconciliation: {
-        status: {
-          convergence: "converged",
-          desiredGeneration: source.revision,
-          observedGeneration: source.revision,
-          lastApplyAt: FIXTURE_APPLIED_AT,
-          lastObservationAt: FIXTURE_APPLIED_AT,
-          lastError: null,
-          explanation:
-            "The runtime has observed the latest desired generation; convergence is recorded."
-        },
-        history: []
-      }
-    });
-    return true;
-  }
-  const promptDetail = url.pathname.match(PROMPT_DETAIL_ROUTE);
-  if (promptDetail !== null) {
-    const name = decodeURIComponent(promptDetail[1] ?? "");
-    const source = canonicalSource("prompt", name);
-    if (source === null) {
-      sendJson(
-        response,
-        {
-          error: {
-            message: `The command "${name}" does not exist.`,
-            type: "autodev_control_api_error",
-            code: "autodev_control_api_unknown_path"
-          }
-        },
-        404
-      );
-      return true;
-    }
-    sendJson(response, {
-      schema: "autodev-control-prompt-detail-v4",
-      name: source.name,
-      type: "command",
-      source: source.path,
-      content: source.content,
-      preview: source.preview ?? source.content,
-      revision: source.revision,
-      diff: {
-        summary: "The canonical command source.",
-        identifier: `prompt-${source.name}-1`
-      },
-      reconciliation: {
-        status: {
-          convergence: "converged",
-          desiredGeneration: `prompt-${source.name}-1`,
-          observedGeneration: `prompt-${source.name}-1`,
-          lastApplyAt: FIXTURE_APPLIED_AT,
-          lastObservationAt: FIXTURE_APPLIED_AT,
-          lastError: null,
-          explanation: "The command matches the canonical source."
-        },
-        history: []
-      }
-    });
+  if (handleCatalogDetailRead(url, response)) {
     return true;
   }
   return false;

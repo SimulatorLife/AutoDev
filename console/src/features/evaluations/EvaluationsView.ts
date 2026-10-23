@@ -37,8 +37,8 @@ import { TabNav } from "../../components/tabs/Tabs.ts";
 import { TraceStatus } from "../../components/traces/TraceStatus.ts";
 import { formatSpanDuration } from "../../components/ui/duration.ts";
 import {
-  TEXT_CONTROL_CLASS,
-  FIELD_GROUP_CLASS
+  FIELD_GROUP_CLASS,
+  TEXT_CONTROL_CLASS
 } from "../../components/ui/field-classes.ts";
 import {
   ACTION_LINK_CLASS,

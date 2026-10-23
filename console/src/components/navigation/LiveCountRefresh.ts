@@ -4,7 +4,6 @@ import React from "react";
 
 import {
   LIVE_COUNT_REFRESH_EVENT,
-  LIVE_COUNT_REFRESH_INTERVAL_MS,
   startLiveCountRefresh
 } from "./live-count-refresh.ts";
 

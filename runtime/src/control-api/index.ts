@@ -2705,9 +2705,7 @@ function appliedHookEvents(
  * groups' actions flattened. `null` means the groups could not be read as
  * groups, which is a different fact from a group that holds no actions.
  */
-function appliedHookActions(
-  groups: readonly unknown[]
-): HookAction[] | null {
+function appliedHookActions(groups: readonly unknown[]): HookAction[] | null {
   const actions: HookAction[] = [];
   for (const group of groups) {
     if (!isPlainRecord(group)) return null;

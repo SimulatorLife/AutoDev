@@ -42,8 +42,7 @@ export interface CheckboxFieldProps {
   readonly defaultChecked?: boolean | undefined;
   readonly checked?: boolean | undefined;
   readonly onChange?:
-    | ((event: React.ChangeEvent<HTMLInputElement>) => void)
-    | undefined;
+    ((event: React.ChangeEvent<HTMLInputElement>) => void) | undefined;
   readonly disabled?: boolean | undefined;
   /** The control must be checked before the form submits. */
   readonly required?: boolean | undefined;
@@ -106,10 +105,9 @@ export function CheckboxField({
     "label",
     {
       htmlFor: controlId,
-      className:
-        `flex min-h-6 gap-2 text-fg-secondary ${
-          started ? "items-start" : "items-center"
-        } ${labelClassName ?? ""}`.trim(),
+      className: `flex min-h-6 gap-2 text-fg-secondary ${
+        started ? "items-start" : "items-center"
+      } ${labelClassName ?? ""}`.trim(),
       ...labelAttributes
     },
     React.createElement("input", {

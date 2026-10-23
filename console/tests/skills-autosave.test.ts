@@ -242,8 +242,9 @@ test("autosave submit-on-change contract is wired on every role checkbox", () =>
   // travels in the primitive's data attributes and the autosave handler is one
   // of its props. The contract is unchanged: every role checkbox submits the
   // form the moment it changes.
-  const fields = (formElement.props as { children: [unknown, CheckboxFieldElement[]] })
-    .children[1];
+  const fields = (
+    formElement.props as { children: [unknown, CheckboxFieldElement[]] }
+  ).children[1];
   assert.equal(fields.length, 2);
 
   for (const field of fields) {

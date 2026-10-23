@@ -18,8 +18,8 @@ import {
   STATE_PILL_TONE_CLASS
 } from "../src/components/ui/state-pill.ts";
 import { mcpDetailTabs } from "../src/features/mcps/McpDetailView.ts";
-import { ProvidersView } from "../src/features/providers/ProvidersView.ts";
 import { PromptsView } from "../src/features/prompts/PromptsView.ts";
+import { ProvidersView } from "../src/features/providers/ProvidersView.ts";
 import { ToolsView } from "../src/features/tools/ToolsView.ts";
 
 /**
@@ -495,19 +495,25 @@ test("a section heading names the section rather than repeating the page", () =>
     React.createElement(ProvidersView, {
       providers: PROVIDERS_FIXTURE,
       models: { status: "unavailable", message: "Fixture not observed." },
-      modelDiscovery: { status: "unavailable", message: "Fixture not observed." }
+      modelDiscovery: {
+        status: "unavailable",
+        message: "Fixture not observed."
+      }
     } as unknown as React.ComponentProps<typeof ProvidersView>)
   );
 
-  const headings = [...providers.matchAll(/<h2[^>]*>([^<]*)</gu)].map(
-    (match) => match[1] ?? ""
+  const headings = new Set(
+    Array.from(
+      providers.matchAll(/<h2[^>]*>([^<]*)</gu),
+      (match) => match[1] ?? ""
+    )
   );
   assert.ok(
-    headings.includes("Configured Providers"),
+    headings.has("Configured Providers"),
     "the providers section has to say which providers it lists"
   );
   assert.ok(
-    !headings.includes("Providers"),
+    !headings.has("Providers"),
     "a section heading that repeats the page's own title says nothing"
   );
 
@@ -520,7 +526,8 @@ test("a section heading names the section rather than repeating the page", () =>
       filters: { source: "", role: "" }
     } as unknown as React.ComponentProps<typeof ToolsView>)
   );
-  const toolHeadings = [...tools.matchAll(/<h2[^>]*>([^<]*)</gu)].map(
+  const toolHeadings = Array.from(
+    tools.matchAll(/<h2[^>]*>([^<]*)</gu),
     (match) => match[1] ?? ""
   );
   assert.ok(
@@ -548,13 +555,17 @@ test("a provider link names the routing slot it points at", () => {
     React.createElement(ProvidersView, {
       providers: PROVIDERS_FIXTURE,
       models: { status: "unavailable", message: "Fixture not observed." },
-      modelDiscovery: { status: "unavailable", message: "Fixture not observed." }
+      modelDiscovery: {
+        status: "unavailable",
+        message: "Fixture not observed."
+      }
     } as unknown as React.ComponentProps<typeof ProvidersView>)
   );
 
-  const names = [
-    ...providers.matchAll(/aria-label="(Open provider [^"]*)"/gu)
-  ].map((match) => match[1] ?? "");
+  const names = Array.from(
+    providers.matchAll(/aria-label="(Open provider [^"]*)"/gu),
+    (match) => match[1] ?? ""
+  );
   assert.equal(
     new Set(names).size,
     names.length,
