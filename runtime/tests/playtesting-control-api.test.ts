@@ -28,10 +28,10 @@ import {
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
 import {
+  type PlaytestFindingFilter,
   PlaytestInvalidCursorError,
   PlaytestSourceUnavailableError,
-  RestrictedHumanResponseRepository,
-  type PlaytestFindingFilter
+  RestrictedHumanResponseRepository
 } from "@simulatorlife/autodev-data/playtesting";
 import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
 
