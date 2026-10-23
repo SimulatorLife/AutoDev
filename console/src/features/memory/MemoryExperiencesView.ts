@@ -13,6 +13,7 @@ import {
   FilterSearchField
 } from "../../components/filters/FilterBar.ts";
 import { Button } from "../../components/forms/Button.ts";
+import { CheckboxField } from "../../components/forms/CheckboxField.ts";
 import {
   SelectField,
   type SelectOption
@@ -509,21 +510,13 @@ function ExperienceDetailPanel({
           options: PURGE_REASON_OPTIONS,
           defaultValue: "privacy_request"
         }),
-        React.createElement(
-          "label",
-          { className: "flex items-center gap-2 text-fg-secondary" },
-          React.createElement("input", {
-            type: "checkbox",
-            name: "confirm",
-            value: "purge",
-            className: "accent-error"
-          }),
-          React.createElement(
-            "span",
-            null,
+        React.createElement(CheckboxField, {
+          name: "confirm",
+          value: "purge",
+          tone: "destructive",
+          label:
             "I understand this permanently erases this raw experience envelope."
-          )
-        ),
+        }),
         React.createElement(
           "div",
           { className: "flex items-center gap-2" },

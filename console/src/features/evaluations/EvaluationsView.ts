@@ -37,7 +37,7 @@ import { TabNav } from "../../components/tabs/Tabs.ts";
 import { TraceStatus } from "../../components/traces/TraceStatus.ts";
 import { formatSpanDuration } from "../../components/ui/duration.ts";
 import {
-  FIELD_CONTROL_CLASS,
+  TEXT_CONTROL_CLASS,
   FIELD_GROUP_CLASS
 } from "../../components/ui/field-classes.ts";
 import {
@@ -1467,7 +1467,7 @@ function runTimeBound(
         ? { max: other || undefined }
         : { min: other || undefined }),
       "aria-label": `Runs ${name === "from" ? "from" : "up to"} this UTC date`,
-      className: FIELD_CONTROL_CLASS,
+      className: TEXT_CONTROL_CLASS,
       "data-evaluations-bound": name
     })
   );

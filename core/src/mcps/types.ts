@@ -1,4 +1,5 @@
 import type { AgentRole } from "../agents/types.ts";
+import type { RuleSyncValidationIssue } from "../validation/types.ts";
 
 export interface McpServerConfig {
   readonly name: string;
@@ -95,24 +96,6 @@ export interface RuleSyncMcpLaunchState {
   /** The target whose configuration this is. */
   readonly target: string;
   readonly servers: readonly McpServerLaunchConfiguration[];
-}
-
-/**
- * One reason a canonical source cannot be applied.
- *
- * `location` names the part of the document at fault in the same terms the
- * operator is looking at -- a server name, a target's override of a server, an
- * event name, an action index, or a source line -- and `message` says what is
- * wrong with it. Neither is a diagnosis of the fix; both are the fact the loader
- * observed and would otherwise have discarded.
- *
- * Lives here rather than in the loader because two independent loaders produce
- * it, and a shared shape is what lets the Control API and the Console validate
- * one form across every canonical source instead of per resource.
- */
-export interface RuleSyncValidationIssue {
-  readonly location: string;
-  readonly message: string;
 }
 
 export interface RuleSyncMcpState {

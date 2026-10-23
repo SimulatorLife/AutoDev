@@ -39,7 +39,7 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
-import { FIELD_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
+import { TEXT_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
 import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
@@ -187,7 +187,7 @@ function textFilter(
     React.createElement("input", {
       name,
       defaultValue: value,
-      className: FIELD_CONTROL_CLASS,
+      className: TEXT_CONTROL_CLASS,
       maxLength: 256,
       autoComplete: "off"
     })

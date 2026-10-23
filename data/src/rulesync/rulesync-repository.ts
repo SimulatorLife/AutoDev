@@ -21,19 +21,22 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type {
-  HookAction,
-  HookDefinition,
-  HookEvent,
-  McpServerDefinition,
-  McpServerLaunchConfiguration,
-  McpServerTransport,
-  McpTargetOverride,
-  PromptVersion,
-  RuleSyncMcpLaunchState,
-  RuleSyncMcpState,
-  RuleSyncValidationIssue,
-  SkillDefinition
+import {
+  type HookAction,
+  type HookDeclarationOrigin,
+  type HookEvent,
+  type HookEventDeclaration,
+  isHookEvent,
+  type McpServerDefinition,
+  type McpServerLaunchConfiguration,
+  type McpServerTransport,
+  type McpTargetOverride,
+  type PromptVersion,
+  type RuleSyncHooksState,
+  type RuleSyncMcpLaunchState,
+  type RuleSyncMcpState,
+  type RuleSyncValidationIssue,
+  type SkillDefinition
 } from "@simulatorlife/autodev-core";
 import {
   applyEdits,
@@ -64,6 +67,14 @@ const COLLATOR = new Intl.Collator();
  * this name, and a second spelling would be a second file to keep in step.
  */
 const MCP_SOURCE = ".rulesync/mcp.jsonc" as const;
+
+/**
+ * The canonical hook declaration's path, in the repository.
+ *
+ * One spelling of it: the declaration is read, written and digested under this
+ * name, and a second spelling would be a second file to keep in step.
+ */
+const HOOKS_SOURCE = ".rulesync/hooks.jsonc" as const;
 const MD_EXTENSION_PATTERN = /\.md$/u;
 const COMMAND_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const COMMAND_CONTENT_MAX_BYTES = 48_000;
@@ -94,12 +105,6 @@ const SKILL_FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u;
 const SKILL_NAME_PATTERN = /^[a-z0-9-]{1,64}$/u;
 const SKILL_DESCRIPTION_MAX = 512;
 const SKILL_CONTENT_MAX = 20_000;
-const HOOK_EVENTS: ReadonlySet<string> = new Set([
-  "sessionStart",
-  "subagentStart",
-  "beforeSubmitPrompt",
-  "preToolUse"
-]);
 const SOURCE_UPDATE_QUEUES = new Map<string, Promise<void>>();
 const COMMAND_PARSED_CACHE = new Map<
   string,
@@ -140,21 +145,6 @@ async function withSourceUpdateLock<T>(
       SOURCE_UPDATE_QUEUES.delete(sourcePath);
     }
   }
-}
-
-export interface RuleSyncHooksState {
-  readonly source: ".rulesync/hooks.jsonc";
-  readonly valid: boolean | null;
-  /**
-   * Why the source is invalid, empty when it is valid or was not observed.
-   *
-   * Required rather than optional so that a caller cannot read `valid: false`
-   * and conclude there is nothing more to say. The loader knows which event
-   * failed and what the parser objected to; reporting only the boolean made an
-   * operator hunt through the file for a fault the system had already located.
-   */
-  readonly issues: readonly RuleSyncValidationIssue[];
-  readonly hooks: readonly HookDefinition[];
 }
 
 /**
@@ -600,6 +590,62 @@ export class RuleSyncMcpValidationError extends Error {
 }
 
 /**
+ * The canonical hook declaration changed since it was loaded.
+ *
+ * A conflict is not a failure of the write: it means another writer changed the
+ * declaration first, and the caller has to load it again to see what it now
+ * says.
+ */
+export class RuleSyncHooksConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RuleSyncHooksConflictError";
+  }
+}
+
+/** The requested hook declaration change cannot be expressed. */
+export class RuleSyncHooksValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RuleSyncHooksValidationError";
+  }
+}
+
+export interface RuleSyncHookEventUpdateInput {
+  /** The event whose action list is written. */
+  readonly event: HookEvent;
+  /** The target whose declaration is written. */
+  readonly target: string;
+  /**
+   * The event's complete action list.
+   *
+   * Complete, because the declaration replaces an event's list rather than
+   * adding to it: a partial list would be read as the whole list and would
+   * drop the actions it left out.
+   */
+  readonly actions: readonly HookAction[];
+  /** The revision of the canonical declaration the caller loaded. */
+  readonly expectedRevision: string;
+}
+
+export interface RuleSyncHookEventUpdateResult {
+  readonly source: ".rulesync/hooks.jsonc";
+  readonly event: HookEvent;
+  readonly target: string;
+  /** The revision of the declaration after the write. */
+  readonly revision: string;
+  /**
+   * Where the written declaration lives.
+   *
+   * `shared` means the shared declaration holds it and every target inherits
+   * it; `target` means the target's own declaration holds it.
+   */
+  readonly origin: HookDeclarationOrigin;
+  /** The action list the target now declares for the event. */
+  readonly actions: readonly HookAction[];
+}
+
+/**
  * The launch configuration one write sets.
  *
  * A key that is absent is left as the declaration has it; a key that is `null`
@@ -1030,6 +1076,7 @@ const MCP_LAUNCH_FILE_KEYS = [
 
 const MCP_SERVER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const MCP_TARGET_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const HOOK_TARGET_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
 /**
  * How the canonical declaration is written back.
@@ -1037,7 +1084,14 @@ const MCP_TARGET_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
  * The library formats the edited region rather than the whole document, so
  * the comments and the layout outside the edited server entry survive.
  */
-const MCP_JSONC_FORMATTING: FormattingOptions = {
+/**
+ * How a canonical JSONC document is written back.
+ *
+ * One setting for every canonical document this repository writes, so a
+ * declaration that is edited in place keeps the same shape as one that was
+ * never edited.
+ */
+const JSONC_FORMATTING: FormattingOptions = {
   insertSpaces: true,
   tabSize: 2,
   eol: "\n"
@@ -1200,7 +1254,7 @@ function mcpLaunchEdits(
   }
 ): EditResult {
   const entryPath = [input.target, "mcpServers", input.name];
-  const options = { formattingOptions: MCP_JSONC_FORMATTING };
+  const options = { formattingOptions: JSONC_FORMATTING };
   if (!input.hasOwnEntry) {
     return modify(
       content,
@@ -1276,10 +1330,6 @@ function mcpLaunchConfiguration(
   return published;
 }
 
-function isHookEvent(value: string): value is HookEvent {
-  return HOOK_EVENTS.has(value);
-}
-
 /** One action, or `null` when it cannot be applied. The single rule set. */
 function parseHookAction(value: unknown): HookAction | null {
   if (
@@ -1301,6 +1351,42 @@ function parseHookAction(value: unknown): HookAction | null {
       ? { statusMessage: value.statusMessage }
       : {})
   };
+}
+
+/**
+ * The action list one write sets.
+ *
+ * The list is written complete, so every action is checked here rather than
+ * when it is read: an action the declaration cannot hold must be refused
+ * before the document is touched, not after.
+ */
+function normalizeHookActions(
+  actions: readonly HookAction[]
+): readonly HookAction[] | null {
+  const normalized: HookAction[] = [];
+  for (const action of actions) {
+    if (
+      action.type !== "command" ||
+      typeof action.command !== "string" ||
+      action.command.trim().length === 0 ||
+      (action.matcher !== undefined && typeof action.matcher !== "string") ||
+      (action.statusMessage !== undefined &&
+        typeof action.statusMessage !== "string")
+    ) {
+      return null;
+    }
+    normalized.push({
+      type: "command",
+      command: action.command,
+      ...(typeof action.matcher === "string"
+        ? { matcher: action.matcher }
+        : {}),
+      ...(typeof action.statusMessage === "string"
+        ? { statusMessage: action.statusMessage }
+        : {})
+    });
+  }
+  return normalized;
 }
 
 function parseHookActions(value: unknown): HookAction[] | null {
@@ -1377,7 +1463,8 @@ function hookValidationIssues(
   source: string,
   content: string,
   errors: readonly ParseError[],
-  document: unknown
+  document: unknown,
+  target: string
 ): RuleSyncValidationIssue[] {
   if (errors.length > 0) {
     return errors.map((error) => jsoncParseIssue(content, error));
@@ -1396,12 +1483,58 @@ function hookValidationIssues(
       }
     ];
   }
+  const issues = hookEventIssues("hooks", hooksValue);
+  // The target's own declaration is checked as well, because it is part of
+  // what this target runs: RuleSync merges it over the shared declaration, so
+  // a fault in it reaches Codex exactly as a fault in the shared block does.
+  // The other targets' blocks are not checked here, because they are not part
+  // of what this surface manages.
+  const targetBlock = document[target];
+  if (targetBlock === undefined) return issues;
+  if (!isRecord(targetBlock)) {
+    issues.push({
+      location: target,
+      message: `The "${target}" declaration must be an object.`
+    });
+    return issues;
+  }
+  const override = targetBlock.hooks;
+  if (override === undefined) return issues;
+  if (!isRecord(override)) {
+    issues.push({
+      location: `${target}.hooks`,
+      message: `The "${target}" hook declaration must be an object.`
+    });
+    return issues;
+  }
+  issues.push(...hookEventIssues(`${target}.hooks`, override));
+  return issues;
+}
+
+/**
+ * The issues one hook event block holds.
+ *
+ * The block is the shared declaration or a target's own declaration of it,
+ * and `location` names which: the shared block's events are located by their
+ * own name, because that is where an operator looks for them, and a target's
+ * own events are located under the block they are in.
+ *
+ * An event the Runtime cannot install is named here rather than dropped. A
+ * declaration the console cannot describe is a declaration the operator
+ * cannot act on, and dropping it would leave the console showing fewer hooks
+ * than the declaration holds.
+ */
+function hookEventIssues(
+  location: string,
+  events: Record<string, unknown>
+): RuleSyncValidationIssue[] {
   const issues: RuleSyncValidationIssue[] = [];
-  for (const [event, value] of Object.entries(hooksValue)) {
+  for (const [event, value] of Object.entries(events)) {
+    const where = location === "hooks" ? event : `${location}.${event}`;
     if (!isHookEvent(event)) {
       issues.push({
-        location: event,
-        message: `"${event}" is not a known hook event.`
+        location: where,
+        message: `"${event}" is not a hook event the Codex runtime runs.`
       });
       continue;
     }
@@ -1411,7 +1544,7 @@ function hookValidationIssues(
     // event with no actions.
     if (!Array.isArray(value)) {
       issues.push({
-        location: event,
+        location: where,
         message: `The actions for "${event}" must be an array.`
       });
       continue;
@@ -1419,7 +1552,7 @@ function hookValidationIssues(
     const invalidIndex = firstInvalidHookActionIndex(value);
     if (invalidIndex === null) continue;
     issues.push({
-      location: `${event} action ${invalidIndex + 1}`,
+      location: `${where} action ${invalidIndex + 1}`,
       message: `Action ${invalidIndex + 1} of "${event}" is not a command hook with a non-empty command string.`
     });
   }
@@ -2071,15 +2204,21 @@ export class RuleSyncRepository {
     });
   }
 
-  loadHooksState(): RuleSyncHooksState {
-    const hooksPath = path.join(
-      this.repositoryRoot,
-      ".rulesync",
-      "hooks.jsonc"
-    );
-    const source = ".rulesync/hooks.jsonc" as const;
+  /**
+   * The canonical hook declaration, read as one target receives it.
+   *
+   * RuleSync merges the shared declaration with the target's own declaration
+   * one event at a time, so the target's effective declaration is the shared
+   * one with the target's own merged over it, and a target that declares an
+   * event replaces the shared declaration of that event rather than adding to
+   * it. The events are published with the origin they come from, because the
+   * origin is what decides who else an edit reaches.
+   */
+  loadHooksState(target: string): RuleSyncHooksState {
+    const source = HOOKS_SOURCE;
+    const hooksPath = path.join(this.repositoryRoot, source);
     if (!existsSync(hooksPath))
-      return { source, valid: null, issues: [], hooks: [] };
+      return { source, valid: null, issues: [], target, events: [] };
 
     let content: string;
     try {
@@ -2087,7 +2226,7 @@ export class RuleSyncRepository {
     } catch {
       // Unreadable is not invalid. The file is there and the system has not
       // read it, so nothing about its contents may be claimed.
-      return { source, valid: null, issues: [], hooks: [] };
+      return { source, valid: null, issues: [], target, events: [] };
     }
 
     const errors: ParseError[] = [];
@@ -2095,27 +2234,221 @@ export class RuleSyncRepository {
       allowTrailingComma: true
     });
 
-    const issues = hookValidationIssues(source, content, errors, document);
+    const issues = hookValidationIssues(
+      source,
+      content,
+      errors,
+      document,
+      target
+    );
     if (issues.length > 0) {
-      // No hooks are returned: the first issue is why the rest of the document
+      // No events are returned: the first issue is why the rest of the document
       // was never examined, and a partial list would read as the whole file.
-      return { source, valid: false, issues, hooks: [] };
+      return { source, valid: false, issues, target, events: [] };
     }
 
     // No issues means the document parsed, is an object, has a `hooks` object,
     // and every event and action in it applied. The empty-object fallback is
     // unreachable for that reason alone; it exists so the narrowing is done by
     // the type system rather than by a cast.
-    const hooksDocument =
+    const shared =
       isRecord(document) && isRecord(document.hooks) ? document.hooks : {};
-    const hooks: HookDefinition[] = [];
-    for (const [event, value] of Object.entries(hooksDocument)) {
+    const targetDeclaration = isRecord(document) ? document[target] : undefined;
+    const targetBlock = isRecord(targetDeclaration)
+      ? targetDeclaration
+      : undefined;
+    const override =
+      targetBlock !== undefined && isRecord(targetBlock.hooks)
+        ? targetBlock.hooks
+        : {};
+    const events: HookEventDeclaration[] = [];
+    for (const [event, value] of Object.entries({ ...shared, ...override })) {
       if (!isHookEvent(event)) continue;
       const actions = parseHookActions(value);
       if (actions === null) continue;
-      hooks.push({ event, actions });
+      events.push({
+        event,
+        origin: Object.hasOwn(override, event) ? "target" : "shared",
+        actions
+      });
     }
-    return { source, valid: true, issues: [], hooks };
+    return { source, valid: true, issues: [], target, events };
+  }
+
+  /**
+   * The revision of the canonical hook declaration.
+   *
+   * It is the handle a write compares against, so it is read with the
+   * declaration it belongs to rather than on its own.
+   */
+  loadHooksRevision(): {
+    readonly source: ".rulesync/hooks.jsonc";
+    readonly revision: string | null;
+    readonly valid: boolean | null;
+  } {
+    const source = HOOKS_SOURCE;
+    const hooksPath = path.join(this.repositoryRoot, source);
+    if (!existsSync(hooksPath)) return { source, revision: null, valid: null };
+    let content: string;
+    try {
+      content = readFileSync(hooksPath, "utf8");
+    } catch {
+      return { source, revision: null, valid: null };
+    }
+    const errors: ParseError[] = [];
+    const document: unknown = parse(content, errors, {
+      allowTrailingComma: true
+    });
+    return {
+      source,
+      revision: createHash("sha256").update(content, "utf8").digest("hex"),
+      valid: errors.length === 0 && isRecord(document) ? true : false
+    };
+  }
+
+  /**
+   * Write one event's action list to the canonical hook declaration.
+   *
+   * The write goes to the declaration that currently holds the event for the
+   * target: the target's own declaration when it declares the event, and the
+   * shared declaration when the target inherits it. That is where the value
+   * lives, and writing it anywhere else would leave a second copy of the same
+   * event in the document -- a shared list the target no longer inherits and a
+   * target list that shadows it.
+   *
+   * The write is a compare-and-swap on the document's revision, and it edits
+   * the document in place: the comments and the formatting outside the edited
+   * event are preserved.
+   */
+  updateHookEvent(
+    input: RuleSyncHookEventUpdateInput
+  ): Promise<RuleSyncHookEventUpdateResult> {
+    const { event, target, expectedRevision } = input;
+    if (!isHookEvent(event)) {
+      return Promise.reject(
+        new RuleSyncHooksValidationError(
+          "Hook event must be a hook event the Codex runtime runs."
+        )
+      );
+    }
+    if (!HOOK_TARGET_NAME_PATTERN.test(target)) {
+      return Promise.reject(
+        new RuleSyncHooksValidationError(
+          "Hook target name must be a non-empty name of letters, digits, dots, dashes or underscores."
+        )
+      );
+    }
+    if (!COMMAND_REVISION_PATTERN.test(expectedRevision)) {
+      return Promise.reject(
+        new RuleSyncHooksValidationError("Expected hook revision is invalid.")
+      );
+    }
+    const actions = normalizeHookActions(input.actions);
+    if (actions === null) {
+      return Promise.reject(
+        new RuleSyncHooksValidationError(
+          "A hook action must be a command hook with a non-empty command string."
+        )
+      );
+    }
+
+    const source = HOOKS_SOURCE;
+    const hooksPath = path.join(this.repositoryRoot, source);
+    if (!existsSync(hooksPath)) {
+      return Promise.reject(
+        new RuleSyncHooksConflictError(
+          "The canonical hook declaration does not exist."
+        )
+      );
+    }
+
+    return withSourceUpdateLock(hooksPath, async () => {
+      let content: string;
+      try {
+        content = await readFile(hooksPath, "utf8");
+      } catch {
+        throw new RuleSyncHooksConflictError(
+          "The canonical hook declaration could not be read."
+        );
+      }
+      const revision = createHash("sha256")
+        .update(content, "utf8")
+        .digest("hex");
+      if (revision !== expectedRevision) {
+        throw new RuleSyncHooksConflictError(
+          "The canonical hook declaration changed since it was loaded."
+        );
+      }
+      const errors: ParseError[] = [];
+      const document: unknown = parse(content, errors, {
+        allowTrailingComma: true
+      });
+      if (errors.length > 0 || !isRecord(document)) {
+        throw new RuleSyncHooksValidationError(
+          "The canonical hook declaration could not be applied."
+        );
+      }
+
+      const targetDeclaration = document[target];
+      const targetBlock = isRecord(targetDeclaration)
+        ? targetDeclaration
+        : undefined;
+      const override =
+        targetBlock !== undefined && isRecord(targetBlock.hooks)
+          ? targetBlock.hooks
+          : undefined;
+      const origin: HookDeclarationOrigin =
+        override !== undefined && Object.hasOwn(override, event)
+          ? "target"
+          : "shared";
+      // RuleSync replaces an event's whole action list when a target declares
+      // that event, so the list is written complete: a list carrying only the
+      // changed actions would take the event's other actions with it.
+      const eventPath =
+        origin === "target" ? [target, "hooks", event] : ["hooks", event];
+      const edits = modify(
+        content,
+        eventPath,
+        actions.length === 0 ? undefined : actions,
+        { formattingOptions: JSONC_FORMATTING }
+      );
+      const updated = applyEdits(content, edits);
+      if (updated === content) {
+        // The declaration already says this, so there is nothing to write.
+        // A write that changes nothing is a successful write, not a conflict.
+        return { source, event, target, revision, origin, actions };
+      }
+
+      const temporaryPath = path.join(
+        this.repositoryRoot,
+        `.hooks.${randomUUID()}.tmp`
+      );
+      try {
+        await writeFile(temporaryPath, updated, {
+          encoding: "utf8",
+          flag: "wx",
+          mode: 0o644
+        });
+        await rename(temporaryPath, hooksPath);
+      } finally {
+        await unlink(temporaryPath).catch(() => undefined);
+      }
+      const persisted = await readFile(hooksPath, "utf8");
+      if (persisted !== updated) {
+        throw new RuleSyncHooksConflictError(
+          "The canonical hook declaration changed during the update."
+        );
+      }
+
+      return {
+        source,
+        event,
+        target,
+        revision: createHash("sha256").update(persisted, "utf8").digest("hex"),
+        origin,
+        actions
+      };
+    });
   }
 
   loadMcpState(): RuleSyncMcpState {

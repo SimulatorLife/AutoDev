@@ -17,6 +17,7 @@ import {
   type PlaytestVisualDecisionCounters,
   type PlaytestVisualDecisionSelfReport,
   type PlaytestVisualHistoryEntry,
+  type PlaytestVisualDecisionProgress,
   type PlaytestVisualObservation,
   type PlaytestVisualPolicy,
   type WorkspaceVisualPlaytestTargetApproval
@@ -139,6 +140,13 @@ export interface SmartDirectDecisionInput {
    * decision: the policy never lets a request outlast it.
    */
   readonly deadlineMonotonicMs: number;
+  /**
+   * What the Runtime measured about the game's progress.
+   *
+   * The backend is told, so a game that stopped advancing does not get the
+   * same action proposed again and again.
+   */
+  readonly progress: PlaytestVisualDecisionProgress;
 }
 
 /** The fields every Smart-direct decision carries, whatever it decided. */
@@ -781,7 +789,11 @@ function decisionInstructions(): string {
     // A refused action is in the history with its outcome, and the episode
     // continues after it. Without this the model reads its own last intent
     // as a done action and repeats the choice the game already refused.
-    "Each history entry carries the outcome of that step. An entry whose outcome starts with refused never reached the game: the page changed under it, so choose a different control or a different way to reach the same effect. An entry whose outcome is dispatched did reach the game."
+    "Each history entry carries the outcome of that step. An entry whose outcome starts with refused never reached the game: the page changed under it, so choose a different control or a different way to reach the same effect. An entry whose outcome is dispatched did reach the game.",
+    // The Runtime measures whether the game is advancing and tells the
+    // backend. Without this the backend keeps proposing the action that
+    // does nothing, and the episode burns its budget on a frozen game.
+    "The request carries a progress reading. advanced is false when the game has shown the player exactly what it showed before. When advanced is false, the game is not responding to what you did: choose a different control or a different way to reach the same effect, and do not repeat an action that recentHistory already shows as dispatched against an unchanged screen. When the reading says the game has not advanced for many steps or a long time, the episode ends and reports that the game did not advance, so say what you observed in your intention rather than claiming progress."
   ].join(" ");
 }
 
@@ -791,6 +803,7 @@ function buildDecisionRequest(input: {
   readonly areasOfFocus: string | null;
   readonly currentStep: number;
   readonly history: readonly SmartDirectHistoryEntry[];
+  readonly progress: PlaytestVisualDecisionProgress;
   readonly maxOutputTokens: number;
 }): Record<string, unknown> {
   const visibleState = JSON.stringify({
@@ -816,6 +829,16 @@ function buildDecisionRequest(input: {
             input.areasOfFocus.replaceAll(EMAIL_PATTERN, "[redacted]")
           ),
     currentStep: input.currentStep,
+    // What the Runtime measured about the game. A backend that can read it
+    // can tell a screen that never changed from one it has not looked at.
+    progress: {
+      version: input.progress.version,
+      advanced: input.progress.advanced,
+      unchangedSteps: input.progress.unchangedSteps,
+      unchangedMs: input.progress.unchangedMs,
+      maxUnchangedDecisions: input.progress.policy.maxUnchangedDecisions,
+      maxUnchangedMs: input.progress.policy.maxUnchangedMs
+    },
     recentHistory: input.history.slice(-MAX_HISTORY_ITEMS).map((entry) => ({
       step: entry.step,
       action: safeVisibleText(entry.action),
@@ -1051,6 +1074,7 @@ export class SmartDirectVisualPolicy implements PlaytestVisualPolicy {
       areasOfFocus: input.areasOfFocus,
       currentStep: input.history.length,
       history: input.history,
+      progress: input.progress,
       maxOutputTokens: Math.min(this.maxOutputTokens, remainingTokens)
     });
     const body = JSON.stringify(request);

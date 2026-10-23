@@ -8,9 +8,11 @@ import type {
   GithubWorkflowRun
 } from "../github/types.ts";
 import type {
-  McpServerResource,
-  RuleSyncValidationIssue
-} from "../mcps/types.ts";
+  HookAction,
+  HookDeclarationOrigin,
+  HookEvent
+} from "../hooks/types.ts";
+import type { McpServerResource } from "../mcps/types.ts";
 import type {
   EvidenceReference,
   ExperienceEnvelope,
@@ -66,6 +68,7 @@ import type {
   ToolCatalogItem,
   ToolCatalogValidity
 } from "../tools/types.ts";
+import type { RuleSyncValidationIssue } from "../validation/types.ts";
 import type { WorkspacePlaytestApproval } from "../workspaces/playtesting.ts";
 import type {
   WorkspaceCatalogStatus,
@@ -837,8 +840,34 @@ export interface ControlApiValidationIssue {
   readonly message: string;
 }
 
+/**
+ * One hook event and the actions it runs.
+ *
+ * The actions are the complete list the event runs, not a delta: RuleSync
+ * replaces an event's whole action list when a target declares that event, so
+ * a partial list would be read as the whole list and would silently drop the
+ * actions it left out.
+ */
+export interface ControlApiHookEvent {
+  readonly event: HookEvent;
+  readonly actions: readonly HookAction[];
+}
+
+/**
+ * One hook event, as the canonical declaration gives it for a target.
+ *
+ * It is the declared side, so it carries where the declaration of the event
+ * lives: `shared` means every target inherits it and `target` means this
+ * target declares it alone. The applied projection says nothing about that,
+ * which is why the applied side is a `ControlApiHookEvent` and not one of
+ * these.
+ */
+export interface ControlApiHookDeclaration extends ControlApiHookEvent {
+  readonly origin: HookDeclarationOrigin;
+}
+
 export interface ControlApiHooksResponse {
-  readonly schema: "autodev-control-hooks-v1";
+  readonly schema: "autodev-control-hooks-v2";
   readonly source: string;
   readonly readOnly: boolean;
   readonly valid: boolean | null;
@@ -850,7 +879,97 @@ export interface ControlApiHooksResponse {
    * leaves the operator to re-find what the system read in a single pass.
    */
   readonly issues: readonly ControlApiValidationIssue[];
-  readonly hooks: Readonly<Record<string, unknown>>;
+  /**
+   * The revision of the canonical declaration, which a write compares against.
+   *
+   * `null` when the declaration could not be read, and a write against `null`
+   * has nothing to compare, so the editor stays disabled with the reason
+   * rather than offering a write that cannot be guarded.
+   */
+  readonly revision: string | null;
+  /** The target whose effective declaration this read publishes. */
+  readonly target: string;
+  /**
+   * The events the target declares.
+   *
+   * The effective declaration for the target: the shared declaration with the
+   * target's own declaration merged over it, one event at a time, which is how
+   * RuleSync merges them.
+   */
+  readonly events: readonly ControlApiHookDeclaration[];
+}
+
+/**
+ * The hook projection the Runtime published, against the canonical
+ * declaration.
+ *
+ * The projection is generated from the declaration, so the two are worth
+ * comparing: a hook the operator declared but the Runtime did not install is
+ * a gap they can act on. The comparison is the Runtime's, and the Console
+ * renders it.
+ */
+export interface ControlApiHooksAppliedResponse {
+  readonly schema: "autodev-control-hooks-applied-v1";
+  /** Where the applied projection was read from. */
+  readonly source: string;
+  /** The canonical declaration the applied projection is compared against. */
+  readonly declarationSource: ".rulesync/hooks.jsonc";
+  /** The target whose projection was applied. */
+  readonly target: string;
+  /**
+   * Whether the applied projection could be read at all.
+   *
+   * `false` means the Runtime could not read it, which is a different fact
+   * from a projection that holds no hooks.
+   */
+  readonly available: boolean;
+  /**
+   * The events the canonical declaration gives the target.
+   *
+   * The declared side of the comparison. It is published so the page can show
+   * what was declared next to what was applied, and so a write has the
+   * declaration to edit.
+   */
+  readonly declaredEvents: readonly ControlApiHookDeclaration[];
+  /** The events the Runtime published. */
+  readonly events: readonly ControlApiHookEvent[];
+  /** The shared reconciliation view of the declaration against the applied state. */
+  readonly reconciliation: ReconciliationView;
+}
+
+/**
+ * A canonical hook declaration write.
+ *
+ * The write owns one event's action list: the whole of it, because the
+ * declaration replaces an event's list rather than adding to it.
+ */
+export interface ControlApiHookEventPatchRequest {
+  readonly expectedRevision: string;
+  readonly actions: readonly HookAction[];
+}
+
+/**
+ * The result of a canonical hook declaration write.
+ *
+ * The write is a compare-and-swap on the declaration's revision, so the
+ * response carries the revision the declaration now has, what the target
+ * declares after the write, and the reconciliation the Runtime observed once
+ * the projection was applied.
+ */
+export interface ControlApiHookEventPatchResponse {
+  readonly schema: "autodev-control-hook-event-patch-v1";
+  /** The event whose actions were written. */
+  readonly event: HookEvent;
+  /** The target whose declaration was written. */
+  readonly target: string;
+  /** The revision of the canonical declaration after the write. */
+  readonly revision: string;
+  /** Whether the declaration's content changed. */
+  readonly changed: boolean;
+  /** The actions the target declares for the event after the write. */
+  readonly actions: readonly HookAction[];
+  /** The shared reconciliation view of the declaration against the applied state. */
+  readonly reconciliation: ReconciliationView;
 }
 
 export interface ControlApiPermissionsResponse {

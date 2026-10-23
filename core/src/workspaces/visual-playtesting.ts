@@ -41,6 +41,44 @@ export interface WorkspaceVisualPlaytestLimits {
 }
 
 /**
+ * How long the game may go without advancing before the episode says so.
+ *
+ * These are the operator's thresholds, because the operator knows whether
+ * their game advances slowly or not at all. The Runtime measures the run
+ * against them; it does not decide on its own that a game is stuck.
+ */
+export interface WorkspaceVisualPlaytestProgressPolicy {
+  /**
+   * Consecutive decisions that may pass without the game advancing.
+   *
+   * The episode counts the decisions whose observation showed the player
+   * exactly what the previous one showed.
+   */
+  readonly maxUnchangedDecisions: number;
+  /**
+   * Milliseconds the game may go without advancing.
+   *
+   * The episode counts from the moment the game last advanced.
+   */
+  readonly maxUnchangedMs: number;
+}
+
+/**
+ * The thresholds an approval that carries no policy of its own is measured
+ * against.
+ *
+ * The defaults are deliberately conservative: they never end an episode
+ * earlier than the approved step cap or the approved wall-time budget would
+ * end it, so an approval that says nothing about progress behaves exactly as
+ * it did before the thresholds existed. An operator who wants a run to be cut
+ * short when their game stops responding says so in the approval.
+ */
+export const PLAYTESTS_VISUAL_PROGRESS_POLICY_DEFAULTS = {
+  maxUnchangedDecisions: 5,
+  maxUnchangedMs: 60_000
+} as const;
+
+/**
  * Operator-authored authorization for a single browser game entry point.
  * This is deliberately separate from the adapter/checkout approval: it grants
  * bounded browser input and capture, never repository or shell access.
@@ -62,6 +100,12 @@ export interface WorkspaceVisualPlaytestTargetApproval {
   readonly sandboxProfile: "transient-browser-profile";
   readonly capturePolicy: "screenshots-only-redact-or-refuse";
   readonly limits: WorkspaceVisualPlaytestLimits;
+  /**
+   * The no-progress thresholds for this target, when the operator set them.
+   *
+   * An approval that carries none is measured against the defaults.
+   */
+  readonly progressPolicy?: WorkspaceVisualPlaytestProgressPolicy;
   readonly approvedAt: string;
   readonly approvedBy: string;
   readonly revokedAt: string | null;
@@ -212,6 +256,58 @@ export function assertWorkspaceVisualPlaytestLimits(
   }
 }
 
+function assertVisualPlaytestProgressPolicy(
+  value: unknown
+): asserts value is WorkspaceVisualPlaytestProgressPolicy {
+  const keys = ["maxUnchangedDecisions", "maxUnchangedMs"] as const;
+  if (!isRecord(value) || !hasOnlyKeys(value, keys)) {
+    throw new TypeError("Visual progress policy has an unsupported shape.");
+  }
+  const bounds = [
+    ["maxUnchangedDecisions", 1, 10_000],
+    ["maxUnchangedMs", 1, 3_600_000]
+  ] as const;
+  for (const [field, minimum, maximum] of bounds) {
+    const amount = value[field];
+    if (
+      !Number.isSafeInteger(amount) ||
+      (amount as number) < minimum ||
+      (amount as number) > maximum
+    ) {
+      throw new TypeError(`Visual progress policy ${field} is out of range.`);
+    }
+  }
+}
+
+/**
+ * The no-progress thresholds an approval is measured against.
+ *
+ * An approval that carries no policy of its own is measured against the
+ * defaults, clamped so that the thresholds never end an episode earlier than
+ * the approved step cap or the approved wall-time budget would end it.
+ */
+export function playtestVisualProgressPolicy(  approval: WorkspaceVisualPlaytestTargetApproval
+): WorkspaceVisualPlaytestProgressPolicy {
+  const configured = approval.progressPolicy;
+  const maxUnchangedDecisions = Math.min(
+    Math.max(
+      configured?.maxUnchangedDecisions ??
+        PLAYTESTS_VISUAL_PROGRESS_POLICY_DEFAULTS.maxUnchangedDecisions,
+      1
+    ),
+    approval.limits.maxStepsPerEpisode
+  );
+  const maxUnchangedMs = Math.min(
+    Math.max(
+      configured?.maxUnchangedMs ??
+        PLAYTESTS_VISUAL_PROGRESS_POLICY_DEFAULTS.maxUnchangedMs,
+      1
+    ),
+    approval.limits.wallTimeMs
+  );
+  return { maxUnchangedDecisions, maxUnchangedMs };
+}
+
 function assertRevocation(
   revokedAt: unknown,
   revokedBy: unknown,
@@ -257,6 +353,7 @@ export function assertWorkspaceVisualPlaytestTargetApproval(
     "sandboxProfile",
     "capturePolicy",
     "limits",
+    "progressPolicy",
     "approvedAt",
     "approvedBy",
     "revokedAt",
@@ -337,6 +434,9 @@ export function assertWorkspaceVisualPlaytestTargetApproval(
     throw new TypeError("Visual target capture policy is unsupported.");
   }
   assertWorkspaceVisualPlaytestLimits(value.limits);
+  if (value.progressPolicy !== undefined) {
+    assertVisualPlaytestProgressPolicy(value.progressPolicy);
+  }
   if (
     typeof value.approvedAt !== "string" ||
     !Number.isFinite(Date.parse(value.approvedAt)) ||

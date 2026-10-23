@@ -230,30 +230,29 @@ test("autosave submit-on-change contract is wired on every role checkbox", () =>
   const formElement = element.props.children[0];
   assert.equal(formElement.props["data-submit-on-change"], "true");
 
-  interface CheckboxElement {
+  interface CheckboxFieldElement {
     props: {
-      "data-submit-on-change"?: string;
+      dataAttributes?: Readonly<Record<string, string>>;
       onChange?: (event: { currentTarget: { form: typeof fakeForm } }) => void;
     };
   }
-  interface LabelElement {
-    props: {
-      children: [CheckboxElement, unknown];
-    };
-  }
 
-  const labels = (formElement.props as { children: [unknown, LabelElement[]] })
+  // The role checkbox is now the shared `CheckboxField` primitive rather than a
+  // hand-written `<label>` and `<input>` pair, so the submit-on-change flag
+  // travels in the primitive's data attributes and the autosave handler is one
+  // of its props. The contract is unchanged: every role checkbox submits the
+  // form the moment it changes.
+  const fields = (formElement.props as { children: [unknown, CheckboxFieldElement[]] })
     .children[1];
-  assert.equal(labels.length, 2);
+  assert.equal(fields.length, 2);
 
-  for (const label of labels) {
-    const checkbox = label.props.children[0];
-    assert.equal(checkbox.props["data-submit-on-change"], "true");
-    assert.equal(typeof checkbox.props.onChange, "function");
+  for (const field of fields) {
+    assert.equal(field.props.dataAttributes?.["data-submit-on-change"], "true");
+    assert.equal(typeof field.props.onChange, "function");
 
     // Invoke onChange to test auto-submit trigger
     submitted = false;
-    checkbox.props.onChange?.({ currentTarget: { form: fakeForm } });
+    field.props.onChange?.({ currentTarget: { form: fakeForm } });
     assert.equal(submitted, true, "onChange must call form.requestSubmit()");
   }
 });

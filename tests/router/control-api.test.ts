@@ -2630,8 +2630,17 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(hooks.response.statusCode, 200);
-    assert.equal(hooks.body.schema, "autodev-control-hooks-v1");
+    assert.equal(hooks.body.schema, "autodev-control-hooks-v2");
     assert.equal(hooks.body.valid, true);
+    assert.equal(hooks.body.target, "codexcli");
+    assert.ok(
+      typeof hooks.body.revision === "string" && hooks.body.revision.length > 0,
+      "the hook declaration publishes the revision a write compares against"
+    );
+    assert.ok(
+      Array.isArray(hooks.body.events) && hooks.body.events.length > 0,
+      "the hook declaration publishes the events the target receives"
+    );
 
     // 8. Permissions
     const permissions = await call("GET", CONTROL_API_PATHS.permissions, {

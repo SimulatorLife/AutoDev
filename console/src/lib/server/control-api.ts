@@ -32,6 +32,10 @@ import {
   type ControlApiError,
   type ControlApiEvaluationsResponse,
   type ControlApiGithubResponse,
+  type ControlApiHookEvent,
+  type ControlApiHookEventPatchRequest,
+  type ControlApiHookEventPatchResponse,
+  type ControlApiHooksAppliedResponse,
   type ControlApiHooksResponse,
   type ControlApiMcpAppliedResponse,
   type ControlApiMcpRuntimeResponse,
@@ -764,6 +768,7 @@ export const CONTROL_API_PATHS = {
   tools: "/control/tools",
   skills: "/control/skills",
   hooks: "/control/hooks",
+  hooksApplied: "/control/hooks-applied",
   permissions: "/control/permissions",
   prompts: "/control/prompts",
   workspaces: "/control/workspaces",
@@ -2331,12 +2336,38 @@ function isValidationIssueList(value: unknown): boolean {
   );
 }
 
+/**
+ * One hook event, as the declaration publishes it.
+ *
+ * The action list is checked rather than trusted: an event whose actions could
+ * not be read is dropped, because an event with an unreadable action list is
+ * not an event the operator can act on and rendering it as one would invite a
+ * write that drops what it could not read.
+ */
+function isControlApiHookEvent(value: unknown): value is ControlApiHookEvent {
+  return (
+    isRecord(value) &&
+    typeof value.event === "string" &&
+    (value.origin === "shared" || value.origin === "target") &&
+    Array.isArray(value.actions) &&
+    value.actions.every(
+      (action) =>
+        isRecord(action) &&
+        action.type === "command" &&
+        typeof action.command === "string" &&
+        (action.matcher === undefined || typeof action.matcher === "string") &&
+        (action.statusMessage === undefined ||
+          typeof action.statusMessage === "string")
+    )
+  );
+}
+
 function isControlApiHooksResponse(
   value: unknown
 ): value is ControlApiHooksResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-hooks-v1" &&
+    value.schema === "autodev-control-hooks-v2" &&
     typeof value.source === "string" &&
     typeof value.readOnly === "boolean" &&
     (value.valid === null || typeof value.valid === "boolean") &&
@@ -2345,7 +2376,35 @@ function isControlApiHooksResponse(
     // to end: the Runtime has already located the fault and thrown the location
     // and the reason away.
     isValidationIssueList(value.issues) &&
-    isRecord(value.hooks)
+    (value.revision === null || typeof value.revision === "string") &&
+    typeof value.target === "string" &&
+    Array.isArray(value.events) &&
+    value.events.every(isControlApiHookEvent)
+  );
+}
+
+/**
+ * The applied hook projection, as the Runtime publishes it.
+ *
+ * The applied side is checked as strictly as the declared one, because the
+ * whole point of the read is to say whether the two agree, and an applied
+ * event that could not be read would make the comparison say nothing.
+ */
+function isControlApiHooksAppliedResponse(
+  value: unknown
+): value is ControlApiHooksAppliedResponse {
+  return (
+    isRecord(value) &&
+    value.schema === "autodev-control-hooks-applied-v1" &&
+    typeof value.source === "string" &&
+    typeof value.declarationSource === "string" &&
+    typeof value.target === "string" &&
+    typeof value.available === "boolean" &&
+    Array.isArray(value.declaredEvents) &&
+    value.declaredEvents.every(isControlApiHookEvent) &&
+    Array.isArray(value.events) &&
+    value.events.every(isControlApiHookEvent) &&
+    isRecord(value.reconciliation)
   );
 }
 
@@ -3053,7 +3112,50 @@ export async function fetchHooks(
   if (result.kind !== "ok") return result;
   return isControlApiHooksResponse(result.data)
     ? { kind: "ok", data: result.data }
-    : invalidResponse("Hooks", "autodev-control-hooks-v1");
+    : invalidResponse("Hooks", "autodev-control-hooks-v2");
+}
+
+/**
+ * The hook projection the Runtime published.
+ *
+ * It is read on its own path rather than folded into the declaration, because
+ * the two answer different questions: the declaration says what is configured
+ * and the applied read says what the Runtime installed.
+ */
+export async function fetchHooksApplied(
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiHooksAppliedResponse>> {
+  const result = await fetchControlApi<unknown>(
+    CONTROL_API_PATHS.hooksApplied,
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  return isControlApiHooksAppliedResponse(result.data)
+    ? { kind: "ok", data: result.data }
+    : invalidResponse("Hooks", "autodev-control-hooks-applied-v1");
+}
+
+/**
+ * Write one hook event's action list to the canonical declaration.
+ *
+ * The write is the Runtime's: the Console forwards the operator's edit and
+ * never touches the declaration itself.
+ */
+export function patchHookEvent(
+  event: string,
+  payload: ControlApiHookEventPatchRequest,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiHookEventPatchResponse>> {
+  return mutateControlApi<ControlApiHookEventPatchResponse>(
+    "PATCH",
+    `${CONTROL_API_PATHS.hooks}/${encodeURIComponent(event)}`,
+    payload,
+    config,
+    options
+  );
 }
 
 /**

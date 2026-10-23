@@ -38,7 +38,7 @@ import {
   formatSpanDuration
 } from "../../components/ui/duration.ts";
 import {
-  FIELD_CONTROL_CLASS,
+  TEXT_CONTROL_CLASS,
   FIELD_GROUP_CLASS
 } from "../../components/ui/field-classes.ts";
 import {
@@ -347,7 +347,7 @@ function renderScopeMeta(
         defaultValue: selection.customRange?.startDate ?? "",
         max: selection.customRange?.endDate ?? todayUtc,
         "aria-label": "Custom range start date",
-        className: FIELD_CONTROL_CLASS
+        className: TEXT_CONTROL_CLASS
       })
     ),
     React.createElement(
@@ -361,7 +361,7 @@ function renderScopeMeta(
         min: selection.customRange?.startDate,
         max: todayUtc,
         "aria-label": "Custom range end date",
-        className: FIELD_CONTROL_CLASS
+        className: TEXT_CONTROL_CLASS
       })
     ),
     React.createElement(

@@ -289,6 +289,18 @@ test("live-count refresh schedules and clears a five-second server refresh", () 
   target.dispatchEvent(new Event(LIVE_COUNT_REFRESH_EVENT));
   assert.equal(routerRefreshes, 1);
 
+  // The refresh is the point, and it stays: the counts these views render are
+  // the Runtime's live projection, and an operator watching a number change
+  // needs it to change without pressing anything.
+  //
+  // What the Console removed was the sentence. It described the implementation
+  // rather than the operator's task, and the Console had already removed it
+  // from `/agents` while leaving it on the other four surfaces that carry live
+  // counts -- so the same product said it on four of the five.
   const marker = renderToStaticMarkup(React.createElement(LiveCountRefresh));
-  assert.match(marker, /Live counts refresh every 5 seconds/);
+  assert.equal(
+    marker,
+    "",
+    "the live-count refresh owns an effect, not a sentence"
+  );
 });

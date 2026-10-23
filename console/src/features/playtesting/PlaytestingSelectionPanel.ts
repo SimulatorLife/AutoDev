@@ -8,9 +8,9 @@ import {
 } from "@simulatorlife/autodev-core";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
+import { Button } from "../../components/forms/Button.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
-import { FIELD_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
 import { MUTED_BODY_CLASS } from "../../components/ui/text-classes.ts";
 import { responseMessage } from "./playtesting-run-messages.ts";
 import type { PlaytestingScope } from "./playtesting-url.ts";
@@ -319,10 +319,10 @@ export function PlaytestingSelectionPanel({
             )
           ),
           React.createElement(
-            "button",
+            Button,
             {
-              type: "button",
-              className: FIELD_CONTROL_CLASS,
+              variant: "secondary",
+              size: "compact",
               disabled: pending,
               onClick: () => onSelectionChange([])
             },
@@ -335,11 +335,18 @@ export function PlaytestingSelectionPanel({
           "Choose sessions above to prepare a review."
         ),
     React.createElement(
-      "button",
+      Button,
       {
-        type: "button",
-        className: FIELD_CONTROL_CLASS,
-        disabled: pending || !workspaceId || selectedEpisodeIds.length === 0,
+        variant: "secondary",
+        size: "compact",
+        // A request that is on its way is a control that is working, not a
+        // control that is unavailable: it stays in the page's focus order so
+        // the operator keeps their place, and a second press is swallowed by
+        // the vocabulary rather than starting a second review. The two
+        // conditions that are genuinely unavailable -- no workspace, and
+        // nothing selected -- still disable it.
+        busy: pending,
+        disabled: !workspaceId || selectedEpisodeIds.length === 0,
         onClick: () => void start()
       },
       pending ? "Starting analyst review" : "Start analyst review"

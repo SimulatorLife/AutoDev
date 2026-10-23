@@ -19,7 +19,7 @@ import {
   NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
-import { FIELD_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
+import { TEXT_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
 import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
@@ -468,7 +468,7 @@ function RunRequestForm({
               <label className="flex flex-col gap-1 text-xs text-fg-muted">
                 Seed prefix
                 <input
-                  className={FIELD_CONTROL_CLASS}
+                  className={TEXT_CONTROL_CLASS}
                   disabled={pending}
                   maxLength={256}
                   value={seedPrefix}
@@ -478,7 +478,7 @@ function RunRequestForm({
               <label className="flex flex-col gap-1 text-xs text-fg-muted">
                 Additional assignments
                 <input
-                  className={FIELD_CONTROL_CLASS}
+                  className={TEXT_CONTROL_CLASS}
                   disabled={pending || remainingBatchCapacity < 1}
                   max={remainingBatchCapacity}
                   min={1}
@@ -539,7 +539,7 @@ function RunRequestForm({
                     <label className="flex flex-col gap-1 text-xs text-fg-muted">
                       Scenario
                       <select
-                        className={FIELD_CONTROL_CLASS}
+                        className={TEXT_CONTROL_CLASS}
                         disabled={pending}
                         name={`scenario-${row}`}
                         value={assignment.scenarioId}
@@ -565,7 +565,7 @@ function RunRequestForm({
                     <label className="flex flex-col gap-1 text-xs text-fg-muted">
                       Policy and cohort
                       <select
-                        className={FIELD_CONTROL_CLASS}
+                        className={TEXT_CONTROL_CLASS}
                         disabled={pending}
                         name={`policy-${row}`}
                         value={assignment.policyId}
@@ -590,7 +590,7 @@ function RunRequestForm({
                       Seed
                       {admissibleSeeds === null ? (
                         <input
-                          className={FIELD_CONTROL_CLASS}
+                          className={TEXT_CONTROL_CLASS}
                           disabled={pending}
                           maxLength={256}
                           name={`seed-${row}`}
@@ -606,7 +606,7 @@ function RunRequestForm({
                         />
                       ) : (
                         <select
-                          className={FIELD_CONTROL_CLASS}
+                          className={TEXT_CONTROL_CLASS}
                           disabled={pending}
                           name={`seed-${row}`}
                           required
@@ -630,7 +630,7 @@ function RunRequestForm({
                     <label className="flex flex-col gap-1 text-xs text-fg-muted">
                       Step cap
                       <input
-                        className={FIELD_CONTROL_CLASS}
+                        className={TEXT_CONTROL_CLASS}
                         disabled={pending}
                         max={selected.maxStepsPerEpisode}
                         min={1}

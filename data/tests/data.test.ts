@@ -21,6 +21,8 @@ import {
   RuleSyncCommandConflictError,
   RuleSyncCommandHistoryUnavailableError,
   RuleSyncCommandValidationError,
+  RuleSyncHooksConflictError,
+  RuleSyncHooksValidationError,
   RuleSyncRepository,
   RuleSyncSkillConflictError,
   RuleSyncSkillSourceUnavailableError,
@@ -64,10 +66,10 @@ test("RuleSyncRepository loads canonical RuleSync sources", () => {
   assert.deepEqual(dryCommand.targets, ["*"]);
   assert.ok(dryCommand.prompt.length > 0);
 
-  const hooks = repo.loadHooksState();
+  const hooks = repo.loadHooksState("codexcli");
   assert.equal(hooks.valid, true);
-  assert.ok(hooks.hooks.length > 0);
-  assert.ok(hooks.hooks.some((hook) => hook.event === "sessionStart"));
+  assert.ok(hooks.events.length > 0);
+  assert.ok(hooks.events.some((hook) => hook.event === "sessionStart"));
 
   const skills = repo.loadSkills();
   assert.equal(skills.valid, true);
@@ -1290,12 +1292,220 @@ test("RuleSync MCP state parses canonical JSONC and target overrides without exp
   }
 });
 
+test("RuleSync hook state is the declaration the target actually receives", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-hooks-target-")
+  );
+  const sourcePath = path.join(repositoryRoot, ".rulesync", "hooks.jsonc");
+  const repo = new RuleSyncRepository(repositoryRoot);
+  try {
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await writeFile(
+      sourcePath,
+      `{
+        // The shared declaration is what every target inherits.
+        "hooks": {
+          "sessionStart": [{
+            "type": "command",
+            "command": "node shared-session-start.ts"
+          }],
+          "preToolUse": [{
+            "type": "command",
+            "matcher": "shared-matcher",
+            "command": "node shared-pre-tool-use.ts"
+          }]
+        },
+        "codexcli": {
+          "hooks": {
+            "preToolUse": [{
+              "type": "command",
+              "command": "node codex-pre-tool-use.ts"
+            }],
+            "sessionEnd": [{
+              "type": "command",
+              "command": "node codex-session-end.ts"
+            }]
+          }
+        }
+      }`,
+      "utf8"
+    );
+
+    const codex = repo.loadHooksState("codexcli");
+    assert.equal(codex.valid, true);
+    assert.deepEqual(codex.issues, []);
+    assert.deepEqual(
+      codex.events.map((event) => event.event),
+      ["sessionStart", "preToolUse", "sessionEnd"]
+    );
+    const preToolUse = codex.events.find(
+      (event) => event.event === "preToolUse"
+    );
+    // RuleSync merges the target's own declaration over the shared one, one
+    // event at a time, and a target's own declaration of an event replaces the
+    // shared one rather than adding to it. Reading the union of the two lists
+    // would report an action the Runtime never installs.
+    assert.deepEqual(preToolUse?.actions, [
+      { type: "command", command: "node codex-pre-tool-use.ts" }
+    ]);
+    assert.equal(preToolUse?.origin, "target");
+    assert.equal(
+      codex.events.find((event) => event.event === "sessionStart")?.origin,
+      "shared"
+    );
+    assert.equal(
+      codex.events.find((event) => event.event === "sessionEnd")?.origin,
+      "target"
+    );
+
+    // Another target inherits the shared declaration and none of the Codex
+    // one, so the same document reads differently for it.
+    const other = repo.loadHooksState("claudecode");
+    assert.deepEqual(
+      other.events.map((event) => event.event),
+      ["sessionStart", "preToolUse"]
+    );
+    assert.equal(
+      other.events.find((event) => event.event === "preToolUse")?.origin,
+      "shared"
+    );
+
+    // The revision is the handle a write compares against, so it is read from
+    // the document itself.
+    const revision = repo.loadHooksRevision();
+    assert.equal(revision.source, ".rulesync/hooks.jsonc");
+    assert.equal(revision.valid, true);
+    assert.equal(
+      revision.revision,
+      createHash("sha256")
+        .update(await readFile(sourcePath, "utf8"), "utf8")
+        .digest("hex")
+    );
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("RuleSync hook writes are revision-guarded and land where the event lives", async () => {
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-hooks-write-")
+  );
+  const sourcePath = path.join(repositoryRoot, ".rulesync", "hooks.jsonc");
+  const repo = new RuleSyncRepository(repositoryRoot);
+  const write = async (
+    event: "sessionStart" | "preToolUse" | "sessionEnd",
+    actions: readonly {
+      readonly type: "command";
+      readonly command: string;
+      readonly matcher?: string;
+      readonly statusMessage?: string;
+    }[],
+    expectedRevision: string
+  ) =>
+    repo.updateHookEvent({
+      event,
+      target: "codexcli",
+      actions,
+      expectedRevision
+    });
+  try {
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await writeFile(
+      sourcePath,
+      `{
+        // A comment the write must not eat.
+        "hooks": {
+          "sessionStart": [{
+            "type": "command",
+            "command": "node shared-session-start.ts"
+          }]
+        },
+        "codexcli": {
+          "hooks": {
+            "sessionEnd": [{
+              "type": "command",
+              "command": "node codex-session-end.ts"
+            }]
+          }
+        }
+      }`,
+      "utf8"
+    );
+
+    const first = repo.loadHooksRevision().revision;
+    assert.ok(first);
+
+    // A stale revision is refused rather than applied over a newer document.
+    await assert.rejects(
+      write(
+        "sessionStart",
+        [{ type: "command", command: "node other.ts" }],
+        "0".repeat(64)
+      ),
+      RuleSyncHooksConflictError
+    );
+
+    // An action the declaration cannot hold is refused before the document is
+    // touched.
+    await assert.rejects(
+      write("sessionStart", [{ type: "command", command: "  " }], first),
+      RuleSyncHooksValidationError
+    );
+
+    // The event the target inherits is written to the shared declaration,
+    // because that is where it lives.
+    const shared = await write(
+      "sessionStart",
+      [
+        {
+          type: "command",
+          command: "node shared-session-start.ts",
+          statusMessage: "Starting the session"
+        }
+      ],
+      first
+    );
+    assert.equal(shared.origin, "shared");
+    assert.notEqual(shared.revision, first);
+    const afterShared = await readFile(sourcePath, "utf8");
+    assert.match(afterShared, /A comment the write must not eat\./u);
+    assert.match(afterShared, /"statusMessage": "Starting the session"/u);
+    // The target's own block is not touched by a write to the shared one.
+    assert.match(afterShared, /"codexcli": \{\s*"hooks": \{\s*"sessionEnd"/u);
+
+    // The event the target declares is written to the target's own
+    // declaration, and the shared one is left alone.
+    const target = await write(
+      "sessionEnd",
+      [{ type: "command", command: "node codex-session-end.ts" }],
+      shared.revision
+    );
+    assert.equal(target.origin, "target");
+    assert.deepEqual(target.actions, [
+      { type: "command", command: "node codex-session-end.ts" }
+    ]);
+    const afterTarget = await readFile(sourcePath, "utf8");
+    assert.match(afterTarget, /"codexcli"/u);
+    assert.match(afterTarget, /"sessionEnd"/u);
+
+    // An empty action list removes the event rather than declaring an event
+    // with nothing in it.
+    const removed = await write("sessionEnd", [], target.revision);
+    assert.deepEqual(removed.actions, []);
+    const afterRemoval = await readFile(sourcePath, "utf8");
+    assert.doesNotMatch(afterRemoval, /"sessionEnd"/u);
+    assert.match(afterRemoval, /"sessionStart"/u);
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
 test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source", async () => {
   const repositoryRoot = await mkdtemp(path.join(tmpdir(), "autodev-hooks-"));
   const sourcePath = path.join(repositoryRoot, ".rulesync", "hooks.jsonc");
   const repo = new RuleSyncRepository(repositoryRoot);
   try {
-    const absent = repo.loadHooksState();
+    const absent = repo.loadHooksState("codexcli");
     assert.equal(absent.valid, null);
     assert.deepEqual(
       absent.issues,
@@ -1317,10 +1527,10 @@ test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source"
       }`,
       "utf8"
     );
-    const valid = repo.loadHooksState();
+    const valid = repo.loadHooksState("codexcli");
     assert.equal(valid.valid, true);
     assert.deepEqual(valid.issues, []);
-    assert.equal(valid.hooks[0]?.actions[0]?.command, "node hook.ts");
+    assert.equal(valid.events[0]?.actions[0]?.command, "node hook.ts");
 
     // Every one of these faults was located by the loader before it answered
     // `valid: false`. Reporting only the flag left the operator to re-find a
@@ -1330,9 +1540,9 @@ test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source"
       `{"hooks":{"sessionStart":[{"type":"command"}]}}`,
       "utf8"
     );
-    const missingCommand = repo.loadHooksState();
+    const missingCommand = repo.loadHooksState("codexcli");
     assert.equal(missingCommand.valid, false);
-    assert.deepEqual(missingCommand.hooks, []);
+    assert.deepEqual(missingCommand.events, []);
     assert.deepEqual(missingCommand.issues, [
       {
         location: "sessionStart action 1",
@@ -1348,7 +1558,7 @@ test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source"
       `{"hooks":{"sessionStart":[{"type":"command","command":"ok"},{"type":"command","command":"   "}]}}`,
       "utf8"
     );
-    const secondAction = repo.loadHooksState();
+    const secondAction = repo.loadHooksState("codexcli");
     assert.deepEqual(secondAction.issues, [
       {
         location: "sessionStart action 2",
@@ -1358,16 +1568,16 @@ test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source"
     ]);
 
     await writeFile(sourcePath, `{"hooks":{"SessionStartt":[]}}`, "utf8");
-    const unknownEvent = repo.loadHooksState();
+    const unknownEvent = repo.loadHooksState("codexcli");
     assert.deepEqual(unknownEvent.issues, [
       {
         location: "SessionStartt",
-        message: '"SessionStartt" is not a known hook event.'
+        message: '"SessionStartt" is not a hook event the Codex runtime runs.'
       }
     ]);
 
     await writeFile(sourcePath, `{"hooks":{"sessionStart":"nope"}}`, "utf8");
-    const actionsNotAnArray = repo.loadHooksState();
+    const actionsNotAnArray = repo.loadHooksState("codexcli");
     assert.equal(actionsNotAnArray.valid, false);
     assert.deepEqual(actionsNotAnArray.issues, [
       {
@@ -1377,7 +1587,7 @@ test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source"
     ]);
 
     await writeFile(sourcePath, `{"other":true}`, "utf8");
-    assert.deepEqual(repo.loadHooksState().issues, [
+    assert.deepEqual(repo.loadHooksState("codexcli").issues, [
       {
         location: "hooks",
         message: 'The hook source must have a "hooks" object.'
@@ -1385,7 +1595,7 @@ test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source"
     ]);
 
     await writeFile(sourcePath, `[1,2,3]`, "utf8");
-    assert.deepEqual(repo.loadHooksState().issues, [
+    assert.deepEqual(repo.loadHooksState("codexcli").issues, [
       {
         location: ".rulesync/hooks.jsonc",
         message: "The hook source must be a JSON object."
@@ -1399,7 +1609,7 @@ test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source"
       `{\n  "hooks": {\n    "sessionStart": [,]\n  }\n}`,
       "utf8"
     );
-    const syntax = repo.loadHooksState();
+    const syntax = repo.loadHooksState("codexcli");
     assert.equal(syntax.valid, false);
     assert.ok(syntax.issues.length > 0, "a syntax fault must say something");
     assert.match(
@@ -1413,7 +1623,7 @@ test("RuleSync hook state distinguishes absent, valid JSONC, and invalid source"
     );
 
     await writeFile(sourcePath, "{", "utf8");
-    assert.equal(repo.loadHooksState().valid, false);
+    assert.equal(repo.loadHooksState("codexcli").valid, false);
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
   }

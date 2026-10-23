@@ -828,6 +828,7 @@ function sendJson(
 
 /** The path of one MCP server's canonical declaration. */
 const MCP_SERVER_ROUTE = /^\/control\/mcps\/([^/]+)$/u;
+const HOOK_EVENT_ROUTE = /^\/control\/hooks\/([a-z][A-Za-z]{0,63})$/u;
 
 /** The moment the fixture's synthetic applied state was observed. */
 const MCP_OBSERVED_AT = "2026-10-22T12:00:00.000Z";
@@ -918,6 +919,221 @@ function initialMcpDeclaration(): McpDeclarationState {
 }
 
 let mcpDeclaration: McpDeclarationState = initialMcpDeclaration();
+
+/**
+ * One hook event, as the canonical declaration gives it for the target.
+ *
+ * The origin is part of the fixture because the page has to show it: it is the
+ * difference between an edit that reaches every target and an edit that
+ * reaches one.
+ */
+interface FixtureHookEvent {
+  readonly event: string;
+  readonly origin: "shared" | "target";
+  readonly actions: readonly {
+    readonly type: "command";
+    readonly command: string;
+    readonly matcher?: string;
+    readonly statusMessage?: string;
+  }[];
+}
+
+interface FixtureHookDeclaration {
+  readonly revision: string;
+  readonly events: readonly FixtureHookEvent[];
+  readonly appliedEvents: readonly FixtureHookEvent[];
+  readonly desiredGeneration: string;
+  readonly observedGeneration: string;
+  readonly converged: boolean;
+}
+
+/**
+ * The events the fixture declares.
+ *
+ * One event every target inherits and one event the target declares alone, so
+ * the page shows both origins rather than one.
+ */
+const FIXTURE_SHARED_HOOK: FixtureHookEvent = {
+  event: "preToolUse",
+  origin: "shared",
+  actions: [
+    {
+      type: "command",
+      command: "echo guarded",
+      matcher: "Bash",
+      statusMessage: "Bash is guarded in this fixture."
+    }
+  ]
+};
+
+const FIXTURE_TARGET_HOOK: FixtureHookEvent = {
+  event: "sessionEnd",
+  origin: "target",
+  actions: [{ type: "command", command: "echo session-end" }]
+};
+
+function hookGeneration(events: readonly FixtureHookEvent[]): string {
+  return createHash("sha256")
+    .update(JSON.stringify(events), "utf8")
+    .digest("hex");
+}
+
+/**
+ * The declaration, and what the Runtime published from it, as they start.
+ *
+ * The published side carries an older command, so the Runtime is behind the
+ * declaration and the verdict is a pending one that is true. A fixture whose
+ * two sides were identical would render a pending verdict over two identical
+ * generations, which says the runtime has not caught up while showing that it
+ * has.
+ */
+function initialHookDeclaration(): FixtureHookDeclaration {
+  const events = [FIXTURE_SHARED_HOOK, FIXTURE_TARGET_HOOK];
+  const appliedEvents: FixtureHookEvent[] = [
+    {
+      ...FIXTURE_SHARED_HOOK,
+      actions: [{ type: "command", command: "echo guarded", matcher: "Bash" }]
+    },
+    FIXTURE_TARGET_HOOK
+  ];
+  return {
+    revision: createHash("sha256")
+      .update("hook-declaration", "utf8")
+      .digest("hex"),
+    events,
+    appliedEvents,
+    desiredGeneration: hookGeneration(events),
+    observedGeneration: hookGeneration(appliedEvents),
+    converged: false
+  };
+}
+
+let hookDeclaration: FixtureHookDeclaration = initialHookDeclaration();
+
+/**
+ * The write of one hook event's action list.
+ *
+ * The write is a compare-and-swap on the declaration's revision, so a write
+ * decided on an older declaration is refused. A write that lands moves the
+ * declaration, applies it, and the Runtime's verdict follows.
+ */
+async function applyHookDeclarationWrite(
+  response: ServerResponse,
+  request: IncomingMessage,
+  url: URL
+): Promise<boolean> {
+  const match = url.pathname.match(HOOK_EVENT_ROUTE);
+  if (match === null) return false;
+  if (request.method !== "PATCH") return false;
+  const event = decodeURIComponent(match[1] ?? "");
+  const body = await readJsonBody(request);
+  const expectedRevision = body?.expectedRevision;
+  const actions = body?.actions;
+  if (typeof expectedRevision !== "string" || !Array.isArray(actions)) {
+    sendCanonicalSourceError(
+      response,
+      400,
+      "autodev_control_api_invalid_body",
+      "Hook declaration updates require exactly the expected revision and an action list."
+    );
+    return true;
+  }
+  if (expectedRevision !== hookDeclaration.revision) {
+    sendCanonicalSourceError(
+      response,
+      409,
+      "autodev_control_hook_revision_conflict",
+      "The canonical hook declaration changed since it was loaded."
+    );
+    return true;
+  }
+  const current = hookDeclaration.events.find((entry) => entry.event === event);
+  if (current === undefined) {
+    sendCanonicalSourceError(
+      response,
+      400,
+      "autodev_control_hook_invalid_declaration",
+      `Hook event "${event}" is not declared for the target "codexcli".`
+    );
+    return true;
+  }
+  const writtenActions = actions.map((action) => {
+    const entry = action as Record<string, unknown>;
+    return {
+      type: "command" as const,
+      command: String(entry.command ?? ""),
+      ...(typeof entry.matcher === "string" ? { matcher: entry.matcher } : {}),
+      ...(typeof entry.statusMessage === "string"
+        ? { statusMessage: entry.statusMessage }
+        : {})
+    };
+  });
+  const written: FixtureHookEvent = {
+    event,
+    origin: current.origin,
+    actions: writtenActions
+  };
+  const events = hookDeclaration.events.map((entry) =>
+    entry.event === event ? written : entry
+  );
+  const revision = createHash("sha256")
+    .update(`${hookDeclaration.revision}:${event}`, "utf8")
+    .digest("hex");
+  const generation = hookGeneration(events);
+  hookDeclaration = {
+    revision,
+    events,
+    appliedEvents: events,
+    desiredGeneration: generation,
+    observedGeneration: generation,
+    converged: true
+  };
+  sendJson(response, {
+    schema: "autodev-control-hook-event-patch-v1",
+    event,
+    target: "codexcli",
+    revision,
+    changed: true,
+    actions: writtenActions,
+    reconciliation: hookReconciliation()
+  });
+  return true;
+}
+
+/**
+ * The Runtime's verdict on the hook declaration.
+ *
+ * The verdict is the Runtime's own: the fixture says what it published and
+ * the shared reconciliation contract says whether that matches the
+ * declaration.
+ */
+function hookReconciliation(): {
+  readonly status: {
+    readonly convergence: string;
+    readonly desiredGeneration: string;
+    readonly observedGeneration: string;
+    readonly lastApplyAt: string | null;
+    readonly lastObservationAt: string | null;
+    readonly lastError: string | null;
+    readonly explanation: string;
+  };
+  readonly history: readonly [];
+} {
+  return {
+    status: {
+      convergence: hookDeclaration.converged ? "converged" : "pending",
+      desiredGeneration: hookDeclaration.desiredGeneration,
+      observedGeneration: hookDeclaration.observedGeneration,
+      lastApplyAt: null,
+      lastObservationAt: MCP_OBSERVED_AT,
+      lastError: null,
+      explanation: hookDeclaration.converged
+        ? "The runtime has observed the latest desired generation; convergence is recorded."
+        : "Apply wrote the latest desired generation, but the running runtime has not observed it yet. Restart the affected process or wait for the observation hook to refresh."
+    },
+    history: []
+  };
+}
 
 /**
  * The write of one MCP server's launch configuration.
@@ -3329,6 +3545,48 @@ function configureSkillFixture(
 }
 
 /**
+ * Moves the canonical hook declaration without the Console knowing.
+ *
+ * The page that has the declaration open holds the revision it was rendered
+ * with, so moving the declaration here is what makes its next write a
+ * conflict rather than a silent overwrite of somebody else's edit.
+ *
+ * `/fixture/hooks/reset` puts it back the way the fixture declares it, so one
+ * spec's write is not the next spec's starting state.
+ */
+function configureHookFixture(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (
+    url.pathname !== "/fixture/hooks/move" &&
+    url.pathname !== "/fixture/hooks/reset"
+  ) {
+    return false;
+  }
+  if (request.method !== "POST") {
+    response.writeHead(405).end();
+    return true;
+  }
+  if (url.pathname === "/fixture/hooks/reset") {
+    hookDeclaration = initialHookDeclaration();
+    sendJson(response, { revision: hookDeclaration.revision });
+    return true;
+  }
+  // The declaration moves under an open editor, so the write the editor
+  // carries is decided on a revision that is no longer the declaration's.
+  hookDeclaration = {
+    ...hookDeclaration,
+    revision: createHash("sha256")
+      .update(`${hookDeclaration.revision}:moved`, "utf8")
+      .digest("hex")
+  };
+  sendJson(response, { revision: hookDeclaration.revision });
+  return true;
+}
+
+/**
  * Moves the canonical MCP declaration without the Console knowing.
  *
  * The page that has the declaration open holds the revision it was rendered
@@ -4258,20 +4516,31 @@ function handleCatalogResourceRead(
   }
   if (url.pathname === "/control/hooks") {
     sendJson(response, {
-      schema: "autodev-control-hooks-v1",
+      schema: "autodev-control-hooks-v2",
       source: ".rulesync/hooks.jsonc",
-      readOnly: true,
+      readOnly: false,
       valid: true,
       issues: [],
-      hooks: {
-        PreToolUse: [
-          {
-            command: "echo guarded",
-            matcher: "Bash",
-            statusMessage: "Bash is guarded in this fixture."
-          }
-        ]
-      }
+      revision: hookDeclaration.revision,
+      target: "codexcli",
+      events: hookDeclaration.events
+    });
+    return true;
+  }
+  if (url.pathname === "/control/hooks-applied") {
+    // The hook configuration the Runtime published, against the canonical
+    // declaration. The published side carries an older command, so the page
+    // can tell a declared hook from one the Runtime has caught up with -- and
+    // the verdict is the Runtime's own.
+    sendJson(response, {
+      schema: "autodev-control-hooks-applied-v1",
+      source: "/codex/hooks.json",
+      declarationSource: ".rulesync/hooks.jsonc",
+      target: "codexcli",
+      available: true,
+      declaredEvents: hookDeclaration.events,
+      events: hookDeclaration.appliedEvents,
+      reconciliation: hookReconciliation()
     });
     return true;
   }
@@ -4642,6 +4911,7 @@ function handleFixtureCatalogRoutes(
 ): boolean {
   if (configureSkillFixture(request, response, url)) return true;
   if (configureMcpFixture(request, response, url)) return true;
+  if (configureHookFixture(request, response, url)) return true;
   if (configureCanonicalSourceFixture(request, response, url)) return true;
   if (handleRuntimeFixture(request, response, url)) return true;
   if (handleGithubRead(request, response, url)) return true;
@@ -4676,6 +4946,9 @@ async function handleSyntheticMutationRoutes(
   if (await handleAgentEnablementMutation(request, response, url)) return true;
   if (await handleCanonicalSourceMutation(request, response, url)) return true;
   if (await applyMcpDeclarationWrite(response, request, url)) {
+    return true;
+  }
+  if (await applyHookDeclarationWrite(response, request, url)) {
     return true;
   }
   return configureAgentEnablementFixture(request, response, url);

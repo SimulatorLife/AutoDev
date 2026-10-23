@@ -18,12 +18,16 @@
  * filesystem.
  */
 
-import type { WorkspaceVisualPlaytestTargetApproval } from "../workspaces/visual-playtesting.ts";
+import type {
+  WorkspaceVisualPlaytestProgressPolicy,
+  WorkspaceVisualPlaytestTargetApproval
+} from "../workspaces/visual-playtesting.ts";
 import type { PlaytestPlayerFocusOutcome } from "./player-debrief.ts";
 import type {
   PlaytestVisualAction,
   PlaytestVisualObservation
 } from "./visual-control.ts";
+import type { PLAYTESTS_VISUAL_PROGRESS_VERSION } from "./visual-progress.ts";
 
 /** The decision backends a visual episode may be launched with. */
 export const PLAYTESTS_VISUAL_POLICY_IDS = [
@@ -115,6 +119,38 @@ export interface PlaytestVisualDecisionRequest {
    * choice can be grounded in something the Runtime proposed.
    */
   readonly candidates: readonly PlaytestVisualCandidate[];
+  /**
+   * What the Runtime measured about the game's progress.
+   *
+   * A backend that is told the game has not advanced can choose differently;
+   * a backend that is not told cannot. The thresholds the measurement is made
+   * against are the operator's, and they travel with the reading so the
+   * backend knows how many attempts are left.
+   */
+  readonly progress: PlaytestVisualDecisionProgress;
+}
+
+/**
+ * The Runtime's progress reading, as the decision backend sees it.
+ *
+ * The version is part of the reading: a reader can tell which reading
+ * produced it.
+ */
+export interface PlaytestVisualDecisionProgress {
+  readonly version: typeof PLAYTESTS_VISUAL_PROGRESS_VERSION;
+  /**
+   * Whether the game advanced since the previous observation.
+   *
+   * The first observation of an episode counts as an advance: the run has
+   * started.
+   */
+  readonly advanced: boolean;
+  /** Consecutive decisions whose observation showed no advance. */
+  readonly unchangedSteps: number;
+  /** Milliseconds since the game last advanced. */
+  readonly unchangedMs: number;
+  /** The thresholds this episode is measured against. */
+  readonly policy: WorkspaceVisualPlaytestProgressPolicy;
 }
 
 /**

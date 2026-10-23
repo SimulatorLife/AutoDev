@@ -9,6 +9,7 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { Button } from "../../components/forms/Button.ts";
+import { CheckboxField } from "../../components/forms/CheckboxField.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import {
@@ -97,29 +98,17 @@ export function ProvidersHeaderActions({
         name: "returnTo",
         value: returnTo
       }),
-      React.createElement(
-        "label",
-        {
-          className:
-            "flex min-w-0 max-w-full items-start gap-2 text-xs text-fg-secondary",
-          htmlFor: "confirm-provider-reset"
-        },
-        React.createElement("input", {
-          id: "confirm-provider-reset",
-          type: "checkbox",
-          name: "confirm",
-          value: "true",
-          required: true,
-          className:
-            "mt-0.5 size-4 shrink-0 rounded border border-border-strong bg-input accent-accent",
-          "data-provider-reset-confirm": "true"
-        }),
-        React.createElement(
-          "span",
-          null,
-          "Confirm clearing role overrides, disabled models, and provider limits"
-        )
-      ),
+      React.createElement(CheckboxField, {
+        id: "confirm-provider-reset",
+        name: "confirm",
+        value: "true",
+        required: true,
+        align: "start",
+        label:
+          "Confirm clearing role overrides, disabled models, and provider limits",
+        labelClassName: "min-w-0 max-w-full text-xs",
+        dataAttributes: { "data-provider-reset-confirm": "true" }
+      }),
       React.createElement(
         Button,
         {
@@ -181,9 +170,21 @@ export interface ProvidersViewProps {
 }
 
 function ProviderLink({
-  provider
+  provider,
+  context
 }: {
   readonly provider: string;
+  /**
+   * What distinguishes this link from another link to the same provider.
+   *
+   * A provider appears on this page more than once: once in the providers
+   * table, and once for every capability tier it holds a routing slot in. The
+   * visible text is the provider's name in every one of those places, so the
+   * accessible name has to carry the slot -- otherwise a links list, which is
+   * how a screen reader user scans the page, showed "Open provider claude"
+   * three times with nothing to tell the entries apart.
+   */
+  readonly context?: string | undefined;
 }): React.JSX.Element {
   return React.createElement(
     NavigationLink,
@@ -191,7 +192,10 @@ function ProviderLink({
       href: providerPath(provider),
       className: MONO_ID_LINK_CLASS,
       title: provider,
-      "aria-label": `Open provider ${provider}`
+      "aria-label":
+        context === undefined
+          ? `Open provider ${provider}`
+          : `Open provider ${provider}, ${context}`
     },
     provider
   );
@@ -464,7 +468,11 @@ function RoutingPriorityPanel({
                   `P${index + 1}`
                 ),
                 ...group.map((provider) =>
-                  React.createElement(ProviderLink, { key: provider, provider })
+                  React.createElement(ProviderLink, {
+                    key: provider,
+                    provider,
+                    context: `${tier} tier, priority ${index + 1}`
+                  })
                 )
               )
             ])
@@ -537,7 +545,12 @@ function ProvidersTab({
       React.createElement(
         "h2",
         { className: `mb-3 ${SECTION_HEADING_CLASS}` },
-        "Providers"
+        // "Configured" is the word every other list page uses for the resource
+        // the operator owns -- "Configured Agents", "Configured Workspaces",
+        // "Configured Lifecycle Hooks". The bare "Providers" repeated the
+        // page's own `h1`, so the heading outline added a level that carried no
+        // information.
+        "Configured Providers"
       ),
       React.createElement<DataTableProps<ControlApiProviderRecord>>(DataTable, {
         data: records,

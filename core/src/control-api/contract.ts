@@ -34,11 +34,17 @@
  * configuration the comparison is made against, and the canonical declaration
  * is written through `PATCH /control/mcps/{name}`, which applies the projection
  * and reports the reconciliation.
+ * v15: the canonical hook declaration publishes the effective declaration of
+ * the target the Runtime applies -- the shared declaration merged with the
+ * target's own, one event at a time -- with the revision a write compares
+ * against and the origin of each event, and the canonical declaration is
+ * written through `PATCH /control/hooks/{event}`, which applies the hook
+ * projection and reports the reconciliation.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 14
+  version: 15
 } as const;
 
 export type ControlApiContractResponse = {

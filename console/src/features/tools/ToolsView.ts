@@ -15,6 +15,7 @@ import {
   CALLOUT_ERROR_CLASS,
   CALLOUT_WARNING_CLASS
 } from "../../components/layout/Callout.ts";
+import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
@@ -554,6 +555,16 @@ export function ToolsView({
       "p",
       { className: coverageBannerClasses(variant) },
       coverageBanner(coverage, validity)
+    ),
+    React.createElement(
+      "h2",
+      { className: `mb-3 ${SECTION_HEADING_CLASS}` },
+      // Every other catalog page names the section its table belongs to --
+      // "Configured Agents", "Agent Skills", "Available Prompts & Commands",
+      // "Evaluation history". This page was the only one whose table arrived
+      // with no heading at all, so the operator scanning the page by its
+      // outline found nothing between the page title and the table.
+      "Tool catalog"
     ),
     React.createElement(
       "div",

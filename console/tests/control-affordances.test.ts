@@ -18,6 +18,7 @@ import {
   STATE_PILL_TONE_CLASS
 } from "../src/components/ui/state-pill.ts";
 import { mcpDetailTabs } from "../src/features/mcps/McpDetailView.ts";
+import { ProvidersView } from "../src/features/providers/ProvidersView.ts";
 import { PromptsView } from "../src/features/prompts/PromptsView.ts";
 import { ToolsView } from "../src/features/tools/ToolsView.ts";
 
@@ -48,6 +49,84 @@ const BUTTON_VARIANT_CLASSES = [
   DESTRUCTIVE_BUTTON_CLASS,
   OUTLINE_BUTTON_CLASS
 ];
+
+/**
+ * A provider that holds a routing slot in two capability tiers.
+ *
+ * Two tiers is the case the links list has to survive: the provider's name is
+ * visible three times on the page -- once in the providers table, once per
+ * routing tier -- and only the name is on the surface.
+ */
+const NO_CONVERGENCE = {
+  convergence: "not-observed" as const,
+  desiredGeneration: null,
+  observedGeneration: null,
+  lastApplyAt: null,
+  lastObservationAt: null,
+  lastError: null,
+  explanation: "Not observed."
+};
+
+const PROVIDERS_FIXTURE = {
+  schema: "autodev-control-providers-v3",
+  orchestratorTier: "root",
+  tiers: [
+    { tier: "default", groups: [["provider-fixture"]] },
+    { tier: "root", groups: [["provider-fixture"]] }
+  ],
+  providers: [
+    {
+      id: "provider-fixture",
+      links: { usage: null, documentation: null },
+      route: null,
+      credential: { envKey: null, configured: false },
+      disabled: false,
+      roles: {
+        default: {
+          priority: "disabled",
+          model: null,
+          mutable: false,
+          convergence: NO_CONVERGENCE
+        },
+        smart: {
+          priority: "disabled",
+          model: null,
+          mutable: false,
+          convergence: NO_CONVERGENCE
+        },
+        orchestrator: {
+          priority: "disabled",
+          model: null,
+          mutable: false,
+          convergence: NO_CONVERGENCE
+        },
+        subagent: {
+          priority: "disabled",
+          model: null,
+          mutable: false,
+          convergence: NO_CONVERGENCE
+        }
+      },
+      agentLimits: null,
+      models: [],
+      priorities: [],
+      orchestratorReasoningEffort: null,
+      health: {
+        cooldown: null,
+        failureStreak: 0,
+        probeFailureStreak: 0,
+        inFlightRequests: 0,
+        activeAgents: 0,
+        attempts: 0,
+        successes: 0,
+        failures: 0,
+        lastSuccessAt: null,
+        lastFailure: null
+      },
+      reconciliation: { status: NO_CONVERGENCE, history: [] }
+    }
+  ]
+};
 
 test("every button variant is a pointer target", () => {
   for (const variantClass of BUTTON_VARIANT_CLASSES) {
@@ -394,5 +473,99 @@ test("a tab that shares a label with a page says which page it belongs to", () =
     overview?.ariaLabel,
     undefined,
     "a tab that shares no label with a page needs no name of its own"
+  );
+});
+
+/**
+ * A section heading that repeats the page's own title says nothing.
+ *
+ * The shell renders the page's `h1` from the canonical section name -- "Tools",
+ * "Providers" -- so a section heading with the same words adds a level to the
+ * outline that carries no information, and the operator navigating by heading
+ * meets the page's own name twice.
+ *
+ * `/providers` did exactly that: an `h2` reading "Providers" under an `h1`
+ * reading "Providers", with a table header reading "PROVIDER" beneath it.
+ * `/tools` had the opposite fault: the only catalog page whose table arrived
+ * with no heading at all, so scanning the outline found nothing between the
+ * page title and the table.
+ */
+test("a section heading names the section rather than repeating the page", () => {
+  const providers = renderToStaticMarkup(
+    React.createElement(ProvidersView, {
+      providers: PROVIDERS_FIXTURE,
+      models: { status: "unavailable", message: "Fixture not observed." },
+      modelDiscovery: { status: "unavailable", message: "Fixture not observed." }
+    } as unknown as React.ComponentProps<typeof ProvidersView>)
+  );
+
+  const headings = [...providers.matchAll(/<h2[^>]*>([^<]*)</gu)].map(
+    (match) => match[1] ?? ""
+  );
+  assert.ok(
+    headings.includes("Configured Providers"),
+    "the providers section has to say which providers it lists"
+  );
+  assert.ok(
+    !headings.includes("Providers"),
+    "a section heading that repeats the page's own title says nothing"
+  );
+
+  const tools = renderToStaticMarkup(
+    React.createElement(ToolsView, {
+      tools: [],
+      coverage: { schema: "x", source: "y" } as never,
+      validity: "valid",
+      usageLink: "/usage",
+      filters: { source: "", role: "" }
+    } as unknown as React.ComponentProps<typeof ToolsView>)
+  );
+  const toolHeadings = [...tools.matchAll(/<h2[^>]*>([^<]*)</gu)].map(
+    (match) => match[1] ?? ""
+  );
+  assert.ok(
+    toolHeadings.length > 0,
+    "every catalog page names the section its table belongs to"
+  );
+  assert.ok(
+    !toolHeadings.includes("Tools"),
+    "a section heading that repeats the page's own title says nothing"
+  );
+});
+
+/**
+ * The same link, twice, has to say which one is which.
+ *
+ * A provider appears on `/providers` more than once: once in the providers
+ * table, and once for every capability tier it holds a routing slot in. The
+ * visible text is the provider's name in all of those places, so the accessible
+ * name has to carry the slot -- otherwise a links list, which is how a screen
+ * reader user scans the page, showed "Open provider claude" three times with
+ * nothing to tell the entries apart.
+ */
+test("a provider link names the routing slot it points at", () => {
+  const providers = renderToStaticMarkup(
+    React.createElement(ProvidersView, {
+      providers: PROVIDERS_FIXTURE,
+      models: { status: "unavailable", message: "Fixture not observed." },
+      modelDiscovery: { status: "unavailable", message: "Fixture not observed." }
+    } as unknown as React.ComponentProps<typeof ProvidersView>)
+  );
+
+  const names = [
+    ...providers.matchAll(/aria-label="(Open provider [^"]*)"/gu)
+  ].map((match) => match[1] ?? "");
+  assert.equal(
+    new Set(names).size,
+    names.length,
+    "two links with the same name are two links the operator cannot tell apart"
+  );
+  assert.ok(
+    names.some((name) => name.includes("tier")),
+    "the routing-priority links name the slot they point at"
+  );
+  assert.ok(
+    names.every((name) => name.includes("provider-fixture")),
+    "the name still contains the provider's visible name, so voice control works"
   );
 });

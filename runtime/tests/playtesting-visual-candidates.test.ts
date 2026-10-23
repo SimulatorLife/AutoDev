@@ -4,6 +4,8 @@ import test from "node:test";
 
 import {
   admitPlaytestVisualAction,
+  PLAYTESTS_VISUAL_PROGRESS_VERSION,
+  playtestVisualProgressPolicy,
   type PlaytestVisualControl,
   type PlaytestVisualObservation,
   type WorkspaceVisualPlaytestTargetApproval
@@ -348,7 +350,14 @@ test("the OneJev backend accepts the built candidates and answers with one of th
     areasOfFocus: null,
     history: [],
     deadlineMonotonicMs: 5000,
-    candidates
+    candidates,
+    progress: {
+      version: PLAYTESTS_VISUAL_PROGRESS_VERSION,
+      advanced: true,
+      unchangedSteps: 0,
+      unchangedMs: 0,
+      policy: playtestVisualProgressPolicy(approved)
+    }
   });
 
   assert.equal(decision.status, "act");

@@ -275,7 +275,7 @@ export function AgentsView({
   return React.createElement(
     PageBody,
     { feature: "agents" },
-    React.createElement(LiveCountRefresh, { silent: true }),
+    React.createElement(LiveCountRefresh),
     controlFailed
       ? React.createElement(ControlFailureNotice, { refusal: controlRefusal })
       : null,

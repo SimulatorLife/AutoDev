@@ -8,6 +8,8 @@ import test from "node:test";
 
 import {
   admitPlaytestVisualAction,
+  PLAYTESTS_VISUAL_PROGRESS_VERSION,
+  type PlaytestVisualDecisionProgress,
   type PlaytestVisualObservation,
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
@@ -72,8 +74,7 @@ function target(
 }
 
 function observation(
-  overrides: Partial<PlaytestVisualObservation> = {}
-): PlaytestVisualObservation {
+  overrides: Partial<PlaytestVisualObservation> = {}): PlaytestVisualObservation {
   return {
     schema: "autodev-playtest-visual-observation-v1",
     observationId: "observation-1",

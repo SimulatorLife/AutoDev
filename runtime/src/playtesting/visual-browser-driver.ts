@@ -18,6 +18,7 @@ import {
   PLAYTEST_VISUAL_OBSERVATION_SCHEMA,
   PLAYTESTS_CONTROL_CHANGED_REFUSAL,
   PLAYTESTS_STALE_OBSERVATION_REFUSAL,
+  PLAYTESTS_VISUAL_LOADING_WARNING,
   type PlaytestVisualAction,
   type PlaytestVisualActionRefusalReason,
   type PlaytestVisualControl,
@@ -181,6 +182,12 @@ interface RawPageReport {
   readonly controls: readonly RawControl[];
   readonly passwordVisible: boolean;
   readonly truncatedControls: boolean;
+  /** The screen the page is showing, or null when it names none. */
+  readonly phase: string | null;
+  /** The progress the page reports, or null when it reports none. */
+  readonly progress: string | null;
+  /** Whether the page reports that it is still loading. */
+  readonly loading: boolean;
 }
 
 /** What the driver reads from the page, with its own verdict on the text. */
@@ -775,6 +782,58 @@ function pageReadInBrowser(patterns: PageReadPatterns): RawPageReport {
     }
     return "none";
   };
+  /**
+   * The screen the page is showing.
+   *
+   * A game's screen is named by its own heading, and the document title is
+   * the fallback for a page that has no heading. The text is bounded because
+   * a heading can carry a live counter, and a counter is not a phase.
+   */
+  const phaseText = (): string | null => {
+    const heading = document.querySelector(
+      'h1,[role="heading"][aria-level="1"]'
+    );
+    const text =
+      heading !== null && visible(heading)
+        ? (heading.textContent ?? "")
+        : (document.title ?? "");
+    const trimmed = text.replace(patterns.whitespace, " ").trim();
+    return trimmed.length > 0 ? trimmed.slice(0, 128) : null;
+  };
+  /**
+   * The progress the page reports.
+   *
+   * A page that shows progress says so in the standard way: a progress bar
+   * with a value, or a progress element. A progress bar without a value is a
+   * loading indicator, not a measurement.
+   */
+  const progressReading = (): {
+    readonly progress: string | null;
+    readonly loading: boolean;
+  } => {
+    const element = document.querySelector(
+      '[role="progressbar"],progress'
+    );
+    const busy =
+      document.body?.getAttribute("aria-busy") === "true" ||
+      document.documentElement?.getAttribute("aria-busy") === "true";
+    if (element === null) {
+      return { progress: null, loading: busy };
+    }
+    const value =
+      element.getAttribute("aria-valuetext") ??
+      element.getAttribute("aria-valuenow") ??
+      (element instanceof HTMLProgressElement
+        ? String(element.value)
+        : null);
+    if (value === null || value.trim().length === 0) {
+      return {
+        progress: null,
+        loading: busy || visible(element)
+      };
+    }
+    return { progress: value.trim().slice(0, 64), loading: busy };
+  };
   const candidates = Array.from(document.querySelectorAll(selector));
   const controls: RawControl[] = [];
   let passwordVisible = false;
@@ -824,10 +883,14 @@ function pageReadInBrowser(patterns: PageReadPatterns): RawPageReport {
       }
     });
   }
+  const reading = progressReading();
   return {
     controls: controls.slice(0, 256),
     passwordVisible,
-    truncatedControls: visibleControlCount > 256
+    truncatedControls: visibleControlCount > 256,
+    phase: phaseText(),
+    progress: reading.progress,
+    loading: reading.loading
   };
 }
 
@@ -1432,7 +1495,10 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
         : []),
       ...(this.blockedRequestCount > 0
         ? ["Some outbound requests were blocked by the approved-origin policy."]
-        : [])
+        : []),
+      // A loading page is not a stuck page. The episode reads this and does
+      // not count the step against its no-progress budget.
+      ...(pageRead.loading ? [PLAYTESTS_VISUAL_LOADING_WARNING] : [])
     ];
     const observation: PlaytestVisualObservation = {
       schema: PLAYTEST_VISUAL_OBSERVATION_SCHEMA,
@@ -1451,8 +1517,8 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
         : "clear",
       controls,
       visibleWarnings,
-      phaseEvidence: null,
-      progressEvidence: null
+      phaseEvidence: pageRead.phase,
+      progressEvidence: pageRead.progress
     };
     try {
       assertPlaytestVisualObservation(observation, this.target);

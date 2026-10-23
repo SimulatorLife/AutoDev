@@ -2,7 +2,7 @@ import React from "react";
 
 import { Button } from "../forms/Button.ts";
 import { FILTER_PANEL_CLASS } from "../layout/Panel.ts";
-import { FIELD_CONTROL_CLASS } from "../ui/field-classes.ts";
+import { TEXT_CONTROL_CLASS } from "../ui/field-classes.ts";
 
 /**
  * The Console's filter bar.
@@ -187,7 +187,7 @@ export function FilterSearchField({
       name,
       defaultValue,
       ...(placeholder === undefined ? {} : { placeholder }),
-      className: `${FIELD_CONTROL_CLASS} w-full min-w-0 placeholder-fg-muted`,
+      className: `${TEXT_CONTROL_CLASS} w-full min-w-0 placeholder-fg-muted`,
       ...(testId === undefined ? {} : { "data-filter-search": testId })
     })
   );

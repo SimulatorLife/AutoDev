@@ -8,6 +8,7 @@ import {
 import React, { useEffect, useState } from "react";
 
 import { Button } from "../../components/forms/Button.ts";
+import { CheckboxField } from "../../components/forms/CheckboxField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import {
   DETAIL_PANEL_CLASS,
@@ -15,7 +16,10 @@ import {
 } from "../../components/layout/Panel.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
-import { FIELD_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
+import {
+  SELECT_CONTROL_CLASS,
+  TEXT_CONTROL_CLASS
+} from "../../components/ui/field-classes.ts";
 import {
   MONO_META_CLASS,
   MUTED_BODY_CLASS,
@@ -116,7 +120,7 @@ function textField(
     },
     label,
     React.createElement("input", {
-      className: FIELD_CONTROL_CLASS,
+      className: TEXT_CONTROL_CLASS,
       defaultValue: options.defaultValue,
       name,
       required: options.required ?? false,
@@ -240,7 +244,7 @@ function targetCard(
                   },
                   "Reason",
                   React.createElement("input", {
-                    className: FIELD_CONTROL_CLASS,
+                    className: TEXT_CONTROL_CLASS,
                     name: "reason",
                     maxLength: 1024,
                     required: true,
@@ -544,7 +548,7 @@ export function WorkspaceVisualPlaytestTargetManager({
             { className: `flex flex-col gap-1 ${MUTED_META_CLASS}` },
             "Target name",
             React.createElement("input", {
-              className: FIELD_CONTROL_CLASS,
+              className: TEXT_CONTROL_CLASS,
               required: true,
               maxLength: 160,
               name: "name",
@@ -593,20 +597,13 @@ export function WorkspaceVisualPlaytestTargetManager({
                 ["gamepad", "Gamepad"]
               ] as const
             ).map(([value, label]) =>
-              React.createElement(
-                "label",
-                {
-                  key: value,
-                  className: `flex min-h-8 items-center gap-2 ${MUTED_BODY_CLASS}`
-                },
-                React.createElement("input", {
-                  type: "checkbox",
-                  name: "inputCapabilities",
-                  value,
-                  defaultChecked: value !== "gamepad"
-                }),
+              React.createElement(CheckboxField, {
+                key: value,
+                name: "inputCapabilities",
+                value,
+                defaultChecked: value !== "gamepad",
                 label
-              )
+              })
             )
           ),
           React.createElement(
@@ -616,7 +613,7 @@ export function WorkspaceVisualPlaytestTargetManager({
             React.createElement(
               "select",
               {
-                className: FIELD_CONTROL_CLASS,
+                className: SELECT_CONTROL_CLASS,
                 name: "controlTimingClass",
                 defaultValue: "turn-based"
               },
@@ -633,7 +630,7 @@ export function WorkspaceVisualPlaytestTargetManager({
             React.createElement(
               "select",
               {
-                className: FIELD_CONTROL_CLASS,
+                className: TEXT_CONTROL_CLASS,
                 name: "entryRequirements",
                 defaultValue: "none"
               },

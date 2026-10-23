@@ -130,40 +130,22 @@ export function unresolvedSkillAssignmentsFromControlApi(
   }));
 }
 
+/**
+ * The hook events the declaration publishes.
+ *
+ * The Runtime publishes the target's effective declaration, so the events are
+ * already the ones the target receives and each one already says where it is
+ * declared. The mapping keeps the event's origin, because it decides who else
+ * an edit reaches and the console has to be able to say so.
+ */
 export function hooksFromControlApi(
   response: ControlApiHooksResponse
 ): readonly HookDefinition[] {
-  const hooks = response.hooks;
-  const events = Object.keys(hooks);
-  return events
-    .map((event): HookDefinition | null => {
-      const actions = hooks[event];
-      if (!Array.isArray(actions)) return null;
-      const mapped = actions
-        .map((action) => {
-          if (!action || typeof action !== "object" || Array.isArray(action)) {
-            return null;
-          }
-          const entry = action as Record<string, unknown>;
-          if (typeof entry.command !== "string") return null;
-          return {
-            type: "command" as const,
-            command: entry.command,
-            ...(typeof entry.matcher === "string"
-              ? { matcher: entry.matcher }
-              : {}),
-            ...(typeof entry.statusMessage === "string"
-              ? { statusMessage: entry.statusMessage }
-              : {})
-          };
-        })
-        .filter(
-          (entry): entry is HookDefinition["actions"][number] => entry !== null
-        );
-      if (mapped.length === 0) return null;
-      return { event: event as HookDefinition["event"], actions: mapped };
-    })
-    .filter((entry): entry is HookDefinition => entry !== null);
+  return response.events.map((event) => ({
+    event: event.event,
+    origin: event.origin,
+    actions: event.actions
+  }));
 }
 
 export function permissionsFromControlApi(

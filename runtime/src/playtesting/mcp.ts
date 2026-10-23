@@ -32,6 +32,11 @@ import {
   PLAYTEST_VISUAL_ACTION_SCHEMA,
   PLAYTEST_VISUAL_OBSERVATION_SCHEMA,
   playtestActionRefusalMeansPageMoved,
+  playtestVisualProgressOutcome,
+  playtestVisualProgressPolicy,
+  playtestVisualProgressState,
+  playtestVisualProgressStuck,
+  PLAYTESTS_VISUAL_PROGRESS_VERSION,
   type PlaytestAdapterAssignmentManifest,
   type PlaytestAdapterBatch,
   type PlaytestAdapterBranchOperation,
@@ -123,6 +128,8 @@ import {
   type PlaytestVisualDecision,
   playtestVisualEpisodeRecordId,
   type PlaytestVisualHistoryEntry,
+  type PlaytestVisualDecisionProgress,
+  type PlaytestVisualProgressState,
   type PlaytestVisualObservation,
   type PlaytestVisualPolicy as CorePlaytestVisualPolicy,
   type PlaytestVisualPolicyId,
@@ -706,6 +713,14 @@ const PLAYTEST_DEBRIEF_MODEL_RESPONSE_INVALID_REASON =
 const PLAYTEST_VISUAL_ACTION_REFUSED_KIND = "action-refused" as const;
 const PLAYTEST_VISUAL_STEP_LIMIT_KIND = "step-limit" as const;
 const PLAYTEST_VISUAL_LOOP_GUARD_KIND = "loop-guard" as const;
+/**
+ * The Runtime's own measurement says the game has not advanced.
+ *
+ * This is not the decision backend reporting that it is stuck; it is the
+ * Runtime comparing what the player sees now with what they saw before, and
+ * finding the game where it was, for as long as the operator allowed.
+ */
+const PLAYTEST_VISUAL_NO_PROGRESS_KIND = "no-progress" as const;
 const PLAYTEST_VISUAL_WALL_TIME_LIMIT_KIND = "wall-time-limit" as const;
 const MAX_REVIEW_PACKET_BYTES = 64 * 1024;
 const REVIEW_PACKET_TOKEN_BUDGET = PLAYTESTS_EVIDENCE_PACKET_MAX_TOKENS;
@@ -4421,6 +4436,10 @@ type VisualEpisodeExit =
       readonly kind: typeof PLAYTEST_VISUAL_LOOP_GUARD_KIND;
       readonly step: number | null;
     }
+  | {
+      readonly kind: typeof PLAYTEST_VISUAL_NO_PROGRESS_KIND;
+      readonly step: number | null;
+    }
   | { readonly kind: "policy-stop"; readonly step: number | null }
   | {
       readonly kind: "driver-blocked";
@@ -4685,6 +4704,19 @@ function visualEpisodeDisposition(exit: VisualEpisodeExit): {
         status: PLAYTEST_BUDGET_TRUNCATED_STATE,
         termination: {
           reason: PLAYTEST_VISUAL_LOOP_GUARD_KIND,
+          step: exit.step
+        },
+        missingReason: PLAYTEST_BUDGET_TRUNCATED_STATE
+      };
+    }
+    case PLAYTEST_VISUAL_NO_PROGRESS_KIND: {
+      // The episode was cut short by the operator's no-progress limit. The
+      // reason names which limit it was, so the run is not read as a budget
+      // that ran out or as a game that crashed.
+      return {
+        status: PLAYTEST_BUDGET_TRUNCATED_STATE,
+        termination: {
+          reason: PLAYTEST_VISUAL_NO_PROGRESS_KIND,
           step: exit.step
         },
         missingReason: PLAYTEST_BUDGET_TRUNCATED_STATE
@@ -5011,6 +5043,8 @@ async function actVisualStep(input: {
   readonly history: PlaytestVisualHistoryEntry[];
   readonly traceSteps: PlaytestEvidenceTraceStep[];
   readonly capturedFrames: readonly PlaytestArtifactReference[];
+  /** What the Runtime measured about the game before this action. */
+  readonly progress: PlaytestVisualDecisionProgress;
   readonly persistRevision: (
     overrides: VisualEpisodeRevisionOverrides,
     view: VisualEpisodeView
@@ -5055,7 +5089,10 @@ async function actVisualStep(input: {
       dispatchedAt:
         receipt.status === "dispatched" ? receipt.dispatchedAt : null,
       receiptAt: new Date().toISOString(),
-      refusalReason: receipt.status === "refused" ? receipt.reason : null
+      refusalReason: receipt.status === "refused" ? receipt.reason : null,
+      // What the Runtime measured about the game at this step, so a reader
+      // of the trace can see the reading the episode was stopped by.
+      progress: visualProgressJson(input.progress)
     },
     events: [],
     frameRefs: [{ id: input.observation.frame.artifactId, kind: "frame" }]
@@ -5111,6 +5148,28 @@ async function actVisualStep(input: {
 }
 
 /**
+ * The progress reading as the trace carries it.
+ *
+ * The trace's outcome is free-form JSON, so the reading is spelled out here
+ * rather than handed over as an object with a contract of its own: a reader
+ * of the trace sees the numbers the episode was stopped by.
+ */
+function visualProgressJson(
+  progress: PlaytestVisualDecisionProgress
+): PlaytestJsonValue {
+  return {
+    version: progress.version,
+    advanced: progress.advanced,
+    unchangedSteps: progress.unchangedSteps,
+    unchangedMs: progress.unchangedMs,
+    policy: {
+      maxUnchangedDecisions: progress.policy.maxUnchangedDecisions,
+      maxUnchangedMs: progress.policy.maxUnchangedMs
+    }
+  };
+}
+
+/**
  * Run one visual episode's step loop.
  *
  * The steps are deliberately sequential. Each step observes the game as the
@@ -5143,6 +5202,13 @@ async function runVisualEpisodeSteps(input: {
   };
   let playerDebrief = input.playerDebrief;
   let stepCount = 0;
+  // The Runtime's own measurement of whether the game is advancing. The
+  // thresholds are the operator's; the measurement is the Runtime's.
+  const progressPolicy = playtestVisualProgressPolicy(input.sessionTarget);
+  let previousProgress: PlaytestVisualProgressState | null = null;
+  let unchangedSteps = 0;
+  let unchangedMs = 0;
+  let lastMeasuredAtMs = Date.now();
 
   for (let step = 0; step < input.assignment.maxSteps; step += 1) {
     if (input.abortSignal.aborted) {
@@ -5163,6 +5229,45 @@ async function runVisualEpisodeSteps(input: {
     }
     if (obsResult.status !== "observed") {
       exit = { kind: "driver-blocked", reason: obsResult.reason, step };
+      break;
+    }
+
+    const measuredAtMs = Date.now();
+    const progressState = playtestVisualProgressState(obsResult.observation);
+    const progressOutcome = playtestVisualProgressOutcome(
+      previousProgress,
+      progressState
+    );
+    previousProgress = progressState;
+    if (progressOutcome === "advanced") {
+      unchangedSteps = 0;
+      unchangedMs = 0;
+    } else if (progressOutcome === "unchanged") {
+      // The step took time, and the game did not advance in it: both the
+      // count and the clock move. A loading page moves neither -- the game
+      // has not had the chance to advance yet.
+      unchangedSteps += 1;
+      unchangedMs += Math.max(0, measuredAtMs - lastMeasuredAtMs);
+    }
+    lastMeasuredAtMs = measuredAtMs;
+    const progress: PlaytestVisualDecisionProgress = {
+      version: PLAYTESTS_VISUAL_PROGRESS_VERSION,
+      advanced: progressOutcome === "advanced",
+      unchangedSteps,
+      unchangedMs,
+      policy: progressPolicy
+    };
+    if (
+      playtestVisualProgressStuck({
+        unchangedSteps,
+        unchangedMs,
+        policy: progressPolicy
+      })
+    ) {
+      // The game has not advanced for as long as the operator allowed. The
+      // episode stops here and says so, instead of spending the rest of its
+      // budget on a game that is not responding.
+      exit = { kind: PLAYTEST_VISUAL_NO_PROGRESS_KIND, step };
       break;
     }
 
@@ -5204,7 +5309,11 @@ async function runVisualEpisodeSteps(input: {
         // a deadline shorter than the budget would cut a healthy provider
         // off mid-answer and report the episode as a runtime failure.
         deadlineMonotonicMs:
-          performance.now() + input.driver.remainingWallTimeMs()
+          performance.now() + input.driver.remainingWallTimeMs(),
+        // What the Runtime measured about the game. A backend that is told
+        // the game has not advanced can choose differently; one that is not
+        // told cannot.
+        progress
       });
     } catch (error) {
       const code = visualRuntimeFailureCode(error);
@@ -5219,7 +5328,8 @@ async function runVisualEpisodeSteps(input: {
         selectedActionId: null,
         preActionPrediction: null,
         authoritativeOutcome: {
-          runtimeFailureCode: code
+          runtimeFailureCode: code,
+          progress: visualProgressJson(progress)
         },
         events: [],
         frameRefs: [
@@ -5251,7 +5361,8 @@ async function runVisualEpisodeSteps(input: {
           reasonCode: decision.reasonCode
         },
         authoritativeOutcome: {
-          stopReason: decision.stopReason ?? ""
+          stopReason: decision.stopReason ?? "",
+          progress: visualProgressJson(progress)
         },
         events: [],
         frameRefs: [
@@ -5288,6 +5399,7 @@ async function runVisualEpisodeSteps(input: {
       history,
       traceSteps: input.traceSteps,
       capturedFrames: input.capturedFrames,
+      progress,
       persistRevision: input.persistRevision
     });
     playerDebrief = act.playerDebrief;

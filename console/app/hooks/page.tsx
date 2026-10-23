@@ -1,10 +1,15 @@
 import type { Metadata } from "next";
 import React from "react";
 
-import { HooksView } from "../../src/features/hooks/HooksView.ts";
+import {
+  type HookDeclarationSaveOutcome,
+  HooksView
+} from "../../src/features/hooks/HooksView.ts";
+import { editorBaseRevisionFromQuery } from "../../src/lib/server/canonical-source.ts";
 import {
   controlApiFailureCode,
-  fetchHooks
+  fetchHooks,
+  fetchHooksApplied
 } from "../../src/lib/server/control-api.ts";
 import { hooksFromControlApi } from "../../src/lib/server/views.ts";
 import {
@@ -20,7 +25,40 @@ export const metadata: Metadata = {
   title: "Hooks"
 };
 
-export default async function HooksPage(): Promise<React.JSX.Element> {
+function firstSearchParam(
+  raw: string | string[] | undefined
+): string | undefined {
+  return Array.isArray(raw) ? raw[0] : raw;
+}
+
+/**
+ * The outcome the last write ended in, when the redirect named one.
+ *
+ * A query value that is not an outcome is not an outcome: it is ignored, and
+ * the page reports no write at all rather than a write it did not measure.
+ */
+function hookSaveOutcome(
+  value: string | string[] | undefined
+): HookDeclarationSaveOutcome | undefined {
+  const outcome = firstSearchParam(value);
+  return outcome === "conflict" ||
+    outcome === "validation" ||
+    outcome === "apply-failed" ||
+    outcome === "failed"
+    ? outcome
+    : undefined;
+}
+
+export default async function HooksPage({
+  searchParams
+}: {
+  readonly searchParams?: Promise<
+    Record<string, string | string[] | undefined>
+  >;
+}): Promise<React.JSX.Element> {
+  const resolvedSearchParams = searchParams
+    ? await searchParams
+    : ({} as Record<string, string | string[] | undefined>);
   const { section, config } = readNodeContext("/hooks");
   if (!config) {
     return React.createElement(
@@ -41,7 +79,14 @@ export default async function HooksPage(): Promise<React.JSX.Element> {
       })
     );
   }
+  // The applied read is a separate question from the declaration, and a
+  // failure to read it is not a failure to read the declaration: the page
+  // shows the declaration and says the applied state was not observed.
+  const appliedResult = await fetchHooksApplied(config);
+  const applied = appliedResult.kind === "ok" ? appliedResult.data : null;
   const hooks = hooksFromControlApi(result.data);
+  const saveOutcome = hookSaveOutcome(resolvedSearchParams.save);
+  const basedOn = editorBaseRevisionFromQuery(resolvedSearchParams.based);
   return React.createElement(
     ConsolePageShell,
     {
@@ -55,7 +100,14 @@ export default async function HooksPage(): Promise<React.JSX.Element> {
       sourceValidity: result.data.valid,
       // Carried straight through: the page renders what the Runtime located in
       // the canonical source rather than re-deriving a reason from the flag.
-      validationIssues: result.data.issues
+      validationIssues: result.data.issues,
+      revision: result.data.revision,
+      // A refused write leaves the editor based on the revision it was filled
+      // from, so the operator's edit is not silently paired with a
+      // declaration that has since moved.
+      ...(basedOn === undefined ? {} : { editorRevision: basedOn }),
+      applied,
+      ...(saveOutcome === undefined ? {} : { saveOutcome })
     })
   );
 }

@@ -13,11 +13,11 @@
  */
 import React from "react";
 
+import { Button } from "../../components/forms/Button.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
-import { FIELD_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
 import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
@@ -205,12 +205,12 @@ function runRow(
   const stale = freshness === "unavailable";
   const buttons: React.JSX.Element[] = [
     React.createElement(
-      "button",
+      Button,
       {
         key: "focus",
-        type: "button",
-        className: FIELD_CONTROL_CLASS,
-        "aria-expanded": focused,
+        variant: "secondary",
+        size: "compact",
+        ariaExpanded: focused,
         onClick: () => onFocusBatch(focused ? null : run.batchId)
       },
       focused ? "Hide progress" : "Show progress"
@@ -219,11 +219,11 @@ function runRow(
   if (onCancel && !terminal) {
     buttons.push(
       React.createElement(
-        "button",
+        Button,
         {
           key: "cancel",
-          type: "button",
-          className: FIELD_CONTROL_CLASS,
+          variant: "secondary",
+          size: "compact",
           disabled: busyBatchId === run.batchId,
           onClick: () => onCancel(run.batchId)
         },
@@ -390,10 +390,10 @@ export function PlaytestingActiveRunsPanel({
         "Run status"
       ),
       React.createElement(
-        "button",
+        Button,
         {
-          type: "button",
-          className: FIELD_CONTROL_CLASS,
+          variant: "secondary",
+          size: "compact",
           onClick: onRefresh,
           disabled: !workspaceId
         },

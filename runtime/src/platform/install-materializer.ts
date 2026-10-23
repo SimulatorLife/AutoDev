@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -1222,6 +1223,48 @@ export function materializeMcpConfiguration(options: {
     configPath,
     false,
     options.otelMode
+  );
+}
+
+/**
+ * Apply the canonical hook declaration, projected from the declaration as it
+ * is now.
+ *
+ * The projection is generated from the canonical source rather than taken from
+ * the install, so a declaration that changed since the last install is applied
+ * as it stands. The generated projection is checked as well as written: a
+ * generation that succeeded is not a projection that matches the source, and
+ * the two are different facts.
+ *
+ * Only the hooks feature is generated. The other features' projections are
+ * left exactly as they are, because a declaration of hooks says nothing about
+ * the skills or the commands a repository also projects.
+ */
+export function materializeCurrentHookProjections(options: {
+  readonly repositoryRoot: string;
+  readonly codexHome: string;
+}): void {
+  const configPath = path.join(options.repositoryRoot, "rulesync.jsonc");
+  runRulesyncGenerate(options.repositoryRoot, {
+    configPath,
+    features: ["hooks"],
+    silent: true
+  });
+  runRulesyncGenerate(options.repositoryRoot, {
+    configPath,
+    features: ["hooks"],
+    check: true,
+    silent: true
+  });
+  const projection = path.join(options.repositoryRoot, ".codex", HOOKS_JSON);
+  if (!existsSync(projection))
+    throw new Error(`missing-hook-projection ${projection}`);
+
+  linkRuntimeSource(projection, path.join(options.codexHome, HOOKS_JSON));
+  syncHookTrust(
+    path.join(options.codexHome, CONFIG_TOML_FILE),
+    options.codexHome,
+    options.repositoryRoot
   );
 }
 

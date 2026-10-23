@@ -1,7 +1,7 @@
 import React from "react";
 
 import { Icon } from "../icons/Icon.ts";
-import { FIELD_CONTROL_CLASS } from "../ui/field-classes.ts";
+import { SELECT_CONTROL_CLASS } from "../ui/field-classes.ts";
 import { MUTED_META_CLASS } from "../ui/text-classes.ts";
 
 /**
@@ -18,10 +18,12 @@ import { MUTED_META_CLASS } from "../ui/text-classes.ts";
  * closed control.
  *
  * The control chrome itself lives in `ui/field-classes.ts`, because it is shared
- * with the controls that have no component -- a text input, a date input.
+ * with the controls that have no component -- a text input, a date input. What
+ * the select adds to that shared chrome is its cursor: a select is a target, so
+ * it shows the pointer, while a text field shows the caret.
  */
 
-const CONTROL_CLASS = FIELD_CONTROL_CLASS;
+const CONTROL_CLASS = SELECT_CONTROL_CLASS;
 
 export interface SelectOption {
   readonly value: string;

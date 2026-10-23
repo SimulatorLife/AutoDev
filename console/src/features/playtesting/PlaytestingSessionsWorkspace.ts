@@ -11,10 +11,11 @@ import {
   FilterBar,
   FilterSearchField
 } from "../../components/filters/FilterBar.ts";
+import { SECONDARY_BUTTON_CLASS } from "../../components/forms/Button.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { EmptyState } from "../../components/status/EmptyState.ts";
-import { FIELD_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
+import { CHECKBOX_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 import {
   episodeScenarioLabel,
@@ -317,6 +318,7 @@ export function PlaytestingSessionsWorkspace({
                   checked,
                   disabled: atLimit,
                   onChange: () => toggle(episode.episodeId),
+                  className: CHECKBOX_CONTROL_CLASS,
                   "aria-label": `Include session ${episode.episodeId} in analyst review`,
                   "data-playtesting-session-select": episode.episodeId
                 }),
@@ -375,7 +377,14 @@ export function PlaytestingSessionsWorkspace({
                       episode.episodeId,
                       null
                     ),
-                    className: `${FIELD_CONTROL_CLASS} shrink-0`,
+                    // This link acts as a control -- "Watch" opens a session the
+                    // operator then drives -- so it wears the secondary button
+                    // chrome, the same as the run controls beside it. The form
+                    // input chrome it used to wear reserved 32px of right
+                    // padding for a select chevron it never drew, and left the
+                    // link without the pointer its button-shaped chrome
+                    // promised.
+                    className: `${SECONDARY_BUTTON_CLASS} shrink-0`,
                     dataAttributes: {
                       "data-playtest-episode-link": episode.episodeId
                     }

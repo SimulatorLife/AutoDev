@@ -15,6 +15,9 @@ import {
   type ControlApiContractResponse,
   type ControlApiEvaluationsResponse,
   type ControlApiGithubResponse,
+  type ControlApiHookDeclaration,
+  type ControlApiHookEvent,
+  type ControlApiHookEventPatchResponse,
   type ControlApiHooksResponse,
   type ControlApiLiveAgentCounts,
   type ControlApiMcpAppliedServer,
@@ -54,6 +57,9 @@ import {
   type GithubWorkflowDefinition,
   type GithubWorkflowRun,
   type GithubWorkflowState,
+  type HookAction,
+  type HookEvent,
+  isHookEvent,
   LOCAL_CONTROL_API_ACTOR,
   type McpServerResource,
   type OperationHistoryEntry,
@@ -94,6 +100,8 @@ import {
   type RuleSyncCommandHistoryPage,
   RuleSyncCommandHistoryUnavailableError,
   RuleSyncCommandValidationError,
+  RuleSyncHooksConflictError,
+  RuleSyncHooksValidationError,
   RuleSyncMcpConflictError,
   RuleSyncMcpValidationError,
   RuleSyncRepository,
@@ -129,6 +137,7 @@ import {
 import {
   installedSkillMatches,
   materializeCommands,
+  materializeCurrentHookProjections,
   materializeCurrentMcpConfiguration,
   materializeRuleSyncSkillProjections
 } from "../platform/install-materializer.ts";
@@ -169,6 +178,7 @@ export const CONTROL_API_PATHS = {
   tools: "/control/tools",
   skills: "/control/skills",
   hooks: "/control/hooks",
+  hooksApplied: "/control/hooks-applied",
   permissions: "/control/permissions",
   prompts: "/control/prompts",
   workspaces: "/control/workspaces",
@@ -325,6 +335,7 @@ const AGENT_DETAIL_PATH = /^\/control\/agents\/([a-zA-Z0-9._-]+)$/u;
 const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
 const MCP_SERVER_PATH =
   /^\/control\/mcps\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/u;
+const HOOK_EVENT_PATH = /^\/control\/hooks\/([a-z][A-Za-z]{0,63})$/u;
 const SKILL_ROLES_PATH = /^\/control\/skills\/([a-zA-Z0-9._-]+)$/u;
 const SKILL_CONTENT_PATH = /^\/control\/skills\/([a-z0-9-]{1,64})\/content$/u;
 const SKILL_CONTENT_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
@@ -1153,6 +1164,14 @@ function mcpLaunchGeneration(entries: readonly McpLaunchEntry[]): string {
 }
 
 /**
+ * The message a read failure carries when it has no better one.
+ *
+ * One spelling of it, so a failure that cannot say more reads the same way
+ * wherever it happened.
+ */
+const UNKNOWN_READ_ERROR = "unknown error";
+
+/**
  * Whether a value is a plain object rather than an array or null.
  *
  * The applied catalogue is untrusted input: it is a file on disk that
@@ -1241,7 +1260,7 @@ function readAppliedMcpCatalogue(codexHome: string): {
       available: false,
       servers: [],
       observedAt: null,
-      error: `The applied MCP catalogue could not be read: ${error instanceof Error ? error.message : "unknown error"}`
+      error: `The applied MCP catalogue could not be read: ${error instanceof Error ? error.message : UNKNOWN_READ_ERROR}`
     };
   }
   let parsed: unknown;
@@ -1252,7 +1271,7 @@ function readAppliedMcpCatalogue(codexHome: string): {
       available: false,
       servers: [],
       observedAt: null,
-      error: `The applied MCP catalogue is not valid JSON: ${error instanceof Error ? error.message : "unknown error"}`
+      error: `The applied MCP catalogue is not valid JSON: ${error instanceof Error ? error.message : UNKNOWN_READ_ERROR}`
     };
   }
   if (!isPlainRecord(parsed)) {
@@ -2555,21 +2574,574 @@ function modelsView(
   } satisfies ControlApiModelsResponse;
 }
 
+/**
+ * The target whose hook declaration the Runtime applies.
+ *
+ * The AutoDev runtime installs one hook projection, the Codex one, so the
+ * declaration it manages is the Codex target's effective declaration. The
+ * other targets RuleSync can project to are not the Runtime's to install.
+ */
+const HOOK_APPLIED_TARGET = "codexcli";
+
+/**
+ * The canonical hook events, under the names Codex gives them.
+ *
+ * RuleSync projects the canonical event names into the target's own names, so
+ * the applied projection is read in Codex's names. This is the map between
+ * them, and it is what lets the applied read answer in the canonical
+ * vocabulary the declaration and the Console both use.
+ */
+const CODEX_HOOK_EVENT_NAMES: Readonly<Record<HookEvent, string>> = {
+  sessionStart: "SessionStart",
+  sessionEnd: "SessionEnd",
+  preToolUse: "PreToolUse",
+  postToolUse: "PostToolUse",
+  beforeSubmitPrompt: "UserPromptSubmit",
+  stop: "Stop",
+  stopCancelled: "Interrupt",
+  permissionRequest: "PermissionRequest",
+  subagentStart: "SubagentStart",
+  subagentStop: "SubagentStop",
+  preCompact: "PreCompact",
+  postCompact: "PostCompact"
+};
+
+const CODEX_HOOK_EVENT_BY_NAME: ReadonlyMap<string, HookEvent> = new Map(
+  Object.entries(CODEX_HOOK_EVENT_NAMES).map(([event, name]) => [
+    name,
+    event as HookEvent
+  ])
+);
+
+/**
+ * The canonical hook declaration, as the target the Runtime applies receives
+ * it.
+ *
+ * The events are the target's effective declaration: the shared declaration
+ * with the target's own merged over it, one event at a time, which is how
+ * RuleSync merges them. The revision is published with them because a write
+ * compares against it.
+ */
 function hooksView(
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
-  const state = new RuleSyncRepository(repositoryRoot).loadHooksState();
-  const hooks = Object.fromEntries(
-    state.hooks.map((hook) => [hook.event, hook.actions])
-  );
+  const repository = new RuleSyncRepository(repositoryRoot);
+  const state = repository.loadHooksState(HOOK_APPLIED_TARGET);
+  const revision = repository.loadHooksRevision().revision;
   return {
-    schema: "autodev-control-hooks-v1",
+    schema: "autodev-control-hooks-v2",
     source: state.source,
-    readOnly: true,
+    readOnly: false,
     valid: state.valid,
     issues: state.issues,
-    hooks
+    revision,
+    target: state.target,
+    events: state.events
   } satisfies ControlApiHooksResponse;
+}
+
+/**
+ * The action one projected hook runs.
+ *
+ * The projection groups the actions by matcher, so an action's matcher is the
+ * group's matcher rather than its own. A group without a matcher gives its
+ * actions none.
+ */
+function appliedHookAction(
+  value: unknown,
+  matcher: unknown
+): HookAction | null {
+  if (!isPlainRecord(value)) return null;
+  if (value.type !== "command") return null;
+  if (typeof value.command !== "string") return null;
+  if (value.command.trim().length === 0) return null;
+  const actionMatcher =
+    typeof matcher === "string"
+      ? matcher
+      : typeof value.matcher === "string"
+        ? value.matcher
+        : undefined;
+  const statusMessage =
+    typeof value.statusMessage === "string" ? value.statusMessage : undefined;
+  return {
+    type: "command",
+    command: value.command,
+    ...(actionMatcher === undefined ? {} : { matcher: actionMatcher }),
+    ...(statusMessage === undefined ? {} : { statusMessage })
+  };
+}
+
+/**
+ * The events one applied hook projection holds.
+ *
+ * `null` means the projection could not be read as a hook configuration, which
+ * is a different fact from a projection that holds no events.
+ */
+function appliedHookEvents(
+  parsed: unknown
+): readonly ControlApiHookEvent[] | null {
+  if (!isPlainRecord(parsed)) return null;
+  const hooks = parsed.hooks;
+  if (!isPlainRecord(hooks)) return null;
+  const events: ControlApiHookEvent[] = [];
+  for (const [name, value] of Object.entries(hooks)) {
+    const event = CODEX_HOOK_EVENT_BY_NAME.get(name);
+    // An event Codex runs that this contract does not name is not projected
+    // into the canonical vocabulary, and an event the contract does name but
+    // Codex does not run cannot appear in the projection at all.
+    if (event === undefined) continue;
+    if (!Array.isArray(value)) return null;
+    const actions = appliedHookActions(value);
+    if (actions === null) return null;
+    events.push({ event, actions });
+  }
+  return events;
+}
+
+/**
+ * The actions one projected hook event runs.
+ *
+ * The projection groups the actions by matcher, so an event's actions are the
+ * groups' actions flattened. `null` means the groups could not be read as
+ * groups, which is a different fact from a group that holds no actions.
+ */
+function appliedHookActions(
+  groups: readonly unknown[]
+): HookAction[] | null {
+  const actions: HookAction[] = [];
+  for (const group of groups) {
+    if (!isPlainRecord(group)) return null;
+    const groupHooks = group.hooks;
+    if (!Array.isArray(groupHooks)) return null;
+    for (const entry of groupHooks) {
+      const action = appliedHookAction(entry, group.matcher);
+      if (action === null) return null;
+      actions.push(action);
+    }
+  }
+  return actions;
+}
+
+/**
+ * The hook projection the Runtime published.
+ *
+ * The projection is a file in the Codex home, so it is read the way any file
+ * on disk is read: it may be absent, unreadable, or not a hook configuration,
+ * and those are three different facts from a projection that holds no hooks.
+ */
+function readAppliedHookProjection(codexHome: string): {
+  readonly available: boolean;
+  readonly events: readonly ControlApiHookEvent[];
+  readonly observedAt: string | null;
+  readonly error: string | null;
+} {
+  const projectionPath = path.join(codexHome, "hooks.json");
+  if (!existsSync(projectionPath))
+    return {
+      available: false,
+      events: [],
+      observedAt: null,
+      error: null
+    };
+  let content: string;
+  try {
+    content = readFileSync(projectionPath, "utf8");
+  } catch (error) {
+    return {
+      available: false,
+      events: [],
+      observedAt: null,
+      error: `The applied hook projection could not be read: ${error instanceof Error ? error.message : UNKNOWN_READ_ERROR}`
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (error) {
+    return {
+      available: false,
+      events: [],
+      observedAt: null,
+      error: `The applied hook projection is not valid JSON: ${error instanceof Error ? error.message : UNKNOWN_READ_ERROR}`
+    };
+  }
+  const events = appliedHookEvents(parsed);
+  if (events === null) {
+    return {
+      available: false,
+      events: [],
+      observedAt: null,
+      error: "The applied hook projection is not a usable hook configuration."
+    };
+  }
+  let observedAt: string | null;
+  try {
+    observedAt = statSync(projectionPath).mtime.toISOString();
+  } catch {
+    observedAt = null;
+  }
+  return { available: true, events, observedAt, error: null };
+}
+
+/**
+ * The generation one side of the hook comparison holds.
+ *
+ * The actions are compared as a set rather than as a list: the projection
+ * groups the actions by matcher, so two actions that share a matcher are
+ * emitted together and the order across matchers follows the grouping rather
+ * than the declaration. Comparing the lists in order would report drift
+ * where there is none.
+ */
+function hookGeneration(events: readonly ControlApiHookEvent[]): string {
+  const serialized = JSON.stringify(
+    events
+      .map((event) => ({
+        event: event.event,
+        actions: event.actions.map((action) => ({
+          type: action.type,
+          command: action.command,
+          matcher: action.matcher ?? null,
+          statusMessage: action.statusMessage ?? null
+        }))
+      }))
+      .sort((left, right) =>
+        CONTROL_API_COLLATOR.compare(left.event, right.event)
+      )
+      .map((event) => ({
+        event: event.event,
+        actions: event.actions.sort((left, right) =>
+          CONTROL_API_COLLATOR.compare(
+            `${left.matcher ?? ""}\u0000${left.command}\u0000${left.statusMessage ?? ""}`,
+            `${right.matcher ?? ""}\u0000${right.command}\u0000${right.statusMessage ?? ""}`
+          )
+        )
+      }))
+  );
+  return createHash("sha256").update(serialized, "utf8").digest("hex");
+}
+
+/**
+ * The hook configuration the Runtime applied, against the canonical
+ * declaration.
+ *
+ * The two sides are compared through the shared reconciliation contract: the
+ * desired generation is the declaration's effective events and the observed
+ * generation is the projection's. A Codex home with no applied projection has
+ * not observed anything, and says so rather than reporting a converged empty
+ * configuration.
+ */
+function hooksAppliedState(
+  repositoryRoot: string = DEFAULT_REPO_ROOT,
+  codexHome: string = defaultCodexHomeForReconciliation()
+): {
+  readonly available: boolean;
+  readonly declaredEvents: readonly ControlApiHookDeclaration[];
+  readonly events: readonly ControlApiHookEvent[];
+  readonly desiredGeneration: string | null;
+  readonly observedGeneration: string | null;
+  readonly reconciliation: ReconciliationView;
+} {
+  const declaration = new RuleSyncRepository(repositoryRoot).loadHooksState(
+    HOOK_APPLIED_TARGET
+  );
+  const applied = readAppliedHookProjection(codexHome);
+  const declaredEvents: ControlApiHookDeclaration[] = declaration.events.map(
+    (event) => ({
+      event: event.event,
+      origin: event.origin,
+      actions: event.actions
+    })
+  );
+  const desiredGeneration =
+    declaration.valid === true && declaredEvents.length > 0
+      ? hookGeneration(declaredEvents)
+      : null;
+  const observedGeneration =
+    applied.available && applied.events.length > 0
+      ? hookGeneration(applied.events)
+      : null;
+  const evidence: ReconciliationEvidence = {
+    desiredGeneration,
+    observedGeneration,
+    // No Control API operation applies a hook configuration on its own, so
+    // there is no apply to date. The observation is the projection's own
+    // moment.
+    lastApplyAt: null,
+    lastObservationAt: applied.observedAt,
+    lastError: applied.error
+  };
+  return {
+    available: applied.available,
+    declaredEvents,
+    events: applied.events,
+    desiredGeneration,
+    observedGeneration,
+    reconciliation: buildReconciliationView({
+      evidence,
+      history: [],
+      hasObservation: applied.available
+    })
+  };
+}
+
+function hooksAppliedView(
+  repositoryRoot: string = DEFAULT_REPO_ROOT,
+  codexHome: string = defaultCodexHomeForReconciliation()
+): Record<string, unknown> {
+  const state = hooksAppliedState(repositoryRoot, codexHome);
+  return {
+    schema: "autodev-control-hooks-applied-v1",
+    source: path.join(codexHome, "hooks.json"),
+    declarationSource: ".rulesync/hooks.jsonc",
+    target: HOOK_APPLIED_TARGET,
+    available: state.available,
+    declaredEvents: state.declaredEvents,
+    events: state.events,
+    reconciliation: state.reconciliation
+  };
+}
+
+/**
+ * The action list one hook write sets.
+ *
+ * The list is the event's whole list, because the declaration replaces an
+ * event's list rather than adding to it. An action that is not a command hook
+ * with a command is refused rather than dropped, because a write that quietly
+ * dropped one of the operator's actions would say it succeeded.
+ */
+function hookActionsFromBody(value: unknown): HookAction[] | null {
+  if (!Array.isArray(value)) return null;
+  const actions: HookAction[] = [];
+  for (const entry of value) {
+    if (!isPlainRecord(entry)) return null;
+    if (entry.type !== "command") return null;
+    if (typeof entry.command !== "string") return null;
+    if (entry.command.trim().length === 0) return null;
+    if (entry.matcher !== undefined && typeof entry.matcher !== "string") {
+      return null;
+    }
+    if (
+      entry.statusMessage !== undefined &&
+      typeof entry.statusMessage !== "string"
+    ) {
+      return null;
+    }
+    actions.push({
+      type: "command",
+      command: entry.command,
+      ...(typeof entry.matcher === "string" ? { matcher: entry.matcher } : {}),
+      ...(typeof entry.statusMessage === "string"
+        ? { statusMessage: entry.statusMessage }
+        : {})
+    });
+  }
+  return actions;
+}
+
+/**
+ * The refusal of a canonical hook declaration write.
+ *
+ * A conflict and a refused declaration are different facts: the first says the
+ * declaration moved under the write, the second says the write could not be
+ * expressed. They get different codes, and the reason is the Runtime's.
+ */
+function sendHookWriteFailure(
+  response: ServerResponse,
+  actor: ControlApiActor,
+  resource: string,
+  error: unknown
+): void {
+  const conflict = error instanceof RuleSyncHooksConflictError;
+  const validation = error instanceof RuleSyncHooksValidationError;
+  if (!conflict && !validation) throw error;
+  const status = conflict ? 409 : 400;
+  const code = conflict
+    ? "autodev_control_hook_revision_conflict"
+    : "autodev_control_hook_invalid_declaration";
+  const message =
+    error instanceof Error
+      ? error.message
+      : "The canonical hook declaration is invalid.";
+  auditMutation({
+    actor: actor.actor,
+    actorVerified: true,
+    role: actor.role,
+    action: "update_rule_sync_hook_declaration",
+    resource,
+    outcome: "error",
+    changes: null,
+    reason: conflict ? "revision_conflict" : "invalid_declaration"
+  });
+  sendControlError(response, status, code, message);
+}
+
+/**
+ * Write one hook event's action list to the canonical declaration.
+ *
+ * The write is a compare-and-swap on the declaration's revision, so a write
+ * decided on an older declaration is refused rather than applied over a newer
+ * one. The projection is applied afterwards and the applied state is read
+ * again, so the response says what the Runtime published rather than what the
+ * write asked for.
+ */
+async function patchHookEvent(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  event: string,
+  repositoryRoot: string,
+  codexHome: string
+): Promise<void> {
+  const resource = `${CONTROL_API_PATHS.hooks}/${event}`;
+  if (actor.role !== "operator") {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_hook_declaration",
+      resource,
+      outcome: "denied",
+      changes: null,
+      reason: "operator_required"
+    });
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_forbidden",
+      "Updating the canonical hook declaration requires an operator."
+    );
+    return;
+  }
+  if (!isHookEvent(event)) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_hook_declaration",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: "unknown_event"
+    });
+    sendControlError(
+      response,
+      400,
+      "autodev_control_hook_unknown_event",
+      `"${event}" is not a hook event the Codex runtime runs.`
+    );
+    return;
+  }
+  const parsed = await readControlApiJsonObject(request);
+  if (!parsed.ok) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_hook_declaration",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: parsed.code
+    });
+    sendControlError(response, parsed.status, parsed.code, parsed.message);
+    return;
+  }
+  const { body } = parsed;
+  const actions = hookActionsFromBody(body.actions);
+  if (
+    Object.keys(body).length !== 2 ||
+    typeof body.expectedRevision !== "string" ||
+    actions === null
+  ) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_hook_declaration",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: "invalid_body"
+    });
+    sendControlError(
+      response,
+      400,
+      "autodev_control_api_invalid_body",
+      "Hook declaration updates require exactly the expected revision and an action list."
+    );
+    return;
+  }
+
+  let updated;
+  try {
+    updated = await new RuleSyncRepository(repositoryRoot).updateHookEvent({
+      event,
+      target: HOOK_APPLIED_TARGET,
+      actions,
+      expectedRevision: body.expectedRevision
+    });
+  } catch (error) {
+    sendHookWriteFailure(response, actor, resource, error);
+    return;
+  }
+
+  try {
+    materializeCurrentHookProjections({ repositoryRoot, codexHome });
+  } catch {
+    // The declaration was written, so this is not a failed write: the applied
+    // state is older than the declaration, and the response says so.
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_rule_sync_hook_declaration",
+      resource,
+      outcome: "error",
+      changes: { event, revision: updated.revision },
+      reason: "projection_apply_failed"
+    });
+    sendControlError(
+      response,
+      503,
+      "autodev_control_hook_apply_failed",
+      "Canonical declaration was updated, but the hook projection could not be applied. Reload the hooks before retrying."
+    );
+    return;
+  }
+
+  const applied = hooksAppliedState(repositoryRoot, codexHome);
+  const reconciliation = applied.reconciliation;
+  const desiredGeneration = applied.desiredGeneration;
+  const observedGeneration = applied.observedGeneration;
+  auditMutation({
+    actor: actor.actor,
+    actorVerified: true,
+    role: actor.role,
+    action: "update_rule_sync_hook_declaration",
+    resource,
+    outcome: "ok",
+    changes: {
+      event,
+      revision: updated.revision,
+      target: HOOK_APPLIED_TARGET
+    },
+    desiredGeneration,
+    observedGeneration
+  });
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-control-hook-event-patch-v1",
+      event,
+      target: HOOK_APPLIED_TARGET,
+      revision: updated.revision,
+      changed: updated.revision !== body.expectedRevision,
+      actions: updated.actions,
+      reconciliation
+    } satisfies ControlApiHookEventPatchResponse,
+    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+  );
 }
 
 /**
@@ -4310,6 +4882,10 @@ const READ_ONLY_COLLECTIONS: ReadonlyMap<string, ReadOnlyCollectionRenderer> =
     [CONTROL_API_PATHS.tools, () => toolsView()],
     [CONTROL_API_PATHS.skills, (_actor, root) => skillsView(root)],
     [CONTROL_API_PATHS.hooks, (_actor, root) => hooksView(root)],
+    [
+      CONTROL_API_PATHS.hooksApplied,
+      (_actor, root, codexHome) => hooksAppliedView(root, codexHome)
+    ],
     [CONTROL_API_PATHS.permissions, () => permissionsView()],
     [CONTROL_API_PATHS.prompts, (_actor, root) => promptsView(root)],
     [CONTROL_API_PATHS.workspaces, (_actor, root) => workspacesView(root)],
@@ -5953,6 +6529,43 @@ async function promptDetailRoute(
  * server; the per-server path is the write, which is the only operation that
  * changes the canonical source.
  */
+async function hookEventRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  pathname: string,
+  event: string,
+  options: ControlApiRequestOptions
+): Promise<boolean> {
+  if (method === "PATCH") {
+    const home = process.env.HOME?.trim() || homedir();
+    const codexHome =
+      options.codexHome?.trim() ||
+      process.env.CODEX_HOME?.trim() ||
+      path.join(home, ".codex");
+    await patchHookEvent(
+      request,
+      response,
+      actor,
+      event,
+      options.repositoryRoot ?? DEFAULT_REPO_ROOT,
+      codexHome
+    );
+    return true;
+  }
+
+  auditRejectedRequest(request, method, pathname, "method_not_allowed", actor);
+  response.setHeader("allow", "PATCH");
+  sendControlError(
+    response,
+    405,
+    "autodev_control_api_method_not_allowed",
+    "Hooks are read through the hook declaration, and the canonical declaration is written via PATCH."
+  );
+  return true;
+}
+
 async function mcpServerRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -6532,6 +7145,17 @@ export async function handleControlApiRequest(
       method,
       pathname,
       mcpServerMatch[1]!,
+      options
+    );
+  const hookEventMatch = pathname.match(HOOK_EVENT_PATH);
+  if (hookEventMatch)
+    return hookEventRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
+      hookEventMatch[1]!,
       options
     );
   if (await readOnlyCollection(pathname, method, response, actor, options))

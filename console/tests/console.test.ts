@@ -53,6 +53,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { ResourceUnavailable } from "../app/_console.ts";
+import * as hookEventRoute from "../app/api/hooks/[event]/route.ts";
 import * as mcpServerRoute from "../app/api/mcps/[name]/route.ts";
 import * as memoryRoute from "../app/api/memory/route.ts";
 import * as modelRoute from "../app/api/models/[model]/route.ts";
@@ -11519,26 +11520,51 @@ test("Agents provider summaries stay not observed without provider configuration
   assert.equal(detail.includes(">Disabled<"), false);
 });
 
-test("HooksView only renders hooks with valid action command lists", () => {
+test("HooksView renders the target's effective hook events and their editors", () => {
   const hooks = hooksFromControlApi({
-    schema: "autodev-control-hooks-v1",
+    schema: "autodev-control-hooks-v2",
     source: "test",
-    readOnly: true,
+    readOnly: false,
     valid: true,
     issues: [],
-    hooks: {
-      sessionStart: [{ command: "echo hi", matcher: ".*" }]
-    }
+    revision: "a".repeat(64),
+    target: "codexcli",
+    events: [
+      {
+        event: "sessionStart",
+        origin: "shared",
+        actions: [{ type: "command", command: "echo hi", matcher: ".*" }]
+      },
+      {
+        event: "sessionEnd",
+        origin: "target",
+        actions: [{ type: "command", command: "echo bye" }]
+      }
+    ]
   });
   const markup = renderToStaticMarkup(
     React.createElement(HooksView, {
       hooks,
       sourceValidity: true,
-      validationIssues: []
+      validationIssues: [],
+      revision: "a".repeat(64),
+      applied: null
     })
   );
   assert.match(markup, /echo hi/);
+  assert.match(markup, /echo bye/);
   assert.match(markup, /Source validation/);
+  // Each event carries its own editor, and the editor says where the event is
+  // declared, because that is what decides who else an edit reaches.
+  assert.match(markup, /data-hook-event="sessionStart"/);
+  assert.match(markup, /data-hook-event="sessionEnd"/);
+  assert.match(markup, /data-hook-origin="sessionStart"/);
+  assert.match(markup, /Declared for every target/);
+  assert.match(markup, /data-hook-origin="sessionEnd"/);
+  assert.match(markup, /Declared for Codex only/);
+  // The write is a compare-and-swap on the declaration's revision, so the
+  // editor carries the revision it was filled from.
+  assert.match(markup, /name="expectedRevision" value="a{64}"/);
   assert.doesNotMatch(
     markup,
     /data-validation-issue-count/,
@@ -11548,10 +11574,38 @@ test("HooksView only renders hooks with valid action command lists", () => {
 
 test("HooksView reports source validity as unknown when no validation is available", () => {
   const markup = renderToStaticMarkup(
-    React.createElement(HooksView, { hooks: [], validationIssues: [] })
+    React.createElement(HooksView, {
+      hooks: [],
+      validationIssues: [],
+      revision: null,
+      applied: null
+    })
   );
   assert.match(markup, /data-hook-state="not-observed"/);
   assert.equal(markup.includes(">Valid<"), false);
+});
+
+test("HooksView keeps the editor in place when the declaration could not be read", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(HooksView, {
+      hooks: [
+        {
+          event: "sessionStart",
+          origin: "shared",
+          actions: [{ type: "command", command: "echo hi" }]
+        }
+      ],
+      validationIssues: [],
+      // A declaration that could not be read has no revision to compare a
+      // write against, so the editor stays in place, disabled, with the
+      // reason.
+      revision: null,
+      applied: null
+    })
+  );
+  assert.match(markup, /data-hook-editor-disabled="true"/);
+  assert.match(markup, /could not be read/);
+  assert.match(markup, /data-hook-event="sessionStart"/);
 });
 
 test("HooksView names the fault the Runtime located instead of only calling the source invalid", () => {
@@ -11567,9 +11621,11 @@ test("HooksView names the fault the Runtime located instead of only calling the 
         },
         {
           location: "PreCompact",
-          message: '"PreCompact" is not a known hook event.'
+          message: '"PreCompact" is not a hook event the Codex runtime runs.'
         }
-      ]
+      ],
+      revision: "b".repeat(64),
+      applied: null
     })
   );
   assert.match(markup, /data-validation-issue-count="2"/);
@@ -11579,7 +11635,7 @@ test("HooksView names the fault the Runtime located instead of only calling the 
     /is not a command hook with a non-empty command string/u
   );
   assert.match(markup, /data-validation-issue="PreCompact"/u);
-  assert.match(markup, /is not a known hook event/u);
+  assert.match(markup, /is not a hook event the Codex runtime runs/u);
   // The count is in the empty-state line too, so an operator reading only the
   // hook list still learns there were two faults and not one.
   assert.match(markup, /2 problems found/);
@@ -13851,16 +13907,51 @@ test("Catalog collections fail closed on unreadable responses", async () => {
   }
 
   const hooks = {
-    schema: "autodev-control-hooks-v1",
+    schema: "autodev-control-hooks-v2",
     source: ".rulesync/hooks.jsonc",
-    readOnly: true,
+    readOnly: false,
     valid: null,
     issues: [],
-    hooks: { pre_tool_use: [] }
+    revision: "c".repeat(64),
+    target: "codexcli",
+    events: [
+      {
+        event: "preToolUse",
+        origin: "shared",
+        actions: [{ type: "command", command: "echo hi" }]
+      }
+    ]
   };
   assert.equal((await fetchHooks(config, serve(hooks))).kind, "ok");
+  // A declaration that declares no events is a declaration, not a shape the
+  // Console cannot read.
   assert.equal(
-    (await fetchHooks(config, serve({ ...hooks, hooks: [] }))).kind,
+    (await fetchHooks(config, serve({ ...hooks, events: [] }))).kind,
+    "ok"
+  );
+  // A shape the Console cannot read is not that.
+  assert.equal(
+    (await fetchHooks(config, serve({ ...hooks, events: {} }))).kind,
+    "invalid-response"
+  );
+  // An event whose actions could not be read is not an event the operator can
+  // act on, so the response fails closed rather than carrying it.
+  assert.equal(
+    (
+      await fetchHooks(
+        config,
+        serve({
+          ...hooks,
+          events: [{ event: "preToolUse", origin: "shared", actions: "nope" }]
+        })
+      )
+    ).kind,
+    "invalid-response"
+  );
+  // A revision is the handle a write compares against, so a response without
+  // one cannot offer a write that could be guarded.
+  assert.equal(
+    (await fetchHooks(config, serve({ ...hooks, revision: undefined }))).kind,
     "invalid-response"
   );
   // A response that reports the source invalid but carries no reasons at all is
@@ -21026,6 +21117,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Submits the complete role set immediately through the existing same-origin Skills mutation route."
     ],
     [
+      join("src", "features", "hooks", "HookEventEditor.ts"),
+      "Holds the action list an operator is editing and submits it through the same-origin hook declaration route; it never drives the router."
+    ],
+    [
       join("src", "features", "prompts", "prompt-source-preview.ts"),
       "Asks the Console's own server what the unsaved canonical source would render as, and renders that answer beside the editor; the page's reads and the save stay server-owned."
     ],
@@ -22150,6 +22245,255 @@ test("the MCP declaration route writes the server's launch configuration through
   // A field the operator cleared removes that key from the declaration.
   assert.equal(sent.launch.command, null);
   assert.equal(sent.launch.args, null);
+});
+
+test("the hook declaration route forwards the operator's action list to the Runtime", async () => {
+  // The route writes the canonical declaration, so it must address the
+  // Runtime's own path and carry the whole action list. A route that
+  // addressed anything else would let the Console answer for a declaration it
+  // does not hold.
+  const requests: { url: string; method: string; body: string }[] = [];
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      body: String(init?.body ?? "")
+    });
+    return Response.json({
+      schema: "autodev-control-hook-event-patch-v1",
+      event: "preToolUse",
+      target: "codexcli",
+      revision: "b".repeat(64),
+      changed: true,
+      actions: [{ type: "command", command: "node edited.ts" }],
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: "c".repeat(64),
+          observedGeneration: "c".repeat(64),
+          lastApplyAt: "2026-10-22T12:00:00.000Z",
+          lastObservationAt: "2026-10-22T12:00:00.000Z",
+          lastError: null,
+          explanation: "The runtime has observed the latest desired generation."
+        },
+        history: []
+      }
+    });
+  }) as typeof fetch;
+
+  await withControlRouteEnvironment(
+    "hook-declaration-token",
+    fetchImpl,
+    async () => {
+      const response = await hookEventRoute.POST(
+        sameOriginFormRequest(
+          "/api/hooks/preToolUse",
+          new URLSearchParams({
+            expectedRevision: "a".repeat(64),
+            "command-0": "node edited.ts",
+            "matcher-0": ".*",
+            "statusMessage-0": "Enforcing command policy",
+            "command-1": "node second.ts"
+          }).toString()
+        ),
+        { params: Promise.resolve({ event: "preToolUse" }) }
+      );
+      // The route answers with a redirect, because the Console's navigation
+      // owner moves the page and the page renders the outcome. A route that
+      // answered with a body would leave the page holding the state it had
+      // before the write.
+      assert.equal(response.status, 303);
+      const location = new URL(
+        response.headers.get("location") ?? "",
+        "http://console.test"
+      );
+      assert.equal(location.pathname, "/hooks");
+      assert.equal(location.searchParams.get("event"), "preToolUse");
+    }
+  );
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.method, "PATCH");
+  assert.equal(
+    requests[0]?.url,
+    "http://127.0.0.1:4101/control/hooks/preToolUse"
+  );
+  const sent = JSON.parse(requests[0]?.body ?? "{}") as {
+    expectedRevision: string;
+    actions: readonly {
+      type: string;
+      command: string;
+      matcher?: string;
+      statusMessage?: string;
+    }[];
+  };
+  assert.equal(sent.expectedRevision, "a".repeat(64));
+  // The list is complete: the declaration replaces an event's action list
+  // rather than adding to it.
+  assert.deepEqual(sent.actions, [
+    {
+      type: "command",
+      command: "node edited.ts",
+      matcher: ".*",
+      statusMessage: "Enforcing command policy"
+    },
+    { type: "command", command: "node second.ts" }
+  ]);
+});
+
+test("the hook declaration route drops an action whose command is empty", async () => {
+  // An empty command is how the editor says the action is not there. Writing
+  // it would declare a hook that runs nothing.
+  const requests: { body: string }[] = [];
+  const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({ body: String(init?.body ?? "") });
+    return Response.json({
+      schema: "autodev-control-hook-event-patch-v1",
+      event: "preToolUse",
+      target: "codexcli",
+      revision: "b".repeat(64),
+      changed: true,
+      actions: [],
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: "c".repeat(64),
+          observedGeneration: "c".repeat(64),
+          lastApplyAt: null,
+          lastObservationAt: null,
+          lastError: null,
+          explanation: "The runtime has observed the latest desired generation."
+        },
+        history: []
+      }
+    });
+  }) as typeof fetch;
+
+  await withControlRouteEnvironment(
+    "hook-declaration-token",
+    fetchImpl,
+    async () => {
+      const response = await hookEventRoute.POST(
+        sameOriginFormRequest(
+          "/api/hooks/preToolUse",
+          new URLSearchParams({
+            expectedRevision: "a".repeat(64),
+            "command-0": "node edited.ts",
+            "command-1": "   "
+          }).toString()
+        ),
+        { params: Promise.resolve({ event: "preToolUse" }) }
+      );
+      assert.equal(response.status, 303);
+    }
+  );
+
+  const sent = JSON.parse(requests[0]?.body ?? "{}") as {
+    actions: readonly { command: string }[];
+  };
+  assert.deepEqual(sent.actions, [
+    { type: "command", command: "node edited.ts" }
+  ]);
+});
+
+test("the hook declaration route reports the Runtime's refusal as the outcome it was", async () => {
+  // The Runtime's verdict is the answer the operator needs: a conflict means
+  // the declaration moved, and a refused declaration means the action list
+  // could not be expressed. The redirect carries that verdict, so the page can
+  // say which one happened.
+  for (const refusal of [
+    {
+      status: 409,
+      code: "autodev_control_hook_revision_conflict",
+      outcome: "conflict"
+    },
+    {
+      status: 400,
+      code: "autodev_control_hook_invalid_declaration",
+      outcome: "validation"
+    },
+    {
+      status: 403,
+      code: "autodev_control_api_forbidden",
+      outcome: "failed"
+    }
+  ]) {
+    const fetchImpl = (async () =>
+      Response.json(
+        {
+          error: {
+            code: refusal.code,
+            message: "The Runtime refused the write.",
+            status: refusal.status
+          }
+        },
+        { status: refusal.status }
+      )) as typeof fetch;
+    await withControlRouteEnvironment(
+      "hook-declaration-token",
+      fetchImpl,
+      async () => {
+        const response = await hookEventRoute.POST(
+          sameOriginFormRequest(
+            "/api/hooks/preToolUse",
+            new URLSearchParams({
+              expectedRevision: "a".repeat(64),
+              "command-0": "node edited.ts"
+            }).toString()
+          ),
+          { params: Promise.resolve({ event: "preToolUse" }) }
+        );
+        assert.equal(response.status, 303);
+        const location = new URL(
+          response.headers.get("location") ?? "",
+          "http://console.test"
+        );
+        assert.equal(location.pathname, "/hooks");
+        assert.equal(location.searchParams.get("save"), refusal.outcome);
+        // A refused write leaves the browser holding the operator's edit, so
+        // the page keeps the revision that edit was written for rather than
+        // the revision the declaration has moved to.
+        if (refusal.outcome === "conflict") {
+          assert.equal(location.searchParams.get("based"), "a".repeat(64));
+        }
+      }
+    );
+  }
+});
+
+test("the hook declaration route refuses a request that is not same-origin before it reaches the Runtime", async () => {
+  // The route writes the canonical declaration. A request that did not come
+  // from this Console must not be able to make it write one, so the refusal
+  // happens before the Runtime is asked anything.
+  let asked = 0;
+  const fetchImpl = (async () => {
+    asked += 1;
+    return Response.json({});
+  }) as typeof fetch;
+  await withControlRouteEnvironment(
+    "hook-declaration-token",
+    fetchImpl,
+    async () => {
+      const response = await hookEventRoute.POST(
+        sameOriginFormRequest(
+          "/api/hooks/preToolUse",
+          new URLSearchParams({
+            expectedRevision: "a".repeat(64),
+            "command-0": "node edited.ts"
+          }).toString(),
+          { fetchSite: "cross-site" }
+        ),
+        { params: Promise.resolve({ event: "preToolUse" }) }
+      );
+      assert.equal(response.status, 303);
+      const location = new URL(
+        response.headers.get("location") ?? "",
+        "http://console.test"
+      );
+      assert.equal(location.searchParams.get("save"), "failed");
+    }
+  );
+  assert.equal(asked, 0);
 });
 
 test("the MCP declaration route reports the Runtime's refusal as the outcome it was", async () => {

@@ -3,6 +3,7 @@
 import type { SkillDefinition } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { CheckboxField } from "../../components/forms/CheckboxField.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { MONO_META_CLASS } from "../../components/ui/text-classes.ts";
 
@@ -50,25 +51,17 @@ export function SkillRoleAssignmentControl({
         value: executionContractRevision
       }),
       assignmentRoles.map((role) =>
-        React.createElement(
-          "label",
-          {
-            key: role,
-            className:
-              "flex items-center gap-1.5 py-1 text-xs text-fg-secondary cursor-pointer select-none",
-            "data-skill-role-option": role
-          },
-          React.createElement("input", {
-            type: "checkbox",
-            name: "roles",
-            value: role,
-            defaultChecked: assigned.has(role),
-            onChange: (event) => event.currentTarget.form?.requestSubmit(),
-            "data-submit-on-change": "true",
-            className: "accent-accent h-3.5 w-3.5 shrink-0"
-          }),
-          React.createElement("span", null, role)
-        )
+        React.createElement(CheckboxField, {
+          key: role,
+          name: "roles",
+          value: role,
+          label: role,
+          defaultChecked: assigned.has(role),
+          onChange: (event) => event.currentTarget.form?.requestSubmit(),
+          labelClassName: "gap-1.5 py-1 text-xs select-none",
+          labelAttributes: { "data-skill-role-option": role },
+          dataAttributes: { "data-submit-on-change": "true" }
+        })
       )
     ),
     isObserved

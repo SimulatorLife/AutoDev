@@ -1,6 +1,6 @@
 import React from "react";
 
-import { FIELD_CONTROL_CLASS } from "../ui/field-classes.ts";
+import { TEXT_CONTROL_CLASS } from "../ui/field-classes.ts";
 import { MUTED_META_CLASS } from "../ui/text-classes.ts";
 
 /**
@@ -9,9 +9,11 @@ import { MUTED_META_CLASS } from "../ui/text-classes.ts";
  * `SelectField` and `FilterSearchField` both own the control chrome, and the
  * first thing a Memory governance form needed that neither could express -- a
  * box for the operator to write a revised claim or an audit reason -- was going
- * to be a third hand-typed `<input>`. It shares `FIELD_CONTROL_CLASS` instead,
- * so a typed field beside a select matches it in padding, border, text size, and
- * focus treatment rather than reading as a different product.
+ * to be a third hand-typed `<input>`. It shares the shared control chrome
+ * instead, so a typed field beside a select matches it in padding, border, text
+ * size, and focus treatment rather than reading as a different product -- and
+ * takes the caret cursor, because a field that takes text is not a field that
+ * opens a list.
  *
  * Two properties are not optional, and both come from controls that got them
  * wrong elsewhere in this codebase:
@@ -65,12 +67,13 @@ export function TextField({
   dataAttributes
 }: TextFieldProps): React.JSX.Element {
   const controlId = id ?? `text-${name}`;
-  // A textarea keeps its own vertical padding, and `FIELD_CONTROL_CLASS` carries
-  // the select's `py-1.5`, which is sized for a single line beside a label.
+  // A textarea keeps its own vertical padding, and the shared control chrome
+  // carries the select's `py-1.5`, which is sized for a single line beside a
+  // label.
   const controlClass =
     rows === undefined
-      ? FIELD_CONTROL_CLASS
-      : `${FIELD_CONTROL_CLASS} py-2 leading-relaxed`;
+      ? TEXT_CONTROL_CLASS
+      : `${TEXT_CONTROL_CLASS} py-2 leading-relaxed`;
   const control = React.createElement(
     rows === undefined ? "input" : "textarea",
     {

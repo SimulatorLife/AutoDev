@@ -3,7 +3,9 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
+  PLAYTESTS_VISUAL_PROGRESS_VERSION,
   PLAYTEST_VISUAL_ACTION_SCHEMA,
+  playtestVisualProgressPolicy,
   type PlaytestVisualCandidate,
   type PlaytestVisualDecisionRequest,
   type PlaytestVisualObservation,
@@ -218,6 +220,13 @@ function scenario(options: {
     history: [],
     deadlineMonotonicMs: 5000,
     candidates: candidates(),
+    progress: {
+      version: PLAYTESTS_VISUAL_PROGRESS_VERSION,
+      advanced: true,
+      unchangedSteps: 0,
+      unchangedMs: 0,
+      policy: playtestVisualProgressPolicy(approved)
+    },
     ...overrides
   });
   return { policy, makeRequest };
