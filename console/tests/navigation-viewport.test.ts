@@ -58,7 +58,10 @@ test("the server-rendered navigation says the viewport decides, not the componen
 test("the narrow-viewport default is a stylesheet rule, so the first paint is already right", () => {
   const css = readFileSync(STYLESHEET, "utf8");
   const narrowStart = css.indexOf("@media (max-width: 1279px)");
-  assert.ok(narrowStart !== -1, "the stylesheet must state the narrow viewport's default");
+  assert.ok(
+    narrowStart !== -1,
+    "the stylesheet must state the narrow viewport's default"
+  );
   const narrow = css.slice(narrowStart);
 
   assert.match(

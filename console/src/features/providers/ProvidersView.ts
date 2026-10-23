@@ -671,11 +671,7 @@ function ModelsTab({
         className: LIST_PANEL_CLASS,
         "data-section": "models"
       },
-      React.createElement(
-        "h2",
-        { className: SECTION_HEADING_CLASS },
-        "Models"
-      ),
+      React.createElement("h2", { className: SECTION_HEADING_CLASS }, "Models"),
       React.createElement(
         "p",
         { className: `mb-3 ${MUTED_META_CLASS}` },

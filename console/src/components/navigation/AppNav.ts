@@ -52,9 +52,8 @@ export function AppNav({
   counts
 }: AppNavProps): React.JSX.Element {
   const [isCollapsed, setIsCollapsed] = React.useState(false);
-  const [hasExplicitPreference, setHasExplicitPreference] = React.useState(
-    false
-  );
+  const [hasExplicitPreference, setHasExplicitPreference] =
+    React.useState(false);
 
   React.useEffect(() => {
     try {

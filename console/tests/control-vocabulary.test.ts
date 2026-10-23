@@ -183,7 +183,10 @@ test("two checkboxes under one field name do not share an id", () => {
       })
     )
   );
-  const ids = Array.from(markup.matchAll(/\sid="([^"]*)"/gu), (match) => match[1]);
+  const ids = Array.from(
+    markup.matchAll(/\sid="([^"]*)"/gu),
+    (match) => match[1]
+  );
   assert.equal(
     new Set(ids).size,
     ids.length,

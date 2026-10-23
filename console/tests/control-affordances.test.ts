@@ -495,11 +495,19 @@ test("a section heading names the section rather than repeating the page", () =>
     React.createElement(ProvidersView, {
       providers: PROVIDERS_FIXTURE,
       models: { status: "unavailable", message: "Fixture not observed." },
-      modelDiscovery: { status: "unavailable", message: "Fixture not observed." }
+      modelDiscovery: {
+        status: "unavailable",
+        message: "Fixture not observed."
+      }
     } as unknown as React.ComponentProps<typeof ProvidersView>)
   );
 
-  const headings = new Set(Array.from(providers.matchAll(/<h2[^>]*>([^<]*)</gu), (match) => match[1] ?? ""));
+  const headings = new Set(
+    Array.from(
+      providers.matchAll(/<h2[^>]*>([^<]*)</gu),
+      (match) => match[1] ?? ""
+    )
+  );
   assert.ok(
     headings.has("Configured Providers"),
     "the providers section has to say which providers it lists"
@@ -518,7 +526,10 @@ test("a section heading names the section rather than repeating the page", () =>
       filters: { source: "", role: "" }
     } as unknown as React.ComponentProps<typeof ToolsView>)
   );
-  const toolHeadings = Array.from(tools.matchAll(/<h2[^>]*>([^<]*)</gu), (match) => match[1] ?? "");
+  const toolHeadings = Array.from(
+    tools.matchAll(/<h2[^>]*>([^<]*)</gu),
+    (match) => match[1] ?? ""
+  );
   assert.ok(
     toolHeadings.length > 0,
     "every catalog page names the section its table belongs to"
@@ -544,11 +555,17 @@ test("a provider link names the routing slot it points at", () => {
     React.createElement(ProvidersView, {
       providers: PROVIDERS_FIXTURE,
       models: { status: "unavailable", message: "Fixture not observed." },
-      modelDiscovery: { status: "unavailable", message: "Fixture not observed." }
+      modelDiscovery: {
+        status: "unavailable",
+        message: "Fixture not observed."
+      }
     } as unknown as React.ComponentProps<typeof ProvidersView>)
   );
 
-  const names = Array.from(providers.matchAll(/aria-label="(Open provider [^"]*)"/gu), (match) => match[1] ?? "");
+  const names = Array.from(
+    providers.matchAll(/aria-label="(Open provider [^"]*)"/gu),
+    (match) => match[1] ?? ""
+  );
   assert.equal(
     new Set(names).size,
     names.length,
