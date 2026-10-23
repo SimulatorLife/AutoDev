@@ -2296,10 +2296,10 @@ function visualSessionContextFacts(
     visualSource.kind === "URL-only" &&
     visualSource.artifactFingerprint === null &&
     episode.identity.buildSha === null
-      ? "Unknown. No verified browser-build fingerprint is bound to this URL-only target."
+      ? `${NOT_OBSERVED_LABEL}. No verified browser-build fingerprint is bound to this URL-only target.`
       : (visualSource.artifactFingerprint ??
         episode.identity.buildSha ??
-        "Unknown.");
+        `${NOT_OBSERVED_LABEL}.`);
   return [
     visualDebriefFact(
       "Recorded assignment focus",

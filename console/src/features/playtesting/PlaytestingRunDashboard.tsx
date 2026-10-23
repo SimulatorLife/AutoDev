@@ -20,6 +20,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components/forms/Button.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
@@ -718,7 +719,7 @@ function VisualPlaytestLaunchCockpit({
             React.createElement(
               "span",
               { "data-testid": "visual-target-build-identity" },
-              "Build identity: Unknown (URL-only target)"
+              `Build identity: ${NOT_OBSERVED_LABEL} (URL-only target)`
             )
           ),
           React.createElement(
