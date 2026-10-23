@@ -544,7 +544,7 @@ function ProvidersTab({
       { className: LIST_PANEL_CLASS, "data-section": "providers" },
       React.createElement(
         "h2",
-        { className: `mb-3 ${SECTION_HEADING_CLASS}` },
+        { className: SECTION_HEADING_CLASS },
         // "Configured" is the word every other list page uses for the resource
         // the operator owns -- "Configured Agents", "Configured Workspaces",
         // "Configured Lifecycle Hooks". The bare "Providers" repeated the
@@ -618,7 +618,7 @@ function ModelsTab({
       },
       React.createElement(
         "h2",
-        { className: `mb-3 ${SECTION_HEADING_CLASS}` },
+        { className: SECTION_HEADING_CLASS },
         "Provider model availability"
       ),
       summaries.length === 0
@@ -673,7 +673,7 @@ function ModelsTab({
       },
       React.createElement(
         "h2",
-        { className: `mb-3 ${SECTION_HEADING_CLASS}` },
+        { className: SECTION_HEADING_CLASS },
         "Models"
       ),
       React.createElement(
@@ -702,7 +702,7 @@ function ModelsTab({
           },
           React.createElement(
             "h2",
-            { className: `mb-3 ${SECTION_HEADING_CLASS}` },
+            { className: SECTION_HEADING_CLASS },
             "Discovered but not routeable"
           ),
           React.createElement<DataTableProps<UnsupportedProviderModel>>(
