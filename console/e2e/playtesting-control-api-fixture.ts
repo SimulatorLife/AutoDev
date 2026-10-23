@@ -835,7 +835,8 @@ const MCP_OBSERVED_AT = "2026-10-22T12:00:00.000Z";
 /**
  * The explanation the fixture gives a declaration the Runtime has converged.
  */
-const MCP_CONVERGED_EXPLANATION = MCP_CONVERGED_EXPLANATION;
+const MCP_CONVERGED_EXPLANATION =
+  "The runtime has observed the latest desired generation; convergence is recorded.";
 
 /**
  * The canonical MCP declaration, and what the Runtime published from it.
