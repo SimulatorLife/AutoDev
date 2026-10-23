@@ -299,7 +299,7 @@ test("visual Play submits the approved focus and budget without starting a game 
   );
   await expect(
     visual.getByTestId("visual-target-build-identity")
-  ).toContainText("Build identity: Unknown (URL-only target)");
+  ).toContainText("Build identity: Not observed (URL-only target)");
   const budgetDetails = visual.getByTestId("visual-approved-budget-details");
   await expect(budgetDetails).toContainText(
     "Other approved per-episode limits"
@@ -428,7 +428,7 @@ test("visual session debrief shows frozen focus and target without claiming obje
   await expect(debrief).toContainText("visual-fixture-approval");
   await expect(debrief).toContainText("revision 1");
   await expect(debrief).toContainText("Browser build identity");
-  await expect(debrief).toContainText("Unknown");
+  await expect(debrief).toContainText("Not observed");
   await expect(debrief).toContainText("URL-only target");
   await expect(debrief).toContainText("Not independently verified");
   await expect(debrief).toContainText("Inspect the setup menu.");
