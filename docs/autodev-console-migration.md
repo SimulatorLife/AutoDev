@@ -102,6 +102,14 @@ A read that the Console abandoned at its own deadline is not a misconfigured int
 
 The Console reads the typed `autodev-control-runtime-v2` `liveAgents` projection for live instance counts. Runtime derives totals and role/provider/model breakdowns from the same canonical live-agent projection used by its status surface; Agents, Providers, and Models list/detail views therefore do not substitute separate health counters. Count-bearing pages refresh server-rendered Runtime evidence every five seconds. A missing source is rendered as `Not observed`, while an observed empty projection renders zero. The focused Console and Control API regression tests cover these distinctions and the rendered role/provider/model counts.
 
+## The phone-width sweep
+
+All fourteen canonical routes were measured at 390x844 in Chromium against the synthetic Control API fixture. The structural result was clean: **zero document horizontal overflow and zero elements painted wider than the viewport** on every route, and the tables scroll inside their own regions as the contract intends. The one target that failed the 24px floor was the shared state-coloured button -- the pill that enables and disables an agent role -- which measured **22px**: `text-xs` on a 16px line, plus `py-0.5` and the border. It is the smallest target on the Agents page and it is the control an operator reaches for.
+
+That pill is the third case WCAG 2.5.8 names, and it is not the inline one. A link chip and the shared name-link class had already been brought up to 24px, and the target-size test explains exactly why the floor has to be carried on a block box: `min-height` is inert on a non-replaced inline box, so a target that merely carried `min-h-6` while staying inline would measure the same 22px and look fixed in the source. A button is an inline-block box, so the floor applies to it properly. `STATE_PILL_BUTTON_CLASS` now carries `min-h-6` and `inline-flex`, and the pill measures **24x64** and **24x96** in the browser. No button on the Agents page is under the floor any more.
+
+The remaining sub-24px measurements are inline text links in table cells -- a record id, a trace link, a run link -- and they qualify under the criterion's own spacing exception: the cells around them are padded far enough apart that a 24px circle centred on each target does not reach its neighbour.
+
 ## The navigation's narrow-viewport default
 
 The sidebar's default depends on the viewport: a rail on a narrow screen, the full navigation on a wide one. That default was decided in a post-hydration effect, so the server-rendered page painted the *expanded* navigation first. Measured in Chromium at 390x844, that first paint is 256px of opaque panel over a 390px viewport -- 66% of the screen -- with the page's own `h1` at x=175, underneath it. The stat cards were cut in half, the page's title was unreachable, and without JavaScript the panel stayed: 134px of page visible.

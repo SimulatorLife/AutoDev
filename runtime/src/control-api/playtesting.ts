@@ -10,6 +10,7 @@ import {
   type ControlApiPlaytestingReviewsResponse,
   type ControlApiPlaytestingVisualAssignment,
   type ControlApiPlaytestingWindowResponse,
+  isPlaytestFindingId,
   type PlaytestBatch,
   type PlaytestEpisode,
   type PlaytestFinding,
@@ -75,7 +76,13 @@ const RESOURCE_FILTERS: Readonly<
     "startedAtFrom",
     "startedAtTo"
   ],
-  findings: ["severity", "status", "verificationStage", "evidenceStatus"],
+  findings: [
+    "severity",
+    "status",
+    "verificationStage",
+    "evidenceStatus",
+    "findingId"
+  ],
   comparisons: ["benchmarkId", "experimentId", "decision"],
   benchmarks: ["referenceBuildSha", "measurementVersion"],
   experiments: ["benchmarkId", "state"],
@@ -368,6 +375,9 @@ function validateFilters(
     if (name === "approved" && value !== "true" && value !== "false") {
       throw new TypeError("Invalid 'approved' filter.");
     }
+    if (name === "findingId" && !isPlaytestFindingId(value)) {
+      throw new TypeError("Invalid 'findingId' filter.");
+    }
   }
   const from = filters.startedAtFrom;
   const to = filters.startedAtTo;
@@ -571,6 +581,7 @@ function readFindingPage(
   return repository.listFindings(
     {
       workspaceId: query.workspaceId,
+      ...(f.findingId === undefined ? {} : { findingId: f.findingId }),
       ...(f.severity === undefined
         ? {}
         : { severity: f.severity as PlaytestFinding["severity"] }),

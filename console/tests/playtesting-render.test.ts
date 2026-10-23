@@ -324,7 +324,13 @@ test("Playtesting list view uses accessible links and explicit empty/unavailable
   );
   assert.match(html, /aria-label="Playtesting views"/u);
   assert.match(html, /aria-current="page"/u);
-  assert.match(html, /disabled; history is read-only/u);
+  // The header says what the page is about and whether the workspace can be
+  // played, in one sentence each.
+  assert.match(html, /Playtests recorded for owner\/game/u);
+  assert.match(html, /the workspace is disabled, so its history is read-only/u);
+  // Each view says what it answers, so the tabs are not four bare nouns.
+  assert.match(html, /data-view-summary="sessions"/u);
+  assert.match(html, /Every playtest in this workspace/u);
   assert.match(html, /No sessions match these filters/u);
   assert.match(html, /name="workspaceId"/u);
   assert.match(html, /name="limit"/u);

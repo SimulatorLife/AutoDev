@@ -6,6 +6,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { Chip } from "../src/components/tables/Chips.ts";
+import { STATE_PILL_BUTTON_CLASS } from "../src/components/ui/state-pill.ts";
 import {
   MONO_ID_CLASS,
   MONO_ID_LINK_CLASS
@@ -90,4 +91,29 @@ test("the minimum resolves to the 24px the criterion asks for", () => {
 
   const stepRem = 0.25;
   assert.equal(stepRem * 6 * 16, 24, "min-h-6 must land on the 24px floor");
+});
+
+/**
+ * The state pill is a button, and the floor applies to it.
+ *
+ * The link chips and the shared name-link class were brought up to 24px, and the
+ * state-coloured button was left where it was: `text-xs` on a 16px line, plus
+ * `py-0.5` and the border, is 22px. That is the control that enables and
+ * disables an agent role, and it is the smallest target on the Agents page.
+ *
+ * It is the third case the criterion names, and it is not the inline one: a
+ * button is an inline-block box, so `min-height` applies to it and the floor is
+ * real rather than decorative.
+ */
+test("the state-coloured button meets the 24px floor", () => {
+  assert.match(
+    STATE_PILL_BUTTON_CLASS,
+    /min-h-6/u,
+    "the target-size floor must be on the button"
+  );
+  assert.match(
+    STATE_PILL_BUTTON_CLASS,
+    /inline-flex|\bblock\b/u,
+    "min-height is inert on an inline box, so the button must be a block box"
+  );
 });

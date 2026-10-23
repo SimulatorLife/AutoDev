@@ -117,6 +117,8 @@ export interface PlaytestingScope {
   readonly returnFindingId: string | null;
   /** The analyst review whose detail is open in the Findings view. */
   readonly selectedReviewId: string | null;
+  /** The finding whose detail is open in the Findings view. */
+  readonly selectedFindingId: string | null;
   /** Focused batch in the live view; bounded so it stays shareable. */
   readonly liveBatchId: string | null;
   /** Explicit analysis selection; bounded by the same limit Runtime enforces. */
@@ -132,6 +134,16 @@ const HASH_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const POSITIVE_INTEGER_PATTERN = /^[1-9]\d{0,2}$/u;
 const STEP_PATTERN = /^(0|[1-9]\d{0,5})$/u;
 const FINDING_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+/**
+ * The shape of a finding id that the Console will ask the Control API for.
+ *
+ * The loose pattern above is right for a reference that is only carried
+ * around -- a "return to this finding" marker. A finding the Console is going
+ * to *open* is looked up by id, and the API resolves the canonical id only:
+ * the `finding-` prefix and the fingerprint. An address that names anything
+ * else would resolve to nothing, so the address refuses to carry it.
+ */
+const SELECTED_FINDING_ID_PATTERN = /^finding-[a-f\d]{64}$/u;
 /** Review ids are bounded so the Findings view's address state stays shareable. */
 const REVIEW_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 /** Batch ids are bounded so the live view's address state stays shareable. */
@@ -273,6 +285,7 @@ export function parsePlaytestingScope(
   const rawStep = singleValue(input.step);
   const rawReturnFinding = singleValue(input.returnFinding);
   const rawReview = singleValue(input.review);
+  const rawFinding = singleValue(input.finding);
   const rawLiveBatch = singleValue(input.liveBatch);
   const rawSelection = singleValue(input.sessions);
   const view = isView(rawView) ? rawView : "overview";
@@ -295,6 +308,14 @@ export function parsePlaytestingScope(
       ? candidateReviewId
       : null;
   const reviewInvalid = candidateReviewId !== null && selectedReviewId === null;
+  const candidateSelectedFindingId = rawFinding?.trim() || null;
+  const selectedFindingId =
+    candidateSelectedFindingId &&
+    SELECTED_FINDING_ID_PATTERN.test(candidateSelectedFindingId)
+      ? candidateSelectedFindingId
+      : null;
+  const selectedFindingInvalid =
+    candidateSelectedFindingId !== null && selectedFindingId === null;
   const candidateLiveBatchId = rawLiveBatch?.trim() || null;
   const liveBatchId =
     candidateLiveBatchId && BATCH_ID_PATTERN.test(candidateLiveBatchId)
@@ -323,6 +344,7 @@ export function parsePlaytestingScope(
     returnFindingId,
     liveBatchId,
     selectedReviewId,
+    selectedFindingId,
     selectedEpisodeIds: selection.episodeIds,
     invalidSelection: selectionInvalid,
     invalidQuery:
@@ -336,6 +358,7 @@ export function parsePlaytestingScope(
       hasRepeatedValues(input.step) ||
       hasRepeatedValues(input.returnFinding) ||
       hasRepeatedValues(input.review) ||
+      hasRepeatedValues(input.finding) ||
       hasRepeatedValues(input.liveBatch) ||
       selectionInvalid ||
       parsedFilters.invalid ||
@@ -344,6 +367,7 @@ export function parsePlaytestingScope(
       workspaceInvalid ||
       cursorInvalid ||
       findingInvalid ||
+      selectedFindingInvalid ||
       reviewInvalid ||
       liveBatchInvalid
   };
@@ -382,6 +406,12 @@ function paramsForScope(
   if (scope.selectedReviewId && scope.view === "findings") {
     params.set("review", scope.selectedReviewId);
   }
+  // The open finding is address state for the same reason the open review is:
+  // a shared link, a refresh or Back returns to the same finding rather than
+  // to a bare list. It only means something in the view that shows findings.
+  if (scope.selectedFindingId && scope.view === "findings") {
+    params.set("finding", scope.selectedFindingId);
+  }
   // The selection is address state so a shared link, a refresh or Back
   // reproduces the same set of sessions.
   if (scope.selectedEpisodeIds.length > 0) {
@@ -419,7 +449,9 @@ export function playtestingViewHref(
     step: null,
     // A review detail belongs to the Findings view; leaving it behind keeps the
     // other views' addresses free of a selection they cannot show.
-    selectedReviewId: view === "findings" ? scope.selectedReviewId : null
+    selectedReviewId: view === "findings" ? scope.selectedReviewId : null,
+    // A finding detail belongs to the Findings view for the same reason.
+    selectedFindingId: view === "findings" ? scope.selectedFindingId : null
   };
   return withQuery(
     PLAYTESTING_ROUTE,
@@ -490,6 +522,56 @@ export function playtestingReviewHref(
 /** The Findings view with the review detail closed and the filters unchanged. */
 export function playtestingReviewCloseHref(scope: PlaytestingScope): string {
   const next: PlaytestingScope = { ...scope, selectedReviewId: null };
+  return withQuery(
+    PLAYTESTING_ROUTE,
+    paramsForScope(next, { includeCursor: false, includeStep: false })
+  );
+}
+
+/**
+ * The arrival anchor for an open finding.
+ *
+ * The link that opens a finding names it, so the browser lands on the panel
+ * rather than at the top of a document whose list is many rows long.
+ */
+export const PLAYTESTING_FINDING_DETAIL_ANCHOR_ID =
+  "playtesting-finding-detail";
+
+/**
+ * The Findings view with one finding's detail open.
+ *
+ * The detail is address state, so the link is shareable and Back returns to
+ * the list with the same finding open rather than closing it.
+ */
+export function playtestingFindingHref(
+  scope: PlaytestingScope,
+  findingId: string
+): string {
+  if (!SELECTED_FINDING_ID_PATTERN.test(findingId)) {
+    return playtestingViewHref(scope, "findings");
+  }
+  const next: PlaytestingScope = {
+    ...scope,
+    view: "findings",
+    selectedFindingId: findingId,
+    // One detail is open at a time: opening a finding from a review closes
+    // that review rather than leaving two panels claiming the reader's
+    // attention.
+    selectedReviewId: null,
+    cursor: null,
+    step: null
+  };
+  return (
+    withQuery(
+      PLAYTESTING_ROUTE,
+      paramsForScope(next, { includeCursor: false, includeStep: false })
+    ) + `#${PLAYTESTING_FINDING_DETAIL_ANCHOR_ID}`
+  );
+}
+
+/** The Findings view with the finding detail closed and the filters unchanged. */
+export function playtestingFindingCloseHref(scope: PlaytestingScope): string {
+  const next: PlaytestingScope = { ...scope, selectedFindingId: null };
   return withQuery(
     PLAYTESTING_ROUTE,
     paramsForScope(next, { includeCursor: false, includeStep: false })

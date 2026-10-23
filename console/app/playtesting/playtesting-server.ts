@@ -199,6 +199,14 @@ export interface PlaytestingPageRequest {
   readonly limit: number;
   readonly cursor?: string | null;
   readonly filters?: Readonly<Partial<Record<PlaytestingFilterKey, string>>>;
+  /**
+   * One finding by id, for the findings resource.
+   *
+   * It is a request field rather than a filter because it is a selection, not
+   * a narrowing: a finding is opened by id from a link that names it, and the
+   * list's own filters are the reader's, not the selection's.
+   */
+  readonly findingId?: string | null | undefined;
 }
 
 export interface PlaytestingWindowRequest {
@@ -552,6 +560,11 @@ function pagePath(
     const value = request.filters?.[key];
     if (value) params.set(key, value);
   }
+  // A selected finding is read by id, so it is asked for on the findings
+  // resource only; another resource has no such selection to honour.
+  if (resource === "findings" && request.findingId) {
+    params.set("findingId", request.findingId);
+  }
   return `${CONTROL_API_PATHS.playtesting}/${resource}?${params.toString()}`;
 }
 
@@ -579,6 +592,31 @@ export async function fetchPlaytestingPage<
   return isPlaytestingPageResponse(result.data, resource, request.workspaceId)
     ? { kind: "ok", data: result.data }
     : invalidResponse(resource, "autodev-control-playtesting-page-v1");
+}
+
+/**
+ * One finding, read by id.
+ *
+ * A finding is opened by id from the links that name it -- a review that
+ * raised it, a shared address -- so the read has to resolve that one finding
+ * rather than the first page of the list, which may not hold it. A finding
+ * that does not exist reads as "no such finding" rather than as an empty
+ * page: the list and the detail are different questions.
+ */
+export async function fetchPlaytestingFinding(
+  workspaceId: string,
+  findingId: string,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<PlaytestFinding | null>> {
+  const result = await fetchPlaytestingPage(
+    "findings",
+    { workspaceId, limit: 1, findingId },
+    config,
+    options
+  );
+  if (result.kind !== "ok") return result;
+  return { kind: "ok", data: result.data.page.rows[0] ?? null };
 }
 
 export async function fetchPlaytestingEpisode(

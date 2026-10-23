@@ -30,7 +30,8 @@ import {
 import {
   PlaytestInvalidCursorError,
   PlaytestSourceUnavailableError,
-  RestrictedHumanResponseRepository
+  RestrictedHumanResponseRepository,
+  type PlaytestFindingFilter
 } from "@simulatorlife/autodev-data/playtesting";
 import { WorkspacePlaytestApprovalRepository } from "@simulatorlife/autodev-data/workspaces";
 
@@ -1853,6 +1854,43 @@ test("Playtesting filters reject duplicate, unknown, invalid, and inverted value
     const response = await call("GET", base + query, { repository });
     assert.equal(response.status, 400, query);
   }
+  assert.equal(reads, 0);
+});
+
+test("Playtesting reads one finding by id, and refuses an id that names no finding", async () => {
+  const findingId = `finding-${"a".repeat(64)}`;
+  const received: PlaytestFindingFilter[] = [];
+  const repository = readRepository({
+    listFindings: async (filter) => {
+      received.push(filter);
+      return { rows: [], total: 0, nextCursor: null };
+    }
+  });
+  const response = await call(
+    "GET",
+    `/control/playtesting/findings?workspaceId=${encodeURIComponent(WORKSPACE)}&findingId=${findingId}`,
+    { repository }
+  );
+  assert.equal(response.status, 200);
+  // The id reaches Data as a filter, so the read is the one finding and not
+  // the first page of the list.
+  assert.equal(received[0]?.findingId, findingId);
+
+  // An id that is not a finding is refused before Data is read: a read that
+  // would certainly find nothing must not look like a read that found none.
+  let reads = 0;
+  const counted = readRepository({
+    listFindings: async () => {
+      reads += 1;
+      return { rows: [], total: 0, nextCursor: null };
+    }
+  });
+  const refused = await call(
+    "GET",
+    `/control/playtesting/findings?workspaceId=${encodeURIComponent(WORKSPACE)}&findingId=not-a-finding`,
+    { repository: counted }
+  );
+  assert.equal(refused.status, 400);
   assert.equal(reads, 0);
 });
 

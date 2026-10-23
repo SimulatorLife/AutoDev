@@ -353,11 +353,13 @@ export function PlaytestingSessionsWorkspace({
                     },
                     episode.episodeId
                   ),
-                  React.createElement(
-                    "p",
-                    { className: MUTED_META_CLASS },
-                    sessionMetaLine(episode)
-                  ),
+                  // What the analyst found comes before the provenance
+                  // facts. The meta line carries the repeated absences --
+                  // "No cohort assigned", "Commit not applicable" -- and
+                  // those read as noise while they lead the row, because
+                  // every row says them and none of them says what
+                  // happened in this session. The analysis line answers
+                  // that, so it is the line the eye reaches first.
                   React.createElement(
                     "p",
                     {
@@ -367,6 +369,11 @@ export function PlaytestingSessionsWorkspace({
                     sessionAnalysisLine(
                       analysisByEpisode.get(episode.episodeId) ?? null
                     ) ?? (everyReviewRead ? NO_ANALYSIS_LABEL : "")
+                  ),
+                  React.createElement(
+                    "p",
+                    { className: MUTED_META_CLASS },
+                    sessionMetaLine(episode)
                   )
                 ),
                 React.createElement(

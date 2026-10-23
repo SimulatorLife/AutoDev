@@ -69,6 +69,7 @@ import {
   playtestingEpisodeHref,
   playtestingFilterHref,
   type PlaytestingFilterKey,
+  playtestingFindingHref,
   playtestingPageHref,
   playtestingPreservedFields,
   playtestingReviewCloseHref,
@@ -77,6 +78,7 @@ import {
   type PlaytestingView as PlaytestingViewTab,
   playtestingViewHref
 } from "./playtesting-url.ts";
+import { PlaytestingFindingDetail } from "./PlaytestingFindingDetail.ts";
 
 /**
  * The stack a drawer's sections are laid out in.
@@ -87,12 +89,51 @@ import {
  */
 const SECTION_STACK_CLASS = "flex flex-col gap-2";
 
+/**
+ * The views this page has, and what each one answers.
+ *
+ * The tabs are nouns and the page is a tool, so a reader who lands on
+ * "Findings" has to guess whether it holds findings, the analyst's opinions
+ * or something else entirely. The sentence under the tabs answers that, and
+ * it lives beside the tab it describes so the two cannot drift apart.
+ */
 const VIEW_TABS = [
-  { id: "overview", label: "Overview" },
-  { id: "sessions", label: "Sessions" },
-  { id: "findings", label: "Findings" },
-  { id: "compare", label: "Compare" }
+  {
+    id: "overview",
+    label: "Overview",
+    summary:
+      "What the last runs did, what the analyst concluded about them, and how well the run measured the game."
+  },
+  {
+    id: "sessions",
+    label: "Sessions",
+    summary:
+      "Every playtest in this workspace, with what was observed and what the analyst said about it."
+  },
+  {
+    id: "findings",
+    label: "Findings",
+    summary:
+      "What the analyst suspected in each session, and the findings that were checked against the evidence."
+  },
+  {
+    id: "compare",
+    label: "Compare",
+    summary:
+      "Sessions of the same run compared with each other, and the decision you make about them."
+  }
 ] as const;
+
+/**
+ * What the view the reader is looking at answers.
+ *
+ * A view that has no sentence of its own would leave the reader with the tab
+ * name alone, which is what made this page hard to read: four nouns and no
+ * statement of what any of them was for.
+ */
+function viewSummary(view: PlaytestingScope["view"]): string {
+  return VIEW_TABS.find((tab) => tab.id === view)?.summary ?? "";
+}
 
 export interface PlaytestingOverviewData {
   readonly batches: readonly PlaytestBatch[];
@@ -151,6 +192,15 @@ export type PlaytestingListData =
       /** The analyst's persisted hypotheses about these sessions. */
       readonly reviews?: readonly ControlApiPlaytestingReview[] | undefined;
       readonly reviewTotal?: number | undefined;
+      /**
+       * The finding whose detail is open, when the address names one.
+       *
+       * It is read on its own rather than taken from the page, because a
+       * finding is opened from links that name it -- a review that raised it,
+       * a shared address -- and those links must resolve even when the
+       * finding is not on the page the list happens to be showing.
+       */
+      readonly selectedFinding?: PlaytestFinding | null | undefined;
     }
   | {
       readonly resource: "comparisons";
@@ -790,12 +840,12 @@ function overview(
     React.createElement(StatCard, {
       title: "Sessions",
       value: data.episodeCount,
-      subtitle: "Across all test scenarios"
+      subtitle: "Recorded in this workspace"
     }),
     React.createElement(StatCard, {
       title: "Runs",
       value: data.batchCount,
-      subtitle: "Playtest batches executed"
+      subtitle: "Runs started"
     }),
     React.createElement(StatCard, {
       title: "Analyst Reviews",
@@ -803,15 +853,15 @@ function overview(
       subtitle:
         data.reviewCount === 0
           ? "No analysis run yet"
-          : "Hypotheses the analyst recorded"
+          : "Sessions the analyst has reviewed"
     }),
     React.createElement(StatCard, {
-      title: "Verified Findings",
+      title: "Findings",
       value: data.findingCount,
       subtitle:
         data.findingCount === 0
-          ? "None verified yet"
-          : "Claims backed by reproduced evidence"
+          ? "None recorded yet"
+          : "Claims checked against the evidence"
     })
   );
 
@@ -819,7 +869,10 @@ function overview(
     React.Fragment,
     null,
     summaryMetrics,
-    latestConclusions(data.latestReviews, data.reviewCount, scope),
+    // The order is the order the questions are asked in. What happened comes
+    // first, because a conclusion read before the run it came from is a
+    // conclusion about nothing; then the sessions it covers; then what the
+    // analyst made of them; then how well the run measured the game at all.
     latestResultSection(latest, latestSourceLabel, currentBuildSha, scope),
     recentSessionsSection(
       recentEpisodes,
@@ -827,6 +880,7 @@ function overview(
       data.batchCount,
       scope
     ),
+    latestConclusions(data.latestReviews, data.reviewCount, scope),
     coverageDetails
   );
 }
@@ -954,8 +1008,14 @@ function analystReviewDetail(
                   className: "flex flex-wrap items-center gap-2"
                 },
                 React.createElement(
-                  "span",
-                  { className: "font-medium text-fg" },
+                  NavigationLink,
+                  {
+                    href: playtestingFindingHref(scope, finding.findingId),
+                    className: "font-medium text-fg hover:underline",
+                    dataAttributes: {
+                      "data-review-finding-open": finding.findingId
+                    }
+                  },
                   finding.title.length > 0
                     ? finding.title
                     : "This finding carries no title."
@@ -1187,7 +1247,8 @@ function findingsTable(
   scope: PlaytestingScope,
   nextCursor: string | null,
   reviews: readonly ControlApiPlaytestingReview[] = [],
-  reviewTotal: number = 0
+  reviewTotal: number = 0,
+  selectedFinding: PlaytestFinding | null = null
 ): React.JSX.Element {
   const columns: readonly ColumnDef<PlaytestFinding>[] = [
     {
@@ -1205,8 +1266,12 @@ function findingsTable(
             "data-finding-row": finding.findingId
           },
           React.createElement(
-            "p",
-            { className: "font-medium text-fg" },
+            NavigationLink,
+            {
+              href: playtestingFindingHref(scope, finding.findingId),
+              className: "font-medium text-fg hover:underline",
+              dataAttributes: { "data-finding-open": finding.findingId }
+            },
             finding.title
           ),
           React.createElement(
@@ -1278,17 +1343,23 @@ function findingsTable(
     "div",
     { className: "flex flex-col gap-4" },
     analystHypotheses(reviews, reviewTotal, scope),
+    selectedFinding === null
+      ? null
+      : React.createElement(PlaytestingFindingDetail, {
+          finding: selectedFinding,
+          scope
+        }),
     React.createElement(
       "section",
       {
         className: LIST_PANEL_CLASS,
         "aria-labelledby": "playtesting-findings-heading"
       },
-      sectionHeading("playtesting-findings-heading", "Verified Findings"),
+      sectionHeading("playtesting-findings-heading", "Findings"),
       React.createElement(
         "p",
         { className: `mb-3 text-sm ${MUTED_META_CLASS}` },
-        "Claims that have been reproduced against a build. A session win or loss is not itself a finding; a finding requires a separate evidence-based investigation."
+        "A finding is a claim about the game that was checked against the evidence and kept a stable identity, so the same problem is one row here however many times it was seen. Its evidence status says how well that claim is supported; a session win or loss is not itself a finding."
       ),
       React.createElement<DataTableProps<PlaytestFinding>>(DataTable, {
         data: rows,
@@ -1296,7 +1367,7 @@ function findingsTable(
         keyExtractor: (finding) => `${finding.findingId}:${finding.version}`,
         emptyMessage:
           total === 0
-            ? "No finding has been verified for this workspace. The analyst's hypotheses are listed above."
+            ? "No finding has been recorded for this workspace. The analyst's hypotheses are listed above."
             : "No findings appear on this page; check the active cursor and filters."
       }),
       React.createElement(PageSummary, {
@@ -1751,7 +1822,8 @@ function activeList(
       scope,
       data.nextCursor,
       data.reviews ?? [],
-      data.reviewTotal ?? 0
+      data.reviewTotal ?? 0,
+      data.selectedFinding ?? null
     );
   }
   return comparisonsTable(
@@ -1889,11 +1961,11 @@ export function PlaytestingView({
         React.createElement(
           "p",
           { className: MUTED_META_CLASS },
-          selectedWorkspace?.enabled === false
-            ? `${scope.workspaceId} · workspace disabled; history is read-only`
-            : scope.workspaceId
-              ? `Workspace: ${scope.workspaceId}`
-              : "Choose a workspace to browse results or start a playtest."
+          scope.workspaceId === null
+            ? "Choose a workspace to browse results or start a playtest."
+            : selectedWorkspace?.enabled === false
+              ? `Playtests recorded for ${scope.workspaceId} · the workspace is disabled, so its history is read-only`
+              : `Playtests recorded for ${scope.workspaceId}`
         )
       ),
       React.createElement(
@@ -1914,6 +1986,14 @@ export function PlaytestingView({
       activeTabId: scope.view,
       hrefFor: (view) => playtestingViewHref(scope, view as PlaytestingViewTab)
     }),
+    React.createElement(
+      "p",
+      {
+        className: `text-sm ${MUTED_META_CLASS}`,
+        "data-view-summary": scope.view
+      },
+      viewSummary(scope.view)
+    ),
     workspaceControls(scope, fields),
     invalidQueryNotice(scope),
     viewContent(scope, overviewData, list, sessionsWorkspace, currentBuildSha)

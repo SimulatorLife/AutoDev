@@ -67,6 +67,14 @@ export interface PlaytestEpisodeFilter {
 export interface PlaytestFindingFilter {
   readonly workspaceId: string;
   readonly fingerprint?: string;
+  /**
+   * One finding by its public id.
+   *
+   * A finding is opened by id from links that name it -- a review that raised
+   * it, a shared address -- and those links must resolve to that finding even
+   * when it is not on the first page of the list.
+   */
+  readonly findingId?: string;
   readonly severity?: PlaytestFinding["severity"];
   readonly status?: PlaytestFinding["status"];
   readonly verificationStage?: PlaytestFinding["verificationStage"];

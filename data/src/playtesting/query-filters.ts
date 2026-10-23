@@ -21,6 +21,8 @@ import type {
 } from "./types.ts";
 
 const SHA256_PATTERN = /^[a-f\d]{64}$/iu;
+/** A finding's public id: the `finding-` prefix and its SHA-256 fingerprint. */
+const FINDING_ID_PATTERN = /^finding-[a-f\d]{64}$/u;
 
 export interface BoundWhereClause {
   readonly clauses: readonly string[];
@@ -123,6 +125,18 @@ export function buildFindingWhereClause(
     }
     clauses.push("fingerprint = {fingerprint:String}");
     params.fingerprint = filter.fingerprint;
+  }
+  if (filter.findingId !== undefined) {
+    if (
+      typeof filter.findingId !== "string" ||
+      !FINDING_ID_PATTERN.test(filter.findingId)
+    ) {
+      throw new TypeError(
+        "PlaytestFindingFilter.findingId must be a finding id."
+      );
+    }
+    clauses.push("finding_id = {findingId:String}");
+    params.findingId = filter.findingId;
   }
   if (filter.severity !== undefined) {
     clauses.push("severity = {severity:String}");

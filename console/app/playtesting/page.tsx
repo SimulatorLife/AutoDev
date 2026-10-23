@@ -37,6 +37,7 @@ import {
   ResourceUnavailable
 } from "../_console.ts";
 import {
+  fetchPlaytestingFinding,
   fetchPlaytestingHumanValidation,
   fetchPlaytestingPage,
   fetchPlaytestingReadiness,
@@ -314,10 +315,17 @@ async function loadList(
     };
   }
   if (scope.view === "findings") {
-    const [result, reviews, capabilities] = await Promise.all([
+    const [result, reviews, capabilities, selected] = await Promise.all([
       fetchPlaytestingPage("findings", pageRequest(scope, "findings"), config),
       fetchPlaytestingReviews(scope.workspaceId!, config),
-      fetchPlaytestingRunCapabilities(scope.workspaceId!, config)
+      fetchPlaytestingRunCapabilities(scope.workspaceId!, config),
+      scope.selectedFindingId === null
+        ? Promise.resolve(null)
+        : fetchPlaytestingFinding(
+            scope.workspaceId!,
+            scope.selectedFindingId,
+            config
+          )
     ]);
     if (result.kind !== "ok") return { kind: "unavailable", result };
     if (reviews.kind !== "ok") return { kind: "unavailable", result: reviews };
@@ -330,7 +338,12 @@ async function loadList(
         total: result.data.page.total,
         nextCursor: result.data.page.nextCursor,
         reviews: reviews.data.rows,
-        reviewTotal: reviews.data.total
+        reviewTotal: reviews.data.total,
+        // The open finding is read on its own so a link that names it
+        // resolves even when the list is showing another page. A failed read
+        // leaves the list intact rather than taking the view down with it.
+        selectedFinding:
+          selected !== null && selected.kind === "ok" ? selected.data : null
       }
     };
   }

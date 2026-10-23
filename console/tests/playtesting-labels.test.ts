@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ControlApiPlaytestingReview } from "@simulatorlife/autodev-core";
+import type {
+  ControlApiPlaytestingReview,
+  PlaytestFinding
+} from "@simulatorlife/autodev-core";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -24,9 +27,54 @@ import { parsePlaytestingScope } from "../src/features/playtesting/playtesting-u
 import { PlaytestingView } from "../src/features/playtesting/PlaytestingView.ts";
 
 const WORKSPACE = "owner/game";
+const FINDING_ID = `finding-${"a".repeat(64)}`;
 
 function scope(view: "findings" | "overview" | "sessions") {
   return parsePlaytestingScope({ view, workspaceId: WORKSPACE });
+}
+
+/**
+ * One finding, as the Control API returns it.
+ *
+ * The finding is a claim about the game that was checked against the
+ * evidence, so it carries an identity that is stable across builds and the
+ * counts that say how often it has been seen.
+ */
+function finding(overrides: Partial<PlaytestFinding> = {}): PlaytestFinding {
+  return {
+    identity: {
+      identitySchema: "autodev-playtest-finding-identity-v1",
+      workspaceId: WORKSPACE,
+      mechanicKey: "pit-stop-window",
+      failureSignature: {
+        events: ["pit-stop-requested", "pit-stop-rejected"],
+        action: "pit-stop",
+        witness: "The pit-stop countdown reads zero while the car keeps racing."
+      },
+      scope: { scenarioFamily: "race", phase: "lap", modality: null }
+    },
+    fingerprint: "a".repeat(64),
+    findingId: FINDING_ID,
+    version: 1,
+    title: "The pit-stop control is offered during the race and does nothing.",
+    description:
+      "The pit-stop control is present on the race screen, and choosing it leaves the countdown at zero while the lap counter keeps running.",
+    severity: "major",
+    status: "open",
+    verificationStage: "not-yet-validated",
+    evidenceStatus: "corroborated",
+    affectedEpisodes: 2,
+    totalEligibleEpisodes: 5,
+    affectedOpportunities: 3,
+    totalEligibleOpportunities: 9,
+    affectedCohorts: ["novice"],
+    evidenceRefs: [{ kind: "episode", id: "episode-17", step: 2 }],
+    experimentIds: [],
+    issueRefs: [],
+    lastVerifiedBuild: null,
+    nextReviewAt: null,
+    ...overrides
+  };
 }
 
 function review(
@@ -178,7 +226,7 @@ test("the Findings view shows the analyst's hypotheses, not only verified findin
     })
   );
   assert.match(html, /Analyst Hypotheses/u);
-  assert.match(html, /Verified Findings/u);
+  assert.match(html, />Findings</u);
   assert.match(
     html,
     /The fast-forward label moves from 1x to 2x across the captures\./u
@@ -209,7 +257,7 @@ test("the Findings view says plainly when nothing has been analysed", () => {
     })
   );
   assert.match(html, /No analysis has been recorded for this workspace yet/u);
-  assert.match(html, /No finding has been verified for this workspace/u);
+  assert.match(html, /No finding has been recorded for this workspace/u);
 });
 
 test("the Overview counts analyst reviews and never claims an absence of anomalies", () => {
@@ -231,7 +279,7 @@ test("the Overview counts analyst reviews and never claims an absence of anomali
     })
   );
   assert.match(html, /Analyst Reviews/u);
-  assert.match(html, /Verified Findings/u);
+  assert.match(html, />Findings</u);
   assert.match(html, /14/u);
   // "No anomalies detected" was a claim that a search had run and found
   // nothing, which was false whenever hypotheses existed.
@@ -327,6 +375,103 @@ test("a conclusion that fills its lines does not take the counts with it", () =>
   // text that only happens to be a link.
   assert.match(html, /data-review-read="review-1"/u);
   assert.match(html, /Open review/u);
+});
+
+test("a finding opens as its own detail, with the facts a reader needs about it", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: parsePlaytestingScope({
+        view: "findings",
+        workspaceId: WORKSPACE,
+        finding: FINDING_ID
+      }),
+      workspaces: [
+        { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
+      ],
+      list: {
+        resource: "findings",
+        rows: [finding()],
+        total: 1,
+        nextCursor: null,
+        reviews: [],
+        reviewTotal: 0,
+        selectedFinding: finding()
+      }
+    })
+  );
+  // The panel is the open finding, not a summary of the list.
+  assert.match(html, new RegExp(`data-finding-detail="${FINDING_ID}"`, "u"));
+  assert.match(html, /id="playtesting-finding-detail"/u);
+  // What was observed, and how well the evidence supports it.
+  assert.match(html, /What was observed/u);
+  assert.match(html, /Corroborated/u);
+  // How often it has been seen: the two numbers are read together.
+  assert.match(html, /Episodes affected/u);
+  assert.match(html, /2 of 5/u);
+  // Where the evidence is, and the way to look at it.
+  assert.match(html, /Evidence cited \(1\)/u);
+  assert.match(html, /data-finding-evidence-link/u);
+  // The identity that makes it the same finding in another build.
+  assert.match(html, /Mechanic key/u);
+  assert.match(html, /pit-stop-window/u);
+  assert.match(html, /How this finding is tracked/u);
+});
+
+test("the finding row opens its own detail, and the detail is addressable", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: scope("findings"),
+      workspaces: [
+        { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
+      ],
+      list: {
+        resource: "findings",
+        rows: [finding()],
+        total: 1,
+        nextCursor: null,
+        reviews: [],
+        reviewTotal: 0
+      }
+    })
+  );
+  // The title is the way in: it names the finding in the address.
+  assert.match(html, new RegExp(`data-finding-open="${FINDING_ID}"`, "u"));
+  assert.match(html, /finding=finding-a{64}/u);
+  // The witness is still its own link, so the evidence can be opened directly.
+  assert.match(html, /data-finding-witness/u);
+  assert.match(html, /Open witness/u);
+});
+
+test("a finding that was never measured says so instead of showing a zero", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingView, {
+      scope: parsePlaytestingScope({
+        view: "findings",
+        workspaceId: WORKSPACE,
+        finding: FINDING_ID
+      }),
+      workspaces: [
+        { id: WORKSPACE, baseBranch: "main", enabled: true, agentRoles: null }
+      ],
+      list: {
+        resource: "findings",
+        rows: [],
+        total: 0,
+        nextCursor: null,
+        reviews: [],
+        reviewTotal: 0,
+        selectedFinding: finding({
+          affectedEpisodes: null,
+          totalEligibleEpisodes: null,
+          affectedCohorts: [],
+          lastVerifiedBuild: null
+        })
+      }
+    })
+  );
+  // A count that was never measured is not a zero.
+  assert.doesNotMatch(html, /0 of 0/u);
+  assert.match(html, new RegExp(NOT_OBSERVED_LABEL, "u"));
 });
 
 test("a session id the workspace never recorded is not described as a server fault", () => {

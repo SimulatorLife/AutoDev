@@ -5,6 +5,8 @@ import {
   parsePlaytestingScope,
   playtestingEpisodeHref,
   playtestingFilterHref,
+  playtestingFindingCloseHref,
+  playtestingFindingHref,
   playtestingInspectorBackHref,
   playtestingListHref,
   playtestingPageHref,
@@ -346,6 +348,83 @@ test("a malformed review id is rejected rather than carried into the address", (
   assert.equal(scope.selectedReviewId, null);
   assert.equal(scope.invalidQuery, true);
   assert.doesNotMatch(playtestingListHref(scope), /review=/u);
+});
+
+test("an open finding is address state, and it belongs to the Findings view", () => {
+  const findingId = `finding-${"a".repeat(64)}`;
+  const scope = parsePlaytestingScope({
+    view: "findings",
+    workspaceId: WORKSPACE,
+    finding: findingId
+  });
+  assert.equal(scope.selectedFindingId, findingId);
+
+  // The Findings view keeps the open finding in its own address.
+  const findings = playtestingViewHref(scope, "findings");
+  assert.match(findings, new RegExp(`finding=${findingId}`, "u"));
+
+  // Another view cannot show a finding, so it must not carry the selection.
+  const sessions = playtestingViewHref(scope, "sessions");
+  assert.doesNotMatch(sessions, /finding=/u);
+  assert.equal(
+    parsePlaytestingScope({
+      view: "sessions",
+      workspaceId: WORKSPACE
+    }).selectedFindingId,
+    null
+  );
+});
+
+test("a malformed finding id is rejected rather than carried into the address", () => {
+  const scope = parsePlaytestingScope({
+    view: "findings",
+    workspaceId: WORKSPACE,
+    finding: "not a valid id"
+  });
+  assert.equal(scope.selectedFindingId, null);
+  assert.equal(scope.invalidQuery, true);
+  assert.doesNotMatch(playtestingListHref(scope), /finding=/u);
+});
+
+test("opening a finding from a review closes that review, so one detail is open at a time", () => {
+  const findingId = `finding-${"b".repeat(64)}`;
+  const scope = parsePlaytestingScope({
+    view: "findings",
+    workspaceId: WORKSPACE,
+    review: "discovery-review-abc123"
+  });
+  const href = playtestingFindingHref(scope, findingId);
+  const url = new URL(href, "http://console.test");
+  assert.equal(url.searchParams.get("finding"), findingId);
+  assert.equal(url.searchParams.has("review"), false);
+  // The link lands on the open panel rather than at the top of the list.
+  assert.match(href, /#playtesting-finding-detail$/u);
+});
+
+test("closing a finding keeps the reader's filters and the rest of the address", () => {
+  const findingId = `finding-${"c".repeat(64)}`;
+  const scope = parsePlaytestingScope({
+    view: "findings",
+    workspaceId: WORKSPACE,
+    severity: "major",
+    finding: findingId
+  });
+  const url = new URL(
+    playtestingFindingCloseHref(scope),
+    "http://console.test"
+  );
+  assert.equal(url.searchParams.has("finding"), false);
+  assert.equal(url.searchParams.get("severity"), "major");
+  assert.equal(url.searchParams.get("workspaceId"), WORKSPACE);
+});
+
+test("a finding id that is not a finding is not opened as one", () => {
+  const scope = parsePlaytestingScope({
+    view: "findings",
+    workspaceId: WORKSPACE
+  });
+  const href = playtestingFindingHref(scope, "not-a-finding-id");
+  assert.doesNotMatch(href, /finding=/u);
 });
 
 test("a session search is part of the addressable scope and survives paging", () => {

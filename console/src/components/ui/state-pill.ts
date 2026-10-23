@@ -35,6 +35,13 @@ export const STATE_PILL_TONE_CLASS = {
  *
  * A disabled button keeps the not-allowed cursor: the control is still a
  * target, and saying so is more useful than an arrow that claims it is not.
+ *
+ * `min-h-6` is the 24px floor of WCAG 2.5.8, and it belongs here for the same
+ * reason it belongs on the link chips: this pill is a *button*, not a piece of
+ * prose, and a button is an inline-block box, so `min-height` applies to it and
+ * the floor is real rather than decorative. Without it the pill measured 22px --
+ * `text-xs` on a 16px line, plus `py-0.5` and the border -- and the control
+ * that enables and disables an agent role was the smallest target on the page.
  */
 export const STATE_PILL_BUTTON_CLASS =
-  "whitespace-nowrap rounded border px-2 py-0.5 text-xs font-medium transition-colors cursor-pointer disabled:cursor-not-allowed";
+  "inline-flex min-h-6 items-center whitespace-nowrap rounded border px-2 py-0.5 text-xs font-medium transition-colors cursor-pointer disabled:cursor-not-allowed";

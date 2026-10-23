@@ -1670,6 +1670,7 @@ const SYNTHETIC_FILTER_COLUMNS: readonly (readonly [string, string])[] = [
   ["status", "status"],
   ["gameOutcome", "game_outcome"],
   ["severity", "severity"],
+  ["findingId", "finding_id"],
   ["verificationStage", "verification_stage"],
   ["evidenceStatus", "evidence_status"],
   ["decision", "decision"],
@@ -3172,6 +3173,62 @@ test("filtered episode counts reflect the full 10k population and SQL binds valu
     "workspace-a/game"
   );
   assert.equal(select.searchParams.get("param_buildSha"), BUILD_SHA_A);
+});
+
+test("a finding can be read by its own id, so a link that names it resolves", async () => {
+  const fake = makeClickHouseFetch();
+  const repo = new PlaytestRepository({
+    clickhouseUrl: "http://clickhouse.test:8123",
+    dbName: "test",
+    fetchImpl: fake.fetchImpl
+  });
+  const named = finding();
+  const otherIdentity = buildPlaytestFindingIdentity({
+    workspaceId: "workspace-a/game",
+    mechanicKey: "pit-stop-window",
+    failureSignature: {
+      events: ["pit-stop-requested"],
+      action: "pit-stop",
+      witness: "witness-pit-stop-1"
+    },
+    scope: {
+      scenarioFamily: "tutorial",
+      phase: "phase-2",
+      modality: "headless"
+    }
+  });
+  const otherFingerprint = createHash("sha256")
+    .update(playtestFindingIdentityHashInput(otherIdentity))
+    .digest("hex");
+  const other = finding({
+    identity: otherIdentity,
+    fingerprint: otherFingerprint,
+    findingId: `finding-${otherFingerprint}`,
+    title: "Another finding about the pit-stop window"
+  });
+  await repo.insertFinding("workspace-a/game", named);
+  await repo.insertFinding("workspace-a/game", other);
+
+  const page = await repo.listFindings({
+    workspaceId: "workspace-a/game",
+    findingId: other.findingId
+  });
+  assert.equal(page.total, 1);
+  assert.equal(page.rows.length, 1);
+  assert.equal(page.rows[0]?.findingId, other.findingId);
+
+  // An id that names nothing reads as an empty page, not as another finding.
+  const missing = await repo.listFindings({
+    workspaceId: "workspace-a/game",
+    findingId: `finding-${"0".repeat(64)}`
+  });
+  assert.equal(missing.total, 0);
+
+  // The id is a bound parameter, not a value spliced into the statement.
+  const select = fake.calls.find((url) =>
+    url.searchParams.get("query")?.includes("finding_id = {findingId:String}")
+  )!;
+  assert.equal(select.searchParams.get("param_findingId"), other.findingId);
 });
 
 test("workspace scope and keyset cursors do not expose another workspace or repeat rows", async () => {

@@ -25,7 +25,10 @@ import {
 } from "../../components/forms/SelectChevron.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
-import { SELECT_CONTROL_CLASS, TEXT_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
+import {
+  SELECT_CONTROL_CLASS,
+  TEXT_CONTROL_CLASS
+} from "../../components/ui/field-classes.ts";
 import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
@@ -1023,7 +1026,9 @@ function liveRunStatusLabel(activeCount: number, totalCount: number): string {
   if (activeCount > 0) {
     return `${String(activeCount)} active ${activeCount === 1 ? "run" : "runs"} · view live status`;
   }
-  return totalCount > 0 ? "Most recent run status" : "Live run status";
+  // A workspace with no runs has no status to show, and saying so is more
+  // useful than promising a status that is not there.
+  return totalCount > 0 ? "Most recent run status" : "No runs yet";
 }
 
 /** The tab's own styling: the selected tab is the accent one. */
@@ -1129,7 +1134,11 @@ export function PlaytestingRunDashboard({
               { "aria-hidden": true, className: "text-lg leading-none" },
               "▶"
             ),
-            "Play"
+            // The visible word has to say what the button does. "Play" alone
+            // could have meant play the game, and the button's accessible name
+            // said something else, so a sighted reader and a screen reader
+            // were being told two different things by the same control.
+            "Start playtest"
           ),
           React.createElement(
             "dialog",

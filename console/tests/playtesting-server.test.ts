@@ -11,6 +11,7 @@ import {
 
 import {
   fetchPlaytestingEpisode,
+  fetchPlaytestingFinding,
   fetchPlaytestingFrame,
   fetchPlaytestingHumanValidation,
   fetchPlaytestingPage,
@@ -299,6 +300,32 @@ test("Playtesting page fetch sends server-bound identity and validates keyset to
   assert.equal(url.searchParams.get("cursor"), "next-keyset");
   assert.equal(authorization, `Bearer ${config.serviceToken}`);
   assert.equal(actor, "autodev-local");
+});
+
+test("a finding is read by id, so a link that names it resolves to that finding", async () => {
+  const findingId = `finding-${"a".repeat(64)}`;
+  let requested = "";
+  const result = await fetchPlaytestingFinding(workspaceId, findingId, config, {
+    fetchImpl: (async (input) => {
+      requested = String(input);
+      return response({
+        schema: "autodev-control-playtesting-page-v1",
+        workspaceId,
+        resource: "findings",
+        readOnly: true,
+        page: { rows: [], total: 0, nextCursor: null }
+      });
+    }) as typeof fetch
+  });
+  assert.equal(result.kind, "ok");
+  if (result.kind !== "ok") return;
+  // The read names the finding rather than asking for the first page.
+  const url = new URL(requested);
+  assert.equal(url.pathname, "/control/playtesting/findings");
+  assert.equal(url.searchParams.get("findingId"), findingId);
+  assert.equal(url.searchParams.get("workspaceId"), workspaceId);
+  // A finding that does not exist reads as no such finding, not as an error.
+  assert.equal(result.data, null);
 });
 
 test("Playtesting page rejects a response for another workspace rather than rendering its rows", async () => {
