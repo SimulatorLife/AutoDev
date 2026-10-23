@@ -453,6 +453,52 @@ test("a repeated link names the row it belongs to", () => {
 });
 
 /**
+ * The count a sighted operator can read is information a screen reader must be
+ * able to hear.
+ *
+ * The sidebar shows each section's count in a badge beside its name, so
+ * "Providers" is visibly "Providers 3". The link's accessible name has to be
+ * *stated* rather than taken from its content, because in the rail the label
+ * and the badge are both hidden and a content-based name would be empty. But a
+ * stated name that stops at the section name drops the count: the operator can
+ * see the "3" and a screen reader hears nothing, which is exactly the gap
+ * recognition-over-recall is about.
+ */
+test("a navigation link names the count it shows", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(AppNav, {
+      activeSection: "Agents",
+      counts: { Agents: 8, MCPs: 5 }
+    })
+  );
+
+  const agents = markup.match(/<a\b[^>]*data-nav-item="agents"[^>]*>/u)?.[0];
+  assert.ok(agents, "the agents link must be rendered");
+  assert.match(
+    agents,
+    /aria-label="Agents \(8\)"/u,
+    "the count the badge shows must be in the link's accessible name"
+  );
+  assert.match(
+    agents,
+    /title="Agents \(8\)"/u,
+    "the name and the tooltip must say the same thing"
+  );
+
+  const mcps = markup.match(/<a\b[^>]*data-nav-item="mcps"[^>]*>/u)?.[0];
+  assert.ok(mcps, "the MCPs link must be rendered");
+  assert.match(mcps, /aria-label="MCPs \(5\)"/u);
+
+  const skills = markup.match(/<a\b[^>]*data-nav-item="skills"[^>]*>/u)?.[0];
+  assert.ok(skills, "the skills link must be rendered");
+  assert.match(
+    skills,
+    /aria-label="Skills"/u,
+    "a section with no count keeps the plain name"
+  );
+});
+
+/**
  * A tab and a top-level page can share a label.
  *
  * The "Tools" tab on an MCP server and the Tools catalog are two different

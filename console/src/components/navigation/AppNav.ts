@@ -302,8 +302,17 @@ function renderNavItem(
   const icon = navIcon(section);
   const labelProps: NavigationLinkProps = {
     href,
-    // The section name stays the link's accessible name in both modes.
-    "aria-label": section,
+    // The section name stays the link's accessible name in both modes, and the
+    // count joins it.
+    //
+    // The name has to be stated rather than taken from the content, because in
+    // the rail the label and its badge are both hidden -- a content-based name
+    // would be empty there. But a name that stops at the section name drops
+    // the count: the badge is visible beside "Providers" in the expanded
+    // navigation, and the operator can read "3" there while a screen reader
+    // hears nothing. The `title` already carried the count, so the name and
+    // the tooltip say the same thing.
+    "aria-label": count === undefined ? section : section + " (" + count + ")",
     "aria-current": isActive ? "page" : undefined,
     "data-nav-item": section.toLowerCase(),
     title: count === undefined ? section : section + " (" + count + ")",
