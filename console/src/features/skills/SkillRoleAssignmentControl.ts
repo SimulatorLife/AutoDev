@@ -58,7 +58,10 @@ export function SkillRoleAssignmentControl({
           label: role,
           defaultChecked: assigned.has(role),
           onChange: (event) => event.currentTarget.form?.requestSubmit(),
-          labelClassName: "gap-1.5 py-1 text-xs select-none",
+          // The gap belongs to the shared checkbox: the label row and the box
+          // are one control, and a caller that restates the gap would be
+          // writing a second spelling of the same relationship.
+          labelClassName: "py-1 text-xs select-none",
           labelAttributes: { "data-skill-role-option": role },
           dataAttributes: { "data-submit-on-change": "true" }
         })

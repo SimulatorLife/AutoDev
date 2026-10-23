@@ -35,14 +35,24 @@ export interface CheckboxFieldProps {
   readonly name: string;
   /** The visible label, which is also the control's accessible name. */
   readonly label: string;
-  /** DOM id, required when one control repeats on a page. */
+  /**
+   * DOM id for the control.
+   *
+   * It is optional and the caller supplies it only when a control needs to be
+   * addressed from outside -- a form's confirmation box, say. A derived id
+   * would collide: the Skills page renders one checkbox per assignable role
+   * under the same field name, so `checkbox-roles` would be on the page
+   * several times over, and a duplicated id makes the label's `for` point at
+   * the first control rather than the one it names.
+   */
   readonly id?: string | undefined;
   /** The value the control submits. */
   readonly value?: string | undefined;
   readonly defaultChecked?: boolean | undefined;
   readonly checked?: boolean | undefined;
   readonly onChange?:
-    ((event: React.ChangeEvent<HTMLInputElement>) => void) | undefined;
+    | ((event: React.ChangeEvent<HTMLInputElement>) => void)
+    | undefined;
   readonly disabled?: boolean | undefined;
   /** The control must be checked before the form submits. */
   readonly required?: boolean | undefined;
@@ -62,9 +72,12 @@ export interface CheckboxFieldProps {
   /**
    * Extra classes for the label row.
    *
-   * The label owns the size and spacing of the target, so a caller that needs a
-   * different weight or density sets it here rather than restating the chrome
-   * of the control itself.
+   * The label owns the size, the gap and the spacing of the target, so a
+   * caller that needs a different weight or density sets it here rather than
+   * restating the chrome of the control itself. The gap is not among the
+   * things a caller restates: two gap utilities in one class list resolve by
+   * stylesheet order rather than by intent, so the row's spacing belongs to
+   * this component and only to it.
    */
   readonly labelClassName?: string | undefined;
   /**
@@ -99,19 +112,22 @@ export function CheckboxField({
   testId,
   dataAttributes
 }: CheckboxFieldProps): React.JSX.Element {
-  const controlId = id ?? `checkbox-${name}`;
   const started = align === "start";
   return React.createElement(
     "label",
     {
-      htmlFor: controlId,
-      className: `flex min-h-6 gap-2 text-fg-secondary ${
-        started ? "items-start" : "items-center"
-      } ${labelClassName ?? ""}`.trim(),
+      // The input is nested, so the label already names it. `for` is only
+      // added when the control has an id of its own, because a `for` that
+      // points at a duplicated id names the wrong control.
+      ...(id === undefined ? {} : { htmlFor: id }),
+      className:
+        `flex min-h-6 gap-2 text-fg-secondary ${
+          started ? "items-start" : "items-center"
+        } ${labelClassName ?? ""}`.trim(),
       ...labelAttributes
     },
     React.createElement("input", {
-      id: controlId,
+      ...(id === undefined ? {} : { id }),
       type: "checkbox",
       name,
       ...(value === undefined ? {} : { value }),

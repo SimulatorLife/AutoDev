@@ -19,8 +19,13 @@ import { useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components/forms/Button.ts";
+import {
+  SELECT_CONTROL_BLOCK_WRAPPER_CLASS,
+  SelectChevron
+} from "../../components/forms/SelectChevron.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+import { SELECT_CONTROL_CLASS, TEXT_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
 import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
@@ -552,33 +557,37 @@ function VisualPlaytestLaunchCockpit({
             "Target Selector"
           ),
           React.createElement(
-            "select",
-            {
-              id: "visual-target-select",
-              value: primaryTarget?.targetId ?? "",
-              disabled: launchRecovery.pendingLaunch !== null,
-              onChange: (e: React.ChangeEvent<HTMLSelectElement>) =>
-                setSelectedTargetId(e.target.value),
-              className:
-                "w-full rounded-lg border border-border bg-surface px-3.5 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent",
-              "data-testid": "visual-target-select"
-            },
-            ...supportedTargets.map((entry) =>
-              React.createElement(
-                "option",
-                {
-                  key: entry.target.targetId,
-                  value: entry.target.targetId
-                },
-                entry.target.name +
-                  " (" +
-                  entry.target.entryUrl +
-                  ") · " +
-                  entry.target.targetId +
-                  " rev " +
-                  String(entry.target.revision)
+            "span",
+            { className: SELECT_CONTROL_BLOCK_WRAPPER_CLASS },
+            React.createElement(
+              "select",
+              {
+                id: "visual-target-select",
+                value: primaryTarget?.targetId ?? "",
+                disabled: launchRecovery.pendingLaunch !== null,
+                onChange: (e: React.ChangeEvent<HTMLSelectElement>) =>
+                  setSelectedTargetId(e.target.value),
+                className: `${SELECT_CONTROL_CLASS} w-full`,
+                "data-testid": "visual-target-select"
+              },
+              ...supportedTargets.map((entry) =>
+                React.createElement(
+                  "option",
+                  {
+                    key: entry.target.targetId,
+                    value: entry.target.targetId
+                  },
+                  entry.target.name +
+                    " (" +
+                    entry.target.entryUrl +
+                    ") · " +
+                    entry.target.targetId +
+                    " rev " +
+                    String(entry.target.revision)
+                )
               )
-            )
+            ),
+            React.createElement(SelectChevron)
           )
         )
       : null,
@@ -595,32 +604,36 @@ function VisualPlaytestLaunchCockpit({
             "Decision backend"
           ),
           React.createElement(
-            "select",
-            {
-              id: "visual-policy-select",
-              value: selectedPolicyId,
-              disabled: launchRecovery.pendingLaunch !== null,
-              onChange: (e: React.ChangeEvent<HTMLSelectElement>) =>
-                setSelectedPolicyId(e.target.value as PlaytestVisualPolicyId),
-              className:
-                "w-full rounded-lg border border-border bg-surface px-3.5 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent",
-              "data-testid": "visual-policy-select"
-            },
-            ...policyOptions.map((policy) =>
-              React.createElement(
-                "option",
-                {
-                  key: policy.policyId,
-                  value: policy.policyId,
-                  disabled: policy.status !== "ready"
-                },
-                policyLabel(policy.policyId) +
-                  (policy.status === "ready"
-                    ? ""
-                    : " · unavailable: " +
-                      (policy.reasons[0]?.message ?? "not reachable"))
+            "span",
+            { className: SELECT_CONTROL_BLOCK_WRAPPER_CLASS },
+            React.createElement(
+              "select",
+              {
+                id: "visual-policy-select",
+                value: selectedPolicyId,
+                disabled: launchRecovery.pendingLaunch !== null,
+                onChange: (e: React.ChangeEvent<HTMLSelectElement>) =>
+                  setSelectedPolicyId(e.target.value as PlaytestVisualPolicyId),
+                className: `${SELECT_CONTROL_CLASS} w-full`,
+                "data-testid": "visual-policy-select"
+              },
+              ...policyOptions.map((policy) =>
+                React.createElement(
+                  "option",
+                  {
+                    key: policy.policyId,
+                    value: policy.policyId,
+                    disabled: policy.status !== "ready"
+                  },
+                  policyLabel(policy.policyId) +
+                    (policy.status === "ready"
+                      ? ""
+                      : " · unavailable: " +
+                        (policy.reasons[0]?.message ?? "not reachable"))
+                )
               )
-            )
+            ),
+            React.createElement(SelectChevron)
           ),
           React.createElement(
             "p",
@@ -881,8 +894,11 @@ function VisualPlaytestLaunchCockpit({
         disabled: launchRecovery.pendingLaunch !== null,
         placeholder:
           "e.g., Focus on vehicle cornering, recovery from wall hits, and finish line detection",
-        className:
-          "w-full rounded-lg border border-border bg-surface px-3.5 py-2 text-sm text-fg placeholder:text-fg-muted/60 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+        // The shared text control, not a second spelling of it. This one wore
+        // the playtesting strand's own chrome, with its own focus treatment --
+        // and the product has exactly one canonical focus ring, defined once in
+        // `app/globals.css`.
+        className: `${TEXT_CONTROL_CLASS} w-full py-2 leading-relaxed`
       })
     ),
     React.createElement(

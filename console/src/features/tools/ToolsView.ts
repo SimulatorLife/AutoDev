@@ -557,49 +557,53 @@ export function ToolsView({
       coverageBanner(coverage, validity)
     ),
     React.createElement(
-      "h2",
-      { className: `mb-3 ${SECTION_HEADING_CLASS}` },
-      // Every other catalog page names the section its table belongs to --
-      // "Configured Agents", "Agent Skills", "Available Prompts & Commands",
-      // "Evaluation history". This page was the only one whose table arrived
-      // with no heading at all, so the operator scanning the page by its
-      // outline found nothing between the page title and the table.
-      "Tool catalog"
-    ),
-    React.createElement(
-      "div",
-      { className: `flex items-center justify-between ${MUTED_META_CLASS}` },
+      "section",
+      { className: "flex flex-col gap-3" },
       React.createElement(
-        "span",
-        null,
-        validity === "valid"
-          ? `Showing ${filtered.length} of ${tools.length} tool entries${
-              unobservedCount > 0
-                ? ` (${unobservedCount} rendered as ${NOT_OBSERVED_LABEL})`
-                : ""
-            }`
-          : "Catalog not observed; no tools available."
+        "h2",
+        { className: SECTION_HEADING_CLASS },
+        // Every other catalog page names the section its table belongs to --
+        // "Configured Agents", "Agent Skills", "Available Prompts & Commands",
+        // "Evaluation history". This page was the only one whose table arrived
+        // with no heading at all, so the operator scanning the page by its
+        // outline found nothing between the page title and the table.
+        "Tool catalog"
       ),
       React.createElement(
-        NavigationLink,
-        {
-          href: usageLink,
-          className: ACTION_LINK_CLASS,
-          dataAttributes: { "data-tools-usage-link": "true" }
-        },
-        "View tool-call usage →"
-      )
-    ),
-    React.createElement<DataTableProps<ToolCatalogItem>>(DataTable, {
-      data: filtered,
-      columns,
-      keyExtractor: (tool) => toolId(tool),
-      emptyMessage:
-        validity === "valid"
-          ? coverage === "complete"
-            ? "No tool entries match the active filters."
-            : "No tool entries were observed in the composite catalog."
-          : "The Tools catalog source is not observed."
-    })
+        "div",
+        { className: `flex items-center justify-between ${MUTED_META_CLASS}` },
+        React.createElement(
+          "span",
+          null,
+          validity === "valid"
+            ? `Showing ${filtered.length} of ${tools.length} tool entries${
+                unobservedCount > 0
+                  ? ` (${unobservedCount} rendered as ${NOT_OBSERVED_LABEL})`
+                  : ""
+              }`
+            : "Catalog not observed; no tools available."
+        ),
+        React.createElement(
+          NavigationLink,
+          {
+            href: usageLink,
+            className: ACTION_LINK_CLASS,
+            dataAttributes: { "data-tools-usage-link": "true" }
+          },
+          "View tool-call usage →"
+        )
+      ),
+      React.createElement<DataTableProps<ToolCatalogItem>>(DataTable, {
+        data: filtered,
+        columns,
+        keyExtractor: (tool) => toolId(tool),
+        emptyMessage:
+          validity === "valid"
+            ? coverage === "complete"
+              ? "No tool entries match the active filters."
+              : "No tool entries were observed in the composite catalog."
+            : "The Tools catalog source is not observed."
+      })
+    )
   );
 }

@@ -1,8 +1,11 @@
 import React from "react";
 
-import { Icon } from "../icons/Icon.ts";
 import { SELECT_CONTROL_CLASS } from "../ui/field-classes.ts";
 import { MUTED_META_CLASS } from "../ui/text-classes.ts";
+import {
+  SELECT_CONTROL_WRAPPER_CLASS,
+  SelectChevron
+} from "./SelectChevron.ts";
 
 /**
  * The Console's single select control.
@@ -147,7 +150,7 @@ export function SelectField({
     ),
     React.createElement(
       "span",
-      { className: "relative inline-flex min-w-0 max-w-full items-center" },
+      { className: SELECT_CONTROL_WRAPPER_CLASS },
       React.createElement(
         "select",
         {
@@ -190,22 +193,9 @@ export function SelectField({
           )
         )
       ),
-      // Pointer-events-none so the decorative chevron never intercepts the
-      // click that opens the native list.
-      React.createElement(
-        "span",
-        {
-          className:
-            "pointer-events-none absolute right-2 flex items-center text-fg-muted",
-          "aria-hidden": true
-        },
-        // 12px rather than the set's 16px default: the chevron is part of the
-        // control's chrome, sized to the 34px control rather than to a
-        // product icon. Stroke weight stays at the set's 2 -- it used to be
-        // hand-set to 2.5 here, which made this the one visibly heavier mark
-        // in the product.
-        React.createElement(Icon, { name: "chevronDown", size: 12 })
-      )
+      // The chevron is the shared one, so a select that wears the shared chrome
+      // outside this component draws the same indicator.
+      React.createElement(SelectChevron)
     ),
     describedBy === undefined
       ? null

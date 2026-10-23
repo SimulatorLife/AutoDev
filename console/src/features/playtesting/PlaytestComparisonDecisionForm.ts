@@ -4,6 +4,14 @@ import type { PlaytestComparison } from "@simulatorlife/autodev-core";
 import React, { useState } from "react";
 
 import { Button } from "../../components/forms/Button.ts";
+import {
+  SELECT_CONTROL_BLOCK_WRAPPER_CLASS,
+  SelectChevron
+} from "../../components/forms/SelectChevron.ts";
+import {
+  SELECT_CONTROL_CLASS,
+  TEXT_CONTROL_CLASS
+} from "../../components/ui/field-classes.ts";
 
 export interface PlaytestComparisonDecisionFormProps {
   readonly workspaceId: string;
@@ -119,27 +127,32 @@ export function PlaytestComparisonDecisionForm({
             { className: "grid gap-1 text-xs" },
             React.createElement("span", {}, "Disposition"),
             React.createElement(
-              "select",
-              {
-                value: disposition,
-                disabled: pending,
-                onChange: (event: React.ChangeEvent<HTMLSelectElement>) => {
-                  setDisposition(
-                    event.currentTarget.value as "promote" | "hold"
-                  );
-                  setConfirming(false);
-                  setMessage(null);
+              "span",
+              { className: SELECT_CONTROL_BLOCK_WRAPPER_CLASS },
+              React.createElement(
+                "select",
+                {
+                  value: disposition,
+                  disabled: pending,
+                  onChange: (event: React.ChangeEvent<HTMLSelectElement>) => {
+                    setDisposition(
+                      event.currentTarget.value as "promote" | "hold"
+                    );
+                    setConfirming(false);
+                    setMessage(null);
+                  },
+                  className: `${SELECT_CONTROL_CLASS} w-full`
                 },
-                className: "rounded border border-border bg-surface px-2 py-1"
-              },
-              canPromote
-                ? React.createElement(
-                    "option",
-                    { value: "promote" },
-                    "Promote eligible candidate"
-                  )
-                : null,
-              React.createElement("option", { value: "hold" }, "Hold")
+                canPromote
+                  ? React.createElement(
+                      "option",
+                      { value: "promote" },
+                      "Promote eligible candidate"
+                    )
+                  : null,
+                React.createElement("option", { value: "hold" }, "Hold")
+              ),
+              React.createElement(SelectChevron)
             )
           ),
           React.createElement(
@@ -157,7 +170,7 @@ export function PlaytestComparisonDecisionForm({
                 setConfirming(false);
                 setMessage(null);
               },
-              className: "rounded border border-border bg-surface px-2 py-1",
+              className: `${TEXT_CONTROL_CLASS} w-full py-2 leading-relaxed`,
               "aria-label": "Owner decision reason"
             })
           ),

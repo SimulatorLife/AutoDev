@@ -14,12 +14,19 @@ import { useRouter } from "next/navigation";
 import React, { useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components/forms/Button.ts";
+import {
+  SELECT_CONTROL_BLOCK_WRAPPER_CLASS,
+  SelectChevron
+} from "../../components/forms/SelectChevron.ts";
 import { NESTED_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import {
   NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
-import { TEXT_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
+import {
+  SELECT_CONTROL_CLASS,
+  TEXT_CONTROL_CLASS
+} from "../../components/ui/field-classes.ts";
 import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
@@ -538,48 +545,60 @@ function RunRequestForm({
                     </legend>
                     <label className="flex flex-col gap-1 text-xs text-fg-muted">
                       Scenario
-                      <select
-                        className={TEXT_CONTROL_CLASS}
-                        disabled={pending}
-                        name={`scenario-${row}`}
-                        value={assignment.scenarioId}
-                        onChange={(event) =>
-                          changeScenario(
-                            assignment.id,
-                            event.currentTarget.value
-                          )
-                        }
-                      >
-                        {Array.from(
-                          new Set(
-                            runnableAssignments.map((item) => item.scenarioId)
-                          ),
-                          (scenarioId) => (
-                            <option key={scenarioId} value={scenarioId}>
-                              {scenarioId}
-                            </option>
-                          )
-                        )}
-                      </select>
+                      <span className={SELECT_CONTROL_BLOCK_WRAPPER_CLASS}>
+                        <select
+                          className={`${SELECT_CONTROL_CLASS} w-full`}
+                          disabled={pending}
+                          name={`scenario-${row}`}
+                          value={assignment.scenarioId}
+                          onChange={(event) =>
+                            changeScenario(
+                              assignment.id,
+                              event.currentTarget.value
+                            )
+                          }
+                        >
+                          {Array.from(
+                            new Set(
+                              runnableAssignments.map((item) => item.scenarioId)
+                            ),
+                            (scenarioId) => (
+                              <option key={scenarioId} value={scenarioId}>
+                                {scenarioId}
+                              </option>
+                            )
+                          )}
+                        </select>
+                        <SelectChevron />
+                      </span>
                     </label>
                     <label className="flex flex-col gap-1 text-xs text-fg-muted">
                       Policy and cohort
-                      <select
-                        className={TEXT_CONTROL_CLASS}
-                        disabled={pending}
-                        name={`policy-${row}`}
-                        value={assignment.policyId}
-                        onChange={(event) =>
-                          changePolicy(assignment.id, event.currentTarget.value)
-                        }
-                      >
-                        {optionsForScenario.map((option) => (
-                          <option key={option.policyId} value={option.policyId}>
-                            {option.policyId} · {option.cohort} ·{" "}
-                            {option.strategy}
-                          </option>
-                        ))}
-                      </select>
+                      <span className={SELECT_CONTROL_BLOCK_WRAPPER_CLASS}>
+                        <select
+                          className={`${SELECT_CONTROL_CLASS} w-full`}
+                          disabled={pending}
+                          name={`policy-${row}`}
+                          value={assignment.policyId}
+                          onChange={(event) =>
+                            changePolicy(
+                              assignment.id,
+                              event.currentTarget.value
+                            )
+                          }
+                        >
+                          {optionsForScenario.map((option) => (
+                            <option
+                              key={option.policyId}
+                              value={option.policyId}
+                            >
+                              {option.policyId} · {option.cohort} ·{" "}
+                              {option.strategy}
+                            </option>
+                          ))}
+                        </select>
+                        <SelectChevron />
+                      </span>
                     </label>
                     <p className={`${MUTED_META_CLASS} md:col-span-2`}>
                       Family {selected.scenarioFamily} · policy version{" "}
@@ -605,26 +624,29 @@ function RunRequestForm({
                           }}
                         />
                       ) : (
-                        <select
-                          className={TEXT_CONTROL_CLASS}
-                          disabled={pending}
-                          name={`seed-${row}`}
-                          required
-                          value={assignment.seed}
-                          onChange={(event) => {
-                            const seed = event.currentTarget.value;
-                            updateAssignment(assignment.id, (current) => ({
-                              ...current,
-                              seed
-                            }));
-                          }}
-                        >
-                          {admissibleSeeds.map((entry) => (
-                            <option key={entry.seed} value={entry.seed}>
-                              {entry.seed} · {entry.purpose}
-                            </option>
-                          ))}
-                        </select>
+                        <span className={SELECT_CONTROL_BLOCK_WRAPPER_CLASS}>
+                          <select
+                            className={`${SELECT_CONTROL_CLASS} w-full`}
+                            disabled={pending}
+                            name={`seed-${row}`}
+                            required
+                            value={assignment.seed}
+                            onChange={(event) => {
+                              const seed = event.currentTarget.value;
+                              updateAssignment(assignment.id, (current) => ({
+                                ...current,
+                                seed
+                              }));
+                            }}
+                          >
+                            {admissibleSeeds.map((entry) => (
+                              <option key={entry.seed} value={entry.seed}>
+                                {entry.seed} · {entry.purpose}
+                              </option>
+                            ))}
+                          </select>
+                          <SelectChevron />
+                        </span>
                       )}
                     </label>
                     <label className="flex flex-col gap-1 text-xs text-fg-muted">
