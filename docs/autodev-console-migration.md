@@ -130,6 +130,18 @@ The acceptance's own clipped-content check found one real thing before it ran ou
 
 Two things followed. The field now carries its value in a `title`, which is how a truncated value stays reachable in this Console. And the acceptance's clipped-content check was reporting a form control's own value as clipped layout content: an `<input>` reports its value's width as its scroll width, so any filled field narrower than its value read as a clip -- even though the value is the operator's own editable text, and focusing the field brings all of it into view and takes all of it when selected. A `<select>` and a `<textarea>` scroll already and never reached the check at all.
 
+## The focus after a navigation
+
+Every navigation in the Console is an in-place one, and the focus the operator had on the link they activated was dropped to the document body when the page changed. Measured in Chromium: after activating a navigation link, `document.activeElement` was `BODY`, and the next Tab landed on "Skip to content" -- so the operator walked the whole fourteen-item navigation again before reaching the page they asked for. Nothing announced the change either: the only live region in the product is the form-feedback toast, and it was empty.
+
+The focus now moves to the new page's heading. A focused heading is read out, so the page change is announced without a second live region saying it twice, and the next Tab lands in the page's content.
+
+Two things decided where the handoff lives. The page frame is the wrong home: the navigation replaces the page segment, so the component that rendered the heading does not survive it, and a component that has to remember the previous route cannot tell a navigation from the first load. The navigation owner is the right home -- it is mounted in the root layout, and a layout is the one segment an in-place navigation does not replace -- and it already owned the focus restoration for a form navigation, so the two now agree on the order: a form navigation restores the focus to the field that was submitted, and that field wins over the heading.
+
+Two guards keep the handoff out of the way: the first route is not a navigation, so the initial load never steals a focus the operator had already put in a field; and a focus that is still somewhere deliberate is left alone.
+
+`console/e2e/navigation-acceptance.spec.ts` drives it in a browser -- the heading is focused after an in-place navigation, and the next Tab lands inside the page's content rather than at the top of the document.
+
 ## The phone-width sweep
 
 All fourteen canonical routes were measured at 390x844 in Chromium against the synthetic Control API fixture. The structural result was clean: **zero document horizontal overflow and zero elements painted wider than the viewport** on every route, and the tables scroll inside their own regions as the contract intends. The one target that failed the 24px floor was the shared state-coloured button -- the pill that enables and disables an agent role -- which measured **22px**: `text-xs` on a 16px line, plus `py-0.5` and the border. It is the smallest target on the Agents page and it is the control an operator reaches for.

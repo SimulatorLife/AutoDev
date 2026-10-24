@@ -249,3 +249,36 @@ test("a wide screen keeps the navigation as a column beside the page", async ({
   expect(contentWidth).toBeLessThan(WIDE_WIDTH);
   expect(await navigationWidth(page)).toBeGreaterThan(200);
 });
+
+test("an in-place navigation moves the focus to the new page's heading", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: WIDE_WIDTH, height: 844 });
+  await openConsole(page, "/agents");
+
+  // Every navigation in the Console is an in-place one, and the focus the
+  // operator had on the link they activated was dropped to the document body
+  // when the page changed. The next Tab then started at the skip link and
+  // walked the whole navigation again before reaching the page they asked
+  // for, and a screen reader was told nothing at all.
+  const usage = page.locator(NAV_ITEM);
+  await usage.focus();
+  await usage.press("Enter");
+  await page.waitForURL(USAGE_URL);
+  await waitForPageContent(page);
+
+  // The focus is on the new page's heading: a focused heading is read out, so
+  // the page change is announced without a second live region saying it twice.
+  await expect(page.locator("main h1")).toBeFocused();
+  await expect(page.locator("main h1")).toHaveText("Usage");
+
+  // And the next Tab lands in the page's content rather than at the top of
+  // the document.
+  await page.keyboard.press("Tab");
+  const insideMain = await page.evaluate(() => {
+    const active = document.activeElement;
+    const main = document.querySelector("#main-content");
+    return active !== null && main !== null && main.contains(active);
+  });
+  expect(insideMain).toBe(true);
+});

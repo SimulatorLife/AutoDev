@@ -46,7 +46,14 @@ test("the pending shell keeps the active shell and announces pending data", () =
   const markup = renderToStaticMarkup(
     React.createElement(ConsoleLoadingPage, { activeSection: "Providers" })
   );
-  assert.match(markup, /<h1[^>]*title="Providers">Providers<\/h1>/u);
+  // The heading carries the section as its title and its text. The title is
+  // not the last attribute on the element -- the heading is focusable, so it
+  // carries a tabindex as well -- and the property here is that the pending
+  // shell keeps the heading, not where the attributes sit.
+  assert.match(
+    markup,
+    /<h1\b[^>]*\btitle="Providers"[^>]*>Providers<\/h1>/u
+  );
   assert.match(
     markup,
     /<a\b(?=[^>]*data-nav-item="providers")(?=[^>]*aria-current="page")[^>]*>/u

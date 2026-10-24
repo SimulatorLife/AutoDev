@@ -12,6 +12,7 @@ import {
   PRIMARY_BUTTON_CLASS,
   SECONDARY_BUTTON_CLASS
 } from "../src/components/forms/Button.ts";
+import { AppShell } from "../src/components/layout/AppShell.ts";
 import { AppNav } from "../src/components/navigation/AppNav.ts";
 import {
   STATE_PILL_BUTTON_CLASS,
@@ -453,6 +454,37 @@ test("a repeated link names the row it belongs to", () => {
 });
 
 /**
+ * The page heading can receive the focus a navigation hands it.
+ *
+ * Every navigation in the Console is an in-place one, and the focus the
+ * operator had on the link they activated was dropped to the document body when
+ * the page changed: the next Tab started at the skip link and walked the whole
+ * navigation again, and a screen reader was told nothing at all. The navigation
+ * owner moves the focus to the new page's heading, which is also how the page
+ * change is announced -- a focused heading is read out.
+ *
+ * The heading has to be focusable for that, and out of the tab order so it is
+ * never a stop the operator has to walk past. The browser's own behaviour is
+ * covered by the navigation acceptance; this pins the affordance the handoff
+ * depends on.
+ */
+test("the page heading is focusable and out of the tab order", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(AppShell, { activeSection: "Agents" })
+  );
+  assert.match(
+    markup,
+    /<h1[^>]*tabindex="-1"/u,
+    "the heading must be able to receive the focus a navigation hands it"
+  );
+  assert.match(
+    markup,
+    /<main[^>]*id="main-content"/u,
+    "the page's content region is what the focus lands inside"
+  );
+});
+
+/**
  * The count a sighted operator can read is information a screen reader must be
  * able to hear.
  *
@@ -471,7 +503,6 @@ test("a navigation link names the count it shows", () => {
       counts: { Agents: 8, MCPs: 5 }
     })
   );
-
   const agents = markup.match(/<a\b[^>]*data-nav-item="agents"[^>]*>/u)?.[0];
   assert.ok(agents, "the agents link must be rendered");
   assert.match(

@@ -37,6 +37,12 @@ export function AppShell({
   actions,
   description
 }: AppShellProps): React.JSX.Element {
+  /**
+   * The heading is focusable so it can receive the focus after an in-place
+   * navigation -- the navigation owner moves it there, because a focused
+   * heading is also how the new page is announced -- and it is out of the tab
+   * order so it is never a stop the operator has to walk past.
+   */
   return React.createElement(
     "div",
     {
@@ -101,7 +107,11 @@ export function AppShell({
               // its hover title.
               {
                 className: "text-lg font-bold text-fg truncate",
-                title: activeSection
+                title: activeSection,
+                // Focusable so it can receive the focus after an in-place
+                // navigation, and out of the tab order so it is never a stop
+                // the operator has to walk past.
+                tabIndex: -1
               },
               activeSection
             )

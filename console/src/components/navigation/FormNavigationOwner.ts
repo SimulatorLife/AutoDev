@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation.js";
+import { usePathname, useRouter } from "next/navigation.js";
 import React from "react";
 
 import {
@@ -1068,6 +1068,45 @@ export function FormNavigationOwner({
   );
   const [isNavigationPending, startTransition] = React.useTransition();
   const observedNavigationRef = React.useRef(false);
+
+  /**
+   * Move the focus to the new page's heading after an in-place navigation.
+   *
+   * Every navigation in the Console is an in-place one, and the focus the
+   * operator had on the link they activated was dropped to the document body
+   * when the page changed: the next Tab started at the skip link and walked the
+   * whole navigation again before reaching the page they asked for, and a
+   * screen reader was told nothing at all. Moving the focus to the heading is
+   * also the announcement -- a focused heading is read out -- so no separate
+   * live region is needed and nothing is said twice.
+   *
+   * This belongs here rather than in the page frame because the page frame is
+   * replaced by the navigation: the heading it renders survives, but the
+   * component that rendered it does not, so a component that has to remember
+   * the previous route cannot tell a navigation from the first load. This
+   * island is mounted in the root layout, and a layout is the one segment an
+   * in-place navigation does not replace.
+   *
+   * Two guards keep it out of the way. The first route is not a navigation --
+   * taking the focus on the initial load would steal it from a field the
+   * operator had already put it in. And a focus that is still somewhere
+   * deliberate is left alone: a form navigation restores the focus to the field
+   * that was submitted, and that field must win over the heading.
+   */
+  const currentPathname = usePathname();
+  const isFirstPathname = React.useRef(true);
+  React.useEffect(() => {
+    if (isFirstPathname.current) {
+      isFirstPathname.current = false;
+      return;
+    }
+    const active = document.activeElement;
+    if (active !== null && active !== document.body && active.isConnected) {
+      return;
+    }
+    const heading = document.querySelector<HTMLHeadingElement>("main h1");
+    heading?.focus({ preventScroll: true });
+  }, [currentPathname]);
 
   const publishFeedback = React.useCallback(
     (status: FormNavigationStatus, message: string) => {
