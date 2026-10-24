@@ -43,6 +43,18 @@ import { HookEventEditor } from "./HookEventEditor.ts";
 export type HookDeclarationSaveOutcome =
   "conflict" | "validation" | "apply-failed" | "failed";
 
+/**
+ * Why the applied projection could not be read.
+ *
+ * The declaration and the projection are two different reads, so one of them
+ * failing says nothing about the other. The page therefore keeps the reason
+ * rather than reducing the failure to "not observed".
+ */
+export interface HooksAppliedUnavailable {
+  readonly code: string;
+  readonly message: string;
+}
+
 export interface HooksViewProps {
   readonly hooks: readonly HookDefinition[];
   readonly sourceValidity?: boolean | null | undefined;
@@ -79,6 +91,10 @@ export interface HooksViewProps {
    * different state from a projection that holds no hooks.
    */
   readonly applied: ControlApiHooksAppliedResponse | null;
+  /**
+   * Why the applied projection could not be read, when it could not be read.
+   */
+  readonly appliedUnavailable?: HooksAppliedUnavailable | null | undefined;
   readonly saveOutcome?: HookDeclarationSaveOutcome | undefined;
 }
 
@@ -136,7 +152,8 @@ function originLabel(origin: HookDefinition["origin"]): string {
  * renders it rather than deriving one.
  */
 function appliedPanel(
-  applied: ControlApiHooksAppliedResponse | null
+  applied: ControlApiHooksAppliedResponse | null,
+  unavailable: HooksAppliedUnavailable | null
 ): React.JSX.Element {
   if (applied === null) {
     return React.createElement(
@@ -150,7 +167,23 @@ function appliedPanel(
         "p",
         { className: MUTED_META_CLASS },
         "The Runtime's applied hook projection could not be read, so nothing is claimed about what it published."
-      )
+      ),
+      // The reason the read failed, so the operator is not left with a gap on
+      // the page and no explanation for it. The declaration beside it says
+      // exactly this when *it* cannot be read, and the two reads answer
+      // different questions -- so the reason for one of them failing is not a
+      // reason for the other, and neither is a reason to leave the second
+      // silent.
+      unavailable === null
+        ? null
+        : React.createElement(
+            "p",
+            {
+              className: MUTED_META_CLASS,
+              "data-applied-unavailable": unavailable.code
+            },
+            `${unavailable.code}: ${unavailable.message}`
+          )
     );
   }
   return React.createElement(
@@ -348,6 +381,7 @@ export function HooksView({
   revision,
   editorRevision,
   applied,
+  appliedUnavailable = null,
   saveOutcome
 }: HooksViewProps): React.JSX.Element {
   const totalActions = hooks.reduce((acc, h) => acc + h.actions.length, 0);
@@ -414,7 +448,7 @@ export function HooksView({
         { className: SECTION_HEADING_CLASS },
         "Applied Hook Configuration"
       ),
-      appliedPanel(applied)
+      appliedPanel(applied, appliedUnavailable)
     )
   );
 }

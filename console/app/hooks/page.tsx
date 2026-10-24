@@ -81,9 +81,18 @@ export default async function HooksPage({
   }
   // The applied read is a separate question from the declaration, and a
   // failure to read it is not a failure to read the declaration: the page
-  // shows the declaration and says the applied state was not observed.
+  // shows the declaration and says the applied state was not observed. The
+  // reason the read failed travels with it, because a gap on the page with no
+  // explanation for it is a question the operator cannot answer.
   const appliedResult = await fetchHooksApplied(config);
   const applied = appliedResult.kind === "ok" ? appliedResult.data : null;
+  const appliedUnavailable =
+    appliedResult.kind === "ok"
+      ? null
+      : {
+          code: controlApiFailureCode(appliedResult),
+          message: appliedResult.message
+        };
   const hooks = hooksFromControlApi(result.data);
   const saveOutcome = hookSaveOutcome(resolvedSearchParams.save);
   const basedOn = editorBaseRevisionFromQuery(resolvedSearchParams.based);
@@ -107,6 +116,7 @@ export default async function HooksPage({
       // declaration that has since moved.
       ...(basedOn === undefined ? {} : { editorRevision: basedOn }),
       applied,
+      ...(appliedUnavailable === null ? {} : { appliedUnavailable }),
       ...(saveOutcome === undefined ? {} : { saveOutcome })
     })
   );
