@@ -140,7 +140,11 @@ Two things decided where the handoff lives. The page frame is the wrong home: th
 
 Two guards keep the handoff out of the way: the first route is not a navigation, so the initial load never steals a focus the operator had already put in a field; and a focus that is still somewhere deliberate is left alone.
 
-`console/e2e/navigation-acceptance.spec.ts` drives it in a browser -- the heading is focused after an in-place navigation, and the next Tab lands inside the page's content rather than at the top of the document.
+A navigation that **names a fragment lands on that fragment** instead of the heading. The detail drawer is opened by a link carrying the drawer's own anchor, and the operator asked for *that panel*, not for the page it sits under -- and the fragment is what a browser would have scrolled to, so honouring it keeps the two in agreement. Measured in Chromium: activating "Open detail for evaluation eval-0001" leaves the focus on the drawer itself, and the next Tab is its "Close evaluation detail" control, inside the panel. A navigation without a fragment still lands on the heading, and the next Tab is the first control of the page.
+
+The Console's drawer is a disclosure and not a modal, so there is no focus trap to get wrong: it renders inline beneath the list it belongs to, is reached by a URL-addressable link, and is closed by a plain link back to the list. That decision is why the handoff has to honour the fragment -- the panel is not a layer over the page, it is *in* the page, and the arrival point is what tells the operator where they landed.
+
+`console/e2e/navigation-acceptance.spec.ts` drives it in a browser -- the heading is focused after an in-place navigation, the next Tab lands inside the page's content rather than at the top of the document, and a navigation that names a fragment lands on that fragment.
 
 ## The phone-width sweep
 

@@ -575,6 +575,34 @@ function escapeCssSelector(value: string): string {
   return value.replaceAll(/["\\]/gu, String.raw`\$&`);
 }
 
+/**
+ * The element the current URL's fragment names, if there is one.
+ *
+ * A link that carries a fragment is a link that says where to arrive: the
+ * detail drawer is opened that way, so the operator lands on the panel they
+ * asked for rather than at the top of the list it sits under. The element has
+ * to exist and be focusable -- the drawers carry `tabIndex={-1}` for exactly
+ * this -- and a fragment that names nothing is left to the heading, because a
+ * browser scrolls to a missing fragment's target and gives up.
+ */
+function fragmentTarget(): HTMLElement | null {
+  const hash = globalThis.location?.hash ?? "";
+  if (hash.length < 2) return null;
+  let id: string;
+  try {
+    id = decodeURIComponent(hash.slice(1));
+  } catch {
+    return null;
+  }
+  if (id.length === 0) return null;
+  const escaped = escapeCssSelector(id);
+  const element = globalThis.document.querySelector<HTMLElement>(
+    `[id="${escaped}"]`
+  );
+  if (element === null) return null;
+  return typeof element.focus === "function" ? element : null;
+}
+
 function restoreScrollAndFocus(snapshot: ScrollAndFocusSnapshot): void {
   const win = globalThis.window;
   const doc = globalThis.document;
@@ -1092,6 +1120,12 @@ export function FormNavigationOwner({
    * operator had already put it in. And a focus that is still somewhere
    * deliberate is left alone: a form navigation restores the focus to the field
    * that was submitted, and that field must win over the heading.
+   *
+   * A navigation that names a fragment lands on that fragment instead. The
+   * detail drawer is opened by a link carrying the drawer's own anchor, and
+   * the operator asked for *that panel*, not for the page it sits on -- and the
+   * fragment is what a browser would have scrolled to, so honouring it keeps
+   * the two in agreement.
    */
   const currentPathname = usePathname();
   const isFirstPathname = React.useRef(true);
@@ -1102,6 +1136,11 @@ export function FormNavigationOwner({
     }
     const active = document.activeElement;
     if (active !== null && active !== document.body && active.isConnected) {
+      return;
+    }
+    const fragment = fragmentTarget();
+    if (fragment !== null) {
+      fragment.focus({ preventScroll: true });
       return;
     }
     const heading = document.querySelector<HTMLHeadingElement>("main h1");

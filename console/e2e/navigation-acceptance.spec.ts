@@ -282,3 +282,27 @@ test("an in-place navigation moves the focus to the new page's heading", async (
   });
   expect(insideMain).toBe(true);
 });
+
+test("a navigation that names a fragment lands on that fragment", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: WIDE_WIDTH, height: 844 });
+  await openConsole(page, "/evaluations");
+
+  // The detail drawer is opened by a link carrying the drawer's own anchor.
+  // The operator asked for *that panel*, not for the page it sits under, so
+  // the focus lands on the drawer and the next Tab is its close control.
+  const open = page.locator('a[href*="#evaluation-detail-drawer"]').first();
+  await open.click();
+  await page.waitForURL(/#evaluation-detail-drawer$/u);
+  await waitForPageContent(page);
+
+  await expect(page.locator("#evaluation-detail-drawer")).toBeFocused();
+  await page.keyboard.press("Tab");
+  const insideDrawer = await page.evaluate(() => {
+    const active = document.activeElement;
+    const drawer = document.querySelector("#evaluation-detail-drawer");
+    return active !== null && drawer !== null && drawer.contains(active);
+  });
+  expect(insideDrawer).toBe(true);
+});
