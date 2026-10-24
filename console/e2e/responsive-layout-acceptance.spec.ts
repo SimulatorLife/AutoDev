@@ -107,6 +107,18 @@ for (const width of WIDTHS) {
   test.describe(`at ${width}px`, () => {
     test.use({ viewport: { width, height: 844 } });
 
+    /**
+     * The timeout this spec needs, and the reason it needs it.
+     *
+     * One test here opens every canonical and detail route and measures it, so
+     * a test that took thirty seconds was never going to finish: the default
+     * timeout is meant for a test that does one thing. Measured against a
+     * Console serving nineteen routes, the widths took minutes, and the run
+     * failed inside `page.goto` -- a timeout reported as a page failure,
+     * which reads like a broken page rather than a short clock.
+     */
+    test.setTimeout(600_000);
+
     // The width is in the test's own name, not only in the group's: the
     // browser here runs one test at a time, because the sandbox's
     // single-process headless shell goes down with its last page, and a

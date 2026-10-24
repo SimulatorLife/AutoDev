@@ -45,8 +45,18 @@ export default defineConfig({
   fullyParallel: false,
   retries: 0,
   reporter: "list",
+  // The acceptance opens every canonical and detail route at three widths, so
+  // a test that takes minutes is the normal case here rather than the
+  // exception.
+  timeout: 600_000,
   expect: {
-    timeout: 15_000
+    // How long a page may take to answer with its heading.
+    //
+    // The gate is real -- a page that never renders its heading is a broken
+    // page -- but fifteen seconds is a short clock on a machine that is also
+    // running a production build and another agent's test suite. It is
+    // settable for the same reason the test timeout is.
+    timeout: Number(process.env.AUTODEV_ACCEPTANCE_EXPECT_TIMEOUT ?? "15_000")
   },
   use: {
     ...devices["Desktop Chrome"],
