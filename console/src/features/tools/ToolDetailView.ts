@@ -33,6 +33,10 @@ import {
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
 import { qualifiedToolName } from "./tool-identity.ts";
+import {
+  type ToolsListFilters,
+  toolsListHref,
+  toolsRoleHref} from "./tools-list-url.ts";
 
 /**
  * Tools catalog detail view.
@@ -55,6 +59,17 @@ export interface ToolDetailViewProps {
   readonly usage: ToolUsageEvidence;
   readonly usageLink: string;
   readonly usageUnavailable: boolean;
+  /**
+   * The list state the operator arrived with.
+   *
+   * The detail route is a path, so the list's narrowing travels beside it as a
+   * query. Without it the breadcrumb returned the operator to the whole
+   * catalogue, and a search they had just run had to be typed a second time.
+   *
+   * Optional, because a detail page opened directly has no list behind it: the
+   * breadcrumb then points at the whole catalogue, which is the honest answer.
+   */
+  readonly listFilters?: ToolsListFilters | undefined;
 }
 
 const UNCONFIGURED_LABEL = "Not configured";
@@ -261,7 +276,10 @@ function coverageBanner(
   );
 }
 
-function roleExposure(tool: ToolCatalogItem): React.JSX.Element {
+function roleExposure(
+  tool: ToolCatalogItem,
+  listFilters: ToolsListFilters
+): React.JSX.Element {
   if (tool.exposedRoles.length === 0) {
     return React.createElement(
       "div",
@@ -289,7 +307,10 @@ function roleExposure(tool: ToolCatalogItem): React.JSX.Element {
       // which covers the same truncation the old explicit `title` did.
       React.createElement(Chip, {
         key: role,
-        href: `/tools?role=${encodeURIComponent(role)}`,
+        // The role the operator clicks here replaces the one already chosen
+        // and keeps the rest of the narrowing, so the list they land on is
+        // still the list they were reading.
+        href: toolsRoleHref(listFilters, role),
         children: role
       })
     )
@@ -302,8 +323,16 @@ export function ToolDetailView({
   validity,
   usage,
   usageLink,
-  usageUnavailable
+  usageUnavailable,
+  listFilters
 }: ToolDetailViewProps): React.JSX.Element {
+  // The list state the operator arrived with. A detail page opened directly
+  // has no list behind it, so the breadcrumb points at the whole catalogue.
+  const listState: ToolsListFilters = listFilters ?? {
+    source: "all",
+    role: "",
+    query: ""
+  };
   // The detail page is the one place the wire name is the whole subject: it is
   // the page's identity and the thing the URL addresses, so it is shown in full
   // rather than elided the way the list cell does beside its Source column.
@@ -319,7 +348,12 @@ export function ToolDetailView({
       }
     },
     React.createElement(Breadcrumbs, {
-      items: [{ href: "/tools", label: "Tools" }, { label: canonicalName }]
+      // The breadcrumb goes back to the list the operator narrowed, not to the
+      // whole catalogue: the search they just ran is still in the address.
+      items: [
+        { href: toolsListHref(listState), label: "Tools" },
+        { label: canonicalName }
+      ]
     }),
     React.createElement(
       "header",
@@ -385,7 +419,7 @@ export function ToolDetailView({
           { className: SECTION_HEADING_CLASS },
           "Role exposure"
         ),
-        roleExposure(tool)
+        roleExposure(tool, listState)
       )
     ),
     React.createElement(

@@ -8,8 +8,15 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import {
+  FilterBar,
+  FilterSearchField
+} from "../../components/filters/FilterBar.ts";
 import { FilterNotice } from "../../components/filters/FilterNotice.ts";
-import { resolveFilter } from "../../components/filters/resolve-filter.ts";
+import {
+  resolveFilter,
+  type UnappliedFilter
+} from "../../components/filters/resolve-filter.ts";
 import {
   CALLOUT_ACCENT_CLASS,
   CALLOUT_ERROR_CLASS,
@@ -43,6 +50,15 @@ import {
   SUCCESS_TONE_CLASS
 } from "../../components/ui/tones.ts";
 import { qualifiedToolName, toolId } from "./tool-identity.ts";
+import {
+  filterTools,
+  isToolSource,
+  toolDetailHref,
+  TOOLS_LIST_PATH,
+  type ToolsListFilters,
+  toolsRoleHref,
+  toolsSourceHref
+} from "./tools-list-url.ts";
 
 /**
  * Tools catalog list view.
@@ -53,8 +69,8 @@ import { qualifiedToolName, toolId } from "./tool-identity.ts";
  * the operator can pivot to MCPs or Agents without the catalog ever owning
  * an edit affordance.
  *
- * The list is URL-filtered by `?source=` and `?role=`. Filters update the
- * query string only and never the server state. Source authority and
+ * The list is URL-filtered by `?source=`, `?role=` and `?q=`. Filters update
+ * the query string only and never the server state. Source authority and
  * availability render through the StatusBadge vocabulary; missing evidence
  * stays explicit instead of becoming a default zero or ready.
  */
@@ -69,6 +85,14 @@ const COLLATOR = new Intl.Collator();
 export interface ToolsViewFilters {
   readonly source: string;
   readonly role: string;
+  /**
+   * The free-text query the list is narrowed by.
+   *
+   * Optional, because a caller that does not narrow by text says so by leaving
+   * it out rather than by passing an empty string, and the page is the only
+   * caller that knows which of the two it meant.
+   */
+  readonly query?: string | undefined;
 }
 
 export interface ToolsViewProps {
@@ -77,10 +101,6 @@ export interface ToolsViewProps {
   readonly validity: ToolCatalogValidity;
   readonly usageLink: string;
   readonly filters: ToolsViewFilters;
-}
-
-function isToolSource(value: string): value is ToolSource {
-  return value === "native" || value === "mcp" || value === "plugin";
 }
 
 function availabilityBadge(availability: ToolAvailability): React.JSX.Element {
@@ -234,23 +254,99 @@ function EditSurfaceLink({
   );
 }
 
-function sourceFilterHref(
-  filters: ToolsViewFilters,
-  source: ToolSource | "all"
+/**
+ * What an empty tool table has to say.
+ *
+ * Five different facts end with an empty table: the source is not observed, a
+ * filter excluded everything, the catalogue is genuinely empty, one of the two
+ * sources behind the composite catalogue was not observed, and the catalogue
+ * itself could not be determined. Only the caller knows which one it is
+ * rendering, and the operator needs to know too -- "no tool entries match the
+ * active filters" when nothing was filtered claims a filter did the emptying,
+ * and there was no filter.
+ */
+function toolEmptyMessage(
+  validity: ToolCatalogValidity,
+  coverage: ToolCatalogCoverage,
+  narrowed: boolean
 ): string {
-  const params = new URLSearchParams();
-  if (source !== "all") params.set("source", source);
-  if (filters.role) params.set("role", filters.role);
-  const query = params.toString();
-  return query ? `/tools?${query}` : "/tools";
+  if (validity !== "valid") {
+    return "The Tools catalog source is not observed.";
+  }
+  if (narrowed) {
+    return "No tool entries found matching the current criteria.";
+  }
+  if (coverage === "complete") {
+    return "No tool entries are configured.";
+  }
+  if (coverage === "partial") {
+    return "No tool entries were observed in the composite catalog.";
+  }
+  return "The tool catalog could not be determined from any authoritative source.";
 }
 
-function roleFilterHref(filters: ToolsViewFilters, role: string): string {
-  const params = new URLSearchParams();
-  if (filters.source) params.set("source", filters.source);
-  if (role) params.set("role", role);
-  const query = params.toString();
-  return query ? `/tools?${query}` : "/tools";
+/**
+ * The list's state, resolved once.
+ *
+ * The source is validated here rather than by the page, because a source the
+ * catalogue cannot honour is a fact the catalogue has to report, and the
+ * catalogue is what renders the report.
+ */
+interface ToolsListState {
+  /** The source to apply, or `null` when every source is shown. */
+  readonly source: ToolSource | null;
+  readonly role: string;
+  readonly query: string;
+  /** The one description of the narrowing, shared by every link on the page. */
+  readonly listFilters: ToolsListFilters;
+  /** The filters this page was asked for and could not apply. */
+  readonly unapplied: readonly UnappliedFilter[];
+  /** Whether the list is narrower than the catalogue. */
+  readonly narrowed: boolean;
+}
+
+function resolveToolsListState(filters: ToolsViewFilters): ToolsListState {
+  const resolvedSource = resolveFilter(filters.source, {
+    name: "source",
+    allowed: SOURCE_FILTERS,
+    fallback: "all"
+  });
+  const source = isToolSource(resolvedSource.value) ? resolvedSource.value : null;
+  const role = filters.role.trim();
+  const query = (filters.query ?? "").trim();
+  return {
+    source,
+    role,
+    query,
+    listFilters: { source: source ?? "all", role, query },
+    // `role` is free text, so every value is one this page accepts; an
+    // unmatched role honestly matches nothing and says so in the table's
+    // empty message.
+    unapplied: resolvedSource.unapplied === null ? [] : [resolvedSource.unapplied],
+    // A filter that is active but happens to keep every entry still counts as
+    // narrowed: the operator asked a question, and the count answers it.
+    narrowed: source !== null || role !== "" || query !== ""
+  };
+}
+
+/**
+ * What the section says about the entries it is about.
+ *
+ * The count itself belongs to the filter bar, which is where the narrowing
+ * happened; what is left here is the fact the table cannot state by itself --
+ * how many of the entries on screen are unobserved rather than measured.
+ */
+function availabilityNote(
+  validity: ToolCatalogValidity,
+  unobservedCount: number
+): string | null {
+  if (validity !== "valid") {
+    return "Catalog not observed; no tools available.";
+  }
+  if (unobservedCount === 0) return null;
+  return `${unobservedCount} ${
+    unobservedCount === 1 ? "entry" : "entries"
+  } rendered as ${NOT_OBSERVED_LABEL}`;
 }
 
 export function ToolsView({
@@ -260,30 +356,17 @@ export function ToolsView({
   usageLink,
   filters
 }: ToolsViewProps): React.JSX.Element {
-  // A `source` outside the set is a request the page cannot honour, so it is
-  // reported rather than quietly answered with the whole catalog: the "all"
-  // chip used to render as selected for `?source=bogus`, which claimed the
-  // reader had chosen a filter that was never applied.
-  const resolvedSource = resolveFilter(filters.source, {
-    name: "source",
-    allowed: SOURCE_FILTERS,
-    fallback: "all"
-  });
-  const requestedSource = isToolSource(resolvedSource.value)
-    ? resolvedSource.value
-    : null;
-  const requestedRole = filters.role.trim();
-  // `role` is free text, so every value is one this page accepts; an unmatched
-  // role honestly matches nothing and says so in the table's empty message.
-  const unappliedFilters =
-    resolvedSource.unapplied === null ? [] : [resolvedSource.unapplied];
+  const state = resolveToolsListState(filters);
+  const {
+    source: requestedSource,
+    role: requestedRole,
+    query: requestedQuery,
+    listFilters,
+    unapplied: unappliedFilters,
+    narrowed
+  } = state;
 
-  const filtered = tools.filter((tool) => {
-    if (requestedSource && tool.source !== requestedSource) return false;
-    if (requestedRole && !tool.exposedRoles.includes(requestedRole))
-      return false;
-    return true;
-  });
+  const filtered = filterTools(tools, listFilters);
 
   const sourceCounts: Record<ToolSource, number> = {
     native: 0,
@@ -296,9 +379,14 @@ export function ToolsView({
     for (const role of tool.exposedRoles) roles.add(role);
   }
   const sortedRoles = Array.from(roles).sort(COLLATOR.compare);
-  const unobservedCount = tools.filter(
+  // Counted over the entries on screen, not over the catalogue: the note sits
+  // beside the table, so it has to describe the table. It used to count the
+  // whole catalogue and then sit next to a narrowed count, so the two numbers
+  // on the line were about different sets.
+  const unobservedCount = filtered.filter(
     (tool) => tool.availability === NOT_OBSERVED_STATUS
   ).length;
+  const note = availabilityNote(validity, unobservedCount);
 
   const variant = coverageBannerVariant(coverage, validity);
 
@@ -318,7 +406,10 @@ export function ToolsView({
           React.createElement(
             NavigationLink,
             {
-              href: `/tools/${toolId(tool)}`,
+              // The list's state travels with the entry, so the detail page's
+              // breadcrumb returns the operator to the list they came from
+              // rather than to the whole catalogue.
+              href: toolDetailHref(listFilters, toolId(tool)),
               className: MONO_ID_LINK_CLASS,
               // The wire name, because that is what a row is identified by and
               // what the href addresses. The visible text is only the tool's
@@ -403,7 +494,7 @@ export function ToolsView({
               return React.createElement(
                 NavigationLink,
                 {
-                  href: roleFilterHref(filters, role),
+                  href: toolsRoleHref(listFilters, role),
                   className: `${CHIP_CLASS} min-h-6 ${ENTITY_LINK_CLASS}`,
                   "aria-label": label,
                   title: label,
@@ -481,6 +572,41 @@ export function ToolsView({
       })
     ),
     React.createElement(
+      FilterBar,
+      {
+        label: "Tool filters",
+        action: TOOLS_LIST_PATH,
+        // The form rebuilds the query string from its own controls, so the
+        // facets the operator already chose have to be carried through it: a
+        // search submitted from a list narrowed to one source must not widen
+        // the list back to the whole catalogue behind the operator's back.
+        preserved: [
+          ...(requestedSource === null
+            ? []
+            : [{ name: "source", value: requestedSource }]),
+          ...(requestedRole === ""
+            ? []
+            : [{ name: "role", value: requestedRole }])
+        ],
+        submitTestId: "tools-filter",
+        // The count of what is in view belongs to the filter that narrowed it,
+        // and only when something was narrowed: an unfiltered catalogue
+        // reporting "56 of 56" says nothing the stat row above it does not
+        // already say.
+        summary: narrowed
+          ? `Showing ${filtered.length} of ${tools.length} tool entries`
+          : undefined,
+        dataAttributes: { "data-feature-filter": "tools" }
+      },
+      React.createElement(FilterSearchField, {
+        name: "q",
+        defaultValue: requestedQuery,
+        label: "Search tools",
+        placeholder: "Search tools…",
+        testId: "tools-search"
+      })
+    ),
+    React.createElement(
       "div",
       { className: "flex flex-wrap items-center justify-between gap-4" },
       React.createElement(
@@ -494,7 +620,7 @@ export function ToolsView({
             NavigationLink,
             {
               key: src,
-              href: sourceFilterHref(filters, src),
+              href: toolsSourceHref(listFilters, src),
               dataAttributes: { "data-source-filter": src },
               className: `px-3 py-1 rounded text-xs font-medium capitalize transition-colors ${
                 requestedSource === src || (src === "all" && !requestedSource)
@@ -521,7 +647,7 @@ export function ToolsView({
             React.createElement(
               NavigationLink,
               {
-                href: roleFilterHref(filters, ""),
+                href: toolsRoleHref(listFilters, ""),
                 dataAttributes: { "data-role-filter": "all" },
                 className: `px-3 py-1 rounded text-xs font-medium transition-colors ${
                   requestedRole
@@ -536,7 +662,7 @@ export function ToolsView({
                 NavigationLink,
                 {
                   key: role,
-                  href: roleFilterHref(filters, role),
+                  href: toolsRoleHref(listFilters, role),
                   dataAttributes: { "data-role-filter": role },
                   className: `px-3 py-1 rounded text-xs font-medium transition-colors ${
                     requestedRole === role
@@ -571,18 +697,12 @@ export function ToolsView({
       ),
       React.createElement(
         "div",
-        { className: `flex items-center justify-between ${MUTED_META_CLASS}` },
-        React.createElement(
-          "span",
-          null,
-          validity === "valid"
-            ? `Showing ${filtered.length} of ${tools.length} tool entries${
-                unobservedCount > 0
-                  ? ` (${unobservedCount} rendered as ${NOT_OBSERVED_LABEL})`
-                  : ""
-              }`
-            : "Catalog not observed; no tools available."
-        ),
+        {
+          className: `flex items-center gap-4 ${
+            note === null ? "justify-end" : "justify-between"
+          } ${MUTED_META_CLASS}`
+        },
+        note === null ? null : React.createElement("span", null, note),
         React.createElement(
           NavigationLink,
           {
@@ -597,12 +717,7 @@ export function ToolsView({
         data: filtered,
         columns,
         keyExtractor: (tool) => toolId(tool),
-        emptyMessage:
-          validity === "valid"
-            ? coverage === "complete"
-              ? "No tool entries match the active filters."
-              : "No tool entries were observed in the composite catalog."
-            : "The Tools catalog source is not observed."
+        emptyMessage: toolEmptyMessage(validity, coverage, narrowed)
       })
     )
   );

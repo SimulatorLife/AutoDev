@@ -267,10 +267,13 @@ export function PromptsView({
         action: PROMPTS_LIST_PATH,
         submitTestId: "prompts-filter",
         // Only a narrowed list has two numbers to report. An unfiltered list
-        // saying "76 of 76 prompts and commands" is noise.
+        // saying "76 of 76 prompts and commands" is noise, and the stat row
+        // above already states the catalogue's size.
+        // The wording matches the tool catalogue's, so the two lists that
+        // carry a filter bar answer a narrowed list the same way.
         summary:
           query.length > 0
-            ? `${commands.length} of ${total} prompts and commands`
+            ? `Showing ${commands.length} of ${total} prompts and commands`
             : undefined,
         dataAttributes: { "data-feature-filter": "prompts" }
       },

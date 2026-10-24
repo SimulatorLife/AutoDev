@@ -22,6 +22,10 @@ interface ToolDetailSearchParams {
   readonly range?: string | string[] | undefined;
   readonly startDate?: string | string[] | undefined;
   readonly endDate?: string | string[] | undefined;
+  /** The list's narrowing, carried here so the breadcrumb can go back to it. */
+  readonly source?: string | string[] | undefined;
+  readonly role?: string | string[] | undefined;
+  readonly q?: string | string[] | undefined;
 }
 
 function first(value: string | string[] | undefined): string {
@@ -111,7 +115,15 @@ export default async function ToolDetailPage({
       usage,
       usageLink: result.data.usageLink,
       usageUnavailable:
-        usageResult.kind !== "ok" && usageResult.kind !== "not-configured"
+        usageResult.kind !== "ok" && usageResult.kind !== "not-configured",
+      // The list the operator came from. The detail route is a path, so the
+      // narrowing travels beside it as a query and the breadcrumb returns
+      // them to the list they were reading.
+      listFilters: {
+        source: first(sp.source),
+        role: first(sp.role),
+        query: first(sp.q)
+      }
     })
   );
 }

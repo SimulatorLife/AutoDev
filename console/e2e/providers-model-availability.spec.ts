@@ -81,7 +81,11 @@ test("Tools source/role filters and resource/tab links navigate in place without
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/tools");
 
-  await expect(page.getByText("Showing 2 of 2 tool entries")).toBeVisible();
+  // The catalogue takes the Console's own filter bar, so a tool can be found
+  // by name as well as by facet. The count of what is in view appears only
+  // once the list is narrowed; an unfiltered catalogue reports its size in the
+  // stat row above it.
+  await expect(page.getByRole("searchbox")).toBeVisible();
   // The exact name, because a role chip in the same row is named after the
   // tool it filters ("Filter tools exposed to worker for read_file"). A
   // substring match reaches the chip as well as the row's own link, and a
@@ -125,7 +129,7 @@ test("Tools source/role filters and resource/tab links navigate in place without
   await expect(page).toHaveURL(TOOLS_SOURCE_MCP_ROLE_ORCHESTRATOR_URL);
   await expect(page.getByText("Showing 0 of 2 tool entries")).toBeVisible();
   await expect(
-    page.getByText("No tool entries match the active filters.")
+    page.getByText("No tool entries found matching the current criteria.")
   ).toBeVisible();
   expect(await readMountToken()).toBe(MOUNTED_DOCUMENT_TOKEN);
 

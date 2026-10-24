@@ -25,6 +25,48 @@ export async function waitForPageContent(page: Page): Promise<void> {
 }
 
 /**
+ * Wait for a route to answer with its heading, and say *why* it did not.
+ *
+ * A page that never renders its heading has two very different causes, and
+ * they need opposite responses. The first is a broken page: the markup is
+ * there and the heading is not. The second is a server that could not answer:
+ * Next's client bundle timed out loading and the framework replaced the page
+ * with its own error boundary, so the heading the server rendered is gone and
+ * the page says "a client-side exception has occurred".
+ *
+ * The second is not a page fault, and reporting it as one sends the reader
+ * looking for a defect in the Console. It is what a starved machine looks
+ * like: measured on a loaded box, the chunk request took 124 seconds against
+ * a 120-second chunk timeout, while the same server answered that chunk in
+ * 12 milliseconds once the machine was quiet.
+ *
+ * So the wait fails fast and says which of the two it is.
+ */
+export async function expectRouteHeading(
+  page: Page,
+  route: CanonicalRoute
+): Promise<void> {
+  try {
+    await expect(routeHeading(page, route)).toBeVisible();
+  } catch (error) {
+    const boundary = await page
+      .locator("text=Application error")
+      .first()
+      .isVisible()
+      .catch(() => false);
+    if (boundary) {
+      throw new Error(
+        `${route.path} fell back to Next's client-side error boundary: the page's ` +
+          "client bundle did not load. The server could not answer in time, which " +
+          "is a machine under load rather than a page that failed. Check the load " +
+          "average before reading this as a Console defect."
+      );
+    }
+    throw error;
+  }
+}
+
+/**
  * The canonical resources the target state names.
  *
  * The grouping is presentation only: all fourteen resources have first-class

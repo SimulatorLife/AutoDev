@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import React from "react";
 
+import { readToolsFilters } from "../../src/features/tools/tools-list-url.ts";
 import { ToolsView } from "../../src/features/tools/ToolsView.ts";
 import {
   controlApiFailureCode,
@@ -15,14 +16,9 @@ import {
 
 export const dynamic = "force-dynamic";
 
-interface ToolsSearchParams {
-  readonly source?: string | string[] | undefined;
-  readonly role?: string | string[] | undefined;
-}
-
-function first(value: string | string[] | undefined): string {
-  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
-}
+type ToolsSearchParams = Readonly<
+  Record<string, string | readonly string[] | undefined>
+>;
 
 export const metadata: Metadata = {
   title: "Tools"
@@ -46,8 +42,7 @@ export default async function ToolsPage({
     fetchTools(config),
     (searchParams ?? Promise.resolve({})) as Promise<ToolsSearchParams>
   ]);
-  const sourceFilter = first(resolvedSearch.source);
-  const roleFilter = first(resolvedSearch.role);
+  const listFilters = readToolsFilters(resolvedSearch);
   if (result.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
@@ -78,7 +73,7 @@ export default async function ToolsPage({
       coverage: result.data.coverage,
       validity: result.data.validity,
       usageLink: result.data.usageLink,
-      filters: { source: sourceFilter, role: roleFilter }
+      filters: listFilters
     })
   );
 }

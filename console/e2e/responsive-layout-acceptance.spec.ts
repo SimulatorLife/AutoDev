@@ -5,7 +5,7 @@ import {
   clippedContent,
   DETAIL_ROUTES,
   documentStructure,
-  routeHeading,
+  expectRouteHeading,
   waitForPageContent
 } from "./acceptance-helpers.ts";
 
@@ -131,7 +131,7 @@ for (const width of WIDTHS) {
             batch.map(async (route, index) => {
               const page = pages[index]!;
               await page.goto(route.path);
-              await expect(routeHeading(page, route)).toBeVisible();
+              await expectRouteHeading(page, route);
               await waitForPageContent(page);
               return findProblems(page, route.path, width);
             })

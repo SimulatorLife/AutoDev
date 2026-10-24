@@ -216,7 +216,12 @@ test("a clean URL still renders four source buttons and an 'all' role chip", () 
     "worker"
   ]);
   const allRole = roles.find((entry) => entry.value === "all");
-  assert.equal(allRole?.href, "/tools?source=all");
+  // The clean list has one address, and "all" is the absence of a source
+  // filter rather than a filter of its own. The role link used to write
+  // `source=all` here while the source chip beside it dropped the parameter,
+  // so two links on the same row disagreed about the address of the same
+  // unfiltered list.
+  assert.equal(allRole?.href, "/tools");
 });
 
 test("the tool detail links point at the encoded wire id for each row", () => {
