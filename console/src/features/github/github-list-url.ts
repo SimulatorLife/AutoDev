@@ -33,11 +33,7 @@ export const GITHUB_LIST_PATH = "/github";
  * state computes over the sampled runs.
  */
 export type RunOutcomeFilter =
-  | "all"
-  | "succeeded"
-  | "failed"
-  | "cancelled"
-  | "in-progress";
+  "all" | "succeeded" | "failed" | "cancelled" | "in-progress";
 
 export const RUN_OUTCOME_FILTERS: readonly RunOutcomeFilter[] = [
   "all",
@@ -75,9 +71,7 @@ const EMPTY_FILTERS: GithubListFilters = { outcome: "all" };
  * A repeated parameter takes its first value, which is what the browser's own
  * form submission produces and what the other list surfaces read.
  */
-function firstValue(
-  value: string | readonly string[] | undefined
-): string {
+function firstValue(value: string | readonly string[] | undefined): string {
   if (typeof value === "string") return value;
   if (value === undefined) return "";
   return value[0] ?? "";

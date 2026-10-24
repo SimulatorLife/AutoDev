@@ -180,11 +180,11 @@ test("the recent runs can be narrowed by outcome", async ({ page }) => {
   // One of the four runs failed, and it is the one the page keeps.
   const failed = tableUnder(page, RECENT_RUNS);
   await expect(failed.locator("tbody tr")).toHaveCount(1);
-  await expect(
-    failed.getByText("#9003 CI", { exact: true })
-  ).toBeVisible();
+  await expect(failed.getByText("#9003 CI", { exact: true })).toBeVisible();
   // And the count of what is in view says so.
-  await expect(page.getByText("Showing 1 of 4 runs", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Showing 1 of 4 runs", { exact: true })
+  ).toBeVisible();
   // The chosen facet says so too, and not only by its colour.
   await expect(page.locator('[data-run-outcome="failed"]')).toHaveAttribute(
     "aria-current",

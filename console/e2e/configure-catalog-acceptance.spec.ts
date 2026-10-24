@@ -224,9 +224,7 @@ test("the Hooks list shows the declaration it read", async ({ page }) => {
   // produce. The name also appears twice on the page, once in the declaration
   // and once in the projection the Runtime published, so the assertion names
   // the declaration's own row rather than the text.
-  await expect(
-    page.locator('[data-hook-event="preToolUse"]')
-  ).toBeVisible();
+  await expect(page.locator('[data-hook-event="preToolUse"]')).toBeVisible();
   // The declaration is edited, so its matcher and its command are the editor's
   // fields rather than prose. The assertion reads them the way an operator
   // reads them: by what the field holds. Every event carries its own action,
@@ -237,12 +235,12 @@ test("the Hooks list shows the declaration it read", async ({ page }) => {
       exact: true
     })
   ).toBeVisible();
-  await expect(
-    declared.locator('[data-hook-action-matcher="0"]')
-  ).toHaveValue("Bash");
-  await expect(
-    declared.locator('[data-hook-action-command="0"]')
-  ).toHaveValue("echo guarded");
+  await expect(declared.locator('[data-hook-action-matcher="0"]')).toHaveValue(
+    "Bash"
+  );
+  await expect(declared.locator('[data-hook-action-command="0"]')).toHaveValue(
+    "echo guarded"
+  );
   expect(await documentFitsViewport(page)).toBe(true);
 });
 

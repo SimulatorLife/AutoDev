@@ -55,10 +55,7 @@ test("an unreadable applied projection says why", () => {
   // The gap is still stated as a gap: nothing is claimed about what the
   // Runtime published.
   assert.match(markup, /Applied hooks: Not observed/u);
-  assert.match(
-    markup,
-    /applied hook projection could not be read/u
-  );
+  assert.match(markup, /applied hook projection could not be read/u);
   // And now the reason for it, in the Control API's own vocabulary.
   assert.match(markup, /autodev_control_api_timeout/u);
   assert.match(markup, /did not answer within 5s/u);
@@ -71,8 +68,5 @@ test("an unreadable applied projection with no reason still says the gap", () =>
   const markup = renderHooks();
 
   assert.match(markup, /Applied hooks: Not observed/u);
-  assert.match(
-    markup,
-    /applied hook projection could not be read/u
-  );
+  assert.match(markup, /applied hook projection could not be read/u);
 });

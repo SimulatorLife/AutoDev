@@ -42,9 +42,7 @@ export const TOOL_SOURCE_FILTERS = ["all", "native", "mcp", "plugin"] as const;
  * A repeated parameter takes its first value, which is what the browser's own
  * form submission produces and what the other list surfaces read.
  */
-function firstValue(
-  value: string | readonly string[] | undefined
-): string {
+function firstValue(value: string | readonly string[] | undefined): string {
   if (typeof value === "string") return value;
   if (value === undefined) return "";
   return value[0] ?? "";
@@ -134,10 +132,7 @@ export function toolsRoleHref(filters: ToolsListFilters, role: string): string {
  * the operator to the whole catalogue and they had to search for the same tool
  * a second time.
  */
-export function toolDetailHref(
-  filters: ToolsListFilters,
-  id: string
-): string {
+export function toolDetailHref(filters: ToolsListFilters, id: string): string {
   const query = toolsListQuery(filters);
   const path = `${TOOLS_LIST_PATH}/${id}`;
   return query ? `${path}?${query}` : path;

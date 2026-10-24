@@ -135,10 +135,7 @@ test("a run the page does not count stays visible only under All outcomes", () =
 
 test("the page's address carries the outcome, and reads it back", () => {
   assert.equal(githubListHref({ outcome: "all" }), "/github");
-  assert.equal(
-    githubListHref({ outcome: "failed" }),
-    "/github?outcome=failed"
-  );
+  assert.equal(githubListHref({ outcome: "failed" }), "/github?outcome=failed");
 
   assert.deepEqual(readGithubFilters({ outcome: "failed" }), {
     outcome: "failed"
@@ -180,7 +177,9 @@ test("the selected chip says so, and not only by its colour", () => {
   // The selection is otherwise distinguishable only by its background, which
   // is no way to read a selection aloud.
   assert.match(markup, /aria-current="true"/u);
-  const selected = /<a\b(?=[^>]*data-run-outcome="failed")[^>]*>/u.exec(markup)?.[0];
+  const selected = /<a\b(?=[^>]*data-run-outcome="failed")[^>]*>/u.exec(
+    markup
+  )?.[0];
   assert.ok(selected, "the failed chip is rendered");
   assert.match(selected, /aria-current="true"/u);
 });
@@ -191,10 +190,7 @@ test("the success-rate card names every counter it covers", () => {
   // The card names the sample's size and then three of its four counters, so
   // the numbers did not add up to the total: thirteen of thirty runs were
   // cancelled and nothing on the page said so.
-  assert.match(
-    markup,
-    /1 succeeded, 1 failed, 1 running, 1 cancelled/u
-  );
+  assert.match(markup, /1 succeeded, 1 failed, 1 running, 1 cancelled/u);
 });
 
 test("a narrowed list says how much of the sample is in view", () => {

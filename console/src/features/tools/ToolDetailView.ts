@@ -36,7 +36,8 @@ import { qualifiedToolName } from "./tool-identity.ts";
 import {
   type ToolsListFilters,
   toolsListHref,
-  toolsRoleHref} from "./tools-list-url.ts";
+  toolsRoleHref
+} from "./tools-list-url.ts";
 
 /**
  * Tools catalog detail view.

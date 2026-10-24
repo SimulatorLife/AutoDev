@@ -91,7 +91,10 @@ test("the list offers the Console's own filter bar", () => {
   // The search control carries the shared chrome and a name of its own: the
   // placeholder is not a substitute, because it disappears with a value.
   assert.match(markup, /data-filter-search="prompts-search"/u);
-  assert.match(markup, /<label[^>]*class="sr-only"[^>]*>Search prompts and commands</u);
+  assert.match(
+    markup,
+    /<label[^>]*class="sr-only"[^>]*>Search prompts and commands</u
+  );
   assert.match(markup, /type="search"/u);
   // The submit is the shared vocabulary's.
   assert.match(markup, /data-button="prompts-filter"/u);
@@ -149,8 +152,5 @@ test("an empty catalog still says the catalog is empty", () => {
     })
   );
 
-  assert.match(
-    markup,
-    /No canonical prompts or commands are configured\./u
-  );
+  assert.match(markup, /No canonical prompts or commands are configured\./u);
 });

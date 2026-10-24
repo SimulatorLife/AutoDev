@@ -311,7 +311,9 @@ function resolveToolsListState(filters: ToolsViewFilters): ToolsListState {
     allowed: SOURCE_FILTERS,
     fallback: "all"
   });
-  const source = isToolSource(resolvedSource.value) ? resolvedSource.value : null;
+  const source = isToolSource(resolvedSource.value)
+    ? resolvedSource.value
+    : null;
   const role = filters.role.trim();
   const query = (filters.query ?? "").trim();
   return {
@@ -322,7 +324,8 @@ function resolveToolsListState(filters: ToolsViewFilters): ToolsListState {
     // `role` is free text, so every value is one this page accepts; an
     // unmatched role honestly matches nothing and says so in the table's
     // empty message.
-    unapplied: resolvedSource.unapplied === null ? [] : [resolvedSource.unapplied],
+    unapplied:
+      resolvedSource.unapplied === null ? [] : [resolvedSource.unapplied],
     // A filter that is active but happens to keep every entry still counts as
     // narrowed: the operator asked a question, and the count answers it.
     narrowed: source !== null || role !== "" || query !== ""

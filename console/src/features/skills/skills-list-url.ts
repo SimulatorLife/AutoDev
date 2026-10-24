@@ -51,9 +51,7 @@ export interface SkillsListFilters {
  * A repeated parameter takes its first value, which is what the browser's own
  * form submission produces and what the other list surfaces read.
  */
-function firstValue(
-  value: string | readonly string[] | undefined
-): string {
+function firstValue(value: string | readonly string[] | undefined): string {
   if (typeof value === "string") return value;
   if (value === undefined) return "";
   return value[0] ?? "";

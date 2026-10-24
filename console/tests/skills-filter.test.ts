@@ -80,21 +80,13 @@ function renderSkills(
 }
 
 test("a role keeps the skills assigned to it", () => {
-  const worker = filterSkills(
-    CATALOG,
-    { role: "worker" },
-    ROLES_BY_SKILL
-  );
+  const worker = filterSkills(CATALOG, { role: "worker" }, ROLES_BY_SKILL);
   assert.deepEqual(
     worker.map((skill) => skill.name),
     ["code-review", "release-notes"]
   );
 
-  const reviewer = filterSkills(
-    CATALOG,
-    { role: "reviewer" },
-    ROLES_BY_SKILL
-  );
+  const reviewer = filterSkills(CATALOG, { role: "reviewer" }, ROLES_BY_SKILL);
   assert.deepEqual(
     reviewer.map((skill) => skill.name),
     ["release-notes"]
@@ -113,7 +105,10 @@ test("a role keeps the skills assigned to it", () => {
 
 test("an empty role is the whole catalogue", () => {
   assert.equal(filterSkills(CATALOG, { role: "" }, ROLES_BY_SKILL).length, 3);
-  assert.equal(filterSkills(CATALOG, { role: "   " }, ROLES_BY_SKILL).length, 3);
+  assert.equal(
+    filterSkills(CATALOG, { role: "   " }, ROLES_BY_SKILL).length,
+    3
+  );
 });
 
 test("the list's address carries the role, and reads it back", () => {
