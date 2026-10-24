@@ -90,70 +90,204 @@ export interface GithubViewProps {
 }
 
 /**
- * The facet that narrows the workflow definitions by state.
+ * One facet: a row of links that narrow a list to one of its values.
  *
- * The same shape as the runs' facet, and for the same reason: the stat cards
- * above count the active workflows and the scheduled ones, and counting
- * without showing which leaves the operator reading the state badge of every
- * row. The page is read-only, so the facet is a row of links rather than a
- * filter bar with an Apply.
+ * The GitHub page is read-only and carries no form and no button at all -- a
+ * committed contract, and the target state's: dispatch, cancel, rerun and
+ * schedule controls are unimplemented and the Console must not expose them as
+ * browser-side affordances. A link narrows without being one, and a link that
+ * navigates to the narrowed address is the same narrowing a form would have
+ * done.
  *
- * It is offered only when the runtime facts were read. Without them there is
- * no state to narrow by -- every workflow reads "Unavailable" -- and naming
- * the states the page has not observed would claim a fact it does not have.
+ * The two facets are the same control over different axes, so they are the
+ * same code: the runs' outcomes and the definitions' states.
  */
-function workflowStateFacet({
-  listFilters,
-  stateCounts,
-  shown,
-  total
+function facetRow<Option extends string>({
+  label,
+  options,
+  selected,
+  href,
+  dataAttribute
 }: {
-  readonly listFilters: GithubListFilters;
-  readonly stateCounts: Record<WorkflowStateFilter, number>;
-  readonly shown: number;
-  readonly total: number;
+  readonly label: string;
+  readonly options: readonly {
+    readonly value: Option;
+    readonly label: string;
+    readonly count?: number | undefined;
+  }[];
+  readonly selected: Option;
+  readonly href: (value: Option) => string;
+  readonly dataAttribute: string;
 }): React.JSX.Element {
-  const narrowed =
-    listFilters.state !== undefined && listFilters.state !== "all";
   return React.createElement(
     "div",
     { className: "flex flex-wrap items-center gap-3" },
     React.createElement(
       "div",
       {
+        // The group wraps: the names are words rather than the tools
+        // catalogue's one-word roles, and a row that cannot wrap is a row that
+        // runs past the edge of a phone.
         className:
           "flex flex-wrap items-center gap-1.5 bg-surface border border-border p-1 rounded-lg"
       },
       React.createElement(
         "span",
         { className: `px-2 ${MUTED_META_CLASS}` },
-        "State:"
+        label
       ),
-      WORKFLOW_STATE_FILTERS.map((value) =>
+      options.map((option) =>
         React.createElement(
           NavigationLink,
           {
-            key: value,
-            href: githubListHref({ ...listFilters, state: value }),
-            dataAttributes: { "data-workflow-state": value },
+            key: option.value,
+            href: href(option.value),
+            dataAttributes: { [dataAttribute]: option.value },
             className: `px-3 py-1 rounded text-xs font-medium transition-colors ${
-              value === listFilters.state
+              option.value === selected
                 ? "bg-surface-raised text-accent"
                 : `${MUTED_TEXT_CLASS} hover:text-fg`
             }`,
-            ...(value === listFilters.state ? { "aria-current": "true" } : {})
+            // The selected chip is otherwise distinguishable only by its
+            // colour, which is no way to read a selection aloud.
+            ...(option.value === selected ? { "aria-current": "true" } : {})
           },
-          `${WORKFLOW_STATE_LABELS[value]} ${stateCounts[value]}`
+          option.count === undefined
+            ? option.label
+            : `${option.label} ${option.count}`
         )
       )
+    )
+  );
+}
+
+/**
+ * The recent runs, with the facet that narrows them.
+ */
+function recentRunsSection({
+  listFilters,
+  runs,
+  narrowed,
+  columns,
+  emptyMessage
+}: {
+  readonly listFilters: GithubListFilters;
+  readonly runs: readonly GithubWorkflowRun[];
+  readonly narrowed: readonly GithubWorkflowRun[];
+  readonly columns: ColumnDef<GithubWorkflowRun>[];
+  readonly emptyMessage: string;
+}): React.JSX.Element {
+  const isNarrowed = listFilters.outcome !== "all";
+  return React.createElement(
+    "div",
+    { className: "flex flex-col gap-3" },
+    React.createElement(
+      "h2",
+      {
+        className: SECTION_HEADING_CLASS
+      },
+      "Recent Workflow Runs"
     ),
-    narrowed
+    React.createElement(
+      "div",
+      { className: "flex flex-wrap items-center gap-3" },
+      facetRow({
+        label: "Outcome:",
+        options: RUN_OUTCOME_FILTERS.map((value) => ({
+          value,
+          label: RUN_OUTCOME_LABELS[value]
+        })),
+        selected: listFilters.outcome,
+        href: (value) => githubListHref({ ...listFilters, outcome: value }),
+        dataAttribute: "data-run-outcome"
+      }),
+      // The count of what is in view, in the same words the other filtered
+      // lists use. It is a plain span rather than a filter bar's summary
+      // because this page has no filter bar.
+      isNarrowed
+        ? React.createElement(
+            "span",
+            { className: FILTER_SUMMARY_CLASS },
+            `Showing ${narrowed.length} of ${runs.length} runs`
+          )
+        : null
+    ),
+    React.createElement<DataTableProps<GithubWorkflowRun>>(DataTable, {
+      data: narrowed,
+      columns,
+      keyExtractor: (run: GithubWorkflowRun) => String(run.id),
+      emptyMessage
+    })
+  );
+}
+
+/**
+ * The workflow definitions, with the facet that narrows them.
+ *
+ * The facet is offered only when the runtime facts were read. Without them
+ * there is no state to narrow by -- every workflow reads "Unavailable" -- and
+ * naming the states the page has not observed would claim a fact it does not
+ * have, which is the rule the state column itself follows.
+ */
+function workflowDefinitionsSection({
+  listFilters,
+  workflows,
+  narrowed,
+  stateCounts,
+  runtimeFactsAvailable,
+  columns,
+  emptyMessage
+}: {
+  readonly listFilters: GithubListFilters;
+  readonly workflows: readonly GithubWorkflowDefinition[];
+  readonly narrowed: readonly GithubWorkflowDefinition[];
+  readonly stateCounts: Record<WorkflowStateFilter, number>;
+  readonly runtimeFactsAvailable: boolean;
+  readonly columns: ColumnDef<GithubWorkflowDefinition>[];
+  readonly emptyMessage: string;
+}): React.JSX.Element {
+  const isNarrowed =
+    listFilters.state !== undefined && listFilters.state !== "all";
+  return React.createElement(
+    "div",
+    null,
+    React.createElement(
+      "h2",
+      {
+        className: SECTION_HEADING_CLASS
+      },
+      "Workflow Definitions"
+    ),
+    runtimeFactsAvailable
       ? React.createElement(
-          "span",
-          { className: FILTER_SUMMARY_CLASS },
-          `Showing ${shown} of ${total} workflows`
+          "div",
+          { className: "flex flex-wrap items-center gap-3" },
+          facetRow({
+            label: "State:",
+            options: WORKFLOW_STATE_FILTERS.map((value) => ({
+              value,
+              label: WORKFLOW_STATE_LABELS[value],
+              count: stateCounts[value]
+            })),
+            selected: listFilters.state ?? "all",
+            href: (value) => githubListHref({ ...listFilters, state: value }),
+            dataAttribute: "data-workflow-state"
+          }),
+          isNarrowed
+            ? React.createElement(
+                "span",
+                { className: FILTER_SUMMARY_CLASS },
+                `Showing ${narrowed.length} of ${workflows.length} workflows`
+              )
+            : null
         )
-      : null
+      : null,
+    React.createElement<DataTableProps<GithubWorkflowDefinition>>(DataTable, {
+      data: narrowed,
+      columns,
+      keyExtractor: (workflow: GithubWorkflowDefinition) => workflow.id,
+      emptyMessage
+    })
   );
 }
 
@@ -603,106 +737,23 @@ export function GithubView({
             "configuration observed in YAML are shown below." +
             (runtimeMessage ? ` (${runtimeMessage})` : "")
         ),
-    React.createElement(
-      "div",
-      null,
-      React.createElement(
-        "h2",
-        {
-          className: SECTION_HEADING_CLASS
-        },
-        "Workflow Definitions"
-      ),
-      runtimeFactsAvailable
-        ? workflowStateFacet({
-            listFilters,
-            stateCounts,
-            shown: narrowedWorkflows.length,
-            total: workflows.length
-          })
-        : null,
-      React.createElement<DataTableProps<GithubWorkflowDefinition>>(DataTable, {
-        data: narrowedWorkflows,
-        columns,
-        keyExtractor: (workflow: GithubWorkflowDefinition) => workflow.id,
-        emptyMessage: workflowEmptyMessage
-      })
-    ),
+    workflowDefinitionsSection({
+      listFilters,
+      workflows,
+      narrowed: narrowedWorkflows,
+      stateCounts,
+      runtimeFactsAvailable,
+      columns,
+      emptyMessage: workflowEmptyMessage
+    }),
     runtimeFactsAvailable && recentRuns.length > 0
-      ? React.createElement(
-          "div",
-          { className: "flex flex-col gap-3" },
-          React.createElement(
-            "h2",
-            {
-              className: SECTION_HEADING_CLASS
-            },
-            "Recent Workflow Runs"
-          ),
-          React.createElement(
-            "div",
-            { className: "flex flex-wrap items-center gap-3" },
-            // The facet is a row of links rather than the shared filter bar.
-            // The GitHub page is read-only and carries no form and no button
-            // at all -- a committed contract, and the target state's: dispatch,
-            // cancel, rerun and schedule controls are unimplemented and the
-            // Console must not expose them as browser-side affordances. A link
-            // narrows without being one, and a link that navigates to the
-            // narrowed address is the same narrowing a form would have done.
-            React.createElement(
-              "div",
-              {
-                // The group wraps: the outcome names are words rather than the
-                // tools catalogue's one-word roles, and a row that cannot wrap
-                // is a row that runs past the edge of a phone.
-                className:
-                  "flex flex-wrap items-center gap-1.5 bg-surface border border-border p-1 rounded-lg"
-              },
-              React.createElement(
-                "span",
-                { className: `px-2 ${MUTED_META_CLASS}` },
-                "Outcome:"
-              ),
-              RUN_OUTCOME_FILTERS.map((value) =>
-                React.createElement(
-                  NavigationLink,
-                  {
-                    key: value,
-                    href: githubListHref({ outcome: value }),
-                    dataAttributes: { "data-run-outcome": value },
-                    className: `px-3 py-1 rounded text-xs font-medium transition-colors ${
-                      value === listFilters.outcome
-                        ? "bg-surface-raised text-accent"
-                        : `${MUTED_TEXT_CLASS} hover:text-fg`
-                    }`,
-                    // The selected chip is otherwise distinguishable only by
-                    // its colour, which is no way to read a selection aloud.
-                    ...(value === listFilters.outcome
-                      ? { "aria-current": "true" }
-                      : {})
-                  },
-                  RUN_OUTCOME_LABELS[value]
-                )
-              )
-            ),
-            // The count of what is in view, in the same words the other
-            // filtered lists use. It is a plain span rather than a filter
-            // bar's summary because this page has no filter bar.
-            isNarrowed
-              ? React.createElement(
-                  "span",
-                  { className: FILTER_SUMMARY_CLASS },
-                  `Showing ${narrowedRuns.length} of ${recentRuns.length} runs`
-                )
-              : null
-          ),
-          React.createElement<DataTableProps<GithubWorkflowRun>>(DataTable, {
-            data: narrowedRuns,
-            columns: runColumns,
-            keyExtractor: (run: GithubWorkflowRun) => String(run.id),
-            emptyMessage: runEmptyMessage
-          })
-        )
+      ? recentRunsSection({
+          listFilters,
+          runs: recentRuns,
+          narrowed: narrowedRuns,
+          columns: runColumns,
+          emptyMessage: runEmptyMessage
+        })
       : null
   );
 }

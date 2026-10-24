@@ -215,9 +215,12 @@ test("the workflow definitions can be narrowed by state", async ({ page }) => {
     "true"
   );
 
-  // And the page stays read-only: no form and no button anywhere on it.
-  await expect(page.locator("form")).toHaveCount(0);
-  await expect(page.locator("button")).toHaveCount(0);
+  // And the page stays read-only: no form and no button of its own. The
+  // scope is the page's own region, because the shell around it has a button
+  // of its own -- the one that collapses the sidebar -- and that is not a
+  // control on the GitHub page.
+  await expect(page.locator('[data-feature="github"] form')).toHaveCount(0);
+  await expect(page.locator('[data-feature="github"] button')).toHaveCount(0);
 });
 
 test("the page offers no GitHub mutation control", async ({ page }) => {
