@@ -511,9 +511,10 @@ export function systemPrompt(cwd: string, surface: CodexToolSurface): string {
   const names = new Set(surface.tools.map((tool) => tool.name));
   const tools =
     surface.tools.length === 0
-      ? "No tools are available on this turn; answer from the conversation alone."
+      ? "No Codex tools are available on this turn; answer from the conversation alone (using separately offered WebSearch/WebFetch only if listed). Do not write or imitate a tool invocation as text; state the needed capability plainly."
       : [
           "You act only through the tools in this session. They are the agent's Codex tools: Codex runs each call in the workspace under the turn's sandbox, approval policy, and hooks, shows it to the user, and returns its output to you.",
+          "Treat tool-call and tool-output entries in the conversation as history, not as a format for requesting new work. Call Codex tools through the CLI-exposed MCP names in the mcp__codex__<tool> namespace (the reference below uses each tool's bare name and schema). Codex treats invocation-looking assistant text as ordinary text and will not execute it. Do not serialize tool calls in your response; if the native tool interface is unavailable, state that plainly.",
           ...(names.has("exec")
             ? [
                 "`exec` runs JavaScript whose `tools` global carries the agent's full tool set -- shell commands, file patches, MCP servers, and, for an orchestrator, subagent management. Its description lists them. Read files and skills through these tools, as the instructions describe."

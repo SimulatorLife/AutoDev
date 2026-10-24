@@ -1431,7 +1431,14 @@ every action goes through the session's Codex tools, and the final message is
 the agent's reply. It also states the workspace the bridge resolved from
 structured request metadata, because a replaced prompt loses the CLI's
 per-machine sections (`--exclude-dynamic-system-prompt-sections` is ignored
-with `--system-prompt`).
+with `--system-prompt`). A Codex tool call exists only when the CLI uses the
+native MCP interface; invocation-looking text in an assistant message remains
+ordinary text and is never dispatched or parsed as a call. The prompt tells the
+model to call the CLI-exposed `mcp__codex__…` tools instead of serializing a
+call, and treats tool-call/output transcript entries as history; that
+instruction is best-effort model guidance, not a structural guarantee.
+`WebSearch`/`WebFetch`, when separately offered, remain provider-native research
+steps rather than Codex tool calls.
 
 Role policy is not in that prompt. It arrives in Codex's own context, which the
 bridge renders with `renderCodexTranscript()` and writes to the CLI's stdin:

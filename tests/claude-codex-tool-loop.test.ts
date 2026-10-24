@@ -334,6 +334,20 @@ test("a Claude turn acts only through Codex tools that Codex executes", async ()
     // No built-in tool may act inside the CLI; Codex's tools are its only tools.
     assert.equal(cli.argv[cli.argv.indexOf("--tools") + 1], "");
     assert.deepEqual(cli.tools, ["exec", "wait"]);
+    const systemPrompt = cli.argv[cli.argv.indexOf("--system-prompt") + 1];
+    assert.match(
+      systemPrompt,
+      /Treat tool-call and tool-output entries in the conversation as history/
+    );
+    assert.match(
+      systemPrompt,
+      /Call Codex tools through the CLI-exposed MCP names in the mcp__codex__<tool> namespace/
+    );
+    assert.match(
+      systemPrompt,
+      /Codex treats invocation-looking assistant text as ordinary text and will not execute it/
+    );
+    assert.match(systemPrompt, /Do not serialize tool calls in your response/);
     assert.equal(
       cli.mcpOtelResourceAttributes,
       "autodev.workspace=claude-mcp-workspace,autodev.agent.role=worker",
@@ -381,6 +395,54 @@ test("a Claude turn acts only through Codex tools that Codex executes", async ()
       ["Script completed\nOutput:\n", "README.md"]
     );
   });
+});
+
+test("tool-call-looking assistant text is not dispatched as a Codex tool", async () => {
+  const serializedCall =
+    '<invoke name="wait"><parameter name="cell_id">7</parameter></invoke>';
+  await withBridge([{ say: serializedCall }], async ({ port }) => {
+    const response = completedResponse(
+      parseSse(
+        await (
+          await codexRequest(port, [
+            CODEX_TOOLS,
+            { type: "message", role: "user", content: "continue" }
+          ])
+        ).text()
+      )
+    );
+
+    assert.deepEqual(
+      response.output.map((item: JsonRecord) => item.type),
+      ["message"],
+      "invocation-looking assistant text remains a message, not a Codex tool call"
+    );
+    assert.equal(response.output_text, serializedCall);
+  });
+});
+
+test("a turn without Codex tools does not direct the model to use absent tools", async () => {
+  await withBridge(
+    [{ say: "I need a tool to continue." }],
+    async ({ port, record }) => {
+      const response = completedResponse(
+        parseSse(
+          await (
+            await codexRequest(port, [
+              { type: "message", role: "user", content: "continue" }
+            ])
+          ).text()
+        )
+      );
+      assert.equal(response.output_text, "I need a tool to continue.");
+
+      const cli = await record();
+      const prompt = cli.argv[cli.argv.indexOf("--system-prompt") + 1];
+      assert.match(prompt, /No Codex tools are available on this turn/);
+      assert.match(prompt, /Do not write or imitate a tool invocation as text/);
+      assert.equal(cli.tools, undefined, "no Codex MCP server is configured");
+    }
+  );
 });
 
 test("a continuation carrying Codex's own notification resumes the same parked turn", async () => {
