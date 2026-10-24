@@ -35,12 +35,17 @@ import {
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
+  countWorkflowStates,
   filterRuns,
+  filterWorkflows,
   type GithubListFilters,
   githubListHref,
   RUN_OUTCOME_FILTERS,
   RUN_OUTCOME_LABELS,
-  type RunOutcomeFilter
+  type RunOutcomeFilter,
+  WORKFLOW_STATE_FILTERS,
+  WORKFLOW_STATE_LABELS,
+  type WorkflowStateFilter
 } from "./github-list-url.ts";
 
 /**
@@ -76,6 +81,80 @@ export interface GithubViewProps {
    * rather than by passing "all".
    */
   readonly outcome?: RunOutcomeFilter | undefined;
+  /**
+   * The state the workflow definitions are narrowed to.
+   *
+   * Optional, and `undefined` means every state.
+   */
+  readonly state?: WorkflowStateFilter | undefined;
+}
+
+/**
+ * The facet that narrows the workflow definitions by state.
+ *
+ * The same shape as the runs' facet, and for the same reason: the stat cards
+ * above count the active workflows and the scheduled ones, and counting
+ * without showing which leaves the operator reading the state badge of every
+ * row. The page is read-only, so the facet is a row of links rather than a
+ * filter bar with an Apply.
+ *
+ * It is offered only when the runtime facts were read. Without them there is
+ * no state to narrow by -- every workflow reads "Unavailable" -- and naming
+ * the states the page has not observed would claim a fact it does not have.
+ */
+function workflowStateFacet({
+  listFilters,
+  stateCounts,
+  shown,
+  total
+}: {
+  readonly listFilters: GithubListFilters;
+  readonly stateCounts: Record<WorkflowStateFilter, number>;
+  readonly shown: number;
+  readonly total: number;
+}): React.JSX.Element {
+  const narrowed =
+    listFilters.state !== undefined && listFilters.state !== "all";
+  return React.createElement(
+    "div",
+    { className: "flex flex-wrap items-center gap-3" },
+    React.createElement(
+      "div",
+      {
+        className:
+          "flex flex-wrap items-center gap-1.5 bg-surface border border-border p-1 rounded-lg"
+      },
+      React.createElement(
+        "span",
+        { className: `px-2 ${MUTED_META_CLASS}` },
+        "State:"
+      ),
+      WORKFLOW_STATE_FILTERS.map((value) =>
+        React.createElement(
+          NavigationLink,
+          {
+            key: value,
+            href: githubListHref({ ...listFilters, state: value }),
+            dataAttributes: { "data-workflow-state": value },
+            className: `px-3 py-1 rounded text-xs font-medium transition-colors ${
+              value === listFilters.state
+                ? "bg-surface-raised text-accent"
+                : `${MUTED_TEXT_CLASS} hover:text-fg`
+            }`,
+            ...(value === listFilters.state ? { "aria-current": "true" } : {})
+          },
+          `${WORKFLOW_STATE_LABELS[value]} ${stateCounts[value]}`
+        )
+      )
+    ),
+    narrowed
+      ? React.createElement(
+          "span",
+          { className: FILTER_SUMMARY_CLASS },
+          `Showing ${shown} of ${total} workflows`
+        )
+      : null
+  );
 }
 
 export function GithubView({
@@ -85,6 +164,7 @@ export function GithubView({
   runtimeMessage,
   repository,
   outcome = "all",
+  state = "all",
   stats,
   recentRuns = []
 }: GithubViewProps): React.JSX.Element {
@@ -101,9 +181,23 @@ export function GithubView({
   // success rate and the run counts describe every run the Actions API
   // returned, and they must not shrink because the operator narrowed the
   // table to the failures.
-  const listFilters: GithubListFilters = { outcome };
+  const listFilters: GithubListFilters = { outcome, state };
   const narrowedRuns = filterRuns(recentRuns, listFilters);
   const isNarrowed = listFilters.outcome !== "all";
+  // The workflow definitions are narrowed by state, on the vocabulary the
+  // "GitHub Actions State" column renders, so the filter's buckets and the
+  // badges in the rows are the same thing.
+  const narrowedWorkflows = filterWorkflows(
+    workflows,
+    listFilters,
+    runtimeFactsAvailable
+  );
+  const stateCounts = countWorkflowStates(workflows, runtimeFactsAvailable);
+  const isStateNarrowed =
+    listFilters.state !== undefined && listFilters.state !== "all";
+  const workflowEmptyMessage = isStateNarrowed
+    ? `No ${WORKFLOW_STATE_LABELS[listFilters.state!].toLowerCase()} workflows were found.`
+    : "No workflow definitions were found.";
   // A run the page does not count -- a skipped or neutral conclusion -- is in
   // the sample's total and in nobody's counter, so it is named here rather
   // than being quietly dropped by a filter that says "Failed".
@@ -519,11 +613,19 @@ export function GithubView({
         },
         "Workflow Definitions"
       ),
+      runtimeFactsAvailable
+        ? workflowStateFacet({
+            listFilters,
+            stateCounts,
+            shown: narrowedWorkflows.length,
+            total: workflows.length
+          })
+        : null,
       React.createElement<DataTableProps<GithubWorkflowDefinition>>(DataTable, {
-        data: workflows,
+        data: narrowedWorkflows,
         columns,
         keyExtractor: (workflow: GithubWorkflowDefinition) => workflow.id,
-        emptyMessage: "No workflow definitions were found."
+        emptyMessage: workflowEmptyMessage
       })
     ),
     runtimeFactsAvailable && recentRuns.length > 0

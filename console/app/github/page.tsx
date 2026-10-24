@@ -91,7 +91,8 @@ export default async function GithubPage({
       repository: result.data.repository,
       stats: result.data.stats,
       recentRuns: result.data.recentRuns,
-      outcome: listFilters.outcome
+      outcome: listFilters.outcome,
+      state: listFilters.state
     })
   );
 }

@@ -192,6 +192,34 @@ test("the recent runs can be narrowed by outcome", async ({ page }) => {
   );
 });
 
+test("the workflow definitions can be narrowed by state", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/github");
+
+  // The page counts the active workflows on a stat card and cannot show
+  // which they are, so the state is a facet over the definitions.
+  const definitions = tableUnder(page, "Workflow Definitions");
+  await expect(definitions.locator("tbody tr")).toHaveCount(4);
+
+  await page.locator('[data-workflow-state="active"]').click();
+  await expect(page).toHaveURL(/state=active/u);
+  await expect(
+    tableUnder(page, "Workflow Definitions").locator("tbody tr")
+  ).toHaveCount(2);
+  await expect(
+    page.getByText("Showing 2 of 4 workflows", { exact: true })
+  ).toBeVisible();
+  // The chosen facet says so, and not only by its colour.
+  await expect(page.locator('[data-workflow-state="active"]')).toHaveAttribute(
+    "aria-current",
+    "true"
+  );
+
+  // And the page stays read-only: no form and no button anywhere on it.
+  await expect(page.locator("form")).toHaveCount(0);
+  await expect(page.locator("button")).toHaveCount(0);
+});
+
 test("the page offers no GitHub mutation control", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/github");

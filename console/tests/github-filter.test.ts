@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { GithubWorkflowDefinition } from "@simulatorlife/autodev-core";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
+  countWorkflowStates,
   filterRuns,
+  filterWorkflows,
   githubListHref,
   readGithubFilters,
-  runOutcome
+  runOutcome,
+  workflowState
 } from "../src/features/github/github-list-url.ts";
 import { GithubView } from "../src/features/github/GithubView.ts";
 
@@ -138,16 +142,19 @@ test("the page's address carries the outcome, and reads it back", () => {
   assert.equal(githubListHref({ outcome: "failed" }), "/github?outcome=failed");
 
   assert.deepEqual(readGithubFilters({ outcome: "failed" }), {
-    outcome: "failed"
+    outcome: "failed",
+    state: "all"
   });
-  assert.deepEqual(readGithubFilters({}), { outcome: "all" });
+  assert.deepEqual(readGithubFilters({}), { outcome: "all", state: "all" });
   // An outcome the page does not have is answered with the whole list rather
   // than with an empty one.
   assert.deepEqual(readGithubFilters({ outcome: "nonsense" }), {
-    outcome: "all"
+    outcome: "all",
+    state: "all"
   });
   assert.deepEqual(readGithubFilters({ outcome: ["failed", "all"] }), {
-    outcome: "failed"
+    outcome: "failed",
+    state: "all"
   });
 });
 
@@ -218,4 +225,173 @@ test("an empty narrowed list says the outcome excluded everything", () => {
   // Not "no runs were observed": two were.
   assert.match(markup, /No cancelled runs were observed in this sample\./u);
   assert.doesNotMatch(markup, /No recent workflow runs observed\./u);
+});
+
+/**
+ * The workflow-definitions table can be narrowed by state.
+ *
+ * Nineteen workflows in the live instance, and the page counts two things it
+ * will not show: the "Active Workflows" card counts the enabled ones and the
+ * "Scheduled Workflows" card counts the ones on a cron, and neither count can
+ * be turned into a list. The state is a badge rather than prose, so finding
+ * the two disabled workflows among nineteen meant reading a badge of every row.
+ *
+ * The buckets are the ones the "GitHub Actions State" column renders, so the
+ * filter and the column are the same thing -- and the two ways a workflow can
+ * be disabled share a bucket, because "is it disabled?" is one question.
+ */
+
+function workflow(
+  id: string,
+  actionsState?: GithubWorkflowDefinition["actionsState"]
+): GithubWorkflowDefinition {
+  return {
+    id,
+    name: id,
+    path: `.github/workflows/${id}.yml`,
+    events: ["push"],
+    schedules: [],
+    ...(actionsState === undefined ? {} : { actionsState })
+  };
+}
+
+const WORKFLOWS = [
+  workflow("ci", "active"),
+  workflow("release", "active"),
+  workflow("nightly", "disabled_manually"),
+  workflow("legacy", "disabled_inactivity"),
+  workflow("gone", "deleted")
+];
+
+test("a workflow's state is the same predicate the state badge renders from", () => {
+  assert.equal(workflowState(WORKFLOWS[0]!, true), "active");
+  assert.equal(workflowState(WORKFLOWS[2]!, true), "disabled");
+  assert.equal(workflowState(WORKFLOWS[3]!, true), "disabled");
+  assert.equal(workflowState(WORKFLOWS[4]!, true), "deleted");
+  // A state the page could not read is unavailable, and it is unavailable
+  // because the runtime facts are missing -- not because the workflow has no
+  // state.
+  assert.equal(workflowState(WORKFLOWS[0]!, false), "unavailable");
+  assert.equal(
+    workflowState(workflow("none", "unavailable"), true),
+    "unavailable"
+  );
+  // A state the Runtime has but the page does not know is not observed.
+  assert.equal(workflowState(workflow("odd", "unknown"), true), "not-observed");
+});
+
+test("a state keeps the workflows in that state", () => {
+  assert.deepEqual(
+    filterWorkflows(WORKFLOWS, { outcome: "all", state: "active" }, true).map(
+      (entry) => entry.id
+    ),
+    ["ci", "release"]
+  );
+  assert.deepEqual(
+    filterWorkflows(WORKFLOWS, { outcome: "all", state: "disabled" }, true).map(
+      (entry) => entry.id
+    ),
+    ["nightly", "legacy"]
+  );
+  assert.equal(
+    filterWorkflows(WORKFLOWS, { outcome: "all", state: "all" }, true).length,
+    5
+  );
+});
+
+test("the state counts are over the whole catalogue", () => {
+  const counts = countWorkflowStates(WORKFLOWS, true);
+  assert.equal(counts.all, 5);
+  assert.equal(counts.active, 2);
+  assert.equal(counts.disabled, 2);
+  assert.equal(counts.deleted, 1);
+  // The counts do not shrink when another state is selected, so the count on
+  // the facet stays true.
+  assert.equal(counts.active, 2);
+});
+
+test("the state and the outcome are two separate narrowings of one address", () => {
+  assert.deepEqual(readGithubFilters({ outcome: "failed" }), {
+    outcome: "failed",
+    state: "all"
+  });
+  assert.deepEqual(readGithubFilters({ state: "active" }), {
+    outcome: "all",
+    state: "active"
+  });
+  // Both at once.
+  assert.deepEqual(readGithubFilters({ outcome: "failed", state: "active" }), {
+    outcome: "failed",
+    state: "active"
+  });
+  // A state the page does not have is answered with every state rather than
+  // with nothing.
+  assert.deepEqual(readGithubFilters({ state: "nonsense" }), {
+    outcome: "all",
+    state: "all"
+  });
+  assert.equal(
+    githubListHref({ outcome: "all", state: "active" }),
+    "/github?state=active"
+  );
+  assert.equal(
+    githubListHref({ outcome: "failed", state: "active" }),
+    "/github?outcome=failed&state=active"
+  );
+  assert.equal(githubListHref({ outcome: "all", state: "all" }), "/github");
+});
+
+test("the workflow definitions carry a state facet, and the page stays read-only", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(GithubView, {
+      workflows: WORKFLOWS,
+      runtimeFactsAvailable: true,
+      runtimeStatus: "available",
+      repository: "SimulatorLife/AutoDev",
+      stats: {
+        totalRuns: 0,
+        successfulRuns: 0,
+        failedRuns: 0,
+        inProgressRuns: 0,
+        cancelledRuns: 0,
+        successRate: null
+      },
+      recentRuns: []
+    })
+  );
+
+  // The facet is a row of links: the GitHub page carries no form and no
+  // button at all, because a link narrows without being one.
+  assert.doesNotMatch(markup, /<form/u);
+  assert.doesNotMatch(markup, /<button/u);
+  assert.match(markup, /data-workflow-state="active"/u);
+  // And the facet names its counts, so the operator can see what a choice
+  // would leave before making it.
+  assert.match(markup, /Active 2/u);
+  // Two ways a workflow can be disabled, and one question to an operator.
+  assert.match(markup, /Disabled 2/u);
+  assert.match(markup, /Deleted 1/u);
+  // A state no workflow holds still says so, rather than being left out and
+  // leaving the operator to wonder whether it exists.
+  assert.match(markup, /Unavailable 0/u);
+});
+
+test("the state facet is not offered when the runtime facts were never read", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(GithubView, {
+      workflows: WORKFLOWS,
+      runtimeFactsAvailable: false,
+      runtimeStatus: "unavailable",
+      repository: "SimulatorLife/AutoDev",
+      stats: null,
+      recentRuns: []
+    })
+  );
+
+  // Every workflow reads "Unavailable" when the facts were never read, so
+  // there is no state to narrow by, and naming the states the page has not
+  // observed would claim a fact it does not have.
+  assert.doesNotMatch(markup, /data-workflow-state/u);
+  assert.doesNotMatch(markup, /Active/u);
+  assert.doesNotMatch(markup, /Disabled/u);
 });

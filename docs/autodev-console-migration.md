@@ -252,6 +252,12 @@ A conclusion the page does not count -- a skipped or neutral run -- is in the sa
 
 `console/tests/github-filter.test.ts` pins the classification, the four categories, the run the page does not count, the address and its reading, the filter bar's own name and its absence of a submit button, the count of what is in view, and the empty message.
 
+**The workflow definitions can be narrowed by state.** The same page counted the active workflows on a stat card and could not show which they were, so the operator read the state badge of every one of nineteen rows to find the two that were disabled. The definitions now carry a state facet beside their table, on the vocabulary the "GitHub Actions State" column renders -- so the filter's buckets and the badges in the rows are the same thing, and the two ways a workflow can be disabled share a bucket because "is it disabled?" is one question. The counts on the facet are over the whole catalogue, so the count for the state the operator is looking at stays true when another state is selected.
+
+The two facets are two narrowings of one address: `?outcome=` narrows the runs and `?state=` narrows the definitions, and either can be used alone or together.
+
+The state facet appears only when the runtime facts were read. Without them every workflow reads "Unavailable", there is no state to narrow by, and naming the states the page has not observed would claim a fact it does not have -- which is the same rule the state column itself follows, and the same one the acceptance holds the page to.
+
 ## How large the Console's lists really are
 
 The rule the target state states -- "every list that holds more than a handful of rows carries the product's own filter bar" -- needs the sizes measured against the live Console rather than against a fixture, because a fixture holds two rows and would have made every list look short enough to leave alone. Measured at 1440x900 on the live Console:

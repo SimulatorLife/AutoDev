@@ -1,4 +1,7 @@
-import type { GithubWorkflowRun } from "@simulatorlife/autodev-core";
+import type {
+  GithubWorkflowDefinition,
+  GithubWorkflowRun
+} from "@simulatorlife/autodev-core";
 
 /**
  * The one owner of the GitHub page's list state.
@@ -61,9 +64,46 @@ export const RUN_OUTCOME_LABELS: Readonly<Record<RunOutcomeFilter, string>> = {
 /** Everything the page's list state can carry. */
 export interface GithubListFilters {
   readonly outcome: RunOutcomeFilter;
+  /** Optional, and `undefined` means every state. */
+  readonly state?: WorkflowStateFilter | undefined;
 }
 
-const EMPTY_FILTERS: GithubListFilters = { outcome: "all" };
+/**
+ * The state a workflow can be narrowed to.
+ *
+ * `all` is every workflow the page knows about. The others are the states the
+ * "GitHub Actions State" column renders, so the filter's buckets and the
+ * badges in the rows are the same thing.
+ */
+export type WorkflowStateFilter =
+  "all" | "active" | "disabled" | "deleted" | "unavailable" | "not-observed";
+
+export const WORKFLOW_STATE_FILTERS: readonly WorkflowStateFilter[] = [
+  "all",
+  "active",
+  "disabled",
+  "deleted",
+  "unavailable",
+  "not-observed"
+];
+
+/**
+ * How each state reads in the filter.
+ *
+ * The words are the column's own: "Active" and "Deleted" are what the badge
+ * says, and the two ways a workflow can be disabled are one question to an
+ * operator -- "is it disabled?" -- so they share a bucket.
+ */
+export const WORKFLOW_STATE_LABELS: Readonly<
+  Record<WorkflowStateFilter, string>
+> = {
+  all: "All states",
+  active: "Active",
+  disabled: "Disabled",
+  deleted: "Deleted",
+  unavailable: "Unavailable",
+  "not-observed": "Not observed"
+};
 
 /**
  * The value of a query parameter.
@@ -89,14 +129,23 @@ export function readGithubFilters(
 ): GithubListFilters {
   const requested = firstValue(params.outcome).trim();
   const outcome = RUN_OUTCOME_FILTERS.find((value) => value === requested);
-  return outcome === undefined ? EMPTY_FILTERS : { outcome };
+  const requestedState = firstValue(params.state).trim();
+  const state = WORKFLOW_STATE_FILTERS.find(
+    (value) => value === requestedState
+  );
+  return {
+    outcome: outcome ?? "all",
+    state: state ?? "all"
+  };
 }
 
 /** The list's query string, without the route. */
 export function githubListQuery(filters: GithubListFilters): string {
-  if (filters.outcome === "all") return "";
   const params = new URLSearchParams();
-  params.set("outcome", filters.outcome);
+  if (filters.outcome !== "all") params.set("outcome", filters.outcome);
+  if (filters.state && filters.state !== "all") {
+    params.set("state", filters.state);
+  }
   return params.toString();
 }
 
@@ -146,6 +195,71 @@ export function filterRuns(
 ): readonly GithubWorkflowRun[] {
   if (filters.outcome === "all") return runs;
   return runs.filter((run) => runOutcome(run) === filters.outcome);
+}
+
+/**
+ * The state a workflow is in, as the "GitHub Actions State" column renders it.
+ *
+ * The same predicates the column's badge uses, so the filter's buckets and
+ * the badges in the rows are the same thing. A workflow the Runtime has not
+ * been asked about is "unavailable" rather than missing, and one whose state
+ * is not a state the page knows is "not observed" -- the same distinction the
+ * column draws between a state it could not read and a state it read and did
+ * not recognise.
+ */
+export function workflowState(
+  workflow: GithubWorkflowDefinition,
+  runtimeFactsAvailable: boolean
+): WorkflowStateFilter {
+  if (!runtimeFactsAvailable) return "unavailable";
+  const state = workflow.actionsState;
+  if (state === undefined || state === "unavailable") return "unavailable";
+  if (state === "active") return "active";
+  if (state === "disabled_manually" || state === "disabled_inactivity") {
+    return "disabled";
+  }
+  if (state === "deleted") return "deleted";
+  return "not-observed";
+}
+
+/**
+ * The workflows a set of filters keeps.
+ */
+export function filterWorkflows(
+  workflows: readonly GithubWorkflowDefinition[],
+  filters: GithubListFilters,
+  runtimeFactsAvailable: boolean
+): readonly GithubWorkflowDefinition[] {
+  if (!filters.state || filters.state === "all") return workflows;
+  return workflows.filter(
+    (workflow) =>
+      workflowState(workflow, runtimeFactsAvailable) === filters.state
+  );
+}
+
+/**
+ * How many workflows each state holds.
+ *
+ * The counts are over the whole catalogue, not over the narrowed list, so the
+ * count for the state the operator is looking at stays true when another state
+ * is selected.
+ */
+export function countWorkflowStates(
+  workflows: readonly GithubWorkflowDefinition[],
+  runtimeFactsAvailable: boolean
+): Record<WorkflowStateFilter, number> {
+  const counts: Record<WorkflowStateFilter, number> = {
+    all: workflows.length,
+    active: 0,
+    disabled: 0,
+    deleted: 0,
+    unavailable: 0,
+    "not-observed": 0
+  };
+  for (const workflow of workflows) {
+    counts[workflowState(workflow, runtimeFactsAvailable)] += 1;
+  }
+  return counts;
 }
 
 /**
