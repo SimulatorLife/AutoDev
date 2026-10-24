@@ -338,7 +338,7 @@ test("console launcher adheres to loopback binding contract, exact-key tokens, a
       "verify-control-api.ts"
     );
     const usagePreflightIndex = result.stdout.indexOf(
-      "verify-usage-contract.ts"
+      "platform/usage-contract.ts"
     );
     const nextStartIndex = result.stdout.indexOf("next start --hostname");
     assert.ok(controlPreflightIndex !== -1, "Control API preflight must run");
@@ -414,6 +414,70 @@ test("console launcher adheres to loopback binding contract, exact-key tokens, a
       !result.stderr.includes(usageToken),
       "Launcher stderr must never echo usage token"
     );
+  }));
+
+test("console launcher reports a backend that did not answer as a temporary failure", () =>
+  withTempDir((directory) => {
+    const fakeRepo = join(directory, "repo");
+    const codexHome = join(directory, "codex-home");
+    const consoleDir = join(fakeRepo, "console");
+    const buildIdDir = join(consoleDir, ".next");
+    const nextBinDir = join(consoleDir, "node_modules/next/dist/bin");
+    const fakeNode = join(directory, "fake-node");
+    const fakeNext = join(nextBinDir, "next");
+
+    mkdirSync(buildIdDir, { recursive: true });
+    mkdirSync(nextBinDir, { recursive: true });
+    mkdirSync(codexHome, { recursive: true });
+    writeFileSync(join(buildIdDir, "BUILD_ID"), "test-build-id-123\n");
+    writeFileSync(fakeNext, "#!/usr/bin/env bash\necho next\n");
+    chmodSync(fakeNext, 0o755);
+    writeFileSync(
+      join(codexHome, "openlit-secrets.env"),
+      [
+        `AUTODEV_CONTROL_API_TOKEN=${"c".repeat(64)}`,
+        `AUTODEV_OPENLIT_USAGE_TOKEN=${"u".repeat(64)}`
+      ].join("\n") + "\n",
+      { mode: 0o600 }
+    );
+
+    // The preflight reports that a backend did not answer: EX_TEMPFAIL.
+    writeFileSync(
+      fakeNode,
+      [
+        "#!/usr/bin/env bash",
+        'echo "ARGS:$*"',
+        'case "$*" in',
+        "  *verify-control-api.ts*) exit 75 ;;",
+        "esac",
+        "exit 0"
+      ].join("\n")
+    );
+    chmodSync(fakeNode, 0o755);
+
+    const result = spawnSync("bash", [runScriptPath], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: directory,
+        CODEX_HOME: codexHome,
+        AUTODEV_REPO_ROOT: fakeRepo,
+        AUTODEV_NODE_BIN: fakeNode,
+        AUTODEV_CONSOLE_PORT: "3300"
+      }
+    });
+
+    assert.equal(
+      result.status,
+      75,
+      "a backend that did not answer is a temporary failure, not a broken service"
+    );
+    assert.doesNotMatch(
+      result.stdout,
+      /next start/u,
+      "the Console must not serve against a backend that did not answer"
+    );
+    assert.match(result.stderr, /a backend did not answer/u);
   }));
 
 test("console ensure script resolves node and dispatches to console-ensure module", () =>

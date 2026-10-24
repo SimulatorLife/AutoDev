@@ -6,11 +6,41 @@ const DEFAULT_BASE_URL = "http://127.0.0.1:3000";
 // contract without scanning the full 24-hour live telemetry volume on every
 // Console service restart.
 const CONTRACT_PROBE_DATE = "2000-01-01";
-const serviceToken = process.env.AUTODEV_OPENLIT_USAGE_TOKEN?.trim();
 
-if (serviceToken) {
+/**
+ * What the deployed Usage API answered with.
+ *
+ * `unreachable` is the class that matters to a supervisor: the API did not
+ * answer at all, which is a backend that has not come up yet rather than a
+ * contract that is wrong. The Data layer owns the contract and reports the
+ * class; the Runtime owns what each class means for a supervised service.
+ */
+export type UsageContractOutcome =
+  | { readonly kind: "ok" }
+  | { readonly kind: "invalid-response" }
+  | { readonly kind: "unauthorized"; readonly status: number }
+  | { readonly kind: "http-error"; readonly status: number }
+  | { readonly kind: "unreachable" }
+  | { readonly kind: "not-configured" };
+
+export interface UsageContractOptions {
+  readonly baseUrl?: string;
+  readonly serviceToken?: string;
+}
+
+/** Verify the deployed Usage response against the v5 contract. */
+export async function verifyUsageContract(
+  options: UsageContractOptions = {}
+): Promise<UsageContractOutcome> {
+  const serviceToken =
+    options.serviceToken ?? process.env.AUTODEV_OPENLIT_USAGE_TOKEN?.trim();
+  if (!serviceToken) return { kind: "not-configured" };
+
   const client = new OpenLITUsageClient({
-    baseUrl: process.env.AUTODEV_OPENLIT_USAGE_URL?.trim() || DEFAULT_BASE_URL,
+    baseUrl:
+      options.baseUrl ??
+      process.env.AUTODEV_OPENLIT_USAGE_URL?.trim() ??
+      DEFAULT_BASE_URL,
     serviceToken
   });
   const result = await client.query({
@@ -24,41 +54,22 @@ if (serviceToken) {
 
   switch (result.kind) {
     case "ok": {
-      process.stdout.write("[openlit] Usage v5 response contract verified.\n");
-      break;
+      return { kind: "ok" };
     }
     case "invalid-response": {
-      process.stderr.write(
-        "[openlit] Usage API returned a response that does not match the required v5 contract. Rebuild/reconcile the patched OpenLIT image.\n"
-      );
-      process.exitCode = 1;
-      break;
+      return { kind: "invalid-response" };
     }
     case "unauthorized": {
-      process.stderr.write(
-        `[openlit] Usage API rejected its server credential with HTTP ${result.status}.\n`
-      );
-      process.exitCode = 1;
-      break;
+      return { kind: "unauthorized", status: result.status };
     }
     case "http-error": {
-      process.stderr.write(
-        `[openlit] Usage API returned HTTP ${result.status} during contract verification.\n`
-      );
-      process.exitCode = 1;
-      break;
+      return { kind: "http-error", status: result.status };
     }
     case "unreachable": {
-      process.stderr.write(
-        "[openlit] Usage API could not be reached during contract verification.\n"
-      );
-      process.exitCode = 1;
-      break;
+      return { kind: "unreachable" };
+    }
+    default: {
+      return { kind: "unreachable" };
     }
   }
-} else {
-  process.stderr.write(
-    "[openlit] AUTODEV_OPENLIT_USAGE_TOKEN is required to verify the Usage API.\n"
-  );
-  process.exitCode = 1;
 }

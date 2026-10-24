@@ -179,8 +179,28 @@ fi
 # Never serve a Console whose Runtime or Usage backend cannot satisfy the
 # checked-out contracts. These checks are read-only and do not restart either
 # backend; stale Runtime installs must be refreshed during a safe window.
-"$NODE_BIN" "$repo_root/runtime/src/cli/verify-control-api.ts"
-"$NODE_BIN" "$repo_root/data/src/usage/verify-usage-contract.ts"
+#
+# The exit status is part of the contract with the supervisor. A backend that
+# did not answer is a temporary failure (EX_TEMPFAIL, 75): the launcher says
+# so and exits with it, so launchd's KeepAlive restarts the job and the
+# installer keeps waiting instead of declaring a crash loop on a service that
+# was about to serve. A backend that answered with a stale contract is a
+# permanent failure, and it exits 1.
+verify_backend_contract() {
+	local verifier="$1"
+	local status=0
+	"$NODE_BIN" "$verifier" || status=$?
+	if [[ "$status" -eq 75 ]]; then
+		echo "run-codex-console: a backend did not answer; the Console will retry when it is up." >&2
+		exit 75
+	fi
+	if [[ "$status" -ne 0 ]]; then
+		exit "$status"
+	fi
+}
+
+verify_backend_contract "$repo_root/runtime/src/cli/verify-control-api.ts"
+verify_backend_contract "$repo_root/runtime/src/platform/usage-contract.ts"
 
 export AUTODEV_CONSOLE_PORT="$console_port"
 

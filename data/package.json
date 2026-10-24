@@ -25,7 +25,6 @@
     "openlit:sync-agents": "node src/openlit/sync-rulesync-agents.ts",
     "openlit:sync-models": "node src/openlit/sync-rulesync-models.ts",
     "openlit:sync-prompts": "node src/openlit/sync-rulesync-prompts.ts",
-    "openlit:verify-usage": "node src/usage/verify-usage-contract.ts",
     "openlit:sync-workspaces": "node src/openlit/sync-rulesync-workspaces.ts",
     "test": "node --test",
     "typecheck": "tsc --noEmit"

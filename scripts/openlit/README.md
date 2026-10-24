@@ -287,7 +287,7 @@ The runner therefore:
 | `build-local.sh`        | Build the patched image and record source, patch, image-ID, and digest metadata outside the repo.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `bootstrap-secrets.sh`  | Generate/preserve strong DB, Control API, OTLP receiver, and Console Usage tokens. Writes the canonical `$CODEX_HOME/openlit-secrets.env` (mode 0600, outside the repo) and additionally materializes the two Console server-only tokens plus their local base URL defaults into `console/.env.local` (mode 0600, ignored by `.env.*`) for Next.js to auto-load during the root `pnpm run dev` workflow. The production launchd-managed Console (`scripts/run-codex-console.sh`) continues to source the canonical secret file directly and does not depend on `console/.env.local`; it validates backend contracts before serving. |
 | `bootstrap-otlp-key.sh` | Materialize the same generated receiver token for producers; it does not call an OpenLIT API.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `up.sh`                 | Build or reuse the locked patch-matched image, prepare secrets, start Compose (retrying an unresponsive Engine), wait for ClickHouse/OpenLIT readiness, and validate the live Usage v5 response through Data.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `up.sh`                 | Build or reuse the locked patch-matched image, prepare secrets, start Compose (retrying an unresponsive Engine), wait for ClickHouse/OpenLIT readiness, ensure the Collector's OTEL schema, and validate the live Usage v5 response through Data.                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `down.sh`               | Stop the local stack while preserving its durable ClickHouse and OpenLIT data volumes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 The bring-up runner cleans up only its own fresh scratch clone. It never edits the
@@ -297,14 +297,25 @@ and runtime acceptance evidence, including remaining gates, lives only in the
 [canonical AutoDev Console target](../../docs/autodev-console-target-state.md) §§11–12;
 source patch application alone is not deployment or cutover proof.
 
+The runner owns the Collector's OTEL schema. The ClickHouse image initializes
+`/docker-entrypoint-initdb.d` only when its data directory is empty, and it
+does that by starting a temporary server bound to the container's loopback,
+running the schema, killing it, and starting the real one — so the published
+port is dead for as long as the schema takes. With the always-run flag set,
+that dance happened on *every* start, and the schema took minutes on a loaded
+host: the Collector, the Usage API, and the Control API's own ClickHouse read
+all failed while it ran. The tables persist in the named volume, so the
+runner checks for them and creates any that are missing.
+
 The Docker-built image is the one rendered in the UI: `OPENLIT_IMAGE` is
 overridden by the runner with a tag derived from the pinned source commit
 and patch-set hash. The lock file records the resulting local image ID/digest.
 Before Compose starts, the runner verifies that the deterministic tag still
 resolves to the image ID recorded in the mode-0600 lock. A successful script
-exit proves the locked image is available, ClickHouse accepts a query, and the
-OpenLIT HTTP service responds; cutover also requires live auth, persistence,
-dashboard, and control-proxy probes.
+exit proves the locked image is available, ClickHouse accepts a query, the
+Collector's OTEL tables exist, and the OpenLIT HTTP service responds;
+cutover also requires live auth, persistence, dashboard, and control-proxy
+probes.
 
 ```sh
 # Full local bring-up (also invoked by pnpm run dev when needed):

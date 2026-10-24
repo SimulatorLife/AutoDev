@@ -221,6 +221,41 @@ openlit_http_ready() {
 		"http://127.0.0.1:${PORT:-3000}/" >/dev/null 2>&1
 }
 
+# Does ClickHouse have the OTEL tables the Collector writes to?
+#
+# The schema lives in the persistent volume, and the image only runs its own
+# initialization when that volume is empty -- so a volume whose first
+# initialization was interrupted keeps missing the tables the Collector
+# writes to, and the Console then shows a stack that ingests nothing. One
+# query decides; the initialization runs only when the tables are absent.
+clickhouse_has_otel_schema() {
+	"${DOCKER_COMPOSE[@]}" -f "$COMPOSE_FILE" exec -T clickhouse \
+		clickhouse-client \
+		--query="SELECT count() FROM system.tables WHERE database = '${OPENLIT_DB_NAME:-openlit}' AND name = 'otel_traces'" \
+		2>/dev/null | tr -d '[:space:]' | grep -qx "1"
+}
+
+# Create the Collector's OTEL schema in the running ClickHouse.
+#
+# The image's own initialization is skipped when the volume already holds a
+# database, so the schema is created here instead: the same script the
+# image would have run, against a server that is already serving.
+ensure_otel_schema() {
+	echo "==> Ensuring the Collector's OTEL schema in ClickHouse"
+	if clickhouse_has_otel_schema; then
+		echo "    OTEL tables are present."
+		return 0
+	fi
+	echo "    OTEL tables are missing; creating them..."
+	if ! "${DOCKER_COMPOSE[@]}" -f "$COMPOSE_FILE" exec -T clickhouse \
+		bash /docker-entrypoint-initdb.d/init.sh; then
+		echo "up.sh: the Collector's OTEL schema could not be created in ClickHouse." >&2
+		echo "up.sh: the Console would ingest no telemetry until they exist." >&2
+		return 1
+	fi
+	return 0
+}
+
 # Print the last Compose output so a failure names its cause instead of
 # pointing at the runner.
 report_compose_output() {
@@ -292,9 +327,13 @@ if [[ "$OPENLIT_READY" -ne 1 ]]; then
 	exit 5
 fi
 
+if ! ensure_otel_schema; then
+	exit 7
+fi
+
 echo "==> Verifying the deployed AutoDev Usage response contract"
 AUTODEV_OPENLIT_USAGE_TOKEN="${CONSOLE_USAGE_TOKEN_OVERRIDE:-$AUTODEV_OPENLIT_USAGE_TOKEN}" \
-	pnpm --filter @simulatorlife/autodev-data openlit:verify-usage
+	pnpm --filter @simulatorlife/autodev-runtime openlit:verify-usage
 
 echo "==> Synchronizing rulesync prompts to AutoDev Prompt Hub"
 OPENLIT_DB_PASSWORD="$OPENLIT_DB_PASSWORD" pnpm --filter @simulatorlife/autodev-data openlit:sync-prompts || echo "Warning: prompt synchronization failed" >&2

@@ -43,7 +43,16 @@ services:
       CLICKHOUSE_PASSWORD: ${OPENLIT_DB_PASSWORD:?OPENLIT_DB_PASSWORD must be set; run scripts/openlit/up.sh to bootstrap strong secrets}
       CLICKHOUSE_USER: ${OPENLIT_DB_USER:-default}
       CLICKHOUSE_DATABASE: ${OPENLIT_DB_NAME:-openlit}
-      CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS: "true"
+    # The image initializes /docker-entrypoint-initdb.d only when its data
+    # directory is empty, and it does that by starting a temporary server
+    # bound to the container's loopback, running the schema, killing it, and
+    # starting the real one. With the always-run flag set, that whole dance
+    # happened on every start: the published port was dead for as long as the
+    # schema took, so the Collector, the Usage API, and the Control API's own
+    # ClickHouse read all failed while it ran -- and the schema took minutes
+    # on a loaded host. The tables persist in the named volume, so the first
+    # initialization is enough; scripts/openlit/up.sh checks for them and
+    # creates any that are missing.
     volumes:
       - openlit-clickhouse:/var/lib/clickhouse
       - ./assets/clickhouse-config.xml:/etc/clickhouse-server/config.d/custom-config.xml:ro

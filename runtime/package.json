@@ -94,12 +94,14 @@
     "./shared/responses-item-ids": "./src/shared/responses-item-ids.ts",
     "./shared/runtime-source-root": "./src/shared/runtime-source-root.ts",
     "./shared/runtime-secrets": "./src/shared/runtime-secrets.ts",
+    "./shared/service-lifecycle": "./src/shared/service-lifecycle.ts",
     "./shared/tool-names": "./src/shared/tool-names.ts",
     "./telemetry": "./src/telemetry/index.ts",
     "./telemetry/resource-context": "./src/telemetry/resource-context/index.ts"
   },
   "scripts": {
     "autodev": "node src/cli/autodev.ts",
+    "openlit:verify-usage": "node src/platform/usage-contract.ts",
     "memory:capture": "node src/memory/capture-main.ts",
     "memory:mcp": "node src/router/memory-mcp-main.ts",
     "memory:retention": "node src/memory/retention-main.ts",

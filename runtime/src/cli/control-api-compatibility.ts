@@ -20,7 +20,14 @@ export interface ControlApiWaitOptions {
   readonly sleep?: (ms: number) => Promise<void>;
 }
 
-class ControlApiUnavailableError extends Error {
+/**
+ * The Control API did not answer.
+ *
+ * This is the "not now" class: the endpoint could not be reached, or it
+ * answered with a server-side failure. A stale contract and a rejected
+ * credential are different classes again, and they are not temporary.
+ */
+export class ControlApiUnavailableError extends Error {
   constructor(reason: string) {
     super(
       `The configured AutoDev Control API could not be reached (${reason}). Verify AUTODEV_CONTROL_API_BASE_URL and that the Model Router's private Control API listener is running. The Console was not started.`

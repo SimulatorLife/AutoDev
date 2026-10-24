@@ -127,6 +127,10 @@ function deps(
       return true;
     },
     sleep: async () => {},
+    ensureUsageStack: async () => {
+      calls.push("ensure-usage-stack");
+      return true;
+    },
     run: (_command, args, input, env) => {
       runs.push({
         args,
@@ -284,6 +288,95 @@ test("the Console is not bootstrapped before the Model Router is serving", async
     servingIndex < consoleIndex,
     "the Console is bootstrapped only after the Router is serving"
   );
+});
+
+test("the Usage stack is brought up before the Console is bootstrapped", async () => {
+  const base = deps();
+  const order: string[] = [];
+  const consolePlist = `bootstrap:/home/Library/LaunchAgents/${LABEL_AUTODEV_CONSOLE}.plist`;
+  const [status] = await captureStderr(() =>
+    restartServices(options({ readyAttempts: 40 }), {
+      ...base,
+      launchd: {
+        ...base.launchd,
+        bootstrap: (plist) => {
+          order.push(`bootstrap:${plist}`);
+          base.launchd.bootstrap(plist);
+        }
+      },
+      ensureUsageStack: async () => {
+        order.push("usage-stack-serving");
+        return true;
+      }
+    })
+  );
+  assert.equal(status, 0);
+  const servingIndex = order.indexOf("usage-stack-serving");
+  const consoleIndex = order.indexOf(consolePlist);
+  assert.ok(servingIndex !== -1, "the Usage stack was reconciled");
+  assert.ok(consoleIndex !== -1);
+  assert.ok(
+    servingIndex < consoleIndex,
+    "the Console is bootstrapped only after the Usage stack is serving"
+  );
+});
+
+test("a Usage stack that never serves leaves the Console unbootstrapped", async () => {
+  const base = deps();
+  const bootstrapped: string[] = [];
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options({ readyAttempts: 3 }), {
+      ...base,
+      launchd: {
+        ...base.launchd,
+        bootstrap: (plist) => {
+          bootstrapped.push(plist);
+          base.launchd.bootstrap(plist);
+        }
+      },
+      ensureUsageStack: async () => false
+    })
+  );
+  assert.notEqual(status, 0);
+  assert.equal(
+    bootstrapped.some((plist) =>
+      plist.endsWith(`${LABEL_AUTODEV_CONSOLE}.plist`)
+    ),
+    false,
+    "the Console is not bootstrapped against a Usage stack that is not serving"
+  );
+  assert.match(stderr, /Usage services are not serving/u);
+});
+
+test("a Console that stopped because a backend did not answer is not a crash loop", async () => {
+  const base = deps();
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options({ readyAttempts: 3, readyDelayMs: 0 }), {
+      ...base,
+      probe: async (url) =>
+        url.includes("/api/health") ? false : base.probe(url),
+      launchd: {
+        ...base.launchd,
+        print: (label) =>
+          label === LABEL_AUTODEV_CONSOLE
+            ? [
+                "gui/501/com.codex.autodev-console = {",
+                "\tpid = 4242",
+                "\tlast exit code = 75",
+                "}"
+              ].join("\n")
+            : base.launchd.print(label)
+      }
+    })
+  );
+  assert.notEqual(status, 0);
+  assert.doesNotMatch(
+    stderr,
+    /exited with code 75/u,
+    "a job waiting for a backend is not a crash loop"
+  );
+  assert.match(stderr, /did not become ready within/u);
+  assert.match(stderr, /a backend it reads did not answer/u);
 });
 
 test("a Model Router that never serves leaves the Console unbootstrapped", async () => {

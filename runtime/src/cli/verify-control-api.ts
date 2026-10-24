@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 
-import { verifyControlApiCompatibility } from "@simulatorlife/autodev-runtime/cli/control-api-compatibility";
+import {
+  ControlApiUnavailableError,
+  verifyControlApiCompatibility
+} from "@simulatorlife/autodev-runtime/cli/control-api-compatibility";
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import {
   writeErrorLine,
   writeLine
 } from "@simulatorlife/autodev-runtime/shared/output";
+import { SERVICE_TEMPORARY_FAILURE_EXIT_CODE } from "@simulatorlife/autodev-runtime/shared/service-lifecycle";
 
 import { readDevControlApiConfig } from "./dev.ts";
 
@@ -30,5 +34,11 @@ try {
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   writeErrorLine(`[console] Startup blocked: ${message}`);
-  process.exitCode = 1;
+  // The Control API did not answer. That is not a stale contract and not a
+  // rejected credential: the service may well serve on the next attempt, so
+  // the exit status says so and the supervisor keeps waiting.
+  process.exitCode =
+    error instanceof ControlApiUnavailableError
+      ? SERVICE_TEMPORARY_FAILURE_EXIT_CODE
+      : 1;
 }

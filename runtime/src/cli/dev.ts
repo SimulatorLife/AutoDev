@@ -2,7 +2,6 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -15,6 +14,7 @@ import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/
 
 import { httpHealthProbe } from "../platform/health-probe.ts";
 import { sleep } from "../platform/sleep.ts";
+import { ensureUsageStack, isPortListening } from "../platform/usage-stack.ts";
 import { waitForProbe } from "../platform/wait-for-probe.ts";
 import { verifyControlApiCompatibility } from "./control-api-compatibility.ts";
 
@@ -26,27 +26,7 @@ export const repoRoot = path.resolve(
   resolveRuntimeSourceRoot(import.meta.dirname)
 );
 
-export function isPortListening(
-  port: number,
-  host = "127.0.0.1",
-  timeoutMs = 400
-): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = createConnection({ port, host, timeout: timeoutMs });
-    socket.on("connect", () => {
-      socket.destroy();
-      resolve(true);
-    });
-    socket.on("error", () => {
-      socket.destroy();
-      resolve(false);
-    });
-    socket.on("timeout", () => {
-      socket.destroy();
-      resolve(false);
-    });
-  });
-}
+export { isPortListening } from "../platform/usage-stack.ts";
 
 const NEWLINE_SPLIT_REGEX = /\r?\n/u;
 
@@ -152,10 +132,6 @@ export function ensureConsoleSecrets(root = repoRoot): void {
 }
 
 const OPENLIT_PORT = 3000;
-const CLICKHOUSE_HTTP_PORT = 8123;
-const DOCKER_READY_TIMEOUT_MS = 120_000;
-const STACK_READY_TIMEOUT_MS = 120_000;
-const DOCKER_PROBE_TIMEOUT_MS = 5000;
 const DEFAULT_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
 const CONTROL_API_BASE_URL_DEFAULT_PATTERN =
   /^\$\{AUTODEV_CONTROL_API_BASE_URL:-([^{}]+)\}$/u;
@@ -288,84 +264,6 @@ function defaultBackendDependencies(): DevBackendDependencies {
   };
 }
 
-function commandSucceeded(result: DevCommandResult): boolean {
-  return result.error === undefined && result.status === 0;
-}
-
-function dockerInfo(dependencies: DevBackendDependencies): boolean {
-  return commandSucceeded(
-    dependencies.runCommand("docker", ["info"], {
-      cwd: dependencies.repoRoot,
-      stdio: "ignore",
-      timeoutMs: DOCKER_PROBE_TIMEOUT_MS
-    })
-  );
-}
-
-function waitForDockerEngine(
-  dependencies: DevBackendDependencies
-): Promise<boolean> {
-  return waitForProbe(
-    {
-      probe: () => Promise.resolve(dockerInfo(dependencies)),
-      sleep: dependencies.sleep
-    },
-    DOCKER_READY_TIMEOUT_MS
-  );
-}
-
-async function isOpenlitStackReady(
-  dependencies: DevBackendDependencies
-): Promise<boolean> {
-  const [clickhouseReady, openlitReady] = await Promise.all([
-    dependencies.isPortListening(CLICKHOUSE_HTTP_PORT),
-    dependencies.isOpenlitHttpReady()
-  ]);
-  return clickhouseReady && openlitReady;
-}
-
-function waitForOpenlitStack(
-  dependencies: DevBackendDependencies
-): Promise<boolean> {
-  return waitForProbe(
-    {
-      probe: () => isOpenlitStackReady(dependencies),
-      sleep: dependencies.sleep
-    },
-    STACK_READY_TIMEOUT_MS
-  );
-}
-
-async function ensureDockerEngine(
-  dependencies: DevBackendDependencies
-): Promise<void> {
-  if (dockerInfo(dependencies)) return;
-  if (dependencies.platform !== "darwin") {
-    throw new Error(
-      "Docker Engine is required for OpenLIT Usage. Start Docker, then rerun pnpm run dev."
-    );
-  }
-
-  dependencies.writeLine(
-    "[dev] Docker Engine is unavailable; starting Docker Desktop..."
-  );
-  const launched = dependencies.runCommand("open", ["-a", "Docker"], {
-    cwd: dependencies.repoRoot,
-    stdio: "ignore",
-    timeoutMs: 10_000
-  });
-  if (!commandSucceeded(launched)) {
-    throw new Error(
-      "Docker Desktop could not be launched. Install or start Docker Desktop, then rerun pnpm run dev."
-    );
-  }
-  if (!(await waitForDockerEngine(dependencies))) {
-    throw new Error(
-      "Docker Desktop did not make Docker Engine ready within 120 seconds. Check Docker Desktop, then rerun pnpm run dev."
-    );
-  }
-}
-
 /**
  * Ensure the dependencies the Console's server-side Usage adapter requires.
  * A known-unreachable Usage service is a startup failure, not an optional
@@ -375,48 +273,27 @@ export async function ensureBackends(
   overrides: Partial<DevBackendDependencies> = {}
 ): Promise<{ telemetryActive: true; routerActive: boolean }> {
   const dependencies = { ...defaultBackendDependencies(), ...overrides };
-  await ensureDockerEngine(dependencies);
-
-  // Readiness alone is not freshness: a healthy container may still be
-  // running an older image or stale bind-mounted configuration. The canonical
-  // runner reuses an unchanged image and lets Compose recreate only services
-  // whose image/config fingerprint changed, while preserving data volumes.
-  dependencies.writeLine(
-    "[dev] Reconciling the OpenLIT and ClickHouse Usage services..."
-  );
   const usageConfig = dependencies.openlitUsageConfig();
-  const started = dependencies.runCommand(
-    "bash",
-    [path.join(dependencies.repoRoot, "scripts", "openlit", "up.sh")],
+  await ensureUsageStack(
     {
-      cwd: dependencies.repoRoot,
-      stdio: "inherit",
-      env: {
+      repositoryRoot: dependencies.repoRoot,
+      platform: dependencies.platform,
+      label: "dev"
+    },
+    {
+      runCommand: dependencies.runCommand,
+      isPortListening: dependencies.isPortListening,
+      isOpenlitHttpReady: dependencies.isOpenlitHttpReady,
+      sleep: dependencies.sleep,
+      writeLine: dependencies.writeLine,
+      runnerEnv: {
         ...process.env,
         AUTODEV_OPENLIT_USAGE_URL: usageConfig.baseUrl,
         AUTODEV_OPENLIT_USAGE_TOKEN: usageConfig.serviceToken
       }
     }
   );
-  if (!commandSucceeded(started)) {
-    const detail = started.error?.message;
-    throw new Error(
-      detail
-        ? `OpenLIT startup failed: ${detail}`
-        : `OpenLIT startup failed with exit status ${String(started.status)}. The runner reported the cause above — an unresponsive Docker Engine and a stack that never became ready are different failures with different fixes.`
-    );
-  }
 
-  const telemetryActive = await waitForOpenlitStack(dependencies);
-  if (!telemetryActive) {
-    throw new Error(
-      "OpenLIT or ClickHouse did not become ready within 120 seconds; check the Docker Compose logs and rerun pnpm run dev."
-    );
-  }
-
-  dependencies.writeLine(
-    "[dev] ✔ OpenLIT Usage v5 and ClickHouse are ready (ports 3000, 8123)."
-  );
   const routerActive = await dependencies.isPortListening(4100);
   if (routerActive) {
     dependencies.writeLine(

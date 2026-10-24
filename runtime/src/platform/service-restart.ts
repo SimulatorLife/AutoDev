@@ -12,6 +12,7 @@ import path from "node:path";
 
 import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/env";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+import { SERVICE_TEMPORARY_FAILURE_EXIT_CODE } from "@simulatorlife/autodev-runtime/shared/service-lifecycle";
 
 import { buildConsole } from "./console-build.ts";
 import {
@@ -21,6 +22,7 @@ import {
 import { LaunchdClient } from "./macos/launchd.ts";
 import { resolveCommandOnPath } from "./runtime-files.ts";
 import { sleep } from "./sleep.ts";
+import { ensureUsageStack } from "./usage-stack.ts";
 
 export { LABEL_AUTODEV_CONSOLE } from "./console-ensure.ts";
 
@@ -84,6 +86,16 @@ export interface ServiceRestartDeps {
   /** The process's current working directory, when it can be read. */
   readonly workingDirectory: (pid: number) => string | null;
   readonly kill: (pid: number, signal: KillSignal) => void;
+  /**
+   * Bring the Usage stack up and prove it is serving.
+   *
+   * The Console's launcher refuses to serve a Usage backend that cannot
+   * satisfy the checked-out contract, so the stack has to be serving before
+   * the Console's job is bootstrapped -- otherwise the launcher exits before
+   * it ever execs Next.js and the job crash-loops on a backend that was
+   * merely starting.
+   */
+  readonly ensureUsageStack: () => Promise<boolean>;
 }
 
 /**
@@ -333,6 +345,21 @@ function defaultDeps(options: ServiceRestartOptions): ServiceRestartDeps {
         process.kill(pid, signal);
       } catch {
         /* process exited */
+      }
+    },
+    ensureUsageStack: async () => {
+      try {
+        await ensureUsageStack({
+          repositoryRoot: options.repositoryRoot,
+          platform: process.platform,
+          label: "install"
+        });
+        return true;
+      } catch (error) {
+        writeErrorLine(
+          `the OpenLIT and ClickHouse Usage services are not serving: ${errorText(error)}`
+        );
+        return false;
       }
     }
   };
@@ -626,14 +653,34 @@ type ServiceCheck =
 // none), so the crash-loop check only runs every few attempts.
 const JOB_STATE_EVERY_ATTEMPTS = 8;
 
+/**
+ * Why a job that never became ready is still trying.
+ *
+ * A job that exits with the temporary-failure status is waiting for a
+ * backend, and the report says so: the operator needs to know that the
+ * service is not broken but late, and that the backend is what is missing.
+ */
+function retryingReason(job: JobState): string {
+  if (job.lastExitCode !== SERVICE_TEMPORARY_FAILURE_EXIT_CODE) return "";
+  return " (its last attempt stopped because a backend it reads did not answer)";
+}
+
+/**
+ * A job that exited, and why it is not a crash loop.
+ *
+ * A service that stops because a backend it reads has not come up yet exits
+ * with the temporary-failure status, and launchd restarts it -- the job is on
+ * its way up, not broken. Any other non-zero exit means the service cannot
+ * start, and waiting out the readiness budget on it only delays the report.
+ */
 function crashLoop(job: JobState): ServiceCheck | null {
-  return job.lastExitCode !== null && job.lastExitCode !== 0
-    ? {
-        ready: false,
-        reason: `exited with code ${job.lastExitCode}`,
-        stderrPath: job.stderrPath
-      }
-    : null;
+  if (job.lastExitCode === null || job.lastExitCode === 0) return null;
+  if (job.lastExitCode === SERVICE_TEMPORARY_FAILURE_EXIT_CODE) return null;
+  return {
+    ready: false,
+    reason: `exited with code ${job.lastExitCode}`,
+    stderrPath: job.stderrPath
+  };
 }
 
 function confirmOwner(
@@ -673,7 +720,7 @@ async function checkService(
     if (lastAttempt)
       return {
         ready: false,
-        reason: `did not become ready within ${options.readyAttempts * options.readyDelayMs}ms`,
+        reason: `did not become ready within ${options.readyAttempts * options.readyDelayMs}ms${retryingReason(job)}`,
         stderrPath: job.stderrPath
       };
   }
@@ -734,7 +781,7 @@ function readLaunchdJobDump(
   return "";
 }
 
-type ReloadResult = "ok" | "no-plist" | "failed";
+type ReloadResult = "ok" | "no-plist" | "failed" | "blocked";
 
 function foreignLabels(
   deps: ServiceRestartDeps,
@@ -829,12 +876,25 @@ async function reloadOneLabel(
 /**
  * Wait for the service another one depends on to be serving, so a dependent
  * is never bootstrapped against an API that is not there yet.
+ *
+ * The Console has two dependencies. The Model Router serves the Control API
+ * the Console reads, and the OpenLIT + ClickHouse stack serves the Usage
+ * contract the Console's launcher verifies before it serves a single page.
+ * Both are checked here, because a dependency that is not there yet is a
+ * reason to wait, not a reason to start the dependent and let it fail.
  */
 async function awaitDependency(
   deps: ServiceRestartDeps,
   options: ServiceRestartOptions,
   label: ManagedServiceLabel
 ): Promise<ServiceCheck> {
+  if (label === CONSOLE_SERVICE_LABEL && !(await deps.ensureUsageStack())) {
+    return {
+      ready: false,
+      reason: "the OpenLIT and ClickHouse Usage services are not serving",
+      stderrPath: null
+    };
+  }
   const dependency = SERVICE_DEPENDENCIES[label];
   if (dependency === undefined) return { ready: true };
   const spec = serviceSpecs(options).find(
@@ -860,7 +920,8 @@ async function reloadLabels(
   if (label === undefined) return results;
   const dependency = await awaitDependency(deps, options, label);
   if (!dependency.ready) {
-    results.push("failed");
+    writeErrorLine(`${label} was not reloaded: ${dependency.reason}.`);
+    results.push("blocked");
     return results;
   }
   results.push(await reloadOneLabel(deps, options, label));
@@ -915,6 +976,15 @@ export async function restartServices(
     return 1;
   }
   const results = await reloadLabels(deps, options);
+  const blockedLabels = MANAGED_SERVICE_LABELS.filter(
+    (_label, index) => results[index] === "blocked"
+  );
+  if (blockedLabels.length > 0) {
+    writeErrorLine(
+      `${blockedLabels.join(", ")} was not reloaded because a service it depends on is not serving.`
+    );
+    return 1;
+  }
   const failedLabels = MANAGED_SERVICE_LABELS.filter(
     (_label, index) => results[index] === "failed"
   );
