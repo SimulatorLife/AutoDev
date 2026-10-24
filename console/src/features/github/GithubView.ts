@@ -550,8 +550,11 @@ export function GithubView({
             React.createElement(
               "div",
               {
+                // The group wraps: the outcome names are words rather than the
+                // tools catalogue's one-word roles, and a row that cannot wrap
+                // is a row that runs past the edge of a phone.
                 className:
-                  "flex items-center gap-1.5 bg-surface border border-border p-1 rounded-lg"
+                  "flex flex-wrap items-center gap-1.5 bg-surface border border-border p-1 rounded-lg"
               },
               React.createElement(
                 "span",

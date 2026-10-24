@@ -613,7 +613,7 @@ export function ToolsView({
         "div",
         {
           className:
-            "flex items-center gap-1.5 bg-surface border border-border p-1 rounded-lg"
+            "flex flex-wrap items-center gap-1.5 bg-surface border border-border p-1 rounded-lg"
         },
         SOURCE_FILTERS.map((src) =>
           React.createElement(
@@ -642,7 +642,7 @@ export function ToolsView({
             "div",
             {
               className:
-                "flex items-center gap-1.5 bg-surface border border-border p-1 rounded-lg"
+                "flex flex-wrap items-center gap-1.5 bg-surface border border-border p-1 rounded-lg"
             },
             React.createElement(
               "span",
