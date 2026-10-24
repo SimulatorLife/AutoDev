@@ -133,19 +133,24 @@ export OPENLIT_IMAGE="$IMAGE_TAG"
 # Compose asked with, and the Engine serves it. The Engine simply did not
 # answer in time.
 #
-# The cause is a Docker Engine that is momentarily too slow to answer, which
-# happens whenever the host is loaded enough to starve the Docker VM. It is
-# transient, and the same `compose up` converges once the Engine answers
-# again. The runner therefore retries those failures instead of failing the
-# whole startup, and it decides success on the stack's readiness rather than
-# on Compose's exit code.
-TRANSIENT_ENGINE_FAILURE_PATTERN='request returned 5[0-9][0-9] Internal Server Error|Cannot connect to the Docker daemon|context deadline exceeded|i/o timeout|connection reset by peer|unexpected EOF'
+# The same starved Engine produces the other health-gate failure: the health
+# check itself cannot start inside the container, the container is recorded
+# unhealthy, and Compose refuses to start the service that depends on it --
+# even when that service is serving. Both failures are transient, and the
+# same `compose up` converges once the Engine and the stack recover. The
+# runner therefore retries those failures instead of failing the whole
+# startup, and it decides success on the stack's readiness rather than on
+# Compose's exit code.
+TRANSIENT_COMPOSE_FAILURE_PATTERN='request returned 5[0-9][0-9] Internal Server Error|Cannot connect to the Docker daemon|context deadline exceeded|i/o timeout|connection reset by peer|unexpected EOF|dependency failed to start: container .* is unhealthy'
 
 # How many times Compose may be asked to start the stack before the runner
-# gives up on an unresponsive Engine.
+# gives up on a stack that will not come up.
 COMPOSE_ATTEMPTS="${AUTODEV_OPENLIT_COMPOSE_ATTEMPTS:-3}"
 # How long to wait for the Engine to answer again between those attempts.
 ENGINE_TIMEOUT_SECONDS="${AUTODEV_OPENLIT_ENGINE_TIMEOUT_SECONDS:-60}"
+# How long to let the stack settle before the next attempt, so a retry is
+# not the same attempt again.
+COMPOSE_RETRY_DELAY_SECONDS="${AUTODEV_OPENLIT_COMPOSE_RETRY_DELAY_SECONDS:-5}"
 # How long the stack may take to serve once Compose has started it.
 CLICKHOUSE_TIMEOUT_SECONDS="${AUTODEV_OPENLIT_CLICKHOUSE_TIMEOUT_SECONDS:-120}"
 OPENLIT_TIMEOUT_SECONDS="${AUTODEV_OPENLIT_HTTP_TIMEOUT_SECONDS:-120}"
@@ -155,9 +160,9 @@ COMPOSE_LOG="$WORK_DIR/compose-up.log"
 
 # Start the stack.
 #
-# Returns 0 when Compose brought it up, 1 when the Docker Engine failed
-# transiently, and 2 for a Compose failure that will not fix itself (a bad
-# compose file, a missing image, an unset variable, a taken port).
+# Returns 0 when Compose brought it up, 1 when the failure is transient, and
+# 2 for a Compose failure that will not fix itself (a bad compose file, a
+# missing image, an unset variable, a taken port).
 compose_up() {
 	local status=0
 	"${DOCKER_COMPOSE[@]}" \
@@ -167,7 +172,7 @@ compose_up() {
 	if [[ "$status" -eq 0 ]]; then
 		return 0
 	fi
-	if grep -Eq "$TRANSIENT_ENGINE_FAILURE_PATTERN" "$COMPOSE_LOG"; then
+	if grep -Eq "$TRANSIENT_COMPOSE_FAILURE_PATTERN" "$COMPOSE_LOG"; then
 		return 1
 	fi
 	return 2
@@ -191,15 +196,23 @@ wait_for_engine() {
 
 # Does ClickHouse accept an authenticated query?
 #
-# The probe goes straight to the published port instead of through
-# `compose exec`: a Docker API call is exactly what fails when the Engine is
-# slow, and the published port is what the producers and the Console use. It
-# authenticates the same way the Data client does, with the same credentials.
+# The published port is probed first: it is what the Console and the producers
+# use, and it needs no Docker API call. The container is the fallback, because
+# when the port forwarder is the starved part the server is serving and only
+# the path to it is slow -- and the reverse is true too, so the probe accepts
+# either path rather than failing a stack that is up on one of them.
 clickhouse_accepts_query() {
-	curl --fail --silent --show-error --max-time 10 \
+	if curl --fail --silent --show-error --max-time 10 \
 		--user "${OPENLIT_DB_USER:-default}:${OPENLIT_DB_PASSWORD}" \
 		--data-urlencode "query=SELECT 1" \
-		"http://127.0.0.1:${CLICKHOUSE_HTTP_PORT}/" >/dev/null 2>&1
+		"http://127.0.0.1:${CLICKHOUSE_HTTP_PORT}/" >/dev/null 2>&1; then
+		return 0
+	fi
+	"${DOCKER_COMPOSE[@]}" -f "$COMPOSE_FILE" exec -T clickhouse \
+		clickhouse-client \
+		--user="${OPENLIT_DB_USER:-default}" \
+		--password="$OPENLIT_DB_PASSWORD" \
+		--query="SELECT 1" >/dev/null 2>&1
 }
 
 # Does OpenLIT answer HTTP?
@@ -223,14 +236,16 @@ compose_status=0
 compose_up || compose_status=$?
 while [[ "$compose_status" -eq 1 ]]; do
 	if [[ "$compose_attempt" -ge "$COMPOSE_ATTEMPTS" ]]; then
-		echo "up.sh: the Docker Engine did not answer docker compose after ${compose_attempt} attempts; the stack was not started." >&2
+		echo "up.sh: docker compose could not start the OpenLIT stack after ${compose_attempt} attempts." >&2
+		echo "up.sh: a Docker Engine that does not answer in time reports this as a 500 with an API-version hint; the version is not the problem." >&2
 		report_compose_output
 		compose_status=3
 		break
 	fi
 	compose_attempt=$((compose_attempt + 1))
-	echo "up.sh: the Docker Engine did not answer docker compose in time; waiting for it to recover and retrying (attempt ${compose_attempt}/${COMPOSE_ATTEMPTS})" >&2
+	echo "up.sh: the OpenLIT stack did not start; waiting for the Docker Engine and the stack to recover and retrying (attempt ${compose_attempt}/${COMPOSE_ATTEMPTS})" >&2
 	wait_for_engine || true
+	sleep "${COMPOSE_RETRY_DELAY_SECONDS}"
 	compose_status=0
 	compose_up || compose_status=$?
 done

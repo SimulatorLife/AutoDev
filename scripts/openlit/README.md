@@ -256,19 +256,28 @@ and is not one: the version in the message is the one Compose asked with. The
 Engine simply did not answer in time, which happens whenever the host is
 loaded enough to starve the Docker VM.
 
+The same starved Engine produces the other health-gate failure: the health
+check cannot start inside the container, the container is recorded unhealthy,
+and Compose refuses to start the service that depends on it — even when that
+service is serving. Both failures are transient, and the same `compose up`
+converges once the Engine and the stack recover.
+
 The runner therefore:
 
-- retries `compose up -d` when — and only when — the Engine failed that way,
-  waiting for `docker info` to answer again between attempts, so a retry does
-  not race the same stall;
+- retries `compose up -d` when — and only when — the failure was one of those
+  two, waiting for `docker info` to answer again and letting the stack settle
+  between attempts, so a retry is not the same attempt again;
 - fails immediately on a Compose failure no retry can fix (a malformed compose
   file, a missing image, an unset variable, a taken port);
 - decides success on the stack's readiness: ClickHouse accepts an
-  authenticated query and OpenLIT answers HTTP. Both probes go straight to
-  the published ports rather than through the Docker API, because a Docker API
-  call is exactly what fails when the Engine is slow.
+  authenticated query and OpenLIT answers HTTP. The ClickHouse probe accepts
+  either path to a serving server — the published port, which is what the
+  Console and the producers use, or the container itself, which is what
+  answers when the port forwarder is the starved part.
 
-`AUTODEV_OPENLIT_COMPOSE_ATTEMPTS`, `AUTODEV_OPENLIT_ENGINE_TIMEOUT_SECONDS`,
+`AUTODEV_OPENLIT_COMPOSE_ATTEMPTS`,
+`AUTODEV_OPENLIT_COMPOSE_RETRY_DELAY_SECONDS`,
+`AUTODEV_OPENLIT_ENGINE_TIMEOUT_SECONDS`,
 `AUTODEV_OPENLIT_CLICKHOUSE_TIMEOUT_SECONDS`, and
 `AUTODEV_OPENLIT_HTTP_TIMEOUT_SECONDS` bound those steps.
 

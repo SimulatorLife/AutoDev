@@ -34,6 +34,15 @@ const DETERMINISTIC_COMPOSE_ERROR = [
   "validating config/openlit/docker-compose.yml: services.clickhouse.environment must be a mapping"
 ].join("\n");
 
+/**
+ * The health-gate failure a starved Engine produces: the health check cannot
+ * start inside the container, so the container is recorded unhealthy and
+ * Compose refuses to start the service that depends on it.
+ */
+const UNHEALTHY_DEPENDENCY_COMPOSE_ERROR = [
+  "dependency failed to start: container openlit-clickhouse is unhealthy"
+].join("\n");
+
 interface Fixture {
   readonly root: string;
   readonly codexHome: string;
@@ -127,16 +136,25 @@ case "\${1:-}" in
     exit 0
     ;;
   compose)
-    # Compose is invoked as \`compose --env-file … -f … up -d\`, so the
-    # subcommand is found by scanning the arguments rather than by position.
+    # Compose is invoked as \`compose --env-file … -f … up -d\` and as
+    # \`compose -f … exec -T …\`, so the subcommand is found by scanning the
+    # arguments rather than by position.
     mode=""
     for argument in "$@"; do
       case "$argument" in
         version) mode="version" ;;
         up) mode="up" ;;
+        exec) mode="exec" ;;
       esac
     done
     if [[ "$mode" == "version" ]]; then
+      exit 0
+    fi
+    if [[ "$mode" == "exec" ]]; then
+      # The in-container query answers only while the stack is ready.
+      if [[ -f "$STUB_STATE_DIR/readiness-down" ]]; then
+        exit 22
+      fi
       exit 0
     fi
     if [[ "$mode" == "up" ]]; then
@@ -155,12 +173,17 @@ exit 0
 `
   );
 
-  // The readiness probes answer only while the stubbed stack is "up".
+  // The readiness probes answer only while the stubbed stack is "up", and the
+  // published ClickHouse port can be starved on its own.
   writeExecutable(
     join(bin, "curl"),
     `#!/usr/bin/env bash
 set -uo pipefail
+url="\${*: -1}"
 if [[ -f "$STUB_STATE_DIR/readiness-down" ]]; then
+  exit 22
+fi
+if [[ -f "$STUB_STATE_DIR/port-down" && "$url" == *":8123"* ]]; then
   exit 22
 fi
 exit 0
@@ -182,6 +205,8 @@ interface RunOptions {
   readonly engineResponsive?: boolean;
   /** Whether the stubbed stack reports itself ready. */
   readonly readiness?: boolean;
+  /** Whether the published ClickHouse port is unreachable. */
+  readonly publishedPortUnreachable?: boolean;
 }
 
 function runUp(fixture: Fixture, options: RunOptions = {}) {
@@ -251,6 +276,8 @@ function withFixture(
       writeFileSync(join(fixture.state, "engine-down"), "");
     if (options.readiness === false)
       writeFileSync(join(fixture.state, "readiness-down"), "");
+    if (options.publishedPortUnreachable === true)
+      writeFileSync(join(fixture.state, "port-down"), "");
     body(fixture, runUp(fixture, options));
   } finally {
     for (const directory of [
@@ -274,11 +301,26 @@ test("the OpenLIT runner retries a Docker Engine that stops answering", () => {
     );
     assert.match(
       result.output,
-      /the Docker Engine did not answer docker compose in time/u,
-      "the runner must name the Engine as the cause"
+      /the OpenLIT stack did not start; waiting for the Docker Engine and the stack to recover and retrying/u,
+      "the runner must name the retry and its cause"
     );
     assert.match(result.output, /OpenLIT HTTP and ClickHouse are ready/u);
   });
+});
+
+test("the OpenLIT runner retries a dependency that was recorded unhealthy", () => {
+  withFixture(
+    { composeFailures: 1, composeError: UNHEALTHY_DEPENDENCY_COMPOSE_ERROR },
+    (fixture, result) => {
+      assert.equal(result.status, 0, result.output);
+      assert.equal(
+        result.composeCalls,
+        2,
+        "an unhealthy dependency is a timing verdict, so the runner tries again"
+      );
+      assert.match(result.output, /OpenLIT HTTP and ClickHouse are ready/u);
+    }
+  );
 });
 
 test("the OpenLIT runner decides success on readiness, not on Compose's exit code", () => {
@@ -287,6 +329,17 @@ test("the OpenLIT runner decides success on readiness, not on Compose's exit cod
       result.status,
       0,
       "a stack that serves is up even when Compose could not confirm it"
+    );
+    assert.match(result.output, /OpenLIT HTTP and ClickHouse are ready/u);
+  });
+});
+
+test("the OpenLIT runner accepts ClickHouse answering in the container", () => {
+  withFixture({ publishedPortUnreachable: true }, (_fixture, result) => {
+    assert.equal(
+      result.status,
+      0,
+      "a starved port forwarder must not fail a ClickHouse that is serving"
     );
     assert.match(result.output, /OpenLIT HTTP and ClickHouse are ready/u);
   });
@@ -321,8 +374,13 @@ test("the OpenLIT runner reports an unresponsive Engine instead of an API versio
       assert.notEqual(result.status, 0);
       assert.match(
         result.output,
-        /the Docker Engine did not answer docker compose after \d+ attempts/u,
-        "the failure must name the Engine, not the API version"
+        /docker compose could not start the OpenLIT stack after \d+ attempts/u,
+        "the failure must name the attempts it made"
+      );
+      assert.match(
+        result.output,
+        /the version is not the problem/u,
+        "the failure must steer the reader away from the API-version hint"
       );
     }
   );
