@@ -95,6 +95,61 @@ const ACTION_REFUSED_TERMINATION_REASON = "action-refused";
 const NO_PROGRESS_TERMINATION_REASON = "no-progress";
 
 /**
+ * The termination reason that says the runtime itself ended the run.
+ *
+ * "runtime-failure" is the episode state machine's word for "something below
+ * the product broke", and on its own it tells the operator nothing about
+ * whether the game, the decision backend or the budget was at fault. The
+ * cause is written down on the step the runtime ended on, and the label below
+ * reads it from there.
+ */
+export const RUNTIME_FAILURE_TERMINATION_REASON = "runtime-failure";
+
+/**
+ * Why a decision backend stopped the run, in the words of the backend.
+ *
+ * The Runtime records the code it ended with against the failing step, and
+ * the code is the backend's own: "the target could not be reached", "the
+ * model answered with something that is not a decision", "the answer used
+ * more tokens than the approved budget". Each one is a different fact for the
+ * operator with a different consequence, and the run's own state says only
+ * that it failed, so the code is what has to be read.
+ *
+ * A code this Console does not know is shown as it was recorded. A cause that
+ * is not guessed at is worth more than a cause that is.
+ */
+const RUNTIME_FAILURE_CAUSES = {
+  "target-unavailable":
+    "The approved game target could not be reached, so no action could be chosen.",
+  "request-budget-exhausted":
+    "The approved request budget ran out before the episode could continue.",
+  "token-budget-exhausted":
+    "The approved token budget ran out before the episode could continue.",
+  "decision-deadline-exceeded":
+    "The decision backend took longer than the approved decision deadline allowed.",
+  "frame-unavailable":
+    "The game's screen could not be captured, so no decision could be asked for.",
+  "frame-too-large":
+    "The captured screen was too large to send to the decision backend.",
+  "router-unavailable": "The model router could not be reached.",
+  "router-rejected-request": "The model router refused the decision request.",
+  "response-too-large": "The decision backend's answer was too large to read.",
+  "response-invalid":
+    "The decision backend's answer could not be read as a decision, so no action was taken.",
+  "response-usage-unavailable":
+    "The decision backend's answer did not report token usage, so the approved budget could not be enforced.",
+  "response-usage-exceeds-budget":
+    "The decision backend's answer used more tokens than the approved budget allowed.",
+  "workspace-unavailable":
+    "The workspace could not be read when the decision was asked for.",
+  "action-not-grounded":
+    "The decision backend chose an action the screen did not offer, so the runtime refused it."
+} as const;
+
+export type PlaytestingRuntimeFailureCause =
+  keyof typeof RUNTIME_FAILURE_CAUSES;
+
+/**
  * The tone for a state that is known but not a success.
  *
  * A crash, a cancellation, a truncated episode and a state the Console does
@@ -236,6 +291,28 @@ export function executionStateExplanation(
       return null;
     }
   }
+}
+
+/** The operator-facing label for a game's own outcome. */
+/**
+ * The sentence that says why the runtime ended the run.
+ *
+ * The episode's own state says only that the run failed; the cause the
+ * Runtime recorded against the failing step says what failed. A cause the
+ * Console does not recognise is shown as it was recorded rather than
+ * described in a guess.
+ */
+export function runtimeFailureExplanation(
+  recordedCode: string | null | undefined
+): string | null {
+  if (recordedCode === null || recordedCode === undefined) return null;
+  const separator = recordedCode.lastIndexOf(":");
+  const cause =
+    separator === -1 ? recordedCode : recordedCode.slice(separator + 1);
+  const sentence = Object.hasOwn(RUNTIME_FAILURE_CAUSES, cause)
+    ? RUNTIME_FAILURE_CAUSES[cause as PlaytestingRuntimeFailureCause]
+    : `The runtime ended the run with the recorded cause "${recordedCode}".`;
+  return `${sentence} No terminal game outcome was observed; no win or loss is inferred.`;
 }
 
 /** The operator-facing label for a game's own outcome. */

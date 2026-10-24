@@ -38,7 +38,9 @@ import {
 } from "./playtesting-episode-presentation.ts";
 import {
   executionModeLabel,
-  executionStateExplanation
+  executionStateExplanation,
+  RUNTIME_FAILURE_TERMINATION_REASON,
+  runtimeFailureExplanation as runtimeFailureSentence
 } from "./playtesting-labels.ts";
 import {
   playtestingAnalyzeEpisodeHref,
@@ -184,6 +186,14 @@ interface TraceStepFacts {
   readonly visiblePhase: string | null;
   readonly visibleProgress: string | null;
   readonly frameId: string | null;
+  /**
+   * The failure the runtime recorded against this step, if it recorded one.
+   *
+   * A step the runtime ended on carries the code it ended with, and that code
+   * is the only place the run's own cause is written down. The episode's own
+   * state says only that the run failed; the cause is here.
+   */
+  readonly runtimeFailureCode: string | null;
 }
 
 function recordedValues(
@@ -209,6 +219,7 @@ function traceStepFacts(entry: PlaytestJsonValue): TraceStepFacts {
   const phase = asTraceRecord(top?.phase);
   const visibleObservation = asTraceRecord(top?.visibleObservation);
   const preActionPrediction = asTraceRecord(top?.preActionPrediction);
+  const authoritativeOutcome = asTraceRecord(top?.authoritativeOutcome);
   const visibleControls = Array.isArray(visibleObservation?.controls)
     ? (visibleObservation.controls as readonly unknown[])
         .map((c) => {
@@ -267,7 +278,11 @@ function traceStepFacts(entry: PlaytestJsonValue): TraceStepFacts {
     visibleWarnings,
     visiblePhase: readRecorded([visibleObservation], ["phase", "phaseId"]),
     visibleProgress: readRecorded([visibleObservation], ["progress"]),
-    frameId
+    frameId,
+    runtimeFailureCode: readRecorded(
+      [authoritativeOutcome],
+      ["runtimeFailureCode", "failureCode"]
+    )
   };
 }
 
@@ -1072,6 +1087,66 @@ function refusalExplanation(
             }
           },
           `Inspect the refused step ${String(step)}`
+        )
+  );
+}
+
+/**
+ * The notice for an episode the runtime itself ended.
+ *
+ * "Failed (infrastructure)" is the state machine's word, and it says that
+ * something below the product broke without saying what. The cause the
+ * Runtime recorded against the failing step does say what: the target could
+ * not be reached, the decision backend's answer could not be read, the
+ * approved budget ran out. Those are different facts with different
+ * consequences, and an operator whose run dies needs the one they can act on.
+ *
+ * The cause is read from the trace, because that is where the Runtime writes
+ * it down. When the read window does not carry it, the notice says so rather
+ * than guessing at a cause.
+ */
+function runtimeFailureExplanation(
+  episode: ControlApiPlaytestingEpisodeDetailResponse["record"],
+  scope: PlaytestingScope,
+  window: ControlApiPlaytestingWindowResponse | null
+): React.ReactNode {
+  if (episode.termination.reason !== RUNTIME_FAILURE_TERMINATION_REASON) {
+    return null;
+  }
+  const recorded = window?.entries
+    .map((entry) => traceStepFacts(entry))
+    .filter((facts) => facts.runtimeFailureCode !== null);
+  const failure = recorded?.[0] ?? null;
+  const explanation =
+    failure === null
+      ? null
+      : runtimeFailureSentence(failure.runtimeFailureCode);
+  const step = failure?.step ?? episode.termination.step;
+  const body =
+    explanation ??
+    "The runtime ended this run and did not record which failure it was. No terminal game outcome was observed; no win or loss is inferred.";
+  return React.createElement(
+    "p",
+    {
+      className:
+        "rounded-md border border-warning/40 bg-surface-raised px-3 py-2 text-sm text-fg-muted",
+      role: "status",
+      "data-testid": "playtesting-runtime-failure-explanation"
+    },
+    body,
+    step === null ? null : " ",
+    step === null
+      ? null
+      : React.createElement(
+          NavigationLink,
+          {
+            href: playtestingEpisodeHref(scope, episode.episodeId, step),
+            className: "font-medium text-accent hover:underline",
+            dataAttributes: {
+              "data-playtesting-failed-step": String(step)
+            }
+          },
+          `Inspect the failed step ${String(step)}`
         )
   );
 }
@@ -2619,6 +2694,7 @@ export function PlaytestingSessionView({
       recordedStatusValues(episode),
       truncationExplanation(episode, scope),
       refusalExplanation(episode, scope),
+      runtimeFailureExplanation(episode, scope, window),
       episode.missingReasons.length === 0
         ? null
         : React.createElement(

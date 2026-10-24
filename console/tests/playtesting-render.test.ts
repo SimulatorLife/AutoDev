@@ -1247,6 +1247,125 @@ test("a step that recorded no intention, prediction or action says so instead of
   assert.match(html, /RacingGame Prototype/u);
 });
 
+test("a run the runtime ended says which failure it recorded, not only that it failed", () => {
+  const failedEpisode: PlaytestEpisode = {
+    ...episode(),
+    status: "infrastructure-failed",
+    termination: { reason: "runtime-failure", step: 0 },
+    stepCount: 1,
+    missingReasons: ["infrastructure-failed"],
+    outcome: "unknown",
+    executionProvenance: {
+      mode: "autonomous-visual",
+      source: {
+        kind: "URL-only",
+        repository: null,
+        revision: null,
+        revisionConfidence: "not-applicable",
+        checkoutState: "not-applicable",
+        artifactFingerprint: null,
+        targetId: "racing-game-local",
+        targetOrigin: "http://localhost:5173"
+      },
+      observationSource: "browser-ui",
+      actionSource: "browser-input",
+      derivedFrom: null
+    }
+  };
+  const window: ControlApiPlaytestingWindowResponse = {
+    schema: "autodev-control-playtesting-window-v1",
+    workspaceId: WORKSPACE,
+    episodeId: failedEpisode.episodeId,
+    artifactId: "trace-window-failed",
+    sha256: "a".repeat(64),
+    mediaType: "application/x-ndjson",
+    startStep: 0,
+    endStep: 0,
+    sourceLineCount: 1,
+    omittedLineCount: 0,
+    entries: [
+      {
+        step: 0,
+        visibleObservation: {
+          controls: [],
+          warnings: [],
+          phase: "RacingGame Prototype",
+          progress: null
+        },
+        // The Runtime writes the cause it ended the run with onto the step it
+        // ended on. That code is the only record of what went wrong.
+        authoritativeOutcome: {
+          runtimeFailureCode: "smart-direct:response-invalid"
+        },
+        frameRefs: [{ id: "frame-step-0", kind: "frame" }]
+      }
+    ]
+  };
+
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: { ...detail(), record: failedEpisode },
+      scope: scope({ view: "sessions", step: "0" }),
+      window
+    })
+  );
+
+  // The page names the failure the Runtime recorded, so an operator whose run
+  // dies knows whether the game, the decision backend or the budget was at
+  // fault.
+  assert.match(
+    html,
+    /could not be read as a decision, so no action was taken/u
+  );
+  // And it points at the step the cause was recorded on.
+  assert.match(html, /Inspect the failed step 0/u);
+  // The episode's own state is still what it is: the cause does not replace it.
+  assert.match(html, /Failed \(infrastructure\)/u);
+});
+
+test("a recorded failure the Console does not recognise is shown as it was recorded", () => {
+  const failedEpisode: PlaytestEpisode = {
+    ...episode(),
+    status: "infrastructure-failed",
+    termination: { reason: "runtime-failure", step: 0 },
+    stepCount: 1,
+    missingReasons: ["infrastructure-failed"],
+    outcome: "unknown"
+  };
+  const window: ControlApiPlaytestingWindowResponse = {
+    schema: "autodev-control-playtesting-window-v1",
+    workspaceId: WORKSPACE,
+    episodeId: failedEpisode.episodeId,
+    artifactId: "trace-window-failed-unknown",
+    sha256: "c".repeat(64),
+    mediaType: "application/x-ndjson",
+    startStep: 0,
+    endStep: 0,
+    sourceLineCount: 1,
+    omittedLineCount: 0,
+    entries: [
+      {
+        step: 0,
+        authoritativeOutcome: {
+          runtimeFailureCode: "smart-direct:a-failure-nobody-has-named"
+        }
+      }
+    ]
+  };
+
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: { ...detail(), record: failedEpisode },
+      scope: scope({ view: "sessions", step: "0" }),
+      window
+    })
+  );
+
+  // A cause that is not guessed at: the recorded code is shown as it is.
+  assert.match(html, /smart-direct:a-failure-nobody-has-named/u);
+  assert.match(html, /No terminal game outcome was observed/u);
+});
+
 test("the visible controls are listed one name per line and the overflow is counted", () => {
   const visualEpisode: PlaytestEpisode = {
     ...episode(),
