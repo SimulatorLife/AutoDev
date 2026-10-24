@@ -8,10 +8,17 @@
  * matches, so a sync test that was written to skip when the OpenLIT container
  * is not running instead fails with a connection stack trace that looks like a
  * product defect.
+ *
+ * A request that did not come back within the client's ceiling is the same
+ * thing from the caller's side: the ClickHouse the test wanted is not
+ * answering. `AbortSignal.timeout` reports it as a `TimeoutError`, so the
+ * guard reads that name as well as the socket codes.
  */
 export function isClickHouseUnavailable(error: unknown): boolean {
   for (const candidate of causedErrors(error)) {
     if (codeOf(candidate) === "ECONNREFUSED") return true;
+    if (nameOf(candidate) === "TimeoutError") return true;
+    if (nameOf(candidate) === "AbortError") return true;
   }
   return false;
 }
@@ -19,11 +26,12 @@ export function isClickHouseUnavailable(error: unknown): boolean {
 function* causedErrors(
   error: unknown,
   depth = 0
-): Generator<{ code?: unknown }> {
+): Generator<{ code?: unknown; name?: unknown }> {
   if (depth > 5 || typeof error !== "object" || error === null) return;
   yield error;
   const wrapped = error as {
     code?: unknown;
+    name?: unknown;
     cause?: unknown;
     errors?: unknown;
   };
@@ -35,4 +43,8 @@ function* causedErrors(
 
 function codeOf(error: { code?: unknown }): unknown {
   return error.code;
+}
+
+function nameOf(error: { name?: unknown }): unknown {
+  return error.name;
 }
