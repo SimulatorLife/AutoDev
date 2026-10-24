@@ -50,10 +50,7 @@ test("the pending shell keeps the active shell and announces pending data", () =
   // not the last attribute on the element -- the heading is focusable, so it
   // carries a tabindex as well -- and the property here is that the pending
   // shell keeps the heading, not where the attributes sit.
-  assert.match(
-    markup,
-    /<h1\b[^>]*\btitle="Providers"[^>]*>Providers<\/h1>/u
-  );
+  assert.match(markup, /<h1\b[^>]*\btitle="Providers"[^>]*>Providers<\/h1>/u);
   assert.match(
     markup,
     /<a\b(?=[^>]*data-nav-item="providers")(?=[^>]*aria-current="page")[^>]*>/u
