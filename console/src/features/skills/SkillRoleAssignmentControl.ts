@@ -6,6 +6,7 @@ import React from "react";
 import { CheckboxField } from "../../components/forms/CheckboxField.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { MONO_META_CLASS } from "../../components/ui/text-classes.ts";
+import { skillsListQueryString } from "./skills-list-url.ts";
 
 export interface SkillRoleAssignmentControlProps {
   readonly skill: SkillDefinition;
@@ -13,6 +14,15 @@ export interface SkillRoleAssignmentControlProps {
   readonly assignmentRoles: readonly string[];
   readonly executionContractRevision: string;
   readonly isObserved?: boolean | undefined;
+  /**
+   * The narrowing the list is at, so the POST can come back to it.
+   *
+   * The assignment's POST redirects, so without this the redirect would land
+   * on the whole catalogue and throw away the narrowing the operator had
+   * just applied. It travels on the action rather than in the body because
+   * the body carries the desired role set and nothing else.
+   */
+  readonly listRole?: string | undefined;
 }
 
 /**
@@ -27,9 +37,14 @@ export function SkillRoleAssignmentControl({
   roles,
   assignmentRoles,
   executionContractRevision,
-  isObserved = true
+  isObserved = true,
+  listRole = ""
 }: SkillRoleAssignmentControlProps): React.JSX.Element {
   const assigned = new Set(roles);
+  const query = skillsListQueryString({ role: listRole });
+  const action = `/api/skills/${encodeURIComponent(skill.name)}${
+    query === "" ? "" : `?${query}`
+  }`;
 
   return React.createElement(
     "div",
@@ -41,7 +56,7 @@ export function SkillRoleAssignmentControl({
       "form",
       {
         method: "POST",
-        action: `/api/skills/${encodeURIComponent(skill.name)}`,
+        action,
         className: "flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0",
         "data-submit-on-change": "true"
       },

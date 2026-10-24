@@ -3,6 +3,7 @@
 import { type NextRequest, NextResponse } from "next/server.js";
 
 import { saveOutcomeForConvergence } from "../../../../src/features/skills/SkillRoleAssignment.ts";
+import { skillsListHref } from "../../../../src/features/skills/skills-list-url.ts";
 import {
   patchSkillRoles,
   readControlApiConfig
@@ -33,12 +34,24 @@ export const runtime = "nodejs";
  * contract revision every row was drawn from. A redirect is the whole response
  * because this boundary has no client JavaScript to render a failure with, so
  * `save=` is the only channel back to the operator.
+ *
+ * The narrowing travels on the request's own query, and the address is
+ * rebuilt here rather than followed: the route never takes a path from the
+ * request, so there is nothing in the flow that could point anywhere but the
+ * skill list. The body carries the desired role set and nothing else.
  */
-function redirectToSkills(saveOutcome?: SaveOutcome): NextResponse {
-  const query = saveOutcome ? `?save=${saveOutcome}` : "";
+function redirectToSkills(
+  listRole: string,
+  saveOutcome?: SaveOutcome
+): NextResponse {
+  const url = new URL(
+    skillsListHref({ role: listRole }),
+    "http://skills.invalid"
+  );
+  if (saveOutcome) url.searchParams.set("save", saveOutcome);
   return new NextResponse(null, {
     status: 303,
-    headers: { location: `/skills${query}` }
+    headers: { location: `${url.pathname}${url.search}` }
   });
 }
 
@@ -80,13 +93,16 @@ export async function POST(
   context: { params: Promise<{ name: string }> }
 ): Promise<NextResponse> {
   const { name } = await context.params;
+  // The narrowing the list was at. Read first, because a failure part-way
+  // through still has to return the operator to it.
+  const listRole = request.nextUrl.searchParams.get("role") ?? "";
   if (!SKILL_NAME_PATTERN.test(name) || !isSameOriginMutation(request)) {
-    return redirectToSkills("failed");
+    return redirectToSkills(listRole, "failed");
   }
 
   const form = await readStrictUrlEncodedFormBody(request, MAX_FORM_BODY_BYTES);
   if (!form || !form.has("expectedRevision")) {
-    return redirectToSkills("failed");
+    return redirectToSkills(listRole, "failed");
   }
 
   const expectedRevision = form.get("expectedRevision");
@@ -102,16 +118,16 @@ export async function POST(
     roles.some((role) => !ROLE_PATTERN.test(role)) ||
     new Set(roles).size !== roles.length
   ) {
-    return redirectToSkills("failed");
+    return redirectToSkills(listRole, "failed");
   }
 
   const config = readControlApiConfig();
-  if (!config) return redirectToSkills("failed");
+  if (!config) return redirectToSkills(listRole, "failed");
 
   const result = await patchSkillRoles(
     name,
     { expectedRevision, roles },
     config
   );
-  return redirectToSkills(saveOutcomeForResult(result));
+  return redirectToSkills(listRole, saveOutcomeForResult(result));
 }

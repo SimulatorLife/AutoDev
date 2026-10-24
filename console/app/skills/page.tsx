@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import React from "react";
 
 import { skillSaveOutcome } from "../../src/features/skills/SkillRoleAssignment.ts";
+import { readSkillsFilters } from "../../src/features/skills/skills-list-url.ts";
 import { SkillsView } from "../../src/features/skills/SkillsView.ts";
 import {
   controlApiFailureCode,
@@ -64,6 +65,7 @@ export default async function SkillsPage({
     result.data
   );
   const saveOutcome = skillSaveOutcome(query.save);
+  const listFilters = readSkillsFilters(query);
   return React.createElement(
     ConsolePageShell,
     {
@@ -84,6 +86,7 @@ export default async function SkillsPage({
       // show the same page twice would be two reads of one fact.
       assignmentRoles: result.data.assignmentRoles,
       executionContractRevision: result.data.executionContractRevision,
+      role: listFilters.role,
       ...(saveOutcome ? { saveOutcome } : {})
     })
   );

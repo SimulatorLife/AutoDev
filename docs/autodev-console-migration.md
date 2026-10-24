@@ -200,6 +200,44 @@ Two smaller corrections came with it. The note beside the table -- how many entr
 
 `console/tests/tools-filter.test.ts` pins the narrowing, the address, the composition of the three filters, the filter bar's own name, the carried state and the two different empty messages.
 
+## The skill catalogue could not be narrowed either
+
+The three capability catalogues are prompts, tools and skills, and the skill catalogue was the last one without a way in. Measured against the live Console it holds **sixteen** entries, and each row carries a role-assignment control with a checkbox per role, so the table runs to about **three screenfuls** at 1440x900.
+
+The question that page is actually about -- *which skills may role X invoke* -- had no answer on it. The operator had to read the Eligible Roles column of every row: sixty-four role chips spread down three screenfuls, to find out which skills carried the role they cared about.
+
+So the catalogue takes the product's own filter bar, and the narrowing is by **role**. Not by name: the catalogue is sorted by name and sixteen short names in one column are a cheap scan, while the role question is the expensive one and it had no answer at all. The count sits in the filter bar's summary in the same form as the other two catalogues -- "Showing 9 of 16 skills" -- and only when something was narrowed, because the stat row above already states the catalogue's size.
+
+**The bar carries no submit button, and that is the point rather than an omission.** Every control on this page applies the moment it changes -- a role assignment saves itself -- so a "Save" button beside them would be a second way to do the same thing, and one an operator could walk past believing the change had not been written. That is a committed contract on this page, pinned by a test that asserts the view contains no submit button at all. A text search has nowhere to put its Apply, but a role is a **bounded** set -- the roles the execution contract declares -- so the control that chooses one is a single-choice select, which is exactly what the shared filter bar's on-change mode is reserved for. The narrowing is therefore a normal GET navigation, like every other filtered view: URL-addressable, bookmarkable, shareable, and with no client-side filtering.
+
+**The narrowing is applied in the view, not by the page.** The stat row above the table is about the *catalogue*, not about the view of it: the "Role-assigned" card counts every eligible skill the execution contract names, and that number must not shrink because the operator narrowed the list. A page that narrowed the list before handing it to the view would have made that card report "2 of 4 configured" for a catalogue of sixteen, which is a different claim from the one the card makes.
+
+**And the narrowing survives the round-trip a role assignment makes.** Every checkbox on this page submits immediately through a POST that redirects back to `/skills`, so a narrowed list would have been thrown away by the act of assigning a role: the operator would come back to all sixteen rows and have to find the skill they were just editing. The narrowing travels on the form's **action** rather than in its body, because the body carries the desired role set and nothing else -- that is a committed contract too, pinned by a test that asserts the exact set of submitted field names, since an unchecked checkbox contributes nothing and a route that demanded a `roles` field would make the one operation that unassigns a skill impossible to express. The route **rebuilds** the address from the query rather than following one it was given, so there is no path anywhere in the flow that could point anywhere but the skill list -- a value that tries to be a path stays a query, encoded.
+
+`console/tests/skills-filter.test.ts` pins the narrowing, the address, the filter bar's own name and its **absence of a submit button**, the two different empty messages, the narrowing carried on the assignment's action, and the fact that the assignment still posts only the revision and the desired roles.
+
+## How large the Console's lists really are
+
+The rule the target state states -- "every list that holds more than a handful of rows carries the product's own filter bar" -- needs the sizes measured against the live Console rather than against a fixture, because a fixture holds two rows and would have made every list look short enough to leave alone. Measured at 1440x900 on the live Console:
+
+| Route | Rows | Table height | Screenfuls | Filter bar |
+| --- | --- | --- | --- | --- |
+| `/prompts` | 76 | 6883px | 8 | yes |
+| `/tools` | 56 | 3989px | 5 | yes |
+| `/github` | 30 | 2401px | 3 | no |
+| `/skills` | 16 | 1859px | 3 | yes |
+| `/usage` | 25 | 1660px | 2 | yes |
+| `/agents` | 10 | 1673px | 2 | no |
+| `/permissions` | 10 | 999px | 2 | no |
+| `/providers` | 5 | 1040px | 2 | no |
+| `/mcps` | 9 | 722px | 1 | no |
+| `/workspaces` | 5 | 309px | 1 | no |
+
+`/providers` is deliberately dense: the target state specifies it as five columns with three controls per role per provider, so its control count is the specified design rather than a defect.
+
+`/github` is the one that is now measurably past the line and still unfiltered -- thirty rows across three screenfuls. It is the next candidate, and it has a different shape from the three catalogues fixed so far: its rows are runs, so a query there would be over a run id and a workflow name rather than over a capability's name and description.
+
+
 
 ## The phone-width sweep
 
