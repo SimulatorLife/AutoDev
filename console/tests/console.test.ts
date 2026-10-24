@@ -229,6 +229,7 @@ import {
   fetchEvaluations,
   fetchGithubWorkflows,
   fetchHooks,
+  fetchHooksApplied,
   fetchMcpApplied,
   fetchMcpRuntime,
   fetchMcps,
@@ -13970,6 +13971,99 @@ test("Catalog collections fail closed on unreadable responses", async () => {
       )
     ).kind,
     "invalid-response"
+  );
+
+  // The applied side is the Runtime's own projection, and a projection carries
+  // no declaration origin: the Runtime publishes what it installed, not where
+  // the declaration said the event was declared.
+  //
+  // The Console once required an origin of an applied event, so the applied
+  // read could never be read on any Runtime -- including one that had
+  // published a projection. The page then said the projection "could not be
+  // read", which is indistinguishable from a Runtime that published nothing.
+  // No fixture covered it: the one applied response the tests knew about was
+  // the one the Console had made up.
+  const hooksApplied = {
+    schema: "autodev-control-hooks-applied-v1",
+    source: "/codex/hooks.json",
+    declarationSource: ".rulesync/hooks.jsonc",
+    target: "codexcli",
+    available: true,
+    declaredEvents: [
+      {
+        event: "preToolUse",
+        origin: "shared",
+        actions: [{ type: "command", command: "echo hi" }]
+      }
+    ],
+    events: [
+      {
+        event: "preToolUse",
+        actions: [{ type: "command", command: "echo hi" }]
+      }
+    ],
+    reconciliation: {
+      status: {
+        convergence: "converged",
+        desiredGeneration: "1",
+        observedGeneration: "1",
+        lastApplyAt: null,
+        lastObservationAt: "2026-01-01T00:00:00.000Z",
+        lastError: null,
+        explanation: "The projection matches the declaration."
+      },
+      history: []
+    }
+  };
+  assert.equal(
+    (await fetchHooksApplied(config, serve(hooksApplied))).kind,
+    "ok"
+  );
+  // The declared side still says where the event is declared, so a declared
+  // event without one fails closed rather than losing the fact that decides
+  // who else an edit reaches.
+  assert.equal(
+    (
+      await fetchHooksApplied(
+        config,
+        serve({
+          ...hooksApplied,
+          declaredEvents: [
+            {
+              event: "preToolUse",
+              actions: [{ type: "command", command: "echo hi" }]
+            }
+          ]
+        })
+      )
+    ).kind,
+    "invalid-response"
+  );
+  // An applied event whose actions could not be read is not an event the
+  // operator can act on, so the response fails closed rather than carrying it.
+  assert.equal(
+    (
+      await fetchHooksApplied(
+        config,
+        serve({
+          ...hooksApplied,
+          events: [{ event: "preToolUse", actions: "nope" }]
+        })
+      )
+    ).kind,
+    "invalid-response"
+  );
+  // A projection that could not be read at all is a fact the Runtime states,
+  // not a shape the Console refuses: an unavailable projection is still a
+  // readable answer, and it must not read as an unreadable contract.
+  assert.equal(
+    (
+      await fetchHooksApplied(
+        config,
+        serve({ ...hooksApplied, available: false, events: [] })
+      )
+    ).kind,
+    "ok"
   );
 
   const evaluations = {

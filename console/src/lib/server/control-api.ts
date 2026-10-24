@@ -32,6 +32,7 @@ import {
   type ControlApiError,
   type ControlApiEvaluationsResponse,
   type ControlApiGithubResponse,
+  type ControlApiHookDeclaration,
   type ControlApiHookEvent,
   type ControlApiHookEventPatchRequest,
   type ControlApiHookEventPatchResponse,
@@ -2337,18 +2338,20 @@ function isValidationIssueList(value: unknown): boolean {
 }
 
 /**
- * One hook event, as the declaration publishes it.
+ * One hook event, as the contract publishes it.
  *
  * The action list is checked rather than trusted: an event whose actions could
  * not be read is dropped, because an event with an unreadable action list is
  * not an event the operator can act on and rendering it as one would invite a
  * write that drops what it could not read.
+ *
+ * This is the applied side's shape: the projection the Runtime published says
+ * what runs and nothing about where it was declared.
  */
 function isControlApiHookEvent(value: unknown): value is ControlApiHookEvent {
   return (
     isRecord(value) &&
     typeof value.event === "string" &&
-    (value.origin === "shared" || value.origin === "target") &&
     Array.isArray(value.actions) &&
     value.actions.every(
       (action) =>
@@ -2359,6 +2362,28 @@ function isControlApiHookEvent(value: unknown): value is ControlApiHookEvent {
         (action.statusMessage === undefined ||
           typeof action.statusMessage === "string")
     )
+  );
+}
+
+/**
+ * One hook event, as the *declaration* publishes it.
+ *
+ * The declared side carries where the event's declaration lives, because that is
+ * what decides who else an edit reaches. The applied projection has no such
+ * place, so the two sides are checked differently: requiring an origin of an
+ * applied event would refuse it for the one thing it cannot say, and the applied
+ * read would then never be readable at all -- which would look exactly like a
+ * Runtime that published nothing.
+ */
+function isControlApiHookDeclaration(
+  value: unknown
+): value is ControlApiHookDeclaration {
+  return (
+    isControlApiHookEvent(value) &&
+    // The origin is read through the record, not through the event type: the
+    // event type is the applied side's shape and carries no origin at all.
+    isRecord(value) &&
+    (value.origin === "shared" || value.origin === "target")
   );
 }
 
@@ -2379,16 +2404,20 @@ function isControlApiHooksResponse(
     (value.revision === null || typeof value.revision === "string") &&
     typeof value.target === "string" &&
     Array.isArray(value.events) &&
-    value.events.every(isControlApiHookEvent)
+    value.events.every(isControlApiHookDeclaration)
   );
 }
 
 /**
  * The applied hook projection, as the Runtime publishes it.
  *
- * The applied side is checked as strictly as the declared one, because the
- * whole point of the read is to say whether the two agree, and an applied
- * event that could not be read would make the comparison say nothing.
+ * The applied side is checked as strictly as the declared one about the things
+ * the two sides have in common -- the event's name and the whole action list --
+ * because an applied event that could not be read would make the comparison say
+ * nothing. The one thing they do not have in common is the origin: a
+ * projection carries no declaration site, so requiring one would refuse the
+ * applied read on every Runtime, including one that had published a
+ * projection.
  */
 function isControlApiHooksAppliedResponse(
   value: unknown
@@ -2401,10 +2430,13 @@ function isControlApiHooksAppliedResponse(
     typeof value.target === "string" &&
     typeof value.available === "boolean" &&
     Array.isArray(value.declaredEvents) &&
-    value.declaredEvents.every(isControlApiHookEvent) &&
+    value.declaredEvents.every(isControlApiHookDeclaration) &&
     Array.isArray(value.events) &&
     value.events.every(isControlApiHookEvent) &&
-    isRecord(value.reconciliation)
+    // The same check every surface that renders a convergence verdict uses, so
+    // the applied side's verdict is held to the same shape as the declared
+    // side's and the wording cannot differ between them.
+    isControlApiReconciliation(value.reconciliation)
   );
 }
 
