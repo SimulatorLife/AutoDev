@@ -1247,6 +1247,84 @@ test("a step that recorded no intention, prediction or action says so instead of
   assert.match(html, /RacingGame Prototype/u);
 });
 
+test("the visible controls are listed one name per line and the overflow is counted", () => {
+  const visualEpisode: PlaytestEpisode = {
+    ...episode(),
+    executionProvenance: {
+      mode: "autonomous-visual",
+      source: {
+        kind: "URL-only",
+        repository: null,
+        revision: null,
+        revisionConfidence: "not-applicable",
+        checkoutState: "not-applicable",
+        artifactFingerprint: null,
+        targetId: "racing-game-local",
+        targetOrigin: "http://localhost:5173"
+      },
+      observationSource: "browser-ui",
+      actionSource: "browser-input",
+      derivedFrom: null
+    }
+  };
+  // A game whose controls carry whole sentences as their accessible names:
+  // nine of them is more than the preview names, and each one is long.
+  const controls = Array.from({ length: 9 }, (_, index) => ({
+    controlId: `control-${String(index)}`,
+    name: `Control ${String(index)} - Lap 4, 65% of the lap - Delta +7.6 seconds`
+  }));
+  const window: ControlApiPlaytestingWindowResponse = {
+    schema: "autodev-control-playtesting-window-v1",
+    workspaceId: WORKSPACE,
+    episodeId: visualEpisode.episodeId,
+    artifactId: "trace-window-controls",
+    sha256: "f".repeat(64),
+    mediaType: "application/x-ndjson",
+    startStep: 0,
+    endStep: 0,
+    sourceLineCount: 1,
+    omittedLineCount: 0,
+    entries: [
+      {
+        step: 0,
+        visibleObservation: {
+          controls,
+          warnings: [],
+          phase: "RacingGame Prototype",
+          progress: null
+        },
+        frameRefs: [{ id: "frame-step-0", kind: "frame" }]
+      }
+    ]
+  };
+
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: { ...detail(), record: visualEpisode },
+      scope: scope({ view: "sessions", step: "0" }),
+      window
+    })
+  );
+
+  // Each name is its own line, so a reader can skip down the list instead of
+  // reading a paragraph of run-on text.
+  assert.match(
+    html,
+    /<li>Control 0 - Lap 4, 65% of the lap - Delta \+7\.6 seconds<\/li>/u
+  );
+  assert.doesNotMatch(html, /Control 0 - Lap 4[^<]*·/u);
+  // The preview names six of them; the rest are counted and kept one
+  // disclosure away rather than dropped.
+  const panel = html.slice(html.indexOf("Visible Controls &amp; Phase"));
+  const disclosureAt = panel.indexOf("<details");
+  const preview = panel.slice(0, disclosureAt);
+  const disclosure = panel.slice(disclosureAt);
+  assert.match(preview, /<li>Control 5 - Lap 4[^<]*<\/li>/u);
+  assert.doesNotMatch(preview, /<li>Control 6 - Lap 4[^<]*<\/li>/u);
+  assert.match(html, /3 more controls observed/u);
+  assert.match(disclosure, /<li>Control 6 - Lap 4[^<]*<\/li>/u);
+});
+
 test("visual spectator derives the latest step from frames, follows live, and shows Persisted Analyst Hypotheses only", () => {
   const visualEpisode: PlaytestEpisode = {
     ...episode(),

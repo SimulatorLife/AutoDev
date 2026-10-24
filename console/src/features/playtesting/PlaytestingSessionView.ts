@@ -1230,6 +1230,12 @@ function spectatorAvailableSteps(
  * and the whole list stays one disclosure away. A step that recorded no
  * controls says so: a screen with no controls and a screen whose controls
  * were never captured are different facts.
+ *
+ * The names are listed rather than run together. A game's own accessible
+ * name for a control can be a whole sentence -- "Breakneck GP - #1 -
+ * Position 5 - Lap 4, 65% of the lap - Delta +7.6 seconds" -- and six of
+ * those joined with separators is a paragraph nobody can scan. One name per
+ * line is a list a reader can skip down.
  */
 function visibleControlsSummary(names: readonly string[]): React.JSX.Element {
   if (names.length === 0) {
@@ -1244,7 +1250,13 @@ function visibleControlsSummary(names: readonly string[]): React.JSX.Element {
   return React.createElement(
     "div",
     { className: "mt-1 space-y-1 text-xs text-fg" },
-    React.createElement("p", null, shown.join(" · ")),
+    React.createElement(
+      "ul",
+      { className: "space-y-0.5" },
+      shown.map((name, index) =>
+        React.createElement("li", { key: `${String(index)}:${name}` }, name)
+      )
+    ),
     hidden > 0
       ? React.createElement(
           "details",
@@ -1255,9 +1267,17 @@ function visibleControlsSummary(names: readonly string[]): React.JSX.Element {
             `${String(hidden)} more ${hidden === 1 ? "control" : "controls"} observed`
           ),
           React.createElement(
-            "p",
-            { className: "mt-1" },
-            names.slice(shown.length).join(" · ")
+            "ul",
+            { className: "mt-1 space-y-0.5" },
+            names
+              .slice(shown.length)
+              .map((name, index) =>
+                React.createElement(
+                  "li",
+                  { key: `${String(index)}:${name}` },
+                  name
+                )
+              )
           )
         )
       : null
