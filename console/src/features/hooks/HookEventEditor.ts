@@ -89,9 +89,9 @@ function actionField(
  * owner is the only thing that may drive its router, and a feature that
  * refreshes the page itself brings back the strand the owner exists to end.
  * The owner also keeps what an operator typed, because the editor is not
- * remounted while the declaration it is based on stays where it is: a refused
- * write leaves the revision the editor was filled from in place, so the edit
- * survives it.
+ * remounted while the operator is working: the declaration it is based on may
+ * move under it, and a refused write leaves the revision the editor was
+ * filled from in place, so the edit survives it.
  *
  * The action list is the editor's own state because the number of actions is
  * not fixed: an event may run one command or several, and the editor has to

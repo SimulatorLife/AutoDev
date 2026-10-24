@@ -106,6 +106,31 @@ test("the hooks page keeps the declaration and the applied configuration apart",
   ).toBeVisible();
 });
 
+test("the hooks page keeps the operator's unfinished work in another event", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/hooks");
+
+  // The operator starts editing one event...
+  const unfinished = eventEditor(page, SHARED_EVENT).locator(
+    '[data-hook-action-command="0"]'
+  );
+  await unfinished.fill(EDITED_COMMAND);
+
+  // ...and then saves a different one. The page answers the save with a
+  // redirect, so every editor on it is rebuilt -- and the one they had not
+  // finished yet must come back with their text in it.
+  await eventEditor(page, TARGET_EVENT)
+    .getByRole("button", { name: "Save and apply" })
+    .click();
+  await page.waitForURL(/event=/u);
+
+  await expect(
+    eventEditor(page, SHARED_EVENT).locator('[data-hook-action-command="0"]')
+  ).toHaveValue(EDITED_COMMAND);
+});
+
 test("the hooks page edits the canonical declaration and reports what the runtime published", async ({
   page
 }) => {

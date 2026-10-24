@@ -361,11 +361,20 @@ function hookEventPanel(
       })
     ),
     React.createElement(HookEventEditor, {
-      // The editor is remounted when the revision it is based on changes, and
-      // not when it does not. That is what keeps an operator's edit across a
-      // refused write: a refused write leaves the editor based on the revision
-      // it was filled from.
-      key: `${hook.event}-${editorRevision ?? revision ?? "none"}`,
+      // The editor's identity is the event, and nothing else. The key used to
+      // carry the revision the editor was based on, so a *successful* write --
+      // which moves the declaration's revision -- remounted every editor on
+      // the page and threw away the drafts in all of them. An operator editing
+      // one event, who then saved a different one, came back to find their
+      // unfinished work gone with no word about it.
+      //
+      // A draft is a draft: it is the operator's, and it is not discarded
+      // because the declaration moved for some other reason. The write it
+      // carries is a compare-and-swap on the revision it was written against,
+      // so a declaration that has moved under it is *refused* -- the operator's
+      // edit stays on screen and the refusal says why -- rather than the edit
+      // being overwritten or thrown away.
+      key: hook.event,
       event: hook.event,
       actions: hook.actions,
       revision: editorRevision ?? revision ?? "",
