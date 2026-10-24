@@ -4383,9 +4383,6 @@ function handleHookCatalogRead(url: URL, response: ServerResponse): boolean {
     };
     sendJson(response, body);
     return true;
-    // The hook paths are the ones this read owns; anything else belongs to a
-    // different read, and saying so is how the caller knows to keep looking.
-    return false;
   }
   if (url.pathname === "/control/hooks-applied") {
     // The hook configuration the Runtime published, against the canonical
@@ -4410,6 +4407,9 @@ function handleHookCatalogRead(url: URL, response: ServerResponse): boolean {
     sendJson(response, body);
     return true;
   }
+  // The hook paths are the ones this read owns; anything else belongs to a
+  // different read, and saying so is how the caller knows to keep looking.
+  return false;
 }
 
 /**
