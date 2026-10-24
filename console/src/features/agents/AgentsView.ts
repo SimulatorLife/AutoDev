@@ -82,11 +82,16 @@ export function AgentsView({
       // the only column here that names a row rather than a property of one.
       //
       // Every weight on this table is sized to the larger of that content
-      // budget at the 1440 content column and the column's own header at the
-      // table's 864px floor. Sizing them as shares of a total that was never
-      // reconciled with either is what had these seven summing to 1125 against
-      // a 1076px content column, so every percentage on the page was handing
-      // out 96% of the budget its weight described.
+      // budget and the column's own header, and the seven of them now add up
+      // to 1076 -- the width the console actually gives this table at a 1440
+      // viewport -- so the table fits its content column and every column is
+      // visible without a sideways scroll.
+      //
+      // They used to add up to 1174 against that same 1076, which is what put
+      // the MCPs column past the right edge of the content column: the budget
+      // was 98px larger than the room it was declared against, so the table
+      // scrolled sideways to a column nobody could see, and the width each
+      // weight described was 9% wider than the column it was drawn in.
       //
       // The cell holds three things -- the role, the live count, and the
       // enablement control with its reason -- so it is a `tokens` column and
@@ -95,7 +100,7 @@ export function AgentsView({
       // enablement projection was cut mid-sentence with nothing to say that
       // anything was cut.
       align: "tokens",
-      weight: 221,
+      weight: 215,
       cell: (agent) =>
         React.createElement(
           "div",
@@ -139,6 +144,10 @@ export function AgentsView({
       // `autodev/orchestrator` measures 145px, 177 with the cell own 32px of
       // padding. The model id titles itself, so narrowing it costs a truncation
       // the reader can recover rather than a status word with nothing behind it.
+      //
+      // 185 is the weight that holds those 177: at the table's new 1076px
+      // budget the column is drawn 185px wide, and at the old 1174px budget the
+      // same share came out at 170 and cut the model id's last glyph.
       weight: 185,
       cell: (agent) =>
         React.createElement(
@@ -158,7 +167,7 @@ export function AgentsView({
       // The provider chips wrap -- that is the target state's rule for discrete
       // cell content -- and wrapping costs height, not legibility, so this is the
       // cheapest column on the page to narrow.
-      weight: 147,
+      weight: 125,
       cell: (agent) =>
         React.createElement(AgentProviderSummary, { agent, providers })
     },
@@ -169,7 +178,10 @@ export function AgentsView({
       // against 52px of header text. Measuring only the badge label span reads
       // 83px here and calls the column fine while the badge is cut at its last
       // glyph on every row.
-      weight: 154,
+      //
+      // 147 is the badge with the cell's own 32px of padding: the widest badge
+      // this column holds.
+      weight: 147,
       cell: (agent) =>
         React.createElement(StatusBadge, { status: agent.status })
     },
@@ -179,7 +191,9 @@ export function AgentsView({
       // "Not observed" measures 128px as a badge, and its 101px header is the
       // longest on the page, so this column is bounded by its header at the floor
       // even though it reads less often than Status.
-      weight: 173,
+      //
+      // 160 is that badge with the cell's own 32px of padding.
+      weight: 160,
       cell: (agent) =>
         React.createElement(StatusBadge, { status: agent.convergence })
     },
@@ -187,7 +201,7 @@ export function AgentsView({
       id: "skills",
       header: "Skills",
       align: "tokens",
-      weight: 147,
+      weight: 122,
       cell: (agent) => {
         const skills = agent.tools.filter((tool) => tool.type === "skill");
         if (skills.length === 0) {
@@ -227,7 +241,7 @@ export function AgentsView({
       id: "mcps",
       header: "MCPs",
       align: "tokens",
-      weight: 147,
+      weight: 122,
       cell: (agent) => {
         const mcps = Array.from(
           new Set(
@@ -317,7 +331,6 @@ export function AgentsView({
     React.createElement(
       "section",
       {
-        className: LIST_PANEL_CLASS,
         "data-section": "configured-agents"
       },
       React.createElement(

@@ -279,6 +279,31 @@ The rule the target state states -- "every list that holds more than a handful o
 
 `/github` held two tables: the workflow definitions (19 rows, 1514px) and the recent runs (30 rows, 2353px). The runs are now narrowed by outcome. The workflow definitions are the smaller list and their own question -- which are scheduled, which are enabled -- is answered by two stat cards above them in the same way the run counts were, so a narrowing there is the next candidate.
 
+## Four tables declared a width larger than the column they were given
+
+The filter bars answer "too many rows to read". The width of a table answers "can I see the column at all", and four of the Console's list tables failed that question at 1440.
+
+A table's width is the sum of its declared column weights, and the Console gives a list table one content column. Measured in the browser against the live Runtime at a 1440x900 viewport, the navigation expanded:
+
+| Route | Declared budget | Content column | Hidden column |
+| --- | --- | --- | --- |
+| `/agents` | 1174 | 1076 | **MCPs** (98px off the right edge) |
+| `/providers` | 1198 | 1076 | **Agent Limits**, cut mid-badge (122px) |
+| `/mcps` | 1302 | 1118 | **Connection** (184px) |
+| `/workspaces` | 1234 | 1118 | **Requests** (116px) |
+
+The providers table was the worst of the four, because the column it lost was one of the five the target state names as primary, and because the **reasoning-effort selector** -- the third of the three controls every role carries -- lives inside the Roles cell, past the right edge with it. An operator configuring which model serves which role could not see or reach the effort setting without scrolling a table whose own border gave no sign that there was anything to the right.
+
+Two things caused it, and neither was the table's design.
+
+**The budgets were larger than the room they were declared against.** The MCPs table's comment carried an arithmetic that described a 904px table while the weights described a 1302px one, and the two had never been reconciled: the prose said the columns "summed to 1272 while the content column measures 1118px", which is a table that cannot fit, and the weights were 30px wider than even that. The scroll bought nothing -- measured against the live catalogue, the same columns and the same values fit inside 1118px with room to spare, and the only column that did not fit was the one whose budget had been inflated. Each weight is now its own column's measured need: the widest cell in it, or its own header, whichever is larger, plus the cell's 32px of inset. The MCPs table's Server Name column was declared at 230 for a name that measures 161; it is 205 now.
+
+**The content column was not the same width on every page.** Four pages wrapped their table in a `p-5` list panel, which is a box inside a box -- the table already draws its own border -- and cost 42px of the content column. So the agents, providers, prompts and usage tables were given 1076px while the MCPs, workspaces, skills, tools, permissions and GitHub tables were given 1118px: the same component, two rooms, and a table's columns budgeted against whichever room its page happened to give it. The rule now lives in one place (`console/src/components/layout/Panel.ts`): **a table brings its own box, so a section whose content is a table is a heading and the table, not a panel.** Every list table is now given the same 1118px column, and the four tables that needed a re-budget have it.
+
+Measured after the change, at 1440 against the live Runtime and against the fixture: **every list table fits its content column**, with no clipped cell and no header on more than one line, on all ten routes that render one. At 390, 768, 1280 and 1440, all twenty-one list and detail routes measure **zero clipped content** -- the tables still scroll sideways below the column's width, which is what the shared table contract asks for, but nothing is cut off without a way to reach it.
+
+The guards are both halves of the claim. `console/tests/list-table-width.test.ts` pins each view's declared budget against the content column in the fast suite, and fails with the arithmetic when a weight is inflated; `console/e2e/table-width-acceptance.spec.ts` measures the width a table is actually given, in a browser, and asserts that no table is wider than its column and that no list table sits inside a bordered panel. The unit guard was checked against a deliberately inflated weight and failed as it should.
+
 
 
 ## The phone-width sweep

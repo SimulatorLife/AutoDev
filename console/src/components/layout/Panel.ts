@@ -15,6 +15,16 @@
  * win — the composed `bg-surface` does. A caller that needs a severity tint
  * must start from `DETAIL_PANEL_SHAPE`, which carries no colour to conflict
  * with.
+ *
+ * A list table is not one of these boxes. The shared table draws its own
+ * border, so a panel around it is a box inside a box: two competing edges, and
+ * 42px of the page's content column spent on padding and a border the table
+ * does not need. Six of the Console's list pages render their table bare; the
+ * four that wrapped it gave their tables 42px less room, and on the agents,
+ * providers, prompts and usage tables that was the difference between a table
+ * that fits its column and one that sc sideways to a column nobody could see.
+ * A section whose content is a table is a heading and the table; a section
+ * whose content is text, a grid or a chart is a panel.
  */
 
 const PANEL_SHAPE = "rounded-lg border shadow";

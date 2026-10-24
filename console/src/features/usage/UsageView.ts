@@ -641,7 +641,7 @@ function renderRecentAttempts(
   return React.createElement(
     "section",
     {
-      className: `flex flex-col gap-3 ${LIST_PANEL_CLASS}`,
+      className: "flex flex-col gap-3",
       "aria-labelledby": "usage-recent-attempts-heading",
       "data-feature": "usage-recent-attempts",
       "data-trace-list-state": traceList.kind

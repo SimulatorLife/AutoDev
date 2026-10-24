@@ -106,7 +106,7 @@ export function WorkspacesView({
       id: "id",
       header: "Repository / Workspace",
       align: "path",
-      weight: 220,
+      weight: 240,
       // Wraps between `owner` and `name` instead of cutting. Measured against
       // real data, "SimulatorLife/Colourful-Life" was cut with nothing to
       // recover it; the two halves are exactly the break points it wants.
@@ -127,7 +127,7 @@ export function WorkspacesView({
     {
       id: "baseBranch",
       header: "Base Branch",
-      weight: 180,
+      weight: 134,
       cell: (ws) =>
         React.createElement(Tag, {
           className: `border-border-strong bg-surface-raised font-mono ${MUTED_TEXT_CLASS}`,
@@ -137,7 +137,7 @@ export function WorkspacesView({
     {
       id: "enablement",
       header: "Enablement",
-      weight: 140,
+      weight: 128,
       cell: (ws) =>
         React.createElement(StatusBadge, {
           status: "configured",
@@ -170,7 +170,7 @@ export function WorkspacesView({
     {
       id: "agentRoles",
       header: "Role Scope",
-      weight: 200,
+      weight: 142,
       cell: (ws) =>
         // A scope that names a role AutoDev does not define is a configuration
         // fault, and it belongs in the cell that owns the scope: listing the
@@ -202,7 +202,7 @@ export function WorkspacesView({
     {
       id: "availability",
       header: "Availability",
-      weight: 160,
+      weight: 132,
       cell: (ws) =>
         React.createElement(StatusBadge, {
           status: workspaceAvailabilityBadgeVariant(ws.runtime),
@@ -219,7 +219,7 @@ export function WorkspacesView({
       // a line of its own under the label it explains, and the header row grew
       // 15px -- the same header measuring 35.5px on every other page and
       // 50.5px here.
-      weight: 128,
+      weight: 136,
       cell: (ws) => workspaceRequestValue(requests.get(ws.id))
     }
   ];

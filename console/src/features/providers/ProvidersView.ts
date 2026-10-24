@@ -220,6 +220,10 @@ function providerColumns(
       header: "Provider",
       // The provider id is the row's primary identifier. Its full declared
       // share is preserved by DataTable; narrow viewports scroll the table.
+      //
+      // The provider id and its two external links stack in this cell, and the
+      // widest of them measures 98px, so 130 is that with the cell's own 32px
+      // of padding.
       weight: 130,
       align: "tokens",
       cell: (provider) =>
@@ -236,9 +240,15 @@ function providerColumns(
     {
       id: "status",
       header: "Status",
-      // Sized against the widest pill the column can produce, which is a named
-      // environment variable ("Missing LITELLM_API_KEY"), not the word Ready.
-      weight: 210,
+      // Sized against the shortest verdict the column has to show in full, not
+      // against the longest: "Not observed" measures 112px as a badge, so 144
+      // is that with the cell's own 32px of padding and 160 holds it.
+      //
+      // A pill like "Missing LITELLM_API_KEY" is longer than any column is
+      // wide, and it ellipsizes inside the badge with the whole name on its
+      // hover title -- so a column sized for it bought nothing and took 50px
+      // from the five columns that have to be read.
+      weight: 160,
       cell: (provider) => React.createElement(ProviderStatusBadge, { provider })
     },
     {
@@ -251,7 +261,7 @@ function providerColumns(
       // own name, which the shared table contract forbids. The margin over
       // the floor matches the other columns', so a system font with different
       // metrics does not put the header back on two lines.
-      weight: 146,
+      weight: 139,
       cell: (provider) =>
         React.createElement(
           "span",
@@ -272,6 +282,10 @@ function providerColumns(
         "Each fixed role takes a priority (P1, P2, P3 or Disabled), a model, and optional reasoning effort. Changing any selection submits the complete role assignment immediately; refreshed values are Runtime-confirmed. Disabled dims selectors but keeps chosen values.",
       // The label and three selects use a 496px aligned grid; the table cell adds
       // 32px of shared inset. The 528px budget keeps fields aligned.
+      //
+      // This is the one column that cannot be narrowed: the four roles share
+      // one aligned grid, so the width is the width of the configuration and
+      // not a share of the table.
       weight: 528,
       align: "tokens",
       cell: (provider) =>
@@ -288,7 +302,10 @@ function providerColumns(
         "Provider-wide concurrent-agent limits. Unlimited has no ceiling; disabling the provider turns it off entirely while preserving its priorities, models and limits.",
       // Both stepper labels sit above their button groups, so the 184px budget
       // leaves room for controls and lets the optional disabled caption wrap.
-      weight: 184,
+      //
+      // 155 holds the widest of the two groups -- the button row measures 123px
+      // -- and the header, whose label and help marker together need 149px.
+      weight: 155,
       align: "tokens",
       cell: (provider) =>
         React.createElement(ProviderLimitsControls, { provider, returnTo })
@@ -541,7 +558,7 @@ function ProvidersTab({
     ),
     React.createElement(
       "section",
-      { className: LIST_PANEL_CLASS, "data-section": "providers" },
+      { "data-section": "providers" },
       React.createElement(
         "h2",
         { className: SECTION_HEADING_CLASS },
@@ -668,7 +685,6 @@ function ModelsTab({
     React.createElement(
       "section",
       {
-        className: LIST_PANEL_CLASS,
         "data-section": "models"
       },
       React.createElement("h2", { className: SECTION_HEADING_CLASS }, "Models"),
@@ -693,7 +709,6 @@ function ModelsTab({
       : React.createElement(
           "section",
           {
-            className: LIST_PANEL_CLASS,
             "data-section": "unsupported-models"
           },
           React.createElement(

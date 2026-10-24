@@ -78,28 +78,23 @@ export function McpsView({
       // own 32px of padding.
       //
       // Every weight here is sized to the larger of that content budget and the
-      // column's own header at the table's 864px floor, rather than to a share
-      // of a total that was never reconciled with either. A share is only
-      // meaningful next to the width it was authored against, and these seven
-      // summed to 1272 while the content column measures 1118px at 1440, so
-      // every percentage was handing out 88% of what the weights described.
-      // The primary key of the row, and the link target. It was declared at 150,
-      // tied with the RuleSync declaration column and below `Configured roles`,
-      // so at the table's 864px floor -- what every viewport under 864 sees --
-      // it resolved to 105px against roles' 135. Measured at 390px, every server
-      // name rendered as eight characters plus an ellipsis: `cocoind…`,
-      // `codegra…`, `openaiD…`.
+      // column's own header, and the seven of them now add up to 1118 -- the
+      // width the console actually gives this table at a 1440 viewport -- so the
+      // table fits its content column and the Connection column is visible
+      // without a sideways scroll.
       //
-      // 163 is not 230 any more, and the reason is arithmetic rather than taste.
-      // Measured in the browser, each of the seven columns needs this much of the
-      // 864px floor: 84 for this one's own header, 120 for the longest role chip,
-      // 123 for the "Canonical" pill, 144 for each "Not observed" pill, 114 for
-      // "TRANSPORT" -- which is wider than the cell it labels -- and 108 for
-      // "OVERRIDES". That is 793px before this column gets a pixel, so it takes
-      // the 111px that is left. A header that does not fit its column is the one
-      // defect the target state names outright; a name that truncates gives
-      // itself back on hover and a title.
-      weight: 230,
+      // They used to add up to 1302 against that same 1118, which is what put
+      // the Connection column past the right edge of the content column: the
+      // budget was 184px larger than the room it was declared against, so the
+      // table scrolled sideways to a column nobody could see. The arithmetic
+      // the comment used to carry described a 904px table and the weights
+      // described a 1302px one, and the two had never been reconciled -- which
+      // is how a column ends up 198px wider than the name it holds.
+      //
+      // A header that does not fit its column is the one defect the target
+      // state names outright; a name that truncates gives itself back on hover
+      // and a title.
+      weight: 205,
       cell: (server) =>
         React.createElement(
           NavigationLink,
@@ -115,7 +110,9 @@ export function McpsView({
       id: "roles",
       header: "Configured roles",
       align: "tokens",
-      weight: 185,
+      // The longest role chip measures 120px and this header measures 135, so
+      // the header is the floor: 167 with the cell's own 32px of padding.
+      weight: 180,
       cell: (server) =>
         chipList({
           items: server.roles,
@@ -128,7 +125,7 @@ export function McpsView({
       header: "RuleSync",
       // Sized against the pill rather than the word: "Canonical" measures
       // 107px with its status dot and padding, against 62px of header text.
-      weight: 165,
+      weight: 135,
       cell: (server) =>
         React.createElement(StatusBadge, {
           status: server.declared ? "configured" : "invalid",
@@ -142,7 +139,9 @@ export function McpsView({
       // as a badge -- status dot, gap and padding -- against 59px of header. A
       // measurement that reads only the badge's label span reports 78px here
       // and calls the column fine while the pill is cut 8px on every row.
-      weight: 190,
+      //
+      // 160 is that badge with the cell's own 32px of padding.
+      weight: 155,
       cell: (server) =>
         React.createElement(StatusBadge, {
           status: server.enabled === null ? NOT_OBSERVED_STATUS : "configured",
@@ -161,7 +160,7 @@ export function McpsView({
       // characters of 12px uppercase with tracking measure 82px, and the cell
       // adds its own 32px of padding, so 114. "STDIO" is only 74. At 95 the
       // header ran into "OVERRIDES" with no gap between the two.
-      weight: 176,
+      weight: 125,
       cell: (server) => server.transport.toUpperCase()
     },
     {
@@ -182,7 +181,7 @@ export function McpsView({
       // The status dot is what makes the column affordable at all. Spelling the
       // state out made the chip 175px wide; the dot form is 133px, and the state
       // is still on the chip's title and on the dot's own accessible label.
-      weight: 166,
+      weight: 125,
       align: "tokens",
       cell: (server) =>
         chipList({
@@ -205,8 +204,10 @@ export function McpsView({
       id: "status",
       header: "Connection",
       // Carries the same "Not observed" badge as Default State, so it needs the
-      // same 128px of badge.
-      weight: 190,
+      // same 128px of badge -- and the observed case is wider than that: the
+      // pill reads "Runtime health: stale", which measures 156px. 193 holds
+      // both with the cell's own 32px of padding.
+      weight: 193,
       // The connection claim is the Runtime's, and it is per server: a server
       // the Runtime has observed reports the health it reported, and a server
       // it has never seen stays "Not observed". The cell carries the flag so

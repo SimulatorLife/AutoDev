@@ -15,7 +15,6 @@ import {
 } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
-import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { SourceValidationIssues } from "../../components/status/SourceValidationIssues.ts";
@@ -311,7 +310,6 @@ export function PromptsView({
     React.createElement(
       "section",
       {
-        className: LIST_PANEL_CLASS,
         "data-section": "prompts-catalog"
       },
       React.createElement(
