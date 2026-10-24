@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import React from "react";
 
+import { readGithubFilters } from "../../src/features/github/github-list-url.ts";
 import { GithubView } from "../../src/features/github/GithubView.ts";
 import {
   controlApiFailureCode,
@@ -19,7 +20,13 @@ export const metadata: Metadata = {
   title: "GitHub"
 };
 
-export default async function GithubPage(): Promise<React.JSX.Element> {
+export default async function GithubPage({
+  searchParams
+}: {
+  readonly searchParams?: Promise<
+    Record<string, string | readonly string[] | undefined>
+  >;
+}): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/github");
   if (!config) {
     return React.createElement(
@@ -28,7 +35,13 @@ export default async function GithubPage(): Promise<React.JSX.Element> {
       controlApiCredentialUnavailable("GitHub workflow definitions")
     );
   }
-  const result = await fetchGithubWorkflows(config);
+  const [result, resolvedSearch] = await Promise.all([
+    fetchGithubWorkflows(config),
+    (searchParams ??
+      Promise.resolve(
+        {} as Record<string, string | readonly string[] | undefined>
+      )) as Promise<Record<string, string | readonly string[] | undefined>>
+  ]);
   if (result.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
@@ -61,6 +74,7 @@ export default async function GithubPage(): Promise<React.JSX.Element> {
     );
   }
   const workflows = result.data.workflows;
+  const listFilters = readGithubFilters(resolvedSearch);
   return React.createElement(
     ConsolePageShell,
     {
@@ -76,7 +90,8 @@ export default async function GithubPage(): Promise<React.JSX.Element> {
       runtimeMessage: result.data.runtimeMessage,
       repository: result.data.repository,
       stats: result.data.stats,
-      recentRuns: result.data.recentRuns
+      recentRuns: result.data.recentRuns,
+      outcome: listFilters.outcome
     })
   );
 }

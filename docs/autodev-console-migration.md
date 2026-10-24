@@ -216,6 +216,32 @@ So the catalogue takes the product's own filter bar, and the narrowing is by **r
 
 `console/tests/skills-filter.test.ts` pins the narrowing, the address, the filter bar's own name and its **absence of a submit button**, the two different empty messages, the narrowing carried on the assignment's action, and the fact that the assignment still posts only the revision and the desired roles.
 
+## The acceptance on `main` was red, and one of the reasons was a stale assertion
+
+The Console's browser acceptance runs in CI on every push to `main` (`.github/workflows/console-acceptance.yml`). It has been **red since 2026-10-22 23:10**, and the failures had been read as the machine's, or as this work's, until the CI's own evidence was read instead of a local rerun.
+
+The run history says when it broke: the commit "Updates across 59 files" (2026-10-23 02:24) landed the hooks acceptance spec and the hooks view's rewrite together, and the acceptance was red from that commit -- four failures, all of them hooks. The responsive-layout failures that the same run reported were fixed later; the hooks ones were not.
+
+**One of them was a stale assertion, and it is now fixed.** "the Hooks list shows the declaration it read" asked the page for the text `PreToolUse`. The product's hook event vocabulary is camelCase -- `preToolUse`, `sessionEnd`, `beforeSubmitPrompt` -- and the page renders the event verbatim in monospace, because it is an identifier. The assertion asked for a spelling the Console has never produced and cannot produce. It also asked for `Matcher:`, `Bash` and `$ echo guarded` as prose, but the hooks view renders an *editor* for each declared action, so the matcher and the command are fields now. The test now reads what an operator reads: the declaration's own panel, its "Matcher" label, and what the matcher and command fields hold. The same failure as a fixture that pins a value nothing writes.
+
+**The other three are a CI-only condition, and their signature is recorded.** In CI the applied projection reads as "The Runtime's applied hook projection could not be read", and the two edit tests find that neither the edited command nor an added action reached the page. All three pass locally, in the same order, against the same build and the same fixture -- so it is not the product, and it is not the order. What is known: the declaration read succeeds while the applied read fails on the same server and the same proxy, and the fixture serves both; the CI's own server log carries no error; and the CI's retained artifact holds the page snapshot that says the projection could not be read. Until that is explained, the hooks acceptance in CI is evidence about the CI's environment rather than about the Console.
+
+## The recent-runs table could not be narrowed either
+
+The GitHub page's run table is the largest list left in the Console: **thirty** observed runs in the live instance, over two and a half screenfuls at 1440x900. And it is a list whose page raises the question it cannot answer -- the success-rate card reads "N succeeded, N failed, N running", so it counts them without showing which, and finding the **twelve failures among the thirteen cancellations** meant reading the status cell of every row.
+
+So the runs are narrowed by outcome, on the vocabulary the page's own statistics already use. The target state names four counters over the sampled runs -- `successfulRuns`, `failedRuns`, `inProgressRuns` and `cancelledRuns` -- and the filter uses the same four, so the count on the card and the rows on the page are the same numbers. The categories are the **same predicates the Status column renders its badge from**, so the filter's "Failed" and the red badge in the row it keeps mean one thing.
+
+A conclusion the page does not count -- a skipped or neutral run -- is in the sample's total and in nobody's counter, exactly as the target state's success-rate denominator models it. Such a run stays visible under "All outcomes" and under no other filter, and the filter does not pretend otherwise.
+
+**The facet is a row of links, not a filter bar.** The GitHub page is a read-only surface and carries no form and no button at all -- a committed contract, and the target state's: dispatch, cancel, rerun and schedule controls are unimplemented, and the Console must not expose them as browser-side affordances. A link narrows without being one, and the tools catalogue already establishes the pattern: a categorical facet is a row of links that navigate to the narrowed address. So the outcome facet is a row of links, each naming its own count, and the page's read-only contract holds unchanged.
+
+**And the count of what is in view says the same thing the filter says.** The success-rate card names the sample's size and then three of its four counters, so its numbers did not add up to the total it named: thirteen of thirty runs were cancelled and nothing on the page said so. The card now names all four counters the target state defines -- successful, failed, in progress and cancelled -- and a run whose conclusion the page does not count is in the sample's total and in nobody's counter, exactly as the target state's success-rate denominator models it.
+
+**The narrowing is applied in the view, not by the page.** The stat cards above the table are about the *sample*, not about the view of it: the success rate and the run counts describe every run the Actions API returned, and they must not shrink because the operator narrowed the table to the failures.
+
+`console/tests/github-filter.test.ts` pins the classification, the four categories, the run the page does not count, the address and its reading, the filter bar's own name and its absence of a submit button, the count of what is in view, and the empty message.
+
 ## How large the Console's lists really are
 
 The rule the target state states -- "every list that holds more than a handful of rows carries the product's own filter bar" -- needs the sizes measured against the live Console rather than against a fixture, because a fixture holds two rows and would have made every list look short enough to leave alone. Measured at 1440x900 on the live Console:
@@ -224,7 +250,7 @@ The rule the target state states -- "every list that holds more than a handful o
 | --- | --- | --- | --- | --- |
 | `/prompts` | 76 | 6883px | 8 | yes |
 | `/tools` | 56 | 3989px | 5 | yes |
-| `/github` | 30 | 2401px | 3 | no |
+| `/github` | 30 | 2353px | 3 | yes (runs, by link) |
 | `/skills` | 16 | 1859px | 3 | yes |
 | `/usage` | 25 | 1660px | 2 | yes |
 | `/agents` | 10 | 1673px | 2 | no |
@@ -235,7 +261,7 @@ The rule the target state states -- "every list that holds more than a handful o
 
 `/providers` is deliberately dense: the target state specifies it as five columns with three controls per role per provider, so its control count is the specified design rather than a defect.
 
-`/github` is the one that is now measurably past the line and still unfiltered -- thirty rows across three screenfuls. It is the next candidate, and it has a different shape from the three catalogues fixed so far: its rows are runs, so a query there would be over a run id and a workflow name rather than over a capability's name and description.
+`/github` held two tables: the workflow definitions (19 rows, 1514px) and the recent runs (30 rows, 2353px). The runs are now narrowed by outcome. The workflow definitions are the smaller list and their own question -- which are scheduled, which are enabled -- is answered by two stat cards above them in the same way the run counts were, so a narrowing there is the next candidate.
 
 
 

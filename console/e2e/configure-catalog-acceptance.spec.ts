@@ -218,10 +218,31 @@ test("the Hooks list shows the declaration it read", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Configured Lifecycle Hooks" })
   ).toBeVisible();
-  await expect(page.getByText("PreToolUse", { exact: true })).toBeVisible();
-  await expect(page.getByText("Matcher:")).toBeVisible();
-  await expect(page.getByText("Bash", { exact: true })).toBeVisible();
-  await expect(page.getByText("$ echo guarded")).toBeVisible();
+  // The event's name is the product's own vocabulary -- `preToolUse`, the way
+  // the execution contract spells it -- and the assertion used to ask for
+  // "PreToolUse", a spelling the Console has never produced and cannot
+  // produce. The name also appears twice on the page, once in the declaration
+  // and once in the projection the Runtime published, so the assertion names
+  // the declaration's own row rather than the text.
+  await expect(
+    page.locator('[data-hook-event="preToolUse"]')
+  ).toBeVisible();
+  // The declaration is edited, so its matcher and its command are the editor's
+  // fields rather than prose. The assertion reads them the way an operator
+  // reads them: by what the field holds. Every event carries its own action,
+  // so the fields are read inside the event's own panel.
+  const declared = page.locator('[data-hook-event="preToolUse"]');
+  await expect(
+    declared.locator('[data-hook-action="0"]').getByText("Matcher", {
+      exact: true
+    })
+  ).toBeVisible();
+  await expect(
+    declared.locator('[data-hook-action-matcher="0"]')
+  ).toHaveValue("Bash");
+  await expect(
+    declared.locator('[data-hook-action-command="0"]')
+  ).toHaveValue("echo guarded");
   expect(await documentFitsViewport(page)).toBe(true);
 });
 

@@ -626,7 +626,12 @@ export function ToolsView({
                 requestedSource === src || (src === "all" && !requestedSource)
                   ? "bg-surface-raised text-accent"
                   : `${MUTED_TEXT_CLASS} hover:text-fg`
-              }`
+              }`,
+              // The selected chip is otherwise distinguishable only by its
+              // background, which is no way to read a selection aloud.
+              ...(requestedSource === src || (src === "all" && !requestedSource)
+                ? { "aria-current": "true" }
+                : {})
             },
             src
           )
@@ -653,7 +658,10 @@ export function ToolsView({
                   requestedRole
                     ? `${MUTED_TEXT_CLASS} hover:text-fg`
                     : "bg-surface-raised text-accent"
-                }`
+                }`,
+                // The selected chip is otherwise distinguishable only by its
+                // background, which is no way to read a selection aloud.
+                ...(requestedRole ? {} : { "aria-current": "true" })
               },
               "All"
             ),
@@ -668,7 +676,10 @@ export function ToolsView({
                     requestedRole === role
                       ? "bg-surface-raised text-accent"
                       : `${MUTED_TEXT_CLASS} hover:text-fg`
-                  }`
+                  }`,
+                  // The selected chip is otherwise distinguishable only by its
+                  // background, which is no way to read a selection aloud.
+                  ...(requestedRole === role ? { "aria-current": "true" } : {})
                 },
                 role
               )

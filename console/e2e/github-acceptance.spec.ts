@@ -162,6 +162,36 @@ test("the observed Actions state is kept apart from the definitions", async ({
   await expect(runs.getByText("in_progress", { exact: true })).toBeVisible();
 });
 
+test("the recent runs can be narrowed by outcome", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/github");
+  await expect(githubBody(page)).toBeVisible();
+
+  // The facet is a row of links, because the page is read-only and carries no
+  // form and no button of its own: a link narrows without being one. The
+  // shell around it has its own controls, so the assertion is about the
+  // resource's own region.
+  await expect(githubBody(page).locator("form")).toHaveCount(0);
+  await expect(githubBody(page).locator("button")).toHaveCount(0);
+  await expect(page.locator('[data-run-outcome="failed"]')).toBeVisible();
+
+  await page.locator('[data-run-outcome="failed"]').click();
+  await expect(page).toHaveURL(/outcome=failed/u);
+  // One of the four runs failed, and it is the one the page keeps.
+  const failed = tableUnder(page, RECENT_RUNS);
+  await expect(failed.locator("tbody tr")).toHaveCount(1);
+  await expect(
+    failed.getByText("#9003 CI", { exact: true })
+  ).toBeVisible();
+  // And the count of what is in view says so.
+  await expect(page.getByText("Showing 1 of 4 runs", { exact: true })).toBeVisible();
+  // The chosen facet says so too, and not only by its colour.
+  await expect(page.locator('[data-run-outcome="failed"]')).toHaveAttribute(
+    "aria-current",
+    "true"
+  );
+});
+
 test("the page offers no GitHub mutation control", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/github");

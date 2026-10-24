@@ -7,9 +7,11 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { FILTER_SUMMARY_CLASS } from "../../components/filters/FilterBar.ts";
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
+import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -32,6 +34,14 @@ import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
+import {
+  filterRuns,
+  type GithubListFilters,
+  githubListHref,
+  RUN_OUTCOME_FILTERS,
+  RUN_OUTCOME_LABELS,
+  type RunOutcomeFilter
+} from "./github-list-url.ts";
 
 /**
  * GitHub resource view.
@@ -59,6 +69,13 @@ export interface GithubViewProps {
   readonly repository?: string | null;
   readonly stats?: GithubActionsRunStats | null;
   readonly recentRuns?: readonly GithubWorkflowRun[];
+  /**
+   * The outcome the runs are narrowed to.
+   *
+   * Optional, because a caller that does not narrow says so by leaving it out
+   * rather than by passing "all".
+   */
+  readonly outcome?: RunOutcomeFilter | undefined;
 }
 
 export function GithubView({
@@ -67,6 +84,7 @@ export function GithubView({
   runtimeStatus,
   runtimeMessage,
   repository,
+  outcome = "all",
   stats,
   recentRuns = []
 }: GithubViewProps): React.JSX.Element {
@@ -77,6 +95,21 @@ export function GithubView({
   for (const workflow of workflows) {
     for (const event of workflow.events) uniqueEvents.add(event);
   }
+
+  // The runs are narrowed here rather than by the page, because the stat
+  // cards above are about the *sample* and not about the view of it: the
+  // success rate and the run counts describe every run the Actions API
+  // returned, and they must not shrink because the operator narrowed the
+  // table to the failures.
+  const listFilters: GithubListFilters = { outcome };
+  const narrowedRuns = filterRuns(recentRuns, listFilters);
+  const isNarrowed = listFilters.outcome !== "all";
+  // A run the page does not count -- a skipped or neutral conclusion -- is in
+  // the sample's total and in nobody's counter, so it is named here rather
+  // than being quietly dropped by a filter that says "Failed".
+  const runEmptyMessage = isNarrowed
+    ? `No ${RUN_OUTCOME_LABELS[listFilters.outcome].toLowerCase()} runs were observed in this sample.`
+    : "No recent workflow runs observed.";
 
   const columns: ColumnDef<GithubWorkflowDefinition>[] = [
     {
@@ -413,7 +446,10 @@ export function GithubView({
               stats.successRate === null
                 ? NOT_OBSERVED_LABEL
                 : `${Math.round(stats.successRate * 100)}%`,
-            subtitle: `From the same ${statsSampleDescription}: ${stats.successfulRuns} succeeded, ${stats.failedRuns} failed, ${stats.inProgressRuns} running`
+            subtitle:
+              `From the same ${statsSampleDescription}: ${stats.successfulRuns} succeeded, ` +
+              `${stats.failedRuns} failed, ${stats.inProgressRuns} running, ` +
+              `${stats.cancelledRuns} cancelled`
           }),
           React.createElement(StatCard, {
             title: "Active Workflows",
@@ -501,11 +537,65 @@ export function GithubView({
             },
             "Recent Workflow Runs"
           ),
+          React.createElement(
+            "div",
+            { className: "flex flex-wrap items-center gap-3" },
+            // The facet is a row of links rather than the shared filter bar.
+            // The GitHub page is read-only and carries no form and no button
+            // at all -- a committed contract, and the target state's: dispatch,
+            // cancel, rerun and schedule controls are unimplemented and the
+            // Console must not expose them as browser-side affordances. A link
+            // narrows without being one, and a link that navigates to the
+            // narrowed address is the same narrowing a form would have done.
+            React.createElement(
+              "div",
+              {
+                className:
+                  "flex items-center gap-1.5 bg-surface border border-border p-1 rounded-lg"
+              },
+              React.createElement(
+                "span",
+                { className: `px-2 ${MUTED_META_CLASS}` },
+                "Outcome:"
+              ),
+              RUN_OUTCOME_FILTERS.map((value) =>
+                React.createElement(
+                  NavigationLink,
+                  {
+                    key: value,
+                    href: githubListHref({ outcome: value }),
+                    dataAttributes: { "data-run-outcome": value },
+                    className: `px-3 py-1 rounded text-xs font-medium transition-colors ${
+                      value === listFilters.outcome
+                        ? "bg-surface-raised text-accent"
+                        : `${MUTED_TEXT_CLASS} hover:text-fg`
+                    }`,
+                    // The selected chip is otherwise distinguishable only by
+                    // its colour, which is no way to read a selection aloud.
+                    ...(value === listFilters.outcome
+                      ? { "aria-current": "true" }
+                      : {})
+                  },
+                  RUN_OUTCOME_LABELS[value]
+                )
+              )
+            ),
+            // The count of what is in view, in the same words the other
+            // filtered lists use. It is a plain span rather than a filter
+            // bar's summary because this page has no filter bar.
+            isNarrowed
+              ? React.createElement(
+                  "span",
+                  { className: FILTER_SUMMARY_CLASS },
+                  `Showing ${narrowedRuns.length} of ${recentRuns.length} runs`
+                )
+              : null
+          ),
           React.createElement<DataTableProps<GithubWorkflowRun>>(DataTable, {
-            data: recentRuns,
+            data: narrowedRuns,
             columns: runColumns,
             keyExtractor: (run: GithubWorkflowRun) => String(run.id),
-            emptyMessage: "No recent workflow runs observed."
+            emptyMessage: runEmptyMessage
           })
         )
       : null
