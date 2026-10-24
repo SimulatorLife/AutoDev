@@ -6,6 +6,10 @@ import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
 import {
+  FilterBar,
+  FilterSearchField
+} from "../../components/filters/FilterBar.ts";
+import {
   CALLOUT_ERROR_CLASS,
   CALLOUT_WARNING_CLASS
 } from "../../components/layout/Callout.ts";
@@ -30,9 +34,21 @@ import {
   ENTITY_LINK_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
+import { PROMPTS_LIST_PATH } from "./prompts-list-url.ts";
 
 export interface PromptsViewProps {
+  /** The commands in the list, already narrowed by the query. */
   readonly commands: readonly PromptAsset[];
+  /**
+   * How many commands the source holds, before the query narrowed them.
+   *
+   * The filter bar says "N of M", and the difference between the two is what
+   * the query removed. Without the total, a narrowed list reads as the whole
+   * catalog. Optional, and the list's own size when it is not given.
+   */
+  readonly totalCommands?: number | undefined;
+  /** The query the list is narrowed by, if any. */
+  readonly query?: string | undefined;
   readonly commandSourceValidity: boolean | null;
   /**
    * Why the catalog is invalid.
@@ -44,11 +60,39 @@ export interface PromptsViewProps {
   readonly validationIssues: readonly RuleSyncValidationIssue[];
 }
 
+/**
+ * What the empty list says.
+ *
+ * Four different facts end with an empty table: the source is invalid, the
+ * source was not observed, the query excluded everything, and the catalog is
+ * genuinely empty. Only the caller knows which one it is rendering, and the
+ * operator needs to know too -- "no commands are configured" when the query
+ * was "review" says the catalog is empty, and it is not.
+ */
+function promptEmptyMessage(
+  commandSourceValidity: boolean | null,
+  query: string
+): string {
+  if (commandSourceValidity === false) {
+    return "No prompt entries are available while the canonical command source is invalid.";
+  }
+  if (commandSourceValidity === null) {
+    return "The canonical command source has not been observed.";
+  }
+  if (query.length > 0) {
+    return "No canonical prompts or commands found matching the current criteria.";
+  }
+  return "No canonical prompts or commands are configured.";
+}
+
 export function PromptsView({
   commands,
+  totalCommands,
+  query = "",
   validationIssues,
   commandSourceValidity
 }: PromptsViewProps): React.JSX.Element {
+  const total = totalCommands ?? commands.length;
   const sourceIssues = React.createElement(SourceValidationIssues, {
     issues: validationIssues,
     testId: "command-validation-issues",
@@ -212,6 +256,32 @@ export function PromptsView({
       }
     },
     sourceIssues,
+    // The list is the whole RuleSync catalog, so it is the one list in the
+    // Console with no way to narrow it. It now takes the product's own filter
+    // bar: a normal GET navigation, so the narrowed list is addressable and
+    // shareable like every other filtered view.
+    React.createElement(
+      FilterBar,
+      {
+        label: "Prompt filters",
+        action: PROMPTS_LIST_PATH,
+        submitTestId: "prompts-filter",
+        // Only a narrowed list has two numbers to report. An unfiltered list
+        // saying "76 of 76 prompts and commands" is noise.
+        summary:
+          query.length > 0
+            ? `${commands.length} of ${total} prompts and commands`
+            : undefined,
+        dataAttributes: { "data-feature-filter": "prompts" }
+      },
+      React.createElement(FilterSearchField, {
+        name: "q",
+        defaultValue: query,
+        label: "Search prompts and commands",
+        placeholder: "Search prompts and commands…",
+        testId: "prompts-search"
+      })
+    ),
     React.createElement(
       StatGrid,
       { columns: 4 },
@@ -276,12 +346,7 @@ export function PromptsView({
         data: commands,
         columns,
         keyExtractor: (prompt: PromptAsset) => prompt.path,
-        emptyMessage:
-          commandSourceValidity === false
-            ? "No prompt entries are available while the canonical command source is invalid."
-            : commandSourceValidity === null
-              ? "The canonical command source has not been observed."
-              : "No canonical prompts or commands are configured."
+        emptyMessage: promptEmptyMessage(commandSourceValidity, query)
       })
     )
   );

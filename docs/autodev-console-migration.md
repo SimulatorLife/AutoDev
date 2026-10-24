@@ -166,6 +166,18 @@ The Console's drawer is a disclosure and not a modal, so there is no focus trap 
 
 `console/e2e/navigation-acceptance.spec.ts` drives it in a browser -- the heading is focused after an in-place navigation, the next Tab lands inside the page's content rather than at the top of the document, and a navigation that names a fragment lands on that fragment.
 
+## The prompts list could not be narrowed
+
+The RuleSync prompt catalogue is every canonical command and role prompt in the repository. Measured against the live Console that is **76 rows**, and it was the only large list in the product with no way to narrow it: the Tools list beside it filters by source and role, the Evaluations list filters and paginates, the Memory list filters, searches and paginates -- and the prompt catalogue rendered all 76 rows in one flat table, so the operator scrolled to reach the command they meant.
+
+It now takes the product's own treatment: a `FilterBar` with a `FilterSearchField`, submitted as a normal GET navigation, so the narrowed list is addressable, bookmarkable and shareable like every other filtered view. The query matches the name, the description and the path, because an operator looking for a command knows it by any of the three, and it ignores case because a command name is typed in lower case and a path is not.
+
+Two details the change had to get right. The list says "**N of 76** prompts and commands" when it is narrowed and says nothing when it is not, because an unfiltered list reporting "76 of 76" is noise. And an empty narrowed list says "No canonical prompts or commands **found matching the current criteria**" rather than "are configured" -- the catalogue holds 76 of them, and the query is what removed them. The navigation badge still counts the resource and not the query, the same rule the sidebar follows everywhere else.
+
+`console/tests/prompts-filter.test.ts` pins the narrowing, the address, the filter bar's own name and the two different empty messages.
+
+**A note for anyone running the Console locally.** `console/.env.local` sets `AUTODEV_CONTROL_API_BASE_URL` and `AUTODEV_CONTROL_API_TOKEN`, and Next.js's env loading overwrites the process environment with them. A dev server started with its own `AUTODEV_CONTROL_API_BASE_URL` therefore still talks to the address in that file -- the installed Runtime on `http://127.0.0.1:4101` -- and not to the synthetic fixture the variables name. That is why a dev server reading the fixture can answer the live data and not the fixture's, and why the prompt catalogue answered "could not be loaded" when the Runtime's token did not match.
+
 ## The phone-width sweep
 
 All fourteen canonical routes were measured at 390x844 in Chromium against the synthetic Control API fixture. The structural result was clean: **zero document horizontal overflow and zero elements painted wider than the viewport** on every route, and the tables scroll inside their own regions as the contract intends. The one target that failed the 24px floor was the shared state-coloured button -- the pill that enables and disables an agent role -- which measured **22px**: `text-xs` on a 16px line, plus `py-0.5` and the border. It is the smallest target on the Agents page and it is the control an operator reaches for.
