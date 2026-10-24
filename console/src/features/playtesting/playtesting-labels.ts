@@ -136,6 +136,8 @@ const RUNTIME_FAILURE_CAUSES = {
   "response-too-large": "The decision backend's answer was too large to read.",
   "response-invalid":
     "The decision backend's answer could not be read as a decision, so no action was taken.",
+  "response-truncated":
+    "The decision backend's answer was cut off at the Runtime's output bound before it answered, so no action was taken.",
   "response-usage-unavailable":
     "The decision backend's answer did not report token usage, so the approved budget could not be enforced.",
   "response-usage-exceeds-budget":

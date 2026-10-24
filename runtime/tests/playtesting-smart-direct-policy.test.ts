@@ -400,7 +400,11 @@ test("Smart-direct stop returns a bounded self-report in the existing request an
       const visibleState = JSON.parse(
         String(body.input[0]?.content[0]?.text)
       ) as { readonly currentStep: number };
-      assert.equal(body.max_output_tokens, 2048);
+      // The cap has to hold the reasoning a real decision costs, and the
+      // approved per-episode budget is the real ceiling. This fixture
+      // approves 4,000 tokens, which is below the Runtime's own 4,096 cap, so
+      // the budget is what the request asks for.
+      assert.equal(body.max_output_tokens, 4000);
       assert.equal(visibleState.currentStep, 0);
       assert.match(
         body.instructions,
@@ -859,4 +863,91 @@ test("Smart-direct reports the decision contract: its backend, no fallback, no c
   assert.equal(usage.tokensUsed, 340);
   assert.equal(usage.tokenUsageComplete, true);
   assert.equal(usage.groundingRejections, 0);
+});
+
+test("Smart-direct reports a turn cut off at the output bound as truncated, not as an undecidable answer", async () => {
+  // A provider that runs out of output room says so in the response it
+  // returns: the turn is incomplete and the reason names the bound. That is a
+  // different fact from a provider that answered with something that is not a
+  // decision, and an operator has to be able to tell them apart.
+  const policy = createPolicy({
+    fetchImpl: async () =>
+      Response.json({
+        model: "fixture-smart-model",
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+        output: [
+          {
+            id: "reasoning-only",
+            type: "reasoning",
+            status: "completed",
+            summary: [],
+            content: [
+              {
+                type: "reasoning_text",
+                text: "The screen shows a race, and the model is still thinking about it."
+              }
+            ]
+          }
+        ],
+        usage: { input_tokens: 300, output_tokens: 2048, total_tokens: 2348 }
+      })
+  });
+
+  await assert.rejects(
+    policy.decide({
+      target: target(),
+      observation: observation(),
+      frameBytes: FRAME_BYTES,
+      areasOfFocus: null,
+      history: [],
+      candidates: [],
+      deadlineMonotonicMs: performance.now() + 5000,
+      progress: progressReading()
+    }),
+    (error: unknown) =>
+      error instanceof SmartDirectPolicyError &&
+      error.code === "response-truncated"
+  );
+  // The provider's tokens are still counted: the turn was paid for.
+  assert.equal(policy.usage().tokensUsed, 2348);
+  assert.equal(policy.usage().decisionsReturned, 0);
+});
+
+test("Smart-direct asks for enough output room that a measured decision can finish", async () => {
+  const requested: Record<string, unknown>[] = [];
+  const policy = createPolicy({
+    // An approval large enough that the Runtime's own cap is what binds.
+    limits: { smartTokensPerEpisode: 100_000 },
+    fetchImpl: async (_input: unknown, init?: RequestInit) => {
+      requested.push(
+        JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
+      );
+      return response(actDecision());
+    }
+  });
+
+  await policy.decide({
+    target: target({
+      limits: { ...target().limits, smartTokensPerEpisode: 100_000 }
+    }),
+    observation: observation(),
+    frameBytes: FRAME_BYTES,
+    areasOfFocus: null,
+    history: [],
+    candidates: [],
+    deadlineMonotonicMs: performance.now() + 5000,
+    progress: progressReading()
+  });
+
+  // A completed decision on the RacingGame screen spent 2,105 output tokens,
+  // of which 1,987 were reasoning; a turn at the previous 2,048 cap arrived
+  // with no answer at all. The cap has to be above the measured need, and the
+  // approved per-episode budget stays the real ceiling.
+  const cap = requested[0]?.max_output_tokens;
+  assert.equal(typeof cap, "number");
+  assert.ok(
+    (cap as number) >= 4096,
+    `the decision's output cap must hold the measured 2,105-token decision, got ${String(cap)}`
+  );
 });

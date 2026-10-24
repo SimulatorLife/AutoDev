@@ -20,7 +20,8 @@ import {
   missingReasonLabel,
   playtestingSessionFailureHint,
   playtestingSessionFailureTitle,
-  policyLabel
+  policyLabel,
+  runtimeFailureExplanation
 } from "../src/features/playtesting/playtesting-labels.ts";
 import { reviewRecordedDay } from "../src/features/playtesting/playtesting-review-presentation.ts";
 import { parsePlaytestingScope } from "../src/features/playtesting/playtesting-url.ts";
@@ -158,6 +159,31 @@ test("an episode the runtime ended because the game did not advance says so", ()
     executionStateExplanation("budget-truncated", "no-progress"),
     "The game showed the player nothing new for as long as the approved no-progress limit allowed, and the episode ended there. No terminal game outcome was observed; no win or loss is inferred."
   );
+});
+
+test("a run the runtime ended says which failure it recorded", () => {
+  // The episode's own state says only that the run failed. The cause the
+  // Runtime recorded against the failing step says what failed, and the two
+  // are different facts with different consequences.
+  assert.equal(
+    runtimeFailureExplanation("smart-direct:response-invalid"),
+    "The decision backend's answer could not be read as a decision, so no action was taken. No terminal game outcome was observed; no win or loss is inferred."
+  );
+  // A turn cut off at the Runtime's own output bound is not a turn that
+  // failed to decide: the provider answered and ran out of room.
+  assert.equal(
+    runtimeFailureExplanation("smart-direct:response-truncated"),
+    "The decision backend's answer was cut off at the Runtime's output bound before it answered, so no action was taken. No terminal game outcome was observed; no win or loss is inferred."
+  );
+  // A cause the Console does not recognise is shown as it was recorded rather
+  // than described in a guess.
+  assert.equal(
+    runtimeFailureExplanation("smart-direct:a-failure-nobody-has-named"),
+    'The runtime ended the run with the recorded cause "smart-direct:a-failure-nobody-has-named". No terminal game outcome was observed; no win or loss is inferred.'
+  );
+  // No recorded cause means no cause is claimed.
+  assert.equal(runtimeFailureExplanation(null), null);
+  assert.equal(runtimeFailureExplanation(undefined), null);
 });
 
 test("a game outcome reads as a word, not a token", () => {

@@ -38,14 +38,24 @@ const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 /**
  * The decision's answer plus the reasoning the provider spends reaching it.
  *
- * A smaller cap lets a reasoning model spend the whole budget thinking and
- * never emit the decision at all: the response then arrives truncated at the
- * cap, and the episode fails on a provider that answered perfectly well. A
- * measured decision spends ~370 tokens of reasoning and ~140 of answer, so
- * the cap leaves several times the observed reasoning in hand. The approved
- * per-episode token budget stays the real ceiling.
+ * The cap has to hold the reasoning a real decision costs, because a turn
+ * cut off mid-reasoning arrives with no answer at all and the episode ends
+ * on a provider that answered perfectly well.
+ *
+ * Measured on the RacingGame screen -- a betting screen whose visible names
+ * are whole sentences -- a completed decision spent 2,105 output tokens, of
+ * which 1,987 were reasoning, and a turn at the previous 2,048 cap was cut
+ * off with `incomplete_details.reason = "max_output_tokens"` and no answer
+ * at all. The cap below is twice that measured need, so a decision that can
+ * finish can finish, and the approved per-episode token budget stays the
+ * real ceiling: the request asks for the smaller of this cap and the tokens
+ * the episode has left.
+ *
+ * The bound does not save a turn that reasons without end: one measured turn
+ * spent 8,192 tokens and 177 seconds without answering, which the episode's
+ * own wall-time budget ends before the cap does.
  */
-const MAX_OUTPUT_TOKENS = 2048;
+const MAX_OUTPUT_TOKENS = 4096;
 const MAX_HISTORY_ITEMS = 8;
 const MAX_TEXT_LENGTH = 512;
 const MAX_FOCUS_LENGTH = 2000;
@@ -90,6 +100,7 @@ export type SmartDirectPolicyErrorCode =
   | "router-rejected-request"
   | "response-too-large"
   | "response-invalid"
+  | "response-truncated"
   | "response-usage-unavailable"
   | "response-usage-exceeds-budget"
   | "workspace-unavailable"
@@ -694,6 +705,22 @@ function responseText(value: unknown): string | null {
   return texts.length > 0 ? texts.join("\n") : null;
 }
 
+/**
+ * Whether the provider's answer was cut off at the Runtime's output bound.
+ *
+ * A provider that runs out of output room says so in the response it
+ * returns: the turn is incomplete and the reason names the bound. That is a
+ * different fact from a provider that answered with something that is not a
+ * decision, and the two are reported under two different codes so an
+ * operator can tell them apart.
+ */
+function isOutputTruncated(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.status !== "incomplete") return false;
+  if (!isRecord(value.incomplete_details)) return false;
+  return value.incomplete_details.reason === "max_output_tokens";
+}
+
 function tokenUsage(value: unknown): {
   readonly inputTokens: number;
   readonly outputTokens: number;
@@ -1142,6 +1169,16 @@ export class SmartDirectVisualPolicy implements PlaytestVisualPolicy {
       }
       const text = responseText(responseBody);
       if (text === null || text.length > 4096) {
+        // A turn the provider cut off at the Runtime's own output bound is not
+        // a turn that failed to decide. The provider answered and ran out of
+        // room, and saying so is what lets the operator tell a bound that was
+        // too small from a model that would not decide.
+        if (isOutputTruncated(responseBody)) {
+          throw new SmartDirectPolicyError(
+            "response-truncated",
+            "The Smart-direct response was cut off at the Runtime's output bound before it answered."
+          );
+        }
         throw new SmartDirectPolicyError(
           RESPONSE_INVALID_CODE,
           "Smart-direct returned no bounded decision text."
