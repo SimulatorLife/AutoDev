@@ -136,6 +136,20 @@ The acceptance's own clipped-content check found one real thing before it ran ou
 
 Two things followed. The field now carries its value in a `title`, which is how a truncated value stays reachable in this Console. And the acceptance's clipped-content check was reporting a form control's own value as clipped layout content: an `<input>` reports its value's width as its scroll width, so any filled field narrower than its value read as a clip -- even though the value is the operator's own editable text, and focusing the field brings all of it into view and takes all of it when selected. A `<select>` and a `<textarea>` scroll already and never reached the check at all.
 
+## What the audit covered, and what it found sound
+
+The sweeps above are a record of what was *changed*. This is the other half: the surfaces that were measured and needed nothing, so that a later pass does not repeat them.
+
+**Empty states** are one vocabulary, not several. The table delegates an empty list to the shared `EmptyState` primitive rather than writing its own line, and the primitive only ever renders a caller-supplied message -- because "no rows" and "source not wired" are different facts and only the caller knows which one it is rendering. Every list's message names its own resource ("No providers are configured.", "No memory records found matching the current criteria.", "No evaluation targets were observed in this view, so there is nothing to compare by <label>.") rather than inheriting a sentence that names nothing.
+
+**Every control has an accessible name.** Measured across all fourteen routes: no anchor, button, select, input or textarea lacks a name, a `title`, or a `labelledby`.
+
+**The landmark structure holds.** One `h1` and one `main` per page, the navigation is a named `nav` landmark, every scroll region that is a landmark carries a name, and no `aria-labelledby`, `aria-describedby` or `aria-controls` points at an id that is not on the page.
+
+**The nav counts are one number, not two.** The sidebar's count comes from the owner's result and is never recomputed, so it cannot disagree with the page it counts.
+
+One thing the raw HTML shows and the DOM does not: every id appears twice in the server's response, because the shell is streamed once and then replaced by the resolved page. The acceptance measures the DOM for exactly this reason -- a duplicate-id count taken from the response body would be a false finding on every page.
+
 ## The focus after a navigation
 
 Every navigation in the Console is an in-place one, and the focus the operator had on the link they activated was dropped to the document body when the page changed. Measured in Chromium: after activating a navigation link, `document.activeElement` was `BODY`, and the next Tab landed on "Skip to content" -- so the operator walked the whole fourteen-item navigation again before reaching the page they asked for. Nothing announced the change either: the only live region in the product is the form-feedback toast, and it was empty.
