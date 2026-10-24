@@ -1026,9 +1026,10 @@ function liveRunStatusLabel(activeCount: number, totalCount: number): string {
   if (activeCount > 0) {
     return `${String(activeCount)} active ${activeCount === 1 ? "run" : "runs"} · view live status`;
   }
-  // A workspace with no runs has no status to show, and saying so is more
-  // useful than promising a status that is not there.
-  return totalCount > 0 ? "Most recent run status" : "No runs yet";
+  // The disclosure is about the runs in flight, not about the runs the
+  // workspace has recorded: "No runs yet" would be false in a workspace with
+  // a long history and no run in flight right now.
+  return totalCount > 0 ? "Most recent run status" : "No live runs";
 }
 
 /** The tab's own styling: the selected tab is the accent one. */
