@@ -403,7 +403,7 @@ export async function ensureBackends(
     throw new Error(
       detail
         ? `OpenLIT startup failed: ${detail}`
-        : `OpenLIT startup failed with exit status ${String(started.status)}.`
+        : `OpenLIT startup failed with exit status ${String(started.status)}. The runner reported the cause above — an unresponsive Docker Engine and a stack that never became ready are different failures with different fixes.`
     );
   }
 

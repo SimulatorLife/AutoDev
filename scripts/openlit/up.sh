@@ -122,38 +122,158 @@ set -a
 source "$SECRET_FILE"
 set +a
 export OPENLIT_IMAGE="$IMAGE_TAG"
-echo "==> Starting the patched OpenLIT stack with authenticated OTLP"
-"${DOCKER_COMPOSE[@]}" \
-	--env-file "$ENV_FILE" \
-	-f "$COMPOSE_FILE" \
-	up -d
 
+# ---- Bringing the stack up -------------------------------------------
+#
+# Docker Desktop's API proxy aborts any Docker Engine call that misses its
+# fixed 10-second deadline and reports the failure as `500 Internal Server
+# Error`. Compose turns that into "dependency clickhouse failed to start: ...
+# check if the server supports the requested API version", which reads like a
+# version mismatch and is not one: the API version in the message is the one
+# Compose asked with, and the Engine serves it. The Engine simply did not
+# answer in time.
+#
+# The cause is a Docker Engine that is momentarily too slow to answer, which
+# happens whenever the host is loaded enough to starve the Docker VM. It is
+# transient, and the same `compose up` converges once the Engine answers
+# again. The runner therefore retries those failures instead of failing the
+# whole startup, and it decides success on the stack's readiness rather than
+# on Compose's exit code.
+TRANSIENT_ENGINE_FAILURE_PATTERN='request returned 5[0-9][0-9] Internal Server Error|Cannot connect to the Docker daemon|context deadline exceeded|i/o timeout|connection reset by peer|unexpected EOF'
+
+# How many times Compose may be asked to start the stack before the runner
+# gives up on an unresponsive Engine.
+COMPOSE_ATTEMPTS="${AUTODEV_OPENLIT_COMPOSE_ATTEMPTS:-3}"
+# How long to wait for the Engine to answer again between those attempts.
+ENGINE_TIMEOUT_SECONDS="${AUTODEV_OPENLIT_ENGINE_TIMEOUT_SECONDS:-60}"
+# How long the stack may take to serve once Compose has started it.
+CLICKHOUSE_TIMEOUT_SECONDS="${AUTODEV_OPENLIT_CLICKHOUSE_TIMEOUT_SECONDS:-120}"
+OPENLIT_TIMEOUT_SECONDS="${AUTODEV_OPENLIT_HTTP_TIMEOUT_SECONDS:-120}"
+CLICKHOUSE_HTTP_PORT="${AUTODEV_OPENLIT_CLICKHOUSE_HTTP_PORT:-8123}"
+
+COMPOSE_LOG="$WORK_DIR/compose-up.log"
+
+# Start the stack.
+#
+# Returns 0 when Compose brought it up, 1 when the Docker Engine failed
+# transiently, and 2 for a Compose failure that will not fix itself (a bad
+# compose file, a missing image, an unset variable, a taken port).
+compose_up() {
+	local status=0
+	"${DOCKER_COMPOSE[@]}" \
+		--env-file "$ENV_FILE" \
+		-f "$COMPOSE_FILE" \
+		up -d 2>&1 | tee "$COMPOSE_LOG" || status=$?
+	if [[ "$status" -eq 0 ]]; then
+		return 0
+	fi
+	if grep -Eq "$TRANSIENT_ENGINE_FAILURE_PATTERN" "$COMPOSE_LOG"; then
+		return 1
+	fi
+	return 2
+}
+
+# Wait for the Docker Engine to answer again.
+#
+# A Compose attempt that failed because the Engine was too slow fails the
+# same way until the Engine recovers, so the runner waits for the Engine
+# instead of retrying into the same stall.
+wait_for_engine() {
+	local deadline=$((SECONDS + ENGINE_TIMEOUT_SECONDS))
+	while (( SECONDS < deadline )); do
+		if docker info >/dev/null 2>&1; then
+			return 0
+		fi
+		sleep 2
+	done
+	return 1
+}
+
+# Does ClickHouse accept an authenticated query?
+#
+# The probe goes straight to the published port instead of through
+# `compose exec`: a Docker API call is exactly what fails when the Engine is
+# slow, and the published port is what the producers and the Console use. It
+# authenticates the same way the Data client does, with the same credentials.
+clickhouse_accepts_query() {
+	curl --fail --silent --show-error --max-time 10 \
+		--user "${OPENLIT_DB_USER:-default}:${OPENLIT_DB_PASSWORD}" \
+		--data-urlencode "query=SELECT 1" \
+		"http://127.0.0.1:${CLICKHOUSE_HTTP_PORT}/" >/dev/null 2>&1
+}
+
+# Does OpenLIT answer HTTP?
+openlit_http_ready() {
+	curl --fail --silent --show-error --location --max-time 10 \
+		"http://127.0.0.1:${PORT:-3000}/" >/dev/null 2>&1
+}
+
+# Print the last Compose output so a failure names its cause instead of
+# pointing at the runner.
+report_compose_output() {
+	if [[ -s "$COMPOSE_LOG" ]]; then
+		echo "up.sh: last docker compose output:" >&2
+		tail -n 20 "$COMPOSE_LOG" >&2
+	fi
+}
+
+echo "==> Starting the patched OpenLIT stack with authenticated OTLP"
+compose_attempt=1
+compose_status=0
+compose_up || compose_status=$?
+while [[ "$compose_status" -eq 1 ]]; do
+	if [[ "$compose_attempt" -ge "$COMPOSE_ATTEMPTS" ]]; then
+		echo "up.sh: the Docker Engine did not answer docker compose after ${compose_attempt} attempts; the stack was not started." >&2
+		report_compose_output
+		compose_status=3
+		break
+	fi
+	compose_attempt=$((compose_attempt + 1))
+	echo "up.sh: the Docker Engine did not answer docker compose in time; waiting for it to recover and retrying (attempt ${compose_attempt}/${COMPOSE_ATTEMPTS})" >&2
+	wait_for_engine || true
+	compose_status=0
+	compose_up || compose_status=$?
+done
+if [[ "$compose_status" -eq 2 ]]; then
+	echo "up.sh: docker compose could not start the OpenLIT stack:" >&2
+	report_compose_output
+	exit 6
+fi
+
+# Readiness, not Compose's exit code, decides whether the stack is up. A
+# Compose attempt can fail while the stack it started is in fact serving —
+# that is what an Engine that timed out mid health-gate looks like — and the
+# runner's promise is that a successful exit means ClickHouse accepts a
+# query and OpenLIT answers HTTP.
 echo "==> Waiting for ClickHouse to accept connections"
 CLICKHOUSE_READY=0
-for _ in {1..120}; do
-	if "${DOCKER_COMPOSE[@]}" -f "$COMPOSE_FILE" exec -T clickhouse clickhouse-client --user="${OPENLIT_DB_USER:-default}" --password="$OPENLIT_DB_PASSWORD" --query="SELECT 1" >/dev/null 2>&1; then
+CLICKHOUSE_DEADLINE=$((SECONDS + CLICKHOUSE_TIMEOUT_SECONDS))
+while (( SECONDS < CLICKHOUSE_DEADLINE )); do
+	if clickhouse_accepts_query; then
 		CLICKHOUSE_READY=1
 		break
 	fi
-	sleep 1
+	sleep 2
 done
 if [[ "$CLICKHOUSE_READY" -ne 1 ]]; then
-	echo "up.sh: ClickHouse did not become healthy within 120 seconds; inspect the openlit-clickhouse container logs" >&2
+	echo "up.sh: ClickHouse did not accept a query within ${CLICKHOUSE_TIMEOUT_SECONDS} seconds; inspect the openlit-clickhouse container logs" >&2
+	report_compose_output
 	exit 5
 fi
 
 echo "==> Waiting for the OpenLIT HTTP service"
 OPENLIT_READY=0
-OPENLIT_DEADLINE=$((SECONDS + 120))
+OPENLIT_DEADLINE=$((SECONDS + OPENLIT_TIMEOUT_SECONDS))
 while (( SECONDS < OPENLIT_DEADLINE )); do
-	if curl --fail --silent --show-error --location --max-time 2 "http://127.0.0.1:${PORT:-3000}/" >/dev/null 2>&1; then
+	if openlit_http_ready; then
 		OPENLIT_READY=1
 		break
 	fi
-	if (( SECONDS < OPENLIT_DEADLINE )); then sleep 1; fi
+	sleep 2
 done
 if [[ "$OPENLIT_READY" -ne 1 ]]; then
-	echo "up.sh: OpenLIT did not become HTTP-ready on port ${PORT:-3000} within 120 seconds; inspect the openlit container logs" >&2
+	echo "up.sh: OpenLIT did not become HTTP-ready on port ${PORT:-3000} within ${OPENLIT_TIMEOUT_SECONDS} seconds; inspect the openlit container logs" >&2
+	report_compose_output
 	exit 5
 fi
 

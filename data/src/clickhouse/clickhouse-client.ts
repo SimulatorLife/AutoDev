@@ -22,6 +22,40 @@ import { withClickHouseConnectionRetry } from "./retry.ts";
 /** The ClickHouse endpoint used when nothing else names one. */
 export const DEFAULT_CLICKHOUSE_URL = "http://127.0.0.1:8123";
 
+/**
+ * Ceiling for one ClickHouse request.
+ *
+ * ClickHouse answers on the loopback interface, so a request that has not
+ * come back within this window is not a slow query: the server is wedged or
+ * the host is too loaded to schedule it. Without a ceiling the request waits
+ * forever, and the caller waits with it -- which is how a `pnpm run dev` that
+ * has an unresponsive ClickHouse hangs on a catalog sync instead of failing
+ * with the reason.
+ */
+export const DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * A request signal that aborts after `timeoutMs`.
+ *
+ * `null` rather than `undefined` because `exactOptionalPropertyTypes` treats
+ * an explicit `undefined` as incompatible with `signal?: AbortSignal | null`,
+ * and `null` is what `fetch` reads as "no signal".
+ */
+function requestSignal(timeoutMs: number): AbortSignal | null {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return null;
+  return AbortSignal.timeout(timeoutMs);
+}
+
+/** Options every ClickHouse request accepts. */
+export interface ClickHouseRequestOptions {
+  /**
+   * Ceiling for the request in milliseconds. Defaults to
+   * `DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS`; a non-positive value disables
+   * the ceiling.
+   */
+  readonly timeoutMs?: number;
+}
+
 export interface ParameterizedQuery {
   readonly query: string;
   readonly params: Record<string, string | number | boolean>;
@@ -73,11 +107,15 @@ export class ClickHouseTelemetryClient {
 export async function selectRows<Row>(
   endpoint: string,
   table: string,
-  columns: readonly string[]
+  columns: readonly string[],
+  options: ClickHouseRequestOptions = {}
 ): Promise<Row[]> {
   const query = `SELECT ${columns.join(", ")} FROM ${table} FORMAT JSON`;
   const res = await fetch(`${endpoint}&query=${encodeURIComponent(query)}`, {
-    method: "GET"
+    method: "GET",
+    signal: requestSignal(
+      options.timeoutMs ?? DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS
+    )
   });
   if (!res.ok) {
     const errText = await res.text();
@@ -124,7 +162,8 @@ export function groupRowsBy<Row>(
 export async function insertRows<Row>(
   endpoint: string,
   table: string,
-  rows: readonly Row[]
+  rows: readonly Row[],
+  options: ClickHouseRequestOptions = {}
 ): Promise<void> {
   if (rows.length === 0) return;
   const body = rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
@@ -135,7 +174,10 @@ export async function insertRows<Row>(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body
+      body,
+      signal: requestSignal(
+        options.timeoutMs ?? DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS
+      )
     }
   );
   if (!res.ok) {
@@ -163,13 +205,19 @@ async function deleteWhereKeyIn(
   endpoint: string,
   table: string,
   keyColumn: string,
-  keys: string
+  keys: string,
+  options: ClickHouseRequestOptions = {}
 ): Promise<void> {
   await fetch(
     `${endpoint}&query=${encodeURIComponent(
       `ALTER TABLE ${table} DELETE WHERE ${keyColumn} IN (${keys})`
     )}`,
-    { method: "POST" }
+    {
+      method: "POST",
+      signal: requestSignal(
+        options.timeoutMs ?? DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS
+      )
+    }
   );
 }
 
@@ -177,7 +225,8 @@ async function deleteWhereKeyIn(
 export async function removeStaleRows<Row>(
   endpoint: string,
   staleRows: readonly Row[],
-  projection: StaleRowProjection<Row>
+  projection: StaleRowProjection<Row>,
+  options: ClickHouseRequestOptions = {}
 ): Promise<string[]> {
   if (staleRows.length === 0) return [];
   const keys = staleRows.map((row) => `'${projection.keyOf(row)}'`).join(", ");
@@ -187,13 +236,15 @@ export async function removeStaleRows<Row>(
     endpoint,
     projection.versionsTable,
     projection.versionsKeyColumn,
-    keys
+    keys,
+    options
   );
   await deleteWhereKeyIn(
     endpoint,
     projection.summaryTable,
     projection.summaryKeyColumn,
-    keys
+    keys,
+    options
   );
   return staleRows.map(projection.labelOf);
 }
@@ -239,7 +290,11 @@ export function runParameterizedClickHouseStatement(
   endpoint: string,
   query: string,
   params: Readonly<Record<string, ClickHouseParamValue>> = {},
-  options: { readonly fetchImpl?: typeof fetch; readonly body?: string } = {}
+  options: {
+    readonly fetchImpl?: typeof fetch;
+    readonly body?: string;
+    readonly timeoutMs?: number;
+  } = {}
 ): Promise<string> {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const url = new URL(endpoint);
@@ -257,7 +312,10 @@ export function runParameterizedClickHouseStatement(
           : {
               headers: { "Content-Type": "application/json" },
               body: options.body
-            })
+            }),
+        signal: requestSignal(
+          options.timeoutMs ?? DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS
+        )
       });
       if (!res.ok) {
         const failureBody = await res.text();

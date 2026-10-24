@@ -243,13 +243,42 @@ runner starts Docker Desktop if its Engine is not running; on other platforms
 the Docker Engine must be running. Use `down.sh` only when an operator
 explicitly wants to stop the stack.
 
+### The runner converges on the stack, not on Compose's exit code
+
+A Compose failure is not by itself a failed stack, and the two are told apart
+by what the runner observes rather than by what Compose prints.
+
+Docker Desktop's API proxy aborts any Docker Engine call that misses its fixed
+10-second deadline and reports it as `500 Internal Server Error`. Compose
+turns that into `dependency clickhouse failed to start: … check if the server
+supports the requested API version`, which reads like an API version mismatch
+and is not one: the version in the message is the one Compose asked with. The
+Engine simply did not answer in time, which happens whenever the host is
+loaded enough to starve the Docker VM.
+
+The runner therefore:
+
+- retries `compose up -d` when — and only when — the Engine failed that way,
+  waiting for `docker info` to answer again between attempts, so a retry does
+  not race the same stall;
+- fails immediately on a Compose failure no retry can fix (a malformed compose
+  file, a missing image, an unset variable, a taken port);
+- decides success on the stack's readiness: ClickHouse accepts an
+  authenticated query and OpenLIT answers HTTP. Both probes go straight to
+  the published ports rather than through the Docker API, because a Docker API
+  call is exactly what fails when the Engine is slow.
+
+`AUTODEV_OPENLIT_COMPOSE_ATTEMPTS`, `AUTODEV_OPENLIT_ENGINE_TIMEOUT_SECONDS`,
+`AUTODEV_OPENLIT_CLICKHOUSE_TIMEOUT_SECONDS`, and
+`AUTODEV_OPENLIT_HTTP_TIMEOUT_SECONDS` bound those steps.
+
 | Script                  | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apply-patches.sh`      | Apply all local patches to the exact pinned OpenLIT commit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `build-local.sh`        | Build the patched image and record source, patch, image-ID, and digest metadata outside the repo.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `bootstrap-secrets.sh`  | Generate/preserve strong DB, Control API, OTLP receiver, and Console Usage tokens. Writes the canonical `$CODEX_HOME/openlit-secrets.env` (mode 0600, outside the repo) and additionally materializes the two Console server-only tokens plus their local base URL defaults into `console/.env.local` (mode 0600, ignored by `.env.*`) for Next.js to auto-load during the root `pnpm run dev` workflow. The production launchd-managed Console (`scripts/run-codex-console.sh`) continues to source the canonical secret file directly and does not depend on `console/.env.local`; it validates backend contracts before serving. |
 | `bootstrap-otlp-key.sh` | Materialize the same generated receiver token for producers; it does not call an OpenLIT API.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `up.sh`                 | Build or reuse the locked patch-matched image, prepare secrets, start Compose, wait for ClickHouse/OpenLIT readiness, and validate the live Usage v5 response through Data.                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `up.sh`                 | Build or reuse the locked patch-matched image, prepare secrets, start Compose (retrying an unresponsive Engine), wait for ClickHouse/OpenLIT readiness, and validate the live Usage v5 response through Data.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `down.sh`               | Stop the local stack while preserving its durable ClickHouse and OpenLIT data volumes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 The bring-up runner cleans up only its own fresh scratch clone. It never edits the
