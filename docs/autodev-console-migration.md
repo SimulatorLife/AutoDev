@@ -112,6 +112,24 @@ Their failure state is a first-class part of the page rather than a broken one: 
 
 Two things were measured and deliberately not reported as defects. The console could not reach the Control API for a while, because a concurrent agent's in-flight edit to the synthetic fixture had a duplicate declaration that stopped it starting; the missing navigation counts and the "could not be loaded" detail pages were that, not the product. And the detail pages' error state was reached only because the fixture could not serve them -- which is the state worth having looked right.
 
+## The responsive-layout acceptance
+
+The repository's own responsive-layout acceptance measures every canonical and detail route at 390px, 768px and 1280px, and asserts what the sweeps above measured by hand: no clipped content, one level-one heading per page, no heading level skipped, and no duplicated id.
+
+**It could not be completed on this machine.** Three runs failed at all three widths, every failure the same shape -- `expect(locator).toBeVisible()` timing out with "element(s) not found" for the page's `h1` -- and the route it named was different on each run: `/tools`, then `/skills`, `/hooks` and `/providers`, then `/tools` again. The last run also reported "Channel closed": the browser process died rather than answering. The machine was at load average 39, then 88, then 194, then 314, with 15GB resident against heavy swap and 0.1% idle -- a production build, a synthetic Control API and a second agent's playtesting work all at once. A probe against the same production build settled it: `/tools` rendered with its `h1` present, no console error and no failed request. The acceptance's ten-second expect timeout is right for an idle machine and impossible on this one.
+
+The repository's own `playwright.sandbox.config.ts` is not a way round it either: it points at a Console that is already running, which is the right idea for a sandbox, but it launches a single-process Chromium, and a single-process browser dies when the spec opens four pages at once -- the 1280px run failed in 42ms inside `context.newPage()`. One width did pass on that config, at 768px.
+
+Two of the runs also failed for a reason that was the agent's own: the first two were started concurrently, and the Playwright harness builds into the repository's shared `.next` directory, so the second build overwrote the first server's chunks and the page died with "Loading chunk 1396 failed" -- an application error that looks like a code fault and is not one. Two acceptance runs cannot share a build directory.
+
+The properties the acceptance asserts were measured directly, on a running Console, with the results recorded above.
+
+## What the acceptance found on its way in
+
+The acceptance's own clipped-content check found one real thing before it ran out of machine. At 390px the Hooks page's status-message field is narrower than its value: the navigation's narrow default is a 56px rail *in flow*, so the page has 56px less to lay its fields out in than it did when the navigation covered the page instead, and "Bash is guarded in this fixture." is 32 characters in a 216px field. The text is cut at the field's edge.
+
+Two things followed. The field now carries its value in a `title`, which is how a truncated value stays reachable in this Console. And the acceptance's clipped-content check was reporting a form control's own value as clipped layout content: an `<input>` reports its value's width as its scroll width, so any filled field narrower than its value read as a clip -- even though the value is the operator's own editable text, and focusing the field brings all of it into view and takes all of it when selected. A `<select>` and a `<textarea>` scroll already and never reached the check at all.
+
 ## The phone-width sweep
 
 All fourteen canonical routes were measured at 390x844 in Chromium against the synthetic Control API fixture. The structural result was clean: **zero document horizontal overflow and zero elements painted wider than the viewport** on every route, and the tables scroll inside their own regions as the contract intends. The one target that failed the 24px floor was the shared state-coloured button -- the pill that enables and disables an agent role -- which measured **22px**: `text-xs` on a 16px line, plus `py-0.5` and the border. It is the smallest target on the Agents page and it is the control an operator reaches for.

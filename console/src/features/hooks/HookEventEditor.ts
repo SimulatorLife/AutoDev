@@ -70,6 +70,11 @@ function actionField(
       disabled,
       onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
         onChange(event.currentTarget.value),
+      // The full value, because the field is narrower than the value at phone
+      // widths and the text is cut at the field's edge. The Console's rule for
+      // a truncated value is that the whole of it stays reachable, and this is
+      // how it reaches one.
+      title: value,
       // The value is the action's position, so a reader can name the action a
       // control belongs to rather than the field's own name.
       [dataAttribute]: String(index)

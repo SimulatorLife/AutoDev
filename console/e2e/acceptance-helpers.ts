@@ -176,6 +176,13 @@ export interface ClippedContent {
  * is a 1px box whose content is its intrinsic width by construction. What is
  * left is content that is silently cut off with no way to reach it -- the
  * failure this looks for.
+ *
+ * A form control's own value is not that. An `<input>` reports its value's
+ * width as its scroll width, so a filled field narrower than its value reads
+ * here as a 23px clip -- but the field is the operator's own editable value:
+ * focusing it scrolls the value into view and selecting it takes the whole of
+ * it, and the text is not layout that the page is hiding. A `<select>` and a
+ * `<textarea>` already scroll, so they never reach this check at all.
  */
 export function clippedContent(page: Page): Promise<readonly ClippedContent[]> {
   return page.evaluate(() => {
@@ -185,6 +192,7 @@ export function clippedContent(page: Page): Promise<readonly ClippedContent[]> {
       if (style.overflowX === "auto" || style.overflowX === "scroll") continue;
       if (style.textOverflow === "ellipsis") continue;
       if (element.clientWidth === 0) continue;
+      if (element.tagName === "INPUT") continue;
       // A visually hidden label is a 1px box; its content is wider than it by
       // definition and always has been.
       const box = element.getBoundingClientRect();
