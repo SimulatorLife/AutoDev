@@ -39,6 +39,28 @@ if (singleProcess) {
     process.env.AUTODEV_ACCEPTANCE_ROUTES_PER_BATCH ?? "1";
 }
 
+/**
+ * How long a page may take to answer with its heading.
+ *
+ * The gate is real -- a page that never renders its heading is a broken
+ * page -- but fifteen seconds is a short clock on a machine that is also
+ * running a production build and another agent's test suite. It is
+ * settable for the same reason the test timeout is.
+ *
+ * The value is read as a number, and an underscore in the *string* is a
+ * separator JavaScript does not understand: `Number("15_000")` is `NaN`,
+ * not `15000`. A `NaN` timeout is not a long timeout, it is no timeout at
+ * all, so the expectation silently ran to the test's own ten-minute clock
+ * and every failure was reported ten minutes late, as the test timing out
+ * rather than as the page that never answered.
+ */
+export function expectTimeoutMs(): number {
+  const raw = process.env.AUTODEV_ACCEPTANCE_EXPECT_TIMEOUT;
+  if (raw === undefined) return 15_000;
+  const parsed = Number(raw.replaceAll("_", ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 15_000;
+}
+
 export default defineConfig({
   testDir: "./e2e",
   testMatch: "**/*.spec.ts",
@@ -50,13 +72,7 @@ export default defineConfig({
   // exception.
   timeout: 600_000,
   expect: {
-    // How long a page may take to answer with its heading.
-    //
-    // The gate is real -- a page that never renders its heading is a broken
-    // page -- but fifteen seconds is a short clock on a machine that is also
-    // running a production build and another agent's test suite. It is
-    // settable for the same reason the test timeout is.
-    timeout: Number(process.env.AUTODEV_ACCEPTANCE_EXPECT_TIMEOUT ?? "15_000")
+    timeout: expectTimeoutMs()
   },
   use: {
     ...devices["Desktop Chrome"],
