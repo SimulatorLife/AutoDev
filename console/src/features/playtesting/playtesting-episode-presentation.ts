@@ -6,6 +6,7 @@ import type {
 import React from "react";
 
 import {
+  NOT_OBSERVED_LABEL,
   NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
@@ -45,6 +46,21 @@ export function episodeBuildLabel(
   episode: Pick<PlaytestEpisode, "identity" | "executionProvenance">
 ): string {
   return buildLabel(episode.executionProvenance.source);
+}
+
+/**
+ * A recorded duration, in the unit the product uses.
+ *
+ * The measurement arrives as a float with sub-millisecond precision, and
+ * "38412.29625000013 ms" is not a number a reader can use: it is the
+ * measurement's own precision printed without restraint. A duration is
+ * rounded to the millisecond it was measured in and grouped, so that
+ * 109,429 ms reads as the hundred and nine seconds it is, and an
+ * unmeasured duration says so rather than showing a zero.
+ */
+export function durationLabel(milliseconds: number | null): string {
+  if (milliseconds === null) return NOT_OBSERVED_LABEL;
+  return `${Math.round(milliseconds).toLocaleString("en-US")} ms`;
 }
 
 /**

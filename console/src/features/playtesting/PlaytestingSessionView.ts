@@ -31,6 +31,7 @@ import {
 } from "../../components/ui/text-classes.ts";
 import {
   defaultEpisodeInspectionStep,
+  durationLabel,
   executionSourceSummary,
   executionStatusBadge,
   gameOutcomeBadge
@@ -64,6 +65,21 @@ const RAISED_PANEL_CLASS =
 const SURFACE_PANEL_CLASS = "rounded-lg border border-border bg-surface p-3";
 
 const EVIDENCE_LINK_CLASS = "text-xs text-accent hover:underline";
+
+/**
+ * The word for a fact the record does not carry.
+ *
+ * "Not observed" is a measurement that was taken and found nothing; "Not
+ * recorded" is a fact that was never captured. A cockpit that fills an
+ * unrecorded field with a plausible sentence is not a cockpit, it is a
+ * narrator -- and a reader who trusts it is reading something the run never
+ * observed. The trace reader below already keeps absence as absence all the
+ * way through; the view has to keep that promise.
+ */
+const NOT_RECORDED_LABEL = "Not recorded";
+
+/** How many visible controls are named before the rest are counted. */
+const VISIBLE_CONTROL_PREVIEW_COUNT = 6;
 
 /** A JSON object read off a recorded trace line. */
 type TraceRecord = Readonly<Record<string, unknown>>;
@@ -1205,6 +1221,268 @@ function spectatorAvailableSteps(
   return Array.from({ length: Math.max(totalSteps, 1) }, (_, index) => index);
 }
 
+/**
+ * The visible controls of one step, bounded.
+ *
+ * A screen can carry thirty controls, and their accessible names run to
+ * fifteen hundred characters; joined into one line they are a wall a reader
+ * can neither use nor skip. The first few are named, the rest are counted,
+ * and the whole list stays one disclosure away. A step that recorded no
+ * controls says so: a screen with no controls and a screen whose controls
+ * were never captured are different facts.
+ */
+function visibleControlsSummary(names: readonly string[]): React.JSX.Element {
+  if (names.length === 0) {
+    return React.createElement(
+      "p",
+      { className: "mt-1 text-xs text-fg" },
+      NOT_RECORDED_LABEL
+    );
+  }
+  const shown = names.slice(0, VISIBLE_CONTROL_PREVIEW_COUNT);
+  const hidden = names.length - shown.length;
+  return React.createElement(
+    "div",
+    { className: "mt-1 space-y-1 text-xs text-fg" },
+    React.createElement("p", null, shown.join(" · ")),
+    hidden > 0
+      ? React.createElement(
+          "details",
+          { className: MUTED_META_CLASS },
+          React.createElement(
+            "summary",
+            null,
+            `${String(hidden)} more ${hidden === 1 ? "control" : "controls"} observed`
+          ),
+          React.createElement(
+            "p",
+            { className: "mt-1" },
+            names.slice(shown.length).join(" · ")
+          )
+        )
+      : null
+  );
+}
+
+/**
+ * The action the run took, with the reason it took it.
+ *
+ * A reason code belongs to an action. When no action was executed there was
+ * no reason either, and a step that recorded neither says so once rather
+ * than inventing a policy name to fill the space.
+ */
+function spectatorActionReasonText(
+  executedAction: string | null,
+  reasonCode: string | null | undefined
+): string {
+  if (executedAction === null) return NOT_RECORDED_LABEL;
+  if (reasonCode === null || reasonCode === undefined) return executedAction;
+  return executedAction + " (" + reasonCode + ")";
+}
+
+/**
+ * The four cockpit panels: what the player planned, what it expected to
+ * see, what it actually did, and what the screen offered.
+ *
+ * Each panel reports what the step recorded. A step that recorded nothing
+ * says "Not recorded" in every panel rather than a sentence about a racing
+ * car the run never saw.
+ */
+function spectatorCockpitPanels(
+  facts: TraceStepFacts | null,
+  executedAction: string | null,
+  phaseText: string | null
+): React.JSX.Element {
+  return React.createElement(
+    "div",
+    { className: "grid gap-3 sm:grid-cols-2" },
+    React.createElement(
+      "div",
+      {
+        className: RAISED_PANEL_CLASS
+      },
+      React.createElement(
+        "p",
+        {
+          className:
+            "text-xs font-semibold text-accent uppercase tracking-wider"
+        },
+        "🎯 Planned Intention"
+      ),
+      React.createElement(
+        "p",
+        { className: "mt-1 text-xs text-fg leading-relaxed" },
+        facts?.intention ?? NOT_RECORDED_LABEL
+      )
+    ),
+    React.createElement(
+      "div",
+      {
+        className: RAISED_PANEL_CLASS
+      },
+      React.createElement(
+        "p",
+        {
+          className:
+            "text-xs font-semibold text-accent uppercase tracking-wider"
+        },
+        "🔮 Predicted Visible Effect"
+      ),
+      React.createElement(
+        "p",
+        { className: "mt-1 text-xs text-fg leading-relaxed" },
+        facts?.predictedVisibleEffect ?? NOT_RECORDED_LABEL
+      )
+    ),
+    React.createElement(
+      "div",
+      {
+        className: RAISED_PANEL_CLASS
+      },
+      React.createElement(
+        "p",
+        {
+          className:
+            "text-xs font-semibold text-fg-muted uppercase tracking-wider"
+        },
+        "⚡ Executed Action & Tactical Reason"
+      ),
+      React.createElement(
+        "p",
+        { className: "mt-1 font-mono text-xs font-medium text-fg" },
+        spectatorActionReasonText(executedAction, facts?.reasonCode)
+      )
+    ),
+    React.createElement(
+      "div",
+      {
+        className: RAISED_PANEL_CLASS
+      },
+      React.createElement(
+        "p",
+        {
+          className:
+            "text-xs font-semibold text-fg-muted uppercase tracking-wider"
+        },
+        "🕹️ Visible Controls & Phase"
+      ),
+      React.createElement(
+        "p",
+        { className: "mt-1 text-xs text-fg" },
+        "Phase: " + (phaseText ?? NOT_RECORDED_LABEL)
+      ),
+      visibleControlsSummary(facts?.visibleControls ?? [])
+    )
+  );
+}
+
+/**
+ * The telemetry strip: the run's own facts about itself.
+ *
+ * A purse is a fact about a particular game. A game that records no
+ * bankroll gets no purse tile: a default of "100 Gold" would be a number
+ * the run never observed, sitting in a panel that says it is the game's.
+ */
+function spectatorTelemetryStrip(
+  episode: PlaytestEpisode,
+  executedAction: string | null,
+  phaseText: string | null
+): React.JSX.Element {
+  const policyText = episode.identity.policyId;
+  const bankroll = episode.outcomeMetrics?.bankroll_gold ?? null;
+  const ticks = episode.logicalTicks ?? episode.stepCount;
+  return React.createElement(
+    "div",
+    { className: "grid grid-cols-2 gap-3 sm:grid-cols-4" },
+    React.createElement(
+      "div",
+      { className: SURFACE_PANEL_CLASS },
+      React.createElement(
+        "p",
+        { className: SECTION_LABEL_CLASS },
+        "Executed Action"
+      ),
+      React.createElement(
+        "p",
+        {
+          className: "mt-1 truncate font-mono text-xs font-medium text-accent",
+          title: executedAction ?? NOT_RECORDED_LABEL
+        },
+        executedAction ?? NOT_RECORDED_LABEL
+      )
+    ),
+    React.createElement(
+      "div",
+      { className: SURFACE_PANEL_CLASS },
+      React.createElement(
+        "p",
+        { className: SECTION_LABEL_CLASS },
+        "Decision Policy"
+      ),
+      React.createElement(
+        "p",
+        {
+          className: "mt-1 truncate font-mono text-xs font-medium text-fg",
+          title: policyText
+        },
+        policyText
+      )
+    ),
+    React.createElement(
+      "div",
+      { className: SURFACE_PANEL_CLASS },
+      React.createElement(
+        "p",
+        { className: SECTION_LABEL_CLASS },
+        "Game Phase"
+      ),
+      React.createElement(
+        "p",
+        {
+          className: "mt-1 truncate text-xs font-medium text-fg",
+          title: phaseText ?? NOT_RECORDED_LABEL
+        },
+        phaseText ?? NOT_RECORDED_LABEL
+      )
+    ),
+    bankroll === null
+      ? null
+      : React.createElement(
+          "div",
+          { className: SURFACE_PANEL_CLASS },
+          React.createElement(
+            "p",
+            { className: SECTION_LABEL_CLASS },
+            "Purse / Bankroll"
+          ),
+          React.createElement(
+            "p",
+            { className: "mt-1 font-mono text-xs font-semibold text-fg" },
+            "💰 " + String(bankroll) + " Gold"
+          )
+        ),
+    React.createElement(
+      "div",
+      { className: SURFACE_PANEL_CLASS },
+      React.createElement(
+        "p",
+        { className: SECTION_LABEL_CLASS },
+        "Execution Speed"
+      ),
+      React.createElement(
+        "p",
+        { className: "mt-1 text-xs font-medium text-fg" },
+        episode.simulationWallMs === null
+          ? NOT_OBSERVED_LABEL
+          : durationLabel(episode.simulationWallMs) +
+              " (" +
+              String(ticks) +
+              " ticks)"
+      )
+    )
+  );
+}
+
 function visualGameSpectatorStage(
   episode: PlaytestEpisode,
   traceScope: PlaytestingScope,
@@ -1225,10 +1503,8 @@ function visualGameSpectatorStage(
     return facts.step === currentStep;
   });
   const currentFacts = currentEntry ? traceStepFacts(currentEntry) : null;
-  const actionText = currentFacts?.actionId ?? episode.identity.policyId;
-  const phaseText =
-    currentFacts?.visiblePhase ?? currentFacts?.phase ?? "Simulation Active";
-  const bankroll = episode.outcomeMetrics?.bankroll_gold ?? 100;
+  const executedAction = currentFacts?.actionId ?? null;
+  const phaseText = currentFacts?.visiblePhase ?? currentFacts?.phase ?? null;
 
   // Frame identification: check trace facts, matching episode frame, or indexed frame
   const frameId =
@@ -1366,7 +1642,10 @@ function visualGameSpectatorStage(
                   "flex items-center gap-2 rounded-md bg-black/75 px-2.5 py-1 text-xs font-mono font-medium text-fg-inverse backdrop-blur-sm"
               },
               React.createElement("span", { className: "text-accent" }, "●"),
-              "STEP " + String(currentStep) + " · " + phaseText
+              "STEP " +
+                String(currentStep) +
+                " · " +
+                (phaseText ?? NOT_RECORDED_LABEL)
             ),
             React.createElement(
               "div",
@@ -1374,7 +1653,9 @@ function visualGameSpectatorStage(
                 className:
                   "rounded-md bg-black/75 px-2.5 py-1 text-xs font-mono font-medium text-accent backdrop-blur-sm"
               },
-              "ACTION: " + actionText
+              executedAction === null
+                ? "NO ACTION RECORDED"
+                : "ACTION: " + executedAction
             )
           ),
           // Screen Bottom Live Intention Banner
@@ -1581,96 +1862,7 @@ function visualGameSpectatorStage(
           "Policy: " + episode.identity.policyId
         )
       ),
-      React.createElement(
-        "div",
-        { className: "grid gap-3 sm:grid-cols-2" },
-        React.createElement(
-          "div",
-          {
-            className: RAISED_PANEL_CLASS
-          },
-          React.createElement(
-            "p",
-            {
-              className:
-                "text-xs font-semibold text-accent uppercase tracking-wider"
-            },
-            "🎯 Planned Intention"
-          ),
-          React.createElement(
-            "p",
-            { className: "mt-1 text-xs text-fg leading-relaxed" },
-            currentFacts?.intention ??
-              "Advancing vehicle along track curve and optimizing straightaway speed."
-          )
-        ),
-        React.createElement(
-          "div",
-          {
-            className: RAISED_PANEL_CLASS
-          },
-          React.createElement(
-            "p",
-            {
-              className:
-                "text-xs font-semibold text-accent uppercase tracking-wider"
-            },
-            "🔮 Predicted Visible Effect"
-          ),
-          React.createElement(
-            "p",
-            { className: "mt-1 text-xs text-fg leading-relaxed" },
-            currentFacts?.predictedVisibleEffect ??
-              "Vehicle maintains road heading; velocity adjusts toward target apex."
-          )
-        ),
-        React.createElement(
-          "div",
-          {
-            className: RAISED_PANEL_CLASS
-          },
-          React.createElement(
-            "p",
-            {
-              className:
-                "text-xs font-semibold text-fg-muted uppercase tracking-wider"
-            },
-            "⚡ Executed Action & Tactical Reason"
-          ),
-          React.createElement(
-            "p",
-            { className: "mt-1 font-mono text-xs font-medium text-fg" },
-            actionText +
-              " (" +
-              (currentFacts?.reasonCode ?? "tactical_progression") +
-              ")"
-          )
-        ),
-        React.createElement(
-          "div",
-          {
-            className: RAISED_PANEL_CLASS
-          },
-          React.createElement(
-            "p",
-            {
-              className:
-                "text-xs font-semibold text-fg-muted uppercase tracking-wider"
-            },
-            "🕹️ Visible Controls & Phase"
-          ),
-          React.createElement(
-            "p",
-            { className: "mt-1 text-xs text-fg" },
-            (currentFacts?.visibleControls &&
-            currentFacts.visibleControls.length > 0
-              ? currentFacts.visibleControls.join(", ")
-              : "Steering & Throttle Controls") +
-              " · Phase: " +
-              phaseText
-          )
-        )
-      ),
+      spectatorCockpitPanels(currentFacts, executedAction, phaseText),
       currentFacts?.visibleWarnings && currentFacts.visibleWarnings.length > 0
         ? React.createElement(
             "div",
@@ -1683,78 +1875,7 @@ function visualGameSpectatorStage(
         : null
     ),
     // Summary Telemetry Strip
-    React.createElement(
-      "div",
-      { className: "grid grid-cols-2 gap-3 sm:grid-cols-4" },
-      React.createElement(
-        "div",
-        { className: SURFACE_PANEL_CLASS },
-        React.createElement(
-          "p",
-          { className: SECTION_LABEL_CLASS },
-          "Current Action"
-        ),
-        React.createElement(
-          "p",
-          {
-            className:
-              "mt-1 truncate font-mono text-xs font-medium text-accent",
-            title: actionText
-          },
-          actionText
-        )
-      ),
-      React.createElement(
-        "div",
-        { className: SURFACE_PANEL_CLASS },
-        React.createElement(
-          "p",
-          { className: SECTION_LABEL_CLASS },
-          "Game Phase"
-        ),
-        React.createElement(
-          "p",
-          {
-            className: "mt-1 truncate text-xs font-medium text-fg",
-            title: phaseText
-          },
-          phaseText
-        )
-      ),
-      React.createElement(
-        "div",
-        { className: SURFACE_PANEL_CLASS },
-        React.createElement(
-          "p",
-          { className: SECTION_LABEL_CLASS },
-          "Purse / Bankroll"
-        ),
-        React.createElement(
-          "p",
-          { className: "mt-1 font-mono text-xs font-semibold text-fg" },
-          "💰 " + String(bankroll) + " Gold"
-        )
-      ),
-      React.createElement(
-        "div",
-        { className: SURFACE_PANEL_CLASS },
-        React.createElement(
-          "p",
-          { className: SECTION_LABEL_CLASS },
-          "Execution Speed"
-        ),
-        React.createElement(
-          "p",
-          { className: "mt-1 text-xs font-medium text-fg" },
-          episode.simulationWallMs === null
-            ? NOT_OBSERVED_LABEL
-            : String(episode.simulationWallMs) +
-                " ms (" +
-                String(episode.logicalTicks ?? totalSteps) +
-                " ticks)"
-        )
-      )
-    )
+    spectatorTelemetryStrip(episode, executedAction, phaseText)
   );
 }
 
@@ -2494,24 +2615,9 @@ export function PlaytestingSessionView({
         label: "Recorded execution measurements"
       },
       compactStat("Steps", episode.stepCount),
-      compactStat(
-        "Simulation",
-        episode.simulationWallMs === null
-          ? "Not observed"
-          : `${episode.simulationWallMs} ms`
-      ),
-      compactStat(
-        "Policy inference",
-        episode.policyInferenceMs === null
-          ? "Not observed"
-          : `${episode.policyInferenceMs} ms`
-      ),
-      compactStat(
-        "Native duration",
-        episode.nativeDurationMs === null
-          ? "Not observed"
-          : `${episode.nativeDurationMs} ms`
-      )
+      compactStat("Simulation", durationLabel(episode.simulationWallMs)),
+      compactStat("Policy inference", durationLabel(episode.policyInferenceMs)),
+      compactStat("Native duration", durationLabel(episode.nativeDurationMs))
     ),
     playerDebriefPanel(
       episode,

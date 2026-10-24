@@ -1175,6 +1175,78 @@ test("visualGameSpectatorStage renders live game screen, AI intentions, scrubber
   assert.match(html, /Analyze with Playtest Analyst/u);
 });
 
+test("a step that recorded no intention, prediction or action says so instead of narrating one", () => {
+  const visualEpisode: PlaytestEpisode = {
+    ...episode(),
+    executionProvenance: {
+      mode: "autonomous-visual",
+      source: {
+        kind: "URL-only",
+        repository: null,
+        revision: null,
+        revisionConfidence: "not-applicable",
+        checkoutState: "not-applicable",
+        artifactFingerprint: null,
+        targetId: "racing-game-local",
+        targetOrigin: "http://localhost:5173"
+      },
+      observationSource: "browser-ui",
+      actionSource: "browser-input",
+      derivedFrom: null
+    }
+  };
+  const window: ControlApiPlaytestingWindowResponse = {
+    schema: "autodev-control-playtesting-window-v1",
+    workspaceId: WORKSPACE,
+    episodeId: visualEpisode.episodeId,
+    artifactId: "trace-window-visual",
+    sha256: "e".repeat(64),
+    mediaType: "application/x-ndjson",
+    startStep: 0,
+    endStep: 0,
+    sourceLineCount: 1,
+    omittedLineCount: 0,
+    entries: [
+      {
+        step: 0,
+        // The step recorded the screen and nothing else: no intention, no
+        // prediction, no executed action, no control list.
+        visibleObservation: {
+          controls: [],
+          warnings: [],
+          phase: "RacingGame Prototype",
+          progress: null
+        },
+        frameRefs: [{ id: "frame-step-0", kind: "frame" }]
+      }
+    ]
+  };
+
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: { ...detail(), record: visualEpisode },
+      scope: scope({ view: "sessions", step: "0" }),
+      window
+    })
+  );
+
+  // Every fact the step did not record is reported as unrecorded, and the
+  // cockpit invents nothing: a plausible sentence about a racing car is not
+  // evidence that the run observed one.
+  assert.match(html, /Not recorded/u);
+  assert.doesNotMatch(html, /Advancing vehicle along track curve/u);
+  assert.doesNotMatch(html, /Vehicle maintains road heading/u);
+  assert.doesNotMatch(html, /Steering &amp; Throttle Controls/u);
+  assert.doesNotMatch(html, /tactical_progression/u);
+  // The frame's own action chip says that no action was executed rather than
+  // naming the policy as if it were one.
+  assert.match(html, /NO ACTION RECORDED/u);
+  // The policy that decided is still recorded, and the phase the screen
+  // showed is still shown.
+  assert.match(html, /Decision Policy/u);
+  assert.match(html, /RacingGame Prototype/u);
+});
+
 test("visual spectator derives the latest step from frames, follows live, and shows Persisted Analyst Hypotheses only", () => {
   const visualEpisode: PlaytestEpisode = {
     ...episode(),
