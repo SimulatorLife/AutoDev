@@ -19,6 +19,25 @@ process.env.AUTODEV_STATE_PROXY_PORT =
 // routes find it.
 process.env.AUTODEV_PLAYTEST_FIXTURE_PORT =
   process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4368";
+/**
+ * A single-process browser, for a machine that cannot register the Mach port
+ * rendezvous a multi-process browser needs.
+ *
+ * It is opt-in because a single-process browser is not stable across specs: it
+ * dies between them, and the next spec then fails inside the harness with a
+ * browser error rather than on a page. Measured here, the acceptance's first
+ * width passed and the second failed in 48ms with "Target page, context or
+ * browser has been closed".
+ */
+const singleProcess = process.env.AUTODEV_ACCEPTANCE_SINGLE_PROCESS === "1";
+// One route at a time under a single-process browser, which cannot hold four
+// pages at once: the second `newPage()` takes it down. The responsive-layout
+// acceptance opens a batch of pages in parallel, so the batch is one page
+// there. The multi-process browser holds the default batch of four.
+if (singleProcess) {
+  process.env.AUTODEV_ACCEPTANCE_ROUTES_PER_BATCH =
+    process.env.AUTODEV_ACCEPTANCE_ROUTES_PER_BATCH ?? "1";
+}
 
 export default defineConfig({
   testDir: "./e2e",
@@ -45,7 +64,9 @@ export default defineConfig({
           executablePath:
             process.env.SANDBOX_CHROMIUM_PATH ??
             "/Users/henrykirk/Library/Caches/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-mac-arm64/chrome-headless-shell",
-          args: ["--single-process", "--no-sandbox"]
+          args: singleProcess
+            ? ["--single-process", "--no-sandbox"]
+            : ["--no-sandbox"]
         }
       }
     }

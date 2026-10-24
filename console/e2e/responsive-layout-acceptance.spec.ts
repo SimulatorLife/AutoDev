@@ -77,8 +77,17 @@ async function findProblems(
  * hold: opening all fourteen at once took the whole browser down with its
  * last page, and the failure looked like a broken page rather than a broken
  * harness.
+ *
+ * The batch size is settable because the single-process browser a constrained
+ * machine has to use cannot hold four pages at once: the second `newPage()`
+ * takes the browser down, and the acceptance fails inside the harness rather
+ * than on a page. `playwright.sandbox.config.ts` sets it to one for that
+ * browser, and the default of four is right for the multi-process one.
  */
-const ROUTES_PER_BATCH = 4;
+const ROUTES_PER_BATCH = Math.max(
+  1,
+  Number(process.env.AUTODEV_ACCEPTANCE_ROUTES_PER_BATCH ?? "4") || 4
+);
 
 /**
  * Split a list into batches of a given size.
