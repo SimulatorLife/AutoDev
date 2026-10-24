@@ -159,8 +159,6 @@ export default async function EvaluationsPage({
     ConsolePageShell,
     {
       section,
-      description:
-        "Retained evaluation results, metric breakdowns, and linked OpenTelemetry traces.",
       // The store's own size, not the narrowed window. The sidebar describes the
       // resource, so it was reading as though a filter emptied it: on
       // `?role=nobody` the badge said "Evaluations (0)" while the card above it

@@ -74,8 +74,6 @@ export default async function ProvidersPage({
       // The shared shell already renders a purpose statement; this page simply
       // had not passed one, which is why the header named the surface without
       // saying what the surface is for.
-      description:
-        "Configure which providers to use, which models to use for each role, and agent spawn limits.",
       actions: React.createElement(ProvidersHeaderActions, {
         returnTo: providersPath(tab === "models" ? "models" : "providers")
       }),

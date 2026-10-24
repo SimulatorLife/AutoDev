@@ -59,8 +59,6 @@ export default async function ToolsPage({
     ConsolePageShell,
     {
       section,
-      description:
-        "Effective tool catalog across native, MCP, plugin, and app capabilities.",
       // The badge counts the rows the table renders, not the envelope's
       // `totalTools`. Both claimed to be "how many tools there are", and they
       // can disagree: a payload carrying two entries under a `totalTools` of 1

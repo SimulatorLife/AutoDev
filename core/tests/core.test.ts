@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   CANONICAL_NAV_GROUPS,
   CANONICAL_NAVIGATION,
+  CANONICAL_SECTION_PURPOSE,
   canonicalNavGroupOf,
+  canonicalSectionPurpose,
   isCanonicalNavGroupId,
   isCanonicalNavSection,
   isOpenTelemetrySpanId,
@@ -92,6 +94,48 @@ test("CANONICAL_NAV_GROUPS defines Configure/Observe/Operate with exact 14 secti
   }
   assert.equal(isCanonicalNavGroupId("Dashboard"), false);
   assert.equal(isCanonicalNavGroupId("Settings"), false);
+});
+
+test("every canonical resource says what it is for, in one sentence", () => {
+  // A resource's purpose is a property of the resource, so it lives beside the
+  // navigation that lists it. That is what stops a page from stating its own:
+  // the sentence was a prop on thirteen pages and on none of the seven render
+  // paths of the fourteenth, which is how Playtesting came to be the one
+  // surface whose header named a resource without saying what it owns.
+  assert.deepEqual(
+    Object.keys(CANONICAL_SECTION_PURPOSE).sort(),
+    [...CANONICAL_NAVIGATION].sort()
+  );
+
+  const sentences = new Set<string>();
+  for (const section of CANONICAL_NAVIGATION) {
+    const purpose = canonicalSectionPurpose(section);
+    assert.ok(
+      purpose.length > 0,
+      `${section} must say what it is for: a header that names a resource ` +
+        "without saying what it owns leaves the operator to guess."
+    );
+    assert.ok(
+      purpose.endsWith("."),
+      `${section}'s purpose is a sentence, so it ends with a full stop.`
+    );
+    assert.equal(
+      purpose,
+      purpose.trim(),
+      `${section}'s purpose carries no leading or trailing whitespace.`
+    );
+    assert.ok(
+      purpose.length <= 140,
+      `${section}'s purpose is ${String(purpose.length)} characters: it is a ` +
+        "line under the title, not a paragraph beside it."
+    );
+    assert.equal(
+      sentences.has(purpose),
+      false,
+      `${section} must not share its purpose sentence with another resource.`
+    );
+    sentences.add(purpose);
+  }
 });
 
 test("validateAgentDefinition validates required fields", () => {

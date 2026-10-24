@@ -57,6 +57,58 @@ export type CanonicalNavSection =
   (typeof CANONICAL_NAV_GROUPS)[number]["sections"][number];
 
 /**
+ * What each canonical resource is for, in one sentence.
+ *
+ * A resource's purpose belongs to the resource, not to the page that renders
+ * it. A page that states its own purpose can state it on the happy path and
+ * forget it on the path where the operator most needs to know what they are
+ * looking at -- which is how the Playtesting page came to be the one resource
+ * whose header named a surface without saying what it owns, and how the
+ * detail pages of the other thirteen came to name a resource without saying
+ * what it is for either.
+ *
+ * The sentence lives here, beside the navigation that lists the resource, so
+ * there is one answer per resource, no page can have a different one, and a
+ * resource added to the navigation cannot be added without one.
+ */
+export const CANONICAL_SECTION_PURPOSE = {
+  Agents:
+    "Configured agent roles, runtime enablement, concurrency limits, and effective provider routing.",
+  Providers:
+    "Configure which providers to use, which models to use for each role, and agent spawn limits.",
+  MCPs: "Canonical RuleSync MCP server declarations, role assignments, and target overrides.",
+  Skills:
+    "Canonical RuleSync skill definitions, the roles that may invoke them, and each skill's assignment state.",
+  Hooks:
+    "Canonical RuleSync lifecycle hook declarations, matchers, and target projections.",
+  Prompts:
+    "Canonical RuleSync command prompts, validation status, and target projections.",
+  Permissions:
+    "Canonical permission policy, effective role capability matrix, and MCP tool grants.",
+  Tools:
+    "Effective tool catalog across native, MCP, plugin, and app capabilities.",
+  Usage:
+    "Active runtime sessions and OpenTelemetry request, token, cost, latency, and trace telemetry.",
+  Evaluations:
+    "Retained evaluation results, metric breakdowns, and linked OpenTelemetry traces.",
+  Playtesting:
+    "Workspace-scoped playtest sessions, recorded episodes, analyst findings, and matched comparisons.",
+  Memory:
+    "Governed durable claims, raw experiences, lifecycle governance, and bounded outcome cohorts.",
+  Workspaces:
+    "Configured repository workspaces, execution scope, playtesting target approvals, and aggregate request usage.",
+  GitHub:
+    "Repository workflow definitions, cron schedules, and observed GitHub Actions runs."
+} as const satisfies Record<CanonicalNavSection, string>;
+
+/**
+ * The one sentence that says what a canonical resource is for.
+ */
+export function canonicalSectionPurpose(section: CanonicalNavSection): string {
+  return CANONICAL_SECTION_PURPOSE[section];
+}
+
+/**
  * Flattened canonical section list, derived from `CANONICAL_NAV_GROUPS`.
  * Order matches Configure → Observe → Operate; do not redefine it elsewhere.
  */

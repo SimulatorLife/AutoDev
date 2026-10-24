@@ -64,8 +64,6 @@ export default async function PromptsPage({
     ConsolePageShell,
     {
       section,
-      description:
-        "Canonical RuleSync command prompts, validation status, and target projections.",
       // The navigation counts the resource, not the query that narrowed it:
       // the sidebar answers "how many prompts are there", and the filter bar
       // answers "how many are in view".

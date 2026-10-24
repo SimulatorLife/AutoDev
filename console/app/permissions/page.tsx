@@ -46,8 +46,6 @@ export default async function PermissionsPage(): Promise<React.JSX.Element> {
     ConsolePageShell,
     {
       section,
-      description:
-        "Canonical permission policy, effective role capability matrix, and MCP tool grants.",
       counts: { Permissions: roleMatrices.length }
     },
     React.createElement(PermissionsView, { policy, roleMatrices })

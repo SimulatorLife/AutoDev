@@ -5,7 +5,10 @@
  * Must never be imported from any client component.
  */
 
-import { type CanonicalNavSection } from "@simulatorlife/autodev-core";
+import {
+  type CanonicalNavSection,
+  canonicalSectionPurpose
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { AppShell } from "../src/components/layout/AppShell.ts";
@@ -236,23 +239,32 @@ export function controlApiCredentialUnavailable(
  * Render a Console page with the shared AppShell using the canonical section
  * for navigation highlighting. Counts are surfaced from the props when known
  * so the sidebar reflects the loaded resource state.
+ *
+ * The header's purpose line is not a prop. It is the canonical resource's own
+ * sentence, resolved from the navigation registry, so every route for a
+ * resource -- its list, its detail, and the states where the read failed --
+ * says the same thing about it, and no page can state a different one or
+ * forget to state one at all.
  */
 export function ConsolePageShell({
   section,
   counts,
-  description,
   actions,
   children
 }: {
   readonly section: CanonicalNavSection;
   readonly counts?: Partial<Record<CanonicalNavSection, number>> | undefined;
-  readonly description?: string | undefined;
   readonly actions?: React.ReactNode | undefined;
   readonly children?: React.ReactNode;
 }): React.JSX.Element {
   return React.createElement(
     AppShell,
-    { activeSection: section, counts, description, actions },
+    {
+      activeSection: section,
+      counts,
+      description: canonicalSectionPurpose(section),
+      actions
+    },
     children
   );
 }

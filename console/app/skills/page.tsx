@@ -70,8 +70,6 @@ export default async function SkillsPage({
     ConsolePageShell,
     {
       section,
-      description:
-        "Canonical RuleSync skill definitions, the roles that may invoke them, and each skill's assignment state.",
       counts: { Skills: skills.length }
     },
     React.createElement(SkillsView, {

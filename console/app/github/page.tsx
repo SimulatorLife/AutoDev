@@ -79,8 +79,6 @@ export default async function GithubPage({
     ConsolePageShell,
     {
       section,
-      description:
-        "Repository workflow definitions, cron schedules, and observed GitHub Actions runs.",
       counts: { GitHub: workflows.length }
     },
     React.createElement(GithubView, {

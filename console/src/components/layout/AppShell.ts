@@ -126,7 +126,14 @@ export function AppShell({
                   // ellipsizing mid-clause; the full text stays on hover.
                   className:
                     "line-clamp-2 text-xs leading-snug text-fg-muted break-words",
-                  title: description
+                  title: description,
+                  // A hook, because "does this page say what the resource is
+                  // for" is a claim about every route and has to be checkable
+                  // on every route rather than read off thirteen source files.
+                  // It carries the section, so a check can compare the line
+                  // against the canonical sentence for that resource rather
+                  // than only notice that some text is there.
+                  "data-page-purpose": activeSection
                 },
                 description
               )

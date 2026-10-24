@@ -100,8 +100,6 @@ export default async function HooksPage({
     ConsolePageShell,
     {
       section,
-      description:
-        "Canonical RuleSync lifecycle hook declarations, matchers, and target projections.",
       counts: { Hooks: hooks.length }
     },
     React.createElement(HooksView, {

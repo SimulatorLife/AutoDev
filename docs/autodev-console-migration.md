@@ -108,7 +108,7 @@ The eight detail routes were audited at 1440x900: `/agents/{id}`, `/providers/{i
 
 Their failure state is a first-class part of the page rather than a broken one: an `alert` region carrying the heading, the failure code as a chip, the reason, and what the operator should do about it ("Configure the required server-side integration and restart the Console"). The one gap was that it offered no way back beyond the breadcrumb and the sidebar.
 
-**A stated accessible name has to carry what the visible content says.** The sidebar shows each section's count in a badge beside its name -- "Providers" is visibly "Providers 3" -- and the link's accessible name has to be *stated* rather than taken from its content, because in the rail the label and the badge are both hidden and a content-based name would be empty there. The stated name stopped at the section name, so the operator could read the "3" and a screen reader heard nothing. It now reads "Providers (3)", which is also what the tooltip has always said: the name and the tooltip agree, in both the expanded navigation and the rail.
+**A stated accessible name has to carry what the visible content says.** The sidebar shows each section's count in a badge beside its name -- "Providers" is visibly "Providers 3" -- and the link's accessible name has to be _stated_ rather than taken from its content, because in the rail the label and the badge are both hidden and a content-based name would be empty there. The stated name stopped at the section name, so the operator could read the "3" and a screen reader heard nothing. It now reads "Providers (3)", which is also what the tooltip has always said: the name and the tooltip agree, in both the expanded navigation and the rail.
 
 Two things were measured and deliberately not reported as defects. The console could not reach the Control API for a while, because a concurrent agent's in-flight edit to the synthetic fixture had a duplicate declaration that stopped it starting; the missing navigation counts and the "could not be loaded" detail pages were that, not the product. And the detail pages' error state was reached only because the fixture could not serve them -- which is the state worth having looked right.
 
@@ -128,7 +128,7 @@ Two more clocks in the harness were too short for the work the spec does. The te
 
 The full green run could not be taken here: the machine was at load average 107, and later 174, with another project's browser run holding 195 Chromium processes open. The failures were the same shape throughout -- `expect(locator).toBeVisible()` timing out for a page's `h1`, on a route that changed from run to run -- which is a machine telling the time, not a page failing.
 
-**The clock that was supposed to catch that was not a clock at all.** The sandbox configuration's expect timeout was written as `Number("15_000")`, and JavaScript's `Number` does not accept an underscore as a digit separator the way the language's own numeric literals do: `Number("15_000")` is `NaN`, not `15000`. A `NaN` timeout is not a long timeout, it is no timeout at all, so every expectation ran to the test's own ten-minute clock and a page that had not answered was reported as the *test* timing out, ten minutes late, naming the test rather than the page. The setting that was supposed to make a failure quick and specific was the reason a failure took ten minutes and said nothing. The value is now parsed by a function that understands the separator and never returns a number that is not finite and positive, and `console/tests/acceptance-config.test.ts` pins it.
+**The clock that was supposed to catch that was not a clock at all.** The sandbox configuration's expect timeout was written as `Number("15_000")`, and JavaScript's `Number` does not accept an underscore as a digit separator the way the language's own numeric literals do: `Number("15_000")` is `NaN`, not `15000`. A `NaN` timeout is not a long timeout, it is no timeout at all, so every expectation ran to the test's own ten-minute clock and a page that had not answered was reported as the _test_ timing out, ten minutes late, naming the test rather than the page. The setting that was supposed to make a failure quick and specific was the reason a failure took ten minutes and said nothing. The value is now parsed by a function that understands the separator and never returns a number that is not finite and positive, and `console/tests/acceptance-config.test.ts` pins it.
 
 **And the failure was not the one it was reported as.** With a working clock the run fails in under three minutes, and the retained trace says what actually happened: the page's client chunk took **124 seconds** to arrive against Next's 120-second chunk-load timeout, so the framework replaced the page with its own error boundary and the heading the server had rendered was gone. The report read "element(s) not found" for the page's `h1`, which reads like a broken page. The same server answered that chunk in **12 milliseconds** and the same document in **73 milliseconds** once the machine was quiet, and a direct probe of `/tools` and of a tool's detail route rendered both with their heading present and no console error.
 
@@ -138,13 +138,13 @@ The properties the acceptance asserts were measured directly, on a running Conso
 
 ## What the acceptance found on its way in
 
-The acceptance's own clipped-content check found one real thing before it ran out of machine. At 390px the Hooks page's status-message field is narrower than its value: the navigation's narrow default is a 56px rail *in flow*, so the page has 56px less to lay its fields out in than it did when the navigation covered the page instead, and "Bash is guarded in this fixture." is 32 characters in a 216px field. The text is cut at the field's edge.
+The acceptance's own clipped-content check found one real thing before it ran out of machine. At 390px the Hooks page's status-message field is narrower than its value: the navigation's narrow default is a 56px rail _in flow_, so the page has 56px less to lay its fields out in than it did when the navigation covered the page instead, and "Bash is guarded in this fixture." is 32 characters in a 216px field. The text is cut at the field's edge.
 
 Two things followed. The field now carries its value in a `title`, which is how a truncated value stays reachable in this Console. And the acceptance's clipped-content check was reporting a form control's own value as clipped layout content: an `<input>` reports its value's width as its scroll width, so any filled field narrower than its value read as a clip -- even though the value is the operator's own editable text, and focusing the field brings all of it into view and takes all of it when selected. A `<select>` and a `<textarea>` scroll already and never reached the check at all.
 
 ## What the audit covered, and what it found sound
 
-The sweeps above are a record of what was *changed*. This is the other half: the surfaces that were measured and needed nothing, so that a later pass does not repeat them.
+The sweeps above are a record of what was _changed_. This is the other half: the surfaces that were measured and needed nothing, so that a later pass does not repeat them.
 
 **Empty states** are one vocabulary, not several. The table delegates an empty list to the shared `EmptyState` primitive rather than writing its own line, and the primitive only ever renders a caller-supplied message -- because "no rows" and "source not wired" are different facts and only the caller knows which one it is rendering. Every list's message names its own resource ("No providers are configured.", "No memory records found matching the current criteria.", "No evaluation targets were observed in this view, so there is nothing to compare by <label>.") rather than inheriting a sentence that names nothing.
 
@@ -166,9 +166,9 @@ Two things decided where the handoff lives. The page frame is the wrong home: th
 
 Two guards keep the handoff out of the way: the first route is not a navigation, so the initial load never steals a focus the operator had already put in a field; and a focus that is still somewhere deliberate is left alone.
 
-A navigation that **names a fragment lands on that fragment** instead of the heading. The detail drawer is opened by a link carrying the drawer's own anchor, and the operator asked for *that panel*, not for the page it sits under -- and the fragment is what a browser would have scrolled to, so honouring it keeps the two in agreement. Measured in Chromium: activating "Open detail for evaluation eval-0001" leaves the focus on the drawer itself, and the next Tab is its "Close evaluation detail" control, inside the panel. A navigation without a fragment still lands on the heading, and the next Tab is the first control of the page.
+A navigation that **names a fragment lands on that fragment** instead of the heading. The detail drawer is opened by a link carrying the drawer's own anchor, and the operator asked for _that panel_, not for the page it sits under -- and the fragment is what a browser would have scrolled to, so honouring it keeps the two in agreement. Measured in Chromium: activating "Open detail for evaluation eval-0001" leaves the focus on the drawer itself, and the next Tab is its "Close evaluation detail" control, inside the panel. A navigation without a fragment still lands on the heading, and the next Tab is the first control of the page.
 
-The Console's drawer is a disclosure and not a modal, so there is no focus trap to get wrong: it renders inline beneath the list it belongs to, is reached by a URL-addressable link, and is closed by a plain link back to the list. That decision is why the handoff has to honour the fragment -- the panel is not a layer over the page, it is *in* the page, and the arrival point is what tells the operator where they landed.
+The Console's drawer is a disclosure and not a modal, so there is no focus trap to get wrong: it renders inline beneath the list it belongs to, is reached by a URL-addressable link, and is closed by a plain link back to the list. That decision is why the handoff has to honour the fragment -- the panel is not a layer over the page, it is _in_ the page, and the arrival point is what tells the operator where they landed.
 
 `console/e2e/navigation-acceptance.spec.ts` drives it in a browser -- the heading is focused after an in-place navigation, the next Tab lands inside the page's content rather than at the top of the document, and a navigation that names a fragment lands on that fragment.
 
@@ -204,13 +204,13 @@ Two smaller corrections came with it. The note beside the table -- how many entr
 
 The three capability catalogues are prompts, tools and skills, and the skill catalogue was the last one without a way in. Measured against the live Console it holds **sixteen** entries, and each row carries a role-assignment control with a checkbox per role, so the table runs to about **three screenfuls** at 1440x900.
 
-The question that page is actually about -- *which skills may role X invoke* -- had no answer on it. The operator had to read the Eligible Roles column of every row: sixty-four role chips spread down three screenfuls, to find out which skills carried the role they cared about.
+The question that page is actually about -- _which skills may role X invoke_ -- had no answer on it. The operator had to read the Eligible Roles column of every row: sixty-four role chips spread down three screenfuls, to find out which skills carried the role they cared about.
 
 So the catalogue takes the product's own filter bar, and the narrowing is by **role**. Not by name: the catalogue is sorted by name and sixteen short names in one column are a cheap scan, while the role question is the expensive one and it had no answer at all. The count sits in the filter bar's summary in the same form as the other two catalogues -- "Showing 9 of 16 skills" -- and only when something was narrowed, because the stat row above already states the catalogue's size.
 
 **The bar carries no submit button, and that is the point rather than an omission.** Every control on this page applies the moment it changes -- a role assignment saves itself -- so a "Save" button beside them would be a second way to do the same thing, and one an operator could walk past believing the change had not been written. That is a committed contract on this page, pinned by a test that asserts the view contains no submit button at all. A text search has nowhere to put its Apply, but a role is a **bounded** set -- the roles the execution contract declares -- so the control that chooses one is a single-choice select, which is exactly what the shared filter bar's on-change mode is reserved for. The narrowing is therefore a normal GET navigation, like every other filtered view: URL-addressable, bookmarkable, shareable, and with no client-side filtering.
 
-**The narrowing is applied in the view, not by the page.** The stat row above the table is about the *catalogue*, not about the view of it: the "Role-assigned" card counts every eligible skill the execution contract names, and that number must not shrink because the operator narrowed the list. A page that narrowed the list before handing it to the view would have made that card report "2 of 4 configured" for a catalogue of sixteen, which is a different claim from the one the card makes.
+**The narrowing is applied in the view, not by the page.** The stat row above the table is about the _catalogue_, not about the view of it: the "Role-assigned" card counts every eligible skill the execution contract names, and that number must not shrink because the operator narrowed the list. A page that narrowed the list before handing it to the view would have made that card report "2 of 4 configured" for a catalogue of sixteen, which is a different claim from the one the card makes.
 
 **And the narrowing survives the round-trip a role assignment makes.** Every checkbox on this page submits immediately through a POST that redirects back to `/skills`, so a narrowed list would have been thrown away by the act of assigning a role: the operator would come back to all sixteen rows and have to find the skill they were just editing. The narrowing travels on the form's **action** rather than in its body, because the body carries the desired role set and nothing else -- that is a committed contract too, pinned by a test that asserts the exact set of submitted field names, since an unchecked checkbox contributes nothing and a route that demanded a `roles` field would make the one operation that unassigns a skill impossible to express. The route **rebuilds** the address from the query rather than following one it was given, so there is no path anywhere in the flow that could point anywhere but the skill list -- a value that tries to be a path stays a query, encoded.
 
@@ -222,15 +222,15 @@ The Console's browser acceptance runs in CI on every push to `main` (`.github/wo
 
 The run history says when it broke: the commit "Updates across 59 files" (2026-10-23 02:24) landed the hooks acceptance spec and the hooks view's rewrite together, and the acceptance was red from that commit -- four failures, all of them hooks. The responsive-layout failures that the same run reported were fixed later; the hooks ones were not.
 
-**One of them was a stale assertion, and it is now fixed.** "the Hooks list shows the declaration it read" asked the page for the text `PreToolUse`. The product's hook event vocabulary is camelCase -- `preToolUse`, `sessionEnd`, `beforeSubmitPrompt` -- and the page renders the event verbatim in monospace, because it is an identifier. The assertion asked for a spelling the Console has never produced and cannot produce. It also asked for `Matcher:`, `Bash` and `$ echo guarded` as prose, but the hooks view renders an *editor* for each declared action, so the matcher and the command are fields now. The test now reads what an operator reads: the declaration's own panel, its "Matcher" label, and what the matcher and command fields hold. The same failure as a fixture that pins a value nothing writes.
+**One of them was a stale assertion, and it is now fixed.** "the Hooks list shows the declaration it read" asked the page for the text `PreToolUse`. The product's hook event vocabulary is camelCase -- `preToolUse`, `sessionEnd`, `beforeSubmitPrompt` -- and the page renders the event verbatim in monospace, because it is an identifier. The assertion asked for a spelling the Console has never produced and cannot produce. It also asked for `Matcher:`, `Bash` and `$ echo guarded` as prose, but the hooks view renders an _editor_ for each declared action, so the matcher and the command are fields now. The test now reads what an operator reads: the declaration's own panel, its "Matcher" label, and what the matcher and command fields hold. The same failure as a fixture that pins a value nothing writes.
 
 **The other three are a CI-only condition, and their signature is recorded.** In CI the applied projection reads as "The Runtime's applied hook projection could not be read", and the two edit tests find that neither the edited command nor an added action reached the page. All three pass locally, in the same order, against the same build and the same fixture -- so it is not the product, and it is not the order. What is known: the declaration read succeeds while the applied read fails on the same server and the same proxy, and the fixture serves both; the CI's own server log carries no error; and the CI's retained artifact holds the page snapshot that says the projection could not be read. The fixture's actor header is not involved -- the hooks reads do not carry one -- and the state proxy forwards both paths with the same headers, so the difference is not in the proxy's forwarding either. Until that is explained, the hooks acceptance in CI is evidence about the CI's environment rather than about the Console.
 
 **The page the failure landed on was the one that said nothing about it.** The hooks page makes two reads -- the canonical declaration and the projection the Runtime published -- and they answer different questions, so one failing is not a failure of the other. The page keeps the declaration when the projection cannot be read, which is right. What was wrong was the silence: the applied section said "could not be read" and nothing else, so the operator was left with a gap on the page and no explanation for it, and so was anybody reading the CI's evidence. The workspace page has been carrying the Control API's own code and message for the same gap since it was written; the hooks page now does the same, and the next CI run will name the cause instead of leaving it to be guessed at.
 
-**The hooks page discarded the operator's unfinished work.** The page carries one editor per hook event -- five of them in the live instance -- and the editor's key carried the revision the editor was based on. A *successful* write moves the declaration's revision, so every editor on the page was remounted and every draft in them was thrown away. An operator who started editing one event, then saved a different one, came back to find their unfinished command gone with no word about it. The live instance made it worse: five editors, each with a command, a matcher and a status message, and one save could empty all of them.
+**The hooks page discarded the operator's unfinished work.** The page carries one editor per hook event -- five of them in the live instance -- and the editor's key carried the revision the editor was based on. A _successful_ write moves the declaration's revision, so every editor on the page was remounted and every draft in them was thrown away. An operator who started editing one event, then saved a different one, came back to find their unfinished command gone with no word about it. The live instance made it worse: five editors, each with a command, a matcher and a status message, and one save could empty all of them.
 
-The editor's identity is now the event and nothing else, so an editor is not remounted while the operator is working. A draft is a draft: it is the operator's, and it is not discarded because the declaration moved for some other reason. The write it carries is a compare-and-swap on the revision it was written against, so a declaration that moved under it is *refused* -- the operator's edit stays on screen and the refusal says why -- rather than the edit being overwritten or thrown away. The acceptance pins it: "the hooks page keeps the operator's unfinished work in another event".
+The editor's identity is now the event and nothing else, so an editor is not remounted while the operator is working. A draft is a draft: it is the operator's, and it is not discarded because the declaration moved for some other reason. The write it carries is a compare-and-swap on the revision it was written against, so a declaration that moved under it is _refused_ -- the operator's edit stays on screen and the refusal says why -- rather than the edit being overwritten or thrown away. The acceptance pins it: "the hooks page keeps the operator's unfinished work in another event".
 
 **Where the acceptance stands.** The CI acceptance on `main` is **green again -- 138 passing, none failing, in 5m6s** -- for the first time since 2026-10-22 23:10. It had been red for thirty-three hours, and the last three failures were the applied-hook defect described above: the Console required a declaration origin of every hook event, including the ones in the projection the Runtime publishes, and a projection carries no declaration site. So the applied read could never be read on any Runtime, and the page said "could not be read" for a projection that was there. The fix and its regression test were written by the agent working the playtesting strand alongside this one; they are committed here so the gate is green, because a Console that cannot read a Runtime's applied hook projection is a product defect and shipping it over a red gate would have shipped the defect.
 
@@ -248,7 +248,7 @@ A conclusion the page does not count -- a skipped or neutral run -- is in the sa
 
 **And the count of what is in view says the same thing the filter says.** The success-rate card names the sample's size and then three of its four counters, so its numbers did not add up to the total it named: thirteen of thirty runs were cancelled and nothing on the page said so. The card now names all four counters the target state defines -- successful, failed, in progress and cancelled -- and a run whose conclusion the page does not count is in the sample's total and in nobody's counter, exactly as the target state's success-rate denominator models it.
 
-**The narrowing is applied in the view, not by the page.** The stat cards above the table are about the *sample*, not about the view of it: the success rate and the run counts describe every run the Actions API returned, and they must not shrink because the operator narrowed the table to the failures.
+**The narrowing is applied in the view, not by the page.** The stat cards above the table are about the _sample_, not about the view of it: the success rate and the run counts describe every run the Actions API returned, and they must not shrink because the operator narrowed the table to the failures.
 
 `console/tests/github-filter.test.ts` pins the classification, the four categories, the run the page does not count, the address and its reading, the filter bar's own name and its absence of a submit button, the count of what is in view, and the empty message.
 
@@ -262,18 +262,18 @@ The state facet appears only when the runtime facts were read. Without them ever
 
 The rule the target state states -- "every list that holds more than a handful of rows carries the product's own filter bar" -- needs the sizes measured against the live Console rather than against a fixture, because a fixture holds two rows and would have made every list look short enough to leave alone. Measured at 1440x900 on the live Console:
 
-| Route | Rows | Table height | Screenfuls | Filter bar |
-| --- | --- | --- | --- | --- |
-| `/prompts` | 76 | 6883px | 8 | yes |
-| `/tools` | 56 | 3989px | 5 | yes |
-| `/github` | 30 | 2353px | 3 | yes (runs, by link) |
-| `/skills` | 16 | 1859px | 3 | yes |
-| `/usage` | 25 | 1660px | 2 | yes |
-| `/agents` | 10 | 1673px | 2 | no |
-| `/permissions` | 10 | 999px | 2 | no |
-| `/providers` | 5 | 1040px | 2 | no |
-| `/mcps` | 9 | 722px | 1 | no |
-| `/workspaces` | 5 | 309px | 1 | no |
+| Route          | Rows | Table height | Screenfuls | Filter bar          |
+| -------------- | ---- | ------------ | ---------- | ------------------- |
+| `/prompts`     | 76   | 6883px       | 8          | yes                 |
+| `/tools`       | 56   | 3989px       | 5          | yes                 |
+| `/github`      | 30   | 2353px       | 3          | yes (runs, by link) |
+| `/skills`      | 16   | 1859px       | 3          | yes                 |
+| `/usage`       | 25   | 1660px       | 2          | yes                 |
+| `/agents`      | 10   | 1673px       | 2          | no                  |
+| `/permissions` | 10   | 999px        | 2          | no                  |
+| `/providers`   | 5    | 1040px       | 2          | no                  |
+| `/mcps`        | 9    | 722px        | 1          | no                  |
+| `/workspaces`  | 5    | 309px        | 1          | no                  |
 
 `/providers` is deliberately dense: the target state specifies it as five columns with three controls per role per provider, so its control count is the specified design rather than a defect.
 
@@ -285,12 +285,12 @@ The filter bars answer "too many rows to read". The width of a table answers "ca
 
 A table's width is the sum of its declared column weights, and the Console gives a list table one content column. Measured in the browser against the live Runtime at a 1440x900 viewport, the navigation expanded:
 
-| Route | Declared budget | Content column | Hidden column |
-| --- | --- | --- | --- |
-| `/agents` | 1174 | 1076 | **MCPs** (98px off the right edge) |
-| `/providers` | 1198 | 1076 | **Agent Limits**, cut mid-badge (122px) |
-| `/mcps` | 1302 | 1118 | **Connection** (184px) |
-| `/workspaces` | 1234 | 1118 | **Requests** (116px) |
+| Route         | Declared budget | Content column | Hidden column                           |
+| ------------- | --------------- | -------------- | --------------------------------------- |
+| `/agents`     | 1174            | 1076           | **MCPs** (98px off the right edge)      |
+| `/providers`  | 1198            | 1076           | **Agent Limits**, cut mid-badge (122px) |
+| `/mcps`       | 1302            | 1118           | **Connection** (184px)                  |
+| `/workspaces` | 1234            | 1118           | **Requests** (116px)                    |
 
 The providers table was the worst of the four, because the column it lost was one of the five the target state names as primary, and because the **reasoning-effort selector** -- the third of the three controls every role carries -- lives inside the Roles cell, past the right edge with it. An operator configuring which model serves which role could not see or reach the effort setting without scrolling a table whose own border gave no sign that there was anything to the right.
 
@@ -304,7 +304,15 @@ Measured after the change, at 1440 against the live Runtime and against the fixt
 
 The guards are both halves of the claim. `console/tests/list-table-width.test.ts` pins each view's declared budget against the content column in the fast suite, and fails with the arithmetic when a weight is inflated; `console/e2e/table-width-acceptance.spec.ts` measures the width a table is actually given, in a browser, and asserts that no table is wider than its column and that no list table sits inside a bordered panel. The unit guard was checked against a deliberately inflated weight and failed as it should.
 
+## Every resource says what it is for, and the resource owns the sentence
 
+The header names the surface -- "Providers", "Playtesting" -- and a name on its own does not tell an operator what the surface owns. The target state asks for both: "The page header names the surface and states its purpose".
+
+Thirteen of the fourteen canonical routes did state a purpose. **Playtesting did not**, and neither did the detail page of any of the other thirteen. The reason is the shape of the thing rather than an oversight on one page: the sentence was a prop each page passed to the shell, and the Playtesting page has seven render paths -- the credential-unavailable shell, the unavailable workspace catalogue, the workspace-not-found shell, the overview, the sessions view, the findings view and the compare view -- so the sentence would have had to be written seven times over, and none of the seven was the one an operator reaches by clicking the resource in the navigation. A sentence that has to be repeated seven times is a sentence that is not there.
+
+The sentence now belongs to the resource. `core/src/navigation.ts` holds one sentence per canonical section, beside the navigation that lists them, and the Console's shell resolves it: every route for a resource -- its list, its detail, and the states where the read failed -- says the same thing about it, and no page can state a different one or forget to state one at all. Measured in the browser against the live Runtime and the fixture, all fourteen canonical routes and all seven detail routes now state their resource's sentence.
+
+The guards are in two places. `core/tests/core.test.ts` checks that every canonical section has a sentence, that it is a sentence, that it is short enough to be a line under a title rather than a paragraph beside it, and that no two resources share one. `console/e2e/page-purpose-acceptance.spec.ts` measures every canonical and detail route in a browser and requires the header to state _the canonical sentence_ -- not merely some text -- while a page that reports a missing resource or a failed read is allowed to explain that state instead, because a state page's job is to say what happened.
 
 ## The phone-width sweep
 
@@ -316,11 +324,11 @@ The remaining sub-24px measurements are inline text links in table cells -- a re
 
 ## The navigation's narrow-viewport default
 
-The sidebar's default depends on the viewport: a rail on a narrow screen, the full navigation on a wide one. That default was decided in a post-hydration effect, so the server-rendered page painted the *expanded* navigation first. Measured in Chromium at 390x844, that first paint is 256px of opaque panel over a 390px viewport -- 66% of the screen -- with the page's own `h1` at x=175, underneath it. The stat cards were cut in half, the page's title was unreachable, and without JavaScript the panel stayed: 134px of page visible.
+The sidebar's default depends on the viewport: a rail on a narrow screen, the full navigation on a wide one. That default was decided in a post-hydration effect, so the server-rendered page painted the _expanded_ navigation first. Measured in Chromium at 390x844, that first paint is 256px of opaque panel over a 390px viewport -- 66% of the screen -- with the page's own `h1` at x=175, underneath it. The stat cards were cut in half, the page's title was unreachable, and without JavaScript the panel stayed: 134px of page visible.
 
 The default is a stylesheet decision now, and JavaScript carries only the operator's explicit choice. `app/globals.css` states the narrow default under `@media (max-width: 1279px)`: the navigation is 56px, in flow, beside the content, with the labels hidden and the rail's short brand mark shown. `AppNav` carries `data-nav-preference` -- `auto` when the viewport decides, `collapsed` or `expanded` when the operator has said so -- and the `data-nav-label`, `data-nav-rail-only` and `data-nav-brand-row` hooks the rule needs. The wide viewport is unchanged: 256px beside the page, with 1184px of content at 1440px.
 
-The first paint is now right without JavaScript at all, and it is right *immediately* rather than after the bundle loads -- which matters, because the Console's own server and the Runtime behind it are slow enough that the operator would otherwise watch a panel sit over their page for seconds.
+The first paint is now right without JavaScript at all, and it is right _immediately_ rather than after the bundle loads -- which matters, because the Console's own server and the Runtime behind it are slow enough that the operator would otherwise watch a panel sit over their page for seconds.
 
 Two things were measured and deliberately not reported as defects, because they are artifacts of the measurement rather than of the product. The `next dev` server rebuilds on a poll watcher, and each rebuild took 4-9 seconds and remounted the navigation, so the preference effect appeared not to run; the production build showed the same effect running correctly once its bundle had loaded. And the first sweep's "the effect never runs" conclusion came from the same artifact: the page had rendered but the client bundle had not hydrated yet.
 

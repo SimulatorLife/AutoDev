@@ -55,8 +55,6 @@ export default async function McpsPage(): Promise<React.JSX.Element> {
     ConsolePageShell,
     {
       section,
-      description:
-        "Canonical RuleSync MCP server declarations, role assignments, and target overrides.",
       counts: result.data.valid ? { MCPs: servers.length } : {}
     },
     React.createElement(McpsView, {

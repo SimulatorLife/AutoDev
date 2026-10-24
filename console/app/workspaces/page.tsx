@@ -100,8 +100,6 @@ export default async function WorkspacesPage(): Promise<React.JSX.Element> {
     ConsolePageShell,
     {
       section,
-      description:
-        "Configured repository workspaces, execution scope, playtesting target approvals, and aggregate request usage.",
       counts: { Workspaces: workspaces.length }
     },
     React.createElement(WorkspacesView, { workspaces, approvals, requests })

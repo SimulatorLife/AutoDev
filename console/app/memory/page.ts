@@ -767,8 +767,6 @@ function renderMemoryContent(
     ConsolePageShell,
     {
       section: SECTION,
-      description:
-        "Governed durable claims, raw experiences, lifecycle governance, and bounded outcome cohorts.",
       counts: {
         Memory: data.records.items.length
       }
