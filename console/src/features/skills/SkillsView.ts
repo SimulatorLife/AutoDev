@@ -463,8 +463,12 @@ export function SkillsView({
       React.createElement(StatCard, {
         title: "Role-assigned",
         value: assignedCount,
+        // The denominator is the catalogue, not the installed skills: this card
+        // counts what the execution contract assigns, and a skill it assigns
+        // that is installed nowhere is still assigned -- it is simply
+        // unreachable, and the row says so.
         ...(sourceValidity === true
-          ? { subtitle: `of ${installedSkills.length} configured` }
+          ? { subtitle: `of ${skills.length} in the catalog` }
           : {})
       }),
       React.createElement(StatCard, {

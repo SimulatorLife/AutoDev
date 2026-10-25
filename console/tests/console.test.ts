@@ -6018,7 +6018,7 @@ test("SkillsView distinguishes declared role scope from missing eligibility evid
     })
   );
   assert.match(markup, /Role-assigned/);
-  assert.match(markup, /of 3 configured/);
+  assert.match(markup, /of 3 in the catalog/);
   assert.match(markup, /orchestrator/);
   assert.match(markup, /Unassigned — no agent role can invoke this skill\./);
   assert.match(markup, /Not observed/);
