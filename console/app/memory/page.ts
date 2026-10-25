@@ -768,7 +768,17 @@ function renderMemoryContent(
     {
       section: SECTION,
       counts: {
-        Memory: data.records.items.length
+        // The collection, not the window this read carried.
+        //
+        // The badge counts the resource: the sidebar answers "how much memory
+        // is there", the way the evaluations badge counts the store's own size
+        // rather than the window it was reading. It was counting the rows on
+        // the page instead, so the sidebar said "Memory (5)" while the card
+        // above it said "Durable Records 1204, 5 on this page" -- two numbers
+        // for one resource on one screen, with nothing saying which was which,
+        // and a narrowing that emptied the list made the sidebar read as
+        // though the memory itself had gone.
+        Memory: totalRecords
       }
     },
     storageCallout,

@@ -316,6 +316,14 @@ The name now carries both, beginning with the visible word: **"Enabled: Disable 
 
 The rule lives with the rest of the state-pill vocabulary in `console/src/components/ui/state-pill.ts`, and the model enablement pill uses it too: the agent pill and the model pill are the same control, and two features spelling the same name is how they drift. `console/tests/control-affordances.test.ts` holds the two to the shared rule, and `console/tests/agent-enablement.test.ts` pins what each state says.
 
+## Two numbers for one resource on one screen
+
+The memory page said **1204** in its durable-records card and **5** in the sidebar, and the sidebar's 5 was the number of rows on the page rather than the size of the collection the card was counting. Two numbers for one resource on one screen, with nothing saying which was which -- the same thing the evaluations page had already been corrected for, in the one place on the Console that still had it.
+
+The sidebar counts the resource, so the memory's badge now counts the collection the card counts: **1204**. The consistency is now measured, because it was not measured before: the memory acceptance asserts that the sidebar and the card state the same number.
+
+The memory API reports the _filtered_ total, so a narrowing that matches nothing makes both read zero, and the empty state says why. That is the Runtime's contract rather than the Console's -- the evaluations API reports the store's own size -- and the Console now says one number rather than two.
+
 ## An empty list says which of two things happened
 
 The target state is explicit: "found matching the current criteria" is not "are configured". A list that is empty because the operator narrowed it and a list that is empty because it holds nothing are two different facts, and the message has to say which of them it is -- the second is a claim about something the operator did, so it may only be made when they did it.

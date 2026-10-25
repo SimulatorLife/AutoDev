@@ -98,6 +98,15 @@ test("the page counts the collection rather than the rows on the page", async ({
   await expect(durable).toContainText(String(STORE_CLAIMS));
   await expect(durable).toContainText(`${PAGE_CLAIMS} on this page`);
 
+  // The sidebar counts the same thing. It is the resource's own size, so the
+  // badge and the card cannot be two numbers for one resource on one screen
+  // -- and a narrowing that emptied the list must not make the sidebar read as
+  // though the memory itself had gone.
+  await expect(page.locator('[data-nav-item="memory"]')).toHaveAttribute(
+    "aria-label",
+    `Memory (${STORE_CLAIMS})`
+  );
+
   // The active-claims card is the Runtime's own rollup over the whole
   // filtered collection, not a count of the active rows on the page -- which
   // would have been two.
