@@ -316,6 +316,12 @@ The name now carries both, beginning with the visible word: **"Enabled: Disable 
 
 The rule lives with the rest of the state-pill vocabulary in `console/src/components/ui/state-pill.ts`, and the model enablement pill uses it too: the agent pill and the model pill are the same control, and two features spelling the same name is how they drift. `console/tests/control-affordances.test.ts` holds the two to the shared rule, and `console/tests/agent-enablement.test.ts` pins what each state says.
 
+## The Console's word for a source
+
+The tools page's source filter said **Mcp** where the rest of the Console says **MCP**: the navigation, the page title, the catalogue's own card and the help text that says the operator can pivot to MCPs. The chips derived their label from the value by capitalising it, so "mcp" reached the screen as "Mcp" -- and because the capitalisation was in the stylesheet rather than in the text, a sweep over the rendered pages' text could not see it: the DOM said "mcp", the screen said "Mcp".
+
+A source is a name the operator reads, not an identifier the page stores, so the label is now stated once, next to the values the module owns: "All", "Native", "MCP", "Plugin". The identifiers stay lower-case, because they are identifiers -- the source cell still quotes the catalogue's own "mcp (lsp)" the way the role chips quote the agent ids.
+
 ## Two numbers for one resource on one screen
 
 The memory page said **1204** in its durable-records card and **5** in the sidebar, and the sidebar's 5 was the number of rows on the page rather than the size of the collection the card was counting. Two numbers for one resource on one screen, with nothing saying which was which -- the same thing the evaluations page had already been corrected for, in the one place on the Console that still had it.

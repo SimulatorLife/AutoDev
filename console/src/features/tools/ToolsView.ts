@@ -53,6 +53,7 @@ import { qualifiedToolName, toolId } from "./tool-identity.ts";
 import {
   filterTools,
   isToolSource,
+  TOOL_SOURCE_LABEL,
   toolDetailHref,
   TOOLS_LIST_PATH,
   type ToolsListFilters,
@@ -625,7 +626,9 @@ export function ToolsView({
               key: src,
               href: toolsSourceHref(listFilters, src),
               dataAttributes: { "data-source-filter": src },
-              className: `px-3 py-1 rounded text-xs font-medium capitalize transition-colors ${
+              // The label is the console's word for the source, not the value
+              // capitalised: the value is "mcp", and the Console says "MCP".
+              className: `px-3 py-1 rounded text-xs font-medium transition-colors ${
                 requestedSource === src || (src === "all" && !requestedSource)
                   ? "bg-surface-raised text-accent"
                   : `${MUTED_TEXT_CLASS} hover:text-fg`
@@ -636,7 +639,7 @@ export function ToolsView({
                 ? { "aria-current": "true" }
                 : {})
             },
-            src
+            TOOL_SOURCE_LABEL[src]
           )
         )
       ),

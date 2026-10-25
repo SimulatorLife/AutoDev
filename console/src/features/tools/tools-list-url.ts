@@ -37,6 +37,24 @@ export const TOOLS_LIST_PATH = "/tools";
 export const TOOL_SOURCE_FILTERS = ["all", "native", "mcp", "plugin"] as const;
 
 /**
+ * The console's word for each source.
+ *
+ * A source is a name the operator reads, not an identifier the page stores, so
+ * it is stated here rather than derived from the value. Capitalising the value
+ * is what the filter chips used to do, and it is how "mcp" reached the screen
+ * as "Mcp" -- while the rest of the Console says "MCP", in the navigation, in
+ * the page title and in the catalogue's own card.
+ */
+export const TOOL_SOURCE_LABEL: Readonly<
+  Record<(typeof TOOL_SOURCE_FILTERS)[number], string>
+> = {
+  all: "All",
+  native: "Native",
+  mcp: "MCP",
+  plugin: "Plugin"
+};
+
+/**
  * The value of a query parameter.
  *
  * A repeated parameter takes its first value, which is what the browser's own

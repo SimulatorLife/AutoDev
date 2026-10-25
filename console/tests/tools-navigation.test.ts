@@ -149,6 +149,21 @@ test("the source filter keeps the active role and resets to /tools when 'all' is
     `expected one button per source, got: ${sources.map((entry) => `${entry.value}->${entry.href}`).join(", ")}`
   );
 
+  // The chip says the console's word for the source, not the value with its
+  // first letter capitalised. "mcp" reached the screen as "Mcp" that way,
+  // while the navigation, the page title and the catalogue's own card all say
+  // "MCP".
+  const chipText = (source: string): string =>
+    new RegExp(
+      String.raw`<a\b(?=[^>]*data-source-filter="${source}")[^>]*>([\s\S]*?)</a>`,
+      "u"
+    ).exec(markup)?.[1] ?? "";
+  assert.deepEqual(
+    ["all", "native", "mcp", "plugin"].map((source) => chipText(source)),
+    ["All", "Native", "MCP", "Plugin"],
+    "the source chips spell the console's words"
+  );
+
   // `all` strips the source query param so the URL is the unfiltered one; the
   // role must be preserved through that change.
   const all = sources.find((entry) => entry.value === "all");
