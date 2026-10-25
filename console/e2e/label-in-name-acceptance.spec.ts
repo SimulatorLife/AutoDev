@@ -37,6 +37,8 @@ import {
 
 const ROUTES = [...CANONICAL_ROUTES, ...DETAIL_ROUTES];
 
+const CONTROLS = "a[href], button, [role='button'], [role='link']";
+
 for (const route of ROUTES) {
   test(`${route.path} names every control after what it shows`, async ({
     page
@@ -44,60 +46,58 @@ for (const route of ROUTES) {
     await page.goto(route.path);
     await waitForPageContent(page);
 
-    const problems = await page.evaluate(() => {
-      const normalize = (value: string): string =>
-        value
-          .toLowerCase()
-          .replaceAll(/[^a-z0-9]+/g, " ")
-          .trim();
-
-      const found: string[] = [];
-      for (const element of document.querySelectorAll(
-        "a[href], button, [role='button'], [role='link']"
-      )) {
+    const controls = page.locator(CONTROLS);
+    // The rendered text, which is what an operator reads: the DOM's own text
+    // content would also carry the screen-reader-only text and would run two
+    // inline elements together.
+    const shown = await controls.allInnerTexts();
+    const stated = await controls.evaluateAll((elements) =>
+      elements.map((element) => {
         if (
           element.getAttribute("aria-hidden") === "true" ||
           element.closest("[aria-hidden='true']") !== null
         ) {
-          continue;
+          return null;
         }
-        const visible = (element.textContent ?? "")
+        const aria = element.getAttribute("aria-label");
+        if (aria !== null) return aria;
+        const labelledBy = element.getAttribute("aria-labelledby");
+        if (labelledBy === null) return "";
+        return labelledBy
+          .split(/\s+/)
+          .map(
+            (id) => document.querySelector(`[id="${id}"]`)?.textContent ?? ""
+          )
+          .join(" ")
           .replaceAll(/\s+/g, " ")
           .trim();
-        if (visible.length === 0) continue;
+      })
+    );
 
-        // The stated name: an aria-label, or the elements an
-        // aria-labelledby points at.
-        let name = element.getAttribute("aria-label");
-        if (name === null) {
-          const labelledBy = element.getAttribute("aria-labelledby");
-          if (labelledBy !== null) {
-            name = labelledBy
-              .split(/\s+/)
-              .map(
-                (id) =>
-                  document.querySelector(`[id="${id}"]`)?.textContent ?? ""
-              )
-              .join(" ")
-              .replaceAll(/\s+/g, " ")
-              .trim();
-          }
-        }
-        // No stated name: the control's name is its own content, so it
-        // contains it by definition.
-        if (name === null || name.trim().length === 0) continue;
+    const normalize = (value: string): string =>
+      value
+        .toLowerCase()
+        .replaceAll(/[^a-z0-9]+/g, " ")
+        .trim();
 
-        const stated = normalize(name);
-        const missing = normalize(visible)
-          .split(" ")
-          .filter((word) => word.length > 1 && !stated.includes(word));
-        if (missing.length > 0) {
-          found.push(
-            `"${visible}" names itself "${name}", which does not say ${missing.join(", ")}`
-          );
-        }
+    const problems: string[] = [];
+    shown.forEach((visible, index) => {
+      const name = stated[index];
+      if (name === null || name === undefined) return;
+      const words = visible.replaceAll(/\s+/g, " ").trim();
+      if (words.length === 0) return;
+      // No stated name: the control's name is its own content, so it contains
+      // it by definition.
+      if (name.trim().length === 0) return;
+      const spoken = normalize(name);
+      const missing = normalize(words)
+        .split(" ")
+        .filter((word) => word.length > 1 && !spoken.includes(word));
+      if (missing.length > 0) {
+        problems.push(
+          `"${words}" names itself "${name}", which does not say ${missing.join(", ")}`
+        );
       }
-      return found;
     });
 
     expect(
