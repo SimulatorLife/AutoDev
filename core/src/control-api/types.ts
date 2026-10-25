@@ -23,6 +23,7 @@ import type {
   MemoryStatusCounts
 } from "../memory/types.ts";
 import type { SandboxMode } from "../permissions/types.ts";
+import type { SkillScope } from "../skills/scope.ts";
 import type {
   HumanPlaytestStudy,
   PlaytestBatch,
@@ -757,6 +758,25 @@ export interface ControlApiSkillsResponse {
     readonly description: string;
     readonly path: string;
     readonly roles: readonly string[];
+    /**
+     * Where the skill is installed, read live.
+     *
+     * `null` when the skill is in the catalogue and installed nowhere: a
+     * skill no agent can reach is a configuration defect, and the Console
+     * says so rather than listing it as though it were live.
+     */
+    readonly scope: SkillScope | null;
+    /** The directory the skill was found in. */
+    readonly scopeLocation: string | null;
+    /**
+     * The workspace a repo-scoped skill belongs to.
+     *
+     * `null` for every other scope, and for a repo-scoped skill whose
+     * repository is not one of the configured workspaces. A repo-scoped
+     * skill is that workspace's skill: its roles are assigned inside that
+     * workspace and nowhere else.
+     */
+    readonly workspace: string | null;
   }[];
   readonly unresolvedAssignments: readonly {
     readonly name: string;

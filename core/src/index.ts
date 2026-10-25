@@ -14,6 +14,7 @@ export * from "./playtesting/index.ts";
 export * from "./prompts/types.ts";
 export * from "./reconciliation/index.ts";
 export * from "./routing/types.ts";
+export * from "./skills/scope.ts";
 export * from "./skills/types.ts";
 export * from "./tools/types.ts";
 export * from "./usage/rules.ts";
