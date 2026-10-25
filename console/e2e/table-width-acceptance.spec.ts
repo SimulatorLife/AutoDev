@@ -35,16 +35,12 @@ const DESKTOP_WIDTH = 1440;
 /**
  * The routes that render a list table.
  *
- * The hooks, evaluations, memory and playtesting pages render their own
- * surfaces rather than a catalogue table, so they are measured by the pages
- * that own the tables they do have.
+ * The hooks and playtesting pages render their own surfaces rather than a
+ * catalogue table, so they are measured by the pages that own the tables they
+ * do have. Every other canonical resource renders one.
  */
 const LIST_ROUTES = CANONICAL_ROUTES.filter(
-  (route) =>
-    route.path !== "/hooks" &&
-    route.path !== "/evaluations" &&
-    route.path !== "/memory" &&
-    route.path !== "/playtesting"
+  (route) => route.path !== "/hooks" && route.path !== "/playtesting"
 );
 
 test.use({ viewport: { width: DESKTOP_WIDTH, height: 900 } });
