@@ -398,6 +398,14 @@ The memory now says the same thing the other lists say, and the scope module own
 
 Getting the browser acceptance to check it turned up a second thing. The Console's own e2e fixture answered the memory records read with the whole catalogue whatever the query said, while the Runtime narrows the read by all three (`the service takes all three`). So the Console's memory filter bar -- one of the four the target state names -- could not be exercised in the browser at all: a narrowed read came back with every record and the page showed a full list under a filter that was never applied. The fixture now narrows the read the way the Runtime does, and the acceptance narrows each searchable list with a query that cannot match and requires the empty state to name the criteria.
 
+## Every text the Console renders is legible
+
+The Console is dark-only, and a dark surface is where contrast goes wrong: a muted grey that reads well on white disappears on a near-black panel, and the operator is left with a page that looks like it said something.
+
+Nothing failed the measurement when it was first taken, which is the point of taking it. The console's muted greys, its `text-fg-inverse` on the accent fill, its badge tones and its meta lines all clear WCAG 1.4.3's 4.5:1 for body text and 3:1 for large text, and the text of an inactive control is exempt -- a disabled button's label may be faint, because the operator cannot act on it either way.
+
+`console/e2e/text-contrast-acceptance.spec.ts` is the guard, and it measures the browser's own output rather than the stylesheet: the colour it painted the text with, against the colour it painted behind it, with every transparent layer composited and every ancestor's opacity applied. The measurement was checked against a deliberately faint paragraph, which it flags, and a deliberately faint disabled control, which it leaves alone -- a guard that cannot fail is not a guard.
+
 ## Every landmark has a name, and the write surfaces are not landmarks
 
 A landmark is a region an operator can jump to, and they find it by its name: the breadcrumb trail is found as "Breadcrumb" rather than as the first navigation on the page, and the filter bars are found as "Usage filters" or "Skill filters". The Console's own filter bar says why it names its form -- "an accessible name, so the form is a named landmark rather than an anonymous one" -- and that rule was not held everywhere.
