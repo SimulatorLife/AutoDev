@@ -5,9 +5,9 @@ import { isWholePageNavigationPending } from "./whole-page-navigation.ts";
  *
  * A refresh that lands while the Console is navigating takes the navigation's
  * place in the router: Next.js keeps the navigation it is running as a promise
- * in its state, and `router.refresh()` replaces that promise with its own, so
- * the navigation never applies its page -- the address bar does not move and
- * the page the operator asked for does not arrive.
+ * in its state, and a refresh replaces that promise with its own, so the
+ * navigation never applies its page -- the address bar does not move and the
+ * page the operator asked for does not arrive.
  *
  * It is not a rare race. The refresh runs every five seconds and the
  * navigation to the densest page in the Console -- the providers table, with a
