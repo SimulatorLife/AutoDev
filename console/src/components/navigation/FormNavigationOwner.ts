@@ -645,7 +645,10 @@ function restoreScrollAndFocus(snapshot: ScrollAndFocusSnapshot): void {
   }
 }
 
-async function handleGetSubmission(
+// The GET submission has nothing to await: the navigation is fired the way
+// its POST sibling fires it, and the scroll and focus are restored here.
+// The promise is the caller's return value, so it stays one.
+function handleGetSubmission(
   actionUrl: URL,
   params: URLSearchParams,
   currentBase: string,
@@ -684,12 +687,12 @@ async function handleGetSubmission(
   }
 
   restoreScrollAndFocus(snapshot);
-  return {
+  return Promise.resolve({
     intercepted: true,
     method: "GET",
     destination: destHref,
     status: "submitting"
-  };
+  });
 }
 
 const SKILL_PROMPT_SAVE_FAILURES = new Set([

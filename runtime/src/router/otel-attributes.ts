@@ -41,12 +41,28 @@ export const AUTODEV_SPAWN_MECHANISM_ALIASES = [
   "spawn_mechanism",
   "spawn.mechanism"
 ];
-export const AUTODEV_SKILL_ALIASES = ["skill", "skill_name", "skill.name"];
+export const AUTODEV_SKILL_ALIASES = [
+  "skill",
+  "skill_name",
+  "skill.name",
+  "autodev.skill.name"
+];
+/**
+ * The attribute names an MCP server can be named by.
+ *
+ * `mcp.server.name` and `mcp.connector.name` are here because the Runtime's
+ * own MCP client writes those, and a span whose server cannot be named is a
+ * span that belongs to no server: the call is counted, and the Console shows
+ * the MCP as unused. The aliases are read in order, so the first name that is
+ * present wins.
+ */
 export const AUTODEV_MCP_SERVER_ALIASES = [
   "server_name",
   "serverName",
   "server",
-  "mcp_server"
+  "mcp_server",
+  "mcp.server.name",
+  "mcp.connector.name"
 ];
 export const AUTODEV_SPAWN_LOG_EVENTS = new Set([
   "codex.subagent_spawn",

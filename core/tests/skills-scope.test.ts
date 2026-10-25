@@ -65,7 +65,10 @@ test("the skills Codex ships with are read from the system directory", () => {
 });
 
 test("a candidate names the skill it is looking for", () => {
-  for (const candidate of skillScopeCandidates("autodev-codex-request-capture", ROOTS)) {
+  for (const candidate of skillScopeCandidates(
+    "autodev-codex-request-capture",
+    ROOTS
+  )) {
     assert.match(candidate.directory, /autodev-codex-request-capture$/u);
   }
 });

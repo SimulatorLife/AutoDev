@@ -439,13 +439,19 @@ export function toolServerAttribute(
   attributes: Record<string, unknown>,
   fallback: string = ""
 ): string {
+  // The names a server can be recorded under. `mcp.server.name` and
+  // `mcp.connector.name` are the names the Runtime's own MCP client writes;
+  // a call whose server cannot be named is a call that belongs to no server,
+  // and the Console then shows that MCP as unused.
   return readNamedAttribute(
     attributes,
     fallback,
     "server",
     "mcp_server",
     "serverName",
-    "server_name"
+    "server_name",
+    "mcp.server.name",
+    "mcp.connector.name"
   );
 }
 
@@ -453,12 +459,17 @@ export function toolNameAttribute(
   attributes: Record<string, unknown>,
   fallback: string = "unknown-tool"
 ): string {
+  // `tool.name` and `gen_ai.tool.name` are the names the tool-call metrics
+  // carry. A call whose tool cannot be named is counted as "unknown-tool",
+  // which is a tool nobody has heard of.
   return readNamedAttribute(
     attributes,
     fallback,
     "tool",
     "toolName",
-    "tool_name"
+    "tool_name",
+    "tool.name",
+    "gen_ai.tool.name"
   );
 }
 

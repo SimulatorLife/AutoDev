@@ -102,9 +102,9 @@ function destinationKeyOf(requestUrl: string): string | null {
  * it is the one thing the owner can read without a clock.
  */
 function isAtDestination(href: string): boolean {
-  if (typeof window === "undefined") return false;
-  const url = new URL(href, window.location.href);
-  const current = window.location;
+  if (globalThis.window === undefined) return false;
+  const url = new URL(href, globalThis.location.href);
+  const current = globalThis.location;
   return current.pathname === url.pathname && current.search === url.search;
 }
 
@@ -120,7 +120,8 @@ const MAX_ATTEMPTS = 3;
 let pendingNavigation = 0;
 
 /** The waiter of the navigation the owner is on, and its destination. */
-let activeWaiter: { readonly key: string; readonly run: () => void } | null = null;
+let activeWaiter: { readonly key: string; readonly run: () => void } | null =
+  null;
 
 /** The observer that reports the requests that carry the answers. */
 let answerObserver: PerformanceObserver | null = null;

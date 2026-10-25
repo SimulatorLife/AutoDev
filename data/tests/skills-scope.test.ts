@@ -53,7 +53,10 @@ function writeGitConfig(repositoryRoot: string, url: string): void {
 test("a skill installed in the repository is repo-scoped, and belongs to that repository's workspace", () => {
   const box = sandbox();
   try {
-    writeGitConfig(box.repositoryRoot, "https://github.com/SimulatorLife/AutoDev.git");
+    writeGitConfig(
+      box.repositoryRoot,
+      "https://github.com/SimulatorLife/AutoDev.git"
+    );
     skillDirectory(
       path.join(box.repositoryRoot, ".agents", "skills"),
       "autodev-codex-request-capture"
@@ -126,7 +129,10 @@ test("a skill the operator keeps in the Codex home is user-scoped", () => {
 test("a skill Codex ships with is system-scoped", () => {
   const box = sandbox();
   try {
-    skillDirectory(path.join(box.codexHome, "skills", ".system"), "skill-creator");
+    skillDirectory(
+      path.join(box.codexHome, "skills", ".system"),
+      "skill-creator"
+    );
     const scopes = resolveSkillScopes(["skill-creator"], {
       roots: {
         home: box.home,
@@ -143,7 +149,10 @@ test("a skill Codex ships with is system-scoped", () => {
 test("a skill installed in both the repository and the home is the repository's", () => {
   const box = sandbox();
   try {
-    skillDirectory(path.join(box.repositoryRoot, ".agents", "skills"), "opentelemetry");
+    skillDirectory(
+      path.join(box.repositoryRoot, ".agents", "skills"),
+      "opentelemetry"
+    );
     skillDirectory(path.join(box.home, ".agents", "skills"), "opentelemetry");
     const scopes = resolveSkillScopes(["opentelemetry"], {
       roots: {
@@ -179,8 +188,14 @@ test("a skill installed nowhere is absent rather than scope-less", () => {
 test("a repository that is not a configured workspace belongs to no workspace", () => {
   const box = sandbox();
   try {
-    writeGitConfig(box.repositoryRoot, "https://github.com/other/OtherProject.git");
-    skillDirectory(path.join(box.repositoryRoot, ".agents", "skills"), "opentelemetry");
+    writeGitConfig(
+      box.repositoryRoot,
+      "https://github.com/other/OtherProject.git"
+    );
+    skillDirectory(
+      path.join(box.repositoryRoot, ".agents", "skills"),
+      "opentelemetry"
+    );
     const scopes = resolveSkillScopes(["opentelemetry"], {
       roots: {
         home: box.home,
@@ -199,7 +214,10 @@ test("a repository that is not a configured workspace belongs to no workspace", 
 test("the workspace is read from the repository's own remote", () => {
   const box = sandbox();
   try {
-    writeGitConfig(box.repositoryRoot, "git@github.com:SimulatorLife/AutoDev.git");
+    writeGitConfig(
+      box.repositoryRoot,
+      "git@github.com:SimulatorLife/AutoDev.git"
+    );
     assert.equal(
       readRepositoryWorkspaceId(box.repositoryRoot, box.workspaces),
       "SimulatorLife/AutoDev"
@@ -224,9 +242,14 @@ test("a repository with no remote belongs to no workspace", () => {
 test("the remote a repository names is matched against the workspace catalogue", () => {
   const box = sandbox();
   try {
-    writeGitConfig(box.repositoryRoot, "https://github.com/SimulatorLife/AutoDev.git");
+    writeGitConfig(
+      box.repositoryRoot,
+      "https://github.com/SimulatorLife/AutoDev.git"
+    );
     assert.equal(
-      readRepositoryWorkspaceId(box.repositoryRoot, ["SimulatorLife/RacingGame"]),
+      readRepositoryWorkspaceId(box.repositoryRoot, [
+        "SimulatorLife/RacingGame"
+      ]),
       null
     );
   } finally {
@@ -248,7 +271,9 @@ test("a remote URL names an owner and a repository", () => {
     "SimulatorLife/AutoDev"
   );
   assert.equal(
-    projectIdFromRemoteUrl("https://token@github.com/SimulatorLife/AutoDev.git"),
+    projectIdFromRemoteUrl(
+      "https://token@github.com/SimulatorLife/AutoDev.git"
+    ),
     "SimulatorLife/AutoDev"
   );
 });

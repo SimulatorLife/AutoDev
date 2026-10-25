@@ -238,9 +238,7 @@ test("a navigation can replace the destination instead of pushing it", () => {
   const { router, pushes, replacements } = createRouter();
   navigateToWholePage(router, "/agents/default", "replace");
   assert.deepEqual(pushes, []);
-  assert.deepEqual(replacements, [
-    { href: "/agents/default", scroll: false }
-  ]);
+  assert.deepEqual(replacements, [{ href: "/agents/default", scroll: false }]);
 });
 
 test("a navigation carries the scroll it was given", () => {
