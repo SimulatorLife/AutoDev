@@ -11702,13 +11702,21 @@ test("View adapters translate Control API responses without inventing data", () 
         name: "playwright",
         description: "Run browser checks.",
         path: ".rulesync/skills/playwright/SKILL.md",
-        roles: ["browser-tester", "validator"]
+        roles: ["browser-tester", "validator"],
+        // The catalogue holds them; neither is installed anywhere, so the scope
+        // is unobserved rather than guessed.
+        scope: null,
+        scopeLocation: null,
+        workspace: null
       },
       {
         name: "audit",
         description: "Audit catalog state.",
         path: ".rulesync/skills/audit/SKILL.md",
-        roles: []
+        roles: [],
+        scope: null,
+        scopeLocation: null,
+        workspace: null
       }
     ],
     unresolvedAssignments: [{ name: "missing", roles: ["worker"] }],

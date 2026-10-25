@@ -18,6 +18,25 @@ import {
   type SkillScopeRoots
 } from "@simulatorlife/autodev-core";
 
+/**
+ * The `url = ...` line of a git remote, and the `gitdir: ...` line of a `.git`
+ * file.
+ *
+ * The value is captured from its first non-space character, so the pattern
+ * cannot trade the whitespace it skips against the value it takes: a reader
+ * that lets those two exchange characters can be made to spend quadratic time
+ * on a line that does not match.
+ */
+const REMOTE_URL_PATTERN = /^url\s*=\s*(\S.*)$/u;
+const GITDIR_PATTERN = /^gitdir:\s*(\S.*)$/mu;
+const REMOTE_SECTION_PATTERN = /^\[remote\s+"[^"]+"\]$/u;
+const URL_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:\/\//iu;
+const URL_CREDENTIALS_PATTERN = /^[^/@]*@/u;
+const URL_PATH_PREFIX_PATTERN = /^[^/:]+[:/]/u;
+const GIT_SUFFIX_PATTERN = /\.git$/gu;
+const SLASH_EDGES_PATTERN = /^\/+|\/+$/gu;
+const SEGMENT_PATTERN = /^[^/\s]+$/u;
+
 export interface SkillScopeReadOptions {
   readonly roots: SkillScopeRoots;
   /**
@@ -108,13 +127,15 @@ function repositoryRemoteIds(repositoryRoot: string): readonly string[] {
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (trimmed.startsWith("[")) {
-      inRemote = /^\[remote\s+"[^"]+"\]$/u.test(trimmed);
+      inRemote = REMOTE_SECTION_PATTERN.test(trimmed);
       continue;
     }
     if (!inRemote) continue;
-    const match = /^url\s*=\s*(.+)$/u.exec(trimmed);
+    const match = REMOTE_URL_PATTERN.exec(trimmed);
     if (match === null) continue;
-    const id = projectIdFromRemoteUrl(match[1].trim());
+    const url = match[1];
+    if (url === undefined) continue;
+    const id = projectIdFromRemoteUrl(url.trim());
     if (id !== null && !ids.includes(id)) ids.push(id);
   }
   return ids;
@@ -132,14 +153,17 @@ function gitConfigPath(repositoryRoot: string): string | null {
     return path.join(dotGit, "config");
   }
   if (!existsSync(dotGit)) return null;
+  let pointer: string;
   try {
-    const pointer = readFileSync(dotGit, "utf8");
+    pointer = readFileSync(dotGit, "utf8");
   } catch {
     return null;
   }
-  const match = /^gitdir:\s*(.+)$/mu.exec(pointer);
+  const match = GITDIR_PATTERN.exec(pointer);
   if (match === null) return null;
-  const config = path.join(match[1].trim(), "config");
+  const gitDir = match[1];
+  if (gitDir === undefined) return null;
+  const config = path.join(gitDir.trim(), "config");
   return existsSync(config) ? config : null;
 }
 
@@ -152,17 +176,20 @@ function gitConfigPath(repositoryRoot: string): string | null {
  * workspace.
  */
 export function projectIdFromRemoteUrl(url: string): string | null {
-  const withoutScheme = url.replace(/^[a-z][a-z0-9+.-]*:\/\//iu, "");
-  const withoutCredentials = withoutScheme.replace(/^[^/@]*@/u, "");
-  const path = withoutCredentials.replace(/^[^/:]+[:/]/u, "");
-  const segments = path
-    .replace(/\.git$/u, "")
-    .replace(/^\/+|\/+$/gu, "")
+  const withoutScheme = url.replace(URL_SCHEME_PATTERN, "");
+  const withoutCredentials = withoutScheme.replace(URL_CREDENTIALS_PATTERN, "");
+  const withoutHost = withoutCredentials.replace(URL_PATH_PREFIX_PATTERN, "");
+  const segments = withoutHost
+    .replaceAll(GIT_SUFFIX_PATTERN, "")
+    .replaceAll(SLASH_EDGES_PATTERN, "")
     .split("/")
     .filter((segment) => segment.length > 0);
   if (segments.length < 2) return null;
-  const owner = segments[segments.length - 2];
-  const repository = segments[segments.length - 1];
-  if (!/^[^/\s]+$/u.test(owner) || !/^[^/\s]+$/u.test(repository)) return null;
+  const owner = segments.at(-2);
+  const repository = segments.at(-1);
+  if (owner === undefined || repository === undefined) return null;
+  if (!SEGMENT_PATTERN.test(owner) || !SEGMENT_PATTERN.test(repository)) {
+    return null;
+  }
   return `${owner}/${repository}`;
 }
