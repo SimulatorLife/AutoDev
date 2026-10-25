@@ -398,6 +398,16 @@ The memory now says the same thing the other lists say, and the scope module own
 
 Getting the browser acceptance to check it turned up a second thing. The Console's own e2e fixture answered the memory records read with the whole catalogue whatever the query said, while the Runtime narrows the read by all three (`the service takes all three`). So the Console's memory filter bar -- one of the four the target state names -- could not be exercised in the browser at all: a narrowed read came back with every record and the page showed a full list under a filter that was never applied. The fixture now narrows the read the way the Runtime does, and the acceptance narrows each searchable list with a query that cannot match and requires the empty state to name the criteria.
 
+## The focus order is the page's own
+
+The keyboard reaches a control in the order the page puts it in, and that is the order a screen reader user expects as well. A control taken out of that order -- a positive `tabindex` -- is a control the keyboard reaches before the page has said anything, and it is the usual way a focus bug gets "fixed" by making the page worse.
+
+The other half is a control that is hidden from assistive technology but still takes focus: a screen reader user tabs into something nobody can name, and the page has told them nothing about where they are.
+
+`console/e2e/focus-order-acceptance.spec.ts` holds both rules, and the sweep that found the class found nothing to fix -- which is the point of taking it: the rules hold, and this is what holds them. The sweep was checked against a deliberately reordered link and a deliberately hidden button, and it flags both.
+
+The same sweep looked for a third thing and found none of it: a `<button>` with no `type` inside a `<form>` submits that form when it is pressed, whether it was meant to or not, and every button the Console renders says what it does.
+
 ## Every text the Console renders is legible
 
 The Console is dark-only, and a dark surface is where contrast goes wrong: a muted grey that reads well on white disappears on a near-black panel, and the operator is left with a page that looks like it said something.
