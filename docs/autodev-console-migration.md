@@ -519,6 +519,8 @@ It is not a rare race either. The refresh runs every five seconds, and the navig
 
 **So the refresh waits for the navigation.** The counts it refreshes are the counts of the page the operator is on, and a page that is being replaced does not need its counts refreshed. The owner knows whether it is navigating -- the address bar is the only place a committed navigation shows itself, and it is the one thing the owner can read without a clock -- and the refresh asks before it refreshes.
 
+The question has one owner, `shouldRefreshLiveCounts`, so that the rule can be pinned rather than restated: `console/tests/live-count-refresh.test.ts` asserts that a Console that is not navigating refreshes its counts, that a navigation the owner has started and the address bar has not moved holds the refresh back, and that the refresh resumes when the address bar has moved.
+
 The CI's own record says the fix landed where it was aimed. The acceptance run for the fix failed on the navigation _back_ to the page the session started on -- "Expected pattern: /agents$/u, Received string: .../providers" -- and not on the navigation _to_ the providers page, which is what every earlier failure was. The navigation to the densest page commits now, and the one failure that is left is the one the console's own answer-driven leave causes: the leave arrives while the navigation to the page the session started on is still in flight, and Next.js discards a navigation in flight when a newer one arrives.
 
 Four ways of changing that leave were measured, and none of them is in the tree.

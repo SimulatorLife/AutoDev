@@ -9,11 +9,11 @@ import {
   NEUTRAL_TONE_CLASS,
   SUCCESS_TONE_CLASS
 } from "../ui/tones.ts";
-import { registerLiveCountRefresh } from "./live-count-refresh.ts";
 import {
-  isWholePageNavigationPending,
-  navigateToWholePage
-} from "./whole-page-navigation.ts";
+  registerLiveCountRefresh,
+  shouldRefreshLiveCounts
+} from "./live-count-refresh.ts";
+import { navigateToWholePage } from "./whole-page-navigation.ts";
 
 export type FormNavigationStatus =
   "idle" | "submitting" | "completed" | "error";
@@ -1258,7 +1258,7 @@ export function FormNavigationOwner({
       // So the refresh waits. The counts it refreshes are the counts of the
       // page the operator is on, and a page that is being replaced does not
       // need its counts refreshed.
-      if (isWholePageNavigationPending()) return;
+      if (!shouldRefreshLiveCounts()) return;
       navigationRouter.refresh();
     }, globalThis.window);
   }, [navigationRouter]);

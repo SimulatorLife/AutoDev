@@ -262,8 +262,8 @@ export function isWholePageNavigationPending(): boolean {
   return !isAtDestination(activeDestination);
 }
 
-/** Forget the recorded answers; the tests need a clean slate. */
-export function clearWholePageRequestsForTests(): void {
+/** Forget the navigation the owner was on; the tests need a clean slate. */
+export function clearWholePageNavigationForTests(): void {
   activeWaiter = null;
   activeDestination = null;
   pendingNavigation = 0;

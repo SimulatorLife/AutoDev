@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  clearWholePageRequestsForTests,
+  clearWholePageNavigationForTests,
   isLocalWholePageDestination,
   isWholePageNavigationPending,
   navigateToWholePage,
@@ -65,7 +65,7 @@ async function settle(): Promise<void> {
 }
 
 test("the warm-up asks for the destination's whole page", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   const { router, prefetches } = createRouter();
   warmUpWholePage(router, "/providers/claude");
   assert.deepEqual(
@@ -76,7 +76,7 @@ test("the warm-up asks for the destination's whole page", () => {
 });
 
 test("the warm-up leaves an external destination to the browser", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   const { router, prefetches } = createRouter();
   warmUpWholePage(router, "https://example.test/docs");
   assert.deepEqual(prefetches, []);
@@ -89,7 +89,7 @@ test("a destination outside the Console is not the Console's to navigate", () =>
 });
 
 test("a navigation asks for the destination's whole page before it leaves", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   clearBrowserAddress();
   const { router, prefetches, pushes } = createRouter();
   navigateToWholePage(router, "/providers/claude", "push", { scroll: false });
@@ -102,7 +102,7 @@ test("a navigation asks for the destination's whole page before it leaves", () =
 });
 
 test("a navigation leaves in the same turn, without waiting for an answer", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   clearBrowserAddress();
   const { router, pushes } = createRouter();
   // The answer to the destination's page is carried by a request, and a
@@ -124,7 +124,7 @@ test("a navigation leaves in the same turn, without waiting for an answer", () =
 });
 
 test("a destination the router already holds still navigates", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   clearBrowserAddress();
   const { router, pushes } = createRouter();
   // The router answers such a destination from its cache, and the browser
@@ -135,7 +135,7 @@ test("a destination the router already holds still navigates", () => {
 });
 
 test("the navigation leaves again when the answer arrives", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   clearBrowserAddress();
   const { router, pushes } = createRouter();
   // A navigation that leaves before the router holds the destination's page
@@ -152,7 +152,7 @@ test("the navigation leaves again when the answer arrives", () => {
 });
 
 test("the navigation keeps leaving until the address bar has moved", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   clearBrowserAddress();
   const { router, pushes } = createRouter();
   // The router does not always commit a navigation that answers for itself,
@@ -170,7 +170,7 @@ test("the navigation keeps leaving until the address bar has moved", () => {
 });
 
 test("the navigation stops leaving once it has left often enough", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   clearBrowserAddress();
   const { router, pushes } = createRouter();
   // The number of leaves is bounded: a navigation that never commits must not
@@ -187,7 +187,7 @@ test("the navigation stops leaving once it has left often enough", () => {
 });
 
 test("a navigation that already committed is not left a second time", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   setBrowserAddress("/providers/claude");
   const { router, pushes } = createRouter();
   navigateToWholePage(router, "/providers/claude", "push");
@@ -201,7 +201,7 @@ test("a navigation that already committed is not left a second time", () => {
 });
 
 test("another destination's answer does not move this navigation", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   clearBrowserAddress();
   const { router, pushes } = createRouter();
   navigateToWholePage(router, "/providers/claude", "push");
@@ -210,7 +210,7 @@ test("another destination's answer does not move this navigation", () => {
 });
 
 test("a newer navigation replaces the one that is waiting", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   clearBrowserAddress();
   const { router, pushes, replacements } = createRouter();
   navigateToWholePage(router, "/providers/claude", "push");
@@ -225,7 +225,7 @@ test("a newer navigation replaces the one that is waiting", () => {
 });
 
 test("the owner knows it is navigating until the address bar has moved", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   clearBrowserAddress();
   const { router } = createRouter();
   // The live-count refresh asks this question before it refreshes, because a
@@ -251,7 +251,7 @@ test("the owner knows it is navigating until the address bar has moved", () => {
 });
 
 test("a navigation leaves an external destination to the browser", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   clearBrowserAddress();
   const { router, prefetches, pushes } = createRouter();
   navigateToWholePage(router, "https://example.test/docs", "push");
@@ -260,7 +260,7 @@ test("a navigation leaves an external destination to the browser", () => {
 });
 
 test("a navigation can replace the destination instead of pushing it", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   clearBrowserAddress();
   const { router, pushes, replacements } = createRouter();
   navigateToWholePage(router, "/agents/default", "replace");
@@ -269,7 +269,7 @@ test("a navigation can replace the destination instead of pushing it", () => {
 });
 
 test("a navigation carries the scroll it was given", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   clearBrowserAddress();
   const { router, pushes } = createRouter();
   navigateToWholePage(router, "/providers/claude", "push", { scroll: true });
@@ -277,7 +277,7 @@ test("a navigation carries the scroll it was given", () => {
 });
 
 test("a search parameter is part of the destination's identity", () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   clearBrowserAddress();
   const { router, prefetches, pushes } = createRouter();
   navigateToWholePage(router, "/tools?source=mcp", "push");
@@ -286,7 +286,7 @@ test("a search parameter is part of the destination's identity", () => {
 });
 
 test("the navigation does not run on the page's clock", async () => {
-  clearWholePageRequestsForTests();
+  clearWholePageNavigationForTests();
   clearBrowserAddress();
   const { router, pushes } = createRouter();
   // The browser acceptance holds the page's clock still on purpose: a feedback
