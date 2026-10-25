@@ -352,6 +352,16 @@ The guards are both halves of the claim. `console/tests/list-table-width.test.ts
 
 **A re-budget has to be checked against the content, not only against the container.** Re-measuring each column against the widest _discrete item_ it holds -- the chip, the badge, the path segment -- found two columns sitting exactly on their limit, and one of them was cutting what it had held whole: the agents table's provider chip, `antigravity`, was cut at its last glyph at every row that named a long provider. The weights now carry the measured item rather than the column's share, and the providers table's status badge, whose label the column cannot hold whole, now names the verdict in its title -- a badge's title is the only way back to a label the column cut, and a title that only _explains_ the verdict left the part that was cut unavailable. The chips that were already truncated before this work -- the agents table's skills and MCPs, the MCPs table's overrides, the workspaces table's repository path -- are the console's own design: a discrete item stays atomic, truncates, and gives itself back on hover.
 
+## A column under budget cut a badge
+
+The workspaces table gave its Availability column 132px. The badge in that column needs 78px for "Not observed" and 34px more for the badge's own chrome -- the padding, the border and the state dot -- and the cell adds 32px of shared inset, so 144px is the floor. At 132 the badge was cut to "Not obse…" on the page.
+
+A cut badge is the one thing a status badge must not be. The page knows the workspace's runtime availability was not observed, and the page did not say so; the operator was left with a word they could not finish. The Console's own badge says as much in its own comment -- "A badge is an atomic status word: it never wraps. A column that cannot fit a badge is a column-width problem" -- and the column was 12px short of the floor.
+
+The 14px came from the Playtesting Approval column, which had 44px of slack: its badge is the same width ("Not approved" is as long as "Not observed") and its header needs 14px more than "Availability" does. The table's budget is still the same 1118px every list table gets.
+
+**The guard is the general one.** `console/e2e/table-clipping-acceptance.spec.ts` walks every table on every canonical route and asks the browser what it actually laid out: an element whose own text does not fit its own box is a cell whose column is under budget. It caught exactly one cell in the Console -- this one -- and it is the same shape as the defect the four over-budget tables were, seen from the other side: a budget that was never reconciled with what the column holds. Three things are not that: screen-reader-only text, which is laid out at a pixel's width on purpose; a region that scrolls, which scrolls to its text rather than cutting it; and a cell that carries its own whole text in a title, which is a deliberate truncation with the full text one hover away.
+
 ## A state the operator can only see
 
 The agent enablement pill wears the agent's current value and activates the opposite, so one control carries both facts: the word on the pill is the state, and the hover title names the action. That is the design, and the shared state-pill vocabulary says so.

@@ -148,7 +148,14 @@ export function WorkspacesView({
     {
       id: "playtestingApproval",
       header: "Playtesting Approval",
-      weight: 206,
+      // The badge in this column and the badge in the Availability column are
+      // the same width -- both carry "Not observed" or "Not approved" -- so
+      // this column's budget is the Availability column's budget plus the
+      // 14px the header here needs for "Playtesting Approval" against
+      // "Availability". It had 206px, which is 44px more than the header and
+      // the badge together need, and that slack paid for the Availability
+      // column, whose badge was cut to "Not obse…".
+      weight: 192,
       cell: (ws) => {
         const approval = approvals.get(ws.id);
         const status =
@@ -212,7 +219,14 @@ export function WorkspacesView({
     {
       id: "availability",
       header: "Availability",
-      weight: 132,
+      // The badge needs 78px for "Not observed" and 34px more for the badge's
+      // own chrome -- the padding, the border and the state dot -- and the cell
+      // adds 32px of shared inset, so 144px is the floor. At 132 the badge
+      // was cut to "Not obse…", which is the one thing a status badge must not
+      // be: a state the operator cannot read is a state the page has not told
+      // them. The 14px came from the Playtesting Approval column, which had
+      // 44px of slack.
+      weight: 146,
       cell: (ws) =>
         React.createElement(StatusBadge, {
           status: workspaceAvailabilityBadgeVariant(ws.runtime),
