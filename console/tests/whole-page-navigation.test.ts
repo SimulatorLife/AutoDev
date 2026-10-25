@@ -3,12 +3,15 @@ import { test } from "node:test";
 
 import {
   clearWholePageRequestsForTests,
+  isLocalWholePageDestination,
   navigateToWholePage,
   warmUpWholePage
 } from "../src/components/navigation/whole-page-navigation.ts";
 import {
+  clearBrowserAddress,
   deliverWholePageAnswer,
-  installWholePageAnswerObserver
+  installWholePageAnswerObserver,
+  setBrowserAddress
 } from "./support/whole-page-answer.ts";
 
 installWholePageAnswerObserver();
@@ -78,106 +81,193 @@ test("the warm-up leaves an external destination to the browser", () => {
   assert.deepEqual(prefetches, []);
 });
 
-test("a navigation waits for the answer before it leaves", async () => {
+test("a destination outside the Console is not the Console's to navigate", () => {
+  assert.equal(isLocalWholePageDestination("/providers/claude"), true);
+  assert.equal(isLocalWholePageDestination("https://example.test/docs"), false);
+  assert.equal(isLocalWholePageDestination("//example.test/docs"), false);
+});
+
+test("a navigation asks for the destination's whole page before it leaves", () => {
   clearWholePageRequestsForTests();
+  clearBrowserAddress();
   const { router, prefetches, pushes } = createRouter();
-  const navigation = navigateToWholePage(router, "/providers/claude", "push", {
-    scroll: false
-  });
-  await settle();
+  navigateToWholePage(router, "/providers/claude", "push", { scroll: false });
+  assert.deepEqual(
+    prefetches,
+    ["/providers/claude"],
+    "the router has to be asked for the page before the navigation leaves"
+  );
+  assert.deepEqual(pushes, [{ href: "/providers/claude", scroll: false }]);
+});
+
+test("a navigation leaves in the same turn, without waiting for an answer", () => {
+  clearWholePageRequestsForTests();
+  clearBrowserAddress();
+  const { router, pushes } = createRouter();
+  // The answer to the destination's page is carried by a request, and a
+  // destination the router already holds needs no request at all. A navigation
+  // that waits for a request waits for one that is never going to be made, and
+  // the operator's click does nothing at all: the URL stays where it was and
+  // the page does not move.
+  //
+  // The browser acceptance measured it. Of thirteen navigations between the
+  // Console's own pages, five never committed: every one of them a
+  // destination the router already held, so every one of them a destination
+  // with no request to wait for.
+  navigateToWholePage(router, "/providers/claude", "push");
   assert.deepEqual(
     pushes,
-    [],
-    "the navigation must not leave before the answer is in hand"
-  );
-  deliverWholePageAnswer("/providers/claude");
-  await navigation;
-  assert.deepEqual(pushes, [{ href: "/providers/claude", scroll: false }]);
-  assert.deepEqual(prefetches, ["/providers/claude"]);
-});
-
-test("a newer navigation replaces the one that is waiting", async () => {
-  clearWholePageRequestsForTests();
-  const { router, pushes, replacements } = createRouter();
-  const first = navigateToWholePage(router, "/providers/claude", "push");
-  const second = navigateToWholePage(router, "/agents/default", "replace");
-  deliverWholePageAnswer("/providers/claude");
-  deliverWholePageAnswer("/agents/default");
-  await Promise.all([first, second]);
-  assert.deepEqual(pushes, [], "the replaced navigation must not leave");
-  assert.deepEqual(
-    replacements,
-    [{ href: "/agents/default", scroll: false }],
-    "the newer navigation is the one that leaves"
+    [{ href: "/providers/claude", scroll: false }],
+    "the navigation must not wait for a request that may never be made"
   );
 });
 
-test("an answer that arrived while the operator was on the link is in hand", async () => {
+test("a destination the router already holds still navigates", () => {
   clearWholePageRequestsForTests();
+  clearBrowserAddress();
   const { router, pushes } = createRouter();
-  // The warm-up asked while the operator's pointer was on the link, and the
-  // answer arrived before the click. The click must not wait for a second
-  // answer that will never come.
+  // The router answers such a destination from its cache, and the browser
+  // records no request for it. The navigation is the same navigation.
   warmUpWholePage(router, "/providers/claude");
-  deliverWholePageAnswer("/providers/claude");
-  const navigation = navigateToWholePage(router, "/providers/claude", "push");
-  await navigation;
+  navigateToWholePage(router, "/providers/claude", "push");
   assert.deepEqual(pushes, [{ href: "/providers/claude", scroll: false }]);
 });
 
-test("an answer left over from an earlier visit is not the answer", async () => {
+test("the navigation leaves again when the answer arrives", () => {
   clearWholePageRequestsForTests();
+  clearBrowserAddress();
   const { router, pushes } = createRouter();
-  // The owner has to be watching before an answer can arrive.
-  warmUpWholePage(router, "/providers");
+  // A navigation that leaves before the router holds the destination's page
+  // does not commit: the reducer applies the destination, React renders it,
+  // and the commit that moves the address bar never runs. The answer arriving
+  // is the signal to leave again, this time with the page in hand.
+  navigateToWholePage(router, "/providers/claude", "push");
+  assert.deepEqual(pushes, [{ href: "/providers/claude", scroll: false }]);
   deliverWholePageAnswer("/providers/claude");
-  const navigation = navigateToWholePage(router, "/providers/claude", "push");
-  await settle();
+  assert.deepEqual(pushes, [
+    { href: "/providers/claude", scroll: false },
+    { href: "/providers/claude", scroll: false }
+  ]);
+});
+
+test("the navigation keeps leaving until the address bar has moved", () => {
+  clearWholePageRequestsForTests();
+  clearBrowserAddress();
+  const { router, pushes } = createRouter();
+  // The router does not always commit a navigation that answers for itself,
+  // and the answer that comes back is the signal to leave again. The owner
+  // leaves for every answer the destination produces, and stops as soon as
+  // the address bar has moved.
+  navigateToWholePage(router, "/providers/claude", "push");
+  deliverWholePageAnswer("/providers/claude");
+  deliverWholePageAnswer("/providers/claude");
+  assert.deepEqual(pushes, [
+    { href: "/providers/claude", scroll: false },
+    { href: "/providers/claude", scroll: false },
+    { href: "/providers/claude", scroll: false }
+  ]);
+});
+
+test("the navigation stops leaving once it has left often enough", () => {
+  clearWholePageRequestsForTests();
+  clearBrowserAddress();
+  const { router, pushes } = createRouter();
+  // The number of leaves is bounded: a navigation that never commits must not
+  // ask the server for the same page for ever.
+  navigateToWholePage(router, "/providers/claude", "push");
+  for (let answer = 0; answer < 6; answer += 1) {
+    deliverWholePageAnswer("/providers/claude");
+  }
+  assert.deepEqual(pushes, [
+    { href: "/providers/claude", scroll: false },
+    { href: "/providers/claude", scroll: false },
+    { href: "/providers/claude", scroll: false }
+  ]);
+});
+
+test("a navigation that already committed is not left a second time", () => {
+  clearWholePageRequestsForTests();
+  setBrowserAddress("/providers/claude");
+  const { router, pushes } = createRouter();
+  navigateToWholePage(router, "/providers/claude", "push");
+  assert.deepEqual(pushes, [{ href: "/providers/claude", scroll: false }]);
+  deliverWholePageAnswer("/providers/claude");
   assert.deepEqual(
     pushes,
-    [],
-    "an answer from before the ask is not the answer this navigation waits for"
+    [{ href: "/providers/claude", scroll: false }],
+    "the address bar already moved, so the navigation committed"
   );
-  deliverWholePageAnswer("/providers/claude");
-  await navigation;
-  assert.deepEqual(pushes, [{ href: "/providers/claude", scroll: false }]);
 });
 
-test("another destination's answer does not satisfy the navigation", async () => {
+test("another destination's answer does not move this navigation", () => {
   clearWholePageRequestsForTests();
+  clearBrowserAddress();
   const { router, pushes } = createRouter();
-  const navigation = navigateToWholePage(router, "/providers/claude", "push");
+  navigateToWholePage(router, "/providers/claude", "push");
   deliverWholePageAnswer("/agents/default");
-  await settle();
-  assert.deepEqual(pushes, [], "another destination's answer is not this one");
-  deliverWholePageAnswer("/providers/claude");
-  await navigation;
   assert.deepEqual(pushes, [{ href: "/providers/claude", scroll: false }]);
 });
 
-test("a search parameter is part of the answer's identity", async () => {
+test("a newer navigation replaces the one that is waiting", () => {
   clearWholePageRequestsForTests();
+  clearBrowserAddress();
+  const { router, pushes, replacements } = createRouter();
+  navigateToWholePage(router, "/providers/claude", "push");
+  navigateToWholePage(router, "/agents/default", "replace");
+  deliverWholePageAnswer("/providers/claude");
+  deliverWholePageAnswer("/agents/default");
+  assert.deepEqual(pushes, [{ href: "/providers/claude", scroll: false }]);
+  assert.deepEqual(replacements, [
+    { href: "/agents/default", scroll: false },
+    { href: "/agents/default", scroll: false }
+  ]);
+});
+
+test("a navigation leaves an external destination to the browser", () => {
+  clearWholePageRequestsForTests();
+  clearBrowserAddress();
+  const { router, prefetches, pushes } = createRouter();
+  navigateToWholePage(router, "https://example.test/docs", "push");
+  assert.deepEqual(prefetches, []);
+  assert.deepEqual(pushes, []);
+});
+
+test("a navigation can replace the destination instead of pushing it", () => {
+  clearWholePageRequestsForTests();
+  clearBrowserAddress();
+  const { router, pushes, replacements } = createRouter();
+  navigateToWholePage(router, "/agents/default", "replace");
+  assert.deepEqual(pushes, []);
+  assert.deepEqual(replacements, [
+    { href: "/agents/default", scroll: false }
+  ]);
+});
+
+test("a navigation carries the scroll it was given", () => {
+  clearWholePageRequestsForTests();
+  clearBrowserAddress();
   const { router, pushes } = createRouter();
-  const navigation = navigateToWholePage(router, "/tools?source=mcp", "push");
-  deliverWholePageAnswer("/tools");
-  await settle();
-  assert.deepEqual(
-    pushes,
-    [],
-    "the unfiltered answer is not the filtered answer"
-  );
-  deliverWholePageAnswer("/tools?source=mcp");
-  await navigation;
+  navigateToWholePage(router, "/providers/claude", "push", { scroll: true });
+  assert.deepEqual(pushes, [{ href: "/providers/claude", scroll: true }]);
+});
+
+test("a search parameter is part of the destination's identity", () => {
+  clearWholePageRequestsForTests();
+  clearBrowserAddress();
+  const { router, prefetches, pushes } = createRouter();
+  navigateToWholePage(router, "/tools?source=mcp", "push");
+  assert.deepEqual(prefetches, ["/tools?source=mcp"]);
   assert.deepEqual(pushes, [{ href: "/tools?source=mcp", scroll: false }]);
 });
 
-test("the answer still arrives when the page's clock and timers are held still", async () => {
+test("the navigation does not run on the page's clock", async () => {
   clearWholePageRequestsForTests();
+  clearBrowserAddress();
   const { router, pushes } = createRouter();
   // The browser acceptance holds the page's clock still on purpose: a feedback
   // that dismisses itself after five seconds has to be told apart from one the
-  // operator closed. A navigation that waited on the page's clock would stop
-  // with it, and the page would never be rebuilt around the write.
+  // operator closed. A navigation that ran on the page's clock would stop with
+  // it, and the page would never be rebuilt around the write.
   const realClock = {
     dateNow: Date.now,
     performanceNow: performance.now,
@@ -190,16 +280,13 @@ test("the answer still arrives when the page's clock and timers are held still",
   globalThis.setInterval = (() =>
     0) as unknown as typeof globalThis.setInterval;
   try {
-    const navigation = navigateToWholePage(router, "/providers/claude", "push");
-    await settle();
-    assert.deepEqual(pushes, [], "the navigation waits for the answer");
+    navigateToWholePage(router, "/providers/claude", "push");
     deliverWholePageAnswer("/providers/claude");
-    await navigation;
-    assert.deepEqual(
-      pushes,
-      [{ href: "/providers/claude", scroll: false }],
-      "the answer arrives as an event, so a still clock cannot hold it back"
-    );
+    await settle();
+    assert.deepEqual(pushes, [
+      { href: "/providers/claude", scroll: false },
+      { href: "/providers/claude", scroll: false }
+    ]);
   } finally {
     Date.now = realClock.dateNow;
     performance.now = realClock.performanceNow;

@@ -1,10 +1,10 @@
 /**
  * The browser's side of the whole-page answer.
  *
- * The Console's navigation owner waits for the destination's whole page by
- * watching the request that carries it: the browser keeps the record of the
- * request, and the owner sees that record. The record arrives through a
- * `PerformanceObserver`, and a unit test has no browser to keep one.
+ * The Console's navigation owner learns that the destination's whole page has
+ * arrived from the browser's own record of the request that carries it: the
+ * browser keeps that record, and the owner sees it through a
+ * `PerformanceObserver`. A unit test has no browser to keep one.
  *
  * So this stands in for the browser: an observer the owner can install, and an
  * answer the test can hand it. The answer is reported the way the browser
@@ -87,4 +87,27 @@ export function deliverWholePageAnswer(href: string): void {
 /** How many observers the owner has installed; the tests assert on this. */
 export function wholePageAnswerObserverCount(): number {
   return observers.size;
+}
+
+/**
+ * Stand in for the browser's address bar.
+ *
+ * The owner reads the address bar to tell a committed navigation from one that
+ * did not commit, so a test that says "the navigation committed" has to be
+ * able to say so.
+ */
+export function setBrowserAddress(href: string): void {
+  const url = new URL(href, "http://console.test");
+  globalThis.window = {
+    location: {
+      href: url.href,
+      pathname: url.pathname,
+      search: url.search
+    }
+  } as unknown as Window & typeof globalThis;
+}
+
+/** Take the browser's address bar away again. */
+export function clearBrowserAddress(): void {
+  delete (globalThis as { window?: unknown }).window;
 }

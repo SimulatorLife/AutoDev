@@ -81,17 +81,25 @@ test("resource navigation warms the destination it is about to route to, in full
   );
 });
 
-test("a click navigates only once the destination's whole page has arrived", () => {
+test("a click asks for the destination's whole page and leaves in the same turn", () => {
   // The warm-up is an intent, and an intent is not guaranteed: a pointer that
   // is already over the link when the operator clicks never enters it, and a
   // keyboard activation never enters it. So the click asks for the whole page
   // too.
   //
-  // And the click does not navigate straight away. A navigation that dispatches
-  // before the answer is in hand is the one that strands: the browser
-  // acceptance measured that the address bar stayed where it was and the page
-  // did not move, while the same navigation with the answer already in hand
-  // committed every time. The owner waits for the answer, and then navigates.
+  // And the click does not wait for the answer. The answer is carried by a
+  // request, and a destination the router already holds needs no request at
+  // all -- so a navigation that waits for a request waits for one that is
+  // never going to be made, and the operator's click does nothing: the URL
+  // stays where it was and the page does not move. The browser acceptance
+  // measured it: of thirteen navigations between the Console's own pages, five
+  // never committed, and every one of them was a destination the router
+  // already held.
+  //
+  // The ask comes first and the navigation leaves in the same turn, so a
+  // destination the router already holds commits at once. And the navigation
+  // leaves again when the answer arrives, so a destination the router had to
+  // fetch commits too.
   assert.match(navigationLinkSource, /onClick:\s*handleClick/u);
   assert.match(
     navigationLinkSource,
@@ -105,9 +113,32 @@ test("a click navigates only once the destination's whole page has arrived", () 
   );
   assert.match(
     wholePageNavigationSource,
-    /await answer;/u,
-    "the navigation has to wait for the answer before it leaves"
+    /router\.prefetch\(href\)/u,
+    "the owner asks for the page before the navigation leaves"
   );
+  assert.match(
+    wholePageNavigationSource,
+    /router\.push\(href/u,
+    "the owner navigates in place, with the destination's page on the way"
+  );
+  assert.match(
+    wholePageNavigationSource,
+    /activeWaiter\.run\(\)/u,
+    "the owner leaves again when the answer for the destination arrives"
+  );
+  assert.match(
+    wholePageNavigationSource,
+    /MAX_ATTEMPTS/u,
+    "the owner has to stop leaving for a destination that never commits"
+  );
+});
+
+test("the owner waits for an event, never for a question on the page's clock", () => {
+  // The answer arrives as an event: the browser's own record of the request
+  // that carries it. A navigation that asked on the page's clock would stop
+  // with it -- and the browser acceptance holds that clock still on purpose,
+  // because a feedback that dismisses itself after five seconds has to be
+  // told apart from one the operator closed.
   assert.match(
     wholePageNavigationSource,
     /new PerformanceObserver\(/u,
@@ -116,14 +147,9 @@ test("a click navigates only once the destination's whole page has arrived", () 
   assert.doesNotMatch(
     wholePageNavigationSource,
     /setTimeout|setInterval|performance\.now|Date\.now/u,
-    "the wait must not run on the page's clock: the acceptance holds that " +
+    "the owner must not wait on the page's clock: the acceptance holds that " +
       "clock still on purpose, and a navigation that waits on a timer stops " +
       "with it"
-  );
-  assert.match(
-    wholePageNavigationSource,
-    /router\.push\(href/u,
-    "the owner navigates in place once the answer is in hand"
   );
 });
 

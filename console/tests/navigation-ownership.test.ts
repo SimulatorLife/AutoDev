@@ -7,13 +7,12 @@ import { fileURLToPath } from "node:url";
 /**
  * The modules that own the Console's navigation.
  *
- * The whole-page owner asks for the destination's page and navigates once that
- * answer is in hand, because a navigation that has to answer for itself never
- * commits -- the address bar stays where it was and the page does not move.
- * The form owner is the boundary between that owner and Next.js's router, and
- * the link asks the owner on the operator's click. Everything else in the
- * Console reaches its destinations through `NavigationLink`, which asks the
- * owner.
+ * The whole-page owner asks for the destination's page and navigates in the
+ * same turn, so the router holds that page by the time the navigation is
+ * dispatched. The form owner is the boundary between that owner and Next.js's
+ * router, and the link asks the owner on the operator's click. Everything else
+ * in the Console reaches its destinations through `NavigationLink`, which asks
+ * the owner.
  */
 const NAVIGATION_OWNERS = new Set([
   "src/components/navigation/whole-page-navigation.ts",

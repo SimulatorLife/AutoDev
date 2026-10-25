@@ -112,6 +112,13 @@ export function clearPrefetchCacheForTests(): void {
  * server-rendered for the visit (`force-dynamic`), so a partial answer would
  * have been thrown away when the route was rendered again, and the request
  * the prefetch saves is one the page has to make anyway.
+ *
+ * The click asks for the destination's whole page as well, and navigates
+ * through the owner. The owner leaves in place in the same turn as the ask,
+ * and leaves again when the answer arrives, so the navigation commits whether
+ * the router already held the destination's page or had to fetch it. See
+ * `whole-page-navigation.ts` for why the ask and the navigation belong
+ * together.
  */
 export function NavigationLink({
   href,
@@ -126,9 +133,9 @@ export function NavigationLink({
   }
 
   /**
-   * The Console asks for the destination's whole page on intent, and the
-   * navigation waits for that answer before it leaves. See
-   * `whole-page-navigation.ts` for why the wait is the whole point.
+   * The Console asks for the destination's whole page on intent. See
+   * `whole-page-navigation.ts` for why the whole page is the answer worth
+   * having.
    */
   const prefetch = React.useCallback((): void => {
     if (!router) return;
@@ -148,12 +155,12 @@ export function NavigationLink({
       if (!destination) return;
       if (!isLocalWholePageDestination(destination)) return;
       if (!isPlainNavigationClick(event)) return;
-      // The Console owns this navigation: it waits for the destination's whole
-      // page and then navigates in place. Next's own handler would dispatch the
-      // navigation straight away, and a navigation that dispatches before the
-      // answer is in hand is the one that does not commit.
+      // The Console owns this navigation: the owner asks for the destination's
+      // whole page and leaves in place, and it leaves again when the answer
+      // arrives. See `whole-page-navigation.ts` for why the two belong
+      // together.
       event.preventDefault();
-      void navigateToWholePage(router, destination, "push", { scroll: true });
+      navigateToWholePage(router, destination, "push", { scroll: true });
     },
     [href, onClick, router]
   );

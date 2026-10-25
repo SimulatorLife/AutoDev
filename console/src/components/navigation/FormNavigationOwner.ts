@@ -676,9 +676,9 @@ async function handleGetSubmission(
   if (destHref === currentPathAndQuery) {
     options.router.refresh();
   } else {
-    // The navigation waits for the destination's whole page before it leaves,
+    // The destination's whole page is asked for before the navigation leaves,
     // so that the address bar and the page move together.
-    await navigateToWholePage(options.router, destHref, "push", {
+    navigateToWholePage(options.router, destHref, "push", {
       scroll: false
     });
   }
@@ -786,7 +786,7 @@ async function handlePostSubmission(
       // carries the write's result. A second round trip here would race the
       // navigation that is already on its way, and the page that lands would
       // be the one that lost the race.
-      await navigateToWholePage(options.router, destPathAndQuery, "replace", {
+      navigateToWholePage(options.router, destPathAndQuery, "replace", {
         scroll: false
       });
     }

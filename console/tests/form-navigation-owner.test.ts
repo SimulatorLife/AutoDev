@@ -17,25 +17,6 @@ import {
   registerFormNavigation,
   scheduleFeedbackDismissal
 } from "../src/components/navigation/FormNavigationOwner.ts";
-import {
-  deliverWholePageAnswer,
-  installWholePageAnswerObserver
-} from "./support/whole-page-answer.ts";
-
-// The whole-page owner waits for the destination's answer, which in a browser
-// is the request that carries it. A unit test has no request, so it reports
-// one.
-installWholePageAnswerObserver();
-
-/**
- * The whole-page owner navigates once the answer is in hand, which is not by
- * the time the submit handler returns.
- */
-async function flushNavigation(): Promise<void> {
-  await new Promise((resolve) => {
-    setTimeout(resolve, 0);
-  });
-}
 
 interface MockSubmitter extends FormElementLike {
   readonly tagName?: string;
@@ -97,8 +78,6 @@ function createMockRouter(overrides?: Partial<FormNavigationRouter>): {
   const router: FormNavigationRouter = {
     prefetch: (href) => {
       overrides?.prefetch?.(href);
-      // The answer to the request the router made for this destination.
-      deliverWholePageAnswer(href);
     },
     push: (href, options) => {
       pushes.push(options ? { href, options } : { href });
@@ -326,9 +305,10 @@ test("registerFormNavigation intercepts submit events fired through EventTarget 
   assert.deepEqual(statuses, ["submitting"]);
 
   assert.equal(nativeEvent.defaultPrevented, true);
-  // The navigation waits for the destination's whole page before it leaves, so
-  // it is not dispatched by the time the event handler returns.
-  await flushNavigation();
+  // The navigation asks for the destination's whole page and leaves in the
+  // same turn. It does not wait for the answer: the router waits for the
+  // answer inside the navigation, and a destination the router already holds
+  // needs no answer at all.
   assert.deepEqual(pushes, [
     { href: "/usage?tab=activity&filter=active", options: { scroll: false } }
   ]);
