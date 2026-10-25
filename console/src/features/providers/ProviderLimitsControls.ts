@@ -152,8 +152,12 @@ function ProviderDisabledToggle({
   readonly returnTo: string;
 }): React.JSX.Element {
   return React.createElement(
+    // A write surface inside a table cell is a group of controls rather
+    // than a landmark: the operator finds it in the cell, and an
+    // anonymous landmark for every row is a list of names that name nothing.
     "form",
     {
+      role: "group",
       action: `/api/providers/${encodeURIComponent(provider.id)}`,
       method: "POST",
       className: "flex min-w-0 flex-col items-start gap-1",
@@ -245,8 +249,12 @@ export function ProviderLimitsControls({
       "data-provider-limits": provider.id
     },
     React.createElement(
+      // A write surface inside a table cell is a group of controls rather
+      // than a landmark: the operator finds it in the cell, and an
+      // anonymous landmark for every row is a list of names that name nothing.
       "form",
       {
+        role: "group",
         action: `/api/providers/${encodeURIComponent(provider.id)}/limits`,
         method: "POST",
         className: "flex min-w-0 flex-col gap-2",

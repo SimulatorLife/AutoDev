@@ -86,8 +86,12 @@ export function ProvidersHeaderActions({
       className: "flex min-w-0 flex-wrap items-start justify-end gap-3"
     },
     React.createElement(
+      // A write surface inside a table cell is a group of controls rather
+      // than a landmark: the operator finds it in the cell, and an
+      // anonymous landmark for every row is a list of names that name nothing.
       "form",
       {
+        role: "group",
         action: "/api/providers/reset",
         method: "post",
         className: "flex min-w-0 flex-wrap items-center gap-2",

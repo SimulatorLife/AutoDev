@@ -398,6 +398,16 @@ The memory now says the same thing the other lists say, and the scope module own
 
 Getting the browser acceptance to check it turned up a second thing. The Console's own e2e fixture answered the memory records read with the whole catalogue whatever the query said, while the Runtime narrows the read by all three (`the service takes all three`). So the Console's memory filter bar -- one of the four the target state names -- could not be exercised in the browser at all: a narrowed read came back with every record and the page showed a full list under a filter that was never applied. The fixture now narrows the read the way the Runtime does, and the acceptance narrows each searchable list with a query that cannot match and requires the empty state to name the criteria.
 
+## Every landmark has a name, and the write surfaces are not landmarks
+
+A landmark is a region an operator can jump to, and they find it by its name: the breadcrumb trail is found as "Breadcrumb" rather than as the first navigation on the page, and the filter bars are found as "Usage filters" or "Skill filters". The Console's own filter bar says why it names its form -- "an accessible name, so the form is a named landmark rather than an anonymous one" -- and that rule was not held everywhere.
+
+The write surfaces inside table cells are where it was not held. Each row of the providers table, the agents table and the skills table carries a form that submits a write, and Chromium exposes an unnamed `<form>` as a landmark: **nineteen of them on the providers page**, each one called "form", each one naming nothing. Across the Console there were thirty-four anonymous landmarks, and a landmark list of thirty-four entries that name nothing is not a list an operator can use.
+
+So a write surface is a group of controls rather than a landmark -- the cell it lives in is already a group -- and the landmarks that are left are the ones an operator would want to jump to: the Console's navigation, the page's main, the filter bars, the tab bars, the pagers.
+
+`console/e2e/landmark-acceptance.spec.ts` is the guard. It reads the landmarks from the browser's accessibility tree and asks two things of every route: every landmark has a name (the page's own `main` excepted, because one main per page needs no name), and no two landmarks of a kind share a name, because a name that two landmarks share is a name that finds the wrong one.
+
 ## Every control has a name, and the tree is what says it
 
 The label-in-name acceptance checks that a control's name _contains_ what the control shows. That is one half of the rule, and the other half needed its own guard: a control with no name at all has nothing to contain, so it passes a name comparison vacuously, and a control the operator can see but a screen reader cannot name is invisible to the person using one.

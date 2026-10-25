@@ -128,8 +128,12 @@ export function AgentEnablementControl({
     "div",
     { className: "inline-flex flex-col items-start gap-1" },
     React.createElement(
+      // A write surface inside a table cell is a group of controls rather
+      // than a landmark: the operator finds it in the cell, and an
+      // anonymous landmark for every row is a list of names that name nothing.
       "form",
       {
+        role: "group",
         method: "POST",
         action: `/api/agents/${encodeURIComponent(role)}`,
         className: "inline-flex",

@@ -63,8 +63,12 @@ export function SkillRoleAssignmentControl({
         : { "data-skill-assignment-workspace": workspace })
     },
     React.createElement(
+      // A write surface inside a table cell is a group of controls rather
+      // than a landmark: the operator finds it in the cell, and an
+      // anonymous landmark for every row is a list of names that name nothing.
       "form",
       {
+        role: "group",
         method: "POST",
         action,
         className: "flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0",

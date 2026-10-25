@@ -68,8 +68,12 @@ export function ConcurrencyLimitControl({
   const configFileLimit = concurrency.maxConcurrentThreadsPerSession;
 
   return React.createElement(
+    // A write surface inside a table cell is a group of controls rather
+    // than a landmark: the operator finds it in the cell, and an
+    // anonymous landmark for every row is a list of names that name nothing.
     "form",
     {
+      role: "group",
       action: "/api/agents/concurrency",
       method: "POST",
       className: "flex flex-col items-start gap-1.5",

@@ -296,8 +296,12 @@ function RoleRow({
   }
 
   return React.createElement(
+    // A write surface inside a table cell is a group of controls rather
+    // than a landmark: the operator finds it in the cell, and an
+    // anonymous landmark for every row is a list of names that name nothing.
     "form",
     {
+      role: "group",
       action: `/api/providers/${encodeURIComponent(provider)}/roles/${encodeURIComponent(role)}`,
       method: "POST",
       className:
