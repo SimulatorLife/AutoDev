@@ -5,7 +5,9 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  assignedSkillRoles,
   assignSkillRoles,
+  contractSkillRoles,
   ExecutionContractConflictError,
   executionContractRevision,
   ExecutionContractValidationError
@@ -169,4 +171,231 @@ test("an assignment that changes nothing reports the revision it read", async ()
   });
   assert.equal(readFileSync(file.path, "utf8"), before);
   assert.equal(result.revision, file.revision);
+});
+
+/**
+ * The workspace dimension of the contract.
+ *
+ * A skill installed inside a repository belongs to that repository's workspace
+ * alone. Its assignment therefore lives in the workspace's section of the
+ * contract, and the global section keeps its own separate assignments -- the
+ * two are not two views of one list, because a global claim on a workspace's
+ * skill would hand it to workspaces it does not belong to.
+ */
+
+const WORKSPACE = "SimulatorLife/AutoDev";
+
+function parsedContract(path: string): {
+  roles: Record<string, { skills?: string[] }>;
+  workspaces?: Record<
+    string,
+    { roles?: Record<string, { skills?: string[] }> }
+  >;
+} {
+  return JSON.parse(readFileSync(path, "utf8")) as {
+    roles: Record<string, { skills?: string[] }>;
+    workspaces?: Record<
+      string,
+      { roles?: Record<string, { skills?: string[] }> }
+    >;
+  };
+}
+
+function workspaceRolesOf(
+  path: string,
+  workspace: string,
+  role: string
+): string[] {
+  return (
+    parsedContract(path).workspaces?.[workspace]?.roles?.[role]?.skills ?? []
+  );
+}
+
+test("assigning inside a workspace writes the workspace section and leaves the global list alone", async () => {
+  const file = contractFile(BASE);
+  const result = await assignSkillRoles({
+    file: file.path,
+    expectedRevision: file.revision,
+    skill: "autodev-codex-request-capture",
+    roles: ["worker"],
+    workspace: WORKSPACE
+  });
+
+  assert.equal(result.workspace, WORKSPACE);
+  assert.deepEqual([...result.roles], ["worker"]);
+  assert.deepEqual(workspaceRolesOf(file.path, WORKSPACE, "worker"), [
+    "autodev-codex-request-capture"
+  ]);
+  // The global section is untouched: the skill is that workspace's alone.
+  assert.deepEqual(rolesOf(file.path, "worker"), []);
+  assert.deepEqual(rolesOf(file.path, "orchestrator"), ["ccc"]);
+});
+
+test("assigning globally writes the global list and leaves the workspace section alone", async () => {
+  const file = contractFile(BASE);
+  const result = await assignSkillRoles({
+    file: file.path,
+    expectedRevision: file.revision,
+    skill: "release-checklist",
+    roles: ["worker"]
+  });
+
+  assert.equal(result.workspace, null);
+  assert.deepEqual(rolesOf(file.path, "worker"), ["release-checklist"]);
+  assert.equal(parsedContract(file.path).workspaces, undefined);
+});
+
+test("a workspace assignment removes the skill from the workspace's other roles", async () => {
+  const file = contractFile(BASE);
+  await assignSkillRoles({
+    file: file.path,
+    expectedRevision: file.revision,
+    skill: "autodev-codex-request-capture",
+    roles: ["worker", "reviewer"],
+    workspace: WORKSPACE
+  });
+  const revision = executionContractRevision(readFileSync(file.path, "utf8"));
+
+  await assignSkillRoles({
+    file: file.path,
+    expectedRevision: revision,
+    skill: "autodev-codex-request-capture",
+    roles: ["worker"],
+    workspace: WORKSPACE
+  });
+
+  assert.deepEqual(workspaceRolesOf(file.path, WORKSPACE, "worker"), [
+    "autodev-codex-request-capture"
+  ]);
+  assert.deepEqual(workspaceRolesOf(file.path, WORKSPACE, "reviewer"), []);
+});
+
+test("a workspace id that is not an owner/repository key is refused", async () => {
+  const file = contractFile(BASE);
+  await assert.rejects(
+    assignSkillRoles({
+      file: file.path,
+      expectedRevision: file.revision,
+      skill: "autodev-codex-request-capture",
+      roles: ["worker"],
+      workspace: "SimulatorLife"
+    }),
+    ExecutionContractValidationError
+  );
+  assert.equal(
+    executionContractRevision(readFileSync(file.path, "utf8")),
+    file.revision,
+    "the contract is untouched by a refused assignment"
+  );
+});
+
+test("a role the contract does not define cannot be assigned inside a workspace", async () => {
+  const file = contractFile(BASE);
+  await assert.rejects(
+    assignSkillRoles({
+      file: file.path,
+      expectedRevision: file.revision,
+      skill: "autodev-codex-request-capture",
+      roles: ["nonexistent"],
+      workspace: WORKSPACE
+    }),
+    ExecutionContractValidationError
+  );
+  assert.equal(parsedContract(file.path).workspaces, undefined);
+});
+
+test("the read side is the exact inverse of the write", async () => {
+  const file = contractFile(BASE);
+  await assignSkillRoles({
+    file: file.path,
+    expectedRevision: file.revision,
+    skill: "autodev-codex-request-capture",
+    roles: ["worker"],
+    workspace: WORKSPACE
+  });
+
+  assert.deepEqual(
+    [
+      ...assignedSkillRoles({
+        file: file.path,
+        skill: "autodev-codex-request-capture"
+      })
+    ],
+    [],
+    "a workspace assignment claims the skill globally nowhere"
+  );
+  assert.deepEqual(
+    [
+      ...assignedSkillRoles({
+        file: file.path,
+        skill: "autodev-codex-request-capture",
+        workspace: WORKSPACE
+      })
+    ],
+    ["worker"]
+  );
+  assert.deepEqual(
+    [...assignedSkillRoles({ file: file.path, skill: "ccc" })],
+    ["orchestrator", "reviewer"]
+  );
+  assert.deepEqual(
+    [
+      ...assignedSkillRoles({
+        file: file.path,
+        skill: "ccc",
+        workspace: WORKSPACE
+      })
+    ],
+    [],
+    "a global assignment claims the skill in no workspace"
+  );
+});
+
+test("the contract's role map is read per workspace", async () => {
+  const file = contractFile(BASE);
+  await assignSkillRoles({
+    file: file.path,
+    expectedRevision: file.revision,
+    skill: "autodev-codex-request-capture",
+    roles: ["worker"],
+    workspace: WORKSPACE
+  });
+
+  const parsed = parsedContract(file.path);
+  assert.deepEqual(
+    contractSkillRoles(parsed as Record<string, unknown>).worker,
+    []
+  );
+  assert.deepEqual(
+    contractSkillRoles(parsed as Record<string, unknown>, WORKSPACE).worker,
+    ["autodev-codex-request-capture"]
+  );
+});
+
+test("the revision changes when the workspace section changes", async () => {
+  const file = contractFile(BASE);
+  const result = await assignSkillRoles({
+    file: file.path,
+    expectedRevision: file.revision,
+    skill: "autodev-codex-request-capture",
+    roles: ["worker"],
+    workspace: WORKSPACE
+  });
+
+  assert.notEqual(result.revision, file.revision);
+  assert.equal(
+    result.revision,
+    executionContractRevision(readFileSync(file.path, "utf8"))
+  );
+  // A second operator's stale read is refused, workspace section or not.
+  await assert.rejects(
+    assignSkillRoles({
+      file: file.path,
+      expectedRevision: file.revision,
+      skill: "autodev-codex-request-capture",
+      roles: ["reviewer"],
+      workspace: WORKSPACE
+    }),
+    ExecutionContractConflictError
+  );
 });

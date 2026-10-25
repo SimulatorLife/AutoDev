@@ -71,6 +71,7 @@ import {
   type ReconciliationEvidence,
   type ReconciliationStatus,
   type ReconciliationView,
+  type SkillScopeFacts,
   type ToolCatalogItem,
   type ToolCatalogView,
   workspaceConfigurationHealth,
@@ -81,11 +82,13 @@ import {
   auditEnvelopesToHistory,
   boundReconciliationError,
   ConfigRepository,
+  contractSkillRoles,
   EvaluationRepository,
   EvaluationSourceUnavailableError,
   ExecutionContractConflictError,
   executionContractRevision,
   ExecutionContractValidationError,
+  getDefaultRestrictedHumanResponseRepository,
   GithubActionsAdapter,
   GithubActionsApiError,
   type GithubActionsRuntimeSnapshot,
@@ -94,6 +97,8 @@ import {
   PlaytestRepository,
   reconcileDiffSummary,
   reconcileDiffWithIdentifier,
+  resolveSkillScopes,
+  type RestrictedHumanResponseRepository,
   RULE_SYNC_COMMAND_HISTORY_MAX_PAGE_SIZE,
   RULE_SYNC_COMMAND_HISTORY_PAGE_SIZE,
   RuleSyncCommandConflictError,
@@ -108,16 +113,10 @@ import {
   RuleSyncSkillConflictError,
   RuleSyncSkillSourceUnavailableError,
   RuleSyncSkillValidationError,
-  ToolCatalogAdapter
-} from "@simulatorlife/autodev-data";
-import {
-  getDefaultRestrictedHumanResponseRepository,
-  type RestrictedHumanResponseRepository
-} from "@simulatorlife/autodev-data/playtesting";
-import {
+  ToolCatalogAdapter,
   WorkspacePlaytestApprovalRepository,
   type WorkspaceVisualPlaytestTargetRepository
-} from "@simulatorlife/autodev-data/workspaces";
+} from "@simulatorlife/autodev-data";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
 import { getDefaultRouterLifecycle } from "@simulatorlife/autodev-runtime/router/lifecycle";
@@ -126,6 +125,7 @@ import {
   ROUTES,
   ROUTING_POLICY
 } from "@simulatorlife/autodev-runtime/router/routing";
+import { getDefaultUsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { readRuntimeSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
@@ -1692,6 +1692,99 @@ function toolsView(): ToolCatalogView {
   } satisfies ControlApiToolsResponse;
 }
 
+/**
+ * The workspace ids this installation serves.
+ *
+ * A repository's remote names a project, but a remote is not a workspace: the
+ * catalogue is what says which projects are workspaces here. When the
+ * catalogue cannot be read, no ids are declared and the repository's own
+ * remote decides alone -- a skill in a repository nobody configured still
+ * belongs to the project that repository is.
+ */
+function configuredWorkspaceIds(
+  repositoryRoot: string
+): readonly string[] | undefined {
+  const catalog = new ConfigRepository(repositoryRoot).readWorkspaceCatalog();
+  return catalog.status === "valid"
+    ? catalog.workspaces.map((workspace) => workspace.id)
+    : undefined;
+}
+
+/**
+ * Where a skill is installed, read live from the machine.
+ *
+ * The catalogue says a skill exists; the scope says whether any agent can
+ * reach it and which workspace it belongs to. Both are read at the moment the
+ * Console asks, so a skill that has just been installed or removed shows what
+ * is true now rather than what was true when the page was written.
+ */
+function liveSkillScopes(
+  names: readonly string[],
+  repositoryRoot: string
+): ReadonlyMap<string, SkillScopeFacts> {
+  const home = process.env.HOME ?? homedir();
+  return resolveSkillScopes(names, {
+    roots: {
+      home,
+      codexHome: process.env.CODEX_HOME ?? path.join(home, ".codex"),
+      repositoryRoot
+    },
+    workspaces: configuredWorkspaceIds(repositoryRoot)
+  });
+}
+
+/**
+ * The roles a skill is assigned to, in the place that skill belongs to.
+ *
+ * A repo-scoped skill belongs to one workspace, so its roles are that
+ * workspace's roles; every other skill's roles are the global ones. A
+ * repo-scoped skill whose repository is not a configured workspace has no
+ * roles at all, because there is nowhere to assign it.
+ */
+function assignedSkillRoles(skill: string, workspace: string | null): string[] {
+  const contract = getDefaultExecutionContract() as unknown as Record<
+    string,
+    unknown
+  >;
+  const roles = contractSkillRoles(
+    contract,
+    workspace === null ? undefined : workspace
+  );
+  return Object.entries(roles)
+    .filter(([, skills]) => skills.includes(skill))
+    .map(([role]) => role)
+    .sort((left, right) => CONTROL_API_COLLATOR.compare(left, right));
+}
+
+/**
+ * The skill exposure and use the Runtime has observed.
+ *
+ * The Runtime's usage telemetry already counts both: an injected skill is an
+ * exposure, and a skill that was used is a use. The telemetry keeps the counts
+ * per workspace, because that is the dimension it attributes by, and the
+ * Console asks for a total across the workspaces it is showing.
+ *
+ * A skill the Runtime has never seen is absent from the map, which is not the
+ * same as a skill it saw and never injected: `null` means "not observed", and
+ * a number means "observed, and this is how often".
+ */
+function observedSkillUsage(): {
+  readonly observed: boolean;
+  readonly bySkill: ReadonlyMap<string, { exposure: number; use: number }>;
+} {
+  const bySkill = new Map<string, { exposure: number; use: number }>();
+  const telemetry = getDefaultUsageTracker().usageTelemetry;
+  for (const bucket of Object.values(telemetry.byWorkspace)) {
+    for (const skill of bucket.skills.values()) {
+      const entry = bySkill.get(skill.skill) ?? { exposure: 0, use: 0 };
+      entry.exposure += skill.total;
+      entry.use += skill.uses;
+      bySkill.set(skill.skill, entry);
+    }
+  }
+  return { observed: bySkill.size > 0, bySkill };
+}
+
 function skillsView(
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
@@ -1706,6 +1799,11 @@ function skillsView(
   // contract is one file shared by every row, so it is read once here rather
   // than once per skill.
   const contractFile = executionContractFile();
+  const scopes = liveSkillScopes(
+    catalog.skills.map((skill) => skill.name),
+    repositoryRoot
+  );
+  const usage = observedSkillUsage();
   return {
     schema: "autodev-control-skills-v2",
     source: `${catalog.source}+${EXECUTION_CONTRACT_SOURCE}`,
@@ -1717,10 +1815,29 @@ function skillsView(
         ? null
         : executionContractRevision(readContract(contractFile)),
     assignmentRoles: assignableRoles(),
-    skills: catalog.skills.map((skill) => ({
-      ...skill,
-      roles: rolesBySkill.get(skill.name) ?? []
-    })),
+    // Whether the Runtime has seen any skill telemetry at all. Without it a
+    // page cannot tell "not observed" from "observed nothing", which are
+    // different facts about a different subject.
+    telemetryObserved: usage.observed,
+    skills: catalog.skills.map((skill) => {
+      const facts = scopes.get(skill.name);
+      // Only a repo-scoped skill belongs to a workspace; every other scope
+      // belongs to the machine and is assigned globally.
+      const workspace = facts?.scope === "repo" ? facts.workspace : null;
+      const observed = usage.bySkill.get(skill.name);
+      return {
+        ...skill,
+        scope: facts?.scope ?? null,
+        scopeLocation: facts?.location ?? null,
+        workspace,
+        roles:
+          workspace === null
+            ? (rolesBySkill.get(skill.name) ?? [])
+            : assignedSkillRoles(skill.name, workspace),
+        observedExposure: observed?.exposure ?? null,
+        observedUse: observed?.use ?? null
+      };
+    }),
     unresolvedAssignments:
       catalog.valid === true
         ? assignments.filter(({ name }) => !catalogNames.has(name))
@@ -5725,33 +5842,183 @@ function promptVersionsRoute(
  * this protects against is two operators assigning at once — a last-writer-wins
  * merge would discard the first assignment and leave both of them believing
  * theirs took.
+ *
+ * `workspace` says where the assignment belongs. A skill installed inside a
+ * repository belongs to that repository's workspace alone, so its assignment is
+ * written into the workspace's section of the contract; every other skill is
+ * assigned globally and names no workspace.
  */
 interface SkillRolesRequestBody {
   readonly expectedRevision: string;
   readonly roles: readonly string[];
+  /** The workspace the assignment belongs to; absent for a global one. */
+  readonly workspace?: string | undefined;
 }
 
 /**
  * The body of a skill assignment, or the reason it is not one.
  *
- * Exactly two fields, checked exactly. A body carrying a third key is refused
- * rather than ignored, because an operator whose tooling sent something this
- * route does not understand should be told so instead of watching the
- * assignment they asked for happen to some subset of what they sent.
+ * Exactly the revision, the roles, and at most one workspace, checked exactly.
+ * A body carrying a key this route does not understand is refused rather than
+ * ignored, because an operator whose tooling sent something this route does not
+ * understand should be told so instead of watching the assignment they asked for
+ * happen to some subset of what they sent.
  */
+function isSkillRolesBodyKey(key: string): boolean {
+  return key === "expectedRevision" || key === "roles" || key === "workspace";
+}
+
+function isStringList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.every((entry): entry is string => typeof entry === "string")
+  );
+}
+
 function readSkillRolesBody(
   body: Record<string, unknown>
 ): SkillRolesRequestBody | null {
-  const roles = body.roles;
-  if (
-    Object.keys(body).length !== 2 ||
-    typeof body.expectedRevision !== "string" ||
-    !Array.isArray(roles) ||
-    !roles.every((role): role is string => typeof role === "string")
-  ) {
+  const keys = Object.keys(body);
+  if (keys.length < 2 || keys.length > 3) return null;
+  if (!keys.every(isSkillRolesBodyKey)) return null;
+  if (typeof body.expectedRevision !== "string") return null;
+  if (!isStringList(body.roles)) return null;
+  if (body.workspace !== undefined && typeof body.workspace !== "string") {
     return null;
   }
-  return { expectedRevision: body.expectedRevision, roles };
+  return {
+    expectedRevision: body.expectedRevision,
+    roles: body.roles,
+    workspace: body.workspace
+  };
+}
+
+/**
+ * Why an assignment cannot be written where the caller asked for.
+ *
+ * The scope is read live from the machine, so the refusal follows where the
+ * skill actually is: a skill inside a repository is that repository's
+ * workspace's alone, and a skill anywhere else belongs to no workspace. The
+ * scope is never the operator's to say.
+ */
+interface SkillScopeRefusal {
+  readonly reason: string;
+  readonly message: string;
+}
+
+function skillScopeRefusal(
+  facts: SkillScopeFacts | null,
+  requestedWorkspace: string | null
+): SkillScopeRefusal | null {
+  if (facts?.scope === "repo") {
+    if (facts.workspace === null) {
+      return {
+        reason: "workspace_unattributed",
+        message:
+          "This skill is installed inside the repository, and the repository is not one of the configured workspaces, so there is nowhere to assign it."
+      };
+    }
+    if (requestedWorkspace !== facts.workspace) {
+      return {
+        reason: "workspace_required",
+        message: `This skill belongs to the workspace "${facts.workspace}" and can only be assigned inside it.`
+      };
+    }
+    return null;
+  }
+  if (requestedWorkspace !== null) {
+    return {
+      reason: "workspace_not_allowed",
+      message:
+        "This skill is not installed inside the repository, so it is assigned to agent roles globally rather than to one workspace."
+    };
+  }
+  return null;
+}
+
+/**
+ * Where a skill is installed, and whether an assignment may be made there.
+ *
+ * The scope is read live from the machine, so the answer follows where the
+ * skill actually is rather than what the request says about it.
+ */
+interface SkillAssignmentScope {
+  /** Where the skill is installed, or null when it is installed nowhere. */
+  readonly facts: SkillScopeFacts | null;
+  /** The workspace the assignment was asked for, or null for a global one. */
+  readonly workspace: string | null;
+  /** Why the assignment cannot be made where it was asked for. */
+  readonly refusal: SkillScopeRefusal | null;
+}
+
+function resolveSkillAssignmentScope(
+  name: string,
+  repositoryRoot: string,
+  assignment: SkillRolesRequestBody
+): SkillAssignmentScope {
+  const facts = liveSkillScopes([name], repositoryRoot).get(name) ?? null;
+  const workspace = assignment.workspace ?? null;
+  return { facts, workspace, refusal: skillScopeRefusal(facts, workspace) };
+}
+
+/**
+ * The roles the contract now carries for a skill, or null when they are not
+ * observed.
+ *
+ * The roles are read from the place the skill belongs to: a repo-scoped
+ * skill's roles are its workspace's roles, and every other skill's are the
+ * global ones. Reading the global list for a workspace-scoped assignment would
+ * report an empty assignment for a write that took.
+ *
+ * An empty assignment is observed only when the just-written source revision is
+ * the one the Runtime reloaded; otherwise absence from that projection stays
+ * unknown instead of becoming an observed empty set.
+ */
+function observedSkillAssignmentRoles(
+  name: string,
+  scope: SkillAssignmentScope,
+  contractFile: string,
+  writtenRevision: string
+): string[] | null {
+  const observedRoles = assignedSkillRoles(
+    name,
+    scope.facts?.scope === "repo" ? scope.facts.workspace : null
+  );
+  if (observedRoles.length > 0) return observedRoles;
+  const content = readContract(contractFile);
+  const revision =
+    content.length > 0 ? executionContractRevision(content) : null;
+  return revision === writtenRevision ? [] : null;
+}
+
+/**
+ * Refuse an assignment whose workspace does not match where the skill is.
+ *
+ * The refusal is audited with the reason it was refused, so a later reader can
+ * tell a workspace mismatch from a body the route did not understand.
+ */
+function refuseSkillScope(
+  response: ServerResponse,
+  actor: ControlApiActor,
+  resource: string,
+  refusal: SkillScopeRefusal
+): void {
+  auditMutation({
+    actor: actor.actor,
+    actorVerified: true,
+    role: actor.role,
+    action: "assign_skill_roles",
+    resource,
+    outcome: "error",
+    changes: null,
+    reason: refusal.reason
+  });
+  sendControlError(
+    response,
+    400,
+    "autodev_control_execution_contract_invalid",
+    refusal.message
+  );
 }
 
 /** The write itself, mapped onto the two refusals it can legitimately return. */
@@ -5778,7 +6045,8 @@ async function applySkillRoles(
         file,
         expectedRevision: assignment.expectedRevision,
         skill,
-        roles: assignment.roles
+        roles: assignment.roles,
+        workspace: assignment.workspace
       })
     };
   } catch (error) {
@@ -5912,8 +6180,22 @@ async function patchSkillRoles(
       response,
       400,
       "autodev_control_api_invalid_body",
-      "Skill role assignment requires exactly the expected execution-contract revision and a roles array of strings."
+      "Skill role assignment requires exactly the expected execution-contract revision, a roles array of strings, and at most one workspace."
     );
+    return;
+  }
+
+  // Where the skill is installed decides where it may be assigned. The scope is
+  // read from the machine rather than taken from the request, so a skill that
+  // lives inside a repository cannot be claimed by a workspace it does not
+  // belong to.
+  const scope = resolveSkillAssignmentScope(
+    skill.name,
+    options.repositoryRoot ?? DEFAULT_REPO_ROOT,
+    assignment
+  );
+  if (scope.refusal !== null) {
+    refuseSkillScope(response, actor, resource, scope.refusal);
     return;
   }
 
@@ -5940,24 +6222,22 @@ async function patchSkillRoles(
   // next `/control/skills` read would show the old ones — an assignment that
   // reports working and does nothing.
   reloadExecutionContract();
-  const observed = configuredRoleExposure("skills").find(
-    (entry) => entry.name === name
+  const actualRoles = observedSkillAssignmentRoles(
+    name,
+    scope,
+    contractFile,
+    assigned.revision
   );
-  const currentContractContent = readContract(contractFile);
-  const currentContractRevision =
-    currentContractContent.length > 0
-      ? executionContractRevision(currentContractContent)
-      : null;
-  // `configuredRoleExposure` omits skills with no assigned roles. An empty
-  // assignment is observed only when the just-written source revision is the
-  // one the Runtime reloaded; otherwise absence from that projection stays
-  // unknown instead of becoming an observed empty set.
-  const actualRoles =
-    observed?.roles ??
-    (currentContractRevision === assigned.revision ? [] : null);
   const roleGeneration = (roles: readonly string[]): string =>
     createHash("sha256")
-      .update(JSON.stringify({ skill: name, roles: [...roles].sort() }), "utf8")
+      .update(
+        JSON.stringify({
+          skill: name,
+          workspace: scope.workspace,
+          roles: [...roles].sort()
+        }),
+        "utf8"
+      )
       .digest("hex");
   const desiredGeneration = roleGeneration(assigned.roles);
   const observedGeneration =
@@ -5973,6 +6253,10 @@ async function patchSkillRoles(
       name,
       desiredRoles: assigned.roles,
       actualRoles,
+      // Where the assignment was made. The skill's scope decides it, and the
+      // audit says so rather than leaving a workspace-scoped write looking
+      // like a global one.
+      workspace: scope.workspace,
       revision: assigned.revision
     },
     desiredGeneration,

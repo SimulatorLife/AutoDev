@@ -5,9 +5,10 @@ import {
   type AgentActivityTracker,
   PROCESS_FALLBACK_SESSION_KEY
 } from "@simulatorlife/autodev-runtime/router/concurrency";
-import type {
-  ExecutionContract,
-  RoleContract
+import {
+  contractRoleSkills,
+  type ExecutionContract,
+  type RoleContract
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
@@ -358,15 +359,32 @@ export interface RoleCapabilityRequirements {
   };
 }
 
+/**
+ * The role's contract, projected for the workspace the work happens in.
+ *
+ * A workspace adds skills to a role and changes nothing else about it: the
+ * MCP servers, the read-only flag, and the rest of the role stay global. A
+ * caller that knows no workspace gets the global contract, because a guess
+ * about which workspace a request is for would hand a role skills it must not
+ * have.
+ */
 function roleContractForAgent(
   role: string | null | undefined,
-  executionContract: ExecutionContract
-): RoleContract | undefined {
+  executionContract: ExecutionContract,
+  workspace?: string | null
+): RoleContract | null {
   const key =
     typeof role === "string" && role.trim()
       ? role.trim().toLowerCase()
       : "default";
-  return executionContract.roles?.[key];
+  const global = executionContract.roles?.[key];
+  if (!global) return null;
+  const workspaceSkills = contractRoleSkills(executionContract, key, workspace);
+  if (workspaceSkills.length === 0) return global;
+  const skills = [
+    ...new Set([...capabilityNames(global.skills), ...workspaceSkills])
+  ].sort();
+  return { ...global, skills };
 }
 
 function capabilityNames(value: unknown): string[] {
@@ -520,9 +538,10 @@ export function providerCapabilities(
 
 export function roleCapabilityRequirements(
   role: string | null | undefined,
-  executionContract: ExecutionContract = getDefaultExecutionContract()
+  executionContract: ExecutionContract = getDefaultExecutionContract(),
+  workspace?: string | null
 ): RoleCapabilityRequirements {
-  const contract = roleContractForAgent(role, executionContract);
+  const contract = roleContractForAgent(role, executionContract, workspace);
   if (!contract) return emptyRoleCapabilityRequirements();
   return {
     mcp: capabilitySet(contract.mcp),

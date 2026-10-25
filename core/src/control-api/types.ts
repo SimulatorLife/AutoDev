@@ -23,7 +23,6 @@ import type {
   MemoryStatusCounts
 } from "../memory/types.ts";
 import type { SandboxMode } from "../permissions/types.ts";
-import type { SkillScope } from "../skills/scope.ts";
 import type {
   HumanPlaytestStudy,
   PlaytestBatch,
@@ -64,6 +63,7 @@ import type {
   ProviderRolePriority,
   RoutingPolicyState
 } from "../routing/types.ts";
+import type { SkillScope } from "../skills/scope.ts";
 import type {
   ToolCatalogCoverage,
   ToolCatalogItem,
@@ -753,6 +753,14 @@ export interface ControlApiSkillsResponse {
    * submission that cannot succeed.
    */
   readonly assignmentRoles: readonly string[];
+  /**
+   * Whether the Runtime has observed any skill telemetry at all.
+   *
+   * The collection-level fact behind "Awaiting OTel evidence": without it a
+   * page cannot tell "nothing has been observed yet" from "it was observed and
+   * nothing happened", which are different facts about a different subject.
+   */
+  readonly telemetryObserved: boolean;
   readonly skills: readonly {
     readonly name: string;
     readonly description: string;
@@ -777,6 +785,16 @@ export interface ControlApiSkillsResponse {
      * workspace and nowhere else.
      */
     readonly workspace: string | null;
+    /**
+     * Times the skill was exposed to an agent; `null` when nothing has been
+     * observed for it.
+     *
+     * `null` means "not observed" and `0` means "observed, and never
+     * happened", so the two are kept apart.
+     */
+    readonly observedExposure: number | null;
+    /** Times the skill was used; `null` when nothing has been observed for it. */
+    readonly observedUse: number | null;
   }[];
   readonly unresolvedAssignments: readonly {
     readonly name: string;
@@ -796,6 +814,16 @@ export interface ControlApiSkillsResponse {
 export interface ControlApiSkillRolesPatchRequest {
   readonly expectedRevision: string;
   readonly roles: readonly string[];
+  /**
+   * The workspace the assignment belongs to.
+   *
+   * Absent for a global assignment. A skill installed inside a repository
+   * belongs to that repository's workspace alone, so its assignment is made
+   * there and nowhere else; a skill installed anywhere else is assigned
+   * globally and names no workspace. The Control API refuses an assignment
+   * whose workspace does not match where the skill is installed.
+   */
+  readonly workspace?: string;
 }
 
 export interface ControlApiSkillRolesPatchResponse {

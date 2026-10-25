@@ -49,7 +49,8 @@ import {
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   type RoleContract,
-  roleContract
+  roleContract,
+  workspaceIdFromKey
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
@@ -471,8 +472,11 @@ type AntigravityRoleContract = RoleContract & {
   mcpTools?: Record<string, string[]>;
 };
 
-function antigravityRoleContract(role: unknown): AntigravityRoleContract {
-  return roleContract(role) as AntigravityRoleContract;
+function antigravityRoleContract(
+  role: unknown,
+  workspace?: string | null
+): AntigravityRoleContract {
+  return roleContract(role, workspace) as AntigravityRoleContract;
 }
 
 // agy's spawn tool takes a batch, not one child: the orchestrator calls
@@ -3387,7 +3391,10 @@ function prepareResponsesTurn(
     spawnSessions.open(spawnSession, {
       orchestrator: isOrchestratorRole(agentRole)
     });
-  const bootstrapContract = antigravityRoleContract(agentRole);
+  const bootstrapContract = antigravityRoleContract(
+    agentRole,
+    workspaceIdFromKey(request.headers[AUTODEV_WORKSPACE_KEY_HEADER])
+  );
   const home = process.env.HOME ?? "";
   writeErrorLine(
     `agy bootstrap provider=antigravity model=${model} role=${agentRole ?? "default"} cwd=${cwd} skills=${JSON.stringify(bootstrapContract.skills ?? [])} mcp=${JSON.stringify(bootstrapContract.mcp ?? [])} permission_settings=${home}/.gemini/antigravity-cli/settings.json skill_registry=${cwd}/.agents/skills.json mcp_registry=${home}/.gemini/config/mcp_config.json`

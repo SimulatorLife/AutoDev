@@ -27,7 +27,8 @@ import {
 } from "@simulatorlife/autodev-runtime/agents";
 import {
   type RoleContract,
-  roleContract
+  roleContract,
+  workspaceIdFromKey
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
@@ -111,8 +112,11 @@ type CopilotRoleContract = RoleContract & {
   skills?: string[];
 };
 
-function copilotRoleContract(role: unknown): CopilotRoleContract {
-  return roleContract(role) as CopilotRoleContract;
+function copilotRoleContract(
+  role: unknown,
+  workspace?: string | null
+): CopilotRoleContract {
+  return roleContract(role, workspace) as CopilotRoleContract;
 }
 
 // How a Copilot turn comes by the skills its role contract grants it: the CLI
@@ -1736,7 +1740,10 @@ function prepareCopilotRequest(
     spawnSessions.open(spawnSession, {
       orchestrator: isOrchestratorRole(agentRole)
     });
-  const bootstrapContract = copilotRoleContract(agentRole);
+  const bootstrapContract = copilotRoleContract(
+    agentRole,
+    workspaceIdFromKey(request.headers[AUTODEV_WORKSPACE_KEY_HEADER])
+  );
   writeErrorLine(
     "copilot bootstrap provider=copilot model=" +
       payload.model +

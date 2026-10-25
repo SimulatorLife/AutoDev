@@ -214,7 +214,37 @@ So the catalogue takes the product's own filter bar, and the narrowing is by **r
 
 **And the narrowing survives the round-trip a role assignment makes.** Every checkbox on this page submits immediately through a POST that redirects back to `/skills`, so a narrowed list would have been thrown away by the act of assigning a role: the operator would come back to all sixteen rows and have to find the skill they were just editing. The narrowing travels on the form's **action** rather than in its body, because the body carries the desired role set and nothing else -- that is a committed contract too, pinned by a test that asserts the exact set of submitted field names, since an unchecked checkbox contributes nothing and a route that demanded a `roles` field would make the one operation that unassigns a skill impossible to express. The route **rebuilds** the address from the query rather than following one it was given, so there is no path anywhere in the flow that could point anywhere but the skill list -- a value that tries to be a path stays a query, encoded.
 
-`console/tests/skills-filter.test.ts` pins the narrowing, the address, the filter bar's own name and its **absence of a submit button**, the two different empty messages, the narrowing carried on the assignment's action, and the fact that the assignment still posts only the revision and the desired roles.
+`console/tests/skills-filter.test.ts` pins the narrowing, the address, the filter bar's own name and its **absence of a submit button**, the two different empty messages, the narrowing carried on the assignment's action, and the fact that the assignment posts the revision and the desired roles -- and, for a skill that belongs to a workspace, that workspace.
+
+## A skill's reachability is where it is, not what it is called
+
+The catalogue held **sixteen** skills and the page listed the roles the execution contract assigned to each of them, as though a skill in the catalogue were a skill an agent could reach. It is not. Measured against this machine the sixteen split three ways: **ten** are installed at the user scope (`~/.agents/skills/`), **three** are installed inside the repository itself (`.agents/skills/`), and **three** -- `game-playtesting`, `playtest-analysis`, `source-driven-development` -- are installed **nowhere**. A row that names roles an agent cannot reach is a row that lies about the one question the page exists to answer.
+
+Codex's own hierarchy is the authority (`repo` before `user` before `admin` before `system`), and the Console now reads it live, per request, off the filesystem. `/control/skills` carries each skill's `scope`, the directory it was found in (`scopeLocation`), and the workspace a repo-scoped skill belongs to (`workspace`). The scope is never the operator's to say.
+
+**A skill installed inside a repository belongs to that repository's workspace and to no other.** The execution contract grew a workspace dimension for that: a top-level `workspaces` section, where a workspace holds the same role -> skills shape the global section holds.
+
+```json
+"workspaces": {
+  "SimulatorLife/AutoDev": {
+    "roles": { "worker": { "skills": ["autodev-codex-request-capture"] } }
+  }
+}
+```
+
+A global assignment and a workspace assignment are two writes to two sections, and the read is the exact inverse of the write: a skill in `workspaces[W].roles[R].skills` is assigned to `R` in `W` and to nobody globally. `PATCH /control/skills/:name` therefore carries the workspace with the assignment -- `{ expectedRevision, roles, workspace? }` -- and **refuses** an assignment that does not match where the skill actually is: a repo-scoped skill without its workspace, a repo-scoped skill whose repository is not one of the configured workspaces, and a skill that is not repo-scoped _with_ one. The projection follows the same rule: a role's skills are the contract's global list plus the workspace's list for that role, and a turn that names no workspace gets the global contract unchanged.
+
+**The Console was also throwing away telemetry the Runtime already had.** Every row read "Observed Exposure: Not observed" while `codex.skill.injected` was arriving with the skill's name on it -- 800 points in the last days -- and the Runtime keeps both counts in its usage telemetry already: an injected skill is an exposure, and a skill that was used is a use. `/control/skills` now carries them per skill (`observedExposure`, `observedUse`) with `telemetryObserved` for the collection-level fact behind "Awaiting OTel evidence". `null` and `0` are kept apart, because they are different facts: `null` means the Runtime has not observed that skill at all, `0` means it observed it and it never happened.
+
+## The Console's table had no column for where a skill lives
+
+The catalogue read gave the Console a name, a description and a path, and the table had four columns -- Skill Name, Path, Eligible Roles, State. Nothing in it said **where** the skill was installed, so a row naming a role an agent could not reach looked exactly like a row naming one it could, and the operator had no way to tell the two apart on the page the question is asked on.
+
+The table now carries a **Scope** column, and it is read-only by construction: the scope is a fact about the install, read live off the filesystem, so the Console offers no control that changes it and the header says so. It reads `Repo`, `User`, `Admin` or `System`, and under it the workspace a repo-scoped skill belongs to (`SimulatorLife/AutoDev`) or the directory the others were found in. A skill that is installed **nowhere** reads `Not installed` rather than a scope, and its State column reads `Unreachable` rather than `Assigned` -- three of the sixteen are in that state, and no agent role can invoke them. The **Configured** card counts the skills that are installed rather than the entries in the catalogue, because a catalogue entry with no install is a configuration defect rather than a live skill, and the card says how many entries the catalogue holds beside it.
+
+**A repo-scoped skill's roles are assigned inside its own workspace, and the row says which one.** The assignment control posts that workspace beside the revision and the desired roles, and says "Roles apply inside SimulatorLife/AutoDev", so the operator can see where the assignment lands before making it. Every other skill posts no workspace at all, and the route refuses a body that names one for it.
+
+The exposure and the use are per row as well as on the cards, and the two absent facts stay apart: a skill the Runtime has never seen reads `Not observed`, and a skill it has seen and never used reads `0 exposed · 0 used`.
 
 ## The acceptance on `main` was red, and one of the reasons was a stale assertion
 
