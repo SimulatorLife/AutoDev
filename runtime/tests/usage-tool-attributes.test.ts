@@ -6,9 +6,9 @@ import {
   AUTODEV_SKILL_ALIASES
 } from "../src/router/otel-attributes.ts";
 import {
+  toolKey,
   toolNameAttribute,
-  toolServerAttribute,
-  toolKey
+  toolServerAttribute
 } from "../src/router/usage.ts";
 
 /**
@@ -52,10 +52,7 @@ test("a tool named the way the tool-call metric names it is found", () => {
   // call whose tool cannot be named is counted as "unknown-tool", which is a
   // tool nobody has heard of.
   assert.equal(toolNameAttribute({ "tool.name": "search" }), "search");
-  assert.equal(
-    toolNameAttribute({ "gen_ai.tool.name": "search" }),
-    "search"
-  );
+  assert.equal(toolNameAttribute({ "gen_ai.tool.name": "search" }), "search");
   assert.equal(toolNameAttribute({ tool: "search" }), "search");
   assert.equal(toolNameAttribute({ tool_name: "search" }), "search");
 });
@@ -86,10 +83,7 @@ test("the alias lists name the attributes the telemetry carries", () => {
     true,
     "the Runtime's MCP client names the server this way"
   );
-  assert.equal(
-    AUTODEV_MCP_SERVER_ALIASES.includes("mcp.connector.name"),
-    true
-  );
+  assert.equal(AUTODEV_MCP_SERVER_ALIASES.includes("mcp.connector.name"), true);
   assert.equal(AUTODEV_SKILL_ALIASES.includes("skill"), true);
   assert.equal(AUTODEV_SKILL_ALIASES.includes("skill.name"), true);
 });
