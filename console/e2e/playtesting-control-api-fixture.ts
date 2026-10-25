@@ -3751,6 +3751,135 @@ const MEMORY_RECORDS_LIMIT = 50;
 let memoryStorageNotConfigured = false;
 
 /**
+ * The records read, narrowed the way the Runtime narrows it.
+ *
+ * The Runtime takes the operator's query, kind and status (the service reads
+ * all three) and the Console passes them straight through. A fixture that
+ * ignored them would leave the Console's memory filter bar -- one of the four
+ * the target state names -- untestable: a narrowed read would answer with the
+ * whole catalogue, and the page would show a full list under a filter that was
+ * never applied.
+ */
+function memoryRecordsResponse(url: URL): Record<string, unknown> {
+  const records = memoryRecords();
+  const narrowing = memoryNarrowing(url.searchParams);
+  const matching = narrowing.narrowed
+    ? records.filter((record) => matchesMemoryNarrowing(record, narrowing))
+    : records;
+  const offset = Number(url.searchParams.get("offset") ?? "0");
+  return {
+    schema: "autodev-memory-records-v1",
+    items: matching.slice(offset, offset + MEMORY_RECORDS_LIMIT),
+    // The unnarrowed read answers with the catalogue the fixture stands in
+    // for; a narrowed one answers with what is left of it.
+    total: narrowing.narrowed ? matching.length : MEMORY_RECORDS_TOTAL,
+    limit: MEMORY_RECORDS_LIMIT,
+    offset,
+    statusCounts: narrowing.narrowed
+      ? countMemoryStatuses(matching)
+      : {
+          proposed: 412,
+          active: 604,
+          superseded: 120,
+          invalidated: 48,
+          uncertain: 20
+        }
+  };
+}
+
+/**
+ * What the operator narrowed a memory read by.
+ */
+interface MemoryNarrowing {
+  readonly query: string;
+  readonly kind: string | null;
+  readonly status: string | null;
+  /** Whether any of the three was set to something other than "all". */
+  readonly narrowed: boolean;
+}
+
+/**
+ * Whether a filter value was set to something other than "all".
+ *
+ * `"all"` and an absent value both mean unfiltered, which is what the URL
+ * writes and what the Console sends.
+ */
+function isMemoryFilterSet(value: string | null): boolean {
+  return value !== null && value !== "" && value !== "all";
+}
+
+/**
+ * The narrowing a memory read carries.
+ *
+ * `"all"` and an absent value both mean unfiltered, which is what the URL
+ * writes and what the Console sends.
+ */
+function memoryNarrowing(params: URLSearchParams): MemoryNarrowing {
+  const query = (params.get("query") ?? "").trim().toLowerCase();
+  const kind = params.get("kind");
+  const status = params.get("status");
+  return {
+    query,
+    kind,
+    status,
+    narrowed:
+      query.length > 0 || isMemoryFilterSet(kind) || isMemoryFilterSet(status)
+  };
+}
+
+/**
+ * Whether a record survives a narrowing.
+ */
+function matchesMemoryNarrowing(
+  record: Record<string, unknown>,
+  narrowing: MemoryNarrowing
+): boolean {
+  if (
+    narrowing.kind !== null &&
+    narrowing.kind !== "" &&
+    narrowing.kind !== "all" &&
+    record.kind !== narrowing.kind
+  ) {
+    return false;
+  }
+  if (
+    narrowing.status !== null &&
+    narrowing.status !== "" &&
+    narrowing.status !== "all" &&
+    record.status !== narrowing.status
+  ) {
+    return false;
+  }
+  if (narrowing.query.length === 0) return true;
+  return `${String(record.id)} ${String(record.claim)} ${String(record.kind)}`
+    .toLowerCase()
+    .includes(narrowing.query);
+}
+
+/**
+ * The lifecycle counts of a narrowed read.
+ */
+function countMemoryStatuses(
+  records: readonly Record<string, unknown>[]
+): Record<string, number> {
+  // Every lifecycle carries a count, including the ones nothing is in: the
+  // Console's reader requires all five, and a narrowed read that answered with
+  // only the ones it had rows in would read as an incompatible response.
+  const lifecycleCounts: Record<string, number> = {
+    proposed: 0,
+    active: 0,
+    superseded: 0,
+    invalidated: 0,
+    uncertain: 0
+  };
+  for (const record of records) {
+    const status = String(record.status);
+    if (status in lifecycleCounts) lifecycleCounts[status] += 1;
+  }
+  return lifecycleCounts;
+}
+
+/**
  * The durable claims the fixture holds.
  *
  * The rows carry the states the Memory view has to tell apart -- a claim
@@ -3947,21 +4076,7 @@ function handleMemoryRead(
       response.writeHead(503).end();
       return true;
     }
-    const records = memoryRecords();
-    sendJson(response, {
-      schema: "autodev-memory-records-v1",
-      items: records,
-      total: MEMORY_RECORDS_TOTAL,
-      limit: MEMORY_RECORDS_LIMIT,
-      offset: 0,
-      statusCounts: {
-        proposed: 412,
-        active: 604,
-        superseded: 120,
-        invalidated: 48,
-        uncertain: 20
-      }
-    });
+    sendJson(response, memoryRecordsResponse(url));
     return true;
   }
   if (url.pathname === "/control/memory/experiences") {

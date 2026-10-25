@@ -316,6 +316,16 @@ The name now carries both, beginning with the visible word: **"Enabled: Disable 
 
 The rule lives with the rest of the state-pill vocabulary in `console/src/components/ui/state-pill.ts`, and the model enablement pill uses it too: the agent pill and the model pill are the same control, and two features spelling the same name is how they drift. `console/tests/control-affordances.test.ts` holds the two to the shared rule, and `console/tests/agent-enablement.test.ts` pins what each state says.
 
+## An empty list says which of two things happened
+
+The target state is explicit: "found matching the current criteria" is not "are configured". A list that is empty because the operator narrowed it and a list that is empty because it holds nothing are two different facts, and the message has to say which of them it is -- the second is a claim about something the operator did, so it may only be made when they did it.
+
+Six of the Console's lists have said which of the two happened since they were narrowed: the prompts, the tools, the skills, the GitHub runs and workflows, and the evaluations. The **memory** did not. Its records table said "no memory records found matching the current criteria" whether or not a filter had been applied, so an operator who opened the memory for a workspace that holds no records yet -- the first thing they see on a fresh workspace -- was told that a filter they never touched had removed them. The experiences and cohorts tables named the scope and the time window instead, which is true in both cases but says nothing about the criteria the operator had just chosen.
+
+The memory now says the same thing the other lists say, and the scope module owns what "narrowed" means: the query, the kind, the status, and the cohort filters, with `"all"` and an absent value both meaning unfiltered.
+
+Getting the browser acceptance to check it turned up a second thing. The Console's own e2e fixture answered the memory records read with the whole catalogue whatever the query said, while the Runtime narrows the read by all three (`the service takes all three`). So the Console's memory filter bar -- one of the four the target state names -- could not be exercised in the browser at all: a narrowed read came back with every record and the page showed a full list under a filter that was never applied. The fixture now narrows the read the way the Runtime does, and the acceptance narrows each searchable list with a query that cannot match and requires the empty state to name the criteria.
+
 ## A name that drops what the control shows
 
 The target state asks for both halves of a control's stated name: it says what the control points at, **and** it still contains the text that is visible, so a voice-control user can say the word they can see and find the control that says it.

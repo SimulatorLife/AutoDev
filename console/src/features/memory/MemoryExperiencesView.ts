@@ -39,6 +39,7 @@ import {
 } from "../../components/ui/text-classes.ts";
 import { codeOptions } from "./memory-code-options.ts";
 import {
+  isMemoryScopeNarrowed,
   memoryDetailHref,
   memoryFilterHref,
   memoryListHref,
@@ -252,8 +253,12 @@ export function MemoryExperiencesView({
       data: experiences,
       columns,
       keyExtractor: (exp: ExperienceEnvelope) => exp.id,
-      emptyMessage:
-        "No captured memory experiences found in this workspace scope."
+      // Which of two things happened: the scope holds no captured experiences,
+      // or the criteria the operator chose hold none. The second is a claim
+      // about something the operator did, so it may only be made when they did.
+      emptyMessage: isMemoryScopeNarrowed(listScope)
+        ? "No captured memory experiences found matching the current criteria."
+        : "No captured memory experiences were observed in this workspace scope."
     }),
 
     // The Runtime returns a bounded page and the total behind it.

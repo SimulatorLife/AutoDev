@@ -102,6 +102,32 @@ export const COHORT_FILTER_KEYS = [
 ] as const;
 
 /**
+ * Whether the operator has narrowed this list.
+ *
+ * The list's empty state has to say which of two things happened: the memory
+ * holds nothing for this scope, or the criteria the operator chose hold
+ * nothing. "No memory records found matching the current criteria" is the
+ * second of those, and it is a claim about something the operator did -- so it
+ * may only be made when they did.
+ *
+ * The scope is the one place that knows what a narrowing is: the query, the
+ * kind and the status, with `"all"` and `undefined` both meaning unfiltered,
+ * and the cohort filters belonging to the cohort tab alone.
+ */
+export function isMemoryScopeNarrowed(scope: MemoryListScope): boolean {
+  if (scope.query !== undefined && scope.query.length > 0) return true;
+  if (scope.kind !== undefined && scope.kind !== "all") return true;
+  if (scope.status !== undefined && scope.status !== "all") return true;
+  if (scope.tab === "cohorts") {
+    for (const key of COHORT_FILTER_KEYS) {
+      const value = scope[key];
+      if (value !== undefined && value !== "all") return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Assemble the list's query string. `offset` is omitted at the first page so
  * that the common case is the short, readable URL an operator would type.
  */

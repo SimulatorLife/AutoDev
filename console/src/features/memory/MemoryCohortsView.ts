@@ -35,7 +35,11 @@ import {
 } from "../../components/ui/text-classes.ts";
 import { SUCCESS_TONE_CLASS } from "../../components/ui/tones.ts";
 import { type CodeOption, codeOptions } from "./memory-code-options.ts";
-import { memoryFilterHref, type MemoryListScope } from "./memory-list-url.ts";
+import {
+  isMemoryScopeNarrowed,
+  memoryFilterHref,
+  type MemoryListScope
+} from "./memory-list-url.ts";
 import {
   MEMORY_COHORT_MODE_LABEL,
   MEMORY_INJECTION_RESULT_LABEL,
@@ -568,8 +572,13 @@ export function MemoryCohortsView({
               columns: cellColumns,
               keyExtractor: (c: MemorySessionOutcomeCohortCell) =>
                 `${c.memoryMode}-${c.outcomeKind ?? "unreported"}-${c.sessionCount}`,
-              emptyMessage:
-                "No session outcome cohort data found for the specified scope and time window."
+              // Which of two things happened: the scope holds no cohort data,
+              // or the criteria the operator chose hold none. The second is a
+              // claim about something the operator did, so it may only be made
+              // when they did.
+              emptyMessage: isMemoryScopeNarrowed(listScope)
+                ? "No session outcome cohort data found matching the current criteria."
+                : "No session outcome cohort data found for the specified scope and time window."
             }
           )
         : React.createElement(
@@ -629,8 +638,9 @@ export function MemoryCohortsView({
               label: "Eligible exposures assessed, by assigned mode",
               notObservedMessage:
                 "Use cohort assessment coverage not observed.",
-              emptyMessage:
-                "No eligible injected memory exposures were observed for this scope and time window.",
+              emptyMessage: isMemoryScopeNarrowed(listScope)
+                ? "No eligible injected memory exposures found matching the current criteria."
+                : "No eligible injected memory exposures were observed for this scope and time window.",
               barClass: "bg-chart-1",
               valueClass: "text-chart-1"
             }),
@@ -638,8 +648,9 @@ export function MemoryCohortsView({
               data: useJudgementChartData(useTotals),
               label: "Injected memory exposures by assessment outcome",
               notObservedMessage: "Use cohort judgements not observed.",
-              emptyMessage:
-                "No eligible injected memory exposures were observed for this scope and time window.",
+              emptyMessage: isMemoryScopeNarrowed(listScope)
+                ? "No eligible injected memory exposures found matching the current criteria."
+                : "No eligible injected memory exposures were observed for this scope and time window.",
               barClass: "bg-chart-2",
               valueClass: "text-chart-2"
             }),
@@ -650,8 +661,9 @@ export function MemoryCohortsView({
                 columns: useCellColumns,
                 keyExtractor: (cell: MemoryInjectionUseCohortCell) =>
                   `${cell.memoryMode}-${cell.sessionCardinality}-${cell.useKind ?? "unassessed"}`,
-                emptyMessage:
-                  "No eligible injected memory exposures were observed for this scope and time window."
+                emptyMessage: isMemoryScopeNarrowed(listScope)
+                  ? "No eligible injected memory exposures found matching the current criteria."
+                  : "No eligible injected memory exposures were observed for this scope and time window."
               }
             )
           )

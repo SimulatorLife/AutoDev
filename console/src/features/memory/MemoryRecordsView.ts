@@ -45,6 +45,7 @@ import {
 } from "../../components/ui/text-classes.ts";
 import { codeOptions } from "./memory-code-options.ts";
 import {
+  isMemoryScopeNarrowed,
   memoryDetailHref,
   memoryExperienceHref,
   memoryFilterHref,
@@ -427,7 +428,12 @@ export function MemoryRecordsView({
       data: records,
       columns,
       keyExtractor: (r: MemoryRecord) => r.id,
-      emptyMessage: "No memory records found matching the current criteria."
+      // Which of two things happened: the memory holds nothing for this scope,
+      // or the criteria the operator chose hold nothing. The second is a claim
+      // about something the operator did, so it may only be made when they did.
+      emptyMessage: isMemoryScopeNarrowed(listScope)
+        ? "No memory records found matching the current criteria."
+        : "No memory records were observed for this scope."
     }),
 
     // The Runtime returns a bounded page and the total behind it, so a
