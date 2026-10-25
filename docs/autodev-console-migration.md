@@ -529,6 +529,10 @@ Deferring the leave by a turn of the event loop -- so the router has a turn to a
 
 Leaving again only once the router had settled needs a settled signal the router does not give, and the one candidate that looks like it, the transition, ends before the router has applied anything.
 
+Two more combinations were measured after that, and they are the ones that say what the leave is for. Removing the click's own ask -- so that the intent prefetch is the only request for the page, and the request the navigation waits for is not aborted by a second ask -- left the leave in place and measured the same as the shipped configuration: four passed, three passed, two passed. Removing the ask _and_ the leave failed every navigation: the destination was reached and the page did not render.
+
+So the leave is what commits a navigation to a page the router has to fetch, and the click's own ask is not what breaks the navigation. That leaves the leave's own timing as the thing to explain, and nothing I have measured explains it yet.
+
 So the leave stays where it is, and the navigation to the page the session started on keeps failing some of the time. That is the honest state of it: the cause is known, the repair is not, and every repair that was tried made the acceptance worse.
 
 So the remaining failure is narrow and understood: the navigation back to the page the session started on, cancelled by the console's own leave. It is the last thing standing between the Console and a navigation that always lands.
