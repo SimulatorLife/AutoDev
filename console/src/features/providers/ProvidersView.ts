@@ -224,7 +224,9 @@ function providerColumns(
       // The provider id and its two external links stack in this cell, and the
       // widest of them measures 98px, so 130 is that with the cell's own 32px
       // of padding.
-      weight: 130,
+      // 132 is the widest line in the cell -- the provider's own id and its
+      // two links -- with the cell's own 32px of inset.
+      weight: 132,
       align: "tokens",
       cell: (provider) =>
         React.createElement(
@@ -248,7 +250,10 @@ function providerColumns(
       // wide, and it ellipsizes inside the badge with the whole name on its
       // hover title -- so a column sized for it bought nothing and took 50px
       // from the five columns that have to be read.
-      weight: 160,
+      //
+      // 168 holds the longest verdict there is in practice -- "Unavailable
+      // (unavailable)" measures 129px -- with the cell's own 32px of inset.
+      weight: 168,
       cell: (provider) => React.createElement(ProviderStatusBadge, { provider })
     },
     {
@@ -303,9 +308,9 @@ function providerColumns(
       // Both stepper labels sit above their button groups, so the 184px budget
       // leaves room for controls and lets the optional disabled caption wrap.
       //
-      // 155 holds the widest of the two groups -- the button row measures 123px
+      // 151 holds the widest of the two groups -- the button row measures 101px
       // -- and the header, whose label and help marker together need 149px.
-      weight: 155,
+      weight: 151,
       align: "tokens",
       cell: (provider) =>
         React.createElement(ProviderLimitsControls, { provider, returnTo })

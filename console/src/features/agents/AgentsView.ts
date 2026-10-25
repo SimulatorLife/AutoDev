@@ -167,7 +167,11 @@ export function AgentsView({
       // The provider chips wrap -- that is the target state's rule for discrete
       // cell content -- and wrapping costs height, not legibility, so this is the
       // cheapest column on the page to narrow.
-      weight: 125,
+      //
+      // 136 is the widest provider chip -- `antigravity` measures 98px -- with
+      // the cell's own 32px of inset. At 125 the chip was cut at its last
+      // glyph on every row that named a long provider.
+      weight: 136,
       cell: (agent) =>
         React.createElement(AgentProviderSummary, { agent, providers })
     },
@@ -192,8 +196,9 @@ export function AgentsView({
       // longest on the page, so this column is bounded by its header at the floor
       // even though it reads less often than Status.
       //
-      // 160 is that badge with the cell's own 32px of padding.
-      weight: 160,
+      // 149 is that badge with the cell's own 32px of padding, with room
+      // over the badge for a longer verdict.
+      weight: 149,
       cell: (agent) =>
         React.createElement(StatusBadge, { status: agent.convergence })
     },

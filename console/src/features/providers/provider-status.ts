@@ -120,7 +120,17 @@ export function ProviderStatusBadge({
   return React.createElement(StatusBadge, {
     status: status.tone,
     label: status.label,
-    ...(status.title === undefined ? {} : { title: status.title })
+    // The title carries the verdict as well as the explanation of it.
+    //
+    // A badge's title is the only way back to a label the column could not
+    // hold: the Status column gives "Unavailable (upstream_5xx)" a 136px box,
+    // so the verdict's tail is cut and what is left is "Unavailable (u…". A
+    // title that only explains the verdict -- "The latest provider health
+    // evidence is a failure" -- leaves the part that was cut unavailable, so
+    // the verdict is named in the title and the explanation follows it.
+    ...(status.title === undefined
+      ? {}
+      : { title: `${status.label} — ${status.title}` })
   });
 }
 
