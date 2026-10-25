@@ -6,6 +6,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { SkillTelemetry } from "../src/features/skills/skill-telemetry.ts";
+import { SkillDetailView } from "../src/features/skills/SkillDetailView.ts";
 import { SkillRoleAssignmentControl } from "../src/features/skills/SkillRoleAssignmentControl.ts";
 import { SkillsView } from "../src/features/skills/SkillsView.ts";
 import {
@@ -316,4 +317,61 @@ test("the telemetry mapping keeps a null apart from a zero", () => {
     observedExposure: null,
     observedUse: null
   });
+});
+
+const DETAIL_SOURCE = {
+  schema: "autodev-control-skill-content-v2" as const,
+  name: "opentelemetry",
+  path: ".rulesync/skills/opentelemetry/SKILL.md",
+  content: "# OpenTelemetry\n",
+  revision: "b".repeat(64),
+  reconciliation: {
+    status: {
+      convergence: "converged" as const,
+      desiredGeneration: "a".repeat(64),
+      observedGeneration: "a".repeat(64),
+      lastApplyAt: "2026-10-25T00:00:00.000Z",
+      lastObservationAt: "2026-10-25T00:00:00.000Z",
+      lastError: null,
+      explanation: "Runtime reconciliation fixture."
+    },
+    history: []
+  },
+  diff: {
+    summary: "Assignment observation fixture.",
+    identifier: "a".repeat(64)
+  }
+};
+
+test("the detail page says where the skill is installed", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(SkillDetailView, {
+      source: DETAIL_SOURCE,
+      scopedSkill: REPO_SKILL
+    })
+  );
+  assert.match(markup, /data-section="skill-installation"/u);
+  assert.match(markup, /data-skill-scope="repo"/u);
+  assert.match(markup, />Scope</u);
+  assert.match(markup, />Repo</u);
+  assert.match(markup, /SimulatorLife\/AutoDev/);
+});
+
+test("the detail page says a skill installed nowhere cannot be invoked", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(SkillDetailView, {
+      source: DETAIL_SOURCE,
+      scopedSkill: UNINSTALLED_SKILL
+    })
+  );
+  assert.match(markup, /Not installed/);
+  assert.match(markup, /no agent role can invoke it/);
+});
+
+test("the detail page says the scope was not observed when the catalogue could not be read", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(SkillDetailView, { source: DETAIL_SOURCE })
+  );
+  assert.match(markup, /Not observed/);
+  assert.match(markup, /data-skill-scope="not-observed"/u);
 });
