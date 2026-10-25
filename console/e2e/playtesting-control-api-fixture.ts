@@ -4824,6 +4824,21 @@ function handleCatalogResourceRead(
           // same as observing that it was never exposed or used.
           observedExposure: null,
           observedUse: null
+        },
+        {
+          name: "release-notes",
+          description: "Draft the release notes for a version.",
+          path: ".rulesync/skills/release-notes/SKILL.md",
+          // The second kind of catalogue entry: defined in the catalogue, and
+          // installed nowhere on this machine, so no agent role can invoke
+          // it. It is the state an operator is most likely to be confused by,
+          // and a fixture that holds only installed skills never shows it.
+          roles: [],
+          scope: null,
+          scopeLocation: null,
+          workspace: null,
+          observedExposure: null,
+          observedUse: null
         }
       ],
       unresolvedAssignments: []

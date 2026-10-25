@@ -52,6 +52,21 @@ test("a skill that is installed nowhere says so rather than naming a scope", asy
   await page.goto("/skills");
   await waitForPageContent(page);
 
+  // A catalogue entry that is installed nowhere is the state an operator is
+  // most likely to be confused by: it looks like a skill, it is in the
+  // catalogue, and no agent role can invoke it. The row has to say so in
+  // every column that can carry the fact -- where it lives, who may invoke
+  // it, and whether it is reachable.
+  const row = page.locator("tbody tr").filter({ hasText: "release-notes" });
+  await expect(row).toHaveCount(1);
+  await expect(row.getByText("Not installed", { exact: true })).toBeVisible();
+  await expect(row.getByText("Unreachable", { exact: true })).toBeVisible();
+  await expect(
+    row.getByText("Unassigned — no agent role can invoke this skill.", {
+      exact: false
+    })
+  ).toBeVisible();
+
   // Every row states a scope or says the skill is installed nowhere. A row
   // that says neither is a row the operator cannot act on.
   const scopes = await page.locator("tbody tr td:nth-child(3)").allInnerTexts();
@@ -59,4 +74,18 @@ test("a skill that is installed nowhere says so rather than naming a scope", asy
   for (const scope of scopes) {
     expect(scope.trim().length).toBeGreaterThan(0);
   }
+});
+
+test("the card counts the configured skills against the catalogue it holds", async ({
+  page
+}) => {
+  await page.goto("/skills");
+  await waitForPageContent(page);
+
+  // The catalogue holds two entries and one of them is installed, so the
+  // card says both numbers: the configured one is what an agent can reach,
+  // and the catalogue is what the sidebar counts.
+  await expect(
+    page.getByText("of 2 in the catalog", { exact: false }).first()
+  ).toBeVisible();
 });
