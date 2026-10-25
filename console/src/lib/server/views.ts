@@ -20,7 +20,7 @@ import type {
   PromptAsset,
   PromptDocument,
   RoleCapabilityMatrix,
-  SkillDefinition,
+  ScopedSkillDefinition,
   SkillEligibility,
   WorkspaceEntry
 } from "@simulatorlife/autodev-core";
@@ -102,14 +102,59 @@ export function agentDetailFromControlApi(
   return agentFromControlApi(response);
 }
 
+/**
+ * The catalogue, with where each skill is installed.
+ *
+ * The scope facts travel with the skill because they are part of what the
+ * skill is: a skill that is in the catalogue and installed nowhere cannot be
+ * invoked by anybody, and a Console that shows it as though it were live is
+ * showing a skill no role can reach.
+ */
 export function skillsFromControlApi(
   response: ControlApiSkillsResponse
-): readonly SkillDefinition[] {
-  return response.skills.map(({ name, description, path }) => ({
-    name,
-    description,
-    path
-  }));
+): readonly ScopedSkillDefinition[] {
+  return response.skills.map(
+    ({ name, description, path, scope, scopeLocation, workspace }) => ({
+      name,
+      description,
+      path,
+      scope,
+      scopeLocation,
+      workspace
+    })
+  );
+}
+
+/**
+ * The skill exposure and use the Runtime has observed.
+ *
+ * `null` is kept apart from `0` on the way through: nothing observed for a
+ * skill is not the same as observed and never used.
+ */
+export function skillTelemetryFromControlApi(
+  response: ControlApiSkillsResponse
+): {
+  readonly observed: boolean;
+  readonly bySkill: ReadonlyMap<
+    string,
+    Pick<
+      ControlApiSkillsResponse["skills"][number],
+      "observedExposure" | "observedUse"
+    >
+  >;
+} {
+  return {
+    observed: response.telemetryObserved,
+    bySkill: new Map(
+      response.skills.map((skill) => [
+        skill.name,
+        {
+          observedExposure: skill.observedExposure,
+          observedUse: skill.observedUse
+        }
+      ])
+    )
+  };
 }
 
 export function skillEligibilityFromControlApi(

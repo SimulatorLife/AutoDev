@@ -1,6 +1,6 @@
 import type {
   RuleSyncValidationIssue,
-  SkillDefinition,
+  ScopedSkillDefinition,
   SkillEligibility
 } from "@simulatorlife/autodev-core";
 import React from "react";
@@ -22,7 +22,7 @@ import {
   NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
-import { chipList } from "../../components/tables/Chips.ts";
+import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   type ColumnDef,
   DataTable,
@@ -34,6 +34,12 @@ import {
   MONO_META_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
+import {
+  NOT_INSTALLED_LABEL,
+  SKILL_SCOPE_LABEL,
+  skillScopePlace
+} from "./skill-scope.ts";
+import type { SkillObservation, SkillTelemetry } from "./skill-telemetry.ts";
 import {
   assignmentUnavailableReason,
   SAVE_OUTCOME_MESSAGES,
@@ -51,8 +57,12 @@ import {
  *
  * Configuration vs. runtime evidence are separate concerns. A configured
  * skill is only that: configured and possibly eligible. Whether it was
- * exposed, selected, or used must come from runtime telemetry; until the OTel
- * skill exposure/use adapter exists, those values remain `Not observed`.
+ * exposed, selected, or used must come from runtime telemetry.
+ *
+ * A skill's reach is a third fact again, and it is not a setting: where the
+ * skill is installed decides which roles can reach it at all. A skill in the
+ * catalogue and installed nowhere is a configuration defect, so the page says
+ * so instead of listing it as though it were live.
  *
  * The catalog table and role assignment controls are merged into one view:
  * each row displays its identity and metadata alongside its assignment control.
@@ -61,7 +71,7 @@ import {
  */
 
 export interface SkillsViewProps {
-  readonly skills: readonly SkillDefinition[];
+  readonly skills: readonly ScopedSkillDefinition[];
   readonly eligibility: readonly SkillEligibility[];
   readonly unresolvedAssignments: readonly SkillEligibility[];
   readonly sourceValidity: boolean | null;
@@ -78,6 +88,13 @@ export interface SkillsViewProps {
    */
   readonly assignmentRoles: readonly string[];
   readonly executionContractRevision: string | null;
+  /**
+   * The exposure and use the Runtime has observed.
+   *
+   * Required rather than defaulted: a page that cannot say whether any
+   * telemetry has been observed must not claim that nothing happened.
+   */
+  readonly telemetry: SkillTelemetry;
   readonly saveOutcome?: SkillAssignmentSaveOutcome | undefined;
   /**
    * The role the list is narrowed to.
@@ -138,6 +155,76 @@ function skillEmptyMessage(
   return "No skills configured in RuleSync `.rulesync/skills/`.";
 }
 
+/**
+ * How many times the Runtime saw something happen.
+ *
+ * `null` is "nothing has been observed" and `0` is "observed, and it never
+ * happened". The two are different facts, so a count of zero is printed as a
+ * zero and never as "not observed".
+ */
+function observedCountLabel(count: number | null, noun: string): string {
+  if (count === null) return NOT_OBSERVED_LABEL;
+  return `${count} ${noun}`;
+}
+
+/**
+ * What the Runtime has observed about one skill.
+ *
+ * A skill with no observation says so once, rather than twice: "Not observed ·
+ * Not observed" reads like two facts where there is one.
+ */
+function skillObservationLine(
+  observation: SkillObservation | undefined
+): string {
+  const exposure = observation?.observedExposure ?? null;
+  const use = observation?.observedUse ?? null;
+  if (exposure === null && use === null) return NOT_OBSERVED_LABEL;
+  return `${observedCountLabel(exposure, "exposed")} · ${observedCountLabel(
+    use,
+    "used"
+  )}`;
+}
+
+/**
+ * The state of one skill, as the State column says it.
+ *
+ * A skill that is installed nowhere comes first: it cannot be invoked by
+ * anybody, so saying it is "Assigned" would report the contract's opinion
+ * instead of what an agent can actually reach.
+ */
+function skillStateBadge(
+  skill: ScopedSkillDefinition,
+  item: SkillEligibility | undefined,
+  executionContractRevision: string | null
+): React.JSX.Element {
+  if (skill.scope === null) {
+    return React.createElement(StatusBadge, {
+      status: "invalid",
+      label: "Unreachable",
+      title:
+        "In the skill catalog, but installed nowhere on this machine, so no agent role can invoke it."
+    });
+  }
+  if (item === undefined || executionContractRevision === null) {
+    return React.createElement(StatusBadge, {
+      status: NOT_OBSERVED_STATUS
+    });
+  }
+  if (item.roles.length === 0) {
+    return React.createElement(StatusBadge, {
+      status: "unavailable",
+      label: "Not assigned",
+      title:
+        "In the skill catalog, but assigned to no agent role, so nothing can invoke it."
+    });
+  }
+  return React.createElement(StatusBadge, {
+    status: "ready",
+    label: "Assigned",
+    title: `Assigned to ${item.roles.join(", ")}`
+  });
+}
+
 export function SkillsView({
   skills,
   eligibility,
@@ -146,6 +233,7 @@ export function SkillsView({
   sourceValidity,
   assignmentRoles,
   executionContractRevision,
+  telemetry,
   saveOutcome,
   role = ""
 }: SkillsViewProps): React.JSX.Element {
@@ -155,14 +243,34 @@ export function SkillsView({
       .filter((item) => item.roles.length > 0 && catalogNames.has(item.skill))
       .map((item) => item.skill)
   );
+  // A skill that is installed nowhere cannot be reached by any role, so it is
+  // not a configured skill: it is a catalogue entry whose install is missing.
+  // Counting it as configured would say a skill is live when no agent can
+  // invoke it.
+  const installedSkills = skills.filter((skill) => skill.scope !== null);
   const configuredCount =
     sourceValidity === true
-      ? skills.length
+      ? installedSkills.length
       : sourceValidity === false
         ? "Invalid"
         : NOT_OBSERVED_LABEL;
   const assignedCount =
     sourceValidity === true ? eligibleSkills.size : NOT_OBSERVED_LABEL;
+
+  // What the Runtime has observed. The totals are over the skills that were
+  // observed, and a skill with no observation contributes nothing rather than
+  // a zero: "no evidence" and "observed and never happened" are different
+  // facts, and the cards below say which one they are.
+  const observedExposureTotal = skills.reduce(
+    (total, skill) =>
+      total + (telemetry.bySkill.get(skill.name)?.observedExposure ?? 0),
+    0
+  );
+  const observedUseTotal = skills.reduce(
+    (total, skill) =>
+      total + (telemetry.bySkill.get(skill.name)?.observedUse ?? 0),
+    0
+  );
 
   // The roles each skill is assigned to, by name. The narrowing is applied
   // here rather than by the page, because the facts above it are about the
@@ -185,11 +293,11 @@ export function SkillsView({
     skills,
     sourceValidity
   });
-  const columns: ColumnDef<SkillDefinition>[] = [
+  const columns: ColumnDef<ScopedSkillDefinition>[] = [
     {
       id: "name",
       header: "Skill Name",
-      weight: 320,
+      weight: 290,
       align: "prose",
       cell: (skill) =>
         React.createElement(
@@ -222,10 +330,47 @@ export function SkillsView({
       cell: (skill) => React.createElement(PathText, { path: skill.path })
     },
     {
+      id: "scope",
+      header: "Scope",
+      // The help says what the column is, because the column has no control in
+      // it and an operator looking for a way to change it has to be told there
+      // is none: the scope is read from the install on this machine.
+      headerHelp:
+        "Where the skill is installed, read from this machine. It is a fact about the install, not a setting, so the Console cannot change it.",
+      align: "tokens",
+      weight: 150,
+      cell: (skill) => {
+        const place = skillScopePlace(skill);
+        return React.createElement(
+          "div",
+          {
+            className: "flex min-w-0 flex-col gap-1",
+            "data-skill-scope": skill.scope ?? "not-installed"
+          },
+          // One label, so it is a chip rather than a list of them. A skill that
+          // is installed nowhere says so in muted text instead: it is not a
+          // scope like the others, it is the absence of one.
+          skill.scope === null
+            ? React.createElement(
+                "span",
+                { className: MUTED_META_CLASS },
+                NOT_INSTALLED_LABEL
+              )
+            : React.createElement(Chip, null, SKILL_SCOPE_LABEL[skill.scope]),
+          place === null
+            ? null
+            : React.createElement(PathText, {
+                path: place,
+                className: "font-mono text-xs text-fg-secondary break-normal"
+              })
+        );
+      }
+    },
+    {
       id: "eligibleRoles",
       header: "Eligible Roles",
       align: "tokens",
-      weight: 360,
+      weight: 250,
       cell: (skill) => {
         const item = eligibility.find((e) => e.skill === skill.name);
         if (executionContractRevision === null) {
@@ -259,27 +404,19 @@ export function SkillsView({
     {
       id: "status",
       header: "State",
-      weight: 146,
+      weight: 188,
       cell: (skill) => {
         const item = eligibility.find((e) => e.skill === skill.name);
-        if (item === undefined || executionContractRevision === null) {
-          return React.createElement(StatusBadge, {
-            status: NOT_OBSERVED_STATUS
-          });
-        }
-        if (item.roles.length === 0) {
-          return React.createElement(StatusBadge, {
-            status: "unavailable",
-            label: "Not assigned",
-            title:
-              "In the skill catalog, but assigned to no agent role, so nothing can invoke it."
-          });
-        }
-        return React.createElement(StatusBadge, {
-          status: "ready",
-          label: "Assigned",
-          title: `Assigned to ${item.roles.join(", ")}`
-        });
+        const badge = skillStateBadge(skill, item, executionContractRevision);
+        const observed = skillObservationLine(
+          telemetry.bySkill.get(skill.name)
+        );
+        return React.createElement(
+          "div",
+          { className: "flex min-w-0 flex-col gap-1" },
+          badge,
+          React.createElement("span", { className: MUTED_META_CLASS }, observed)
+        );
       }
     }
   ];
@@ -289,7 +426,7 @@ export function SkillsView({
     {
       feature: "skills",
       attributes: {
-        "data-skill-runtime-observed": "false",
+        "data-skill-runtime-observed": String(telemetry.observed),
         "data-skill-source-validity":
           sourceValidity === null ? "not-observed" : String(sourceValidity)
       }
@@ -318,24 +455,31 @@ export function SkillsView({
       { columns: 4 },
       React.createElement(StatCard, {
         title: "Configured",
-        value: configuredCount
+        value: configuredCount,
+        ...(sourceValidity === true
+          ? { subtitle: `of ${skills.length} in the catalog` }
+          : {})
       }),
       React.createElement(StatCard, {
         title: "Role-assigned",
         value: assignedCount,
         ...(sourceValidity === true
-          ? { subtitle: `of ${skills.length} configured` }
+          ? { subtitle: `of ${installedSkills.length} configured` }
           : {})
       }),
       React.createElement(StatCard, {
         title: "Observed Exposure",
-        value: NOT_OBSERVED_LABEL,
-        subtitle: "Awaiting OTel evidence"
+        value: telemetry.observed ? observedExposureTotal : NOT_OBSERVED_LABEL,
+        subtitle: telemetry.observed
+          ? "times a skill was exposed to an agent"
+          : "Awaiting OTel evidence"
       }),
       React.createElement(StatCard, {
         title: "Usage Evidence",
-        value: NOT_OBSERVED_LABEL,
-        subtitle: "skill_used events not wired"
+        value: telemetry.observed ? observedUseTotal : NOT_OBSERVED_LABEL,
+        subtitle: telemetry.observed
+          ? "times a skill was used"
+          : "Awaiting OTel evidence"
       })
     ),
     unresolvedAssignments.length > 0
@@ -434,10 +578,10 @@ export function SkillsView({
             { className: CALLOUT_WARNING_CLASS, role: "status" },
             unavailable
           ),
-      React.createElement<DataTableProps<SkillDefinition>>(DataTable, {
+      React.createElement<DataTableProps<ScopedSkillDefinition>>(DataTable, {
         data: narrowed,
         columns,
-        keyExtractor: (s: SkillDefinition) => s.name,
+        keyExtractor: (s: ScopedSkillDefinition) => s.name,
         emptyMessage
       }),
       unavailable === null && narrowed.length > 0

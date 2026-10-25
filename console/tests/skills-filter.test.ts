@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { ScopedSkillDefinition } from "@simulatorlife/autodev-core";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -32,21 +33,30 @@ import { SkillsView } from "../src/features/skills/SkillsView.ts";
  * select -- which is what the shared filter bar's on-change mode is for.
  */
 
-const CATALOG = [
+const CATALOG: readonly ScopedSkillDefinition[] = [
   {
     name: "code-review",
     description: "Review a diff and report what would break.",
-    path: ".rulesync/skills/code-review/SKILL.md"
+    path: ".rulesync/skills/code-review/SKILL.md",
+    scope: "repo",
+    scopeLocation: "/repo/.agents/skills/code-review",
+    workspace: "SimulatorLife/AutoDev"
   },
   {
     name: "release-notes",
     description: "Write release notes from a commit range.",
-    path: ".rulesync/skills/release-notes/SKILL.md"
+    path: ".rulesync/skills/release-notes/SKILL.md",
+    scope: "user",
+    scopeLocation: "/home/operator/.agents/skills/release-notes",
+    workspace: null
   },
   {
     name: "browser-check",
     description: "Open a page and report what it shows.",
-    path: ".rulesync/skills/browser-check/SKILL.md"
+    path: ".rulesync/skills/browser-check/SKILL.md",
+    scope: "user",
+    scopeLocation: "/home/operator/.agents/skills/browser-check",
+    workspace: null
   }
 ];
 
@@ -74,6 +84,7 @@ function renderSkills(
       validationIssues: [],
       assignmentRoles: ["worker", "reviewer"],
       executionContractRevision: "a".repeat(64),
+      telemetry: { observed: false, bySkill: new Map() },
       ...(role === undefined ? {} : { role })
     })
   );

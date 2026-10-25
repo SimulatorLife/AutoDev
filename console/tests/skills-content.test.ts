@@ -166,13 +166,23 @@ test("skill content mutation uses the source subresource and requires a confirme
 test("Skills rows link to one canonical source editor and editor posts the exact revision and source", () => {
   const list = renderToStaticMarkup(
     React.createElement(SkillsView, {
-      skills: [{ name: NAME, description: "Release steps.", path: PATH }],
+      skills: [
+        {
+          name: NAME,
+          description: "Release steps.",
+          path: PATH,
+          scope: "user",
+          scopeLocation: "/home/operator/.agents/skills/release-checklist",
+          workspace: null
+        }
+      ],
       eligibility: [],
       unresolvedAssignments: [],
       sourceValidity: true,
       validationIssues: [],
       assignmentRoles: [],
-      executionContractRevision: null
+      executionContractRevision: null,
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
   assert.match(list, new RegExp(`href="/skills/${NAME}"`, "u"));

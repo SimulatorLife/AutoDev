@@ -25,6 +25,7 @@ import {
   type ControlApiProviderRecord,
   type ControlApiProvidersResponse,
   type ControlApiRuntimeResponse,
+  type ControlApiSkillsResponse,
   type ExperienceEnvelope,
   type GithubWorkflowDefinition,
   isHistoricalUsageSelection,
@@ -1420,7 +1421,11 @@ test("a skill path wraps between its segments and shows every one of them", () =
         {
           name: "improve-codebase-architecture",
           path: ".rulesync/skills/improve-codebase-architecture/SKILL.md",
-          description: "Analyze and improve codebase architecture."
+          description: "Analyze and improve codebase architecture.",
+          scope: "user",
+          scopeLocation:
+            "/home/operator/.agents/skills/improve-codebase-architecture",
+          workspace: null
         }
       ],
       eligibility: [],
@@ -1428,7 +1433,8 @@ test("a skill path wraps between its segments and shows every one of them", () =
       validationIssues: [],
       sourceValidity: true,
       assignmentRoles: [],
-      executionContractRevision: null
+      executionContractRevision: null,
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
 
@@ -3401,6 +3407,11 @@ test("no column is narrower than its own header", () => {
     Requests: 72,
     State: 74,
     "Role Scope": 77,
+    // Measured in Chromium against the Console's own compiled Tailwind output
+    // and the header typography the table renders it with: the `Scope` label
+    // measures 77px there (45px of text and the header's own 16px of padding
+    // each side), recorded as measured.
+    Scope: 77,
     Trace: 77,
     "Role / Agent": 78,
     Model: 79,
@@ -3505,7 +3516,10 @@ test("no column is narrower than its own header", () => {
           {
             name: "orchestration",
             description: "Coordination",
-            path: ".rulesync/skills/orchestration"
+            path: ".rulesync/skills/orchestration",
+            scope: "user",
+            scopeLocation: "/home/operator/.agents/skills/orchestration",
+            workspace: null
           }
         ],
         eligibility: [{ skill: "orchestration", roles: ["orchestrator"] }],
@@ -3513,7 +3527,8 @@ test("no column is narrower than its own header", () => {
         sourceValidity: true,
         validationIssues: [],
         assignmentRoles: ["orchestrator", "worker"],
-        executionContractRevision: "c".repeat(64)
+        executionContractRevision: "c".repeat(64),
+        telemetry: { observed: false, bySkill: new Map() }
       })
     ),
     renderToStaticMarkup(
@@ -4135,12 +4150,18 @@ test("Skills fetcher validates the v2 catalog contract and rejects stale respons
     executionContractRevision: "b".repeat(64),
     assignmentRoles: ["validator"],
     issues: [],
+    telemetryObserved: false,
     skills: [
       {
         name: "audit",
         description: "Review canonical sources.",
         path: ".rulesync/skills/audit/SKILL.md",
-        roles: ["validator"]
+        roles: ["validator"],
+        scope: "user",
+        scopeLocation: "/home/operator/.agents/skills/audit",
+        workspace: null,
+        observedExposure: null,
+        observedUse: null
       }
     ],
     unresolvedAssignments: []
@@ -5935,7 +5956,10 @@ test("SkillsView never reports 'Active' or 'Recorded' without OTel evidence", ()
         {
           name: "orchestration",
           description: "Coordination",
-          path: ".rulesync/skills/orchestration"
+          path: ".rulesync/skills/orchestration",
+          scope: "user",
+          scopeLocation: "/home/operator/.agents/skills/orchestration",
+          workspace: null
         }
       ],
       eligibility: [],
@@ -5943,7 +5967,8 @@ test("SkillsView never reports 'Active' or 'Recorded' without OTel evidence", ()
       sourceValidity: true,
       validationIssues: [],
       assignmentRoles: ["orchestrator"],
-      executionContractRevision: "c".repeat(64)
+      executionContractRevision: "c".repeat(64),
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
   assert.equal(markup.includes("Active"), false);
@@ -5955,9 +5980,30 @@ test("SkillsView distinguishes declared role scope from missing eligibility evid
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
       skills: [
-        { name: "assigned", description: "", path: "assigned" },
-        { name: "unscoped", description: "", path: "unscoped" },
-        { name: "unobserved", description: "", path: "unobserved" }
+        {
+          name: "assigned",
+          description: "",
+          path: "assigned",
+          scope: "user",
+          scopeLocation: "/home/operator/.agents/skills/assigned",
+          workspace: null
+        },
+        {
+          name: "unscoped",
+          description: "",
+          path: "unscoped",
+          scope: "user",
+          scopeLocation: "/home/operator/.agents/skills/unscoped",
+          workspace: null
+        },
+        {
+          name: "unobserved",
+          description: "",
+          path: "unobserved",
+          scope: "user",
+          scopeLocation: "/home/operator/.agents/skills/unobserved",
+          workspace: null
+        }
       ],
       eligibility: [
         { skill: "assigned", roles: ["orchestrator"] },
@@ -5967,7 +6013,8 @@ test("SkillsView distinguishes declared role scope from missing eligibility evid
       sourceValidity: true,
       validationIssues: [],
       assignmentRoles: ["orchestrator", "worker"],
-      executionContractRevision: "c".repeat(64)
+      executionContractRevision: "c".repeat(64),
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
   assert.match(markup, /Role-assigned/);
@@ -5989,7 +6036,8 @@ test("SkillsView does not synthesize empty catalog counts for an unavailable Rul
       sourceValidity: null,
       validationIssues: [],
       assignmentRoles: ["orchestrator"],
-      executionContractRevision: "c".repeat(64)
+      executionContractRevision: "c".repeat(64),
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
   assert.match(markup, /data-skill-source-validity="not-observed"/);
@@ -11690,13 +11738,14 @@ test("an empty list names its resource instead of inheriting a generic sentence"
 });
 
 test("View adapters translate Control API responses without inventing data", () => {
-  const skillsResponse = {
-    schema: "autodev-control-skills-v2" as const,
+  const skillsResponse: ControlApiSkillsResponse = {
+    schema: "autodev-control-skills-v2",
     source: ".rulesync/skills+execution-contract",
     readOnly: true,
     valid: true,
     executionContractRevision: "a".repeat(64),
     assignmentRoles: ["browser-tester", "validator"],
+    telemetryObserved: true,
     skills: [
       {
         name: "playwright",
@@ -11707,16 +11756,20 @@ test("View adapters translate Control API responses without inventing data", () 
         // is unobserved rather than guessed.
         scope: null,
         scopeLocation: null,
-        workspace: null
+        workspace: null,
+        observedExposure: 3,
+        observedUse: 1
       },
       {
         name: "audit",
         description: "Audit catalog state.",
         path: ".rulesync/skills/audit/SKILL.md",
         roles: [],
-        scope: null,
-        scopeLocation: null,
-        workspace: null
+        scope: "repo",
+        scopeLocation: "/repo/.agents/skills/audit",
+        workspace: "SimulatorLife/AutoDev",
+        observedExposure: null,
+        observedUse: null
       }
     ],
     unresolvedAssignments: [{ name: "missing", roles: ["worker"] }],
@@ -11726,7 +11779,18 @@ test("View adapters translate Control API responses without inventing data", () 
   assert.deepEqual(skills[0], {
     name: "playwright",
     description: "Run browser checks.",
-    path: ".rulesync/skills/playwright/SKILL.md"
+    path: ".rulesync/skills/playwright/SKILL.md",
+    scope: null,
+    scopeLocation: null,
+    workspace: null
+  });
+  assert.deepEqual(skills[1], {
+    name: "audit",
+    description: "Audit catalog state.",
+    path: ".rulesync/skills/audit/SKILL.md",
+    scope: "repo",
+    scopeLocation: "/repo/.agents/skills/audit",
+    workspace: "SimulatorLife/AutoDev"
   });
   assert.deepEqual(skillEligibilityFromControlApi(skillsResponse), [
     { skill: "playwright", roles: ["browser-tester", "validator"] },
@@ -12958,7 +13022,10 @@ test("a skill that reached the catalog but reached no agent says so", () => {
           {
             name: "release-checklist",
             description: "Steps for cutting a release.",
-            path: ".rulesync/skills/release-checklist/SKILL.md"
+            path: ".rulesync/skills/release-checklist/SKILL.md",
+            scope: "user",
+            scopeLocation: "/home/operator/.agents/skills/release-checklist",
+            workspace: null
           }
         ],
         eligibility,
@@ -12966,7 +13033,8 @@ test("a skill that reached the catalog but reached no agent says so", () => {
         sourceValidity: true,
         validationIssues: [],
         assignmentRoles: ["orchestrator", "worker"],
-        executionContractRevision: "c".repeat(64)
+        executionContractRevision: "c".repeat(64),
+        telemetry: { observed: false, bySkill: new Map() }
       })
     );
 
@@ -21487,7 +21555,12 @@ function submittedAssignmentFields(
 const SKILL_ASSIGNMENT_SKILL = {
   name: "release-checklist",
   description: "Steps for cutting a release.",
-  path: ".rulesync/skills/release-checklist/SKILL.md"
+  path: ".rulesync/skills/release-checklist/SKILL.md",
+  // Installed inside the repository, so its roles belong to one workspace and
+  // the assignment says which one.
+  scope: "repo" as const,
+  scopeLocation: "/repo/.agents/skills/release-checklist",
+  workspace: "SimulatorLife/AutoDev"
 };
 
 test("a skill assignment form posts the whole desired set, and an empty one clears it", () => {
@@ -21499,7 +21572,8 @@ test("a skill assignment form posts the whole desired set, and an empty one clea
       sourceValidity: true,
       validationIssues: [],
       assignmentRoles: ["orchestrator", "worker"],
-      executionContractRevision: "d".repeat(64)
+      executionContractRevision: "d".repeat(64),
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
 
@@ -21519,16 +21593,20 @@ test("a skill assignment form posts the whole desired set, and an empty one clea
       sourceValidity: true,
       validationIssues: [],
       assignmentRoles: ["orchestrator", "worker"],
-      executionContractRevision: "d".repeat(64)
+      executionContractRevision: "d".repeat(64),
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
   // Unassigning is "check nothing", so the submission legitimately carries no
   // `roles` at all. A route that required the field to be present would make the
-  // one operation that fixes an unreachable skill impossible to express.
+  // one operation that fixes an unreachable skill impossible to express. The
+  // workspace still travels: the assignment is made inside it either way.
+  const clearedFields = submittedAssignmentFields(cleared, "release-checklist");
   assert.deepEqual(
-    [...submittedAssignmentFields(cleared, "release-checklist").keys()],
-    ["expectedRevision"]
+    [...clearedFields.keys()],
+    ["expectedRevision", "workspace"]
   );
+  assert.deepEqual(clearedFields.get("workspace"), ["SimulatorLife/AutoDev"]);
   assert.match(
     cleared,
     /Unassigned — no agent role can invoke this skill/,
@@ -21545,7 +21623,8 @@ test("an unassigned skill is fixable from the page that reports it as unassigned
       sourceValidity: true,
       validationIssues: [],
       assignmentRoles: ["orchestrator"],
-      executionContractRevision: "e".repeat(64)
+      executionContractRevision: "e".repeat(64),
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
   assert.match(markup, /Not assigned/);
@@ -21569,7 +21648,8 @@ test("no execution contract means no assignment form and a reason, not a broken 
       sourceValidity: true,
       validationIssues: [],
       assignmentRoles: ["orchestrator"],
-      executionContractRevision: null
+      executionContractRevision: null,
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
   assert.doesNotMatch(
@@ -21596,6 +21676,7 @@ test("a refused assignment says what happened and claims nothing was written", (
       validationIssues: [],
       assignmentRoles: ["orchestrator"],
       executionContractRevision: "f".repeat(64),
+      telemetry: { observed: false, bySkill: new Map() },
       saveOutcome: "conflict"
     })
   );
@@ -21714,6 +21795,7 @@ test("an unobserved skill assignment result is a warning, not an empty assignmen
       validationIssues: [],
       assignmentRoles: ["orchestrator"],
       executionContractRevision: "f".repeat(64),
+      telemetry: { observed: false, bySkill: new Map() },
       saveOutcome: "not-observed"
     })
   );
@@ -22104,7 +22186,8 @@ test("an invalid skill catalog names the file it could not apply, like every oth
         }
       ],
       assignmentRoles: ["orchestrator"],
-      executionContractRevision: "c".repeat(64)
+      executionContractRevision: "c".repeat(64),
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
   // A skill dropped from the catalog is a skill no agent can be assigned, and
@@ -22128,7 +22211,8 @@ test("a valid skill catalog renders no validation panel", () => {
       sourceValidity: true,
       validationIssues: [],
       assignmentRoles: ["orchestrator"],
-      executionContractRevision: "c".repeat(64)
+      executionContractRevision: "c".repeat(64),
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
   assert.doesNotMatch(markup, /data-testid="skill-catalog-validation-issues"/u);

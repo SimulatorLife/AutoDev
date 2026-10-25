@@ -98,12 +98,16 @@ export function skillsListHref(filters: SkillsListFilters): string {
  * role at all is kept by every role filter -- it is the one an operator is
  * most likely looking for when they filter, because an unassigned skill is
  * the one that cannot be invoked by anybody.
+ *
+ * Generic over the skill shape so that filtering keeps the scope facts a
+ * scoped skill carries: a filter that dropped them would strip the page of
+ * what it knows about where each skill is installed.
  */
-export function filterSkills(
-  skills: readonly SkillDefinition[],
+export function filterSkills<T extends SkillDefinition>(
+  skills: readonly T[],
   filters: SkillsListFilters,
   rolesBySkill: ReadonlyMap<string, readonly string[]>
-): readonly SkillDefinition[] {
+): readonly T[] {
   const role = filters.role.trim();
   if (role === "") return skills;
   return skills.filter((skill) => {

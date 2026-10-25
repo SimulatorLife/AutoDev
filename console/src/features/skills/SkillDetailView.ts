@@ -1,4 +1,7 @@
-import type { ControlApiSkillContentResponse } from "@simulatorlife/autodev-core";
+import type {
+  ControlApiSkillContentResponse,
+  ScopedSkillDefinition
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { CodeEditor } from "../../components/code/CodeBlock.ts";
@@ -14,11 +17,18 @@ import {
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import {
   MONO_META_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
+import {
+  NOT_INSTALLED_LABEL,
+  SKILL_SCOPE_LABEL,
+  skillScopePlace
+} from "./skill-scope.ts";
 
 export type SkillContentSaveOutcome =
   "conflict" | "validation" | "apply-failed" | "failed";
@@ -38,6 +48,14 @@ export function skillContentSaveOutcome(
 export interface SkillDetailViewProps {
   readonly source: ControlApiSkillContentResponse;
   readonly saveOutcome?: SkillContentSaveOutcome | undefined;
+  /**
+   * Where the skill is installed, read from the catalogue.
+   *
+   * `null` when the catalogue could not be read: a scope that was not observed
+   * is not the same as a skill that is installed nowhere, and this page says
+   * which one it is looking at.
+   */
+  readonly scopedSkill?: ScopedSkillDefinition | null | undefined;
   /**
    * The revision the editor's content is based on.
    *
@@ -77,18 +95,58 @@ function saveNotice(
   );
 }
 
+/**
+ * Where the skill is installed, as the page says it.
+ *
+ * Three different facts end here: the catalogue could not be read, the skill
+ * is installed nowhere, and the skill is installed in one of the places Codex
+ * looks for one. Only the first is missing evidence; the second is an
+ * observed absence, and the page says so rather than leaving the field empty.
+ */
+function skillInstallation(scopedSkill: ScopedSkillDefinition | null): {
+  readonly scope: string;
+  readonly place: { readonly label: string; readonly value: string } | null;
+  readonly note: string | null;
+} {
+  if (scopedSkill === null) {
+    return {
+      scope: NOT_OBSERVED_LABEL,
+      place: null,
+      note: "The skill catalogue could not be read, so where this skill is installed was not observed."
+    };
+  }
+  if (scopedSkill.scope === null) {
+    return {
+      scope: NOT_INSTALLED_LABEL,
+      place: null,
+      note: "This skill is in the catalog but installed nowhere on this machine, so no agent role can invoke it."
+    };
+  }
+  return {
+    scope: SKILL_SCOPE_LABEL[scopedSkill.scope],
+    place: {
+      label: scopedSkill.scope === "repo" ? "Workspace" : "Location",
+      value: skillScopePlace(scopedSkill) ?? ""
+    },
+    note: null
+  };
+}
+
 export function SkillDetailView({
   source,
   saveOutcome,
+  scopedSkill = null,
   editorRevision
 }: SkillDetailViewProps): React.JSX.Element {
+  const installation = skillInstallation(scopedSkill);
   return React.createElement(
     PageBody,
     {
       feature: "skills",
       attributes: {
         "data-skill-content": source.name,
-        "data-skill-revision": source.revision
+        "data-skill-revision": source.revision,
+        "data-skill-scope": scopedSkill?.scope ?? "not-observed"
       }
     },
     React.createElement(Breadcrumbs, {
@@ -117,6 +175,42 @@ export function SkillDetailView({
         status: source.reconciliation.status,
         history: source.reconciliation.history
       })
+    ),
+    React.createElement(
+      "section",
+      {
+        className: DETAIL_PANEL_CLASS,
+        "aria-label": "Installation",
+        "data-section": "skill-installation"
+      },
+      React.createElement(
+        "h3",
+        { className: SECTION_HEADING_CLASS },
+        "Installation"
+      ),
+      React.createElement(
+        DetailGrid,
+        { columns: 2 },
+        React.createElement(
+          DetailValue,
+          { label: "Scope" },
+          installation.scope
+        ),
+        installation.place === null
+          ? null
+          : React.createElement(
+              DetailValue,
+              { label: installation.place.label },
+              installation.place.value
+            )
+      ),
+      installation.note === null
+        ? null
+        : React.createElement(
+            "p",
+            { className: `${MUTED_META_CLASS} mt-3` },
+            installation.note
+          )
     ),
     React.createElement(
       "section",

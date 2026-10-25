@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { ScopedSkillDefinition } from "@simulatorlife/autodev-core";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -61,15 +62,21 @@ function countOccurrences(text: string, pattern: RegExp): number {
 }
 
 test("SkillsView combines catalog metadata and role assignments into a single table with no second list", () => {
-  const dynamicSkillA = {
+  const dynamicSkillA: ScopedSkillDefinition = {
     name: "dynamic-skill-alpha",
     description: "Alpha dynamic test skill",
-    path: ".rulesync/skills/dynamic-skill-alpha/SKILL.md"
+    path: ".rulesync/skills/dynamic-skill-alpha/SKILL.md",
+    scope: "user",
+    scopeLocation: "/home/operator/.agents/skills/dynamic-skill-alpha",
+    workspace: null
   };
-  const dynamicSkillB = {
+  const dynamicSkillB: ScopedSkillDefinition = {
     name: "dynamic-skill-beta",
     description: "Beta dynamic test skill",
-    path: ".rulesync/skills/dynamic-skill-beta/SKILL.md"
+    path: ".rulesync/skills/dynamic-skill-beta/SKILL.md",
+    scope: "user",
+    scopeLocation: "/home/operator/.agents/skills/dynamic-skill-beta",
+    workspace: null
   };
 
   const dynamicRoles = [
@@ -90,7 +97,8 @@ test("SkillsView combines catalog metadata and role assignments into a single ta
       sourceValidity: true,
       validationIssues: [],
       assignmentRoles: dynamicRoles,
-      executionContractRevision: revision
+      executionContractRevision: revision,
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
 
@@ -161,10 +169,13 @@ test("SkillsView combines catalog metadata and role assignments into a single ta
 });
 
 test("no Save button exists anywhere in the SkillsView markup", () => {
-  const dynamicSkill = {
+  const dynamicSkill: ScopedSkillDefinition = {
     name: "autonomous-formatter",
     description: "Format files automatically",
-    path: ".rulesync/skills/autonomous-formatter/SKILL.md"
+    path: ".rulesync/skills/autonomous-formatter/SKILL.md",
+    scope: "user",
+    scopeLocation: "/home/operator/.agents/skills/autonomous-formatter",
+    workspace: null
   };
   const roles = ["dev", "reviewer"];
   const revision = "f".repeat(64);
@@ -177,7 +188,8 @@ test("no Save button exists anywhere in the SkillsView markup", () => {
       sourceValidity: true,
       validationIssues: [],
       assignmentRoles: roles,
-      executionContractRevision: revision
+      executionContractRevision: revision,
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
 
@@ -210,7 +222,10 @@ test("autosave submit-on-change contract is wired on every role checkbox", () =>
     skill: {
       name: "linter",
       description: "Code linter",
-      path: ".rulesync/skills/linter/SKILL.md"
+      path: ".rulesync/skills/linter/SKILL.md",
+      scope: "user",
+      scopeLocation: "/home/operator/.agents/skills/linter",
+      workspace: null
     },
     roles: ["operator"],
     assignmentRoles: ["operator", "auditor"],
@@ -232,9 +247,15 @@ test("autosave submit-on-change contract is wired on every role checkbox", () =>
   // travels in the primitive's data attributes and the autosave handler is one
   // of its props. The contract is unchanged: every role checkbox submits the
   // form the moment it changes.
-  const fields = (
-    formElement.props as { children: [unknown, CheckboxFieldElement[]] }
-  ).children[1];
+  //
+  // The role fields are found by their shape rather than by their position: a
+  // skill that belongs to a workspace also carries that workspace in the form,
+  // and the position of the role list is not a contract the test should pin.
+  const children = (formElement.props as { children: readonly unknown[] })
+    .children;
+  const fields = children.find((child) =>
+    Array.isArray(child)
+  ) as CheckboxFieldElement[];
   assert.equal(fields.length, 2);
 
   for (const field of fields) {
@@ -373,7 +394,10 @@ test("expectedRevision conflict protection and visible failure feedback", () => 
       {
         name: "conflict-prone-skill",
         description: "Skill with revision conflict",
-        path: ".rulesync/skills/conflict-prone-skill/SKILL.md"
+        path: ".rulesync/skills/conflict-prone-skill/SKILL.md",
+        scope: "user",
+        scopeLocation: "/home/operator/.agents/skills/conflict-prone-skill",
+        workspace: null
       }
     ],
     eligibility: [{ skill: "conflict-prone-skill", roles: ["worker"] }],
@@ -382,6 +406,7 @@ test("expectedRevision conflict protection and visible failure feedback", () => 
     validationIssues: [],
     assignmentRoles: ["worker"],
     executionContractRevision: "c".repeat(64),
+    telemetry: { observed: false, bySkill: new Map() },
     saveOutcome: "conflict"
   };
 
@@ -423,10 +448,13 @@ test("expectedRevision conflict protection and visible failure feedback", () => 
 });
 
 test("distinguishes unavailable sources and renders appropriate reasons without broken mutation forms", () => {
-  const baseSkill = {
+  const baseSkill: ScopedSkillDefinition = {
     name: "inspectable-skill",
     description: "Inspectable description",
-    path: ".rulesync/skills/inspectable-skill/SKILL.md"
+    path: ".rulesync/skills/inspectable-skill/SKILL.md",
+    scope: "user",
+    scopeLocation: "/home/operator/.agents/skills/inspectable-skill",
+    workspace: null
   };
 
   // 1. Missing execution contract revision
@@ -438,7 +466,8 @@ test("distinguishes unavailable sources and renders appropriate reasons without 
       sourceValidity: true,
       validationIssues: [],
       assignmentRoles: ["tester"],
-      executionContractRevision: null
+      executionContractRevision: null,
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
   assert.doesNotMatch(
@@ -458,7 +487,8 @@ test("distinguishes unavailable sources and renders appropriate reasons without 
       sourceValidity: true,
       validationIssues: [],
       assignmentRoles: [],
-      executionContractRevision: "e".repeat(64)
+      executionContractRevision: "e".repeat(64),
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
   assert.doesNotMatch(
@@ -482,7 +512,8 @@ test("distinguishes unavailable sources and renders appropriate reasons without 
         }
       ],
       assignmentRoles: ["tester"],
-      executionContractRevision: "e".repeat(64)
+      executionContractRevision: "e".repeat(64),
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
   assert.doesNotMatch(invalidCatalogMarkup, /action="\/api\/skills\//);
@@ -501,7 +532,8 @@ test("distinguishes unavailable sources and renders appropriate reasons without 
       sourceValidity: null,
       validationIssues: [],
       assignmentRoles: ["tester"],
-      executionContractRevision: "e".repeat(64)
+      executionContractRevision: "e".repeat(64),
+      telemetry: { observed: false, bySkill: new Map() }
     })
   );
   assert.doesNotMatch(unobservedMarkup, /action="\/api\/skills\//);

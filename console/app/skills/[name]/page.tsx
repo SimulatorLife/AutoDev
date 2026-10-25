@@ -9,8 +9,10 @@ import {
 import { editorBaseRevisionFromQuery } from "../../../src/lib/server/canonical-source.ts";
 import {
   controlApiFailureCode,
-  fetchSkillContent
+  fetchSkillContent,
+  fetchSkills
 } from "../../../src/lib/server/control-api.ts";
+import { skillsFromControlApi } from "../../../src/lib/server/views.ts";
 import {
   ConsolePageShell,
   controlApiCredentialUnavailable,
@@ -54,7 +56,14 @@ export default async function SkillDetailPage({
     );
   }
 
-  const result = await fetchSkillContent(name, config);
+  // The content and the catalogue are two different facts: the content is the
+  // canonical source, and the catalogue says where the skill is installed. A
+  // catalogue that cannot be read leaves the scope unobserved rather than
+  // making the skill look installed nowhere.
+  const [result, catalogue] = await Promise.all([
+    fetchSkillContent(name, config),
+    fetchSkills(config)
+  ]);
   if (result.kind === "http-error" && result.status === 404) notFound();
   if (result.kind !== "ok") {
     return React.createElement(
@@ -67,6 +76,12 @@ export default async function SkillDetailPage({
       })
     );
   }
+  const scopedSkill =
+    catalogue.kind === "ok"
+      ? (skillsFromControlApi(catalogue.data).find(
+          (skill) => skill.name === name
+        ) ?? null)
+      : null;
 
   const saveOutcome = skillContentSaveOutcome(query.save);
   // The editor writes against the revision its content is based on. A refused
@@ -81,6 +96,7 @@ export default async function SkillDetailPage({
     React.createElement(SkillDetailView, {
       source: result.data,
       editorRevision,
+      scopedSkill,
       ...(saveOutcome ? { saveOutcome } : {})
     })
   );

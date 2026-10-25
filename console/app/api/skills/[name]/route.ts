@@ -16,10 +16,16 @@ import {
 const SKILL_NAME_PATTERN = /^[a-zA-Z0-9._-]{1,128}$/u;
 const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const ROLE_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
+/**
+ * The workspace id grammar the workspace catalogue and the execution contract
+ * share: a canonical `owner/repository` key.
+ */
+const WORKSPACE_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const MAX_FORM_BODY_BYTES = 8000;
 type SaveOutcome =
   | "conflict"
   | "validation"
+  | "wrong-workspace"
   | "not-found"
   | "failed"
   | "pending"
@@ -38,7 +44,8 @@ export const runtime = "nodejs";
  * The narrowing travels on the request's own query, and the address is
  * rebuilt here rather than followed: the route never takes a path from the
  * request, so there is nothing in the flow that could point anywhere but the
- * skill list. The body carries the desired role set and nothing else.
+ * skill list. The body carries the desired role set and, for a skill that
+ * belongs to a workspace, that workspace.
  */
 function redirectToSkills(
   listRole: string,
@@ -66,7 +73,14 @@ function saveOutcomeForFailure(
     case "autodev_control_execution_contract_conflict": {
       return "conflict";
     }
-    case "autodev_control_execution_contract_invalid":
+    case "autodev_control_execution_contract_invalid": {
+      // The Runtime refuses an assignment whose workspace does not match where
+      // the skill is installed. It refuses the role set for a role the
+      // contract does not declare, but this page only ever offers the roles
+      // the contract declares and the revision that declared them, so the
+      // workspace is the rule this request can have broken.
+      return "wrong-workspace";
+    }
     case "autodev_control_api_invalid_body": {
       return "validation";
     }
@@ -112,11 +126,18 @@ export async function POST(
   // exactly one occurrence -- requiring one would make unassigning impossible
   // to express and would refuse the empty set that clears an assignment.
   const roles = form.getAll("roles");
+  // The workspace the assignment belongs to. A skill installed inside a
+  // repository belongs to that repository's workspace alone, so its roles are
+  // assigned inside that workspace and nowhere else. The field is absent for
+  // every other skill, and the Control API refuses a body that names a
+  // workspace for one.
+  const workspace = form.get("workspace");
   if (
     expectedRevision === null ||
     !REVISION_PATTERN.test(expectedRevision) ||
     roles.some((role) => !ROLE_PATTERN.test(role)) ||
-    new Set(roles).size !== roles.length
+    new Set(roles).size !== roles.length ||
+    (workspace !== null && !WORKSPACE_PATTERN.test(workspace))
   ) {
     return redirectToSkills(listRole, "failed");
   }
@@ -126,7 +147,11 @@ export async function POST(
 
   const result = await patchSkillRoles(
     name,
-    { expectedRevision, roles },
+    {
+      expectedRevision,
+      roles,
+      ...(workspace === null ? {} : { workspace })
+    },
     config
   );
   return redirectToSkills(listRole, saveOutcomeForResult(result));

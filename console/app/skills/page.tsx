@@ -11,6 +11,7 @@ import {
 import {
   skillEligibilityFromControlApi,
   skillsFromControlApi,
+  skillTelemetryFromControlApi,
   unresolvedSkillAssignmentsFromControlApi
 } from "../../src/lib/server/views.ts";
 import {
@@ -64,6 +65,9 @@ export default async function SkillsPage({
   const unresolvedAssignments = unresolvedSkillAssignmentsFromControlApi(
     result.data
   );
+  // The Runtime's skill telemetry, from the same read: whether any telemetry
+  // has been observed at all, and what was observed for each skill.
+  const telemetry = skillTelemetryFromControlApi(result.data);
   const saveOutcome = skillSaveOutcome(query.save);
   const listFilters = readSkillsFilters(query);
   return React.createElement(
@@ -84,6 +88,7 @@ export default async function SkillsPage({
       // show the same page twice would be two reads of one fact.
       assignmentRoles: result.data.assignmentRoles,
       executionContractRevision: result.data.executionContractRevision,
+      telemetry,
       role: listFilters.role,
       ...(saveOutcome ? { saveOutcome } : {})
     })

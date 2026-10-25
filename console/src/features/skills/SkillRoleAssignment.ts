@@ -7,6 +7,7 @@ import type {
 export type SkillAssignmentSaveOutcome =
   | "conflict"
   | "validation"
+  | "wrong-workspace"
   | "not-found"
   | "failed"
   | "pending"
@@ -35,6 +36,7 @@ export function skillSaveOutcome(
   const outcome = typeof value === "string" ? value : value?.[0];
   return outcome === "conflict" ||
     outcome === "validation" ||
+    outcome === "wrong-workspace" ||
     outcome === "not-found" ||
     outcome === "failed" ||
     outcome === "pending" ||
@@ -51,6 +53,8 @@ export const SAVE_OUTCOME_MESSAGES: Readonly<
     "The execution contract changed after this page was loaded, so nothing was written. Reload to see the current assignments and try again.",
   validation:
     "The execution contract refused that assignment, so nothing was written. One of these roles may no longer exist in it.",
+  "wrong-workspace":
+    "The execution contract refused that assignment because of the workspace it named, so nothing was written. A skill installed inside a repository can only be assigned inside that repository's workspace, and a skill installed anywhere else is assigned globally.",
   "not-found":
     "That skill is not in the RuleSync catalog any more, so nothing was written. Reload to see the current catalog.",
   failed:

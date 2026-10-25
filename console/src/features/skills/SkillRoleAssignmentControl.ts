@@ -1,6 +1,6 @@
 "use client";
 
-import type { SkillDefinition } from "@simulatorlife/autodev-core";
+import type { ScopedSkillDefinition } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { CheckboxField } from "../../components/forms/CheckboxField.ts";
@@ -9,7 +9,7 @@ import { MONO_META_CLASS } from "../../components/ui/text-classes.ts";
 import { skillsListQueryString } from "./skills-list-url.ts";
 
 export interface SkillRoleAssignmentControlProps {
-  readonly skill: SkillDefinition;
+  readonly skill: ScopedSkillDefinition;
   readonly roles: readonly string[];
   readonly assignmentRoles: readonly string[];
   readonly executionContractRevision: string;
@@ -31,6 +31,12 @@ export interface SkillRoleAssignmentControlProps {
  * Each checkbox submits the full selected role set through the existing
  * same-origin POST route. Clearing every role submits the empty set and
  * unassigns the skill.
+ *
+ * A repo-scoped skill belongs to one workspace, so its assignment is made
+ * inside that workspace and nowhere else. The workspace travels with the
+ * assignment, and the control says which one it is making the assignment in:
+ * an operator who cannot see that is editing a role list they cannot tell
+ * where it lands.
  */
 export function SkillRoleAssignmentControl({
   skill,
@@ -45,12 +51,16 @@ export function SkillRoleAssignmentControl({
   const action = `/api/skills/${encodeURIComponent(skill.name)}${
     query === "" ? "" : `?${query}`
   }`;
+  const workspace = skill.scope === "repo" ? skill.workspace : null;
 
   return React.createElement(
     "div",
     {
       className: "flex flex-col gap-1 min-w-0",
-      "data-skill-assignment": skill.name
+      "data-skill-assignment": skill.name,
+      ...(workspace === null
+        ? {}
+        : { "data-skill-assignment-workspace": workspace })
     },
     React.createElement(
       "form",
@@ -65,6 +75,13 @@ export function SkillRoleAssignmentControl({
         name: "expectedRevision",
         value: executionContractRevision
       }),
+      workspace === null
+        ? null
+        : React.createElement("input", {
+            type: "hidden",
+            name: "workspace",
+            value: workspace
+          }),
       assignmentRoles.map((role) =>
         React.createElement(CheckboxField, {
           key: role,
@@ -82,6 +99,13 @@ export function SkillRoleAssignmentControl({
         })
       )
     ),
+    workspace === null
+      ? null
+      : React.createElement(
+          "p",
+          { className: MONO_META_CLASS },
+          `Roles apply inside ${workspace}.`
+        ),
     isObserved
       ? roles.length === 0
         ? React.createElement(
