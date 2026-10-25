@@ -9841,8 +9841,13 @@ test("every history row names its run for assistive technology", () => {
     `every run is named distinctly, got ${new Set(names).size} names for ${rows.length} rows`
   );
   // The naming matches the row's other link rather than replacing the visible
-  // text: the role is still what a sighted reader sees.
-  assert.match(html, /aria-label="Open detail for evaluation run-0-0"/);
+  // text: the role is still what a sighted reader sees, and it is also in the
+  // name -- a stated name replaces the control's own content, so a name that
+  // left the role out would have taken it away from a screen reader as well.
+  assert.match(
+    html,
+    /aria-label="docs-researcher: Open detail for evaluation run-0-0"/
+  );
   assert.match(html, />docs-researcher</);
 });
 

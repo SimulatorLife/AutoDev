@@ -45,25 +45,3 @@ export const STATE_PILL_TONE_CLASS = {
  */
 export const STATE_PILL_BUTTON_CLASS =
   "inline-flex min-h-6 items-center whitespace-nowrap rounded border px-2 py-0.5 text-xs font-medium transition-colors cursor-pointer disabled:cursor-not-allowed";
-
-/**
- * The accessible name for a state-coloured button.
- *
- * The pill wears the item's current state and activates the opposite, so one
- * control carries both -- and the name has to carry both as well.
- *
- * A name that carried only the action said what the control would do and
- * nothing about the state it was in: every agent row's enablement pill
- * announced "Disable browser-tester", "Disable default", "Disable explorer",
- * and a screen reader could not tell an enabled agent from a disabled one,
- * because the visible word -- the state -- was overridden by the label. The
- * name therefore begins with the visible word and then names the action and
- * the thing the action applies to.
- *
- * That also keeps the visible label inside the accessible name, which is what
- * WCAG 2.5.3 asks for and what voice control needs: a person who says the word
- * they can see has to find the control that says it.
- */
-export function statePillName(stateLabel: string, detail: string): string {
-  return `${stateLabel}: ${detail}`;
-}

@@ -316,6 +316,25 @@ The name now carries both, beginning with the visible word: **"Enabled: Disable 
 
 The rule lives with the rest of the state-pill vocabulary in `console/src/components/ui/state-pill.ts`, and the model enablement pill uses it too: the agent pill and the model pill are the same control, and two features spelling the same name is how they drift. `console/tests/control-affordances.test.ts` holds the two to the shared rule, and `console/tests/agent-enablement.test.ts` pins what each state says.
 
+## A name that drops what the control shows
+
+The target state asks for both halves of a control's stated name: it says what the control points at, **and** it still contains the text that is visible, so a voice-control user can say the word they can see and find the control that says it.
+
+A stated name replaces the control's own content for assistive technology, so a name that leaves a visible word out does not merely differ from the screen -- it removes it. Measured across every canonical and detail route, the Console had four families of that:
+
+| Visible                 | Named itself                                | What was lost                                                                      |
+| ----------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `Docs ↗`                | `Open claude documentation in a new tab`    | "Docs" -- and its sibling `Usage ↗` worked only because its name repeated the word |
+| `browser-tester (Leaf)` | `Open agent browser-tester`                 | the agent's kind                                                                   |
+| `Not approved`          | `Open playtesting approval for <workspace>` | the approval's **state**                                                           |
+| `orchestrator`          | `Open detail for evaluation eval-0001`      | the role, on fifty rows over six roles                                             |
+
+The third one is the same defect as the state pill above: a state that only a sighted operator could read. The fourth is the trade a previous change made deliberately -- a fifty-row page over six roles announced six words fifty times with nothing to say _which_ run it was -- so the name was given the evaluation id. That trade was right about identity and wrong about the visible word, and the name can carry both.
+
+Every one of them is now the same shape: **the word the control shows, then what the control does**. `Docs: Open claude documentation in a new tab`. `Not approved: Open playtesting approval for SimulatorLife/AutoDev`. `orchestrator: Open detail for evaluation eval-0001`.
+
+The rule has one owner, `console/src/components/ui/accessible-name.ts`, because six call sites spelling the same convention is how they drift. The guard is `console/e2e/label-in-name-acceptance.spec.ts`: it walks every interactive control on every canonical and detail route, compares the visible words against the stated name, and fails with the ones that dropped something. It found **zero** after the change, and it would have found all four families before it.
+
 ## Every resource says what it is for, and the resource owns the sentence
 
 The header names the surface -- "Providers", "Playtesting" -- and a name on its own does not tell an operator what the surface owns. The target state asks for both: "The page header names the surface and states its purpose".

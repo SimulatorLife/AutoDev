@@ -6,10 +6,10 @@ import {
   NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
+import { namedAfterVisible } from "../../components/ui/accessible-name.ts";
 import {
   STATE_PILL_BUTTON_CLASS,
-  STATE_PILL_TONE_CLASS,
-  statePillName
+  STATE_PILL_TONE_CLASS
 } from "../../components/ui/state-pill.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
@@ -119,11 +119,11 @@ export function AgentEnablementControl({
   // control announce its action twice.
   const name =
     presentation.reason === null
-      ? statePillName(
+      ? namedAfterVisible(
           presentation.stateLabel,
           `${presentation.buttonLabel} ${role}`
         )
-      : statePillName(presentation.stateLabel, presentation.reason);
+      : namedAfterVisible(presentation.stateLabel, presentation.reason);
   return React.createElement(
     "div",
     { className: "inline-flex flex-col items-start gap-1" },

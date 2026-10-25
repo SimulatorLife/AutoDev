@@ -35,6 +35,7 @@ import {
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
 import { TraceStatus } from "../../components/traces/TraceStatus.ts";
+import { namedAfterVisible } from "../../components/ui/accessible-name.ts";
 import { formatSpanDuration } from "../../components/ui/duration.ts";
 import {
   FIELD_GROUP_CLASS,
@@ -1757,7 +1758,10 @@ export function EvaluationsView({
               // link in the same row already names itself with the evaluation id,
               // so this adopts the convention the row's other link set rather
               // than inventing one.
-              "aria-label": `Open detail for evaluation ${evaluation.id}`,
+              "aria-label": namedAfterVisible(
+                evaluation.agentRole,
+                `Open detail for evaluation ${evaluation.id}`
+              ),
               dataAttributes: { "data-evaluation-result-id": evaluation.id }
             },
             evaluation.agentRole

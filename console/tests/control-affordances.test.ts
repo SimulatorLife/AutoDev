@@ -14,10 +14,10 @@ import {
 } from "../src/components/forms/Button.ts";
 import { AppShell } from "../src/components/layout/AppShell.ts";
 import { AppNav } from "../src/components/navigation/AppNav.ts";
+import { namedAfterVisible } from "../src/components/ui/accessible-name.ts";
 import {
   STATE_PILL_BUTTON_CLASS,
-  STATE_PILL_TONE_CLASS,
-  statePillName
+  STATE_PILL_TONE_CLASS
 } from "../src/components/ui/state-pill.ts";
 import { mcpDetailTabs } from "../src/features/mcps/McpDetailView.ts";
 import { PromptsView } from "../src/features/prompts/PromptsView.ts";
@@ -299,7 +299,11 @@ test("the three state tones are the ones the pill has always had", () => {
   assert.match(STATE_PILL_TONE_CLASS.unknown, /text-fg-muted/u);
 });
 
-test("the state pill's name is one rule, and it carries the state", () => {
+test("a control that states its name says the word it shows", () => {
+  // A stated name replaces the control's own content for assistive
+  // technology, so whatever the name leaves out is gone from the screen
+  // reader as well as from the screen.
+  //
   // The pill wears the item's current value and activates the opposite, so
   // its name has to carry both. A name that carried only the action said what
   // the control would do and nothing about the state it was in: every agent
@@ -307,29 +311,33 @@ test("the state pill's name is one rule, and it carries the state", () => {
   // an enabled agent from a disabled one, and the name did not contain the
   // visible word, which WCAG 2.5.3 asks for.
   assert.equal(
-    statePillName("Enabled", "Disable orchestrator"),
+    namedAfterVisible("Enabled", "Disable orchestrator"),
     "Enabled: Disable orchestrator"
   );
   assert.equal(
-    statePillName("Disabled", "Enable orchestrator"),
+    namedAfterVisible("Disabled", "Enable orchestrator"),
     "Disabled: Enable orchestrator"
   );
 
-  // The two features must not spell the name themselves either.
+  // Every feature that states a name must use the one rule, or the six
+  // versions of it drift apart.
   for (const source of [
     "../src/features/agents/AgentEnablementControl.ts",
-    "../src/features/providers/ModelToggle.ts"
+    "../src/features/providers/ModelToggle.ts",
+    "../src/features/providers/ProviderExternalLinks.ts",
+    "../src/features/workspaces/WorkspacesView.ts",
+    "../src/features/evaluations/EvaluationsView.ts"
   ]) {
     const text = readFileSync(new URL(source, import.meta.url), "utf8");
     assert.match(
       text,
-      /statePillName\(/u,
-      `${source} must use the shared state-pill name`
+      /namedAfterVisible\(/u,
+      `${source} must use the shared accessible-name rule`
     );
     assert.doesNotMatch(
       text,
       /"aria-label":\s*`\$\{/u,
-      `${source} must not spell the pill's name itself`
+      `${source} must not spell the name itself`
     );
   }
 });

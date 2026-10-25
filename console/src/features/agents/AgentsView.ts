@@ -112,7 +112,7 @@ export function AgentsView({
             {
               href: `/agents/${encodeURIComponent(agent.id)}`,
               className: `block min-h-6 font-semibold text-fg ${ENTITY_LINK_CLASS}`,
-              "aria-label": `Open agent ${agent.role}`,
+              "aria-label": `Open agent ${agent.role} (${agent.kind})`,
               title: `${agent.role} (${agent.kind})`
             },
             React.createElement("span", null, agent.role),

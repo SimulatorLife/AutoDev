@@ -17,6 +17,7 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
+import { namedAfterVisible } from "../../components/ui/accessible-name.ts";
 import {
   ENTITY_LINK_CLASS,
   MONO_ID_CLASS,
@@ -158,7 +159,16 @@ export function WorkspacesView({
           NavigationLink,
           {
             href: workspacePath(ws.id),
-            "aria-label": `Open playtesting approval for ${ws.id}`
+            // The name begins with the state the badge shows.
+            //
+            // The link's content is the approval's state, and a stated name
+            // replaces the content: "Open playtesting approval for <workspace>"
+            // said what the link did and never said whether the workspace was
+            // approved, so the state was reachable by sight alone.
+            "aria-label": namedAfterVisible(
+              workspaceApprovalBadgeLabel(status),
+              `Open playtesting approval for ${ws.id}`
+            )
           },
           React.createElement(StatusBadge, {
             status: workspaceApprovalBadgeVariant(status),

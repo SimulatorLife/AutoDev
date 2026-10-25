@@ -2,10 +2,10 @@ import type { ControlApiEnablement } from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+import { namedAfterVisible } from "../../components/ui/accessible-name.ts";
 import {
   STATE_PILL_BUTTON_CLASS,
-  STATE_PILL_TONE_CLASS,
-  statePillName
+  STATE_PILL_TONE_CLASS
 } from "../../components/ui/state-pill.ts";
 
 const NOT_OBSERVED_REASON =
@@ -67,8 +67,8 @@ export function ModelToggle({
   // because a title is read out as the control's description.
   const name =
     unavailableReason === null
-      ? statePillName(stateLabel, `${buttonLabel} ${model}`)
-      : statePillName(stateLabel, unavailableReason);
+      ? namedAfterVisible(stateLabel, `${buttonLabel} ${model}`)
+      : namedAfterVisible(stateLabel, unavailableReason);
 
   return React.createElement(
     "form",
