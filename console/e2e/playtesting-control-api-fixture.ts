@@ -3337,6 +3337,49 @@ function nextSkillAssignmentRevision(): string {
 }
 
 /**
+ * Where the fixture's skills are installed.
+ *
+ * The fixture's catalogue is a repository's own `.rulesync/skills` directory,
+ * so the skill is installed inside that repository and belongs to the
+ * workspace that repository is. The scope is read from the machine and is
+ * never the caller's to say, so a write that names a different workspace is
+ * refused rather than applied somewhere it does not belong.
+ */
+const FIXTURE_SKILL_SCOPES: Readonly<
+  Record<string, { readonly scope: string | null; readonly workspace: string | null }>
+> = {
+  "code-review": { scope: "repo", workspace: WORKSPACE_ID }
+};
+
+/**
+ * Why an assignment may not be made where it was asked for, if it may not.
+ *
+ * `null` is "the assignment may be made here". The rule is the Runtime's own:
+ * a skill installed inside a repository belongs to that repository's workspace
+ * alone, and a skill installed anywhere else is assigned to agent roles
+ * globally rather than to one workspace.
+ */
+function skillScopeRefusal(
+  name: string,
+  requestedWorkspace: string | null
+): string | null {
+  const facts = FIXTURE_SKILL_SCOPES[name] ?? null;
+  if (facts?.scope === "repo") {
+    if (facts.workspace === null) {
+      return "This skill is installed inside the repository, and the repository is not one of the configured workspaces, so there is nowhere to assign it.";
+    }
+    if (requestedWorkspace !== facts.workspace) {
+      return `This skill belongs to the workspace "${facts.workspace}" and can only be assigned inside it.`;
+    }
+    return null;
+  }
+  if (requestedWorkspace !== null) {
+    return "This skill is not installed inside the repository, so it is assigned to agent roles globally rather than to one workspace.";
+  }
+  return null;
+}
+
+/**
  * The skill role assignment write.
  *
  * The whole desired set travels with the write, so the fixture replaces the
@@ -3376,6 +3419,33 @@ async function handleSyntheticSkillRoleMutation(
       {
         code: "autodev_control_execution_contract_invalid",
         message: "The fixture only accepts role names."
+      },
+      400
+    );
+    return true;
+  }
+  const workspace = body?.workspace;
+  if (workspace !== undefined && typeof workspace !== "string") {
+    sendJson(
+      response,
+      {
+        code: "autodev_control_execution_contract_invalid",
+        message: "The fixture only accepts a workspace name."
+      },
+      400
+    );
+    return true;
+  }
+  const refusal = skillScopeRefusal(
+    name,
+    typeof workspace === "string" ? workspace : null
+  );
+  if (refusal !== null) {
+    sendJson(
+      response,
+      {
+        code: "autodev_control_execution_contract_invalid",
+        message: refusal
       },
       400
     );
@@ -4730,12 +4800,27 @@ function handleCatalogResourceRead(
       issues: [],
       executionContractRevision: skillAssignmentRevision,
       assignmentRoles: ["default", "worker"],
+      // The Runtime has observed no skill telemetry at all, so the page has to
+      // say "not observed" rather than "zero".
+      telemetryObserved: false,
       skills: [
         {
           name: "code-review",
           description: "Review a diff for defects.",
           path: ".rulesync/skills/code-review/SKILL.md",
-          roles: skillRoles["code-review"] ?? []
+          roles: skillRoles["code-review"] ?? [],
+          // The fixture's catalogue is a repository's own `.rulesync/skills`
+          // directory, so the skill is installed in that repository and
+          // belongs to the workspace that repository is. The scope facts are
+          // part of the contract: a catalogue that left them out reads as a
+          // skill installed nowhere, and the page says so.
+          scope: "repo",
+          scopeLocation: `/tmp/${WORKSPACE_ID}/.rulesync/skills/code-review`,
+          workspace: WORKSPACE_ID,
+          // Nothing has been observed for this skill, and that is not the
+          // same as observing that it was never exposed or used.
+          observedExposure: null,
+          observedUse: null
         }
       ],
       unresolvedAssignments: []
