@@ -951,3 +951,39 @@ test("Smart-direct asks for enough output room that a measured decision can fini
     `the decision's output cap must hold the measured 2,105-token decision, got ${String(cap)}`
   );
 });
+
+test("Smart-direct tells the backend which refusals continue the episode and which end it", async () => {
+  const requests: { readonly init: { readonly body: string } }[] = [];
+  const policy = createPolicy({
+    fetchImpl: async (_input: unknown, init?: RequestInit) => {
+      requests.push({ init: { body: String(init?.body ?? "{}") } });
+      return response(actDecision());
+    }
+  });
+
+  await policy.decide({
+    target: target(),
+    observation: observation(),
+    frameBytes: FRAME_BYTES,
+    areasOfFocus: null,
+    history: [],
+    candidates: [],
+    deadlineMonotonicMs: performance.now() + 5000,
+    progress: progressReading()
+  });
+
+  const body = JSON.parse(String(requests[0]?.init.body)) as {
+    readonly instructions: string;
+  };
+  // The Runtime continues the episode after a refusal that says the page
+  // moved, and ends it on every other refusal. The prompt must say which is
+  // which: promising a retry the Runtime does not grant spends the backend's
+  // next turn planning a continuation that never comes.
+  assert.match(body.instructions, /control-changed/u);
+  assert.match(body.instructions, /stale-observation/u);
+  assert.match(body.instructions, /ends the episode there/u);
+  assert.doesNotMatch(
+    body.instructions,
+    /an entry whose outcome starts with refused never reached the game: the page changed under it/u
+  );
+});
