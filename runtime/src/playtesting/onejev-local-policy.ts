@@ -19,6 +19,8 @@
  * failed call is thrown rather than dressed up as a decision.
  */
 import { createHash, randomUUID } from "node:crypto";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import {
@@ -41,21 +43,61 @@ import {
 
 /** The upstream `qev` server's System One endpoint, relative to the base. */
 const SYSTEMONE_PATH = "/v1/systemone";
-/** The portable model alias the upstream resolves to the served checkpoint. */
-const DEFAULT_MODEL = "jev-latest";
+/**
+ * The model the upstream serves.
+ *
+ * The upstream's request contract names one model literally -- the served
+ * checkpoint's id -- and it is a `Literal`: a request that asks for anything
+ * else is refused before the frame is read. A portable alias is not resolved
+ * for it, so the alias the Runtime used to send was refused by the very
+ * server it was written for.
+ */
+const UPSTREAM_MODEL_ID = "Qwen/Qwen3.5-2B";
 const DEFAULT_ENDPOINT = "http://127.0.0.1:8000";
+/**
+ * The status the upstream's health endpoint reports once it is serving.
+ *
+ * The upstream answers `{"status":"ready","trained":true}`. A probe that
+ * waited for a different word reported a server that was up as one that was
+ * not, and the Console read that as an unavailable route.
+ */
+const UPSTREAM_HEALTH_STATUS = "ready";
 /** The question id the action choice is asked and answered under. */
 const ACTION_QUESTION_ID = "action";
-/** The reference the upstream resolves `state` against, 1-based into media. */
-const SCREEN_REFERENCE = "<image:1>";
 /**
- * A choice question needs at least one option and at most 255 options. A
- * larger candidate set is refused here rather than sent as an invalid request.
+ * The upstream's own cap on the options one choice question may carry.
+ *
+ * A request with more options is refused by the upstream, so it is refused
+ * here where the reason can be named and the episode can end honestly.
  */
-const MAX_CHOICE_OPTIONS = 255;
+const MAX_CHOICE_OPTIONS = 16;
+/**
+ * The upstream's own floor on a choice question's options.
+ *
+ * One option is not a choice, and the upstream refuses a question that
+ * carries one. The Runtime therefore does not ask in that case: the single
+ * option on offer is the only action there is, and it is taken without
+ * pretending the model chose it.
+ */
+const MIN_CHOICE_OPTIONS = 2;
+/**
+ * The upstream's bound on the evidence text one request may carry.
+ *
+ * The upstream packs the text as the data half of its prompt, so a request
+ * that carries more is refused. The Runtime's own bound is the smaller of
+ * the two: a screen's state is a summary, not a transcript.
+ */
+const MAX_STATE_TEXT_LENGTH = 100_000;
 const MAX_DECISION_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
-const MAX_REQUEST_BYTES = 12 * 1024 * 1024;
+/**
+ * The upstream's own bound on a request body.
+ *
+ * The server refuses a body larger than this before it reads it, so the
+ * Runtime's bound is the server's: a request the server will refuse is a
+ * request the Runtime has no reason to send.
+ */
+const MAX_REQUEST_BYTES = 1024 * 1024;
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 const MAX_FOCUS_LENGTH = 2000;
 const MAX_CANDIDATE_ID_LENGTH = 128;
@@ -79,8 +121,35 @@ const LOCAL_ONEJEV_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const RETRYABLE_STATUS_CODES = new Set([502, 503, 504]);
 const REASON_CODE_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/u;
 
+/**
+ * The directory the upstream `qev serve --image-root` was started with.
+ *
+ * The upstream resolves the frame path it is given against this directory and
+ * refuses a path that leaves it, so the Runtime has to write the frame where
+ * the server will look for it. The operator names the same directory in both
+ * places: the server's `--image-root` and this variable.
+ */
+const ONEJEV_IMAGE_ROOT_ENV = "AUTODEV_ONEJEV_IMAGE_ROOT";
+/**
+ * The directory under the image root where the Runtime writes its frames.
+ *
+ * The Runtime's frames are its own working files, so they live in a
+ * directory of their own rather than loose in the operator's image root.
+ */
+const FRAME_DIRECTORY = "autodev";
+
 const CHOICE_REASON_CODE = "onejev-choice";
 const NO_CANDIDATES_REASON_CODE = "no-candidates";
+/**
+ * The reason a decision carries when only one action was on offer.
+ *
+ * The upstream's choice question needs two options, so a lone option is not
+ * asked about. The decision says so rather than reporting a model choice
+ * that never happened.
+ */
+const SINGLE_OPTION_REASON_CODE = "onejev-single-option";
+/** The reason a decision carries when the model declined to commit. */
+const ABSTAINED_REASON_CODE = "onejev-abstained";
 
 /** What a OneJev decision reports. A backend that reports no confidence is a
  * backend whose confidence is not-supported; it is never a confidence of zero.
@@ -110,6 +179,7 @@ export type OneJevLocalPolicyErrorCode =
   | "onejev-token-budget-exhausted"
   | "onejev-deadline-exceeded"
   | "onejev-frame-unavailable"
+  | "onejev-image-root-unavailable"
   | "onejev-invalid-request"
   | "onejev-too-many-candidates"
   | "onejev-duplicate-candidates"
@@ -137,8 +207,13 @@ export class OneJevLocalPolicyError extends Error {
  * The version names the contract the episode was run under. It is not a
  * model weight revision: the served model is named per decision, from the
  * answer the local server actually returned.
+ *
+ * Version 2 is the upstream's own request contract: the model is named by
+ * its literal id, the frame is a file under the server's image root, the
+ * state is the evidence text and that one frame, and the answer reports
+ * whether the model abstained.
  */
-export const ONEJEV_LOCAL_POLICY_VERSION = "1" as const;
+export const ONEJEV_LOCAL_POLICY_VERSION = "2" as const;
 
 export interface OneJevLocalPolicyOptions {
   /**
@@ -146,8 +221,15 @@ export interface OneJevLocalPolicyOptions {
    * HTTP origin; anything else is refused before a frame can leave the process.
    */
   readonly endpoint?: string;
-  /** The model or portable alias to request. Defaults to `jev-latest`. */
-  readonly model?: string;
+  /**
+   * The directory the upstream `qev serve --image-root` was started with.
+   *
+   * The upstream resolves the frame path it is given against this directory
+   * and refuses a path that leaves it, so the Runtime writes the frame here
+   * and names it relative to this root. Defaults to the operator's
+   * `AUTODEV_ONEJEV_IMAGE_ROOT`.
+   */
+  readonly imageRoot?: string;
   /**
    * An optional tighter bound on a single decision. The operative bound is the
    * caller's deadline -- the approved per-episode wall-time budget -- and this
@@ -171,6 +253,7 @@ export interface OneJevLocalPolicyOptions {
  */
 export interface OneJevLocalAvailabilityProbeOptions {
   readonly endpoint?: string | undefined;
+  readonly imageRoot?: string | undefined;
   readonly fetchImpl?: typeof fetch;
   readonly now?: () => number;
   readonly cacheMs?: number;
@@ -217,6 +300,15 @@ export async function isOneJevLocalVisualPolicyAvailable(
 ): Promise<boolean> {
   const endpoint =
     options.endpoint ?? process.env.AUTODEV_ONEJEV_ENDPOINT ?? DEFAULT_ENDPOINT;
+  // The upstream reads the frame from a directory it was started with, so a
+  // route with no image root named cannot serve a decision at all.
+  if (
+    resolveImageRoot(
+      options.imageRoot ?? process.env[ONEJEV_IMAGE_ROOT_ENV]
+    ) === null
+  ) {
+    return false;
+  }
   try {
     assertLocalOneJevEndpoint(endpoint);
   } catch {
@@ -246,7 +338,7 @@ export async function isOneJevLocalVisualPolicyAvailable(
         typeof body === "object" &&
         body !== null &&
         !Array.isArray(body) &&
-        (body as { status?: unknown }).status === "ok";
+        (body as { status?: unknown }).status === UPSTREAM_HEALTH_STATUS;
     }
   } catch {
     available = false;
@@ -270,15 +362,30 @@ interface OneJevAnswer {
   readonly model: string;
   readonly candidate: PlaytestVisualCandidate;
   readonly confidence: number;
+  /**
+   * Whether the upstream declined to commit to its own winner.
+   *
+   * The upstream reports it beside the choice it would have made: a model
+   * whose confidence falls below the abstention threshold it was calibrated
+   * with answers that it does not know. Acting on its winner anyway would
+   * dispatch an action the backend explicitly disowned.
+   */
+  readonly abstained: boolean;
 }
 
 type DecisionPlan =
   | { readonly kind: "stop"; readonly reasonCode: string }
   | {
+      readonly kind: "single";
+      readonly candidate: PlaytestVisualCandidate;
+    }
+  | {
       readonly kind: "ask";
       readonly body: string;
       readonly timeoutMs: number;
       readonly candidates: readonly PlaytestVisualCandidate[];
+      /** The frame's path under the image root, as the upstream resolves it. */
+      readonly framePath: string;
     };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -332,6 +439,20 @@ function assertLocalOneJevEndpoint(value: string): void {
 }
 
 /**
+ * The image root the Runtime writes frames into, or null when none is named.
+ *
+ * The upstream resolves the frame path it is given against the directory it
+ * was started with and refuses a path that leaves it, so the Runtime has to
+ * know that directory to write into. When the operator has named none there
+ * is nowhere to write, and the decision says so instead of sending a request
+ * the server cannot serve.
+ */
+function resolveImageRoot(value: string | undefined): string | null {
+  const named = (value ?? "").trim();
+  return named.length === 0 ? null : path.resolve(named);
+}
+
+/**
  * The Runtime's progress reading as the local server reads it.
  *
  * The upstream takes its state as a flat map of strings, so the reading is
@@ -356,6 +477,46 @@ function progressState(progress: PlaytestVisualDecisionProgress): string {
 }
 
 /**
+ * The choice question's options, named so that each one means something
+ * different.
+ *
+ * The upstream refuses a choice question whose options share a description:
+ * two options that read the same are one option to it, and the answer it
+ * gives names one of them at random. A game can and does put two controls
+ * with the same accessible name on one screen -- the RacingGame screen has
+ * thirteen driver-row buttons over six drivers -- so the name that repeats
+ * is qualified by the control it belongs to. That is what the control id is
+ * for, and the model is told which control each option is.
+ */
+function distinctCriteria(
+  candidates: readonly PlaytestVisualCandidate[]
+): Record<string, string> {
+  const criteria: Record<string, string> = {};
+  const used = new Map<string, number>();
+  for (const candidate of candidates) {
+    const seen = used.get(candidate.description) ?? 0;
+    used.set(candidate.description, seen + 1);
+    criteria[candidate.id] =
+      seen === 0
+        ? candidate.description
+        : `${candidate.description} (control ${candidate.id})`;
+  }
+  return criteria;
+}
+
+/**
+ * A frame file name the upstream's image root can hold.
+ *
+ * The name comes from the observation the frame belongs to, so two frames of
+ * the same step never overwrite one another, and it is reduced to characters
+ * that are safe in a path.
+ */
+function safeFrameFileName(value: string): string {
+  const cleaned = value.replaceAll(/[^A-Za-z0-9._-]/gu, "_");
+  return cleaned.length > 0 && cleaned.length <= 128 ? cleaned : "frame";
+}
+
+/**
  * The decisions the episode already took, as the local server reads them.
  *
  * The reading is only actionable when the backend can see what it already
@@ -372,7 +533,7 @@ function recentActionsState(
       (entry) =>
         `step ${String(entry.step)}: ${describeAction(entry.action)} (${entry.outcome.trim()})`
     )
-    .join(" | ");
+    .join("; ");
 }
 
 /**
@@ -435,7 +596,7 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
   readonly backendId = "onejev-local";
   private readonly target: WorkspaceVisualPlaytestTargetApproval;
   private readonly endpoint: string;
-  private readonly model: string;
+  private readonly imageRoot: string | null;
   private readonly timeoutMs: number;
   private readonly maxResponseBytes: number;
   private readonly maxRequestBytes: number;
@@ -458,10 +619,9 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
     this.target = target;
     this.endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
     assertLocalOneJevEndpoint(this.endpoint);
-    this.model = options.model ?? DEFAULT_MODEL;
-    if (!isBoundedText(this.model, 128)) {
-      throw new TypeError("The OneJev model name is invalid.");
-    }
+    this.imageRoot = resolveImageRoot(
+      options.imageRoot ?? process.env[ONEJEV_IMAGE_ROOT_ENV]
+    );
     this.timeoutMs = options.timeoutMs ?? MAX_DECISION_TIMEOUT_MS;
     this.maxResponseBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES;
     this.maxRequestBytes = options.maxRequestBytes ?? MAX_REQUEST_BYTES;
@@ -493,7 +653,7 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
   async decide(
     request: PlaytestVisualDecisionRequest
   ): Promise<PlaytestVisualDecision> {
-    const plan = this.prepare(request);
+    const plan = await this.prepare(request);
     this.logicalRequests += 1;
     const startedAt = this.now();
     try {
@@ -501,28 +661,68 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
         this.decisionsReturned += 1;
         return this.stopDecision(plan.reasonCode);
       }
-      const answer = await this.ask(request, plan);
-      const action = this.groundAction(request, answer.candidate);
-      this.decisionsReturned += 1;
-      return {
-        status: "act",
-        action,
-        stopReason: null,
-        intention: null,
-        predictedVisibleEffect: null,
-        // A calibrated choice is not a self-report: OneJev answers what to
-        // do, not what it was trying to do.
-        selfReport: null,
-        reasonCode: stableReasonCode(CHOICE_REASON_CODE),
-        backendId: this.backendId,
-        modelId: answer.model,
-        modelRevision: null,
-        fallback: false,
-        fallbackReason: null,
-        confidence: answer.confidence,
-        capabilities: oneJevCapabilities(answer.confidence),
-        counters: this.counters()
-      };
+      if (plan.kind === "single") {
+        // One option is not a choice the upstream can be asked about, so the
+        // action is taken and the decision says that no model chose it.
+        const action = this.groundAction(request, plan.candidate);
+        this.decisionsReturned += 1;
+        return {
+          status: "act",
+          action,
+          stopReason: null,
+          intention: null,
+          predictedVisibleEffect: null,
+          selfReport: null,
+          reasonCode: stableReasonCode(SINGLE_OPTION_REASON_CODE),
+          backendId: this.backendId,
+          modelId: null,
+          modelRevision: null,
+          fallback: false,
+          fallbackReason: null,
+          confidence: null,
+          capabilities: oneJevCapabilities(null),
+          counters: this.counters()
+        };
+      }
+      try {
+        const answer = await this.ask(request, plan);
+        if (answer.abstained) {
+          // The model answered and disowned its own winner. Dispatching it
+          // would perform an action the backend explicitly declined to
+          // commit to, so the episode ends with that reason recorded.
+          this.decisionsReturned += 1;
+          return this.stopDecision(
+            ABSTAINED_REASON_CODE,
+            answer.model,
+            answer.confidence
+          );
+        }
+        const action = this.groundAction(request, answer.candidate);
+        this.decisionsReturned += 1;
+        return {
+          status: "act",
+          action,
+          stopReason: null,
+          intention: null,
+          predictedVisibleEffect: null,
+          // A calibrated choice is not a self-report: OneJev answers what to
+          // do, not what it was trying to do.
+          selfReport: null,
+          reasonCode: stableReasonCode(CHOICE_REASON_CODE),
+          backendId: this.backendId,
+          modelId: answer.model,
+          modelRevision: null,
+          fallback: false,
+          fallbackReason: null,
+          confidence: answer.confidence,
+          capabilities: oneJevCapabilities(answer.confidence),
+          counters: this.counters()
+        };
+      } finally {
+        // The upstream has read the frame by the time it answers, so the
+        // Runtime's working copy has served its purpose.
+        await this.removeFrame(plan.framePath);
+      }
     } finally {
       this.lastLatencyMs = Math.max(0, this.now() - startedAt);
     }
@@ -533,7 +733,9 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
    * process, so a request that cannot be served or cannot be afforded is
    * refused without spending a provider attempt.
    */
-  private prepare(request: PlaytestVisualDecisionRequest): DecisionPlan {
+  private async prepare(
+    request: PlaytestVisualDecisionRequest
+  ): Promise<DecisionPlan> {
     assertWorkspaceVisualPlaytestTargetApproval(this.target);
     assertWorkspaceVisualPlaytestTargetApproval(request.target);
     assertPlaytestVisualObservation(request.observation, this.target);
@@ -598,6 +800,12 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
       // ask. Stopping is an honest answer; it is not a failure.
       return { kind: "stop", reasonCode: NO_CANDIDATES_REASON_CODE };
     }
+    if (candidates.length < MIN_CHOICE_OPTIONS) {
+      // The upstream refuses a choice question that carries one option, and
+      // there is nothing to choose between. The only action on offer is
+      // taken, and the decision records that the model was not asked.
+      return { kind: "single", candidate: candidates[0]! };
+    }
     const remainingTimeMs = request.deadlineMonotonicMs - this.now();
     if (remainingTimeMs <= 0) {
       throw new OneJevLocalPolicyError(
@@ -605,18 +813,23 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
         "The visual session deadline elapsed before OneJev could decide."
       );
     }
-    const body = JSON.stringify(this.buildRequestBody(request, candidates));
+    const framePath = this.framePath(request);
+    const body = JSON.stringify(
+      this.buildRequestBody(request, candidates, framePath)
+    );
     if (new TextEncoder().encode(body).byteLength > this.maxRequestBytes) {
       throw new OneJevLocalPolicyError(
         ONEJEV_INVALID_REQUEST_CODE,
         "The bounded OneJev request exceeded its Runtime input size limit."
       );
     }
+    await this.writeFrame(request, framePath);
     return {
       kind: "ask",
       body,
       timeoutMs: Math.min(this.timeoutMs, remainingTimeMs),
-      candidates
+      candidates,
+      framePath
     };
   }
 
@@ -661,41 +874,112 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
     return candidates;
   }
 
+  /**
+   * The frame's path under the image root, as the upstream resolves it.
+   *
+   * The upstream joins the path it is given to its own image root and
+   * refuses anything that leaves it, so the path is relative and names the
+   * file the Runtime is about to write.
+   */
+  private framePath(request: PlaytestVisualDecisionRequest): string {
+    const name = `${safeFrameFileName(
+      request.observation.episodeId
+    )}-${safeFrameFileName(request.observation.observationId)}.png`;
+    return `${FRAME_DIRECTORY}/${name}`;
+  }
+
+  /**
+   * Write the frame where the upstream will look for it.
+   *
+   * The upstream opens the frame itself -- it takes a path, not bytes -- so
+   * the Runtime's copy has to exist on disk under the image root the server
+   * was started with.
+   */
+  private async writeFrame(
+    request: PlaytestVisualDecisionRequest,
+    framePath: string
+  ): Promise<void> {
+    const root = this.imageRoot;
+    if (root === null) {
+      throw new OneJevLocalPolicyError(
+        "onejev-image-root-unavailable",
+        "The local OneJev server's image root is not configured."
+      );
+    }
+    const stats = await stat(root).catch(() => null);
+    if (stats === null || !stats.isDirectory()) {
+      throw new OneJevLocalPolicyError(
+        "onejev-image-root-unavailable",
+        "The local OneJev server's image root is not a directory."
+      );
+    }
+    const absolute = path.join(root, framePath);
+    try {
+      await mkdir(path.join(root, FRAME_DIRECTORY), { recursive: true });
+      await writeFile(absolute, request.frameBytes);
+    } catch (error) {
+      // A half-written frame would be read by the upstream as the screen.
+      await rm(absolute, { force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /**
+   * Remove the Runtime's working copy of the frame.
+   *
+   * The upstream has read the frame by the time it answers, and the image
+   * root is the operator's directory: the Runtime's copies do not stay in it.
+   */
+  private async removeFrame(framePath: string): Promise<void> {
+    const root = this.imageRoot;
+    if (root === null) return;
+    // A frame that cannot be removed is litter in the operator's directory,
+    // not a failure of the decision that already succeeded.
+    await rm(path.join(root, framePath), { force: true }).catch(
+      () => undefined
+    );
+  }
+
   private buildRequestBody(
     request: PlaytestVisualDecisionRequest,
-    candidates: readonly PlaytestVisualCandidate[]
+    candidates: readonly PlaytestVisualCandidate[],
+    framePath: string
   ): Record<string, unknown> {
-    const criteria: Record<string, string> = {};
-    for (const candidate of candidates) {
-      criteria[candidate.id] = candidate.description;
-    }
-    const state: Record<string, string> = { screen: SCREEN_REFERENCE };
+    // The upstream's state is a strict pair: the evidence text and, at most,
+    // one image named by a path under the directory the server was started
+    // with. It does not accept a map of extra keys, and it does not accept
+    // image bytes: it opens the file itself.
+    const evidence: string[] = ["screen: the attached frame"];
     if (request.areasOfFocus !== null) {
-      state.focus = request.areasOfFocus;
+      evidence.push(`focus: ${request.areasOfFocus}`);
     }
     // What the Runtime measured, and what the episode already tried. The
     // reading is the fact that lets the local backend answer differently when
     // the game is not advancing; the decisions are what make that answer a
     // different one rather than the same one again.
-    state.progress = progressState(request.progress);
+    evidence.push(`progress: ${progressState(request.progress)}`);
     const recentActions = recentActionsState(request.history);
     if (recentActions.length > 0) {
-      state.recentActions = recentActions;
+      evidence.push(`recentActions: ${recentActions}`);
+    }
+    const stateText = evidence.join("\n");
+    if (stateText.length > MAX_STATE_TEXT_LENGTH) {
+      throw new OneJevLocalPolicyError(
+        ONEJEV_INVALID_REQUEST_CODE,
+        "The bounded OneJev evidence text exceeded the server's own limit."
+      );
     }
     return {
-      model: this.model,
-      state,
-      media: [
-        {
-          type: "image",
-          data: `data:image/png;base64,${Buffer.from(request.frameBytes).toString("base64")}`
-        }
-      ],
+      model: UPSTREAM_MODEL_ID,
+      state: {
+        text: stateText,
+        images: [{ path: framePath }]
+      },
       questions: {
         [ACTION_QUESTION_ID]: {
           type: "choice",
           instructions: actionQuestionInstructions(),
-          criteria
+          criteria: distinctCriteria(candidates)
         }
       }
     };
@@ -914,6 +1198,17 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
         "The OneJev response did not report a calibrated confidence."
       );
     }
+    // The upstream reports whether it stood behind its own winner. An answer
+    // that leaves the question open is not an answer the Runtime may act on,
+    // and an answer that does not say whether it stood behind it is not an
+    // answer the Runtime may read as a commitment either.
+    const abstained = answer.abstained;
+    if (typeof abstained !== "boolean") {
+      throw new OneJevLocalPolicyError(
+        ONEJEV_PROTOCOL_ERROR_CODE,
+        "The OneJev response did not report whether it abstained."
+      );
+    }
     const candidate = candidates.find((option) => option.id === choice);
     if (!candidate) {
       throw new OneJevLocalPolicyError(
@@ -924,7 +1219,8 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
     return {
       model: body.model.trim(),
       candidate,
-      confidence
+      confidence,
+      abstained
     };
   }
 
@@ -1011,7 +1307,18 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
     throw new OneJevLocalPolicyError("onejev-action-not-grounded", message);
   }
 
-  private stopDecision(reasonCode: string): PlaytestVisualDecision {
+  /**
+   * The decision that ends the episode.
+   *
+   * A stop is not a blank: when the upstream answered and then declined to
+   * commit, the model it named and the confidence it reported are part of
+   * what the episode ended on, and they are recorded.
+   */
+  private stopDecision(
+    reasonCode: string,
+    modelId: string | null = null,
+    confidence: number | null = null
+  ): PlaytestVisualDecision {
     return {
       status: "stop",
       selfReport: null,
@@ -1021,12 +1328,12 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
       predictedVisibleEffect: null,
       reasonCode: stableReasonCode(reasonCode),
       backendId: this.backendId,
-      modelId: null,
+      modelId,
       modelRevision: null,
       fallback: false,
       fallbackReason: null,
-      confidence: null,
-      capabilities: oneJevCapabilities(null),
+      confidence,
+      capabilities: oneJevCapabilities(confidence),
       counters: this.counters()
     };
   }

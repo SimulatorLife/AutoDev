@@ -1311,7 +1311,7 @@ async function capabilitiesForLaunchRequest(input: {
               code: "onejev-local-policy-unavailable",
               label: "Local OneJev server unavailable",
               message:
-                "The local OneJev model server is not reachable. Start it with `qev serve` on the approved local endpoint, or choose the Smart-directed route.",
+                "The local OneJev model server is not reachable, or the image root it reads frames from is not configured. Start it with `qev serve --image-root <dir>` on the approved local endpoint and point AUTODEV_ONEJEV_IMAGE_ROOT at that same directory, or choose the Smart-directed route.",
               severity: UNAVAILABLE_STATUS
             }
           })

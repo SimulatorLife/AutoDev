@@ -222,7 +222,10 @@ import {
   type PlaytestVisualEpisodeDriver,
   type PlaytestVisualObservationBlockReason
 } from "./visual-browser-driver.ts";
-import { buildVisualCandidates } from "./visual-candidates.ts";
+import {
+  buildVisualCandidateSet,
+  visualCandidateOffer
+} from "./visual-candidates.ts";
 
 export class PlaytestMcpAuthorizationError extends Error {
   constructor(message: string) {
@@ -5048,6 +5051,8 @@ async function actVisualStep(input: {
   readonly capturedFrames: readonly PlaytestArtifactReference[];
   /** What the Runtime measured about the game before this action. */
   readonly progress: PlaytestVisualDecisionProgress;
+  /** How much of the screen the decision backend was asked about. */
+  readonly offer: PlaytestJsonValue;
   readonly persistRevision: (
     overrides: VisualEpisodeRevisionOverrides,
     view: VisualEpisodeView
@@ -5093,6 +5098,10 @@ async function actVisualStep(input: {
         receipt.status === "dispatched" ? receipt.dispatchedAt : null,
       receiptAt: new Date().toISOString(),
       refusalReason: receipt.status === "refused" ? receipt.reason : null,
+      // How much of the screen the decision was made from, so a reader of
+      // the trace can tell an offer the contract's bound shortened from a
+      // decision made on everything the screen showed.
+      offer: input.offer,
       // What the Runtime measured about the game at this step, so a reader
       // of the trace can see the reading the episode was stopped by.
       progress: visualProgressJson(input.progress)
@@ -5376,6 +5385,11 @@ async function runVisualEpisodeSteps(input: {
     const frameBytes = input.artifacts.readArtifact(
       obsResult.observation.frame
     ).bytes;
+    // The offer is what a finite-choice backend chooses from. It is derived
+    // from the observation, so every action a backend can return is one the
+    // Runtime proposed, and the bound on it is the contract's.
+    const candidateSet = buildVisualCandidateSet(obsResult.observation);
+    const offer = visualCandidateOffer(candidateSet);
     let decision;
     try {
       // eslint-disable-next-line no-await-in-loop -- the decision must be taken from the frame this step captured.
@@ -5385,10 +5399,7 @@ async function runVisualEpisodeSteps(input: {
         frameBytes,
         areasOfFocus: input.areasOfFocus,
         history,
-        // The candidate set is what a finite-choice backend chooses
-        // from. It is derived from the observation, so every action a
-        // backend can return is one the Runtime proposed.
-        candidates: buildVisualCandidates(obsResult.observation),
+        candidates: candidateSet.candidates,
         // The approved per-episode wall-time budget owns the decision
         // deadline. The driver enforces that same ceiling before every
         // observation and every action, so a decision may not outlive it;
@@ -5415,7 +5426,8 @@ async function runVisualEpisodeSteps(input: {
         preActionPrediction: null,
         authoritativeOutcome: {
           runtimeFailureCode: code,
-          progress: visualProgressJson(progress)
+          progress: visualProgressJson(progress),
+          offer
         },
         events: [],
         frameRefs: [
@@ -5448,7 +5460,8 @@ async function runVisualEpisodeSteps(input: {
         },
         authoritativeOutcome: {
           stopReason: decision.stopReason ?? "",
-          progress: visualProgressJson(progress)
+          progress: visualProgressJson(progress),
+          offer
         },
         events: [],
         frameRefs: [
@@ -5486,6 +5499,7 @@ async function runVisualEpisodeSteps(input: {
       traceSteps: input.traceSteps,
       capturedFrames: input.capturedFrames,
       progress,
+      offer,
       persistRevision: input.persistRevision
     });
     playerDebrief = act.playerDebrief;
@@ -6911,10 +6925,7 @@ export function createPlaytestRunControl(
         ? new OneJevLocalVisualPolicy(target, {
             ...(process.env.AUTODEV_ONEJEV_ENDPOINT === undefined
               ? {}
-              : { endpoint: process.env.AUTODEV_ONEJEV_ENDPOINT }),
-            ...(process.env.AUTODEV_ONEJEV_MODEL === undefined
-              ? {}
-              : { model: process.env.AUTODEV_ONEJEV_MODEL })
+              : { endpoint: process.env.AUTODEV_ONEJEV_ENDPOINT })
           })
         : new SmartDirectVisualPolicy(target, { workspacePath })
   } = options;

@@ -194,6 +194,31 @@ interface TraceStepFacts {
    * state says only that the run failed; the cause is here.
    */
   readonly runtimeFailureCode: string | null;
+  /**
+   * How much of the screen the decision backend was asked about.
+   *
+   * The offer is the choice the backend made from, and its bound is the
+   * choice contract's: a screen with more actionable controls than the
+   * contract carries leaves some of them out of the question. A reader needs
+   * that number to tell "it did not choose that button" from "it was never
+   * asked about that button". Null when the step records no offer.
+   */
+  readonly offeredCandidates: number | null;
+  readonly actionableControls: number | null;
+  readonly controlsNotOffered: number | null;
+}
+
+/**
+ * A recorded count, or null when the line does not record it.
+ *
+ * A count is a count: a line that records one records a whole number, and a
+ * value that is not one is left unread rather than rounded into a number the
+ * trace never wrote.
+ */
+function recordedCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : null;
 }
 
 function recordedValues(
@@ -220,6 +245,7 @@ function traceStepFacts(entry: PlaytestJsonValue): TraceStepFacts {
   const visibleObservation = asTraceRecord(top?.visibleObservation);
   const preActionPrediction = asTraceRecord(top?.preActionPrediction);
   const authoritativeOutcome = asTraceRecord(top?.authoritativeOutcome);
+  const offer = asTraceRecord(authoritativeOutcome?.offer);
   const visibleControls = Array.isArray(visibleObservation?.controls)
     ? (visibleObservation.controls as readonly unknown[])
         .map((c) => {
@@ -282,7 +308,10 @@ function traceStepFacts(entry: PlaytestJsonValue): TraceStepFacts {
     runtimeFailureCode: readRecorded(
       [authoritativeOutcome],
       ["runtimeFailureCode", "failureCode"]
-    )
+    ),
+    offeredCandidates: recordedCount(offer?.candidatesOffered),
+    actionableControls: recordedCount(offer?.actionableControls),
+    controlsNotOffered: recordedCount(offer?.controlsNotOffered)
   };
 }
 
@@ -1466,8 +1495,40 @@ function spectatorCockpitPanels(
         { className: "mt-1 text-xs text-fg" },
         "Phase: " + (phaseText ?? NOT_RECORDED_LABEL)
       ),
-      visibleControlsSummary(facts?.visibleControls ?? [])
+      visibleControlsSummary(facts?.visibleControls ?? []),
+      spectatorOfferSummary(facts)
     )
+  );
+}
+
+/**
+ * The offer, as the cockpit states it.
+ *
+ * The visible controls are everything the screen showed; the offer is what
+ * the decision was made from. When the choice contract's bound left some of
+ * the screen out of the question, the cockpit says so: without it, "it did
+ * not choose that button" and "it was never asked about that button" look
+ * the same to a reader. A step that records no offer says nothing.
+ */
+function spectatorOfferSummary(
+  facts: TraceStepFacts | null
+): React.JSX.Element | null {
+  const offered = facts?.offeredCandidates ?? null;
+  const actionable = facts?.actionableControls ?? null;
+  const notOffered = facts?.controlsNotOffered ?? null;
+  if (offered === null || actionable === null || notOffered === null) {
+    return null;
+  }
+  if (notOffered === 0) {
+    return null;
+  }
+  return React.createElement(
+    "p",
+    {
+      className: `mt-1 ${MUTED_META_CLASS}`,
+      "data-testid": "playtesting-offer-summary"
+    },
+    `Asked about ${String(offered)} of ${String(actionable)} actionable controls; ${String(notOffered)} were not offered.`
   );
 }
 

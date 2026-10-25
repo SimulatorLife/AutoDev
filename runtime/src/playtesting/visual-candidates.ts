@@ -8,6 +8,7 @@
  */
 import {
   PLAYTEST_VISUAL_ACTION_SCHEMA,
+  type PlaytestJsonValue,
   type PlaytestVisualAction,
   type PlaytestVisualCandidate,
   type PlaytestVisualControl,
@@ -20,13 +21,14 @@ import { withoutControlCharacters } from "./recorded-text.ts";
 /**
  * How many candidates one observation may offer.
  *
- * The upstream choice question accepts at most 255 options, but a browser
- * screen shows far fewer actionable controls than that, and a small local
- * model compares a short list far more reliably than a long one. The Runtime
- * therefore offers a bounded set, and it reports the truncation instead of
- * dropping controls silently.
+ * The upstream's choice question accepts at most sixteen options, so an
+ * offer larger than that cannot be asked about at all: the server refuses
+ * the question rather than answering a subset of it. The Runtime's offer is
+ * therefore bounded by the contract of the backend that chooses from it, and
+ * a small local model compares a short list far more reliably than a long
+ * one besides.
  */
-export const MAX_VISUAL_CANDIDATES = 32;
+export const MAX_VISUAL_CANDIDATES = 16;
 
 /**
  * A candidate id becomes a JSON object key in the choice question and comes
@@ -95,6 +97,24 @@ export function buildVisualCandidateSet(
     truncated: actionable.length > candidates.length,
     droppedCount: actionable.length - candidates.length
   };
+}
+
+/**
+ * The offer, as the episode's trace records it.
+ *
+ * A reader of the trace can already see every control the screen showed.
+ * What the trace has to add is how much of that the decision backend was
+ * asked about: the offer is a choice the backend made from, and an offer the
+ * contract's bound shortened is part of what the decision was made on.
+ */
+export function visualCandidateOffer(
+  set: VisualCandidateSet
+): PlaytestJsonValue {
+  return {
+    candidatesOffered: set.candidates.length,
+    actionableControls: set.actionableControlCount,
+    controlsNotOffered: set.droppedCount
+  } as unknown as PlaytestJsonValue;
 }
 
 /**

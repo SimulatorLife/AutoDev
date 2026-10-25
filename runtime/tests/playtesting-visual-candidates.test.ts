@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -17,7 +20,8 @@ import {
   buildVisualCandidates,
   buildVisualCandidateSet,
   describeVisualCandidateChoice,
-  MAX_VISUAL_CANDIDATES
+  MAX_VISUAL_CANDIDATES,
+  visualCandidateOffer
 } from "../src/playtesting/visual-candidates.ts";
 
 const WORKSPACE_ID = "fixture/racing-game";
@@ -25,6 +29,14 @@ const ORIGIN = "http://127.0.0.1:5173";
 const FRAME_BYTES = new TextEncoder().encode("bounded fixture frame bytes");
 /** The charset the Core gives every control id, and the one a candidate keeps. */
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+// The upstream reads the frame from a directory it was started with, so the
+// Runtime writes into a real one.
+const IMAGE_ROOT = mkdtempSync(
+  path.join(tmpdir(), "autodev-visual-candidates-image-root-")
+);
+test.after(() => {
+  rmSync(IMAGE_ROOT, { recursive: true, force: true });
+});
 
 function target(
   overrides: Partial<WorkspaceVisualPlaytestTargetApproval> = {}
@@ -271,6 +283,34 @@ test("an observation within the cap is not truncated", () => {
   assert.equal(set.candidates.length, MAX_VISUAL_CANDIDATES);
 });
 
+test("the offer the trace records says how much of the screen was asked about", () => {
+  const offered = visualCandidateOffer(
+    buildVisualCandidateSet(
+      observation({ controls: gridControls(MAX_VISUAL_CANDIDATES + 3) })
+    )
+  );
+  const whole = visualCandidateOffer(
+    buildVisualCandidateSet(observation({ controls: gridControls(2) }))
+  );
+
+  assert.deepEqual(offered, {
+    candidatesOffered: MAX_VISUAL_CANDIDATES,
+    actionableControls: MAX_VISUAL_CANDIDATES + 3,
+    controlsNotOffered: 3
+  });
+  assert.deepEqual(whole, {
+    candidatesOffered: 2,
+    actionableControls: 2,
+    controlsNotOffered: 0
+  });
+});
+
+test("the offer fits the choice contract the upstream's own question carries", () => {
+  // A choice question carries at most sixteen options, so an offer larger
+  // than that could not be asked about at all.
+  assert.equal(MAX_VISUAL_CANDIDATES, 16);
+});
+
 test("the candidate order is deterministic and follows the observation's control order", () => {
   const controls = [
     control({ controlId: "control-start", name: "Start race" }),
@@ -328,16 +368,18 @@ test("the OneJev backend accepts the built candidates and answers with one of th
   const chosen = candidates[1]!;
   const policy = new OneJevLocalVisualPolicy(approved, {
     endpoint: "http://127.0.0.1:8000",
+    imageRoot: IMAGE_ROOT,
     now: () => 0,
     fetchImpl: async () =>
       Response.json({
-        model: "jev-latest",
+        model: "veyra-qwen3.5-2b",
         answers: {
           action: {
             type: "choice",
             choice: chosen.id,
             probabilities: { [chosen.id]: 1 },
-            confidence: 0.82
+            confidence: 0.82,
+            abstained: false
           }
         },
         usage: { input_tokens: 120, output_tokens: 8 }

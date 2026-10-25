@@ -1247,6 +1247,144 @@ test("a step that recorded no intention, prediction or action says so instead of
   assert.match(html, /RacingGame Prototype/u);
 });
 
+test("the cockpit says how much of the screen the decision was made from", () => {
+  const visualEpisode: PlaytestEpisode = {
+    ...episode(),
+    executionProvenance: {
+      mode: "autonomous-visual",
+      source: {
+        kind: "URL-only",
+        repository: null,
+        revision: null,
+        revisionConfidence: "not-applicable",
+        checkoutState: "not-applicable",
+        artifactFingerprint: null,
+        targetId: "racing-game-local",
+        targetOrigin: "http://localhost:5173"
+      },
+      observationSource: "browser-ui",
+      actionSource: "browser-input",
+      derivedFrom: null
+    },
+    frames: [{ id: "frame-step-0", kind: "frame", step: 0, frameIndex: 0 }],
+    stepCount: 1
+  };
+
+  const window: ControlApiPlaytestingWindowResponse = {
+    schema: "autodev-control-playtesting-window-v1",
+    workspaceId: WORKSPACE,
+    episodeId: visualEpisode.episodeId,
+    artifactId: "trace-window-visual",
+    sha256: "e".repeat(64),
+    mediaType: "application/x-ndjson",
+    startStep: 0,
+    endStep: 0,
+    sourceLineCount: 1,
+    omittedLineCount: 0,
+    entries: [
+      {
+        step: 0,
+        visibleObservation: {
+          controls: [{ controlId: "pedal", name: "Throttle" }],
+          warnings: [],
+          phase: "GreenFlag",
+          progress: "Lap 1"
+        },
+        // The choice contract carries sixteen options, so a screen with
+        // nineteen actionable controls left three of them out of the question.
+        authoritativeOutcome: {
+          offer: {
+            candidatesOffered: 16,
+            actionableControls: 19,
+            controlsNotOffered: 3
+          }
+        },
+        frameRefs: [{ id: "frame-step-0", kind: "frame" }]
+      }
+    ]
+  };
+
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: { ...detail(), record: visualEpisode },
+      scope: scope({ view: "sessions", step: "0" }),
+      window
+    })
+  );
+
+  assert.match(html, /data-testid="playtesting-offer-summary"/u);
+  assert.match(
+    html,
+    /Asked about 16 of 19 actionable controls; 3 were not offered\./u
+  );
+});
+
+test("the cockpit says nothing about the offer when the whole screen was offered", () => {
+  const visualEpisode: PlaytestEpisode = {
+    ...episode(),
+    executionProvenance: {
+      mode: "autonomous-visual",
+      source: {
+        kind: "URL-only",
+        repository: null,
+        revision: null,
+        revisionConfidence: "not-applicable",
+        checkoutState: "not-applicable",
+        artifactFingerprint: null,
+        targetId: "racing-game-local",
+        targetOrigin: "http://localhost:5173"
+      },
+      observationSource: "browser-ui",
+      actionSource: "browser-input",
+      derivedFrom: null
+    },
+    frames: [{ id: "frame-step-0", kind: "frame", step: 0, frameIndex: 0 }],
+    stepCount: 1
+  };
+
+  const window: ControlApiPlaytestingWindowResponse = {
+    schema: "autodev-control-playtesting-window-v1",
+    workspaceId: WORKSPACE,
+    episodeId: visualEpisode.episodeId,
+    artifactId: "trace-window-visual",
+    sha256: "e".repeat(64),
+    mediaType: "application/x-ndjson",
+    startStep: 0,
+    endStep: 0,
+    sourceLineCount: 1,
+    omittedLineCount: 0,
+    entries: [
+      {
+        step: 0,
+        visibleObservation: {
+          controls: [{ controlId: "pedal", name: "Throttle" }],
+          warnings: [],
+          phase: "GreenFlag",
+          progress: "Lap 1"
+        },
+        authoritativeOutcome: {
+          offer: {
+            candidatesOffered: 2,
+            actionableControls: 2,
+            controlsNotOffered: 0
+          }
+        },
+        frameRefs: [{ id: "frame-step-0", kind: "frame" }]
+      }
+    ]
+  };
+
+  const html = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: { ...detail(), record: visualEpisode },
+      scope: scope({ view: "sessions", step: "0" }),
+      window
+    })
+  );
+
+  assert.doesNotMatch(html, /data-testid="playtesting-offer-summary"/u);
+});
+
 test("a run the runtime ended says which failure it recorded, not only that it failed", () => {
   const failedEpisode: PlaytestEpisode = {
     ...episode(),
