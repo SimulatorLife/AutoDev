@@ -303,10 +303,18 @@ test("the model detail is the model's own page, not its provider's", async ({
   // The enablement control is the model's own, and the action it offers is
   // the one the model's own state calls for: the model is enabled, so the
   // action is to disable it.
+  //
+  // The name carries the state as well as the action, and it begins with the
+  // word the control shows: the pill wears the current value and activates
+  // the opposite, so a name that carried only the action left the state
+  // reachable by sight alone.
   const enablement = page.locator('[data-enablement="model"]');
   await expect(enablement).toHaveAttribute("data-enablement-target", MODEL_ID);
   await expect(enablement).toHaveText("Enabled");
-  await expect(enablement).toHaveAttribute("aria-label", `Disable ${MODEL_ID}`);
+  await expect(enablement).toHaveAttribute(
+    "aria-label",
+    `Enabled: Disable ${MODEL_ID}`
+  );
   // The provider's own enablement is a different control and is not here.
   await expect(page.locator('[data-enablement="provider"]')).toHaveCount(0);
 
