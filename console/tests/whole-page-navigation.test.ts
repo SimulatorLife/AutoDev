@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   clearWholePageRequestsForTests,
   isLocalWholePageDestination,
+  isWholePageNavigationPending,
   navigateToWholePage,
   warmUpWholePage
 } from "../src/components/navigation/whole-page-navigation.ts";
@@ -221,6 +222,32 @@ test("a newer navigation replaces the one that is waiting", () => {
     { href: "/agents/default", scroll: false },
     { href: "/agents/default", scroll: false }
   ]);
+});
+
+test("the owner knows it is navigating until the address bar has moved", () => {
+  clearWholePageRequestsForTests();
+  clearBrowserAddress();
+  const { router } = createRouter();
+  // The live-count refresh asks this question before it refreshes, because a
+  // refresh that lands while the Console is navigating takes the navigation's
+  // place in the router, and the navigation never applies its page.
+  assert.equal(
+    isWholePageNavigationPending(),
+    false,
+    "a Console that is not navigating is not navigating"
+  );
+  navigateToWholePage(router, "/providers/claude", "push");
+  assert.equal(
+    isWholePageNavigationPending(),
+    true,
+    "a navigation the owner has started and the address bar has not moved is pending"
+  );
+  setBrowserAddress("/providers/claude");
+  assert.equal(
+    isWholePageNavigationPending(),
+    false,
+    "the address bar moved, so the navigation committed"
+  );
 });
 
 test("a navigation leaves an external destination to the browser", () => {

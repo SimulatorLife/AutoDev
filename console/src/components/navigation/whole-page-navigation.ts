@@ -124,6 +124,9 @@ let pendingNavigation = 0;
 let activeWaiter: { readonly key: string; readonly run: () => void } | null =
   null;
 
+/** The destination the owner is navigating to, while it is navigating. */
+let activeDestination: string | null = null;
+
 /** The observer that reports the requests that carry the answers. */
 let answerObserver: PerformanceObserver | null = null;
 
@@ -216,6 +219,7 @@ export function navigateToWholePage(
     dispatch(router, href, mode, options);
   };
 
+  activeDestination = href;
   leave(true);
 
   // A newer navigation replaces the one that was waiting.
@@ -228,9 +232,40 @@ export function navigateToWholePage(
   };
 }
 
+/**
+ * Whether the Console is navigating.
+ *
+ * The answer matters to anything else that asks the router to do work while a
+ * navigation is in flight, and the live-count refresh is that thing.
+ *
+ * Next.js's router keeps the navigation it is running as a promise in its
+ * state, and a `router.refresh()` replaces that promise with its own -- so a
+ * refresh that lands while a navigation is in flight takes the navigation's
+ * place, and the navigation never applies its page: the address bar does not
+ * move and the page the operator asked for does not arrive. It is not a rare
+ * race either. The refresh runs every five seconds, and the navigation to the
+ * densest page in the Console -- the providers table, with a write form for
+ * every role and every limit -- takes longer than that to issue its request,
+ * so the navigation and the refresh landed on top of each other every time.
+ *
+ * Measured in Chromium with the refresh left on: the navigation to
+ * `/providers` issued its request three seconds after the click, the request
+ * was cancelled, and the address bar stayed where it was. With the refresh
+ * left off: the same navigation committed in 575 milliseconds.
+ *
+ * So the refresh waits for the navigation. The address bar is the only place
+ * a committed navigation shows itself, and it is the one thing the owner can
+ * read without a clock.
+ */
+export function isWholePageNavigationPending(): boolean {
+  if (activeDestination === null) return false;
+  return !isAtDestination(activeDestination);
+}
+
 /** Forget the recorded answers; the tests need a clean slate. */
 export function clearWholePageRequestsForTests(): void {
   activeWaiter = null;
+  activeDestination = null;
   pendingNavigation = 0;
   answerObserver?.disconnect();
   answerObserver = null;

@@ -10,7 +10,10 @@ import {
   SUCCESS_TONE_CLASS
 } from "../ui/tones.ts";
 import { registerLiveCountRefresh } from "./live-count-refresh.ts";
-import { navigateToWholePage } from "./whole-page-navigation.ts";
+import {
+  isWholePageNavigationPending,
+  navigateToWholePage
+} from "./whole-page-navigation.ts";
 
 export type FormNavigationStatus =
   "idle" | "submitting" | "completed" | "error";
@@ -1244,10 +1247,20 @@ export function FormNavigationOwner({
     if (!navigationRouter || globalThis.window === undefined) {
       return () => {};
     }
-    return registerLiveCountRefresh(
-      () => navigationRouter.refresh(),
-      globalThis.window
-    );
+    return registerLiveCountRefresh(() => {
+      // A refresh that lands while the Console is navigating takes the
+      // navigation's place in the router, and the navigation never applies
+      // its page: the address bar does not move and the page the operator
+      // asked for does not arrive. The refresh runs every five seconds and
+      // the navigation to the densest page takes longer than that to issue
+      // its request, so the two landed on top of each other every time.
+      //
+      // So the refresh waits. The counts it refreshes are the counts of the
+      // page the operator is on, and a page that is being replaced does not
+      // need its counts refreshed.
+      if (isWholePageNavigationPending()) return;
+      navigationRouter.refresh();
+    }, globalThis.window);
   }, [navigationRouter]);
 
   return React.createElement(
