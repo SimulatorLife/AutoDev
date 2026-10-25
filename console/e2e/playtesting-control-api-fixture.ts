@@ -3346,7 +3346,10 @@ function nextSkillAssignmentRevision(): string {
  * refused rather than applied somewhere it does not belong.
  */
 const FIXTURE_SKILL_SCOPES: Readonly<
-  Record<string, { readonly scope: string | null; readonly workspace: string | null }>
+  Record<
+    string,
+    { readonly scope: string | null; readonly workspace: string | null }
+  >
 > = {
   "code-review": { scope: "repo", workspace: WORKSPACE_ID }
 };

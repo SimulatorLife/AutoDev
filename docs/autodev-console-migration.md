@@ -246,6 +246,20 @@ The table now carries a **Scope** column, and it is read-only by construction: t
 
 The exposure and the use are per row as well as on the cards, and the two absent facts stay apart: a skill the Runtime has never seen reads `Not observed`, and a skill it has seen and never used reads `0 exposed · 0 used`.
 
+## The Console's own fixture has to serve the contract
+
+The Control API's contract has said, since before the scope feature existed, that every skill in `/control/skills` carries `scope`, `scopeLocation`, `workspace`, `observedExposure` and `observedUse`, and that the collection carries `telemetryObserved`. The Console's own browser fixture served a catalogue without them.
+
+That was not a breach the Runtime could see -- the Runtime reads the filesystem, so it answers the question itself and never asks the fixture -- but the Console's page asked, and the page read `undefined` where a path was expected. The whole page failed to render: "Console render failure", digest `513010147`, with the table at zero width and the shell at zero width around it.
+
+The cost was **fourteen failures across four acceptance runs**, and they read like a dozen different defects: a table with no column, a label that did not name its control, a page that did not fit a phone, a form that never confirmed, a catalogue that could not be saved. They were one defect, and the run summary only said so in aggregate.
+
+The fixture now serves the contract. Its catalogue is a repository's own `.rulesync/skills` directory, so the skill is installed inside that repository and belongs to the workspace that repository is, and the row reads `Repo` and `fixture/game`. The two absent telemetry facts stay absent -- `observedExposure: null`, `observedUse: null`, `telemetryObserved: false` -- because "the Runtime has not observed this skill" and "the Runtime observed it and it never happened" are different facts, and a fixture that guesses zero teaches the page to say zero.
+
+The fixture also refuses what the Runtime refuses. An assignment that names a workspace which is not the skill's own is refused with `autodev_control_execution_contract_invalid`, so the Console's wrong-workspace path is a path something walks rather than a branch nothing reaches.
+
+**The rule: a fixture that does not serve the contract makes the page's own behaviour unmeasurable.** The contract is what both sides agree on; a test double that quietly leaves a field out is not a simpler double, it is a different API, and the Console's page is the only thing in the tree that can tell the difference. `console/e2e/skill-scope-acceptance.spec.ts` is the guard: the Scope column has to be there, the row has to name the scope and the workspace, the assignment has to say where the write lands, and every row has to say something an operator can act on.
+
 ## The acceptance on `main` was red, and one of the reasons was a stale assertion
 
 The Console's browser acceptance runs in CI on every push to `main` (`.github/workflows/console-acceptance.yml`). It has been **red since 2026-10-22 23:10**, and the failures had been read as the machine's, or as this work's, until the CI's own evidence was read instead of a local rerun.
@@ -426,6 +440,22 @@ Internal resource and tab links use the shared Next.js `NavigationLink`; URL sta
 The root-mounted form feedback owner keeps pending notices visible and automatically dismisses completed or failed notices after five seconds. Terminal feedback shows a visible countdown outside its live announcement and an accessible manual close control; new feedback and unmounting cancel obsolete timers.
 
 A focused read-only Chromium smoke against the isolated staged production build covered `/agents`, `/agents/smart`, `/providers?tab=models`, `/providers/claude`, `/skills`, and `/usage` at 390px and 1280px. All six returned HTTP 200 with no document overflow, selected Control API/Usage failure code, accessible alert, or page exception. The first broad `next dev` sweep was discarded after transient request timeouts during cold route work; this staged-build sample is representative evidence only, not full visual, keyboard, mutation, or all-resource acceptance. A second pass against the same staged build covered `/mcps`, `/hooks`, `/prompts`, `/permissions`, `/tools`, `/evaluations`, and `/memory` at both widths; all seven returned HTTP 200 with no overflow, selected failure code, alert, or page exception. GitHub has separate live acceptance evidence below. Workspaces was not probed because its page reads Playtesting-owned approvals; full Workspace acceptance remains open and is left to the other session.
+
+## A navigation that does not commit is load-sensitive, and the Console's retry is part of it
+
+The Console's navigation owner asks for the destination's whole page and leaves for it, and it leaves again when the answer arrives, because a navigation the router had to fetch does not always commit on its own.
+
+Next's own source says what a second navigation does to one in flight. `dispatchAppRouterAction` marks the pending action as discarded -- "Navigations take priority over any pending actions" -- so the second leave throws the first navigation away and the first one's state is never applied. The owner cannot see that from outside the router, and it cannot tell whether the navigation it is waiting for has committed until the address bar moves.
+
+Measured in Chromium against the Console, with the circle the acceptance walks (providers -> mcps -> usage -> agents -> hooks -> providers): on a quiet machine all six navigations commit, and on a loaded one the sixth does not -- the return to the page the session started on. The router applies the answer about sixteen milliseconds after the answer arrives, and the address bar moves when it does; the leave that follows the answer is dispatched inside the answer's own turn, which is before the router has applied it.
+
+The CI's own record agrees, and it is the record that matters: the navigation acceptance passed at `34d926a7` and failed at `66b9b089` and `bf33b32f`, with no change to the navigation in between.
+
+**What was tried, and what is not in the tree.** Deferring the leave that follows an answer by a turn of the event loop -- so the router has a turn to apply the answer before the leave arrives -- was built and measured. On a quiet machine it made no difference (six of six either way); on a loaded one it was no better. It is therefore not in the tree, and the tree's navigation is unchanged. The reason it does not help is that the router's render is itself a task, so under load the commit lands later than a single deferred turn does.
+
+**What a fix needs.** The retry has to be dispatched when the router has _settled_, not when its answer arrives -- and the router already says so, through the transition the form navigation owner uses for its own writes. A navigation the owner starts inside `startTransition` stays pending until the router has applied it, so the owner could learn "the navigation has settled and the address bar has not moved" and leave again with the page in hand, at the one moment where nothing is in flight and a leave cannot cancel anything. That is the shape of the fix, and it is not yet in the tree.
+
+Until it is: an operator's click can leave the Console where it was. The Console's own acceptance is the guard for it, and it is load-sensitive in the same way the product is -- a failure there on a loaded machine is evidence about the machine until it is read against the load average.
 
 ## Agent alias enablement
 
