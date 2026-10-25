@@ -398,6 +398,14 @@ The memory now says the same thing the other lists say, and the scope module own
 
 Getting the browser acceptance to check it turned up a second thing. The Console's own e2e fixture answered the memory records read with the whole catalogue whatever the query said, while the Runtime narrows the read by all three (`the service takes all three`). So the Console's memory filter bar -- one of the four the target state names -- could not be exercised in the browser at all: a narrowed read came back with every record and the page showed a full list under a filter that was never applied. The fixture now narrows the read the way the Runtime does, and the acceptance narrows each searchable list with a query that cannot match and requires the empty state to name the criteria.
 
+## Every control has a name, and the tree is what says it
+
+The label-in-name acceptance checks that a control's name _contains_ what the control shows. That is one half of the rule, and the other half needed its own guard: a control with no name at all has nothing to contain, so it passes a name comparison vacuously, and a control the operator can see but a screen reader cannot name is invisible to the person using one.
+
+`console/e2e/accessible-name-acceptance.spec.ts` reads the names from the browser's accessibility tree rather than from the markup, because the markup is not what a screen reader says: an `aria-label` replaces a control's own content, so a button whose text is "Enabled" can be named something else entirely, and a control whose name comes from a hidden label has no name in the source to find. It walks the fourteen canonical routes and the seven detail routes, and every control the tree reports -- buttons, links, text boxes, combos, check boxes, radios, switches, sliders, tabs, options -- has a name.
+
+The tree is also the reason the earlier measurement of the agent enablement pill could be trusted: the markup said `aria-label="Disable browser-tester"` and the tree said the same thing, which is how the visible word "Enabled" was found to be reachable by sight alone. Reading the tree is not a nicety here; it is the only way to ask the question.
+
 ## A name that drops what the control shows
 
 The target state asks for both halves of a control's stated name: it says what the control points at, **and** it still contains the text that is visible, so a voice-control user can say the word they can see and find the control that says it.
