@@ -107,7 +107,12 @@ export function WorkspacesView({
       id: "id",
       header: "Repository / Workspace",
       align: "path",
-      weight: 240,
+      // The header needs 117px and the path wraps between `owner` and `name`,
+      // so this column had 123px more than it needs. That paid for the
+      // Availability column's badge, which was cut to "Not obse…": a badge is
+      // an atomic status word, and a column that cannot fit one is a
+      // column-width problem.
+      weight: 226,
       // Wraps between `owner` and `name` instead of cutting. Measured against
       // real data, "SimulatorLife/Colourful-Life" was cut with nothing to
       // recover it; the two halves are exactly the break points it wants.
@@ -148,14 +153,7 @@ export function WorkspacesView({
     {
       id: "playtestingApproval",
       header: "Playtesting Approval",
-      // The badge in this column and the badge in the Availability column are
-      // the same width -- both carry "Not observed" or "Not approved" -- so
-      // this column's budget is the Availability column's budget plus the
-      // 14px the header here needs for "Playtesting Approval" against
-      // "Availability". It had 206px, which is 44px more than the header and
-      // the badge together need, and that slack paid for the Availability
-      // column, whose badge was cut to "Not obse…".
-      weight: 192,
+      weight: 206,
       cell: (ws) => {
         const approval = approvals.get(ws.id);
         const status =
@@ -224,8 +222,8 @@ export function WorkspacesView({
       // adds 32px of shared inset, so 144px is the floor. At 132 the badge
       // was cut to "Not obse…", which is the one thing a status badge must not
       // be: a state the operator cannot read is a state the page has not told
-      // them. The 14px came from the Playtesting Approval column, which had
-      // 44px of slack.
+      // them. The 14px came from the Repository / Workspace column, which had
+      // 123px more than its header and its wrapped path need.
       weight: 146,
       cell: (ws) =>
         React.createElement(StatusBadge, {
