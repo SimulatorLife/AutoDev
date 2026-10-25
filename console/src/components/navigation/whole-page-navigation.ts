@@ -102,9 +102,10 @@ function destinationKeyOf(requestUrl: string): string | null {
  * it is the one thing the owner can read without a clock.
  */
 function isAtDestination(href: string): boolean {
-  if (globalThis.window === undefined) return false;
-  const url = new URL(href, globalThis.location.href);
-  const current = globalThis.location;
+  const view = globalThis.window;
+  if (view === undefined) return false;
+  const current = view.location;
+  const url = new URL(href, current.href);
   return current.pathname === url.pathname && current.search === url.search;
 }
 
