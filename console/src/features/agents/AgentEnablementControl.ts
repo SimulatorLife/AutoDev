@@ -8,7 +8,8 @@ import {
 } from "../../components/status/StatusBadge.ts";
 import {
   STATE_PILL_BUTTON_CLASS,
-  STATE_PILL_TONE_CLASS
+  STATE_PILL_TONE_CLASS,
+  statePillName
 } from "../../components/ui/state-pill.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
@@ -106,6 +107,23 @@ export function AgentEnablementControl({
   readonly convergence: "converged" | "pending" | "error" | "not-observed";
 }): React.JSX.Element {
   const presentation = presentationFor(enablement);
+  // One string for both the accessible name and the hover title.
+  //
+  // The name has to carry the state and the action, because the pill shows the
+  // state and activates the opposite. Naming only the action left the state
+  // reachable by sight alone: every row's pill announced "Disable <role>", so a
+  // screen reader could not tell an enabled agent from a disabled one.
+  //
+  // The title says the same thing, because a title is read out as the
+  // control's description: a title that carried only the action made the
+  // control announce its action twice.
+  const name =
+    presentation.reason === null
+      ? statePillName(
+          presentation.stateLabel,
+          `${presentation.buttonLabel} ${role}`
+        )
+      : statePillName(presentation.stateLabel, presentation.reason);
   return React.createElement(
     "div",
     { className: "inline-flex flex-col items-start gap-1" },
@@ -142,8 +160,13 @@ export function AgentEnablementControl({
         {
           type: "submit",
           disabled: presentation.reason !== null,
-          "aria-label": `${presentation.buttonLabel} ${role}`,
-          title: presentation.reason ?? `${presentation.buttonLabel} ${role}`,
+          // The name carries the state and the action, because the pill shows
+          // the state and activates the opposite. Naming only the action left
+          // the state reachable by sight alone: every row's pill announced
+          // "Disable <role>", so a screen reader could not tell an enabled
+          // agent from a disabled one.
+          "aria-label": name,
+          title: name,
           "data-enablement": "agent",
           "data-enablement-target": role,
           "data-status": presentation.status,

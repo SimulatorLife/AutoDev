@@ -61,6 +61,62 @@ test("unavailable Agent state is nonmutable and displays Runtime reason", () => 
   assert.match(markup, /data-status="not-observed"/);
 });
 
+test("the enablement pill's name carries the state and the action", () => {
+  // The pill wears the state and activates the opposite, so its name has to
+  // carry both. Naming only the action left the state reachable by sight
+  // alone: every row's pill announced "Disable <role>", so a screen reader
+  // could not tell an enabled agent from a disabled one, and the name did not
+  // contain the visible word, which WCAG 2.5.3 asks for.
+  const enabledMarkup = renderToStaticMarkup(
+    React.createElement(AgentEnablementControl, {
+      role: "orchestrator",
+      enablement: enabled,
+      convergence: "converged",
+      returnTo: "/agents"
+    })
+  );
+  assert.match(
+    enabledMarkup,
+    /aria-label="Enabled: Disable orchestrator"/u,
+    "the name states the current value and the action it performs"
+  );
+  assert.match(enabledMarkup, />Enabled<\/button>/u);
+
+  const disabledMarkup = renderToStaticMarkup(
+    React.createElement(AgentEnablementControl, {
+      role: "orchestrator",
+      enablement: { ...enabled, enabled: false },
+      convergence: "converged",
+      returnTo: "/agents"
+    })
+  );
+  assert.match(
+    disabledMarkup,
+    /aria-label="Disabled: Enable orchestrator"/u,
+    "the name follows the state, not the action alone"
+  );
+  assert.match(disabledMarkup, />Disabled<\/button>/u);
+
+  const unavailableMarkup = renderToStaticMarkup(
+    React.createElement(AgentEnablementControl, {
+      role: "worker",
+      enablement: {
+        kind: "unavailable",
+        enabled: null,
+        mutable: false,
+        reason: "No runtime alias is configured."
+      },
+      convergence: "not-observed",
+      returnTo: "/agents/worker"
+    })
+  );
+  assert.match(
+    unavailableMarkup,
+    /aria-label="Not observed: No runtime alias is configured\."/u,
+    "a control that cannot act names the reason instead of an action it will not perform"
+  );
+});
+
 test("agent enablement fetcher PATCHes role with exact revision request", async () => {
   let captured: { url: string; init: RequestInit } | undefined;
   const result = await patchAgentEnablement(

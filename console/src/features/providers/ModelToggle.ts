@@ -4,7 +4,8 @@ import React from "react";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import {
   STATE_PILL_BUTTON_CLASS,
-  STATE_PILL_TONE_CLASS
+  STATE_PILL_TONE_CLASS,
+  statePillName
 } from "../../components/ui/state-pill.ts";
 
 const NOT_OBSERVED_REASON =
@@ -59,6 +60,15 @@ export function ModelToggle({
         : IMMUTABLE_REASON;
   const nextEnabled = enablement === undefined ? true : !enablement.enabled;
   const buttonLabel = nextEnabled ? "Enable" : "Disable";
+  // One string for both the accessible name and the hover title.
+  //
+  // The name has to carry the state and the action, because the pill shows the
+  // state and activates the opposite, and the title says the same thing
+  // because a title is read out as the control's description.
+  const name =
+    unavailableReason === null
+      ? statePillName(stateLabel, `${buttonLabel} ${model}`)
+      : statePillName(stateLabel, unavailableReason);
 
   return React.createElement(
     "form",
@@ -88,8 +98,8 @@ export function ModelToggle({
       {
         type: "submit",
         disabled: unavailableReason !== null,
-        "aria-label": `${buttonLabel} ${model}`,
-        title: unavailableReason ?? `${buttonLabel} ${model}`,
+        "aria-label": name,
+        title: name,
         "data-enablement": "model",
         "data-enablement-target": model,
         "data-status":

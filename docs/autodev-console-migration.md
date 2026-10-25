@@ -306,6 +306,16 @@ The guards are both halves of the claim. `console/tests/list-table-width.test.ts
 
 **A re-budget has to be checked against the content, not only against the container.** Re-measuring each column against the widest _discrete item_ it holds -- the chip, the badge, the path segment -- found two columns sitting exactly on their limit, and one of them was cutting what it had held whole: the agents table's provider chip, `antigravity`, was cut at its last glyph at every row that named a long provider. The weights now carry the measured item rather than the column's share, and the providers table's status badge, whose label the column cannot hold whole, now names the verdict in its title -- a badge's title is the only way back to a label the column cut, and a title that only _explains_ the verdict left the part that was cut unavailable. The chips that were already truncated before this work -- the agents table's skills and MCPs, the MCPs table's overrides, the workspaces table's repository path -- are the console's own design: a discrete item stays atomic, truncates, and gives itself back on hover.
 
+## A state the operator can only see
+
+The agent enablement pill wears the agent's current value and activates the opposite, so one control carries both facts: the word on the pill is the state, and the hover title names the action. That is the design, and the shared state-pill vocabulary says so.
+
+The **accessible name** carried only the action. Read out of the live Console's accessibility tree, all ten agent rows' pills announced `Disable browser-tester`, `Disable default`, `Disable explorer` -- and nothing said whether any of them was currently enabled. The state was reachable by sight alone: `aria-label` overrides the button's content, so the word on the pill never reached assistive technology. Two rules were broken at once, and neither needed a design change to fix: WCAG 4.1.2, because a toggle's value has to be programmatically determinable, and WCAG 2.5.3, because an accessible name has to contain the label that is visible.
+
+The name now carries both, beginning with the visible word: **"Enabled: Disable browser-tester"**, **"Disabled: Enable default"**. A pill that cannot act -- an enablement the Runtime has not published -- names its reason instead of an action it will not perform: **"Not observed: No runtime alias is configured."**
+
+The rule lives with the rest of the state-pill vocabulary in `console/src/components/ui/state-pill.ts`, and the model enablement pill uses it too: the agent pill and the model pill are the same control, and two features spelling the same name is how they drift. `console/tests/control-affordances.test.ts` holds the two to the shared rule, and `console/tests/agent-enablement.test.ts` pins what each state says.
+
 ## Every resource says what it is for, and the resource owns the sentence
 
 The header names the surface -- "Providers", "Playtesting" -- and a name on its own does not tell an operator what the surface owns. The target state asks for both: "The page header names the surface and states its purpose".

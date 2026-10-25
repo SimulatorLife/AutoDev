@@ -16,7 +16,8 @@ import { AppShell } from "../src/components/layout/AppShell.ts";
 import { AppNav } from "../src/components/navigation/AppNav.ts";
 import {
   STATE_PILL_BUTTON_CLASS,
-  STATE_PILL_TONE_CLASS
+  STATE_PILL_TONE_CLASS,
+  statePillName
 } from "../src/components/ui/state-pill.ts";
 import { mcpDetailTabs } from "../src/features/mcps/McpDetailView.ts";
 import { PromptsView } from "../src/features/prompts/PromptsView.ts";
@@ -296,6 +297,41 @@ test("the three state tones are the ones the pill has always had", () => {
   assert.match(STATE_PILL_TONE_CLASS.on, /text-success/u);
   assert.match(STATE_PILL_TONE_CLASS.off, /text-warning/u);
   assert.match(STATE_PILL_TONE_CLASS.unknown, /text-fg-muted/u);
+});
+
+test("the state pill's name is one rule, and it carries the state", () => {
+  // The pill wears the item's current value and activates the opposite, so
+  // its name has to carry both. A name that carried only the action said what
+  // the control would do and nothing about the state it was in: every agent
+  // row's pill announced "Disable <role>", so a screen reader could not tell
+  // an enabled agent from a disabled one, and the name did not contain the
+  // visible word, which WCAG 2.5.3 asks for.
+  assert.equal(
+    statePillName("Enabled", "Disable orchestrator"),
+    "Enabled: Disable orchestrator"
+  );
+  assert.equal(
+    statePillName("Disabled", "Enable orchestrator"),
+    "Disabled: Enable orchestrator"
+  );
+
+  // The two features must not spell the name themselves either.
+  for (const source of [
+    "../src/features/agents/AgentEnablementControl.ts",
+    "../src/features/providers/ModelToggle.ts"
+  ]) {
+    const text = readFileSync(new URL(source, import.meta.url), "utf8");
+    assert.match(
+      text,
+      /statePillName\(/u,
+      `${source} must use the shared state-pill name`
+    );
+    assert.doesNotMatch(
+      text,
+      /"aria-label":\s*`\$\{/u,
+      `${source} must not spell the pill's name itself`
+    );
+  }
 });
 
 /**
