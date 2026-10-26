@@ -70,7 +70,12 @@ export function AppShell({
         // next Tab continues from the nav, which is the fourteen stops this link
         // exists to avoid. `tabIndex={-1}` keeps it out of the tab order itself.
         tabIndex: -1,
-        className: "flex-1 flex flex-col min-w-0 overflow-y-auto"
+        // `scroll-pb-1` leaves room for the focus ring when the page
+        // scrolls a control into view. The Console draws the ring four pixels
+        // outside the control, and a control the browser parks at the very
+        // bottom of the scrollport would lose the bottom of its ring to the
+        // edge of the window.
+        className: "flex-1 flex flex-col min-w-0 overflow-y-auto scroll-pb-1.5"
       },
       React.createElement(
         "header",

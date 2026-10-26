@@ -201,7 +201,24 @@ export function AppNav({
     React.createElement(
       "ul",
       {
-        className: "flex flex-col gap-4 list-none p-0 m-0"
+        // The rail scrolls itself.
+        //
+        // The navigation is taller than a short window: fourteen resources in
+        // three groups, and the brand row above them. The shell's root is
+        // `overflow-hidden`, so the overflow was not scrollable and the last
+        // item in the rail -- the GitHub link -- sat below the window with no
+        // way to reach it. Measured at 1280x600: the link sat at 684-720 in a
+        // 600-pixel window, a pointer could not reach it, and focusing it
+        // scrolled the whole Console up under the operator to bring it into
+        // view, header and all.
+        //
+        // So the list scrolls and the brand row stays: the Console keeps its
+        // own shape at any window height, and the scrollbar says there is more
+        // to see. `scroll-pb-1.5` leaves the focus ring its room at the
+        // bottom of the scrollport, for the same reason the page's scrollport
+        // does.
+        className:
+          "flex flex-1 min-h-0 flex-col gap-4 list-none p-0 m-0 overflow-y-auto scroll-pb-1.5"
       },
       CANONICAL_NAV_GROUPS.map((group, index) =>
         renderGroup(

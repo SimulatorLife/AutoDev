@@ -440,8 +440,12 @@ export function ProviderRoleControls({
       // row is not squeezed into the panel and left overflowing: the strip
       // scrolls as one thing, which is one scrollbar for four roles rather
       // than one per role.
+      // `py-1` leaves room for the focus ring. The Console draws it four
+      // pixels outside the control it belongs to, and this strip scrolls, so
+      // a control flush against the strip's edge would lose the top and the
+      // bottom of its ring to the clip -- a ring with its own edges cut off.
       className:
-        "flex list-none flex-col items-start gap-1.5 overflow-x-auto p-0 m-0",
+        "flex list-none flex-col items-start gap-1.5 overflow-x-auto p-0 py-1.5 m-0",
       "data-provider-roles": provider.id
     },
     ...PROVIDER_ROLES.map((role) =>
