@@ -43,12 +43,14 @@ test("Workspaces keeps its aggregate usage column readable at narrow and desktop
 }) => {
   await page.goto(WORKSPACES_URL);
   const table = page.locator("table");
+  // The workspace's configuration is one grouped setting and one editable
+  // control, so the three read-only columns it used to be spread across --
+  // Base Branch, Enablement and Role Scope -- are one Configuration column.
+  // The rest of the columns are still the columns they were.
   const expectedColumns = [
     "Repository / Workspace",
-    "Base Branch",
-    "Enablement",
+    "Configuration",
     "Playtesting Approval",
-    "Role Scope",
     "Availability",
     "Requests"
   ];
