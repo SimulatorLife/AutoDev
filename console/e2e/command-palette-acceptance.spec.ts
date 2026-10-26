@@ -58,6 +58,12 @@ test("the palette finds a resource by name and by what it is for", async ({
   await expect(results).toHaveCount(1);
   await expect(results.first()).toContainText("Playtesting");
 
+  // The words do not have to arrive in the page's order: the operator types
+  // the words they have, not the Console's wording.
+  await page.locator("#command-palette-input").fill("sessions playtest");
+  await expect(results).toHaveCount(1);
+  await expect(results.first()).toContainText("Playtesting");
+
   // The answer is stated, so a screen reader hears the search resolve.
   await expect(dialog.locator("[data-palette-count]")).toHaveText(
     "1 resource matches."

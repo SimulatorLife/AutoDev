@@ -97,13 +97,30 @@ interface Shortcut {
   readonly badge: string;
 }
 
+/**
+ * Whether a result matches the query.
+ *
+ * The query's words are matched one at a time, not as a phrase, because an
+ * operator does not know the Console's wording and types the words they have:
+ * "sessions playtest" has to find the page whose purpose says "playtest
+ * sessions". A phrase match would answer that query with "no resources match
+ * that search", which is worse than no answer -- the operator concludes the
+ * resource does not exist.
+ *
+ * The words are matched against the section's name and its purpose together,
+ * so a word can name either.
+ */
+/** The query's words, however the operator typed them. */
+const QUERY_WORDS = /\s+/u;
+
 function matches(result: PaletteResult, query: string): boolean {
-  if (query.length === 0) return true;
-  const needle = query.toLowerCase();
-  return (
-    result.section.toLowerCase().includes(needle) ||
-    result.purpose.toLowerCase().includes(needle)
-  );
+  const words = query
+    .toLowerCase()
+    .split(QUERY_WORDS)
+    .filter((word) => word.length > 0);
+  if (words.length === 0) return true;
+  const haystack = `${result.section} ${result.purpose}`.toLowerCase();
+  return words.every((word) => haystack.includes(word));
 }
 
 /** Whether the operator is typing into something, where a shortcut must not fire. */
