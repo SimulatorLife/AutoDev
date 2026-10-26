@@ -4102,15 +4102,10 @@ function memoryRecordsResponse(url: URL): Record<string, unknown> {
     total: narrowing.narrowed ? matching.length : MEMORY_RECORDS_TOTAL,
     limit: MEMORY_RECORDS_LIMIT,
     offset,
-    statusCounts: narrowing.narrowed
-      ? countMemoryStatuses(matching)
-      : {
-          proposed: 412,
-          active: 604,
-          superseded: 120,
-          invalidated: 48,
-          uncertain: 20
-        }
+    // The rollup is the collection's, counted from the collection the fixture
+    // holds -- so the number the page shows and the rows behind it cannot
+    // disagree.
+    statusCounts: countMemoryStatuses(narrowing.narrowed ? matching : records)
   };
 }
 
@@ -4216,6 +4211,79 @@ function countMemoryStatuses(
  * page, because a page is a window the reader chose.
  */
 function memoryRecords(): readonly Record<string, unknown>[] {
+  return [...writtenMemoryRecords(), ...generatedMemoryRecords()];
+}
+
+/**
+ * The claims the fixture holds beyond the five it writes out.
+ *
+ * The records read is a bounded window over a collection of 1,204 claims, and
+ * the fixture used to hold five of them while reporting the collection's
+ * total -- so every page past the first was empty, and the pager's own links
+ * could not be measured against it. A fixture that does not serve the
+ * contract makes the page's own behaviour unmeasurable.
+ *
+ * The generated claims carry the lifecycle rollup the collection reports, and
+ * they are interleaved rather than blocked by status, so a page of the
+ * collection reads like a collection instead of a run of one state.
+ */
+/** The validity a lifecycle carries, the way the written claims carry it. */
+const VALIDITY_BY_STATUS: Readonly<Record<string, string>> = {
+  active: "verified",
+  proposed: "unverified",
+  superseded: "contradicted",
+  invalidated: "contradicted",
+  uncertain: "unverified"
+};
+
+function generatedMemoryRecords(): readonly Record<string, unknown>[] {
+  const lifecycles: { readonly status: string; remaining: number }[] = [
+    { status: "active", remaining: 602 },
+    { status: "proposed", remaining: 411 },
+    { status: "superseded", remaining: 119 },
+    { status: "invalidated", remaining: 47 },
+    { status: "uncertain", remaining: 20 }
+  ];
+  const kinds = ["semantic", "episodic", "procedural"] as const;
+  const generated: Record<string, unknown>[] = [];
+  let index = 0;
+  while (lifecycles.some((lifecycle) => lifecycle.remaining > 0)) {
+    for (const lifecycle of lifecycles) {
+      if (lifecycle.remaining <= 0) continue;
+      lifecycle.remaining -= 1;
+      index += 1;
+      generated.push({
+        id: `mem-${String(index + 5).padStart(4, "0")}`,
+        kind: kinds[index % kinds.length],
+        scope: { kind: "global" },
+        claim: `Generated claim ${index} of the fixture's standing catalogue.`,
+        status: lifecycle.status,
+        provenance: {
+          experienceIds: [`exp-${String(index + 5).padStart(4, "0")}`],
+          evidence: [{ kind: "commit", uri: "8ea55f37" }],
+          createdBy: FIXTURE_LOCAL_WORKSPACE,
+          createdAt: FIXTURE_EARLIER_TIMESTAMP
+        },
+        // The validity block is part of the record's contract, not an
+        // optional extra: the Console reads its state to colour the claim.
+        validity: {
+          state: VALIDITY_BY_STATUS[lifecycle.status] ?? "unverified"
+        },
+        createdAt: FIXTURE_EARLIER_TIMESTAMP,
+        updatedAt: FIXTURE_EARLIER_TIMESTAMP
+      });
+    }
+  }
+  return generated;
+}
+
+/**
+ * The five claims the fixture writes out by hand.
+ *
+ * The acceptance reads these by name and by lifecycle state, so they are
+ * written rather than generated.
+ */
+function writtenMemoryRecords(): readonly Record<string, unknown>[] {
   return [
     {
       id: "mem-0001",

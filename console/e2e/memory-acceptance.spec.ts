@@ -12,7 +12,7 @@ const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTUR
 /** The claims the store holds behind the window one read carries. */
 const STORE_CLAIMS = 1204;
 /** The claims one read carries. */
-const PAGE_CLAIMS = 5;
+const PAGE_CLAIMS = 50;
 /** The active claims in the whole filtered collection. */
 const ACTIVE_CLAIMS = 604;
 /** The sessions the cohort read counted. */
@@ -76,10 +76,23 @@ test("the page shows the durable claims and the lifecycle they are in", async ({
   await expect(
     page.locator('[data-memory-kind="semantic"]').first()
   ).toBeVisible();
-  await expect(table.getByText("Proposed", { exact: true })).toHaveCount(1);
-  await expect(table.getByText("Active", { exact: true })).toHaveCount(2);
-  await expect(table.getByText("Superseded", { exact: true })).toHaveCount(1);
-  await expect(table.getByText("Invalidated", { exact: true })).toHaveCount(1);
+  // The written claims name the lifecycle state each is in, so the states are
+  // told apart rather than collapsed into a health word borrowed from another
+  // resource. The states are asserted on the rows that carry them, not on the
+  // page's totals: the page holds fifty claims and the totals belong to the
+  // collection.
+  for (const [id, state] of [
+    ["mem-0002", "Proposed"],
+    ["mem-0001", "Active"],
+    ["mem-0003", "Superseded"],
+    ["mem-0005", "Invalidated"]
+  ] as const) {
+    await expect(
+      table
+        .getByRole("row", { name: new RegExp(id, "u") })
+        .getByText(state, { exact: true })
+    ).toBeVisible();
+  }
   await expect(
     table.getByText("The Console's breadcrumb landmark is named Breadcrumb.")
   ).toBeVisible();
@@ -119,6 +132,39 @@ test("the page counts the collection rather than the rows on the page", async ({
   await expect(statCard(page, "Mode-Isolated Sessions")).toContainText(
     String(MODE_ISOLATED_SESSIONS)
   );
+});
+
+test("the pager says which pages there are and its links reach them", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/memory");
+  await expect(memoryBody(page)).toBeVisible();
+
+  // The card says the collection holds 1,204 claims, so the pager has to be a
+  // way into it rather than a count with nothing behind it.
+  const pager = page.locator('[data-pagination="memory-records-pagination"]');
+  await expect(pager).toBeVisible();
+  await expect(pager).toContainText(`1–${PAGE_CLAIMS} of ${STORE_CLAIMS}`);
+  await expect(
+    pager.getByRole("link", { name: "Page 2", exact: true })
+  ).toBeVisible();
+
+  // And the page the strip links to is a page of the collection, not an empty
+  // one: the claims it holds are there, and the pager says which rows they
+  // are.
+  await pager.getByRole("link", { name: "Page 2", exact: true }).click();
+  await expect(page).toHaveURL(/offset=50/u);
+  await expect(memoryBody(page)).toBeVisible();
+  await expect(memoryBody(page).locator("table tbody tr")).toHaveCount(
+    PAGE_CLAIMS
+  );
+  await expect(pager).toContainText(
+    `51–${50 + PAGE_CLAIMS} of ${STORE_CLAIMS}`
+  );
+  // The page the operator is on is the one the strip marks, not a link that
+  // goes where they already are.
+  await expect(pager.locator('[aria-current="page"]')).toHaveText("2");
 });
 
 test("the page says why memory could not be read rather than showing nothing", async ({

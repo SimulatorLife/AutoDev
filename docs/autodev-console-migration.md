@@ -396,7 +396,9 @@ The pager now carries a page strip. A short collection shows every page; a long 
 
 Measured in Chromium against the production build, on the Memory records page with its 1,204 claims: the strip reads "1–50 of 1204 · Previous · 1 · 2 · … · 25 · Next", the page links carry the exact grid offsets (`limit=50&offset=50`, `limit=50&offset=1200`), and the current page is the one marked `aria-current="page"`.
 
-**What the strip cannot fix yet.** The Console's browser fixture stands in for the 1,204-claim catalogue but holds five claims, so the pages past the first are empty -- the fixture does not serve the contract, and the `Next` button has always led to an empty page against it. The strip widens that: a link to page 2 lands on an empty page. The fixture's catalogue is the thing to repair (the acceptance's own `PAGE_CLAIMS` constant says five, so the expectations move with it), and until then the strip's own behaviour is measured by its unit guard rather than end to end.
+**The fixture had to serve the collection for any of that to be measurable.** The Console's browser fixture stood in for the 1,204-claim catalogue while holding five claims, so every page past the first was empty -- the `Next` button had always led to an empty page, and the strip would have led to one too. It serves the collection now: the five written claims the acceptance reads by name, and 1,199 generated around them, carrying the same lifecycle rollup the collection reports (412 proposed, 604 active, 120 superseded, 48 invalidated, 20 uncertain) and interleaved by lifecycle so a page reads like a collection rather than a run of one state. The rollup is counted from the records the fixture holds, so the number the page shows and the rows behind it cannot disagree.
+
+`console/e2e/memory-acceptance.spec.ts` is the guard: the strip's links are real pages of the collection, not empty ones -- the page the strip lands on holds its claims, the pager names which rows they are ("51–100 of 1204"), and the page the operator is on is the one the strip marks rather than a link that goes where they already are.
 
 ## A state the operator can only see
 
