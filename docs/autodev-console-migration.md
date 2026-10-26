@@ -386,6 +386,18 @@ Measured in Chromium against the production build: pressing `Enter` on the "Enab
 
 `console/e2e/agents-enablement-acceptance.spec.ts` holds it now -- both surfaces -- and the assertion was checked against a build with the restore removed, where it fails.
 
+## The pager reported 1,204 rows and offered twenty-four clicks
+
+The Memory records page holds 50 of 1,204 rows. Its pager said so -- "1–50 of 1204" -- and offered Previous and Next, so reaching the last row was twenty-four clicks of a button whose label says which way it goes, on a list the operator could have searched instead.
+
+The Console's own rule says it: "a count that reports more than the page holds is only useful if something can act on it" -- which is why the pagination exists at all, because the Memory pages once rendered _neither_ collection's second page. The count was answered; the way to act on it was not.
+
+The pager now carries a page strip. A short collection shows every page; a long one shows the first, the last, and a window around the page the operator is on -- so a hundred pages do not become a row of a hundred links. Every page in the strip is an exact multiple of the page size, which is the grid the URL resolver snaps an offset to, so a strip link is always a page the Runtime can answer. The page the operator is on is text rather than a link, marked with `aria-current="page"`, and the gaps are inert text: the strip is a way into the collection, not a set of controls that do nothing.
+
+Measured in Chromium against the production build, on the Memory records page with its 1,204 claims: the strip reads "1–50 of 1204 · Previous · 1 · 2 · … · 25 · Next", the page links carry the exact grid offsets (`limit=50&offset=50`, `limit=50&offset=1200`), and the current page is the one marked `aria-current="page"`.
+
+**What the strip cannot fix yet.** The Console's browser fixture stands in for the 1,204-claim catalogue but holds five claims, so the pages past the first are empty -- the fixture does not serve the contract, and the `Next` button has always led to an empty page against it. The strip widens that: a link to page 2 lands on an empty page. The fixture's catalogue is the thing to repair (the acceptance's own `PAGE_CLAIMS` constant says five, so the expectations move with it), and until then the strip's own behaviour is measured by its unit guard rather than end to end.
+
 ## A state the operator can only see
 
 The agent enablement pill wears the agent's current value and activates the opposite, so one control carries both facts: the word on the pill is the state, and the hover title names the action. That is the design, and the shared state-pill vocabulary says so.

@@ -93,7 +93,10 @@ import {
   handleFormSubmission
 } from "../src/components/navigation/FormNavigationOwner.ts";
 import {
+  currentPageNumber,
+  pageCount,
   pageRangeLabel,
+  pageStrip,
   Pagination
 } from "../src/components/navigation/Pagination.ts";
 import { ControlFailureNotice } from "../src/components/status/ControlFailureNotice.ts";
@@ -13565,6 +13568,36 @@ test("Pagination reports the rows on the page and offers only the directions tha
   assert.equal(at(0, 50, 12), null);
   assert.equal(at(0, 50, 50), null);
 
+  // The pages themselves. A short collection shows every page; a long one
+  // shows the first, the last, and a window around the page the operator is
+  // on -- so the strip is a way into the collection, not the collection.
+  assert.equal(pageCount({ offset: 0, limit: 50, total: 1204 }), 25);
+  assert.equal(currentPageNumber({ offset: 50, limit: 50, total: 1204 }), 2);
+  const pagesOf = (page: {
+    readonly offset: number;
+    readonly limit: number;
+    readonly total: number;
+  }): (number | "gap")[] =>
+    pageStrip(page).map((entry) =>
+      entry.kind === "page" ? entry.page : "gap"
+    );
+  assert.deepEqual(pagesOf({ offset: 0, limit: 50, total: 120 }), [1, 2, 3]);
+  assert.deepEqual(pagesOf({ offset: 0, limit: 50, total: 1204 }), [
+    1,
+    2,
+    "gap",
+    25
+  ]);
+  assert.deepEqual(pagesOf({ offset: 600, limit: 50, total: 1204 }), [
+    1,
+    "gap",
+    12,
+    13,
+    14,
+    "gap",
+    25
+  ]);
+
   const middle = renderToStaticMarkup(at(50, 50, 120)) ?? "";
   assert.match(middle, /aria-label="Records pagination"/);
   assert.match(middle, /51–100 of 120/);
@@ -13575,6 +13608,19 @@ test("Pagination reports the rows on the page and offers only the directions tha
   assert.match(
     middle,
     /<a\b(?=[^>]*href="\/memory\?offset=100")(?=[^>]*rel="next")[^>]*>/u
+  );
+
+  // The strip links to the pages, and every one of them is an exact multiple
+  // of the page size -- the grid the URL resolver snaps an offset to.
+  const strip = renderToStaticMarkup(at(50, 50, 120)) ?? "";
+  assert.match(strip, /<span aria-current="page"[^>]*>2<\/span>/u);
+  assert.match(
+    strip,
+    /<a\b(?=[^>]*href="\/memory\?offset=0")(?=[^>]*aria-label="Page 1")[^>]*>/u
+  );
+  assert.match(
+    strip,
+    /<a\b(?=[^>]*href="\/memory\?offset=100")(?=[^>]*aria-label="Page 3")[^>]*>/u
   );
 
   // The unavailable direction is inert text, not a dead link a keyboard
