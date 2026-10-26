@@ -4,6 +4,7 @@ import Link from "next/link.js";
 import { useRouter } from "next/navigation.js";
 import React from "react";
 
+import { ROUTER_STALE_SECONDS } from "../../lib/router-staleness.ts";
 import {
   isLocalWholePageDestination,
   navigateToWholePage,
@@ -63,7 +64,15 @@ function toHrefString(href: React.ComponentProps<typeof Link>["href"]): string {
 }
 
 const RECENT_PREFETCHES = new Map<string, number>();
-const PREFETCH_COOLDOWN_MS = 15_000;
+/**
+ * The Console does not ask for the same destination twice inside the router's
+ * own reuse window: the second ask would be thrown away, because the router
+ * may only reuse a page it fetched for that window. The window is the
+ * Console's live-count cadence, so a destination the operator comes back to
+ * after a moment is warm again -- and one they come back to after a minute
+ * is fetched afresh, which is what a page of live state wants.
+ */
+const PREFETCH_COOLDOWN_MS = ROUTER_STALE_SECONDS * 1000;
 
 export function shouldPrefetch(
   destination: string,
