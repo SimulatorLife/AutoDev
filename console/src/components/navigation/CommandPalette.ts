@@ -6,6 +6,7 @@ import {
   canonicalSectionPurpose
 } from "@simulatorlife/autodev-core";
 import React from "react";
+import { createPortal } from "react-dom";
 
 import { canonicalNavPath } from "../../lib/routes.ts";
 import { MUTED_META_CLASS, MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
@@ -551,7 +552,12 @@ export function CommandPalette({
       "aria-label": PALETTE_NAME,
       onKeyDown: containFocus,
       className:
-        "w-full max-w-xl overflow-hidden rounded-lg border border-border bg-surface shadow-2xl"
+        // The dialog is bounded by the window it opens in. A palette that is
+        // taller than a short viewport -- a phone in landscape, a half-height
+        // window -- puts its lower half below the fold, and a fixed overlay
+        // cannot be scrolled: the results the operator cannot see are the
+        // results they cannot reach.
+        "flex w-full max-w-xl max-h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-2xl"
     },
     React.createElement(
       "div",
@@ -563,7 +569,10 @@ export function CommandPalette({
     selection,
     React.createElement(
       "ul",
-      { ref: listRef, className: "max-h-80 overflow-y-auto p-2" },
+      {
+        ref: listRef,
+        className: "min-h-0 max-h-80 flex-1 overflow-y-auto p-2"
+      },
       shown.length === 0 ? empty : entries
     )
   );
@@ -572,7 +581,9 @@ export function CommandPalette({
     "div",
     {
       className:
-        "fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-24",
+        // The overlay scrolls as a last resort, so a dialog that is taller
+        // than the window can still be reached.
+        "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 pt-24",
       "data-command-palette": true,
       onClick: handleOverlayClick
     },
@@ -583,6 +594,20 @@ export function CommandPalette({
     React.Fragment,
     null,
     trigger,
-    open ? overlay : null
+    // The overlay is a child of the document, not of the header.
+    //
+    // The shell's header carries a `backdrop-blur`, and an element with a
+    // backdrop filter is the containing block for its fixed descendants: the
+    // palette's overlay was "fixed to the window" only in the sense that it
+    // was fixed to the header. Measured in Chromium against the production
+    // build, the overlay was 1384x112 -- the header's box -- in a 1440x900
+    // window, so the dialog overflowed it, the backdrop dimmed the header
+    // and nothing else, and at a phone-in-landscape height the dialog's
+    // lower half was below the fold with no way to reach it.
+    //
+    // Rendering it into the document puts it back in the window, where
+    // "fixed" means what it says. The palette is only ever open in the
+    // browser, so the portal is never taken on the server.
+    open ? createPortal(overlay, globalThis.document.body) : null
   );
 }

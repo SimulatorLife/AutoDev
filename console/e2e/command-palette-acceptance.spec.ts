@@ -154,6 +154,56 @@ test("the palette opens the first match with Enter", async ({ page }) => {
   await expect(page.locator("main h1")).toBeFocused();
 });
 
+test("the palette fits a short window", async ({ page }) => {
+  // A phone in landscape is the shortest window the Console is used in, and
+  // it is the one where a palette that is taller than the window puts its
+  // lower half out of reach.
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.goto("/agents");
+  await waitForPageContent(page);
+
+  await page.keyboard.press("Meta+k");
+  const dialog = page.getByRole("dialog", { name: "Find a resource" });
+  await expect(dialog).toBeVisible();
+
+  const geometry = await page.evaluate(() => {
+    const overlay = document.querySelector("[data-command-palette]");
+    const list = overlay?.querySelector("ul");
+    const overlayBox = overlay?.getBoundingClientRect();
+    const dialogBox = overlay
+      ?.querySelector("[role='dialog']")
+      ?.getBoundingClientRect();
+    const listBox = list?.getBoundingClientRect();
+    // What the operator can actually see where the first result is.
+    const hit =
+      listBox === undefined
+        ? null
+        : document.elementFromPoint(
+            Math.round(listBox.left + 40),
+            Math.round(listBox.top + 20)
+          );
+    return {
+      overlayWidth: overlayBox?.width ?? 0,
+      overlayHeight: overlayBox?.height ?? 0,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      dialogBottom: dialogBox?.bottom ?? 0,
+      firstResultPainted:
+        hit !== null && hit.closest("[data-command-palette]") !== null
+    };
+  });
+
+  // The overlay is the window and not the header it happens to be rendered
+  // in: an element with a backdrop filter is the containing block for its
+  // fixed descendants, so a palette rendered inside the shell's frosted
+  // header is "fixed" to the header.
+  expect(geometry.overlayWidth).toBe(geometry.viewportWidth);
+  expect(geometry.overlayHeight).toBe(geometry.viewportHeight);
+  // And the dialog is inside the window, so every result is reachable.
+  expect(geometry.dialogBottom).toBeLessThanOrEqual(geometry.viewportHeight);
+  expect(geometry.firstResultPainted).toBe(true);
+});
+
 test("the palette selects a result the keyboard can move", async ({ page }) => {
   await page.goto("/agents");
   await waitForPageContent(page);
