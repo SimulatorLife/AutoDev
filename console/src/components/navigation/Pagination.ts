@@ -187,12 +187,14 @@ export function Pagination({
    * The current page is text rather than a link: it is where the operator
    * already is, and `aria-current` says so to assistive technology.
    */
-  const strip = pageStrip(page).map((entry) =>
+  const strip = pageStrip(page).map((entry, index) =>
     entry.kind === "gap"
       ? React.createElement(
           "span",
           {
-            key: "gap",
+            // The strip can carry two gaps -- one on each side of the window --
+            // so the key carries its place rather than its kind.
+            key: `gap-${index}`,
             "aria-hidden": "true",
             className: "px-1 text-fg-muted"
           },
