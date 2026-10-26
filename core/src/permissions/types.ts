@@ -28,19 +28,42 @@ export function isSandboxMode(value: unknown): value is SandboxMode {
   );
 }
 
+/**
+ * The permission policy of a session.
+ *
+ * These are the settings the canonical source declares, and no others. A
+ * policy field with no canonical key behind it is a value the product would be
+ * inventing: the policy used to carry a `defaultToolsApprovalMode` that no
+ * source declared, and the Console rendered a policy that was not the policy
+ * the product ran.
+ */
 export interface PermissionPolicy {
   readonly approvalPolicy: ApprovalPolicy;
   readonly sandboxMode: SandboxMode;
+  readonly approvalsReviewer: string;
   readonly networkAccess: boolean;
   readonly webSearch: boolean;
-  readonly approvalsReviewer: string;
-  readonly defaultToolsApprovalMode: string;
 }
 
 export interface RoleCapabilityMatrix {
   readonly role: AgentRole;
+  /**
+   * Whether this role runs in the read-only sandbox.
+   *
+   * Derived from the role's own sandbox mode, which is the fact; a mode that
+   * could not be observed is neither read-only nor not.
+   */
   readonly readOnly: boolean;
-  readonly sandboxMode: SandboxMode;
+  /**
+   * The sandbox this role runs in, as its own declaration states it.
+   *
+   * Null when the declaration could not be read. The matrix used to answer
+   * every role but the read-only ones with `workspace-write`, so the
+   * orchestrator -- declared `danger-full-access` -- was shown as a sandboxed
+   * role, and an unreadable declaration was shown as the nearest mode the
+   * product knows rather than as not observed.
+   */
+  readonly sandboxMode: SandboxMode | null;
   readonly allowedMcpServers: readonly string[];
   readonly allowedSkills: readonly string[];
   /**

@@ -11920,10 +11920,15 @@ test("an empty list names its resource instead of inheriting a generic sentence"
         sandboxMode: "workspace-write",
         approvalsReviewer: "user",
         networkAccess: true,
-        webSearch: true,
-        defaultToolsApprovalMode: "approve"
+        webSearch: true
       },
-      roleMatrices: []
+      policyStatus: "valid",
+      policyReason: null,
+      revision: "a".repeat(64),
+      applied: null,
+      appliedSource: "/tmp/codex/config.toml",
+      roleMatrices: [],
+      returnTo: "/permissions"
     })
   );
   assert.match(permissions, /No role capability matrices were observed\./u);
@@ -12091,30 +12096,35 @@ test("View adapters translate Control API responses without inventing data", () 
   assert.equal(workspaces[0]?.id, "SimulatorLife/AutoDev");
 
   const perms = permissionsFromControlApi({
-    schema: "autodev-control-permissions-v1",
+    schema: "autodev-control-permissions-v2",
     source: "test",
-    readOnly: true,
+    readOnly: false,
+    revision: "b".repeat(64),
+    policyStatus: "valid",
+    policyReason: null,
+    applied: null,
+    appliedSource: "/tmp/codex/config.toml",
     policy: {
       approvalPolicy: "never",
       sandboxMode: "workspace-write",
       approvalsReviewer: "user",
       networkAccess: true,
-      webSearch: true,
-      defaultToolsApprovalMode: "approve"
+      webSearch: true
     },
     rolePermissions: {
       orchestrator: {
-        readOnly: false,
-        sandbox: "workspace-write",
-        networkAccess: true,
-        approvals: "never",
+        sandboxMode: "unrestricted",
         mcp: ["cocoindex-code", "lsp"],
         mcpTools: { lsp: ["lsp_find_symbol", "lsp_goto_definition"] },
         skills: ["autodev-session-diagnostics", "ccc"]
       }
     }
   });
-  assert.equal(perms.roleMatrices[0]?.sandboxMode, "workspace-write");
+  // The orchestrator declares `danger-full-access`. The matrix used to answer
+  // every role but the read-only ones with "workspace-write", so the product's
+  // unsandboxed role was shown as a sandboxed one.
+  assert.equal(perms.roleMatrices[0]?.sandboxMode, "unrestricted");
+  assert.equal(perms.roleMatrices[0]?.readOnly, false);
   // The effective capability matrix must be the projected list, never a
   // placeholder empty list the UI would render as "None".
   assert.deepEqual(perms.roleMatrices[0]?.allowedMcpServers, [
@@ -12138,25 +12148,26 @@ test("the capability matrix lists the fixed roles in the one order the app uses"
   // evidence -- but they rank after the fixed four and keep a deterministic
   // order among themselves, so the table cannot churn between reads.
   const role = () => ({
-    readOnly: true,
-    sandbox: "workspace-write",
-    networkAccess: true,
-    approvals: "user",
+    sandboxMode: "workspace-write" as const,
     mcp: [],
     mcpTools: {},
     skills: []
   });
   const ordered = permissionsFromControlApi({
-    schema: "autodev-control-permissions-v1",
+    schema: "autodev-control-permissions-v2",
     source: "test",
-    readOnly: true,
+    readOnly: false,
+    revision: "c".repeat(64),
+    policyStatus: "valid",
+    policyReason: null,
+    applied: null,
+    appliedSource: "/tmp/codex/config.toml",
     policy: {
       approvalPolicy: "on-demand",
       sandboxMode: "workspace-write",
       approvalsReviewer: "user",
       networkAccess: true,
-      webSearch: true,
-      defaultToolsApprovalMode: "approve"
+      webSearch: true
     },
     // Deliberately scrambled, plus two roles outside the fixed four.
     rolePermissions: {
@@ -12179,10 +12190,15 @@ test("the capability matrix lists the fixed roles in the one order the app uses"
   ]);
 });
 
-test("the policy cards read as prose rather than raw config values", () => {
-  // Three cards in that row render words -- "Workspace write", "Allowed",
-  // "Enabled" -- and the fourth rendered the enum itself, so `on-demand`
-  // appeared on the page in display-sized type as `on-demand`.
+test("the policy reads as prose rather than raw config values", () => {
+  // The policy's choices render words -- "Workspace write", "Allowed",
+  // "Enabled" -- and the approval policy rendered the enum itself, so
+  // `on-demand` appeared on the page in display-sized type as `on-demand`.
+  //
+  // The policy is a control now, so the prose is the label of the choice the
+  // operator picks rather than a card's value. The enum is still the value the
+  // control submits; what must not happen is the raw value standing on the page
+  // as text.
   for (const [approvalPolicy, expected] of [
     ["on-demand", "On demand"],
     ["always", "Always"],
@@ -12195,10 +12211,15 @@ test("the policy cards read as prose rather than raw config values", () => {
           sandboxMode: "workspace-write",
           approvalsReviewer: "user",
           networkAccess: true,
-          webSearch: true,
-          defaultToolsApprovalMode: "approve"
+          webSearch: true
         },
-        roleMatrices: []
+        policyStatus: "valid",
+        policyReason: null,
+        revision: "1".repeat(64),
+        applied: null,
+        appliedSource: "/tmp/codex/config.toml",
+        roleMatrices: [],
+        returnTo: "/permissions"
       })
     );
     assert.match(markup, new RegExp(`>${expected}<`, "u"));
@@ -19322,13 +19343,17 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     sandboxMode: "workspace-write",
     approvalsReviewer: "user",
     networkAccess: true,
-    webSearch: true,
-    defaultToolsApprovalMode: "approve"
+    webSearch: true
   };
   const permissionsEnvelope = (policy: unknown) => ({
-    schema: "autodev-control-permissions-v1",
+    schema: "autodev-control-permissions-v2",
     source: ".rulesync/permissions",
-    readOnly: true,
+    readOnly: false,
+    revision: "d".repeat(64),
+    policyStatus: "valid",
+    policyReason: null,
+    applied: null,
+    appliedSource: "/tmp/codex/config.toml",
     policy,
     rolePermissions: {}
   });
@@ -19343,8 +19368,7 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     "sandboxMode",
     "approvalsReviewer",
     "networkAccess",
-    "webSearch",
-    "defaultToolsApprovalMode"
+    "webSearch"
   ]) {
     const incomplete = await fetchPermissions(
       config,
@@ -21588,6 +21612,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Holds the canonical configuration an operator is editing and submits it through the same-origin workspace configuration route; it never drives the router."
     ],
     [
+      join("src", "features", "permissions", "PermissionPolicyForm.ts"),
+      "Holds the canonical permission policy an operator is editing and submits it through the same-origin permission policy route; it never drives the router."
+    ],
+    [
       join(
         "src",
         "features",
@@ -22213,33 +22241,39 @@ test("patchSkillRoles preserves unobserved actual roles instead of converting th
 });
 
 test("the permissions page answers which tools a role may call, not only which servers it reaches", () => {
-  const { policy, roleMatrices } = permissionsFromControlApi({
-    schema: "autodev-control-permissions-v1",
+  const {
+    policy,
+    policyStatus,
+    policyReason,
+    revision,
+    applied,
+    appliedSource,
+    roleMatrices
+  } = permissionsFromControlApi({
+    schema: "autodev-control-permissions-v2",
     source: "test",
-    readOnly: true,
+    readOnly: false,
+    revision: "e".repeat(64),
+    policyStatus: "valid",
+    policyReason: null,
+    applied: null,
+    appliedSource: "/tmp/codex/config.toml",
     policy: {
       approvalPolicy: "never",
       sandboxMode: "workspace-write",
       approvalsReviewer: "user",
       networkAccess: true,
-      webSearch: true,
-      defaultToolsApprovalMode: "approve"
+      webSearch: true
     },
     rolePermissions: {
       worker: {
-        readOnly: false,
-        sandbox: "workspace-write",
-        networkAccess: true,
-        approvals: "never",
+        sandboxMode: "workspace-write",
         mcp: ["lsp"],
         mcpTools: { lsp: ["lsp_find_symbol", "lsp_goto_definition"] },
         skills: []
       },
       validator: {
-        readOnly: true,
-        sandbox: "read-only",
-        networkAccess: true,
-        approvals: "never",
+        sandboxMode: "read-only",
         // Reaches an MCP server with no tool grants. That is a real state, and
         // it must not read the same as a role whose grants were never reported.
         mcp: ["lsp"],
@@ -22247,10 +22281,7 @@ test("the permissions page answers which tools a role may call, not only which s
         skills: []
       },
       orchestrator: {
-        readOnly: false,
-        sandbox: "workspace-write",
-        networkAccess: true,
-        approvals: "never",
+        sandboxMode: "unrestricted",
         mcp: [],
         mcpTools: {},
         skills: []
@@ -22259,7 +22290,16 @@ test("the permissions page answers which tools a role may call, not only which s
   });
 
   const markup = renderToStaticMarkup(
-    React.createElement(PermissionsView, { policy, roleMatrices })
+    React.createElement(PermissionsView, {
+      policy,
+      policyStatus,
+      policyReason,
+      revision,
+      applied,
+      appliedSource,
+      roleMatrices,
+      returnTo: "/permissions"
+    })
   );
 
   // The server list alone used to be the whole answer, and a role named
@@ -22276,24 +22316,33 @@ test("the permissions page answers which tools a role may call, not only which s
 });
 
 test("a permissions page where no role has a tool grant says so instead of rendering an empty list", () => {
-  const { policy, roleMatrices } = permissionsFromControlApi({
-    schema: "autodev-control-permissions-v1",
+  const {
+    policy,
+    policyStatus,
+    policyReason,
+    revision,
+    applied,
+    appliedSource,
+    roleMatrices
+  } = permissionsFromControlApi({
+    schema: "autodev-control-permissions-v2",
     source: "test",
-    readOnly: true,
+    readOnly: false,
+    revision: "f".repeat(64),
+    policyStatus: "valid",
+    policyReason: null,
+    applied: null,
+    appliedSource: "/tmp/codex/config.toml",
     policy: {
       approvalPolicy: "never",
       sandboxMode: "workspace-write",
       approvalsReviewer: "user",
       networkAccess: true,
-      webSearch: true,
-      defaultToolsApprovalMode: "approve"
+      webSearch: true
     },
     rolePermissions: {
       default: {
-        readOnly: false,
-        sandbox: "workspace-write",
-        networkAccess: true,
-        approvals: "never",
+        sandboxMode: "workspace-write",
         mcp: ["lsp"],
         mcpTools: {},
         skills: []
@@ -22302,7 +22351,16 @@ test("a permissions page where no role has a tool grant says so instead of rende
   });
 
   const markup = renderToStaticMarkup(
-    React.createElement(PermissionsView, { policy, roleMatrices })
+    React.createElement(PermissionsView, {
+      policy,
+      policyStatus,
+      policyReason,
+      revision,
+      applied,
+      appliedSource,
+      roleMatrices,
+      returnTo: "/permissions"
+    })
   );
   assert.match(markup, /No role has an MCP tool grant recorded/u);
   // Reaching a server is still reported: this role does reach `lsp`, and the
@@ -22316,23 +22374,24 @@ test("a permissions payload whose tool grants are unreadable fails closed", asyn
     serviceToken: "server-only"
   };
   const payload = {
-    schema: "autodev-control-permissions-v1",
+    schema: "autodev-control-permissions-v2",
     source: "test",
-    readOnly: true,
+    readOnly: false,
+    revision: "0".repeat(64),
+    policyStatus: "valid",
+    policyReason: null,
+    applied: null,
+    appliedSource: "/tmp/codex/config.toml",
     policy: {
       approvalPolicy: "never",
       sandboxMode: "workspace-write",
       approvalsReviewer: "user",
       networkAccess: true,
-      webSearch: true,
-      defaultToolsApprovalMode: "approve"
+      webSearch: true
     },
     rolePermissions: {
       default: {
-        readOnly: false,
-        sandbox: "workspace-write",
-        networkAccess: true,
-        approvals: "never",
+        sandboxMode: "workspace-write",
         mcp: ["lsp"],
         mcpTools: {},
         skills: []

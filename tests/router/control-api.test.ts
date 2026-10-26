@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import {
@@ -56,6 +57,7 @@ import {
   setTelemetryExporter
 } from "@simulatorlife/autodev-runtime/router/telemetry";
 import type { ExecutionContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { parse } from "smol-toml";
 
 // Disabling a role is a priority, not a boolean: `disabled` is a member of
 // the priority enum so a role cannot hold a priority and be disabled at once.
@@ -2647,9 +2649,35 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(permissions.response.statusCode, 200);
-    assert.equal(permissions.body.schema, "autodev-control-permissions-v1");
-    assert.equal(permissions.body.policy.approvalPolicy, "never");
-    assert.equal(permissions.body.policy.sandboxMode, "workspace-write");
+    assert.equal(permissions.body.schema, "autodev-control-permissions-v2");
+    // The policy is read from the canonical source that states it. The
+    // portable source declares these two, and the response used to publish
+    // literals that happened to agree with it -- so a policy the operator had
+    // changed was still published as the old one.
+    const canonicalPolicy = parse(
+      readFileSync(
+        join(
+          fileURLToPath(new URL("../../", import.meta.url)),
+          "config",
+          "config.autodev.toml"
+        ),
+        "utf8"
+      )
+    ) as Record<string, unknown>;
+    assert.equal(
+      permissions.body.policy.approvalPolicy,
+      canonicalPolicy.approval_policy
+    );
+    assert.equal(
+      permissions.body.policy.sandboxMode,
+      canonicalPolicy.sandbox_mode
+    );
+    assert.equal(permissions.body.policyStatus, "valid");
+    assert.ok(
+      typeof permissions.body.revision === "string" &&
+        permissions.body.revision.length === 64,
+      "the permission policy publishes the revision a write compares against"
+    );
 
     // The effective capability matrix must be a real projection of the
     // execution contract, not an absent value the Console would render as
@@ -2678,7 +2706,24 @@ test("Control API surfaces all 13 typed resource families", async () => {
         (entry.skills as unknown[]).every((value) => typeof value === "string"),
         `role ${role} skill entries must be strings`
       );
+      // A role's sandbox is what its own declaration states. The projection
+      // keeps a boolean instead, and the runtime answered every role but the
+      // read-only ones with "workspace-write" -- so the orchestrator, declared
+      // `danger-full-access`, was published as a sandboxed role.
+      assert.ok(
+        entry.sandboxMode === null ||
+          ["read-only", "workspace-write", "unrestricted"].includes(
+            entry.sandboxMode as string
+          ),
+        `role ${role} must publish a sandbox the product supports`
+      );
     }
+    // The orchestrator is the product's unsandboxed role. It must say so.
+    assert.equal(
+      permissions.body.rolePermissions.orchestrator?.sandboxMode,
+      "unrestricted",
+      "the orchestrator declares danger-full-access and must be published as unrestricted"
+    );
     const agentsForComparison = await call("GET", CONTROL_API_PATHS.agents, {
       actor: "viewer-a"
     });

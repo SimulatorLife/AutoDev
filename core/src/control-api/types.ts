@@ -22,7 +22,7 @@ import type {
   MemorySessionOutcomeCohortPage,
   MemoryStatusCounts
 } from "../memory/types.ts";
-import type { SandboxMode } from "../permissions/types.ts";
+import type { PermissionPolicy, SandboxMode } from "../permissions/types.ts";
 import type {
   HumanPlaytestStudy,
   PlaytestBatch,
@@ -1020,26 +1020,67 @@ export interface ControlApiHookEventPatchResponse {
   readonly reconciliation: ReconciliationView;
 }
 
+/**
+ * The permission policy, as the canonical source states it.
+ *
+ * These are the keys the portable source declares, and no others: a policy
+ * field with no canonical key behind it is a value the product would be
+ * inventing.
+ */
+export type ControlApiPermissionPolicy = PermissionPolicy;
+
+/**
+ * The permission policy as the Runtime published it and the Console reads it.
+ *
+ * The policy is the portable source's, read from it: the response names the
+ * file it was read from, and publishes the revision a write is compared
+ * against.
+ */
 export interface ControlApiPermissionsResponse {
-  readonly schema: "autodev-control-permissions-v1";
+  readonly schema: "autodev-control-permissions-v2";
+  /** The canonical file the policy was read from. */
   readonly source: string;
   readonly readOnly: boolean;
-  readonly policy: {
-    readonly approvalPolicy: "never" | "always" | "on-demand";
-    readonly sandboxMode: SandboxMode;
-    readonly approvalsReviewer: string;
-    readonly networkAccess: boolean;
-    readonly webSearch: boolean;
-    readonly defaultToolsApprovalMode: string;
-  };
+  /** The revision of the canonical file: the sha256 of its exact bytes. */
+  readonly revision: string | null;
+  /**
+   * The policy the canonical source states.
+   *
+   * Null when the source could not be read or could not be parsed. A policy
+   * that states defaults is not a policy the operator chose, so a source that
+   * does not say what its keys are is reported as not observed rather than
+   * filled in.
+   */
+  readonly policy: ControlApiPermissionPolicy | null;
+  /** Whether the canonical source could be read, and whether it parsed. */
+  readonly policyStatus: "valid" | "invalid" | "unavailable";
+  /** Why the policy could not be read; null when it could. */
+  readonly policyReason: string | null;
+  /**
+   * The policy the Runtime applied, read from the composed user configuration.
+   *
+   * Null when the applied configuration could not be read. A configuration that
+   * exists but was not observed is not a policy of defaults.
+   */
+  readonly applied: ControlApiPermissionPolicy | null;
+  /** Where the applied policy was read from. */
+  readonly appliedSource: string;
   readonly rolePermissions: Readonly<
     Record<
       string,
       {
-        readonly readOnly: boolean;
-        readonly sandbox: string;
-        readonly networkAccess: boolean;
-        readonly approvals: string;
+        /**
+         * The sandbox this role runs in, as its own declaration states it.
+         *
+         * The projection the Runtime installs keeps a boolean instead, so a
+         * role declared `danger-full-access` was reported as `workspace-write`
+         * -- the product's most privileged role named as a sandboxed one.
+         *
+         * Null when the role's declaration could not be read: the sandbox is
+         * then not observed, which is neither the read-only mode nor the
+         * unrestricted one.
+         */
+        readonly sandboxMode: SandboxMode | null;
         /**
          * MCP servers this role is permitted to reach, projected from the same
          * execution contract that backs `/control/agents`. Kept here so the
@@ -1061,6 +1102,46 @@ export interface ControlApiPermissionsResponse {
       }
     >
   >;
+}
+
+/**
+ * A request to change the permission policy.
+ *
+ * The policy is written one setting at a time, because each setting is a
+ * separate control on the surface: a request names the settings it changes and
+ * the revision it decided on, and the rest of the policy is left as the
+ * canonical source has it.
+ */
+export interface ControlApiPermissionsPatchRequest {
+  /** The revision of the canonical policy file the change was decided on. */
+  readonly expectedRevision: string;
+  readonly approvalPolicy?: "never" | "always" | "on-demand";
+  readonly sandboxMode?: SandboxMode;
+  readonly approvalsReviewer?: string;
+  readonly networkAccess?: boolean;
+  readonly webSearch?: boolean;
+}
+
+/**
+ * The result of a permission policy write.
+ *
+ * The write is a compare-and-swap on the policy file's revision, so the
+ * response carries the revision the file now has, the policy it now states,
+ * and the reconciliation the Runtime observed once the composed
+ * configuration was refreshed.
+ */
+export interface ControlApiPermissionsPatchResponse {
+  readonly schema: "autodev-control-permissions-patch-v1";
+  /** The revision of the canonical policy file after the write. */
+  readonly revision: string;
+  /** Whether the policy file's content changed. */
+  readonly changed: boolean;
+  /** The policy the canonical source states after the write. */
+  readonly policy: ControlApiPermissionPolicy;
+  /** The policy the Runtime applied, read from the composed configuration. */
+  readonly applied: ControlApiPermissionPolicy | null;
+  /** The shared reconciliation view of the policy against the applied state. */
+  readonly reconciliation: ReconciliationView;
 }
 
 export interface ControlApiPromptsResponse {

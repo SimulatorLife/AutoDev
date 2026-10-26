@@ -24,6 +24,7 @@ import {
   ClickHouseTelemetryClient,
   ConfigRepository,
   parseRuleSyncCommand,
+  readPermissionPolicyFile,
   RuleSyncCommandConflictError,
   RuleSyncCommandHistoryUnavailableError,
   RuleSyncCommandValidationError,
@@ -1647,9 +1648,12 @@ test("ConfigRepository reads agent role identifiers and workspaces", () => {
   assert.ok(workspaces.length > 0);
   assert.ok(workspaces.some((w) => w.id === "SimulatorLife/AutoDev"));
 
-  const policy = repo.loadPermissionPolicy();
-  assert.equal(policy.approvalPolicy, "never");
-  assert.equal(policy.sandboxMode, "workspace-write");
+  const policy = readPermissionPolicyFile(repo.permissionPolicyPath());
+  assert.equal(policy.status, "valid");
+  if (policy.status === "valid") {
+    assert.ok(policy.policy.approvalPolicy);
+    assert.ok(policy.policy.sandboxMode);
+  }
 });
 
 test("ConfigRepository does not derive Agent roles from a malformed contract section", async () => {

@@ -119,6 +119,27 @@ const workspaceConfiguration = {
 const INITIAL_WORKSPACE_REVISION = workspaceConfiguration.revision;
 
 /**
+ * The canonical permission policy the fixture holds.
+ *
+ * The Runtime reads the policy from the canonical source that states it and
+ * publishes a revision the write is compared against, so the fixture holds a
+ * policy and a revision too: a spec that writes through the Console has to be
+ * able to see that the write landed, and a spec that moves the revision
+ * underneath an open page has to be able to make the page's next write a
+ * conflict.
+ */
+const permissionPolicy = {
+  approvalPolicy: "on-demand" as "never" | "always" | "on-demand",
+  sandboxMode: "workspace-write" as
+    "read-only" | "workspace-write" | "unrestricted",
+  approvalsReviewer: "operator",
+  networkAccess: false,
+  webSearch: false,
+  revision: "9".repeat(64)
+};
+const INITIAL_PERMISSION_POLICY_REVISION = permissionPolicy.revision;
+
+/**
  * The states the fixture's own control routes put a setting back to.
  *
  * "enabled" and "disabled" say which way a setting goes, and "revision-moved"
@@ -3335,6 +3356,16 @@ function nextAgentEnablementRevision(revision: string): string {
  * that holds the old one write against a catalog that has moved past it.
  */
 function nextWorkspaceRevision(revision: string): string {
+  return nextRevision(revision);
+}
+
+/**
+ * The next revision of a canonical source.
+ *
+ * The revision is the source's own handle, so moving it is what makes a page
+ * that holds the old one write against a source that has moved past it.
+ */
+function nextRevision(revision: string): string {
   return (BigInt(`0x${revision}`) + 1n).toString(16).padStart(64, "0");
 }
 
@@ -3839,6 +3870,182 @@ async function applyWorkspaceConfigurationWrite(
     revision: workspaceConfiguration.revision,
     changed,
     workspace: workspaceConfigurationRecord()
+  });
+  return true;
+}
+
+/**
+ * The canonical permission policy, as the Runtime reports it.
+ *
+ * The read and the write answer from the same state, so a write that lands is
+ * the same fact on both surfaces rather than two the fixture keeps in step by
+ * hand.
+ */
+function permissionPolicyRecord(): {
+  approvalPolicy: string;
+  sandboxMode: string;
+  approvalsReviewer: string;
+  networkAccess: boolean;
+  webSearch: boolean;
+} {
+  return {
+    approvalPolicy: permissionPolicy.approvalPolicy,
+    sandboxMode: permissionPolicy.sandboxMode,
+    approvalsReviewer: permissionPolicy.approvalsReviewer,
+    networkAccess: permissionPolicy.networkAccess,
+    webSearch: permissionPolicy.webSearch
+  };
+}
+
+/**
+ * Write one setting of the canonical permission policy.
+ *
+ * The write is a compare-and-swap on the policy's revision, so a write
+ * decided on a policy that has since moved is refused rather than applied over
+ * the newer one -- which is what the Console's own conflict path reports.
+ */
+async function applyPermissionPolicyWrite(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): Promise<boolean> {
+  if (url.pathname !== "/control/permissions") return false;
+  if (request.method !== "PATCH") return false;
+
+  const body = await readJsonBody(request);
+  const expectedRevision = body?.expectedRevision;
+  if (typeof expectedRevision !== "string") {
+    sendJson(
+      response,
+      {
+        code: "autodev_control_permission_policy_invalid_update",
+        message: "The fixture needs an expectedRevision."
+      },
+      400
+    );
+    return true;
+  }
+  if (expectedRevision !== permissionPolicy.revision) {
+    sendJson(
+      response,
+      {
+        code: "autodev_control_permission_policy_revision_conflict",
+        message:
+          "The permission policy changed after it was read, so the write was not applied."
+      },
+      409
+    );
+    return true;
+  }
+
+  const before = JSON.stringify(permissionPolicyRecord());
+  const settings: readonly string[] = [
+    "approvalPolicy",
+    "sandboxMode",
+    "approvalsReviewer",
+    "networkAccess",
+    "webSearch"
+  ];
+  for (const setting of settings) {
+    if (!(setting in body)) continue;
+    const value = body[setting];
+    if (setting === "networkAccess" || setting === "webSearch") {
+      if (typeof value !== "boolean") {
+        sendJson(
+          response,
+          {
+            code: "autodev_control_permission_policy_invalid_update",
+            message: `The fixture needs ${setting} to be a boolean.`
+          },
+          400
+        );
+        return true;
+      }
+    } else if (typeof value !== "string" || value.trim().length === 0) {
+      sendJson(
+        response,
+        {
+          code: "autodev_control_permission_policy_invalid_update",
+          message: `The fixture needs ${setting} to be a non-empty string.`
+        },
+        400
+      );
+      return true;
+    }
+    Object.assign(permissionPolicy, { [setting]: value });
+  }
+  const after = JSON.stringify(permissionPolicyRecord());
+  const changed = before !== after;
+  if (changed) {
+    permissionPolicy.revision = nextRevision(permissionPolicy.revision);
+  }
+  sendJson(response, {
+    schema: "autodev-control-permissions-patch-v1",
+    revision: permissionPolicy.revision,
+    changed,
+    policy: permissionPolicyRecord(),
+    applied: null,
+    reconciliation: {
+      status: {
+        convergence: changed ? "pending" : "converged",
+        desiredGeneration: null,
+        observedGeneration: null,
+        restartRequired: false,
+        lastApplyAt: null,
+        lastObservationAt: null,
+        lastError: null
+      },
+      history: []
+    }
+  });
+  return true;
+}
+
+/**
+ * The fixture's own control over the canonical permission policy.
+ *
+ * `/fixture/permissions/state?state=revision-moved` moves the revision
+ * without this Console knowing: the page that has the permissions open holds
+ * the revision it was rendered with, so moving it here is what makes the
+ * page's next write a conflict rather than a silent overwrite of somebody
+ * else's change. The `reset` state puts the policy back where a test that
+ * writes starts.
+ */
+function configurePermissionPolicyFixture(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (url.pathname !== "/fixture/permissions/state") return false;
+  if (request.method !== "POST") {
+    response.writeHead(405).end();
+    return true;
+  }
+  const state = url.searchParams.get("state");
+  if (state === "reset") {
+    permissionPolicy.approvalPolicy = "on-demand";
+    permissionPolicy.sandboxMode = "workspace-write";
+    permissionPolicy.approvalsReviewer = "operator";
+    permissionPolicy.networkAccess = false;
+    permissionPolicy.webSearch = false;
+    permissionPolicy.revision = INITIAL_PERMISSION_POLICY_REVISION;
+  } else if (state === FIXTURE_STATE_REVISION_MOVED) {
+    permissionPolicy.revision = nextRevision(permissionPolicy.revision);
+  } else {
+    sendJson(
+      response,
+      {
+        code: "autodev_fixture_unknown_state",
+        message: "The fixture knows reset and revision-moved."
+      },
+      400
+    );
+    return true;
+  }
+  sendJson(response, {
+    state,
+    policy: permissionPolicyRecord(),
+    revision: permissionPolicy.revision
   });
   return true;
 }
@@ -5189,32 +5396,30 @@ function handleCatalogResourceRead(
   }
   if (url.pathname === "/control/permissions") {
     sendJson(response, {
-      schema: "autodev-control-permissions-v1",
-      source: ".rulesync/permissions.jsonc",
-      readOnly: true,
+      schema: "autodev-control-permissions-v2",
+      source: "config/config.autodev.toml",
+      readOnly: false,
+      revision: permissionPolicy.revision,
+      policyStatus: "valid",
+      policyReason: null,
+      applied: null,
+      appliedSource: "/fixture/codex/config.toml",
       policy: {
-        approvalPolicy: "on-demand",
-        sandboxMode: "workspace-write",
-        networkAccess: false,
-        webSearch: false,
-        approvalsReviewer: "operator",
-        defaultToolsApprovalMode: "on-request"
+        approvalPolicy: permissionPolicy.approvalPolicy,
+        sandboxMode: permissionPolicy.sandboxMode,
+        networkAccess: permissionPolicy.networkAccess,
+        webSearch: permissionPolicy.webSearch,
+        approvalsReviewer: permissionPolicy.approvalsReviewer
       },
       rolePermissions: {
         default: {
-          readOnly: false,
-          sandbox: "workspace-write",
-          networkAccess: false,
-          approvals: "on-demand",
+          sandboxMode: "workspace-write",
           mcp: ["lsp"],
           skills: ["code-review"],
           mcpTools: { lsp: ["lsp_goto_definition"] }
         },
         worker: {
-          readOnly: true,
-          sandbox: "read-only",
-          networkAccess: false,
-          approvals: "never",
+          sandboxMode: "read-only",
           mcp: [],
           skills: ["code-review"],
           mcpTools: {}
@@ -5536,6 +5741,7 @@ function handleFixtureCatalogRoutes(
   if (configureMcpFixture(request, response, url)) return true;
   if (configureHookFixture(request, response, url)) return true;
   if (configureWorkspaceFixture(request, response, url)) return true;
+  if (configurePermissionPolicyFixture(request, response, url)) return true;
   if (configureCanonicalSourceFixture(request, response, url)) return true;
   if (handleRuntimeFixture(request, response, url)) return true;
   if (handleGithubRead(request, response, url)) return true;
@@ -5576,6 +5782,9 @@ async function handleSyntheticMutationRoutes(
     return true;
   }
   if (await applyWorkspaceConfigurationWrite(request, response, url)) {
+    return true;
+  }
+  if (await applyPermissionPolicyWrite(request, response, url)) {
     return true;
   }
   return configureAgentEnablementFixture(request, response, url);

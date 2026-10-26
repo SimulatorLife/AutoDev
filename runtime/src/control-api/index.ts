@@ -29,6 +29,9 @@ import {
   type ControlApiMcpsResponse,
   type ControlApiModelPatchResponse,
   type ControlApiModelsResponse,
+  type ControlApiPermissionPolicy,
+  type ControlApiPermissionsPatchRequest,
+  type ControlApiPermissionsPatchResponse,
   type ControlApiPermissionsResponse,
   type ControlApiPromptCommandPatchResponse,
   type ControlApiPromptDetailResponse,
@@ -61,6 +64,7 @@ import {
   type HookAction,
   type HookEvent,
   isHookEvent,
+  isSandboxMode,
   LOCAL_CONTROL_API_ACTOR,
   type McpServerResource,
   type OperationHistoryEntry,
@@ -72,6 +76,7 @@ import {
   type ReconciliationEvidence,
   type ReconciliationStatus,
   type ReconciliationView,
+  type SandboxMode,
   type SkillScopeFacts,
   type ToolCatalogItem,
   type ToolCatalogView,
@@ -95,7 +100,12 @@ import {
   type GithubActionsRuntimeSnapshot,
   type GithubApiWorkflow,
   GithubWorkflowRepository,
+  PermissionPolicyConflictError,
+  permissionPolicyGeneration,
+  PermissionPolicyValidationError,
   PlaytestRepository,
+  readPermissionPolicyFile,
+  readRoleSandboxModes,
   reconcileDiffSummary,
   reconcileDiffWithIdentifier,
   resolveSkillScopes,
@@ -115,6 +125,7 @@ import {
   RuleSyncSkillSourceUnavailableError,
   RuleSyncSkillValidationError,
   ToolCatalogAdapter,
+  updatePermissionPolicy,
   updateWorkspaceCatalogEntry,
   WorkspaceCatalogConflictError,
   WorkspaceCatalogUnknownWorkspaceError,
@@ -410,6 +421,21 @@ const CONTROL_API_COLLATOR = new Intl.Collator();
 const EXECUTION_CONTRACT_SOURCE = "execution-contract" as const;
 const MD_EXTENSION_PATTERN = /\.md$/u;
 const CONTROL_VARY_HEADER = "Authorization, X-AutoDev-Actor";
+/**
+ * The audit reason for a request whose method the route does not accept.
+ *
+ * Named because it is one reason and it is written in one place: a reason
+ * spelled out at every call site is a reason the audit log can spell two
+ * ways.
+ */
+const AUDIT_REASON_METHOD_NOT_ALLOWED = "method_not_allowed";
+/**
+ * The methods a route that is read and written allows.
+ *
+ * Named because it is one answer -- what a route allows -- and it is written
+ * in four places.
+ */
+const ALLOWED_METHODS_READ_AND_PATCH = "GET, PATCH";
 const GITHUB_CONTROL_API_SCHEMA = "autodev-control-github-v1";
 const GITHUB_WORKFLOW_YAML_SOURCE = ".github/workflows";
 /**
@@ -3538,10 +3564,412 @@ function contractMcpTools(value: unknown): Record<string, readonly string[]> {
   return tools;
 }
 
+/**
+ * The permission policy the Runtime applied, against the canonical source.
+ *
+ * The two sides are compared through the shared reconciliation contract: the
+ * desired generation is the canonical source's policy values and the observed
+ * generation is the composed configuration's. A Codex home with no composed
+ * configuration has not observed anything, and says so rather than reporting a
+ * converged policy.
+ */
+function permissionPolicyAppliedState(
+  repositoryRoot: string = DEFAULT_REPO_ROOT,
+  codexHome: string = defaultCodexHomeForReconciliation()
+): {
+  readonly desiredGeneration: string | null;
+  readonly observedGeneration: string | null;
+  readonly applied: ControlApiPermissionPolicy | null;
+  readonly reconciliation: ReconciliationView;
+} {
+  const state = permissionPolicyState(repositoryRoot, codexHome);
+  const desiredGeneration =
+    state.policy === null ? null : permissionPolicyGeneration(state.policy);
+  const observedGeneration =
+    state.applied === null ? null : permissionPolicyGeneration(state.applied);
+  const evidence: ReconciliationEvidence = {
+    desiredGeneration,
+    observedGeneration,
+    // The apply is the compose, and the observation is the composed
+    // configuration's own contents; neither is dated by the Control API
+    // itself, so neither is dated here.
+    lastApplyAt: null,
+    lastObservationAt: null,
+    lastError: null
+  };
+  return {
+    desiredGeneration,
+    observedGeneration,
+    applied: state.applied,
+    reconciliation: buildReconciliationView({
+      evidence,
+      history: [],
+      hasObservation: state.applied !== null
+    })
+  };
+}
+
+/**
+ * The settings a permission policy write may change.
+ *
+ * The body is strict: a key the policy does not have is a request the route
+ * does not understand, and a body that carries one is refused rather than
+ * partly applied.
+ */
+const PERMISSION_POLICY_UPDATE_KEYS = new Set([
+  "expectedRevision",
+  "approvalPolicy",
+  "sandboxMode",
+  "approvalsReviewer",
+  "networkAccess",
+  "webSearch"
+]);
+
+/** A revision is a sha256: the canonical file's own digest. */
+const PERMISSION_POLICY_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
+
+/**
+ * One setting of the policy, read from a request body.
+ *
+ * Each setting is read by its own reader, so a setting that is absent is
+ * absent rather than a default, and a setting that is present but wrong is
+ * refused rather than coerced.
+ */
+type PermissionPolicySetting =
+  | { readonly ok: true; readonly value: string | boolean }
+  | { readonly ok: false };
+
+function permissionPolicyApprovalPolicy(
+  value: unknown
+): PermissionPolicySetting {
+  if (value !== "never" && value !== "always" && value !== "on-demand") {
+    return { ok: false };
+  }
+  return { ok: true, value };
+}
+
+function permissionPolicySandboxMode(value: unknown): PermissionPolicySetting {
+  if (!isSandboxMode(value)) return { ok: false };
+  return { ok: true, value };
+}
+
+function permissionPolicyApprovalsReviewer(
+  value: unknown
+): PermissionPolicySetting {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return { ok: false };
+  }
+  return { ok: true, value };
+}
+
+function permissionPolicyBoolean(value: unknown): PermissionPolicySetting {
+  if (typeof value !== "boolean") return { ok: false };
+  return { ok: true, value };
+}
+
+function permissionPolicyUpdateFromBody(body: Record<string, unknown>): {
+  readonly expectedRevision: string;
+  readonly update: Omit<ControlApiPermissionsPatchRequest, "expectedRevision">;
+} | null {
+  for (const key of Object.keys(body)) {
+    if (!PERMISSION_POLICY_UPDATE_KEYS.has(key)) return null;
+  }
+  const expectedRevision = body.expectedRevision;
+  if (
+    typeof expectedRevision !== "string" ||
+    !PERMISSION_POLICY_REVISION_PATTERN.test(expectedRevision)
+  ) {
+    return null;
+  }
+  const update: {
+    -readonly [
+      Key in keyof Omit<ControlApiPermissionsPatchRequest, "expectedRevision">
+    ]: Omit<ControlApiPermissionsPatchRequest, "expectedRevision">[Key];
+  } = {};
+  let fields = 0;
+
+  const approvalPolicy = body.approvalPolicy;
+  if (approvalPolicy !== undefined) {
+    const read = permissionPolicyApprovalPolicy(approvalPolicy);
+    if (!read.ok || typeof read.value !== "string") return null;
+    update.approvalPolicy = read.value as "never" | "always" | "on-demand";
+    fields += 1;
+  }
+  const sandboxMode = body.sandboxMode;
+  if (sandboxMode !== undefined) {
+    const read = permissionPolicySandboxMode(sandboxMode);
+    if (!read.ok || typeof read.value !== "string") return null;
+    update.sandboxMode = read.value as SandboxMode;
+    fields += 1;
+  }
+  const approvalsReviewer = body.approvalsReviewer;
+  if (approvalsReviewer !== undefined) {
+    const read = permissionPolicyApprovalsReviewer(approvalsReviewer);
+    if (!read.ok || typeof read.value !== "string") return null;
+    update.approvalsReviewer = read.value;
+    fields += 1;
+  }
+  const networkAccess = body.networkAccess;
+  if (networkAccess !== undefined) {
+    const read = permissionPolicyBoolean(networkAccess);
+    if (!read.ok || typeof read.value !== "boolean") return null;
+    update.networkAccess = read.value;
+    fields += 1;
+  }
+  const webSearch = body.webSearch;
+  if (webSearch !== undefined) {
+    const read = permissionPolicyBoolean(webSearch);
+    if (!read.ok || typeof read.value !== "boolean") return null;
+    update.webSearch = read.value;
+    fields += 1;
+  }
+  if (fields === 0) return null;
+  return { expectedRevision, update };
+}
+
+/**
+ * The refusal a write to the canonical policy answers with.
+ *
+ * A conflict and a write that could not be expressed are two different facts,
+ * and the caller is told which one happened.
+ */
+function sendPermissionPolicyWriteFailure(
+  response: ServerResponse,
+  actor: ControlApiActor,
+  resource: string,
+  error: unknown
+): void {
+  const conflict = error instanceof PermissionPolicyConflictError;
+  const validation = error instanceof PermissionPolicyValidationError;
+  if (!conflict && !validation) throw error;
+  const status = conflict ? 409 : 400;
+  const code = conflict
+    ? "autodev_control_permission_policy_revision_conflict"
+    : "autodev_control_permission_policy_invalid_update";
+  const message =
+    error instanceof Error
+      ? error.message
+      : "The permission policy could not be written.";
+  auditMutation({
+    actor: actor.actor,
+    actorVerified: true,
+    role: actor.role,
+    action: "update_permission_policy",
+    resource,
+    outcome: "error",
+    changes: null,
+    reason: conflict ? "revision_conflict" : "invalid_update"
+  });
+  sendControlError(response, status, code, message);
+}
+
+/**
+ * Change one setting of the canonical permission policy.
+ *
+ * The write is a compare-and-swap on the policy file's revision, so a change
+ * decided on a policy that has since moved is refused rather than applied over
+ * the newer one. The composed configuration is refreshed afterwards and the
+ * applied policy is read again, so the response says what the Runtime
+ * published rather than what the write asked for.
+ */
+async function patchPermissions(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  repositoryRoot: string,
+  codexHome: string
+): Promise<void> {
+  const resource = CONTROL_API_PATHS.permissions;
+  if (actor.role !== "operator") {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_permission_policy",
+      resource,
+      outcome: "denied",
+      changes: null,
+      reason: "operator_required"
+    });
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_forbidden",
+      "Changing the permission policy requires an operator."
+    );
+    return;
+  }
+  const parsed = await readControlApiJsonObject(request);
+  if (!parsed.ok) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_permission_policy",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: parsed.code
+    });
+    sendControlError(response, parsed.status, parsed.code, parsed.message);
+    return;
+  }
+  const update = permissionPolicyUpdateFromBody(parsed.body);
+  if (update === null) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_permission_policy",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: "invalid_update"
+    });
+    sendControlError(
+      response,
+      400,
+      "autodev_control_permission_policy_invalid_update",
+      "A permission policy update requires the expected revision and at least one of approval policy, sandbox mode, approvals reviewer, network access or web search."
+    );
+    return;
+  }
+
+  let written;
+  try {
+    written = updatePermissionPolicy({
+      file: new ConfigRepository(repositoryRoot).permissionPolicyPath(),
+      expectedRevision: update.expectedRevision,
+      update: update.update
+    });
+  } catch (error) {
+    sendPermissionPolicyWriteFailure(response, actor, resource, error);
+    return;
+  }
+
+  try {
+    materializeCurrentMcpConfiguration({ repositoryRoot, codexHome });
+  } catch {
+    // The policy was written, so this is not a failed write: the applied
+    // configuration is older than the policy, and the response says so.
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_permission_policy",
+      resource,
+      outcome: "error",
+      changes: { revision: written.revision },
+      reason: "apply_failed"
+    });
+    sendControlError(
+      response,
+      503,
+      "autodev_control_permission_policy_apply_failed",
+      "The permission policy was updated, but the user configuration could not be composed. Reload the permissions before retrying."
+    );
+    return;
+  }
+
+  const applied = permissionPolicyAppliedState(repositoryRoot, codexHome);
+  auditMutation({
+    actor: actor.actor,
+    actorVerified: true,
+    role: actor.role,
+    action: "update_permission_policy",
+    resource,
+    outcome: "ok",
+    changes: { revision: written.revision, changed: written.changed },
+    desiredGeneration: applied.desiredGeneration,
+    observedGeneration: applied.observedGeneration
+  });
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-control-permissions-patch-v1",
+      revision: written.revision,
+      changed: written.changed,
+      policy: written.policy,
+      applied: applied.applied,
+      reconciliation: applied.reconciliation
+    } satisfies ControlApiPermissionsPatchResponse,
+    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+  );
+}
+
+/**
+ * Where the Runtime applies the permission policy.
+ *
+ * The portable source is composed into the user configuration Codex reads, so
+ * the applied policy is read from the composed file rather than from the
+ * source: a source that was written but never composed is a policy the product
+ * is not running.
+ */
+const CODEX_USER_CONFIG_FILE = "config.toml";
+
+/**
+ * The permission policy, as the canonical source states it and as the Runtime
+ * applied it.
+ *
+ * The two are separate facts. The canonical source is what the operator
+ * declared; the composed configuration is what Codex reads. A policy that was
+ * written and never applied is a pending change, not a failure and not a
+ * converged one.
+ */
+function permissionPolicyState(
+  repositoryRoot: string,
+  codexHome: string
+): {
+  readonly source: string;
+  readonly revision: string | null;
+  readonly policy: ControlApiPermissionPolicy | null;
+  readonly policyStatus: "valid" | "invalid" | "unavailable";
+  readonly policyReason: string | null;
+  readonly appliedSource: string;
+  readonly applied: ControlApiPermissionPolicy | null;
+  readonly appliedRevision: string | null;
+} {
+  const repository = new ConfigRepository(repositoryRoot);
+  const source = "config/config.autodev.toml";
+  const read = readPermissionPolicyFile(repository.permissionPolicyPath());
+  const appliedSource = path.join(codexHome, CODEX_USER_CONFIG_FILE);
+  const appliedRead = readPermissionPolicyFile(appliedSource);
+  return {
+    source,
+    revision: read.status === "unavailable" ? null : read.revision,
+    policy: read.status === "valid" ? read.policy : null,
+    policyStatus: read.status,
+    policyReason: read.status === "valid" ? null : read.reason,
+    appliedSource,
+    applied: appliedRead.status === "valid" ? appliedRead.policy : null,
+    appliedRevision:
+      appliedRead.status === "unavailable" ? null : appliedRead.revision
+  };
+}
+
+/**
+ * The effective capability matrix, with each role's real sandbox.
+ *
+ * The matrix used to name every role's sandbox by way of a boolean the
+ * execution contract keeps: a role declared `danger-full-access` came back as
+ * `workspace-write`, so the Console named the orchestrator, the smart agent
+ * and the worker as sandboxed roles when they are the product's three
+ * unsandboxed ones. The mode is read from the role's own declaration now, and
+ * a role whose declaration cannot be read is reported as not observed rather
+ * than as the nearest mode the product knows.
+ */
 function permissionsView(
-  _repositoryRoot: string = DEFAULT_REPO_ROOT
+  repositoryRoot: string = DEFAULT_REPO_ROOT,
+  codexHome: string = defaultCodexHomeForReconciliation()
 ): Record<string, unknown> {
   const roles = getDefaultExecutionContract().roles ?? {};
+  const repository = new ConfigRepository(repositoryRoot);
+  const state = permissionPolicyState(repositoryRoot, codexHome);
+  const roleSandboxes = readRoleSandboxModes(
+    repository.agentRolesPath(),
+    state.policy?.sandboxMode ?? "workspace-write"
+  );
   // Typed as the contract's own entry rather than `Record<string, unknown>`:
   // the anonymous shape above *is* the published one, and writing it out here is
   // what stops the two from drifting without a compiler noticing. Mutable
@@ -3552,12 +3980,11 @@ function permissionsView(
   > = {};
   for (const [role, raw] of Object.entries(roles)) {
     const entry = (raw ?? {}) as Record<string, unknown>;
-    const isReadOnly = Boolean(entry.readOnly);
     rolePermissions[role] = {
-      readOnly: isReadOnly,
-      sandbox: isReadOnly ? "read-only" : "workspace-write",
-      networkAccess: true,
-      approvals: "never",
+      // A role with no readable declaration has no observed sandbox. It is
+      // not the read-only mode and it is not the unrestricted one: both would
+      // be a claim the source does not support.
+      sandboxMode: roleSandboxes[role] ?? null,
       // Same execution-contract join `/control/agents` uses, so the effective
       // capability matrix never contradicts the Agents surface.
       mcp: Array.isArray(entry.mcp) ? entry.mcp : [],
@@ -3569,17 +3996,15 @@ function permissionsView(
     };
   }
   return {
-    schema: "autodev-control-permissions-v1",
-    source: "config.autodev.toml",
-    readOnly: true,
-    policy: {
-      approvalPolicy: "never",
-      sandboxMode: "workspace-write",
-      approvalsReviewer: "user",
-      networkAccess: true,
-      webSearch: true,
-      defaultToolsApprovalMode: "approve"
-    },
+    schema: "autodev-control-permissions-v2",
+    source: state.source,
+    readOnly: false,
+    revision: state.revision,
+    policy: state.policy,
+    policyStatus: state.policyStatus,
+    policyReason: state.policyReason,
+    applied: state.applied,
+    appliedSource: state.appliedSource,
     rolePermissions
   } satisfies ControlApiPermissionsResponse;
 }
@@ -5255,7 +5680,6 @@ const READ_ONLY_COLLECTIONS: ReadonlyMap<string, ReadOnlyCollectionRenderer> =
       CONTROL_API_PATHS.hooksApplied,
       (_actor, root, codexHome) => hooksAppliedView(root, codexHome)
     ],
-    [CONTROL_API_PATHS.permissions, () => permissionsView()],
     [CONTROL_API_PATHS.prompts, (_actor, root) => promptsView(root)],
     [CONTROL_API_PATHS.workspaces, (_actor, root) => workspacesView(root)],
     [CONTROL_API_PATHS.routing, () => routingView(Date.now())],
@@ -5320,6 +5744,55 @@ async function readOnlyCollection(
   return true;
 }
 
+/**
+ * The permission policy's own route.
+ *
+ * The policy is read through the Control API and changed through it as well:
+ * the canonical source is the portable source, and the Runtime is what applies
+ * it, so the Console never writes the file itself.
+ */
+async function permissionsRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  pathname: string,
+  options: ControlApiRequestOptions
+): Promise<boolean> {
+  const repositoryRoot = options.repositoryRoot ?? DEFAULT_REPO_ROOT;
+  const home = process.env.HOME?.trim() || homedir();
+  const codexHome =
+    options.codexHome?.trim() ||
+    process.env.CODEX_HOME?.trim() ||
+    path.join(home, ".codex");
+  if (method === "PATCH") {
+    await patchPermissions(request, response, actor, repositoryRoot, codexHome);
+    return true;
+  }
+  if (method === "GET") {
+    sendJson(response, 200, permissionsView(repositoryRoot, codexHome), {
+      "cache-control": "no-store",
+      vary: CONTROL_VARY_HEADER
+    });
+    return true;
+  }
+  auditRejectedRequest(
+    request,
+    method,
+    pathname,
+    AUDIT_REASON_METHOD_NOT_ALLOWED,
+    actor
+  );
+  response.setHeader("allow", ALLOWED_METHODS_READ_AND_PATCH);
+  sendControlError(
+    response,
+    405,
+    "autodev_control_api_method_not_allowed",
+    "The permission policy is read with GET and changed with PATCH."
+  );
+  return true;
+}
+
 async function providerRoleRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -5333,7 +5806,7 @@ async function providerRoleRoute(
       request,
       method,
       pathname,
-      "method_not_allowed",
+      AUDIT_REASON_METHOD_NOT_ALLOWED,
       actor
     );
     response.setHeader("allow", "PATCH");
@@ -5368,7 +5841,7 @@ async function modelRoute(
       request,
       method,
       pathname,
-      "method_not_allowed",
+      AUDIT_REASON_METHOD_NOT_ALLOWED,
       actor
     );
     response.setHeader("allow", "PATCH");
@@ -5406,7 +5879,7 @@ function readOnlyDetailRoute(
       request,
       method,
       pathname,
-      "method_not_allowed",
+      AUDIT_REASON_METHOD_NOT_ALLOWED,
       actor
     );
     response.setHeader("allow", "GET");
@@ -6828,10 +7301,10 @@ function rejectSkillContentMethod(
     request,
     request.method ?? "GET",
     pathname,
-    "method_not_allowed",
+    AUDIT_REASON_METHOD_NOT_ALLOWED,
     actor
   );
-  response.setHeader("allow", "GET, PATCH");
+  response.setHeader("allow", ALLOWED_METHODS_READ_AND_PATCH);
   sendControlError(
     response,
     405,
@@ -6954,7 +7427,13 @@ async function skillRolesRoute(
     await patchSkillRoles(request, response, actor, name, options);
     return true;
   }
-  auditRejectedRequest(request, method, pathname, "method_not_allowed", actor);
+  auditRejectedRequest(
+    request,
+    method,
+    pathname,
+    AUDIT_REASON_METHOD_NOT_ALLOWED,
+    actor
+  );
   response.setHeader("allow", "PATCH");
   sendControlError(
     response,
@@ -7047,8 +7526,14 @@ async function promptDetailRoute(
     return true;
   }
 
-  auditRejectedRequest(request, method, pathname, "method_not_allowed", actor);
-  response.setHeader("allow", "GET, PATCH");
+  auditRejectedRequest(
+    request,
+    method,
+    pathname,
+    AUDIT_REASON_METHOD_NOT_ALLOWED,
+    actor
+  );
+  response.setHeader("allow", ALLOWED_METHODS_READ_AND_PATCH);
   sendControlError(
     response,
     405,
@@ -7091,7 +7576,13 @@ async function hookEventRoute(
     return true;
   }
 
-  auditRejectedRequest(request, method, pathname, "method_not_allowed", actor);
+  auditRejectedRequest(
+    request,
+    method,
+    pathname,
+    AUDIT_REASON_METHOD_NOT_ALLOWED,
+    actor
+  );
   response.setHeader("allow", "PATCH");
   sendControlError(
     response,
@@ -7128,7 +7619,13 @@ async function mcpServerRoute(
     return true;
   }
 
-  auditRejectedRequest(request, method, pathname, "method_not_allowed", actor);
+  auditRejectedRequest(
+    request,
+    method,
+    pathname,
+    AUDIT_REASON_METHOD_NOT_ALLOWED,
+    actor
+  );
   response.setHeader("allow", "PATCH");
   sendControlError(
     response,
@@ -7401,8 +7898,14 @@ async function agentDetailRoute(
       AGENT_DETAIL_ROUTE
     );
 
-  auditRejectedRequest(request, method, pathname, "method_not_allowed", actor);
-  response.setHeader("allow", "GET, PATCH");
+  auditRejectedRequest(
+    request,
+    method,
+    pathname,
+    AUDIT_REASON_METHOD_NOT_ALLOWED,
+    actor
+  );
+  response.setHeader("allow", ALLOWED_METHODS_READ_AND_PATCH);
   sendControlError(
     response,
     405,
@@ -7431,7 +7934,13 @@ function rejectUnsupportedMethod(
   allowed: "PATCH" | "POST",
   message: string
 ): void {
-  auditRejectedRequest(request, method, pathname, "method_not_allowed", actor);
+  auditRejectedRequest(
+    request,
+    method,
+    pathname,
+    AUDIT_REASON_METHOD_NOT_ALLOWED,
+    actor
+  );
   response.setHeader("allow", allowed);
   sendControlError(
     response,
@@ -7556,7 +8065,13 @@ async function workspaceRoute(
     );
     return true;
   }
-  auditRejectedRequest(request, method, pathname, "method_not_allowed", actor);
+  auditRejectedRequest(
+    request,
+    method,
+    pathname,
+    AUDIT_REASON_METHOD_NOT_ALLOWED,
+    actor
+  );
   response.setHeader("allow", "PATCH");
   sendControlError(
     response,
@@ -7743,6 +8258,15 @@ export async function handleControlApiRequest(
       pathname,
       workspaceMatch[1]!,
       workspaceMatch[2]!,
+      options
+    );
+  if (pathname === CONTROL_API_PATHS.permissions)
+    return permissionsRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
       options
     );
   if (await readOnlyCollection(pathname, method, response, actor, options))

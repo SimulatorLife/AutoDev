@@ -61,6 +61,8 @@ import {
   type ControlApiMemoryWhyResponse,
   type ControlApiModelPatchResponse,
   type ControlApiModelsResponse,
+  type ControlApiPermissionsPatchRequest,
+  type ControlApiPermissionsPatchResponse,
   type ControlApiPermissionsResponse,
   type ControlApiPromptCommandPatchRequest,
   type ControlApiPromptCommandPatchResponse,
@@ -3207,6 +3209,10 @@ export function patchHookEvent(
  * because a drifted value has to fail closed rather than render as a novel
  * policy name. `sandboxMode` is checked with Core's `isSandboxMode`, so the
  * accepted set is the one the type is derived from and the two cannot drift.
+ *
+ * The policy carries no `defaultToolsApprovalMode`: no canonical source
+ * declared one, so the field was a value the product invented, and the
+ * Console rendered it beside a policy that was not the policy the product ran.
  */
 function isPermissionsPolicy(value: unknown): boolean {
   return (
@@ -3217,20 +3223,35 @@ function isPermissionsPolicy(value: unknown): boolean {
     isSandboxMode(value.sandboxMode) &&
     typeof value.approvalsReviewer === "string" &&
     typeof value.networkAccess === "boolean" &&
-    typeof value.webSearch === "boolean" &&
-    typeof value.defaultToolsApprovalMode === "string"
+    typeof value.webSearch === "boolean"
   );
 }
 
+/**
+ * Narrows the permissions response.
+ *
+ * The policy may be absent: a canonical source that could not be read is
+ * reported as not observed, which is a state the page renders, rather than a
+ * response the whole page refuses to show. The same is true of the applied
+ * policy -- a composed configuration that could not be read says so instead of
+ * being replaced by the policy the source states.
+ */
 function isControlApiPermissionsResponse(
   value: unknown
 ): value is ControlApiPermissionsResponse {
   if (
     !isRecord(value) ||
-    value.schema !== "autodev-control-permissions-v1" ||
+    value.schema !== "autodev-control-permissions-v2" ||
     typeof value.source !== "string" ||
-    value.readOnly !== true ||
-    !isPermissionsPolicy(value.policy) ||
+    value.readOnly !== false ||
+    (value.revision !== null && typeof value.revision !== "string") ||
+    (value.policy !== null && !isPermissionsPolicy(value.policy)) ||
+    (value.applied !== null && !isPermissionsPolicy(value.applied)) ||
+    typeof value.appliedSource !== "string" ||
+    (value.policyStatus !== "valid" &&
+      value.policyStatus !== "invalid" &&
+      value.policyStatus !== "unavailable") ||
+    (value.policyReason !== null && typeof value.policyReason !== "string") ||
     !isRecord(value.rolePermissions)
   ) {
     return false;
@@ -3238,10 +3259,11 @@ function isControlApiPermissionsResponse(
   return Object.values(value.rolePermissions).every(
     (entry) =>
       isRecord(entry) &&
-      typeof entry.readOnly === "boolean" &&
-      typeof entry.sandbox === "string" &&
-      typeof entry.networkAccess === "boolean" &&
-      typeof entry.approvals === "string" &&
+      // A role's sandbox is what its own declaration states, and a role whose
+      // declaration could not be read has no observed sandbox. The check is
+      // exact so a drifted mode fails closed instead of being rendered as the
+      // nearest mode the Console knows.
+      (entry.sandboxMode === null || isSandboxMode(entry.sandboxMode)) &&
       // The capability matrix must be a real projection. An absent list is
       // missing evidence, not "no MCP servers", so it fails closed instead of
       // letting the Console print a fabricated `None`.
@@ -3288,6 +3310,27 @@ export async function fetchPermissions(
     message:
       "AutoDev Control API returned an incompatible Permissions response; the Console requires the effective capability-matrix contract."
   };
+}
+
+/**
+ * Change one setting of the canonical permission policy.
+ *
+ * The write names the setting it changes and the revision it decided on, so
+ * the Runtime can refuse a change made against a policy that has since moved
+ * instead of applying it over the newer one.
+ */
+export function patchPermissions(
+  payload: ControlApiPermissionsPatchRequest,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiPermissionsPatchResponse>> {
+  return mutateControlApi<ControlApiPermissionsPatchResponse>(
+    "PATCH",
+    CONTROL_API_PATHS.permissions,
+    payload,
+    config,
+    options
+  );
 }
 
 function isControlApiPromptsResponse(

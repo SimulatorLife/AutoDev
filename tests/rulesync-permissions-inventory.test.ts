@@ -27,14 +27,31 @@ const portableConfig = parse(
 const rulesyncMcp = readJson(".rulesync/mcp.jsonc");
 
 test("Codex portable permission surface is explicit", () => {
-  assert.equal(portableConfig.approval_policy, "never");
-  assert.equal(portableConfig.sandbox_mode, "workspace-write");
-  assert.equal(portableConfig.approvals_reviewer, "user");
-  assert.equal(
-    asObject(portableConfig.sandbox_workspace_write).network_access,
-    true
+  // The policy's values are the operator's to choose: the Console writes this
+  // file, through the Runtime, under the compare-and-swap every canonical
+  // source uses. So this asserts that the surface is explicit and that every
+  // value is one the product supports -- not which value it currently is.
+  // Pinning the values would make the policy unchangeable, which is the one
+  // thing a canonical edit surface cannot be.
+  assert.ok(
+    ["never", "always", "on-demand"].includes(
+      String(portableConfig.approval_policy)
+    ),
+    `approval_policy must be a policy the product supports: ${String(portableConfig.approval_policy)}`
   );
-  assert.equal(asObject(portableConfig.tools).web_search, true);
+  assert.ok(
+    ["read-only", "workspace-write", "danger-full-access"].includes(
+      String(portableConfig.sandbox_mode)
+    ),
+    `sandbox_mode must be a sandbox the product supports: ${String(portableConfig.sandbox_mode)}`
+  );
+  assert.equal(typeof portableConfig.approvals_reviewer, "string");
+  assert.notEqual(portableConfig.approvals_reviewer, "");
+  assert.equal(
+    typeof asObject(portableConfig.sandbox_workspace_write).network_access,
+    "boolean"
+  );
+  assert.equal(typeof asObject(portableConfig.tools).web_search, "boolean");
   assert.equal(asObject(portableConfig.features).hooks, true);
   assert.equal(
     Object.hasOwn(asObject(portableConfig.features), "permissions"),

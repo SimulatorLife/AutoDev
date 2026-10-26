@@ -193,41 +193,47 @@ export function hooksFromControlApi(
   }));
 }
 
+/**
+ * The permission policy and the effective capability matrix.
+ *
+ * The policy is what the canonical source states, and it may be absent: a
+ * source that could not be read is a state the page renders, not a page the
+ * whole Console refuses to draw. The applied policy is what the Runtime
+ * applied, which is a separate fact -- a source that was written and never
+ * composed is a pending change rather than a converged one.
+ */
 export function permissionsFromControlApi(
   response: ControlApiPermissionsResponse
 ): {
-  readonly policy: PermissionPolicy;
+  readonly policy: PermissionPolicy | null;
+  readonly policyStatus: "valid" | "invalid" | "unavailable";
+  readonly policyReason: string | null;
+  readonly revision: string | null;
+  readonly applied: PermissionPolicy | null;
+  readonly appliedSource: string;
   readonly roleMatrices: readonly RoleCapabilityMatrix[];
 } {
   const roleMatrices: RoleCapabilityMatrix[] = Object.entries(
     response.rolePermissions
   )
-    .map(([role, entry]) => {
-      const sandboxMode: RoleCapabilityMatrix["sandboxMode"] =
-        entry.sandbox === "read-only"
-          ? "read-only"
-          : entry.sandbox === "workspace-write"
-            ? "workspace-write"
-            : "unrestricted";
-      return {
-        role: role as RoleCapabilityMatrix["role"],
-        readOnly: entry.readOnly,
-        sandboxMode,
-        allowedMcpServers: entry.mcp,
-        allowedMcpTools: entry.mcpTools,
-        allowedSkills: entry.skills
-      };
-    })
+    .map(([role, entry]) => ({
+      role: role as RoleCapabilityMatrix["role"],
+      // The mode is the fact, and the read-only flag is derived from it in one
+      // place rather than published beside it.
+      readOnly: entry.sandboxMode === "read-only",
+      sandboxMode: entry.sandboxMode,
+      allowedMcpServers: entry.mcp,
+      allowedMcpTools: entry.mcpTools,
+      allowedSkills: entry.skills
+    }))
     .sort((left, right) => compareRoles(left.role, right.role));
   return {
-    policy: {
-      approvalPolicy: response.policy.approvalPolicy,
-      sandboxMode: response.policy.sandboxMode,
-      networkAccess: response.policy.networkAccess,
-      webSearch: response.policy.webSearch,
-      approvalsReviewer: response.policy.approvalsReviewer,
-      defaultToolsApprovalMode: response.policy.defaultToolsApprovalMode
-    },
+    policy: response.policy,
+    policyStatus: response.policyStatus,
+    policyReason: response.policyReason,
+    revision: response.revision,
+    applied: response.applied,
+    appliedSource: response.appliedSource,
     roleMatrices
   };
 }

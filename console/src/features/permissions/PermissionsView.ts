@@ -20,37 +20,87 @@ import {
   MONO_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
+import { PermissionPolicyForm } from "./PermissionPolicyForm.ts";
 
 export interface PermissionsViewProps {
-  readonly policy: PermissionPolicy;
+  /**
+   * The policy the canonical source states.
+   *
+   * Null when the source could not be read: the page says so and leaves the
+   * control disabled rather than filling the cards with a policy the operator
+   * never chose.
+   */
+  readonly policy: PermissionPolicy | null;
+  /** Whether the canonical source could be read, and whether it parsed. */
+  readonly policyStatus: "valid" | "invalid" | "unavailable";
+  /** Why the policy could not be read; null when it could. */
+  readonly policyReason: string | null;
+  /** The revision of the canonical source a write is compared against. */
+  readonly revision: string | null;
+  /** The policy the Runtime applied, read from the composed configuration. */
+  readonly applied: PermissionPolicy | null;
+  /** Where the applied policy was read from. */
+  readonly appliedSource: string;
   readonly roleMatrices: readonly RoleCapabilityMatrix[];
-}
-
-/** How a sandbox mode reads in prose, so the column is not raw config text. */
-function sandboxLabel(mode: RoleCapabilityMatrix["sandboxMode"]): string {
-  if (mode === "read-only") return "Read-only";
-  if (mode === "workspace-write") return "Workspace write";
-  return "Unrestricted";
+  /** Where the write answers to. */
+  readonly returnTo: string;
 }
 
 /**
- * How the approval policy reads in prose, for the same reason as
- * `sandboxLabel`: its neighbours in that row already render as words
- * ("Workspace write", "Allowed", "Enabled"), and one card reading
- * `on-demand` put the raw config value on the page in a display-sized type.
+ * What a fact that was not observed reads as.
  *
- * Keyed by the closed union rather than switched, so a fourth member added to
- * the policy fails to compile here instead of silently rendering as itself.
+ * One label, because a page that writes it out differently in two places is a
+ * page whose two places do not agree.
  */
-const APPROVAL_LABELS: Record<PermissionPolicy["approvalPolicy"], string> = {
-  never: "Never",
-  always: "Always",
-  "on-demand": "On demand"
-};
+const NOT_OBSERVED = "Not observed";
+
+/**
+ * How a sandbox mode reads in prose, so the column is not raw config text.
+ *
+ * A mode that was not observed reads as not observed. The column used to
+ * answer every mode but the read-only one with "Unrestricted", so a role whose
+ * declaration could not be read was shown as the product's most privileged
+ * sandbox -- and a drifted mode was shown the same way.
+ */
+function sandboxLabel(mode: RoleCapabilityMatrix["sandboxMode"]): string {
+  if (mode === "read-only") return "Read-only";
+  if (mode === "workspace-write") return "Workspace write";
+  if (mode === "unrestricted") return "Unrestricted";
+  return NOT_OBSERVED;
+}
+
+/**
+ * How the applied state reads.
+ *
+ * The canonical source and the composed configuration are two facts, and the
+ * page says which of them it is showing. A policy that was written and never
+ * composed is pending: the operator's change is recorded and the product is
+ * not running it yet.
+ */
+function appliedStateLabel(
+  policy: PermissionPolicy | null,
+  applied: PermissionPolicy | null
+): string {
+  if (policy === null) return NOT_OBSERVED;
+  if (applied === null) return "Pending";
+  const same =
+    applied.approvalPolicy === policy.approvalPolicy &&
+    applied.sandboxMode === policy.sandboxMode &&
+    applied.approvalsReviewer === policy.approvalsReviewer &&
+    applied.networkAccess === policy.networkAccess &&
+    applied.webSearch === policy.webSearch;
+  return same ? "Converged" : "Pending";
+}
 
 export function PermissionsView({
   policy,
-  roleMatrices
+  policyStatus,
+  policyReason,
+  revision,
+  applied,
+  appliedSource,
+  roleMatrices,
+  returnTo
 }: PermissionsViewProps): React.JSX.Element {
   const columns: ColumnDef<RoleCapabilityMatrix>[] = [
     {
@@ -68,7 +118,11 @@ export function PermissionsView({
         React.createElement(Tag, {
           className: CHIP_TONE_CLASS,
           dataAttributes: {
-            "data-permission-mode": r.readOnly ? "read-only" : "workspace-write"
+            // The mode is the fact the column shows, so the attribute carries
+            // the mode itself rather than a boolean derived from it. The
+            // orchestrator is declared `danger-full-access`, and the column
+            // used to report it as a workspace-write role.
+            "data-permission-mode": r.sandboxMode ?? "not-observed"
           },
           children: sandboxLabel(r.sandboxMode)
         })
@@ -102,24 +156,52 @@ export function PermissionsView({
     PageBody,
     { feature: "permissions" },
     React.createElement(
-      StatGrid,
-      { columns: 4 },
-      React.createElement(StatCard, {
-        title: "Approval Policy",
-        value: APPROVAL_LABELS[policy.approvalPolicy]
+      "section",
+      {
+        className: "flex flex-col gap-3",
+        "aria-labelledby": "permission-policy-heading"
+      },
+      React.createElement(
+        "h2",
+        {
+          id: "permission-policy-heading",
+          className: SECTION_HEADING_CLASS
+        },
+        "Permission Policy"
+      ),
+      policyReason === null
+        ? null
+        : React.createElement(
+            "p",
+            {
+              className: MUTED_TEXT_CLASS,
+              "data-permission-policy-unavailable": policyStatus
+            },
+            policyReason
+          ),
+      React.createElement(PermissionPolicyForm, {
+        policy,
+        revision,
+        policyStatus,
+        returnTo
       }),
-      React.createElement(StatCard, {
-        title: "Default Sandbox",
-        value: sandboxLabel(policy.sandboxMode)
-      }),
-      React.createElement(StatCard, {
-        title: "Network Access",
-        value: policy.networkAccess ? "Allowed" : "Blocked"
-      }),
-      React.createElement(StatCard, {
-        title: "Web Search",
-        value: policy.webSearch ? "Enabled" : "Disabled"
-      })
+      React.createElement(
+        StatGrid,
+        { columns: 2 },
+        React.createElement(StatCard, {
+          title: "Applied State",
+          value: appliedStateLabel(policy, applied),
+          subtitle: applied === null ? NOT_OBSERVED : appliedSource
+        }),
+        React.createElement(StatCard, {
+          title: "Canonical Source",
+          value: policyStatus === "valid" ? "Readable" : NOT_OBSERVED,
+          subtitle:
+            revision === null
+              ? NOT_OBSERVED
+              : `revision ${revision.slice(0, 12)}`
+        })
+      )
     ),
     React.createElement(
       "div",

@@ -45,11 +45,17 @@
  * through `PATCH /control/workspaces/{owner}/{repository}`, which replaces that
  * entry's enablement, base branch and role scope under the same
  * compare-and-swap the other canonical sources use.
+ * v17: the permission policy is published from the canonical source that
+ * states it, with the revision a write is compared against, each role's real
+ * sandbox mode, and the applied policy read from the composed configuration;
+ * the policy is written through `PATCH /control/permissions`, which replaces
+ * one setting under the same compare-and-swap the other canonical sources use
+ * and reports the reconciliation against the applied configuration.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 16
+  version: 17
 } as const;
 
 export type ControlApiContractResponse = {

@@ -2,10 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type {
-  PermissionPolicy,
-  WorkspaceEntry
-} from "@simulatorlife/autodev-core";
+import type { WorkspaceEntry } from "@simulatorlife/autodev-core";
 
 import { readWorkspaceCatalogFile } from "./workspace-catalog.ts";
 
@@ -63,6 +60,28 @@ export class ConfigRepository {
     return path.join(this.repositoryRoot, "config", "workspaces.json");
   }
 
+  /**
+   * Where the canonical permission policy lives under this repository root.
+   *
+   * The policy's rules live in the module that owns them; the file is the
+   * portable source the Runtime composes into the user configuration, and the
+   * owner is what says what it states.
+   */
+  permissionPolicyPath(): string {
+    return path.join(this.repositoryRoot, "config", "config.autodev.toml");
+  }
+
+  /**
+   * Where the role declarations live under this repository root.
+   *
+   * A role's own sandbox mode is declared in its declaration and nowhere else,
+   * so the matrix is read from here rather than from the projection that keeps
+   * only a boolean of it.
+   */
+  agentRolesPath(): string {
+    return path.join(this.repositoryRoot, "agents", "roles");
+  }
+
   readWorkspaceCatalog(): WorkspaceCatalogRead {
     const catalogPath = this.workspaceCatalogPath();
     // The catalog's schema is decided once, in the module that owns it. The
@@ -81,17 +100,6 @@ export class ConfigRepository {
         agentRoles: workspace.agentRoles
       })),
       revision: read.revision
-    };
-  }
-
-  loadPermissionPolicy(): PermissionPolicy {
-    return {
-      approvalPolicy: "never",
-      sandboxMode: "workspace-write",
-      networkAccess: true,
-      webSearch: true,
-      approvalsReviewer: "user",
-      defaultToolsApprovalMode: "approve"
     };
   }
 }

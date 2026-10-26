@@ -1,6 +1,23 @@
 export * from "./clickhouse/clickhouse-client.ts";
 export * from "./config/config-repository.ts";
 export {
+  approvalPolicyFromConfig,
+  PermissionPolicyConflictError,
+  permissionPolicyGeneration,
+  type PermissionPolicyKey,
+  type PermissionPolicyRead,
+  permissionPolicyRevision,
+  type PermissionPolicyUpdate,
+  PermissionPolicyValidationError,
+  type PermissionPolicyWrite,
+  readPermissionPolicyFile,
+  readRoleSandboxModes,
+  roleSandboxMode,
+  sandboxModeFromConfig,
+  sandboxModeToConfig,
+  updatePermissionPolicy
+} from "./config/permission-policy.ts";
+export {
   readWorkspaceCatalogRevision,
   updateWorkspaceCatalogEntry,
   WorkspaceCatalogConflictError,
