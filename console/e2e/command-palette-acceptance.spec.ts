@@ -35,7 +35,10 @@ test("the palette finds a resource by name and by what it is for", async ({
 
   const trigger = page.locator("[data-command-palette-trigger]");
   await expect(trigger).toBeVisible();
-  await expect(trigger).toHaveAttribute("aria-label", "Find a resource");
+  // The name carries the key the badge shows, because the badge is visible
+  // text on the control: a visible word the name drops is a word the
+  // operator can see and nobody else can.
+  await expect(trigger).toHaveAttribute("aria-label", /Find a resource/u);
 
   await page.keyboard.press("Meta+k");
   const dialog = page.getByRole("dialog", { name: "Find a resource" });

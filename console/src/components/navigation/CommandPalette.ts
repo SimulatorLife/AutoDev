@@ -69,19 +69,15 @@ const PALETTE_NAME = "Find a resource";
 const PALETTE_INPUT_ID = "command-palette-input";
 
 /**
- * The key the operator presses, and what this machine calls it.
+ * The key the operator presses.
  *
  * The badge is the affordance: an operator who sees `⌘K` next to a button
  * learns that the palette is one key away, which is the difference between
- * searching the Console and scanning it. The name is what the tooltip says,
- * because a tooltip that says "Command-K" to a Windows operator is a tooltip
- * that describes another machine.
+ * searching the Console and scanning it.
  */
 interface Shortcut {
-  /** What the badge shows. */
+  /** What the badge shows, and what the control's name says. */
   readonly badge: string;
-  /** What the tooltip calls the key. */
-  readonly name: string;
 }
 
 function matches(result: PaletteResult, query: string): boolean {
@@ -107,13 +103,16 @@ function isTyping(target: EventTarget | null): boolean {
  * Read from the user agent rather than from a media query, because the
  * question is which keyboard the operator has in front of them and not which
  * screen they are looking at.
+ *
+ * The badge is one string, and the control's name carries it: the badge is
+ * visible text, and a visible word that the name leaves out is a word the
+ * operator can see and nobody else can -- which is the same defect as the
+ * state pill that was reachable by sight alone, in a different costume.
  */
 function shortcutForThisMachine(): Shortcut {
   const nav: { readonly userAgent?: string } = globalThis.navigator;
   const agent = nav.userAgent ?? "";
-  return agent.includes("Mac")
-    ? { badge: "⌘K", name: "Command-K" }
-    : { badge: "Ctrl K", name: "Control-K" };
+  return { badge: agent.includes("Mac") ? "⌘K" : "Ctrl K" };
 }
 
 /** The controls the keyboard can reach inside the dialog. */
@@ -174,6 +173,17 @@ export function CommandPalette({
     shown.length === 0
       ? "No resources match that search."
       : `${shown.length} ${shown.length === 1 ? "resource matches" : "resources match"}.`;
+
+  /**
+   * What the trigger is called.
+   *
+   * The badge is inside the trigger, so the key is visible text on the
+   * control -- and a name that leaves a visible word out removes it. The name
+   * therefore carries the key, and the tooltip says the same thing the name
+   * says, which is the rule the Console's own links follow.
+   */
+  const triggerName =
+    shortcut === null ? PALETTE_NAME : `${PALETTE_NAME} (${shortcut.badge})`;
 
   React.useEffect(() => {
     setShortcut(shortcutForThisMachine());
@@ -319,8 +329,8 @@ export function CommandPalette({
       onClick: openPalette,
       className:
         "flex min-h-6 items-center gap-2 whitespace-nowrap rounded border border-border bg-surface-raised px-2 py-1 text-xs text-fg-muted transition-colors hover:border-fg-muted hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-      "aria-label": PALETTE_NAME,
-      title: `${PALETTE_NAME} (${shortcut?.name ?? "Command-K"})`,
+      "aria-label": triggerName,
+      title: triggerName,
       "data-command-palette-trigger": true
     },
     React.createElement("span", null, PALETTE_NAME),
