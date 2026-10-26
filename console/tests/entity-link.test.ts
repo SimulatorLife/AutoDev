@@ -38,7 +38,8 @@ const ENTITY_LINK_VIEWS = [
   "providers/ProviderDetailView.ts",
   "providers/ProvidersView.ts",
   "mcps/McpsView.ts",
-  "tools/ToolsView.ts"
+  "tools/ToolsView.ts",
+  "hooks/HooksView.ts"
 ];
 
 test("the entity link signals both, not one or the other", () => {

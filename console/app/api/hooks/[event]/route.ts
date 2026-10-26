@@ -21,6 +21,7 @@
 
 import { type NextRequest, NextResponse } from "next/server.js";
 
+import { HOOKS_PATH, hookWriteReturnPath } from "../../../../src/features/hooks/paths.ts";
 import {
   type CanonicalSourceSaveOutcome,
   editorBaseRevision
@@ -48,13 +49,18 @@ const MAX_FORM_BODY_BYTES = 64_000;
 const MAX_ACTIONS = 64;
 
 /**
- * The redirect back to the hooks page.
+ * The redirect back to the surface the write came from.
  *
- * The event is in the destination because the edit surface lives on it: a
- * write that answered with a redirect to the top of the page would leave the
- * operator looking at a list that says nothing about what they just changed.
+ * The editor is on the list and on the event's own page, so the write answers
+ * to whichever of the two the operator used: a write that answered with a
+ * redirect to the top of the page would leave the operator looking at a list
+ * that says nothing about what they just changed.
+ *
+ * The destination is a bounded Hooks path and not one the browser chose, so a
+ * write can never redirect off this Console.
  */
 function redirectToHooks(
+  returnTo: string,
   event: string,
   outcome?: CanonicalSourceSaveOutcome,
   basedOn?: string
@@ -62,11 +68,14 @@ function redirectToHooks(
   const query = new URLSearchParams();
   if (outcome) query.set("save", outcome);
   if (basedOn) query.set("based", basedOn);
-  query.set("event", event);
+  // The list names the event it is showing the outcome for; the event's own
+  // page has the event in its path, and repeating it in the query would be a
+  // second place for the same fact to disagree.
+  if (returnTo === HOOKS_PATH) query.set("event", event);
   const suffix = query.toString();
   return new NextResponse(null, {
     status: 303,
-    headers: { location: `/hooks${suffix.length > 0 ? `?${suffix}` : ""}` }
+    headers: { location: `${returnTo}${suffix.length > 0 ? `?${suffix}` : ""}` }
   });
 }
 
@@ -157,29 +166,34 @@ export async function POST(
 ): Promise<NextResponse> {
   const { event } = await context.params;
   if (!HOOK_EVENT_PATTERN.test(event)) {
-    return redirectToHooks(event, "failed");
+    return redirectToHooks(HOOKS_PATH, event, "failed");
   }
   if (!isSameOriginMutation(request)) {
-    return redirectToHooks(event, "failed");
+    return redirectToHooks(HOOKS_PATH, event, "failed");
   }
 
   const form = await readStrictUrlEncodedFormBody(request, MAX_FORM_BODY_BYTES);
   if (!form || form.getAll("expectedRevision").length !== 1) {
-    return redirectToHooks(event, "failed");
+    return redirectToHooks(HOOKS_PATH, event, "failed");
   }
+
+  // Where the write answers to. The editor carries it and the route checks it
+  // against the Hooks paths, so the destination is the surface the operator
+  // wrote from and nothing else.
+  const returnTo = hookWriteReturnPath(form.get("returnTo"), event);
 
   const expectedRevision = form.get("expectedRevision");
   if (expectedRevision === null || !REVISION_PATTERN.test(expectedRevision)) {
-    return redirectToHooks(event, "failed");
+    return redirectToHooks(returnTo, event, "failed");
   }
   const actions = readActions(form);
   if (actions === null) {
-    return redirectToHooks(event, "validation");
+    return redirectToHooks(returnTo, event, "validation");
   }
 
   const config = readControlApiConfig();
   if (!config) {
-    return redirectToHooks(event, "failed");
+    return redirectToHooks(returnTo, event, "failed");
   }
 
   const result = await patchHookEvent(
@@ -188,10 +202,11 @@ export async function POST(
     config
   );
   if (result.kind === "ok") {
-    return redirectToHooks(event);
+    return redirectToHooks(returnTo, event);
   }
   const outcome = saveOutcomeForFailure(result);
   return redirectToHooks(
+    returnTo,
     event,
     outcome,
     editorBaseRevision(outcome, expectedRevision)

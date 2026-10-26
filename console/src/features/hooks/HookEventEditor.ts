@@ -35,6 +35,16 @@ export interface HookEventEditorProps {
    */
   readonly revision: string;
   /**
+   * Where the write answers to.
+   *
+   * The editor is on the list and on the event's own page, and the write has
+   * to answer to whichever of the two it was made from: a write that answered
+   * somewhere else would leave the operator looking at a page that says
+   * nothing about the declaration they just changed. It is a bounded Hooks
+   * path rather than a destination the browser chooses.
+   */
+  readonly returnTo: string;
+  /**
    * Why the editor cannot be used.
    *
    * Required rather than defaulted: a control that cannot change stays in
@@ -101,6 +111,7 @@ export function HookEventEditor({
   event,
   actions,
   revision,
+  returnTo,
   disabledReason
 }: HookEventEditorProps): React.JSX.Element {
   const [drafts, setDrafts] = useState<readonly HookActionDraft[]>(() =>
@@ -159,6 +170,14 @@ export function HookEventEditor({
       type: "hidden",
       name: "expectedRevision",
       value: revision
+    }),
+    // Where the write answers to. The route validates it against the Hooks
+    // paths before it redirects, so a destination the browser chose freely
+    // cannot become a redirect off this Console.
+    React.createElement("input", {
+      type: "hidden",
+      name: "returnTo",
+      value: returnTo
     }),
     drafts.map((draft, index) =>
       React.createElement(

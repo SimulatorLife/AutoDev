@@ -113,6 +113,7 @@ export const DETAIL_ROUTES: readonly CanonicalRoute[] = [
   { path: "/mcps/lsp", section: "mcps", heading: "MCPs" },
   { path: "/prompts/review", section: "prompts", heading: "Prompts" },
   { path: "/skills/code-review", section: "skills", heading: "Skills" },
+  { path: "/hooks/preToolUse", section: "hooks", heading: "Hooks" },
   {
     path: "/tools/mcp__lsp__lsp_goto_definition",
     section: "tools",

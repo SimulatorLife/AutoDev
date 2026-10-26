@@ -224,3 +224,145 @@ test("the hooks page says when the applied configuration has not been observed",
   await expect(page.getByText("Hook Events", { exact: true })).toBeVisible();
   await expect(page.getByText(NOT_OBSERVED).first()).toBeVisible();
 });
+
+test("the list links each event to its own page", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/hooks");
+
+  // The event is the item's name and the item's own address, so the card's
+  // header is where the operator opens it.
+  const link = page.locator(`[data-hook-event-link="${SHARED_EVENT}"]`);
+  await expect(link).toHaveAttribute("href", `/hooks/${SHARED_EVENT}`);
+  await link.click();
+
+  await expect(page).toHaveURL(new RegExp(`/hooks/${SHARED_EVENT}$`, "u"));
+  await expect(
+    page.locator(`[data-hook-event="${SHARED_EVENT}"]`)
+  ).toBeVisible();
+});
+
+test("the hook event's own page carries the same editor the list carries", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(`/hooks/${SHARED_EVENT}`);
+
+  // The trail names the place the operator is on and where they came from.
+  const trail = page.getByRole("navigation", { name: "Breadcrumb" });
+  await expect(trail).toBeVisible();
+  await expect(
+    trail.getByRole("link", { name: "Hooks", exact: true })
+  ).toHaveAttribute("href", "/hooks");
+  await expect(trail.locator('[aria-current="page"]')).toHaveText(SHARED_EVENT);
+
+  // The editor is the shared one, filled from the declaration rather than
+  // from what the Runtime published. The two differ here, so the field can
+  // only be showing one of them.
+  const editor = eventEditor(page, SHARED_EVENT);
+  await expect(editor).toBeVisible();
+  await expect(editor.locator('[data-hook-action-command="0"]')).toHaveValue(
+    DECLARED_COMMAND
+  );
+  // And it answers to this page: a write made here comes back here.
+  await expect(editor.locator('input[name="returnTo"]')).toHaveValue(
+    `/hooks/${SHARED_EVENT}`
+  );
+  // The origin is the same fact the card shows.
+  await expect(
+    page.locator(`[data-hook-origin="${SHARED_EVENT}"]`)
+  ).toContainText("Declared for every target");
+});
+
+test("the hook event's own page says what the Runtime published for it", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(`/hooks/${SHARED_EVENT}`);
+
+  // The projection is published for the whole declaration, and the page
+  // answers the question about this event: what did the Runtime publish for
+  // it, and has it caught up with the declaration.
+  await expect(
+    page.locator(`[data-hook-applied-event="${SHARED_EVENT}"]`)
+  ).toBeVisible();
+  await expect(page.locator('[data-feature="reconciliation"]')).toBeVisible();
+  // The Runtime has not caught up with the declaration yet, and the page says
+  // so rather than reporting convergence.
+  await expect(
+    page.getByText("Pending", { exact: true }).first()
+  ).toBeVisible();
+});
+
+test("a write made from the event's own page answers to that page", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(`/hooks/${SHARED_EVENT}`);
+
+  const editor = eventEditor(page, SHARED_EVENT);
+  await editor
+    .locator('[data-hook-action-command="0"]')
+    .fill(EDITED_COMMAND);
+  await editor.getByRole("button", { name: "Save and apply" }).click();
+
+  // The write answers to the surface it was made from: the operator comes
+  // back to the event they were working on, not to the list of every event.
+  await expect(page).toHaveURL(new RegExp(`/hooks/${SHARED_EVENT}$`, "u"));
+  await expect(
+    page.locator(
+      `[data-hook-event-editor="${SHARED_EVENT}"] [data-hook-action-command="0"]`
+    )
+  ).toHaveValue(EDITED_COMMAND);
+});
+
+test("the hook event's own page refuses a write against a declaration that moved under it", async ({
+  page,
+  request
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(`/hooks/${SHARED_EVENT}`);
+
+  const editor = eventEditor(page, SHARED_EVENT);
+  const command = editor.locator('[data-hook-action-command="0"]');
+  const revision = await editor
+    .locator('input[name="expectedRevision"]')
+    .inputValue();
+  await command.fill(EDITED_COMMAND);
+
+  const moved = await request.post(`${FIXTURE_BASE_URL}/fixture/hooks/move`);
+  expect(moved.ok()).toBe(true);
+
+  await editor.getByRole("button", { name: "Save and apply" }).click();
+
+  // The refusal is on the page the operator is on, and it names the event it
+  // was about.
+  const outcome = page.locator('[data-hook-declaration-save="conflict"]');
+  await expect(outcome).toBeVisible();
+  await expect(outcome).toContainText("your edit was not saved");
+  await expect(outcome).toContainText(SHARED_EVENT);
+  // The operator's edit is still in the editor, and it still carries the
+  // revision it was written for.
+  await expect(
+    page.locator(
+      `[data-hook-event-editor="${SHARED_EVENT}"] [data-hook-action-command="0"]`
+    )
+  ).toHaveValue(EDITED_COMMAND);
+  await expect(
+    page
+      .locator(`[data-hook-event-editor="${SHARED_EVENT}"]`)
+      .locator('input[name="expectedRevision"]')
+  ).toHaveValue(revision);
+});
+
+test("an event the target does not declare has no page", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+
+  // The Runtime publishes the effective declaration for the target, so an
+  // event that is not in it is not declared for this target and there is
+  // nothing there to edit.
+  await page.goto("/hooks/subagentStart");
+  await expect(
+    page.getByRole("heading", { name: "Page not found" })
+  ).toBeVisible();
+  await expect(page.locator("[data-hook-event-editor]")).toHaveCount(0);
+});

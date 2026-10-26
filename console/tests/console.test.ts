@@ -164,7 +164,10 @@ import {
   formatLatency,
   formatTokenCount,
   GithubView,
+  HookEventDetailView,
+  hookEventPath,
   HooksView,
+  hookWriteReturnPath,
   isProvidersReturnPath,
   MAX_MEMORY_OFFSET,
   MCP_DETAIL_TABS,
@@ -11685,6 +11688,188 @@ test("HooksView names the fault the Runtime located instead of only calling the 
   assert.match(markup, /2 problems found/);
 });
 
+/**
+ * A hook declaration as one event's page receives it.
+ */
+const HOOK_DECLARATION = {
+  event: "preToolUse" as const,
+  origin: "shared" as const,
+  actions: [{ type: "command" as const, command: "echo guarded" }]
+};
+
+test("a hook write answers to the surface it was made from, and to nothing else", () => {
+  // The editor is on the list and on the event's own page, so the write has
+  // two destinations. It is not allowed a third: a destination the browser
+  // chose would be an open redirect, and another event's page would take the
+  // operator to a declaration they did not write.
+  assert.equal(hookEventPath("preToolUse"), "/hooks/preToolUse");
+  assert.equal(hookWriteReturnPath("/hooks", "preToolUse"), "/hooks");
+  assert.equal(
+    hookWriteReturnPath("/hooks/preToolUse", "preToolUse"),
+    "/hooks/preToolUse"
+  );
+  assert.equal(
+    hookWriteReturnPath("/hooks/sessionEnd", "preToolUse"),
+    "/hooks",
+    "another event's page is not a destination"
+  );
+  assert.equal(
+    hookWriteReturnPath("https://example.test/hooks", "preToolUse"),
+    "/hooks",
+    "a destination off this Console is not a destination"
+  );
+  assert.equal(hookWriteReturnPath("//example.test/hooks", "preToolUse"), "/hooks");
+  assert.equal(
+    hookWriteReturnPath(null, "preToolUse"),
+    "/hooks",
+    "a write that names no destination answers to the list"
+  );
+});
+
+test("each hook event on the list links to its own page", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(HooksView, {
+      hooks: [HOOK_DECLARATION],
+      sourceValidity: true,
+      validationIssues: [],
+      revision: "a".repeat(64),
+      applied: null
+    })
+  );
+  // The event is the item's name and the item's own address, and the card's
+  // header is where the operator opens it.
+  assert.match(markup, /href="\/hooks\/preToolUse"/);
+  assert.match(markup, /data-hook-event-link="preToolUse"/);
+  // The write made from the list answers to the list, so the operator comes
+  // back to the page they were working on.
+  assert.match(markup, /name="returnTo" value="\/hooks"/);
+});
+
+test("the hook event's page carries the same editor the list carries", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(HookEventDetailView, {
+      hook: HOOK_DECLARATION,
+      source: ".rulesync/hooks.jsonc",
+      sourceValidity: true,
+      revision: "a".repeat(64),
+      applied: null
+    })
+  );
+  // The trail names the place the operator is on and where they came from.
+  assert.match(markup, /aria-label="Breadcrumb"/);
+  assert.match(markup, /href="\/hooks"/);
+  assert.match(markup, /aria-current="page"[^>]*>preToolUse</);
+  // The editor is the shared one, and it writes back to this page.
+  assert.match(markup, /data-hook-event-editor="preToolUse"/);
+  assert.match(markup, /name="returnTo" value="\/hooks\/preToolUse"/);
+  assert.match(markup, /name="expectedRevision" value="a{64}"/);
+  // The origin is the same fact the card shows.
+  assert.match(markup, /data-hook-origin="preToolUse"/);
+  assert.match(markup, /Declared for every target/);
+});
+
+test("the hook event's page shows what the Runtime published for that event", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(HookEventDetailView, {
+      hook: HOOK_DECLARATION,
+      source: ".rulesync/hooks.jsonc",
+      sourceValidity: true,
+      revision: "a".repeat(64),
+      applied: {
+        schema: "autodev-control-hooks-applied-v1",
+        source: "/Users/test/.codex/hooks.json",
+        declarationSource: ".rulesync/hooks.jsonc",
+        target: "codexcli",
+        available: true,
+        declaredEvents: [
+          {
+            event: "preToolUse",
+            origin: "shared",
+            actions: [{ type: "command", command: "echo guarded" }]
+          }
+        ],
+        events: [
+          {
+            event: "preToolUse",
+            actions: [{ type: "command", command: "echo guarded" }]
+          }
+        ],
+        reconciliation: {
+          status: {
+            convergence: "converged",
+            desiredGeneration: "c".repeat(64),
+            observedGeneration: "c".repeat(64),
+            lastApplyAt: "2026-10-22T12:00:00.000Z",
+            lastObservationAt: "2026-10-22T12:00:00.000Z",
+            lastError: null,
+            explanation: "The runtime has observed the latest desired generation."
+          },
+          history: []
+        }
+      }
+    })
+  );
+  assert.match(markup, /data-hook-applied-event="preToolUse"/);
+  assert.match(markup, /echo guarded/);
+  assert.match(markup, /data-feature="reconciliation"/);
+});
+
+test("the hook event's page says when the Runtime published nothing for the event", () => {
+  // An event the Runtime published nothing for is a different fact from a
+  // projection that could not be read, and the page says which one it is.
+  const markup = renderToStaticMarkup(
+    React.createElement(HookEventDetailView, {
+      hook: HOOK_DECLARATION,
+      source: ".rulesync/hooks.jsonc",
+      sourceValidity: true,
+      revision: "a".repeat(64),
+      applied: {
+        schema: "autodev-control-hooks-applied-v1",
+        source: "/Users/test/.codex/hooks.json",
+        declarationSource: ".rulesync/hooks.jsonc",
+        target: "codexcli",
+        available: true,
+        declaredEvents: [],
+        events: [],
+        reconciliation: {
+          status: {
+            convergence: "pending",
+            desiredGeneration: "c".repeat(64),
+            observedGeneration: "d".repeat(64),
+            lastApplyAt: null,
+            lastObservationAt: null,
+            lastError: null,
+            explanation: "The runtime has not observed the latest desired generation."
+          },
+          history: []
+        }
+      }
+    })
+  );
+  assert.match(markup, /data-hook-applied-missing="preToolUse"/);
+  assert.match(markup, /published no action for this event/);
+});
+
+test("a refused hook write names the event it was about", () => {
+  // The list presents every event's declaration at once, so a notice that did
+  // not name its event would leave the operator to work out which of the edits
+  // on the page it was talking about.
+  const markup = renderToStaticMarkup(
+    React.createElement(HooksView, {
+      hooks: [HOOK_DECLARATION],
+      sourceValidity: true,
+      validationIssues: [],
+      revision: "a".repeat(64),
+      applied: null,
+      saveOutcome: "conflict",
+      savedEvent: "preToolUse"
+    })
+  );
+  assert.match(markup, /data-hook-declaration-save="conflict"/);
+  assert.match(markup, /for &quot;preToolUse&quot;/);
+  assert.match(markup, /your edit was not saved/);
+});
+
 test("an empty list names its resource instead of inheriting a generic sentence", () => {
   // DataTable used to default `emptyMessage` to "No items to display.", and
   // fifteen of the seventeen list views overrode it -- the two that did not
@@ -22524,6 +22709,123 @@ test("the hook declaration route forwards the operator's action list to the Runt
     },
     { type: "command", command: "node second.ts" }
   ]);
+});
+
+test("the hook declaration route answers to the page the write came from", async () => {
+  // The editor is on the list and on the event's own page, so the write has
+  // two destinations and has to answer to the one the operator used. A write
+  // that always answered to the list would take the operator off the event
+  // they were working on and leave them in front of every event.
+  const fetchImpl = (async () =>
+    Response.json({
+      schema: "autodev-control-hook-event-patch-v1",
+      event: "preToolUse",
+      target: "codexcli",
+      revision: "b".repeat(64),
+      changed: true,
+      actions: [{ type: "command", command: "node edited.ts" }],
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: "c".repeat(64),
+          observedGeneration: "c".repeat(64),
+          lastApplyAt: "2026-10-22T12:00:00.000Z",
+          lastObservationAt: "2026-10-22T12:00:00.000Z",
+          lastError: null,
+          explanation: "The runtime has observed the latest desired generation."
+        },
+        history: []
+      }
+    })) as typeof fetch;
+
+  for (const destination of [
+    { returnTo: "/hooks", path: "/hooks" },
+    { returnTo: "/hooks/preToolUse", path: "/hooks/preToolUse" }
+  ]) {
+    await withControlRouteEnvironment(
+      "hook-declaration-token",
+      fetchImpl,
+      async () => {
+        const response = await hookEventRoute.POST(
+          sameOriginFormRequest(
+            "/api/hooks/preToolUse",
+            new URLSearchParams({
+              expectedRevision: "a".repeat(64),
+              "command-0": "node edited.ts",
+              returnTo: destination.returnTo
+            }).toString()
+          ),
+          { params: Promise.resolve({ event: "preToolUse" }) }
+        );
+        assert.equal(response.status, 303);
+        const location = new URL(
+          response.headers.get("location") ?? "",
+          "http://console.test"
+        );
+        assert.equal(location.pathname, destination.path);
+      }
+    );
+  }
+});
+
+test("the hook declaration route refuses a destination that is not a Hooks page", async () => {
+  // The destination is carried by the browser, so one it chose freely would
+  // be an open redirect, and one that named another event's page would take
+  // the operator to a declaration they did not write. The write still
+  // happened; the answer is the list.
+  const fetchImpl = (async () =>
+    Response.json({
+      schema: "autodev-control-hook-event-patch-v1",
+      event: "preToolUse",
+      target: "codexcli",
+      revision: "b".repeat(64),
+      changed: true,
+      actions: [{ type: "command", command: "node edited.ts" }],
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: "c".repeat(64),
+          observedGeneration: "c".repeat(64),
+          lastApplyAt: "2026-10-22T12:00:00.000Z",
+          lastObservationAt: "2026-10-22T12:00:00.000Z",
+          lastError: null,
+          explanation: "The runtime has observed the latest desired generation."
+        },
+        history: []
+      }
+    })) as typeof fetch;
+
+  for (const returnTo of [
+    "https://example.test/hooks",
+    "//example.test/hooks",
+    "/hooks/sessionEnd",
+    "/api/hooks/preToolUse"
+  ]) {
+    await withControlRouteEnvironment(
+      "hook-declaration-token",
+      fetchImpl,
+      async () => {
+        const response = await hookEventRoute.POST(
+          sameOriginFormRequest(
+            "/api/hooks/preToolUse",
+            new URLSearchParams({
+              expectedRevision: "a".repeat(64),
+              "command-0": "node edited.ts",
+              returnTo
+            }).toString()
+          ),
+          { params: Promise.resolve({ event: "preToolUse" }) }
+        );
+        assert.equal(response.status, 303);
+        const location = new URL(
+          response.headers.get("location") ?? "",
+          "http://console.test"
+        );
+        assert.equal(location.pathname, "/hooks");
+        assert.equal(location.origin, "http://console.test");
+      }
+    );
+  }
 });
 
 test("the hook declaration route drops an action whose command is empty", async () => {

@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
 import React from "react";
 
-import {
-  type HookDeclarationSaveOutcome,
-  HooksView
-} from "../../src/features/hooks/HooksView.ts";
+import { hookSaveOutcomeFromQuery } from "../../src/features/hooks/declaration.ts";
+import { HooksView } from "../../src/features/hooks/HooksView.ts";
 import { editorBaseRevisionFromQuery } from "../../src/lib/server/canonical-source.ts";
 import {
   controlApiFailureCode,
@@ -29,24 +27,6 @@ function firstSearchParam(
   raw: string | string[] | undefined
 ): string | undefined {
   return Array.isArray(raw) ? raw[0] : raw;
-}
-
-/**
- * The outcome the last write ended in, when the redirect named one.
- *
- * A query value that is not an outcome is not an outcome: it is ignored, and
- * the page reports no write at all rather than a write it did not measure.
- */
-function hookSaveOutcome(
-  value: string | string[] | undefined
-): HookDeclarationSaveOutcome | undefined {
-  const outcome = firstSearchParam(value);
-  return outcome === "conflict" ||
-    outcome === "validation" ||
-    outcome === "apply-failed" ||
-    outcome === "failed"
-    ? outcome
-    : undefined;
 }
 
 export default async function HooksPage({
@@ -94,8 +74,15 @@ export default async function HooksPage({
           message: appliedResult.message
         };
   const hooks = hooksFromControlApi(result.data);
-  const saveOutcome = hookSaveOutcome(resolvedSearchParams.save);
+  const saveOutcome = hookSaveOutcomeFromQuery(resolvedSearchParams.save);
   const basedOn = editorBaseRevisionFromQuery(resolvedSearchParams.based);
+  // The event the last write was about. It is resolved against the declared
+  // events rather than taken on trust: a query value that names an event this
+  // target does not declare is not an event, and the notice then says what it
+  // can without it.
+  const savedEvent = hooks.find(
+    (hook) => hook.event === firstSearchParam(resolvedSearchParams.event)
+  )?.event;
   return React.createElement(
     ConsolePageShell,
     {
@@ -115,7 +102,8 @@ export default async function HooksPage({
       ...(basedOn === undefined ? {} : { editorRevision: basedOn }),
       applied,
       ...(appliedUnavailable === null ? {} : { appliedUnavailable }),
-      ...(saveOutcome === undefined ? {} : { saveOutcome })
+      ...(saveOutcome === undefined ? {} : { saveOutcome }),
+      ...(savedEvent === undefined ? {} : { savedEvent })
     })
   );
 }

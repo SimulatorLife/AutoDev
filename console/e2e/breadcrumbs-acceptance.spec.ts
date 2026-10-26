@@ -13,6 +13,7 @@ const MCP_TOOL_ID = "mcp__lsp__lsp_goto_definition";
 const WORKSPACE_ID = "fixture/game";
 const PROVIDER_ID = "claude";
 const MODEL_ID = "sonnet";
+const HOOK_EVENT = "preToolUse";
 
 /**
  * One entry of a breadcrumb trail.
@@ -97,6 +98,14 @@ const MODEL_SURFACE: DetailSurface = {
     { label: "Providers", href: "/providers" },
     { label: PROVIDER_ID, href: `/providers/${PROVIDER_ID}` },
     { label: MODEL_ID, href: null }
+  ]
+};
+
+const HOOK_SURFACE: DetailSurface = {
+  url: `/hooks/${HOOK_EVENT}`,
+  trail: [
+    { label: "Hooks", href: "/hooks" },
+    { label: HOOK_EVENT, href: null }
   ]
 };
 
@@ -211,6 +220,7 @@ test("every detail surface presents one breadcrumb landmark with its ancestors a
   await assertTrail(page, WORKSPACE_SURFACE);
   await assertTrail(page, PROVIDER_SURFACE);
   await assertTrail(page, MODEL_SURFACE);
+  await assertTrail(page, HOOK_SURFACE);
 });
 
 test("the breadcrumb trail names the place the operator is on, in the order it was walked", async ({
