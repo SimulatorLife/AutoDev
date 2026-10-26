@@ -305,22 +305,23 @@ function RoleRow({
       action: `/api/providers/${encodeURIComponent(provider)}/roles/${encodeURIComponent(role)}`,
       method: "POST",
       className:
-        // The label column is sized to its content rather than to a guess.
-        // `Orchestrator` is the longest role label, and with its icon it needs
-        // 92px; the fixed `5.5rem` was 88px, so the label's last four pixels
-        // were painted past the edge of its own column on every role row.
+        // The label column is a fixed width, and it is the width the longest
+        // role label needs: `Orchestrator`, with its icon, is 92px.
         //
-        // `max-content` rather than `minmax(5.5rem, max-content)`: a track
-        // whose base size is its minimum only grows into space the grid
-        // already has, and this grid has none -- its width is the sum of its
-        // own tracks -- so the label column stayed at 88px and kept cutting
-        // the label it was supposed to fit.
+        // It was `max-content` for a while, to stop a label being cut. That
+        // traded one defect for another: every row's grid sized its own
+        // label track to its own label, so the four rows' controls started at
+        // four different x positions. Measured in Chromium against the
+        // production build, the priority column drifted 38px between `Smart`
+        // and `Orchestrator`, and the model column drifted with it -- a strip
+        // that claims to be an aligned configuration, in which the eye cannot
+        // scan down a column at all.
         //
-        // The gaps are `1.5` rather than `2` because the four tracks now sum
-        // to 494px against a 496px cell: the columns were sized to fill that
-        // cell exactly, so the four pixels the label needed had to come from
-        // the gaps rather than from a column that was already measured.
-        "grid min-w-0 grid-cols-[max-content_5rem_12rem_7rem] items-center gap-1.5",
+        // The gaps are `1.5` because the four tracks sum to 494px against a
+        // 496px cell: the columns were sized to fill that cell exactly, so
+        // the four pixels the label needed came from the gaps rather than
+        // from a column that was already measured.
+        "grid min-w-0 grid-cols-[5.75rem_5rem_12rem_7rem] items-center gap-1.5",
       "data-role-form": `${provider}-${role}`
     },
     React.createElement("input", {
