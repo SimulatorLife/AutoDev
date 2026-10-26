@@ -68,6 +68,20 @@ const PALETTE_NAME = "Find a resource";
 /** The field's id, so the label and the input agree on it. */
 const PALETTE_INPUT_ID = "command-palette-input";
 
+/** How a result row looks. */
+const PALETTE_RESULT_CLASS =
+  "flex min-h-6 flex-col gap-0.5 rounded px-3 py-2 transition-colors hover:bg-surface-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+
+/**
+ * How the selected result looks.
+ *
+ * The accent bar is drawn inside the row with an inset shadow, so the
+ * selection costs the row no width: a selection that shifted the text would
+ * move every line below it when the operator pressed an arrow key.
+ */
+const PALETTE_ACTIVE_RESULT_CLASS =
+  "bg-surface-raised shadow-[inset_2px_0_0_0_var(--color-accent)]";
+
 /**
  * The key the operator presses.
  *
@@ -147,6 +161,7 @@ export function CommandPalette({
 }: CommandPaletteProps): React.JSX.Element {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
+  const [activeIndex, setActiveIndex] = React.useState(0);
   const [shortcut, setShortcut] = React.useState<Shortcut | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
@@ -168,6 +183,18 @@ export function CommandPalette({
     () => results.filter((result) => matches(result, query)),
     [query, results]
   );
+
+  /**
+   * The result the palette has selected.
+   *
+   * Every command palette the operator already knows selects a result and
+   * opens the selection with `Enter`: VS Code, Linear, Raycast and GitHub all
+   * have the first match selected before a key is pressed, and all of them let
+   * the arrow keys move the selection. A palette that only filters is a
+   * palette that makes the operator reach for the mouse to pick the third
+   * match of five.
+   */
+  const activeResult = shown[activeIndex] ?? null;
 
   const count =
     shown.length === 0
@@ -199,6 +226,7 @@ export function CommandPalette({
    */
   const openPalette = React.useCallback((): void => {
     setQuery("");
+    setActiveIndex(0);
     setOpen(true);
   }, []);
 
@@ -290,21 +318,79 @@ export function CommandPalette({
   };
 
   /**
-   * `Enter` opens the first match.
+   * The arrow keys move the selection.
+   *
+   * The focus stays in the field, because the field is where the answer is
+   * typed: a palette that moved the focus onto a row would stop filtering on
+   * the next keystroke. The selection is a separate thing from the focus, and
+   * it wraps, because a list of fourteen resources is longer than a screen.
+   */
+  const moveSelection = (
+    event: React.KeyboardEvent<HTMLInputElement>
+  ): void => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    if (shown.length === 0) return;
+    event.preventDefault();
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    setActiveIndex((index) => (index + step + shown.length) % shown.length);
+  };
+
+  /**
+   * The selected row is kept in view.
+   *
+   * The list scrolls, not the page: the dialog is fixed to the window, and
+   * moving the window under the operator would move the whole Console.
+   */
+  React.useEffect(() => {
+    const list = listRef.current;
+    if (list === null) return;
+    const selected = list.querySelector<HTMLElement>(
+      '[data-palette-active="true"]'
+    );
+    if (selected === null) return;
+    const listBox = list.getBoundingClientRect();
+    const row = selected.getBoundingClientRect();
+    if (row.top < listBox.top) {
+      list.scrollTop -= listBox.top - row.top;
+    } else if (row.bottom > listBox.bottom) {
+      list.scrollTop += row.bottom - listBox.bottom;
+    }
+  }, [activeIndex, open, shown]);
+
+  /**
+   * `Enter` opens the selected match.
    *
    * The palette exists so the operator can get from a question to a page
    * without the mouse, and a search that needs a click to finish is a search
-   * that needs the mouse. The first match is the one the list shows first,
-   * so the keystroke and the eye agree on what it will open.
+   * that needs the mouse. The keystroke opens what the list has selected, so
+   * the keystroke and the eye agree on what it will open.
    */
-  const openFirstMatch = (
+  const openSelectedMatch = (
     event: React.KeyboardEvent<HTMLInputElement>
   ): void => {
     if (event.key !== "Enter") return;
-    const first = listRef.current?.querySelector<HTMLAnchorElement>("a[href]");
-    if (first === undefined || first === null) return;
+    const selected = listRef.current?.querySelector<HTMLAnchorElement>(
+      '[data-palette-active="true"]'
+    );
+    const target =
+      selected ?? listRef.current?.querySelector<HTMLAnchorElement>("a[href]");
+    if (target === undefined || target === null) return;
     event.preventDefault();
-    first.click();
+    target.click();
+  };
+
+  /**
+   * The field's own keys.
+   *
+   * The arrow keys move the selection and `Enter` opens it. Both are handled
+   * on the field rather than on the list, because the field is where the
+   * operator's attention is and where their next keystroke belongs.
+   */
+  const handleFieldKeyDown = (
+    event: React.KeyboardEvent<HTMLInputElement>
+  ): void => {
+    moveSelection(event);
+    openSelectedMatch(event);
   };
 
   /**
@@ -356,8 +442,10 @@ export function CommandPalette({
     value: query,
     onChange: (event: React.ChangeEvent<HTMLInputElement>): void => {
       setQuery(event.target.value);
+      // A new search starts at its first match.
+      setActiveIndex(0);
     },
-    onKeyDown: openFirstMatch,
+    onKeyDown: handleFieldKeyDown,
     placeholder: "Search the Console's resources",
     autoComplete: "off",
     className:
@@ -368,9 +456,27 @@ export function CommandPalette({
     "p",
     {
       className: `${MUTED_META_CLASS} border-b border-border px-3 py-1.5`,
-      role: "status"
+      role: "status",
+      "data-palette-count": "true"
     },
     count
+  );
+
+  /**
+   * What the palette has selected, said out loud.
+   *
+   * The selection is a visual accent bar, and a screen reader user cannot see
+   * an accent bar. The count says how many resources match; this says which
+   * one `Enter` would open, and it changes only when the selection does.
+   */
+  const selection = React.createElement(
+    "p",
+    {
+      className: "sr-only",
+      role: "status",
+      "data-palette-selection": "true"
+    },
+    activeResult === null ? "" : `${activeResult.section} is selected.`
   );
 
   const empty = React.createElement(
@@ -379,8 +485,9 @@ export function CommandPalette({
     "No resource matches that. Try a resource's name, or what it is for."
   );
 
-  const entries = shown.map((result) =>
-    React.createElement(
+  const entries = shown.map((result, index) => {
+    const isActive = index === activeIndex;
+    return React.createElement(
       "li",
       { key: result.section },
       React.createElement(
@@ -390,8 +497,10 @@ export function CommandPalette({
           onClick: (): void => {
             closePalette(false);
           },
-          className:
-            "flex min-h-6 flex-col gap-0.5 rounded px-3 py-2 transition-colors hover:bg-surface-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          dataAttributes: isActive ? { "data-palette-active": "true" } : {},
+          className: isActive
+            ? `${PALETTE_RESULT_CLASS} ${PALETTE_ACTIVE_RESULT_CLASS}`
+            : PALETTE_RESULT_CLASS
         },
         React.createElement(
           "span",
@@ -411,8 +520,8 @@ export function CommandPalette({
           result.purpose
         )
       )
-    )
-  );
+    );
+  });
 
   const dialog = React.createElement(
     "div",
@@ -431,6 +540,7 @@ export function CommandPalette({
       input
     ),
     countLine,
+    selection,
     React.createElement(
       "ul",
       { ref: listRef, className: "max-h-80 overflow-y-auto p-2" },

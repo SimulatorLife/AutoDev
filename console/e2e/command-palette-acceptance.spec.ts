@@ -59,12 +59,14 @@ test("the palette finds a resource by name and by what it is for", async ({
   await expect(results.first()).toContainText("Playtesting");
 
   // The answer is stated, so a screen reader hears the search resolve.
-  await expect(dialog.getByRole("status")).toHaveText("1 resource matches.");
+  await expect(dialog.locator("[data-palette-count]")).toHaveText(
+    "1 resource matches."
+  );
 
   // A search that matches nothing says so rather than showing an empty list.
   await page.locator("#command-palette-input").fill("zzzznothing");
   await expect(page.getByText("No resource matches that.")).toBeVisible();
-  await expect(dialog.getByRole("status")).toHaveText(
+  await expect(dialog.locator("[data-palette-count]")).toHaveText(
     "No resources match that search."
   );
 
@@ -144,4 +146,37 @@ test("the palette opens the first match with Enter", async ({ page }) => {
   // And the console's own rule for a navigation still holds, because the
   // palette closed by navigating rather than by being dismissed.
   await expect(page.locator("main h1")).toBeFocused();
+});
+
+test("the palette selects a result the keyboard can move", async ({ page }) => {
+  await page.goto("/agents");
+  await waitForPageContent(page);
+
+  await page.keyboard.press("Meta+k");
+  const field = page.locator("#command-palette-input");
+  await expect(field).toBeFocused();
+
+  // The first match is selected before a key is pressed, the way every
+  // command palette the operator already knows behaves.
+  const selected = page.locator('[data-palette-active="true"]');
+  await expect(selected).toHaveCount(1);
+  await expect(selected).toContainText("Agents");
+
+  // The arrow keys move the selection -- and the focus stays in the field,
+  // because the field is where the next keystroke belongs.
+  await page.keyboard.press("ArrowDown");
+  await expect(selected).toHaveCount(1);
+  await expect(selected).toContainText("Providers");
+  await expect(field).toBeFocused();
+
+  // The selection is said out loud: it is an accent bar, and an accent bar
+  // is not something a screen reader can see.
+  await expect(page.locator("[data-palette-selection]")).toHaveText(
+    /Providers is selected\./u
+  );
+
+  // `Enter` opens what is selected, not what was first.
+  const href = await selected.getAttribute("href");
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(new RegExp(`${href}$`, "u"));
 });
