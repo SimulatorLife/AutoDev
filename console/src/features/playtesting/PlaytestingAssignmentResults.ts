@@ -53,7 +53,12 @@ export function PlaytestingAssignmentResults({
         : React.createElement(
             "ol",
             {
-              className: "max-h-80 list-none space-y-2 overflow-y-auto p-0",
+              // `scroll-pb-1.5` leaves room for the focus ring of the last
+              // outcome in the list: the Console draws the ring four pixels
+              // outside the control it belongs to, and a list that scrolls
+              // without that room cuts the bottom of it off.
+              className:
+                "max-h-80 list-none space-y-2 overflow-y-auto scroll-pb-1.5 p-0",
               "aria-label": "Per-assignment results"
             },
             ...(showAll ? outcomes : outcomes.slice(0, 10)).map((outcome) =>

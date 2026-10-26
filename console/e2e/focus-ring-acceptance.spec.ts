@@ -42,6 +42,18 @@ const ROUTES = [...CANONICAL_ROUTES, ...DETAIL_ROUTES];
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/**
+ * A short window, because that is where a ring gets cut.
+ *
+ * The Console's focus ring is drawn four pixels outside the control it
+ * belongs to, so it needs a region that scrolls to leave that room. A window
+ * tall enough for every region to fit its content never exercises the rule:
+ * the navigation rail alone is taller than a short window, so the sweep runs
+ * at a height where the rail scrolls and the last item in it is the one whose
+ * ring would be clipped.
+ */
+test.use({ viewport: { width: 1280, height: 600 } });
+
 for (const route of ROUTES) {
   test(`${route.path} draws the focus ring whole`, async ({ page }) => {
     await page.goto(route.path);
