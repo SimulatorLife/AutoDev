@@ -95,6 +95,12 @@ test("the Agents row disables the agent against the revision it loaded", async (
   // The revision moved with the enablement, so the next write has to carry
   // the new one.
   expect(held.revision).not.toBe("a".repeat(64));
+
+  // And the keyboard stays where the operator left it. The write rebuilt the
+  // page around the control, and a control that comes back unfocused sends
+  // the keyboard back to the top of the document -- so the next write is a
+  // walk away instead of one key away.
+  await expect(control).toBeFocused();
 });
 
 test("a stale enablement is refused rather than overwriting somebody else's change", async ({
@@ -146,4 +152,8 @@ test("the agent detail writes through the same control as the row", async ({
 
   const held = await readAgentEnablement(request);
   expect(held.enabled).toBe(false);
+
+  // The control the operator wrote from is the control that still has the
+  // focus, on the detail view as on the list.
+  await expect(control).toBeFocused();
 });

@@ -376,6 +376,16 @@ The gaps stayed at `1.5` because the four tracks still sum to 494px against a 49
 
 `console/e2e/provider-role-alignment-acceptance.spec.ts` is the guard. It asks the browser where each row's controls were laid out, on both surfaces, and it was checked against the old grid: it reports "the priority column starts at one x position, not 811, 804, 842, 824" and fails both routes.
 
+## A write leaves the keyboard where the operator was
+
+Every write in the Console is a form submission, and the page that comes back is the Runtime-confirmed value rather than an optimistic one -- so the write rebuilds the page around the control the operator was on. If the focus did not come back with it, a keyboard operator would be sent back to the top of the document after every change, and the next write would be a walk away instead of one key away.
+
+The navigation owner restores it: it snapshots the focused element's place in the document before the write and puts the focus back on the same control afterwards -- by its id, then by its position in the document, then by its name only when the name is unique. A control that has moved or been replaced since the snapshot is not the control the operator was on, so it is not focused.
+
+Measured in Chromium against the production build: pressing `Enter` on the "Enabled: Disable default" control leaves the focus on that control after the write has come back, on the list row and on the detail view.
+
+`console/e2e/agents-enablement-acceptance.spec.ts` holds it now -- both surfaces -- and the assertion was checked against a build with the restore removed, where it fails.
+
 ## A state the operator can only see
 
 The agent enablement pill wears the agent's current value and activates the opposite, so one control carries both facts: the word on the pill is the state, and the hover title names the action. That is the design, and the shared state-pill vocabulary says so.
