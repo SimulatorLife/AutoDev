@@ -1,5 +1,15 @@
 export * from "./clickhouse/clickhouse-client.ts";
 export * from "./config/config-repository.ts";
+export {
+  readWorkspaceCatalogRevision,
+  updateWorkspaceCatalogEntry,
+  WorkspaceCatalogConflictError,
+  workspaceCatalogRevision,
+  WorkspaceCatalogUnknownWorkspaceError,
+  type WorkspaceCatalogUpdate,
+  WorkspaceCatalogValidationError,
+  type WorkspaceCatalogWrite
+} from "./config/workspace-catalog.ts";
 export * from "./control-api/operation-history.ts";
 export * from "./evaluations/index.ts";
 export * from "./execution-contract.ts";

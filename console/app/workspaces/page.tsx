@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import React from "react";
 
+import { workspaceSaveOutcomeFromQuery } from "../../src/features/workspaces/configuration.ts";
 import {
   type WorkspaceApprovalLookup,
   WorkspacesView
 } from "../../src/features/workspaces/WorkspacesView.ts";
+import { editorBaseRevisionFromQuery } from "../../src/lib/server/canonical-source.ts";
 import {
   type ControlApiConfig,
   controlApiFailureCode,
@@ -24,6 +26,12 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: "Workspaces"
 };
+
+function firstSearchParam(
+  raw: string | string[] | undefined
+): string | undefined {
+  return Array.isArray(raw) ? raw[0] : raw;
+}
 
 /**
  * Each configured workspace's most recent playtesting approval, read
@@ -49,7 +57,16 @@ async function readApprovals(
   return new Map(entries);
 }
 
-export default async function WorkspacesPage(): Promise<React.JSX.Element> {
+export default async function WorkspacesPage({
+  searchParams
+}: {
+  readonly searchParams?: Promise<
+    Record<string, string | string[] | undefined>
+  >;
+}): Promise<React.JSX.Element> {
+  const resolvedSearchParams = searchParams
+    ? await searchParams
+    : ({} as Record<string, string | string[] | undefined>);
   const { section, config } = readNodeContext("/workspaces");
   if (!config) {
     return React.createElement(
@@ -96,12 +113,33 @@ export default async function WorkspacesPage(): Promise<React.JSX.Element> {
     readApprovals(workspaceIds, config),
     readWorkspaceRequests(workspaceIds)
   ]);
+  const saveOutcome = workspaceSaveOutcomeFromQuery(resolvedSearchParams.save);
+  // A refused write leaves the control based on the revision it was filled
+  // from, so the operator's edit is not silently paired with a catalog that
+  // has since moved.
+  const basedOn = editorBaseRevisionFromQuery(resolvedSearchParams.based);
+  // The workspace the last write was about. It is resolved against the
+  // declared workspaces rather than taken on trust: a query value that names
+  // a workspace this target does not declare is not a workspace, and the
+  // notice then says what it can without it.
+  const savedWorkspace = workspaces.find(
+    (workspace) =>
+      workspace.id === firstSearchParam(resolvedSearchParams.workspace)
+  )?.id;
   return React.createElement(
     ConsolePageShell,
     {
       section,
       counts: { Workspaces: workspaces.length }
     },
-    React.createElement(WorkspacesView, { workspaces, approvals, requests })
+    React.createElement(WorkspacesView, {
+      workspaces,
+      approvals,
+      requests,
+      revision: basedOn ?? result.data.revision,
+      catalogStatus: result.data.catalogStatus,
+      ...(saveOutcome === undefined ? {} : { saveOutcome }),
+      ...(savedWorkspace === undefined ? {} : { savedWorkspace })
+    })
   );
 }

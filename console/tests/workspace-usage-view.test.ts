@@ -51,7 +51,9 @@ function renderWorkspaces(requests: WorkspaceRequestLookup): string {
         }
       ],
       approvals: new Map(),
-      requests
+      requests,
+      revision: "a".repeat(64),
+      catalogStatus: "valid"
     })
   );
 }

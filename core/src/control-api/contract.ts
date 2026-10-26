@@ -40,11 +40,16 @@
  * against and the origin of each event, and the canonical declaration is
  * written through `PATCH /control/hooks/{event}`, which applies the hook
  * projection and reports the reconciliation.
+ * v16: the canonical workspace catalog publishes the revision a write is
+ * compared against, and one workspace's canonical configuration is written
+ * through `PATCH /control/workspaces/{owner}/{repository}`, which replaces that
+ * entry's enablement, base branch and role scope under the same
+ * compare-and-swap the other canonical sources use.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 15
+  version: 16
 } as const;
 
 export type ControlApiContractResponse = {

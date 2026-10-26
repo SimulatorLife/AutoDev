@@ -14,6 +14,14 @@ const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 export interface WorkspaceCatalogRead {
   readonly status: "valid" | "invalid" | "unavailable";
   readonly workspaces: readonly WorkspaceEntry[];
+  /**
+   * The revision of the catalog file: the sha256 of its exact bytes, or null
+   * when the file could not be read.
+   *
+   * Optional because a stand-in catalog -- a fixture that names the workspaces
+   * it admits -- has no file behind it and no revision to publish.
+   */
+  readonly revision?: string | null;
 }
 
 export class ConfigRepository {
@@ -44,18 +52,25 @@ export class ConfigRepository {
     }
   }
 
+  /**
+   * Where the canonical workspace catalog lives under this repository root.
+   *
+   * The catalog's own rules live in the module that owns them; where the file
+   * sits is this repository's decision, and a writer that has to name the file
+   * asks here rather than building the path itself.
+   */
+  workspaceCatalogPath(): string {
+    return path.join(this.repositoryRoot, "config", "workspaces.json");
+  }
+
   readWorkspaceCatalog(): WorkspaceCatalogRead {
-    const catalogPath = path.join(
-      this.repositoryRoot,
-      "config",
-      "workspaces.json"
-    );
+    const catalogPath = this.workspaceCatalogPath();
     // The catalog's schema is decided once, in the module that owns it. The
     // reader here decides nothing about what the file means: it says where
     // the file is and what came back.
     const read = readWorkspaceCatalogFile(catalogPath);
     if (read.status !== "valid") {
-      return { status: read.status, workspaces: [] };
+      return { status: read.status, workspaces: [], revision: read.revision };
     }
     return {
       status: "valid",
@@ -64,7 +79,8 @@ export class ConfigRepository {
         baseBranch: workspace.baseBranch,
         enabled: workspace.enabled,
         agentRoles: workspace.agentRoles
-      }))
+      })),
+      revision: read.revision
     };
   }
 

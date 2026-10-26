@@ -687,6 +687,7 @@ test("an unrecognised URL filter is named, never resolved into a default", async
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
+          revision: "e".repeat(64),
           totalWorkspaces: 1,
           workspaces: [
             {
@@ -813,6 +814,7 @@ test("MemoryPage starts its independent status and records reads together", asyn
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
+          revision: "e".repeat(64),
           totalWorkspaces: 1,
           workspaces: [
             {
@@ -906,6 +908,7 @@ test("MemoryPage asks the Runtime for the page the URL names", async () => {
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
+          revision: "e".repeat(64),
           totalWorkspaces: 1,
           workspaces: [
             {
@@ -2181,7 +2184,9 @@ test("a path wraps between its segments and never inside one", () => {
         }
       ],
       approvals: new Map(),
-      requests: new Map()
+      requests: new Map(),
+      revision: "a".repeat(64),
+      catalogStatus: "valid"
     })
   );
   assert.ok(
@@ -3445,6 +3450,10 @@ test("no column is narrower than its own header", () => {
     Providers: 109,
     Workflow: 111,
     "Canonical Source": 112,
+    // Measured in Chromium against the Console's own header typography: the
+    // label is one word, so the width a column has to hold is that word's own
+    // width plus the header cell's padding.
+    Configuration: 144,
     Transport: 114,
     Credential: 117,
     "Repository / Workspace": 117,
@@ -3596,7 +3605,9 @@ test("no column is narrower than its own header", () => {
           }
         ],
         approvals: new Map(),
-        requests: new Map()
+        requests: new Map(),
+        revision: "a".repeat(64),
+        catalogStatus: "valid"
       })
     ),
     renderToStaticMarkup(
@@ -6072,7 +6083,9 @@ test("WorkspacesView keeps availability and unconfigured role scope explicit", (
         }
       ],
       approvals: new Map(),
-      requests: new Map()
+      requests: new Map(),
+      revision: "a".repeat(64),
+      catalogStatus: "valid"
     })
   );
   assert.equal(markup.includes("Available"), false);
@@ -6081,9 +6094,14 @@ test("WorkspacesView keeps availability and unconfigured role scope explicit", (
   assert.match(markup, /Configuration, not runtime availability/);
   assert.match(markup, /Enablement/);
   assert.equal((markup.match(/data-status="not-observed"/gu) ?? []).length, 2);
-  assert.equal((markup.match(/data-status="configured"/gu) ?? []).length, 2);
-  assert.match(markup, /data-role-scope="not-configured">Not configured/);
-  assert.match(markup, /data-role-scope="empty">No roles assigned/);
+  // A healthy configuration is not badged: the control on the row is the
+  // statement that the configuration is readable, and a badge that says
+  // "Configured" beside an editable control would be noise. A fault is badged.
+  assert.equal((markup.match(/data-status="configured"/gu) ?? []).length, 0);
+  // A scope that is not configured and a scope that names no role are
+  // different facts, and the control on each row says which one it carries.
+  assert.match(markup, /data-role-scope="not-configured"/u);
+  assert.match(markup, /data-role-scope="empty"/u);
   assert.match(markup, />Enabled</);
   assert.match(markup, />Disabled</);
 });
@@ -6125,7 +6143,9 @@ test("WorkspacesView reports measured availability and a broken role scope inste
         }
       ],
       approvals: new Map(),
-      requests: new Map()
+      requests: new Map(),
+      revision: "a".repeat(64),
+      catalogStatus: "valid"
     })
   );
   // A workspace the runtime answered for reports its count; a workspace it
@@ -6426,6 +6446,7 @@ test("MemoryPage requires a valid canonical workspace catalog before querying me
         source: "config/workspaces.json",
         readOnly: true,
         catalogStatus: "invalid",
+        revision: "e".repeat(64),
         totalWorkspaces: 0,
         workspaces: []
       });
@@ -6463,6 +6484,7 @@ test("MemoryPage rejects URL workspace ids outside the canonical catalog before 
         source: "config/workspaces.json",
         readOnly: true,
         catalogStatus: "valid",
+        revision: "e".repeat(64),
         totalWorkspaces: 1,
         workspaces: [
           {
@@ -6511,6 +6533,7 @@ test("MemoryPage reports failed experience history instead of rendering an empty
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
+          revision: "e".repeat(64),
           totalWorkspaces: 1,
           workspaces: [
             {
@@ -12047,8 +12070,9 @@ test("View adapters translate Control API responses without inventing data", () 
   const workspaces = workspacesFromControlApi({
     schema: "autodev-control-workspaces-v2",
     source: "test",
-    readOnly: true,
+    readOnly: false,
     catalogStatus: "valid",
+    revision: "c".repeat(64),
     totalWorkspaces: 1,
     workspaces: [
       {
@@ -14597,6 +14621,7 @@ test("Memory detail and the workspace catalog fail closed on unreadable response
     source: "config/workspaces.json",
     readOnly: true,
     catalogStatus: "valid",
+    revision: "e".repeat(64),
     totalWorkspaces: 1,
     workspaces: [
       {
@@ -17047,6 +17072,7 @@ test("the Memory page names why storage failed, from the status read rather than
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
+          revision: "e".repeat(64),
           totalWorkspaces: 1,
           workspaces: [
             {
@@ -17663,6 +17689,7 @@ test("cohort filters reach the Runtime and stay on the cohorts tab", async () =>
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
+          revision: "e".repeat(64),
           totalWorkspaces: 1,
           workspaces: [
             {
@@ -18099,6 +18126,7 @@ test("the Memory page carries the Runtime's explanation into the record drawer",
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
+          revision: "e".repeat(64),
           totalWorkspaces: 1,
           workspaces: [
             {
@@ -21508,6 +21536,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
     [
       join("src", "features", "workspaces", "WorkspacePlaytestRevokeForm.ts"),
       "Provides revision-bound revocation fields and submits through the in-place workspace mutation handler."
+    ],
+    [
+      join("src", "features", "workspaces", "WorkspaceConfigurationForm.ts"),
+      "Holds the canonical configuration an operator is editing and submits it through the same-origin workspace configuration route; it never drives the router."
     ],
     [
       join(

@@ -44,6 +44,12 @@ export function workspacePlaytestApprovalPath(
   return revoke ? `${base}/revoke` : base;
 }
 
+/** Same-origin Console mutation URL for one workspace's canonical configuration. */
+export function workspaceConfigurationPath(workspaceId: string): string {
+  const [owner, repository] = segmentsForWorkspaceId(workspaceId);
+  return `/api/workspaces/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`;
+}
+
 export function workspaceVisualPlaytestTargetsPath(
   workspaceId: string
 ): string {

@@ -30,18 +30,21 @@ import {
   workspaceApprovalBadgeVariant,
   workspaceApprovalStatus
 } from "./approval-status.ts";
+import {
+  workspaceConfigurationSaveNotice,
+  type WorkspaceConfigurationSaveOutcome
+} from "./configuration.ts";
 import { WORKSPACE_PLAYTEST_LIMIT_FIELDS } from "./limits-fields.ts";
-import { WORKSPACES_PATH } from "./paths.ts";
+import { workspacePath, WORKSPACES_PATH } from "./paths.ts";
 import {
   workspaceAvailabilityBadgeLabel,
-  workspaceAvailabilityBadgeVariant,
-  workspaceConfigurationBadgeLabel,
-  workspaceConfigurationBadgeVariant
+  workspaceAvailabilityBadgeVariant
 } from "./workspace-health.ts";
 import {
   type WorkspaceRequestReading,
   workspaceRequestValue
 } from "./workspace-usage.ts";
+import { WorkspaceConfigurationForm } from "./WorkspaceConfigurationForm.ts";
 import { WorkspacePlaytestApprovalForm } from "./WorkspacePlaytestApprovalForm.ts";
 import { WorkspacePlaytestRevokeForm } from "./WorkspacePlaytestRevokeForm.ts";
 import {
@@ -75,6 +78,18 @@ export interface WorkspaceDetailViewProps {
   readonly controlFailed?: boolean | undefined;
   readonly refusal?:
     React.ComponentProps<typeof ControlFailureNotice>["refusal"] | undefined;
+  /**
+   * The revision the canonical catalog was read at.
+   *
+   * It is the handle a write is compared against, so the configuration
+   * control carries it: a write decided on a catalog that has since moved is
+   * refused rather than applied over the newer catalog.
+   */
+  readonly revision?: string | null | undefined;
+  /** The status of the canonical catalog the read came from. */
+  readonly catalogStatus?: "valid" | "invalid" | "unavailable" | undefined;
+  /** How the last write to this workspace's configuration ended. */
+  readonly saveOutcome?: WorkspaceConfigurationSaveOutcome | undefined;
 }
 
 function IdentityPanel({
@@ -162,12 +177,12 @@ function LimitsPanel({
 }
 
 /**
- * The canonical configuration of one workspace, and the two facts beside it.
+ * The facts beside one workspace's canonical configuration.
  *
- * The configuration is judged against the canonical role list, and the
- * runtime's own answer about the workspace is a separate authority, so the
- * panel keeps them apart: a scope that names a role nothing answers to is
- * a configuration fault, and an unobserved workspace is missing evidence
+ * The configuration itself is edited by the control above this grid, so the
+ * grid holds the facts the control does not own: the runtime's own answer
+ * about the workspace is a separate authority from the configuration, and the
+ * panel keeps them apart -- an unobserved workspace is missing evidence
  * rather than an idle one.
  */
 function ConfigurationPanel({
@@ -179,29 +194,7 @@ function ConfigurationPanel({
 }): React.JSX.Element {
   return React.createElement(
     DetailGrid,
-    { columns: 2, label: "Canonical configuration" },
-    React.createElement(
-      DetailValue,
-      { label: "Base branch" },
-      workspace.baseBranch
-    ),
-    React.createElement(
-      DetailValue,
-      { label: "Role scope" },
-      workspace.agentRoles === null
-        ? "Not configured"
-        : workspace.agentRoles.length === 0
-          ? "No roles assigned"
-          : workspace.agentRoles.join(", ")
-    ),
-    React.createElement(
-      DetailValue,
-      { label: "Configuration" },
-      React.createElement(StatusBadge, {
-        status: workspaceConfigurationBadgeVariant(workspace.configuration),
-        label: workspaceConfigurationBadgeLabel(workspace.configuration)
-      })
-    ),
+    { columns: 2, label: "Workspace facts" },
     React.createElement(
       DetailValue,
       { label: "Runtime availability" },
@@ -334,7 +327,10 @@ export function WorkspaceDetailView({
   visualTargetsUnavailable,
   requests,
   controlFailed,
-  refusal
+  refusal,
+  revision = null,
+  catalogStatus = "valid",
+  saveOutcome
 }: WorkspaceDetailViewProps): React.JSX.Element {
   const [currentApproval, setCurrentApproval] = React.useState(approval);
   const [currentWorkspaceEnabled, setCurrentWorkspaceEnabled] = React.useState(
@@ -590,9 +586,16 @@ export function WorkspaceDetailView({
         { className: SECTION_HEADING_CLASS },
         "Configuration"
       ),
+      workspaceConfigurationSaveNotice(saveOutcome, workspace.id),
       React.createElement(
         "div",
         { className: "mt-3 flex flex-col gap-4" },
+        React.createElement(WorkspaceConfigurationForm, {
+          workspace,
+          revision,
+          catalogStatus,
+          returnTo: workspacePath(workspace.id)
+        }),
         React.createElement(ConfigurationPanel, { workspace, requests })
       )
     ),

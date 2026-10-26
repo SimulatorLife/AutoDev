@@ -85,6 +85,8 @@ import {
   type ControlApiSkillRolesPatchResponse,
   type ControlApiSkillsResponse,
   type ControlApiToolsResponse,
+  type ControlApiWorkspacePatchRequest,
+  type ControlApiWorkspacePatchResponse,
   type ControlApiWorkspacePlaytestApprovalResponse,
   type ControlApiWorkspacesResponse,
   type ControlApiWorkspaceVisualPlaytestTargetsResponse,
@@ -3625,6 +3627,9 @@ function isControlApiWorkspacesResponse(
     (value.catalogStatus === "valid" ||
       value.catalogStatus === "invalid" ||
       value.catalogStatus === "unavailable") &&
+    // The revision is the handle a write is compared against, so a read that
+    // cannot name it is saying that there is nothing to write against.
+    (value.revision === null || typeof value.revision === "string") &&
     isNullableNumber(value.totalWorkspaces) &&
     Array.isArray(value.workspaces) &&
     value.workspaces.every(
@@ -3659,6 +3664,30 @@ export async function fetchWorkspaces(
     message:
       "AutoDev Control API returned an incompatible Workspaces response; the Console requires the v2 workspace catalog contract."
   };
+}
+
+/**
+ * Write one workspace's configuration to the canonical catalog.
+ *
+ * The write is the Runtime's: the Console forwards the operator's edit and
+ * never touches the catalog itself. The owner and the repository are separate
+ * path segments because a workspace is an `owner/repository` pair, and the
+ * Runtime names it the way the catalog is indexed.
+ */
+export function patchWorkspace(
+  owner: string,
+  repository: string,
+  payload: ControlApiWorkspacePatchRequest,
+  config: ControlApiConfig,
+  options: FetchControlApiOptions = {}
+): Promise<ControlApiResult<ControlApiWorkspacePatchResponse>> {
+  return mutateControlApi<ControlApiWorkspacePatchResponse>(
+    "PATCH",
+    `${CONTROL_API_PATHS.workspaces}/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`,
+    payload,
+    config,
+    options
+  );
 }
 
 function isWorkspacePlaytestApprovalResponse(

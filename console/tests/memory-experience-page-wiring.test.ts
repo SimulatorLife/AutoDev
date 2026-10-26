@@ -164,6 +164,7 @@ function route(path: string, wire: Wire): unknown {
       source: "config/workspaces.json",
       readOnly: true,
       catalogStatus: "valid",
+      revision: "e".repeat(64),
       totalWorkspaces: 1,
       workspaces: [
         {

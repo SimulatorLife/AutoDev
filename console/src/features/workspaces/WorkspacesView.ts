@@ -10,7 +10,6 @@ import { PageBody } from "../../components/layout/PageBody.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
-import { Tag } from "../../components/status/Tag.ts";
 import {
   type ColumnDef,
   DataTable,
@@ -20,26 +19,27 @@ import { PathText } from "../../components/tables/PathText.ts";
 import { namedAfterVisible } from "../../components/ui/accessible-name.ts";
 import {
   ENTITY_LINK_CLASS,
-  MONO_ID_CLASS,
-  MONO_VALUE_CLASS,
-  MUTED_TEXT_CLASS
+  MONO_ID_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
   workspaceApprovalBadgeLabel,
   workspaceApprovalBadgeVariant,
   workspaceApprovalStatus
 } from "./approval-status.ts";
-import { workspacePath } from "./paths.ts";
+import {
+  workspaceConfigurationSaveNotice,
+  type WorkspaceConfigurationSaveOutcome
+} from "./configuration.ts";
+import { workspacePath, WORKSPACES_PATH } from "./paths.ts";
 import {
   workspaceAvailabilityBadgeLabel,
-  workspaceAvailabilityBadgeVariant,
-  workspaceConfigurationBadgeLabel,
-  workspaceConfigurationBadgeVariant
+  workspaceAvailabilityBadgeVariant
 } from "./workspace-health.ts";
 import {
   type WorkspaceRequestLookup,
   workspaceRequestValue
 } from "./workspace-usage.ts";
+import { WorkspaceConfigurationForm } from "./WorkspaceConfigurationForm.ts";
 
 /**
  * One workspace's most recently read playtesting approval, keyed by
@@ -84,12 +84,36 @@ export interface WorkspacesViewProps {
   readonly workspaces: readonly ControlApiWorkspaceRecord[];
   readonly approvals: WorkspaceApprovalLookup;
   readonly requests: WorkspaceRequestLookup;
+  /**
+   * The revision the canonical catalog was read at.
+   *
+   * It is the handle a write is compared against, so the control on every row
+   * carries it: a write decided on a catalog that has since moved is refused
+   * rather than applied over the newer catalog.
+   */
+  readonly revision: string | null;
+  /** The status of the canonical catalog the read came from. */
+  readonly catalogStatus: "valid" | "invalid" | "unavailable";
+  /** How the last write to a workspace's configuration ended. */
+  readonly saveOutcome?: WorkspaceConfigurationSaveOutcome | undefined;
+  /**
+   * The workspace the last write was about.
+   *
+   * The list presents every workspace's configuration at once, so a notice
+   * that did not name its workspace would leave the operator to work out
+   * which of the edits on the page it was talking about.
+   */
+  readonly savedWorkspace?: string | undefined;
 }
 
 export function WorkspacesView({
   workspaces,
   approvals,
-  requests
+  requests,
+  revision,
+  catalogStatus,
+  saveOutcome,
+  savedWorkspace
 }: WorkspacesViewProps): React.JSX.Element {
   const enabledCount = workspaces.filter((w) => w.enabled).length;
   const approvedCount = workspaces.filter((w) => {
@@ -131,23 +155,19 @@ export function WorkspacesView({
         )
     },
     {
-      id: "baseBranch",
-      header: "Base Branch",
-      weight: 134,
+      // The canonical configuration is edited on the row, not summarised on
+      // it: this is the surface that writes it, and the row's control is the
+      // same control the workspace's own page carries.
+      id: "configuration",
+      header: "Configuration",
+      weight: 392,
       cell: (ws) =>
-        React.createElement(Tag, {
-          className: `border-border-strong bg-surface-raised font-mono ${MUTED_TEXT_CLASS}`,
-          children: ws.baseBranch
-        })
-    },
-    {
-      id: "enablement",
-      header: "Enablement",
-      weight: 128,
-      cell: (ws) =>
-        React.createElement(StatusBadge, {
-          status: "configured",
-          label: ws.enabled ? "Enabled" : "Disabled"
+        React.createElement(WorkspaceConfigurationForm, {
+          workspace: ws,
+          revision,
+          catalogStatus,
+          returnTo: WORKSPACES_PATH,
+          compact: true
         })
     },
     {
@@ -181,38 +201,6 @@ export function WorkspacesView({
           })
         );
       }
-    },
-    {
-      id: "agentRoles",
-      header: "Role Scope",
-      weight: 142,
-      cell: (ws) =>
-        // A scope that names a role AutoDev does not define is a configuration
-        // fault, and it belongs in the cell that owns the scope: listing the
-        // roles anyway would show a scope that excludes every agent that
-        // could work here and say nothing about why.
-        ws.configuration.status === "invalid-role-scope"
-          ? React.createElement(StatusBadge, {
-              status: workspaceConfigurationBadgeVariant(ws.configuration),
-              label: workspaceConfigurationBadgeLabel(ws.configuration)
-            })
-          : React.createElement(
-              "span",
-              {
-                className: MONO_VALUE_CLASS,
-                "data-role-scope":
-                  ws.agentRoles === null
-                    ? "not-configured"
-                    : ws.agentRoles.length === 0
-                      ? "empty"
-                      : "configured"
-              },
-              ws.agentRoles === null
-                ? "Not configured"
-                : ws.agentRoles.length === 0
-                  ? "No roles assigned"
-                  : ws.agentRoles.join(", ")
-            )
     },
     {
       id: "availability",
@@ -283,6 +271,7 @@ export function WorkspacesView({
     React.createElement(
       "div",
       null,
+      workspaceConfigurationSaveNotice(saveOutcome, savedWorkspace),
       React.createElement(
         "h2",
         {

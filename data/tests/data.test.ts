@@ -1678,7 +1678,8 @@ test("ConfigRepository distinguishes missing and invalid workspace sources from 
   try {
     assert.deepEqual(repository.readWorkspaceCatalog(), {
       status: "unavailable",
-      workspaces: []
+      workspaces: [],
+      revision: null
     });
 
     const configDirectory = path.join(repositoryRoot, "config");
@@ -1689,9 +1690,14 @@ test("ConfigRepository distinguishes missing and invalid workspace sources from 
       JSON.stringify({ schema: "autodev-workspaces-v1", workspaces: [] }),
       "utf8"
     );
+    // The revision is the handle a write is compared against: the sha256 of
+    // the catalog's exact bytes.
     assert.deepEqual(repository.readWorkspaceCatalog(), {
       status: "valid",
-      workspaces: []
+      workspaces: [],
+      revision: createHash("sha256")
+        .update(await readFile(catalogPath))
+        .digest("hex")
     });
 
     await writeFile(
@@ -1704,7 +1710,10 @@ test("ConfigRepository distinguishes missing and invalid workspace sources from 
     );
     assert.deepEqual(repository.readWorkspaceCatalog(), {
       status: "invalid",
-      workspaces: []
+      workspaces: [],
+      revision: createHash("sha256")
+        .update(await readFile(catalogPath))
+        .digest("hex")
     });
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });

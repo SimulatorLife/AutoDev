@@ -5280,6 +5280,7 @@ const server = createServer(
         source: "fixture",
         readOnly: true,
         catalogStatus: "valid",
+        revision: "e".repeat(64),
         totalWorkspaces: 1,
         workspaces: [
           {

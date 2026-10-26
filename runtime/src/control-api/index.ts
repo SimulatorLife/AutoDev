@@ -52,6 +52,7 @@ import {
   type ControlApiSkillRolesPatchResponse,
   type ControlApiSkillsResponse,
   type ControlApiToolsResponse,
+  type ControlApiWorkspacePatchResponse,
   type ControlApiWorkspacesResponse,
   type GithubActionsRuntimeStatus,
   type GithubWorkflowDefinition,
@@ -114,6 +115,11 @@ import {
   RuleSyncSkillSourceUnavailableError,
   RuleSyncSkillValidationError,
   ToolCatalogAdapter,
+  updateWorkspaceCatalogEntry,
+  WorkspaceCatalogConflictError,
+  WorkspaceCatalogUnknownWorkspaceError,
+  WorkspaceCatalogValidationError,
+  type WorkspaceCatalogWrite,
   WorkspacePlaytestApprovalRepository,
   type WorkspaceVisualPlaytestTargetRepository
 } from "@simulatorlife/autodev-data";
@@ -336,6 +342,15 @@ const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
 const MCP_SERVER_PATH =
   /^\/control\/mcps\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/u;
 const HOOK_EVENT_PATH = /^\/control\/hooks\/([a-z][A-Za-z]{0,63})$/u;
+/**
+ * One workspace's own configuration route.
+ *
+ * The owner and the repository are separate segments, because a workspace is
+ * an `owner/repository` pair and the route has to name it the way the Console
+ * names it. A percent-encoded slash inside one segment would be a different
+ * key from the pair the catalog is indexed by.
+ */
+const WORKSPACE_DETAIL_PATH = /^\/control\/workspaces\/([^/\s]+)\/([^/\s]+)$/u;
 const SKILL_ROLES_PATH = /^\/control\/skills\/([a-zA-Z0-9._-]+)$/u;
 const SKILL_CONTENT_PATH = /^\/control\/skills\/([a-z0-9-]{1,64})\/content$/u;
 const SKILL_CONTENT_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
@@ -1893,8 +1908,11 @@ function workspacesView(repositoryRoot?: string): Record<string, unknown> {
   return {
     schema: "autodev-control-workspaces-v2",
     source: "config/workspaces.json",
-    readOnly: true,
+    readOnly: false,
     catalogStatus: catalog.status,
+    // The revision a write is compared against. It is published here because
+    // this read is the only place the catalog's exact bytes are named.
+    revision: catalog.revision ?? null,
     totalWorkspaces:
       catalog.status === "valid" ? catalog.workspaces.length : null,
     workspaces:
@@ -1908,8 +1926,244 @@ function workspacesView(repositoryRoot?: string): Record<string, unknown> {
   } satisfies ControlApiWorkspacesResponse;
 }
 
-let githubActionsAdapterOverride: GithubActionsAdapter | null = null;
+/** The fields a workspace update may carry, and nothing else. */
+const WORKSPACE_UPDATE_KEYS: ReadonlySet<string> = new Set([
+  "expectedRevision",
+  "enabled",
+  "baseBranch",
+  "agentRoles"
+]);
 
+/** The revision a workspace write is compared against. */
+const WORKSPACE_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
+
+/**
+ * The change a workspace write asks for, or null when the body cannot be one.
+ *
+ * The body has to name the revision the write was decided on and at least one
+ * field to change, and it may not carry anything else: `id` in particular is
+ * not a field a write may set, because a workspace's identity is what the
+ * catalog is indexed by.
+ */
+function workspaceUpdateFromBody(body: Record<string, unknown>): {
+  readonly expectedRevision: string;
+  readonly change: {
+    readonly enabled?: boolean | undefined;
+    readonly baseBranch?: string | undefined;
+    readonly agentRoles?: readonly string[] | null | undefined;
+  };
+} | null {
+  for (const key of Object.keys(body)) {
+    if (!WORKSPACE_UPDATE_KEYS.has(key)) return null;
+  }
+  const expectedRevision = body.expectedRevision;
+  if (
+    typeof expectedRevision !== "string" ||
+    !WORKSPACE_REVISION_PATTERN.test(expectedRevision)
+  ) {
+    return null;
+  }
+  const change: {
+    enabled?: boolean | undefined;
+    baseBranch?: string | undefined;
+    agentRoles?: readonly string[] | null | undefined;
+  } = {};
+  let fields = 0;
+  if ("enabled" in body) {
+    const enabled = body.enabled;
+    if (typeof enabled !== "boolean") return null;
+    change.enabled = enabled;
+    fields += 1;
+  }
+  if ("baseBranch" in body) {
+    const baseBranch = body.baseBranch;
+    if (typeof baseBranch !== "string") return null;
+    change.baseBranch = baseBranch;
+    fields += 1;
+  }
+  if ("agentRoles" in body) {
+    const agentRoles = body.agentRoles;
+    if (agentRoles === null) {
+      change.agentRoles = null;
+    } else {
+      if (
+        !Array.isArray(agentRoles) ||
+        agentRoles.some((role) => typeof role !== "string")
+      ) {
+        return null;
+      }
+      change.agentRoles = agentRoles as readonly string[];
+    }
+    fields += 1;
+  }
+  if (fields === 0) return null;
+  return { expectedRevision, change };
+}
+
+/**
+ * The refusal a write to the canonical catalog answers with.
+ *
+ * A conflict, an unknown workspace and a write that could not be expressed are
+ * three different facts, and the caller is told which one happened.
+ */
+function sendWorkspaceWriteFailure(
+  response: ServerResponse,
+  actor: ControlApiActor,
+  resource: string,
+  error: unknown
+): void {
+  const conflict = error instanceof WorkspaceCatalogConflictError;
+  const unknownWorkspace =
+    error instanceof WorkspaceCatalogUnknownWorkspaceError;
+  const validation = error instanceof WorkspaceCatalogValidationError;
+  if (!conflict && !unknownWorkspace && !validation) throw error;
+  let status = 400;
+  let code = "autodev_control_workspace_invalid_update";
+  let reason = "invalid_update";
+  if (conflict) {
+    status = 409;
+    code = "autodev_control_workspace_revision_conflict";
+    reason = "revision_conflict";
+  } else if (unknownWorkspace) {
+    status = 404;
+    code = "autodev_control_workspace_unknown";
+    reason = "unknown_workspace";
+  }
+  const message =
+    error instanceof Error
+      ? error.message
+      : "The workspace catalog could not be written.";
+  auditMutation({
+    actor: actor.actor,
+    actorVerified: true,
+    role: actor.role,
+    action: "update_workspace_catalog_entry",
+    resource,
+    outcome: "error",
+    changes: null,
+    reason
+  });
+  sendControlError(response, status, code, message);
+}
+
+/**
+ * Write one workspace's configuration to the canonical catalog.
+ *
+ * The catalog's rules and its write live in the module that owns them, so this
+ * route decides only what a Control API request is: who may write, what the
+ * body has to say, and which refusal the caller is told about.
+ */
+async function patchWorkspace(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  owner: string,
+  repository: string,
+  repositoryRoot: string
+): Promise<void> {
+  const workspaceId = `${owner}/${repository}`;
+  const resource = `${CONTROL_API_PATHS.workspaces}/${owner}/${repository}`;
+  if (actor.role !== "operator") {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_workspace_catalog_entry",
+      resource,
+      outcome: "denied",
+      changes: null,
+      reason: "operator_required"
+    });
+    sendControlError(
+      response,
+      403,
+      "autodev_control_api_forbidden",
+      "Updating a workspace's canonical configuration requires an operator."
+    );
+    return;
+  }
+  const parsed = await readControlApiJsonObject(request);
+  if (!parsed.ok) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_workspace_catalog_entry",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: parsed.code
+    });
+    sendControlError(response, parsed.status, parsed.code, parsed.message);
+    return;
+  }
+  const update = workspaceUpdateFromBody(parsed.body);
+  if (update === null) {
+    auditMutation({
+      actor: actor.actor,
+      actorVerified: true,
+      role: actor.role,
+      action: "update_workspace_catalog_entry",
+      resource,
+      outcome: "error",
+      changes: null,
+      reason: "invalid_update"
+    });
+    sendControlError(
+      response,
+      400,
+      "autodev_control_workspace_invalid_update",
+      "A workspace update requires the expected revision and at least one of enablement, base branch or role scope."
+    );
+    return;
+  }
+
+  let written: WorkspaceCatalogWrite;
+  try {
+    written = updateWorkspaceCatalogEntry(
+      new ConfigRepository(repositoryRoot).workspaceCatalogPath(),
+      workspaceId,
+      update.expectedRevision,
+      update.change
+    );
+  } catch (error) {
+    sendWorkspaceWriteFailure(response, actor, resource, error);
+    return;
+  }
+
+  const knownRoles = configuredAgentRoleNames();
+  const liveAgents = liveAgentCountsSource?.(Date.now()) ?? null;
+  auditMutation({
+    actor: actor.actor,
+    actorVerified: true,
+    role: actor.role,
+    action: "update_workspace_catalog_entry",
+    resource,
+    outcome: "ok",
+    changes: { id: workspaceId, revision: written.revision }
+  });
+  sendJson(
+    response,
+    200,
+    {
+      schema: "autodev-control-workspace-patch-v1",
+      id: workspaceId,
+      revision: written.revision,
+      changed: written.changed,
+      workspace: {
+        ...written.workspace,
+        configuration: workspaceConfigurationHealth(
+          written.workspace,
+          knownRoles
+        ),
+        runtime: workspaceRuntimeAvailability(written.workspace.id, liveAgents)
+      }
+    } satisfies ControlApiWorkspacePatchResponse,
+    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
+  );
+}
+
+let githubActionsAdapterOverride: GithubActionsAdapter | null = null;
 interface CachedGithubSnapshot {
   readonly timestamp: number;
   readonly snapshot: GithubActionsRuntimeSnapshot;
@@ -7274,6 +7528,45 @@ async function handleMutationOnlyRoute(
   return false;
 }
 
+/**
+ * One workspace's own configuration route.
+ *
+ * The catalog is read through the collection route and written through this
+ * one, so a write names the workspace it changes rather than a collection the
+ * caller would have to search.
+ */
+async function workspaceRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  actor: ControlApiActor,
+  method: string,
+  pathname: string,
+  owner: string,
+  repository: string,
+  options: ControlApiRequestOptions
+): Promise<boolean> {
+  if (method === "PATCH") {
+    await patchWorkspace(
+      request,
+      response,
+      actor,
+      owner,
+      repository,
+      options.repositoryRoot ?? DEFAULT_REPO_ROOT
+    );
+    return true;
+  }
+  auditRejectedRequest(request, method, pathname, "method_not_allowed", actor);
+  response.setHeader("allow", "PATCH");
+  sendControlError(
+    response,
+    405,
+    "autodev_control_api_method_not_allowed",
+    "A workspace's canonical configuration is written via PATCH."
+  );
+  return true;
+}
+
 export async function handleControlApiRequest(
   request: IncomingMessage,
   response: ServerResponse,
@@ -7438,6 +7731,18 @@ export async function handleControlApiRequest(
       method,
       pathname,
       hookEventMatch[1]!,
+      options
+    );
+  const workspaceMatch = pathname.match(WORKSPACE_DETAIL_PATH);
+  if (workspaceMatch)
+    return workspaceRoute(
+      request,
+      response,
+      actor,
+      method,
+      pathname,
+      workspaceMatch[1]!,
+      workspaceMatch[2]!,
       options
     );
   if (await readOnlyCollection(pathname, method, response, actor, options))

@@ -139,6 +139,7 @@ function route(path: string, options: RouteOptions): Response | null {
         source: "config/workspaces.json",
         readOnly: true,
         catalogStatus: "valid",
+        revision: "e".repeat(64),
         totalWorkspaces: 1,
         workspaces: [
           {
@@ -246,6 +247,7 @@ test("a workspace catalog that is unreadable fails closed before any memory read
         source: "config/workspaces.json",
         readOnly: true,
         catalogStatus: "unavailable",
+        revision: "e".repeat(64),
         totalWorkspaces: 0,
         workspaces: []
       }
@@ -273,6 +275,7 @@ test("an empty workspace catalog names the missing configuration, not an empty l
         source: "config/workspaces.json",
         readOnly: true,
         catalogStatus: "valid",
+        revision: "e".repeat(64),
         totalWorkspaces: 0,
         workspaces: []
       }

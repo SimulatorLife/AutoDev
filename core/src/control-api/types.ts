@@ -1169,8 +1169,41 @@ export interface ControlApiWorkspacesResponse {
   readonly source: string;
   readonly readOnly: boolean;
   readonly catalogStatus: WorkspaceCatalogStatus;
+  /**
+   * The revision of the canonical catalog: the sha256 of its exact bytes, or
+   * null when the file could not be read.
+   *
+   * It is the handle a write is compared against, so a reader that cannot
+   * name it is saying that there is nothing to write against.
+   */
+  readonly revision: string | null;
   readonly totalWorkspaces: number | null;
   readonly workspaces: readonly ControlApiWorkspaceRecord[];
+}
+
+/**
+ * One workspace's configuration write.
+ *
+ * The write is a compare-and-swap on the catalog's revision, so it names the
+ * revision it was decided on. Only the fields the body carries change, and
+ * `id` is not among them: a workspace's identity is what the catalog is
+ * indexed by.
+ */
+export interface ControlApiWorkspacePatchRequest {
+  readonly expectedRevision: string;
+  readonly enabled?: boolean | undefined;
+  readonly baseBranch?: string | undefined;
+  readonly agentRoles?: readonly string[] | null | undefined;
+}
+
+export interface ControlApiWorkspacePatchResponse {
+  readonly schema: "autodev-control-workspace-patch-v1";
+  readonly id: string;
+  /** The revision of the catalog after the write. */
+  readonly revision: string;
+  readonly changed: boolean;
+  /** The workspace as the catalog now declares it. */
+  readonly workspace: ControlApiWorkspaceRecord;
 }
 
 export interface ControlApiGithubResponse {

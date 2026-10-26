@@ -1,4 +1,13 @@
-import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -182,17 +191,27 @@ export interface WorkspaceCatalogRead {
   readonly status: "valid" | "invalid" | "unavailable";
   readonly workspaces: readonly WorkspaceCatalogEntry[];
   readonly reason?: string;
+  /**
+   * The revision of the file the catalog was read from: the sha256 of its
+   * exact bytes, or null when the file could not be read at all.
+   */
+  readonly revision: string | null;
 }
 
 /**
  * The catalog at a path, or why it could not be read.
  */
 type CatalogLoad =
-  | { readonly ok: true; readonly catalog: WorkspaceCatalog }
+  | {
+      readonly ok: true;
+      readonly catalog: WorkspaceCatalog;
+      readonly revision: string;
+    }
   | {
       readonly ok: false;
       readonly status: "invalid" | "unavailable";
       readonly reason: string;
+      readonly revision: string | null;
     };
 
 function loadCatalogFile(catalogPath: string): CatalogLoad {
@@ -201,23 +220,41 @@ function loadCatalogFile(catalogPath: string): CatalogLoad {
     return {
       ok: false,
       status: "unavailable",
-      reason: `Workspace catalog not found: ${absolute}`
+      reason: `Workspace catalog not found: ${absolute}`,
+      revision: null
     };
   }
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(absolute);
+  } catch (error) {
+    return {
+      ok: false,
+      status: "unavailable",
+      reason: `Workspace catalog could not be read: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      revision: null
+    };
+  }
+  // The revision is a handle on the file's exact bytes, so it is taken from
+  // the bytes themselves rather than from the text they decode to.
+  const revision = workspaceCatalogRevision(bytes);
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(absolute, "utf8")) as unknown;
+    raw = JSON.parse(bytes.toString("utf8")) as unknown;
   } catch (error) {
     return {
       ok: false,
       status: "invalid",
       reason: `Workspace catalog is not valid JSON: ${
         error instanceof Error ? error.message : String(error)
-      }`
+      }`,
+      revision
     };
   }
   try {
-    return { ok: true, catalog: parseWorkspaceCatalog(raw) };
+    return { ok: true, catalog: parseWorkspaceCatalog(raw), revision };
   } catch (error) {
     return {
       ok: false,
@@ -225,7 +262,8 @@ function loadCatalogFile(catalogPath: string): CatalogLoad {
       reason:
         error instanceof WorkspaceCatalogError
           ? error.message
-          : `Workspace catalog is invalid: ${String(error)}`
+          : `Workspace catalog is invalid: ${String(error)}`,
+      revision
     };
   }
 }
@@ -243,9 +281,18 @@ export function readWorkspaceCatalogFile(
 ): WorkspaceCatalogRead {
   const load = loadCatalogFile(catalogPath);
   if (load.ok) {
-    return { status: "valid", workspaces: load.catalog.list };
+    return {
+      status: "valid",
+      workspaces: load.catalog.list,
+      revision: load.revision
+    };
   }
-  return { status: load.status, workspaces: [], reason: load.reason };
+  return {
+    status: load.status,
+    workspaces: [],
+    reason: load.reason,
+    revision: load.revision
+  };
 }
 
 /**
@@ -259,6 +306,383 @@ export function loadWorkspaceCatalog(catalogPath: string): WorkspaceCatalog {
   const load = loadCatalogFile(catalogPath);
   if (load.ok) return load.catalog;
   throw new WorkspaceCatalogError(load.reason);
+}
+
+/**
+ * The revision of a catalog file: the sha256 of its exact bytes.
+ *
+ * A revision is a handle, not a summary. Two readers that read the same bytes
+ * get the same string, and a writer that was handed the revision from an
+ * earlier read can tell that the file moved before its write landed. It is
+ * the same handle the Console's other canonical-source writes compare
+ * against, so one write surface speaks one vocabulary.
+ */
+export function workspaceCatalogRevision(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/**
+ * The revision of the catalog file at a path, or null when it cannot be read.
+ */
+export function readWorkspaceCatalogRevision(
+  catalogPath: string
+): string | null {
+  try {
+    return workspaceCatalogRevision(readFileSync(path.resolve(catalogPath)));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The fields one workspace update may change.
+ *
+ * `id` is not among them: a workspace's identity is what the catalog is
+ * indexed by, and renaming one is a different operation from configuring it.
+ * A field that is absent is not written; a field that is present replaces the
+ * value the catalog holds.
+ */
+export interface WorkspaceCatalogUpdate {
+  readonly enabled?: boolean | undefined;
+  readonly baseBranch?: string | undefined;
+  readonly agentRoles?: readonly string[] | null | undefined;
+}
+
+/**
+ * What a write to the catalog did.
+ */
+export interface WorkspaceCatalogWrite {
+  /** The revision of the catalog after the write. */
+  readonly revision: string;
+  /** The workspace as the catalog now declares it. */
+  readonly workspace: WorkspaceCatalogEntry;
+  /** Whether the write moved the catalog. */
+  readonly changed: boolean;
+}
+
+/**
+ * The write was decided on a catalog that has since moved.
+ *
+ * The write is refused rather than applied over the newer catalog, because a
+ * write that overwrites a change it never saw is how two operators lose each
+ * other's work.
+ */
+export class WorkspaceCatalogConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkspaceCatalogConflictError";
+  }
+}
+
+/**
+ * The write could not be expressed, or the catalog could not be written.
+ */
+export class WorkspaceCatalogValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkspaceCatalogValidationError";
+  }
+}
+
+/**
+ * The catalog does not declare the workspace the write names.
+ */
+export class WorkspaceCatalogUnknownWorkspaceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkspaceCatalogUnknownWorkspaceError";
+  }
+}
+
+/** The shape of a revision a write may name. */
+const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
+
+/** The change a write asks for, validated against the catalog's own rules. */
+interface WorkspaceCatalogChange {
+  readonly enabled?: boolean | undefined;
+  readonly baseBranch?: string | undefined;
+  readonly agentRoles?: readonly string[] | null | undefined;
+}
+
+/**
+ * The enablement flag a write asks for.
+ *
+ * The rules are the ones `parseWorkspaceCatalog` enforces, checked here so a
+ * write that could not be expressed is refused before it touches the file.
+ */
+function readEnabledFlag(value: unknown): boolean {
+  if (typeof value !== "boolean") {
+    throw new WorkspaceCatalogValidationError(
+      "A workspace enablement flag must be true or false."
+    );
+  }
+  return value;
+}
+
+/** The base branch a write asks for. */
+function readBaseBranch(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new WorkspaceCatalogValidationError(
+      "A workspace base branch must be a branch name."
+    );
+  }
+  const baseBranch = value.trim();
+  if (baseBranch.length === 0) {
+    throw new WorkspaceCatalogValidationError(
+      "A workspace base branch must not be empty."
+    );
+  }
+  return baseBranch;
+}
+
+/**
+ * The role scope a write asks for.
+ *
+ * A scope that is not configured and a scope that names no role are different
+ * facts, and a scope that names the same role twice is not a scope at all:
+ * the catalog's own parser refuses all three, and so does this.
+ */
+function readRoleScope(value: unknown): readonly string[] | null {
+  if (value === null) return null;
+  if (!Array.isArray(value)) {
+    throw new WorkspaceCatalogValidationError(
+      "A workspace role scope must be a list of role names or null."
+    );
+  }
+  const roles: string[] = [];
+  for (const role of value) {
+    if (typeof role !== "string") {
+      throw new WorkspaceCatalogValidationError(
+        "A workspace role scope must be a list of role names or null."
+      );
+    }
+    const trimmed = role.trim();
+    if (trimmed.length === 0) {
+      throw new WorkspaceCatalogValidationError(
+        "A workspace role scope must not name an empty role."
+      );
+    }
+    if (roles.includes(trimmed)) {
+      throw new WorkspaceCatalogValidationError(
+        `A workspace role scope must not repeat the role ${trimmed}.`
+      );
+    }
+    roles.push(trimmed);
+  }
+  return roles;
+}
+
+/**
+ * The change a write asks for, validated against the catalog's own rules.
+ *
+ * The rules are the ones `parseWorkspaceCatalog` enforces, checked here so a
+ * write that could not be expressed is refused before it touches the file.
+ */
+function readCatalogUpdate(
+  update: WorkspaceCatalogUpdate
+): WorkspaceCatalogChange {
+  const change: {
+    enabled?: boolean | undefined;
+    baseBranch?: string | undefined;
+    agentRoles?: readonly string[] | null | undefined;
+  } = {};
+  if (update.enabled !== undefined) {
+    change.enabled = readEnabledFlag(update.enabled);
+  }
+  if (update.baseBranch !== undefined) {
+    change.baseBranch = readBaseBranch(update.baseBranch);
+  }
+  if (update.agentRoles !== undefined) {
+    change.agentRoles = readRoleScope(update.agentRoles);
+  }
+  if (
+    change.enabled === undefined &&
+    change.baseBranch === undefined &&
+    change.agentRoles === undefined
+  ) {
+    throw new WorkspaceCatalogValidationError(
+      "A workspace update must change at least one of enablement, base branch or role scope."
+    );
+  }
+  return change;
+}
+
+/**
+ * The temporary file a write lands in before it replaces the catalog.
+ *
+ * It is in the catalog's own directory, because a rename is only atomic
+ * within a filesystem, and it is hidden, because a reader that lists the
+ * directory must not see a half-written catalog.
+ */
+let writeCounter = 0;
+
+function temporaryCatalogPath(catalogPath: string): string {
+  writeCounter += 1;
+  return path.join(
+    path.dirname(catalogPath),
+    `.${path.basename(catalogPath)}.${process.pid}.${writeCounter}.tmp`
+  );
+}
+
+/** The catalog's bytes, or the reason they could not be read. */
+function readCatalogBytes(catalogPath: string): Buffer {
+  try {
+    return readFileSync(catalogPath);
+  } catch (error) {
+    throw new WorkspaceCatalogValidationError(
+      `Workspace catalog could not be read: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+}
+
+/**
+ * The catalog's document, checked against the catalog's own rules.
+ *
+ * A catalog that cannot be read as a catalog is not written: the write would
+ * land in a file the catalog's own parser refuses, and the next reader would
+ * find a broken catalog where a working one was.
+ */
+function readCatalogDocument(bytes: Buffer): Record<string, unknown> {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(bytes.toString("utf8")) as unknown;
+  } catch (error) {
+    throw new WorkspaceCatalogValidationError(
+      `Workspace catalog is not valid JSON: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+  if (!isPlainRecord(raw) || !Array.isArray(raw.workspaces)) {
+    throw new WorkspaceCatalogValidationError("Workspace catalog is invalid.");
+  }
+  try {
+    parseWorkspaceCatalog(raw);
+  } catch (error) {
+    throw new WorkspaceCatalogValidationError(
+      error instanceof WorkspaceCatalogError
+        ? error.message
+        : `Workspace catalog is invalid: ${String(error)}`
+    );
+  }
+  return raw;
+}
+
+/** The catalog's entry for one workspace. */
+function findCatalogEntry(
+  document: Record<string, unknown>,
+  workspaceId: string
+): Record<string, unknown> {
+  const id = workspaceId.trim();
+  const entries = document.workspaces as readonly unknown[];
+  const index = entries.findIndex(
+    (entry) =>
+      isPlainRecord(entry) &&
+      typeof entry.id === "string" &&
+      entry.id.trim() === id
+  );
+  if (index === -1) {
+    throw new WorkspaceCatalogUnknownWorkspaceError(
+      `Workspace ${workspaceId} is not in the canonical catalog.`
+    );
+  }
+  return entries[index] as Record<string, unknown>;
+}
+
+/**
+ * Replace the catalog with the document the write produced.
+ *
+ * The write lands in a temporary file in the catalog's own directory and is
+ * moved into place with a rename, so a reader never sees a half-written
+ * catalog. The catalog keeps the permissions it had: a rename replaces the
+ * file, and a file that came back with different permissions would be a
+ * change the operator never asked for.
+ */
+function replaceCatalogFile(catalogPath: string, text: string): void {
+  const temporary = temporaryCatalogPath(catalogPath);
+  try {
+    writeFileSync(temporary, text, { encoding: "utf8" });
+    chmodSync(temporary, statSync(catalogPath).mode & 0o777);
+    renameSync(temporary, catalogPath);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw new WorkspaceCatalogValidationError(
+      `Workspace catalog could not be written: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+}
+
+/**
+ * Write one workspace's configuration to the canonical catalog.
+ *
+ * The write is a compare-and-swap on the catalog's revision: the caller names
+ * the revision it decided on, and a catalog that has moved since is refused
+ * rather than overwritten. The file is rewritten in place -- same shape, same
+ * key order, same indentation -- and replaced atomically, so a reader never
+ * sees a half-written catalog and a diff shows the fields that changed.
+ *
+ * The catalog's own rules are the rules this write obeys: an update that
+ * could not be expressed is refused before the file is touched, and the
+ * document the write produces is validated again before it lands.
+ */
+export function updateWorkspaceCatalogEntry(
+  catalogPath: string,
+  workspaceId: string,
+  expectedRevision: string,
+  update: WorkspaceCatalogUpdate
+): WorkspaceCatalogWrite {
+  const absolute = path.resolve(catalogPath);
+  const change = readCatalogUpdate(update);
+  if (!REVISION_PATTERN.test(expectedRevision)) {
+    throw new WorkspaceCatalogValidationError(
+      "A workspace write must name the revision it was decided on."
+    );
+  }
+  const bytes = readCatalogBytes(absolute);
+  const revision = workspaceCatalogRevision(bytes);
+  if (revision !== expectedRevision) {
+    throw new WorkspaceCatalogConflictError(
+      "The workspace catalog changed after it was read, so the write was not applied."
+    );
+  }
+  const document = readCatalogDocument(bytes);
+  const entry = findCatalogEntry(document, workspaceId);
+  // The fields the catalog already declares are written in place, so the
+  // document keeps the key order it was written in and the diff shows the
+  // value that changed rather than a rewritten file.
+  if (change.enabled !== undefined) entry.enabled = change.enabled;
+  if (change.baseBranch !== undefined) entry.baseBranch = change.baseBranch;
+  if (change.agentRoles !== undefined) {
+    entry.agentRoles =
+      change.agentRoles === null ? null : [...change.agentRoles];
+  }
+  let updated: WorkspaceCatalog;
+  try {
+    updated = parseWorkspaceCatalog(document);
+  } catch (error) {
+    throw new WorkspaceCatalogValidationError(
+      error instanceof WorkspaceCatalogError
+        ? error.message
+        : `Workspace catalog is invalid: ${String(error)}`
+    );
+  }
+  const workspace = updated.workspaces.get(workspaceId.trim());
+  if (workspace === undefined) {
+    throw new WorkspaceCatalogUnknownWorkspaceError(
+      `Workspace ${workspaceId} is not in the canonical catalog.`
+    );
+  }
+  replaceCatalogFile(absolute, `${JSON.stringify(document, null, 2)}\n`);
+  const written = workspaceCatalogRevision(readFileSync(absolute));
+  return {
+    revision: written,
+    workspace,
+    changed: written !== expectedRevision
+  };
 }
 
 /**

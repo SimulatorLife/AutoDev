@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
 
+import { workspaceSaveOutcomeFromQuery } from "../../../../src/features/workspaces/configuration.ts";
 import { isWorkspaceId } from "../../../../src/features/workspaces/paths.ts";
 import { workspaceRequestReading } from "../../../../src/features/workspaces/workspace-usage.ts";
 import { WorkspaceDetailView } from "../../../../src/features/workspaces/WorkspaceDetailView.ts";
@@ -9,6 +10,7 @@ import {
   isControlFailure,
   readControlRefusal
 } from "../../../../src/lib/control-failure.ts";
+import { editorBaseRevisionFromQuery } from "../../../../src/lib/server/canonical-source.ts";
 import {
   controlApiFailureCode,
   fetchWorkspacePlaytestApproval,
@@ -98,6 +100,12 @@ export default async function WorkspaceDetailPage({
   );
   if (!workspace) notFound();
 
+  // A refused write leaves the control based on the revision the edit was
+  // written for rather than the revision the catalog has moved to, so the
+  // operator's edit is not silently paired with a catalog it never saw.
+  const basedOn = editorBaseRevisionFromQuery(query.based);
+  const saveOutcome = workspaceSaveOutcomeFromQuery(query.save);
+
   return React.createElement(
     ConsolePageShell,
     { section },
@@ -125,7 +133,10 @@ export default async function WorkspaceDetailPage({
             },
       requests: workspaceRequestReading(requestSource, id),
       controlFailed: isControlFailure(query.control),
-      refusal: readControlRefusal(query.refusal)
+      refusal: readControlRefusal(query.refusal),
+      revision: basedOn ?? workspacesResult.data.revision,
+      catalogStatus: workspacesResult.data.catalogStatus,
+      ...(saveOutcome === undefined ? {} : { saveOutcome })
     })
   );
 }
