@@ -100,6 +100,35 @@ const SYNTHETIC_VISUAL_LIMIT_KEYS = new Set([
   "artifactBytesPerEpisode"
 ]);
 const WORKSPACE_ID = "fixture/game";
+/**
+ * The canonical workspace configuration the fixture holds.
+ *
+ * The Runtime owns the real catalog and publishes a revision the write is
+ * compared against, so the fixture has to hold a configuration and a revision
+ * too: a spec that writes through the Console has to be able to see that the
+ * write landed, and a spec that moves the revision underneath an open page
+ * has to be able to make the page's next write a conflict.
+ */
+const workspaceConfiguration = {
+  id: WORKSPACE_ID,
+  baseBranch: "main",
+  enabled: true,
+  agentRoles: null as string[] | null,
+  revision: "e".repeat(64)
+};
+const INITIAL_WORKSPACE_REVISION = workspaceConfiguration.revision;
+
+/**
+ * The states the fixture's own control routes put a setting back to.
+ *
+ * "enabled" and "disabled" say which way a setting goes, and "revision-moved"
+ * moves the revision without this Console knowing -- so the page that holds
+ * the revision it was rendered with writes against a setting that has moved
+ * past it.
+ */
+const FIXTURE_STATE_ENABLED = "enabled";
+const FIXTURE_STATE_DISABLED = "disabled";
+const FIXTURE_STATE_REVISION_MOVED = "revision-moved";
 const BUILD_SHA = "a".repeat(40);
 const MEASUREMENT_VERSION = "measurement-v1";
 const RUBRIC_HASH = "d".repeat(64);
@@ -3300,6 +3329,41 @@ function nextAgentEnablementRevision(revision: string): string {
 }
 
 /**
+ * The next revision of the canonical workspace configuration.
+ *
+ * The revision is the catalog's own handle, so moving it is what makes a page
+ * that holds the old one write against a catalog that has moved past it.
+ */
+function nextWorkspaceRevision(revision: string): string {
+  return (BigInt(`0x${revision}`) + 1n).toString(16).padStart(64, "0");
+}
+
+/**
+ * One workspace's configuration, as the Runtime reports it.
+ *
+ * The list and the detail read the same state through this one function, so a
+ * write that lands is the same fact on both surfaces rather than two the
+ * fixture keeps in step by hand.
+ */
+function workspaceConfigurationRecord(): {
+  id: string;
+  baseBranch: string;
+  enabled: boolean;
+  agentRoles: string[] | null;
+  configuration: { status: "configured" };
+  runtime: { status: "not-observed" };
+} {
+  return {
+    id: workspaceConfiguration.id,
+    baseBranch: workspaceConfiguration.baseBranch,
+    enabled: workspaceConfiguration.enabled,
+    agentRoles: workspaceConfiguration.agentRoles,
+    configuration: { status: "configured" },
+    runtime: { status: "not-observed" }
+  };
+}
+
+/**
  * One role's enablement, as the Runtime reports it.
  *
  * The list and the detail read the same state through this one function, so a
@@ -3617,10 +3681,10 @@ function configureAgentEnablementFixture(
     return true;
   }
   const state = url.searchParams.get("state");
-  if (state === "enabled" || state === "disabled") {
-    agentEnablement.default.enabled = state === "enabled";
+  if (state === FIXTURE_STATE_ENABLED || state === FIXTURE_STATE_DISABLED) {
+    agentEnablement.default.enabled = state === FIXTURE_STATE_ENABLED;
     agentEnablement.default.revision = INITIAL_AGENT_ENABLEMENT_REVISION;
-  } else if (state === "revision-moved") {
+  } else if (state === FIXTURE_STATE_REVISION_MOVED) {
     agentEnablement.default.revision = nextAgentEnablementRevision(
       agentEnablement.default.revision
     );
@@ -3636,9 +3700,199 @@ function configureAgentEnablementFixture(
     return true;
   }
   sendJson(response, {
-    state: state === "revision-moved" ? "revision-moved" : state,
+    state:
+      state === FIXTURE_STATE_REVISION_MOVED
+        ? FIXTURE_STATE_REVISION_MOVED
+        : state,
     enabled: agentEnablement.default.enabled,
     revision: agentEnablement.default.revision
+  });
+  return true;
+}
+
+/** One workspace's own configuration route. */
+const WORKSPACE_CONFIGURATION_ROUTE =
+  /^\/control\/workspaces\/([^/]+)\/([^/]+)$/u;
+
+/**
+ * The write to one workspace's canonical configuration.
+ *
+ * The Runtime owns the catalog, so the fixture has to do what the Runtime
+ * does: compare the revision the write was decided on against the revision it
+ * holds, refuse a write that names a revision the catalog has moved past, and
+ * answer a write that lands with the catalog's new revision.
+ */
+async function applyWorkspaceConfigurationWrite(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): Promise<boolean> {
+  const match = url.pathname.match(WORKSPACE_CONFIGURATION_ROUTE);
+  if (match === null) return false;
+  if (request.method !== "PATCH") return false;
+
+  const workspaceId = `${decodeURIComponent(match[1] ?? "")}/${decodeURIComponent(match[2] ?? "")}`;
+  if (workspaceId !== workspaceConfiguration.id) {
+    sendJson(
+      response,
+      {
+        code: "autodev_control_workspace_unknown",
+        message: `Workspace ${workspaceId} is not in the canonical catalog.`
+      },
+      404
+    );
+    return true;
+  }
+
+  const body = await readJsonBody(request);
+  const expectedRevision = body?.expectedRevision;
+  if (typeof expectedRevision !== "string") {
+    sendJson(
+      response,
+      {
+        code: "autodev_control_workspace_invalid_update",
+        message: "The fixture needs an expectedRevision."
+      },
+      400
+    );
+    return true;
+  }
+  if (expectedRevision !== workspaceConfiguration.revision) {
+    sendJson(
+      response,
+      {
+        code: "autodev_control_workspace_revision_conflict",
+        message:
+          "The workspace catalog changed after it was read, so the write was not applied."
+      },
+      409
+    );
+    return true;
+  }
+
+  const before = JSON.stringify({
+    baseBranch: workspaceConfiguration.baseBranch,
+    enabled: workspaceConfiguration.enabled,
+    agentRoles: workspaceConfiguration.agentRoles
+  });
+  if ("enabled" in body) {
+    if (typeof body.enabled !== "boolean") {
+      sendJson(
+        response,
+        {
+          code: "autodev_control_workspace_invalid_update",
+          message: "The fixture needs an enabled boolean."
+        },
+        400
+      );
+      return true;
+    }
+    workspaceConfiguration.enabled = body.enabled;
+  }
+  if ("baseBranch" in body) {
+    if (typeof body.baseBranch !== "string" || body.baseBranch.trim() === "") {
+      sendJson(
+        response,
+        {
+          code: "autodev_control_workspace_invalid_update",
+          message: "The fixture needs a base branch."
+        },
+        400
+      );
+      return true;
+    }
+    workspaceConfiguration.baseBranch = body.baseBranch.trim();
+  }
+  if ("agentRoles" in body) {
+    if (
+      body.agentRoles !== null &&
+      (!Array.isArray(body.agentRoles) ||
+        body.agentRoles.some((role: unknown) => typeof role !== "string"))
+    ) {
+      sendJson(
+        response,
+        {
+          code: "autodev_control_workspace_invalid_update",
+          message:
+            "The fixture needs a role scope of null or a list of role names."
+        },
+        400
+      );
+      return true;
+    }
+    workspaceConfiguration.agentRoles = body.agentRoles as string[] | null;
+  }
+  const after = JSON.stringify({
+    baseBranch: workspaceConfiguration.baseBranch,
+    enabled: workspaceConfiguration.enabled,
+    agentRoles: workspaceConfiguration.agentRoles
+  });
+  const changed = before !== after;
+  if (changed) {
+    workspaceConfiguration.revision = nextWorkspaceRevision(
+      workspaceConfiguration.revision
+    );
+  }
+  sendJson(response, {
+    schema: "autodev-control-workspace-patch-v1",
+    id: workspaceConfiguration.id,
+    revision: workspaceConfiguration.revision,
+    changed,
+    workspace: workspaceConfigurationRecord()
+  });
+  return true;
+}
+
+/**
+ * The fixture's own control over the canonical workspace configuration.
+ *
+ * `/fixture/workspaces/state?state=revision-moved` moves the revision without
+ * this Console knowing: the page that has the workspace open holds the
+ * revision it was rendered with, so moving it here is what makes the page's
+ * next write a conflict rather than a silent overwrite of somebody else's
+ * change. The `enabled` and `disabled` states put the configuration back
+ * where a test that writes starts.
+ */
+function configureWorkspaceFixture(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+): boolean {
+  if (url.pathname !== "/fixture/workspaces/state") return false;
+  if (request.method !== "POST") {
+    response.writeHead(405).end();
+    return true;
+  }
+  const state = url.searchParams.get("state");
+  if (state === FIXTURE_STATE_ENABLED || state === FIXTURE_STATE_DISABLED) {
+    workspaceConfiguration.enabled = state === FIXTURE_STATE_ENABLED;
+    workspaceConfiguration.baseBranch = "main";
+    workspaceConfiguration.agentRoles = null;
+    workspaceConfiguration.revision = INITIAL_WORKSPACE_REVISION;
+  } else if (state === FIXTURE_STATE_REVISION_MOVED) {
+    workspaceConfiguration.revision = nextWorkspaceRevision(
+      workspaceConfiguration.revision
+    );
+  } else {
+    sendJson(
+      response,
+      {
+        code: "autodev_fixture_unknown_state",
+        message: "The fixture knows enabled, disabled and revision-moved."
+      },
+      400
+    );
+    return true;
+  }
+  sendJson(response, {
+    state:
+      state === FIXTURE_STATE_REVISION_MOVED
+        ? FIXTURE_STATE_REVISION_MOVED
+        : state,
+    enabled: workspaceConfiguration.enabled,
+    baseBranch: workspaceConfiguration.baseBranch,
+    agentRoles: workspaceConfiguration.agentRoles,
+    revision: workspaceConfiguration.revision
   });
   return true;
 }
@@ -5213,6 +5467,7 @@ function handleFixtureCatalogRoutes(
   if (configureSkillFixture(request, response, url)) return true;
   if (configureMcpFixture(request, response, url)) return true;
   if (configureHookFixture(request, response, url)) return true;
+  if (configureWorkspaceFixture(request, response, url)) return true;
   if (configureCanonicalSourceFixture(request, response, url)) return true;
   if (handleRuntimeFixture(request, response, url)) return true;
   if (handleGithubRead(request, response, url)) return true;
@@ -5252,6 +5507,9 @@ async function handleSyntheticMutationRoutes(
   if (await applyHookDeclarationWrite(response, request, url)) {
     return true;
   }
+  if (await applyWorkspaceConfigurationWrite(request, response, url)) {
+    return true;
+  }
   return configureAgentEnablementFixture(request, response, url);
 }
 
@@ -5278,16 +5536,16 @@ const server = createServer(
       sendJson(response, {
         schema: "autodev-control-workspaces-v2",
         source: "fixture",
-        readOnly: true,
+        readOnly: false,
         catalogStatus: "valid",
-        revision: "e".repeat(64),
+        revision: workspaceConfiguration.revision,
         totalWorkspaces: 1,
         workspaces: [
           {
-            id: WORKSPACE_ID,
-            baseBranch: "main",
-            enabled: true,
-            agentRoles: null,
+            id: workspaceConfiguration.id,
+            baseBranch: workspaceConfiguration.baseBranch,
+            enabled: workspaceConfiguration.enabled,
+            agentRoles: workspaceConfiguration.agentRoles,
             configuration: { status: "configured" },
             runtime: { status: "not-observed" }
           }
