@@ -51,8 +51,11 @@ jobs:
           github-token: ${{ secrets.GH_USER_TOKEN }}
           script: |
             const path = require('node:path');
-            const { loadCatalog, resolveTarget } = require(path.join(process.env.GITHUB_WORKSPACE, '.github', 'scripts', 'workspace-catalog.cjs'));
-            const catalog = loadCatalog('config/workspaces.json');
+            const { pathToFileURL } = require('node:url');
+            const { loadWorkspaceCatalog, resolveTarget } = await import(
+              pathToFileURL(path.join(process.env.GITHUB_WORKSPACE, 'data', 'src', 'config', 'workspace-catalog.ts')).href
+            );
+            const catalog = loadWorkspaceCatalog(path.join(process.env.GITHUB_WORKSPACE, 'config/workspaces.json'));
             const result = resolveTarget(catalog, process.env.TARGET_REPOSITORY);
             if (!result.ok) throw new Error(result.reason);
             const [owner, repo] = process.env.TARGET_REPOSITORY.split('/');

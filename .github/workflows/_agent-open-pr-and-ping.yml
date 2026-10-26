@@ -96,6 +96,14 @@ jobs:
           path: .autodev
           fetch-depth: 1
 
+      # The catalog owner is TypeScript, so the Node that runs it has to be
+      # able to strip types. The runner's default Node is not a promise; the
+      # repository's own .nvmrc is.
+      - name: Setup AutoDev Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .autodev/.nvmrc
+
       - name: Resolve target and prompt workspaces
         id: workspace_catalog
         env:
@@ -107,14 +115,14 @@ jobs:
           set -euo pipefail
           cp .autodev/.github/workflows/weights.json "$RUNNER_TEMP/autodev-weights.json"
 
-          target_workspace=$(node .autodev/.github/scripts/workspace-catalog.cjs resolve-target \
+          target_workspace=$(node .autodev/data/src/config/workspace-catalog.ts resolve-target \
             .autodev/config/workspaces.json "${TARGET_REPOSITORY}" \
             --base-branch "${REQUESTED_BASE_BRANCH}")
           canonical_base_branch=$(jq -r '.baseBranch' <<<"${target_workspace}")
           echo "base_branch=${canonical_base_branch}" >> "$GITHUB_OUTPUT"
 
           if [ -n "${PROMPT_PATH}" ]; then
-            node .autodev/.github/scripts/workspace-catalog.cjs resolve-prompt \
+            node .autodev/data/src/config/workspace-catalog.ts resolve-prompt \
               .autodev/config/workspaces.json "${PROMPT_REPOSITORY}" >/dev/null
           fi
           if [ -n "${PROMPT_PATH}" ] && [ "${PROMPT_REPOSITORY}" = "SimulatorLife/AutoDev" ]; then

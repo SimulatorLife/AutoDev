@@ -74,13 +74,21 @@ jobs:
           path: .autodev
           fetch-depth: 1
 
+      # The catalog owner is TypeScript, so the Node that runs it has to be
+      # able to strip types. The runner's default Node is not a promise; the
+      # repository's own .nvmrc is.
+      - name: Setup AutoDev Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .autodev/.nvmrc
+
       - name: Validate target workspace against canonical catalog
         shell: bash
         env:
           TARGET_REPOSITORY: ${{ inputs.target_repository || github.event.inputs.target_repository || github.repository }}
         run: |
           set -euo pipefail
-          node .autodev/.github/scripts/workspace-catalog.cjs resolve-target \
+          node .autodev/data/src/config/workspace-catalog.ts resolve-target \
             .autodev/config/workspaces.json "${TARGET_REPOSITORY}" >/dev/null
 
       - name: Stage AutoDev policy

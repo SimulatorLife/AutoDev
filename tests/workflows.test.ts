@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -14,6 +15,15 @@ const readWorkflow = (name: string): Promise<string> =>
   readFile(path.join(workflows, name), "utf8");
 const readPrompt = (name: string): Promise<string> =>
   readFile(path.join(prompts, name), "utf8");
+
+// The canonical workspace catalog has one owner, and a workflow that reads
+// the catalog has to name it by its exact repository-relative path. The
+// path is written as path.join() segments, so the pattern is the segments.
+const workspaceCatalogOwnerPattern = new RegExp(
+  ["data", "src", "config", "workspace-catalog.ts"]
+    .map((segment) => `['"]${segment.replaceAll(".", String.raw`\.`)}['"]`)
+    .join(String.raw`\s*,\s*`)
+);
 
 async function enabledWorkspaceIds(): Promise<string[]> {
   const catalog = JSON.parse(
@@ -85,7 +95,7 @@ const githubScriptRequire = createRequire(import.meta.url);
 async function runGithubScriptBody(
   body: string,
   stubs: GithubScriptStubs
-): Promise<void> {
+): Promise<unknown> {
   const AsyncFunction = Object.getPrototypeOf(async function () {})
     .constructor as new (
     ...args: string[]
@@ -106,7 +116,7 @@ async function runGithubScriptBody(
     process.env[key] = value;
   }
   try {
-    await fn(
+    return await fn(
       stubs.github ?? {},
       stubs.context ?? {},
       stubs.core ?? {},
@@ -215,6 +225,11 @@ test("generic prompt runner supports AutoDev and target prompt scopes", async ()
     runner,
     /prompt_path must be a repository-relative \.agents\/prompts\/\*\.md path/
   );
+  assert.match(
+    runner,
+    /\.agents\/prompts\/\*\.md\|\.rulesync\/commands\/\*\.md\)/,
+    "the runner accepts the same prompt locations the scheduler may plan"
+  );
   assert.match(source, /repository: \$\{\{ inputs\.target_repository \}\}/);
   assert.match(
     source,
@@ -228,7 +243,7 @@ test("generic prompt runner supports AutoDev and target prompt scopes", async ()
   assert.match(runner, /config\/workspaces\.json/);
   assert.match(
     runner,
-    /workspace-catalog\.cjs/,
+    /data\/src\/config\/workspace-catalog\.ts/,
     "the reusable prompt runner resolves targets from the canonical catalog"
   );
   assert.match(
@@ -401,8 +416,8 @@ test("central target PR janitor owns empty stale PR cleanup", async () => {
   assert.match(source, /rawStaleHours/);
   assert.ok(source.includes("Number(rawStaleHours || '1.25')"));
   assert.match(source, /config\/workspaces\.json/);
-  assert.match(source, /workspace-catalog\.cjs/);
-  assert.match(source, /loadCatalog/);
+  assert.match(source, workspaceCatalogOwnerPattern);
+  assert.match(source, /loadWorkspaceCatalog/);
   assert.match(source, /listEnabled/);
   assert.match(source, /resolveTarget/);
   assert.match(source, /pulls\.list/);
@@ -671,25 +686,29 @@ test("manual repository selectors accept target_repository as string without dup
   }
 });
 
-test("target-handling workflows delegate validation to the workspace-catalog owner", async () => {
-  const ownerPath = ".github/scripts/workspace-catalog.cjs";
+test("every workflow that reads the workspace catalog delegates to the one owner", async () => {
+  const ownerPath = "data/src/config/workspace-catalog.ts";
   const catalogPath = "config/workspaces.json";
   const escapeForRegExp = (segment: string): string =>
     segment.replaceAll(".", String.raw`\.`);
-  const ownerRequirePattern = new RegExp(
-    String.raw`require\(\s*path\.join\(` +
-      String.raw`[\s\S]*?` +
-      ownerPath
-        .split("/")
-        .map(escapeForRegExp)
-        .map((segment) => `['"]${segment}['"]`)
-        .join(String.raw`[\s\S]*?`) +
-      String.raw`\s*\)\s*\)`
+  const ownerSegments = ownerPath
+    .split("/")
+    .map(escapeForRegExp)
+    .map((segment) => `['"]${segment}['"]`);
+  // The github-script bodies cannot require() a TypeScript file, so they
+  // import it by absolute file URL built from the workspace root.
+  const ownerImportPattern = new RegExp(
+    String.raw`import\(\s*pathToFileURL\(\s*path\.join\(\s*` +
+      String.raw`process\.env\.GITHUB_WORKSPACE\s*,\s*` +
+      ownerSegments.join(String.raw`\s*,\s*`) +
+      String.raw`\s*\)\s*\)\.href\s*\)`
   );
   const rootWorkflows = [
     "target-pr-janitor.yml",
     "target-automerge.yml",
-    "target-validation.yml"
+    "target-validation.yml",
+    "_scheduler.yml",
+    "metrics-dashboard.yml"
   ] as const;
   const autodevWorkflows = [
     "_agent-open-pr-and-ping.yml",
@@ -701,8 +720,8 @@ test("target-handling workflows delegate validation to the workspace-catalog own
     const source = await readWorkflow(name);
     assert.match(
       source,
-      ownerRequirePattern,
-      `${name} loads the catalog owner via its exact repository-relative require path`
+      ownerImportPattern,
+      `${name} loads the catalog owner via its exact repository-relative import path`
     );
     assert.match(
       source,
@@ -720,13 +739,18 @@ test("target-handling workflows delegate validation to the workspace-catalog own
       `${name} must not duplicate the identity regex`
     );
     assert.doesNotMatch(source, /catalog\.schema !==/, `${name}`);
+    assert.doesNotMatch(
+      source,
+      /workspaceCatalog/,
+      `${name} must not carry its own copy of the catalog`
+    );
   }
 
   for (const name of autodevWorkflows) {
     const source = await readWorkflow(name);
     assert.match(
       source,
-      /workspace-catalog\.cjs/,
+      /node \.autodev\/data\/src\/config\/workspace-catalog\.ts/,
       `${name} invokes the catalog owner`
     );
     assert.doesNotMatch(
@@ -739,6 +763,168 @@ test("target-handling workflows delegate validation to the workspace-catalog own
       /\.workspaces\[\] \| select\(\.id ==/,
       `${name} must not inline the workspace lookup jq query`
     );
+  }
+});
+
+test("the catalog has exactly one owner, and it is TypeScript", async () => {
+  const legacyOwner = path.join(
+    root,
+    ".github",
+    "scripts",
+    "workspace-catalog.cjs"
+  );
+  assert.equal(
+    existsSync(legacyOwner),
+    false,
+    "the legacy catalog script must be gone, not shadowed by a second owner"
+  );
+  const owner = path.join(
+    root,
+    "data",
+    "src",
+    "config",
+    "workspace-catalog.ts"
+  );
+  assert.equal(existsSync(owner), true);
+  for (const name of await readdir(path.join(root, ".github", "workflows"))) {
+    if (!name.endsWith(".yml")) continue;
+    const source = await readWorkflow(name);
+    assert.doesNotMatch(
+      source,
+      /workspace-catalog\.cjs/,
+      `${name} must not call the retired catalog script`
+    );
+  }
+});
+
+test("the metrics dashboard loads its modules from the workspace, not from the action", async () => {
+  // A relative import() inside a github-script body resolves against the
+  // action's own dist directory, so the dashboard asked the action's bundle
+  // for runtime/src/telemetry/github-metrics.ts and could not find it. The
+  // body has to name the workspace's modules by absolute file URL, and this
+  // executes it to prove it does.
+  const source = await readWorkflow("metrics-dashboard.yml");
+  const dashboardBlock = extractScriptBlocks(source).find((block) =>
+    block.body.includes("collectMetrics")
+  );
+  assert.ok(dashboardBlock, "expected to find the dashboard script block");
+  const workingDirectory = await mkdtemp(
+    path.join(tmpdir(), "autodev-metrics-dashboard-")
+  );
+  const previousCwd = process.cwd();
+  process.chdir(workingDirectory);
+  try {
+    const created: number[] = [];
+    await runGithubScriptBody(dashboardBlock!.body, {
+      env: {
+        GITHUB_WORKSPACE: root,
+        LOOKBACK_DAYS: "90"
+      },
+      core: {
+        info: () => {},
+        summary: {
+          addRaw: () => ({
+            write: () => {}
+          })
+        }
+      },
+      context: { repo: { owner: "SimulatorLife", repo: "AutoDev" } },
+      github: {
+        paginate: async () => [],
+        rest: {
+          pulls: { list: async () => ({ data: [] }) },
+          actions: { listWorkflowRuns: async () => ({ data: [] }) },
+          issues: {
+            listForRepo: async () => [],
+            create: async () => {
+              created.push(1);
+              return { data: { number: 1 } };
+            }
+          }
+        }
+      }
+    });
+    assert.equal(created.length, 1, "the dashboard must publish its issue");
+    const snapshot = JSON.parse(
+      await readFile(
+        path.join(workingDirectory, "metrics-snapshot.json"),
+        "utf8"
+      )
+    ) as { repositories?: string[] };
+    assert.deepEqual(
+      snapshot.repositories,
+      [
+        "SimulatorLife/3DSpider",
+        "SimulatorLife/AutoDev",
+        "SimulatorLife/Colourful-Life",
+        "SimulatorLife/GMLoop",
+        "SimulatorLife/RacingGame"
+      ],
+      "the dashboard measures the workspaces the catalog declares"
+    );
+  } finally {
+    process.chdir(previousCwd);
+    await rm(workingDirectory, { recursive: true, force: true });
+  }
+});
+
+test("the scheduler plans against the catalog the owner reads", async () => {
+  // The scheduler used to carry its own copy of the catalog's rules and was
+  // handed the catalog as JSON through a step output. It now asks the owner,
+  // so the plan it produces has to come from the canonical file: the branch
+  // it dispatches against is the branch the catalog declares.
+  const source = await readWorkflow("_scheduler.yml");
+  const planBlock = extractScriptBlocks(source).find((block) =>
+    block.body.includes("workflow_id: 'run-prompt.yml'")
+  );
+  assert.ok(planBlock, "expected to find the scheduler's plan script block");
+  const cfg = JSON.parse(
+    await readFile(
+      path.join(root, ".github", "workflows", "weights.json"),
+      "utf8"
+    )
+  ) as unknown;
+  const previousCwd = process.cwd();
+  process.chdir(root);
+  try {
+    const plan = (await runGithubScriptBody(planBlock!.body, {
+      env: {
+        GITHUB_WORKSPACE: root,
+        CFG_JSON: JSON.stringify(cfg),
+        GITHUB_RUN_NUMBER: "1"
+      },
+      core: { info: () => {} }
+    })) as {
+      target_repository?: string;
+      base_branch?: string;
+      prompt_repository?: string;
+      agent_name?: string;
+    } | null;
+    assert.ok(plan, "the scheduler must plan a dispatch on run #1");
+    assert.ok(plan.target_repository);
+    const catalog = JSON.parse(
+      await readFile(path.join(root, "config", "workspaces.json"), "utf8")
+    ) as {
+      workspaces: Array<{
+        id: string;
+        baseBranch: string;
+        enabled: boolean;
+      }>;
+    };
+    const workspace = catalog.workspaces.find(
+      (entry) => entry.id === plan.target_repository
+    );
+    assert.ok(workspace, "the scheduled target must be a catalogued workspace");
+    assert.equal(workspace.enabled, true);
+    assert.equal(
+      plan.base_branch,
+      workspace.baseBranch,
+      "the dispatched branch is the one the canonical catalog declares"
+    );
+    assert.equal(plan.prompt_repository, "SimulatorLife/AutoDev");
+    assert.ok(plan.agent_name);
+  } finally {
+    process.chdir(previousCwd);
   }
 });
 

@@ -1,18 +1,31 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import {
+  listEnabled,
+  loadWorkspaceCatalog,
+  parseWorkspaceCatalog,
+  readWorkspaceCatalogFile,
+  resolvePrompt,
+  resolveTarget,
+  WORKSPACE_CATALOG_SCHEMA,
+  WORKSPACE_ID_PATTERN,
+  workspaceAdmitsRole,
+  WorkspaceCatalogError
+} from "../data/src/config/workspace-catalog.ts";
+
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
-const scriptPath = path.join(
+const ownerPath = path.join(
   repositoryRoot,
-  ".github",
-  "scripts",
-  "workspace-catalog.cjs"
+  "data",
+  "src",
+  "config",
+  "workspace-catalog.ts"
 );
 const canonicalCatalogPath = path.join(
   repositoryRoot,
@@ -20,30 +33,9 @@ const canonicalCatalogPath = path.join(
   "workspaces.json"
 );
 
-const require = createRequire(import.meta.url);
-const workspaceCatalog = require(scriptPath) as {
-  CATALOG_SCHEMA: string;
-  REPO_ID_PATTERN: RegExp;
-  WorkspaceCatalogError: ErrorConstructor;
-  loadCatalog(catalogPath: string): {
-    workspaces: Map<string, Workspace>;
-    list: Workspace[];
-  };
-  resolveTarget(
-    catalog: { workspaces: Map<string, Workspace> },
-    repoId: string,
-    options?: { baseBranch?: string; agentRole?: string }
-  ): { ok: true; workspace: Workspace } | { ok: false; reason: string };
-  resolvePrompt(
-    catalog: { workspaces: Map<string, Workspace> },
-    repoId: string
-  ): { ok: true; workspace: Workspace } | { ok: false; reason: string };
-  listEnabled(catalog: { list: Workspace[] }): string[];
-};
-
 interface Workspace {
   id: string;
-  baseBranch: string | null;
+  baseBranch: string;
   enabled: boolean;
   agentRoles: string[] | null;
 }
@@ -53,7 +45,7 @@ function runCli(args: string[]): {
   stdout: string;
   stderr: string;
 } {
-  const result = spawnSync(process.execPath, [scriptPath, ...args], {
+  const result = spawnSync(process.execPath, [ownerPath, ...args], {
     encoding: "utf8"
   });
   if (result.error) {
@@ -86,14 +78,14 @@ function makeWorkspace(overrides: Partial<Workspace>): Workspace {
   };
 }
 
-test("workspace catalog module exposes the canonical schema and identity regex", () => {
-  assert.equal(workspaceCatalog.CATALOG_SCHEMA, "autodev-workspaces-v1");
-  assert.ok(workspaceCatalog.REPO_ID_PATTERN instanceof RegExp);
-  assert.equal(typeof workspaceCatalog.WorkspaceCatalogError, "function");
+test("the catalog owner exposes the canonical schema and identity regex", () => {
+  assert.equal(WORKSPACE_CATALOG_SCHEMA, "autodev-workspaces-v1");
+  assert.ok(WORKSPACE_ID_PATTERN instanceof RegExp);
+  assert.equal(typeof WorkspaceCatalogError, "function");
 });
 
-test("loadCatalog validates and indexes the canonical registry", () => {
-  const catalog = workspaceCatalog.loadCatalog(canonicalCatalogPath);
+test("the owner validates and indexes the canonical registry", () => {
+  const catalog = loadWorkspaceCatalog(canonicalCatalogPath);
   assert.ok(catalog.workspaces instanceof Map);
   assert.equal(
     catalog.workspaces.get("SimulatorLife/AutoDev")?.baseBranch,
@@ -104,14 +96,11 @@ test("loadCatalog validates and indexes the canonical registry", () => {
     "master"
   );
   for (const workspace of catalog.list) {
-    assert.equal(
-      workspace.id,
-      workspace.id.match(workspaceCatalog.REPO_ID_PATTERN)?.[0]
-    );
+    assert.equal(workspace.id, workspace.id.match(WORKSPACE_ID_PATTERN)?.[0]);
   }
 });
 
-test("loadCatalog rejects malformed entries, duplicates, and missing files", () => {
+test("the owner rejects malformed entries, duplicates, and missing files", () => {
   const missing = runCli(["load", path.join(tmpdir(), "missing.json")]);
   assert.equal(missing.status, 1);
   assert.match(missing.stderr, /Workspace catalog not found/);
@@ -152,76 +141,88 @@ test("loadCatalog rejects malformed entries, duplicates, and missing files", () 
   rmSync(duplicate, { force: true });
 });
 
+test("the owner requires all four keys, so the canonical file has one shape", () => {
+  for (const missing of ["id", "baseBranch", "enabled", "agentRoles"]) {
+    const entry: Record<string, unknown> = {
+      id: "SimulatorLife/AutoDev",
+      baseBranch: "main",
+      enabled: true,
+      agentRoles: null
+    };
+    delete entry[missing];
+    const file = writeCatalog(`missing-${missing}`, {
+      schema: "autodev-workspaces-v1",
+      workspaces: [entry]
+    });
+    const result = runCli(["load", file]);
+    assert.equal(result.status, 1, `a catalog without ${missing} is refused`);
+    rmSync(file, { force: true });
+  }
+});
+
+test("the owner normalises every string it reads", () => {
+  const file = writeCatalog("padded", {
+    schema: "autodev-workspaces-v1",
+    workspaces: [
+      makeWorkspace({ id: " SimulatorLife/AutoDev ", baseBranch: " main " })
+    ]
+  });
+  const catalog = loadWorkspaceCatalog(file);
+  assert.equal(catalog.list[0]?.id, "SimulatorLife/AutoDev");
+  assert.equal(catalog.list[0]?.baseBranch, "main");
+  rmSync(file, { force: true });
+});
+
 test("resolveTarget enforces id form, presence, enabled, base branch, and role", () => {
-  const catalog = workspaceCatalog.loadCatalog(canonicalCatalogPath);
-  const known = workspaceCatalog.resolveTarget(
-    catalog,
-    "SimulatorLife/AutoDev"
-  );
+  const catalog = loadWorkspaceCatalog(canonicalCatalogPath);
+  const known = resolveTarget(catalog, "SimulatorLife/AutoDev");
   assert.equal(known.ok, true);
   if (known.ok) {
     assert.equal(known.workspace.baseBranch, "main");
   }
 
-  const badForm = workspaceCatalog.resolveTarget(catalog, "no-slash");
+  const badForm = resolveTarget(catalog, "no-slash");
   assert.equal(badForm.ok, false);
   if (!badForm.ok) assert.match(badForm.reason, /owner\/name form/);
 
-  const unknown = workspaceCatalog.resolveTarget(
-    catalog,
-    "SimulatorLife/Missing"
-  );
+  const unknown = resolveTarget(catalog, "SimulatorLife/Missing");
   assert.equal(unknown.ok, false);
   if (!unknown.ok)
     assert.match(unknown.reason, /Unconfigured target repository/);
 
-  const restricted = workspaceCatalog.loadCatalog(
-    writeCatalog("restricted", {
-      schema: "autodev-workspaces-v1",
-      workspaces: [
-        makeWorkspace({
-          id: "SimulatorLife/Locked",
-          enabled: true,
-          agentRoles: ["codex", "claude"]
-        })
-      ]
-    })
-  );
-  const unlocked = workspaceCatalog.resolveTarget(
-    restricted,
-    "SimulatorLife/Locked"
-  );
+  const restrictedFile = writeCatalog("restricted", {
+    schema: "autodev-workspaces-v1",
+    workspaces: [
+      makeWorkspace({
+        id: "SimulatorLife/Locked",
+        enabled: true,
+        agentRoles: ["codex", "claude"]
+      })
+    ]
+  });
+  const restricted = loadWorkspaceCatalog(restrictedFile);
+  const unlocked = resolveTarget(restricted, "SimulatorLife/Locked");
   assert.equal(unlocked.ok, true);
   assert.equal(
-    workspaceCatalog.resolveTarget(restricted, "SimulatorLife/Locked", {
+    resolveTarget(restricted, "SimulatorLife/Locked", {
       agentRole: "codex"
     }).ok,
     true
   );
-  const disallowed = workspaceCatalog.resolveTarget(
-    restricted,
-    "SimulatorLife/Locked",
-    {
-      agentRole: "gemini"
-    }
-  );
+  const disallowed = resolveTarget(restricted, "SimulatorLife/Locked", {
+    agentRole: "gemini"
+  });
   assert.equal(disallowed.ok, false);
   if (!disallowed.ok)
     assert.match(disallowed.reason, /is not allowed for workspace/);
-  rmSync(path.dirname(restricted.list[0]?.id ?? ""), {
-    recursive: true,
-    force: true
-  });
+  rmSync(restrictedFile, { force: true });
 
   const disabledFile = writeCatalog("disabled", {
     schema: "autodev-workspaces-v1",
     workspaces: [makeWorkspace({ id: "SimulatorLife/Off", enabled: false })]
   });
-  const disabledCatalog = workspaceCatalog.loadCatalog(disabledFile);
-  const disabled = workspaceCatalog.resolveTarget(
-    disabledCatalog,
-    "SimulatorLife/Off"
-  );
+  const disabledCatalog = loadWorkspaceCatalog(disabledFile);
+  const disabled = resolveTarget(disabledCatalog, "SimulatorLife/Off");
   assert.equal(disabled.ok, false);
   if (!disabled.ok)
     assert.match(
@@ -230,35 +231,49 @@ test("resolveTarget enforces id form, presence, enabled, base branch, and role",
     );
   rmSync(disabledFile, { force: true });
 
-  const baseMatch = workspaceCatalog.resolveTarget(
-    catalog,
-    "SimulatorLife/Colourful-Life",
-    {
-      baseBranch: "master"
-    }
-  );
+  const baseMatch = resolveTarget(catalog, "SimulatorLife/Colourful-Life", {
+    baseBranch: "master"
+  });
   assert.equal(baseMatch.ok, true);
-  const baseMismatch = workspaceCatalog.resolveTarget(
-    catalog,
-    "SimulatorLife/Colourful-Life",
-    { baseBranch: "main" }
-  );
+  const baseMismatch = resolveTarget(catalog, "SimulatorLife/Colourful-Life", {
+    baseBranch: "main"
+  });
   assert.equal(baseMismatch.ok, false);
   if (!baseMismatch.ok)
     assert.match(baseMismatch.reason, /base_branch must match/);
 });
 
+test("a workspace with no role scope admits every agent", () => {
+  // The catalog's own type says that null means the workspace has not
+  // declared a role scope, so every agent may work there. The scheduler and
+  // the runtime's configuration health already read it that way; the owner
+  // has to say the same thing, or the CI refuses every unscoped workspace.
+  const unscoped = makeWorkspace({ id: "SimulatorLife/Open" });
+  assert.equal(workspaceAdmitsRole(unscoped, "codex"), true);
+  const scoped = makeWorkspace({
+    id: "SimulatorLife/Scoped",
+    agentRoles: ["codex"]
+  });
+  assert.equal(workspaceAdmitsRole(scoped, "codex"), true);
+  assert.equal(workspaceAdmitsRole(scoped, "gemini"), false);
+
+  const file = writeCatalog("unscoped", {
+    schema: "autodev-workspaces-v1",
+    workspaces: [makeWorkspace({ id: "SimulatorLife/Open" })]
+  });
+  const catalog = loadWorkspaceCatalog(file);
+  const resolved = resolveTarget(catalog, "SimulatorLife/Open", {
+    agentRole: "codex"
+  });
+  assert.equal(resolved.ok, true);
+  rmSync(file, { force: true });
+});
+
 test("resolvePrompt requires an enabled workspace", () => {
-  const catalog = workspaceCatalog.loadCatalog(canonicalCatalogPath);
-  const allowed = workspaceCatalog.resolvePrompt(
-    catalog,
-    "SimulatorLife/AutoDev"
-  );
+  const catalog = loadWorkspaceCatalog(canonicalCatalogPath);
+  const allowed = resolvePrompt(catalog, "SimulatorLife/AutoDev");
   assert.equal(allowed.ok, true);
-  const missing = workspaceCatalog.resolvePrompt(
-    catalog,
-    "SimulatorLife/Ghost"
-  );
+  const missing = resolvePrompt(catalog, "SimulatorLife/Ghost");
   assert.equal(missing.ok, false);
   if (!missing.ok)
     assert.match(
@@ -270,11 +285,8 @@ test("resolvePrompt requires an enabled workspace", () => {
     schema: "autodev-workspaces-v1",
     workspaces: [makeWorkspace({ id: "SimulatorLife/Auto", enabled: false })]
   });
-  const disabledCatalog = workspaceCatalog.loadCatalog(disabledFile);
-  const disabled = workspaceCatalog.resolvePrompt(
-    disabledCatalog,
-    "SimulatorLife/Auto"
-  );
+  const disabledCatalog = loadWorkspaceCatalog(disabledFile);
+  const disabled = resolvePrompt(disabledCatalog, "SimulatorLife/Auto");
   assert.equal(disabled.ok, false);
   if (!disabled.ok)
     assert.match(
@@ -285,23 +297,57 @@ test("resolvePrompt requires an enabled workspace", () => {
 });
 
 test("listEnabled returns only the enabled workspace ids", () => {
-  const catalog = workspaceCatalog.loadCatalog(
-    writeCatalog("mixed", {
-      schema: "autodev-workspaces-v1",
-      workspaces: [
-        makeWorkspace({ id: "SimulatorLife/A", enabled: true }),
-        makeWorkspace({ id: "SimulatorLife/B", enabled: false }),
-        makeWorkspace({ id: "SimulatorLife/C", enabled: true })
-      ]
-    })
-  );
-  assert.deepEqual(workspaceCatalog.listEnabled(catalog), [
+  const file = writeCatalog("mixed", {
+    schema: "autodev-workspaces-v1",
+    workspaces: [
+      makeWorkspace({ id: "SimulatorLife/A", enabled: true }),
+      makeWorkspace({ id: "SimulatorLife/B", enabled: false }),
+      makeWorkspace({ id: "SimulatorLife/C", enabled: true })
+    ]
+  });
+  const catalog = loadWorkspaceCatalog(file);
+  assert.deepEqual(listEnabled(catalog), [
     "SimulatorLife/A",
     "SimulatorLife/C"
   ]);
+  rmSync(file, { force: true });
 });
 
-test("CLI surfaces success JSON and fail-closed exit codes", () => {
+test("the tolerant reader distinguishes missing, broken, and valid catalogs", () => {
+  const missing = readWorkspaceCatalogFile(
+    path.join(tmpdir(), "autodev-missing-catalog.json")
+  );
+  assert.equal(missing.status, "unavailable");
+  assert.deepEqual(missing.workspaces, []);
+
+  const brokenFile = writeCatalog("broken", {
+    schema: "autodev-workspaces-v1",
+    workspaces: [makeWorkspace({ id: "no-slash" })]
+  });
+  const broken = readWorkspaceCatalogFile(brokenFile);
+  assert.equal(broken.status, "invalid");
+  assert.deepEqual(broken.workspaces, []);
+  assert.match(broken.reason ?? "", /invalid identity or enabled flag/);
+  rmSync(brokenFile, { force: true });
+
+  const valid = readWorkspaceCatalogFile(canonicalCatalogPath);
+  assert.equal(valid.status, "valid");
+  assert.ok(valid.workspaces.length > 0);
+});
+
+test("parseWorkspaceCatalog validates a document it is handed", () => {
+  const catalog = parseWorkspaceCatalog({
+    schema: "autodev-workspaces-v1",
+    workspaces: [makeWorkspace({ id: "SimulatorLife/AutoDev" })]
+  });
+  assert.equal(catalog.list.length, 1);
+  assert.throws(
+    () => parseWorkspaceCatalog({ schema: "other", workspaces: [] }),
+    WorkspaceCatalogError
+  );
+});
+
+test("the CLI surfaces success JSON and fail-closed exit codes", () => {
   const ok = runCli([
     "resolve-target",
     canonicalCatalogPath,
@@ -345,7 +391,6 @@ test("CLI surfaces success JSON and fail-closed exit codes", () => {
   assert.equal(list.status, 0);
   const ids = JSON.parse(list.stdout) as string[];
   assert.ok(ids.includes("SimulatorLife/AutoDev"));
-  assert.ok(!ids.includes("SimulatorLife/Colourful-Life") || ids.length > 0);
 
   const unknownCommand = runCli(["nope", canonicalCatalogPath]);
   assert.equal(unknownCommand.status, 1);

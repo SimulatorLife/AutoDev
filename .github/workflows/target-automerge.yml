@@ -45,9 +45,12 @@ jobs:
           script: |
             const path = require('node:path');
             const fs = require('node:fs');
-            const { loadCatalog, resolveTarget, listEnabled } = require(path.join(process.env.GITHUB_WORKSPACE, '.github', 'scripts', 'workspace-catalog.cjs'));
+            const { pathToFileURL } = require('node:url');
+            const { loadWorkspaceCatalog, resolveTarget, listEnabled } = await import(
+              pathToFileURL(path.join(process.env.GITHUB_WORKSPACE, 'data', 'src', 'config', 'workspace-catalog.ts')).href
+            );
             const cfg = JSON.parse(fs.readFileSync('.github/workflows/weights.json', 'utf8'));
-            const catalog = loadCatalog('config/workspaces.json');
+            const catalog = loadWorkspaceCatalog(path.join(process.env.GITHUB_WORKSPACE, 'config/workspaces.json'));
             const schedulerWeights = new Map();
             for (const entry of cfg.repositories || []) {
               const workspaceId = typeof entry?.workspaceId === 'string' ? entry.workspaceId.trim() : '';

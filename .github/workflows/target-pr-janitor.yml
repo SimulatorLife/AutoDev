@@ -39,8 +39,11 @@ jobs:
           github-token: ${{ secrets.GH_USER_TOKEN }}
           script: |
             const path = require('node:path');
-            const { loadCatalog, listEnabled, resolveTarget } = require(path.join(process.env.GITHUB_WORKSPACE, '.github', 'scripts', 'workspace-catalog.cjs'));
-            const catalog = loadCatalog('config/workspaces.json');
+            const { pathToFileURL } = require('node:url');
+            const { loadWorkspaceCatalog, listEnabled, resolveTarget } = await import(
+              pathToFileURL(path.join(process.env.GITHUB_WORKSPACE, 'data', 'src', 'config', 'workspace-catalog.ts')).href
+            );
+            const catalog = loadWorkspaceCatalog(path.join(process.env.GITHUB_WORKSPACE, 'config/workspaces.json'));
             const configured = listEnabled(catalog);
             const requested = (process.env.TARGET_REPOSITORY || '').trim() || 'all';
             const repositories = requested === 'all' ? configured : [requested];

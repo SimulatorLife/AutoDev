@@ -7,8 +7,9 @@ import type {
   WorkspaceEntry
 } from "@simulatorlife/autodev-core";
 
+import { readWorkspaceCatalogFile } from "./workspace-catalog.ts";
+
 const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 
 export interface WorkspaceCatalogRead {
   readonly status: "valid" | "invalid" | "unavailable";
@@ -49,63 +50,22 @@ export class ConfigRepository {
       "config",
       "workspaces.json"
     );
-    if (!existsSync(catalogPath))
-      return { status: "unavailable", workspaces: [] };
-    try {
-      const raw = JSON.parse(readFileSync(catalogPath, "utf8")) as unknown;
-      if (
-        raw === null ||
-        typeof raw !== "object" ||
-        Array.isArray(raw) ||
-        (raw as { schema?: unknown }).schema !== "autodev-workspaces-v1" ||
-        !Array.isArray((raw as { workspaces?: unknown }).workspaces)
-      ) {
-        return { status: "invalid", workspaces: [] };
-      }
-      const records = (raw as { workspaces: unknown[] }).workspaces;
-      const workspaces: WorkspaceEntry[] = [];
-      const names = new Set<string>();
-      for (const workspace of records) {
-        if (
-          workspace === null ||
-          typeof workspace !== "object" ||
-          Array.isArray(workspace)
-        ) {
-          return { status: "invalid", workspaces: [] };
-        }
-        const entry = workspace as Record<string, unknown>;
-        const agentRoles = entry.agentRoles;
-        if (
-          typeof entry.id !== "string" ||
-          !WORKSPACE_ID_PATTERN.test(entry.id) ||
-          typeof entry.baseBranch !== "string" ||
-          !entry.baseBranch.trim() ||
-          typeof entry.enabled !== "boolean" ||
-          (agentRoles !== null &&
-            (!Array.isArray(agentRoles) ||
-              !agentRoles.every(
-                (role) =>
-                  typeof role === "string" &&
-                  role.trim().length > 0 &&
-                  role.trim() === role
-              ) ||
-              new Set(agentRoles).size !== agentRoles.length)) ||
-          names.has(entry.id)
-        ) {
-          return { status: "invalid", workspaces: [] };
-        }
-        names.add(entry.id);
-        workspaces.push({
-          id: entry.id,
-          baseBranch: entry.baseBranch,
-          enabled: entry.enabled,
-          agentRoles: agentRoles === null ? null : (agentRoles as string[])
-        });
-      }
-      return { status: "valid", workspaces };
-    } catch {
-      return { status: "invalid", workspaces: [] };
+    // The catalog's schema is decided once, in the module that owns it. The
+    // reader here decides nothing about what the file means: it says where
+    // the file is and what came back.
+    const read = readWorkspaceCatalogFile(catalogPath);
+    if (read.status !== "valid") {
+      return { status: read.status, workspaces: [] };
     }
+    return {
+      status: "valid",
+      workspaces: read.workspaces.map((workspace) => ({
+        id: workspace.id,
+        baseBranch: workspace.baseBranch,
+        enabled: workspace.enabled,
+        agentRoles: workspace.agentRoles
+      }))
+    };
   }
 
   loadPermissionPolicy(): PermissionPolicy {

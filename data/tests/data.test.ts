@@ -13,7 +13,13 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
+import {
+  loadWorkspaceCatalog,
+  readWorkspaceCatalogFile,
+  WorkspaceCatalogError
+} from "../src/config/workspace-catalog.ts";
 import {
   ClickHouseTelemetryClient,
   ConfigRepository,
@@ -1700,6 +1706,61 @@ test("ConfigRepository distinguishes missing and invalid workspace sources from 
       status: "invalid",
       workspaces: []
     });
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("ConfigRepository and the catalog owner agree about the same file", async () => {
+  // The repository used to carry its own copy of the catalog's rules, and
+  // the CI's script carried another. Two readers of one file that can
+  // disagree are two answers to one question, so the repository now asks the
+  // owner. This is the guard on that: whatever the repository says about a
+  // catalog, the owner says the same.
+  const canonicalPath = fileURLToPath(
+    new URL("../../config/workspaces.json", import.meta.url)
+  );
+  const repository = new ConfigRepository();
+  const read = repository.readWorkspaceCatalog();
+  assert.equal(read.status, "valid");
+  const catalog = loadWorkspaceCatalog(canonicalPath);
+  assert.deepEqual(
+    read.workspaces.map((workspace) => ({
+      id: workspace.id,
+      baseBranch: workspace.baseBranch,
+      enabled: workspace.enabled,
+      agentRoles: workspace.agentRoles
+    })),
+    catalog.list.map((workspace) => ({
+      id: workspace.id,
+      baseBranch: workspace.baseBranch,
+      enabled: workspace.enabled,
+      agentRoles: workspace.agentRoles
+    }))
+  );
+
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-config-workspaces-agree-")
+  );
+  try {
+    const configDirectory = path.join(repositoryRoot, "config");
+    await mkdir(configDirectory, { recursive: true });
+    const catalogPath = path.join(configDirectory, "workspaces.json");
+    await writeFile(
+      catalogPath,
+      JSON.stringify({
+        schema: "autodev-workspaces-v1",
+        workspaces: [{ id: "SimulatorLife/AutoDev" }]
+      }),
+      "utf8"
+    );
+    const brokenRepository = new ConfigRepository(repositoryRoot);
+    assert.equal(brokenRepository.readWorkspaceCatalog().status, "invalid");
+    assert.equal(readWorkspaceCatalogFile(catalogPath).status, "invalid");
+    assert.throws(
+      () => loadWorkspaceCatalog(catalogPath),
+      WorkspaceCatalogError
+    );
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
   }

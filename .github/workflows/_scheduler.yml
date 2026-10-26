@@ -24,39 +24,29 @@ jobs:
           test -f .github/workflows/weights.json
           test -f config/workspaces.json
           echo "cfg=$(jq -c . .github/workflows/weights.json)" >> "$GITHUB_OUTPUT"
-          echo "workspace_catalog=$(jq -c . config/workspaces.json)" >> "$GITHUB_OUTPUT"
 
       - name: Compute dispatch plan
         id: plan
         uses: actions/github-script@v8
         env:
           CFG_JSON: ${{ steps.cfg.outputs.cfg }}
-          WORKSPACE_CATALOG_JSON: ${{ steps.cfg.outputs.workspace_catalog }}
         with:
           script: |
+            const path = require('node:path');
+            const { pathToFileURL } = require('node:url');
+            const { loadWorkspaceCatalog, WORKSPACE_ID_PATTERN } = await import(
+              pathToFileURL(path.join(process.env.GITHUB_WORKSPACE, 'data', 'src', 'config', 'workspace-catalog.ts')).href
+            );
             const cfg = JSON.parse(process.env.CFG_JSON || '{}');
-            const workspaceCatalog = JSON.parse(process.env.WORKSPACE_CATALOG_JSON || '{}');
+            const catalog = loadWorkspaceCatalog(path.join(process.env.GITHUB_WORKSPACE, 'config/workspaces.json'));
+            const workspaces = catalog.workspaces;
             const WEIGHT_SCALE = 1000;
             const CATEGORIES = new Set(['code', 'merging', 'regressions']);
-            const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
-
-            if (workspaceCatalog.schema !== 'autodev-workspaces-v1' || !Array.isArray(workspaceCatalog.workspaces)) {
-              throw new Error('Workspace registry must use the autodev-workspaces-v1 schema.');
-            }
-            const workspaces = new Map();
-            for (const [index, workspace] of workspaceCatalog.workspaces.entries()) {
-              const id = typeof workspace?.id === 'string' ? workspace.id.trim() : '';
-              const baseBranch = typeof workspace?.baseBranch === 'string' ? workspace.baseBranch.trim() : '';
-              const agentRoles = workspace?.agentRoles;
-              if (!WORKSPACE_ID_PATTERN.test(id) || !baseBranch || typeof workspace.enabled !== 'boolean') {
-                throw new Error(`workspaces[${index}] has invalid identity, branch, or enabled state.`);
-              }
-              if (agentRoles !== null && (!Array.isArray(agentRoles) || agentRoles.some((role) => typeof role !== 'string' || !role.trim()))) {
-                throw new Error(`workspaces[${index}].agentRoles must be null or a list of role names.`);
-              }
-              if (workspaces.has(id)) throw new Error(`Workspace ids must be unique: ${id}`);
-              workspaces.set(id, { id, baseBranch, enabled: workspace.enabled, agentRoles });
-            }
+            // The same two prompt locations the runner that will execute the
+            // prompt accepts: a target repository's own prompts, and the
+            // AutoDev-owned commands. A scheduler that only accepted one of
+            // them could plan a dispatch the runner refuses.
+            const PROMPT_PATH_PATTERN = /^\.(?:agents\/prompts|rulesync\/commands)\/[^/]+\.md$/;
 
             const finite = (value, label) => {
               const number = Number(value);
@@ -105,18 +95,18 @@ jobs:
 
             const prompts = (cfg.prompts || []).map((raw, index) => {
               const name = typeof raw?.name === 'string' ? raw.name.trim() : '';
-              const path = typeof raw?.path === 'string' ? raw.path.trim() : '';
+              const promptPath = typeof raw?.path === 'string' ? raw.path.trim() : '';
               const promptRepository = typeof raw?.promptRepository === 'string' && raw.promptRepository.trim()
                 ? raw.promptRepository.trim()
                 : 'SimulatorLife/AutoDev';
               const title = typeof raw?.title === 'string' && raw.title.trim() ? raw.title.trim() : `Agent: ${name}`;
-              if (!name || !/^\.agents\/prompts\/[^/]+\.md$/.test(path)) throw new Error(`prompts[${index}] must define a safe Markdown path.`);
-              if (!/^[^/\s]+\/[^/\s]+$/.test(promptRepository)) throw new Error(`prompts[${index}].promptRepository must use owner/name.`);
+              if (!name || !PROMPT_PATH_PATTERN.test(promptPath)) throw new Error(`prompts[${index}] must define a safe Markdown path.`);
+              if (!WORKSPACE_ID_PATTERN.test(promptRepository)) throw new Error(`prompts[${index}].promptRepository must use owner/name.`);
               const category = raw?.category;
               if (!CATEGORIES.has(category)) throw new Error(`prompts[${index}].category is invalid.`);
               const complexity = integer(raw.complexity, `prompts[${index}].complexity`);
               if (complexity < 1 || complexity > 3) throw new Error(`prompts[${index}].complexity must be 1..3.`);
-              return { name, path, promptRepository, title, category, complexity, weight: finite(raw.weight, `prompts[${index}].weight`) };
+              return { name, path: promptPath, promptRepository, title, category, complexity, weight: finite(raw.weight, `prompts[${index}].weight`) };
             });
             uniqueNames(prompts, 'Prompt');
 
