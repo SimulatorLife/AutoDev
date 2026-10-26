@@ -14804,13 +14804,15 @@ test("ProvidersView renders configuration columns and live provider counts", () 
   assert.doesNotMatch(markup, /draggable=/u);
 
   // Every role form shares one grid so labels and selects stay aligned. The
-  // label column is sized to its content: `Orchestrator` with its icon needs
-  // 92px, and the fixed `5.5rem` was four pixels short of that, so the label
-  // was painted past the edge of its own column.
+  // label column is a fixed 92px -- what `Orchestrator` needs with its icon --
+  // and a column sized to its own content gave every row its own geometry:
+  // the four rows' controls started at four different x positions, so the
+  // columns did not line up at all. `console/e2e/provider-role-alignment-
+  // acceptance.spec.ts` measures that in the browser.
   const roleForms = forms.filter((form) => form.includes("data-role-form="));
   assert.equal(roleForms.length, PROVIDERS_FIXTURE.providers.length * 4);
   for (const roleForm of roleForms) {
-    assert.match(roleForm, /grid-cols-\[max-content_5rem_12rem_7rem\]/u);
+    assert.match(roleForm, /grid-cols-\[5\.75rem_5rem_12rem_7rem\]/u);
     assert.doesNotMatch(roleForm, /flex-wrap/u);
   }
   assert.doesNotMatch(markup, /data-apply-role|>Apply<\/button>/u);
