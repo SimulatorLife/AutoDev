@@ -10,6 +10,7 @@ import {
   SECONDARY_BUTTON_CLASS
 } from "../forms/Button.ts";
 import { AppNav } from "../navigation/AppNav.ts";
+import { CommandPalette } from "../navigation/CommandPalette.ts";
 import { NavigationLink } from "../navigation/NavigationLink.ts";
 import { MUTED_META_CLASS, MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
 import { PageBody } from "./PageBody.ts";
@@ -114,7 +115,11 @@ export function AppShell({
                 tabIndex: -1
               },
               activeSection
-            )
+            ),
+            // The palette's trigger sits beside the title rather than inside
+            // the navigation: it is a way to reach any resource, not one
+            // resource's way round.
+            React.createElement(CommandPalette, { activeSection })
           ),
           description === undefined
             ? null
