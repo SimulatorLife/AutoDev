@@ -33,15 +33,18 @@ import { NavigationLink } from "./NavigationLink.ts";
  * the single owner of that sentence, so the palette cannot drift from the
  * page header: it reads the same words.
  *
- * Three details make it usable rather than decorative:
+ * Four details make it usable rather than decorative:
  *
  *   - The shortcut is ignored while the operator is typing in a field. A
  *     palette that swallows the letters of a filter is worse than no palette.
  *   - The results are links, so the browser's own affordances -- a new tab,
  *     the back button, the page's own navigation owner -- keep working.
+ *   - A result is selected before a key is pressed, and the arrow keys move
+ *     the selection, the way every command palette the operator already
+ *     knows behaves.
  *   - The search answers in one keystroke: typing filters, and `Enter` opens
- *     the first match, so the operator never has to reach for the mouse to
- *     get from a question to a page.
+ *     the selected match, so the operator never has to reach for the mouse
+ *     to get from a question to a page.
  *
  * It is a `.ts` module and not a `.tsx` one, and that is not a style
  * preference: the Console's unit tests load the module graph directly, and
