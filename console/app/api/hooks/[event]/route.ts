@@ -21,7 +21,10 @@
 
 import { type NextRequest, NextResponse } from "next/server.js";
 
-import { HOOKS_PATH, hookWriteReturnPath } from "../../../../src/features/hooks/paths.ts";
+import {
+  HOOKS_PATH,
+  hookWriteReturnPath
+} from "../../../../src/features/hooks/paths.ts";
 import {
   type CanonicalSourceSaveOutcome,
   editorBaseRevision

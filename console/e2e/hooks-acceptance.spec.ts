@@ -300,9 +300,7 @@ test("a write made from the event's own page answers to that page", async ({
   await page.goto(`/hooks/${SHARED_EVENT}`);
 
   const editor = eventEditor(page, SHARED_EVENT);
-  await editor
-    .locator('[data-hook-action-command="0"]')
-    .fill(EDITED_COMMAND);
+  await editor.locator('[data-hook-action-command="0"]').fill(EDITED_COMMAND);
   await editor.getByRole("button", { name: "Save and apply" }).click();
 
   // The write answers to the surface it was made from: the operator comes

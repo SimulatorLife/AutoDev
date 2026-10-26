@@ -11718,7 +11718,10 @@ test("a hook write answers to the surface it was made from, and to nothing else"
     "/hooks",
     "a destination off this Console is not a destination"
   );
-  assert.equal(hookWriteReturnPath("//example.test/hooks", "preToolUse"), "/hooks");
+  assert.equal(
+    hookWriteReturnPath("//example.test/hooks", "preToolUse"),
+    "/hooks"
+  );
   assert.equal(
     hookWriteReturnPath(null, "preToolUse"),
     "/hooks",
@@ -11802,7 +11805,8 @@ test("the hook event's page shows what the Runtime published for that event", ()
             lastApplyAt: "2026-10-22T12:00:00.000Z",
             lastObservationAt: "2026-10-22T12:00:00.000Z",
             lastError: null,
-            explanation: "The runtime has observed the latest desired generation."
+            explanation:
+              "The runtime has observed the latest desired generation."
           },
           history: []
         }
@@ -11839,7 +11843,8 @@ test("the hook event's page says when the Runtime published nothing for the even
             lastApplyAt: null,
             lastObservationAt: null,
             lastError: null,
-            explanation: "The runtime has not observed the latest desired generation."
+            explanation:
+              "The runtime has not observed the latest desired generation."
           },
           history: []
         }

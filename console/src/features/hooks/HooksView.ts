@@ -34,7 +34,7 @@ import {
   hookOriginLabel
 } from "./declaration.ts";
 import { HookEventEditor } from "./HookEventEditor.ts";
-import { hookEventPath,HOOKS_PATH } from "./paths.ts";
+import { hookEventPath, HOOKS_PATH } from "./paths.ts";
 
 export interface HooksViewProps {
   readonly hooks: readonly HookDefinition[];

@@ -31,7 +31,7 @@ import {
   hookOriginLabel
 } from "./declaration.ts";
 import { HookEventEditor } from "./HookEventEditor.ts";
-import { hookEventPath,HOOKS_PATH } from "./paths.ts";
+import { hookEventPath, HOOKS_PATH } from "./paths.ts";
 
 export interface HookEventDetailViewProps {
   /**
@@ -154,11 +154,7 @@ export function HookEventDetailView({
       items: [{ label: "Hooks", href: HOOKS_PATH }, { label: hook.event }]
     }),
     React.createElement(EntityTitle, { mono: true }, hook.event),
-    React.createElement(
-      "p",
-      { className: `${MONO_META_CLASS} -mt-2` },
-      source
-    ),
+    React.createElement("p", { className: `${MONO_META_CLASS} -mt-2` }, source),
     hookDeclarationSaveNotice(saveOutcome, hook.event),
     React.createElement(
       "section",
