@@ -505,7 +505,7 @@ test("viewer reads control resources; MCP and Skills views contain configuration
       actor: "viewer-a"
     });
     assert.equal(workspaces.response.statusCode, 200);
-    assert.equal(workspaces.body.schema, "autodev-control-workspaces-v2");
+    assert.equal(workspaces.body.schema, "autodev-control-workspaces-v3");
     assert.equal(workspaces.body.source, "config/workspaces.json");
     assert.equal(workspaces.body.catalogStatus, "valid");
     assert.ok(Array.isArray(workspaces.body.workspaces));
@@ -2774,7 +2774,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(workspaces.response.statusCode, 200);
-    assert.equal(workspaces.body.schema, "autodev-control-workspaces-v2");
+    assert.equal(workspaces.body.schema, "autodev-control-workspaces-v3");
 
     // 11. Routing
     const routing = await call("GET", CONTROL_API_PATHS.routing, {

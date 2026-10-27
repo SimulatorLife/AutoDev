@@ -3685,7 +3685,7 @@ function isControlApiWorkspacesResponse(
 ): value is ControlApiWorkspacesResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-workspaces-v2" &&
+    value.schema === "autodev-control-workspaces-v3" &&
     typeof value.source === "string" &&
     typeof value.readOnly === "boolean" &&
     (value.catalogStatus === "valid" ||
@@ -3695,6 +3695,11 @@ function isControlApiWorkspacesResponse(
     // cannot name it is saying that there is nothing to write against.
     (value.revision === null || typeof value.revision === "string") &&
     isNullableNumber(value.totalWorkspaces) &&
+    // The reconciliation is required, not optional: the Workspaces surface
+    // says converged, pending or not observed from it, and a response without
+    // it would leave the page to infer convergence from the catalog's
+    // contents.
+    isReconciliationBundle(value.reconciliation) &&
     Array.isArray(value.workspaces) &&
     value.workspaces.every(
       (workspace) =>

@@ -138,6 +138,7 @@ export default async function WorkspacesPage({
       requests,
       revision: basedOn ?? result.data.revision,
       catalogStatus: result.data.catalogStatus,
+      reconciliation: result.data.reconciliation,
       ...(saveOutcome === undefined ? {} : { saveOutcome }),
       ...(savedWorkspace === undefined ? {} : { savedWorkspace })
     })

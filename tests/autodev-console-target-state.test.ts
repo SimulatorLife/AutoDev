@@ -989,7 +989,7 @@ test("canonical target and migration tracker track gaps without claiming prematu
     migration,
     /per-workspace configuration-health[\s\S]{0,200}runtime-availability/u
   );
-  assert.match(migration, /autodev-control-workspaces-v2/u);
+  assert.match(migration, /autodev-control-workspaces-v3/u);
   assert.match(migration, /liveAgents\.byWorkspace/u);
   // The rest of this area's gap must stay visible: the role scope is still
   // unassigned for every workspace, and per-workspace usage is not on the

@@ -67,6 +67,13 @@ test("a write changes the catalog and answers with the revision of the file it w
   assert.equal(written.changed, true);
   assert.equal(written.revision, revisionOf(catalogPath));
   assert.notEqual(written.revision, revision);
+  // The write reports the fields whose value actually moved, so the diff says
+  // what changed rather than what was asked for.
+  assert.deepEqual(written.changedFields, [
+    "enabled",
+    "baseBranch",
+    "agentRoles"
+  ]);
   assert.deepEqual(written.workspace, {
     id: "SimulatorLife/AutoDev",
     baseBranch: "release",
@@ -109,6 +116,9 @@ test("a write that changes nothing but the values it names keeps the rest of the
   assert.equal(written.changed, false);
   assert.equal(written.revision, revision);
   assert.equal(readFileSync(catalogPath, "utf8"), CATALOG);
+  // A write that set the value the catalog already held changed nothing, so
+  // it is not reported as a change.
+  assert.deepEqual(written.changedFields, []);
 });
 
 test("a write decided on a catalog that has since moved is refused and the file is untouched", () => {

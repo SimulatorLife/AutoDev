@@ -128,6 +128,7 @@ import {
   updatePermissionPolicy,
   updateWorkspaceCatalogEntry,
   WorkspaceCatalogConflictError,
+  type WorkspaceCatalogField,
   WorkspaceCatalogUnknownWorkspaceError,
   WorkspaceCatalogValidationError,
   type WorkspaceCatalogWrite,
@@ -1927,12 +1928,85 @@ function configuredAgentRoleNames(): readonly string[] {
   return Object.keys(getDefaultExecutionContract().roles ?? {});
 }
 
+/**
+ * The canonical catalog's desired-vs-actual view.
+ *
+ * The catalog is the desired state, and the Runtime reads that same file on
+ * every request rather than a copy of it, so the observation is a live fact:
+ * the catalog the Runtime reads is the catalog that was written, or it is not.
+ *
+ * The observed generation is therefore a second read of the canonical source
+ * and never a copy of the generation a write produced. A catalog that moved
+ * again between the write and the observation is reported as pending, and a
+ * catalog that cannot be read at all is reported as not observed -- neither is
+ * dressed up as convergence, because the operator would be reading a verdict
+ * the Runtime never reached.
+ */
+function workspaceCatalogReconciliation(args: {
+  readonly repositoryRoot: string;
+  readonly desiredGeneration: string | null;
+}): ReconciliationView {
+  const resource = CONTROL_API_PATHS.workspaces;
+  const latest = findLatestAuditFor(resource);
+  const observed = new ConfigRepository(
+    args.repositoryRoot
+  ).readWorkspaceCatalog();
+  const observedGeneration =
+    observed.status === "valid" ? (observed.revision ?? null) : null;
+  const evidence: ReconciliationEvidence = {
+    desiredGeneration: args.desiredGeneration,
+    observedGeneration,
+    lastApplyAt: latest?.timestamp ?? null,
+    // The observation is the read, so the time of the observation is the time
+    // of this read rather than the time of an apply that refreshed a copy.
+    lastObservationAt:
+      observedGeneration === null ? null : new Date().toISOString(),
+    lastError: boundReconciliationError(latest?.reason ?? null)
+  };
+  return buildReconciliationView({
+    evidence,
+    history: historyForResource(resource),
+    hasObservation: observedGeneration !== null,
+    restartRequired: false
+  });
+}
+
+/**
+ * What a workspace configuration write changed, in the catalog's vocabulary.
+ *
+ * The fields are the catalog's own names, so the summary says "base branch"
+ * rather than a second word for it, and the identifier is the generation the
+ * write produced.
+ */
+function workspaceConfigurationDiff(args: {
+  readonly changedFields: readonly WorkspaceCatalogField[];
+  readonly revision: string;
+}): ReconciliationDiff {
+  if (args.changedFields.length === 0) {
+    return reconcileDiffSummary({
+      summary:
+        "Canonical workspace configuration unchanged; the catalog already held these values."
+    });
+  }
+  const labels = args.changedFields.map((field) =>
+    field === "enabled"
+      ? "enablement"
+      : field === "baseBranch"
+        ? "base branch"
+        : "role scope"
+  );
+  return reconcileDiffWithIdentifier({
+    summary: `Canonical workspace configuration changed: ${labels.join(", ")}.`,
+    identifier: args.revision
+  });
+}
+
 function workspacesView(repositoryRoot?: string): Record<string, unknown> {
   const catalog = new ConfigRepository(repositoryRoot).readWorkspaceCatalog();
   const liveAgents = liveAgentCountsSource?.(Date.now()) ?? null;
   const knownRoles = configuredAgentRoleNames();
   return {
-    schema: "autodev-control-workspaces-v2",
+    schema: "autodev-control-workspaces-v3",
     source: "config/workspaces.json",
     readOnly: false,
     catalogStatus: catalog.status,
@@ -1941,6 +2015,10 @@ function workspacesView(repositoryRoot?: string): Record<string, unknown> {
     revision: catalog.revision ?? null,
     totalWorkspaces:
       catalog.status === "valid" ? catalog.workspaces.length : null,
+    reconciliation: workspaceCatalogReconciliation({
+      repositoryRoot: repositoryRoot ?? DEFAULT_REPO_ROOT,
+      desiredGeneration: catalog.revision ?? null
+    }),
     workspaces:
       catalog.status === "valid"
         ? catalog.workspaces.map((workspace) => ({
@@ -2172,7 +2250,7 @@ async function patchWorkspace(
     response,
     200,
     {
-      schema: "autodev-control-workspace-patch-v1",
+      schema: "autodev-control-workspace-patch-v2",
       id: workspaceId,
       revision: written.revision,
       changed: written.changed,
@@ -2183,7 +2261,18 @@ async function patchWorkspace(
           knownRoles
         ),
         runtime: workspaceRuntimeAvailability(written.workspace.id, liveAgents)
-      }
+      },
+      // The observation is a second read of the canonical catalog, so a
+      // catalog that moved again between the write and the observation is
+      // reported as pending rather than as the write having landed.
+      reconciliation: workspaceCatalogReconciliation({
+        repositoryRoot,
+        desiredGeneration: written.revision
+      }),
+      diff: workspaceConfigurationDiff({
+        changedFields: written.changedFields,
+        revision: written.revision
+      })
     } satisfies ControlApiWorkspacePatchResponse,
     { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
   );

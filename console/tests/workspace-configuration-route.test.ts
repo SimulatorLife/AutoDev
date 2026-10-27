@@ -101,7 +101,7 @@ async function withMockedFetch<T>(
 function okResponse(): Response {
   return Response.json(
     {
-      schema: "autodev-control-workspace-patch-v1",
+      schema: "autodev-control-workspace-patch-v2",
       id: WORKSPACE_ID,
       revision: "b".repeat(64),
       changed: true,
@@ -110,6 +110,22 @@ function okResponse(): Response {
         baseBranch: "release",
         enabled: false,
         agentRoles: ["worker", "reviewer"]
+      },
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: "b".repeat(64),
+          observedGeneration: "b".repeat(64),
+          lastApplyAt: "2026-10-07T00:00:00Z",
+          lastObservationAt: "2026-10-07T00:00:05Z",
+          lastError: null,
+          explanation: "The canonical catalog matches the desired state."
+        },
+        history: []
+      },
+      diff: {
+        summary: "Canonical workspace configuration changed: base branch.",
+        identifier: "b".repeat(64)
       }
     },
     { status: 200 }

@@ -136,6 +136,7 @@ export default async function WorkspaceDetailPage({
       refusal: readControlRefusal(query.refusal),
       revision: basedOn ?? workspacesResult.data.revision,
       catalogStatus: workspacesResult.data.catalogStatus,
+      reconciliation: workspacesResult.data.reconciliation,
       ...(saveOutcome === undefined ? {} : { saveOutcome })
     })
   );

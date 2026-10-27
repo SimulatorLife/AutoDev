@@ -21,6 +21,7 @@ export {
   readWorkspaceCatalogRevision,
   updateWorkspaceCatalogEntry,
   WorkspaceCatalogConflictError,
+  type WorkspaceCatalogField,
   workspaceCatalogRevision,
   WorkspaceCatalogUnknownWorkspaceError,
   type WorkspaceCatalogUpdate,

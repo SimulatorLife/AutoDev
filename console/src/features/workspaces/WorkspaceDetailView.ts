@@ -4,6 +4,7 @@ import {
   assertWorkspacePlaytestApproval,
   type ControlApiWorkspacePlaytestApprovalResponse,
   type ControlApiWorkspaceRecord,
+  type ReconciliationView,
   type WorkspacePlaytestApproval,
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
@@ -23,6 +24,7 @@ import {
   ControlFailureNotice,
   isControlRefusalReason
 } from "../../components/status/ControlFailureNotice.ts";
+import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 import {
@@ -88,6 +90,15 @@ export interface WorkspaceDetailViewProps {
   readonly revision?: string | null | undefined;
   /** The status of the canonical catalog the read came from. */
   readonly catalogStatus?: "valid" | "invalid" | "unavailable" | undefined;
+  /**
+   * The Runtime's desired-vs-actual view of the canonical catalog.
+   *
+   * The catalog is the configuration this page edits, so the page shows what
+   * the Runtime observed about it: converged, pending or not observed, with
+   * the operation history behind it. The Runtime derives it, so the page
+   * renders the Runtime's verdict rather than deciding one of its own.
+   */
+  readonly reconciliation?: ReconciliationView | undefined;
   /** How the last write to this workspace's configuration ended. */
   readonly saveOutcome?: WorkspaceConfigurationSaveOutcome | undefined;
 }
@@ -330,6 +341,7 @@ export function WorkspaceDetailView({
   refusal,
   revision = null,
   catalogStatus = "valid",
+  reconciliation,
   saveOutcome
 }: WorkspaceDetailViewProps): React.JSX.Element {
   const [currentApproval, setCurrentApproval] = React.useState(approval);
@@ -587,6 +599,12 @@ export function WorkspaceDetailView({
         "Configuration"
       ),
       workspaceConfigurationSaveNotice(saveOutcome, workspace.id),
+      reconciliation === undefined
+        ? null
+        : React.createElement(ReconciliationPanel, {
+            status: reconciliation.status,
+            history: reconciliation.history
+          }),
       React.createElement(
         "div",
         { className: "mt-3 flex flex-col gap-4" },

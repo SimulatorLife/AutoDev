@@ -3395,6 +3395,38 @@ function workspaceConfigurationRecord(): {
 }
 
 /**
+ * The canonical catalog's desired-vs-actual view, as the Runtime reports it.
+ *
+ * The catalog is the file the fixture serves, so the observed generation is
+ * the revision the fixture holds -- the same fact the write answers with.
+ */
+function workspaceConfigurationReconciliation(): {
+  status: {
+    convergence: "converged";
+    desiredGeneration: string;
+    observedGeneration: string;
+    lastApplyAt: string | null;
+    lastObservationAt: string | null;
+    lastError: null;
+    explanation: string;
+  };
+  history: unknown[];
+} {
+  return {
+    status: {
+      convergence: "converged",
+      desiredGeneration: workspaceConfiguration.revision,
+      observedGeneration: workspaceConfiguration.revision,
+      lastApplyAt: null,
+      lastObservationAt: null,
+      lastError: null,
+      explanation: "The canonical catalog matches the desired state."
+    },
+    history: []
+  };
+}
+
+/**
  * One role's enablement, as the Runtime reports it.
  *
  * The list and the detail read the same state through this one function, so a
@@ -3865,11 +3897,18 @@ async function applyWorkspaceConfigurationWrite(
     );
   }
   sendJson(response, {
-    schema: "autodev-control-workspace-patch-v1",
+    schema: "autodev-control-workspace-patch-v2",
     id: workspaceConfiguration.id,
     revision: workspaceConfiguration.revision,
     changed,
-    workspace: workspaceConfigurationRecord()
+    workspace: workspaceConfigurationRecord(),
+    reconciliation: workspaceConfigurationReconciliation(),
+    diff: {
+      summary: changed
+        ? "Canonical workspace configuration changed."
+        : "Canonical workspace configuration unchanged; the catalog already held these values.",
+      identifier: workspaceConfiguration.revision
+    }
   });
   return true;
 }
@@ -5826,12 +5865,13 @@ const server = createServer(
     }
     if (url.pathname === "/control/workspaces") {
       sendJson(response, {
-        schema: "autodev-control-workspaces-v2",
+        schema: "autodev-control-workspaces-v3",
         source: "fixture",
         readOnly: false,
         catalogStatus: "valid",
         revision: workspaceConfiguration.revision,
         totalWorkspaces: 1,
+        reconciliation: workspaceConfigurationReconciliation(),
         workspaces: [
           {
             id: workspaceConfiguration.id,

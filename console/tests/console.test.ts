@@ -737,12 +737,24 @@ test("an unrecognised URL filter is named, never resolved into a default", async
       const url = String(input);
       if (url.endsWith("/control/workspaces")) {
         return Response.json({
-          schema: "autodev-control-workspaces-v2",
+          schema: "autodev-control-workspaces-v3",
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
           revision: "e".repeat(64),
           totalWorkspaces: 1,
+          reconciliation: {
+            status: {
+              convergence: "converged",
+              desiredGeneration: "e".repeat(64),
+              observedGeneration: "e".repeat(64),
+              lastApplyAt: "2026-10-07T00:00:00Z",
+              lastObservationAt: "2026-10-07T00:00:05Z",
+              lastError: null,
+              explanation: "The canonical catalog matches the desired state."
+            },
+            history: []
+          },
           workspaces: [
             {
               id: "SimulatorLife/AutoDev",
@@ -864,12 +876,24 @@ test("MemoryPage starts its independent status and records reads together", asyn
       const url = String(input);
       if (url.endsWith("/control/workspaces")) {
         return Response.json({
-          schema: "autodev-control-workspaces-v2",
+          schema: "autodev-control-workspaces-v3",
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
           revision: "e".repeat(64),
           totalWorkspaces: 1,
+          reconciliation: {
+            status: {
+              convergence: "converged",
+              desiredGeneration: "e".repeat(64),
+              observedGeneration: "e".repeat(64),
+              lastApplyAt: "2026-10-07T00:00:00Z",
+              lastObservationAt: "2026-10-07T00:00:05Z",
+              lastError: null,
+              explanation: "The canonical catalog matches the desired state."
+            },
+            history: []
+          },
           workspaces: [
             {
               id: "SimulatorLife/AutoDev",
@@ -958,12 +982,24 @@ test("MemoryPage asks the Runtime for the page the URL names", async () => {
       requested.push(url);
       if (url.endsWith("/control/workspaces")) {
         return Response.json({
-          schema: "autodev-control-workspaces-v2",
+          schema: "autodev-control-workspaces-v3",
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
           revision: "e".repeat(64),
           totalWorkspaces: 1,
+          reconciliation: {
+            status: {
+              convergence: "converged",
+              desiredGeneration: "e".repeat(64),
+              observedGeneration: "e".repeat(64),
+              lastApplyAt: "2026-10-07T00:00:00Z",
+              lastObservationAt: "2026-10-07T00:00:05Z",
+              lastError: null,
+              explanation: "The canonical catalog matches the desired state."
+            },
+            history: []
+          },
           workspaces: [
             {
               id: "SimulatorLife/AutoDev",
@@ -6497,12 +6533,24 @@ test("MemoryPage requires a valid canonical workspace catalog before querying me
     globalThis.fetch = async (input) => {
       requests.push(String(input));
       return Response.json({
-        schema: "autodev-control-workspaces-v2",
+        schema: "autodev-control-workspaces-v3",
         source: "config/workspaces.json",
         readOnly: true,
         catalogStatus: "invalid",
         revision: "e".repeat(64),
         totalWorkspaces: 0,
+        reconciliation: {
+          status: {
+            convergence: "converged",
+            desiredGeneration: "e".repeat(64),
+            observedGeneration: "e".repeat(64),
+            lastApplyAt: "2026-10-07T00:00:00Z",
+            lastObservationAt: "2026-10-07T00:00:05Z",
+            lastError: null,
+            explanation: "The canonical catalog matches the desired state."
+          },
+          history: []
+        },
         workspaces: []
       });
     };
@@ -6535,12 +6583,24 @@ test("MemoryPage rejects URL workspace ids outside the canonical catalog before 
     globalThis.fetch = async (input) => {
       requests.push(String(input));
       return Response.json({
-        schema: "autodev-control-workspaces-v2",
+        schema: "autodev-control-workspaces-v3",
         source: "config/workspaces.json",
         readOnly: true,
         catalogStatus: "valid",
         revision: "e".repeat(64),
         totalWorkspaces: 1,
+        reconciliation: {
+          status: {
+            convergence: "converged",
+            desiredGeneration: "e".repeat(64),
+            observedGeneration: "e".repeat(64),
+            lastApplyAt: "2026-10-07T00:00:00Z",
+            lastObservationAt: "2026-10-07T00:00:05Z",
+            lastError: null,
+            explanation: "The canonical catalog matches the desired state."
+          },
+          history: []
+        },
         workspaces: [
           {
             id: "SimulatorLife/AutoDev",
@@ -6584,12 +6644,24 @@ test("MemoryPage reports failed experience history instead of rendering an empty
       const url = String(input);
       if (url.endsWith("/control/workspaces")) {
         return Response.json({
-          schema: "autodev-control-workspaces-v2",
+          schema: "autodev-control-workspaces-v3",
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
           revision: "e".repeat(64),
           totalWorkspaces: 1,
+          reconciliation: {
+            status: {
+              convergence: "converged",
+              desiredGeneration: "e".repeat(64),
+              observedGeneration: "e".repeat(64),
+              lastApplyAt: "2026-10-07T00:00:00Z",
+              lastObservationAt: "2026-10-07T00:00:05Z",
+              lastError: null,
+              explanation: "The canonical catalog matches the desired state."
+            },
+            history: []
+          },
           workspaces: [
             {
               id: "SimulatorLife/AutoDev",
@@ -11714,6 +11786,53 @@ test("HooksView reports source validity as unknown when no validation is availab
   assert.equal(markup.includes(">Valid<"), false);
 });
 
+test("HooksView names the applied state in the Console's word", () => {
+  // The card beside this one says "Valid" rather than "valid", and the
+  // applied card used to print the wire's own key for the state -- "pending"
+  // -- so two cards on one row read as two different kinds of answer rather
+  // than two spellings of the same one. The Console has one word for a
+  // state, and a card that shows a state shows that word.
+  const markup = renderToStaticMarkup(
+    React.createElement(HooksView, {
+      hooks: [],
+      sourceValidity: true,
+      validationIssues: [],
+      revision: "a".repeat(64),
+      applied: {
+        schema: "autodev-control-hooks-applied-v1",
+        source: "test",
+        declarationSource: ".rulesync/hooks.jsonc",
+        target: "codexcli",
+        available: false,
+        declaredEvents: [],
+        events: [],
+        reconciliation: {
+          status: {
+            convergence: "pending",
+            desiredGeneration: null,
+            observedGeneration: null,
+            lastApplyAt: null,
+            lastObservationAt: null,
+            lastError: null,
+            explanation:
+              "The Runtime has not published this projection on this machine yet."
+          },
+          history: []
+        }
+      }
+    })
+  );
+  assert.match(
+    markup,
+    />Pending</,
+    "the applied state reads in the Console's word"
+  );
+  assert.doesNotMatch(
+    markup,
+    />pending</,
+    "the wire's own key is not the Console's word for a state"
+  );
+});
 test("HooksView keeps the editor in place when the declaration could not be read", () => {
   const markup = renderToStaticMarkup(
     React.createElement(HooksView, {
@@ -12132,12 +12251,24 @@ test("View adapters translate Control API responses without inventing data", () 
   });
 
   const workspaces = workspacesFromControlApi({
-    schema: "autodev-control-workspaces-v2",
+    schema: "autodev-control-workspaces-v3",
     source: "test",
     readOnly: false,
     catalogStatus: "valid",
     revision: "c".repeat(64),
     totalWorkspaces: 1,
+    reconciliation: {
+      status: {
+        convergence: "converged",
+        desiredGeneration: "e".repeat(64),
+        observedGeneration: "e".repeat(64),
+        lastApplyAt: "2026-10-07T00:00:00Z",
+        lastObservationAt: "2026-10-07T00:00:05Z",
+        lastError: null,
+        explanation: "The canonical catalog matches the desired state."
+      },
+      history: []
+    },
     workspaces: [
       {
         id: "SimulatorLife/AutoDev",
@@ -14740,12 +14871,24 @@ test("Memory detail and the workspace catalog fail closed on unreadable response
   // The catalog scopes every Memory read, so an unreadable catalog must not
   // reach the selector as "no workspaces are configured".
   const catalog = {
-    schema: "autodev-control-workspaces-v2",
+    schema: "autodev-control-workspaces-v3",
     source: "config/workspaces.json",
     readOnly: true,
     catalogStatus: "valid",
     revision: "e".repeat(64),
     totalWorkspaces: 1,
+    reconciliation: {
+      status: {
+        convergence: "converged",
+        desiredGeneration: "e".repeat(64),
+        observedGeneration: "e".repeat(64),
+        lastApplyAt: "2026-10-07T00:00:00Z",
+        lastObservationAt: "2026-10-07T00:00:05Z",
+        lastError: null,
+        explanation: "The canonical catalog matches the desired state."
+      },
+      history: []
+    },
     workspaces: [
       {
         id: workspaceId,
@@ -17191,12 +17334,24 @@ test("the Memory page names why storage failed, from the status read rather than
       const url = String(input);
       if (url.includes("/control/workspaces")) {
         return Response.json({
-          schema: "autodev-control-workspaces-v2",
+          schema: "autodev-control-workspaces-v3",
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
           revision: "e".repeat(64),
           totalWorkspaces: 1,
+          reconciliation: {
+            status: {
+              convergence: "converged",
+              desiredGeneration: "e".repeat(64),
+              observedGeneration: "e".repeat(64),
+              lastApplyAt: "2026-10-07T00:00:00Z",
+              lastObservationAt: "2026-10-07T00:00:05Z",
+              lastError: null,
+              explanation: "The canonical catalog matches the desired state."
+            },
+            history: []
+          },
           workspaces: [
             {
               id: "SimulatorLife/AutoDev",
@@ -17808,12 +17963,24 @@ test("cohort filters reach the Runtime and stay on the cohorts tab", async () =>
       requested.push(url);
       if (url.endsWith("/control/workspaces")) {
         return Response.json({
-          schema: "autodev-control-workspaces-v2",
+          schema: "autodev-control-workspaces-v3",
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
           revision: "e".repeat(64),
           totalWorkspaces: 1,
+          reconciliation: {
+            status: {
+              convergence: "converged",
+              desiredGeneration: "e".repeat(64),
+              observedGeneration: "e".repeat(64),
+              lastApplyAt: "2026-10-07T00:00:00Z",
+              lastObservationAt: "2026-10-07T00:00:05Z",
+              lastError: null,
+              explanation: "The canonical catalog matches the desired state."
+            },
+            history: []
+          },
           workspaces: [
             {
               id: "SimulatorLife/AutoDev",
@@ -18245,12 +18412,24 @@ test("the Memory page carries the Runtime's explanation into the record drawer",
       const url = String(input);
       if (url.endsWith("/control/workspaces")) {
         return Response.json({
-          schema: "autodev-control-workspaces-v2",
+          schema: "autodev-control-workspaces-v3",
           source: "config/workspaces.json",
           readOnly: true,
           catalogStatus: "valid",
           revision: "e".repeat(64),
           totalWorkspaces: 1,
+          reconciliation: {
+            status: {
+              convergence: "converged",
+              desiredGeneration: "e".repeat(64),
+              observedGeneration: "e".repeat(64),
+              lastApplyAt: "2026-10-07T00:00:00Z",
+              lastObservationAt: "2026-10-07T00:00:05Z",
+              lastError: null,
+              explanation: "The canonical catalog matches the desired state."
+            },
+            history: []
+          },
           workspaces: [
             {
               id: "SimulatorLife/AutoDev",

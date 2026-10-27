@@ -135,7 +135,7 @@ test("the workspaces read publishes the revision a write is compared against", a
   const options = fixture();
   const result = await call("GET", "/control/workspaces", options);
   assert.equal(result.statusCode, 200);
-  assert.equal(result.body?.schema, "autodev-control-workspaces-v2");
+  assert.equal(result.body?.schema, "autodev-control-workspaces-v3");
   assert.equal(result.body?.source, "config/workspaces.json");
   assert.equal(result.body?.readOnly, false);
   assert.equal(result.body?.catalogStatus, "valid");
@@ -150,6 +150,27 @@ test("the workspaces read publishes the revision a write is compared against", a
     )
   );
   assert.match(String(result.body?.revision), /^[a-f0-9]{64}$/u);
+
+  // The catalog is the canonical source, and the Runtime reads it on every
+  // request, so the reconciliation says what the Runtime observed about it:
+  // the generation it holds, observed, and converged.
+  const reconciliation = result.body?.reconciliation as
+    | {
+        readonly status: {
+          readonly convergence: string;
+          readonly desiredGeneration: string | null;
+          readonly observedGeneration: string | null;
+        };
+        readonly history: readonly unknown[];
+      }
+    | undefined;
+  assert.equal(reconciliation?.status.convergence, "converged");
+  assert.equal(reconciliation?.status.desiredGeneration, result.body?.revision);
+  assert.equal(
+    reconciliation?.status.observedGeneration,
+    result.body?.revision
+  );
+  assert.ok(Array.isArray(reconciliation?.history));
 });
 
 test("a workspace write changes the canonical catalog and answers with the new revision", async () => {
@@ -168,7 +189,7 @@ test("a workspace write changes the canonical catalog and answers with the new r
     }
   );
   assert.equal(result.statusCode, 200);
-  assert.equal(result.body?.schema, "autodev-control-workspace-patch-v1");
+  assert.equal(result.body?.schema, "autodev-control-workspace-patch-v2");
   assert.equal(result.body?.id, "SimulatorLife/AutoDev");
   assert.equal(result.body?.changed, true);
   assert.notEqual(result.body?.revision, revision);
@@ -184,6 +205,39 @@ test("a workspace write changes the canonical catalog and answers with the new r
   assert.equal(workspace?.baseBranch, "release");
   assert.equal(workspace?.enabled, true);
   assert.deepEqual(workspace?.agentRoles, ["worker"]);
+
+  // The write reports the shared desired-vs-actual view and what it changed.
+  // The observation is a second read of the canonical catalog, so the write
+  // that landed is the generation the Runtime now holds.
+  const patch = result.body as
+    | {
+        readonly reconciliation: {
+          readonly status: {
+            readonly convergence: string;
+            readonly desiredGeneration: string | null;
+            readonly observedGeneration: string | null;
+          };
+        };
+        readonly diff: {
+          readonly summary: string;
+          readonly identifier: string;
+        };
+      }
+    | undefined;
+  assert.equal(patch?.reconciliation.status.convergence, "converged");
+  assert.equal(
+    patch?.reconciliation.status.desiredGeneration,
+    result.body?.revision
+  );
+  assert.equal(
+    patch?.reconciliation.status.observedGeneration,
+    result.body?.revision
+  );
+  // The diff names the fields that moved, in the catalog's own vocabulary.
+  assert.match(patch?.diff.summary ?? "", /base branch/u);
+  assert.match(patch?.diff.summary ?? "", /role scope/u);
+  assert.doesNotMatch(patch?.diff.summary ?? "", /enablement/u);
+  assert.equal(patch?.diff.identifier, result.body?.revision);
 
   // The file on disk carries the change, in the shape it already had.
   const written = readFileSync(options.catalogPath, "utf8");

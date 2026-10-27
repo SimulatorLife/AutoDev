@@ -160,12 +160,24 @@ function route(path: string, wire: Wire): unknown {
   }
   if (path.startsWith("/control/workspaces")) {
     return {
-      schema: "autodev-control-workspaces-v2",
+      schema: "autodev-control-workspaces-v3",
       source: "config/workspaces.json",
       readOnly: true,
       catalogStatus: "valid",
       revision: "e".repeat(64),
       totalWorkspaces: 1,
+      reconciliation: {
+        status: {
+          convergence: "converged",
+          desiredGeneration: "e".repeat(64),
+          observedGeneration: "e".repeat(64),
+          lastApplyAt: "2026-10-07T00:00:00Z",
+          lastObservationAt: "2026-10-07T00:00:05Z",
+          lastError: null,
+          explanation: "The canonical catalog matches the desired state."
+        },
+        history: []
+      },
       workspaces: [
         {
           id: WORKSPACE,

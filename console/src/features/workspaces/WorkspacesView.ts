@@ -1,5 +1,6 @@
 import type {
   ControlApiWorkspaceRecord,
+  ReconciliationView,
   WorkspacePlaytestApproval
 } from "@simulatorlife/autodev-core";
 import React from "react";
@@ -9,6 +10,7 @@ import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
+import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import {
   countValue,
   scopedCount
@@ -118,6 +120,14 @@ export interface WorkspacesViewProps {
   readonly revision: string | null;
   /** The status of the canonical catalog the read came from. */
   readonly catalogStatus: "valid" | "invalid" | "unavailable";
+  /**
+   * The Runtime's desired-vs-actual view of the canonical catalog.
+   *
+   * The catalog is the configuration this list edits, so the list shows what
+   * the Runtime observed about it: converged, pending or not observed, with
+   * the operation history behind it.
+   */
+  readonly reconciliation?: ReconciliationView | undefined;
   /** How the last write to a workspace's configuration ended. */
   readonly saveOutcome?: WorkspaceConfigurationSaveOutcome | undefined;
   /**
@@ -136,6 +146,7 @@ export function WorkspacesView({
   requests,
   revision,
   catalogStatus,
+  reconciliation,
   saveOutcome,
   savedWorkspace
 }: WorkspacesViewProps): React.JSX.Element {
@@ -297,6 +308,12 @@ export function WorkspacesView({
       "div",
       null,
       workspaceConfigurationSaveNotice(saveOutcome, savedWorkspace),
+      reconciliation === undefined
+        ? null
+        : React.createElement(ReconciliationPanel, {
+            status: reconciliation.status,
+            history: reconciliation.history
+          }),
       React.createElement(
         "h2",
         {

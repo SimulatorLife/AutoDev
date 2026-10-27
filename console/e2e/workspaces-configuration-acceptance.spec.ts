@@ -112,6 +112,14 @@ test("the workspace row writes its configuration against the revision it loaded"
   // The revision moved with the configuration, so the next write has to carry
   // the new one.
   expect(held.revision).not.toBe("e".repeat(64));
+
+  // The page says what the Runtime observed about the canonical catalog, not
+  // only that the write succeeded: the shared desired-vs-actual view every
+  // other canonical source publishes.
+  await expect(page.locator('[data-feature="reconciliation"]')).toBeVisible();
+  await expect(page.locator('[data-feature="reconciliation"]')).toContainText(
+    "Converged"
+  );
 });
 
 test("a stale configuration write is refused rather than overwriting somebody else's change", async ({

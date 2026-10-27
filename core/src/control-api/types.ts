@@ -1246,7 +1246,7 @@ export interface ControlApiWorkspaceRecord extends WorkspaceEntry {
 }
 
 export interface ControlApiWorkspacesResponse {
-  readonly schema: "autodev-control-workspaces-v2";
+  readonly schema: "autodev-control-workspaces-v3";
   readonly source: string;
   readonly readOnly: boolean;
   readonly catalogStatus: WorkspaceCatalogStatus;
@@ -1260,6 +1260,17 @@ export interface ControlApiWorkspacesResponse {
   readonly revision: string | null;
   readonly totalWorkspaces: number | null;
   readonly workspaces: readonly ControlApiWorkspaceRecord[];
+  /**
+   * The shared desired-vs-actual view of the canonical catalog.
+   *
+   * The catalog is the desired state, and the Runtime reads it from disk on
+   * every request, so the generation it observes is the generation the file
+   * holds. Publishing it is what lets the Workspaces surface say the same word
+   * as every other canonical write -- converged, pending or not observed --
+   * instead of leaving the operator to infer convergence from a write that
+   * said it succeeded.
+   */
+  readonly reconciliation: ReconciliationView;
 }
 
 /**
@@ -1278,13 +1289,32 @@ export interface ControlApiWorkspacePatchRequest {
 }
 
 export interface ControlApiWorkspacePatchResponse {
-  readonly schema: "autodev-control-workspace-patch-v1";
+  readonly schema: "autodev-control-workspace-patch-v2";
   readonly id: string;
   /** The revision of the catalog after the write. */
   readonly revision: string;
   readonly changed: boolean;
   /** The workspace as the catalog now declares it. */
   readonly workspace: ControlApiWorkspaceRecord;
+  /**
+   * The shared desired-vs-actual view of the canonical catalog after the
+   * write.
+   *
+   * The observed generation is a second read of the canonical source, not a
+   * copy of the generation the write produced: a catalog that moved again
+   * between the write and the observation is reported as pending, and a
+   * catalog that cannot be read at all is reported as not observed. Neither
+   * is dressed up as convergence.
+   */
+  readonly reconciliation: ReconciliationView;
+  /**
+   * What the write changed, in the catalog's own vocabulary.
+   *
+   * The summary names the fields that moved and the identifier is the
+   * generation they produced, so the Console can render "what changed and
+   * which generation it is" without inventing a second diff vocabulary.
+   */
+  readonly diff: ReconciliationDiff;
 }
 
 export interface ControlApiGithubResponse {
@@ -1959,6 +1989,14 @@ export interface ControlApiPlaytestingAnalystRun {
   readonly analysisId: string;
   readonly workspaceId: string;
   readonly analysisKind?: "confirmatory" | "discovery";
+  /**
+   * Whether the operator's request was for a review that must file findings.
+   *
+   * A hypothesis review states what the packet shows; a findings request also
+   * files the defect claims the packet supports. The two are different jobs,
+   * so the run records which one was asked for.
+   */
+  readonly requireFindings?: boolean;
   readonly status: "running" | "completed" | "partial" | "failed";
   readonly createdAt: string;
   readonly finishedAt: string | null;

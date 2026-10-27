@@ -51,11 +51,16 @@
  * the policy is written through `PATCH /control/permissions`, which replaces
  * one setting under the same compare-and-swap the other canonical sources use
  * and reports the reconciliation against the applied configuration.
+ * v18: the canonical workspace catalog publishes the shared desired-vs-actual
+ * view like every other canonical source, and one workspace's configuration
+ * write reports it together with the fields it changed -- so the Workspaces
+ * surface says converged, pending or not observed instead of leaving the
+ * operator to infer convergence from a write that reported success.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 17
+  version: 18
 } as const;
 
 export type ControlApiContractResponse = {

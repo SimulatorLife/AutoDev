@@ -349,6 +349,15 @@ export interface WorkspaceCatalogUpdate {
 }
 
 /**
+ * One field of a workspace's canonical configuration.
+ *
+ * The names are the catalog's own, so the write reports what it changed in the
+ * vocabulary the file uses rather than in a second vocabulary the caller has to
+ * translate.
+ */
+export type WorkspaceCatalogField = "enabled" | "baseBranch" | "agentRoles";
+
+/**
  * What a write to the catalog did.
  */
 export interface WorkspaceCatalogWrite {
@@ -358,6 +367,15 @@ export interface WorkspaceCatalogWrite {
   readonly workspace: WorkspaceCatalogEntry;
   /** Whether the write moved the catalog. */
   readonly changed: boolean;
+  /**
+   * The fields whose value the write actually changed.
+   *
+   * A write that sets a field to the value the catalog already holds changed
+   * nothing, so it is not reported as a change: the operator is told what moved,
+   * not what they asked for. The fields are the catalog's own names, because
+   * the write is the only place that knows which of them moved.
+   */
+  readonly changedFields: readonly WorkspaceCatalogField[];
 }
 
 /**
@@ -654,11 +672,26 @@ export function updateWorkspaceCatalogEntry(
   // The fields the catalog already declares are written in place, so the
   // document keeps the key order it was written in and the diff shows the
   // value that changed rather than a rewritten file.
-  if (change.enabled !== undefined) entry.enabled = change.enabled;
-  if (change.baseBranch !== undefined) entry.baseBranch = change.baseBranch;
+  //
+  // A field is reported as changed only when its value actually moved: a write
+  // that sets a field to the value the catalog already holds changed nothing,
+  // and saying it changed would put a change in the diff that did not happen.
+  const changedFields: WorkspaceCatalogField[] = [];
+  if (change.enabled !== undefined) {
+    if (entry.enabled !== change.enabled) changedFields.push("enabled");
+    entry.enabled = change.enabled;
+  }
+  if (change.baseBranch !== undefined) {
+    if (entry.baseBranch !== change.baseBranch)
+      changedFields.push("baseBranch");
+    entry.baseBranch = change.baseBranch;
+  }
   if (change.agentRoles !== undefined) {
-    entry.agentRoles =
-      change.agentRoles === null ? null : [...change.agentRoles];
+    const next = change.agentRoles === null ? null : [...change.agentRoles];
+    if (!sameRoleScope(entry.agentRoles, next)) {
+      changedFields.push("agentRoles");
+    }
+    entry.agentRoles = next;
   }
   let updated: WorkspaceCatalog;
   try {
@@ -681,8 +714,29 @@ export function updateWorkspaceCatalogEntry(
   return {
     revision: written,
     workspace,
-    changed: written !== expectedRevision
+    changed: written !== expectedRevision,
+    changedFields
   };
+}
+
+/**
+ * Whether two role scopes name the same roles in the same order.
+ *
+ * A scope is a list, and the list is the scope: a scope that names the same
+ * roles in a different order is a different list, and the write reports it as
+ * the change it is. The current scope is read from the document as it stands,
+ * so it is whatever the catalog holds -- a list of names, or null.
+ */
+function sameRoleScope(
+  current: unknown,
+  next: readonly string[] | null
+): boolean {
+  if (next === null) return current === null;
+  if (!Array.isArray(current)) return false;
+  return (
+    current.length === next.length &&
+    current.every((role, index) => role === next[index])
+  );
 }
 
 /**
