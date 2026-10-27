@@ -4692,12 +4692,27 @@ function handleMemoryRead(
     return true;
   }
   if (url.pathname === "/control/memory/session-cohorts") {
+    // The five counts the cohorts contract declares, and the story they tell
+    // together: eighteen sessions whose injections all agreed on one mode,
+    // twelve of which reported an outcome and six of which did not; three
+    // sessions whose injections disagreed about the mode, which the contract
+    // counts beside the population rather than inside it; and two sessions
+    // whose per-injection tokens disagreed about the outcome, which is a
+    // diagnostic and may overlap the three.
+    //
+    // The last two were missing here, and the Console's guard for this
+    // response checked three of the five counts the contract declares -- so
+    // the response passed, the view read the two absent ones as numbers, and
+    // the Outcome Cohorts tab failed to render at all. A fixture that does
+    // not serve the contract cannot measure the page that reads it.
     sendJson(response, {
       schema: "autodev-memory-session-outcome-cohorts-v1",
       cells: [],
       sessionCount: 18,
       reportedSessionCount: 12,
-      unreportedSessionCount: 6
+      unreportedSessionCount: 6,
+      mixedModeSessionCount: 3,
+      conflictingOutcomeSessionCount: 2
     });
     return true;
   }

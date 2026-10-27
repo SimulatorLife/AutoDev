@@ -17,6 +17,14 @@ const PAGE_CLAIMS = 50;
 const ACTIVE_CLAIMS = 604;
 /** The sessions the cohort read counted. */
 const MODE_ISOLATED_SESSIONS = 18;
+/** The sessions among them that reported an outcome. */
+const REPORTED_SESSIONS = 12;
+/** The sessions among them that did not. */
+const UNREPORTED_SESSIONS = 6;
+/** The sessions whose injections disagreed about the mode. */
+const MIXED_MODE_SESSIONS = 3;
+/** The sessions whose per-injection tokens disagreed about the outcome. */
+const CONFLICTING_REPORTS = 2;
 /** The first claim the fixture holds, addressed by its identifier. */
 const FIRST_RECORD = /mem-0001/u;
 /** The setting the page names when durable storage is not configured. */
@@ -131,6 +139,54 @@ test("the page counts the collection rather than the rows on the page", async ({
   // card says which window it is about.
   await expect(statCard(page, "Mode-Isolated Sessions")).toContainText(
     String(MODE_ISOLATED_SESSIONS)
+  );
+});
+
+/**
+ * One stat card of the cohorts tab, addressed by its exact title.
+ *
+ * The titles overlap as substrings -- "Reported Sessions" is inside
+ * "Unreported Sessions" -- so the card is addressed by an exact match on its
+ * term. A substring match resolves to two cards and the assertion cannot say
+ * which one it read.
+ */
+function cohortsCard(page: Page, title: string): Locator {
+  return page
+    .locator("dl")
+    .filter({ has: page.getByText(title, { exact: true }) });
+}
+
+test("the Outcome Cohorts tab renders every count the cohorts contract declares", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/memory?tab=cohorts");
+  await expect(memoryBody(page)).toBeVisible();
+
+  // The tab used to fail to render at all. The Console's guard for the
+  // cohorts response checked three of the five counts the contract declares,
+  // and the fixture published three, so the two absent counts passed
+  // validation and reached the view as `undefined` -- which the view's stat
+  // card read as a number. A tab that throws is not a tab that reports
+  // anything, and nothing in the acceptance visited this tab to find out.
+  //
+  // The four counts below are the ones only this grid carries. The
+  // mode-isolated total is on the page's headline grid as well, because the
+  // headline states it and this grid breaks it down, and that total is
+  // asserted on the Durable Records tab.
+  await expect(cohortsCard(page, "Reported Sessions")).toContainText(
+    String(REPORTED_SESSIONS)
+  );
+  await expect(cohortsCard(page, "Unreported Sessions")).toContainText(
+    String(UNREPORTED_SESSIONS)
+  );
+  // The two diagnostics are counted beside the population rather than inside
+  // it, so they are separate cards with their own numbers.
+  await expect(cohortsCard(page, "Mixed-Mode Sessions")).toContainText(
+    String(MIXED_MODE_SESSIONS)
+  );
+  await expect(cohortsCard(page, "Conflicting Reports")).toContainText(
+    String(CONFLICTING_REPORTS)
   );
 });
 

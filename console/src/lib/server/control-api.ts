@@ -1886,7 +1886,18 @@ function isSessionOutcomeCohortPage(
     value.cells.every(isSessionOutcomeCohortCell) &&
     typeof value.sessionCount === "number" &&
     typeof value.reportedSessionCount === "number" &&
-    typeof value.unreportedSessionCount === "number"
+    typeof value.unreportedSessionCount === "number" &&
+    // The two diagnostic counts are part of the contract the page reads, so
+    // they are required here too. The guard used to check three of the five
+    // counts the contract declares, so a response missing the other two passed
+    // validation and then reached the view as `undefined` -- and the view's
+    // stat card read it as a number, which is not a number at all. The page
+    // did not say the count was unavailable; it failed to render.
+    //
+    // A guard that narrows to a type it has not checked is a guard that lets
+    // the wire lie. This one checks every count the type declares.
+    typeof value.mixedModeSessionCount === "number" &&
+    typeof value.conflictingOutcomeSessionCount === "number"
   );
 }
 
