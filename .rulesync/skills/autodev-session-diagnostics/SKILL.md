@@ -59,8 +59,8 @@ every event and looked like "the router logged nothing".
 
 | Question | Source |
 | --- | --- |
-| What did the thread contain? | `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl`: `session_meta` (role, parent, `cli_version`), `turn_context` (model), `response_item`, `event_msg` `task_complete.error` |
-| Which provider served each request? | `$CODEX_HOME/run/codex-model-router.launchd.err.log` (`autodev-router-event-v1`, with `thread`) |
+| What did the thread contain? | `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl`, or `$CODEX_HOME/archived_sessions/` once the Codex app has archived it: `session_meta` (role, parent, `cli_version`), `turn_context` (model), `response_item`, `event_msg` `task_complete.error` |
+| Which provider served each request? | `$CODEX_HOME/run/codex-model-router.launchd.err.log` (`autodev-router-event-v1`, with `thread`), **and its rotated `.err.log.1`, `.err.log.2`, ...** -- launchd empties the live file and moves the events aside |
 | What did a bridge do? | `$CODEX_HOME/hooks/<bridge>.launchd.log` (no timestamps: correlate by order and router times) |
 | Health, cooldowns, agent counts, MCP usage now | `curl -s 127.0.0.1:4100/status \| jq` -- `providers.<name>`, `agents` (`canonicalLiveCount`, `byState`, `liveByRole`), `usage.byWorkspace.<ws>.byMcp`, `spawnFailures`. Bridges: `curl 127.0.0.1:{4000,4002,4003,18765}/health`. (`autodev router status` is not wired up.) |
 | Does an MCP server work? | `node "$SKILL_DIR/scripts/mcp-probe.ts" <server> --cwd <repo> --call <tool> '<json>'` starts it exactly as Codex does (installed launcher, minimal env) and prints its stderr if it dies. `<server>` must be a canonical AutoDev name -- `lsp`, `playwright`, `cocoindex-code`, `codegraphcontext` (`runtime/src/mcp/launcher.ts`); anything else exits 2 with `unsupported AutoDev MCP`. A binary's package name is often not its server name: the LSP server is `lsp-mcp-server` on disk and on disk's `PATH`, but `lsp` everywhere AutoDev names it. |
@@ -163,6 +163,17 @@ every event and looked like "the router logged nothing".
   `HEURISTIC_CALLS` instead. Trust its `files`/`modules`, and get real counts
   from `MATCH (n) RETURN labels(n), count(*)`. Upstream bug, not AutoDev's
   (pipx 0.6.13, already current), so report it rather than patching site-packages.
+- **The router's event log rotates, and the live file is the empty one.** launchd
+  caps `codex-model-router.launchd.err.log` and moves its contents to
+  `.err.log.1`; the live file is then 0 bytes. Reading only the live file
+  reports "the router saw 0 requests; no results" for a session the router
+  actually served -- and it reads as "the request never reached the router",
+  which sends the investigation after the wrong system. Read the live file and
+  every `.err.log.N` beside it.
+- **An archived session's rollout is not under `sessions/`.** The Codex app
+  moves a rollout to `$CODEX_HOME/archived_sessions/` when a session is
+  archived, so a search of `sessions/` alone reports "no rollout found for that
+  id" for a session the user has finished with. Read both roots.
 - **Never restart launchd services or run the installer without asking**: it
   interrupts every in-flight session.
 - **Never print tokens or paste prompts**; quote ids, counts, and timestamps.

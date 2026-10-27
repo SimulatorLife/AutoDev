@@ -693,15 +693,29 @@ function rolloutFiles(root: string): string[] {
 }
 
 /**
+ * Where rollouts live. The Codex app archives a session by moving its rollout
+ * out of `sessions/` and into `archived_sessions/`, so a session the user has
+ * archived is still worth reading -- but a search of `sessions/` alone reports
+ * "no rollout found" for exactly the sessions someone has finished with.
+ */
+export function rolloutRoots(codexHome: string): string[] {
+  return [
+    path.join(codexHome, "sessions"),
+    path.join(codexHome, "archived_sessions")
+  ];
+}
+
+/**
  * Rollouts belonging to the id: the thread itself, plus -- whether the id names
  * a session or a thread -- every thread sharing its session. Newest files are
  * checked first because a debugged session is almost always recent.
  */
 export function findSessionRollouts(
-  sessionsRoot: string,
+  sessionsRoot: string | string[],
   id: string
 ): string[] {
-  const files = rolloutFiles(sessionsRoot).reverse();
+  const roots = Array.isArray(sessionsRoot) ? sessionsRoot : [sessionsRoot];
+  const files = roots.flatMap((root) => rolloutFiles(root)).reverse();
   const direct = files.filter((file) => file.includes(id));
   const sessionIds = new Set<string>([id]);
   for (const file of direct) {
@@ -1267,21 +1281,49 @@ function routerEventFromLine(
   };
 }
 
+/**
+ * Every log that can hold the router's events, newest first.
+ *
+ * launchd rotates the router's stderr log: the live file becomes empty and
+ * the events move to `.err.log.1`, then `.2`, and so on. Reading only the live
+ * file therefore reads as "the router saw no request at all" for exactly the
+ * sessions that are worth investigating.
+ */
+export function routerLogFiles(logFile: string): string[] {
+  if (!existsSync(logFile)) return [];
+  const dir = path.dirname(logFile);
+  const base = path.basename(logFile);
+  const files = [logFile];
+  let index = 1;
+  for (;;) {
+    const rotated = path.join(dir, `${base}.${index}`);
+    if (!existsSync(rotated)) break;
+    files.push(rotated);
+    index += 1;
+  }
+  return files;
+}
+
 export async function routerEvents(
   logFile: string,
   start: string,
   end: string
 ): Promise<RouterEventRow[]> {
-  if (!existsSync(logFile)) return [];
   const rows: RouterEventRow[] = [];
-  const lines = createInterface({
-    input: createReadStream(logFile, "utf8"),
-    crlfDelay: Infinity
-  });
-  for await (const line of lines) {
-    const event = routerEventFromLine(line, start, end);
-    if (event) rows.push(event);
+  const files = routerLogFiles(logFile);
+  /* eslint-disable no-await-in-loop -- The logs are read one after the other: a rotated log holds the earlier events, and the files are read in order so the rows come out in the order they happened. */
+  for (const file of files) {
+    const lines = createInterface({
+      input: createReadStream(file, "utf8"),
+      crlfDelay: Infinity
+    });
+    for await (const line of lines) {
+      const event = routerEventFromLine(line, start, end);
+      if (event) rows.push(event);
+    }
   }
+  /* eslint-enable no-await-in-loop */
+  rows.sort((a, b) => COLLATOR.compare(a.at, b.at));
   return rows;
 }
 
@@ -1525,7 +1567,7 @@ function logFreshness(codexHome: string): TraceReport["logs"] {
 
 export async function buildReport(options: TraceOptions): Promise<TraceReport> {
   const threads = findSessionRollouts(
-    path.join(options.codexHome, "sessions"),
+    rolloutRoots(options.codexHome),
     options.id
   ).map((file) => traceThread(file, options.items));
   const stamps = threads
