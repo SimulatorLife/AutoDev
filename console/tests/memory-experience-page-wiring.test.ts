@@ -456,3 +456,33 @@ test("a failed session-outcome read is not drawn as a session with no outcome", 
     "an unreadable session outcome must not offer a report form"
   );
 });
+
+test("a failed evidence read does not make the totals line a zero", async () => {
+  // The two totals on the evidence panel come from two different reads, and the
+  // panel printed "0 observed injections" whenever the outcomes read had not
+  // answered -- beside a panel that said the outcomes were not observed. A
+  // count nobody measured is the exact thing the target state's state
+  // correctness rule forbids, and here it was a measurement of the session's
+  // injections that the Runtime never made.
+  const { markup } = await renderExperiencePage({
+    fail: (path) => /\/experiences\/[^/?]+\/outcomes\b/u.test(path)
+  });
+
+  assert.doesNotMatch(
+    markup,
+    /0 observed injection/u,
+    "a read that never answered must not be rendered as a measured zero"
+  );
+  assert.match(
+    markup,
+    /injections not observed/u,
+    "the totals line must say which dimension was not observed"
+  );
+  // The other read did answer, so its count is still shown: the two totals are
+  // observed separately.
+  assert.match(
+    markup,
+    /1 assessed/u,
+    "the read that did answer must keep its count"
+  );
+});

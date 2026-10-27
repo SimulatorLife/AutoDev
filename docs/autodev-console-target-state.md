@@ -179,6 +179,8 @@ error
 
 Never synthesize ready, converged, healthy, connected, zero, or success merely because configuration exists or telemetry is absent.
 
+A count is the sharpest case of that rule, because a count over a scope whose elements were only partly read still looks like a measurement: the number is exactly right for the elements that were read and merely incomplete for the ones that were not. A count is therefore a number only when everything it counts was observed; otherwise it is not observed, and the page says how much of the scope was missing. Two independent reads are observed separately, so one unread read never turns the other's count into a zero. A measured zero is a measurement and stays a number: "nothing was there" and "nobody looked" are different claims, and only the first is a count.
+
 Configuration does not prove runtime availability. Eligibility/exposure does not prove execution. Historical tool use does not define current permissions.
 
 ### Accessibility and interaction consistency

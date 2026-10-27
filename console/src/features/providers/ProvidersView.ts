@@ -25,7 +25,12 @@ import {
   type ControlFailureNoticeProps
 } from "../../components/status/ControlFailureNotice.ts";
 import {
+  countValue,
+  scopedCount
+} from "../../components/status/observed-count.ts";
+import {
   NOT_OBSERVED_LABEL,
+  NOT_OBSERVED_STATUS,
   StatusBadge
 } from "../../components/status/StatusBadge.ts";
 import { Chip, chipList } from "../../components/tables/Chips.ts";
@@ -523,9 +528,17 @@ function ProvidersTab({
   // Ready is the one count worth leading with, and it is computed from the same
   // `resolveProviderStatus` the column uses, so the summary can never disagree
   // with the rows beneath it.
-  const readyCount = records.filter(
+  //
+  // A provider whose health was never observed reads "Not observed" in its own
+  // row, so it is not a provider that was judged and found unready: nobody
+  // looked. Counting it as unready would print a readiness the Runtime never
+  // measured, so the count is a number only when every provider's verdict was
+  // observed.
+  const readiness = scopedCount(
+    records,
+    (provider) => resolveProviderStatus(provider).tone !== NOT_OBSERVED_STATUS,
     (provider) => resolveProviderStatus(provider).label === "Ready"
-  ).length;
+  );
   return React.createElement(
     "div",
     {
@@ -537,8 +550,10 @@ function ProvidersTab({
       { columns: 4 },
       React.createElement(StatCard, {
         title: "Ready",
-        value: readyCount,
-        subtitle: `of ${records.length} providers`
+        value: countValue(readiness),
+        subtitle: readiness.observed
+          ? `of ${records.length} providers`
+          : "Provider readiness was not observed"
       }),
       React.createElement(StatCard, {
         title: "Disabled",

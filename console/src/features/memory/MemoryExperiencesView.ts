@@ -24,6 +24,7 @@ import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { Pagination } from "../../components/navigation/Pagination.ts";
 import { DetailDrawer } from "../../components/panels/DetailDrawer.ts";
 import { gridRowClass } from "../../components/panels/DetailGrid.ts";
+import { observedTotal } from "../../components/status/observed-count.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
@@ -615,6 +616,13 @@ function ExperienceEvidence({
       `${what} were not observed; nothing is inferred about them.`
     );
 
+  // The two totals come from two different reads, so they are observed
+  // separately. A read that did not succeed has no total, and the line says so
+  // for that dimension alone -- it used to print "0 observed injections" for a
+  // read that never answered, which claimed a measurement nobody made.
+  const injections = observedTotal(outcomeTotal);
+  const assessments = observedTotal(useAssessmentTotal);
+
   return React.createElement(
     "section",
     {
@@ -705,16 +713,19 @@ function ExperienceEvidence({
             )
           ),
 
-    (outcomeTotal !== null && outcomeTotal !== undefined) ||
-      (useAssessmentTotal !== null && useAssessmentTotal !== undefined)
+    injections.observed || assessments.observed
       ? React.createElement(
           "p",
           { className: MUTED_TEXT_CLASS, "data-evidence": "totals" },
           [
-            `${outcomeTotal ?? 0} observed injection${
-              outcomeTotal === 1 ? "" : "s"
-            }`,
-            `${useAssessmentTotal ?? 0} assessed`
+            injections.observed && injections.value !== null
+              ? `${injections.value} observed injection${
+                  injections.value === 1 ? "" : "s"
+                }`
+              : "injections not observed",
+            assessments.observed && assessments.value !== null
+              ? `${assessments.value} assessed`
+              : "assessments not observed"
           ].join(" · ")
         )
       : null

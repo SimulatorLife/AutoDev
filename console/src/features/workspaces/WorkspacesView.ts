@@ -9,6 +9,10 @@ import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
+import {
+  countValue,
+  scopedCount
+} from "../../components/status/observed-count.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
   type ColumnDef,
@@ -24,6 +28,7 @@ import {
 import {
   workspaceApprovalBadgeLabel,
   workspaceApprovalBadgeVariant,
+  type WorkspaceApprovalStatus,
   workspaceApprovalStatus
 } from "./approval-status.ts";
 import {
@@ -51,6 +56,25 @@ export type WorkspaceApprovalLookup = ReadonlyMap<
   string,
   WorkspacePlaytestApproval | null | "unavailable"
 >;
+
+/**
+ * One workspace's approval state, read the way the table row reads it.
+ *
+ * The row's badge and the count card above the table are two readings of the
+ * same fact, so they read it through one function: a workspace whose approval
+ * the Control API could not answer is `unavailable` in the badge and in the
+ * count, never "not approved" in one place and "unreadable" in the other.
+ */
+function workspaceApprovalOf(
+  approvals: WorkspaceApprovalLookup,
+  workspaceId: string
+): WorkspaceApprovalStatus {
+  const approval = approvals.get(workspaceId);
+  if (approval === undefined || approval === "unavailable") {
+    return "unavailable";
+  }
+  return workspaceApprovalStatus(approval);
+}
 
 /**
  * Workspaces resource view.
@@ -116,15 +140,18 @@ export function WorkspacesView({
   savedWorkspace
 }: WorkspacesViewProps): React.JSX.Element {
   const enabledCount = workspaces.filter((w) => w.enabled).length;
-  const approvedCount = workspaces.filter((w) => {
-    const approval = approvals.get(w.id);
-    return (
-      approval !== undefined &&
-      approval !== "unavailable" &&
-      approval !== null &&
-      approval.revokedAt === null
-    );
-  }).length;
+  // An approval the Control API could not read is not an approval that was
+  // refused: the row's badge says "Unavailable", and the card below the table
+  // used to disagree with it by counting the same workspace as "not approved".
+  // So the count is a number only when every workspace's approval was read.
+  const approvalStatuses = workspaces.map((workspace) =>
+    workspaceApprovalOf(approvals, workspace.id)
+  );
+  const approvedCount = scopedCount(
+    approvalStatuses,
+    (status) => status !== "unavailable",
+    (status) => status === "active"
+  );
 
   const columns: ColumnDef<ControlApiWorkspaceRecord>[] = [
     {
@@ -175,11 +202,7 @@ export function WorkspacesView({
       header: "Playtesting Approval",
       weight: 206,
       cell: (ws) => {
-        const approval = approvals.get(ws.id);
-        const status =
-          approval === undefined || approval === "unavailable"
-            ? "unavailable"
-            : workspaceApprovalStatus(approval);
+        const status = workspaceApprovalOf(approvals, ws.id);
         return React.createElement(
           NavigationLink,
           {
@@ -259,8 +282,10 @@ export function WorkspacesView({
       }),
       React.createElement(StatCard, {
         title: "Approved for Playtesting",
-        value: approvedCount,
-        subtitle: "Active checkout approvals"
+        value: countValue(approvedCount),
+        subtitle: approvedCount.observed
+          ? "Active checkout approvals"
+          : "Approval state was not observed"
       }),
       React.createElement(StatCard, {
         title: "Tenancy Model",

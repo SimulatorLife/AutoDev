@@ -22,6 +22,7 @@ import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
+import { observedTotal } from "../../components/status/observed-count.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
@@ -194,6 +195,17 @@ export function MemoryCohortsView({
   const hasSessionCohorts = sessionCohorts !== null;
   const sessionCells = sessionCohorts?.cells ?? [];
   const useCells = useCohorts?.cells ?? [];
+  // The cell count is a count over both cohort matrices, so it is a number only
+  // when both were read. A failed read is not an empty matrix: the panels below
+  // say the data is unavailable, and a summary that said "0 cohort cells" would
+  // contradict them on the same screen.
+  const sessionCellCount = sessionCohorts?.cells.length;
+  const useCellCount = useCohorts?.cells.length;
+  const cohortCells = observedTotal(
+    sessionCellCount === undefined || useCellCount === undefined
+      ? undefined
+      : sessionCellCount + useCellCount
+  );
   const assessedExposureCount = useCells.reduce(
     (count, cell) => count + (cell.useKind === null ? 0 : cell.exposureCount),
     0
@@ -373,7 +385,9 @@ export function MemoryCohortsView({
           { name: "limit", value: String(listScope.limit) }
         ],
         submitTestId: "memory-cohort-filter",
-        summary: `${sessionCells.length + useCells.length} cohort cells`,
+        summary: cohortCells.observed
+          ? `${cohortCells.value} cohort cells`
+          : "Cohort cells unavailable",
         dataAttributes: { "data-feature-filter": "cohorts" }
       },
       React.createElement(SelectField, {
