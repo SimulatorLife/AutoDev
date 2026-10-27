@@ -19,8 +19,23 @@ export type StatusBadgeVariant =
   | "error"
   | "not-observed";
 
+/**
+ * A status the badge can be handed.
+ *
+ * The union above is the Console's own vocabulary: the states it has decided a
+ * word and a tone for. A status can also arrive from a service that has grown
+ * a state the Console has not been taught, and the badge must still be able to
+ * render it -- a badge that renders no word says nothing at all, which is a
+ * different claim from the one the service made.
+ *
+ * `(string & {})` keeps the union's members in an editor's completion list
+ * while still accepting any other string. It is the shape the repository
+ * already uses for an open union (`AgentRole`).
+ */
+export type StatusBadgeStatus = StatusBadgeVariant | (string & {});
+
 export interface StatusBadgeProps {
-  readonly status: StatusBadgeVariant;
+  readonly status: StatusBadgeStatus;
   readonly label?: string;
   /** Extra explanation revealed on hover, for a verbose state behind a short label. */
   readonly title?: string | undefined;
@@ -125,6 +140,47 @@ const VARIANT_LABEL: Record<StatusBadgeVariant, string> = {
 };
 
 /**
+ * The separators a status key may carry between its words.
+ */
+const STATUS_WORD_SEPARATOR = /[-_\s]+/u;
+
+/**
+ * The word a status the Console has no variant for is spoken with.
+ *
+ * "idle" is spoken "Idle". The Console has no tone for a state it has not been
+ * taught, and it must not borrow one -- a badge painted success would be a
+ * claim the Console cannot make. But it can say what the service said, and a
+ * service that names a state is evidence of that state.
+ */
+function spokenStatus(status: string): string {
+  const words = status
+    .split(STATUS_WORD_SEPARATOR)
+    .filter((word) => word.length > 0);
+  const [first, ...rest] = words;
+  if (first === undefined) return "";
+  return [first.charAt(0).toUpperCase() + first.slice(1), ...rest].join(" ");
+}
+
+/**
+ * The word a badge renders for a status.
+ *
+ * A known variant has a word of its own, and the table above is exhaustive over
+ * them, so adding a variant without deciding its word is still a typecheck
+ * failure. A status the Console has no variant for is spoken from its own key:
+ * the badge must never render an empty label, because a badge with no word is a
+ * shape with no meaning -- the operator sees a dot and cannot tell a state from
+ * a rendering that failed, and a screen reader is told nothing at all. A status
+ * that names nothing at all is the Console's own word for evidence it does not
+ * have.
+ */
+export function statusBadgeLabel(status: StatusBadgeStatus): string {
+  const known = VARIANT_LABEL[status as StatusBadgeVariant];
+  if (known !== undefined) return known;
+  const spoken = spokenStatus(status);
+  return spoken === "" ? NOT_OBSERVED_LABEL : spoken;
+}
+
+/**
  * Foreground token per status variant, for places that carry the status as a
  * mark rather than a word (a dot beside a compact chip). Keeps one vocabulary:
  * a status never renders green in one component and success-green in another.
@@ -142,7 +198,7 @@ const STATUS_DOT_CLASS: Record<StatusBadgeVariant, string> = {
 };
 
 export interface StatusDotProps {
-  readonly status: StatusBadgeVariant;
+  readonly status: StatusBadgeStatus;
   /** Accessible description of what the dot means, e.g. "Enabled". */
   readonly label: string;
 }
@@ -157,7 +213,9 @@ export function StatusDot({
   status,
   label
 }: StatusDotProps): React.JSX.Element {
-  const dot = STATUS_DOT_CLASS[status] ?? STATUS_DOT_CLASS["not-observed"];
+  const dot =
+    STATUS_DOT_CLASS[status as StatusBadgeVariant] ??
+    STATUS_DOT_CLASS["not-observed"];
   return React.createElement("span", {
     className: `${dot} inline-block h-1.5 w-1.5 shrink-0 rounded-full`,
     title: label,
@@ -172,8 +230,8 @@ export function StatusBadge({
   label,
   title
 }: StatusBadgeProps): React.JSX.Element {
-  const style = BADGE_STYLES[status] ?? DEFAULT_STYLE;
-  const displayLabel = label ?? VARIANT_LABEL[status];
+  const style = BADGE_STYLES[status as StatusBadgeVariant] ?? DEFAULT_STYLE;
+  const displayLabel = label ?? statusBadgeLabel(status);
 
   return React.createElement(
     "span",

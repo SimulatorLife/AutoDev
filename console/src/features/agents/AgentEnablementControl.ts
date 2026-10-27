@@ -1,4 +1,7 @@
-import type { AgentEnablementState } from "@simulatorlife/autodev-core";
+import type {
+  AgentConvergence,
+  AgentEnablementState
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import {
@@ -60,7 +63,7 @@ function presentationFor(enablement: AgentEnablementState): {
 
 function convergenceNotice(
   enablement: AgentEnablementState,
-  convergence: "converged" | "pending" | "error" | "not-observed"
+  convergence: AgentConvergence
 ): React.ReactNode {
   if (enablement.kind === "unavailable")
     return React.createElement(
@@ -104,7 +107,7 @@ export function AgentEnablementControl({
   readonly role: string;
   readonly enablement: AgentEnablementState;
   readonly returnTo: string;
-  readonly convergence: "converged" | "pending" | "error" | "not-observed";
+  readonly convergence: AgentConvergence;
 }): React.JSX.Element {
   const presentation = presentationFor(enablement);
   // One string for both the accessible name and the hover title.

@@ -24,7 +24,8 @@ import {
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import {
   NOT_OBSERVED_LABEL,
-  StatusBadge
+  StatusBadge,
+  type StatusBadgeStatus
 } from "../../components/status/StatusBadge.ts";
 import { chipList } from "../../components/tables/Chips.ts";
 import {
@@ -360,13 +361,7 @@ function StatusValue({
   status
 }: {
   readonly label: string;
-  readonly status:
-    | "ready"
-    | "unavailable"
-    | "converged"
-    | "pending"
-    | "error"
-    | "not-observed";
+  readonly status: StatusBadgeStatus;
 }): React.JSX.Element {
   return React.createElement(
     DetailValue,

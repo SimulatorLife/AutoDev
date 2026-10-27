@@ -855,6 +855,16 @@ export async function fetchAgentDetail(
  * unreadable record used to reach the table as `undefined` fields rather than
  * as an explicit failure, so the guard checks the fields the views actually
  * read rather than only the identifier.
+ *
+ * `status` is accepted as a string rather than as one of the states the
+ * contract names, while `convergence` is narrowed to the four the Runtime
+ * computes. The difference is deliberate. A convergence is a verdict the Runtime
+ * reaches, and the Console must not guess at one it does not recognise, so an
+ * unrecognised convergence fails the response closed. A status is a state the
+ * service reports, and a service that has grown a state is still evidence of
+ * that state: the Console carries it and names it, because the alternative -- a
+ * badge with no word, or a whole page refused over one field -- tells the
+ * operator nothing about what the service actually said.
  */
 function isAgentRecord(value: unknown): boolean {
   return (

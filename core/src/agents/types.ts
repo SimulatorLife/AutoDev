@@ -11,9 +11,28 @@ export type AgentRole =
 
 export type AgentKind = "orchestrator" | "leaf";
 
+/**
+ * The state the Runtime reports for an agent.
+ *
+ * The five states below are the ones the product has words for. The union is
+ * open because the Control API is a service whose states can grow, and a
+ * Console that refused to show a state it has no word for would either blank
+ * the row or take the whole page down over one field. The Console's own view
+ * of an agent therefore has to be able to carry a state it has not been taught,
+ * so that the badge can name it.
+ *
+ * The Runtime's own producer narrows this back to the states it can actually
+ * report, so an open union here does not make a typo in the Runtime compile.
+ */
 export type AgentStatus =
-  "configured" | "valid" | "invalid" | "ready" | "unavailable";
+  "configured" | "valid" | "invalid" | "ready" | "unavailable" | (string & {});
 
+/**
+ * Whether the Runtime observed an agent's rollout converge.
+ *
+ * A closed vocabulary: this is a verdict the Runtime computes, and the Console
+ * validates it rather than guessing at one it does not recognise.
+ */
 export type AgentConvergence =
   "converged" | "pending" | "error" | "not-observed";
 

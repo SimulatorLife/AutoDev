@@ -574,6 +574,57 @@ test("missing evidence is reported in one word, from one constant", () => {
   );
 });
 
+/**
+ * The word a badge renders, read out of its markup.
+ *
+ * The badge is a dot beside a word, and the word is the part that carries the
+ * meaning, so the assertion is about the word rather than about the badge's
+ * markup as a whole.
+ */
+function badgeLabel(markup: string): string {
+  const match = /class="min-w-0 truncate">([^<]*)<\/span>/u.exec(markup);
+  assert.ok(match, `the badge must render a label, got: ${markup}`);
+  return (match[1] ?? "").trim();
+}
+
+test("a status the Console has no word for is still named", () => {
+  // The badge read the status out of a table keyed by the states the Console
+  // knows. A status outside that table had no entry, so the word was
+  // `undefined` and the badge rendered a shape with no meaning at all: the
+  // Agents table's STATUS column drew a bare grey pill, with no label, no
+  // title and no accessible name to fall back on either.
+  //
+  // Nothing in the type system said so. The status arrived as a string off the
+  // wire, the Console's own model declared it as one of five states, and the
+  // compiler was satisfied -- while the page was blank. That is why the
+  // vocabulary is open here and why the badge has to speak the state it does
+  // not know: a service that has grown a state is still evidence of it.
+  const unknown = renderToStaticMarkup(
+    React.createElement(StatusBadge, { status: "idle" })
+  );
+  assert.equal(badgeLabel(unknown), "Idle");
+  assert.match(unknown, /data-status="idle"/u);
+  // The Console has no verdict on a state it was not taught, so it borrows no
+  // tone for one: a badge painted success would be a claim it cannot make.
+  assert.match(unknown, /text-neutral/u);
+  assert.doesNotMatch(unknown, /text-success/u);
+  assert.doesNotMatch(unknown, /text-error/u);
+
+  // A state that names nothing at all is the Console's own word for evidence
+  // it does not have.
+  const empty = renderToStaticMarkup(
+    React.createElement(StatusBadge, { status: "" })
+  );
+  assert.equal(badgeLabel(empty), NOT_OBSERVED_LABEL);
+
+  // And a state the Console does know keeps its own word and its own tone.
+  const known = renderToStaticMarkup(
+    React.createElement(StatusBadge, { status: "ready" })
+  );
+  assert.equal(badgeLabel(known), "Ready");
+  assert.match(known, /text-success/u);
+});
+
 /** The `/tools` source filter, which is the shape every bounded filter takes. */
 const SPEC: FilterSpec = {
   name: "source",
