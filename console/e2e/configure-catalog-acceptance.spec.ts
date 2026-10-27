@@ -390,19 +390,19 @@ test("the Permissions list shows the policy and the role capability matrix", asy
   // The policy is the one the canonical source declares, not a default, and
   // each of its settings is a control that shows that value.
   await expect(
-    page.locator('[data-permission-policy-approval-policy]')
+    page.locator("[data-permission-policy-approval-policy]")
   ).toHaveValue("on-demand");
   await expect(
-    page.locator('[data-permission-policy-sandbox-mode]')
+    page.locator("[data-permission-policy-sandbox-mode]")
   ).toHaveValue("workspace-write");
   await expect(
-    page.locator('[data-permission-policy-network-access]')
+    page.locator("[data-permission-policy-network-access]")
   ).toHaveValue("false");
+  await expect(page.locator("[data-permission-policy-web-search]")).toHaveValue(
+    "false"
+  );
   await expect(
-    page.locator('[data-permission-policy-web-search]')
-  ).toHaveValue("false");
-  await expect(
-    page.locator('[data-permission-policy-approvals-reviewer]')
+    page.locator("[data-permission-policy-approvals-reviewer]")
   ).toHaveValue("operator");
 
   // The capability matrix is a real projection: a role's reach into an MCP
