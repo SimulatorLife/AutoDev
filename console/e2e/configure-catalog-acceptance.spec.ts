@@ -387,21 +387,23 @@ test("the Permissions list shows the policy and the role capability matrix", asy
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/permissions");
 
-  const permissionStats = page.locator(STAT_GRID);
+  // The policy is the one the canonical source declares, not a default, and
+  // each of its settings is a control that shows that value.
   await expect(
-    permissionStats.getByText("Approval Policy", { exact: true })
-  ).toBeVisible();
+    page.locator('[data-permission-policy-approval-policy]')
+  ).toHaveValue("on-demand");
   await expect(
-    permissionStats.getByText("Default Sandbox", { exact: true })
-  ).toBeVisible();
+    page.locator('[data-permission-policy-sandbox-mode]')
+  ).toHaveValue("workspace-write");
   await expect(
-    permissionStats.getByText("Network Access", { exact: true })
-  ).toBeVisible();
+    page.locator('[data-permission-policy-network-access]')
+  ).toHaveValue("false");
   await expect(
-    permissionStats.getByText("Web Search", { exact: true })
-  ).toBeVisible();
-  // The policy is the one the canonical source declares, not a default.
-  await expect(page.getByText("Blocked", { exact: true })).toBeVisible();
+    page.locator('[data-permission-policy-web-search]')
+  ).toHaveValue("false");
+  await expect(
+    page.locator('[data-permission-policy-approvals-reviewer]')
+  ).toHaveValue("operator");
 
   // The capability matrix is a real projection: a role's reach into an MCP
   // server is not permission to call everything on it.

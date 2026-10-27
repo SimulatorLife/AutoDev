@@ -4,7 +4,6 @@ import {
   CALLOUT_ERROR_CLASS,
   CALLOUT_WARNING_CLASS
 } from "../../components/layout/Callout.ts";
-import type { CanonicalSourceSaveOutcome } from "../../lib/server/canonical-source.ts";
 
 /**
  * The vocabulary the permission policy's surface shares with its write.
@@ -15,10 +14,13 @@ import type { CanonicalSourceSaveOutcome } from "../../lib/server/canonical-sour
  * four different facts. Keeping the wording and the reasons here is what makes
  * the surface one control rather than a control and a message that disagree.
  *
- * The vocabulary is the shared one every canonical source's write ends in, so
- * the policy is not a second way of saying the same four things.
+ * The vocabulary is the one every canonical source's write ends in, and each
+ * feature declares it here rather than reaching for the shared type: a feature
+ * may not depend on the Console's server library, and the app layer is
+ * where the two meet.
  */
-export type PermissionPolicySaveOutcome = CanonicalSourceSaveOutcome;
+export type PermissionPolicySaveOutcome =
+  "conflict" | "validation" | "apply-failed" | "failed";
 
 /**
  * The outcome a query value names, when it names one.
