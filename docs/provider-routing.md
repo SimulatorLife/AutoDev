@@ -455,14 +455,20 @@ Therefore, reasoning items are excluded from id rewriting. Instead:
   provider that minted them retains its own reasoning continuity on subsequent
   turns.
 
-When the orchestrator tier is genuinely exhausted, the router returns
-`503 router_provider_exhausted` exactly as it does for an exhausted role tier --
-but only after the last-resort pass and the bounded wait below have both failed.
-(It is a non-retryable `400` instead when every candidate failed for a
-configuration reason, such as a model the provider rejects; see below.)
-That distinction matters for the orchestrator specifically: its 503 ends the root
-turn and every child with it, so exhausting the tier is the most expensive
-failure in the system and worth the extra attempts to avoid.
+When the orchestrator tier is genuinely exhausted, the router reports
+`router_provider_exhausted` -- but only after the last-resort pass and the
+bounded wait below have both failed. The status follows whether a retry can
+help: `503` when one might, and a non-retryable `400` when none can. That covers
+every candidate failing for a configuration reason (a model the provider
+rejects, bad credentials) and every candidate being out of usage (a quota
+exhausted, a session limit reached) or switched off. See "Retryable and
+terminal exhaustion" below.
+That distinction matters for the orchestrator specifically: its answer ends the
+root turn and every child with it, so exhausting the tier is the most expensive
+failure in the system and worth the extra attempts to avoid -- but an answer
+that arrives as a 503 is one the client retries, and a client that retries a
+request whose providers are all out of usage waits out the window with the turn
+still open.
 
 A subagent that comes back with `status: "incomplete"` is a normal, actionable
 outcome rather than a lost turn: the child hit a limit partway through, and the
@@ -565,8 +571,8 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
 - **A cooldown only ever moves later.** A short probe cooldown landing on top of
   a long declared limit must not shorten it.
 
-Selection then runs in up to three passes, and only reaches a 503 if all three
-come up empty:
+Selection then runs in up to three passes, and only answers if all three come up
+empty:
 
 1. **Primary.** Every candidate that is not cooling, in tier order.
 2. **Last resort.** The candidates pass 1 skipped, capped at
@@ -588,7 +594,12 @@ come up empty:
    `CODEX_ROUTER_EXHAUSTION_WAIT_MS` (default 20s), the router waits for it and
    makes one more attempt rather than ending the caller's turn. It happens before
    response headers, so the client sees a slow request rather than a stalled
-   stream, and it is cut short if the client disconnects. Keep it small: a role
+   stream, and it is cut short if the client disconnects. Only a candidate whose
+   lapse would let it serve is worth waiting for: a blip that clears, or a usage
+   window the provider named as ending inside the wait window. A provider that
+   said it is out of usage will not serve when its cooldown lapses, so waiting
+   for it only delays the answer and re-attempts a provider whose quota is gone
+   for hours on every window. Keep it small: a role
    request holds its subagent slot throughout, and the per-session limit is
    typically 2. An orchestrator turn holds no slot and its failure ends every
    child's work, so its window is at least one first-strike transient cooldown
@@ -1009,11 +1020,12 @@ Role controls are independent:
 
 - **Subagent role:** A provider disabled for subagents is omitted from capability role
   aliases and all subagent fallback passes. Direct concrete model requests use this role
-  and fail with HTTP 503 `router_provider_unavailable` when their provider is disabled.
+  and fail with HTTP 400 `router_provider_unavailable` when their provider is disabled:
+  no retry reaches a provider that is switched off.
 - **Orchestrator role:** A provider disabled for orchestrators is omitted from
   `autodev/orchestrator` candidates, including session-continuation preference hoisting.
 - **Both roles:** Disabling both roles reproduces full provider exclusion. If every provider
-  for a requested role is disabled, the router returns HTTP 503
+  for a requested role is disabled, the router returns HTTP 400
   `router_provider_exhausted` with `failureClass: "provider_disabled"`.
 
 Each skipped candidate records skip reason `"disabled"` and failure class
@@ -1025,7 +1037,7 @@ attempt budgets for that role.
 A disabled model is removed from every tier its provider serves with it, for both roles:
 the provider is skipped for those tiers (it does not fall back to its `default` model), and
 other providers in the tier's groups serve instead. A direct concrete request that names a
-disabled model fails with HTTP 503 `router_provider_unavailable` and
+disabled model fails with HTTP 400 `router_provider_unavailable` and
 `failureClass: "model_disabled"`. Fallback passes re-check enablement before each attempt, so
 a model disabled mid-request is skipped with failure class `"model_disabled"`. A provider
 that is itself disabled for the role reports `"provider_disabled"` first.
@@ -1235,9 +1247,11 @@ fields in the JSON error object. Transport failures are logged as structured
 `transport_error` events with only sanitized error name/code/syscall fields;
 raw exception text, credentials, prompts, and upstream bodies are not exposed.
 When no provider can complete a role request -- after the primary, last-resort
-and bounded-wait passes have all failed -- the router returns HTTP 503 with a
-`router_provider_exhausted` error code, the same `x-autodev-request-id` header,
-and a `retry-after` header sized to the provider cooldown window.
+and bounded-wait passes have all failed -- the router returns a
+`router_provider_exhausted` error code and the same `x-autodev-request-id`
+header. The status is HTTP 503 with a `retry-after` header sized to the provider
+cooldown window when another attempt might serve the request, and HTTP 400 with
+no `retry-after` when none can (see "Retryable and terminal exhaustion").
 
 The consumer of that error is a model deciding what to do next, so it carries
 enough to act on rather than four repetitions of "cooldown active". `error.details`
@@ -1245,9 +1259,43 @@ holds `retryAfterMs`, `resetsAt`, `lastResortAttempts`, `selectionDeadlineReache
 the per-candidate `providers[]` summary (`state`, `failureClass`, `resetsAt`,
 `retryAfterMs`), and a `recommendedAction`:
 
-- `summarize_and_yield` when every candidate is hard-limited. There is nothing to
+- `summarize_and_yield` when every candidate is out of usage. There is nothing to
   retry into; the right move is to return a summary of the work completed so far.
+- `fix_configuration` when every candidate failed for a configuration reason.
 - `retry_after` otherwise, with the wait in `retryAfterMs`.
+
+### Retryable and terminal exhaustion
+
+The status of an exhausted request answers one question: could another attempt
+serve it? Codex retries a 5xx, so a failure no retry can fix must not be one --
+and it must not carry a `retry-after` either, because a client that honours that
+header holds the turn open for the whole window with nothing happening in
+between. Observed 2026-10-27: every provider the orchestrator tier could reach
+was out of usage (Codex's ChatGPT quota, Antigravity's individual quota
+"resets in 35h", Claude's session limit, Copilot disabled). The router answered
+`503` with `retry-after: 8224`; Codex waited the two hours out and the turn
+never ended.
+
+So an exhaustion is terminal -- HTTP 400, `retryable: false`, no `retry-after` --
+when every candidate is out of usage, switched off, or misconfigured. The
+provider's own window still travels in `x-autodev-limit-resets-at` and in the
+message, so the reader knows when to come back. It is retryable -- HTTP 503 with
+a `retry-after` -- when some candidate failed for a reason another attempt could
+clear: a blip, an unreachable bridge, a turn that did not complete.
+
+The class that decides this is the one the request saw, not the one sitting in
+the cooldown entry. A usage limit does not always earn a long cooldown -- an
+inferred limit stays on the transient ladder, so the provider looks briefly
+unavailable even though its quota is gone for hours -- and a later attempt
+against the same provider supersedes the entry's class, because a cooldown only
+ever moves later.
+
+For the same reason the bounded wait below only spends itself on a candidate
+whose lapse would let it serve: a blip that clears, or a usage window the
+provider named as ending inside the wait window. A provider that said it is out
+of usage will not serve when its cooldown lapses, so waiting for it only delays
+the answer the caller needs now, and re-attempts a provider whose quota is gone
+for hours on every window.
 
 The message text says the same thing in prose, naming each provider and its reset
 time, because that is what a model actually reads. Concurrency denials return HTTP

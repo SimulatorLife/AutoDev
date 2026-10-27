@@ -9224,19 +9224,21 @@ test("never re-attempts a provider that stated a reset time still in the future"
           body: JSON.stringify({ model: "autodev/default", stream: false })
         }
       );
-      assert.equal(response.status, 503);
       // The providers said they will not serve until the reset. Attempting them
       // anyway is guaranteed to fail and is exactly the hammering a cooldown
-      // exists to prevent.
+      // exists to prevent. And a request nothing can serve is not one a retry
+      // can fix, so it must not be a 5xx: Codex retries a 5xx, and with a
+      // `retry-after` it waits the window out with the turn still open.
+      assert.equal(response.status, 400);
       assert.equal(responseCalls, 0);
+      assert.equal(response.headers.get("retry-after"), null);
       const body = await response.json();
       assert.equal(body.error.details.recommendedAction, "summarize_and_yield");
       assert.equal(body.error.details.resetsAt, resetsAt);
       assert.equal(body.error.failureClass, "quota_exhausted");
-      assert.match(
-        body.error.message,
-        /Return a summary of the work completed so far/
-      );
+      assert.equal(body.error.retryable, false);
+      assert.match(body.error.message, /out of usage/);
+      assert.match(body.error.message, /Retrying will not help/);
       assert.equal(response.headers.get("x-autodev-limit-resets-at"), resetsAt);
       assert.equal(
         response.headers.get("x-autodev-limit-class"),
@@ -9383,7 +9385,10 @@ test("does not wait for a cooldown that is nowhere near lapsing", async () => {
           body: JSON.stringify({ model: "autodev/default", stream: false })
         }
       );
-      assert.equal(response.status, 503);
+      // Every provider is out of usage for an hour, so nothing a retry can do
+      // serves this request: the answer is terminal, and it comes at once.
+      assert.equal(response.status, 400);
+      assert.equal(response.headers.get("retry-after"), null);
       // An hour is not something to hold a subagent slot for.
       assert.ok(
         Date.now() - startedAt < 5000,
@@ -9437,7 +9442,7 @@ test("holds a provider until the reset time it declared in its response", async 
           body: JSON.stringify({ model: "autodev/default", stream: false })
         }
       );
-      assert.equal(response.status, 503);
+      assert.equal(response.status, 400);
       const claude = getRouterStatus().providers.claude;
       // The provider's own word, not a 30s guess doubling toward ten minutes.
       assert.equal(claude.cooldownKind, "hard");
@@ -9715,6 +9720,286 @@ test("a model the provider rejects fails the turn once, non-retryably, and leave
     routing.resetRoleAssignment("subagent");
     routing.resetRoleAssignment("orchestrator");
     cooldowns.clear("claude");
+  }
+});
+
+/**
+ * The providers the default tier can reach without a Codex credential on this
+ * machine. Codex itself is switched off in these tests so the outcome does not
+ * depend on whether `~/.codex/auth.json` exists: the point is what the router
+ * does when nothing it can reach is able to serve.
+ */
+const TIER_WITHOUT_CODEX = ["claude", "antigravity", "minimax", "copilot"];
+
+test("a request no provider can serve because its usage is exhausted ends the turn instead of being retried for hours", async () => {
+  // Observed 2026-10-27: every provider the orchestrator tier could reach was
+  // out of usage -- Codex's ChatGPT quota, Antigravity's individual quota
+  // ("resets in 35h"), Claude's session limit, Copilot disabled -- and the
+  // router answered 503 with `retry-after: 8224`. Codex honours that header,
+  // so the turn stayed open for the whole window: the client showed
+  // "Thinking..." for hours and nothing ever happened. A failure no retry can
+  // fix must not be a 5xx.
+  const resetsAt = new Date(Date.now() + 36 * 60 * 60 * 1000).toISOString();
+  const startedAt = Date.now();
+  try {
+    await withStubbedProviders(
+      (target: any) => {
+        const probe = healthyProbe(target);
+        if (probe) return probe;
+        if (target.endsWith("/responses")) {
+          return jsonResponse(
+            {
+              error: {
+                message:
+                  "Individual quota reached. Please upgrade your subscription to increase your limits."
+              }
+            },
+            { status: 429 }
+          );
+        }
+        return null;
+      },
+      async ({ port, fetch: realFetch }: any) => {
+        const response = await realFetch(
+          `http://127.0.0.1:${port}/v1/responses`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-codex-session-id": "usage-exhausted-test"
+            },
+            body: JSON.stringify({ model: "autodev/default", stream: false })
+          }
+        );
+        assert.equal(
+          response.status,
+          400,
+          "a 5xx makes Codex retry a request that cannot succeed"
+        );
+        assert.equal(
+          response.headers.get("retry-after"),
+          null,
+          "a retry-after holds the caller's turn open for the whole window"
+        );
+        assert.equal(
+          response.headers.get("x-autodev-limit-resets-at"),
+          resetsAt,
+          "the window the provider named is what tells the user when to come back"
+        );
+        const body = await response.json();
+        assert.equal(body.error.code, "router_provider_exhausted");
+        assert.equal(body.error.retryable, false);
+        assert.equal(
+          body.error.details.recommendedAction,
+          "summarize_and_yield"
+        );
+        assert.match(body.error.message, /out of usage/);
+        assert.match(body.error.message, /quota_exhausted/);
+        // The router must not sit in its bounded wait for a provider whose
+        // quota is gone for hours: that wait is for a cooldown that lapses.
+        assert.ok(
+          Date.now() - startedAt < 10_000,
+          "the answer must not wait out the exhaustion window"
+        );
+      },
+      () => {
+        routing.setProviderAssignment("codex", "subagent", DISABLED_ASSIGNMENT);
+        routing.setProviderAssignment(
+          "codex",
+          "orchestrator",
+          DISABLED_ASSIGNMENT
+        );
+        for (const provider of TIER_WITHOUT_CODEX)
+          cooldowns.cooldownProvider(provider, {
+            failureClass: "quota_exhausted",
+            resetsAt,
+            structured: true
+          });
+      }
+    );
+  } finally {
+    routing.resetRoleAssignment("subagent");
+    routing.resetRoleAssignment("orchestrator");
+    for (const provider of TIER_WITHOUT_CODEX) cooldowns.clear(provider);
+  }
+});
+
+test("a quota failure the router only inferred still ends the turn rather than waiting the ladder out", async () => {
+  // The same incident, with the limits inferred from prose rather than
+  // reported: an inferred limit keeps the transient ladder, so the provider
+  // looks briefly unavailable even though its quota is gone for hours. The
+  // class is the fact that decides; the cooldown's duration is only a
+  // scheduling decision.
+  try {
+    await withStubbedProviders(
+      (target: any) => {
+        const probe = healthyProbe(target);
+        if (probe) return probe;
+        if (target.endsWith("/responses")) {
+          return jsonResponse(
+            {
+              error: {
+                message:
+                  "Individual quota reached. Please upgrade your subscription to increase your limits."
+              }
+            },
+            { status: 429 }
+          );
+        }
+        return null;
+      },
+      async ({ port, fetch: realFetch }: any) => {
+        const response = await realFetch(
+          `http://127.0.0.1:${port}/v1/responses`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-codex-session-id": "inferred-quota-test"
+            },
+            body: JSON.stringify({ model: "autodev/default", stream: false })
+          }
+        );
+        assert.equal(response.status, 400);
+        assert.equal(response.headers.get("retry-after"), null);
+        const body = await response.json();
+        assert.equal(body.error.retryable, false);
+        assert.equal(body.error.failureClass, "quota_exhausted");
+      },
+      () => {
+        routing.setProviderAssignment("codex", "subagent", DISABLED_ASSIGNMENT);
+        routing.setProviderAssignment(
+          "codex",
+          "orchestrator",
+          DISABLED_ASSIGNMENT
+        );
+      }
+    );
+  } finally {
+    routing.resetRoleAssignment("subagent");
+    routing.resetRoleAssignment("orchestrator");
+    for (const provider of TIER_WITHOUT_CODEX) cooldowns.clear(provider);
+  }
+});
+
+test("an orchestrator turn does not wait on a provider that is out of usage", async () => {
+  // The bounded wait exists for a cooldown that lapses. An orchestrator turn's
+  // window is at least one first-strike transient cooldown (30s), so a provider
+  // whose quota is gone for hours was waited on and then re-attempted: the
+  // observed incident slept 26s, re-asked a provider that had said "resets in
+  // 35h", and answered 503 with a retry-after two hours out.
+  const startedAt = Date.now();
+  try {
+    await withStubbedProviders(
+      (target: any) => {
+        const probe = healthyProbe(target);
+        if (probe) return probe;
+        if (target.endsWith("/responses")) {
+          return jsonResponse(
+            {
+              error: {
+                message:
+                  "Individual quota reached. Please upgrade your subscription to increase your limits."
+              }
+            },
+            { status: 429 }
+          );
+        }
+        return null;
+      },
+      async ({ port, fetch: realFetch }: any) => {
+        const response = await realFetch(
+          `http://127.0.0.1:${port}/v1/responses`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-codex-session-id": "orchestrator-usage-test"
+            },
+            body: JSON.stringify({
+              model: "autodev/orchestrator",
+              stream: false
+            })
+          }
+        );
+        assert.equal(response.status, 400);
+        assert.equal(response.headers.get("retry-after"), null);
+        assert.equal(
+          getRouterStatus().recentEvents.some(
+            (event: any) => event.phase === "exhaustion_wait"
+          ),
+          false,
+          "the bounded wait is for a cooldown that lapses, not for a quota that is gone"
+        );
+        assert.ok(
+          Date.now() - startedAt < 10_000,
+          "the answer must not wait out the exhaustion window"
+        );
+      },
+      () => {
+        routing.setProviderAssignment(
+          "codex",
+          "orchestrator",
+          DISABLED_ASSIGNMENT
+        );
+        routing.setProviderAssignment("codex", "subagent", DISABLED_ASSIGNMENT);
+      }
+    );
+  } finally {
+    routing.resetRoleAssignment("subagent");
+    routing.resetRoleAssignment("orchestrator");
+    for (const provider of TIER_WITHOUT_CODEX) cooldowns.clear(provider);
+  }
+});
+
+test("a failure a retry can fix stays retryable", async () => {
+  // The other half of the contract: a provider that is briefly unavailable is
+  // not out of usage. Answering 400 there would strand a request that the next
+  // attempt would have served.
+  try {
+    await withStubbedProviders(
+      (target: any) => {
+        const probe = healthyProbe(target);
+        if (probe) return probe;
+        if (target.endsWith("/responses")) {
+          return jsonResponse(
+            { error: { message: "temporarily unavailable" } },
+            { status: 503 }
+          );
+        }
+        return null;
+      },
+      async ({ port, fetch: realFetch }: any) => {
+        const response = await realFetch(
+          `http://127.0.0.1:${port}/v1/responses`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-codex-session-id": "transient-failure-test"
+            },
+            body: JSON.stringify({ model: "autodev/default", stream: false })
+          }
+        );
+        assert.equal(response.status, 503);
+        assert.notEqual(response.headers.get("retry-after"), null);
+        const body = await response.json();
+        assert.equal(body.error.retryable, true);
+        assert.equal(body.error.details.recommendedAction, "retry_after");
+      },
+      () => {
+        routing.setProviderAssignment("codex", "subagent", DISABLED_ASSIGNMENT);
+        routing.setProviderAssignment(
+          "codex",
+          "orchestrator",
+          DISABLED_ASSIGNMENT
+        );
+      }
+    );
+  } finally {
+    routing.resetRoleAssignment("subagent");
+    routing.resetRoleAssignment("orchestrator");
+    for (const provider of TIER_WITHOUT_CODEX) cooldowns.clear(provider);
   }
 });
 
@@ -11064,7 +11349,8 @@ test("disabled providers are excluded across role aliases, orchestrator, and fal
         attemptedProviders.includes("minimax")
     );
 
-    // 4. Direct concrete request to disabled provider is rejected with 503
+    // 4. Direct concrete request to a disabled provider is rejected, and not
+    // retryably: no retry reaches a provider that is switched off.
     const directRes = await originalFetch(
       `http://127.0.0.1:${port}/v1/responses`,
       {
@@ -11073,7 +11359,7 @@ test("disabled providers are excluded across role aliases, orchestrator, and fal
         body: JSON.stringify({ model: "sonnet", stream: false })
       }
     );
-    assert.equal(directRes.status, 503);
+    assert.equal(directRes.status, 400);
     const directJson = await directRes.json();
     assert.equal(directJson.error?.code, "router_provider_unavailable");
     assert.equal(directJson.error?.failureClass, "provider_disabled");
@@ -11143,29 +11429,31 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
   const baseUrl = `http://127.0.0.1:${port}`;
 
   try {
-    // 1. Role alias returns 503 provider exhausted
+    // 1. Role alias reports the exhausted providers, non-retryably: nothing a
+    // retry can do reaches a provider that is switched off.
     const roleRes = await fetch(`${baseUrl}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model: "autodev/default", stream: false })
     });
-    assert.equal(roleRes.status, 503);
+    assert.equal(roleRes.status, 400);
     const roleJson = await roleRes.json();
     assert.equal(roleJson.error?.code, "router_provider_exhausted");
     assert.equal(roleJson.error?.failureClass, "provider_disabled");
+    assert.equal(roleJson.error?.retryable, false);
 
-    // 2. Orchestrator alias returns 503 provider exhausted
+    // 2. Orchestrator alias reports the exhausted providers, non-retryably
     const orchRes = await fetch(`${baseUrl}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model: "autodev/orchestrator", stream: false })
     });
-    assert.equal(orchRes.status, 503);
+    assert.equal(orchRes.status, 400);
     const orchJson = await orchRes.json();
     assert.equal(orchJson.error?.code, "router_provider_exhausted");
     assert.equal(orchJson.error?.failureClass, "provider_disabled");
 
-    // 3. Direct concrete request returns 503 provider unavailable
+    // 3. Direct concrete request reports the disabled provider, non-retryably
     const concreteRes = await fetch(`${baseUrl}/v1/responses`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -11174,7 +11462,7 @@ test("all-disabled behavior rejects aliases, orchestrator, and concrete requests
         stream: false
       })
     });
-    assert.equal(concreteRes.status, 503);
+    assert.equal(concreteRes.status, 400);
     const concreteJson = await concreteRes.json();
     assert.equal(concreteJson.error?.code, "router_provider_unavailable");
     assert.equal(concreteJson.error?.failureClass, "provider_disabled");
@@ -11222,9 +11510,10 @@ test("a disabled model is skipped for role aliases and rejected for direct reque
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model, stream: false })
     });
-    assert.equal(response.status, 503);
+    assert.equal(response.status, 400);
     const body = await response.json();
     assert.equal(body.error?.code, "router_provider_unavailable");
+    assert.equal(body.error?.retryable, false);
     assert.equal(body.error?.failureClass, "model_disabled");
     assert.equal(body.error?.provider, "claude");
     assert.equal(body.error?.model, model);

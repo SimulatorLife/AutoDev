@@ -37,6 +37,7 @@ import { providerRequestUnsupported } from "@simulatorlife/autodev-runtime/share
 import {
   INCOMPLETE_REASON_INTERRUPTED,
   INCOMPLETE_REASON_TIMEOUT,
+  isHardLimitClass,
   LIMIT_HEADER_CLASS,
   LIMIT_HEADER_RESETS_AT,
   LIMIT_SOURCE_REPORTED,
@@ -1851,6 +1852,7 @@ export function exhaustionBody({
   subject,
   summary,
   failures,
+  observed,
   model,
   requestId,
   lastResortAttempts,
@@ -1859,6 +1861,7 @@ export function exhaustionBody({
   subject: string;
   summary: CooldownSummary[];
   failures: string[];
+  observed?: ReadonlyMap<string, string>;
   model: string;
   requestId: string;
   lastResortAttempts: number;
@@ -1872,11 +1875,14 @@ export function exhaustionBody({
         : soonest,
     0
   );
-  const hard = summary.filter((entry) => entry.state === "hard");
-  const everyCandidateHardLimited =
-    hard.length > 0 && hard.length === summary.length;
   const firstMisconfigured = summary.find((entry) => entry.state === "config");
   const everyCandidateMisconfigured = exhaustedByConfiguration(summary);
+  const outOfUsage = exhaustedByUsage(summary, observed ?? new Map());
+  const firstOutOfUsage = summary.find((entry) =>
+    isNonRetryableClass(
+      (observed ?? new Map()).get(entry.provider) ?? entry.failureClass
+    )
+  );
   const reset = soonestReset(summary);
   const described = summary.map((entry) => {
     if (entry.state === "available")
@@ -1889,13 +1895,13 @@ export function exhaustionBody({
   });
   const action = everyCandidateMisconfigured
     ? "fix_configuration"
-    : everyCandidateHardLimited
+    : outOfUsage
       ? "summarize_and_yield"
       : "retry_after";
   const guidance = everyCandidateMisconfigured
     ? "Retrying will not help: correct the provider configuration, then start a new turn."
-    : everyCandidateHardLimited
-      ? `Every provider is out of usage${reset ? ` until at least ${reset.resetsAt}` : ""}. Return a summary of the work completed so far rather than retrying.`
+    : outOfUsage
+      ? `Every provider is out of usage${reset ? ` until at least ${reset.resetsAt}` : ""}. Retrying will not help before then; start a new turn once the usage window has reset.`
       : `Retry after approximately ${Math.max(1, Math.ceil(retryAfterMs / 1000))}s.`;
   const reason = deadlineReached
     ? `No available provider completed ${subject} within the ${Math.ceil(CHAIN_SELECTION_DEADLINE_MS / 1000)}s provider-selection budget.`
@@ -1905,11 +1911,11 @@ export function exhaustionBody({
     "router_provider_exhausted",
     {
       code: "router_provider_exhausted",
-      retryable: !everyCandidateMisconfigured,
+      retryable: !outOfUsage,
       failureClass: everyCandidateMisconfigured
         ? (firstMisconfigured?.failureClass ?? "invalid_model")
-        : everyCandidateHardLimited
-          ? (hard[0]?.failureClass ?? "quota_exhausted")
+        : outOfUsage
+          ? (firstOutOfUsage?.failureClass ?? "quota_exhausted")
           : "unavailable",
       model,
       requestId,
@@ -1931,17 +1937,66 @@ export function exhaustionBody({
  * Every candidate failed for a reason only the user can fix (a model the
  * provider rejects, bad credentials): a retry would fail the same way.
  */
-export function exhaustedByConfiguration(summary: CooldownSummary[]): boolean {
+function exhaustedByConfiguration(summary: CooldownSummary[]): boolean {
   return (
     summary.length > 0 && summary.every((entry) => entry.state === "config")
   );
 }
 
+/**
+ * Failure classes a retry cannot fix: the provider's usage window is closed,
+ * or it will not accept this model or these credentials at all.
+ */
+function isNonRetryableClass(failureClass: string | null | undefined): boolean {
+  const value = String(failureClass ?? "");
+  return (
+    isHardLimitClass(value) ||
+    value === "invalid_model" ||
+    value === "authentication"
+  );
+}
+
+/**
+ * Every candidate is out of usage, so no retry can serve the request.
+ *
+ * A provider that reported a usage limit -- its quota exhausted, its session
+ * limit reached -- said its window is closed, and that window resets on the
+ * provider's clock, not the router's. A provider that is switched off or
+ * misconfigured is equally beyond a retry. Only when every candidate is in one
+ * of those states is the request genuinely over: the answer has to say so, and
+ * the caller has to be told to come back later rather than be sent round the
+ * chain again.
+ *
+ * A candidate that failed for any other reason -- a blip, an unreachable
+ * bridge, a turn that did not complete -- is left out of this: a retry can
+ * still serve it, and the router must keep the request alive for that.
+ *
+ * The class is the one this request saw, not the one sitting in the cooldown
+ * entry. A usage limit does not always earn a long cooldown -- an inferred
+ * limit stays on the transient ladder, so the provider looks briefly
+ * unavailable even though its quota is gone for hours -- and a later attempt
+ * against the same provider supersedes the entry's class, because the entry
+ * only ever moves later.
+ */
+function exhaustedByUsage(
+  summary: CooldownSummary[],
+  observed: ReadonlyMap<string, string> = new Map()
+): boolean {
+  if (summary.length === 0) return false;
+  return summary.every((entry) => {
+    if (entry.state === "disabled" || entry.state === "config") return true;
+    const seen = observed?.get(entry.provider);
+    return isNonRetryableClass(seen ?? entry.failureClass);
+  });
+}
+
 export function exhaustionHeaders({
   summary,
+  observed,
   requestId
 }: {
   summary: CooldownSummary[];
+  observed?: ReadonlyMap<string, string>;
   requestId: string;
 }): Record<string, string> {
   const retryAfterMs = summary.reduce(
@@ -1954,7 +2009,11 @@ export function exhaustionHeaders({
   const headers: Record<string, string> = {
     "x-autodev-request-id": requestId
   };
-  if (!exhaustedByConfiguration(summary))
+  // A `retry-after` is an instruction to come back. When nothing a retry can
+  // do would serve the request, sending one tells the client to wait out a
+  // window it cannot hurry -- and a client that honours it holds the turn open
+  // for exactly that long, with nothing to show for it.
+  if (!exhaustedByUsage(summary, observed))
     headers["retry-after"] = String(
       Math.max(1, Math.ceil(retryAfterMs / 1000))
     );
@@ -2265,12 +2324,14 @@ function rejectConcreteRequest(
     model: modelName,
     workspace,
     outcome: "failure",
-    status: 503,
+    status: 400,
     failureClass
   });
+  // A disabled provider or model is not something a retry reaches: the body
+  // says so, and a 5xx would have the client retry it anyway.
   sendJson(
     response,
-    503,
+    400,
     errorBody(
       failureClass === "model_disabled"
         ? `Direct concrete request to ${modelName} (${route.provider}) is unavailable because model ${modelName} is disabled.`
@@ -2576,14 +2637,46 @@ type FallbackContext = {
   startedAt: number;
 };
 
+/**
+ * What this request saw of each candidate.
+ *
+ * The lines are the operator-facing account of the chain, one per candidate.
+ * The classes are what the router acts on: whether a retry can help depends on
+ * why a candidate failed, and the cooldown summary cannot answer that on its
+ * own. A cooldown entry keeps the class of the failure that put it there, and a
+ * later attempt against the same provider -- one that reached it and found it
+ * briefly unavailable -- does not replace it, because a cooldown only ever
+ * moves later. What this request actually saw is the fact.
+ */
+class CandidateFailures {
+  private readonly lines: string[] = [];
+  private readonly classes = new Map<string, string>();
+
+  /** Record what a candidate did, and why, in the order it happened. */
+  record(provider: string, why: string, failureClass: string): void {
+    this.lines.push(`${provider}: ${why}`);
+    this.classes.set(provider, failureClass);
+  }
+
+  /** The account of the chain, for the error body. */
+  get entries(): string[] {
+    return [...this.lines];
+  }
+
+  /** The failure class this request saw from each provider it reached. */
+  get observed(): ReadonlyMap<string, string> {
+    return this.classes;
+  }
+}
+
 function recordFallbackSkip(
   ctx: FallbackContext,
   route: Candidate,
   why: string,
   failureClass: string,
-  failures: string[]
+  failures: CandidateFailures
 ): void {
-  failures.push(`${route.provider}: ${why}`);
+  failures.record(route.provider, why, failureClass);
   recordRouterEvent({
     phase: "skipped",
     requestId: ctx.requestId,
@@ -2764,7 +2857,7 @@ export async function proxyFallbackChain(
     });
     return;
   }
-  const failures: string[] = [];
+  const failures = new CandidateFailures();
   const attempted = new Set<string>();
   const skipped: Candidate[] = [];
   const startedAt = Date.now();
@@ -2869,6 +2962,7 @@ export async function proxyFallbackChain(
           candidates,
           state,
           skipped,
+          failures,
           tryCandidate,
           served
         )
@@ -2939,12 +3033,12 @@ function rejectFallbackChain(
     model: null,
     workspace,
     outcome: "failure",
-    status: 503,
+    status: 400,
     failureClass: "provider_disabled"
   });
   sendJson(
     response,
-    503,
+    400,
     errorBody(
       `No enabled providers or models available for ${subject}.`,
       "router_provider_exhausted",
@@ -2976,6 +3070,7 @@ async function tryPrimaryRoute(
     fallbackableProviderFailure: boolean;
   },
   skipped: Candidate[],
+  failures: CandidateFailures,
   tryCandidate: (
     route: Candidate,
     selection: string
@@ -2998,7 +3093,7 @@ async function tryPrimaryRoute(
     ctx.providerRole
   );
   if (disabledReason) {
-    recordFallbackSkip(ctx, route, "disabled", disabledReason, []);
+    recordFallbackSkip(ctx, route, "disabled", disabledReason, failures);
     skipped.push(route);
     return tryPrimaryRoute(
       ctx,
@@ -3006,6 +3101,7 @@ async function tryPrimaryRoute(
       index + 1,
       state,
       skipped,
+      failures,
       tryCandidate,
       served
     );
@@ -3017,7 +3113,7 @@ async function tryPrimaryRoute(
       route,
       "cooldown active",
       cooldown.failureClass ?? "cooldown",
-      []
+      failures
     );
     skipped.push(route);
     return tryPrimaryRoute(
@@ -3026,6 +3122,7 @@ async function tryPrimaryRoute(
       index + 1,
       state,
       skipped,
+      failures,
       tryCandidate,
       served
     );
@@ -3037,6 +3134,7 @@ async function tryPrimaryRoute(
     index + 1,
     state,
     skipped,
+    failures,
     tryCandidate,
     served
   );
@@ -3051,6 +3149,7 @@ function runPrimaryPass(
     fallbackableProviderFailure: boolean;
   },
   skipped: Candidate[],
+  failures: CandidateFailures,
   tryCandidate: (
     route: Candidate,
     selection: string
@@ -3063,6 +3162,7 @@ function runPrimaryPass(
     0,
     state,
     skipped,
+    failures,
     tryCandidate,
     served
   );
@@ -3166,18 +3266,32 @@ async function runExhaustionWait(
   ) => Promise<"served" | "terminal" | "fallback" | "unavailable">,
   served: (outcome: string) => boolean
 ): Promise<boolean> {
-  const attempted = new Set<string>(); // placeholder; actual set tracked elsewhere
-  const waitCandidates = candidates.filter(
-    (route) =>
-      ROUTING_POLICY.routeDisabledReason(route, ctx.providerRole) === null &&
-      !attempted.has(route.provider)
-  );
+  // The wait buys one more attempt, after a cooldown lapses. It is worth
+  // spending only when the lapse would let the provider serve: a blip that
+  // clears, or a usage window the provider named as ending inside the window.
+  // A provider that said it is out of usage will not serve when its cooldown
+  // lapses -- its window resets on the provider's clock, not the router's --
+  // so waiting for it, and then attempting it, only delays the answer the
+  // caller needs now, and re-attempts a provider whose quota is gone for hours
+  // on every window. That is the hammering the cooldowns exist to prevent.
+  const windowMs = exhaustionWaitWindowMs(ctx.isOrchestratorTurn);
+  const waitCandidates = candidates.filter((route) => {
+    if (ROUTING_POLICY.routeDisabledReason(route, ctx.providerRole) !== null)
+      return false;
+    const cooldown = COOLDOWNS.get(route.provider, Date.now(), route.model);
+    if (!cooldown) return true;
+    if (cooldown.kind === "config") return false;
+    if (!isHardLimitClass(cooldown.failureClass ?? "")) return true;
+    const resetsAt = cooldown.resetsAt
+      ? Date.parse(cooldown.resetsAt)
+      : Number.NaN;
+    return Number.isFinite(resetsAt) && resetsAt <= Date.now() + windowMs;
+  });
   const cooldownCandidates = waitCandidates.map(({ provider, model }) => ({
     provider,
     model
   }));
   const waitMs = COOLDOWNS.nextRetryMs(cooldownCandidates);
-  const windowMs = exhaustionWaitWindowMs(ctx.isOrchestratorTurn);
   if (
     !state.deadlineReached &&
     windowMs > 0 &&
@@ -3252,7 +3366,7 @@ async function tryExhaustionRoute(
 function finalizeFallbackFailure(
   response: ServerResponse,
   ctx: FallbackContext,
-  failures: string[],
+  failures: CandidateFailures,
   lastResortAttempts: number,
   deadlineReached: boolean,
   _attempted: Set<string>
@@ -3275,20 +3389,26 @@ function finalizeFallbackFailure(
     Date.now(),
     ctx.providerRole
   );
-  // Codex retries a 5xx; a failure no retry can fix must not be one.
+  // Codex retries a 5xx; a failure no retry can fix must not be one. A request
+  // whose every candidate is out of usage is not fixable by trying again, so it
+  // is answered with a status that ends the caller's turn and says when the
+  // usage window resets. A 5xx here would leave the client waiting out a
+  // `retry-after` measured in hours, with nothing happening in between.
+  const observed = failures.observed;
   sendJson(
     response,
-    exhaustedByConfiguration(summary) ? 400 : 503,
+    exhaustedByUsage(summary, observed) ? 400 : 503,
     exhaustionBody({
       subject: ctx.subject,
       summary,
-      failures,
+      failures: failures.entries,
+      observed,
       model: ctx.modelName,
       requestId: ctx.requestId,
       lastResortAttempts,
       deadlineReached
     }),
-    exhaustionHeaders({ summary, requestId: ctx.requestId })
+    exhaustionHeaders({ summary, observed, requestId: ctx.requestId })
   );
 }
 
@@ -3296,7 +3416,7 @@ async function attemptCandidate(
   ctx: FallbackContext,
   route: Candidate,
   selection: string,
-  failures: string[],
+  failures: CandidateFailures,
   _attempted: Set<string>
 ): Promise<"served" | "terminal" | "fallback"> {
   const attemptStartedAt = Date.now();
@@ -3551,13 +3671,13 @@ function handleCandidateUpstreamFailure(
   route: Candidate,
   result: Extract<FetchUpstreamResult, { ok: false }>,
   selection: string,
-  failures: string[],
+  failures: CandidateFailures,
   attemptStartedAt: number
 ): "served" | "terminal" | "fallback" {
   const failureClass =
     result.limit?.limitClass ??
     classifyProviderFailure(result.status ?? 500, result.body);
-  failures.push(`${route.provider}: HTTP ${result.status}`);
+  failures.record(route.provider, `HTTP ${result.status}`, failureClass);
   recordRouterEvent({
     phase: "result",
     requestId: ctx.requestId,
@@ -3609,7 +3729,7 @@ function handleCandidateTransportError(
   ctx: FallbackContext,
   route: Candidate,
   selection: string,
-  failures: string[],
+  failures: CandidateFailures,
   attemptStartedAt: number,
   error: unknown
 ): "served" | "terminal" | "fallback" {
@@ -3633,7 +3753,7 @@ function handleCandidateTransportError(
       error,
       workspace: ctx.workspace
     });
-  failures.push(`${route.provider}: ${failureClass}`);
+  failures.record(route.provider, failureClass, failureClass);
   recordRouterEvent({
     phase: "result",
     requestId: ctx.requestId,
