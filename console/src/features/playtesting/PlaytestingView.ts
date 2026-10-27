@@ -40,6 +40,7 @@ import {
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
 import { TEXT_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
+import { instantLabel } from "../../components/ui/instant.ts";
 import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
@@ -915,7 +916,7 @@ function analystReviewDetail(
             ? "Discovery review"
             : "Confirmatory review"
       }),
-      subtitle: `${review.reviewId} · Recorded ${new Date(review.createdAt).toISOString()}`,
+      subtitle: `${review.reviewId} · Recorded ${instantLabel(review.createdAt)}`,
       closeHref: playtestingReviewCloseHref(scope),
       closeLabel: "Close review detail",
       anchorId: PLAYTESTING_REVIEW_DETAIL_ANCHOR_ID,

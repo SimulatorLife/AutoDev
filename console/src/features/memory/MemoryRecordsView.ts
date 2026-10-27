@@ -37,6 +37,7 @@ import {
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
+import { instantDate, instantLabel } from "../../components/ui/instant.ts";
 import {
   ACTION_LINK_CLASS,
   MONO_META_CLASS,
@@ -122,13 +123,13 @@ function validityWindowLabel(validity: MemoryValidity): string | null {
   const from = validity.validFrom;
   const to = validity.validTo;
   if (from !== undefined && to !== undefined) {
-    return `Valid ${new Date(from).toLocaleString()} to ${new Date(to).toLocaleString()}`;
+    return `Valid ${instantLabel(from)} to ${instantLabel(to)}`;
   }
   if (from !== undefined) {
-    return `Valid from ${new Date(from).toLocaleString()}`;
+    return `Valid from ${instantLabel(from)}`;
   }
   if (to !== undefined) {
-    return `Valid until ${new Date(to).toLocaleString()}`;
+    return `Valid until ${instantLabel(to)}`;
   }
   return null;
 }
@@ -179,7 +180,7 @@ function ValidityFacts({
       ? React.createElement(
           "div",
           { className: MUTED_META_CLASS },
-          `Checked at: ${new Date(validity.checkedAt).toLocaleString()}`
+          `Checked at: ${instantLabel(validity.checkedAt)}`
         )
       : null,
     validity.verificationSource
@@ -357,9 +358,7 @@ export function MemoryRecordsView({
         React.createElement(
           "span",
           { className: MUTED_META_CLASS },
-          record.updatedAt
-            ? new Date(record.updatedAt).toLocaleDateString()
-            : "unknown"
+          record.updatedAt ? instantDate(record.updatedAt) : "unknown"
         )
     }
   ];
@@ -739,7 +738,7 @@ function RecordDetailPanel({
           ? React.createElement(
               "div",
               { className: MONO_META_CLASS },
-              `Last verified: ${new Date(record.provenance.lastVerifiedAt).toLocaleString()}`
+              `Last verified: ${instantLabel(record.provenance.lastVerifiedAt)}`
             )
           : null,
         record.provenance.evidence && record.provenance.evidence.length > 0
@@ -838,11 +837,7 @@ function RecordDetailPanel({
                       "flex items-center gap-3 text-fg-muted font-mono text-meta"
                   },
                   React.createElement("span", null, t.actorId),
-                  React.createElement(
-                    "span",
-                    null,
-                    new Date(t.occurredAt).toLocaleString()
-                  )
+                  React.createElement("span", null, instantLabel(t.occurredAt))
                 )
               )
             )

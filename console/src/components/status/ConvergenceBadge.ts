@@ -6,6 +6,7 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { instantLabel } from "../ui/instant.ts";
 import { MUTED_META_CLASS, MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -79,6 +80,17 @@ function fieldValue(value: string | null): string {
   return value ?? NOT_OBSERVED_LABEL;
 }
 
+/**
+ * An instant the Runtime reported, or nothing when it reported none.
+ *
+ * The two moments in this panel are moments like any other, so they are
+ * rendered the way the Console renders a moment: read through the one owner,
+ * rather than printed as the raw wire value.
+ */
+function instantField(value: string | null): string | null {
+  return value === null ? null : instantLabel(value);
+}
+
 function historyRow(entry: OperationHistoryEntry): React.JSX.Element {
   const detail = [entry.reason, entry.actor].filter(
     (part): part is string => typeof part === "string" && part.length > 0
@@ -95,7 +107,7 @@ function historyRow(entry: OperationHistoryEntry): React.JSX.Element {
       { className: "font-mono text-fg-secondary" },
       entry.action
     ),
-    React.createElement("span", null, entry.timestamp),
+    React.createElement("span", null, instantLabel(entry.timestamp)),
     React.createElement(
       "span",
       {
@@ -174,8 +186,8 @@ export function ReconciliationPanel({
         [
           ["Desired generation", status.desiredGeneration],
           ["Observed generation", status.observedGeneration],
-          ["Last apply", status.lastApplyAt],
-          ["Last observation", status.lastObservationAt],
+          ["Last apply", instantField(status.lastApplyAt)],
+          ["Last observation", instantField(status.lastObservationAt)],
           ["Last error", status.lastError]
         ] as const
       ).flatMap(([label, value]) => [

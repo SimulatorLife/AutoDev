@@ -42,6 +42,11 @@ import {
   TEXT_CONTROL_CLASS
 } from "../../components/ui/field-classes.ts";
 import {
+  instantClock,
+  isReadableInstant,
+  splitInstant
+} from "../../components/ui/instant.ts";
+import {
   ACTION_LINK_CLASS,
   MONO_ID_CLASS,
   MONO_META_CLASS,
@@ -269,71 +274,6 @@ function metricCell(evaluation: EvaluationResult): React.JSX.Element {
   );
 }
 
-/** `YYYY-MM-DD`. */
-const UTC_DATE = /^\d{4}-\d{2}-\d{2}$/u;
-/** `HH:MM:SS`. */
-const UTC_CLOCK = /^\d{2}:\d{2}:\d{2}$/u;
-/** `Z`, or a signed offset. */
-const UTC_OFFSET = /^(?:Z|[+-]\d{2}:\d{2})$/u;
-/** The digits of a fractional second, which the clock reading does not include. */
-const FRACTION = /^\d+/u;
-
-/**
- * One instant, split into the parts a cell renders: a date, and where the source
- * wrote them, a clock and an offset.
- *
- * Fixed-width checks in sequence rather than one pattern, for two reasons. The
- * shape here *is* fixed-width, so each piece is a trivial test. And a single
- * nested-quantifier regex for it trips `detect-unsafe-regex`, which is a report
- * worth answering rather than suppressing -- so this is the answer.
- *
- * Anything that is not an ISO instant comes back whole, which is the property
- * that matters: a value that cannot be cut into parts is not cut into parts.
- */
-function splitInstant(timestamp: string): {
-  readonly date: string;
-  readonly clock?: string | undefined;
-  readonly offset?: string | undefined;
-} {
-  const date = timestamp.slice(0, 10);
-  if (!UTC_DATE.test(date) || timestamp.length === 10)
-    return { date: timestamp };
-  if (timestamp[10] !== "T") return { date: timestamp };
-  const clock = timestamp.slice(11, 19);
-  if (!UTC_CLOCK.test(clock)) return { date: timestamp };
-
-  let offset = timestamp.slice(19);
-  // A fractional second belongs to the instant, not to the clock reading, so it
-  // is skipped rather than rendered as a third number.
-  if (offset.startsWith(".")) {
-    const digits = offset.slice(1).match(FRACTION);
-    if (digits === null) return { date: timestamp };
-    offset = offset.slice(1 + digits[0].length);
-  }
-  return offset === "" || UTC_OFFSET.test(offset)
-    ? { date, clock, offset }
-    : { date: timestamp };
-}
-
-/**
- * Whether a machine can read this value back as an instant.
- *
- * `splitInstant` answers whether the value can be *cut into parts*, which is a
- * narrower question: `2026-10-05 09:47:58` cannot be cut, and is still a date.
- * The two have to stay separate, because `time[datetime]` is the page's claim
- * that its content is a time, and that claim needs the second question.
- *
- * The evaluator accepts any string here -- it checks that the field is one and
- * nothing more -- so a value whose writer failed reaches the view intact, and
- * stamping it into `datetime` asserted that the token was a date. Rendered as
- * the text it is, it claims nothing and still shows the operator what the store
- * holds. `Date.parse` is the test because it is the question being asked: can
- * this be read back as the moment it names?
- */
-function isReadableInstant(timestamp: string): boolean {
-  return Number.isFinite(Date.parse(timestamp));
-}
-
 /**
  * A timestamp, split so it can break between its parts, and never stamped with
  * an offset it did not read.
@@ -348,9 +288,10 @@ function isReadableInstant(timestamp: string): boolean {
  * that it is a string, so a `+02:00` offset, a date-only value, and an
  * unreadable one all reach the view intact.
  *
- * The source's own offset is kept, then: `Z` stays `Z`, `+02:00` stays
- * `+02:00`, a value with no offset shows none, and a value that is not an ISO
- * instant is shown whole.
+ * The source's own offset is kept, then: `+02:00` stays `+02:00`, a value with
+ * no offset shows none, and a value that is not an ISO instant is shown whole.
+ * The zone is named rather than signed -- `Z` is Zulu, which is UTC, and the
+ * Console says "UTC" because its own column headers and date fields say "UTC".
  *
  * Splitting is what makes it fit. The raw string is 24 characters with no break
  * opportunity, so a column holding one either truncates or pushes every other
@@ -366,7 +307,7 @@ function isReadableInstant(timestamp: string): boolean {
  * did not have it, which is the other half of why this is one function now.
  */
 function timestampCell(timestamp: string): React.JSX.Element {
-  const { date, clock, offset } = splitInstant(timestamp);
+  const { date, clock } = splitInstant(timestamp);
   const readable = isReadableInstant(timestamp);
   return React.createElement(
     "span",
@@ -391,7 +332,7 @@ function timestampCell(timestamp: string): React.JSX.Element {
       : React.createElement(
           "span",
           { className: `${MONO_META_CLASS} min-w-0 break-words` },
-          `${clock}${offset ?? ""}`
+          instantClock(timestamp)
         )
   );
 }
@@ -415,8 +356,9 @@ function timestampCell(timestamp: string): React.JSX.Element {
  * same way, because "is this a time" cannot have two answers on one screen.
  */
 function runTimeInstant(timestamp: string): React.JSX.Element {
-  const { date, clock, offset } = splitInstant(timestamp);
+  const { date, clock } = splitInstant(timestamp);
   const readable = isReadableInstant(timestamp);
+  const clockText = instantClock(timestamp);
   return React.createElement(
     readable ? "time" : "span",
     {
@@ -424,7 +366,7 @@ function runTimeInstant(timestamp: string): React.JSX.Element {
         ? { dateTime: timestamp, title: timestamp }
         : { "data-evaluations-unreadable-time": "true" })
     },
-    `${date}${clock === undefined ? "" : ` ${clock}${offset ?? ""}`}`
+    `${date}${clock === undefined || clockText === "" ? "" : ` ${clockText}`}`
   );
 }
 

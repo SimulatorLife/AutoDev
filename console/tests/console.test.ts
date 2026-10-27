@@ -2532,7 +2532,7 @@ test("Agent detail renders the reconciliation its own response requires of it", 
   );
   assert.match(converged, /data-field="desired-generation">gen-7</);
   assert.match(converged, /data-field="observed-generation">gen-7</);
-  assert.match(converged, /data-field="last-apply">2026-10-07T00:00:00Z</);
+  assert.match(converged, /data-field="last-apply">2026-10-07 00:00:00 UTC</);
   assert.match(
     converged,
     /data-history-outcome="ok"/,
@@ -3262,12 +3262,13 @@ function evaluationsFilters(
 }
 
 test("one instant is rendered one way, including in the drawer", () => {
-  // The resource has a single definition of how it renders an instant --
-  // `splitInstant` -- and the history and trace tables both go through it. The
-  // drawer's subtitle did not, and it is the third rendering of the same value
-  // on the same screen: opening a run showed `2026-10-05 12:20:05Z` in the row
-  // and `2026-10-05T12:20:05.000Z` in the subtitle above the detail it came
-  // from. Two formats, one moment, a question mark about which one is the fact.
+  // The Console has a single definition of how it renders an instant --
+  // `components/ui/instant.ts` -- and the history and trace tables both go
+  // through it. The drawer's subtitle did not, and it is the third rendering
+  // of the same value on the same screen: opening a run showed
+  // `2026-10-05 12:20:05 UTC` in the row and `2026-10-05T12:20:05.000Z` in the
+  // subtitle above the detail it came from. Two formats, one moment, a
+  // question mark about which one is the fact.
   // The raw token also broke mid-date at 390px -- `2026-10-` / `05T12:20:05.000Z`
   // -- and carried no `dateTime`, so the one place showing the run's time was
   // the one place a machine could not read it.
@@ -3285,7 +3286,7 @@ test("one instant is rendered one way, including in the drawer", () => {
   // The same readable instant the table prints.
   assert.match(
     markup,
-    /<time dateTime="2026-10-05T12:20:05\.000Z"[^>]*>2026-10-05 12:20:05Z</
+    /<time dateTime="2026-10-05T12:20:05\.000Z"[^>]*>2026-10-05 12:20:05 UTC</
   );
 
   // And the subtitle is one of those, not a raw wire value beside it.
@@ -3295,7 +3296,7 @@ test("one instant is rendered one way, including in the drawer", () => {
   assert.ok(drawer.length > 0, "the run's detail is rendered");
   assert.match(
     drawer,
-    /<time dateTime="2026-10-05T12:20:05\.000Z"[^>]*>2026-10-05 12:20:05Z<\/time>/,
+    /<time dateTime="2026-10-05T12:20:05\.000Z"[^>]*>2026-10-05 12:20:05 UTC<\/time>/,
     "the subtitle renders the instant the way the table does"
   );
   assert.equal(
@@ -10500,10 +10501,10 @@ test("a timestamp is never stamped with an offset the source did not write", () 
     });
 
   // The source's own offset is kept.
-  assert.match(trace("2026-10-05T09:31:00Z"), /09:31:00Z/);
+  assert.match(trace("2026-10-05T09:31:00Z"), /09:31:00 UTC/);
   assert.match(
     trace("2026-10-05T09:31:00.000Z"),
-    /09:31:00Z/,
+    /09:31:00 UTC/,
     "a fractional second is not part of the clock reading"
   );
   assert.match(
@@ -10511,7 +10512,11 @@ test("a timestamp is never stamped with an offset the source did not write", () 
     /09:31:00\+02:00/,
     "a non-UTC offset is shown, not silently relabelled as UTC"
   );
-  assert.doesNotMatch(trace("2026-10-05T09:31:00+02:00"), /09:31:00Z/);
+  assert.doesNotMatch(
+    trace("2026-10-05T09:31:00+02:00"),
+    /09:31:00 UTC/,
+    "a source that wrote +02:00 is not shown in UTC"
+  );
   assert.match(
     trace("2026-10-05T09:31:00"),
     />09:31:00</,

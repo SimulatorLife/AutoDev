@@ -2,6 +2,7 @@
 import type { ControlApiPlaytestingReview } from "@simulatorlife/autodev-core";
 
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+import { instantDate, isReadableInstant } from "../../components/ui/instant.ts";
 
 /**
  * What the analyst wrote when it wrote nothing.
@@ -29,9 +30,8 @@ export function reviewHeadlineText(
  * did not observe.
  */
 export function reviewRecordedDay(createdAt: string): string {
-  const recorded = new Date(createdAt);
-  if (Number.isNaN(recorded.getTime())) return NOT_OBSERVED_LABEL;
-  return recorded.toISOString().slice(0, 10);
+  if (!isReadableInstant(createdAt)) return NOT_OBSERVED_LABEL;
+  return instantDate(createdAt);
 }
 
 /**

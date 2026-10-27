@@ -26,6 +26,7 @@ import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { gridRowClass } from "../../components/panels/DetailGrid.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
+import { instantLabel } from "../../components/ui/instant.ts";
 import {
   ACTION_LINK_CLASS,
   MONO_META_CLASS,
@@ -376,7 +377,7 @@ function renderPromptHistory(
                       dateTime: version.updatedAt,
                       className: "text-fg-secondary"
                     },
-                    version.updatedAt
+                    instantLabel(version.updatedAt)
                   ),
                   React.createElement(
                     "span",
@@ -422,7 +423,7 @@ function renderPromptHistory(
           React.createElement(
             "h4",
             { className: "text-sm font-semibold text-fg" },
-            `Changes since ${selectedVersion.versionHash.slice(0, 12)} (${selectedVersion.updatedAt})`
+            `Changes since ${selectedVersion.versionHash.slice(0, 12)} (${instantLabel(selectedVersion.updatedAt)})`
           ),
           selectedVersion.diff.length > 0
             ? React.createElement(CodeBlock, {

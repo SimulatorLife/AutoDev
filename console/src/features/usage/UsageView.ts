@@ -41,6 +41,7 @@ import {
   FIELD_GROUP_CLASS,
   TEXT_CONTROL_CLASS
 } from "../../components/ui/field-classes.ts";
+import { instantLabel } from "../../components/ui/instant.ts";
 import {
   ACTION_LINK_CLASS,
   MUTED_BODY_CLASS,
@@ -443,13 +444,6 @@ function usageHref(selection: UsageFilterSelection, spanId?: string): string {
   return `/usage?${params.toString()}`;
 }
 
-function formatTraceTimestamp(timestamp: string): string {
-  return new Date(timestamp)
-    .toISOString()
-    .replace("T", " ")
-    .replace("Z", " UTC");
-}
-
 function formatTraceDuration(durationNs: number): string {
   return formatSpanDuration(durationNs);
 }
@@ -463,7 +457,7 @@ function traceAttemptColumns(
       header: "Time (UTC)",
       weight: 190,
       align: "tokens",
-      cell: (attempt) => formatTraceTimestamp(attempt.timestamp)
+      cell: (attempt) => instantLabel(attempt.timestamp)
     },
     {
       id: "provider",
@@ -580,7 +574,7 @@ function traceSpanColumns(
       header: "Time (UTC)",
       weight: 190,
       align: "tokens",
-      cell: (span) => formatTraceTimestamp(span.timestamp)
+      cell: (span) => instantLabel(span.timestamp)
     },
     {
       id: "duration",

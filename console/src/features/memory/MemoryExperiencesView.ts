@@ -32,6 +32,7 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import { instantLabel } from "../../components/ui/instant.ts";
 import {
   ACTION_LINK_CLASS,
   MONO_VALUE_CLASS,
@@ -215,7 +216,7 @@ export function MemoryExperiencesView({
         React.createElement(
           "span",
           { className: MUTED_META_CLASS },
-          exp.startedAt ? new Date(exp.startedAt).toLocaleString() : "unknown"
+          exp.startedAt ? instantLabel(exp.startedAt) : "unknown"
         )
     }
   ];

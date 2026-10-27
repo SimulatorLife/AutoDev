@@ -30,6 +30,7 @@ import {
   DataTable,
   type DataTableProps
 } from "../../components/tables/DataTable.ts";
+import { instantDate } from "../../components/ui/instant.ts";
 import {
   MONO_VALUE_CLASS,
   MUTED_TEXT_CLASS
@@ -169,13 +170,40 @@ function useJudgementChartData(totals: UseOutcomeTotals): BarChartDatum[] {
   return bars;
 }
 
+/**
+ * The window the cohorts were observed in.
+ *
+ * The Memory page always narrows the collection to a window, so this is what
+ * an operator reads there. A view that was not told a window -- the
+ * acceptance renders this one on its own -- says so in the Console's word for
+ * evidence it does not have, rather than printing an empty pair of bounds or
+ * a date the Runtime never reported.
+ */
+function cohortWindow(
+  from: string | undefined,
+  until: string | undefined
+): string {
+  const start = instantDate(from);
+  const end = instantDate(until);
+  if (start === "" || end === "") return NOT_OBSERVED_LABEL;
+  return `${start} — ${end}`;
+}
+
 export interface MemoryCohortsViewProps {
   readonly sessionCohorts: MemorySessionOutcomeCohortPage | null;
   readonly useCohorts: MemoryInjectionUseCohortPage | null;
   readonly currentWorkspaceId: string;
   readonly repositoryId: string;
-  readonly occurredFrom: string;
-  readonly occurredUntil: string;
+  /**
+   * The window the cohorts were observed in.
+   *
+   * Both bounds are optional: the view is rendered by the Memory page, which
+   * always narrows the collection to a window, and by the acceptance, which
+   * renders the view on its own. A view that was not told a window says so
+   * rather than inventing one -- and it does not take the page down to say it.
+   */
+  readonly occurredFrom: string | undefined;
+  readonly occurredUntil: string | undefined;
   /**
    * The address of this tab's list, so its filter bar submits back to itself
    * with the same window and workspace rather than resetting the page.
@@ -380,8 +408,8 @@ export function MemoryCohortsView({
         preserved: [
           { name: "tab", value: "cohorts" },
           { name: "workspaceId", value: listScope.workspaceId },
-          { name: "from", value: occurredFrom },
-          { name: "until", value: occurredUntil },
+          { name: "from", value: occurredFrom ?? "" },
+          { name: "until", value: occurredUntil ?? "" },
           { name: "limit", value: String(listScope.limit) }
         ],
         submitTestId: "memory-cohort-filter",
@@ -487,7 +515,7 @@ export function MemoryCohortsView({
         React.createElement(
           "span",
           { className: "font-mono text-fg" },
-          `${new Date(occurredFrom).toLocaleDateString()} — ${new Date(occurredUntil).toLocaleDateString()}`
+          cohortWindow(occurredFrom, occurredUntil)
         )
       )
     ),
