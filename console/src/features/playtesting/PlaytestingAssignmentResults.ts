@@ -13,7 +13,7 @@ import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
-import { gameOutcomeLabel } from "./playtesting-labels.ts";
+import { executionStateLabel, gameOutcomeLabel } from "./playtesting-labels.ts";
 import {
   playtestingEpisodeHref,
   type PlaytestingScope
@@ -80,7 +80,12 @@ export function PlaytestingAssignmentResults({
                 React.createElement(
                   "p",
                   { className: MUTED_BODY_CLASS },
-                  `Execution state: ${outcome.state}`
+                  // The Console's word for the state, not the wire's key for
+                  // it: the line below reads "Game outcome: Success" rather
+                  // than "success", and an execution state spelled raw beside it
+                  // reads as two different kinds of answer rather than two
+                  // spellings of the same one.
+                  `Execution state: ${executionStateLabel(outcome.state)}`
                 ),
                 React.createElement(
                   "p",

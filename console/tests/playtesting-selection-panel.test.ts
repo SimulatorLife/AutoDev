@@ -290,6 +290,49 @@ test("persisted cross-session synthesis remains visible when Runtime task histor
   assert.match(markup, /data-aggregate-source="episode-1"/u);
 });
 
+test("the operator states whether the review must file findings", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(PlaytestingSelectionPanel, {
+      scope,
+      selectedEpisodeIds: ["episode-1"],
+      rejectedSelection: false,
+      onSelectionChange: () => {}
+    })
+  );
+
+  // The request carries what the operator wants out of the review, so the
+  // control that states it has to be on the panel that starts the review.
+  assert.match(markup, /File findings for the defects this review shows/u);
+  assert.match(markup, /data-checkbox="playtesting-require-findings"/u);
+  assert.match(markup, /hypothesis review files none/iu);
+});
+
+test("an analyst run names the kind of review the operator asked for", () => {
+  const findingsMarkup = renderToStaticMarkup(
+    React.createElement(PlaytestingAnalysisResults, {
+      scope,
+      result: null,
+      runs: [{ ...run, requireFindings: true }],
+      syntheses: [],
+      stale: false
+    })
+  );
+  const hypothesisMarkup = renderToStaticMarkup(
+    React.createElement(PlaytestingAnalysisResults, {
+      scope,
+      result: null,
+      runs: [{ ...run, requireFindings: false }],
+      syntheses: [],
+      stale: false
+    })
+  );
+
+  // A run that filed no findings reads differently when the reader knows
+  // whether findings were asked for.
+  assert.match(findingsMarkup, /Asked to file findings/u);
+  assert.match(hypothesisMarkup, /Hypothesis review; no findings requested/u);
+});
+
 test("status failures are rendered as stale rather than current", () => {
   const markup = renderToStaticMarkup(
     React.createElement(PlaytestingAnalysisResults, {

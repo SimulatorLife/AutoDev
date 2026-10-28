@@ -11,8 +11,15 @@ const API_PATH = "http://console.test/api/playtesting/analyses";
 function request(
   workspaceId: string,
   episodeIds: unknown,
-  init: { origin?: string } = {}
+  init: { origin?: string; requireFindings?: string } = {}
 ): NextRequest {
+  const body = new URLSearchParams({
+    workspaceId,
+    episodeIds: JSON.stringify(episodeIds)
+  });
+  if (init.requireFindings !== undefined) {
+    body.set("requireFindings", init.requireFindings);
+  }
   return new NextRequest(API_PATH, {
     method: "POST",
     headers: {
@@ -22,10 +29,7 @@ function request(
       "sec-fetch-site": "same-origin",
       "content-type": "application/x-www-form-urlencoded"
     },
-    body: new URLSearchParams({
-      workspaceId,
-      episodeIds: JSON.stringify(episodeIds)
-    })
+    body
   });
 }
 
@@ -112,10 +116,12 @@ test("the route dispatches the selected packets and returns every receipt", asyn
       );
       assert.equal(response.status, 202);
       // The workspace travels in the query, so the two authorities cannot
-      // disagree; the body carries only the selection.
+      // disagree; the body carries only the selection and which kind of
+      // review the operator asked for.
       assert.deepEqual(forwarded, {
         episodeIds: ["episode-a", "episode-b", "episode-c"],
-        operation: "dispatch"
+        operation: "dispatch",
+        requireFindings: false
       });
       const body = (await response.json()) as {
         kind: string;
@@ -128,6 +134,84 @@ test("the route dispatches the selected packets and returns every receipt", asyn
       assert.equal(body.data.packets.length, 1);
       assert.equal(body.data.receipts.length, 2);
       assert.equal(response.headers.get("cache-control"), "no-store");
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+});
+
+test("a findings request reaches the Runtime as a findings request", async () => {
+  await withToken(async () => {
+    const previousFetch = globalThis.fetch;
+    let forwarded: unknown = null;
+    globalThis.fetch = (async (_input, init) => {
+      forwarded = JSON.parse(String(init?.body));
+      return Response.json({
+        schema: "autodev-control-playtesting-analysis-v1",
+        operation: "dispatch",
+        workspaceId: WORKSPACE_ID,
+        requested: 1,
+        packets: [
+          { episodeId: "episode-a", batchId: "batch-1", packetId: "packet-a" }
+        ],
+        receipts: [],
+        budget: [],
+        analysis: {
+          analysisId: "analysis-1",
+          workspaceId: WORKSPACE_ID,
+          analysisKind: "confirmatory",
+          requireFindings: true,
+          status: "running",
+          createdAt: "2026-10-14T12:00:00.000Z",
+          finishedAt: null,
+          requestedEpisodeIds: ["episode-a"],
+          packets: [
+            {
+              episodeId: "episode-a",
+              batchId: "batch-1",
+              packetId: "packet-a"
+            }
+          ],
+          receipts: [],
+          budget: [],
+          reviews: [],
+          synthesisId: null,
+          error: null
+        }
+      });
+    }) as typeof fetch;
+    try {
+      const response = await POST(
+        request(WORKSPACE_ID, ["episode-a"], { requireFindings: "true" })
+      );
+      assert.equal(response.status, 202);
+      assert.deepEqual(forwarded, {
+        episodeIds: ["episode-a"],
+        operation: "dispatch",
+        requireFindings: true
+      });
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+});
+
+test("a malformed findings flag is refused rather than read as a hypothesis review", async () => {
+  await withToken(async () => {
+    const previousFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return Response.json({});
+    }) as typeof fetch;
+    try {
+      for (const flag of ["yes", "1", "TRUE", ""]) {
+        const response = await POST(
+          request(WORKSPACE_ID, ["episode-a"], { requireFindings: flag })
+        );
+        assert.equal(response.status, 400, flag);
+      }
+      assert.equal(calls, 0);
     } finally {
       globalThis.fetch = previousFetch;
     }

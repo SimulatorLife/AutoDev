@@ -64,7 +64,8 @@ const analysisRequestSchema = z
       .array(z.string().min(1).max(256))
       .min(1)
       .max(PLAYTESTS_MAX_ANALYSIS_SESSIONS),
-    operation: z.enum(["prepare", "dispatch"]).optional()
+    operation: z.enum(["prepare", "dispatch"]).optional(),
+    requireFindings: z.boolean().optional()
   })
   .superRefine((value, context) => {
     const selectionLimit =
@@ -543,7 +544,8 @@ async function requestCrossSessionReview(
       const result = await runControl.dispatchCrossSessionReview(
         session,
         query.workspaceId,
-        parsed.data.episodeIds
+        parsed.data.episodeIds,
+        { requireFindings: parsed.data.requireFindings === true }
       );
       sendJson(
         response,

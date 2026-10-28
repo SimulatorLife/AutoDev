@@ -42,6 +42,16 @@ export interface PlaytestAnalystProcessInput {
   readonly episodeIds: readonly string[];
   readonly analysisKind: "confirmatory" | "discovery";
   readonly metricAggregation: PlaytestCrossSessionMetricAggregation | null;
+  /**
+   * Whether this request must produce findings.
+   *
+   * A hypothesis review states what the packet shows; a findings request
+   * also files the defect claims the packet supports, each with the strict
+   * identity the register deduplicates on. The request says which it wants,
+   * because the two are different jobs and the register is a registry of
+   * defects rather than a second copy of every review.
+   */
+  readonly requireFindings: boolean;
 }
 
 export interface PlaytestAnalystProcessResult {
@@ -116,7 +126,11 @@ function playtestAnalystPrompt(input: PlaytestAnalystProcessInput): string {
     "If playtest.submitReview returns playtest_review_narrative_not_grounded, use the validation detail to revise only the unsupported narrative with a specific fact already present in the same frozen packet, then retry once with the same packet ID/artifact/hash. This rejection is before critique reservation; do not request a new packet, invent facts, or abandon a fixable review. If the packet has no support for a claim, remove the claim or mark it not observed.",
     "The strict playtest.submitReview input requires episodeId, packetId, packetArtifactId, packetSha256, chronologicalSummary, status (hypothesis or not observed only), non-empty top-level evidenceRefs, non-empty observations and interpretations (each exactly {text,evidenceRefs}), alternativeExplanations, reportCompleteness, experiments, and rubricHash. dimensionEvidence is optional and each item has only dimensionId, rationale, evidenceRefs, and optional counterexampleId. Runtime copies authoritativeMetrics and derives anchor categories, provenance, author, version, and timestamps; do not submit those fields.",
     "reportCompleteness must contain exactly four keys, with no narrative-section keys or extra metadata: crossSessionContext, alternatives, experiments, and followUp. Cross-session context is {status:unavailable,reason:<packet-specific reason>} or {status:available,evidenceRefs:[{kind:episode,id:<packet-supplied sibling episode ID>}]}; the available evidenceRefs are whole-episode locators, not synthesis triples. For empty alternativeExplanations use alternatives={status:none-identified,reason:<evidence-grounded reason>}; for a non-empty array use exactly {status:provided}. For an empty experiments array use experiments={status:none-recommended,reason:<evidence-grounded reason>}; for a non-empty array use exactly {status:proposed}. Follow-up is exactly {status:proposed,text:<next investigation>} or {status:none,reason:<why none>}. Do not use historical not-recorded statuses in a new review.",
-    "Per-session experiment entries have exactly hypothesis, falsifier, metricId, controls (a non-empty string array), and budget; do not add citations there. Keep hypotheses in interpretations with evidenceRefs. Omit findings for this analyst hypothesis review; if a future request requires a finding, its separate strict identity uses mechanicKey, failureSignature, and scope, never a locator. Do not use a score field in dimensionEvidence; provide only supported dimension-specific rationale/citations.",
+    "Per-session experiment entries have exactly hypothesis, falsifier, metricId, controls (a non-empty string array), and budget; do not add citations there. Keep hypotheses in interpretations with evidenceRefs. " +
+      (input.requireFindings
+        ? "This request requires findings: submit them with the review. Each finding is exactly {identity: {mechanicKey, failureSignature: {action, witness}}, title, description, evidenceStatus: \"hypothesis\", evidenceRefs}. mechanicKey must be copied verbatim from one of the packet's metricIntent mechanicKey values and must name the mechanic the failure is in, not the policy that caused it. failureSignature.action is the action the failure followed, or null when the failure had no action; failureSignature.witness is the observed value that proves the failure, not a restatement of the title. evidenceRefs must cite the packet's own events, steps or frames. File a finding only for a defect the packet's own evidence shows: a policy that chose badly is not a defect, and neither is variance. If the packet shows no defect, submit no findings and say so in the summary."
+        : "Omit findings for this analyst hypothesis review; if a future request requires a finding, its separate strict identity uses mechanicKey, failureSignature, and scope, never a locator.") +
+      " Do not use a score field in dimensionEvidence; provide only supported dimension-specific rationale/citations.",
     "After the per-session reviews, when at least two packets were prepared, submit one batch-level cross-session synthesis with playtest.submitCrossSessionSynthesis. Cite every pattern, counterexample, confounder, and proposed experiment using {episodeId, packetId, locator} references from those exact packets. Keep all conclusions at hypothesis level; do not call patterns verified or corroborated. If fewer than two packets were available, do not submit a synthesis.",
     "Do not run, branch, modify source, change game state, or publish issues. Do not claim verification or corroboration; reviews remain hypotheses or not-observed."
   ].join("\n");

@@ -75,6 +75,7 @@ test("analyst dispatch uses the existing provider-agent role with a read-only sc
       actor: "control-api:abcd",
       episodeIds: ["episode-1", "episode-2"],
       analysisKind: "confirmatory",
+      requireFindings: false,
       metricAggregation: aggregationFor(["episode-1", "episode-2"])
     },
     {
@@ -262,6 +263,7 @@ test("analyst dispatch needs no unused Control API credential", async () => {
       actor: "control-api:abcd",
       episodeIds: ["episode-1"],
       analysisKind: "confirmatory",
+      requireFindings: false,
       metricAggregation: aggregationFor(["episode-1"])
     },
     {
@@ -313,6 +315,7 @@ test("a failed analyst reports what the child said, bounded", async () => {
       actor: "control-api:abcd",
       episodeIds: ["episode-1"],
       analysisKind: "confirmatory",
+      requireFindings: false,
       metricAggregation: aggregationFor(["episode-1"])
     },
     {
@@ -366,6 +369,7 @@ test("discovery analyst dispatch has no metric aggregation and receives a hypoth
       actor: "control-api:abcd",
       episodeIds: ["ep-visual-1"],
       analysisKind: "discovery",
+      requireFindings: false,
       metricAggregation: null
     },
     { environment: {}, spawnProcess }
@@ -403,6 +407,64 @@ test("discovery analyst dispatch has no metric aggregation and receives a hypoth
   });
 });
 
+test("a findings request asks for the strict finding identity, and a hypothesis review omits findings", async () => {
+  const prompts: string[] = [];
+  const eventHandlers = new Map<string, (...args: unknown[]) => void>();
+  const child = {
+    once(event: string, handler: (...args: unknown[]) => void) {
+      eventHandlers.set(event, handler);
+      return child;
+    },
+    kill: () => true,
+    emitForTest(event: string, ...args: unknown[]) {
+      eventHandlers.get(event)?.(...args);
+    }
+  } as unknown as ChildProcess & {
+    emitForTest(event: string, ...args: unknown[]): void;
+  };
+  const spawnProcess = ((
+    _command: string,
+    args: string[],
+    _options: SpawnOptions
+  ) => {
+    prompts.push(args.at(-1) ?? "");
+    return child;
+  }) as unknown as typeof spawn;
+  for (const requireFindings of [true, false]) {
+    const processHandle = launchPlaytestAnalystProcess(
+      {
+        analysisId: "analysis-123",
+        workspaceId: "owner/RacingGame",
+        actor: "control-api:abcd",
+        episodeIds: ["episode-1"],
+        analysisKind: "confirmatory",
+        requireFindings,
+        metricAggregation: aggregationFor(["episode-1"])
+      },
+      { environment: {}, spawnProcess }
+    );
+    eventHandlers.get("close")?.(0, null);
+    await processHandle.completion;
+  }
+  const [findingsPrompt, hypothesisPrompt] = prompts;
+  assert.ok(findingsPrompt);
+  assert.ok(hypothesisPrompt);
+  // The request says which job the analyst is running, so the two prompts
+  // must not both be able to describe themselves as a findings review.
+  assert.match(findingsPrompt, /This request requires findings/u);
+  assert.match(
+    findingsPrompt,
+    /\{identity: \{mechanicKey, failureSignature: \{action, witness\}\}, title, description, evidenceStatus: "hypothesis", evidenceRefs\}/u
+  );
+  assert.match(
+    findingsPrompt,
+    /mechanicKey must be copied verbatim from one of the packet's metricIntent mechanicKey values/u
+  );
+  assert.doesNotMatch(findingsPrompt, /Omit findings for this analyst/u);
+  assert.match(hypothesisPrompt, /Omit findings for this analyst/u);
+  assert.doesNotMatch(hypothesisPrompt, /This request requires findings/u);
+});
+
 test("a failed analyst reports what the child said, bounded", async () => {
   const eventHandlers = new Map<string, (...args: unknown[]) => void>();
   const streamHandlers = new Map<string, (...args: unknown[]) => void>();
@@ -436,6 +498,7 @@ test("a failed analyst reports what the child said, bounded", async () => {
       actor: "control-api:abcd",
       episodeIds: ["episode-1"],
       analysisKind: "confirmatory",
+      requireFindings: false,
       metricAggregation: aggregationFor(["episode-1"])
     },
     {

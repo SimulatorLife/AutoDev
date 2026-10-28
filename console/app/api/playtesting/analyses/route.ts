@@ -19,7 +19,11 @@ export const runtime = "nodejs";
 const MAX_BODY_BYTES = 64 * 1024;
 const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
 const EPISODE_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
-const ALLOWED_FIELDS = new Set(["workspaceId", "episodeIds"]);
+const ALLOWED_FIELDS = new Set([
+  "workspaceId",
+  "episodeIds",
+  "requireFindings"
+]);
 
 function sendError(
   status: number,
@@ -90,6 +94,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       "The session selection is malformed."
     );
   }
+  // A findings request is a different job from a hypothesis review, so the
+  // operator states which one they want. The flag is read strictly: a value
+  // that is neither "true" nor "false" is a malformed request, not a
+  // request for a hypothesis review.
+  const rawRequireFindings = params.get("requireFindings");
+  if (
+    rawRequireFindings !== null &&
+    rawRequireFindings !== "true" &&
+    rawRequireFindings !== "false"
+  ) {
+    return sendError(
+      400,
+      "autodev_console_playtesting_invalid_request",
+      "The findings request flag is malformed."
+    );
+  }
+  const requireFindings = rawRequireFindings === "true";
   const config = readControlApiConfig();
   if (!config) {
     return sendError(
@@ -101,7 +122,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const result = await requestPlaytestingAnalysis(
     workspaceId,
     episodeIds,
-    config
+    config,
+    { requireFindings }
   );
   if (result.kind !== "ok") {
     return sendError(

@@ -13,7 +13,10 @@ import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import { SourceValidationIssues } from "../../components/status/SourceValidationIssues.ts";
-import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  statusBadgeLabel
+} from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
   ENTITY_LINK_CLASS,
@@ -304,7 +307,12 @@ export function HooksView({
         value:
           applied === null
             ? NOT_OBSERVED_LABEL
-            : applied.reconciliation.status.convergence
+            : // The Console's word for the state, not the wire's key for it.
+              // The card beside this one says "Valid" rather than "valid", and
+              // a reader who saw "pending" beside it would read the two as
+              // two different kinds of answer rather than two spellings of
+              // the same one.
+              statusBadgeLabel(applied.reconciliation.status.convergence)
       })
     ),
     // Only when there is something to report. A valid or unobserved source has

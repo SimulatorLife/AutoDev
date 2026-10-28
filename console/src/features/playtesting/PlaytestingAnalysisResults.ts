@@ -11,6 +11,7 @@ import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
+import { analystRequestKindLabel } from "./playtesting-labels.ts";
 import {
   playtestingEpisodeHref,
   type PlaytestingScope
@@ -384,6 +385,14 @@ export function PlaytestingAnalysisResults({
         { className: MUTED_BODY_CLASS },
         statusDescription(run),
         stale ? " Last known status; the Runtime could not refresh it." : ""
+      ),
+      React.createElement(
+        "p",
+        {
+          className: MUTED_META_CLASS,
+          "data-testid": "playtesting-analysis-request-kind"
+        },
+        analystRequestKindLabel(run.requireFindings)
       ),
       run.error
         ? React.createElement(

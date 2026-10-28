@@ -1130,6 +1130,8 @@ function isPlaytestingAnalystRun(
     (value.analysisKind !== undefined &&
       value.analysisKind !== "confirmatory" &&
       value.analysisKind !== "discovery") ||
+    (value.requireFindings !== undefined &&
+      typeof value.requireFindings !== "boolean") ||
     !["running", "completed", "partial", "failed"].includes(
       String(value.status)
     ) ||
@@ -1354,8 +1356,19 @@ export async function requestPlaytestingAnalysis(
   workspaceId: string,
   episodeIds: readonly string[],
   config: ControlApiConfig,
-  options: FetchControlApiOptions = {}
+  options: FetchControlApiOptions & {
+    /**
+     * Whether this dispatch must produce findings.
+     *
+     * A hypothesis review states what the packet shows; a findings request
+     * also files the defect claims the packet supports. Runtime is told
+     * which one the operator asked for, because it cannot be inferred from
+     * the selection.
+     */
+    readonly requireFindings?: boolean;
+  } = {}
 ): Promise<ControlApiResult<ControlApiPlaytestingAnalysisDispatchResponse>> {
+  const { requireFindings = false, ...fetchOptions } = options;
   const selected = [...new Set(episodeIds)];
   if (
     !WORKSPACE_ID_PATTERN.test(workspaceId) ||
@@ -1371,9 +1384,13 @@ export async function requestPlaytestingAnalysis(
   const params = new URLSearchParams({ workspaceId });
   const result = await postControlApi(
     `${CONTROL_API_PATHS.playtesting}/analyses?${params}`,
-    { episodeIds: selected, operation: "dispatch" },
+    {
+      episodeIds: selected,
+      operation: "dispatch",
+      requireFindings
+    },
     config,
-    playtestingControlApiOptions(options)
+    playtestingControlApiOptions(fetchOptions)
   );
   if (result.kind !== "ok") return result;
   const data = result.data;

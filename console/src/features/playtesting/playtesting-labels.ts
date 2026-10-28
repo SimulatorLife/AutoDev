@@ -536,6 +536,30 @@ export function cohortLabel(cohort: string | null): string {
   return cohort;
 }
 
+/**
+ * What kind of analyst review the operator asked for.
+ *
+ * A findings review files the defects the frozen evidence supports; a
+ * hypothesis review states what the packet shows and files none. The two are
+ * different jobs, and a run that filed no findings reads differently when the
+ * operator knows which one was requested.
+ *
+ * A run recorded before the request was recorded at all says so. Naming a
+ * kind it cannot support would make an old run look like a deliberate
+ * hypothesis review.
+ */
+export function analystRequestKindLabel(
+  requireFindings: boolean | undefined
+): string {
+  if (requireFindings === true) {
+    return "Asked to file findings";
+  }
+  if (requireFindings === false) {
+    return "Hypothesis review; no findings requested";
+  }
+  return "Not recorded";
+}
+
 /** The operator-facing label for a finding's severity. */
 export function findingSeverityLabel(
   severity: "catastrophic" | "major" | "minor" | "informational"

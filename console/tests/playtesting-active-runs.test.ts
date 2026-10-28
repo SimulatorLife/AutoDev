@@ -652,7 +652,12 @@ test("the panel renders the owner's own counts rather than an absent reading", (
     ),
     "no tile may name a field the Runtime does not produce"
   );
-  assert.match(markup, /Execution state: completed/);
+  // The state reads in the Console's word, beside a game outcome that reads
+  // in the Console's word too. The wire's own key -- "completed" -- beside
+  // "Win" read as two different kinds of answer rather than two spellings of
+  // the same one.
+  assert.match(markup, /Execution state: Completed/);
+  assert.doesNotMatch(markup, /Execution state: completed/);
   assert.match(markup, /Game outcome: Win/);
   assert.match(
     markup,

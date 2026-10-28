@@ -9,6 +9,7 @@ import {
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components/forms/Button.ts";
+import { CheckboxField } from "../../components/forms/CheckboxField.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { MUTED_BODY_CLASS } from "../../components/ui/text-classes.ts";
@@ -26,7 +27,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function dispatchAnalystReview(
   workspaceId: string,
-  episodeIds: readonly string[]
+  episodeIds: readonly string[],
+  requireFindings: boolean
 ): Promise<
   | {
       readonly ok: true;
@@ -36,7 +38,8 @@ export async function dispatchAnalystReview(
 > {
   const body = new URLSearchParams({
     workspaceId,
-    episodeIds: JSON.stringify(episodeIds)
+    episodeIds: JSON.stringify(episodeIds),
+    requireFindings: requireFindings ? "true" : "false"
   });
   const response = await fetch("/api/playtesting/analyses", {
     method: "POST",
@@ -86,6 +89,7 @@ export function PlaytestingSelectionPanel({
 }: PlaytestingSelectionPanelProps): React.JSX.Element {
   const workspaceId = scope.workspaceId;
   const [pending, setPending] = useState(false);
+  const [requireFindings, setRequireFindings] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resultState, setResultState] = useState<{
     readonly workspaceId: string;
@@ -212,7 +216,8 @@ export function PlaytestingSelectionPanel({
     try {
       const outcome = await dispatchAnalystReview(
         workspaceId,
-        selectedEpisodeIds
+        selectedEpisodeIds,
+        requireFindings
       );
       if (outcome.ok) {
         setResultState({ workspaceId, selectionKey, data: outcome.data });
@@ -251,7 +256,7 @@ export function PlaytestingSelectionPanel({
     } finally {
       setPending(false);
     }
-  }, [selectedEpisodeIds, selectionKey, workspaceId]);
+  }, [requireFindings, selectedEpisodeIds, selectionKey, workspaceId]);
 
   const resultRunId = result?.analysis?.analysisId;
   const focusedRun =
@@ -334,6 +339,26 @@ export function PlaytestingSelectionPanel({
           { className: MUTED_BODY_CLASS },
           "Choose sessions above to prepare a review."
         ),
+    React.createElement(
+      "div",
+      {
+        className: "flex flex-col gap-1",
+        "data-testid": "playtesting-findings-option"
+      },
+      React.createElement(CheckboxField, {
+        name: "requireFindings",
+        label: "File findings for the defects this review shows",
+        checked: requireFindings,
+        disabled: pending,
+        onChange: (event) => setRequireFindings(event.target.checked),
+        testId: "playtesting-require-findings"
+      }),
+      React.createElement(
+        "p",
+        { className: MUTED_BODY_CLASS },
+        "A findings review files each defect the frozen evidence supports, at hypothesis status, in the findings register. A hypothesis review files none, and a visual discovery session cannot file findings at all."
+      )
+    ),
     React.createElement(
       Button,
       {

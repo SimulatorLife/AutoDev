@@ -30,7 +30,14 @@ export function PlaytestingSpectatorAnalystButton({
     setPending(true);
     setError(null);
     try {
-      const outcome = await dispatchAnalystReview(workspaceId, [episodeId]);
+      // The spectator dispatch is a hypothesis review of one session. A
+      // findings review is requested from the sessions view, where the
+      // operator states that the review must file defects.
+      const outcome = await dispatchAnalystReview(
+        workspaceId,
+        [episodeId],
+        false
+      );
       if (outcome.ok) {
         setDispatchResult(outcome.data);
       } else {

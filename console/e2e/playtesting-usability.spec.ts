@@ -1151,7 +1151,7 @@ test("approved run start, automatic status watching, and cancellation stay in th
   const assignmentOutcomes = assignmentDisclosure.getByRole("region", {
     name: "Assignment outcomes"
   });
-  await expect(assignmentOutcomes).toContainText("Execution state: completed");
+  await expect(assignmentOutcomes).toContainText("Execution state: Completed");
   await expect(assignmentOutcomes).toContainText("Game outcome: Not observed");
   await expect(
     assignmentOutcomes.getByRole("link", {

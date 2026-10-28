@@ -381,6 +381,14 @@ export interface PlaytestAnalystReviewRun {
   readonly analysisId: string;
   readonly workspaceId: string;
   readonly analysisKind?: "confirmatory" | "discovery";
+  /**
+   * Whether the request asked the analyst to file findings.
+   *
+   * The record says which job the run was given, because a run that filed a
+   * defect and a run that only described one are not the same result, and a
+   * reader of the register has to be able to tell them apart.
+   */
+  readonly requireFindings?: boolean;
   readonly status: "running" | "completed" | "partial" | "failed";
   readonly createdAt: string;
   readonly finishedAt: string | null;
@@ -406,7 +414,8 @@ export interface PlaytestAnalystReviewDispatch {
   dispatchCrossSessionReview(
     session: PlaytestMcpSession,
     workspaceId: string,
-    episodeIds: readonly string[]
+    episodeIds: readonly string[],
+    request?: { readonly requireFindings?: boolean }
   ): Promise<{
     readonly run: PlaytestAnalystReviewRun | null;
     readonly packets: readonly PlaytestCrossSessionPacket[];
@@ -7861,7 +7870,7 @@ export function createPlaytestRunControl(
         if (timeout) clearTimeout(timeout);
       }
     },
-    dispatchCrossSessionReview(session, workspaceId, episodeIds) {
+    dispatchCrossSessionReview(session, workspaceId, episodeIds, request) {
       assertPlaytestToolRole(
         session.role,
         ANALYST_DISPATCH_ROLES,
@@ -7869,6 +7878,9 @@ export function createPlaytestRunControl(
       );
       const authorizedWorkspaceId = authorizeWorkspace(workspaceId, session);
       const uniqueEpisodeIds = [...new Set(episodeIds)];
+      // A request that asks for findings is a different job from a hypothesis
+      // review, and the analyst has to be told which one it is running.
+      const requireFindings = request?.requireFindings === true;
       if (
         uniqueEpisodeIds.length === 0 ||
         uniqueEpisodeIds.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS ||
@@ -7906,6 +7918,17 @@ export function createPlaytestRunControl(
                   firstEpisode.batchId
                 );
           if (firstBatch?.executionMode === PLAYTEST_AUTONOMOUS_VISUAL_MODE) {
+            // A findings request against a discovery selection would come back
+            // as a discovery review: the discovery contract has no findings
+            // field, so the analyst could not file one even if the evidence
+            // showed a defect. Refusing here keeps "the review asked for
+            // findings" and "the review filed findings" from being two
+            // different claims about the same run.
+            if (requireFindings) {
+              throw new PlaytestMcpValidationError(
+                "Findings require a confirmatory review of a completed, selected batch; visual discovery sessions cannot file findings."
+              );
+            }
             return dispatchVisualDiscoveryReview({
               workspaceId: authorizedWorkspaceId,
               actor: session.actor,
@@ -8077,6 +8100,7 @@ export function createPlaytestRunControl(
             analysisId,
             workspaceId: authorizedWorkspaceId,
             analysisKind: "confirmatory",
+            requireFindings: requireFindings,
             status: "running",
             createdAt,
             finishedAt: null,
@@ -8109,6 +8133,7 @@ export function createPlaytestRunControl(
             episodeIds: packets.map((packet) => packet.episodeId),
             analysisKind: "confirmatory",
             metricAggregation,
+            requireFindings,
             failureMessage: "The analyst process could not be started."
           });
           analystReviewRuns.set(analysisId, record);
@@ -8327,6 +8352,7 @@ function startAnalystProcess(input: {
   readonly episodeIds: readonly string[];
   readonly analysisKind: "confirmatory" | "discovery";
   readonly metricAggregation: PlaytestCrossSessionMetricAggregation | null;
+  readonly requireFindings: boolean;
   readonly failureMessage: string;
 }): PlaytestAnalystProcess {
   try {
@@ -8336,7 +8362,8 @@ function startAnalystProcess(input: {
       actor: input.actor,
       episodeIds: input.episodeIds,
       analysisKind: input.analysisKind,
-      metricAggregation: input.metricAggregation
+      metricAggregation: input.metricAggregation,
+      requireFindings: input.requireFindings
     });
   } catch (error) {
     throw new PlaytestMcpUnavailableError(
@@ -8554,6 +8581,7 @@ async function dispatchVisualDiscoveryReview(input: {
     episodeIds: input.episodeIds,
     analysisKind: "discovery",
     metricAggregation: null,
+    requireFindings: false,
     failureMessage: "The discovery analyst process could not be started."
   });
   input.analystReviewRuns.set(analysisId, record);
