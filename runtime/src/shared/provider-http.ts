@@ -36,27 +36,6 @@ export const PROVIDER_REQUEST_UNSUPPORTED_TYPE =
   "provider_request_unsupported" as const;
 
 /**
- * Whether the request's own conversation carries image content.
- *
- * Only message content is inspected. A tool *output* that carries an image
- * travels the bridges' image-aware tool path, and must not refuse the turn
- * that carries it.
- */
-export function requestCarriesImageContent(input: unknown): boolean {
-  if (!Array.isArray(input)) return false;
-  return input.some((item) => {
-    if (!isRecord(item)) return false;
-    const content = item.content;
-    if (!Array.isArray(content)) return false;
-    return content.some((part) => {
-      if (!isRecord(part)) return false;
-      if (part.type === "input_image" || part.type === "image") return true;
-      return part.image_url !== undefined && part.image_url !== null;
-    });
-  });
-}
-
-/**
  * Fail closed on a request this bridge cannot serve.
  *
  * The refusal is typed so the router can tell "this route cannot serve this

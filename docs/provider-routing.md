@@ -552,19 +552,40 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   pattern could not read; both the class and the duration are parsed now, so
   `/status` and the 503 body report the window the provider actually named.
 
-- **A route that cannot serve a request is not a provider failure.** A
-  CLI-backed bridge turns a turn into a text prompt for its CLI, so it cannot
-  carry an image: the Claude bridge renders an image part as the literal text
-  `[image]`, and the request's own `instructions` never reach the turn. It used
-  to answer anyway -- HTTP 200, a well-formed response, a question the model
-  was never asked -- and the caller read it as an answer. The bridges now refuse
-  a request whose conversation carries an image, before the CLI is started, with
-  the typed error `provider_request_unsupported`. The router reads that refusal
-  as a fallback: the next candidate may serve the request, so the chain moves on
-  and the provider stays healthy (a refusal cools nothing down and is recorded
-  as the failure class `unsupported_request`, not as an outage). A concrete
-  request for a model on such a route is the client's answer and gets the typed
-  refusal as it stands.
+- **A route that cannot serve a request is not a provider failure.** A bridge
+  whose transport cannot carry the request's content refuses it, before the
+  provider is started, with the typed error `provider_request_unsupported`. The
+  router reads that refusal as a fallback: the next candidate may serve the
+  request, so the chain moves on and the provider stays healthy (a refusal cools
+  nothing down and is recorded as the failure class `unsupported_request`, not
+  as an outage). A route that renders an image as text and answers anyway used
+  to answer a question the model was never asked -- HTTP 200, a well-formed
+  response, and a caller that read it as an answer -- so the refusal is the
+  contract.
+- **What each transport can carry is a property of the CLI, not of the model.**
+  The models behind these routes read images; what decides whether a route can
+  serve an image-bearing request is the channel the bridge hands the turn to.
+  The Claude CLI's print mode takes one NDJSON user message per turn, and that
+  message accepts image content blocks, so the Claude bridge carries an image
+  the user attached as an image block and the model sees the picture. The
+  Antigravity CLI's print mode reads text content blocks only, and the Copilot
+  CLI takes a prompt, so those bridges refuse an image-bearing request rather
+  than base64 it into a prompt. MiniMax is a transparent proxy, so the request
+  reaches the upstream API with the image intact. The distinction is read once,
+  in `shared/request-content.ts`, so the bridges and the router agree on what
+  "this request carries an image" means.
+- **The router names a refusal for what it is.** A route that refused did not
+  fail: it cannot serve *this* request, and it is healthy. Reporting it as
+  "available but did not complete the turn" sent the reader looking for an
+  outage that was not there, and made providers with usage left look like the
+  problem. The exhaustion body now says "cannot serve this request" and names
+  the reason the bridge gave. When every candidate refused, no retry can serve
+  the request -- the same request will be refused the same way -- so the answer
+  is not retryable and carries no `retry-after`: a `retry-after` is an
+  instruction to come back, and a client that honours it holds the turn open
+  for exactly that long, with nothing to show for it. A candidate that is
+  merely out of usage is different: its window lapses, so the request stays
+  retryable and keeps its window.
 - **Probe failures ride their own ladder.** A local bridge restarting says
   nothing about the provider behind it, and escalating the provider's own backoff
   for it was how a one-minute outage became a ten-minute one.

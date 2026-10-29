@@ -22,6 +22,12 @@
  * as `wait`. Captured from Codex 0.154.0 with the request-capture skill.
  */
 
+import {
+  requestContentParts,
+  type RequestImage,
+  requestImages
+} from "@simulatorlife/autodev-runtime/shared/request-content";
+
 type JsonRecord = Record<string, unknown>;
 
 /** One tool Codex offered on this request, flattened out of any namespace. */
@@ -370,6 +376,88 @@ function outputText(output: unknown): string {
 }
 
 /**
+ * One block of the Claude CLI's user message.
+ *
+ * A text block is what the model reads; an image block is the picture itself.
+ * The CLI's input message accepts both, so an image the user attached reaches
+ * the model as an image rather than as a placeholder standing in for one.
+ */
+export type ClaudeContentBlock =
+  | { readonly type: "text"; readonly text: string }
+  | {
+      readonly type: "image";
+      readonly source: {
+        readonly type: "base64";
+        readonly media_type: string;
+        readonly data: string;
+      };
+    };
+
+/** The image block for an image the request carries, or null when it has no bytes. */
+function claudeImageBlock(image: RequestImage): ClaudeContentBlock | null {
+  if (image.kind !== "bytes") return null;
+  return {
+    type: "image",
+    source: { type: "base64", media_type: image.mediaType, data: image.data }
+  };
+}
+
+/**
+ * A message's text, without the images it carried.
+ *
+ * An image is not text: it leaves the transcript and becomes an image block,
+ * so the model is shown the picture instead of a word standing in for one.
+ */
+function messageText(content: unknown): string {
+  return requestContentParts(content)
+    .map((part) => (part.kind === "text" ? part.text : ""))
+    .filter((text) => text !== "")
+    .join("\n");
+}
+
+/**
+ * The Codex conversation as the Claude CLI's user message.
+ *
+ * The transcript keeps the shape it has always had -- one text block per
+ * conversation item, with the role tags that mark who said it -- and every
+ * image the user attached follows it as an image block.
+ */
+export function renderCodexContentBlocks(input: unknown): ClaudeContentBlock[] {
+  const blocks: ClaudeContentBlock[] = [
+    { type: "text", text: renderCodexTranscript(input) }
+  ];
+  for (const image of requestImages(input)) {
+    const block = claudeImageBlock(image);
+    if (block) blocks.push(block);
+  }
+  return blocks;
+}
+
+/**
+ * The one user message the CLI's print mode runs a turn from.
+ *
+ * The CLI reads one NDJSON message per line and runs a turn for each, so the
+ * bridge sends one and closes the stream.
+ */
+export function claudeUserMessage(blocks: ClaudeContentBlock[]): string {
+  return `${JSON.stringify({
+    type: "user",
+    message: { role: "user", content: blocks }
+  })}\n`;
+}
+
+/**
+ * The image an MCP tool result carries, in the shape the CLI renders.
+ *
+ * A tool output that carries an image reaches the model through the bridge's
+ * image-aware tool path, not through the prompt.
+ */
+export function claudeMcpImageContent(image: RequestImage): JsonRecord | null {
+  if (image.kind !== "bytes") return null;
+  return { type: "image", mimeType: image.mediaType, data: image.data };
+}
+
+/**
  * Codex's conversation for this agent, as the text a fresh Claude CLI starts from.
  *
  * Everything a Codex-native model would see is kept: developer instructions,
@@ -397,7 +485,7 @@ export function renderCodexTranscript(input: unknown): string {
         item.role === "system"
           ? item.role
           : "user";
-      const text = textOf(item.content ?? item.text);
+      const text = messageText(item.content ?? item.text);
       if (text) parts.push(`<${role}>\n${text}\n</${role}>`);
     } else if (type === "custom_tool_call") {
       parts.push(

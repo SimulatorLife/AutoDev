@@ -1086,3 +1086,52 @@ test("observeResponseEvent reports requested tool calls across event shapes", as
   });
   assert.equal(requested.length, 2);
 });
+
+test("an image the user attached reaches MiniMax with its bytes intact", async () => {
+  const imageUrl =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  let upstreamBody: string | null = null;
+  await withProxy(
+    (request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        upstreamBody = Buffer.concat(chunks).toString("utf8");
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ output: [] }));
+      });
+    },
+    async (proxyPort) => {
+      const response = await fetch(
+        `http://127.0.0.1:${proxyPort}/v1/responses`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "MiniMax-M3",
+            input: [
+              {
+                type: "message",
+                role: "user",
+                content: [
+                  { type: "input_text", text: "what is in this picture?" },
+                  { type: "input_image", image_url: imageUrl }
+                ]
+              }
+            ]
+          })
+        }
+      );
+      assert.equal(response.status, 200);
+    }
+  );
+
+  const forwarded = JSON.parse(upstreamBody!) as {
+    input: Array<{ content: Array<{ type: string; image_url?: string }> }>;
+  };
+  assert.equal(
+    forwarded.input[0]?.content[1]?.image_url,
+    imageUrl,
+    "the proxy must forward the image the user attached, byte for byte"
+  );
+});

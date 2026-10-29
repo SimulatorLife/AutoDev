@@ -728,12 +728,15 @@ test(
         await runRejectedModelCase(name, entry);
       }
       await runOauthMissingCase("oauth_token_missing", oauthMissingCase);
-      const unsupportedCase = contract.cases.image_content_refused;
+      const unsupportedCase = contract.cases.image_reference_refused;
       assert.ok(
         unsupportedCase,
         "the request a bridge cannot serve must have a contract case"
       );
-      await runUnsupportedRequestCase("image_content_refused", unsupportedCase);
+      await runUnsupportedRequestCase(
+        "image_reference_refused",
+        unsupportedCase
+      );
     } finally {
       await new Promise((resolve) => telemetry.server.close(resolve));
     }

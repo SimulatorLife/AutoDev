@@ -28,7 +28,7 @@
       "experimental_supported_tools": [],
       "use_responses_lite": false,
       "multi_agent_version": "v1",
-      "input_modalities": ["text"]
+      "input_modalities": ["text", "image"]
     }
   ]
 }

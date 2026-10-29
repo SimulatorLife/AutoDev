@@ -54,7 +54,6 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
-  requestCarriesImageContent,
   sendJson,
   sendUnsupportedRequestFailure,
   sendWorkspaceResolutionFailure
@@ -70,6 +69,7 @@ import {
   retryAfterSecondsFromLimit,
   terminalIncompleteEvents
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
+import { requestCarriesImageContent } from "@simulatorlife/autodev-runtime/shared/request-content";
 import {
   resolveCwd,
   WorkspaceResolutionError
@@ -4634,7 +4634,7 @@ async function handleResponsesRequest(
     sendUnsupportedRequestFailure(
       response,
       "agy",
-      "This bridge turns a turn into a text prompt for the Antigravity CLI and cannot carry image content. Serve the request on a route that supports vision."
+      "This bridge turns a turn into a text prompt for the Antigravity CLI, whose print mode takes text and nothing else, and cannot carry image content. Serve the request on a route that supports vision."
     );
     return;
   }

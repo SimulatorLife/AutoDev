@@ -39,7 +39,6 @@ import { codexToolsMcpServer } from "@simulatorlife/autodev-runtime/mcp/codex-to
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
-  requestCarriesImageContent,
   sendJson,
   sendUnsupportedRequestFailure,
   sendWorkspaceResolutionFailure
@@ -55,6 +54,7 @@ import {
   type ProviderLimit,
   retryAfterSecondsFromLimit
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
+import { requestImages } from "@simulatorlife/autodev-runtime/shared/request-content";
 import {
   resolveCwd,
   WorkspaceResolutionError
@@ -71,11 +71,13 @@ import {
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 import {
+  type ClaudeContentBlock,
+  claudeUserMessage,
   CODEX_TOOLS_SERVER,
   codexToolReference,
   type CodexToolSurface,
   codexToolSurface,
-  renderCodexTranscript
+  renderCodexContentBlocks
 } from "./claude-codex-tools.ts";
 import {
   type ClaudeCliEvent,
@@ -270,7 +272,7 @@ export function claudeModelMetadata(): JsonRecord {
     model_messages: {
       instructions_template: "You are a bounded external-provider Codex agent."
     },
-    input_modalities: ["text"],
+    input_modalities: ["text", "image"],
     experimental_supported_tools: ["web_search", "web_fetch"],
     support_verbosity: false,
     supports_parallel_tool_calls: false,
@@ -598,6 +600,11 @@ export function claudeCliArgs(
     options.systemPrompt,
     "--output-format",
     "stream-json",
+    // The turn arrives as one NDJSON user message rather than as plain text
+    // on stdin, because only a message can carry an image: the CLI's text
+    // input takes a prompt, and a prompt has no room for a picture.
+    "--input-format",
+    "stream-json",
     "--include-partial-messages",
     "--verbose",
     "--no-session-persistence",
@@ -803,7 +810,7 @@ function* translateClaudeStreamLine(
 }
 
 export async function* runClaudeStream(
-  prompt: string,
+  blocks: ClaudeContentBlock[],
   model: string,
   effort: string,
   options: ClaudeStreamOptions
@@ -814,9 +821,9 @@ export async function* runClaudeStream(
     env: options.env,
     stdio: ["pipe", "pipe", "pipe"]
   });
-  // A CLI that exits before reading its prompt must not take the bridge down.
+  // A CLI that exits before reading its turn must not take the bridge down.
   child.stdin.on("error", () => undefined);
-  child.stdin.end(prompt);
+  child.stdin.end(claudeUserMessage(blocks));
   const kill = (): void => {
     if (child.exitCode === null && child.signalCode === null)
       child.kill("SIGTERM");
@@ -1066,37 +1073,42 @@ function startResponsesTurn(
   );
   turn.attach(stream, reporter);
   void turn.run(
-    runClaudeStream(renderCodexTranscript(payload.input ?? ""), model, effort, {
-      cwd,
-      // A parked call must not time out inside the CLI before the turn does.
-      env: {
-        ...withAutoDevOtelResourceContext(
-          {
-            ...environment,
-            ...gitCommitIdentityEnv({ role: agentRole, provider: "claude" })
-          },
-          workspaceKey,
-          agentRole
-        ),
-        MCP_TOOL_TIMEOUT: String(Math.ceil(CLAUDE_PARK_SECONDS * 1000))
-      },
-      signal: turn.signal,
-      waitingOnCodex: () => turn.waitingOnCodex,
-      systemPrompt:
-        systemPrompt(cwd, surface) +
-        sandboxInjection +
-        (orchestratorSkillContext
-          ? `
+    runClaudeStream(
+      renderCodexContentBlocks(payload.input ?? ""),
+      model,
+      effort,
+      {
+        cwd,
+        // A parked call must not time out inside the CLI before the turn does.
+        env: {
+          ...withAutoDevOtelResourceContext(
+            {
+              ...environment,
+              ...gitCommitIdentityEnv({ role: agentRole, provider: "claude" })
+            },
+            workspaceKey,
+            agentRole
+          ),
+          MCP_TOOL_TIMEOUT: String(Math.ceil(CLAUDE_PARK_SECONDS * 1000))
+        },
+        signal: turn.signal,
+        waitingOnCodex: () => turn.waitingOnCodex,
+        systemPrompt:
+          systemPrompt(cwd, surface) +
+          sandboxInjection +
+          (orchestratorSkillContext
+            ? `
 
 ## Selected skill context (propagated from orchestrator)
 
 ${orchestratorSkillContext}
 `
-          : ""),
-      selectedSkillContext: orchestratorSkillContext,
-      turnId: surface.tools.length > 0 ? turn.id : null,
-      webSearch: surface.webSearch
-    })
+            : ""),
+        selectedSkillContext: orchestratorSkillContext,
+        turnId: surface.tools.length > 0 ? turn.id : null,
+        webSearch: surface.webSearch
+      }
+    )
   );
 }
 
@@ -1150,11 +1162,15 @@ async function handle(
     });
     return;
   }
-  if (requestCarriesImageContent(payload.input)) {
+  // The CLI's user message carries an image, so the bridge serves a request
+  // that has one. What it cannot serve is an image the request names without
+  // carrying: there are no bytes to hand the model, and answering anyway
+  // would answer a question the model was never asked.
+  if (requestImages(payload.input).some((image) => image.kind !== "bytes")) {
     sendUnsupportedRequestFailure(
       response,
       "claude",
-      "This bridge turns a turn into a text prompt for the Claude CLI and cannot carry image content. Serve the request on a route that supports vision."
+      "This request carries an image the bridge cannot read: the request names the image and carries none of its bytes."
     );
     return;
   }

@@ -195,7 +195,8 @@
       "use_responses_lite": false,
       "multi_agent_version": "v1",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -236,7 +237,8 @@
       "use_responses_lite": false,
       "multi_agent_version": "v1",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {
@@ -289,7 +291,8 @@
       "use_responses_lite": false,
       "multi_agent_version": "v1",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ]
     },
     {

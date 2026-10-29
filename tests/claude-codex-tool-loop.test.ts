@@ -19,9 +19,10 @@ const REPO_ROOT = resolvePath(import.meta.dirname, "..");
 const BRIDGE = join(REPO_ROOT, "runtime/src/providers/claude.ts");
 type JsonRecord = Record<string, any>;
 
-// A stand-in for `claude -p --output-format stream-json`: reads the prompt on
-// stdin, starts the MCP server named in --mcp-config, and follows the script
-// in CLAUDE_FAKE_SCRIPT. `call` blocks on a real MCP tools/call.
+// A stand-in for `claude -p --input-format stream-json --output-format
+// stream-json`: reads the turn's user message on stdin, starts the MCP server
+// named in --mcp-config, and follows the script in CLAUDE_FAKE_SCRIPT. `call`
+// blocks on a real MCP tools/call.
 const FAKE_CLI = String.raw`#!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
@@ -29,9 +30,12 @@ const args = process.argv.slice(2);
 const flag = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 const out = (event) => process.stdout.write(JSON.stringify(event) + "\n");
 const stream = (event) => out({ type: "stream_event", event });
-let prompt = "";
-for await (const chunk of process.stdin) prompt += chunk;
-const record = { argv: args, prompt, pid: process.pid };
+let raw = "";
+for await (const chunk of process.stdin) raw += chunk;
+const message = JSON.parse(raw.trim());
+const blocks = message?.message?.content ?? [];
+const prompt = blocks.filter((block) => block.type === "text").map((block) => block.text).join("\n\n");
+const record = { argv: args, prompt, message, blocks, pid: process.pid };
 writeFileSync(process.env.CLAUDE_FAKE_RECORD, JSON.stringify(record));
 let server = null, nextId = 1;
 const pending = new Map();
@@ -608,4 +612,55 @@ test("a client that disconnects mid-turn takes the CLI down with it", async () =
       );
     }
   );
+});
+
+test("an image the user attached reaches the Claude CLI as an image, not as a refusal", async () => {
+  const script = [{ say: "I can see the picture." }];
+  const data =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  await withBridge(script, async ({ port, record }) => {
+    const history: JsonRecord[] = [
+      CODEX_TOOLS,
+      {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: "What is in this picture?" },
+          {
+            type: "input_image",
+            image_url: `data:image/png;base64,${data}`
+          }
+        ]
+      }
+    ];
+    const response = await codexRequest(port, history);
+    assert.equal(
+      response.status,
+      200,
+      "a request that carries an image is served, not refused"
+    );
+    const events = parseSse(await response.text());
+    assert.equal(completedResponse(events).status, "completed");
+
+    const cli = await record();
+    const imageBlock = (cli.blocks as JsonRecord[]).find(
+      (block) => block.type === "image"
+    );
+    assert.ok(imageBlock, "the CLI must receive the image as an image block");
+    assert.deepEqual(imageBlock.source, {
+      type: "base64",
+      media_type: "image/png",
+      data
+    });
+    assert.match(
+      cli.prompt,
+      /<user>\nWhat is in this picture\?\n<\/user>/,
+      "the message's text still reaches the CLI"
+    );
+    assert.equal(
+      JSON.stringify(cli.prompt).includes(data),
+      false,
+      "the image must not be inlined into the prompt as text"
+    );
+  });
 });

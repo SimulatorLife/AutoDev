@@ -32,7 +32,6 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
-  requestCarriesImageContent,
   sendJson,
   sendUnsupportedRequestFailure,
   sendWorkspaceResolutionFailure
@@ -46,6 +45,7 @@ import {
   retryAfterSecondsFromLimit,
   terminalIncompleteEvents
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
+import { requestCarriesImageContent } from "@simulatorlife/autodev-runtime/shared/request-content";
 import {
   resolveCwd,
   WorkspaceResolutionError

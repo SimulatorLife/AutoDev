@@ -1209,3 +1209,121 @@ test(
     }
   }
 );
+
+test("a route that refused the request is named as such, not as a provider that did not finish", () => {
+  // A refusal is not an outage: the route is healthy and cannot serve *this*
+  // request. Saying it "did not complete the turn" sent the reader hunting
+  // for a provider failure that was not there, and the providers with usage
+  // left looked like the problem.
+  const summary: CooldownSummary[] = [
+    {
+      provider: "claude",
+      model: "sonnet",
+      state: "available",
+      failureClass: null,
+      resetsAt: null,
+      retryAfterMs: 0,
+      detail: null
+    },
+    {
+      provider: "antigravity",
+      model: "gemini-3.8-flash-high",
+      state: "available",
+      failureClass: null,
+      resetsAt: null,
+      retryAfterMs: 0,
+      detail: null
+    }
+  ];
+  const body = exhaustionBody({
+    subject: "the orchestrator",
+    summary,
+    failures: [
+      "claude: cannot serve this request (the request names an image and carries none of its bytes)",
+      "antigravity: cannot serve this request (image content)"
+    ],
+    observed: new Map([
+      ["claude", "unsupported_request"],
+      ["antigravity", "unsupported_request"]
+    ]),
+    model: "claude-opus-5-5",
+    requestId: "req-refused",
+    lastResortAttempts: 2,
+    deadlineReached: false
+  });
+  const message = (body as any).error.message as string;
+  assert.match(message, /claude: cannot serve this request/);
+  assert.match(message, /antigravity: cannot serve this request/);
+  assert.doesNotMatch(
+    message,
+    /did not complete the turn/,
+    "a refusal must not read as a provider that failed to finish"
+  );
+  // No candidate can serve this request, and the same request will be
+  // refused again: a retry buys nothing, so the body must not promise one.
+  assert.equal((body as any).error.retryable, false);
+  assert.match(message, /Retrying will not help/);
+  assert.deepEqual(
+    exhaustionHeaders({
+      summary,
+      observed: new Map([
+        ["claude", "unsupported_request"],
+        ["antigravity", "unsupported_request"]
+      ]),
+      requestId: "req-refused"
+    }),
+    { "x-autodev-request-id": "req-refused" },
+    "a request no retry can serve must not carry a retry-after"
+  );
+});
+
+test("a route that refused does not make a request another route could serve un-retryable", () => {
+  // Codex was out of usage; the two routes that could have served the request
+  // refused it. Codex will serve it once its window resets, so the request
+  // stays retryable and the retry keeps its window.
+  const summary: CooldownSummary[] = [
+    {
+      provider: "codex",
+      model: "gpt-5-codex",
+      state: "hard",
+      failureClass: "quota_exhausted",
+      resetsAt: new Date(Date.now() + 600_000).toISOString(),
+      retryAfterMs: 600_000,
+      detail: null
+    },
+    {
+      provider: "claude",
+      model: "sonnet",
+      state: "available",
+      failureClass: null,
+      resetsAt: null,
+      retryAfterMs: 0,
+      detail: null
+    }
+  ];
+  const observed = new Map([["claude", "unsupported_request"]]);
+  const body = exhaustionBody({
+    subject: "the orchestrator",
+    summary,
+    failures: ["codex: HTTP 429", "claude: cannot serve this request"],
+    observed,
+    model: "gpt-5-codex",
+    requestId: "req-mixed",
+    lastResortAttempts: 1,
+    deadlineReached: false
+  });
+  const message = (body as any).error.message as string;
+  assert.match(message, /codex: quota_exhausted/);
+  assert.match(message, /claude: cannot serve this request/);
+  assert.equal(
+    (body as any).error.retryable,
+    true,
+    "a route that is merely out of usage will serve the request later"
+  );
+  assert.equal(
+    exhaustionHeaders({ summary, observed, requestId: "req-mixed" })[
+      "retry-after"
+    ],
+    "600"
+  );
+});

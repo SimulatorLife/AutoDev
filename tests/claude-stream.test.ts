@@ -42,18 +42,23 @@ process.stdout.write(JSON.stringify({
     const { runClaudeStream } =
       await import("../runtime/src/providers/claude.ts");
     const events = [];
-    for await (const event of runClaudeStream("prompt", "sonnet", "medium", {
-      cwd: temp,
-      env: {
-        ...process.env,
-        CLAUDE_STREAM_TEST_LINES: String(lineCount)
-      },
-      signal: new AbortController().signal,
-      waitingOnCodex: () => false,
-      systemPrompt: "",
-      turnId: null,
-      webSearch: false
-    })) {
+    for await (const event of runClaudeStream(
+      [{ type: "text", text: "prompt" }],
+      "sonnet",
+      "medium",
+      {
+        cwd: temp,
+        env: {
+          ...process.env,
+          CLAUDE_STREAM_TEST_LINES: String(lineCount)
+        },
+        signal: new AbortController().signal,
+        waitingOnCodex: () => false,
+        systemPrompt: "",
+        turnId: null,
+        webSearch: false
+      }
+    )) {
       events.push(event);
     }
 

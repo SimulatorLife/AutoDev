@@ -1848,6 +1848,56 @@ function cooldownWindow(entry: CooldownSummary, now: number): string {
   return `provider reports usage resets in ${resetIn} (${resetsAt}); retrying in ${retrySeconds}s`;
 }
 
+/**
+ * How one candidate ended, in the words the reader needs.
+ *
+ * A route that refused the request did not fail: it cannot serve *this*
+ * request, and saying it "did not complete the turn" sends the reader looking
+ * for an outage that is not there.
+ */
+function describeCandidate(
+  entry: CooldownSummary,
+  observedClass: string | undefined,
+  now: number
+): string {
+  if (observedClass === "unsupported_request")
+    return `${entry.provider}: cannot serve this request`;
+  if (entry.state === "available")
+    return `${entry.provider}: available but did not complete the turn`;
+  if (entry.state === "config")
+    return `${entry.provider}: ${entry.failureClass ?? "configuration error"} for ${entry.model ?? "its model"}${entry.detail ? ` (${entry.detail})` : ""}`;
+  if (entry.resetsAt)
+    return `${entry.provider}: ${entry.failureClass ?? entry.state}, ${cooldownWindow(entry, now)}`;
+  return `${entry.provider}: ${entry.failureClass ?? entry.state}, retry in ${Math.ceil(entry.retryAfterMs / 1000)}s`;
+}
+
+/**
+ * What the reader should do next, which follows from why the chain came up
+ * empty: a misconfigured route needs a correction, a route that refused needs
+ * a different one, and a route that is merely out of usage needs patience.
+ */
+function exhaustionGuidance({
+  everyCandidateMisconfigured,
+  noneCanServe,
+  outOfUsage,
+  reset,
+  retryAfterMs
+}: {
+  everyCandidateMisconfigured: boolean;
+  noneCanServe: boolean;
+  outOfUsage: boolean;
+  reset: { resetsAt: string | null } | null;
+  retryAfterMs: number;
+}): string {
+  if (everyCandidateMisconfigured)
+    return "Retrying will not help: correct the provider configuration, then start a new turn.";
+  if (noneCanServe)
+    return "Retrying will not help: every candidate refused this request. Serve it on a route that can carry its content, or start a new turn without it.";
+  if (outOfUsage)
+    return `Every provider is out of usage${reset ? ` until at least ${reset.resetsAt}` : ""}. Retrying will not help before then; start a new turn once the usage window has reset.`;
+  return `Retry after approximately ${Math.max(1, Math.ceil(retryAfterMs / 1000))}s.`;
+}
+
 export function exhaustionBody({
   subject,
   summary,
@@ -1877,46 +1927,48 @@ export function exhaustionBody({
   );
   const firstMisconfigured = summary.find((entry) => entry.state === "config");
   const everyCandidateMisconfigured = exhaustedByConfiguration(summary);
-  const outOfUsage = exhaustedByUsage(summary, observed ?? new Map());
+  const seen = observed ?? new Map();
+  const outOfUsage = exhaustedByUsage(summary, seen);
   const firstOutOfUsage = summary.find((entry) =>
-    isNonRetryableClass(
-      (observed ?? new Map()).get(entry.provider) ?? entry.failureClass
-    )
+    isNonRetryableClass(seen.get(entry.provider) ?? entry.failureClass)
   );
+  const noneCanServe = noCandidateCanServe(summary, seen);
   const reset = soonestReset(summary);
-  const described = summary.map((entry) => {
-    if (entry.state === "available")
-      return `${entry.provider}: available but did not complete the turn`;
-    if (entry.state === "config")
-      return `${entry.provider}: ${entry.failureClass ?? "configuration error"} for ${entry.model ?? "its model"}${entry.detail ? ` (${entry.detail})` : ""}`;
-    if (entry.resetsAt)
-      return `${entry.provider}: ${entry.failureClass ?? entry.state}, ${cooldownWindow(entry, now)}`;
-    return `${entry.provider}: ${entry.failureClass ?? entry.state}, retry in ${Math.ceil(entry.retryAfterMs / 1000)}s`;
-  });
+  const described = summary.map((entry) =>
+    describeCandidate(entry, seen.get(entry.provider), now)
+  );
   const action = everyCandidateMisconfigured
     ? "fix_configuration"
-    : outOfUsage
+    : noneCanServe
       ? "summarize_and_yield"
-      : "retry_after";
-  const guidance = everyCandidateMisconfigured
-    ? "Retrying will not help: correct the provider configuration, then start a new turn."
-    : outOfUsage
-      ? `Every provider is out of usage${reset ? ` until at least ${reset.resetsAt}` : ""}. Retrying will not help before then; start a new turn once the usage window has reset.`
-      : `Retry after approximately ${Math.max(1, Math.ceil(retryAfterMs / 1000))}s.`;
+      : outOfUsage
+        ? "summarize_and_yield"
+        : "retry_after";
+  const guidance = exhaustionGuidance({
+    everyCandidateMisconfigured,
+    noneCanServe,
+    outOfUsage,
+    reset,
+    retryAfterMs
+  });
   const reason = deadlineReached
     ? `No available provider completed ${subject} within the ${Math.ceil(CHAIN_SELECTION_DEADLINE_MS / 1000)}s provider-selection budget.`
-    : `No available provider completed ${subject}.`;
+    : noneCanServe
+      ? `No candidate can serve ${subject}.`
+      : `No available provider completed ${subject}.`;
   return errorBody(
     `${reason} ${described.join("; ")}. ${guidance}`,
     "router_provider_exhausted",
     {
       code: "router_provider_exhausted",
-      retryable: !outOfUsage,
+      retryable: !outOfUsage && !noneCanServe,
       failureClass: everyCandidateMisconfigured
         ? (firstMisconfigured?.failureClass ?? "invalid_model")
-        : outOfUsage
-          ? (firstOutOfUsage?.failureClass ?? "quota_exhausted")
-          : "unavailable",
+        : noneCanServe
+          ? "unsupported_request"
+          : outOfUsage
+            ? (firstOutOfUsage?.failureClass ?? "quota_exhausted")
+            : "unavailable",
       model,
       requestId,
       details: {
@@ -1990,6 +2042,31 @@ function exhaustedByUsage(
   });
 }
 
+/**
+ * No candidate can serve this request, so no retry can serve it either.
+ *
+ * A route that refuses a request does not fail: it cannot serve *this*
+ * request, because the request carries something the route cannot carry. The
+ * same request will be refused the same way next time, so a retry buys
+ * nothing -- unless some other candidate is merely cooling down, because a
+ * cooldown lapses and the route may serve the request then.
+ *
+ * The class is the one this request saw, not the one sitting in the cooldown
+ * entry: a route that refused is healthy, and a later request without the
+ * content must still reach it.
+ */
+function noCandidateCanServe(
+  summary: CooldownSummary[],
+  observed: ReadonlyMap<string, string> = new Map()
+): boolean {
+  if (summary.length === 0) return false;
+  return summary.every((entry) => {
+    if (observed.get(entry.provider) === "unsupported_request") return true;
+    if (entry.state === "disabled" || entry.state === "config") return true;
+    return false;
+  });
+}
+
 export function exhaustionHeaders({
   summary,
   observed,
@@ -2013,7 +2090,10 @@ export function exhaustionHeaders({
   // do would serve the request, sending one tells the client to wait out a
   // window it cannot hurry -- and a client that honours it holds the turn open
   // for exactly that long, with nothing to show for it.
-  if (!exhaustedByUsage(summary, observed))
+  if (
+    !exhaustedByUsage(summary, observed) &&
+    !noCandidateCanServe(summary, observed)
+  )
     headers["retry-after"] = String(
       Math.max(1, Math.ceil(retryAfterMs / 1000))
     );
@@ -3393,11 +3473,14 @@ function finalizeFallbackFailure(
   // whose every candidate is out of usage is not fixable by trying again, so it
   // is answered with a status that ends the caller's turn and says when the
   // usage window resets. A 5xx here would leave the client waiting out a
-  // `retry-after` measured in hours, with nothing happening in between.
+  // `retry-after` measured in hours, with nothing happening in between. The
+  // same holds for a request every candidate refused: the same request will
+  // be refused again.
   const observed = failures.observed;
+  const noneCanServe = noCandidateCanServe(summary, observed);
   sendJson(
     response,
-    exhaustedByUsage(summary, observed) ? 400 : 503,
+    exhaustedByUsage(summary, observed) || noneCanServe ? 400 : 503,
     exhaustionBody({
       subject: ctx.subject,
       summary,
@@ -3677,7 +3760,19 @@ function handleCandidateUpstreamFailure(
   const failureClass =
     result.limit?.limitClass ??
     classifyProviderFailure(result.status ?? 500, result.body);
-  failures.record(route.provider, `HTTP ${result.status}`, failureClass);
+  // A refusal carries the reason it cannot serve the request. "HTTP 400" on
+  // its own reads like an outage, and sends the reader looking for one.
+  const refusal =
+    failureClass === "unsupported_request"
+      ? providerErrorDetail(result.body ?? "")
+      : null;
+  failures.record(
+    route.provider,
+    refusal
+      ? `cannot serve this request (${refusal})`
+      : `HTTP ${result.status}`,
+    failureClass
+  );
   recordRouterEvent({
     phase: "result",
     requestId: ctx.requestId,

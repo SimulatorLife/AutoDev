@@ -420,7 +420,7 @@ test("every provider bridge picks its instructions from the shared role prompts"
   // Claude takes its role policy from Codex's developer instructions, like a
   // Codex-native model; a second composed copy would compete with them.
   assert.doesNotMatch(claude, /composeProviderPrompt/);
-  assert.match(claude, /renderCodexTranscript\(payload\.input/);
+  assert.match(claude, /renderCodexContentBlocks\(payload\.input/);
 });
 
 test("the Claude bridge replaces the CLI's own system prompt instead of appending to it", () => {

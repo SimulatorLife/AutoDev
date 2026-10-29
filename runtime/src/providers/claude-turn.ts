@@ -23,9 +23,11 @@ import {
   type ProviderLimit,
   truncationNotice
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
+import { requestImages } from "@simulatorlife/autodev-runtime/shared/request-content";
 import type { AwaitedToolResults } from "@simulatorlife/autodev-runtime/shared/responses-continuation";
 
 import {
+  claudeMcpImageContent,
   codexOutputFailed,
   type CodexTool,
   codexToolCallEvents,
@@ -564,10 +566,22 @@ export class ClaudeTurn {
     // instead of being lost to a CLI that only ever sees tool output.
     const last = results.at(-1)?.[1];
     if (last && awaited.messages.length > 0) {
-      (last.content as JsonRecord[]).push({
+      const content = last.content as JsonRecord[];
+      content.push({
         type: "text",
         text: `Codex added to the conversation while this ran:\n\n${renderCodexTranscript(awaited.messages)}`
       });
+      // An image the user attached while the call ran is delivered as an
+      // image: the tool result is the channel the CLI renders a picture on,
+      // and a word standing in for one is not the picture.
+      for (const image of requestImages(awaited.messages)) {
+        content.push(
+          claudeMcpImageContent(image) ?? {
+            type: "text",
+            text: "An image added to the conversation could not be delivered: the request carries a reference to it and none of its bytes."
+          }
+        );
+      }
     }
     for (const [call, result] of results) call.resolve(result);
     // Codex moved on without answering these: the model must not wait on them.

@@ -131,6 +131,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/shared/execution-contract.ts",
   "runtime/src/shared/provider-http.ts",
   "runtime/src/shared/provider-limits.ts",
+  "runtime/src/shared/request-content.ts",
   "runtime/src/shared/resolve-workspace.ts",
   "runtime/src/shared/responses-continuation.ts",
   "runtime/src/shared/responses-item-ids.ts",

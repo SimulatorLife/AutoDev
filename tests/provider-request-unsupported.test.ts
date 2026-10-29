@@ -5,9 +5,12 @@ import { classifyProviderFailure } from "@simulatorlife/autodev-runtime/router/e
 import { decideCandidateFailure } from "@simulatorlife/autodev-runtime/router/proxy";
 import {
   PROVIDER_REQUEST_UNSUPPORTED_TYPE,
-  providerRequestUnsupported,
-  requestCarriesImageContent
+  providerRequestUnsupported
 } from "@simulatorlife/autodev-runtime/shared/provider-http";
+import {
+  requestCarriesImageContent,
+  requestImages
+} from "@simulatorlife/autodev-runtime/shared/request-content";
 
 const REFUSAL_BODY = JSON.stringify({
   error: {
@@ -50,6 +53,39 @@ test("a request that carries a frame is recognised as one a bridge cannot serve"
     false,
     "a prompt that is not a conversation carries no frame"
   );
+});
+
+test("the request's image is read as bytes a bridge can hand to its model", () => {
+  const images = requestImages([
+    {
+      type: "message",
+      role: "user",
+      content: [
+        {
+          type: "input_image",
+          image_url: "data:image/png;base64,iVBORw0KGgo="
+        }
+      ]
+    }
+  ]);
+  assert.deepEqual(images, [
+    { kind: "bytes", mediaType: "image/png", data: "iVBORw0KGgo=" }
+  ]);
+});
+
+test("an image the request only names is reported as a reference, not as bytes", () => {
+  const images = requestImages([
+    {
+      type: "message",
+      role: "user",
+      content: [
+        { type: "input_image", image_url: "https://example.test/frame.png" }
+      ]
+    }
+  ]);
+  assert.deepEqual(images, [
+    { kind: "reference", url: "https://example.test/frame.png" }
+  ]);
 });
 
 test("a tool output that carries an image does not make the turn unservable", () => {
