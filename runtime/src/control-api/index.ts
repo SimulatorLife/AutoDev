@@ -114,7 +114,6 @@ import {
   RULE_SYNC_COMMAND_HISTORY_PAGE_SIZE,
   RuleSyncCommandConflictError,
   type RuleSyncCommandHistoryPage,
-  RuleSyncCommandHistoryUnavailableError,
   RuleSyncCommandValidationError,
   RuleSyncHooksConflictError,
   RuleSyncHooksValidationError,
@@ -4590,16 +4589,23 @@ function promptVersionView(
     name,
     versionHash
   );
-  if (!version) return { status: "unknown" };
+  if (version.status === "unreadable") {
+    return {
+      status: "unreadable",
+      code: "autodev_control_api_prompt_version_source_not_read",
+      message: version.reason
+    };
+  }
+  if (version.status === "not-found") return { status: "unknown" };
   return {
     status: "found",
     detail: {
       schema: "autodev-control-prompt-version-v1",
-      name: version.name,
-      versionHash: version.versionHash,
-      updatedAt: version.updatedAt,
-      content: version.content,
-      diff: version.diff
+      name: version.version.name,
+      versionHash: version.version.versionHash,
+      updatedAt: version.version.updatedAt,
+      content: version.version.content,
+      diff: version.version.diff
     } satisfies ControlApiPromptVersionResponse
   };
 }
@@ -6767,35 +6773,16 @@ function promptVersionsRoute(
             options.repositoryRoot ?? DEFAULT_REPO_ROOT
           )
   };
-  try {
-    return readOnlyDetailRoute(
-      request,
-      response,
-      actor,
-      method,
-      pathname,
-      name,
-      route
-    );
-  } catch (error) {
-    if (!(error instanceof RuleSyncCommandHistoryUnavailableError)) throw error;
-    auditRejectedRequest(
-      request,
-      method,
-      pathname,
-      "prompt_history_unavailable",
-      actor
-    );
-    sendControlError(
-      response,
-      503,
-      "autodev_control_api_prompt_history_unavailable",
-      "Committed prompt history is unavailable for this source."
-    );
-    return true;
-  }
+  return readOnlyDetailRoute(
+    request,
+    response,
+    actor,
+    method,
+    pathname,
+    name,
+    route
+  );
 }
-
 /**
  * `PATCH /control/skills/:name` — assign a skill to exactly the roles named.
  *
@@ -7075,6 +7062,31 @@ async function patchSkillRoles(
   ).loadSkills();
   const skill = catalog.skills.find((entry) => entry.name === name);
   if (!skill) {
+    // A catalogue that was read and found broken does not name this skill,
+    // and that is not the same as the catalogue naming it absent: a 404 would
+    // say the skill does not exist when nobody could read the file that would
+    // have said whether it does. An absent catalogue holds no skill, so the
+    // skill is genuinely not there.
+    if (catalog.valid === false) {
+      auditMutation({
+        actor: actor.actor,
+        actorVerified: true,
+        role: actor.role,
+        action: "assign_skill_roles",
+        resource,
+        outcome: "error",
+        changes: null,
+        reason: "skill_catalogue_invalid"
+      });
+      sendControlError(
+        response,
+        503,
+        "autodev_control_skill_catalogue_invalid",
+        catalog.issues[0]?.message ??
+          "The RuleSync skill catalog is invalid, so no skill could be assigned."
+      );
+      return;
+    }
     auditMutation({
       actor: actor.actor,
       actorVerified: true,
@@ -7089,9 +7101,7 @@ async function patchSkillRoles(
       response,
       404,
       "autodev_control_skill_not_found",
-      catalog.valid === true
-        ? `No RuleSync skill named "${name}" exists.`
-        : "The RuleSync skill catalog is invalid, so no skill could be assigned."
+      `No RuleSync skill named "${name}" exists.`
     );
     return;
   }
@@ -7653,15 +7663,28 @@ async function skillRolesRoute(
   ).loadSkills();
   const skill = catalog.skills.find((entry) => entry.name === name);
   // A request for a skill that is not there is a wrong answer, not an empty
-  // one: the caller would render a panel for a skill that does not exist.
+  // one: the caller would render a panel for a skill that does not exist. A
+  // catalogue that was read and found broken is a different claim, and it
+  // answers 503 with the catalogue's own reason: a 404 would say the skill
+  // does not exist when nobody could read the file that would have said
+  // whether it does. An absent catalogue holds no skill, so the skill is
+  // genuinely not there.
   if (!skill) {
+    if (catalog.valid === false) {
+      sendControlError(
+        response,
+        503,
+        "autodev_control_skill_catalogue_invalid",
+        catalog.issues[0]?.message ??
+          "The RuleSync skill catalog is invalid, so no skill could be read."
+      );
+      return true;
+    }
     sendControlError(
       response,
       404,
       "autodev_control_skill_not_found",
-      catalog.valid === true
-        ? `No RuleSync skill named "${name}" exists.`
-        : "The RuleSync skill catalog is invalid, so no skill could be read."
+      `No RuleSync skill named "${name}" exists.`
     );
     return true;
   }

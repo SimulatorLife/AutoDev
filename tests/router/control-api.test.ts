@@ -2255,6 +2255,72 @@ test("a prompt that is not there is still an unknown prompt", async () => {
   }
 });
 
+test("a prompt version whose catalogue could not be read is not an unknown version", async () => {
+  const saved = saveEnv();
+  const repositoryRoot = mkdtempSync(join(tmpdir(), "autodev-prompt-version-"));
+  try {
+    configure();
+    // A command file that is there and cannot be parsed. The catalogue that
+    // names the commands is broken, so nobody can say whether this command has
+    // a committed version at all -- which is not the same as the version not
+    // existing.
+    const commandsDir = join(repositoryRoot, ".rulesync", "commands");
+    mkdirSync(commandsDir, { recursive: true });
+    writeFileSync(join(commandsDir, "audit.md"), "No command frontmatter.");
+    const version = await call(
+      "GET",
+      `${CONTROL_API_PATHS.prompts}/audit/versions/${"a".repeat(40)}`,
+      { actor: "viewer-a" },
+      { repositoryRoot }
+    );
+    assert.equal(version.response.statusCode, 503);
+    assert.equal(
+      version.body.error.code,
+      "autodev_control_api_prompt_version_source_not_read"
+    );
+    // The reason names the catalogue's own fault, so the operator repairs the
+    // file instead of hunting for a revision that was never committed.
+    assert.match(
+      version.body.error.message,
+      /must have valid YAML frontmatter/u
+    );
+  } finally {
+    restoreEnv(saved);
+    rmSync(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("a skill whose catalogue could not be read is not an unknown skill", async () => {
+  const saved = saveEnv();
+  const repositoryRoot = mkdtempSync(
+    join(tmpdir(), "autodev-skill-catalogue-")
+  );
+  try {
+    configure();
+    // A skill whose SKILL.md cannot be parsed. The catalogue is invalid, and
+    // the route used to answer 404 with a message that said the catalogue was
+    // invalid -- a status that contradicted its own message.
+    const skillsDir = join(repositoryRoot, ".rulesync", "skills", "audit");
+    mkdirSync(skillsDir, { recursive: true });
+    writeFileSync(join(skillsDir, "SKILL.md"), "No skill frontmatter.");
+    const skill = await call(
+      "GET",
+      `${CONTROL_API_PATHS.skills}/audit`,
+      { actor: "viewer-a" },
+      { repositoryRoot }
+    );
+    assert.equal(skill.response.statusCode, 503);
+    assert.equal(
+      skill.body.error.code,
+      "autodev_control_skill_catalogue_invalid"
+    );
+    assert.match(skill.body.error.message, /audit/u);
+  } finally {
+    restoreEnv(saved);
+    rmSync(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
 test("an agent detail whose contract was not read is not an unknown role", async () => {
   const saved = saveEnv();
   const priorContract = getDefaultExecutionContract();

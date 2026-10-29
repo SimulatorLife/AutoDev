@@ -26,7 +26,6 @@ import {
   parseRuleSyncCommand,
   readPermissionPolicyFile,
   RuleSyncCommandConflictError,
-  RuleSyncCommandHistoryUnavailableError,
   RuleSyncCommandValidationError,
   RuleSyncHooksConflictError,
   RuleSyncHooksValidationError,
@@ -148,11 +147,24 @@ test("RuleSyncRepository reads bounded Git command history and compares it with 
     const previous = history.versions[1];
     assert.ok(previous);
     const version = repo.loadCommandVersion("audit", previous.versionHash);
-    assert.ok(version);
-    assert.equal(version.content, first);
-    assert.match(version.diff, /-Review the source\./u);
-    assert.match(version.diff, /\+Review the current canonical source\./u);
-    assert.equal(repo.loadCommandVersion("audit", "0".repeat(40)), null);
+    assert.equal(version.status, "found");
+    assert.equal(
+      version.status === "found" ? version.version.content : "",
+      first
+    );
+    assert.match(
+      version.status === "found" ? version.version.diff : "",
+      /-Review the source\./u
+    );
+    assert.match(
+      version.status === "found" ? version.version.diff : "",
+      /\+Review the current canonical source\./u
+    );
+    // A revision nobody committed is an unknown version, not an unreadable
+    // source: the repository answered, and its answer was "no such commit".
+    assert.deepEqual(repo.loadCommandVersion("audit", "0".repeat(40)), {
+      status: "not-found"
+    });
     assert.equal(repo.loadCommandHistory("../audit"), null);
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
@@ -261,9 +273,15 @@ test("RuleSyncRepository pages a command's committed history and opens a revisio
     const oldest = revisions[0];
     assert.ok(oldest);
     const version = repo.loadCommandVersion("audit", oldest);
-    assert.ok(version);
-    assert.equal(version.versionHash, oldest);
-    assert.match(version.content, /Revision 0\./u);
+    assert.equal(version.status, "found");
+    assert.equal(
+      version.status === "found" ? version.version.versionHash : "",
+      oldest
+    );
+    assert.match(
+      version.status === "found" ? version.version.content : "",
+      /Revision 0\./u
+    );
 
     // A page that is not a window onto the history is refused rather than
     // clamped: a clamped page would answer a different question.
@@ -319,7 +337,12 @@ test("RuleSyncRepository does not offer a commit that never changed the command 
     ).trim();
 
     const repo = new RuleSyncRepository(repositoryRoot);
-    assert.equal(repo.loadCommandVersion("audit", unrelated), null);
+    // A commit that never touched the command is not a version of it. The
+    // repository answered, so this is an unknown version and not an unreadable
+    // source.
+    assert.deepEqual(repo.loadCommandVersion("audit", unrelated), {
+      status: "not-found"
+    });
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
   }
@@ -342,9 +365,14 @@ test("RuleSyncRepository distinguishes unavailable Git history from an empty com
       versions: [],
       hasMore: false
     });
-    assert.throws(
-      () => repo.loadCommandVersion("audit", "a".repeat(40)),
-      RuleSyncCommandHistoryUnavailableError
+    // The command is there and the repository is not a Git work tree, so the
+    // committed version cannot be read. That is not the same as the revision
+    // not existing: the read could not be made.
+    const unreadable = repo.loadCommandVersion("audit", "a".repeat(40));
+    assert.equal(unreadable.status, "unreadable");
+    assert.match(
+      unreadable.status === "unreadable" ? unreadable.reason : "",
+      /Git work tree/u
     );
     git(repositoryRoot, ["init", "-q"]);
     assert.deepEqual(repo.loadCommandHistory("audit"), {

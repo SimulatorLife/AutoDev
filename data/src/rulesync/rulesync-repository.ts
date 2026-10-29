@@ -375,6 +375,30 @@ export type RuleSyncCommandRead =
       readonly reason: string;
     };
 
+/**
+ * The outcome of reading one committed revision of a command.
+ *
+ * The three outcomes are the point, for the same reason the command read has
+ * them: a revision nobody committed, a revision that is not a version of this
+ * command, and a source that could not be read are three different answers,
+ * and a caller that collapses the last two tells an operator their revision
+ * does not exist when the truth is that nobody could read the catalogue that
+ * names the command.
+ */
+export type RuleSyncCommandVersionRead =
+  | {
+      readonly status: "found";
+      readonly version: RuleSyncCommandVersion;
+    }
+  | {
+      readonly status: "not-found";
+    }
+  | {
+      readonly status: "unreadable";
+      /** Why the revision could not be read, in the operator's terms. */
+      readonly reason: string;
+    };
+
 export interface RuleSyncCommandVersionReference {
   readonly versionHash: string;
   readonly updatedAt: string;
@@ -520,13 +544,6 @@ function commandHistoryFallback(
   return workingTreeAnswers
     ? { status: "available", versions: [], hasMore: false }
     : UNAVAILABLE_COMMAND_HISTORY;
-}
-
-export class RuleSyncCommandHistoryUnavailableError extends Error {
-  constructor(message = "Canonical command history is unavailable.") {
-    super(message);
-    this.name = "RuleSyncCommandHistoryUnavailableError";
-  }
 }
 
 export class RuleSyncCommandConflictError extends Error {
@@ -2024,34 +2041,29 @@ export class RuleSyncRepository {
       return fallback;
     }
 
-    try {
-      const entries = output
-        .split(COMMAND_HISTORY_LINE_SPLIT_PATTERN)
-        .filter(Boolean)
-        .map((entry) => {
-          const [versionHash, updatedAt] = entry.split("\0");
-          if (
-            !versionHash ||
-            !GIT_REVISION_PATTERN.test(versionHash) ||
-            !updatedAt ||
-            !Number.isFinite(Date.parse(updatedAt))
-          ) {
-            throw new RuleSyncCommandHistoryUnavailableError(
-              "Git returned malformed command history metadata."
-            );
-          }
-          return { versionHash, updatedAt };
-        });
-      const result: RuleSyncCommandHistory = {
-        status: "available",
-        versions: entries.slice(0, page.limit),
-        hasMore: entries.length > page.limit
-      };
-      COMMAND_HISTORY_CACHE.set(cacheKey, { timestamp: now, history: result });
-      return result;
-    } catch {
-      return UNAVAILABLE_COMMAND_HISTORY;
+    const entries: { versionHash: string; updatedAt: string }[] = [];
+    for (const entry of output.split(COMMAND_HISTORY_LINE_SPLIT_PATTERN)) {
+      if (!entry) continue;
+      const [versionHash, updatedAt] = entry.split("\0");
+      if (
+        !versionHash ||
+        !GIT_REVISION_PATTERN.test(versionHash) ||
+        !updatedAt ||
+        !Number.isFinite(Date.parse(updatedAt))
+      ) {
+        // Git answered with something that is not a revision and a date, so
+        // the page of history it claims to have is not a page of history.
+        return UNAVAILABLE_COMMAND_HISTORY;
+      }
+      entries.push({ versionHash, updatedAt });
     }
+    const result: RuleSyncCommandHistory = {
+      status: "available",
+      versions: entries.slice(0, page.limit),
+      hasMore: entries.length > page.limit
+    };
+    COMMAND_HISTORY_CACHE.set(cacheKey, { timestamp: now, history: result });
+    return result;
   }
 
   /**
@@ -2068,37 +2080,56 @@ export class RuleSyncRepository {
   loadCommandVersion(
     name: string,
     versionHash: string
-  ): RuleSyncCommandVersion | null {
+  ): RuleSyncCommandVersionRead {
     if (
       !COMMAND_NAME_PATTERN.test(name) ||
       !GIT_REVISION_PATTERN.test(versionHash)
     ) {
-      return null;
+      return { status: "not-found" };
     }
     const state = this.loadCommands();
+    // A catalogue that was read and found broken does not name this command,
+    // and that is not the same as the catalogue naming it absent: nobody can
+    // say whether this command has a committed version at all.
+    if (state.valid === false) {
+      return {
+        status: "unreadable",
+        reason:
+          state.issues[0]?.message ??
+          "The canonical commands catalogue is invalid, so the committed version could not be read."
+      };
+    }
     const command =
       state.valid === true
         ? state.commands.find((item) => item.name === name)
         : undefined;
-    if (!command) return null;
+    if (!command) return { status: "not-found" };
 
     let repositoryRoot: string;
     try {
       repositoryRoot = realpathSync(this.repositoryRoot);
     } catch {
-      throw new RuleSyncCommandHistoryUnavailableError();
+      return {
+        status: "unreadable",
+        reason:
+          "The repository root could not be resolved, so the committed version could not be read."
+      };
     }
     const git = gitRunner(repositoryRoot);
 
     if (tryGit(git, ["rev-parse", "--is-inside-work-tree"], 1024) !== "true") {
-      throw new RuleSyncCommandHistoryUnavailableError();
+      return {
+        status: "unreadable",
+        reason:
+          "The repository is not a Git work tree, so the committed version could not be read."
+      };
     }
     // A revision nobody committed is an unknown version, not an unavailable
     // history: the repository answered, and its answer was "no such commit".
     if (
       tryGit(git, ["cat-file", "-e", `${versionHash}^{commit}`], 1024) === null
     ) {
-      return null;
+      return { status: "not-found" };
     }
     const changedPaths = tryGit(
       git,
@@ -2115,11 +2146,14 @@ export class RuleSyncRepository {
       8192
     );
     if (changedPaths === null) {
-      throw new RuleSyncCommandHistoryUnavailableError(
-        "The selected command version could not be read."
-      );
+      return {
+        status: "unreadable",
+        reason: "The selected command version could not be read."
+      };
     }
-    if (!changedPaths.split("\n").includes(command.path)) return null;
+    if (!changedPaths.split("\n").includes(command.path)) {
+      return { status: "not-found" };
+    }
 
     const updatedAt = tryGit(
       git,
@@ -2127,14 +2161,16 @@ export class RuleSyncRepository {
       1024
     );
     if (updatedAt === null) {
-      throw new RuleSyncCommandHistoryUnavailableError(
-        "The selected command version could not be read."
-      );
+      return {
+        status: "unreadable",
+        reason: "The selected command version could not be read."
+      };
     }
     if (!Number.isFinite(Date.parse(updatedAt))) {
-      throw new RuleSyncCommandHistoryUnavailableError(
-        "Git returned malformed command version metadata."
-      );
+      return {
+        status: "unreadable",
+        reason: "Git returned malformed command version metadata."
+      };
     }
 
     try {
@@ -2157,16 +2193,21 @@ export class RuleSyncRepository {
         COMMAND_DIFF_MAX_BYTES
       );
       return {
-        name,
-        versionHash,
-        updatedAt,
-        content,
-        diff
+        status: "found",
+        version: {
+          name,
+          versionHash,
+          updatedAt,
+          content,
+          diff
+        }
       };
     } catch {
-      throw new RuleSyncCommandHistoryUnavailableError(
-        "The selected command version or its bounded diff could not be read."
-      );
+      return {
+        status: "unreadable",
+        reason:
+          "The selected command version or its bounded diff could not be read."
+      };
     }
   }
 
