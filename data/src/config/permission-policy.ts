@@ -364,10 +364,15 @@ export function readPermissionPolicyFile(file: string): PermissionPolicyRead {
  * A role whose declaration names a mode this product does not support is
  * reported as unknown rather than as the nearest supported one: a role that
  * cannot be sandboxed the way it asks is not a role whose sandbox is known.
+ *
+ * The fallback is the policy's mode, and it is null when the policy was not
+ * observed. A role that declares no mode under a policy that could not be read
+ * has no observed sandbox: the nearest mode the product knows is not a mode
+ * any source stated.
  */
 export function readRoleSandboxModes(
   rolesDirectory: string,
-  fallback: SandboxMode
+  fallback: SandboxMode | null
 ): Readonly<Record<string, SandboxMode | null>> {
   const modes: Record<string, SandboxMode | null> = {};
   let entries: string[];
@@ -394,7 +399,7 @@ export function readRoleSandboxModes(
  */
 export function roleSandboxMode(
   roleFile: string,
-  fallback: SandboxMode
+  fallback: SandboxMode | null
 ): SandboxMode | null {
   let content: string;
   try {

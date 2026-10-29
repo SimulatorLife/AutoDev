@@ -4062,7 +4062,12 @@ function permissionsView(
   const state = permissionPolicyState(repositoryRoot, codexHome);
   const roleSandboxes = readRoleSandboxModes(
     repository.agentRolesPath(),
-    state.policy?.sandboxMode ?? "workspace-write"
+    // A role that declares no sandbox inherits the policy's. When the policy
+    // could not be read there is no mode to inherit, and the role's sandbox
+    // is not observed -- it is not the product's nearest mode. This used to
+    // fall back to `workspace-write`, which named a role as sandboxed on the
+    // strength of a policy nobody read.
+    state.policy?.sandboxMode ?? null
   );
   // Typed as the contract's own entry rather than `Record<string, unknown>`:
   // the anonymous shape above *is* the published one, and writing it out here is

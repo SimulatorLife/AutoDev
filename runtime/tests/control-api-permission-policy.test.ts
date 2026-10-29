@@ -49,6 +49,15 @@ const READ_ONLY_ROLE_SOURCE = `name = "explorer"
 sandbox_mode = "read-only"
 `;
 
+/**
+ * A role that declares no sandbox of its own.
+ *
+ * It is silent about its mode, so the policy is the answer -- which makes it
+ * the role that says whether the policy was read.
+ */
+const SILENT_ROLE_SOURCE = `name = "worker"
+`;
+
 interface Fixture {
   readonly repositoryRoot: string;
   readonly policyPath: string;
@@ -69,6 +78,11 @@ function fixture(): Fixture {
   writeFileSync(
     path.join(repositoryRoot, "agents", "roles", "explorer.toml"),
     READ_ONLY_ROLE_SOURCE,
+    "utf8"
+  );
+  writeFileSync(
+    path.join(repositoryRoot, "agents", "roles", "worker.toml"),
+    SILENT_ROLE_SOURCE,
     "utf8"
   );
   return { repositoryRoot, policyPath };
@@ -187,6 +201,9 @@ test("a role's sandbox is the one its own declaration states", async () => {
   // unsandboxed role was published as a sandboxed one.
   assert.equal(rolePermissions?.orchestrator?.sandboxMode, "unrestricted");
   assert.equal(rolePermissions?.explorer?.sandboxMode, "read-only");
+  // A role that declares no sandbox inherits the policy's: its configuration
+  // is layered over the portable source. This is the mode the policy states.
+  assert.equal(rolePermissions?.worker?.sandboxMode, "workspace-write");
 });
 
 test("a policy that cannot be read is reported as not observed, not as defaults", async () => {
@@ -197,6 +214,17 @@ test("a policy that cannot be read is reported as not observed, not as defaults"
   assert.equal(result.body?.policyStatus, "invalid");
   assert.equal(result.body?.policy, null);
   assert.equal(typeof result.body?.policyReason, "string");
+
+  const rolePermissions = result.body?.rolePermissions as
+    Record<string, { readonly sandboxMode: string | null }> | undefined;
+  // A role that declares no sandbox inherits the policy's, and the policy
+  // could not be read: there is no mode to inherit, so the role's sandbox is
+  // not observed. It used to be published as `workspace-write`, which named a
+  // role as sandboxed on the strength of a policy nobody read.
+  assert.equal(rolePermissions?.worker?.sandboxMode, null);
+  // A role that declares its own mode is still known: the policy is only the
+  // answer for a role that is silent.
+  assert.equal(rolePermissions?.orchestrator?.sandboxMode, "unrestricted");
 });
 
 test("a policy write changes the canonical source and answers with the new revision", async () => {

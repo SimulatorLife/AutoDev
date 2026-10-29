@@ -147,6 +147,28 @@ test("a role that declares a sandbox the product does not support is unknown", a
   assert.equal(modes.odd, null);
 });
 
+test("a role that declares no sandbox under an unreadable policy has no observed sandbox", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "autodev-role-sandbox-"));
+  await writeFile(
+    path.join(directory, "default.toml"),
+    'name = "default"\n',
+    "utf8"
+  );
+  await writeFile(
+    path.join(directory, "explorer.toml"),
+    'name = "explorer"\nsandbox_mode = "read-only"\n',
+    "utf8"
+  );
+  // The policy could not be read, so there is no mode for a role that declares
+  // none to inherit. The nearest mode the product knows is not a mode any
+  // source stated, so the role's sandbox is not observed.
+  const modes = readRoleSandboxModes(directory, null);
+  assert.equal(modes.default, null);
+  // A role that declares its own mode is still known: the policy is only the
+  // answer for a role that is silent.
+  assert.equal(modes.explorer, "read-only");
+});
+
 test("a write changes the key it was asked to change and nothing else", async () => {
   const { file } = await policyFixture();
   const before = await readFile(file, "utf8");
