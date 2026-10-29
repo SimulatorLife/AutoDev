@@ -20,9 +20,23 @@ import {
   reportMemoryInjectionUse,
   transitionMemoryRecord
 } from "../../../src/lib/server/control-api.ts";
+import {
+  isSameOriginMutation,
+  isUrlEncodedFormRequest,
+  readStrictUrlEncodedFormBody
+} from "../../../src/lib/server/form-mutation.ts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+/**
+ * How large a form body this route will read.
+ *
+ * The promotion carries the record's own content into a skill, so the bound
+ * is the one the route that writes a skill body uses rather than the smaller
+ * one a toggle needs.
+ */
+const MAX_FORM_BODY_BYTES = 160_000;
 
 interface MemoryActionPayload {
   readonly action: string;
@@ -194,6 +208,29 @@ function redirectTo(location: string): NextResponse {
 }
 
 /**
+ * The refusal a write from another origin gets.
+ *
+ * A form submission is a browser navigation, so the answer is a redirect back
+ * into Memory carrying the shared could-not-be-confirmed notice: the operator
+ * is told the change did not happen instead of being handed a bare status
+ * page outside the Console shell. A caller that asked for a body gets a
+ * status and a body.
+ *
+ * The refusal names nothing about the request beyond its origin. It says the
+ * request was refused, and it does not become a channel for echoing what
+ * another site sent.
+ */
+function refuseCrossOrigin(request: NextRequest): NextResponse {
+  if (isUrlEncodedFormRequest(request)) {
+    return redirectTo(withControlFailure("/memory"));
+  }
+  return NextResponse.json(
+    { error: "Cross-origin request refused" },
+    { status: 403 }
+  );
+}
+
+/**
  * The query a redirect back to Memory needs to re-select what was acted on.
  *
  * A purge acts on an experience and the experiences tab reads its selection from
@@ -281,47 +318,48 @@ function memoryReturnQuery(
 async function parsePayload(
   request: NextRequest
 ): Promise<MemoryActionPayload | null> {
-  const contentType = request.headers.get("content-type") ?? "";
-  const isForm =
-    contentType.includes("application/x-www-form-urlencoded") ||
-    contentType.includes("multipart/form-data");
-
-  if (isForm) {
-    const formData = await request.formData();
+  if (isUrlEncodedFormRequest(request)) {
+    // The bounded parser, not `request.formData()`: this route holds the
+    // service credential and writes to the Runtime's memory, so the body it
+    // reads is bounded the way every other write route's body is.
+    const form = await readStrictUrlEncodedFormBody(
+      request,
+      MAX_FORM_BODY_BYTES
+    );
+    if (form === null) return null;
     return {
-      action: String(formData.get("action") ?? "").trim(),
-      recordId: String(formData.get("recordId") ?? "").trim(),
-      experienceId: String(formData.get("experienceId") ?? "").trim(),
+      action: String(form.get("action") ?? "").trim(),
+      recordId: String(form.get("recordId") ?? "").trim(),
+      experienceId: String(form.get("experienceId") ?? "").trim(),
       workspaceId:
-        String(formData.get("workspaceId") ?? "").trim() ||
-        "SimulatorLife/AutoDev",
-      reason: String(formData.get("reason") ?? "").trim(),
-      claim: String(formData.get("claim") ?? "").trim(),
-      priorId: String(formData.get("priorId") ?? "").trim(),
-      skillName: String(formData.get("skillName") ?? "").trim(),
-      promotedContent: String(formData.get("promotedContent") ?? "").trim(),
-      correlationToken: String(formData.get("correlationToken") ?? "").trim(),
-      outcomeKind: String(formData.get("outcomeKind") ?? "").trim(),
-      reportKind: String(formData.get("reportKind") ?? "").trim(),
-      useKind: String(formData.get("useKind") ?? "").trim(),
-      injectionEventId: String(formData.get("injectionEventId") ?? "").trim(),
-      sourceExperienceIds: String(formData.get("experienceIds") ?? "")
+        String(form.get("workspaceId") ?? "").trim() || "SimulatorLife/AutoDev",
+      reason: String(form.get("reason") ?? "").trim(),
+      claim: String(form.get("claim") ?? "").trim(),
+      priorId: String(form.get("priorId") ?? "").trim(),
+      skillName: String(form.get("skillName") ?? "").trim(),
+      promotedContent: String(form.get("promotedContent") ?? "").trim(),
+      correlationToken: String(form.get("correlationToken") ?? "").trim(),
+      outcomeKind: String(form.get("outcomeKind") ?? "").trim(),
+      reportKind: String(form.get("reportKind") ?? "").trim(),
+      useKind: String(form.get("useKind") ?? "").trim(),
+      injectionEventId: String(form.get("injectionEventId") ?? "").trim(),
+      sourceExperienceIds: String(form.get("experienceIds") ?? "")
         .split(",")
         .map((value) => value.trim())
         .filter((value) => value !== ""),
-      usedMemoryIds: String(formData.get("usedMemoryIds") ?? "")
+      usedMemoryIds: String(form.get("usedMemoryIds") ?? "")
         .split(",")
         .map((value) => value.trim())
         .filter((value) => value !== ""),
       evidence: [
         {
-          kind: String(formData.get("evidenceKind") ?? "").trim(),
-          uri: String(formData.get("evidenceUri") ?? "").trim()
+          kind: String(form.get("evidenceKind") ?? "").trim(),
+          uri: String(form.get("evidenceUri") ?? "").trim()
         }
       ].filter((reference) => reference.kind !== "" && reference.uri !== ""),
-      confirm: String(formData.get("confirm") ?? "").trim(),
-      ...(formData.has("returned")
-        ? { returned: String(formData.get("returned") ?? "") }
+      confirm: String(form.get("confirm") ?? "").trim(),
+      ...(form.has("returned")
+        ? { returned: String(form.get("returned") ?? "") }
         : {}),
       isForm: true
     };
@@ -671,6 +709,18 @@ function executeAction(
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  // This route holds the service credential and writes to the Runtime's
+  // memory -- an irreversible purge among them -- so the origin is the only
+  // thing that separates an operator's own click from a page on another site
+  // making the request on the operator's behalf. Every other write route in
+  // the Console checks it; this one did not, and a cross-site form post is a
+  // simple request: no preflight, no header a page cannot set by itself.
+  //
+  // The check comes before the body is read, so a refused request costs
+  // nothing and a body nobody may submit is never parsed.
+  if (!isSameOriginMutation(request)) {
+    return refuseCrossOrigin(request);
+  }
   const payload = await parsePayload(request);
   // The subject is the action's, not the tab's. Purge and both reports act on an
   // experience rather than a durable record, and each report additionally names

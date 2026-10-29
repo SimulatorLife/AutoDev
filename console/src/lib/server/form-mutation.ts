@@ -3,6 +3,25 @@
 const CONTENT_LENGTH_PATTERN = /^\d+$/u;
 const FORM_CONTENT_TYPE = "application/x-www-form-urlencoded";
 
+/**
+ * Whether this request carries a URL-encoded form body.
+ *
+ * The list is the one the bounded parser accepts, and it is named here so a
+ * route that has to tell a form from a JSON body asks the same question the
+ * parser answers. A route that answered it differently would parse a body the
+ * parser refuses, or refuse a body it parses.
+ */
+export function isUrlEncodedFormRequest(request: Request): boolean {
+  const contentType = (request.headers.get("content-type") ?? "")
+    .trim()
+    .toLowerCase();
+  return (
+    contentType === FORM_CONTENT_TYPE ||
+    contentType === `${FORM_CONTENT_TYPE}; charset=utf-8` ||
+    contentType === `${FORM_CONTENT_TYPE};charset=utf-8`
+  );
+}
+
 export function isSameOriginMutation(request: Request): boolean {
   const origin = request.headers.get("origin");
   const host = request.headers.get("host");
@@ -24,14 +43,7 @@ export async function readStrictUrlEncodedFormBody(
   maxBytes: number
 ): Promise<URLSearchParams | null> {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) return null;
-  const contentType = (request.headers.get("content-type") ?? "")
-    .trim()
-    .toLowerCase();
-  if (
-    contentType !== FORM_CONTENT_TYPE &&
-    contentType !== `${FORM_CONTENT_TYPE}; charset=utf-8` &&
-    contentType !== `${FORM_CONTENT_TYPE};charset=utf-8`
-  ) {
+  if (!isUrlEncodedFormRequest(request)) {
     return null;
   }
 

@@ -975,6 +975,7 @@ Requirements:
 
 - no AutoDev account/login/signup product;
 - same-origin browser mutations with CSRF protection;
+- **every** write route checks the origin, including the ones that answer a JSON caller. The route holds the service credential, so the origin is the only thing that separates the operator's own click from a page on another site making the request on the operator's behalf -- and a cross-site form post is a *simple* request: no preflight, and a content type the page chooses, including the `text/plain` body a JSON reader will happily parse. The check comes before the body is read, so a refused request costs nothing and a body nobody may submit is never parsed;
 - private/scoped server credential from Console to Control API;
 - installation/operator authorization appropriate to deployment;
 - optional reverse-proxy/SSO protection for remote exposure without AutoDev accounts;
