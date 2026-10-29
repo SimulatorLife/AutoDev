@@ -2347,7 +2347,10 @@ function unavailableGithubResponse(
     runtimeMessage: options.runtimeMessage,
     repository: options.repository,
     stats: null,
-    recentRuns: []
+    // The Actions read did not happen, so the runs were never asked for. An
+    // empty list here would say the workflows have never run, which is a claim
+    // about the repository rather than about this read.
+    recentRuns: null
   };
 }
 

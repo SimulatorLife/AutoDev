@@ -2635,7 +2635,11 @@ function isControlApiGithubResponse(
     (value.stats === null || isGithubRunStats(value.stats)) &&
     Array.isArray(value.workflows) &&
     value.workflows.every(isGithubWorkflowRow) &&
-    Array.isArray(value.recentRuns)
+    // The runs are null when the Actions read did not happen, and an empty
+    // list when it happened and the workflows had never run. The Console
+    // renders the page on the strength of `runtimeFactsAvailable`, so both
+    // shapes are answered the same way.
+    (value.recentRuns === null || Array.isArray(value.recentRuns))
   );
 }
 

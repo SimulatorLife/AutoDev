@@ -4957,7 +4957,7 @@ function handleGithubRead(
           cancelledRuns: 2,
           successRate: 0.7
         },
-    recentRuns: githubRuntimeUnavailable ? [] : githubRecentRuns()
+    recentRuns: githubRuntimeUnavailable ? null : githubRecentRuns()
   });
   return true;
 }

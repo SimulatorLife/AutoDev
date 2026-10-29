@@ -74,7 +74,15 @@ export interface GithubViewProps {
   readonly runtimeMessage?: string | null;
   readonly repository?: string | null;
   readonly stats?: GithubActionsRunStats | null;
-  readonly recentRuns?: readonly GithubWorkflowRun[];
+  /**
+   * The runs the Actions API returned.
+   *
+   * Null when the Actions read did not happen, and an empty list when it
+   * happened and the workflows had never run. The page renders the run table
+   * on the strength of `runtimeFactsAvailable`, which says the same thing, so
+   * neither shape reaches the table.
+   */
+  readonly recentRuns?: readonly GithubWorkflowRun[] | null;
   /**
    * The outcome the runs are narrowed to.
    *
@@ -301,8 +309,13 @@ export function GithubView({
   outcome = "all",
   state = "all",
   stats,
-  recentRuns = []
+  recentRuns
 }: GithubViewProps): React.JSX.Element {
+  // The runs are null when the Actions read did not happen. The page renders
+  // the run table only when the facts are available, so a null list and an
+  // empty one are the same page -- and neither is a claim that the workflows
+  // never ran.
+  const runs = recentRuns ?? [];
   const scheduledCount = workflows.filter((w) => w.schedules.length > 0).length;
   const statsSampleSize = stats?.totalRuns ?? 0;
   const statsSampleDescription = `most recent ${statsSampleSize} returned run${statsSampleSize === 1 ? "" : "s"}`;
@@ -317,7 +330,7 @@ export function GithubView({
   // returned, and they must not shrink because the operator narrowed the
   // table to the failures.
   const listFilters: GithubListFilters = { outcome, state };
-  const narrowedRuns = filterRuns(recentRuns, listFilters);
+  const narrowedRuns = filterRuns(runs, listFilters);
   const isNarrowed = listFilters.outcome !== "all";
   // The workflow definitions are narrowed by state, on the vocabulary the
   // "GitHub Actions State" column renders, so the filter's buckets and the
@@ -747,10 +760,10 @@ export function GithubView({
       columns,
       emptyMessage: workflowEmptyMessage
     }),
-    runtimeFactsAvailable && recentRuns.length > 0
+    runtimeFactsAvailable && runs.length > 0
       ? recentRunsSection({
           listFilters,
-          runs: recentRuns,
+          runs,
           narrowed: narrowedRuns,
           columns: runColumns,
           emptyMessage: runEmptyMessage

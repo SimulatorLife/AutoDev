@@ -61,11 +61,15 @@
  * own source for prompts -- so the Console refuses a response that claims
  * those collections are read-only. Both collections published `readOnly: true`
  * from before their write paths existed.
+ * v20: the GitHub page's recent runs are null when the Actions read did not
+ * happen, beside the `stats` that already said so. An empty list there claimed
+ * the workflows had never run, which is a claim about the repository rather
+ * than about the read.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 19
+  version: 20
 } as const;
 
 export type ControlApiContractResponse = {

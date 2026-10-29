@@ -20,7 +20,9 @@ const RESPONSE = {
     "GitHub Actions API request is still within its source deadline.",
   repository: null,
   stats: null,
-  recentRuns: []
+  // The Actions read did not happen, so the runs are not observed rather than
+  // empty: an empty list would say the workflows had never run.
+  recentRuns: null
 };
 
 test(

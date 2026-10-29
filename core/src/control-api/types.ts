@@ -1341,7 +1341,19 @@ export interface ControlApiGithubResponse {
   readonly runtimeMessage: string | null;
   readonly repository: string | null;
   readonly stats: GithubActionsRunStats | null;
-  readonly recentRuns: readonly GithubWorkflowRun[];
+  /**
+   * The runs the Actions API returned for the workflows on this page.
+   *
+   * Null when the Actions read did not happen -- the token was missing, the
+   * repository was not trusted, the request ran out of its deadline. An empty
+   * list there would say the workflows have never run, which is a claim about
+   * the repository rather than about this read, and `runtimeFactsAvailable`
+   * already says the read did not happen.
+   *
+   * An empty list beside an available read is a measured zero and stays a
+   * list: the workflows were asked and none had run.
+   */
+  readonly recentRuns: readonly GithubWorkflowRun[] | null;
 }
 
 export interface ControlApiConcurrencyStatus {

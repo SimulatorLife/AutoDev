@@ -384,7 +384,9 @@ test("the state facet is not offered when the runtime facts were never read", ()
       runtimeStatus: "unavailable",
       repository: "SimulatorLife/AutoDev",
       stats: null,
-      recentRuns: []
+      // The Actions read did not happen, so the runs are not observed. An
+      // empty list here would say the workflows had never run.
+      recentRuns: null
     })
   );
 

@@ -4003,7 +4003,9 @@ test("Control API /control/github rejects unconfigured workspace repositories", 
     assert.equal(res.body.runtimeStatus, "invalid");
     assert.equal(res.body.repository, "UnconfiguredOrg/UntrustedRepo");
     assert.equal(res.body.stats, null);
-    assert.deepEqual(res.body.recentRuns, []);
+    // The Actions read did not happen, so the runs were never asked for.
+    // An empty list here would claim the workflows had never run.
+    assert.equal(res.body.recentRuns, null);
     assert.ok(
       res.body.runtimeMessage.includes(
         "not a recognized workspace in config/workspaces.json"
@@ -4062,7 +4064,9 @@ test("GitHub runtime state rejects disabled workspaces before calling GitHub", a
     assert.equal(result.runtimeFactsAvailable, false);
     assert.equal(result.runtimeStatus, "invalid");
     assert.equal(result.stats, null);
-    assert.deepEqual(result.recentRuns, []);
+    // The Actions read was refused before it happened, so the runs are not
+    // observed rather than empty.
+    assert.equal(result.recentRuns, null);
     assert.match(String(result.runtimeMessage), /workspace .* is disabled/u);
     assert.equal(fetchCalls, 0);
   } finally {

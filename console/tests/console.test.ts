@@ -11247,7 +11247,9 @@ test("fetchGithubWorkflows issues authenticated GET to /control/github", async (
       runtimeMessage: "AUTODEV_GITHUB_TOKEN is not configured.",
       repository: null,
       stats: null,
-      recentRuns: [],
+      // The Actions read did not happen, so the runs are not observed rather
+      // than empty: an empty list would say the workflows had never run.
+      recentRuns: null,
       workflows: [
         {
           id: "_scheduler.yml",
@@ -19756,13 +19758,27 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     repository: null,
     stats: null,
     workflows,
-    recentRuns: []
+    // The Actions read did not happen, so the runs are not observed rather
+    // than empty.
+    recentRuns: null
   });
   const githubAccept = await fetchGithubWorkflows(
     config,
     serve(githubEnvelope([workflowRow]))
   );
   assert.equal(githubAccept.kind, "ok");
+  // The runs are null when the Actions read did not happen and a list when it
+  // did, so the guard answers both. A third shape is not a shape the contract
+  // has, and a runs field the Console cannot read must fail closed.
+  assert.equal(
+    (
+      await fetchGithubWorkflows(
+        config,
+        serve({ ...githubEnvelope([workflowRow]), recentRuns: "none" })
+      )
+    ).kind,
+    "invalid-response"
+  );
   // Stats were checked only as "a record", so an *empty* one reached the view:
   // `Math.round(stats.successRate * 100)` published `NaN%` and `totalRuns` drew
   // an empty stat card. An unreadable projection must fail closed instead.
