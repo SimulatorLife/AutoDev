@@ -430,7 +430,7 @@ test("an evidence page for another experience is not drawn as evidence for this 
 
   assert.doesNotMatch(
     markup,
-    /used \(1\/1 memories cited\)/u,
+    /Used \(1\/1 memories cited\)/u,
     "another experience's use assessment must not be shown for this one"
   );
   assert.doesNotMatch(
