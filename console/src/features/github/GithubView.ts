@@ -231,6 +231,26 @@ function recentRunsSection({
 }
 
 /**
+ * What the active-workflow count covers.
+ *
+ * The Actions API does not report every workflow the repository declares, and
+ * a workflow it did not report has no state to count. The count is right for
+ * what arrived, and the subtitle says how much of the catalogue arrived, so
+ * the number is not read as the whole. The state column draws the same
+ * distinction per row.
+ */
+function activeWorkflowsSubtitle(
+  counts: Record<WorkflowStateFilter, number>
+): string {
+  const unobserved = counts["not-observed"] + counts.unavailable;
+  if (unobserved === 0) return "Enabled in GitHub Actions";
+  return (
+    `Enabled in GitHub Actions; the state of ${unobserved} of ${counts.all} ` +
+    "workflows was not observed"
+  );
+}
+
+/**
  * The workflow definitions, with the facet that narrows them.
  *
  * The facet is offered only when the runtime facts were read. Without them
@@ -695,8 +715,8 @@ export function GithubView({
           }),
           React.createElement(StatCard, {
             title: "Active Workflows",
-            value: workflows.filter((w) => w.actionsState === "active").length,
-            subtitle: "Enabled in GitHub Actions"
+            value: stateCounts.active,
+            subtitle: activeWorkflowsSubtitle(stateCounts)
           })
         )
       : null,

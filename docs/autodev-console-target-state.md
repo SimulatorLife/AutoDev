@@ -187,6 +187,8 @@ The same rule governs a detail. A detail that cannot be produced because its sou
 
 One published word has one owner. When a fact is composed of two reads, the layer that composes them publishes it, and a layer that contributed only a part publishes only what it read. A second derivation of the same word over a narrower scope is how two authorities drift apart: each is defensible on its own, and then one surface contradicts another about the same fact.
 
+A count over a partly-observed scope names the scope. The count may be exactly right for what arrived -- a workflow the Actions API did not report cannot be counted active, and an unread half of a catalogue contributes no entries -- but the operator has to be told how much of the scope arrived, or a number that is right about half the catalogue reads as a number about all of it.
+
 Configuration does not prove runtime availability. Eligibility/exposure does not prove execution. Historical tool use does not define current permissions.
 
 ### Accessibility and interaction consistency

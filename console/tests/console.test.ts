@@ -6522,6 +6522,49 @@ test("GithubView displays explicit unavailable notice without synthesizing zero 
   assert.equal(markup.includes("Active Workflows"), false);
 });
 
+test("GithubView names the workflows whose Actions state was not observed", () => {
+  // The Actions API does not report every workflow the repository declares, and
+  // a workflow it did not report has no state to count. The active count is
+  // right for what arrived, and the card says how much of the catalogue
+  // arrived, so the number is not read as the whole.
+  const markup = renderToStaticMarkup(
+    React.createElement(GithubView, {
+      workflows: [
+        {
+          id: "ci.yml",
+          name: "CI",
+          path: ".github/workflows/ci.yml",
+          events: ["push"],
+          schedules: [],
+          actionsState: "active" as const
+        },
+        {
+          id: "unreported.yml",
+          name: "Unreported",
+          path: ".github/workflows/unreported.yml",
+          events: ["push"],
+          schedules: [],
+          actionsState: "unknown" as const
+        }
+      ],
+      runtimeFactsAvailable: true,
+      runtimeStatus: "available",
+      repository: "SimulatorLife/AutoDev",
+      stats: {
+        totalRuns: 1,
+        successfulRuns: 1,
+        failedRuns: 0,
+        inProgressRuns: 0,
+        cancelledRuns: 0,
+        successRate: 1
+      },
+      recentRuns: []
+    })
+  );
+
+  assert.match(markup, /the state of 1 of 2 workflows was not observed/u);
+});
+
 test("ToolsView renders explicit availability per tool with the catalog coverage banner", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ToolsView, {
