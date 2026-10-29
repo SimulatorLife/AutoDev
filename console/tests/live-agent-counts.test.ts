@@ -171,6 +171,7 @@ test("agent, provider, and model views render counts from one Runtime projection
   };
   const agentsMarkup = renderToStaticMarkup(
     React.createElement(AgentsView, {
+      executionContractObserved: true,
       agents: [agent],
       runtime: runtime(ACTIVE_COUNTS)
     })

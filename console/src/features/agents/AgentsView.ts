@@ -46,6 +46,17 @@ export interface AgentsViewProps {
   readonly agents: readonly AgentDefinition[];
   readonly providers?: ControlApiProvidersResponse | undefined;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
+  /**
+   * Whether the execution contract was read.
+   *
+   * The catalogue is the contract's roles, and the accessor that reads the
+   * contract falls back to an empty contract when the read fails: an empty
+   * contract and a contract nobody read look the same to a caller that only
+   * sees the roles. They are not the same claim -- the first says the contract
+   * declares no role, the second says nobody read it -- and the list says
+   * which one it is showing.
+   */
+  readonly executionContractObserved: boolean;
   readonly controlFailed?: boolean | undefined;
   readonly controlRefusal?: ControlFailureNoticeProps["refusal"];
 }
@@ -54,6 +65,7 @@ export function AgentsView({
   agents,
   providers,
   runtime,
+  executionContractObserved,
   controlFailed,
   controlRefusal
 }: AgentsViewProps): React.JSX.Element {
@@ -352,7 +364,9 @@ export function AgentsView({
         // The Control API answered, and it answered with no rows. That is an
         // observed empty catalog rather than an unreadable one -- a fetch that
         // fails renders the failure shell above instead of reaching here.
-        emptyMessage: "No agents are configured."
+        // Unless the contract behind the catalogue was the read that failed,
+        // in which case nobody read it and the list is not known to be empty.
+        emptyMessage: agentEmptyMessage(executionContractObserved)
       })
     ),
     React.createElement(
@@ -475,4 +489,20 @@ export function AgentsView({
  */
 function observed(value: number | undefined): string {
   return value === undefined ? NOT_OBSERVED_LABEL : String(value);
+}
+
+/**
+ * What an empty agent list has to say.
+ *
+ * The Control API answered, and it answered with no rows: an observed empty
+ * catalogue, unless the read behind it was the one that failed. The catalogue
+ * is the execution contract's roles, and the accessor that reads the contract
+ * falls back to an empty contract when the read fails -- so "the contract
+ * declares no role" and "nobody read the contract" are different claims, and
+ * only one of them is an empty list.
+ */
+function agentEmptyMessage(executionContractObserved: boolean): string {
+  return executionContractObserved
+    ? "No agents are configured."
+    : "The execution contract was not read, so the agent catalogue is not known.";
 }

@@ -88,6 +88,7 @@ test("SkillsView combines catalog metadata and role assignments into a single ta
 
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [dynamicSkillA, dynamicSkillB],
       eligibility: [
         { skill: dynamicSkillA.name, roles: ["custom-role-worker"] },
@@ -182,6 +183,7 @@ test("no Save button exists anywhere in the SkillsView markup", () => {
 
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [dynamicSkill],
       eligibility: [{ skill: dynamicSkill.name, roles: ["dev"] }],
       unresolvedAssignments: [],
@@ -390,6 +392,7 @@ test("clearing all checkboxes unassigns the skill and submits empty roles set", 
 
 test("expectedRevision conflict protection and visible failure feedback", () => {
   const props: SkillsViewProps = {
+    executionContractObserved: true,
     skills: [
       {
         name: "conflict-prone-skill",
@@ -460,6 +463,7 @@ test("distinguishes unavailable sources and renders appropriate reasons without 
   // 1. Missing execution contract revision
   const noContractMarkup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [baseSkill],
       eligibility: [{ skill: baseSkill.name, roles: ["tester"] }],
       unresolvedAssignments: [],
@@ -481,6 +485,7 @@ test("distinguishes unavailable sources and renders appropriate reasons without 
   // 2. Empty declared assignment roles
   const noRolesMarkup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [baseSkill],
       eligibility: [],
       unresolvedAssignments: [],
@@ -501,6 +506,7 @@ test("distinguishes unavailable sources and renders appropriate reasons without 
   // 3. Invalid RuleSync catalog
   const invalidCatalogMarkup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [],
       eligibility: [],
       unresolvedAssignments: [],
@@ -526,6 +532,7 @@ test("distinguishes unavailable sources and renders appropriate reasons without 
   // 4. Unobserved RuleSync catalog
   const unobservedMarkup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [],
       eligibility: [],
       unresolvedAssignments: [],

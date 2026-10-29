@@ -75,12 +75,21 @@ export default async function AgentsPage({
     ConsolePageShell,
     {
       section,
-      counts: { Agents: agents.length }
+      // The badge counts the catalogue, and it is a count only when the
+      // catalogue was read. The catalogue is the execution contract's roles,
+      // and the accessor that reads the contract falls back to an empty
+      // contract when the read fails -- so a badge with that empty list's
+      // length would claim the contract declares no role, which is a claim
+      // about the read rather than about the contract.
+      ...(agentsResult.data.executionContractObserved
+        ? { counts: { Agents: agents.length } }
+        : {})
     },
     React.createElement(AgentsView, {
       agents,
       providers,
       runtime,
+      executionContractObserved: agentsResult.data.executionContractObserved,
       controlFailed: isControlFailure(query.control),
       controlRefusal: readControlRefusal(query.refusal)
     })

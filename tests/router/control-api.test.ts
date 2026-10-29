@@ -2175,6 +2175,15 @@ test("the tool catalogue's count is not observed when the execution contract was
     // empty contract and a contract nobody read look the same to every caller
     // that only sees the roles.
     assert.equal(tools.body.executionContractObserved, false);
+    // The agents catalogue is the contract's roles, so the same read decides
+    // whether its count is a count. It used to be `agents.length` -- a number
+    // that said the contract declares no role, for a contract nobody read.
+    const agents = await call("GET", CONTROL_API_PATHS.agents, {
+      actor: "viewer-a"
+    });
+    assert.equal(agents.response.statusCode, 200);
+    assert.equal(agents.body.executionContractObserved, false);
+    assert.equal(agents.body.totalAgents, null);
     rmSync(unreadable, { recursive: true, force: true });
   } finally {
     if (priorContractFile === undefined) {
@@ -2483,6 +2492,8 @@ test("Control API surfaces all 13 typed resource families", async () => {
     assert.equal(agents.response.statusCode, 200);
     assert.equal(agents.body.schema, "autodev-control-agents-v2");
     assert.ok(agents.body.totalAgents > 0);
+    // The contract was read, so the count over its roles is a count.
+    assert.equal(agents.body.executionContractObserved, true);
     assert.ok(Array.isArray(agents.body.agents));
     const configuredAgent = agents.body.agents.find(
       (agent: { role: string }) => agent.role === "orchestrator"

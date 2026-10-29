@@ -74,6 +74,7 @@ function renderSkills(
 ): string {
   return renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills,
       eligibility: skills.map((skill) => ({
         skill: skill.name,

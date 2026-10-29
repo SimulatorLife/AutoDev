@@ -89,6 +89,7 @@ export default async function SkillsPage({
       eligibility,
       unresolvedAssignments,
       sourceValidity: result.data.valid,
+      executionContractObserved: result.data.executionContractObserved,
       validationIssues: result.data.issues,
       // Drawn from the same catalog read rather than from a route of its own:
       // the revision and the assignable roles are properties of the execution

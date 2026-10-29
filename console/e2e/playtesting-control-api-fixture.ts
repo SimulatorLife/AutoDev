@@ -5339,6 +5339,7 @@ function handleCatalogResourceRead(
       schema: "autodev-control-agents-v2",
       source: ".rulesync/agents.jsonc",
       readOnly: false,
+      executionContractObserved: true,
       totalAgents: 2,
       agents: [
         {
@@ -5382,6 +5383,7 @@ function handleCatalogResourceRead(
       schema: "autodev-control-skills-v2",
       source: ".rulesync/skills",
       readOnly: false,
+      executionContractObserved: true,
       valid: true,
       issues: [],
       executionContractRevision: skillAssignmentRevision,

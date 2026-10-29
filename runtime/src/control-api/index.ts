@@ -1881,6 +1881,12 @@ function skillsView(
     readOnly: false,
     valid: catalog.valid,
     issues: catalog.issues,
+    // The role assignments come from the execution contract, and the accessor
+    // that reads it falls back to an empty contract when the read fails: an
+    // empty contract and a contract nobody read look the same to a caller
+    // that only sees the roles. The eligibility a card counts, and the
+    // assignment form's roles, both depend on which one it was.
+    executionContractObserved: executionContractObserved(),
     executionContractRevision:
       contractFile === null
         ? null
@@ -2850,11 +2856,17 @@ function agentsView(
       };
     }
   );
+  const contractObserved = executionContractObserved();
   return {
     schema: "autodev-control-agents-v2",
     source: EXECUTION_CONTRACT_SOURCE,
     readOnly: false,
-    totalAgents: agents.length,
+    // The catalogue is the execution contract's roles. The accessor that reads
+    // the contract falls back to an empty contract when the read fails, so an
+    // empty contract and a contract nobody read look the same to every caller
+    // -- and the count over the catalogue depends on which one it was.
+    executionContractObserved: contractObserved,
+    totalAgents: contractObserved ? agents.length : null,
     agents
   } satisfies ControlApiAgentsResponse;
 }

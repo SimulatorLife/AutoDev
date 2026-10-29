@@ -166,6 +166,7 @@ test("skill content mutation uses the source subresource and requires a confirme
 test("Skills rows link to one canonical source editor and editor posts the exact revision and source", () => {
   const list = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [
         {
           name: NAME,

@@ -82,6 +82,7 @@ function renderSkills(
 ): string {
   return renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills,
       eligibility: skills.map((skill) => ({
         skill: skill.name,
@@ -187,6 +188,7 @@ test("the control API mapping carries the scope facts through", () => {
     schema: "autodev-control-skills-v2",
     source: ".rulesync/skills+execution-contract",
     readOnly: false,
+    executionContractObserved: true,
     valid: true,
     executionContractRevision: "a".repeat(64),
     assignmentRoles: ["worker"],
@@ -277,6 +279,7 @@ test("the telemetry mapping keeps a null apart from a zero", () => {
     schema: "autodev-control-skills-v2",
     source: ".rulesync/skills+execution-contract",
     readOnly: false,
+    executionContractObserved: true,
     valid: true,
     executionContractRevision: "a".repeat(64),
     assignmentRoles: ["worker"],

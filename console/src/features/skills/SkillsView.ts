@@ -104,6 +104,17 @@ export interface SkillsViewProps {
    * telemetry has been observed must not claim that nothing happened.
    */
   readonly telemetry: SkillTelemetry;
+  /**
+   * Whether the execution contract was read.
+   *
+   * The role assignments come from the contract, and the accessor that reads
+   * it falls back to an empty contract when the read fails: an empty contract
+   * and a contract nobody read look the same to a caller that only sees the
+   * roles. They are not the same claim, and the card that counts the
+   * assignments -- and the roles an assignment form may offer -- depend on
+   * which one it was.
+   */
+  readonly executionContractObserved: boolean;
   readonly saveOutcome?: SkillAssignmentSaveOutcome | undefined;
   /**
    * The role the list is narrowed to.
@@ -293,6 +304,7 @@ export function SkillsView({
   assignmentRoles,
   executionContractRevision,
   telemetry,
+  executionContractObserved,
   saveOutcome,
   role = ""
 }: SkillsViewProps): React.JSX.Element {
@@ -314,7 +326,9 @@ export function SkillsView({
         ? "Invalid"
         : NOT_OBSERVED_LABEL;
   const assignedCount =
-    sourceValidity === true ? eligibleSkills.size : NOT_OBSERVED_LABEL;
+    sourceValidity === true && executionContractObserved
+      ? eligibleSkills.size
+      : NOT_OBSERVED_LABEL;
 
   // What the Runtime has observed. The totals are over the skills that were
   // observed, and a skill with no observation contributes nothing rather than

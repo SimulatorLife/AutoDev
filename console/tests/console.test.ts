@@ -1518,6 +1518,7 @@ test("a skill path wraps between its segments and shows every one of them", () =
   // which is 9 characters of `SKILL.md` repeated on every row.
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [
         {
           name: "improve-codebase-architecture",
@@ -2436,7 +2437,10 @@ test("StatusBadge gives back a status word it has to cut", () => {
 
 test("AgentsView keeps readiness and convergence unknown without observations", () => {
   const markup = renderToStaticMarkup(
-    React.createElement(AgentsView, { agents: [CONFIGURED_AGENT] })
+    React.createElement(AgentsView, {
+      agents: [CONFIGURED_AGENT],
+      executionContractObserved: true
+    })
   );
 
   assert.equal(markup.includes("Runtime healthy"), false);
@@ -2448,7 +2452,10 @@ test("AgentsView keeps readiness and convergence unknown without observations", 
 
 test("AgentsView links each assigned skill and MCP chip to its canonical resource", () => {
   const markup = renderToStaticMarkup(
-    React.createElement(AgentsView, { agents: [CONFIGURED_AGENT] })
+    React.createElement(AgentsView, {
+      agents: [CONFIGURED_AGENT],
+      executionContractObserved: true
+    })
   );
 
   assert.match(
@@ -3620,10 +3627,14 @@ test("no column is narrower than its own header", () => {
   // no table at all, and `/permissions` because it fails closed.
   const markup = [
     renderToStaticMarkup(
-      React.createElement(AgentsView, { agents: [CONFIGURED_AGENT] })
+      React.createElement(AgentsView, {
+        agents: [CONFIGURED_AGENT],
+        executionContractObserved: true
+      })
     ),
     renderToStaticMarkup(
       React.createElement(SkillsView, {
+        executionContractObserved: true,
         skills: [
           {
             name: "orchestration",
@@ -4262,6 +4273,7 @@ test("Skills fetcher validates the v2 catalog contract and rejects stale respons
     schema: "autodev-control-skills-v2",
     source: ".rulesync/skills+execution-contract",
     readOnly: false,
+    executionContractObserved: true,
     valid: true,
     executionContractRevision: "b".repeat(64),
     assignmentRoles: ["validator"],
@@ -6100,6 +6112,7 @@ test("McpsView distinguishes invalid canonical configuration from an empty list"
 test("SkillsView never reports 'Active' or 'Recorded' without OTel evidence", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [
         {
           name: "orchestration",
@@ -6127,6 +6140,7 @@ test("SkillsView never reports 'Active' or 'Recorded' without OTel evidence", ()
 test("SkillsView distinguishes declared role scope from missing eligibility evidence", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [
         {
           name: "assigned",
@@ -6178,6 +6192,7 @@ test("SkillsView distinguishes declared role scope from missing eligibility evid
 test("SkillsView does not synthesize empty catalog counts for an unavailable RuleSync source", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [],
       eligibility: [],
       unresolvedAssignments: [],
@@ -6628,6 +6643,7 @@ test("MemoryPage requires a valid canonical workspace catalog before querying me
         schema: "autodev-control-workspaces-v3",
         source: "config/workspaces.json",
         readOnly: true,
+        executionContractObserved: true,
         catalogStatus: "invalid",
         revision: "e".repeat(64),
         totalWorkspaces: 0,
@@ -11789,6 +11805,7 @@ function hiddenValue(
 test("AgentsView shows read-only provider summaries that link to Providers", () => {
   const markup = renderToStaticMarkup(
     React.createElement(AgentsView, {
+      executionContractObserved: true,
       agents: [CONFIGURED_AGENT],
       providers: PROVIDERS_FIXTURE,
       runtime: {
@@ -11861,6 +11878,7 @@ test("AgentDetailView renders a read-only provider summary and concurrency detai
 test("Agents provider summaries stay not observed without provider configuration", () => {
   const agentsMarkup = renderToStaticMarkup(
     React.createElement(AgentsView, {
+      executionContractObserved: true,
       agents: [CONFIGURED_AGENT]
     })
   );
@@ -12248,7 +12266,10 @@ test("an empty list names its resource instead of inheriting a generic sentence"
   // typecheck is the guard; this pins the rendered outcome and keeps the
   // retired default from coming back.
   const agents = renderToStaticMarkup(
-    React.createElement(AgentsView, { agents: [] })
+    React.createElement(AgentsView, {
+      agents: [],
+      executionContractObserved: true
+    })
   );
   assert.match(agents, /No agents are configured\./u);
 
@@ -12302,6 +12323,7 @@ test("View adapters translate Control API responses without inventing data", () 
     schema: "autodev-control-skills-v2",
     source: ".rulesync/skills+execution-contract",
     readOnly: false,
+    executionContractObserved: true,
     valid: true,
     executionContractRevision: "a".repeat(64),
     assignmentRoles: ["browser-tester", "validator"],
@@ -13607,6 +13629,7 @@ test("a skill that reached the catalog but reached no agent says so", () => {
   const renderWith = (eligibility: SkillEligibility[]): string =>
     renderToStaticMarkup(
       React.createElement(SkillsView, {
+        executionContractObserved: true,
         skills: [
           {
             name: "release-checklist",
@@ -14299,6 +14322,7 @@ test("Agents responses fail closed rather than render an empty Configure surface
     schema: "autodev-control-agents-v2",
     source: "config/execution-contract.json",
     readOnly: false,
+    executionContractObserved: true,
     totalAgents: 1,
     agents: [agent]
   };
@@ -14310,6 +14334,11 @@ test("Agents responses fail closed rather than render an empty Configure surface
   for (const broken of [
     { ...page, schema: "autodev-control-agents-v0" },
     { ...page, totalAgents: "1" },
+    // A payload that cannot say whether the execution contract was read cannot
+    // support a count over its roles: the accessor that reads the contract
+    // falls back to an empty contract when the read fails, so the roles alone
+    // cannot tell an empty contract from a contract nobody read.
+    { ...page, executionContractObserved: "yes" },
     { ...page, agents: {} },
     { ...page, agents: [{ ...agent, convergence: "healthy" }] },
     { ...page, agents: [{ ...agent, mcps: "lsp" }] },
@@ -16899,6 +16928,7 @@ test("AgentsView reports runtime counters as unobserved instead of zero", () => 
   } as const;
   const markup = renderToStaticMarkup(
     React.createElement(AgentsView, {
+      executionContractObserved: true,
       agents: [CONFIGURED_AGENT],
       providers: PROVIDERS_FIXTURE,
       runtime
@@ -22306,6 +22336,7 @@ const SKILL_ASSIGNMENT_SKILL = {
 test("a skill assignment form posts the whole desired set, and an empty one clears it", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [SKILL_ASSIGNMENT_SKILL],
       eligibility: [{ skill: "release-checklist", roles: ["worker"] }],
       unresolvedAssignments: [],
@@ -22327,6 +22358,7 @@ test("a skill assignment form posts the whole desired set, and an empty one clea
 
   const cleared = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [SKILL_ASSIGNMENT_SKILL],
       eligibility: [{ skill: "release-checklist", roles: [] }],
       unresolvedAssignments: [],
@@ -22357,6 +22389,7 @@ test("a skill assignment form posts the whole desired set, and an empty one clea
 test("an unassigned skill is fixable from the page that reports it as unassigned", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [SKILL_ASSIGNMENT_SKILL],
       eligibility: [{ skill: "release-checklist", roles: [] }],
       unresolvedAssignments: [],
@@ -22382,6 +22415,7 @@ test("an unassigned skill is fixable from the page that reports it as unassigned
 test("no execution contract means no assignment form and a reason, not a broken control", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [SKILL_ASSIGNMENT_SKILL],
       eligibility: [],
       unresolvedAssignments: [],
@@ -22409,6 +22443,7 @@ test("no execution contract means no assignment form and a reason, not a broken 
 test("a refused assignment says what happened and claims nothing was written", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [SKILL_ASSIGNMENT_SKILL],
       eligibility: [{ skill: "release-checklist", roles: [] }],
       unresolvedAssignments: [],
@@ -22528,6 +22563,7 @@ test("skill assignment route redirects with Runtime pending and not-observed evi
 test("an unobserved skill assignment result is a warning, not an empty assignment", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [SKILL_ASSIGNMENT_SKILL],
       eligibility: [{ skill: "release-checklist", roles: [] }],
       unresolvedAssignments: [],
@@ -22947,6 +22983,7 @@ test("a valid command source renders no validation panel", () => {
 test("an invalid skill catalog names the file it could not apply, like every other RuleSync source", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [],
       eligibility: [],
       unresolvedAssignments: [],
@@ -22978,6 +23015,7 @@ test("an invalid skill catalog names the file it could not apply, like every oth
 test("a valid skill catalog renders no validation panel", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
+      executionContractObserved: true,
       skills: [],
       eligibility: [],
       unresolvedAssignments: [],
@@ -23059,6 +23097,7 @@ test("a Runtime response with no concurrency limit is readable, and says so", as
   const render = (effectivePerSessionLimit: number | null | undefined) =>
     renderToStaticMarkup(
       React.createElement(AgentsView, {
+        executionContractObserved: true,
         agents: [CONFIGURED_AGENT],
         runtime: {
           ...runtime,

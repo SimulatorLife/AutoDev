@@ -516,6 +516,8 @@ Agent detail may combine canonical role/prompt, assigned capabilities, a read-on
 
 The Agent enablement control is revision-bound through `PATCH /control/agents/{role}` and is shown on both the Agent row and its detail view. Runtime rejects a stale expected revision, persists the policy before confirming the mutation, and enforces disabled aliases before provider selection or subagent admission. Missing Runtime aliases render as unavailable and nonmutable; they are never represented as disabled or silently mapped to a provider assignment. This control has no effect on a concrete provider/model request, which does not carry named Agent identity.
 
+The agent catalogue is the execution contract's roles, and the accessor that reads the contract falls back to an empty contract when the read fails. An empty contract and a contract nobody read look the same to a caller that only sees the roles, and they are not the same claim: the first says the contract declares no role, the second says nobody read it. The Runtime publishes whether the contract was read, the count over the catalogue is a number only when it was, and the list says which read did not happen instead of rendering an empty catalogue as a configured one. The skills catalogue draws its role assignments from the same contract and answers the same way.
+
 ### Providers
 
 Providers is the one place an operator decides which model providers may serve the fixed agent roles, in what priority order, with which model, and under which concurrency limits. Its **Providers** tab is a single compact configuration table with exactly **five primary columns**:

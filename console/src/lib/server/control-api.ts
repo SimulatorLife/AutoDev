@@ -913,8 +913,14 @@ function isControlApiAgentsResponse(
     value.schema === "autodev-control-agents-v2" &&
     typeof value.source === "string" &&
     value.readOnly === false &&
+    // The catalogue is the execution contract's roles. A payload that does not
+    // say whether the contract was read cannot support a count over it: the
+    // accessor that reads the contract falls back to an empty contract when
+    // the read fails, so the roles alone cannot tell an empty contract from a
+    // contract nobody read.
+    typeof value.executionContractObserved === "boolean" &&
+    isNullableNumber(value.totalAgents) &&
     Array.isArray(value.agents) &&
-    typeof value.totalAgents === "number" &&
     value.agents.every(
       (agent) => isAgentRecord(agent) && typeof agent.hasPrompt === "boolean"
     )
@@ -2952,6 +2958,11 @@ function isControlApiSkillsResponse(
     // Every catalog carries the reasons it located, so one flag cannot stand in
     // for six faults that need six different repairs.
     isValidationIssueList(value.issues) &&
+    // The role assignments come from the execution contract, and the accessor
+    // that reads it falls back to an empty contract when the read fails. A
+    // payload that cannot say whether the contract was read cannot support the
+    // eligibility a card counts.
+    typeof value.executionContractObserved === "boolean" &&
     // Required, and pattern-checked rather than merely typed, because a form
     // built from it is the only thing standing between two concurrent operators
     // and a silently discarded assignment. A malformed revision would post as a

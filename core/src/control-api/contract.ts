@@ -78,11 +78,15 @@
  * directory could not be read. The catalogue is two independent reads, and an
  * empty list for the one that failed claimed the repository holds no role
  * prompt.
+ * v24: the agents and skills catalogues publish whether the execution
+ * contract was read. Both draw role assignments from it, and the accessor
+ * that reads it falls back to an empty contract when the read fails -- so an
+ * empty contract and a contract nobody read looked the same to every caller.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 23
+  version: 24
 } as const;
 
 export type ControlApiContractResponse = {

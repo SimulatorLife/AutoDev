@@ -111,7 +111,23 @@ export interface ControlApiAgentsResponse {
   readonly schema: "autodev-control-agents-v2";
   readonly source: string;
   readonly readOnly: boolean;
-  readonly totalAgents: number;
+  /**
+   * Whether the execution contract was read.
+   *
+   * The catalogue is the contract's roles. The accessor that reads the
+   * contract falls back to an empty contract when the read fails, so an empty
+   * contract and a contract nobody read look the same to every caller -- and
+   * the count over the catalogue depends on which one it was.
+   */
+  readonly executionContractObserved: boolean;
+  /**
+   * How many agents the catalogue holds.
+   *
+   * Null when the contract was not read. A contract that was read and declares
+   * no role is a measured zero and stays a number: "the contract declares no
+   * role" and "nobody read the contract" are different claims.
+   */
+  readonly totalAgents: number | null;
   readonly agents: readonly (ControlApiAgentRecord & {
     readonly hasPrompt: boolean;
   })[];
@@ -759,6 +775,20 @@ export interface ControlApiSkillsResponse {
    * names a different skill -- six faults that shared one flag.
    */
   readonly issues: readonly RuleSyncValidationIssue[];
+  /**
+   * Whether the execution contract was read.
+   *
+   * The role assignments come from the contract, and the accessor that reads
+   * it falls back to an empty contract when the read fails: an empty contract
+   * and a contract nobody read look the same to a caller that only sees the
+   * roles. The eligibility a card counts, and the roles an assignment form
+   * may offer, both depend on which one it was.
+   *
+   * False when the contract could not be read. The catalogue's own entries are
+   * then still what the RuleSync source declared, and the assignments are not
+   * known.
+   */
+  readonly executionContractObserved: boolean;
   /**
    * Digest of the execution contract that backs role assignment, or `null`
    * when no contract file was found.
