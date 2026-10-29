@@ -173,3 +173,28 @@ export async function ensureAntigravityProxy(
   deps.startFallback(options.launcher, options.logPath);
   return (await waitForProbe(deps, options.readyTimeoutMs)) ? 0 : 1;
 }
+
+/**
+ * The entry point the dispatch script reaches.
+ *
+ * `scripts/ensure-codex-antigravity-proxy.sh` runs this module as a process
+ * and feeds it the model request on stdin, the way the Claude and MiniMax
+ * bridges are run. Without this block the module loaded, exported its
+ * functions and exited zero: the script reported success and nothing had been
+ * ensured at all, so the Antigravity bridge was silently never started by the
+ * one path that is supposed to start it.
+ */
+if (process.argv[1] === new URL(import.meta.url).pathname) {
+  ensureAntigravityProxy()
+    .then((status) => {
+      process.exitCode = status;
+      return status;
+    })
+    .catch((error) => {
+      writeErrorLine(
+        `antigravity-ensure: ${error instanceof Error ? error.message : String(error)}`
+      );
+      process.exitCode = 1;
+      return 1;
+    });
+}
