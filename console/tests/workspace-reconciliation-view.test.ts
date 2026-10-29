@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ControlApiWorkspaceRecord } from "@simulatorlife/autodev-core";
+import type {
+  ControlApiWorkspaceRecord,
+  ReconciliationView
+} from "@simulatorlife/autodev-core";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -35,18 +38,7 @@ function workspace(id: string): ControlApiWorkspaceRecord {
 
 function reconciliation(
   convergence: "converged" | "pending" | "error" | "not-observed"
-): {
-  readonly status: {
-    readonly convergence: string;
-    readonly desiredGeneration: string | null;
-    readonly observedGeneration: string | null;
-    readonly lastApplyAt: string | null;
-    readonly lastObservationAt: string | null;
-    readonly lastError: string | null;
-    readonly explanation: string;
-  };
-  readonly history: readonly unknown[];
-} {
+): ReconciliationView {
   return {
     status: {
       convergence,
