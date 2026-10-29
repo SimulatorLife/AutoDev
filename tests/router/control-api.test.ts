@@ -2196,6 +2196,65 @@ test("the tool catalogue's count is not observed when the execution contract was
   }
 });
 
+test("a prompt detail whose command could not be read is not an unknown prompt", async () => {
+  const saved = saveEnv();
+  const repositoryRoot = mkdtempSync(join(tmpdir(), "autodev-prompt-source-"));
+  try {
+    configure();
+    // A command file that is there and cannot be parsed. The catalogue already
+    // says the source is invalid, and the detail used to answer 404 anyway --
+    // "this prompt does not exist" -- for a prompt that is present and
+    // unreadable.
+    const commandsDir = join(repositoryRoot, ".rulesync", "commands");
+    mkdirSync(commandsDir, { recursive: true });
+    writeFileSync(join(commandsDir, "audit.md"), "No command frontmatter.");
+    const detail = await call(
+      "GET",
+      `${CONTROL_API_PATHS.prompts}/audit`,
+      { actor: "viewer-a" },
+      { repositoryRoot }
+    );
+    assert.equal(detail.response.statusCode, 503);
+    assert.equal(
+      detail.body.error.code,
+      "autodev_control_api_prompt_command_source_not_read"
+    );
+    // The reason names the file and the fault, so an operator can repair it
+    // instead of looking for a prompt that was renamed.
+    assert.match(detail.body.error.message, /audit/u);
+    assert.match(
+      detail.body.error.message,
+      /must have valid YAML frontmatter/u
+    );
+  } finally {
+    restoreEnv(saved);
+    rmSync(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test("a prompt that is not there is still an unknown prompt", async () => {
+  const saved = saveEnv();
+  const repositoryRoot = mkdtempSync(join(tmpdir(), "autodev-prompt-absent-"));
+  try {
+    configure();
+    const commandsDir = join(repositoryRoot, ".rulesync", "commands");
+    mkdirSync(commandsDir, { recursive: true });
+    const detail = await call(
+      "GET",
+      `${CONTROL_API_PATHS.prompts}/absent`,
+      { actor: "viewer-a" },
+      { repositoryRoot }
+    );
+    // A prompt nobody wrote is a 404. The 503 is for a prompt that could not
+    // be read, and the two must not be confused.
+    assert.equal(detail.response.statusCode, 404);
+    assert.equal(detail.body.error.code, "autodev_control_api_unknown_prompt");
+  } finally {
+    restoreEnv(saved);
+    rmSync(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
 test("an agent detail whose contract was not read is not an unknown role", async () => {
   const saved = saveEnv();
   const priorContract = getDefaultExecutionContract();

@@ -583,6 +583,49 @@ test("RuleSync command catalog distinguishes an absent, empty, and invalid sourc
   }
 });
 
+test("RuleSyncRepository tells an absent command from one it could not read", async () => {
+  // The detail read answers three different questions -- is the prompt there,
+  // is it not there, or could it not be read -- and a caller that collapses
+  // the last two tells an operator their prompt is gone when the file is
+  // there and unreadable. The catalogue already tells them apart; the detail
+  // read has to as well.
+  const repositoryRoot = await mkdtemp(
+    path.join(tmpdir(), "autodev-rulesync-command-read-")
+  );
+  try {
+    const repo = new RuleSyncRepository(repositoryRoot);
+    // An absent commands directory holds no command, so the prompt is not
+    // there: a measured absence, not a failed read.
+    assert.deepEqual(repo.loadCommand("audit"), { status: "not-found" });
+
+    const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
+    await mkdir(commandsDir, { recursive: true });
+    // The directory is there and holds no such command.
+    assert.deepEqual(repo.loadCommand("audit"), { status: "not-found" });
+
+    const commandPath = path.join(commandsDir, "audit.md");
+    await writeFile(commandPath, "No command frontmatter.");
+    // The file is there and could not be parsed. The catalogue says the same
+    // thing about it, and names the command, so the detail names it too.
+    const unreadable = repo.loadCommand("audit");
+    assert.equal(unreadable.status, "unreadable");
+    assert.match(
+      unreadable.status === "unreadable" ? unreadable.reason : "",
+      /must have valid YAML frontmatter/u
+    );
+
+    await writeFile(
+      commandPath,
+      "---\ntargets: [codexcli]\ndescription: Review canonical sources.\n---\n\n# Audit\n\nCheck the source tree.\n"
+    );
+    const found = repo.loadCommand("audit");
+    assert.equal(found.status, "found");
+    assert.equal(found.status === "found" ? found.command.name : "", "audit");
+  } finally {
+    await rm(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
 test("RuleSync catalogs reject a symlinked canonical .rulesync root", async () => {
   const repositoryRoot = await mkdtemp(
     path.join(tmpdir(), "autodev-rulesync-command-root-")

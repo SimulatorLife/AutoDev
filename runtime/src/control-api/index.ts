@@ -2874,10 +2874,25 @@ function agentsView(
 function agentDetailView(
   role: string,
   repositoryRoot: string = DEFAULT_REPO_ROOT
-): Record<string, unknown> | null {
+): ReadOnlyDetailResult {
   const roles = getDefaultExecutionContract().roles ?? {};
   const raw = roles[role] as Record<string, unknown> | undefined;
-  if (!raw) return null;
+  if (!raw) {
+    // The roles are the execution contract's, and the accessor that reads the
+    // contract falls back to an empty contract when the read fails: an empty
+    // contract and a contract nobody read look the same to a caller that only
+    // sees the roles. A 404 here would say the role does not exist, which is
+    // a claim the contract never made.
+    if (!executionContractObserved()) {
+      return {
+        status: "unreadable",
+        code: "autodev_control_api_execution_contract_not_observed",
+        message:
+          "The execution contract was not read, so the agent roles are not known."
+      };
+    }
+    return { status: "unknown" };
+  }
   const isOrchestrator = role === "orchestrator";
   // Normalised for the same reason as in `agentsView`, and the two must agree:
   // a role whose `kind` is a typo has to read one way on the list and the same way
@@ -2925,32 +2940,37 @@ function agentDetailView(
   const valid = hasPrompt && allowedProviders.length > 0;
 
   return {
-    schema: "autodev-control-agent-detail-v3",
-    id: role,
-    role,
-    kind,
-    readOnly,
-    configured: true,
-    valid,
-    status,
-    convergence,
-    enablement: agentEnablementView(role),
-    primaryModel: isOrchestrator ? "autodev/orchestrator" : "autodev/subagent",
-    allowedProviders,
-    mcps,
-    skills,
-    promptPath: existsSync(promptPath)
-      ? `agents/prompts/roles/${role}.md`
-      : null,
-    systemPrompt,
-    reconciliation: promptReconciliationView({
-      name: role,
-      codexHome: defaultCodexHomeForReconciliation(),
-      expectedRevision: createHash("sha256")
-        .update(systemPrompt, "utf8")
-        .digest("hex")
-    })
-  } satisfies ControlApiAgentDetailResponse;
+    status: "found",
+    detail: {
+      schema: "autodev-control-agent-detail-v3",
+      id: role,
+      role,
+      kind,
+      readOnly,
+      configured: true,
+      valid,
+      status,
+      convergence,
+      enablement: agentEnablementView(role),
+      primaryModel: isOrchestrator
+        ? "autodev/orchestrator"
+        : "autodev/subagent",
+      allowedProviders,
+      mcps,
+      skills,
+      promptPath: existsSync(promptPath)
+        ? `agents/prompts/roles/${role}.md`
+        : null,
+      systemPrompt,
+      reconciliation: promptReconciliationView({
+        name: role,
+        codexHome: defaultCodexHomeForReconciliation(),
+        expectedRevision: createHash("sha256")
+          .update(systemPrompt, "utf8")
+          .digest("hex")
+      })
+    } satisfies ControlApiAgentDetailResponse
+  };
 }
 
 function providerModelsView(): ControlApiProviderModelsResponse {
@@ -4442,32 +4462,52 @@ function defaultCodexHomeForReconciliation(): string {
   return process.env.CODEX_HOME?.trim() || path.join(home, ".codex");
 }
 
+/**
+ * The prompt's own read.
+ *
+ * A prompt has two canonical sources -- the RuleSync command catalogue and the
+ * role-prompt directory -- and the detail is served from whichever holds it.
+ * Each read says which of the three things happened: the prompt was read, the
+ * prompt is not there, or the source could not be read. The third is not the
+ * second: "this prompt does not exist" and "the file that holds this prompt
+ * could not be parsed" are different claims, and only the first is a 404.
+ */
 function promptDetailView(
   name: string,
   repositoryRoot: string = DEFAULT_REPO_ROOT
-): Record<string, unknown> | null {
+): ReadOnlyDetailResult {
   const repo = new RuleSyncRepository(repositoryRoot);
   const command = repo.loadCommand(name);
-  if (command) {
+  if (command.status === "unreadable") {
+    return {
+      status: "unreadable",
+      code: "autodev_control_api_prompt_command_source_not_read",
+      message: `The canonical command "${name}" could not be read: ${command.reason}`
+    };
+  }
+  if (command.status === "found") {
     const reconciliation = promptReconciliationView({
       name,
       codexHome: defaultCodexHomeForReconciliation(),
-      expectedRevision: command.revision
+      expectedRevision: command.command.revision
     });
     return {
-      schema: "autodev-control-prompt-detail-v4",
-      name,
-      type: "command",
-      source: command.path,
-      content: command.content,
-      preview: command.prompt,
-      revision: command.revision,
-      diff: reconcileDiffWithIdentifier({
-        summary:
-          "Canonical RuleSync command; Rulesync projection observed via Codex home.",
-        identifier: hashString(command.revision) ?? ""
-      }),
-      reconciliation
+      status: "found",
+      detail: {
+        schema: "autodev-control-prompt-detail-v4",
+        name,
+        type: "command",
+        source: command.command.path,
+        content: command.command.content,
+        preview: command.command.prompt,
+        revision: command.command.revision,
+        diff: reconcileDiffWithIdentifier({
+          summary:
+            "Canonical RuleSync command; Rulesync projection observed via Codex home.",
+          identifier: hashString(command.command.revision) ?? ""
+        }),
+        reconciliation
+      } satisfies ControlApiPromptDetailResponse
     };
   }
   const rolePath = path.join(
@@ -4484,69 +4524,84 @@ function promptDetailView(
         .update(content, "utf8")
         .digest("hex");
       return {
-        schema: "autodev-control-prompt-detail-v4",
-        name,
-        type: "role",
-        source: `agents/prompts/roles/${name}.md`,
-        content,
-        preview: content,
-        revision,
-        diff: reconcileDiffSummary({
-          summary:
-            "Role prompt is read-only; canonical source lives under agents/prompts/roles/."
-        }),
-        reconciliation: promptReconciliationView({
+        status: "found",
+        detail: {
+          schema: "autodev-control-prompt-detail-v4",
           name,
-          codexHome: defaultCodexHomeForReconciliation(),
-          expectedRevision: revision
-        })
-      } satisfies ControlApiPromptDetailResponse;
-    } catch {
-      return null;
+          type: "role",
+          source: `agents/prompts/roles/${name}.md`,
+          content,
+          preview: content,
+          revision,
+          diff: reconcileDiffSummary({
+            summary:
+              "Role prompt is read-only; canonical source lives under agents/prompts/roles/."
+          }),
+          reconciliation: promptReconciliationView({
+            name,
+            codexHome: defaultCodexHomeForReconciliation(),
+            expectedRevision: revision
+          })
+        } satisfies ControlApiPromptDetailResponse
+      };
+    } catch (error) {
+      return {
+        status: "unreadable",
+        code: "autodev_control_api_prompt_role_source_not_read",
+        message: `The role prompt "${name}" could not be read: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`
+      };
     }
   }
-  return null;
+  return { status: "unknown" };
 }
 
 function promptVersionsView(
   name: string,
   page: RuleSyncCommandHistoryPage,
   repositoryRoot: string = DEFAULT_REPO_ROOT
-): Record<string, unknown> | null {
+): ReadOnlyDetailResult {
   const history = new RuleSyncRepository(repositoryRoot).loadCommandHistory(
     name,
     page
   );
-  if (!history) return null;
+  if (!history) return { status: "unknown" };
   return {
-    schema: "autodev-control-prompt-versions-v2",
-    name,
-    status: history.status,
-    versions: history.versions,
-    hasMore: history.hasMore,
-    offset: page.offset,
-    limit: page.limit
-  } satisfies ControlApiPromptVersionsResponse;
+    status: "found",
+    detail: {
+      schema: "autodev-control-prompt-versions-v2",
+      name,
+      status: history.status,
+      versions: history.versions,
+      hasMore: history.hasMore,
+      offset: page.offset,
+      limit: page.limit
+    } satisfies ControlApiPromptVersionsResponse
+  };
 }
 
 function promptVersionView(
   name: string,
   versionHash: string,
   repositoryRoot: string = DEFAULT_REPO_ROOT
-): Record<string, unknown> | null {
+): ReadOnlyDetailResult {
   const version = new RuleSyncRepository(repositoryRoot).loadCommandVersion(
     name,
     versionHash
   );
-  if (!version) return null;
+  if (!version) return { status: "unknown" };
   return {
-    schema: "autodev-control-prompt-version-v1",
-    name: version.name,
-    versionHash: version.versionHash,
-    updatedAt: version.updatedAt,
-    content: version.content,
-    diff: version.diff
-  } satisfies ControlApiPromptVersionResponse;
+    status: "found",
+    detail: {
+      schema: "autodev-control-prompt-version-v1",
+      name: version.name,
+      versionHash: version.versionHash,
+      updatedAt: version.updatedAt,
+      content: version.content,
+      diff: version.diff
+    } satisfies ControlApiPromptVersionResponse
+  };
 }
 
 function routingView(now: number): Record<string, unknown> {
@@ -6012,26 +6067,34 @@ async function modelRoute(
   return true;
 }
 
+/**
+ * The outcome of reading one detail.
+ *
+ * The read owns its own failure. A detail that cannot be produced because its
+ * source was never read is not an unknown resource -- nobody looked -- and only
+ * the read knows which of the two happened and why, so the reason travels with
+ * the answer instead of in a second probe of the same source.
+ */
+type ReadOnlyDetailResult =
+  | {
+      readonly status: "found";
+      readonly detail: Record<string, unknown>;
+    }
+  | {
+      readonly status: "unknown";
+    }
+  | {
+      readonly status: "unreadable";
+      readonly code: string;
+      readonly message: string;
+    };
+
 interface ReadOnlyDetailRoute {
   readonly action: string;
   readonly unknownReason: string;
   readonly unknownCode: string;
   readonly unknownMessage: string;
-  readonly read: (identifier: string) => Record<string, unknown> | null;
-  /**
-   * The read behind the detail, when it can fail on its own.
-   *
-   * A detail that cannot be produced because its source was never read is not
-   * an unknown resource: nobody looked. The route answers the two
-   * differently, because a 404 for a resource that exists is a wrong answer,
-   * and it is the wrong answer an operator cannot act on -- the page says the
-   * role does not exist when the truth is that the roles are not known.
-   */
-  readonly source?: {
-    readonly observed: () => boolean;
-    readonly code: string;
-    readonly message: string;
-  };
+  readonly read: (identifier: string) => ReadOnlyDetailResult;
 }
 
 function readOnlyDetailRoute(
@@ -6061,29 +6124,27 @@ function readOnlyDetailRoute(
     return true;
   }
 
-  const detail = route.read(identifier);
-  if (!detail) {
-    const source = route.source;
-    if (source !== undefined && !source.observed()) {
-      auditRejectedRequest(
-        request,
-        method,
-        pathname,
-        `${route.unknownReason}_source_not_observed`,
-        actor
-      );
-      sendControlError(response, 503, source.code, source.message);
-      return true;
-    }
-    auditRejectedRequest(request, method, pathname, route.unknownReason, actor);
-    sendControlError(response, 404, route.unknownCode, route.unknownMessage);
+  const result = route.read(identifier);
+  if (result.status === "found") {
+    sendJson(response, 200, result.detail, {
+      "cache-control": "no-store",
+      vary: CONTROL_VARY_HEADER
+    });
     return true;
   }
-
-  sendJson(response, 200, detail, {
-    "cache-control": "no-store",
-    vary: CONTROL_VARY_HEADER
-  });
+  if (result.status === "unreadable") {
+    auditRejectedRequest(
+      request,
+      method,
+      pathname,
+      `${route.unknownReason}_source_not_observed`,
+      actor
+    );
+    sendControlError(response, 503, result.code, result.message);
+    return true;
+  }
+  auditRejectedRequest(request, method, pathname, route.unknownReason, actor);
+  sendControlError(response, 404, route.unknownCode, route.unknownMessage);
   return true;
 }
 
@@ -6092,18 +6153,7 @@ const AGENT_DETAIL_ROUTE: ReadOnlyDetailRoute = {
   unknownReason: "unknown_agent",
   unknownCode: "autodev_control_api_unknown_agent",
   unknownMessage: "Unknown agent role.",
-  read: agentDetailView,
-  source: {
-    // The roles are the execution contract's, and the accessor that reads the
-    // contract falls back to an empty contract when the read fails: an empty
-    // contract and a contract nobody read look the same to a caller that only
-    // sees the roles. A 404 here would say the role does not exist, which is
-    // a claim the contract never made.
-    observed: executionContractObserved,
-    code: "autodev_control_api_execution_contract_not_observed",
-    message:
-      "The execution contract was not read, so the agent roles are not known."
-  }
+  read: agentDetailView
 };
 
 const PROMPT_DETAIL_ROUTE: ReadOnlyDetailRoute = {

@@ -351,6 +351,30 @@ export interface RuleSyncCommandUpdateInput {
   readonly content: string;
 }
 
+/**
+ * The outcome of reading one canonical command.
+ *
+ * "The command does not exist" and "the command could not be read" are two
+ * different claims, and a caller that answers "unknown prompt" for both tells
+ * an operator their prompt is gone when it is there and unreadable. The
+ * catalogue's own read already tells them apart -- an unreadable file makes
+ * the whole catalogue invalid and names the fault -- so the detail read names
+ * the same fault rather than swallowing it.
+ */
+export type RuleSyncCommandRead =
+  | {
+      readonly status: "found";
+      readonly command: RuleSyncCommand;
+    }
+  | {
+      readonly status: "not-found";
+    }
+  | {
+      readonly status: "unreadable";
+      /** Why the command could not be read, in the operator's terms. */
+      readonly reason: string;
+    };
+
 export interface RuleSyncCommandVersionReference {
   readonly versionHash: string;
   readonly updatedAt: string;
@@ -1856,24 +1880,78 @@ export class RuleSyncRepository {
     return { source: COMMANDS_SOURCE, valid: true, issues: [], commands };
   }
 
-  loadCommand(name: string): RuleSyncCommand | null {
-    if (!COMMAND_NAME_PATTERN.test(name)) return null;
+  /**
+   * Reads one canonical command.
+   *
+   * The three outcomes are the point: a command that is absent, a command
+   * that could not be read, and a command that was read are three different
+   * answers, and a caller that collapses them into "no such command" tells an
+   * operator to look for a renamed prompt when the real fault is a file that
+   * cannot be parsed.
+   */
+  loadCommand(name: string): RuleSyncCommandRead {
+    if (!COMMAND_NAME_PATTERN.test(name)) return { status: "not-found" };
     const directory = resolveCanonicalRuleSyncDirectory(
       this.repositoryRoot,
       "commands"
     );
     if (directory.valid !== true || directory.path === null) {
-      return null;
+      // An absent commands directory holds no command, so the prompt is
+      // genuinely not there. A directory that is there and unusable is a fault
+      // the operator has to know about, and it carries its own reason.
+      if (directory.valid === null) return { status: "not-found" };
+      return {
+        status: "unreadable",
+        reason:
+          directory.issues[0]?.message ??
+          "The canonical commands directory could not be read."
+      };
     }
     const commandsDir = directory.path;
     const entryPath = path.join(commandsDir, `${name}.md`);
+    let stat: ReturnType<typeof lstatSync>;
     try {
-      const stat = lstatSync(entryPath);
-      if (stat.isSymbolicLink() || !stat.isFile()) return null;
-      const content = readFileSync(entryPath, "utf8");
-      return parseCachedRuleSyncCommand(entryPath, name, content);
-    } catch {
-      return null;
+      stat = lstatSync(entryPath);
+    } catch (error) {
+      if (isMissingFileError(error)) return { status: "not-found" };
+      return {
+        status: "unreadable",
+        reason: `"${name}.md" could not be read: ${describeFileSystemError(error)}.`
+      };
+    }
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      return {
+        status: "unreadable",
+        reason: stat.isSymbolicLink()
+          ? `"${name}.md" is a symbolic link, and canonical commands are read from the repository itself.`
+          : `"${name}.md" exists but is not a regular file.`
+      };
+    }
+    let content: string;
+    try {
+      content = readFileSync(entryPath, "utf8");
+    } catch (error) {
+      return {
+        status: "unreadable",
+        reason: `"${name}.md" could not be read: ${describeFileSystemError(error)}.`
+      };
+    }
+    try {
+      return {
+        status: "found",
+        command: parseCachedRuleSyncCommand(entryPath, name, content)
+      };
+    } catch (error) {
+      // The parser names the command, which is the one string an operator can
+      // search for, so its message is carried through rather than replaced by a
+      // generic failure.
+      return {
+        status: "unreadable",
+        reason:
+          error instanceof Error
+            ? error.message
+            : "The command could not be parsed."
+      };
     }
   }
 
@@ -1903,6 +1981,11 @@ export class RuleSyncRepository {
     }
 
     const state = this.loadCommands();
+    // A catalogue that was read and found broken does not name this command,
+    // and that is not the same as the catalogue naming it as absent: the
+    // history is unavailable rather than unknown. An absent catalogue holds no
+    // command, so the prompt is genuinely not there.
+    if (state.valid === false) return UNAVAILABLE_COMMAND_HISTORY;
     if (
       state.valid !== true ||
       !state.commands.some((item) => item.name === name)

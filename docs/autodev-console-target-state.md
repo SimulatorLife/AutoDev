@@ -595,6 +595,8 @@ The prompts catalogue is every canonical prompt and command in the repository, a
 
 A count over the catalogue is a number only when both reads were observed. The "Canonical Prompts" card states the catalogue's own size, the "RuleSync Commands" and "Agent Role Prompts" cards state their own source's size, and each card is a measurement only of the read behind it. The page says which read did not happen, and the entries that arrived are still shown: they are what was observed.
 
+The prompt's detail tells the same story about one prompt. A prompt has two canonical sources -- the RuleSync command catalogue and the role-prompt directory -- and each read answers one of three things: the prompt was read, the prompt is not there, or the source could not be read. The third is not the second. A command file that is present and cannot be parsed is a source that could not be read, and the detail says so, with the reason, rather than answering that the prompt does not exist. A prompt nobody wrote is an unknown prompt; a prompt nobody could read is a source that could not be read.
+
 ### Skills/capabilities
 
 Keep stages distinct:

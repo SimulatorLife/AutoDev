@@ -4175,6 +4175,39 @@ test("Control API detail fetchers encode identifiers and preserve not-found stat
   }
 });
 
+test("a prompt detail that could not be read keeps the Runtime's reason", async () => {
+  // The Runtime answers 503 when a prompt's source could not be read, and the
+  // Console must carry that reason to the page: a 404 would say the prompt
+  // does not exist, and the page would tell the operator to look for a renamed
+  // prompt instead of a file that cannot be parsed.
+  const config = {
+    baseUrl: "http://127.0.0.1:4101",
+    serviceToken: "server-only"
+  };
+  const result = await fetchPromptDetail("audit", config, {
+    fetchImpl: async () =>
+      Response.json(
+        {
+          error: {
+            code: "autodev_control_api_prompt_command_source_not_read",
+            message:
+              'The canonical command "audit" could not be read: "audit.md" must have valid YAML frontmatter.',
+            type: "unavailable"
+          }
+        },
+        { status: 503 }
+      )
+  });
+
+  assert.equal(result.kind, "http-error");
+  assert.equal(result.status, 503);
+  assert.equal(
+    result.code,
+    "autodev_control_api_prompt_command_source_not_read"
+  );
+  assert.match(result.message, /must have valid YAML frontmatter/u);
+});
+
 test("Prompt version fetchers validate recent history and selected revision identity", async () => {
   const config = {
     baseUrl: "http://127.0.0.1:4101",
