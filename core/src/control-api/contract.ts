@@ -56,11 +56,16 @@
  * write reports it together with the fields it changed -- so the Workspaces
  * surface says converged, pending or not observed instead of leaving the
  * operator to infer convergence from a write that reported success.
+ * v19: the skills and prompts collections declare the canonical write paths
+ * they have -- role assignment and source editing for skills, the command's
+ * own source for prompts -- so the Console refuses a response that claims
+ * those collections are read-only. Both collections published `readOnly: true`
+ * from before their write paths existed.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 18
+  version: 19
 } as const;
 
 export type ControlApiContractResponse = {

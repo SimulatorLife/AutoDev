@@ -2590,6 +2590,10 @@ test("Control API surfaces all 13 typed resource families", async () => {
     assert.equal(skills.response.statusCode, 200);
     assert.equal(skills.body.schema, "autodev-control-skills-v2");
     assert.equal(skills.body.source, ".rulesync/skills+execution-contract");
+    // The skills collection has canonical write paths -- role assignment and
+    // the canonical source -- so the Runtime must not claim it is read-only.
+    // The flag used to be a stale constant that predated both write paths.
+    assert.equal(skills.body.readOnly, false);
     const canonicalSkills = new RuleSyncRepository().loadSkills();
     assert.equal(canonicalSkills.valid, true);
     assert.equal(skills.body.valid, true);
@@ -2935,7 +2939,10 @@ test("Control API prompts listing projects the canonical RuleSyncRepository.load
     assert.equal(prompts.body.schema, "autodev-control-prompts-v2");
     assert.equal(prompts.body.source, ".rulesync/commands");
     assert.equal(prompts.body.valid, true);
-    assert.equal(prompts.body.readOnly, true);
+    // The prompts collection has a canonical write path -- the command's own
+    // source -- so the Runtime must not claim it is read-only. The flag used
+    // to be a stale constant that predated the write path.
+    assert.equal(prompts.body.readOnly, false);
     assert.equal(prompts.body.totalCommands, expectedCommands.length);
     assert.deepEqual(prompts.body.commands, expectedCommands);
 

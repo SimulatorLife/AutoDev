@@ -4250,7 +4250,7 @@ test("Skills fetcher validates the v2 catalog contract and rejects stale respons
   const payload = {
     schema: "autodev-control-skills-v2",
     source: ".rulesync/skills+execution-contract",
-    readOnly: true,
+    readOnly: false,
     valid: true,
     executionContractRevision: "b".repeat(64),
     assignmentRoles: ["validator"],
@@ -4317,6 +4317,16 @@ test("Skills fetcher validates the v2 catalog contract and rejects stale respons
     assert.equal(stale.code, "autodev_control_api_invalid_skills_response");
     assert.match(stale.message, /requires the v2 canonical catalog contract/);
   }
+
+  // The skills collection has canonical write paths -- role assignment and the
+  // canonical source -- so a response that claims it is read-only is refused.
+  // The page offers an assignment form and a source editor, and both post to
+  // the write paths that flag names; rendering a catalogue that says the write
+  // path does not exist would offer forms that cannot work.
+  const readOnly = await fetchSkills(config, {
+    fetchImpl: async () => Response.json({ ...payload, readOnly: true })
+  });
+  assert.equal(readOnly.kind, "invalid-response");
 });
 
 test("fetchControlApi extracts code and message from Control API error envelope", async () => {
@@ -11152,7 +11162,7 @@ test("Prompts fetcher validates source state and rejects stale contracts", async
       Response.json({
         schema: "autodev-control-prompts-v2",
         source: ".rulesync/commands",
-        readOnly: true,
+        readOnly: false,
         issues: [],
         valid: true,
         totalCommands: 1,
@@ -11186,6 +11196,31 @@ test("Prompts fetcher validates source state and rejects stale contracts", async
     assert.equal(stale.code, "autodev_control_api_invalid_prompts_response");
     assert.match(stale.message, /requires the v2 source-validity contract/);
   }
+
+  // The prompts collection has a canonical write path -- the command's own
+  // source -- so a response that claims it is read-only is refused. The page
+  // offers a source editor that posts to that write path, and a catalogue
+  // that says the path does not exist would offer an editor that cannot work.
+  const readOnly = await fetchPrompts(config, {
+    fetchImpl: async () =>
+      Response.json({
+        schema: "autodev-control-prompts-v2",
+        source: ".rulesync/commands",
+        readOnly: true,
+        issues: [],
+        valid: true,
+        totalCommands: 1,
+        commands: [
+          {
+            name: "dry",
+            path: ".rulesync/commands/dry.md",
+            description: "Run a dry pass."
+          }
+        ],
+        rolePrompts: []
+      })
+  });
+  assert.equal(readOnly.kind, "invalid-response");
 });
 
 test("fetchGithubWorkflows issues authenticated GET to /control/github", async () => {
@@ -12137,7 +12172,7 @@ test("View adapters translate Control API responses without inventing data", () 
   const skillsResponse: ControlApiSkillsResponse = {
     schema: "autodev-control-skills-v2",
     source: ".rulesync/skills+execution-contract",
-    readOnly: true,
+    readOnly: false,
     valid: true,
     executionContractRevision: "a".repeat(64),
     assignmentRoles: ["browser-tester", "validator"],
@@ -12199,7 +12234,7 @@ test("View adapters translate Control API responses without inventing data", () 
   const prompts = promptsFromControlApi({
     schema: "autodev-control-prompts-v2",
     source: ".rulesync/commands",
-    readOnly: true,
+    readOnly: false,
     issues: [],
     valid: true,
     totalCommands: 1,

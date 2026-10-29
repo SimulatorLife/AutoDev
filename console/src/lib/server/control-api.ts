@@ -2933,7 +2933,12 @@ function isControlApiSkillsResponse(
     isRecord(value) &&
     value.schema === "autodev-control-skills-v2" &&
     typeof value.source === "string" &&
-    value.readOnly === true &&
+    // The skills collection has canonical write paths -- role assignment and
+    // the canonical source -- so the Runtime says it is writable. A response
+    // that claims the opposite is refused rather than rendered: the page
+    // offers an assignment form and a source editor, and both post to the
+    // write paths this flag names.
+    value.readOnly === false &&
     (value.valid === true || value.valid === false || value.valid === null) &&
     // Every catalog carries the reasons it located, so one flag cannot stand in
     // for six faults that need six different repairs.
@@ -3361,7 +3366,11 @@ function isControlApiPromptsResponse(
     isRecord(value) &&
     value.schema === "autodev-control-prompts-v2" &&
     typeof value.source === "string" &&
-    value.readOnly === true &&
+    // The prompts collection has a canonical write path -- the command's own
+    // source -- so the Runtime says it is writable. A response that claims the
+    // opposite is refused rather than rendered: the page offers a source
+    // editor that posts to the write path this flag names.
+    value.readOnly === false &&
     (value.valid === true || value.valid === false || value.valid === null) &&
     isValidationIssueList(value.issues) &&
     (value.totalCommands === null ||

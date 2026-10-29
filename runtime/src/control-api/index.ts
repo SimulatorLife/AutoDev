@@ -1849,7 +1849,12 @@ function skillsView(
   return {
     schema: "autodev-control-skills-v2",
     source: `${catalog.source}+${EXECUTION_CONTRACT_SOURCE}`,
-    readOnly: true,
+    // The skills collection has canonical write paths -- role assignment at
+    // `PATCH /control/skills/:name` and the canonical source at
+    // `PATCH /control/skills/:name/content` -- so it is not read-only. This
+    // used to say it was, which was a stale constant: the write paths arrived
+    // after it and the flag was never revisited.
+    readOnly: false,
     valid: catalog.valid,
     issues: catalog.issues,
     executionContractRevision:
@@ -4138,7 +4143,11 @@ function promptsView(
   return {
     schema: "autodev-control-prompts-v2",
     source: commandState.source,
-    readOnly: true,
+    // The prompts collection has a canonical write path -- the command's own
+    // source at `PATCH /control/prompts/:name` -- so it is not read-only. This
+    // used to say it was, which was a stale constant: the write path arrived
+    // after it and the flag was never revisited.
+    readOnly: false,
     valid: commandState.valid,
     issues: commandState.issues,
     totalCommands: commandState.valid === true ? commands.length : null,

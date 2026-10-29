@@ -186,7 +186,7 @@ test("the control API mapping carries the scope facts through", () => {
   const skills = skillsFromControlApi({
     schema: "autodev-control-skills-v2",
     source: ".rulesync/skills+execution-contract",
-    readOnly: true,
+    readOnly: false,
     valid: true,
     executionContractRevision: "a".repeat(64),
     assignmentRoles: ["worker"],
@@ -276,7 +276,7 @@ test("the telemetry mapping keeps a null apart from a zero", () => {
   const telemetry = skillTelemetryFromControlApi({
     schema: "autodev-control-skills-v2",
     source: ".rulesync/skills+execution-contract",
-    readOnly: true,
+    readOnly: false,
     valid: true,
     executionContractRevision: "a".repeat(64),
     assignmentRoles: ["worker"],

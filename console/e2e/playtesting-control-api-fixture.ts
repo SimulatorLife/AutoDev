@@ -5381,7 +5381,7 @@ function handleCatalogResourceRead(
     sendJson(response, {
       schema: "autodev-control-skills-v2",
       source: ".rulesync/skills",
-      readOnly: true,
+      readOnly: false,
       valid: true,
       issues: [],
       executionContractRevision: skillAssignmentRevision,
@@ -5433,7 +5433,7 @@ function handleCatalogResourceRead(
     sendJson(response, {
       schema: "autodev-control-prompts-v2",
       source: ".rulesync/prompts",
-      readOnly: true,
+      readOnly: false,
       valid: true,
       issues: [],
       totalCommands: 1,
