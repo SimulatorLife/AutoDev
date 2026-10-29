@@ -4307,11 +4307,149 @@ let githubRuntimeUnavailable = false;
 /**
  * The workspace the durable memory belongs to.
  */
+/**
+ * The routes the experiences tab reads.
+ *
+ * The sub-resources are matched before the bare detail, which is the order the
+ * Runtime nests them in.
+ */
+const MEMORY_EXPERIENCE_SESSION_OUTCOMES_ROUTE =
+  /\/control\/memory\/experiences\/[^/]+\/session-outcomes$/u;
+const MEMORY_EXPERIENCE_USE_ASSESSMENTS_ROUTE =
+  /\/control\/memory\/experiences\/[^/]+\/use-assessments$/u;
+const MEMORY_EXPERIENCE_OUTCOMES_ROUTE =
+  /\/control\/memory\/experiences\/[^/]+\/outcomes$/u;
+const MEMORY_EXPERIENCE_DETAIL_ROUTE =
+  /\/control\/memory\/experiences\/[^/]+$/u;
+
+/** The trajectory the one experience points at. */
+const MEMORY_EXPERIENCE_TRAJECTORY_URI = "codex://session/exp-0001";
+
 const MEMORY_WORKSPACE_ID = "fixture/game";
 /** The claims the store holds behind the window one read carries. */
 const MEMORY_RECORDS_TOTAL = 1204;
 /** The rows one read carries. */
 const MEMORY_RECORDS_LIMIT = 50;
+
+/**
+ * The one experience the fixture holds, and the four reads opening it makes.
+ *
+ * The experiences read used to answer an empty list, so the whole Experiences
+ * tab was unreachable: the page rendered its "no experiences" state and the
+ * acceptance could not have measured an evidence row, an outcome report or a
+ * curator's assessment even if one of them had been wrong. A fixture that does
+ * not serve the contract cannot measure the page that reads it.
+ *
+ * The injection carries the vocabulary the Runtime validates -- a mode, a
+ * result, an outcome, a report kind, an authority and a reason -- because the
+ * Console renders each of them in its own word, and a value the Runtime cannot
+ * produce would be measured against nothing.
+ */
+const MEMORY_EXPERIENCE = {
+  id: "exp-0001",
+  workspaceId: MEMORY_WORKSPACE_ID,
+  scope: {
+    kind: "repository",
+    workspaceId: MEMORY_WORKSPACE_ID,
+    repositoryId: MEMORY_WORKSPACE_ID
+  },
+  taskId: "task-0001",
+  runId: "run-0001",
+  agentId: "agent-0001",
+  startedAt: "2026-02-11T08:59:00.000Z",
+  outcome: "success",
+  memoryMode: "jit",
+  trajectory: {
+    format: "codex-v1",
+    uri: MEMORY_EXPERIENCE_TRAJECTORY_URI,
+    sourceAdapter: "codex",
+    normalizerId: "codex.rollout.v1",
+    normalizerVersion: "3",
+    digest: "sha256:0123456789abcdef0123456789abcdef",
+    diagnosticCodes: ["trajectory.truncated"]
+  },
+  evidence: [{ kind: "trajectory", uri: MEMORY_EXPERIENCE_TRAJECTORY_URI }]
+};
+
+/** The injection the experience's outcome and assessment rows are about. */
+const MEMORY_INJECTION = {
+  id: "inj-0001",
+  correlationToken: "corr-0001",
+  memoryMode: "jit",
+  injectionResult: "injected",
+  packetCharacterCount: 812,
+  memoryIds: ["mem-0001"],
+  occurredAt: "2026-02-11T09:00:00.000Z"
+};
+
+/** The outcome the reporter filed for the injection. */
+const MEMORY_INJECTION_OUTCOMES = {
+  schema: "autodev-memory-injection-outcomes-v1",
+  experienceId: MEMORY_EXPERIENCE.id,
+  items: [
+    {
+      injection: MEMORY_INJECTION,
+      outcome: {
+        outcomeKind: "success",
+        reportKind: "task",
+        reportedAt: "2026-02-11T09:01:00.000Z",
+        reporterId: "reporter@example",
+        reporterAuthority: "worker",
+        reasonCode: "reporter_supplied"
+      },
+      sessionInjectionCount: 1
+    }
+  ],
+  total: 1,
+  limit: MEMORY_RECORDS_LIMIT,
+  offset: 0
+};
+
+/**
+ * The same injection without its correlation token.
+ *
+ * The token is what a reporter's outcome binds to, and the use assessment is
+ * not an outcome, so the projection withholds it.
+ */
+const { correlationToken: _correlationToken, ...ASSESSED_INJECTION } =
+  MEMORY_INJECTION;
+
+/** The curator's assessment of the same injection. */
+const MEMORY_USE_ASSESSMENTS = {
+  schema: "autodev-memory-injection-use-assessments-v1",
+  experienceId: MEMORY_EXPERIENCE.id,
+  items: [
+    {
+      injection: ASSESSED_INJECTION,
+      use: {
+        useKind: "used",
+        usedMemoryIds: ["mem-0001"],
+        reportedAt: "2026-02-11T09:02:00.000Z",
+        evidence: [
+          { kind: "trajectory", uri: MEMORY_EXPERIENCE_TRAJECTORY_URI }
+        ]
+      },
+      sessionInjectionCount: 1
+    }
+  ],
+  total: 1,
+  limit: MEMORY_RECORDS_LIMIT,
+  offset: 0
+};
+
+/** The reporter's session-level outcome for the experience. */
+const MEMORY_SESSION_OUTCOME = {
+  schema: "autodev-memory-session-outcome-report-v1",
+  experienceId: MEMORY_EXPERIENCE.id,
+  report: {
+    outcomeKind: "success",
+    reportKind: "task",
+    reporterId: "reporter@example",
+    reportedAt: "2026-02-11T09:03:00.000Z",
+    reasonCode: "reporter_supplied",
+    evidence: [{ kind: "trajectory", uri: MEMORY_EXPERIENCE_TRAJECTORY_URI }]
+  }
+};
 
 /**
  * Whether durable memory storage is connected.
@@ -4723,10 +4861,32 @@ function handleMemoryRead(
   if (url.pathname === "/control/memory/experiences") {
     sendJson(response, {
       schema: "autodev-memory-experiences-v1",
-      items: [],
-      total: 0,
+      items: [MEMORY_EXPERIENCE],
+      total: 1,
       limit: MEMORY_RECORDS_LIMIT,
-      offset: 0
+      offset: 0,
+      hasMore: false
+    });
+    return true;
+  }
+  // The sub-resources are matched before the bare detail, which is the order the
+  // Runtime nests them in.
+  if (MEMORY_EXPERIENCE_SESSION_OUTCOMES_ROUTE.test(url.pathname)) {
+    sendJson(response, MEMORY_SESSION_OUTCOME);
+    return true;
+  }
+  if (MEMORY_EXPERIENCE_USE_ASSESSMENTS_ROUTE.test(url.pathname)) {
+    sendJson(response, MEMORY_USE_ASSESSMENTS);
+    return true;
+  }
+  if (MEMORY_EXPERIENCE_OUTCOMES_ROUTE.test(url.pathname)) {
+    sendJson(response, MEMORY_INJECTION_OUTCOMES);
+    return true;
+  }
+  if (MEMORY_EXPERIENCE_DETAIL_ROUTE.test(url.pathname)) {
+    sendJson(response, {
+      schema: "autodev-memory-experience-v1",
+      experience: MEMORY_EXPERIENCE
     });
     return true;
   }

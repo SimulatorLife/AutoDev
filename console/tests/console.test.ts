@@ -13070,7 +13070,7 @@ test("MemoryExperiencesView renders experiences with task, role, and validation 
   assert.match(markup, /task-101/);
   assert.match(markup, /run-505/);
   assert.match(markup, /orchestrator/);
-  assert.match(markup, /jit/);
+  assert.match(markup, /JIT/);
   assert.match(markup, /success/);
 });
 
@@ -18118,8 +18118,8 @@ test("an experience shows observed packets and reported outcomes as separate cla
 
   assert.match(reported, /data-experience-evidence="true"/);
   assert.match(reported, /Observed by the runtime/);
-  assert.match(reported, /Reported outcome: success/);
-  assert.match(reported, /partially_used \(1\/2 memories cited\)/);
+  assert.match(reported, /Reported outcome: Success/);
+  assert.match(reported, /Partially used \(1\/2 memories cited\)/);
   // The session count is labelled as the session's, not this row's.
   assert.match(reported, /1 injection in this session/);
 
@@ -18176,7 +18176,7 @@ test("an experience shows observed packets and reported outcomes as separate cla
     ],
     useAssessmentTotal: 1
   });
-  assert.match(unobservable, /unobservable/);
+  assert.match(unobservable, /Unobservable/);
   assert.doesNotMatch(unobservable, /not_used/);
 
   // A read that did not succeed is reported as unavailable. It must never

@@ -190,6 +190,43 @@ test("the Outcome Cohorts tab renders every count the cohorts contract declares"
   );
 });
 
+test("the Experiences tab renders the evidence it read, in the Console's words", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/memory?tab=experiences");
+  await expect(memoryBody(page)).toBeVisible();
+
+  // The tab used to be unreachable: the fixture's experiences read answered an
+  // empty list, so the page rendered its "no experiences" state and nothing
+  // in the acceptance could have measured an evidence row -- which is how the
+  // evidence rows came to print the wire's own keys for a mode, a result, an
+  // outcome and a reason without anything failing.
+  const row = page.locator('[data-memory-experience-id="exp-0001"]');
+  await expect(row).toBeVisible();
+  await row.click();
+
+  // The reporter's half of the evidence, in the Console's words for each of
+  // them: the mode, the result, the outcome, the report kind, the authority
+  // that filed it, the reason it carries, and the moment it was filed at.
+  const outcomes = page.locator('[data-evidence="outcomes"]');
+  await expect(outcomes).toContainText("Injected");
+  await expect(outcomes).toContainText("JIT");
+  await expect(outcomes).toContainText("Reported outcome: Success");
+  await expect(outcomes).toContainText(
+    "Task by reporter@example (Worker) at 2026-02-11 09:01:00 UTC — Supplied by the reporter"
+  );
+  await expect(outcomes).toContainText(
+    "1 memories · 812 chars · 2026-02-11 09:00:00 UTC"
+  );
+
+  // The curator's half is a separate claim from the reporter's, and it is
+  // reported separately.
+  const assessments = page.locator('[data-evidence="use-assessments"]');
+  await expect(assessments).toContainText("JIT · Injected");
+  await expect(assessments).toContainText("Used (1/1 memories cited)");
+});
+
 test("the pager says which pages there are and its links reach them", async ({
   page
 }) => {

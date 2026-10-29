@@ -57,6 +57,7 @@ import {
   MEMORY_OUTCOME_REPORT_REASON_LABEL,
   MEMORY_PURGE_REASON_LABEL,
   MEMORY_REPORT_KIND_LABEL,
+  MEMORY_USE_KIND_LABEL,
   MEMORY_VALIDATION_LABEL,
   MEMORY_VALIDATION_VARIANT
 } from "./memory-status.ts";
@@ -718,7 +719,7 @@ function ExperienceEvidence({
                   null,
                   row.use === null
                     ? "not assessed"
-                    : `${row.use.useKind} (${row.use.usedMemoryIds.length}/${row.injection.memoryIds.length} memories cited)`
+                    : `${MEMORY_USE_KIND_LABEL[row.use.useKind]} (${row.use.usedMemoryIds.length}/${row.injection.memoryIds.length} memories cited)`
                 )
               )
             )
