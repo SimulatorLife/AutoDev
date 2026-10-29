@@ -22,12 +22,15 @@ const REPO_ROOT = resolvePath(import.meta.dirname, "..");
  */
 const FAKE_AGY = String.raw`
 import { spawn } from "node:child_process";
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 
 const log = process.env.FAKE_AGY_LOG;
-appendFileSync(log, JSON.stringify({ pid: process.pid, argv: process.argv.slice(2) }) + "\n");
+const argv = process.argv.slice(2);
+const prompt = argv[argv.indexOf("-p") + 1] ?? "";
+const attachment = prompt.match(/(\S*\/attachments\/attachment-\d+\.\w+)/)?.[1] ?? null;
+appendFileSync(log, JSON.stringify({ pid: process.pid, argv, attachment, attachmentExists: attachment ? existsSync(attachment) : null }) + "\n");
 
 // agy streams a text delta before reaching for a tool, so the bridge has
 // something to open the response with.
@@ -718,6 +721,119 @@ test("a continuation for a call no live turn owns starts a turn instead of hangi
       readFileSync(agyLog, "utf8").trim().split("\n").length,
       1,
       "a stale continuation is a new turn, not a resume"
+    );
+  } finally {
+    await stopChild(bridge);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an image the user attached is written where agy can open it, and named in the prompt", async () => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-agy-attachment-"));
+  const home = join(root, "home");
+  const codexHome = join(root, "codex");
+  const workspace = join(root, "workspace");
+  const agyHome = join(home, ".gemini");
+  const agyCliDir = join(agyHome, "antigravity-cli");
+  const agyLog = join(root, "agy.jsonl");
+  const fakeAgy = join(root, "fake-agy.mjs");
+  const port = await reservePort();
+
+  mkdirSync(join(agyHome, "config"), { recursive: true });
+  mkdirSync(agyCliDir, { recursive: true });
+  mkdirSync(join(agyHome, "antigravity-browser-profile"), {
+    recursive: true
+  });
+  mkdirSync(join(codexHome, "provider-runtime"), { recursive: true });
+  mkdirSync(workspace, { recursive: true });
+  writeFileSync(join(agyHome, "config", "mcp_config.json"), "{}\n");
+  writeFileSync(
+    join(agyCliDir, "settings.json"),
+    '{"permissions":{"allow":[],"deny":[]}}\n'
+  );
+  writeFileSync(
+    join(codexHome, "provider-runtime", "mcp-servers.json"),
+    JSON.stringify({ playwright: { command: process.execPath, args: [] } })
+  );
+  writeFileSync(fakeAgy, `#!/usr/bin/env node\n${FAKE_AGY}`, { mode: 0o755 });
+  writeFileSync(agyLog, "");
+
+  const bridge = spawn(
+    process.execPath,
+    ["runtime/src/providers/antigravity.ts"],
+    {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        HOME: home,
+        CODEX_HOME: codexHome,
+        AGY_PROXY_PORT: String(port),
+        AGY_CLI_PATH: fakeAgy,
+        AGY_SKIP_PERMISSIONS: "true",
+        FAKE_AGY_LOG: agyLog,
+        LITELLM_API_KEY: ""
+      },
+      stdio: ["ignore", "ignore", "pipe"]
+    }
+  );
+
+  try {
+    await waitForBridge(bridge);
+    const response = await post(
+      port,
+      {
+        cwd: workspace,
+        input: [
+          ...TOOLS,
+          {
+            type: "message",
+            role: "user",
+            content: [
+              { type: "input_text", text: "what is in this picture?" },
+              {
+                type: "input_image",
+                image_url: "data:image/png;base64,iVBORw0KGgo="
+              }
+            ]
+          }
+        ],
+        model: "gemini-3.8-flash-medium",
+        stream: true
+      },
+      AbortSignal.timeout(30_000)
+    );
+    assert.equal(
+      response.status,
+      200,
+      `a request that carries an image is served, not refused: ${response.body}`
+    );
+
+    const launches = readFileSync(agyLog, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, any>);
+    const launch = launches.find((entry) => entry.attachment);
+    assert.ok(
+      launch,
+      `the prompt must name the attachment the model is to open: ${agyLog}`
+    );
+    assert.match(
+      launch.attachment as string,
+      /\/attachments\/attachment-1\.png$/,
+      "the attachment is written under the invocation's own home"
+    );
+    assert.equal(
+      launch.attachmentExists,
+      true,
+      "the attachment must exist while agy runs, or the model opens nothing"
+    );
+    const prompt =
+      (launch.argv as string[])[(launch.argv as string[]).indexOf("-p") + 1] ??
+      "";
+    assert.match(
+      prompt,
+      /read_file/,
+      "the prompt must tell the model how to open the picture"
     );
   } finally {
     await stopChild(bridge);

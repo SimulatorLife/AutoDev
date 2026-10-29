@@ -568,14 +568,20 @@ reported`, from a Claude `rate_limit_event` or an upstream that sent the limit
   The Claude CLI's print mode takes one NDJSON user message per turn, and that
   message accepts image content blocks, so the Claude bridge carries an image
   the user attached as an image block and the model sees the picture. The
-  Antigravity CLI's print mode reads text content blocks only, and the Copilot
-  CLI takes a prompt, so those bridges refuse an image-bearing request rather
-  than base64 it into a prompt. MiniMax is a transparent proxy, so the request
-  reaches the upstream API with the image intact. The distinction is read once,
-  in `shared/request-content.ts`, so the bridges and the router agree on what
-  "this request carries an image" means.
+  Antigravity CLI's print mode takes a text prompt, but it delivers an image
+  _file_ to the model as media -- the tool that opens an image hands the model
+  the picture itself -- so the Antigravity bridge writes the attachment into
+  the invocation's own home, names the file in the prompt and in the agent's
+  definition, and the model opens it before it answers. MiniMax is a
+  transparent proxy, so the request reaches the upstream API with the image
+  intact. The distinction is read once, in `shared/request-content.ts`, so the
+  bridges and the router agree on what "this request carries an image" means.
+  A route whose transport cannot carry the content at all -- the Copilot CLI
+  takes a prompt and nothing more -- refuses the request rather than base64 it
+  into a prompt, because answering without the picture is answering a question
+  the model was never asked.
 - **The router names a refusal for what it is.** A route that refused did not
-  fail: it cannot serve *this* request, and it is healthy. Reporting it as
+  fail: it cannot serve _this_ request, and it is healthy. Reporting it as
   "available but did not complete the turn" sent the reader looking for an
   outage that was not there, and made providers with usage left look like the
   problem. The exhaustion body now says "cannot serve this request" and names

@@ -485,15 +485,15 @@ test("Antigravity Responses contract fixture is exercised through the offline pr
   const telemetry = await startTelemetryServer();
   try {
     for (const [name, item] of Object.entries(contract.cases)) {
-      if (name === "image_content_refused") continue;
+      if (name === "image_reference_refused") continue;
       await runCase(name, item, telemetry);
     }
-    const unsupportedCase = contract.cases.image_content_refused;
+    const unsupportedCase = contract.cases.image_reference_refused;
     assert.ok(
       unsupportedCase,
       "the request a bridge cannot serve must have a contract case"
     );
-    await runUnsupportedRequestCase("image_content_refused", unsupportedCase);
+    await runUnsupportedRequestCase("image_reference_refused", unsupportedCase);
   } finally {
     await new Promise((resolve) => telemetry.server.close(resolve));
   }

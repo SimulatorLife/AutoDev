@@ -69,7 +69,11 @@ import {
   retryAfterSecondsFromLimit,
   terminalIncompleteEvents
 } from "@simulatorlife/autodev-runtime/shared/provider-limits";
-import { requestCarriesImageContent } from "@simulatorlife/autodev-runtime/shared/request-content";
+import {
+  requestContentParts,
+  type RequestImage,
+  requestImages
+} from "@simulatorlife/autodev-runtime/shared/request-content";
 import {
   resolveCwd,
   WorkspaceResolutionError
@@ -1499,7 +1503,7 @@ function modelMetadata() {
     model_messages: {
       instructions_template: "You are a bounded external-provider Codex agent."
     },
-    input_modalities: ["text"],
+    input_modalities: ["text", "image"],
     experimental_supported_tools: ["web_search", "web_fetch"],
     support_verbosity: false,
     supports_parallel_tool_calls: false,
@@ -1623,6 +1627,117 @@ function contentText(content: unknown): string {
         : String(part)
     )
     .join("\n");
+}
+
+/**
+ * An image the request carried, written where this invocation's agent can open
+ * it.
+ */
+interface AgyAttachment {
+  /** The file the CLI opens to see the picture. */
+  readonly path: string;
+}
+
+/**
+ * The images a request's user messages carried, in the order they appeared.
+ *
+ * Only user messages are read: they are the only messages the prompt carries,
+ * so an image anywhere else would be dropped, and an image that is dropped is
+ * a question the model was never asked.
+ */
+function userMessageImages(input: unknown): RequestImage[] {
+  if (!Array.isArray(input)) return [];
+  const images: RequestImage[] = [];
+  for (const item of input) {
+    if (!isJsonRecord(item)) continue;
+    if (item.role !== "user") continue;
+    for (const part of requestContentParts(item.content ?? item.text)) {
+      if (part.kind === "image") images.push(part.image);
+    }
+  }
+  return images;
+}
+
+/** The file name an image's media type is written under. */
+function attachmentFileName(index: number, mediaType: string): string {
+  const extension =
+    mediaType === "image/jpeg"
+      ? "jpg"
+      : mediaType === "image/png"
+        ? "png"
+        : mediaType === "image/gif"
+          ? "gif"
+          : mediaType === "image/webp"
+            ? "webp"
+            : "bin";
+  return `attachment-${index + 1}.${extension}`;
+}
+
+/**
+ * The reason this request's images cannot be served here, or null when they can.
+ *
+ * An image the prompt carries is delivered as a file the agent opens. An image
+ * the prompt does not carry -- one in a developer message, or one the request
+ * names without carrying the bytes for -- cannot be delivered at all, and
+ * answering without it is answering a question the model was never asked.
+ */
+function agyUndeliverableImage(input: unknown): string | null {
+  const carried = requestImages(input);
+  if (carried.length === 0) return null;
+  const delivered = userMessageImages(input);
+  if (carried.length !== delivered.length)
+    return "This request carries an image the bridge cannot deliver: the prompt carries the user's messages only, so an image elsewhere in the conversation would be dropped.";
+  if (delivered.some((image) => image.kind !== "bytes"))
+    return "This request carries an image the bridge cannot read: the request names the image and carries none of its bytes.";
+  return null;
+}
+
+/**
+ * Writes the images a request carried where this invocation's agent can open
+ * them.
+ *
+ * agy's print mode takes a text prompt, and a text prompt has no room for a
+ * picture. What the CLI *can* do is deliver an image file to the model as
+ * media: the tool that opens an image hands the model the picture itself, not
+ * a word standing in for one. So the bridge writes the attachment into this
+ * invocation's own home -- which the agent can read, and which is deleted
+ * with the turn -- and names the file in the prompt.
+ */
+function writeAgyAttachments(
+  images: readonly RequestImage[],
+  home: string
+): AgyAttachment[] {
+  const directory = pathApi.join(home, "attachments");
+  const attachments: AgyAttachment[] = [];
+  for (const [index, image] of images.entries()) {
+    if (image.kind !== "bytes") continue;
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const path = pathApi.join(
+      directory,
+      attachmentFileName(index, image.mediaType)
+    );
+    writeFileSync(path, Buffer.from(image.data, "base64"), { mode: 0o600 });
+    attachments.push({ path });
+  }
+  return attachments;
+}
+
+/**
+ * What the prompt says about the attachments, so the model opens them before
+ * it answers rather than answering around them.
+ */
+function agyAttachmentPrompt(attachments: readonly AgyAttachment[]): string {
+  if (attachments.length === 0) return "";
+  const files = attachments.map(({ path }) => `- ${path}`).join("\n");
+  const many =
+    attachments.length === 1 ? "an image" : `${attachments.length} images`;
+  return `
+## Attached images
+
+The user attached ${many} to this request. This prompt is text, so the picture travels as a file: open ${attachments.length === 1 ? "it" : "each of them"} with the \`read_file\` tool before you answer, so that you are looking at what the user sent rather than answering around it.
+
+${files}
+`;
 }
 
 function promptFromInput(value: unknown, instructions?: unknown): string {
@@ -2025,6 +2140,11 @@ interface IsolatedHomeOptions {
    * server out of this home's config entirely.
    */
   toolTurnId?: string | null;
+  /**
+   * The images this turn carries, written into the home so the agent can open
+   * them.
+   */
+  attachments?: readonly RequestImage[];
 }
 
 const GEMINI_DIRECTORY = ".gemini";
@@ -2052,6 +2172,11 @@ interface IsolatedHomeResult {
    * CLI's workspace roots; null when the invocation needs none.
    */
   customizationDir: string | null;
+  /**
+   * The images this turn carries, written into the home so the agent can open
+   * them.
+   */
+  attachments: AgyAttachment[];
   cleanup: () => void;
 }
 
@@ -2198,7 +2323,10 @@ interface AgyInvocation {
  * Rendered per invocation rather than shipped in the workspace: the definition
  * belongs to a turn's tool surface, and a workspace is the user's own tree.
  */
-function writeCodexToolsAgent(isolatedHome: string): string {
+function writeCodexToolsAgent(
+  isolatedHome: string,
+  attachments: readonly AgyAttachment[]
+): string {
   const root = pathApi.join(
     isolatedHome,
     INVOCATION_CUSTOMIZATION_DIRECTORY,
@@ -2207,6 +2335,16 @@ function writeCodexToolsAgent(isolatedHome: string): string {
     CODEX_TOOLS_AGENT_NAME
   );
   mkdirSync(root, { recursive: true, mode: 0o700 });
+  const attachmentNote =
+    attachments.length > 0
+      ? [
+          "",
+          "One file is yours to open directly: the image the user attached to this",
+          "turn. It is below, and it is the only file you may read without asking",
+          "Codex:",
+          ...attachments.map(({ path }) => `- ${path}`)
+        ].join("\n")
+      : "";
   writeFileSync(
     pathApi.join(root, "agent.md"),
     [
@@ -2225,6 +2363,7 @@ function writeCodexToolsAgent(isolatedHome: string): string {
       "Everything you do goes through the `codex` MCP server -- reading files,",
       "writing them, running commands, delegating. Do not describe a tool you",
       "have not called as done. If a call returns an error, say what failed.",
+      attachmentNote,
       ""
     ].join("\n"),
     { mode: 0o600 }
@@ -2607,6 +2746,14 @@ function createIsolatedAntigravityHome(
     tempHome = mkdtempSync(pathApi.join(tmpdir(), "autodev-agy-home-"));
     chmodSync(tempHome, 0o700);
 
+    // The attachment is written into this invocation's own home, which the
+    // agent reads and which is deleted with the turn, so the picture reaches
+    // the model as media without leaving anything behind.
+    const attachments = writeAgyAttachments(
+      options?.attachments ?? [],
+      tempHome
+    );
+
     const toolTurnId = options?.toolTurnId ?? null;
     const mcpConfig = buildInvocationMcpConfig(
       agentRole,
@@ -2658,7 +2805,10 @@ function createIsolatedAntigravityHome(
       isolatedHome: tempHome,
       mcpConfig,
       settings,
-      customizationDir: toolTurnId ? writeCodexToolsAgent(tempHome) : null,
+      customizationDir: toolTurnId
+        ? writeCodexToolsAgent(tempHome, attachments)
+        : null,
+      attachments,
       cleanup
     };
   } catch (error) {
@@ -2796,7 +2946,8 @@ function runAgy(
   skillContext: string | null = null,
   workspaceKey: unknown = null,
   toolTurnId: string | null = null,
-  requestId: string | null = null
+  requestId: string | null = null,
+  attachments: readonly RequestImage[] = []
 ): Promise<RunAgyResult> {
   let isolatedState: IsolatedHomeResult;
   try {
@@ -2805,7 +2956,8 @@ function runAgy(
       requestId,
       workspaceKey,
       sandboxMode,
-      toolTurnId
+      toolTurnId,
+      attachments
     });
   } catch (error) {
     return Promise.reject(error);
@@ -2832,7 +2984,7 @@ function runAgy(
     let child: ChildProcess;
     try {
       const finalPrompt = buildAgyPrompt(
-        prompt,
+        `${prompt}${agyAttachmentPrompt(isolatedState.attachments)}`,
         agentRole,
         sandboxMode,
         skillContext
@@ -3313,6 +3465,14 @@ interface ResponsesTurn {
   requestId: string | null;
   cwd: string;
   prompt: string;
+  /**
+   * The images the request carried, in the order they appeared.
+   *
+   * They are written into the invocation's own home and named in the prompt,
+   * because agy's print mode takes a text prompt and the picture has to reach
+   * the model through a file it opens.
+   */
+  attachments: RequestImage[];
   spawnTracker: ReturnType<typeof createSpawnTracker>;
   toolObserver: ReturnType<typeof createToolObserver>;
   /**
@@ -3417,6 +3577,7 @@ function prepareResponsesTurn(
     requestId,
     cwd,
     prompt,
+    attachments: userMessageImages(payload.input),
     spawnTracker,
     toolObserver,
     codexTools,
@@ -3457,7 +3618,8 @@ function runTurnAgy(
     turn.skillContext,
     turn.workspaceKey,
     codexToolsTurnId(turn),
-    turn.requestId
+    turn.requestId,
+    turn.attachments
   );
 }
 
@@ -4630,12 +4792,9 @@ async function handleResponsesRequest(
   payload: JsonObject
 ): Promise<void> {
   if (continueParkedTurn(response, payload)) return;
-  if (requestCarriesImageContent(payload.input)) {
-    sendUnsupportedRequestFailure(
-      response,
-      "agy",
-      "This bridge turns a turn into a text prompt for the Antigravity CLI, whose print mode takes text and nothing else, and cannot carry image content. Serve the request on a route that supports vision."
-    );
+  const undeliverable = agyUndeliverableImage(payload.input);
+  if (undeliverable) {
+    sendUnsupportedRequestFailure(response, "agy", undeliverable);
     return;
   }
   const turn = prepareResponsesTurn(request, response, payload);

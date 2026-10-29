@@ -506,7 +506,7 @@
         "privacyToken": "contract task"
       }
     },
-    "image_content_refused": {
+    "image_reference_refused": {
       "request": {
         "stream": false,
         "input": [
@@ -520,7 +520,7 @@
               },
               {
                 "type": "input_image",
-                "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+                "image_url": "https://example.test/frame.png"
               }
             ]
           }
@@ -532,7 +532,7 @@
       "expected": {
         "status": 400,
         "errorType": "provider_request_unsupported",
-        "errorMessageContains": "cannot carry image content"
+        "errorMessageContains": "cannot read"
       }
     }
   }
