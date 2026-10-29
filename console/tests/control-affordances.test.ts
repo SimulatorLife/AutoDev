@@ -468,7 +468,8 @@ test("a repeated link names the row it belongs to", () => {
         }
       ],
       validationIssues: [],
-      commandSourceValidity: true
+      commandSourceValidity: true,
+      rolePromptsObserved: true
     })
   );
   assert.match(prompts, /aria-label="Evaluations for dry"/u);

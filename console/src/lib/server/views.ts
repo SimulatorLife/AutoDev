@@ -254,7 +254,10 @@ export function promptsFromControlApi(
         ? {}
         : { description: command.description })
     })),
-    ...response.rolePrompts.map((prompt) => ({
+    // The role prompts are a read of their own, and a read that did not happen
+    // contributes no entries. The catalogue's size is not known in that case,
+    // and the caller is told so by the response itself.
+    ...(response.rolePrompts ?? []).map((prompt) => ({
       name: prompt.role,
       path: prompt.path,
       kind: "role" as const,

@@ -38,6 +38,7 @@ function render(validity: boolean | null): string {
     React.createElement(PromptsView, {
       commands,
       commandSourceValidity: validity,
+      rolePromptsObserved: true,
       validationIssues: validity === false ? [ISSUE] : []
     })
   );

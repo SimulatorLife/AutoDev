@@ -74,11 +74,15 @@
  * so an empty contract and a contract nobody read looked the same to every
  * caller -- and the catalogue's counts and the role exposure of every entry
  * depend on which one it was.
+ * v23: the prompts catalogue publishes null for its role prompts when the
+ * directory could not be read. The catalogue is two independent reads, and an
+ * empty list for the one that failed claimed the repository holds no role
+ * prompt.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 22
+  version: 23
 } as const;
 
 export type ControlApiContractResponse = {

@@ -2627,7 +2627,8 @@ test("Prompt list links to source detail instead of synthesizing a preview", () 
         }
       ],
       validationIssues: [],
-      commandSourceValidity: true
+      commandSourceValidity: true,
+      rolePromptsObserved: true
     })
   );
 
@@ -2648,7 +2649,8 @@ test("PromptsView distinguishes an unavailable command source from a valid empty
     React.createElement(PromptsView, {
       commands,
       validationIssues: [],
-      commandSourceValidity: false
+      commandSourceValidity: false,
+      rolePromptsObserved: true
     })
   );
   assert.match(invalid, /data-prompt-command-source="false"/);
@@ -2660,7 +2662,8 @@ test("PromptsView distinguishes an unavailable command source from a valid empty
     React.createElement(PromptsView, {
       commands: [],
       validationIssues: [],
-      commandSourceValidity: null
+      commandSourceValidity: null,
+      rolePromptsObserved: true
     })
   );
   assert.match(missing, /data-prompt-command-source="not-observed"/);
@@ -3055,7 +3058,8 @@ test("PromptsView and PromptDetailView render prompt types, linkage, and Git aut
         }
       ],
       validationIssues: [],
-      commandSourceValidity: true
+      commandSourceValidity: true,
+      rolePromptsObserved: true
     })
   );
   assert.match(listMarkup, /RuleSync Commands/);
@@ -3649,7 +3653,8 @@ test("no column is narrower than its own header", () => {
           }
         ],
         validationIssues: [],
-        commandSourceValidity: true
+        commandSourceValidity: true,
+        rolePromptsObserved: true
       })
     ),
     renderToStaticMarkup(
@@ -11273,6 +11278,51 @@ test("Prompts fetcher validates source state and rejects stale contracts", async
     assert.equal(stale.code, "autodev_control_api_invalid_prompts_response");
     assert.match(stale.message, /requires the v2 source-validity contract/);
   }
+
+  // The role prompts are their own read, and the response says whether that
+  // read happened: null when it did not, a list when it did. A page that
+  // counts the catalogue needs both answers, so a payload that carries
+  // neither shape is refused rather than read as an empty list.
+  const unreadRolePrompts = await fetchPrompts(config, {
+    fetchImpl: async () =>
+      Response.json({
+        schema: "autodev-control-prompts-v2",
+        source: ".rulesync/commands",
+        readOnly: false,
+        issues: [],
+        valid: true,
+        totalCommands: 1,
+        commands: [
+          {
+            name: "dry",
+            path: ".rulesync/commands/dry.md",
+            description: "Run a dry pass."
+          }
+        ],
+        rolePrompts: null
+      })
+  });
+  assert.equal(unreadRolePrompts.kind, "ok");
+  const driftedRolePrompts = await fetchPrompts(config, {
+    fetchImpl: async () =>
+      Response.json({
+        schema: "autodev-control-prompts-v2",
+        source: ".rulesync/commands",
+        readOnly: false,
+        issues: [],
+        valid: true,
+        totalCommands: 1,
+        commands: [
+          {
+            name: "dry",
+            path: ".rulesync/commands/dry.md",
+            description: "Run a dry pass."
+          }
+        ],
+        rolePrompts: "none"
+      })
+  });
+  assert.equal(driftedRolePrompts.kind, "invalid-response");
 
   // The prompts collection has a canonical write path -- the command's own
   // source -- so a response that claims it is read-only is refused. The page
@@ -22858,6 +22908,7 @@ test("an invalid command source names the file it could not read, like every oth
     React.createElement(PromptsView, {
       commands: [],
       commandSourceValidity: false,
+      rolePromptsObserved: true,
       validationIssues: [
         {
           location: ".rulesync/commands/dry.md",
@@ -22886,6 +22937,7 @@ test("a valid command source renders no validation panel", () => {
     React.createElement(PromptsView, {
       commands: [],
       commandSourceValidity: true,
+      rolePromptsObserved: true,
       validationIssues: []
     })
   );

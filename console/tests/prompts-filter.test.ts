@@ -79,9 +79,9 @@ test("the list offers the Console's own filter bar", () => {
   const markup = renderToStaticMarkup(
     React.createElement(PromptsView, {
       commands: CATALOG,
-      totalCommands: 76,
       query: "",
       commandSourceValidity: true,
+      rolePromptsObserved: true,
       validationIssues: []
     })
   );
@@ -105,27 +105,91 @@ test("the list offers the Console's own filter bar", () => {
 test("a narrowed list says how much of the catalog is in view", () => {
   const markup = renderToStaticMarkup(
     React.createElement(PromptsView, {
-      commands: [CATALOG[0]!],
-      totalCommands: 76,
+      commands: CATALOG,
       query: "code-review",
       commandSourceValidity: true,
+      rolePromptsObserved: true,
       validationIssues: []
     })
   );
 
-  assert.match(markup, /1 of 76 prompts and commands/u);
+  assert.match(markup, /1 of 3 prompts and commands/u);
   // The search control keeps what the operator typed, so the second narrowing
   // starts from the first rather than from nothing.
   assert.match(markup, /value="code-review"/u);
 });
 
+test("the stat row counts the catalog, not the narrowed view of it", () => {
+  // The narrowing is applied in the view, so the view holds both the
+  // catalogue and the query. The cards above the table are about the
+  // catalogue: a page that narrowed the list before handing it over made the
+  // "Canonical Prompts" card report the narrowed count for a catalogue of
+  // seventy-six, while the navigation badge beside it said seventy-six.
+  const markup = renderToStaticMarkup(
+    React.createElement(PromptsView, {
+      commands: CATALOG,
+      query: "code-review",
+      commandSourceValidity: true,
+      rolePromptsObserved: true,
+      validationIssues: []
+    })
+  );
+
+  assert.match(
+    markup,
+    /Canonical Prompts<\/dt>[\s\S]*?>3</u,
+    "the catalogue holds three entries, and the query narrowed the rows below"
+  );
+  assert.match(markup, /RuleSync Commands<\/dt>[\s\S]*?>2</u);
+  assert.match(markup, /Agent Role Prompts<\/dt>[\s\S]*?>1</u);
+  // And the rows are what the query selected.
+  assert.match(markup, /code-review/u);
+  assert.doesNotMatch(markup, /release-notes/u);
+});
+
+test("a catalogue whose role prompts were not read states no count", () => {
+  // The catalogue is two independent reads, and the role prompts' read failed.
+  // The entries that arrived are the commands, and their number is exactly
+  // right for what arrived and incomplete for what the unread source would
+  // have contributed, so the page states no total.
+  const markup = renderToStaticMarkup(
+    React.createElement(PromptsView, {
+      commands: CATALOG,
+      query: "",
+      commandSourceValidity: true,
+      rolePromptsObserved: false,
+      validationIssues: []
+    })
+  );
+
+  assert.match(markup, /data-prompts-observed="false"/u);
+  assert.match(markup, /data-prompts-role-source-observed="false"/u);
+  assert.match(
+    markup,
+    /Canonical Prompts<\/dt>[\s\S]*?>Not observed</u,
+    "the catalogue's size is not known"
+  );
+  assert.match(
+    markup,
+    /Agent Role Prompts<\/dt>[\s\S]*?>Not observed</u,
+    "the role prompts were not read, so their count is not known"
+  );
+  // The command catalogue was read, so its own count is a measurement.
+  assert.match(markup, /RuleSync Commands<\/dt>[\s\S]*?>2</u);
+  assert.match(
+    markup,
+    /The canonical role prompts were not observed/u,
+    "the page says which read did not happen"
+  );
+});
+
 test("an empty narrowed list says the query excluded everything", () => {
   const markup = renderToStaticMarkup(
     React.createElement(PromptsView, {
-      commands: [],
-      totalCommands: 76,
+      commands: CATALOG,
       query: "nothing here",
       commandSourceValidity: true,
+      rolePromptsObserved: true,
       validationIssues: []
     })
   );
@@ -146,8 +210,8 @@ test("an empty catalog still says the catalog is empty", () => {
   const markup = renderToStaticMarkup(
     React.createElement(PromptsView, {
       commands: [],
-      totalCommands: 0,
       commandSourceValidity: true,
+      rolePromptsObserved: true,
       validationIssues: []
     })
   );

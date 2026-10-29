@@ -1,10 +1,7 @@
 import type { Metadata } from "next";
 import React from "react";
 
-import {
-  filterPrompts,
-  readPromptsQuery
-} from "../../src/features/prompts/prompts-list-url.ts";
+import { readPromptsQuery } from "../../src/features/prompts/prompts-list-url.ts";
 import { PromptsView } from "../../src/features/prompts/PromptsView.ts";
 import {
   controlApiFailureCode,
@@ -55,11 +52,13 @@ export default async function PromptsPage({
       })
     );
   }
-  const commands = promptsFromControlApi(result.data);
-  // The list is narrowed on the server, so the narrowed list is the one the
-  // address describes: the query is in the URL and the rows are what it
-  // selects.
-  const matching = filterPrompts(commands, query);
+  const catalogue = promptsFromControlApi(result.data);
+  // The catalogue is two independent reads -- the RuleSync command catalogue
+  // and the canonical role-prompt directory -- and the response says whether
+  // the second one happened.
+  const rolePromptsObserved = result.data.rolePrompts !== null;
+  // The catalogue is fully observed only when both reads were.
+  const catalogueObserved = result.data.valid === true && rolePromptsObserved;
   return React.createElement(
     ConsolePageShell,
     {
@@ -67,15 +66,21 @@ export default async function PromptsPage({
       // The navigation counts the resource, not the query that narrowed it:
       // the sidebar answers "how many prompts are there", and the filter bar
       // answers "how many are in view".
-      ...(result.data.valid === true
-        ? { counts: { Prompts: commands.length } }
-        : {})
+      //
+      // The count is published only when the catalogue was fully observed.
+      // The entries that arrived are the ones the read that succeeded
+      // produced, and their number is exactly right for what arrived and
+      // incomplete for what the unread source would have contributed.
+      ...(catalogueObserved ? { counts: { Prompts: catalogue.length } } : {})
     },
     React.createElement(PromptsView, {
-      commands: matching,
-      totalCommands: commands.length,
+      // The whole catalogue and the query, not the narrowed list: the
+      // narrowing is applied in the view, because the stat row above the
+      // table is about the catalogue and not about the view of it.
+      commands: catalogue,
       query,
       commandSourceValidity: result.data.valid,
+      rolePromptsObserved,
       validationIssues: result.data.issues
     })
   );

@@ -33,22 +33,33 @@ import {
   ENTITY_LINK_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
-import { PROMPTS_LIST_PATH } from "./prompts-list-url.ts";
+import { filterPrompts, PROMPTS_LIST_PATH } from "./prompts-list-url.ts";
 
 export interface PromptsViewProps {
-  /** The commands in the list, already narrowed by the query. */
-  readonly commands: readonly PromptAsset[];
   /**
-   * How many commands the source holds, before the query narrowed them.
+   * The catalogue: every canonical command and role prompt.
    *
-   * The filter bar says "N of M", and the difference between the two is what
-   * the query removed. Without the total, a narrowed list reads as the whole
-   * catalog. Optional, and the list's own size when it is not given.
+   * The narrowing is applied here and not by the page, because the stat row
+   * above the table is about the catalogue and not about the view of it. A
+   * page that narrowed the list before handing it over would have made the
+   * "Canonical Prompts" card report the narrowed count for a catalogue of
+   * seventy-six, which is a different claim from the one the card makes -- and
+   * the navigation badge beside it would have said seventy-six.
    */
-  readonly totalCommands?: number | undefined;
+  readonly commands: readonly PromptAsset[];
   /** The query the list is narrowed by, if any. */
   readonly query?: string | undefined;
   readonly commandSourceValidity: boolean | null;
+  /**
+   * Whether the role prompts were read.
+   *
+   * The catalogue is two independent reads -- the RuleSync command catalogue
+   * and the canonical role-prompt directory -- and a count over it is a number
+   * only when both were observed. The role prompts' read fails on a directory
+   * that cannot be listed, and an empty list there would have claimed the
+   * repository holds no role prompt.
+   */
+  readonly rolePromptsObserved: boolean;
   /**
    * Why the catalog is invalid.
    *
@@ -62,15 +73,17 @@ export interface PromptsViewProps {
 /**
  * What the empty list says.
  *
- * Four different facts end with an empty table: the source is invalid, the
- * source was not observed, the query excluded everything, and the catalog is
- * genuinely empty. Only the caller knows which one it is rendering, and the
- * operator needs to know too -- "no commands are configured" when the query
- * was "review" says the catalog is empty, and it is not.
+ * Five different facts end with an empty table: the source is invalid, the
+ * source was not observed, the query excluded everything, the catalogue is
+ * genuinely empty, and the role prompts were not read. Only the caller knows
+ * which one it is rendering, and the operator needs to know too -- "no
+ * commands are configured" when the query was "review" says the catalog is
+ * empty, and it is not.
  */
 function promptEmptyMessage(
   commandSourceValidity: boolean | null,
-  query: string
+  query: string,
+  rolePromptsObserved: boolean
 ): string {
   if (commandSourceValidity === false) {
     return "No prompt entries are available while the canonical command source is invalid.";
@@ -78,49 +91,94 @@ function promptEmptyMessage(
   if (commandSourceValidity === null) {
     return "The canonical command source has not been observed.";
   }
+  if (!rolePromptsObserved) {
+    // The catalogue is empty over a scope that was only partly read: the role
+    // prompts' half of it was never read, so it is not known to be empty.
+    return "No prompt entries were observed in the canonical sources.";
+  }
   if (query.length > 0) {
     return "No canonical prompts or commands found matching the current criteria.";
   }
   return "No canonical prompts or commands are configured.";
 }
 
-export function PromptsView({
-  commands,
-  totalCommands,
-  query = "",
-  validationIssues,
-  commandSourceValidity
-}: PromptsViewProps): React.JSX.Element {
-  const total = totalCommands ?? commands.length;
-  const sourceIssues = React.createElement(SourceValidationIssues, {
-    issues: validationIssues,
-    testId: "command-validation-issues",
-    subject: "Command catalog"
-  });
+/**
+ * The catalogue's counts, and what each one is a measurement of.
+ *
+ * The catalogue is two independent reads -- the RuleSync command catalogue
+ * and the canonical role-prompt directory -- and a count over it is a number
+ * only when both were observed: one unread read makes the count incomplete
+ * rather than small, and an incomplete count is not a count. Each source's own
+ * count is a measurement of that source's read, and the catalogue's own size
+ * is a measurement of both.
+ */
+function promptsCatalogueCounts(
+  commands: readonly PromptAsset[],
+  commandSourceValidity: boolean | null,
+  rolePromptsObserved: boolean
+): {
+  readonly canonical: number | string;
+  readonly commands: number | string;
+  readonly rolePrompts: number | string;
+  readonly observed: boolean;
+} {
   const commandCount = commands.filter(
     (c) => c.kind === "command" || c.path.includes("commands")
   ).length;
   const rolePromptCount = commands.filter(
     (c) => c.kind === "role" || c.path.includes("roles")
   ).length;
-  const canonicalPromptCount =
-    commandSourceValidity === true
-      ? commands.length
-      : commandSourceValidity === false
+  const observed = commandSourceValidity === true && rolePromptsObserved;
+  return {
+    canonical:
+      commandSourceValidity === false
         ? "Invalid"
-        : NOT_OBSERVED_LABEL;
-  const commandCountValue =
-    commandSourceValidity === true
-      ? commandCount
-      : commandSourceValidity === false
-        ? "Invalid"
-        : NOT_OBSERVED_LABEL;
+        : observed
+          ? commands.length
+          : NOT_OBSERVED_LABEL,
+    commands:
+      commandSourceValidity === true
+        ? commandCount
+        : commandSourceValidity === false
+          ? "Invalid"
+          : NOT_OBSERVED_LABEL,
+    rolePrompts: rolePromptsObserved ? rolePromptCount : NOT_OBSERVED_LABEL,
+    observed
+  };
+}
+
+export function PromptsView({
+  commands,
+  query = "",
+  validationIssues,
+  commandSourceValidity,
+  rolePromptsObserved
+}: PromptsViewProps): React.JSX.Element {
+  // The narrowing happens here so the stat row can count the catalogue. The
+  // page hands over the whole catalogue and the query, and this is where the
+  // two meet: the rows are what the query selects, and the counts are what
+  // the catalogue holds.
+  const matching = filterPrompts(commands, query);
+  const sourceIssues = React.createElement(SourceValidationIssues, {
+    issues: validationIssues,
+    testId: "command-validation-issues",
+    subject: "Command catalog"
+  });
+  const counts = promptsCatalogueCounts(
+    commands,
+    commandSourceValidity,
+    rolePromptsObserved
+  );
+  const catalogueObserved = counts.observed;
+  const rolePromptNotice = rolePromptsObserved
+    ? null
+    : "The canonical role prompts were not observed; the catalogue's size is not known.";
   const commandSourceNotice =
     commandSourceValidity === false
       ? "RuleSync `.rulesync/commands/` is invalid; slash-command results are unavailable."
       : commandSourceValidity === null
         ? "RuleSync `.rulesync/commands/` was not observed."
-        : null;
+        : rolePromptNotice;
 
   const columns: ColumnDef<PromptAsset>[] = [
     {
@@ -251,7 +309,14 @@ export function PromptsView({
         "data-prompt-command-source":
           commandSourceValidity === null
             ? "not-observed"
-            : String(commandSourceValidity)
+            : String(commandSourceValidity),
+        // Whether the catalogue was fully observed. The two reads behind it
+        // are the RuleSync command catalogue and the canonical role-prompt
+        // directory, and a count over it is a number only when both were read.
+        "data-prompts-observed": catalogueObserved ? "true" : "false",
+        "data-prompts-role-source-observed": rolePromptsObserved
+          ? "true"
+          : "false"
       }
     },
     sourceIssues,
@@ -270,9 +335,16 @@ export function PromptsView({
         // above already states the catalogue's size.
         // The wording matches the tool catalogue's, so the two lists that
         // carry a filter bar answer a narrowed list the same way.
+        //
+        // The total is stated only when the catalogue was fully observed. A
+        // catalogue whose role prompts were not read holds the commands that
+        // were, and their number is exactly right for what arrived and
+        // incomplete for what the unread source would have contributed.
         summary:
           query.length > 0
-            ? `Showing ${commands.length} of ${total} prompts and commands`
+            ? catalogueObserved
+              ? `Showing ${matching.length} of ${commands.length} prompts and commands`
+              : `Showing ${matching.length} prompts and commands`
             : undefined,
         dataAttributes: { "data-feature-filter": "prompts" }
       },
@@ -289,16 +361,16 @@ export function PromptsView({
       { columns: 4 },
       React.createElement(StatCard, {
         title: "Canonical Prompts",
-        value: canonicalPromptCount
+        value: counts.canonical
       }),
       React.createElement(StatCard, {
         title: "RuleSync Commands",
-        value: commandCountValue,
+        value: counts.commands,
         subtitle: ".rulesync/commands"
       }),
       React.createElement(StatCard, {
         title: "Agent Role Prompts",
-        value: rolePromptCount,
+        value: counts.rolePrompts,
         subtitle: "agents/prompts/roles"
       }),
       React.createElement(StatCard, {
@@ -344,10 +416,14 @@ export function PromptsView({
           )
         : null,
       React.createElement<DataTableProps<PromptAsset>>(DataTable, {
-        data: commands,
+        data: matching,
         columns,
         keyExtractor: (prompt: PromptAsset) => prompt.path,
-        emptyMessage: promptEmptyMessage(commandSourceValidity, query)
+        emptyMessage: promptEmptyMessage(
+          commandSourceValidity,
+          query,
+          rolePromptsObserved
+        )
       })
     )
   );

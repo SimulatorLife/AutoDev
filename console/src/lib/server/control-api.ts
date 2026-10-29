@@ -3395,13 +3395,17 @@ function isControlApiPromptsResponse(
         (command.description === undefined ||
           typeof command.description === "string")
     ) &&
-    Array.isArray(value.rolePrompts) &&
-    value.rolePrompts.every(
-      (prompt) =>
-        isRecord(prompt) &&
-        typeof prompt.role === "string" &&
-        typeof prompt.path === "string"
-    )
+    // The role prompts are their own read. Null says that read did not happen,
+    // which is what a count over the catalogue needs to know; a list says it
+    // did, and an empty list is then a measured zero.
+    (value.rolePrompts === null ||
+      (Array.isArray(value.rolePrompts) &&
+        value.rolePrompts.every(
+          (prompt) =>
+            isRecord(prompt) &&
+            typeof prompt.role === "string" &&
+            typeof prompt.path === "string"
+        )))
   );
 }
 

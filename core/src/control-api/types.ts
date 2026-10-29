@@ -1199,10 +1199,26 @@ export interface ControlApiPromptsResponse {
     readonly path: string;
     readonly description?: string;
   }[];
-  readonly rolePrompts: readonly {
-    readonly role: string;
-    readonly path: string;
-  }[];
+  /**
+   * The canonical role prompts, or null when they were not observed.
+   *
+   * The prompts live in `agents/prompts/roles/`, and the directory's absence
+   * is an observation: no role prompt is configured there, and that is a
+   * measured zero. A read that failed for any other reason is not an
+   * observation, and the list is then null -- an empty list there would claim
+   * the repository holds no role prompt, which is a claim about the read
+   * rather than about the repository.
+   *
+   * The catalogue is two independent reads -- this one and the RuleSync
+   * command catalogue -- so every count over it is a number only when both
+   * were observed.
+   */
+  readonly rolePrompts:
+    | readonly {
+        readonly role: string;
+        readonly path: string;
+      }[]
+    | null;
 }
 
 export interface ControlApiPromptDetailResponse {

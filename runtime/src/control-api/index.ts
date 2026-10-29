@@ -4139,6 +4139,31 @@ function permissionsView(
   } satisfies ControlApiPermissionsResponse;
 }
 
+/**
+ * Read the canonical role prompts, or report that they were not observed.
+ *
+ * The directory's absence is an observation: no role prompt is configured
+ * there, and that is a measured zero. A read that failed for any other reason
+ * is not an observation, and the list of role prompts is then not known -- an
+ * empty list there would claim the repository holds none, which is a claim
+ * about the read rather than about the repository.
+ */
+function readRolePrompts(
+  rolePromptsDir: string
+): Array<{ role: string; path: string }> | null {
+  try {
+    return readdirSync(rolePromptsDir)
+      .filter((file) => file.endsWith(".md"))
+      .sort(CONTROL_API_COLLATOR.compare)
+      .map((file) => ({
+        role: file.replace(MD_EXTENSION_PATTERN, ""),
+        path: `agents/prompts/roles/${file}`
+      }));
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? [] : null;
+  }
+}
+
 function promptsView(
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
@@ -4159,23 +4184,7 @@ function promptsView(
     "prompts",
     "roles"
   );
-  const rolePrompts: Array<{ role: string; path: string }> = [];
-  if (existsSync(rolePromptsDir)) {
-    try {
-      const files = readdirSync(rolePromptsDir);
-      for (const file of files
-        .filter((f) => f.endsWith(".md"))
-        .sort(CONTROL_API_COLLATOR.compare)) {
-        const role = file.replace(MD_EXTENSION_PATTERN, "");
-        rolePrompts.push({
-          role,
-          path: `agents/prompts/roles/${file}`
-        });
-      }
-    } catch {
-      // Ignore unreadable role prompts directory
-    }
-  }
+  const rolePrompts = readRolePrompts(rolePromptsDir);
   return {
     schema: "autodev-control-prompts-v2",
     source: commandState.source,

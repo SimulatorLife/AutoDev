@@ -3005,6 +3005,56 @@ test("Control API prompts listing projects the canonical RuleSyncRepository.load
   }
 });
 
+test("the prompts catalogue says when its role prompts were not read", async () => {
+  const saved = saveEnv();
+  const repositoryRoot = mkdtempSync(
+    join(tmpdir(), "autodev-prompts-role-source-control-")
+  );
+  try {
+    configure();
+    const commandsDir = join(repositoryRoot, ".rulesync", "commands");
+    mkdirSync(commandsDir, { recursive: true });
+    await writeFileSync(
+      join(commandsDir, "audit.md"),
+      "---\ntargets: [codexcli]\ndescription: Review source.\n---\n\n# Audit\n"
+    );
+    const options = { repositoryRoot };
+
+    // A repository with no role-prompt directory holds no role prompt, and
+    // that is an observation: the directory's absence was seen.
+    const withoutDirectory = await call(
+      "GET",
+      CONTROL_API_PATHS.prompts,
+      { actor: "viewer-a" },
+      options
+    );
+    assert.equal(withoutDirectory.response.statusCode, 200);
+    assert.deepEqual(withoutDirectory.body.rolePrompts, []);
+
+    // A directory that cannot be listed is a different fact: the list of role
+    // prompts is not known. It used to be published as an empty list, which
+    // claimed the repository holds no role prompt -- a claim about the read
+    // rather than about the repository.
+    const rolesPath = join(repositoryRoot, "agents", "prompts", "roles");
+    mkdirSync(join(repositoryRoot, "agents", "prompts"), { recursive: true });
+    await writeFileSync(rolesPath, "not a directory\n");
+    const unreadable = await call(
+      "GET",
+      CONTROL_API_PATHS.prompts,
+      { actor: "viewer-a" },
+      options
+    );
+    assert.equal(unreadable.response.statusCode, 200);
+    assert.equal(unreadable.body.rolePrompts, null);
+    // The command catalogue was read, so its own count is still a measurement.
+    assert.equal(unreadable.body.valid, true);
+    assert.equal(unreadable.body.totalCommands, 1);
+  } finally {
+    rmSync(repositoryRoot, { recursive: true, force: true });
+    restoreEnv(saved);
+  }
+});
+
 test("Control API exposes bounded Git prompt history and selected-version diff as read-only data", async () => {
   const saved = saveEnv();
   const repositoryRoot = mkdtempSync(
