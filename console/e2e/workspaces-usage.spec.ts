@@ -42,7 +42,13 @@ test("Workspaces keeps its aggregate usage column readable at narrow and desktop
   page
 }) => {
   await page.goto(WORKSPACES_URL);
-  const table = page.locator("table");
+  // The document also carries React's streaming scaffolding. A flight row that
+  // outgrows React's row limit is split into segments, and the segments are
+  // relocated into `<table hidden>` wrappers that stay in the document as
+  // siblings of the page -- three of them, on every table route. They are
+  // not tables the Console renders, so the locator names the one that is:
+  // the table inside its own scroll region.
+  const table = page.locator("[role='region'] table");
   // The workspace's configuration is one grouped setting and one editable
   // control, so the three read-only columns it used to be spread across --
   // Base Branch, Enablement and Role Scope -- are one Configuration column.

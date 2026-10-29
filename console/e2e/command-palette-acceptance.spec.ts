@@ -1,6 +1,27 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 
 import { waitForPageContent } from "./acceptance-helpers.ts";
+
+/**
+ * The palette's trigger, once the client has written the key that opens it.
+ *
+ * The name carries the key the badge shows, because the badge is visible text
+ * on the control: a visible word the name drops is a word the operator can
+ * see and nobody else can. The key is read from the browser, so only the
+ * client can write it -- and the client is what registers the shortcut, so
+ * waiting for the key is waiting for the shortcut to exist. A key pressed
+ * before that is a key pressed into a page that has not taken over yet, and
+ * it goes nowhere.
+ */
+async function paletteTrigger(page: Page): Promise<Locator> {
+  const trigger = page.locator("[data-command-palette-trigger]");
+  await expect(trigger).toBeVisible();
+  await expect(trigger).toHaveAttribute(
+    "aria-label",
+    /^Find a resource \(.+?\)$/u
+  );
+  return trigger;
+}
 
 /**
  * The Console can be searched for a resource by what it is for.
@@ -27,18 +48,32 @@ import { waitForPageContent } from "./acceptance-helpers.ts";
  * than like a list of links: it keeps the focus inside itself, it hands the
  * focus back when it closes, and it answers a search in one keystroke.
  */
+test("the page says the client has taken over only when the page responds", async ({
+  page
+}) => {
+  await page.goto("/agents");
+  // The shared wait requires the page's hydration marker, which the page
+  // publishes when the client has taken it over.
+  await waitForPageContent(page);
+
+  // The shortcut belongs to the client: the keydown listener is registered by
+  // an effect, and an effect runs only once the client is there. If the page
+  // could say the client was live before that listener existed, a key pressed
+  // in the gap would go nowhere -- and the gap is exactly what the marker has
+  // to exclude. This is the assertion that says it does.
+  await page.keyboard.press("Meta+k");
+  await expect(
+    page.getByRole("dialog", { name: "Find a resource" })
+  ).toBeVisible();
+});
+
 test("the palette finds a resource by name and by what it is for", async ({
   page
 }) => {
   await page.goto("/agents");
   await waitForPageContent(page);
 
-  const trigger = page.locator("[data-command-palette-trigger]");
-  await expect(trigger).toBeVisible();
-  // The name carries the key the badge shows, because the badge is visible
-  // text on the control: a visible word the name drops is a word the
-  // operator can see and nobody else can.
-  await expect(trigger).toHaveAttribute("aria-label", /Find a resource/u);
+  await paletteTrigger(page);
 
   await page.keyboard.press("Meta+k");
   const dialog = page.getByRole("dialog", { name: "Find a resource" });
@@ -88,7 +123,10 @@ test("the palette does not open while the operator is typing in a field", async 
   await waitForPageContent(page);
 
   // The shortcut is for reaching the palette, not for interrupting a sentence
-  // the operator is writing.
+  // the operator is writing. The shortcut has to exist for the check to mean
+  // anything: a palette that was never registered would not open either, and
+  // the assertion below would pass for the wrong reason.
+  await paletteTrigger(page);
   await page.evaluate(() => {
     const field = document.createElement("input");
     field.id = "palette-probe-field";
@@ -107,7 +145,7 @@ test("the palette hands the focus back to its trigger when it closes", async ({
   await page.goto("/agents");
   await waitForPageContent(page);
 
-  const trigger = page.locator("[data-command-palette-trigger]");
+  const trigger = await paletteTrigger(page);
   await trigger.click();
   await expect(page.locator("#command-palette-input")).toBeFocused();
 
@@ -122,6 +160,7 @@ test("the palette keeps the focus inside itself", async ({ page }) => {
   await page.goto("/agents");
   await waitForPageContent(page);
 
+  await paletteTrigger(page);
   await page.keyboard.press("Meta+k");
   const dialog = page.getByRole("dialog", { name: "Find a resource" });
   await expect(dialog).toBeVisible();
@@ -142,6 +181,7 @@ test("the palette opens the first match with Enter", async ({ page }) => {
   await page.goto("/agents");
   await waitForPageContent(page);
 
+  await paletteTrigger(page);
   await page.keyboard.press("Meta+k");
   await page.locator("#command-palette-input").fill("playtest sessions");
   await page.keyboard.press("Enter");
@@ -162,6 +202,7 @@ test("the palette fits a short window", async ({ page }) => {
   await page.goto("/agents");
   await waitForPageContent(page);
 
+  await paletteTrigger(page);
   await page.keyboard.press("Meta+k");
   const dialog = page.getByRole("dialog", { name: "Find a resource" });
   await expect(dialog).toBeVisible();
@@ -208,6 +249,7 @@ test("the palette selects a result the keyboard can move", async ({ page }) => {
   await page.goto("/agents");
   await waitForPageContent(page);
 
+  await paletteTrigger(page);
   await page.keyboard.press("Meta+k");
   const field = page.locator("#command-palette-input");
   await expect(field).toBeFocused();

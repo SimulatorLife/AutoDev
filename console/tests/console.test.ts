@@ -21823,6 +21823,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
       "Keeps the shared Console frame and active section visible while route data streams."
     ],
     [
+      join("src", "components", "layout", "HydrationMarker.ts"),
+      "Publishes the page's own marker for the client having taken the page over; it holds no page data, reads nothing, and moves nothing."
+    ],
+    [
       join("src", "components", "navigation", "NavigationLink.ts"),
       "Warms the destination it is about to route to with a full prefetch, on user intent only."
     ],

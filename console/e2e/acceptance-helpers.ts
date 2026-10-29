@@ -13,15 +13,31 @@ export interface CanonicalRoute {
 }
 
 /**
- * Wait until the page's own content has replaced its loading shell.
+ * Wait until the page's own content has replaced its loading shell, and the
+ * client has taken the page over.
  *
  * The Console streams a page: the shell and its loading state arrive first
  * and the resource's own content is swapped in afterwards. Measuring the
  * shell would measure the placeholder rather than the page.
+ *
+ * The content arriving is not the same as the client arriving. The markup is
+ * server-rendered, so the page is on the screen before the bundle that makes
+ * it respond has run -- and everything the operator does with the keyboard,
+ * the palette's shortcut, the filters and the write controls all belong to
+ * the client. A keystroke in the gap between the two goes nowhere, and a
+ * page that has been asserted against in that gap passes every check about
+ * what it shows and fails every check about what it does.
+ *
+ * So the wait requires both, and the page publishes the difference: the
+ * marker is rendered with the page's own content, so it cannot be set by the
+ * loading state that stands in for a page that has not arrived.
  */
 export async function waitForPageContent(page: Page): Promise<void> {
   await expect(page.locator("[data-feature]").first()).toBeVisible();
   await expect(page.locator("[data-console-loading]")).toHaveCount(0);
+  await expect(
+    page.locator("[data-hydration-marker][data-hydrated='true']")
+  ).toHaveCount(1);
 }
 
 /**

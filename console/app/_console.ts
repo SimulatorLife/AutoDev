@@ -12,6 +12,7 @@ import {
 import React from "react";
 
 import { AppShell } from "../src/components/layout/AppShell.ts";
+import { HydrationMarker } from "../src/components/layout/HydrationMarker.ts";
 import { DETAIL_PANEL_SHAPE } from "../src/components/layout/Panel.ts";
 import { MUTED_META_CLASS } from "../src/components/ui/text-classes.ts";
 import { canonicalSectionFromPath } from "../src/lib/routes.ts";
@@ -265,6 +266,14 @@ export function ConsolePageShell({
       description: canonicalSectionPurpose(section),
       actions
     },
-    children
+    children,
+    // The page's own "the client has taken over" marker, and the last thing in
+    // the page: everything the content is made of is mounted before it, so a
+    // caller that waits for the marker is waiting for the page's controls to
+    // be live rather than for the shell around them. The shell is also what
+    // the pending state is rendered with, so the marker cannot live there: a
+    // marker the pending state set would report a client that had taken over
+    // a page that had not arrived yet.
+    React.createElement(HydrationMarker)
   );
 }
