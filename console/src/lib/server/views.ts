@@ -6,7 +6,6 @@
 
 import type {
   AgentDefinition,
-  ControlApiAgentDetailResponse,
   ControlApiAgentRecord,
   ControlApiAgentsResponse,
   ControlApiHooksResponse,
@@ -14,15 +13,13 @@ import type {
   ControlApiPromptDetailResponse,
   ControlApiPromptsResponse,
   ControlApiSkillsResponse,
-  ControlApiWorkspacesResponse,
   HookDefinition,
   PermissionPolicy,
   PromptAsset,
   PromptDocument,
   RoleCapabilityMatrix,
   ScopedSkillDefinition,
-  SkillEligibility,
-  WorkspaceEntry
+  SkillEligibility
 } from "@simulatorlife/autodev-core";
 
 const ROLE_COLLATOR = new Intl.Collator();
@@ -97,12 +94,6 @@ export function agentFromControlApi(
       ? {}
       : { systemPrompt: agent.systemPrompt })
   };
-}
-
-export function agentDetailFromControlApi(
-  response: ControlApiAgentDetailResponse
-): AgentDefinition {
-  return agentFromControlApi(response);
 }
 
 /**
@@ -289,10 +280,4 @@ export function promptDocumentFromControlApi(
     preview: response.preview,
     revision: response.revision
   };
-}
-
-export function workspacesFromControlApi(
-  response: ControlApiWorkspacesResponse
-): readonly WorkspaceEntry[] {
-  return response.workspaces;
 }

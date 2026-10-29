@@ -269,15 +269,14 @@ import {
 } from "../src/lib/server/openlit-usage.ts";
 import { activeSessionsFromRuntime } from "../src/lib/server/usage-active-sessions.ts";
 import {
-  agentDetailFromControlApi,
+  agentFromControlApi,
   hooksFromControlApi,
   permissionsFromControlApi,
   promptDocumentFromControlApi,
   promptsFromControlApi,
   skillEligibilityFromControlApi,
   skillsFromControlApi,
-  unresolvedSkillAssignmentsFromControlApi,
-  workspacesFromControlApi
+  unresolvedSkillAssignmentsFromControlApi
 } from "../src/lib/server/views.ts";
 /** Find one rendered anchor by destination without depending on prop order. */
 function anchorMarkupForHref(markup: string, href: string): string {
@@ -12514,37 +12513,9 @@ test("View adapters translate Control API responses without inventing data", () 
     revision: "b".repeat(64)
   });
 
-  const workspaces = workspacesFromControlApi({
-    schema: "autodev-control-workspaces-v3",
-    source: "test",
-    readOnly: false,
-    catalogStatus: "valid",
-    revision: "c".repeat(64),
-    totalWorkspaces: 1,
-    reconciliation: {
-      status: {
-        convergence: "converged",
-        desiredGeneration: "e".repeat(64),
-        observedGeneration: "e".repeat(64),
-        lastApplyAt: "2026-10-07T00:00:00Z",
-        lastObservationAt: "2026-10-07T00:00:05Z",
-        lastError: null,
-        explanation: "The canonical catalog matches the desired state."
-      },
-      history: []
-    },
-    workspaces: [
-      {
-        id: "SimulatorLife/AutoDev",
-        baseBranch: "main",
-        enabled: true,
-        agentRoles: null,
-        configuration: { status: "configured" },
-        runtime: { status: "not-observed" }
-      }
-    ]
-  });
-  assert.equal(workspaces[0]?.id, "SimulatorLife/AutoDev");
+  // The workspaces catalogue has no adapter to exercise: its entries are
+  // already the view's shape, so the page reads them where the payload
+  // publishes them and there is no second path to the same list.
 
   const perms = permissionsFromControlApi({
     schema: "autodev-control-permissions-v2",
@@ -14522,7 +14493,7 @@ test("an agent detail whose prompt could not be read says the prompt is unavaila
 
   // The null is carried into the view as an absent prompt, not as an empty
   // one: the two say different things about the same role.
-  const mapped = agentDetailFromControlApi(wire);
+  const mapped = agentFromControlApi(wire);
   assert.equal(mapped.systemPrompt, undefined);
 
   const unavailable = renderToStaticMarkup(

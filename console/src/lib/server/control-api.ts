@@ -16,7 +16,6 @@
  * state instead of fabricating values.
  */
 
-import { readFileSync } from "node:fs";
 import nodePath from "node:path";
 
 import {
@@ -93,6 +92,13 @@ import {
   type ControlApiWorkspacesResponse,
   type ControlApiWorkspaceVisualPlaytestTargetsResponse,
   type ConvergenceStatus,
+  isExperienceOutcome,
+  isMemoryAuthority,
+  isMemoryExecutionMode,
+  isMemoryInjectionResult,
+  isMemoryOutcomeReportKind,
+  isMemoryOutcomeReportReasonCode,
+  isMemoryUseKind,
   isSandboxMode,
   LOCAL_CONTROL_API_ACTOR,
   MEMORY_STATUSES,
@@ -106,6 +112,8 @@ import {
   type WorkspaceConfigurationHealth,
   type WorkspaceRuntimeAvailability
 } from "@simulatorlife/autodev-core";
+
+import { readSecretFromFile } from "./secret-file.ts";
 
 export type ControlApiResult<T> =
   | { readonly kind: "ok"; readonly data: T }
@@ -164,36 +172,10 @@ const PROMPT_VERSION_TIMEOUT_MS = 12_000;
 const CONTROL_API_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const CONTROL_API_GIT_REVISION_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const TRAILING_SLASHES = /\/+$/u;
-const LINE_SPLIT_PATTERN = /\r?\n/u;
 
 export interface ControlApiConfig {
   readonly baseUrl: string;
   readonly serviceToken: string;
-}
-
-function readSecretFromFile(filePath: string, key: string): string | null {
-  try {
-    const content = readFileSync(filePath, "utf8");
-    for (const line of content.split(LINE_SPLIT_PATTERN)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const stripped = trimmed.startsWith("export ")
-        ? trimmed.slice(7).trim()
-        : trimmed;
-      if (!stripped.startsWith(`${key}=`)) continue;
-      const rawValue = stripped.slice(key.length + 1).trim();
-      const first = rawValue[0];
-      const last = rawValue.at(-1);
-      const quoted =
-        rawValue.length >= 2 &&
-        ((first === '"' && last === '"') || (first === "'" && last === "'"));
-      const value = quoted ? rawValue.slice(1, -1) : rawValue;
-      return value || null;
-    }
-  } catch {
-    return null;
-  }
-  return null;
 }
 
 export function readControlApiConfig(
@@ -1932,8 +1914,8 @@ function isObservedInjection(value: unknown): boolean {
   return (
     isRecord(value) &&
     typeof value.id === "string" &&
-    typeof value.memoryMode === "string" &&
-    typeof value.injectionResult === "string" &&
+    isMemoryExecutionMode(value.memoryMode) &&
+    isMemoryInjectionResult(value.injectionResult) &&
     typeof value.packetCharacterCount === "number" &&
     Array.isArray(value.memoryIds) &&
     value.memoryIds.every((id) => typeof id === "string") &&
@@ -1956,8 +1938,8 @@ function isAssessedInjection(value: unknown): boolean {
   return (
     isRecord(value) &&
     typeof value.id === "string" &&
-    typeof value.memoryMode === "string" &&
-    typeof value.injectionResult === "string" &&
+    isMemoryExecutionMode(value.memoryMode) &&
+    isMemoryInjectionResult(value.injectionResult) &&
     typeof value.packetCharacterCount === "number" &&
     Array.isArray(value.memoryIds) &&
     value.memoryIds.every((id) => typeof id === "string") &&
@@ -1973,12 +1955,17 @@ function isInjectionOutcomeJoin(
     isObservedInjection(value.injection) &&
     (value.outcome === null ||
       (isRecord(value.outcome) &&
-        typeof value.outcome.outcomeKind === "string" &&
-        typeof value.outcome.reportKind === "string" &&
+        // Each of these is a vocabulary the Runtime validates, and each one
+        // has a word the Console owns. A guard that accepted any string here
+        // would let a value the Runtime cannot produce reach the view, where
+        // it would be looked up in a table of words and found missing -- which
+        // is a blank cell rather than an unreadable response.
+        isExperienceOutcome(value.outcome.outcomeKind) &&
+        isMemoryOutcomeReportKind(value.outcome.reportKind) &&
         typeof value.outcome.reportedAt === "string" &&
         typeof value.outcome.reporterId === "string" &&
-        typeof value.outcome.reporterAuthority === "string" &&
-        typeof value.outcome.reasonCode === "string")) &&
+        isMemoryAuthority(value.outcome.reporterAuthority) &&
+        isMemoryOutcomeReportReasonCode(value.outcome.reasonCode))) &&
     typeof value.sessionInjectionCount === "number"
   );
 }
@@ -1991,7 +1978,7 @@ function isInjectionUseAssessment(
     isAssessedInjection(value.injection) &&
     (value.use === null ||
       (isRecord(value.use) &&
-        typeof value.use.useKind === "string" &&
+        isMemoryUseKind(value.use.useKind) &&
         Array.isArray(value.use.usedMemoryIds) &&
         value.use.usedMemoryIds.every((id) => typeof id === "string") &&
         typeof value.use.reportedAt === "string" &&

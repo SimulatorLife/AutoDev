@@ -189,6 +189,8 @@ A detail composed from a catalogue is held to the same rule, and the catalogue's
 
 One published word has one owner. When a fact is composed of two reads, the layer that composes them publishes it, and a layer that contributed only a part publishes only what it read. A second derivation of the same word over a narrower scope is how two authorities drift apart: each is defensible on its own, and then one surface contradicts another about the same fact.
 
+A capability has one path as well as one owner. A helper that forwards to another without adding anything is a second path to the same thing, and the second path is where the two drift apart: the copy that is called less often is the one whose callers were migrated first and whose behaviour was checked last. A pass-through that no production caller reaches is not a convenience -- it is a second answer to a question that already has one -- and a re-export that exists so a test can import a symbol is a second published home for a value its owner already publishes.
+
 A count over a partly-observed scope names the scope. The count may be exactly right for what arrived -- a workflow the Actions API did not report cannot be counted active, and an unread half of a catalogue contributes no entries -- but the operator has to be told how much of the scope arrived, or a number that is right about half the catalogue reads as a number about all of it.
 
 Configuration does not prove runtime availability. Eligibility/exposure does not prove execution. Historical tool use does not define current permissions.
@@ -975,7 +977,7 @@ Requirements:
 
 - no AutoDev account/login/signup product;
 - same-origin browser mutations with CSRF protection;
-- **every** write route checks the origin, including the ones that answer a JSON caller. The route holds the service credential, so the origin is the only thing that separates the operator's own click from a page on another site making the request on the operator's behalf -- and a cross-site form post is a *simple* request: no preflight, and a content type the page chooses, including the `text/plain` body a JSON reader will happily parse. The check comes before the body is read, so a refused request costs nothing and a body nobody may submit is never parsed;
+- **every** write route checks the origin, including the ones that answer a JSON caller. The route holds the service credential, so the origin is the only thing that separates the operator's own click from a page on another site making the request on the operator's behalf -- and a cross-site form post is a _simple_ request: no preflight, and a content type the page chooses, including the `text/plain` body a JSON reader will happily parse. The check comes before the body is read, so a refused request costs nothing and a body nobody may submit is never parsed;
 - private/scoped server credential from Console to Control API;
 - installation/operator authorization appropriate to deployment;
 - optional reverse-proxy/SSO protection for remote exposure without AutoDev accounts;

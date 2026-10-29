@@ -13,7 +13,7 @@ import {
   fetchProviders,
   fetchRuntime
 } from "../../../src/lib/server/control-api.ts";
-import { agentDetailFromControlApi } from "../../../src/lib/server/views.ts";
+import { agentFromControlApi } from "../../../src/lib/server/views.ts";
 import {
   ConsolePageShell,
   controlApiCredentialUnavailable,
@@ -90,7 +90,7 @@ export default async function AgentDetailPage({
     ConsolePageShell,
     { section },
     React.createElement(AgentDetailView, {
-      agent: agentDetailFromControlApi(detailResult.data),
+      agent: agentFromControlApi(detailResult.data),
       reconciliation: detailResult.data.reconciliation,
       providers,
       runtime,

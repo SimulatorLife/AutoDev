@@ -1,6 +1,5 @@
 /** Server-only OpenLIT Usage adapter configuration and URL filter parsing. */
 
-import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -17,9 +16,10 @@ import {
   type OpenLITUsageResult
 } from "@simulatorlife/autodev-data/usage";
 
+import { readSecretFromFile } from "./secret-file.ts";
+
 const DEFAULT_OPENLIT_USAGE_BASE_URL = "http://127.0.0.1:3000";
 const TRAILING_SLASHES = /\/+$/u;
-const SECRET_FILE_LINE_BREAK = /\r?\n/u;
 const VALID_RANGES = new Set<UsageTimeRange>([
   "24H",
   "7D",
@@ -43,32 +43,6 @@ export type ConsoleUsageResult =
 
 export type ConsoleTraceResult =
   { readonly kind: "not-configured" } | OpenLITTraceResult;
-
-function readSecretFromFile(filePath: string, key: string): string | null {
-  try {
-    const content = readFileSync(filePath, "utf8");
-    for (const line of content.split(SECRET_FILE_LINE_BREAK)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const stripped = trimmed.startsWith("export ")
-        ? trimmed.slice(7).trim()
-        : trimmed;
-      if (!stripped.startsWith(`${key}=`)) continue;
-      const rawValue = stripped.slice(key.length + 1).trim();
-      const leading = rawValue[0];
-      const trailing = rawValue.at(-1);
-      const quoted =
-        rawValue.length >= 2 &&
-        ((leading === '"' && trailing === '"') ||
-          (leading === "'" && trailing === "'"));
-      const value = quoted ? rawValue.slice(1, -1) : rawValue;
-      return value || null;
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
 
 export function readOpenLITUsageConfig(
   env: OpenLITUsageEnvironment = process.env
