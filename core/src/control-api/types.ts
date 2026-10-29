@@ -136,7 +136,11 @@ export interface ControlApiAgentsResponse {
 export interface ControlApiAgentDetailResponse extends ControlApiAgentRecord {
   readonly schema: "autodev-control-agent-detail-v3";
   readonly promptPath: string | null;
-  readonly systemPrompt: string;
+  /**
+   * The role's system prompt, or null when the prompt file is there and could
+   * not be read. An unreadable prompt is not an empty prompt.
+   */
+  readonly systemPrompt: string | null;
   /** Reusable reconciliation view shared with mutation responses. */
   readonly reconciliation: {
     readonly status: ReconciliationStatus;

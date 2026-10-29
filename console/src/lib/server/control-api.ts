@@ -940,7 +940,7 @@ function isControlApiAgentDetailResponse(
     value.schema === "autodev-control-agent-detail-v3" &&
     isAgentRecord(value) &&
     (value.promptPath === null || typeof value.promptPath === "string") &&
-    typeof value.systemPrompt === "string" &&
+    (value.systemPrompt === null || typeof value.systemPrompt === "string") &&
     isReconciliationBundle(value.reconciliation)
   );
 }

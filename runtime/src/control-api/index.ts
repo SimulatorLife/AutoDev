@@ -2870,6 +2870,56 @@ function agentsView(
   } satisfies ControlApiAgentsResponse;
 }
 
+/**
+ * One role prompt, read.
+ *
+ * Three outcomes, and the third is not the second: the prompt was read, the
+ * role has no prompt file, or the prompt is there and could not be read. Only
+ * the second is an empty prompt. The third is no observation at all, and an
+ * empty string there would claim the prompt was read and held nothing -- and
+ * it would hand the reconciliation a digest of nothing to compare against,
+ * which is an identity that names no prompt.
+ */
+interface RolePromptRead {
+  /** Whether a prompt file is there at all. */
+  readonly present: boolean;
+  /** The prompt's content, or null when it could not be read. */
+  readonly content: string | null;
+  /** The prompt's canonical revision, or null when it could not be read. */
+  readonly revision: string | null;
+}
+
+function readRolePrompt(promptPath: string): RolePromptRead {
+  if (!existsSync(promptPath)) {
+    // A role with no prompt file has an empty prompt. That was observed.
+    return { present: false, content: "", revision: null };
+  }
+  // A path that is there and is not a regular file cannot be read as a
+  // prompt. The canonical command catalogue refuses a non-regular entry the
+  // same way, and the reason is the same: the path exists, the prompt does
+  // not.
+  let regularFile = false;
+  try {
+    regularFile = statSync(promptPath).isFile();
+  } catch {
+    // The path could not be inspected, so it cannot be a readable prompt.
+  }
+  if (!regularFile) {
+    return { present: true, content: null, revision: null };
+  }
+  try {
+    const content = readFileSync(promptPath, "utf8").trim();
+    return {
+      present: true,
+      content,
+      revision: createHash("sha256").update(content, "utf8").digest("hex")
+    };
+  } catch {
+    // The file is there and could not be read.
+    return { present: true, content: null, revision: null };
+  }
+}
+
 function agentDetailView(
   role: string,
   repositoryRoot: string = DEFAULT_REPO_ROOT
@@ -2914,14 +2964,10 @@ function agentDetailView(
     "roles",
     `${role}.md`
   );
-  let systemPrompt = "";
-  if (existsSync(promptPath)) {
-    try {
-      systemPrompt = readFileSync(promptPath, "utf8").trim();
-    } catch {
-      // Ignore unreadable prompt
-    }
-  }
+  // The prompt is read as an observation, not as a string: a prompt that is
+  // there and cannot be read is not an empty prompt, and an empty prompt would
+  // also give the reconciliation a digest of nothing to compare against.
+  const rolePrompt = readRolePrompt(promptPath);
   const roleType = isOrchestrator ? "orchestrator" : "subagent";
   const allowedProviders = [
     "codex",
@@ -2933,7 +2979,7 @@ function agentDetailView(
     ROUTING_POLICY.isProviderEnabledForRole(provider, roleType)
   );
 
-  const hasPrompt = existsSync(promptPath);
+  const hasPrompt = rolePrompt.present;
   const status = agentStatus(role, hasPrompt, allowedProviders);
   const convergence = agentConvergence(role, hasPrompt);
   const valid = hasPrompt && allowedProviders.length > 0;
@@ -2957,16 +3003,14 @@ function agentDetailView(
       allowedProviders,
       mcps,
       skills,
-      promptPath: existsSync(promptPath)
-        ? `agents/prompts/roles/${role}.md`
-        : null,
-      systemPrompt,
+      promptPath: rolePrompt.present ? `agents/prompts/roles/${role}.md` : null,
+      systemPrompt: rolePrompt.content,
       reconciliation: promptReconciliationView({
         name: role,
         codexHome: defaultCodexHomeForReconciliation(),
-        expectedRevision: createHash("sha256")
-          .update(systemPrompt, "utf8")
-          .digest("hex")
+        // The canonical revision of a prompt nobody could read is not known,
+        // and a digest of nothing is not a revision of anything.
+        expectedRevision: rolePrompt.revision
       })
     } satisfies ControlApiAgentDetailResponse
   };
@@ -4339,7 +4383,7 @@ function promptGeneration(revision: string | null | undefined): string | null {
 function promptReconciliationView(args: {
   readonly name: string;
   readonly codexHome: string;
-  readonly expectedRevision: string;
+  readonly expectedRevision: string | null;
 }): {
   readonly status: ReconciliationStatus;
   readonly history: readonly OperationHistoryEntry[];
@@ -5879,7 +5923,7 @@ const READ_ONLY_COLLECTIONS: ReadonlyMap<string, ReadOnlyCollectionRenderer> =
           version: CONTROL_API_CONTRACT.version
         }) satisfies ControlApiContractResponse
     ],
-    [CONTROL_API_PATHS.agents, () => agentsView()],
+    [CONTROL_API_PATHS.agents, (_actor, root) => agentsView(root)],
     [CONTROL_API_PATHS.providers, () => providersView(Date.now())],
     [CONTROL_API_PATHS.providerModels, () => providerModelsView()],
     [CONTROL_API_PATHS.models, () => modelsView()],
@@ -8146,13 +8190,22 @@ async function agentDetailRoute(
   actor: ControlApiActor,
   method: string,
   pathname: string,
-  role: string
+  role: string,
+  options: ControlApiRequestOptions
 ): Promise<boolean> {
   if (method === "PATCH") {
     await patchAgentEnablement(request, response, actor, role);
     return true;
   }
-  if (method === "GET")
+  if (method === "GET") {
+    // The role's prompt is read from the same repository the collection is
+    // read from, so a caller pointed at another repository gets one answer
+    // about one repository rather than two answers about two.
+    const route: ReadOnlyDetailRoute = {
+      ...AGENT_DETAIL_ROUTE,
+      read: (identifier) =>
+        agentDetailView(identifier, options.repositoryRoot ?? DEFAULT_REPO_ROOT)
+    };
     return readOnlyDetailRoute(
       request,
       response,
@@ -8160,8 +8213,9 @@ async function agentDetailRoute(
       method,
       pathname,
       role,
-      AGENT_DETAIL_ROUTE
+      route
     );
+  }
 
   auditRejectedRequest(
     request,
@@ -8454,7 +8508,8 @@ export async function handleControlApiRequest(
       actor,
       method,
       pathname,
-      agentMatch[1]!.toLowerCase()
+      agentMatch[1]!.toLowerCase(),
+      options
     );
   const promptVersionsMatch = promptVersionsPath(pathname);
   if (promptVersionsMatch)

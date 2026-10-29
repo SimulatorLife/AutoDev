@@ -63,7 +63,7 @@ export function agentsFromControlApi(
 }
 
 export function agentFromControlApi(
-  agent: ControlApiAgentRecord & { readonly systemPrompt?: string }
+  agent: ControlApiAgentRecord & { readonly systemPrompt?: string | null }
 ): AgentDefinition {
   return {
     id: agent.id,
@@ -90,7 +90,10 @@ export function agentFromControlApi(
       }))
     ],
     toolNames: [...agent.skills, ...agent.mcps],
-    ...(agent.systemPrompt === undefined
+    // A prompt nobody could read is not an empty prompt: the field is left off
+    // rather than set to "", and the detail page says the prompt is
+    // unavailable instead of showing an empty one.
+    ...(agent.systemPrompt === undefined || agent.systemPrompt === null
       ? {}
       : { systemPrompt: agent.systemPrompt })
   };

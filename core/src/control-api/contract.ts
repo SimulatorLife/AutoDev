@@ -82,11 +82,16 @@
  * contract was read. Both draw role assignments from it, and the accessor
  * that reads it falls back to an empty contract when the read fails -- so an
  * empty contract and a contract nobody read looked the same to every caller.
+ * v25: the agent detail publishes null for its system prompt when the role's
+ * prompt file is there and could not be read. The detail used to publish an
+ * empty string for it, which claimed the prompt was read and held nothing --
+ * and gave the reconciliation a digest of nothing to compare against, an
+ * identity that names no prompt.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 24
+  version: 25
 } as const;
 
 export type ControlApiContractResponse = {

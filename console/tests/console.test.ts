@@ -269,6 +269,7 @@ import {
 } from "../src/lib/server/openlit-usage.ts";
 import { activeSessionsFromRuntime } from "../src/lib/server/usage-active-sessions.ts";
 import {
+  agentDetailFromControlApi,
   hooksFromControlApi,
   permissionsFromControlApi,
   promptDocumentFromControlApi,
@@ -14420,7 +14421,6 @@ test("Agents responses fail closed rather than render an empty Configure surface
 
   for (const broken of [
     { ...detail, schema: "autodev-control-agent-detail-v1" },
-    { ...detail, systemPrompt: null },
     { ...detail, promptPath: 5 },
     // The detail page composes configuration, runtime state, and reconciliation,
     // so a payload missing the reconciliation bundle must not render at all.
@@ -14439,6 +14439,63 @@ test("Agents responses fail closed rather than render an empty Configure surface
       JSON.stringify(broken)
     );
   }
+
+  // A prompt that is there and could not be read is published as null, and
+  // null is a fact the Console understands: the prompt is not empty, it was
+  // not read. The guard used to reject it, so the Runtime's honest answer
+  // would have failed the page closed.
+  assert.equal(
+    (
+      await fetchAgentDetail(
+        "orchestrator",
+        config,
+        serve({ ...detail, systemPrompt: null })
+      )
+    ).kind,
+    "ok"
+  );
+});
+
+test("an agent detail whose prompt could not be read says the prompt is unavailable", () => {
+  // The Runtime publishes null for a role prompt it could not read, and the
+  // view already had a vocabulary for "the prompt is not available". What was
+  // missing was a way for the Runtime to say so: it published an empty string,
+  // which the page rendered as a prompt that was read and held nothing.
+  const wire = {
+    ...CONFIGURED_AGENT,
+    schema: "autodev-control-agent-detail-v3",
+    allowedProviders: ["claude"],
+    mcps: [],
+    skills: [],
+    hasPrompt: true,
+    promptPath: "agents/prompts/roles/orchestrator.md",
+    systemPrompt: null,
+    reconciliation: AGENT_RECONCILIATION
+  } as unknown as ControlApiAgentDetailResponse;
+
+  // The null is carried into the view as an absent prompt, not as an empty
+  // one: the two say different things about the same role.
+  const mapped = agentDetailFromControlApi(wire);
+  assert.equal(mapped.systemPrompt, undefined);
+
+  const unavailable = renderToStaticMarkup(
+    React.createElement(AgentDetailView, {
+      agent: mapped,
+      reconciliation: AGENT_RECONCILIATION
+    })
+  );
+  assert.match(unavailable, /data-prompt-state="unavailable"/);
+  assert.match(unavailable, /Role prompt content is unavailable\./);
+  assert.equal(unavailable.includes("System prompt"), false);
+
+  const read = renderToStaticMarkup(
+    React.createElement(AgentDetailView, {
+      agent: { ...CONFIGURED_AGENT, systemPrompt: "You are the orchestrator." },
+      reconciliation: AGENT_RECONCILIATION
+    })
+  );
+  assert.match(read, /You are the orchestrator\./);
+  assert.equal(read.includes('data-prompt-state="unavailable"'), false);
 });
 
 test("Catalog collections fail closed on unreadable responses", async () => {

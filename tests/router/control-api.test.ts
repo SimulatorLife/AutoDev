@@ -2321,6 +2321,46 @@ test("a skill whose catalogue could not be read is not an unknown skill", async 
   }
 });
 
+test("an agent detail whose role prompt could not be read does not publish an empty prompt", async () => {
+  const saved = saveEnv();
+  const priorContract = getDefaultExecutionContract();
+  const repositoryRoot = mkdtempSync(join(tmpdir(), "autodev-agent-prompt-"));
+  try {
+    configure();
+    setExecutionContractForTests({
+      roles: { reviewer: { mcp: [] } },
+      providers: {}
+    } as unknown as ExecutionContract);
+    // The role's prompt is there and is not a regular file, so it cannot be
+    // read as a prompt. The detail used to publish an empty string for it,
+    // which claimed the prompt was read and held nothing.
+    mkdirSync(
+      join(repositoryRoot, "agents", "prompts", "roles", "reviewer.md"),
+      {
+        recursive: true
+      }
+    );
+    const detail = await call(
+      "GET",
+      `${CONTROL_API_PATHS.agents}/reviewer`,
+      { actor: "viewer-a" },
+      { repositoryRoot }
+    );
+    assert.equal(detail.response.statusCode, 200);
+    assert.equal(detail.body.systemPrompt, null);
+    // The path is still published: the prompt is there, nobody could read it.
+    assert.equal(detail.body.promptPath, "agents/prompts/roles/reviewer.md");
+    // The canonical revision of a prompt nobody could read is not known, and a
+    // digest of nothing is an identity that names no prompt.
+    assert.equal(detail.body.reconciliation.status.desiredGeneration, null);
+    assert.equal(detail.body.reconciliation.status.convergence, "not-observed");
+  } finally {
+    setExecutionContractForTests(priorContract);
+    restoreEnv(saved);
+    rmSync(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
 test("an agent detail whose contract was not read is not an unknown role", async () => {
   const saved = saveEnv();
   const priorContract = getDefaultExecutionContract();

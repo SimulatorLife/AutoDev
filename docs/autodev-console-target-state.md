@@ -522,6 +522,8 @@ The Agent enablement control is revision-bound through `PATCH /control/agents/{r
 
 The agent catalogue is the execution contract's roles, and the accessor that reads the contract falls back to an empty contract when the read fails. An empty contract and a contract nobody read look the same to a caller that only sees the roles, and they are not the same claim: the first says the contract declares no role, the second says nobody read it. The Runtime publishes whether the contract was read, the count over the catalogue is a number only when it was, and the list says which read did not happen instead of rendering an empty catalogue as a configured one. The skills catalogue draws its role assignments from the same contract and answers the same way.
 
+The role's prompt is read as an observation, for the same reason. A role whose prompt file is there and cannot be read has no known prompt, and the detail says so -- it does not publish an empty prompt, which would claim the prompt was read and held nothing, and it does not publish a digest of nothing as the prompt's canonical revision, which is an identity that names no prompt. A path that is there and is not a regular file cannot be read as a prompt, and it is not one. A role with no prompt file at all has an empty prompt, and that was observed.
+
 ### Providers
 
 Providers is the one place an operator decides which model providers may serve the fixed agent roles, in what priority order, with which model, and under which concurrency limits. Its **Providers** tab is a single compact configuration table with exactly **five primary columns**:
