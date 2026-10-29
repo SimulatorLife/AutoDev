@@ -54,17 +54,21 @@ async function withFixture(
   }
 }
 
-test("ToolCatalogAdapter reports unknown when the RuleSync MCP source is absent", async () => {
+test("ToolCatalogAdapter publishes the source's state when the RuleSync MCP source is absent", async () => {
   const repositoryRoot = await mkdtemp(
     path.join(tmpdir(), "autodev-tool-catalog-empty-")
   );
   try {
     const adapter = new ToolCatalogAdapter({ repositoryRoot });
     const result = adapter.load();
-    assert.equal(result.coverage, "unknown");
     assert.equal(result.validity, "not-observed");
     assert.equal(result.source, ".rulesync/mcp.jsonc");
     assert.equal(result.tools.length, 0);
+    // The adapter publishes what it read, not the composite's coverage: the
+    // coverage belongs to whoever merges this projection with the execution
+    // contract's, and a second derivation of the same word is how the two
+    // drift apart.
+    assert.equal("coverage" in result, false);
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
   }
@@ -83,7 +87,6 @@ test("ToolCatalogAdapter reports invalid when the RuleSync MCP source cannot be 
     );
     const adapter = new ToolCatalogAdapter({ repositoryRoot });
     const result = adapter.load();
-    assert.equal(result.coverage, "unavailable");
     assert.equal(result.validity, "invalid");
     assert.equal(result.tools.length, 0);
   } finally {
@@ -116,7 +119,6 @@ test("ToolCatalogAdapter joins declared MCP/plugin tools with execution-contract
         }
       }
     );
-    assert.equal(result.coverage, "complete");
     assert.equal(result.validity, "valid");
 
     const goto = result.tools.find(
@@ -182,7 +184,6 @@ test("ToolCatalogAdapter handles the not-observed validity without dropping the 
     servers: []
   };
   const result = adapter.fromMcpState(mcpState);
-  assert.equal(result.coverage, "unknown");
   assert.equal(result.validity, "not-observed");
   assert.equal(result.source, ".rulesync/mcp.jsonc");
   assert.deepEqual(result.tools, []);

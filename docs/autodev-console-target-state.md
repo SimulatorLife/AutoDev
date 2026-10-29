@@ -185,6 +185,8 @@ A read that falls back to an empty result is still a read that may have failed. 
 
 The same rule governs a detail. A detail that cannot be produced because its source was never read is not an unknown resource: nobody looked. "This role does not exist" and "the file that says which roles exist was not read" are different claims, and an operator can act on the second and not the first.
 
+One published word has one owner. When a fact is composed of two reads, the layer that composes them publishes it, and a layer that contributed only a part publishes only what it read. A second derivation of the same word over a narrower scope is how two authorities drift apart: each is defensible on its own, and then one surface contradicts another about the same fact.
+
 Configuration does not prove runtime availability. Eligibility/exposure does not prove execution. Historical tool use does not define current permissions.
 
 ### Accessibility and interaction consistency
@@ -584,6 +586,8 @@ The Tools resource is the composite effective catalogue, not one source's list. 
 The catalogue publishes what was observed about each read, and the page's claims follow from those facts rather than from the shape of the result. The execution contract's accessor returns an empty contract when the contract cannot be read, so the roles it contributes look exactly like a contract that declares no roles; the Runtime publishes whether the contract was read, and the Console states the catalogue's counts and every entry's role exposure as not observed when it was not. The entries that arrived are still shown -- they are what was observed -- but the page states no total it cannot know, and it does not claim that a tool has no roles when nobody read the source that assigns them.
 
 The page has one count authority: the entries it renders. The sidebar badge, the summary row and the narrowed filter summary all count those same entries, and they are numbers only when the catalogue was fully observed. A catalogue whose role projection was never read holds the entries the RuleSync source alone declared, and the number of those is exactly right for what arrived and incomplete for what the unread source would have contributed. Availability is a separate observation from exposure: a tool that is configured but was not observed is rendered with the vocabulary of the thing that was observed, not as a configured one.
+
+The catalogue's coverage has one owner, and it is the layer that composes the two reads. The data layer publishes what it read -- the RuleSync source's state and the entries it produced -- and no coverage of its own, because a coverage derived from one read answers a narrower question than the composite's coverage answers, and the two then disagree: the projection called an invalid source "unavailable" while the composite called it "unknown". The Runtime, which merges the RuleSync projection with the contract's role projection, publishes the coverage of the composite.
 
 ### Prompts
 

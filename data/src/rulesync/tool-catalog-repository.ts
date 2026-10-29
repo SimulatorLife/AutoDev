@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import type {
   RuleSyncMcpState,
   ToolAvailability,
-  ToolCatalogCoverage,
   ToolCatalogItem,
   ToolCatalogValidity,
   ToolSource,
@@ -18,8 +17,8 @@ import { RuleSyncRepository } from "./rulesync-repository.ts";
  * This module owns the authoritative reading of Tool catalog entries from
  * RuleSync MCP declarations plus the execution-contract role projection. It
  * never fabricates availability: missing or invalid sources render as
- * `not-observed`/`invalid` and the coverage collapses to the lowest observed
- * state instead of claiming completion.
+ * `not-observed`/`invalid` with no entries. The coverage of the composite
+ * belongs to whoever merges this projection with the contract's.
  *
  * The Tools composite catalog is built by:
  *   1. Reading every RuleSync MCP server declaration whose target projection
@@ -52,8 +51,19 @@ export interface ToolCatalogAdapterConfig {
   readonly repositoryRoot?: string;
 }
 
+/**
+ * What the adapter read.
+ *
+ * The adapter publishes the source's state and the entries it produced, and
+ * nothing else: the catalogue's coverage belongs to whoever owns the
+ * composite. The Runtime merges this projection with the execution contract's
+ * role projection, and the coverage it publishes describes that composite --
+ * which is a different question from the one this projection can answer. A
+ * second derivation of the same word, over a narrower scope, is how the two
+ * drift apart: this one called an invalid source "unavailable" while the
+ * composite called it "unknown".
+ */
 export interface ToolCatalogAdapterResult {
-  readonly coverage: ToolCatalogCoverage;
   readonly validity: ToolCatalogValidity;
   readonly source: string;
   readonly tools: readonly ToolCatalogItem[];
@@ -95,10 +105,10 @@ export class ToolCatalogAdapter {
     > = {}
   ): ToolCatalogAdapterResult {
     if (mcpState.valid === null) {
-      return unavailableResult(mcpState, "not-observed", "unknown");
+      return unavailableResult(mcpState, "not-observed");
     }
     if (mcpState.valid === false) {
-      return unavailableResult(mcpState, "invalid", "unavailable");
+      return unavailableResult(mcpState, "invalid");
     }
     const declaredByName = indexDeclaredServers(mcpState);
     const roleByTool = collectRoleAttribution(
@@ -107,9 +117,7 @@ export class ToolCatalogAdapter {
     );
     ensureCodexAppPluginTool(roleByTool, declaredByName);
     const tools = projectCatalogItems(roleByTool, declaredByName);
-    const coverage = deriveCoverage(tools);
     return {
-      coverage,
       validity: "valid",
       source: mcpState.source,
       tools
@@ -139,10 +147,9 @@ interface RoleEntry {
 
 function unavailableResult(
   mcpState: RuleSyncMcpState,
-  validity: ToolCatalogValidity,
-  coverage: ToolCatalogCoverage
+  validity: ToolCatalogValidity
 ): ToolCatalogAdapterResult {
-  return { coverage, validity, source: mcpState.source, tools: [] };
+  return { validity, source: mcpState.source, tools: [] };
 }
 
 function isPluginServer(name: string): boolean {
@@ -388,16 +395,4 @@ function projectCatalogItems(
       `${right.source}:${right.server ?? ""}:${right.name}`
     )
   );
-}
-
-function deriveCoverage(
-  tools: readonly ToolCatalogItem[]
-): ToolCatalogCoverage {
-  const hasRulesyncSources = tools.some(
-    (tool) =>
-      tool.sourceAuthority === RULESYNC_MCP_AUTHORITY ||
-      tool.sourceAuthority === RULESYNC_PLUGIN_AUTHORITY
-  );
-  if (hasRulesyncSources) return "complete";
-  return tools.length > 0 ? "partial" : "unavailable";
 }
