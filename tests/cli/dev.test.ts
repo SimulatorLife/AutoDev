@@ -27,11 +27,11 @@ import {
   ensureConsolePortAvailable,
   ensureConsoleSecrets,
   ensureModelRouter,
-  isPortListening,
   readDevControlApiConfig,
   readDevOpenLITUsageConfig,
   repoRoot
 } from "@simulatorlife/autodev-runtime/cli/dev";
+import { isPortListening } from "@simulatorlife/autodev-runtime/platform/usage-stack";
 
 interface RecordedCommand {
   command: string;

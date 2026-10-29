@@ -134,6 +134,13 @@ import {
   WorkspacePlaytestApprovalRepository,
   type WorkspaceVisualPlaytestTargetRepository
 } from "@simulatorlife/autodev-data";
+import {
+  installedSkillMatches,
+  materializeCommands,
+  materializeCurrentHookProjections,
+  materializeCurrentMcpConfiguration,
+  materializeRuleSyncSkillProjections
+} from "@simulatorlife/autodev-runtime/platform";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
 import { getDefaultRouterLifecycle } from "@simulatorlife/autodev-runtime/router/lifecycle";
@@ -151,13 +158,6 @@ import {
   WEB_SEARCH_TOOL
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
-import {
-  installedSkillMatches,
-  materializeCommands,
-  materializeCurrentHookProjections,
-  materializeCurrentMcpConfiguration,
-  materializeRuleSyncSkillProjections
-} from "../platform/install-materializer.ts";
 import type { PlaytestRunControl } from "../playtesting/mcp.ts";
 import { getDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
 import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";

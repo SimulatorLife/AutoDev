@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { LABEL_AUTODEV_CONSOLE } from "@simulatorlife/autodev-runtime/platform/console-ensure";
 import {
   type KillSignal,
   LABEL_ANTIGRAVITY_PROXY,
-  LABEL_AUTODEV_CONSOLE,
   LABEL_CLAUDE_BRIDGE,
   LABEL_COPILOT_PROXY,
   LABEL_MINIMAX_PROXY,

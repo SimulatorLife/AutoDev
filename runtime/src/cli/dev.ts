@@ -7,15 +7,18 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
+  ensureUsageStack,
+  httpHealthProbe,
+  isPortListening,
+  sleep,
+  waitForProbe
+} from "@simulatorlife/autodev-runtime/platform";
+import {
   writeErrorLine,
   writeLine
 } from "@simulatorlife/autodev-runtime/shared/output";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
-import { httpHealthProbe } from "../platform/health-probe.ts";
-import { sleep } from "../platform/sleep.ts";
-import { ensureUsageStack, isPortListening } from "../platform/usage-stack.ts";
-import { waitForProbe } from "../platform/wait-for-probe.ts";
 import { verifyControlApiCompatibility } from "./control-api-compatibility.ts";
 
 export const IS_MAIN =
@@ -25,8 +28,6 @@ export const IS_MAIN =
 export const repoRoot = path.resolve(
   resolveRuntimeSourceRoot(import.meta.dirname)
 );
-
-export { isPortListening } from "../platform/usage-stack.ts";
 
 const NEWLINE_SPLIT_REGEX = /\r?\n/u;
 

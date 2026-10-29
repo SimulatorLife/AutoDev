@@ -24,8 +24,6 @@ import { resolveCommandOnPath } from "./runtime-files.ts";
 import { sleep } from "./sleep.ts";
 import { ensureUsageStack } from "./usage-stack.ts";
 
-export { LABEL_AUTODEV_CONSOLE } from "./console-ensure.ts";
-
 const WHITESPACE_SPLIT_PATTERN = /\s+/u;
 const PID_NUMERIC_PATTERN = /^\d+$/u;
 const AUTH_TOKEN_PATTERN =

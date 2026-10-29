@@ -27,6 +27,15 @@ function typescriptFiles(directory: string): string[] {
 const platformRoot = path.join("runtime", "src", "platform");
 const deepPlatformImport =
   /from\s+["']@simulatorlife\/autodev-runtime\/platform\//u;
+/**
+ * The same coupling written as a relative path.
+ *
+ * The package form is only one of the two ways a module inside the Runtime
+ * can name a platform implementation file, and the guard that watched only
+ * the package form let the other one through: the CLI named four platform
+ * modules relatively, and the Control API named a fifth.
+ */
+const relativePlatformImport = /from\s+["'](?:\.\.\/)+platform\/[^"']+["']/u;
 const platformEntry =
   /from\s+["']@simulatorlife\/autodev-runtime\/platform["']/u;
 
@@ -41,17 +50,24 @@ test("nothing outside platform imports a platform implementation file by path", 
   // imports them, not whether they exist.
   const offenders = typescriptFiles(path.join(repositoryRoot, "runtime", "src"))
     .filter((file) => !file.startsWith(platformRoot))
-    .filter((file) => deepPlatformImport.test(source(file)));
+    .filter(
+      (file) =>
+        deepPlatformImport.test(source(file)) ||
+        relativePlatformImport.test(source(file))
+    );
 
   assert.deepEqual(offenders, []);
 });
 
-test("the CLI reaches install and router-ensure through the platform entry", () => {
+test("the CLI and the Control API reach the platform through its entry", () => {
   // `hooks/` already consumed the facade (lifecycle, session-start,
-  // subagent-start); the CLI was the only layer naming platform internals.
+  // subagent-start); the CLI named platform internals relatively, and the
+  // Control API named the materializer that way too.
   for (const file of [
+    "runtime/src/cli/dev.ts",
     "runtime/src/cli/install.ts",
-    "runtime/src/cli/provider-agent.ts"
+    "runtime/src/cli/provider-agent.ts",
+    "runtime/src/control-api/index.ts"
   ]) {
     assert.match(
       source(file),
