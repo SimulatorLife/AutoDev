@@ -99,20 +99,34 @@ export function AppShell({
             React.createElement(
               "span",
               {
+                // The app's own name gives way to the page's name on a narrow
+                // window. At 390px the header row is 291px wide, and the three
+                // things in it -- the brand, the title and the palette's
+                // trigger -- do not fit: the title was left 34px of a name
+                // that needs 71, so every page read "M..." on a phone. The
+                // brand is the one that can go, because the collapsed rail
+                // already carries the mark and the operator needs to know
+                // which *page* they are on.
                 className:
-                  "text-xs uppercase font-semibold text-fg-muted tracking-wider"
+                  "hidden text-xs uppercase font-semibold text-fg-muted tracking-wider sm:inline"
               },
               "AutoDev Console"
             ),
-            React.createElement("span", { className: MUTED_TEXT_CLASS }, "/"),
+            React.createElement(
+              "span",
+              { className: `hidden sm:inline ${MUTED_TEXT_CLASS}` },
+              "/"
+            ),
             React.createElement(
               "h1",
               // The page title truncates on a narrow window, and it is the one
               // heading on the page: an ellipsized `h1` tells the operator
               // which page they are on only partially. The full name stays on
-              // its hover title.
+              // its hover title, which a phone does not have -- so the title
+              // is given the room to be read at a narrow width instead, and
+              // only shrinks when there is genuinely no room for it.
               {
-                className: "text-lg font-bold text-fg truncate",
+                className: "text-base sm:text-lg font-bold text-fg truncate",
                 title: activeSection,
                 // Focusable so it can receive the focus after an in-place
                 // navigation, and out of the tab order so it is never a stop

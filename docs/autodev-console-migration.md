@@ -476,6 +476,16 @@ The fixture now serves one experience and the four reads opening it makes: the d
 
 Measured in Chromium, the tab now renders the evidence as the Console's words: `JIT · Injected`, `Reported outcome: Success`, `Task by reporter@example (Worker) at 2026-02-11 09:01:00 UTC — Supplied by the reporter`, and `Used (1/1 memories cited)`.
 
+## The page's own name was unreadable on a phone
+
+At 390px the header row is 291px wide, and it holds three things: the app's name, the page's name, and the palette's trigger. They did not fit, so the row shrank everything in it proportionally — and the page's name got **34 pixels of a name that needs 71**. Every page read `M...` on a phone, including `Workspaces`, which got 34 pixels of 106.
+
+The heading carries its full name on its hover title, which is no way to read it on a phone: a phone has no hover. And the clipped-content sweep never saw it, for two reasons — the heading is drawn in the header rather than in the body, and a truncated line is excluded from that sweep because it keeps its full text on its title. Both are right for a table cell and wrong for the one piece of a page that says which page it is.
+
+So the app's name gives way to the page's name below the `sm` breakpoint — the collapsed rail already carries the mark, and the operator needs to know which _page_ they are on — and the heading shrinks a step rather than being cut in half. Measured at 390px across all fourteen routes, the widest heading is now `Workspaces` at 106 pixels of 106, with no clipping anywhere; before the change the same pages clipped by 30 to 72 pixels.
+
+The sweep now measures the heading too. `headingClipping` reads the `h1` wherever it is drawn, and the responsive acceptance reports a route whose own name does not fit its own box.
+
 ## The Console's word for a source
 
 The tools page's source filter said **Mcp** where the rest of the Console says **MCP**: the navigation, the page title, the catalogue's own card and the help text that says the operator can pivot to MCPs. The chips derived their label from the value by capitalising it, so "mcp" reached the screen as "Mcp" -- and because the capitalisation was in the stylesheet rather than in the text, a sweep over the rendered pages' text could not see it: the DOM said "mcp", the screen said "Mcp".

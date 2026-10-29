@@ -6,6 +6,7 @@ import {
   DETAIL_ROUTES,
   documentStructure,
   expectRouteHeading,
+  headingClipping,
   waitForPageContent
 } from "./acceptance-helpers.ts";
 
@@ -39,6 +40,18 @@ async function findProblems(
   width: number
 ): Promise<readonly string[]> {
   const problems: string[] = [];
+
+  // The page's own name has to be readable. It is drawn in the header rather
+  // than in the body, so the clipped-content sweep below never sees it -- and
+  // it used to be clipped to a third of its width on a phone, where every page
+  // read "M...". The heading carries its full name on its hover title, which
+  // is no way to read it on a phone.
+  const headingOverflow = await headingClipping(page);
+  if (headingOverflow > 1) {
+    problems.push(
+      `${routePath} at ${width}px clips the page's own heading by ${headingOverflow}px`
+    );
+  }
 
   const clipped = await clippedContent(page);
   for (const finding of clipped) {

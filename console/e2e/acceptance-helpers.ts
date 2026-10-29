@@ -269,6 +269,23 @@ export function clippedContent(page: Page): Promise<readonly ClippedContent[]> {
 }
 
 /**
+ * How much of the page's own heading its box cannot show.
+ *
+ * The heading is the one piece of the page that says which page it is, and it
+ * is drawn in the header rather than in the body, so the sweep that looks for
+ * clipped content never sees it. It is also the one piece that has to be
+ * readable without a pointer: a phone has no hover, so a heading that only
+ * exists in a tooltip is a heading nobody on a phone can read.
+ */
+export function headingClipping(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const heading = document.querySelector("h1");
+    if (heading === null) return 0;
+    return Math.max(0, heading.scrollWidth - heading.clientWidth);
+  });
+}
+
+/**
  * One stat card of a page, addressed by its title.
  *
  * The cards are definition lists, so the title is the term and the value and
