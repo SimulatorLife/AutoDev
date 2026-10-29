@@ -87,7 +87,12 @@ export default async function HooksPage({
     ConsolePageShell,
     {
       section,
-      counts: { Hooks: hooks.length }
+      // The badge counts the declared events, and it is a count only when the
+      // declaration was read. An invalid or unreadable source publishes an
+      // empty list, and a badge with that list's length would claim the target
+      // declares no hooks -- which is a claim about the read, not about the
+      // target. A badge with no number says the count is not known.
+      ...(result.data.valid === true ? { counts: { Hooks: hooks.length } } : {})
     },
     React.createElement(HooksView, {
       hooks,

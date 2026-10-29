@@ -74,7 +74,15 @@ export default async function SkillsPage({
     ConsolePageShell,
     {
       section,
-      counts: { Skills: skills.length }
+      // The badge counts the catalogue, and it is a count only when the
+      // catalogue was read. An invalid or unreadable source publishes an
+      // empty list, and a badge with that list's length would claim the
+      // repository holds no skill -- which is a claim about the read, not
+      // about the repository. A badge with no number says the count is not
+      // known.
+      ...(result.data.valid === true
+        ? { counts: { Skills: skills.length } }
+        : {})
     },
     React.createElement(SkillsView, {
       skills,

@@ -158,6 +158,22 @@ function sourceValidityLabel(sourceValidity: boolean | null): string {
 }
 
 /**
+ * A count over the declared source, or the reason it is not a number.
+ *
+ * A count is a number only when everything it counts was observed. An invalid
+ * source was read and found broken, and an unreadable one was never read;
+ * neither publishes a count, because "the source declares nothing" and
+ * "nobody read the source" are different claims.
+ */
+function sourceValidityCount(
+  sourceValidity: boolean | null,
+  count: number
+): number | string {
+  if (sourceValidity === true) return count;
+  return sourceValidity === false ? "Invalid" : NOT_OBSERVED_LABEL;
+}
+
+/**
  * The declared events, or the reason there are none to show.
  *
  * An invalid source shows none of its events: the first fault is why the rest
@@ -282,6 +298,12 @@ export function HooksView({
 }: HooksViewProps): React.JSX.Element {
   const totalActions = hooks.reduce((acc, h) => acc + h.actions.length, 0);
   const disabledReason = hookEditorDisabledReason(revision, sourceValidity);
+  // The declaration's own counts. An invalid or unreadable source publishes
+  // an empty list of events, and the two cards above the table counted it as
+  // a target that declares nothing -- a claim about the read rather than
+  // about the target. The cards say what is known about the source instead.
+  const hookEventCount = sourceValidityCount(sourceValidity, hooks.length);
+  const handlerCount = sourceValidityCount(sourceValidity, totalActions);
 
   return React.createElement(
     PageBody,
@@ -291,11 +313,11 @@ export function HooksView({
       { columns: 4 },
       React.createElement(StatCard, {
         title: "Hook Events",
-        value: hooks.length
+        value: hookEventCount
       }),
       React.createElement(StatCard, {
         title: "Total Handlers",
-        value: totalActions
+        value: handlerCount
       }),
       React.createElement(StatCard, {
         title: "Source validation",
