@@ -5455,6 +5455,7 @@ function handleCatalogResourceRead(
       schema: "autodev-control-permissions-v2",
       source: "config/config.autodev.toml",
       readOnly: false,
+      executionContractObserved: true,
       revision: permissionPolicy.revision,
       policyStatus: "valid",
       policyReason: null,
