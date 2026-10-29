@@ -424,8 +424,36 @@ function emptyRoleCapabilityRequirements(): RoleCapabilityRequirements {
 // keeps unknown fields addressable without resorting to `any`.
 let cachedExecutionContract: ExecutionContract | null = null;
 
+/**
+ * Whether the last read of the execution contract observed a contract.
+ *
+ * The accessor falls back to an empty contract when the read fails, so an
+ * empty contract and a contract that could not be read look the same to a
+ * caller. They are not the same claim: the first says the contract declares no
+ * roles, and the second says nobody read it. A count over the contract's roles
+ * is over a scope that was only partly read when the read failed -- the
+ * number is exactly right for the roles that were read and merely incomplete
+ * for the ones that were not -- so a caller that counts them has to be able to
+ * tell the two apart.
+ */
+let executionContractWasObserved = false;
+
+/**
+ * Whether the execution contract was observed by the last read.
+ *
+ * True when a contract was read and parsed, and false when the read failed
+ * and the accessor fell back to an empty contract. A contract set for a test
+ * is observed: the caller was given the document, so nothing was left unread.
+ */
+export function executionContractObserved(): boolean {
+  return executionContractWasObserved;
+}
+
 export function getDefaultExecutionContract(): ExecutionContract {
-  if (cachedExecutionContract) return cachedExecutionContract;
+  if (cachedExecutionContract) {
+    executionContractWasObserved = true;
+    return cachedExecutionContract;
+  }
   const codexHome =
     process.env.CODEX_HOME ?? `${process.env.HOME ?? process.cwd()}/.codex`;
   const defaultContract = path.join(
@@ -446,11 +474,13 @@ export function getDefaultExecutionContract(): ExecutionContract {
       cachedExecutionContract = JSON.parse(
         readFileSync(candidates[0]!, "utf8")
       ) as ExecutionContract;
+      executionContractWasObserved = true;
       return cachedExecutionContract;
     } catch {
       /* fallthrough to empty */
     }
   }
+  executionContractWasObserved = false;
   return { roles: {}, providers: {} };
 }
 
@@ -458,6 +488,9 @@ export function setExecutionContractForTests(
   contract: ExecutionContract | null
 ): void {
   cachedExecutionContract = contract;
+  // A contract handed to the runtime was observed; a null contract drops the
+  // cache so the next read goes to the file, which has not been read yet.
+  executionContractWasObserved = contract !== null;
 }
 
 /**
@@ -503,6 +536,7 @@ export function executionContractFile(): string | null {
  */
 export function reloadExecutionContract(): void {
   cachedExecutionContract = null;
+  executionContractWasObserved = false;
 }
 
 export function providerCapabilities(

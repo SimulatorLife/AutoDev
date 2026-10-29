@@ -164,6 +164,7 @@ import { getDefaultPlaytestRunControl } from "../playtesting/run-control-service
 import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
 import {
   executionContractFile,
+  executionContractObserved,
   getDefaultExecutionContract,
   reloadExecutionContract
 } from "../router/subagents.ts";
@@ -1697,6 +1698,15 @@ function toolsView(): ToolCatalogView {
     >
   );
 
+  // The catalogue is built from two independent reads: the execution
+  // contract's roles and the RuleSync tool catalogue. A count over a scope
+  // that was only partly read is not a count -- the number is exactly right
+  // for the half that was read and merely incomplete for the half that was
+  // not -- so the count is a number only when both reads were observed. One
+  // unread read never turns the other's count into a zero.
+  const catalogueObserved =
+    rulesyncCatalog.validity === "valid" && executionContractObserved();
+
   if (roles.length === 0 && rulesyncCatalog.tools.length === 0) {
     return {
       schema: "autodev-control-tools-v2",
@@ -1705,7 +1715,10 @@ function toolsView(): ToolCatalogView {
       coverage:
         rulesyncCatalog.validity === "valid" ? "unavailable" : "unknown",
       validity: rulesyncCatalog.validity,
-      totalTools: 0,
+      // A catalogue that was read and holds no tools is a measured zero and
+      // stays a number. A catalogue that was not read is not observed, and
+      // `coverage` beside it already says so.
+      totalTools: catalogueObserved ? 0 : null,
       tools: [],
       usageLink: "/usage"
     } satisfies ControlApiToolsResponse;
@@ -1728,7 +1741,7 @@ function toolsView(): ToolCatalogView {
     readOnly: true,
     coverage: deriveCoverage(catalog, rulesyncCatalog.validity),
     validity: rulesyncCatalog.validity,
-    totalTools: tools.length,
+    totalTools: catalogueObserved ? tools.length : null,
     tools,
     usageLink: "/usage"
   } satisfies ControlApiToolsResponse;

@@ -2143,6 +2143,42 @@ test("Tools catalog stays authoritative when the role projection is empty but th
   }
 });
 
+test("the tool catalogue's count is not observed when the execution contract was not read", async () => {
+  const saved = saveEnv();
+  const priorContract = getDefaultExecutionContract();
+  const priorContractFile = process.env.CODEX_EXECUTION_CONTRACT_FILE;
+  try {
+    configure();
+    // A contract path that exists but cannot be read: the accessor finds it,
+    // fails to read it, and falls back to an empty contract. The roles it
+    // would have contributed are then missing from the catalogue, so a count
+    // over the catalogue is a count over a scope that was only partly read.
+    const unreadable = mkdtempSync(join(tmpdir(), "autodev-contract-"));
+    process.env.CODEX_EXECUTION_CONTRACT_FILE = unreadable;
+    setExecutionContractForTests(null);
+    const tools = await call("GET", CONTROL_API_PATHS.tools, {
+      actor: "viewer-a"
+    });
+    assert.equal(tools.response.statusCode, 200);
+    // The RuleSync catalogue was read, so the contract's is the one read that
+    // failed -- and one unread read makes the count incomplete rather than
+    // small. The count used to be a number, and it was exactly right for the
+    // tools that arrived and merely incomplete for the ones the contract
+    // would have contributed.
+    assert.equal(tools.body.validity, "valid");
+    assert.equal(tools.body.totalTools, null);
+    rmSync(unreadable, { recursive: true, force: true });
+  } finally {
+    if (priorContractFile === undefined) {
+      delete process.env.CODEX_EXECUTION_CONTRACT_FILE;
+    } else {
+      process.env.CODEX_EXECUTION_CONTRACT_FILE = priorContractFile;
+    }
+    setExecutionContractForTests(priorContract);
+    restoreEnv(saved);
+  }
+});
+
 test("Agent enablement is Runtime-owned, revision-bound, and independent of provider assignments", async () => {
   const saved = saveEnv();
   const originalPersistence = getDefaultPersistenceManager();

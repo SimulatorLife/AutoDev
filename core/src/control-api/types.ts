@@ -712,6 +712,18 @@ export interface ControlApiToolsResponse {
   readonly readOnly: true;
   readonly coverage: ToolCatalogCoverage;
   readonly validity: ToolCatalogValidity;
+  /**
+   * How many tools the composite catalogue holds.
+   *
+   * The catalogue is built from two independent reads -- the execution
+   * contract's roles and the RuleSync tool catalogue -- so the count is a
+   * number only when both were observed. One unread read makes the count
+   * incomplete rather than small, and an incomplete count is not a count.
+   *
+   * Null when either read was not observed. A catalogue that was read and
+   * holds no tools is a measured zero and stays a number: "nothing was there"
+   * and "nobody looked" are different claims.
+   */
   readonly totalTools: number | null;
   readonly tools: readonly ToolCatalogItem[];
   readonly usageLink: string;
