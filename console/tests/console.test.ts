@@ -4327,6 +4327,28 @@ test("Skills fetcher validates the v2 catalog contract and rejects stale respons
     fetchImpl: async () => Response.json({ ...payload, readOnly: true })
   });
   assert.equal(readOnly.kind, "invalid-response");
+
+  // The unresolved assignments are null when the catalogue was not read, and
+  // a list when it was. The Runtime publishes the first beside a catalogue
+  // that is not valid, because the join between the contract's assignments and
+  // the catalogue's names was not performed.
+  const unobserved = await fetchSkills(config, {
+    fetchImpl: async () =>
+      Response.json({ ...payload, valid: null, unresolvedAssignments: null })
+  });
+  assert.equal(
+    unobserved.kind,
+    "ok",
+    "a catalogue nobody read leaves the unresolved assignments not observed"
+  );
+  if (unobserved.kind === "ok") {
+    assert.equal(unobserved.data.unresolvedAssignments, null);
+  }
+  const unreadable = await fetchSkills(config, {
+    fetchImpl: async () =>
+      Response.json({ ...payload, unresolvedAssignments: "none" })
+  });
+  assert.equal(unreadable.kind, "invalid-response");
 });
 
 test("fetchControlApi extracts code and message from Control API error envelope", async () => {

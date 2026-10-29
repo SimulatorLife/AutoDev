@@ -808,10 +808,24 @@ export interface ControlApiSkillsResponse {
     /** Times the skill was used; `null` when nothing has been observed for it. */
     readonly observedUse: number | null;
   }[];
-  readonly unresolvedAssignments: readonly {
-    readonly name: string;
-    readonly roles: readonly string[];
-  }[];
+  /**
+   * The skills the execution contract assigns that no canonical RuleSync
+   * source exists for.
+   *
+   * Null when the catalogue was not read. The check is a join between the
+   * contract's assignments and the catalogue's names, so a catalogue nobody
+   * read leaves the join unperformed -- and an empty list there would say
+   * every assignment resolves, which is a claim the catalogue did not make.
+   *
+   * An empty list beside a read catalogue is a measured answer: every
+   * assignment resolves.
+   */
+  readonly unresolvedAssignments:
+    | readonly {
+        readonly name: string;
+        readonly roles: readonly string[];
+      }[]
+    | null;
 }
 
 /**

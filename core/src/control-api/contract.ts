@@ -65,11 +65,15 @@
  * happen, beside the `stats` that already said so. An empty list there claimed
  * the workflows had never run, which is a claim about the repository rather
  * than about the read.
+ * v21: the skills page's unresolved assignments are null when the catalogue was
+ * not read, because the join between the contract's assignments and the
+ * catalogue's names was not performed. An empty list there claimed every
+ * assignment resolves.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 20
+  version: 21
 } as const;
 
 export type ControlApiContractResponse = {

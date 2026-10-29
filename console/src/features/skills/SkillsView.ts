@@ -73,7 +73,16 @@ import {
 export interface SkillsViewProps {
   readonly skills: readonly ScopedSkillDefinition[];
   readonly eligibility: readonly SkillEligibility[];
-  readonly unresolvedAssignments: readonly SkillEligibility[];
+  /**
+   * The skills the execution contract assigns that no canonical source exists
+   * for.
+   *
+   * Null when the catalogue was not read: the join between the contract's
+   * assignments and the catalogue's names was not performed, so the set is not
+   * known rather than empty. The catalogue's own state says the same thing on
+   * the page.
+   */
+  readonly unresolvedAssignments: readonly SkillEligibility[] | null;
   readonly sourceValidity: boolean | null;
   /**
    * How the canonical catalog is invalid.
@@ -223,6 +232,56 @@ function skillStateBadge(
     label: "Assigned",
     title: `Assigned to ${item.roles.join(", ")}`
   });
+}
+
+/**
+ * The callout for the assignments that no canonical source backs.
+ *
+ * It is a defect the operator can act on, so it is an alert; the catalogue's
+ * own state carries everything the page could not observe. A null set is not a
+ * defect: the join was not performed, and the catalogue says why.
+ */
+function unresolvedAssignmentsSection(
+  assignments: readonly SkillEligibility[] | null
+): React.JSX.Element | null {
+  if (assignments === null || assignments.length === 0) return null;
+  return React.createElement(
+    "section",
+    {
+      className: CALLOUT_WARNING_CLASS,
+      role: "alert",
+      "data-unresolved-skill-assignments": assignments.length
+    },
+    React.createElement(
+      "h2",
+      { className: "font-semibold" },
+      "Unresolved role assignments"
+    ),
+    React.createElement(
+      "p",
+      { className: "mt-1 text-xs" },
+      "The execution contract assigns these skills, but no canonical RuleSync skill source exists:"
+    ),
+    React.createElement(
+      "ul",
+      { className: "mt-2 flex flex-col gap-1" },
+      assignments.map((item) =>
+        React.createElement(
+          "li",
+          { key: item.skill },
+          React.createElement(StatusBadge, {
+            status: "invalid",
+            label: item.skill
+          }),
+          React.createElement(
+            "span",
+            { className: "ml-2 text-xs" },
+            `Assigned to: ${item.roles.join(", ")}`
+          )
+        )
+      )
+    )
+  );
 }
 
 export function SkillsView({
@@ -486,45 +545,7 @@ export function SkillsView({
           : "Awaiting OTel evidence"
       })
     ),
-    unresolvedAssignments.length > 0
-      ? React.createElement(
-          "section",
-          {
-            className: CALLOUT_WARNING_CLASS,
-            role: "alert",
-            "data-unresolved-skill-assignments": unresolvedAssignments.length
-          },
-          React.createElement(
-            "h2",
-            { className: "font-semibold" },
-            "Unresolved role assignments"
-          ),
-          React.createElement(
-            "p",
-            { className: "mt-1 text-xs" },
-            "The execution contract assigns these skills, but no canonical RuleSync skill source exists:"
-          ),
-          React.createElement(
-            "ul",
-            { className: "mt-2 flex flex-col gap-1" },
-            unresolvedAssignments.map((item) =>
-              React.createElement(
-                "li",
-                { key: item.skill },
-                React.createElement(StatusBadge, {
-                  status: "invalid",
-                  label: item.skill
-                }),
-                React.createElement(
-                  "span",
-                  { className: "ml-2 text-xs" },
-                  `Assigned to: ${item.roles.join(", ")}`
-                )
-              )
-            )
-          )
-        )
-      : null,
+    unresolvedAssignmentsSection(unresolvedAssignments),
     React.createElement(
       "section",
       {

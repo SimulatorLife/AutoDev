@@ -2964,8 +2964,9 @@ function isControlApiSkillsResponse(
         typeof skill.path === "string" &&
         isStringList(skill.roles)
     ) &&
-    Array.isArray(value.unresolvedAssignments) &&
-    value.unresolvedAssignments.every(
+    (value.unresolvedAssignments === null ||
+      Array.isArray(value.unresolvedAssignments)) &&
+    (value.unresolvedAssignments ?? []).every(
       (assignment) =>
         isRecord(assignment) &&
         typeof assignment.name === "string" &&

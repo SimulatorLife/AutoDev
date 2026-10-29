@@ -1898,10 +1898,14 @@ function skillsView(
         observedUse: observed?.use ?? null
       };
     }),
+    // The unresolved assignments are a join between the contract's assignments
+    // and the catalogue's names. A catalogue that was not read leaves the join
+    // unperformed, and an empty list there would say every assignment
+    // resolves -- a claim the catalogue did not make.
     unresolvedAssignments:
       catalog.valid === true
         ? assignments.filter(({ name }) => !catalogNames.has(name))
-        : []
+        : null
   } satisfies ControlApiSkillsResponse;
 }
 

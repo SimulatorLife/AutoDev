@@ -168,7 +168,11 @@ export function skillEligibilityFromControlApi(
 
 export function unresolvedSkillAssignmentsFromControlApi(
   response: ControlApiSkillsResponse
-): readonly SkillEligibility[] {
+): readonly SkillEligibility[] | null {
+  // Null when the catalogue was not read: the join between the contract's
+  // assignments and the catalogue's names was not performed, so the set is
+  // not known rather than empty.
+  if (response.unresolvedAssignments === null) return null;
   return response.unresolvedAssignments.map(({ name, roles }) => ({
     skill: name,
     roles

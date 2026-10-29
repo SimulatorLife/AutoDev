@@ -587,6 +587,8 @@ Used
 
 Canonical skill definitions and descriptive metadata come from `.rulesync/skills`; role eligibility is joined from the execution contract by skill name. One Skills table shows the complete canonical skill catalog, each skill's role-assignment checkboxes, and its state, including skills with no assigned roles; each checkbox change immediately submits the full assignment set through the revision-checked mutation route. There is no separate Save button or second assignment table. The page explicitly surfaces role references with no canonical source. A missing or invalid RuleSync catalog is not a successful empty catalog. Only an owning producer may assert observed exposure/use/error. Do not infer later stages from configuration or eligibility.
 
+The unresolved role assignments are a join between the execution contract's assignments and the catalogue's names, so they are observed only when the catalogue was read. A catalogue that was missing, invalid or never read leaves the join unperformed, and the set is then not observed rather than empty: an empty set there would claim every assignment resolves, which is a claim the catalogue did not make. A catalogue that was read and resolves every assignment is a measured empty set and stays one.
+
 Each skill links to a URL-addressable source detail view. Operators edit an existing `.rulesync/skills/<name>/SKILL.md` through a revision-checked **Save & Apply** operation; Runtime validates the canonical file and regenerates then checks the configured RuleSync skill projections before confirming success. Do not invent skill enable/disable state without a lossless canonical source and runtime meaning.
 
 ### Memory
