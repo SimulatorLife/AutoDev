@@ -112,6 +112,7 @@ export default async function ToolDetailPage({
       tool,
       coverage: result.data.coverage,
       validity: result.data.validity,
+      executionContractObserved: result.data.executionContractObserved,
       usage,
       usageLink: result.data.usageLink,
       usageUnavailable:

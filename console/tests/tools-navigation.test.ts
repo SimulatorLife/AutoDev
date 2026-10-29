@@ -77,6 +77,7 @@ function renderTools(
       tools: TOOLS,
       coverage: "complete",
       validity: "valid",
+      executionContractObserved: true,
       usageLink,
       filters
     })

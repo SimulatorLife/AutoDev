@@ -1704,8 +1704,9 @@ function toolsView(): ToolCatalogView {
   // for the half that was read and merely incomplete for the half that was
   // not -- so the count is a number only when both reads were observed. One
   // unread read never turns the other's count into a zero.
+  const contractObserved = executionContractObserved();
   const catalogueObserved =
-    rulesyncCatalog.validity === "valid" && executionContractObserved();
+    rulesyncCatalog.validity === "valid" && contractObserved;
 
   if (roles.length === 0 && rulesyncCatalog.tools.length === 0) {
     return {
@@ -1715,6 +1716,11 @@ function toolsView(): ToolCatalogView {
       coverage:
         rulesyncCatalog.validity === "valid" ? "unavailable" : "unknown",
       validity: rulesyncCatalog.validity,
+      // Whether the contract was read is a fact about the read, and the
+      // catalogue's own claims depend on it: the entries that arrived are the
+      // ones the RuleSync source alone declared, and every statement about a
+      // tool's role exposure is unobserved when the contract was not read.
+      executionContractObserved: contractObserved,
       // A catalogue that was read and holds no tools is a measured zero and
       // stays a number. A catalogue that was not read is not observed, and
       // `coverage` beside it already says so.
@@ -1741,6 +1747,11 @@ function toolsView(): ToolCatalogView {
     readOnly: true,
     coverage: deriveCoverage(catalog, rulesyncCatalog.validity),
     validity: rulesyncCatalog.validity,
+    // The contract's read is a fact about the read. The coverage beside it
+    // says what the catalogue holds, and the count below is a number only
+    // when both reads were observed; this says which read was the one that
+    // was not.
+    executionContractObserved: contractObserved,
     totalTools: catalogueObserved ? tools.length : null,
     tools,
     usageLink: "/usage"

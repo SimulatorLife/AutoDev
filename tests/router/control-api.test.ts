@@ -2127,6 +2127,9 @@ test("Tools catalog stays authoritative when the role projection is empty but th
     // because the canonical RuleSync source is authoritative on its own.
     assert.equal(tools.body.coverage, "complete");
     assert.equal(tools.body.validity, "valid");
+    // The contract was handed to the Runtime, so it was observed: the empty
+    // role projection above is a measurement, not a missing read.
+    assert.equal(tools.body.executionContractObserved, true);
     assert.equal(typeof tools.body.totalTools, "number");
     assert.ok(Array.isArray(tools.body.tools));
     assert.ok(
@@ -2167,6 +2170,11 @@ test("the tool catalogue's count is not observed when the execution contract was
     // would have contributed.
     assert.equal(tools.body.validity, "valid");
     assert.equal(tools.body.totalTools, null);
+    // The read that failed is named, so the Console can say which half of the
+    // catalogue it has. The accessor fell back to an empty contract, and an
+    // empty contract and a contract nobody read look the same to every caller
+    // that only sees the roles.
+    assert.equal(tools.body.executionContractObserved, false);
     rmSync(unreadable, { recursive: true, force: true });
   } finally {
     if (priorContractFile === undefined) {

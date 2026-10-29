@@ -2336,6 +2336,11 @@ function isControlApiToolsResponse(
     (value.validity === "valid" ||
       value.validity === "invalid" ||
       value.validity === "not-observed") &&
+    // The contract's read is a fact the catalogue's counts and role exposure
+    // depend on. A payload that does not carry it is a payload that cannot say
+    // whether the contract was read, so the Console refuses it rather than
+    // counting a catalogue whose second half nobody looked at.
+    typeof value.executionContractObserved === "boolean" &&
     isNullableNumber(value.totalTools) &&
     typeof value.usageLink === "string" &&
     Array.isArray(value.tools) &&

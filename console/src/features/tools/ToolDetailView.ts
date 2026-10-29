@@ -57,6 +57,16 @@ export interface ToolDetailViewProps {
   readonly tool: ToolCatalogItem;
   readonly coverage: ToolCatalogCoverage;
   readonly validity: ToolCatalogValidity;
+  /**
+   * Whether the execution contract was read.
+   *
+   * The role exposure of a tool comes from the contract's role projection. The
+   * accessor that reads the contract falls back to an empty contract when the
+   * read fails, so an empty contract and a contract nobody read look the same
+   * to a caller, and they are not the same claim: the first says no role
+   * reaches this tool, the second says nobody looked.
+   */
+  readonly executionContractObserved: boolean;
   readonly usage: ToolUsageEvidence;
   readonly usageLink: string;
   readonly usageUnavailable: boolean;
@@ -244,12 +254,13 @@ function usageSection(
 
 function coverageBanner(
   coverage: ToolCatalogCoverage,
-  validity: ToolCatalogValidity
+  validity: ToolCatalogValidity,
+  executionContractObserved: boolean
 ): React.JSX.Element {
   const variant =
     validity === "invalid"
       ? "error"
-      : coverage === "complete"
+      : coverage === "complete" && executionContractObserved
         ? "info"
         : "warning";
   const classes =
@@ -271,9 +282,11 @@ function coverageBanner(
       ? "The canonical RuleSync MCP source is invalid; this tool entry is rendered as Invalid until the source is repaired."
       : validity === NOT_OBSERVED_STATUS
         ? "The canonical RuleSync MCP source was not observed; tool entry metadata is partial."
-        : coverage === "complete"
-          ? "Composite catalog entry: source authority and role exposure are both observed."
-          : "Partial catalog entry: only the execution-contract role projection is observed for this tool."
+        : executionContractObserved
+          ? coverage === "complete"
+            ? "Composite catalog entry: source authority and role exposure are both observed."
+            : "Partial catalog entry: only the execution-contract role projection is observed for this tool."
+          : "The RuleSync MCP declaration is observed, but the execution contract was not read; this tool's role exposure is not observed."
   );
 }
 
@@ -322,6 +335,7 @@ export function ToolDetailView({
   tool,
   coverage,
   validity,
+  executionContractObserved,
   usage,
   usageLink,
   usageUnavailable,
@@ -368,7 +382,7 @@ export function ToolDetailView({
         )}`
       )
     ),
-    coverageBanner(coverage, validity),
+    coverageBanner(coverage, validity, executionContractObserved),
     React.createElement(
       "div",
       {

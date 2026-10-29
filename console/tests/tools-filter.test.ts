@@ -72,6 +72,7 @@ function renderTools(
       tools,
       coverage: "complete",
       validity: "valid",
+      executionContractObserved: true,
       usageLink: "/usage",
       filters: {
         source: filters.source ?? "all",

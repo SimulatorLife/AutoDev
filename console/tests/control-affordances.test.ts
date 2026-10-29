@@ -487,6 +487,7 @@ test("a repeated link names the row it belongs to", () => {
       ],
       coverage: { schema: "x", source: "y" } as never,
       validity: "valid",
+      executionContractObserved: true,
       usageLink: "/usage",
       filters: { source: "", role: "" }
     } as unknown as React.ComponentProps<typeof ToolsView>)

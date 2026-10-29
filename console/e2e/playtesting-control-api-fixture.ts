@@ -6055,6 +6055,7 @@ const server = createServer(
         readOnly: true,
         coverage: "complete",
         validity: "valid",
+        executionContractObserved: true,
         totalTools: 2,
         usageLink: "/usage",
         tools: [

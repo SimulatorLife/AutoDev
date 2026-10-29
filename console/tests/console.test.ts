@@ -714,6 +714,7 @@ test("an unrecognised URL filter is named, never resolved into a default", async
         tools: [],
         coverage: { schema: "x", source: "y" } as never,
         validity: "valid",
+        executionContractObserved: true,
         usageLink: "/usage",
         filters: { source, role: "" }
       })
@@ -1379,6 +1380,7 @@ test("the Tools summary row counts one collection once, not twice", () => {
     React.createElement(ToolsView, {
       coverage: "complete",
       validity: "valid",
+      executionContractObserved: true,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: [
@@ -1428,6 +1430,7 @@ test("the Tools summary row counts one collection once, not twice", () => {
     React.createElement(ToolsView, {
       coverage: "complete",
       validity: "valid",
+      executionContractObserved: true,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: []
@@ -1447,6 +1450,7 @@ test("the Tools cell does not repeat the server name its own Source column state
     React.createElement(ToolsView, {
       coverage: "complete",
       validity: "valid",
+      executionContractObserved: true,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: [
@@ -1487,6 +1491,7 @@ test("the Tools cell does not repeat the server name its own Source column state
     React.createElement(ToolsView, {
       coverage: "complete",
       validity: "valid",
+      executionContractObserved: true,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: [
@@ -3666,6 +3671,7 @@ test("no column is narrower than its own header", () => {
         ] as never,
         coverage: { schema: "x", source: "y" } as never,
         validity: "valid",
+        executionContractObserved: true,
         usageLink: "/usage",
         filters: { source: "", role: "" }
       })
@@ -6467,6 +6473,7 @@ test("ToolsView renders explicit availability per tool with the catalog coverage
     React.createElement(ToolsView, {
       coverage: "partial",
       validity: "valid",
+      executionContractObserved: true,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: [
@@ -6500,6 +6507,7 @@ test("ToolsView keeps an unavailable capability source unknown instead of zero",
     React.createElement(ToolsView, {
       coverage: "unknown",
       validity: "not-observed",
+      executionContractObserved: false,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: []
@@ -6511,11 +6519,57 @@ test("ToolsView keeps an unavailable capability source unknown instead of zero",
   assert.doesNotMatch(markup, /Composite catalog[\s\S]*?>0</);
 });
 
+test("ToolsView states no catalogue count when the execution contract was not read", () => {
+  // The catalogue is a composite of two independent reads. When the contract's
+  // read failed, the entries that arrived are the ones the RuleSync source
+  // alone declared: the number of them is exactly right for what arrived and
+  // incomplete for what the unread source would have contributed. The page
+  // shows the entries and states no count, and it does not claim the role
+  // projection was observed when nobody read it.
+  const markup = renderToStaticMarkup(
+    React.createElement(ToolsView, {
+      coverage: "complete",
+      validity: "valid",
+      executionContractObserved: false,
+      usageLink: "/usage",
+      filters: { source: "", role: "" },
+      tools: [
+        {
+          name: "read_file",
+          source: "mcp",
+          sourceAuthority: "rulesync-mcp",
+          server: "codegraphcontext",
+          availability: "configured",
+          exposedRoles: []
+        }
+      ]
+    })
+  );
+  // The count is not observed: it was a number before, and it was exactly
+  // right for the entries that arrived and merely incomplete for the ones the
+  // contract would have contributed.
+  assert.match(markup, /Composite catalog<\/dt>[\s\S]*?>Not observed</);
+  assert.match(markup, /data-tools-observed="false"/);
+  assert.match(markup, /data-tools-contract-observed="false"/);
+  // The banner names the read that failed instead of claiming both sources
+  // were observed.
+  assert.match(markup, /the execution contract was not read/);
+  assert.doesNotMatch(
+    markup,
+    /RuleSync MCP declarations and the execution-contract role projection are both observed/
+  );
+  // The role projection was not observed, so the cell says so rather than
+  // claiming that no role reaches the tool.
+  assert.match(markup, /data-roles-observed="false"/);
+  assert.doesNotMatch(markup, /No roles assigned/);
+});
+
 test("ToolsView surfaces availability through the StatusBadge vocabulary and never invents ready", () => {
   const configuredMarkup = renderToStaticMarkup(
     React.createElement(ToolsView, {
       coverage: "partial",
       validity: "valid",
+      executionContractObserved: true,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: [
@@ -6535,6 +6589,7 @@ test("ToolsView surfaces availability through the StatusBadge vocabulary and nev
     React.createElement(ToolsView, {
       coverage: "partial",
       validity: "valid",
+      executionContractObserved: true,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: [
@@ -14477,6 +14532,7 @@ test("Catalog collections fail closed on unreadable responses", async () => {
     readOnly: true,
     coverage: "complete",
     validity: "valid",
+    executionContractObserved: true,
     totalTools: 1,
     usageLink: "/usage",
     tools: [
@@ -14490,13 +14546,23 @@ test("Catalog collections fail closed on unreadable responses", async () => {
     ]
   };
   assert.equal((await fetchTools(config, serve(tools))).kind, "ok");
+  // A payload that does not say whether the execution contract was read cannot
+  // support the catalogue's counts: the accessor that reads the contract falls
+  // back to an empty contract when the read fails, so the roles alone cannot
+  // tell an empty contract from a contract nobody read. The Console refuses
+  // the payload rather than counting a catalogue whose second half nobody
+  // looked at.
+  const { executionContractObserved: _omitted, ...withoutContractObservation } =
+    tools;
   for (const broken of [
     // Coverage and validity are the page's whole honesty budget; a drifted
     // vocabulary must not silently become "unknown"/"not-observed".
     { ...tools, coverage: "full" },
     { ...tools, validity: "ok" },
     { ...tools, tools: {} },
-    { ...tools, totalTools: "1" }
+    { ...tools, totalTools: "1" },
+    { ...tools, executionContractObserved: "yes" },
+    withoutContractObservation
   ]) {
     assert.equal(
       (await fetchTools(config, serve(broken))).kind,
@@ -16819,6 +16885,7 @@ test("ToolsView applies URL-addressable source and role filters without losing c
     React.createElement(ToolsView, {
       coverage: "complete",
       validity: "valid",
+      executionContractObserved: true,
       usageLink: "/usage",
       filters: { source: "mcp", role: "" },
       tools: [
@@ -16877,6 +16944,7 @@ test("ToolsView renders a Not observed availability badge when source authority 
     React.createElement(ToolsView, {
       coverage: "partial",
       validity: "valid",
+      executionContractObserved: true,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: [
@@ -16907,6 +16975,7 @@ test("ToolsView reports explicit invalid source via the error vocabulary", () =>
     React.createElement(ToolsView, {
       coverage: "unavailable",
       validity: "invalid",
+      executionContractObserved: false,
       usageLink: "/usage",
       filters: { source: "", role: "" },
       tools: []
@@ -16934,6 +17003,7 @@ test("ToolDetailView renders source authority, edit surface, and unobserved hist
       },
       coverage: "complete",
       validity: "valid",
+      executionContractObserved: true,
       usage: { calls: null, errors: null, observed: false },
       usageLink: "/usage",
       usageUnavailable: false
@@ -16973,6 +17043,7 @@ test("ToolDetailView publishes one owner for the catalog's coverage and validity
       },
       coverage: "complete",
       validity: "valid",
+      executionContractObserved: true,
       usage: { calls: null, errors: null, observed: false },
       usageLink: "/usage",
       usageUnavailable: false
@@ -17018,6 +17089,7 @@ test("every detail view titles its resource with the one canonical entity title"
         },
         coverage: "complete",
         validity: "valid",
+        executionContractObserved: true,
         usage: { calls: null, errors: null, observed: false },
         usageLink: "/usage",
         usageUnavailable: false
@@ -17152,6 +17224,7 @@ test("ToolDetailView surfaces observed historical use and falls back to Unavaila
       },
       coverage: "complete",
       validity: "valid",
+      executionContractObserved: true,
       usage: { calls: 12, errors: null, observed: true },
       usageLink: "/usage",
       usageUnavailable: false
@@ -17181,6 +17254,7 @@ test("ToolDetailView surfaces observed historical use and falls back to Unavaila
       },
       coverage: "complete",
       validity: "valid",
+      executionContractObserved: true,
       usage: { calls: null, errors: null, observed: false },
       usageLink: "/usage",
       usageUnavailable: true
@@ -19736,6 +19810,7 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     readOnly: true,
     coverage: "complete",
     validity: "valid",
+    executionContractObserved: true,
     totalTools: 1,
     usageLink: "/usage",
     tools
@@ -19930,6 +20005,7 @@ test("a catalog row missing the fields its view reads fails closed instead of th
         tools: [toolRow as never],
         coverage: "complete",
         validity: "valid",
+        executionContractObserved: true,
         usageLink: "/usage",
         filters: { source: "", role: "" }
       })

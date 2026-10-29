@@ -713,6 +713,22 @@ export interface ControlApiToolsResponse {
   readonly coverage: ToolCatalogCoverage;
   readonly validity: ToolCatalogValidity;
   /**
+   * Whether the execution contract was read.
+   *
+   * The catalogue's second half is the contract's role projection: which roles
+   * reach which tools. The accessor that reads the contract falls back to an
+   * empty contract when the read fails, so an empty contract and a contract
+   * nobody read look the same to a caller. They are not the same claim -- the
+   * first says the contract declares no roles, the second says nobody read it
+   * -- and every count over the catalogue, and every statement about a tool's
+   * role exposure, depends on which one it was.
+   *
+   * False when the contract could not be read. The entries that arrived are
+   * then the ones the RuleSync source alone declared, and the catalogue's size
+   * is not known.
+   */
+  readonly executionContractObserved: boolean;
+  /**
    * How many tools the composite catalogue holds.
    *
    * The catalogue is built from two independent reads -- the execution

@@ -100,6 +100,21 @@ export interface ToolsViewProps {
   readonly tools: readonly ToolCatalogItem[];
   readonly coverage: ToolCatalogCoverage;
   readonly validity: ToolCatalogValidity;
+  /**
+   * Whether the execution contract was read.
+   *
+   * The catalogue is built from two independent reads -- the RuleSync
+   * declarations and the contract's role projection -- and the contract's
+   * accessor falls back to an empty contract when the read fails, so an empty
+   * contract and a contract nobody read look the same to a caller. They are
+   * not the same claim, and every count over the catalogue, and every
+   * statement about a tool's role exposure, depends on which one it was.
+   *
+   * False when the contract could not be read: the entries that arrived are
+   * then the ones the RuleSync source alone declared, and the catalogue's
+   * size is not known.
+   */
+  readonly executionContractObserved: boolean;
   readonly usageLink: string;
   readonly filters: ToolsViewFilters;
 }
@@ -150,13 +165,21 @@ function sourceAuthorityLabel(
 
 function coverageBanner(
   coverage: ToolCatalogCoverage,
-  validity: ToolCatalogValidity
+  validity: ToolCatalogValidity,
+  executionContractObserved: boolean
 ): string {
   if (validity === "invalid") {
     return "The canonical RuleSync MCP source is invalid; the tool catalog is unavailable until the source is repaired.";
   }
   if (validity === NOT_OBSERVED_STATUS) {
     return "The canonical RuleSync MCP source was not observed; the tool catalog is not yet available.";
+  }
+  if (!executionContractObserved) {
+    // The catalogue's second half is the contract's role projection, and the
+    // read that failed is the one that would have said which roles reach
+    // which tools. The entries below are the ones the RuleSync source alone
+    // declared, and the catalogue's size is not known.
+    return "The RuleSync MCP declarations are observed, but the execution contract was not read; the role projection that contributes role exposure is not observed, so the entries below are only the ones the RuleSync source declared.";
   }
   switch (coverage) {
     case "complete": {
@@ -176,9 +199,14 @@ function coverageBanner(
 
 function coverageBannerVariant(
   coverage: ToolCatalogCoverage,
-  validity: ToolCatalogValidity
+  validity: ToolCatalogValidity,
+  executionContractObserved: boolean
 ): "info" | "warning" | "error" {
   if (validity === "invalid") return "error";
+  // A catalogue that was only partly read is a warning even when its coverage
+  // says "complete": the coverage describes the entries that arrived, and the
+  // contract's role projection is one of the two halves that did not arrive.
+  if (!executionContractObserved) return "warning";
   if (coverage === "complete") return "info";
   return "warning";
 }
@@ -256,6 +284,28 @@ function EditSurfaceLink({
 }
 
 /**
+ * What the filter bar says about what is in view.
+ *
+ * The count of what is in view belongs to the filter that narrowed it, and only
+ * when something was narrowed: an unfiltered catalogue reporting "56 of 56" says
+ * nothing the stat row above it does not already say.
+ *
+ * The total is stated only when the catalogue was fully observed. A catalogue
+ * that was only partly read has entries, and the number of them is exactly right
+ * for what arrived and incomplete for what the unread source would have
+ * contributed, so "of N" would name a catalogue size nobody established.
+ */
+function toolsFilterSummary(
+  filtered: number,
+  total: number,
+  catalogueObserved: boolean
+): string {
+  return catalogueObserved
+    ? `Showing ${filtered} of ${total} tool entries`
+    : `Showing ${filtered} tool entries`;
+}
+
+/**
  * What an empty tool table has to say.
  *
  * Five different facts end with an empty table: the source is not observed, a
@@ -269,7 +319,8 @@ function EditSurfaceLink({
 function toolEmptyMessage(
   validity: ToolCatalogValidity,
   coverage: ToolCatalogCoverage,
-  narrowed: boolean
+  narrowed: boolean,
+  executionContractObserved: boolean
 ): string {
   if (validity !== "valid") {
     return "The Tools catalog source is not observed.";
@@ -277,11 +328,15 @@ function toolEmptyMessage(
   if (narrowed) {
     return "No tool entries found matching the current criteria.";
   }
-  if (coverage === "complete") {
-    return "No tool entries are configured.";
-  }
-  if (coverage === "partial") {
+  if (!executionContractObserved) {
+    // The catalogue is empty over a scope that was only partly read: the
+    // contract's half of it was never read, so it is not known to be empty.
     return "No tool entries were observed in the composite catalog.";
+  }
+  if (coverage === "complete" || coverage === "unavailable") {
+    // Both sources were read and the catalogue holds nothing: a measured
+    // zero, not an absence.
+    return "No tool entries are configured.";
   }
   return "The tool catalog could not be determined from any authoritative source.";
 }
@@ -357,6 +412,7 @@ export function ToolsView({
   tools,
   coverage,
   validity,
+  executionContractObserved,
   usageLink,
   filters
 }: ToolsViewProps): React.JSX.Element {
@@ -369,6 +425,13 @@ export function ToolsView({
     unapplied: unappliedFilters,
     narrowed
   } = state;
+
+  // The catalogue is a composite of two independent reads. A count over it is
+  // a number only when both were read: one unread read makes the count
+  // incomplete rather than small, and an incomplete count is not a count. The
+  // entries that arrived are still shown -- they are what was observed -- but
+  // the page does not state a total it cannot know.
+  const catalogueObserved = validity === "valid" && executionContractObserved;
 
   const filtered = filterTools(tools, listFilters);
 
@@ -392,7 +455,11 @@ export function ToolsView({
   ).length;
   const note = availabilityNote(validity, unobservedCount);
 
-  const variant = coverageBannerVariant(coverage, validity);
+  const variant = coverageBannerVariant(
+    coverage,
+    validity,
+    executionContractObserved
+  );
 
   const columns: ColumnDef<ToolCatalogItem>[] = [
     {
@@ -485,29 +552,39 @@ export function ToolsView({
       cell: (tool) =>
         React.createElement(
           "div",
-          { "data-roles-observed": String(tool.exposedRoles.length > 0) },
-          chipList({
-            items: tool.exposedRoles,
-            emptyLabel: "No roles assigned",
-            testId: "tool-roles",
-            renderItem: (role) => {
-              // The name has to say which tool the chip belongs to. Every tool
-              // that exposes a role repeated the same filter link, so a links
-              // list showed "Filter tools exposed to smart" once per tool.
-              const label = `Filter tools exposed to ${role} for ${tool.name}`;
-              return React.createElement(
-                NavigationLink,
-                {
-                  href: toolsRoleHref(listFilters, role),
-                  className: `${CHIP_CLASS} min-h-6 ${ENTITY_LINK_CLASS}`,
-                  "aria-label": label,
-                  title: label,
-                  dataAttributes: { "data-role-chip": role }
-                },
-                role
-              );
-            }
-          })
+          {
+            // The roles come from the contract's role projection. When the
+            // contract was not read the entry carries no roles because nobody
+            // looked, not because no role reaches it, so the cell says the
+            // evidence is missing instead of claiming an empty assignment.
+            "data-roles-observed": String(
+              executionContractObserved && tool.exposedRoles.length > 0
+            )
+          },
+          executionContractObserved
+            ? chipList({
+                items: tool.exposedRoles,
+                emptyLabel: "No roles assigned",
+                testId: "tool-roles",
+                renderItem: (role) => {
+                  // The name has to say which tool the chip belongs to. Every tool
+                  // that exposes a role repeated the same filter link, so a links
+                  // list showed "Filter tools exposed to smart" once per tool.
+                  const label = `Filter tools exposed to ${role} for ${tool.name}`;
+                  return React.createElement(
+                    NavigationLink,
+                    {
+                      href: toolsRoleHref(listFilters, role),
+                      className: `${CHIP_CLASS} min-h-6 ${ENTITY_LINK_CLASS}`,
+                      "aria-label": label,
+                      title: label,
+                      dataAttributes: { "data-role-chip": role }
+                    },
+                    role
+                  );
+                }
+              })
+            : React.createElement(StatusBadge, { status: NOT_OBSERVED_STATUS })
         )
     },
     {
@@ -547,7 +624,13 @@ export function ToolsView({
       attributes: {
         "data-tools-coverage": coverage,
         "data-tools-validity": validity,
-        "data-tools-observed": validity === "valid" ? "true" : "false"
+        // Whether the catalogue was fully observed. The coverage describes the
+        // entries that arrived; this says whether the reads behind them both
+        // happened, which is what a count over them depends on.
+        "data-tools-observed": catalogueObserved ? "true" : "false",
+        "data-tools-contract-observed": executionContractObserved
+          ? "true"
+          : "false"
       }
     },
     React.createElement(
@@ -560,19 +643,24 @@ export function ToolsView({
         // contradict itself -- a composite total of 1 above native 0 + MCP 2 +
         // plugin 0 -- because one number was the Runtime's claim and the other
         // three were counted from what arrived.
-        value: validity === "valid" ? tools.length : NOT_OBSERVED_LABEL
+        //
+        // The count is a number only when the catalogue was fully observed.
+        // A catalogue whose role projection was never read holds the entries
+        // the RuleSync source alone declared, and the number of those is
+        // exactly right for what arrived and incomplete for what did not.
+        value: catalogueObserved ? tools.length : NOT_OBSERVED_LABEL
       }),
       React.createElement(StatCard, {
         title: "Native entries",
-        value: validity === "valid" ? sourceCounts.native : NOT_OBSERVED_LABEL
+        value: catalogueObserved ? sourceCounts.native : NOT_OBSERVED_LABEL
       }),
       React.createElement(StatCard, {
         title: "MCP entries",
-        value: validity === "valid" ? sourceCounts.mcp : NOT_OBSERVED_LABEL
+        value: catalogueObserved ? sourceCounts.mcp : NOT_OBSERVED_LABEL
       }),
       React.createElement(StatCard, {
         title: "Plugin entries",
-        value: validity === "valid" ? sourceCounts.plugin : NOT_OBSERVED_LABEL
+        value: catalogueObserved ? sourceCounts.plugin : NOT_OBSERVED_LABEL
       })
     ),
     React.createElement(
@@ -597,8 +685,14 @@ export function ToolsView({
         // and only when something was narrowed: an unfiltered catalogue
         // reporting "56 of 56" says nothing the stat row above it does not
         // already say.
+        //
+        // The total is stated only when the catalogue was fully observed. A
+        // catalogue that was only partly read has entries, and the number of
+        // them is exactly right for what arrived and incomplete for what the
+        // unread source would have contributed, so "of N" would name a
+        // catalogue size nobody established.
         summary: narrowed
-          ? `Showing ${filtered.length} of ${tools.length} tool entries`
+          ? toolsFilterSummary(filtered.length, tools.length, catalogueObserved)
           : undefined,
         dataAttributes: { "data-feature-filter": "tools" }
       },
@@ -697,7 +791,7 @@ export function ToolsView({
     React.createElement(
       "p",
       { className: coverageBannerClasses(variant) },
-      coverageBanner(coverage, validity)
+      coverageBanner(coverage, validity, executionContractObserved)
     ),
     React.createElement(
       "section",
@@ -734,7 +828,12 @@ export function ToolsView({
         data: filtered,
         columns,
         keyExtractor: (tool) => toolId(tool),
-        emptyMessage: toolEmptyMessage(validity, coverage, narrowed)
+        emptyMessage: toolEmptyMessage(
+          validity,
+          coverage,
+          narrowed,
+          executionContractObserved
+        )
       })
     )
   );

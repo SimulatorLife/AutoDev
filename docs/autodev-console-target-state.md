@@ -181,6 +181,8 @@ Never synthesize ready, converged, healthy, connected, zero, or success merely b
 
 A count is the sharpest case of that rule, because a count over a scope whose elements were only partly read still looks like a measurement: the number is exactly right for the elements that were read and merely incomplete for the ones that were not. A count is therefore a number only when everything it counts was observed; otherwise it is not observed, and the page says how much of the scope was missing. Two independent reads are observed separately, so one unread read never turns the other's count into a zero. A measured zero is a measurement and stays a number: "nothing was there" and "nobody looked" are different claims, and only the first is a count.
 
+A read that falls back to an empty result is still a read that may have failed. The accessor that reads the execution contract returns an empty contract when the contract cannot be read, so the roles it contributes look exactly like a contract that declares no roles, and the two are not the same claim. The producer of a read publishes whether the read happened, and a consumer does not infer it from the emptiness of the result: an empty result standing in for a failed read is an absence of evidence wearing the shape of evidence.
+
 Configuration does not prove runtime availability. Eligibility/exposure does not prove execution. Historical tool use does not define current permissions.
 
 ### Accessibility and interaction consistency
@@ -568,6 +570,14 @@ Errors / Logs
 ```
 
 Useful operations include ping/test, list tools, inspect schemas, list/read resources, list/preview prompts, inspect effective authorization/configuration, and view recent calls/errors.
+
+### Tools
+
+The Tools resource is the composite effective catalogue, not one source's list. It is built from two independent reads -- the RuleSync tool declarations and the execution contract's role projection, which says which roles reach which tools -- and the two are observed separately. Every entry carries its own source and source authority, so the RuleSync declaration and the contract's projection of the same capability are one entry with one authority rather than two rows, and no capability is presented twice.
+
+The catalogue publishes what was observed about each read, and the page's claims follow from those facts rather than from the shape of the result. The execution contract's accessor returns an empty contract when the contract cannot be read, so the roles it contributes look exactly like a contract that declares no roles; the Runtime publishes whether the contract was read, and the Console states the catalogue's counts and every entry's role exposure as not observed when it was not. The entries that arrived are still shown -- they are what was observed -- but the page states no total it cannot know, and it does not claim that a tool has no roles when nobody read the source that assigns them.
+
+The page has one count authority: the entries it renders. The sidebar badge, the summary row and the narrowed filter summary all count those same entries, and they are numbers only when the catalogue was fully observed. A catalogue whose role projection was never read holds the entries the RuleSync source alone declared, and the number of those is exactly right for what arrived and incomplete for what the unread source would have contributed. Availability is a separate observation from exposure: a tool that is configured but was not observed is rendered with the vocabulary of the thing that was observed, not as a configured one.
 
 ### Skills/capabilities
 

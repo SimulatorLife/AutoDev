@@ -72,11 +72,36 @@ export interface ToolCatalogView {
   readonly readOnly: true;
   readonly coverage: ToolCatalogCoverage;
   readonly validity: ToolCatalogValidity;
+  /**
+   * Whether the execution contract was read.
+   *
+   * The catalogue's second half is the contract's role projection. The
+   * accessor that reads the contract falls back to an empty contract when the
+   * read fails, so an empty contract and a contract nobody read look the same
+   * to a caller, and they are not the same claim. False when the contract
+   * could not be read: the entries that arrived are then the ones the
+   * RuleSync source alone declared, and the catalogue's size is not known.
+   */
+  readonly executionContractObserved: boolean;
   readonly totalTools: number | null;
   readonly tools: readonly ToolCatalogItem[];
   readonly usageLink: string;
 }
 
+/**
+ * How complete the catalogue's content is.
+ *
+ * This is a statement about the entries that arrived, not about whether every
+ * source behind them was read: `coverage` says what the catalogue holds, and
+ * `validity` and `executionContractObserved` say what was read.
+ *
+ * - `complete`: the catalogue holds RuleSync-declared tools.
+ * - `partial`: the catalogue holds tools, but none the RuleSync source
+ *   declared -- only the execution contract's role projection contributed.
+ * - `unavailable`: no tool entry was rendered.
+ * - `unknown`: the RuleSync source was not observed, so the catalogue's
+ *   content is not known.
+ */
 export type ToolCatalogCoverage =
   "complete" | "partial" | "unavailable" | "unknown";
 

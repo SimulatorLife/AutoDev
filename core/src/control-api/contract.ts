@@ -69,11 +69,16 @@
  * not read, because the join between the contract's assignments and the
  * catalogue's names was not performed. An empty list there claimed every
  * assignment resolves.
+ * v22: the tool catalogue publishes whether the execution contract was read.
+ * The contract's accessor falls back to an empty contract when the read fails,
+ * so an empty contract and a contract nobody read looked the same to every
+ * caller -- and the catalogue's counts and the role exposure of every entry
+ * depend on which one it was.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 21
+  version: 22
 } as const;
 
 export type ControlApiContractResponse = {

@@ -46,6 +46,7 @@ test("every tools detail section carries a stable hook and some content", () => 
       tool: TOOL,
       coverage: "complete",
       validity: "valid",
+      executionContractObserved: true,
       usage: { calls: null, errors: null, observed: false },
       usageLink: "/usage",
       usageUnavailable: false
@@ -96,6 +97,7 @@ test("a tool with no description still renders its section", () => {
       tool: withoutDescription,
       coverage: "complete",
       validity: "valid",
+      executionContractObserved: true,
       usage: { calls: null, errors: null, observed: false },
       usageLink: "/usage",
       usageUnavailable: false
