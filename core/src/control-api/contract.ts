@@ -87,11 +87,16 @@
  * empty string for it, which claimed the prompt was read and held nothing --
  * and gave the reconciliation a digest of nothing to compare against, an
  * identity that names no prompt.
+ * v26: the permissions response publishes whether the execution contract was
+ * read. The role matrices are the contract's roles, and an unread contract
+ * falls back to an empty one -- so an empty matrix set, an empty tool-exposure
+ * line and a navigation badge reading 0 were three ways of saying the
+ * contract declares no role, which is not what happened.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 25
+  version: 26
 } as const;
 
 export type ControlApiContractResponse = {

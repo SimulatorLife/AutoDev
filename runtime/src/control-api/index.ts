@@ -4200,6 +4200,7 @@ function permissionsView(
       skills: Array.isArray(entry.skills) ? entry.skills : []
     };
   }
+  const contractObserved = executionContractObserved();
   return {
     schema: "autodev-control-permissions-v2",
     source: state.source,
@@ -4210,6 +4211,12 @@ function permissionsView(
     policyReason: state.policyReason,
     applied: state.applied,
     appliedSource: state.appliedSource,
+    // The role matrices are the execution contract's roles, and the accessor
+    // that reads the contract falls back to an empty contract when the read
+    // fails: an empty contract and a contract nobody read look the same to a
+    // caller that only sees the matrices. The policy's own read is a separate
+    // fact, and a policy that was read says nothing about the contract.
+    executionContractObserved: contractObserved,
     rolePermissions
   } satisfies ControlApiPermissionsResponse;
 }

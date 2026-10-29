@@ -1117,6 +1117,15 @@ export interface ControlApiPermissionsResponse {
   /** The canonical file the policy was read from. */
   readonly source: string;
   readonly readOnly: boolean;
+  /**
+   * Whether the execution contract was read.
+   *
+   * The role matrices are the contract's roles, and the accessor that reads the
+   * contract falls back to an empty contract when the read fails. An empty
+   * contract and a contract nobody read are different claims, and the matrices
+   * cannot tell them apart on their own.
+   */
+  readonly executionContractObserved: boolean;
   /** The revision of the canonical file: the sha256 of its exact bytes. */
   readonly revision: string | null;
   /**

@@ -63,7 +63,8 @@ export default async function PermissionsPage({
     revision,
     applied,
     appliedSource,
-    roleMatrices
+    roleMatrices,
+    executionContractObserved
   } = permissionsFromControlApi(result.data);
   const outcome = permissionPolicySaveOutcomeFromQuery(
     resolvedSearchParams.save
@@ -76,7 +77,12 @@ export default async function PermissionsPage({
     ConsolePageShell,
     {
       section,
-      counts: { Permissions: roleMatrices.length }
+      // The badge counts the role matrices, and the matrices are the execution
+      // contract's roles. A contract nobody read leaves no matrices, and a
+      // badge reading 0 would claim the contract declares no role.
+      ...(executionContractObserved
+        ? { counts: { Permissions: roleMatrices.length } }
+        : {})
     },
     React.createElement(PermissionsView, {
       policy,
@@ -86,6 +92,7 @@ export default async function PermissionsPage({
       applied,
       appliedSource,
       roleMatrices,
+      executionContractObserved,
       returnTo: PERMISSIONS_PATH
     }),
     permissionPolicySaveNotice(outcome)

@@ -219,6 +219,14 @@ export function permissionsFromControlApi(
   readonly applied: PermissionPolicy | null;
   readonly appliedSource: string;
   readonly roleMatrices: readonly RoleCapabilityMatrix[];
+  /**
+   * Whether the execution contract was read.
+   *
+   * The matrices are the contract's roles, and an unread contract falls back to
+   * an empty one, so an empty matrix set is not the same as a contract that
+   * declares no role.
+   */
+  readonly executionContractObserved: boolean;
 } {
   const roleMatrices: RoleCapabilityMatrix[] = Object.entries(
     response.rolePermissions
@@ -241,7 +249,8 @@ export function permissionsFromControlApi(
     revision: response.revision,
     applied: response.applied,
     appliedSource: response.appliedSource,
-    roleMatrices
+    roleMatrices,
+    executionContractObserved: response.executionContractObserved
   };
 }
 

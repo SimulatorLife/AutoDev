@@ -12309,6 +12309,7 @@ test("an empty list names its resource instead of inheriting a generic sentence"
 
   const permissions = renderToStaticMarkup(
     React.createElement(PermissionsView, {
+      executionContractObserved: true,
       policy: {
         approvalPolicy: "on-demand",
         sandboxMode: "workspace-write",
@@ -12504,6 +12505,7 @@ test("View adapters translate Control API responses without inventing data", () 
 
   const perms = permissionsFromControlApi({
     schema: "autodev-control-permissions-v2",
+    executionContractObserved: true,
     source: "test",
     readOnly: false,
     revision: "b".repeat(64),
@@ -12562,6 +12564,7 @@ test("the capability matrix lists the fixed roles in the one order the app uses"
   });
   const ordered = permissionsFromControlApi({
     schema: "autodev-control-permissions-v2",
+    executionContractObserved: true,
     source: "test",
     readOnly: false,
     revision: "c".repeat(64),
@@ -12613,6 +12616,7 @@ test("the policy reads as prose rather than raw config values", () => {
   ] as const) {
     const markup = renderToStaticMarkup(
       React.createElement(PermissionsView, {
+        executionContractObserved: true,
         policy: {
           approvalPolicy,
           sandboxMode: "workspace-write",
@@ -19885,6 +19889,7 @@ test("a catalog row missing the fields its view reads fails closed instead of th
   };
   const permissionsEnvelope = (policy: unknown) => ({
     schema: "autodev-control-permissions-v2",
+    executionContractObserved: true,
     source: ".rulesync/permissions",
     readOnly: false,
     revision: "d".repeat(64),
@@ -19964,6 +19969,24 @@ test("a catalog row missing the fields its view reads fails closed instead of th
       `the near-miss "${nearMiss}" must fail closed`
     );
   }
+
+  // The role matrices are the execution contract's roles, and an unread
+  // contract falls back to an empty one. The response has to say whether the
+  // contract was read, or the Console cannot tell an empty matrix set from a
+  // contract that declares no role.
+  assert.equal(
+    (
+      await fetchPermissions(
+        config,
+        serve({
+          ...permissionsEnvelope(policyRow),
+          executionContractObserved: undefined
+        })
+      )
+    ).kind,
+    "invalid-response",
+    "a permissions response that does not say whether the contract was read must not reach the view"
+  );
 
   // --- Tools: role exposure drives both the role filter and the role chips,
   // --- and `availability` is what separates "Configured" from "Not observed".
@@ -22815,6 +22838,7 @@ test("the permissions page answers which tools a role may call, not only which s
     roleMatrices
   } = permissionsFromControlApi({
     schema: "autodev-control-permissions-v2",
+    executionContractObserved: true,
     source: "test",
     readOnly: false,
     revision: "e".repeat(64),
@@ -22855,6 +22879,7 @@ test("the permissions page answers which tools a role may call, not only which s
 
   const markup = renderToStaticMarkup(
     React.createElement(PermissionsView, {
+      executionContractObserved: true,
       policy,
       policyStatus,
       policyReason,
@@ -22879,6 +22904,55 @@ test("the permissions page answers which tools a role may call, not only which s
   assert.doesNotMatch(markup, /data-tool-role="orchestrator"/u);
 });
 
+test("the permissions view says the execution contract was not read", () => {
+  // The role matrices are the execution contract's roles, and an unread
+  // contract falls back to an empty one. "No role has a matrix" and "nobody
+  // read the contract" are different claims, and only the second one tells
+  // the operator what to go and fix.
+  const props = {
+    policy: {
+      approvalPolicy: "on-demand" as const,
+      sandboxMode: "workspace-write" as const,
+      approvalsReviewer: "user",
+      networkAccess: true,
+      webSearch: true
+    },
+    policyStatus: "valid" as const,
+    policyReason: null,
+    revision: "a".repeat(64),
+    applied: null,
+    appliedSource: "/tmp/codex/config.toml",
+    roleMatrices: [],
+    returnTo: "/permissions"
+  };
+  const unobserved = renderToStaticMarkup(
+    React.createElement(PermissionsView, {
+      ...props,
+      executionContractObserved: false
+    })
+  );
+  assert.match(
+    unobserved,
+    /The execution contract was not read, so no role capability matrix is known\./u
+  );
+  assert.match(
+    unobserved,
+    /The execution contract was not read, so no MCP tool grants are known\./u
+  );
+
+  const observed = renderToStaticMarkup(
+    React.createElement(PermissionsView, {
+      ...props,
+      executionContractObserved: true
+    })
+  );
+  assert.match(observed, /No role capability matrices were observed\./u);
+  assert.match(
+    observed,
+    /No role has an MCP tool grant recorded in the execution contract\./u
+  );
+});
+
 test("a permissions page where no role has a tool grant says so instead of rendering an empty list", () => {
   const {
     policy,
@@ -22890,6 +22964,7 @@ test("a permissions page where no role has a tool grant says so instead of rende
     roleMatrices
   } = permissionsFromControlApi({
     schema: "autodev-control-permissions-v2",
+    executionContractObserved: true,
     source: "test",
     readOnly: false,
     revision: "f".repeat(64),
@@ -22916,6 +22991,7 @@ test("a permissions page where no role has a tool grant says so instead of rende
 
   const markup = renderToStaticMarkup(
     React.createElement(PermissionsView, {
+      executionContractObserved: true,
       policy,
       policyStatus,
       policyReason,
@@ -22939,6 +23015,7 @@ test("a permissions payload whose tool grants are unreadable fails closed", asyn
   };
   const payload = {
     schema: "autodev-control-permissions-v2",
+    executionContractObserved: true,
     source: "test",
     readOnly: false,
     revision: "0".repeat(64),

@@ -2361,6 +2361,42 @@ test("an agent detail whose role prompt could not be read does not publish an em
   }
 });
 
+test("a permissions response says whether the execution contract was read", async () => {
+  const saved = saveEnv();
+  const priorContract = getDefaultExecutionContract();
+  const priorContractFile = process.env.CODEX_EXECUTION_CONTRACT_FILE;
+  try {
+    configure();
+    // A contract path that exists but cannot be read: the accessor falls back
+    // to an empty contract, so the role matrices are empty. The response used
+    // to publish that empty set with nothing saying why, and the Console read
+    // it as a contract that declares no role.
+    const unreadable = mkdtempSync(
+      join(tmpdir(), "autodev-permissions-contract-")
+    );
+    process.env.CODEX_EXECUTION_CONTRACT_FILE = unreadable;
+    setExecutionContractForTests(null);
+    const permissions = await call("GET", CONTROL_API_PATHS.permissions, {
+      actor: "viewer-a"
+    });
+    assert.equal(permissions.response.statusCode, 200);
+    assert.equal(permissions.body.executionContractObserved, false);
+    assert.deepEqual(permissions.body.rolePermissions, {});
+    // The policy's own read is a separate fact: a policy that was read says
+    // nothing about the contract, and the response keeps the two apart.
+    assert.equal(typeof permissions.body.policyStatus, "string");
+    rmSync(unreadable, { recursive: true, force: true });
+  } finally {
+    if (priorContractFile === undefined) {
+      delete process.env.CODEX_EXECUTION_CONTRACT_FILE;
+    } else {
+      process.env.CODEX_EXECUTION_CONTRACT_FILE = priorContractFile;
+    }
+    setExecutionContractForTests(priorContract);
+    restoreEnv(saved);
+  }
+});
+
 test("an agent detail whose contract was not read is not an unknown role", async () => {
   const saved = saveEnv();
   const priorContract = getDefaultExecutionContract();

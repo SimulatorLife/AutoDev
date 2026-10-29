@@ -42,6 +42,14 @@ export interface PermissionsViewProps {
   /** Where the applied policy was read from. */
   readonly appliedSource: string;
   readonly roleMatrices: readonly RoleCapabilityMatrix[];
+  /**
+   * Whether the execution contract was read.
+   *
+   * The role matrices are the contract's roles, and an unread contract falls
+   * back to an empty one. The page says which of the two it is showing: an
+   * empty matrix set is a different claim from a contract nobody read.
+   */
+  readonly executionContractObserved: boolean;
   /** Where the write answers to. */
   readonly returnTo: string;
 }
@@ -100,6 +108,7 @@ export function PermissionsView({
   applied,
   appliedSource,
   roleMatrices,
+  executionContractObserved,
   returnTo
 }: PermissionsViewProps): React.JSX.Element {
   const columns: ColumnDef<RoleCapabilityMatrix>[] = [
@@ -217,11 +226,13 @@ export function PermissionsView({
         data: roleMatrices,
         columns,
         keyExtractor: (r: RoleCapabilityMatrix) => r.role,
-        // Observed and genuinely empty: the page fails closed when the policy
-        // read fails, so reaching here means the Control API returned a policy
-        // with no roles behind it. Wording follows the matrix it replaces
-        // rather than a generic "nothing to show".
-        emptyMessage: "No role capability matrices were observed.",
+        // Observed and genuinely empty: the policy's own read fails closed, so
+        // reaching here with a readable policy means the contract declared no
+        // role. A contract nobody read is a different claim, and the page says
+        // which of the two it is showing.
+        emptyMessage: executionContractObserved
+          ? "No role capability matrices were observed."
+          : "The execution contract was not read, so no role capability matrix is known.",
         // The heading above already names the matrix; the region says so too,
         // because the matrix is the one table on this page whose cells hold
         // nothing focusable, and a named, focusable region is the only way a
@@ -234,7 +245,10 @@ export function PermissionsView({
     // against a browser-measured minimum that cannot be produced here. The
     // question this section answers -- may this role call *this* tool -- needs
     // the vertical room anyway.
-    React.createElement(RoleToolExposure, { roleMatrices })
+    React.createElement(RoleToolExposure, {
+      roleMatrices,
+      executionContractObserved
+    })
   );
 }
 
@@ -251,9 +265,11 @@ export function PermissionsView({
  * look alike.
  */
 function RoleToolExposure({
-  roleMatrices
+  roleMatrices,
+  executionContractObserved
 }: {
   readonly roleMatrices: readonly RoleCapabilityMatrix[];
+  readonly executionContractObserved: boolean;
 }): React.JSX.Element {
   const granted = roleMatrices.filter(
     (role) => Object.keys(role.allowedMcpTools).length > 0
@@ -273,7 +289,12 @@ function RoleToolExposure({
       ? React.createElement(
           "p",
           { className: MUTED_TEXT_CLASS },
-          "No role has an MCP tool grant recorded in the execution contract."
+          // The grants are the execution contract's, and a contract nobody read
+          // grants nothing to everybody. "No role has a grant" and "the grants
+          // were not read" are different claims.
+          executionContractObserved
+            ? "No role has an MCP tool grant recorded in the execution contract."
+            : "The execution contract was not read, so no MCP tool grants are known."
         )
       : React.createElement(
           "ul",

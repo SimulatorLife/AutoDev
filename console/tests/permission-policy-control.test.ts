@@ -40,6 +40,7 @@ function markup(
       readonly allowedSkills: readonly string[];
       readonly allowedMcpTools: Readonly<Record<string, readonly string[]>>;
     }[];
+    readonly executionContractObserved?: boolean;
   } = {}
 ): string {
   return renderToStaticMarkup(
@@ -55,6 +56,7 @@ function markup(
         overrides.revision === undefined ? REVISION : overrides.revision,
       applied: null,
       appliedSource: "/tmp/codex/config.toml",
+      executionContractObserved: overrides.executionContractObserved ?? true,
       roleMatrices: overrides.roleMatrices ?? [
         {
           role: "orchestrator",
