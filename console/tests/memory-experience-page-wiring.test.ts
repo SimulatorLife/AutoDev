@@ -347,7 +347,8 @@ test("an opened experience renders all four of its reads, not the unread state",
   assert.match(markup, /data-evidence="outcomes"/u);
   assert.match(markup, /Reported outcome/u);
   assert.match(markup, /data-evidence="use-assessments"/u);
-  assert.match(markup, /used \(1\/1 memories cited\)/u);
+  // The use kind is the vocabulary's word ("Used"), not the wire key ("used").
+  assert.match(markup, /Used \(1\/1 memories cited\)/u);
 
   // The reporter's session outcome, by the panel's own marker.
   assert.match(
