@@ -183,6 +183,8 @@ A count is the sharpest case of that rule, because a count over a scope whose el
 
 A read that falls back to an empty result is still a read that may have failed. The accessor that reads the execution contract returns an empty contract when the contract cannot be read, so the roles it contributes look exactly like a contract that declares no roles, and the two are not the same claim. The producer of a read publishes whether the read happened, and a consumer does not infer it from the emptiness of the result: an empty result standing in for a failed read is an absence of evidence wearing the shape of evidence.
 
+The same rule governs a detail. A detail that cannot be produced because its source was never read is not an unknown resource: nobody looked. "This role does not exist" and "the file that says which roles exist was not read" are different claims, and an operator can act on the second and not the first.
+
 Configuration does not prove runtime availability. Eligibility/exposure does not prove execution. Historical tool use does not define current permissions.
 
 ### Accessibility and interaction consistency

@@ -6018,6 +6018,20 @@ interface ReadOnlyDetailRoute {
   readonly unknownCode: string;
   readonly unknownMessage: string;
   readonly read: (identifier: string) => Record<string, unknown> | null;
+  /**
+   * The read behind the detail, when it can fail on its own.
+   *
+   * A detail that cannot be produced because its source was never read is not
+   * an unknown resource: nobody looked. The route answers the two
+   * differently, because a 404 for a resource that exists is a wrong answer,
+   * and it is the wrong answer an operator cannot act on -- the page says the
+   * role does not exist when the truth is that the roles are not known.
+   */
+  readonly source?: {
+    readonly observed: () => boolean;
+    readonly code: string;
+    readonly message: string;
+  };
 }
 
 function readOnlyDetailRoute(
@@ -6049,6 +6063,18 @@ function readOnlyDetailRoute(
 
   const detail = route.read(identifier);
   if (!detail) {
+    const source = route.source;
+    if (source !== undefined && !source.observed()) {
+      auditRejectedRequest(
+        request,
+        method,
+        pathname,
+        `${route.unknownReason}_source_not_observed`,
+        actor
+      );
+      sendControlError(response, 503, source.code, source.message);
+      return true;
+    }
     auditRejectedRequest(request, method, pathname, route.unknownReason, actor);
     sendControlError(response, 404, route.unknownCode, route.unknownMessage);
     return true;
@@ -6066,7 +6092,18 @@ const AGENT_DETAIL_ROUTE: ReadOnlyDetailRoute = {
   unknownReason: "unknown_agent",
   unknownCode: "autodev_control_api_unknown_agent",
   unknownMessage: "Unknown agent role.",
-  read: agentDetailView
+  read: agentDetailView,
+  source: {
+    // The roles are the execution contract's, and the accessor that reads the
+    // contract falls back to an empty contract when the read fails: an empty
+    // contract and a contract nobody read look the same to a caller that only
+    // sees the roles. A 404 here would say the role does not exist, which is
+    // a claim the contract never made.
+    observed: executionContractObserved,
+    code: "autodev_control_api_execution_contract_not_observed",
+    message:
+      "The execution contract was not read, so the agent roles are not known."
+  }
 };
 
 const PROMPT_DETAIL_ROUTE: ReadOnlyDetailRoute = {

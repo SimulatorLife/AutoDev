@@ -2196,6 +2196,43 @@ test("the tool catalogue's count is not observed when the execution contract was
   }
 });
 
+test("an agent detail whose contract was not read is not an unknown role", async () => {
+  const saved = saveEnv();
+  const priorContract = getDefaultExecutionContract();
+  const priorContractFile = process.env.CODEX_EXECUTION_CONTRACT_FILE;
+  try {
+    configure();
+    // A contract path that exists but cannot be read: the accessor falls back
+    // to an empty contract, so the roles are not known rather than absent.
+    const unreadable = mkdtempSync(join(tmpdir(), "autodev-contract-"));
+    process.env.CODEX_EXECUTION_CONTRACT_FILE = unreadable;
+    setExecutionContractForTests(null);
+    const detail = await call(
+      "GET",
+      `${CONTROL_API_PATHS.agents}/orchestrator`,
+      { actor: "viewer-a" }
+    );
+    // "Unknown agent role" would be a claim the contract never made: it says
+    // the role does not exist, when the truth is that nobody read the file
+    // that would have said whether it does.
+    assert.equal(detail.response.statusCode, 503);
+    assert.equal(
+      detail.body.error.code,
+      "autodev_control_api_execution_contract_not_observed"
+    );
+    assert.match(detail.body.error.message, /execution contract was not read/u);
+    rmSync(unreadable, { recursive: true, force: true });
+  } finally {
+    if (priorContractFile === undefined) {
+      delete process.env.CODEX_EXECUTION_CONTRACT_FILE;
+    } else {
+      process.env.CODEX_EXECUTION_CONTRACT_FILE = priorContractFile;
+    }
+    setExecutionContractForTests(priorContract);
+    restoreEnv(saved);
+  }
+});
+
 test("Agent enablement is Runtime-owned, revision-bound, and independent of provider assignments", async () => {
   const saved = saveEnv();
   const originalPersistence = getDefaultPersistenceManager();
