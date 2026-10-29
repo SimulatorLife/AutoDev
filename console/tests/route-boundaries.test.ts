@@ -12,11 +12,25 @@ import {
 
 test("ConsoleNotFoundPage renders 404 heading and canonical resource navigation links", () => {
   const markup = renderToStaticMarkup(
-    React.createElement(ConsoleNotFoundPage, { activeSection: "Workspaces" })
+    React.createElement(ConsoleNotFoundPage, { title: "Page not found" })
   );
 
   assert.match(markup, /404/);
   assert.match(markup, /Page not found/);
+  // The page belongs to no section, so it claims none. It used to fall back to
+  // Workspaces, which put a section's name in the heading the navigation owner
+  // announces and marked that section as the current one in the rail -- the
+  // operator was told they were on a page they were not on.
+  assert.match(
+    markup,
+    /<h1[^>]*>Page not found</u,
+    "the page's heading names the page, not a section"
+  );
+  assert.doesNotMatch(
+    markup,
+    /aria-current="page"/u,
+    "no section is the current one on a page that belongs to none"
+  );
   assert.match(markup, /data-testid="not-found-page"/);
   assert.match(markup, /href="\/agents"/);
   assert.match(markup, /href="\/providers"/);

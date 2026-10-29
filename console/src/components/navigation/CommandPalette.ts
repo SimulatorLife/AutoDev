@@ -174,7 +174,12 @@ export interface CommandPaletteProps {
    * resource it is showing, and a palette that has to ask the router where it
    * is cannot be rendered outside one.
    */
-  readonly activeSection: CanonicalNavSection;
+  /**
+   * The resource the operator is on, when they are on one.
+   *
+   * A page that belongs to no section marks no result as the current one.
+   */
+  readonly activeSection: CanonicalNavSection | undefined;
 }
 
 export function CommandPalette({

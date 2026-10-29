@@ -17,7 +17,14 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = "autodev.console.sidebar.collapsed";
 const SIDEBAR_COMPACT_QUERY = "(max-width: 1279px)";
 
 export interface AppNavProps {
-  readonly activeSection: CanonicalNavSection;
+  /**
+   * The section the operator is on, when they are on one.
+   *
+   * A page that belongs to no section -- the page a bad address lands on --
+   * marks nothing, which is the honest answer: no item in the rail is the
+   * current page.
+   */
+  readonly activeSection: CanonicalNavSection | undefined;
   readonly counts?: Partial<Record<CanonicalNavSection, number>> | undefined;
 }
 
@@ -236,7 +243,7 @@ export function AppNav({
 
 function renderGroup(
   group: CanonicalNavGroup<CanonicalNavSection>,
-  activeSection: CanonicalNavSection,
+  activeSection: CanonicalNavSection | undefined,
   counts: Partial<Record<CanonicalNavSection, number>> | undefined,
   isFirst: boolean,
   isCollapsed: boolean,
@@ -308,7 +315,7 @@ function renderGroup(
 
 function renderNavItem(
   section: CanonicalNavSection,
-  activeSection: CanonicalNavSection,
+  activeSection: CanonicalNavSection | undefined,
   counts: Partial<Record<CanonicalNavSection, number>> | undefined,
   isCollapsed: boolean,
   onNavigationClick: React.MouseEventHandler<HTMLAnchorElement>

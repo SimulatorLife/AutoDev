@@ -46,6 +46,21 @@ test("the root route leads to a canonical resource rather than to a dashboard", 
   expect(statuses).toEqual(GENERIC_SURFACES.map(() => 404));
 });
 
+test("an address that names no resource says so, and claims no section", async ({
+  page
+}) => {
+  // The page a bad address lands on used to fall back to the Workspaces
+  // section: its heading named Workspaces, and the rail marked Workspaces as
+  // the current page. The heading is what the navigation owner announces after
+  // a navigation, so the operator was told they were on a page they were not
+  // on -- by the navigation as well as by the page.
+  await page.goto("/no-such-resource");
+  await expect(
+    page.getByRole("heading", { name: "Page not found", level: 1 })
+  ).toBeVisible();
+  await expect(page.locator('[aria-current="page"]')).toHaveCount(0);
+});
+
 test("every canonical resource route answers with its own resource", async ({
   context
 }) => {

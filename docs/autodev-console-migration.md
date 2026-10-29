@@ -486,6 +486,20 @@ So the app's name gives way to the page's name below the `sm` breakpoint — the
 
 The sweep now measures the heading too. `headingClipping` reads the `h1` wherever it is drawn, and the responsive acceptance reports a route whose own name does not fit its own box.
 
+## A bad address claimed a page the operator was not on
+
+The page an unknown address lands on fell back to the Workspaces section. So the address bar said `AutoDev Console / Workspaces`, the rail marked Workspaces as the current page, and the page's own `h1` — the one thing the navigation owner announces after a navigation — read "Workspaces".
+
+The body was clear about it: a `404`, "Page not found", and the address that was followed. But the chrome around it claimed a page, and the chrome is what the operator reads first.
+
+**The section became optional.** `AppShell` took a `activeSection` and every consumer of it assumed one was there: the heading, the breadcrumb, the rail's current item, the palette's current resource. A page that belongs to no section now says so — the shell takes a `title` for a page that is not a section's page, and the rail and the palette mark nothing when there is no section. The not-found page and the loading shell for an unknown address both take the honest answer.
+
+The loading shell had the same defect, more briefly: it fell back to Agents, so an unknown address spent a moment claiming Agents before the 404 said otherwise.
+
+The tab said "AutoDev Console" too — the root layout's default, which is what every route that declares no title of its own gets. The not-found page declares its own now, so a stale link says "Page not found" in the tab as well as on the page.
+
+`console/e2e/console-routes-acceptance.spec.ts` opens an address that names no resource and asserts that the page's heading names the page and that no item in the rail is the current one; `console/tests/route-boundaries.test.ts` holds the same claim at the markup level.
+
 ## The Console's word for a source
 
 The tools page's source filter said **Mcp** where the rest of the Console says **MCP**: the navigation, the page title, the catalogue's own card and the help text that says the operator can pivot to MCPs. The chips derived their label from the value by capitalising it, so "mcp" reached the screen as "Mcp" -- and because the capitalisation was in the stylesheet rather than in the text, a sweep over the rendered pages' text could not see it: the DOM said "mcp", the screen said "Mcp".

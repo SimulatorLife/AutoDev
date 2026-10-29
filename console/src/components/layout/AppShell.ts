@@ -18,7 +18,23 @@ import { DETAIL_PANEL_CLASS, DETAIL_PANEL_SHAPE } from "./Panel.ts";
 import { SkipLink } from "./SkipLink.ts";
 
 export interface AppShellProps {
-  readonly activeSection: CanonicalNavSection;
+  /**
+   * The section this page belongs to.
+   *
+   * It is absent for a page that is not one of the Console's sections -- the
+   * page a bad address lands on, for instance. A page that claims a section it
+   * does not belong to puts the wrong name in the heading the navigation owner
+   * announces after a navigation, and marks the wrong item in the rail: the
+   * operator is told they are on a page they are not on.
+   */
+  readonly activeSection?: CanonicalNavSection | undefined;
+  /**
+   * The page's own name, for a page that belongs to no section.
+   *
+   * Every other page takes its name from the section it belongs to, so this is
+   * only for the ones that are not a section's page.
+   */
+  readonly title?: string | undefined;
   readonly counts?: Partial<Record<CanonicalNavSection, number>> | undefined;
   readonly children?: React.ReactNode | undefined;
   readonly actions?: React.ReactNode | undefined;
@@ -33,11 +49,22 @@ export interface AppShellProps {
 
 export function AppShell({
   activeSection,
+  title,
   counts,
   children,
   actions,
   description
 }: AppShellProps): React.JSX.Element {
+  /**
+   * What the page calls itself in the header.
+   *
+   * A page that belongs to a section is named by that section; a page that
+   * belongs to no section is named by itself. It has to name itself either
+   * way: the heading is the one thing the navigation owner announces after a
+   * navigation, and a heading that says "Workspaces" on a page that is not
+   * the Workspaces page announces the wrong resource.
+   */
+  const heading = title ?? activeSection ?? "AutoDev Console";
   /**
    * The heading is focusable so it can receive the focus after an in-place
    * navigation -- the navigation owner moves it there, because a focused
@@ -127,13 +154,13 @@ export function AppShell({
               // only shrinks when there is genuinely no room for it.
               {
                 className: "text-base sm:text-lg font-bold text-fg truncate",
-                title: activeSection,
+                title: heading,
                 // Focusable so it can receive the focus after an in-place
                 // navigation, and out of the tab order so it is never a stop
                 // the operator has to walk past.
                 tabIndex: -1
               },
-              activeSection
+              heading
             ),
             // The palette's trigger sits beside the title rather than inside
             // the navigation: it is a way to reach any resource, not one
@@ -188,7 +215,10 @@ export function AppShell({
  */
 export function ConsoleLoadingShell(): React.JSX.Element {
   const pathname = usePathname();
-  const activeSection = canonicalSectionFromPath(pathname ?? "") ?? "Agents";
+  // An address that names no section loads no section: the old fallback
+  // claimed Agents, so the heading and the rail named a page the operator was
+  // not on while it was still loading.
+  const activeSection = canonicalSectionFromPath(pathname ?? "") ?? undefined;
   return React.createElement(ConsoleLoadingPage, { activeSection });
 }
 
@@ -196,7 +226,7 @@ export function ConsoleLoadingShell(): React.JSX.Element {
 export function ConsoleLoadingPage({
   activeSection
 }: {
-  readonly activeSection: CanonicalNavSection;
+  readonly activeSection: CanonicalNavSection | undefined;
 }): React.JSX.Element {
   return React.createElement(
     AppShell,
@@ -215,7 +245,9 @@ export function ConsoleLoadingPage({
           "aria-live": "polite",
           className: MUTED_TEXT_CLASS
         },
-        `Loading ${activeSection.toLowerCase()}…`
+        activeSection === undefined
+          ? "Loading…"
+          : `Loading ${activeSection.toLowerCase()}…`
       ),
       React.createElement(
         "div",
@@ -242,21 +274,21 @@ export function ConsoleLoadingPage({
  * Route-level 404 boundary rendered when a route does not exist.
  */
 export function ConsoleNotFoundShell(): React.JSX.Element {
-  const pathname = usePathname();
-  const activeSection =
-    canonicalSectionFromPath(pathname ?? "") ?? "Workspaces";
-  return React.createElement(ConsoleNotFoundPage, { activeSection });
+  // The page a bad address lands on belongs to no section, and it says so:
+  // the old fallback claimed Workspaces, so the heading named a page the
+  // operator was not on and the rail marked it as the current one.
+  return React.createElement(ConsoleNotFoundPage, { title: "Page not found" });
 }
 
 export function ConsoleNotFoundPage({
-  activeSection
+  title
 }: {
-  readonly activeSection: CanonicalNavSection;
+  readonly title: string;
 }): React.JSX.Element {
   return React.createElement(
     AppShell,
     {
-      activeSection,
+      title,
       description: "The requested Console route or resource does not exist."
     },
     React.createElement(
@@ -275,11 +307,6 @@ export function ConsoleNotFoundPage({
               "mb-2 font-mono text-4xl font-bold tracking-tight text-fg-muted"
           },
           "404"
-        ),
-        React.createElement(
-          "h2",
-          { className: "text-lg font-semibold text-fg" },
-          "Page not found"
         ),
         React.createElement(
           "p",
