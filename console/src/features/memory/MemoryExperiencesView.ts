@@ -50,8 +50,13 @@ import {
   memoryPageHref
 } from "./memory-list-url.ts";
 import {
+  MEMORY_AUTHORITY_LABEL,
+  MEMORY_EXECUTION_MODE_LABEL,
+  MEMORY_INJECTION_RESULT_LABEL,
   MEMORY_OUTCOME_LABEL,
+  MEMORY_OUTCOME_REPORT_REASON_LABEL,
   MEMORY_PURGE_REASON_LABEL,
+  MEMORY_REPORT_KIND_LABEL,
   MEMORY_VALIDATION_LABEL,
   MEMORY_VALIDATION_VARIANT
 } from "./memory-status.ts";
@@ -193,7 +198,12 @@ export function MemoryExperiencesView({
         React.createElement(
           "span",
           { className: MONO_VALUE_CLASS },
-          exp.memoryMode ?? "unknown"
+          // The Console's word for the mode, not the wire's key for it: the
+          // mode is one of five the Runtime validates, and the Console has a
+          // word for each of them.
+          exp.memoryMode === undefined
+            ? MEMORY_EXECUTION_MODE_LABEL.unknown
+            : MEMORY_EXECUTION_MODE_LABEL[exp.memoryMode]
         )
     },
     {
@@ -673,8 +683,8 @@ function ExperienceEvidence({
                     ? null
                     : {
                         label: "Reported outcome",
-                        value: row.outcome.outcomeKind,
-                        detail: `${row.outcome.reportKind} by ${row.outcome.reporterId} (${row.outcome.reporterAuthority}) at ${row.outcome.reportedAt} — ${row.outcome.reasonCode}`
+                        value: MEMORY_OUTCOME_LABEL[row.outcome.outcomeKind],
+                        detail: `${MEMORY_REPORT_KIND_LABEL[row.outcome.reportKind]} by ${row.outcome.reporterId} (${MEMORY_AUTHORITY_LABEL[row.outcome.reporterAuthority]}) at ${instantLabel(row.outcome.reportedAt)} — ${MEMORY_OUTCOME_REPORT_REASON_LABEL[row.outcome.reasonCode]}`
                       }
               })
             )
@@ -701,7 +711,7 @@ function ExperienceEvidence({
                 React.createElement(
                   "span",
                   { className: MUTED_TEXT_CLASS },
-                  `${row.injection.memoryMode} · ${row.injection.injectionResult} · `
+                  `${MEMORY_EXECUTION_MODE_LABEL[row.injection.memoryMode]} · ${MEMORY_INJECTION_RESULT_LABEL[row.injection.injectionResult]} · `
                 ),
                 React.createElement(
                   "span",
@@ -774,17 +784,17 @@ function EvidenceRow({
       React.createElement(
         "span",
         { className: "font-mono text-fg" },
-        injection.injectionResult
+        MEMORY_INJECTION_RESULT_LABEL[injection.injectionResult]
       ),
       React.createElement(
         "span",
         { className: MUTED_TEXT_CLASS },
-        injection.memoryMode
+        MEMORY_EXECUTION_MODE_LABEL[injection.memoryMode]
       ),
       React.createElement(
         "span",
         { className: MUTED_TEXT_CLASS },
-        `${injection.memoryIds.length} memories · ${injection.packetCharacterCount} chars · ${injection.occurredAt}`
+        `${injection.memoryIds.length} memories · ${injection.packetCharacterCount} chars · ${instantLabel(injection.occurredAt)}`
       )
     ),
     React.createElement(

@@ -70,7 +70,7 @@ function injection(
   return {
     id: "inj-1",
     correlationToken: "corr-1",
-    memoryMode: "on",
+    memoryMode: "jit",
     injectionResult: "injected",
     packetCharacterCount: 812,
     memoryIds: ["mem-1"],
@@ -104,8 +104,8 @@ function render(
               reportKind: "task",
               reportedAt: "2026-09-20T10:00:00.000Z",
               reporterId: "operator",
-              reporterAuthority: "operator",
-              reasonCode: "verified_current_state"
+              reporterAuthority: "worker",
+              reasonCode: "reporter_supplied"
             }
           : null
     }
@@ -114,7 +114,7 @@ function render(
     {
       injection: {
         id: "inj-1",
-        memoryMode: "on",
+        memoryMode: "jit",
         injectionResult: "injected",
         packetCharacterCount: 812,
         memoryIds: ["mem-1"],

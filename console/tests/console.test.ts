@@ -19,6 +19,7 @@ import {
   type ControlApiAgentDetailResponse,
   type ControlApiMcpAppliedResponse,
   type ControlApiMcpRuntimeResponse,
+  type ControlApiMemoryInjectionOutcomeJoin,
   type ControlApiMemoryWhyResponse,
   type ControlApiModelsResponse,
   type ControlApiPromptDetailResponse,
@@ -18876,7 +18877,7 @@ test("an observed injection offers both reports, on the injection they describe"
     },
     evidence: []
   };
-  const injection = {
+  const injection: ControlApiMemoryInjectionOutcomeJoin["injection"] = {
     id: "inj-r",
     correlationToken: "corr-r",
     memoryMode: "jit",

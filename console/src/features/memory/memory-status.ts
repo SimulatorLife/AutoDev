@@ -1,10 +1,13 @@
 import type {
   ExperienceOutcome,
   ExperienceValidationState,
+  MemoryAuthority,
   MemoryEvidenceKind,
+  MemoryExecutionMode,
   MemoryExperiencePurgeReason,
   MemoryInjectionResult,
   MemoryOutcomeReportKind,
+  MemoryOutcomeReportReasonCode,
   MemoryReasonCode,
   MemorySessionCohortAssignedMode,
   MemoryStatus,
@@ -204,17 +207,68 @@ export const MEMORY_INJECTION_RESULT_LABEL: Record<
 };
 
 /**
- * Only the modes a cohort can be *assigned*, which is fewer than the five an
- * experience can be observed in: `invalid` and `unknown` are results, not
- * assignments, so no cohort matrix carries them as an axis.
+ * The mode a packet was injected in, as an operator would name it.
+ *
+ * Five modes, and the cohort matrix carries only three of them: `invalid` and
+ * `unknown` are results, not assignments, so no cohort matrix has them as an
+ * axis. The three that overlap are the same words in both places, so the
+ * cohort map reads them from here rather than spelling them a second time.
+ */
+export const MEMORY_EXECUTION_MODE_LABEL: Record<MemoryExecutionMode, string> =
+  {
+    jit: "JIT",
+    "retrieval-only": "Retrieval only",
+    disabled: "Disabled",
+    invalid: "Invalid",
+    unknown: "Unknown"
+  };
+
+/**
+ * Only the modes a cohort can be *assigned*, which are fewer than the five an
+ * experience can be observed in.
  */
 export const MEMORY_COHORT_MODE_LABEL: Record<
   MemorySessionCohortAssignedMode,
   string
 > = {
-  jit: "JIT",
-  "retrieval-only": "Retrieval only",
-  disabled: "Disabled"
+  jit: MEMORY_EXECUTION_MODE_LABEL.jit,
+  "retrieval-only": MEMORY_EXECUTION_MODE_LABEL["retrieval-only"],
+  disabled: MEMORY_EXECUTION_MODE_LABEL.disabled
+};
+
+/**
+ * Who filed a report, as an operator would name them.
+ *
+ * The authority is not an identifier: it says whose word the outcome carries,
+ * and the word is what the Console shows beside the reporter's own id.
+ */
+export const MEMORY_AUTHORITY_LABEL: Record<MemoryAuthority, string> = {
+  worker: "Worker",
+  root: "Root",
+  curator: "Curator",
+  system: "System"
+};
+
+/**
+ * Why a report was filed, in the report's own vocabulary.
+ *
+ * This is a different list from the reason codes a memory *record* carries:
+ * a report says why the outcome was what it was, and a record says why it was
+ * superseded. They share no code except `scope_mismatch`, and they answer
+ * different questions, so they are spelled apart.
+ */
+export const MEMORY_OUTCOME_REPORT_REASON_LABEL: Record<
+  MemoryOutcomeReportReasonCode,
+  string
+> = {
+  reporter_supplied: "Supplied by the reporter",
+  reporter_unknown: "The reporter is unknown",
+  missing_evidence: "Missing evidence",
+  scope_mismatch: "Scope mismatch",
+  duplicate_report: "Duplicate report",
+  invalid_outcome_kind: "Invalid outcome kind",
+  invalid_report_kind: "Invalid report kind",
+  untrusted_target_reference: "Untrusted target reference"
 };
 
 /** What kind of thing a piece of evidence is, as an operator would name it. */

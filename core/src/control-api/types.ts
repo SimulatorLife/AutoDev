@@ -16,11 +16,18 @@ import type { McpServerResource } from "../mcps/types.ts";
 import type {
   EvidenceReference,
   ExperienceEnvelope,
+  ExperienceOutcome,
+  MemoryAuthority,
+  MemoryExecutionMode,
+  MemoryInjectionResult,
   MemoryInjectionUseCohortPage,
   MemoryLifecycleEvent,
+  MemoryOutcomeReportKind,
+  MemoryOutcomeReportReasonCode,
   MemoryRecord,
   MemorySessionOutcomeCohortPage,
-  MemoryStatusCounts
+  MemoryStatusCounts,
+  MemoryUseKind
 } from "../memory/types.ts";
 import type { PermissionPolicy, SandboxMode } from "../permissions/types.ts";
 import type {
@@ -1825,19 +1832,32 @@ export interface ControlApiMemoryInjectionOutcomeJoin {
      * legitimately see, and a wrong token fails closed rather than mis-binding.
      */
     readonly correlationToken: string;
-    readonly memoryMode: string;
-    readonly injectionResult: string;
+    /**
+     * The mode the packet was injected in, and the result of that injection.
+     *
+     * Both are bounded vocabularies the Runtime validates, so the wire says
+     * which ones they are rather than carrying any string at all. The Console
+     * reads these as the words it has for them, and a wire that said "any
+     * string" would leave it rendering the wire's own key -- or guessing at a
+     * word for a value the Runtime never produces.
+     */
+    readonly memoryMode: MemoryExecutionMode;
+    readonly injectionResult: MemoryInjectionResult;
     readonly packetCharacterCount: number;
     readonly memoryIds: readonly string[];
     readonly occurredAt: string;
   };
   readonly outcome: {
-    readonly outcomeKind: string;
-    readonly reportKind: string;
+    /** The outcome the reporter asserted, in the Runtime's vocabulary. */
+    readonly outcomeKind: ExperienceOutcome;
+    /** What kind of thing the report was filed as. */
+    readonly reportKind: MemoryOutcomeReportKind;
     readonly reportedAt: string;
     readonly reporterId: string;
-    readonly reporterAuthority: string;
-    readonly reasonCode: string;
+    /** Who filed the report: the authority that reported it. */
+    readonly reporterAuthority: MemoryAuthority;
+    /** Why the outcome was what it was, in the report's own vocabulary. */
+    readonly reasonCode: MemoryOutcomeReportReasonCode;
   } | null;
   readonly sessionInjectionCount: number;
 }
@@ -1871,14 +1891,16 @@ export type ControlApiMemoryInjectionOutcomesResponse =
 export interface ControlApiMemoryInjectionUseAssessment {
   readonly injection: {
     readonly id: string;
-    readonly memoryMode: string;
-    readonly injectionResult: string;
+    /** The mode the packet was injected in, and the result of that injection. */
+    readonly memoryMode: MemoryExecutionMode;
+    readonly injectionResult: MemoryInjectionResult;
     readonly packetCharacterCount: number;
     readonly memoryIds: readonly string[];
     readonly occurredAt: string;
   };
   readonly use: {
-    readonly useKind: string;
+    /** What the curator concluded about the packet, in the Runtime's vocabulary. */
+    readonly useKind: MemoryUseKind;
     readonly usedMemoryIds: readonly string[];
     readonly reportedAt: string;
     readonly evidence: readonly EvidenceReference[];

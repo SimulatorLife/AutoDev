@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import type {
+  ControlApiMemoryInjectionOutcomeJoin,
+  ControlApiMemoryInjectionUseAssessment
+} from "@simulatorlife/autodev-core";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import MemoryPage from "../app/memory/page.ts";
@@ -73,16 +77,26 @@ function experience(
   };
 }
 
-/** An observed injection: the outcome join carries the token, use does not. */
-function injection(withToken: boolean): Record<string, unknown> {
+/**
+ * An observed injection.
+ *
+ * Typed against the contract, so the fixture serves it: the mode and the
+ * result used to be words the Runtime cannot produce -- "active" and
+ * "applied" -- and the wire's own loose types let them through, so the page
+ * was measured against an injection that does not exist.
+ *
+ * The use assessment's injection has no correlation token; the outcome
+ * join's does, because the token is what a reporter's outcome binds to. So
+ * the helper carries the shape both have, and the outcome row adds the token.
+ */
+function injection(): ControlApiMemoryInjectionUseAssessment["injection"] {
   return {
     id: "inj-1",
-    memoryMode: "active",
-    injectionResult: "applied",
+    memoryMode: "jit",
+    injectionResult: "injected",
     packetCharacterCount: 2048,
     memoryIds: ["mem-1"],
-    occurredAt: "2026-10-07T08:59:00.000Z",
-    ...(withToken ? { correlationToken: "tok-1" } : {})
+    occurredAt: "2026-10-07T08:59:00.000Z"
   };
 }
 
@@ -100,15 +114,15 @@ function evidencePage(
   };
 }
 
-const OUTCOME_ROW = {
-  injection: injection(true),
+const OUTCOME_ROW: ControlApiMemoryInjectionOutcomeJoin = {
+  injection: { ...injection(), correlationToken: "tok-1" },
   outcome: {
     outcomeKind: "failure",
-    reportKind: "injection",
+    reportKind: "task",
     reportedAt: "2026-10-07T09:00:00.000Z",
     reporterId: "operator@example",
-    reporterAuthority: "operator",
-    reasonCode: "reported"
+    reporterAuthority: "worker",
+    reasonCode: "reporter_supplied"
   },
   sessionInjectionCount: 3
 };
@@ -121,7 +135,7 @@ const USE_ASSESSMENTS_PAGE = evidencePage(
   "autodev-memory-injection-use-assessments-v1",
   [
     {
-      injection: injection(false),
+      injection: injection(),
       use: {
         useKind: "used",
         usedMemoryIds: ["mem-1"],
@@ -343,6 +357,29 @@ test("an opened experience renders all four of its reads, not the unread state",
   assert.match(markup, /operator@example/u);
 });
 
+test("the evidence rows speak the Console's words, not the wire's keys", async () => {
+  const { markup } = await renderExperiencePage();
+
+  // The injection's mode and result, the report's outcome, its kind and the
+  // authority that filed it, and the reason it carries are all bounded
+  // vocabularies the Runtime validates -- and the Console has a word for
+  // each of them. The rows used to print the wire's own key for every one,
+  // so the same word was spelled two ways on one screen, and the moment the
+  // row carried was the raw wire value.
+  assert.match(markup, /JIT · Injected/u);
+  assert.match(markup, /Reported outcome: Failure/u);
+  assert.match(
+    markup,
+    /Task by operator@example \(Worker\) at 2026-10-07 09:00:00 UTC — Supplied by the reporter/u
+  );
+  assert.match(markup, /2026-10-07 08:59:00 UTC/u);
+
+  // And none of the wire's own keys is what the reader sees.
+  assert.doesNotMatch(markup, /· jit ·/u);
+  assert.doesNotMatch(markup, /— reporter_supplied/u);
+  assert.doesNotMatch(markup, /· 2026-10-07T08:59:00\.000Z/u);
+});
+
 test("a drifted detail is refused rather than rendered as an experience", async () => {
   // The guard whose absence produced a live 500: the detail panel dereferences
   // `experience.trajectory.format`, so an envelope whose `experience` has no
@@ -421,7 +458,10 @@ test("one unaddressable row refuses the whole outcomes page, not just its row", 
   const { markup } = await renderExperiencePage({
     override: (path, body) => {
       if (!/\/experiences\/[^/?]+\/outcomes\b/u.test(path)) return body;
-      const { correlationToken: _token, ...tokenless } = injection(true);
+      const { correlationToken: _token, ...tokenless } = {
+        ...injection(),
+        correlationToken: "tok-1"
+      };
       return evidencePage("autodev-memory-injection-outcomes-v1", [
         OUTCOME_ROW,
         {

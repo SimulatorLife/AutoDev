@@ -129,7 +129,27 @@ export function isMemoryScopeVisibleTo(
   }
 }
 
-export type MemoryAuthority = "worker" | "root" | "curator" | "system";
+/**
+ * The authorities a report can be filed by.
+ *
+ * The list is here as well as the union, because a guard on the wire needs
+ * to check membership: a union says what the type is, and only a list says
+ * what a value may be.
+ */
+export const MEMORY_AUTHORITIES = [
+  "worker",
+  "root",
+  "curator",
+  "system"
+] as const;
+export type MemoryAuthority = (typeof MEMORY_AUTHORITIES)[number];
+
+export function isMemoryAuthority(value: unknown): value is MemoryAuthority {
+  return (
+    typeof value === "string" &&
+    MEMORY_AUTHORITIES.includes(value as MemoryAuthority)
+  );
+}
 
 export interface MemoryActor {
   readonly id: string;
@@ -145,6 +165,15 @@ export const EXPERIENCE_OUTCOMES = [
   "unknown"
 ] as const;
 export type ExperienceOutcome = (typeof EXPERIENCE_OUTCOMES)[number];
+
+export function isExperienceOutcome(
+  value: unknown
+): value is ExperienceOutcome {
+  return (
+    typeof value === "string" &&
+    EXPERIENCE_OUTCOMES.includes(value as ExperienceOutcome)
+  );
+}
 
 /** Host-selected memory policy for the task that produced this experience. */
 export const MEMORY_EXECUTION_MODES = [
@@ -235,6 +264,17 @@ export const MEMORY_OUTCOME_REPORT_REASON_CODES = [
 ] as const;
 export type MemoryOutcomeReportReasonCode =
   (typeof MEMORY_OUTCOME_REPORT_REASON_CODES)[number];
+
+export function isMemoryOutcomeReportReasonCode(
+  value: unknown
+): value is MemoryOutcomeReportReasonCode {
+  return (
+    typeof value === "string" &&
+    MEMORY_OUTCOME_REPORT_REASON_CODES.includes(
+      value as MemoryOutcomeReportReasonCode
+    )
+  );
+}
 
 export function isMemoryInjectionResult(
   value: unknown
