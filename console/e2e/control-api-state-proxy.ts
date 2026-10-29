@@ -34,7 +34,8 @@ const STATES = [
   "slow",
   "unavailable",
   "unauthorized",
-  "error"
+  "error",
+  "catalogue-invalid"
 ] as const;
 
 type ProxyState = (typeof STATES)[number];
@@ -124,6 +125,71 @@ function degradedAnswer(degraded: ProxyState): {
   };
 }
 
+/**
+ * The catalogue reads whose answer this proxy can break.
+ *
+ * These are the reads that publish a *catalogue* -- a set of declared things
+ * -- together with whether that catalogue could be applied. A service that
+ * answers them with a broken catalogue is up, and its transport is healthy,
+ * and it has told the truth: the declaration is invalid, or nobody read it.
+ * That is a state the transport-level degradations above cannot express,
+ * because they replace the answer instead of describing it.
+ */
+const CATALOGUE_ROUTES: Readonly<Record<string, string>> = {
+  "/control/hooks": ".rulesync/hooks.jsonc",
+  "/control/mcps": ".rulesync/mcp.jsonc"
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The catalogue answer a broken declaration produces.
+ *
+ * The catalogue's own entries are removed with it: a declaration that could
+ * not be applied declares nothing that may be shown, and leaving the entries
+ * in place would let a page render a thing the Runtime has disowned.
+ */
+function brokenCatalogue(pathname: string, body: unknown): unknown {
+  if (!isRecord(body)) return body;
+  if (pathname === "/control/hooks") {
+    return {
+      ...body,
+      valid: false,
+      issues: [
+        {
+          location: CATALOGUE_ROUTES[pathname] ?? pathname,
+          message: "The hook declaration could not be applied."
+        }
+      ],
+      events: []
+    };
+  }
+  if (pathname === "/control/mcps") {
+    return {
+      ...body,
+      valid: false,
+      issues: [
+        {
+          location: CATALOGUE_ROUTES[pathname] ?? pathname,
+          message: "The MCP declaration could not be applied."
+        }
+      ],
+      servers: []
+    };
+  }
+  if (pathname === "/control/tools") {
+    return {
+      ...body,
+      validity: "invalid",
+      totalTools: null,
+      tools: []
+    };
+  }
+  return body;
+}
+
 const server = createServer(
   async (request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -167,7 +233,11 @@ const server = createServer(
         setTimeout(resolve, DELAY_MS);
       });
     }
-    if (state !== "normal" && state !== "slow") {
+    if (
+      state !== "normal" &&
+      state !== "slow" &&
+      state !== "catalogue-invalid"
+    ) {
       const answer = degradedAnswer(state);
       sendJson(response, answer.status, answer.body);
       return;
@@ -202,6 +272,20 @@ const server = createServer(
       return;
     }
     const payload = Buffer.from(await upstream.arrayBuffer());
+    if (state === "catalogue-invalid") {
+      // The service answered, and the answer says the catalogue could not be
+      // applied. The transport is healthy, so the answer is forwarded with the
+      // catalogue broken in it -- the state a page has to answer for.
+      const contentType = upstream.headers.get("content-type") ?? "";
+      if (contentType.includes("application/json")) {
+        const broken = brokenCatalogue(
+          url.pathname,
+          JSON.parse(payload.toString("utf8")) as unknown
+        );
+        sendJson(response, upstream.status, broken);
+        return;
+      }
+    }
     response.writeHead(upstream.status, {
       "content-type":
         upstream.headers.get("content-type") ?? "application/json",

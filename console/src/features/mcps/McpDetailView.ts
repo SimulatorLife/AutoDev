@@ -145,7 +145,15 @@ export interface McpDetailViewProps {
    * says which one happened rather than reporting one generic failure.
    */
   readonly saveOutcome?: McpDeclarationSaveOutcome | undefined;
-  readonly sourceValidity: boolean;
+  /**
+   * How the canonical MCP declaration read.
+   *
+   * `true` when it was read and applied, `false` when it was read and found
+   * broken, and `null` when nothing about it was read. The three are different
+   * claims, and the detail page draws the same badge the list page's card
+   * draws: a declaration nobody read is not an invalid one.
+   */
+  readonly sourceValidity: boolean | null;
   /**
    * Partial projection of explicitly enumerated role MCP/plugin allowlist
    * tools joined from the Tools capability catalog. These entries describe
@@ -583,10 +591,18 @@ export function McpDetailView({
           "Source validation"
         ),
         React.createElement(StatusBadge, {
-          status: sourceValidity ? "valid" : "invalid",
-          label: sourceValidity
-            ? "RuleSync source valid"
-            : "RuleSync source invalid"
+          status:
+            sourceValidity === null
+              ? NOT_OBSERVED_STATUS
+              : sourceValidity
+                ? "valid"
+                : "invalid",
+          label:
+            sourceValidity === null
+              ? "Source not observed"
+              : sourceValidity
+                ? "RuleSync source valid"
+                : "RuleSync source invalid"
         })
       )
     ),

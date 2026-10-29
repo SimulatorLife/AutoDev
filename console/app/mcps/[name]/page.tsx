@@ -8,6 +8,10 @@ import {
 } from "../../../src/features/mcps/McpDetailView.ts";
 import { editorBaseRevisionFromQuery } from "../../../src/lib/server/canonical-source.ts";
 import {
+  catalogueDetailOutcome,
+  catalogueObservation
+} from "../../../src/lib/server/catalogue-detail.ts";
+import {
   controlApiFailureCode,
   fetchMcpApplied,
   fetchMcpRuntime,
@@ -109,8 +113,31 @@ export default async function McpDetailPage({
     );
   }
 
-  if (!result.data.valid) notFound();
   const server = result.data.servers.find((entry) => entry.name === name);
+  // A server the declaration does not hold has no page -- but only when the
+  // declaration was read. An invalid declaration publishes no servers because
+  // it could not be applied, and an unobserved one publishes none because
+  // nothing about it was read; a server that was there a moment ago is still
+  // there. Both answer "this server could not be read", with the reason,
+  // rather than "this server does not exist", which is a claim nobody made.
+  const outcome = catalogueDetailOutcome({
+    subject: "MCP server",
+    source: "canonical MCP declaration",
+    invalidCode: "autodev_console_mcps_catalogue_invalid",
+    unobservedCode: "autodev_console_mcps_catalogue_not_observed",
+    observation: catalogueObservation(result.data.valid, result.data.issues)
+  });
+  if (!server && outcome.kind === "unavailable") {
+    return React.createElement(
+      ConsolePageShell,
+      { section },
+      React.createElement(ResourceUnavailable, {
+        title: outcome.title,
+        code: outcome.code,
+        message: outcome.message
+      })
+    );
+  }
   if (!server) notFound();
   // The whole observation read is handed to the view, which joins it by name:
   // a server the Runtime has never seen has no record in it, and an
@@ -131,7 +158,17 @@ export default async function McpDetailPage({
 
   return React.createElement(
     ConsolePageShell,
-    { section, counts: { MCPs: result.data.servers.length } },
+    {
+      section,
+      // The badge counts the declared servers, and it is a count only when the
+      // declaration was read. An invalid or unreadable declaration publishes
+      // an empty list, and a badge with that list's length would claim the
+      // target declares no MCP servers -- a claim about the read, not about
+      // the target. The list page draws the badge the same way.
+      ...(result.data.valid === true
+        ? { counts: { MCPs: result.data.servers.length } }
+        : {})
+    },
     React.createElement(McpDetailView, {
       server,
       runtime,

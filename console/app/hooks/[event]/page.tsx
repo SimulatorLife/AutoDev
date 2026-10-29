@@ -6,6 +6,10 @@ import { hookSaveOutcomeFromQuery } from "../../../src/features/hooks/declaratio
 import { HookEventDetailView } from "../../../src/features/hooks/HookEventDetailView.ts";
 import { editorBaseRevisionFromQuery } from "../../../src/lib/server/canonical-source.ts";
 import {
+  catalogueDetailOutcome,
+  catalogueObservation
+} from "../../../src/lib/server/catalogue-detail.ts";
+import {
   controlApiFailureCode,
   fetchHooks,
   fetchHooksApplied
@@ -89,6 +93,31 @@ export default async function HookEventDetailPage({
   // boundary flushes the shell before the page resolves, so the status is
   // already committed by the time this page knows the event is absent. Every
   // detail route answers a missing item the same way.
+  //
+  // But "the declaration does not hold this event" is only a fact when the
+  // declaration was read. An invalid declaration publishes no events because
+  // it could not be applied, and an unobserved one publishes none because
+  // nothing about it was read -- and an event that was there a moment ago is
+  // still there. Both answer "this event could not be read", with the reason,
+  // rather than "this event does not exist", which is a claim nobody made.
+  const outcome = catalogueDetailOutcome({
+    subject: "Hook event",
+    source: "canonical hook declaration",
+    invalidCode: "autodev_console_hooks_catalogue_invalid",
+    unobservedCode: "autodev_console_hooks_catalogue_not_observed",
+    observation: catalogueObservation(result.data.valid, result.data.issues)
+  });
+  if (!hook && outcome.kind === "unavailable") {
+    return React.createElement(
+      ConsolePageShell,
+      { section },
+      React.createElement(ResourceUnavailable, {
+        title: outcome.title,
+        code: outcome.code,
+        message: outcome.message
+      })
+    );
+  }
   if (!hook) notFound();
 
   // An unreadable applied read is not an applied configuration with nothing in
@@ -111,7 +140,15 @@ export default async function HookEventDetailPage({
 
   return React.createElement(
     ConsolePageShell,
-    { section, counts: { Hooks: hooks.length } },
+    {
+      section,
+      // The badge counts the declared events, and it is a count only when the
+      // declaration was read. An invalid or unreadable declaration publishes
+      // an empty list, and a badge with that list's length would claim the
+      // target declares no hooks -- a claim about the read, not about the
+      // target. The list page draws the badge the same way.
+      ...(result.data.valid === true ? { counts: { Hooks: hooks.length } } : {})
+    },
     React.createElement(HookEventDetailView, {
       hook,
       source: result.data.source,

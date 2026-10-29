@@ -5,6 +5,10 @@ import React from "react";
 import { filterToolCatalogUsage } from "../../../src/features/tools/tool-usage.ts";
 import { ToolDetailView } from "../../../src/features/tools/ToolDetailView.ts";
 import {
+  catalogueDetailOutcome,
+  type CatalogueObservation
+} from "../../../src/lib/server/catalogue-detail.ts";
+import {
   controlApiFailureCode,
   fetchTools
 } from "../../../src/lib/server/control-api.ts";
@@ -30,6 +34,41 @@ interface ToolDetailSearchParams {
 
 function first(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
+}
+
+/**
+ * How the tool catalogue was read.
+ *
+ * The catalogue is a composite of two independent reads -- the RuleSync tool
+ * declarations and the execution contract's role projection -- and the two
+ * are observed separately. The catalogue can therefore only say a tool is
+ * absent when both were read: a tool the RuleSync source alone declares is
+ * missing from a catalogue whose contract half nobody read, and a tool the
+ * contract alone projects is missing from one whose RuleSync half was not
+ * read.
+ */
+function toolCatalogueObservation(
+  validity: "valid" | "invalid" | "not-observed",
+  executionContractObserved: boolean
+): CatalogueObservation {
+  if (validity === "invalid") {
+    return { kind: "invalid", reason: null };
+  }
+  if (validity === "not-observed") {
+    return {
+      kind: "not-observed",
+      reason:
+        "The RuleSync tool declaration was not observed, so the catalogue's contents could not be read."
+    };
+  }
+  if (!executionContractObserved) {
+    return {
+      kind: "not-observed",
+      reason:
+        "The execution contract was not read, so the catalogue's role projection could not be read."
+    };
+  }
+  return { kind: "observed" };
 }
 
 /**
@@ -98,6 +137,34 @@ export default async function ToolDetailPage({
       `mcp__${entry.server ?? ""}__${entry.name}` === decoded ||
       `${entry.source}:${entry.server ?? ""}:${entry.name}` === decoded
   );
+  // A tool the catalogue does not hold has no page -- but only when the
+  // catalogue was fully read. It is built from two independent reads, and a
+  // catalogue whose RuleSync half or whose contract half was not observed
+  // holds the entries that did arrive and says nothing about the rest, so a
+  // tool that is not among them may well be there. That answers "this tool
+  // could not be read", with the reason, rather than "this tool does not
+  // exist", which is a claim nobody made.
+  const outcome = catalogueDetailOutcome({
+    subject: "Tool",
+    source: "tool catalogue",
+    invalidCode: "autodev_console_tools_catalogue_invalid",
+    unobservedCode: "autodev_console_tools_catalogue_not_observed",
+    observation: toolCatalogueObservation(
+      result.data.validity,
+      result.data.executionContractObserved
+    )
+  });
+  if (!tool && outcome.kind === "unavailable") {
+    return React.createElement(
+      ConsolePageShell,
+      { section },
+      React.createElement(ResourceUnavailable, {
+        title: outcome.title,
+        code: outcome.code,
+        message: outcome.message
+      })
+    );
+  }
   if (!tool) notFound();
 
   const usage =
