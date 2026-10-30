@@ -38,6 +38,28 @@ export interface ConcurrencyDenialRecord {
   [key: string]: unknown;
 }
 
+/**
+ * Where the limit in force came from.
+ *
+ * The operator has to be able to tell three things apart: a limit a stored
+ * override put in place, a limit the config file declares, and no limit
+ * declared by anything the Runtime could read. The published word says which,
+ * so the Console does not have to infer it.
+ */
+export type ConcurrencyLimitSource =
+  "stored_override" | "config_file" | "default";
+
+/**
+ * Which config file the router read.
+ *
+ * A different fact from the limit's source: this one answers "which file did
+ * the router consult", and the limit's source answers "what did that file say".
+ * One word cannot carry both, and when it tried, the consumer read the file's
+ * location as the limit's source and was wrong about every limit the operator
+ * had configured.
+ */
+export type ConcurrencyConfigFileSource = "default_codex_home" | "env_override";
+
 export interface ConcurrencyTelemetry {
   denials: number;
   denialsByReason: Record<string, number>;
@@ -46,7 +68,18 @@ export interface ConcurrencyTelemetry {
 
 export interface ConcurrencyStatus {
   scope: string;
-  configSource: string;
+  /**
+   * Where the limit in force came from.
+   *
+   * `stored_override` is a stored override, `config_file` is the limit the
+   * config file declares, and `default` is nothing that could be read
+   * declaring a limit. The operator reads this word to know whether the cap in
+   * force is theirs, so it names the limit's source rather than the file's
+   * location.
+   */
+  configSource: ConcurrencyLimitSource;
+  /** Which config file the router read. A different fact from the limit's source. */
+  configFileSource: ConcurrencyConfigFileSource;
   configFileExists: boolean;
   /**
    * The limit the config file declares.
@@ -71,7 +104,7 @@ export interface ConcurrencyStatus {
 export interface ConcurrencyManagerOptions {
   agentActivity: AgentActivityTracker;
   configFile?: string;
-  configSource?: string;
+  configFileSource?: ConcurrencyConfigFileSource;
   initialConfig?: ConcurrencyConfig;
   getOrchestratorSession?: (sessionKey: string) => {
     provider?: string | null;
@@ -241,7 +274,7 @@ export function parseConcurrencyConfig(
 export class ConcurrencyManager {
   private readonly agentActivity: AgentActivityTracker;
   private readonly config: ConcurrencyConfig;
-  private readonly configSource: string;
+  private readonly configFileSource: ConcurrencyConfigFileSource;
   private readonly getOrchestratorSession?:
     | ((sessionKey: string) => {
         provider?: string | null;
@@ -263,8 +296,8 @@ export class ConcurrencyManager {
     this.agentActivity = options.agentActivity;
     this.config =
       options.initialConfig ?? parseConcurrencyConfig(options.configFile);
-    this.configSource =
-      options.configSource ??
+    this.configFileSource =
+      options.configFileSource ??
       (process.env.CODEX_ROUTER_CODEX_CONFIG_FILE
         ? "env_override"
         : "default_codex_home");
@@ -462,9 +495,19 @@ export class ConcurrencyManager {
     );
     const isStored = this.storedLimit !== undefined;
     const configuredLimit = this.config.maxConcurrentThreadsPerSession;
+    // Where the limit in force came from. A stored override wins outright; a
+    // config file that declares a number is the source; and anything else --
+    // a file that declares no limit, or a file nobody could read -- leaves no
+    // declared limit in force, so the router's default is what is running.
+    const configSource: ConcurrencyLimitSource = isStored
+      ? "stored_override"
+      : typeof configuredLimit === "number"
+        ? "config_file"
+        : "default";
     return {
       scope: "router-admitted-child-requests",
-      configSource: isStored ? "stored_override" : this.configSource,
+      configSource,
+      configFileSource: this.configFileSource,
       configFileExists: existsSync(this.config.file),
       // The configured limit travels only when it was read. A file that could
       // not be read leaves the field absent rather than `null`, because `null`

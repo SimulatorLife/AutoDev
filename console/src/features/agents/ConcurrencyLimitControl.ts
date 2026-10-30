@@ -1,4 +1,7 @@
-import type { ControlApiConcurrencyStatus } from "@simulatorlife/autodev-core";
+import type {
+  ControlApiConcurrencyLimitSource,
+  ControlApiConcurrencyStatus
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { Button } from "../../components/forms/Button.ts";
@@ -57,6 +60,32 @@ function configFileLimitLabel(limit: number | null | undefined): string {
 }
 
 /**
+ * What the operator is told about where the limit in force came from.
+ *
+ * The Runtime publishes the source, so the Console renders it rather than
+ * inferring it: a stored override, the limit the config file declares, or
+ * nothing that could be read declaring a limit. A config file nobody could
+ * read is named as such -- "the limit is the default" would be a claim about a
+ * file the Runtime never read.
+ */
+function limitSourceLabel(
+  source: ControlApiConcurrencyLimitSource | undefined,
+  configFileLimit: number | null | undefined
+): string {
+  // The config file's limit is absent when the file was there and could not be
+  // read: nobody knows what it declares, so the page cannot say where the
+  // limit in force came from.
+  if (configFileLimit === undefined) return "Config file not read";
+  if (source === "config_file") return "From config file";
+  if (source === "default") return "Default configuration";
+  // A source the Console has no word for. `stored_override` is rendered by the
+  // stored-override branch and never reaches here; anything else is a value
+  // this build does not know, and saying so is better than inventing a
+  // source.
+  return NOT_OBSERVED_LABEL;
+}
+
+/**
  * Interactive concurrency control for orchestrator subagent threads.
  *
  * Provides stepper (− / +), explicit Unlimited selection, and reset-to-config
@@ -77,7 +106,8 @@ export function ConcurrencyLimitControl({
 
   const effectiveLimit = concurrency.effectivePerSessionLimit;
   const isUnlimited = effectiveLimit === null;
-  const isStoredOverride = concurrency.configSource === "stored_override";
+  const configSource = concurrency.configSource;
+  const isStoredOverride = configSource === "stored_override";
   const configFileLimit = concurrency.maxConcurrentThreadsPerSession;
 
   return React.createElement(
@@ -224,17 +254,9 @@ export function ConcurrencyLimitControl({
             "span",
             {
               className: MUTED_TEXT_CLASS,
-              "data-concurrency-source": concurrency.configSource ?? "default"
+              "data-concurrency-source": configSource ?? "not-observed"
             },
-            // The config file's limit is absent when the file was there and
-            // could not be read. "From config file" would then be a claim about
-            // a file nobody read, and the limit in force is the router's
-            // default rather than the one that was configured.
-            configFileLimit === undefined
-              ? "Config file not read"
-              : concurrency.configSource === "config_file"
-                ? "From config file"
-                : "Default configuration"
+            limitSourceLabel(configSource, configFileLimit)
           ),
       concurrency.revision === undefined
         ? null

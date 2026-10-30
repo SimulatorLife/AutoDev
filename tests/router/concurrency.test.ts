@@ -130,9 +130,68 @@ test("a config file nobody could read is not a config file that declares no limi
       JSON.stringify(status).includes("maxConcurrentThreadsPerSession"),
       false
     );
+    // Nothing that could be read declared a limit, so the router's default is
+    // what is in force -- and the status says that is where it came from.
+    assert.equal(status.configSource, "default");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("the status names where the limit in force came from", () => {
+  // The operator reads this word next to the limit, so it has to say whether
+  // the cap is a stored override, the config file's own limit, or nothing
+  // that could be read declaring one. It used to name the config file's
+  // location instead, so the word the Console reads was never published.
+  const configured = new ConcurrencyManager({
+    agentActivity: createAgentActivityTracker(),
+    configFileSource: "env_override",
+    initialConfig: {
+      file: "/nonexistent/autodev-codex-concurrency.toml",
+      maxConcurrentThreadsPerSession: 8
+    }
+  });
+  const configuredStatus = configured.concurrencyStatus();
+  assert.equal(configuredStatus.configSource, "config_file");
+  // Which file was read is a different fact, and it travels under its own
+  // name rather than under the limit's source.
+  assert.equal(configuredStatus.configFileSource, "env_override");
+
+  const undeclared = new ConcurrencyManager({
+    agentActivity: createAgentActivityTracker(),
+    configFileSource: "default_codex_home",
+    initialConfig: {
+      file: "/nonexistent/autodev-codex-concurrency.toml",
+      maxConcurrentThreadsPerSession: null
+    }
+  });
+  assert.equal(undeclared.concurrencyStatus().configSource, "default");
+  assert.equal(
+    undeclared.concurrencyStatus().configFileSource,
+    "default_codex_home"
+  );
+
+  // A stored override is the limit in force, and it says so.
+  const overridden = new ConcurrencyManager({
+    agentActivity: createAgentActivityTracker(),
+    configFileSource: "default_codex_home",
+    initialConfig: {
+      file: "/nonexistent/autodev-codex-concurrency.toml",
+      maxConcurrentThreadsPerSession: 8
+    }
+  });
+  overridden.setMaxConcurrentThreadsPerSession(3);
+  const overriddenStatus = overridden.concurrencyStatus();
+  assert.equal(overriddenStatus.configSource, "stored_override");
+  assert.equal(overriddenStatus.effectivePerSessionLimit, 3);
+  // The config file still declares eight, and that is still published beside
+  // the override rather than being overwritten by it.
+  assert.equal(overriddenStatus.maxConcurrentThreadsPerSession, 8);
+
+  // Clearing the override hands the limit back to the config file.
+  overridden.clearStoredLimit();
+  assert.equal(overridden.concurrencyStatus().configSource, "config_file");
+  assert.equal(overridden.concurrencyStatus().effectivePerSessionLimit, 8);
 });
 
 test("matchAgentsContext extracts context cleanly", () => {

@@ -103,7 +103,7 @@ function harness(): {
   const manager = new ConcurrencyManager({
     agentActivity: createAgentActivityTracker(),
     configFile: "/nonexistent/autodev-codex-concurrency.json",
-    configSource: "config_file",
+    configFileSource: "default_codex_home",
     initialConfig: {
       file: "/nonexistent/autodev-codex-concurrency.json",
       maxConcurrentThreadsPerSession: CONFIG_FILE_LIMIT

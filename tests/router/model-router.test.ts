@@ -6024,7 +6024,20 @@ test("serves status snapshots without exposing request content", async () => {
     assert.equal(typeof status.telemetryPersistence.source, "string");
     assert.equal(typeof status.telemetryPersistence.exists, "boolean");
     assert.equal(Object.hasOwn(status.concurrency, "configFile"), false);
-    assert.equal(typeof status.concurrency.configSource, "string");
+    // The source of the limit in force is a closed vocabulary the Console
+    // renders, and which config file was read is a separate fact beside it.
+    assert.equal(
+      ["stored_override", "config_file", "default"].includes(
+        status.concurrency.configSource
+      ),
+      true
+    );
+    assert.equal(
+      ["default_codex_home", "env_override"].includes(
+        status.concurrency.configFileSource
+      ),
+      true
+    );
     assert.equal(typeof status.concurrency.configFileExists, "boolean");
     assertNoLeakedPaths(status);
   } finally {

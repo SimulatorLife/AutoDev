@@ -1423,18 +1423,57 @@ export interface ControlApiGithubResponse {
   readonly recentRuns: readonly GithubWorkflowRun[] | null;
 }
 
+/**
+ * Where the session concurrency limit in force came from.
+ *
+ * A stored override is the operator's own write; `config_file` is the limit the
+ * config file declares; `default` is nothing that could be read declaring a
+ * limit. The Console renders this word next to the limit, so it names the
+ * limit's source -- not the file's location, which is a different fact and
+ * travels as `configFileSource`.
+ */
+export type ControlApiConcurrencyLimitSource =
+  "stored_override" | "config_file" | "default";
+
+/**
+ * Which config file the router read.
+ *
+ * `env_override` means `CODEX_ROUTER_CODEX_CONFIG_FILE` redirected the read
+ * away from the default Codex home. It is a fact about the read, not about the
+ * limit.
+ */
+export type ControlApiConcurrencyConfigFileSource =
+  "default_codex_home" | "env_override";
+
 export interface ControlApiConcurrencyStatus {
   readonly scope?: string;
-  readonly configSource?: string;
+  /**
+   * Where the limit in force came from.
+   *
+   * A closed union rather than a `string`: the Console branches on it to
+   * decide what it tells the operator about the limit, so a value it has no
+   * word for must not reach the page. It was a `string` carrying a different
+   * fact entirely -- the file's location -- which left the branch the Console
+   * reads unreachable and every configured limit labelled as a default.
+   */
+  readonly configSource?: ControlApiConcurrencyLimitSource;
+  /** Which config file the router read. A different fact from the limit's source. */
+  readonly configFileSource?: ControlApiConcurrencyConfigFileSource;
   readonly configFileExists?: boolean;
   /**
-   * `null` means no per-session limit is configured, which is the default.
+   * The limit the config file declares.
    *
-   * Not optional-and-not-nullable because "unlimited" is an observed fact about
-   * this deployment, not a missing field: the Runtime's own status CLI prints it
-   * as `unlimited`, and collapsing it to `undefined` here would make a router
-   * that deliberately runs without a limit indistinguishable from one whose
-   * limit was never read.
+   * Three states. A number is a file that was read and declares that limit;
+   * `null` is a file that was read and declares no limit, which is the default
+   * deployment; and an absent field is a file that was there and could not be
+   * read, so nobody knows what it declares.
+   *
+   * `null` is an observed fact about this deployment rather than a missing
+   * field: the Runtime's own status CLI prints it as `unlimited`, and
+   * collapsing it to `undefined` would make a router that deliberately runs
+   * without a limit indistinguishable from one whose limit was never read.
+   * The absent state is a different claim again, and the Runtime publishes it
+   * as absence rather than as `null` so the two stay apart.
    */
   readonly maxConcurrentThreadsPerSession?: number | null;
   readonly effectivePerSessionLimit?: number | null;

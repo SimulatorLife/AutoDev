@@ -5245,7 +5245,8 @@ function handleRuntimeFixture(
     },
     concurrency: {
       scope: "fixture",
-      configSource: "fixture",
+      configSource: "config_file",
+      configFileSource: "default_codex_home",
       configFileExists: true,
       maxConcurrentThreadsPerSession: 4,
       effectivePerSessionLimit: 4,

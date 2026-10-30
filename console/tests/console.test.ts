@@ -16978,6 +16978,11 @@ test("Console rejects a runtime response that does not match the v2 contract", a
     { ...valid, lifecycle: { ...valid.lifecycle, state: "restarting" } },
     { ...valid, lifecycle: { state: "ready", draining: "yes" } },
     { ...valid, concurrency: { effectivePerSessionLimit: "two" } },
+    // The source of the limit in force is the word the Console prints beside
+    // the limit, so a value it has no word for must not reach the page. The
+    // Runtime publishes one of three.
+    { ...valid, concurrency: { configSource: "fixture" } },
+    { ...valid, concurrency: { configFileSource: "somewhere_else" } },
     { ...valid, concurrency: { denialsByReason: { cap: "many" } } },
     { ...valid, liveAgents: undefined },
     {

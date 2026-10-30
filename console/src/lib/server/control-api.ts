@@ -25,6 +25,8 @@ import {
   type ControlApiAgentEnablementPatchRequest,
   type ControlApiAgentEnablementPatchResponse,
   type ControlApiAgentsResponse,
+  type ControlApiConcurrencyConfigFileSource,
+  type ControlApiConcurrencyLimitSource,
   type ControlApiConcurrencyPatchRequest,
   type ControlApiConcurrencyPatchResponse,
   type ControlApiConcurrencyStatus,
@@ -2815,6 +2817,34 @@ function isRouterLifecycleState(value: unknown): boolean {
   return value === "ready" || value === "draining";
 }
 
+/**
+ * The source of the concurrency limit in force.
+ *
+ * A membership check rather than a `typeof === "string"`, because the Console
+ * renders this value as the operator-facing word beside the limit: accepting
+ * any string would let a source it has no word for reach an operator unread,
+ * and -- worse -- would let the compiler keep believing the field is one of
+ * the three it knows. It was a plain string, and the value the Console
+ * branches on was one the Runtime never published, so the branch was dead and
+ * every configured limit was labelled as a default.
+ */
+function isConcurrencyLimitSource(
+  value: unknown
+): value is ControlApiConcurrencyLimitSource {
+  return (
+    value === "stored_override" ||
+    value === "config_file" ||
+    value === "default"
+  );
+}
+
+/** Which config file the router read. A different fact from the limit's source. */
+function isConcurrencyConfigFileSource(
+  value: unknown
+): value is ControlApiConcurrencyConfigFileSource {
+  return value === "default_codex_home" || value === "env_override";
+}
+
 function isConcurrencyStatus(
   value: unknown
 ): value is ControlApiConcurrencyStatus {
@@ -2822,7 +2852,9 @@ function isConcurrencyStatus(
   return (
     (value.scope === undefined || typeof value.scope === "string") &&
     (value.configSource === undefined ||
-      typeof value.configSource === "string") &&
+      isConcurrencyLimitSource(value.configSource)) &&
+    (value.configFileSource === undefined ||
+      isConcurrencyConfigFileSource(value.configFileSource)) &&
     (value.configFileExists === undefined ||
       typeof value.configFileExists === "boolean") &&
     (value.revision === undefined ||

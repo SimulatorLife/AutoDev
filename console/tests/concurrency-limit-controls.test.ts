@@ -44,7 +44,7 @@ function mockReconciliation(
 
 const mockUnlimitedConcurrency: ControlApiConcurrencyStatus = {
   scope: "router-admitted-child-requests",
-  configSource: "config_file",
+  configSource: "default",
   configFileExists: true,
   maxConcurrentThreadsPerSession: null,
   effectivePerSessionLimit: null,
@@ -103,7 +103,11 @@ test("ConcurrencyLimitControl renders stepper and checked Unlimited button when 
   assert.match(markup, />∞<\/span>/);
   assert.match(markup, /data-concurrency-unlimited="true"/);
   assert.match(markup, /data-checked="true"/);
-  assert.match(markup, /From config file/);
+  // Nothing declared a limit, so the limit in force is the router's default.
+  // It is not the config file's limit, and saying so is the point: the
+  // Runtime publishes the source rather than the Console inferring it.
+  assert.match(markup, /Default configuration/);
+  assert.doesNotMatch(markup, /From config file/);
   assert.match(markup, /• rev 1/);
 });
 
@@ -119,6 +123,12 @@ test("ConcurrencyLimitControl renders numeric value and unchecked Unlimited butt
   assert.match(markup, /name="revision" value="2"/);
   assert.match(markup, />8<\/span>/);
   assert.match(markup, /data-checked="false"/);
+  // The limit in force is the config file's own limit, and the page says so.
+  // The Runtime used to publish the config file's *location* under this field,
+  // so this branch was unreachable and every configured limit was labelled a
+  // default -- a claim about a cap the operator had set themselves.
+  assert.match(markup, /From config file/);
+  assert.doesNotMatch(markup, /Default configuration/);
   assert.match(markup, /• rev 2/);
   // Should step down to 7 and step up to 9
   assert.match(markup, /name="setLimit"/);
@@ -139,6 +149,32 @@ test("ConcurrencyLimitControl renders stored override warning and reset button",
   assert.match(markup, /name="resetToConfigFile"/);
   assert.match(markup, /value="true"/);
   assert.match(markup, /Reset to config/);
+});
+
+test("ConcurrencyLimitControl says the source of the limit is not observed when the Runtime did not publish one", () => {
+  // The Runtime publishes where the limit in force came from. A response that
+  // carries the limit but no source has not told the Console where the cap
+  // came from, and "Default configuration" would be a claim it cannot make.
+  const markup = renderToStaticMarkup(
+    React.createElement(ConcurrencyLimitControl, {
+      concurrency: {
+        scope: "router-admitted-child-requests",
+        configFileExists: true,
+        maxConcurrentThreadsPerSession: 8,
+        effectivePerSessionLimit: 8,
+        activeSubagentThreads: 0,
+        activeSessions: 0,
+        denials: 0,
+        revision: 4
+      },
+      returnTo: "/agents"
+    })
+  );
+
+  assert.match(markup, /Not observed/);
+  assert.doesNotMatch(markup, /From config file/);
+  assert.doesNotMatch(markup, /Default configuration/);
+  assert.match(markup, /data-concurrency-source="not-observed"/);
 });
 
 test("ConcurrencyLimitControl says the config file was not read rather than naming its contents", () => {

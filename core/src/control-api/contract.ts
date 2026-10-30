@@ -98,11 +98,17 @@
  * -- so "the write was accepted" and "the Runtime is enforcing this limit"
  * were the same claim, and only the second one says what the operator will
  * actually get.
+ * v28: the concurrency status publishes where the limit in force came from.
+ * The field the Console reads was carrying a different fact -- the config
+ * file's location -- so the branch the Console branches on was unreachable
+ * and every limit the operator had configured was labelled as a default. The
+ * limit's source is now a closed union the Console can render, and the file's
+ * location travels beside it under the name that says what it is.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 27
+  version: 28
 } as const;
 
 export type ControlApiContractResponse = {

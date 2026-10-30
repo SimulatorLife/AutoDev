@@ -415,7 +415,7 @@ const CODEX_CONFIG_FILE =
 const concurrencyManager = new ConcurrencyManager({
   agentActivity,
   configFile: CODEX_CONFIG_FILE,
-  configSource: process.env.CODEX_ROUTER_CODEX_CONFIG_FILE
+  configFileSource: process.env.CODEX_ROUTER_CODEX_CONFIG_FILE
     ? "env_override"
     : "default_codex_home",
   getOrchestratorSession: (key) => subagentRegistry.orchestratorSessionInfo(key)

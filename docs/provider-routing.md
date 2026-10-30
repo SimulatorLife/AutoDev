@@ -1357,6 +1357,15 @@ declares no limit. `configFileExists` answers whether the file is there, which i
 different question from whether it could be read. The same status is published by
 `/control/runtime`, `/control/routing`, and the router's `/status`.
 
+`configSource` names where the limit in force came from, and it is a closed vocabulary
+of three: `stored_override` for a stored override, `config_file` for the limit the
+config file declares, and `default` for nothing that could be read declaring one. It
+used to carry the config file's *location* under this name -- `default_codex_home` or
+`env_override` -- which is a fact about the read rather than about the limit; that
+fact now travels as `configFileSource`. The limit's source and the file's location
+are two different questions, and one field cannot answer both: when it tried, the
+value the Console read was a value the router never published.
+
 Its reasons are `provider_exhausted`, `selection_deadline` (the router spent its
 provider-selection budget without finding one),
 `max_concurrent_threads_per_session`, and `spawn_tool_unavailable`. Only child
