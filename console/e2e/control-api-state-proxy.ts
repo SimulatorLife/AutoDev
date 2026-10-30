@@ -136,8 +136,12 @@ function degradedAnswer(degraded: ProxyState): {
  * because they replace the answer instead of describing it.
  */
 const CATALOGUE_ROUTES: Readonly<Record<string, string>> = {
+  "/control/agents": ".rulesync/agents.jsonc",
   "/control/hooks": ".rulesync/hooks.jsonc",
-  "/control/mcps": ".rulesync/mcp.jsonc"
+  "/control/mcps": ".rulesync/mcp.jsonc",
+  "/control/permissions": "config/config.autodev.toml",
+  "/control/prompts": ".rulesync/prompts",
+  "/control/skills": ".rulesync/skills"
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -185,6 +189,54 @@ function brokenCatalogue(pathname: string, body: unknown): unknown {
       validity: "invalid",
       totalTools: null,
       tools: []
+    };
+  }
+  if (pathname === "/control/skills") {
+    return {
+      ...body,
+      valid: false,
+      issues: [
+        {
+          location: CATALOGUE_ROUTES[pathname] ?? pathname,
+          message: "The skill catalogue could not be applied."
+        }
+      ],
+      skills: [],
+      unresolvedAssignments: []
+    };
+  }
+  if (pathname === "/control/prompts") {
+    return {
+      ...body,
+      valid: false,
+      issues: [
+        {
+          location: CATALOGUE_ROUTES[pathname] ?? pathname,
+          message: "The prompt catalogue could not be applied."
+        }
+      ],
+      totalCommands: null,
+      commands: []
+    };
+  }
+  if (pathname === "/control/agents") {
+    // The agent catalogue is the execution contract's roles, so an unread
+    // contract is an unread catalogue -- and the response says which of the
+    // two it is.
+    return {
+      ...body,
+      executionContractObserved: false,
+      totalAgents: null,
+      agents: []
+    };
+  }
+  if (pathname === "/control/permissions") {
+    // The role matrices are the execution contract's roles, for the same
+    // reason: an unread contract leaves no matrix and is not an empty one.
+    return {
+      ...body,
+      executionContractObserved: false,
+      rolePermissions: {}
     };
   }
   return body;

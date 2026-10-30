@@ -93,3 +93,99 @@ test("a tool whose catalogue could not be applied is not an unknown tool", async
   );
   await expect(page.locator('[data-testid="not-found-page"]')).toHaveCount(0);
 });
+
+test("a skill catalogue that could not be applied is not an empty catalogue", async ({
+  page
+}) => {
+  await setControlApiState("catalogue-invalid");
+  await page.goto("/skills");
+
+  // The catalogue holds no skill because it could not be read, which is not
+  // the same claim as the repository holding no skill. The page says which
+  // one it is showing, and the badge that counts the catalogue is not
+  // published at all -- a count of zero would be a count.
+  await expect(
+    page.locator('[data-skill-source-validity="false"]')
+  ).toHaveCount(1);
+  await expect(
+    page.getByText("catalog contents are unavailable")
+  ).toBeVisible();
+  await expect(
+    page.getByText("The skill catalogue could not be applied.")
+  ).toBeVisible();
+  // And the navigation badge counts nothing, because nothing was counted.
+  await expect(page.locator('[data-nav-item="skills"]')).toHaveAttribute(
+    "aria-label",
+    "Skills"
+  );
+});
+
+test("a prompt catalogue that could not be applied is not an empty catalogue", async ({
+  page
+}) => {
+  await setControlApiState("catalogue-invalid");
+  await page.goto("/prompts");
+
+  await expect(
+    page.locator('[data-prompt-command-source="false"]')
+  ).toHaveCount(1);
+  await expect(
+    page.getByText("slash-command results are unavailable")
+  ).toBeVisible();
+  await expect(
+    page.getByText("The prompt catalogue could not be applied.")
+  ).toBeVisible();
+  // The catalogue is two reads -- the RuleSync command catalogue and the
+  // canonical role-prompt directory -- and the half that could not be applied
+  // takes the count away: the card says the catalogue is invalid rather than
+  // counting the half that survived. A number here would count a catalogue
+  // the Runtime never declared.
+  const canonicalCard = page
+    .locator("dl")
+    .filter({ has: page.locator("dt", { hasText: "Canonical Prompts" }) });
+  await expect(canonicalCard.locator("dd span").first()).toHaveText("Invalid");
+  await expect(page.locator('[data-nav-item="prompts"]')).toHaveAttribute(
+    "aria-label",
+    "Prompts"
+  );
+});
+
+test("an agent catalogue nobody read is not an empty catalogue", async ({
+  page
+}) => {
+  await setControlApiState("catalogue-invalid");
+  await page.goto("/agents");
+
+  // The agent catalogue is the execution contract's roles, and an unread
+  // contract falls back to an empty one. The page has to say which of the two
+  // it is showing.
+  await expect(
+    page.getByText(
+      "The execution contract was not read, so the agent catalogue is not known."
+    )
+  ).toBeVisible();
+  await expect(page.locator('[data-nav-item="agents"]')).toHaveAttribute(
+    "aria-label",
+    "Agents"
+  );
+});
+
+test("a role matrix nobody read is not an empty matrix", async ({ page }) => {
+  await setControlApiState("catalogue-invalid");
+  await page.goto("/permissions");
+
+  await expect(
+    page.getByText(
+      "The execution contract was not read, so no role capability matrix is known."
+    )
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "The execution contract was not read, so no MCP tool grants are known."
+    )
+  ).toBeVisible();
+  await expect(page.locator('[data-nav-item="permissions"]')).toHaveAttribute(
+    "aria-label",
+    "Permissions"
+  );
+});
