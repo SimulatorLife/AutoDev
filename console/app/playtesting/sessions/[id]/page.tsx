@@ -159,9 +159,27 @@ interface PlaytestingSessionPageProps {
   >;
 }
 
-export const metadata: Metadata = {
-  title: "Playtesting session"
-};
+/**
+ * The title of the tab this session is open in.
+ *
+ * Every other detail page names the item it is about: "default · Agents",
+ * "claude · Providers", "lsp · MCPs". This one said "Playtesting session" for
+ * every session, so an operator with two sessions open could not tell the tabs
+ * apart -- and the tab is what you read when you have many of them.
+ *
+ * The route's own id is the name, and it is the name the page shows too: the
+ * episode's heading reads the same id. The metadata function does not fetch the
+ * episode to learn more, because a metadata function that fetched would double
+ * every session request.
+ */
+export async function generateMetadata({
+  params
+}: {
+  readonly params: Promise<{ readonly id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  return { title: `${id} · Playtesting` };
+}
 
 export default async function PlaytestingSessionPage({
   params,

@@ -2,6 +2,7 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 
 import {
   CANONICAL_ROUTES,
+  DETAIL_ROUTES,
   routeHeading,
   waitForPageContent
 } from "./acceptance-helpers.ts";
@@ -133,4 +134,36 @@ test("every canonical resource route answers with its own resource", async ({
       );
     })
   );
+});
+
+/**
+ * A detail page's tab names the item it is about.
+ *
+ * The tab is what an operator reads when they have several of them open, so
+ * a tab that names only the section leaves two sessions, two providers or two
+ * tools indistinguishable. Every detail page names its item: "default ·
+ * Agents", "claude · Providers", "lsp · MCPs".
+ *
+ * The Playtesting session page did not: it said "Playtesting session" for
+ * every session, so two sessions open in two tabs read the same.
+ */
+test("a detail page's tab names the item it is about", async ({ page }) => {
+  const detailPaths: readonly string[] = [
+    ...DETAIL_ROUTES.map((route) => route.path),
+    "/playtesting/sessions/episode-17?workspaceId=fixture%2Fgame"
+  ];
+
+  for (const path of detailPaths) {
+    await page.goto(path);
+    await waitForPageContent(page);
+    const queryAt = path.indexOf("?");
+    const withoutQuery = path.includes("?") ? path.slice(0, queryAt) : path;
+    const segments = withoutQuery.split("/").filter(Boolean);
+    const item = segments.findLast((segment) => segment.length > 0) ?? "";
+    await expect
+      .soft(page, `${path} names its item in the tab`)
+      .toHaveTitle(
+        new RegExp(item.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`))
+      );
+  }
 });

@@ -590,6 +590,14 @@ So the page publishes it. A region that holds the service's own words carries `d
 
 The marker is on the Console's shared code primitive too, because that is where a quoted block of text belongs: `CodeBlock` and `CodeEditor` render source verbatim and now say so. A prompt's source, a configuration block and an agent's diff are the author's or the service's own words, quoted into the page; a moment inside one of them is the author's moment, and the Console's instant sweep was never a claim about the author's spelling.
 
+## Every session's tab read the same
+
+The Playtesting session page was the only detail page whose tab did not name the item it was about. Every other one does — "default · Agents", "claude · Providers", "lsp · MCPs", "fixture/game · Workspaces" — and the session page said "Playtesting session" for every session. The page itself names the session: the episode's heading reads its id, right under the section's own heading. The tab did not.
+
+That matters because the tab is what an operator reads when they have several open. An operator watching two sessions, or comparing a session against a finding, saw two tabs that read identically, and had to open each one to find out which was which.
+
+The tab now names the session the way the page does. The metadata function does not fetch the episode to learn a better name for it: a metadata function that fetched would double every session request, and the route's own id is already the name the page shows.
+
 ## The Console's word for a source
 
 The tools page's source filter said **Mcp** where the rest of the Console says **MCP**: the navigation, the page title, the catalogue's own card and the help text that says the operator can pivot to MCPs. The chips derived their label from the value by capitalising it, so "mcp" reached the screen as "Mcp" -- and because the capitalisation was in the stylesheet rather than in the text, a sweep over the rendered pages' text could not see it: the DOM said "mcp", the screen said "Mcp".
