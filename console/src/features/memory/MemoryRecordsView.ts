@@ -813,7 +813,13 @@ function RecordDetailPanel({
                   React.createElement(StatusBadge, {
                     status:
                       MEMORY_STATUS_VARIANT[t.toStatus] ?? NOT_OBSERVED_STATUS,
-                    label: `${t.fromStatus ?? "none"} → ${t.toStatus}`
+                    // The transition reads as two states, so it reads as the
+                    // Console's words for them. The wire keys -- "proposed",
+                    // "active" -- were printed raw, and a badge that says
+                    // "proposed → active" is a pair of database keys where the
+                    // reader was promised a history. A transition with no
+                    // earlier state is the record's first one.
+                    label: `${t.fromStatus === undefined ? "None" : (MEMORY_STATUS_LABEL[t.fromStatus] ?? "None")} → ${MEMORY_STATUS_LABEL[t.toStatus] ?? "Not observed"}`
                   }),
                   // The machine reason, not a free-text note the producer never
                   // set. It is the only thing on the wire that says *why* a

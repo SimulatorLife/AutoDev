@@ -150,7 +150,14 @@ export const SWEEP_ROUTES: readonly string[] = [
   ...DETAIL_ROUTES.map((route) => route.path),
   "/memory?tab=experiences&experienceId=exp-0001",
   "/memory?tab=cohorts",
-  "/memory?tab=records&workspaceId=fixture%2Fgame&recordId=mem-0001"
+  "/memory?tab=records&workspaceId=fixture%2Fgame&recordId=mem-0001",
+  // A playtesting session is a detail page like any other, and it carries
+  // states: the execution state, the game's outcome, the completeness status
+  // of each section of the analyst's review. It was not in this list, so the
+  // sweeps had never asked the browser about it -- which is how the review's
+  // completeness statuses came to be printed on the screen as the codes the
+  // contract stores.
+  "/playtesting/sessions/episode-17?workspaceId=fixture%2Fgame"
 ];
 
 /**

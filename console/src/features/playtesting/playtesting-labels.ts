@@ -17,14 +17,20 @@
  * Every operator-facing string is derived here, from the code, once.
  */
 
-import type {
-  PlaytestEpisode,
-  PlaytestExecutionProvenance,
-  PlaytestGameOutcomeKind,
-  PlaytestMissingReason
+import {
+  PLAYTEST_REVIEW_SECTION_NOT_RECORDED,
+  type PlaytestEpisode,
+  type PlaytestExecutionProvenance,
+  type PlaytestGameOutcomeKind,
+  type PlaytestMissingReason,
+  type PlaytestReviewSectionStatus
 } from "@simulatorlife/autodev-core";
 
-import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
+import {
+  NOT_OBSERVED_LABEL,
+  NOT_OBSERVED_STATUS,
+  type StatusBadgeVariant
+} from "../../components/status/StatusBadge.ts";
 
 /** The badge tones the Console's status component understands. */
 export type PlaytestingLabelTone =
@@ -351,6 +357,63 @@ export function gameOutcomeLabel(value: PlaytestGameOutcomeKind): string {
  */
 export function gameOutcomeBadgeLabel(value: PlaytestGameOutcomeKind): string {
   return value === "unknown" ? "No game outcome" : gameOutcomeLabel(value);
+}
+
+/**
+ * The operator-facing word for every status a review section can carry.
+ *
+ * A `Record` over the contract's own union, so the table is exhaustive: a
+ * status added to the contract without a word of its own is a typecheck
+ * failure here rather than a code on a page. A switch with a `default` branch
+ * would not have caught it -- the new status would have fallen through to the
+ * fallback and the page would have said "Not observed" about a section that
+ * was there.
+ */
+const REVIEW_SECTION_STATUS_LABEL: Record<PlaytestReviewSectionStatus, string> =
+  {
+    available: "Available",
+    unavailable: "Unavailable",
+    provided: "Provided",
+    "none-identified": "None identified",
+    proposed: "Proposed",
+    "none-recommended": "None recommended",
+    none: "None",
+    [PLAYTEST_REVIEW_SECTION_NOT_RECORDED]: "Not recorded"
+  };
+
+export function reviewSectionStatusLabel(
+  status: PlaytestReviewSectionStatus
+): string {
+  return REVIEW_SECTION_STATUS_LABEL[status] ?? UNRECOGNISED_LABEL;
+}
+
+/**
+ * The tone every status a review section can carry is shown with.
+ *
+ * A section that could not be assembled is a known gap in what was observed,
+ * so it is the warning tone; a section the review did not record at all is
+ * missing evidence, so it is never painted as anything else. The sections that
+ * carry content -- and the sections that legitimately found none -- take the
+ * accent tone, which claims neither a success nor a failure.
+ */
+const REVIEW_SECTION_STATUS_TONE: Record<
+  PlaytestReviewSectionStatus,
+  StatusBadgeVariant
+> = {
+  available: "configured",
+  unavailable: "unavailable",
+  provided: "configured",
+  "none-identified": "configured",
+  proposed: "configured",
+  "none-recommended": "configured",
+  none: "configured",
+  [PLAYTEST_REVIEW_SECTION_NOT_RECORDED]: NOT_OBSERVED_STATUS
+};
+
+export function reviewSectionStatusTone(
+  status: PlaytestReviewSectionStatus
+): StatusBadgeVariant {
+  return REVIEW_SECTION_STATUS_TONE[status] ?? NOT_OBSERVED_STATUS;
 }
 
 /** The operator-facing label for a reason a piece of evidence is missing. */

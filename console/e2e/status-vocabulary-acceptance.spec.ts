@@ -74,3 +74,108 @@ test("every status the Console shows is named", async ({ page }) => {
     "the sweep has to read the statuses the Console renders, not an error page"
   ).toBeGreaterThan(60);
 });
+
+/**
+ * A status badge speaks the Console's word, not the code the service sent.
+ *
+ * Naming the state is not enough. A badge that says "none-recommended" has
+ * named the state and said nothing else: the code is the persisted contract,
+ * hyphenated and lower case, and it leaks the storage shape into the one
+ * place the operator reads a state at a glance. The four sections of an
+ * analyst review's completeness account each carried one -- "provided",
+ * "none-recommended", "not-recorded" -- on a page no sweep walked.
+ *
+ * The Console's words are sentence-cased English, so an entirely lower-case
+ * badge word is a code that was passed through instead of a word that was
+ * chosen. That is what this measures, over every route and every badge.
+ */
+test("no status shows the code it was given", async ({ page }) => {
+  const codes: string[] = [];
+  let seen = 0;
+
+  for (const path of SWEEP_ROUTES) {
+    await page.goto(path);
+    await waitForPageContent(page);
+
+    const found = await page.evaluate(() => {
+      const findings: string[] = [];
+      let counted = 0;
+      for (const element of Array.from(
+        document.querySelectorAll<HTMLElement>("[data-status]")
+      )) {
+        const style = getComputedStyle(element);
+        if (style.display === "none" || style.visibility === "hidden") continue;
+        if (element.closest("[hidden]")) continue;
+        counted += 1;
+        if (element.getAttribute("role") === "img") continue;
+        const shown = (element.textContent ?? "").trim();
+        if (shown.length === 0) continue;
+        // The Console's words are sentence-cased. A word that is entirely
+        // lower case is the code the service sent.
+        if (shown !== shown.toLowerCase()) continue;
+        if (!/[a-z]/u.test(shown)) continue;
+        findings.push(
+          `${element.dataset.status ?? "(no status)"} => "${shown}"`
+        );
+      }
+      return { findings, counted };
+    });
+
+    seen += found.counted;
+    for (const finding of found.findings) codes.push(`${path}: ${finding}`);
+  }
+
+  expect(
+    codes,
+    "a badge has to speak the Console's word: a machine code on a badge leaks the persisted contract into the place the operator reads a state"
+  ).toEqual([]);
+  expect(
+    seen,
+    "the sweep has to read the statuses the Console renders, not an error page"
+  ).toBeGreaterThan(60);
+});
+
+/**
+ * The analyst review's completeness sections name what each section says.
+ *
+ * The four sections of a review's completeness account each carry a status
+ * from the review contract, and each of them was reaching the screen as the
+ * code the contract stores -- "provided", "none-recommended", "not-recorded".
+ * The contract is the persisted shape and must not change; the word on the
+ * badge is the Console's to choose.
+ *
+ * This reads the words themselves rather than only checking that they are
+ * not codes, so the page cannot drift into a different code and still pass.
+ */
+test("the analyst review's completeness sections speak the Console's words", async ({
+  page
+}) => {
+  await page.goto(
+    "/playtesting/sessions/episode-17?workspaceId=fixture%2Fgame"
+  );
+  await waitForPageContent(page);
+
+  const expected: readonly {
+    readonly section: string;
+    readonly word: string;
+  }[] = [
+    { section: "cross-session-context", word: "Unavailable" },
+    { section: "alternative-explanations", word: "Provided" },
+    { section: "experiments", word: "None recommended" },
+    { section: "follow-up", word: "Proposed" }
+  ];
+
+  for (const entry of expected) {
+    const badge = page.locator(
+      `[data-review-completeness-section="${entry.section}"] [data-status]`
+    );
+    await expect(
+      badge,
+      `the ${entry.section} section says what it is`
+    ).toHaveCount(1);
+    await expect(
+      badge,
+      `the ${entry.section} section speaks the Console's word`
+    ).toHaveText(entry.word);
+  }
+});

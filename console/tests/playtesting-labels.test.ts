@@ -3,7 +3,8 @@ import test from "node:test";
 
 import type {
   ControlApiPlaytestingReview,
-  PlaytestFinding
+  PlaytestFinding,
+  PlaytestReviewSectionStatus
 } from "@simulatorlife/autodev-core";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -21,6 +22,8 @@ import {
   playtestingSessionFailureHint,
   playtestingSessionFailureTitle,
   policyLabel,
+  reviewSectionStatusLabel,
+  reviewSectionStatusTone,
   runtimeFailureExplanation
 } from "../src/features/playtesting/playtesting-labels.ts";
 import { reviewRecordedDay } from "../src/features/playtesting/playtesting-review-presentation.ts";
@@ -200,6 +203,51 @@ test("an outcome badge names what it did not observe", () => {
   assert.equal(gameOutcomeBadgeLabel("unknown"), "No game outcome");
   assert.equal(gameOutcomeBadgeLabel("win"), "Win");
   assert.equal(gameOutcomeBadgeLabel("dnf"), "Did not finish");
+});
+
+test("a review section's status reads as a word, not as the code it was stored as", () => {
+  // The four completeness sections each carry a status from the review
+  // contract, and each of them was reaching the screen as the code the
+  // contract stores: "provided", "none-recommended", "not-recorded".
+  const statuses: readonly PlaytestReviewSectionStatus[] = [
+    "available",
+    "unavailable",
+    "provided",
+    "none-identified",
+    "proposed",
+    "none-recommended",
+    "none",
+    "not-recorded"
+  ];
+
+  for (const status of statuses) {
+    const word = reviewSectionStatusLabel(status);
+    assert.notEqual(
+      word,
+      status,
+      `"${status}" is printed as itself, so the persisted contract is leaking into the Console's voice`
+    );
+    assert.match(
+      word,
+      /^[A-Z]/u,
+      `"${status}" reads as "${word}", which is not a word the Console speaks`
+    );
+    assert.doesNotMatch(
+      word,
+      /-/u,
+      `"${word}" still carries the contract's hyphen`
+    );
+  }
+});
+
+test("a review section's status is painted as what it is", () => {
+  // A section that could not be assembled is a known gap; a section the
+  // review did not record is missing evidence and is never painted as
+  // anything else.
+  assert.equal(reviewSectionStatusTone("unavailable"), "unavailable");
+  assert.equal(reviewSectionStatusTone("not-recorded"), "not-observed");
+  assert.equal(reviewSectionStatusTone("provided"), "configured");
+  assert.equal(reviewSectionStatusTone("none-recommended"), "configured");
 });
 
 test("a recorded day that cannot be read does not take the page with it", () => {

@@ -564,6 +564,23 @@ export interface PlaytestReviewCompleteness {
       };
 }
 
+/**
+ * The status of one section of a review's completeness account.
+ *
+ * The four completeness sections do not share one status vocabulary -- the
+ * cross-session context can be available, the alternatives can be provided,
+ * the experiments can be proposed -- so the union is taken from the interface
+ * rather than written out. A consumer can therefore look up a word for every
+ * status the contract admits, exhaustively: a status added to the interface
+ * without a word of its own is a typecheck failure there, rather than a
+ * machine code printed on a page.
+ */
+export type PlaytestReviewSectionStatus =
+  | PlaytestReviewCompleteness["crossSessionContext"]["status"]
+  | PlaytestReviewCompleteness["alternatives"]["status"]
+  | PlaytestReviewCompleteness["experiments"]["status"]
+  | PlaytestReviewCompleteness["followUp"]["status"];
+
 /** What a review records as a deterministic fact-support verdict. */
 export type PlaytestEvidenceVerdict =
   "supported" | "contradicted" | "insufficient";

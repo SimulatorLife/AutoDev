@@ -35,6 +35,7 @@ import {
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
+import { githubRunOutcome } from "./github-labels.ts";
 import {
   countWorkflowStates,
   filterRuns,
@@ -527,28 +528,18 @@ export function GithubView({
             "No runs observed"
           );
         }
-        const isSuccess = workflow.lastRunConclusion === "success";
-        const isFailure =
-          workflow.lastRunConclusion === "failure" ||
-          workflow.lastRunConclusion === "timed_out";
-        const isPending =
-          workflow.lastRunStatus === "in_progress" ||
-          workflow.lastRunStatus === "queued" ||
-          workflow.lastRunStatus === "waiting";
-        const status = isSuccess
-          ? "ready"
-          : isFailure
-            ? "error"
-            : isPending
-              ? "pending"
-              : NOT_OBSERVED_STATUS;
-        const label =
-          workflow.lastRunConclusion ?? workflow.lastRunStatus ?? "unknown";
+        const runBadge = githubRunOutcome(
+          workflow.lastRunConclusion,
+          workflow.lastRunStatus
+        );
 
         return React.createElement(
           "div",
           { className: "flex items-center gap-2" },
-          React.createElement(StatusBadge, { status, label }),
+          React.createElement(StatusBadge, {
+            status: runBadge.variant,
+            label: runBadge.label
+          }),
           workflow.lastRunHtmlUrl
             ? React.createElement(
                 "a",
@@ -639,22 +630,11 @@ export function GithubView({
       id: "outcome",
       header: "Status / Outcome",
       cell: (run) => {
-        const isSuccess = run.conclusion === "success";
-        const isFailure =
-          run.conclusion === "failure" || run.conclusion === "timed_out";
-        const isPending =
-          run.status === "in_progress" ||
-          run.status === "queued" ||
-          run.status === "waiting";
-        const status = isSuccess
-          ? "ready"
-          : isFailure
-            ? "error"
-            : isPending
-              ? "pending"
-              : NOT_OBSERVED_STATUS;
-        const label = run.conclusion ?? run.status;
-        return React.createElement(StatusBadge, { status, label });
+        const runBadge = githubRunOutcome(run.conclusion, run.status);
+        return React.createElement(StatusBadge, {
+          status: runBadge.variant,
+          label: runBadge.label
+        });
       }
     },
     {

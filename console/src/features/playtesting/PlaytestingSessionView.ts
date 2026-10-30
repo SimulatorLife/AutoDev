@@ -6,6 +6,7 @@ import type {
   PlaytestJsonValue,
   PlaytestPlayerEvidenceReference,
   PlaytestReviewClaim,
+  PlaytestReviewSectionStatus,
   PlaytestSessionReview
 } from "@simulatorlife/autodev-core";
 import React from "react";
@@ -39,6 +40,8 @@ import {
 import {
   executionModeLabel,
   executionStateExplanation,
+  reviewSectionStatusLabel,
+  reviewSectionStatusTone,
   RUNTIME_FAILURE_TERMINATION_REASON,
   runtimeFailureExplanation as runtimeFailureSentence
 } from "./playtesting-labels.ts";
@@ -725,7 +728,7 @@ function reviewPanel(
   }
   const completenessSection = (
     title: string,
-    status: string,
+    status: PlaytestReviewSectionStatus,
     explanation: string,
     children: readonly React.ReactNode[] = []
   ): React.JSX.Element =>
@@ -739,13 +742,8 @@ function reviewPanel(
       },
       React.createElement("h4", { className: "font-medium" }, title),
       React.createElement(StatusBadge, {
-        status:
-          status === "not-recorded"
-            ? NOT_OBSERVED_STATUS
-            : status === "unavailable"
-              ? "unavailable"
-              : "configured",
-        label: status
+        status: reviewSectionStatusTone(status),
+        label: reviewSectionStatusLabel(status)
       }),
       explanation.length > 0
         ? React.createElement("p", { className: MUTED_BODY_CLASS }, explanation)

@@ -143,12 +143,19 @@ test("the observed Actions state is kept apart from the definitions", async ({
   );
 
   // The last run of each workflow is the run's own outcome, not a claim
-  // about the workflow.
-  await expect(definitions.getByText("success", { exact: true })).toHaveCount(
+  // about the workflow. The badge says it in the Console's words: GitHub's
+  // own codes -- `success`, `failure` -- were printed on the badge, so the
+  // one place an operator reads whether a pipeline was green was the one
+  // place the storage shape leaked through.
+  await expect(definitions.getByText("Succeeded", { exact: true })).toHaveCount(
     1
   );
+  await expect(definitions.getByText("Failed", { exact: true })).toHaveCount(1);
+  await expect(definitions.getByText("success", { exact: true })).toHaveCount(
+    0
+  );
   await expect(definitions.getByText("failure", { exact: true })).toHaveCount(
-    1
+    0
   );
 
   // The recent runs are the runs the API returned, with their own outcomes.
@@ -158,8 +165,10 @@ test("the observed Actions state is kept apart from the definitions", async ({
     runs.getByText("#9001 Scheduler", { exact: true })
   ).toBeVisible();
   await expect(runs.getByText("pull_request", { exact: true })).toBeVisible();
-  await expect(runs.getByText("cancelled", { exact: true })).toBeVisible();
-  await expect(runs.getByText("in_progress", { exact: true })).toBeVisible();
+  await expect(runs.getByText("Cancelled", { exact: true })).toBeVisible();
+  await expect(runs.getByText("In progress", { exact: true })).toBeVisible();
+  await expect(runs.getByText("cancelled", { exact: true })).toHaveCount(0);
+  await expect(runs.getByText("in_progress", { exact: true })).toHaveCount(0);
 });
 
 test("the recent runs can be narrowed by outcome", async ({ page }) => {
